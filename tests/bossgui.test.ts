@@ -4,6 +4,7 @@ import { get } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
+import { readRecord } from "../src/gui.ts";
 import type { Net } from "../src/net.ts";
 import { type Agent, settle, until, World } from "./fakes.ts";
 
@@ -134,4 +135,33 @@ test("without a built bundle the command says how to build it", async () => {
 	await viewer.command("gui");
 	await until(() => viewer.notices.some((n) => n.level === "error"), "an error notice");
 	assert.match(viewer.notices.find((n) => n.level === "error")!.text, /npm run gui:build/);
+});
+
+test("one server per machine: two calls at once in one session, and a call from another session, open the same server", async () => {
+	const a = world.agent({ id: "viewer-a", pane: "wA:p1", tab: "wA:t1", deps });
+	const b = world.agent({ id: "viewer-b", pane: "wB:p1", tab: "wB:t1", deps });
+	await Promise.all([a.start(), b.start()]);
+	await Promise.all([a.command("gui"), a.command("gui"), b.command("gui")]);
+	const urls = [a, b].flatMap((who) => who.notices.map((n) => /Straw net GUI: (\S+)/.exec(n.text)?.[1]).filter(Boolean));
+	assert.equal(urls.length, 3);
+	assert.equal(new Set(urls).size, 1, "every call got the same URL");
+	const record = readRecord(world.stateDir)!;
+	assert.equal(`http://127.0.0.1:${record.port}/${record.token}/`, urls[0], "gui.json records the running server");
+	const other = record.owner.startsWith("viewer-a") ? b : a;
+	await other.command("gui stop");
+	assert.match(other.notices.at(-1)!.text, /runs in session viewer-[ab] \(pane w[AB]:p1\); stop it there/);
+	assert.equal(await status(urls[0]!), 200, "a stop from another session leaves the server running");
+});
+
+test("when the session holding the server ends, the next /boss gui elsewhere starts it again on the same URL", async () => {
+	const a = world.agent({ id: "viewer-a", pane: "wA:p1", tab: "wA:t1", deps });
+	const b = world.agent({ id: "viewer-b", pane: "wB:p1", tab: "wB:t1", deps });
+	await Promise.all([a.start(), b.start()]);
+	await a.command("gui");
+	const url = urlOf(a);
+	await a.stop();
+	await assert.rejects(status(url), /ECONNREFUSED/);
+	await b.command("gui");
+	assert.equal(urlOf(b), url, "an open page reconnects to the successor");
+	assert.equal(await status(url), 200);
 });

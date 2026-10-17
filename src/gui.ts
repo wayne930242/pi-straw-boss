@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { createReadStream, statSync } from "node:fs";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createReadStream, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createServer, type IncomingMessage, request, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -107,6 +107,59 @@ export async function startGui({ read, dir = BUNDLE, port = 0, token = randomByt
 			server.closeAllConnections();
 		}),
 	};
+}
+
+// One server per machine. gui.json in the state directory records the running server (pid, port, token, owner session), and
+// gui.lock makes the check-and-start atomic, so a second /boss gui, from this session or another, opens the running server
+// instead of starting one. A dead server's port and token are reused, so a page left open reconnects to its successor.
+export interface GuiRecord { pid: number; port: number; token: string; owner: string }
+export interface Shared { url: string; owner: string; mine?: Gui }
+const urlOf = (r: GuiRecord) => `http://127.0.0.1:${r.port}/${r.token}/`;
+
+export function readRecord(dir: string): GuiRecord | undefined {
+	try {
+		return JSON.parse(readFileSync(join(dir, "gui.json"), "utf8")) as GuiRecord;
+	} catch {
+		return undefined;
+	}
+}
+
+/** Whether a recorded server answers its own page. */
+export const answers = (r: GuiRecord) =>
+	new Promise<boolean>((done) => {
+		const req = request({ host: "127.0.0.1", port: r.port, path: `/${r.token}/`, headers: { host: `127.0.0.1:${r.port}` }, timeout: 1000 }, (res) => {
+			res.resume();
+			done(res.statusCode === 200);
+		});
+		req.on("error", () => done(false)).on("timeout", () => (req.destroy(), done(false)));
+		req.end();
+	});
+
+export async function sharedGui(dir: string, owner: string, start: (prefer: { port?: number; token?: string }) => Promise<Gui>, sleep: (ms: number) => Promise<void>): Promise<Shared> {
+	mkdirSync(dir, { recursive: true, mode: 0o700 });
+	const lock = join(dir, "gui.lock");
+	for (let tries = 0; ; tries++) {
+		try {
+			writeFileSync(lock, String(process.pid), { flag: "wx" });
+			break;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+			// A lock older than 10 s was left by a session that died while starting the server.
+			const age = Date.now() - (statSync(lock, { throwIfNoEntry: false })?.mtimeMs ?? Date.now());
+			if (age > 10_000) rmSync(lock, { force: true });
+			else if (tries >= 50) throw new Error("Another session is starting the straw net GUI; try again");
+			else await sleep(200);
+		}
+	}
+	try {
+		const record = readRecord(dir);
+		if (record && (await answers(record))) return { url: urlOf(record), owner: record.owner };
+		const gui = await start(record ? { port: record.port, token: record.token } : {});
+		writeFileSync(join(dir, "gui.json"), JSON.stringify({ pid: process.pid, port: gui.port, token: gui.token, owner }), { mode: 0o600 });
+		return { url: gui.url, owner, mine: gui };
+	} finally {
+		rmSync(lock, { force: true });
+	}
 }
 
 /** Opens the default browser; rejects when the platform command fails, so the caller can show the URL instead. */

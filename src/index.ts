@@ -1,10 +1,11 @@
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static, type TSchema } from "typebox";
 import { collect, startDashboard } from "./dashboard.ts";
-import { type Gui, openBrowser, startGui } from "./gui.ts";
+import { answers, type Gui, openBrowser, readRecord, sharedGui, startGui } from "./gui.ts";
 import { collectNet } from "./net.ts";
 import { ensureTower, headOf, herdrApi, type HerdrApi, herdrRun, type HerdrRun, isSub, type Pane, panes, parentOf, place, type Place, report, type Session, type Sleep, waitFor, workspaces, type Workspace } from "./herdr.ts";
 
@@ -32,7 +33,7 @@ interface Saved { asked?: boolean; joined?: boolean; tower?: boolean }
 type Role = "tower" | "main" | "member";
 type Scope = "tab" | "workspace" | "towers" | "all";
 type Member = ReturnType<typeof netMembers>[number];
-export interface Deps { run?: HerdrRun; api?: HerdrApi; env?: NodeJS.ProcessEnv; sleep?: Sleep; promptDir?: string; bundle?: string; openUrl?: (url: string) => Promise<void> }
+export interface Deps { run?: HerdrRun; api?: HerdrApi; env?: NodeJS.ProcessEnv; sleep?: Sleep; promptDir?: string; bundle?: string; openUrl?: (url: string) => Promise<void>; stateDir?: string }
 
 /** Live sessions whose pane carries an `sb_role` token: the sessions that joined the net, and towers. */
 function netMembers(sessions: Session[], ps: Pane[]) {
@@ -44,7 +45,7 @@ function netMembers(sessions: Session[], ps: Pane[]) {
 }
 const nameOf = (s?: Session) => (s ? (s.name ?? s.id) : "");
 
-export function createStrawBoss({ run = herdrRun, api = herdrApi(), env = process.env, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), promptDir = fileURLToPath(new URL("../prompts", import.meta.url)), bundle, openUrl = openBrowser }: Deps = {}) {
+export function createStrawBoss({ run = herdrRun, api = herdrApi(), env = process.env, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), promptDir = fileURLToPath(new URL("../prompts", import.meta.url)), bundle, openUrl = openBrowser, stateDir }: Deps = {}) {
 	return function strawBoss(pi: ExtensionAPI): void {
 		// Outside Herdr there is no tab to coordinate. A pi-herdr-agents worker never joins: its parent represents it.
 		if (!env.HERDR_PANE_ID || env.PI_SUBAGENT_ID) return;
@@ -53,7 +54,8 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), env = proces
 		// Why this session cannot join: it sits in a sub workspace, or Herdr could not say whether it does.
 		let barred: string | undefined, dashboard: ReturnType<typeof startDashboard> | undefined, hasUI = false;
 		let prompts: Record<string, string> = {}, info: Record<string, string> = {}, saved: Saved = {};
-		let gui: Gui | undefined, viewer: Channel | undefined, lastGui: { port: number; token: string } | undefined;
+		let gui: Gui | undefined, viewer: Channel | undefined, opening: Promise<string> | undefined;
+		const guiDir = stateDir ?? join(env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "straw-boss");
 		let c!: Channel, at!: Place, ui: ExtensionContext["ui"] | undefined, timer: ReturnType<typeof setInterval> | undefined;
 		let queue: Promise<void> = Promise.resolve();
 		const me = () => env.PI_INTERCOM_SESSION_ID ?? "";
@@ -346,14 +348,22 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), env = proces
 			if (stop) {
 				const running = gui;
 				gui = undefined;
-				await running?.stop();
-				return tell(running ? "Straw net GUI stopped" : "The straw net GUI is not running");
+				if (running) return (await running.stop(), tell("Straw net GUI stopped"));
+				const record = readRecord(guiDir);
+				if (record && (await answers(record))) return tell(`The straw net GUI runs in session ${record.owner}; stop it there with /boss gui stop`);
+				return tell("The straw net GUI is not running");
 			}
-			// A restarted server asks for the port and token it had, so a page that is still open reconnects by itself.
-			gui ??= await startGui({ read: () => collectNet({ run, sessions }), dir: bundle, ...lastGui });
-			lastGui = { port: gui.port, token: gui.token };
-			tell(`Straw net GUI: ${gui.url}`);
-			await openUrl(gui.url).catch((error: Error) => tell(`Could not open a browser (${error.message}); open the URL above yourself`, "warning"));
+			// One server per machine: a second /boss gui, here or in another session, opens the one that runs. Two calls in flight
+			// in this session share one start.
+			opening ??= (async () => {
+				if (gui) return gui.url;
+				const shared = await sharedGui(guiDir, `${me() || "unknown"} (pane ${env.HERDR_PANE_ID})`, (prefer) => startGui({ read: () => collectNet({ run, sessions }), dir: bundle, ...prefer }), sleep);
+				gui = shared.mine;
+				return shared.url;
+			})().finally(() => (opening = undefined));
+			const url = await opening;
+			tell(`Straw net GUI: ${url}`);
+			await openUrl(url).catch((error: Error) => tell(`Could not open a browser (${error.message}); open the URL above yourself`, "warning"));
 		};
 
 		pi.registerCommand("boss", {

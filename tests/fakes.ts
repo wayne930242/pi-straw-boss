@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { createStrawBoss, type Deps } from "../src/index.ts";
@@ -285,7 +288,7 @@ export class Agent {
 		if (!options.noIntercom) events.on("intercom:outbox-request", (request) => world.broker.outbox(this, request as { requestId: string; to: string; message: string }));
 		world.broker.connect(this);
 		// The extension's waits are real in production; here they are capped so timeouts take milliseconds.
-		createStrawBoss({ run: world.herdr.runFor(this.pane), api: world.herdr.api, env, sleep: (ms) => sleep(Math.min(ms, 2)), promptDir: PROMPT_DIR, ...options.deps })(pi);
+		createStrawBoss({ run: world.herdr.runFor(this.pane), api: world.herdr.api, env, sleep: (ms) => sleep(Math.min(ms, 2)), promptDir: PROMPT_DIR, stateDir: world.stateDir, ...options.deps })(pi);
 	}
 
 	emit(channel: string, data: unknown): void {
@@ -337,6 +340,8 @@ export class World {
 	herdr = new FakeHerdr();
 	broker = new FakeBroker(this.herdr);
 	agents: Agent[] = [];
+	/** The state directory of the one-GUI-per-machine record, private to this world. */
+	stateDir = mkdtempSync(join(tmpdir(), "psb-state-test-"));
 
 	constructor() {
 		// Closing a tab kills the pi inside it.
@@ -372,5 +377,6 @@ export class World {
 	}
 	async stopAll(): Promise<void> {
 		for (const agent of this.agents) await agent.stop();
+		rmSync(this.stateDir, { recursive: true, force: true });
 	}
 }
