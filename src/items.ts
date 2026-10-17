@@ -29,18 +29,21 @@ export const parse = (s: string): Json | undefined => {
 const pics = (c: unknown) => blocks(c).filter((b) => b?.type === "image" && /^image\/(png|jpe?g|gif|webp)$/.test(b.mimeType)).map((b) => `data:${b.mimeType};base64,${b.data}`);
 const idOf = (file: string) => basename(file, ".jsonl").split("_").pop()!;
 
+/** What a question tool asks, in one line: the questions' headers when each has one (short enough for a phone), else the first question. */
+const asked = (qs: Json[], heads = qs.map((q) => (typeof q?.header === "string" ? first(q.header.trim()).trim() : ""))) => (qs.length && heads.every(Boolean) ? first(heads.join(" · ")) : first(qs[0]?.question) + (qs.length > 1 ? ` (+${qs.length - 1} more)` : ""));
+
 function toolLine(name: string, a: Json): string {
 	switch (name) {
 		case "bash": return first(a.command);
 		case "read": case "edit": case "write": return first(a.path ?? a.file_path);
 		case "subagent": case "subagent_resume": return [a.name, a.agent].filter(Boolean).join(" · ");
 		case "intercom": return [a.action, a.to, first(a.message, 80)].filter(Boolean).join(" ");
-		case "ask_user": return first(a.question ?? a.questions?.[0]?.question);
-		case "ask_user_question": return first(a.questions?.[0]?.question) + (a.questions?.length > 1 ? ` (+${a.questions.length - 1} more)` : "");
+		case "ask_user": case "ask_user_question": return asked(Array.isArray(a.questions) ? a.questions : [a]);
 		case "show_doc": return first([a.paths].flat().join(", "));
 		case "todo": return [a.action, first(a.subject ?? a.id, 80)].filter(Boolean).join(" ");
 		case "MonitorCreate": return first(a.description ?? a.command);
-		default: return `(${first(Object.values(a)[0], 100)})`;
+		// Another tool shows its first plain argument; one with only structured arguments shows their names, never "[object Object]".
+		default: return `(${first(Object.values(a).find((v) => ["string", "number", "boolean"].includes(typeof v)) ?? Object.keys(a).join(", "), 100)})`;
 	}
 }
 

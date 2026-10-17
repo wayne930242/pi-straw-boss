@@ -26,10 +26,23 @@ test("an assistant message has markdown text, thinking as a size, one summary li
 		["show_doc", "/a/x.html, /a/y.md"], ["todo", "create write tests"], ["MonitorCreate", "wait for deploy"], ["mystery", "(arg)"],
 	]);
 	assert.equal(a.thoughtText, undefined, "thinking text is fetched on click");
+	assert.ok(a.tools!.every((t) => t.args?.startsWith("{")), "the arguments stay whole inside the card");
 	assert.equal((item(assistant("a1", "u1", [{ type: "thinking", thinking: "let me think" }]), true) as Item).thoughtText, "let me think");
 	for (const stop of ["error", "aborted", "length"]) assert.equal((item(assistant("a", null, [], { stopReason: stop, errorMessage: "boom" })) as Item).stop, stop);
 	assert.equal((item(assistant("a", null, [], { stopReason: "aborted", errorMessage: "Operation aborted" })) as Item).error, "Operation aborted");
 	assert.equal((item(assistant("a", null, [{ type: "thinking", thinking: "", redacted: true }])) as Item).thought, -1, "redacted thinking is marked");
+});
+
+test("a question tool's summary is its questions' headers, short enough for a phone; a tool with only structured arguments names them instead of printing objects", () => {
+	const two = [{ question: "Ship the phone check?", header: "Phone\nextra line", options: [{ label: "Yes" }] }, { question: "Which channels?", header: " Channels ", multiSelect: true, options: [{ label: "email", description: "Mail" }] }];
+	const a = item(assistant("a1", "u1", [
+		call("t1", "ask_user_question", { questions: two }), call("t2", "ask_user_question", { questions: [two[0]] }), call("t3", "ask_user_question", { questions: [two[0], { question: "No header?" }] }),
+		call("t4", "ask_user", { question: "Which?\nmore context", options: ["a", "b"] }),
+		call("t5", "mystery", { config: { deep: true }, items: [{ a: 1 }] }), call("t6", "mystery", { config: { deep: true }, path: "src/a.ts" }), call("t7", "mystery", {}),
+	])) as Item;
+	assert.deepEqual(a.tools!.map((t) => t.summary), ["Phone · Channels", "Phone", "Ship the phone check? (+1 more)", "Which?", "(config, items)", "(src/a.ts)", "()"]);
+	assert.ok(!a.tools!.some((t) => /[{}[\]]|\[object/.test(t.summary)), "no summary is raw JSON");
+	assert.match(a.tools![0]!.args!, /"Which channels\?"/, "the full questions stay reachable inside the card");
 });
 
 test("a tool result carries its call id, a 2 KB preview, and its size; the full entry lifts the cap", () => {
