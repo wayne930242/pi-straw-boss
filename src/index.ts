@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static, type TSchema } from "typebox";
 import { collect, startDashboard } from "./dashboard.ts";
+import { type Gui, openBrowser, startGui } from "./gui.ts";
+import { collectNet } from "./net.ts";
 import { ensureTower, headOf, herdrApi, type HerdrApi, herdrRun, type HerdrRun, isSub, type Pane, panes, parentOf, place, type Place, report, type Session, type Sleep, waitFor, workspaces, type Workspace } from "./herdr.ts";
 
 // pi-intercom's extension API as constants and minimal types: intercom is a runtime requirement, not an import.
@@ -30,7 +32,7 @@ interface Saved { asked?: boolean; joined?: boolean; tower?: boolean }
 type Role = "tower" | "main" | "member";
 type Scope = "tab" | "workspace" | "towers" | "all";
 type Member = ReturnType<typeof netMembers>[number];
-export interface Deps { run?: HerdrRun; api?: HerdrApi; env?: NodeJS.ProcessEnv; sleep?: Sleep; promptDir?: string }
+export interface Deps { run?: HerdrRun; api?: HerdrApi; env?: NodeJS.ProcessEnv; sleep?: Sleep; promptDir?: string; bundle?: string; openUrl?: (url: string) => Promise<void> }
 
 /** Live sessions whose pane carries an `sb_role` token: the sessions that joined the net, and towers. */
 function netMembers(sessions: Session[], ps: Pane[]) {
@@ -42,7 +44,7 @@ function netMembers(sessions: Session[], ps: Pane[]) {
 }
 const nameOf = (s?: Session) => (s ? (s.name ?? s.id) : "");
 
-export function createStrawBoss({ run = herdrRun, api = herdrApi(), env = process.env, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), promptDir = fileURLToPath(new URL("../prompts", import.meta.url)) }: Deps = {}) {
+export function createStrawBoss({ run = herdrRun, api = herdrApi(), env = process.env, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), promptDir = fileURLToPath(new URL("../prompts", import.meta.url)), bundle, openUrl = openBrowser }: Deps = {}) {
 	return function strawBoss(pi: ExtensionAPI): void {
 		// Outside Herdr there is no tab to coordinate. A pi-herdr-agents worker never joins: its parent represents it.
 		if (!env.HERDR_PANE_ID || env.PI_SUBAGENT_ID) return;
@@ -51,6 +53,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), env = proces
 		// Why this session cannot join: it sits in a sub workspace, or Herdr could not say whether it does.
 		let barred: string | undefined, dashboard: ReturnType<typeof startDashboard> | undefined, hasUI = false;
 		let prompts: Record<string, string> = {}, info: Record<string, string> = {}, saved: Saved = {};
+		let gui: Gui | undefined, viewer: Channel | undefined, lastGui: { port: number; token: string } | undefined;
 		let c!: Channel, at!: Place, ui: ExtensionContext["ui"] | undefined, timer: ReturnType<typeof setInterval> | undefined;
 		let queue: Promise<void> = Promise.resolve();
 		const me = () => env.PI_INTERCOM_SESSION_ID ?? "";
@@ -120,9 +123,9 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), env = proces
 		};
 		const sync = () => (queue = queue.then(refresh));
 		// A session that has just started connects to the broker a moment after session_start.
-		const connected = async () => {
-			if (await waitFor(sleep, () => c.snapshot().connected && c.snapshot().supported, CONNECT_MS)) return;
-			throw new Error(c.snapshot().connected ? "The intercom broker lacks extension-bus-v1" : "pi-intercom is not connected");
+		const connected = async (channel = c) => {
+			if (await waitFor(sleep, () => channel.snapshot().connected && channel.snapshot().supported, CONNECT_MS)) return;
+			throw new Error(channel.snapshot().connected ? "The intercom broker lacks extension-bus-v1" : "pi-intercom is not connected");
 		};
 		const joinNet = async (restored = false) => {
 			if (joined) return;
@@ -315,6 +318,8 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), env = proces
 		});
 
 		pi.on("session_shutdown", async () => {
+			await gui?.stop();
+			gui = undefined;
 			dashboard?.stop();
 			dashboard = undefined;
 			clearInterval(timer);
@@ -326,11 +331,37 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), env = proces
 			if (held) await report(run, "workspace", at.workspaceId, { tower: null }).catch(() => {});
 		});
 
+		// /boss gui is a read-only viewer: any session may open it, and it joins nothing and writes no token. A session outside the net
+		// reads the sessions through a channel of its own that never takes part in a tab (no owner, no role).
+		const sessions = async () => {
+			if (!c && !viewer) {
+				const namespace = `straw-boss/view/${Buffer.from(env.HERDR_PANE_ID!).toString("hex")}`;
+				pi.events.emit(REGISTER, { namespace, ownerEligible: false, onReady: (channel: Channel) => (viewer = channel), onEvent: () => {} });
+				if (!viewer) throw new Error("pi-intercom is not loaded (Straw Boss needs pi-intercom >= 0.17.1)");
+				await connected(viewer);
+			}
+			return (c ?? viewer!).listSessions();
+		};
+		const guiCommand = async (stop: boolean) => {
+			if (stop) {
+				const running = gui;
+				gui = undefined;
+				await running?.stop();
+				return tell(running ? "Straw net GUI stopped" : "The straw net GUI is not running");
+			}
+			// A restarted server asks for the port and token it had, so a page that is still open reconnects by itself.
+			gui ??= await startGui({ read: () => collectNet({ run, sessions }), dir: bundle, ...lastGui });
+			lastGui = { port: gui.port, token: gui.token };
+			tell(`Straw net GUI: ${gui.url}`);
+			await openUrl(gui.url).catch((error: Error) => tell(`Could not open a browser (${error.message}); open the URL above yourself`, "warning"));
+		};
+
 		pi.registerCommand("boss", {
-			description: "Join this tab's Straw Boss net and become its main agent. /boss status shows the coordinators; /boss tower opens and focuses the workspace tower.",
+			description: "Join this tab's Straw Boss net and become its main agent. /boss status shows the coordinators; /boss tower opens and focuses the workspace tower; /boss gui opens the net in the browser (/boss gui stop closes it).",
 			handler: async (args, ctx) => {
 				ui = ctx.ui;
 				try {
+					if (/^gui( stop)?$/.test(args.trim())) return await guiCommand(args.trim() === "gui stop");
 					if (args.trim() === "status") return tell(joined || isTower ? JSON.stringify(await status(), null, 2) : "Not in the net. /boss joins it.");
 					if (isTower) throw new Error("This session is the tower, not a main agent");
 					if (args.trim() !== "tower") return tell(await takeover());

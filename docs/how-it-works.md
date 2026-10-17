@@ -45,6 +45,22 @@ A tower session with a TUI shows a monitoring widget above its editor. It is rea
 
 Where the data comes from: pi-intercom `listSessions()` (status `idle`, `thinking`, `tool:<name>`, and the Herdr location of each session), `herdr pane list` (`sb_role` token, Herdr's agent status where `blocked` means waiting on a question, and the pi session file), and `herdr workspace list` (workspace status, `tower` token, linked-worktree fields). Subagents are linked to their parent through pi-herdr-agents' own layout: the parent's session file names its artifacts directory, `subagent-activity/<child id>.json` there records each child's activity, and the child's pane session file contains the child id. So a subagent is grouped under the session that launched it wherever it runs, and it never counts as a net member of the workspace or tab it sits in.
 
+## Browser view
+
+`/boss gui` shows the whole net in your default browser: a read-only game-style map, live and animated.
+
+![The browser view](straw-net-gui.png)
+
+- **Any session can open it**, in a Herdr workspace or a sub workspace, joined or not. It joins nothing, writes no token, and changes no role; a session outside the net reads the sessions through a channel of its own (`straw-boss/view/<hex of the pane id>`, never owner-eligible) that takes no part in any tab. Outside Herdr the extension is inactive, so there is no command.
+- **What it shows.** Each workspace the net reaches is a **base**: one with a live tower or with sessions that joined. Workspaces with neither are not shown, and neither are sessions that did not join. A base has its **control tower** (the head tower wears a crown; a base without a tower shows a dim ghost), each tab's main agent and members as units, subagents under the session that launched them (linked exactly as the dashboard does, wherever they run), and sub workspaces as **outposts** under their parent. A net log lists joins, leaves, and state changes as they arrive.
+- **States** look the same everywhere: working is a spinning ring (and a spinner badge), waiting on a question an amber `?` that hops with a pulsing ring, idle a dim `z`, finished a green `✓`, error a red `!`. Changes animate; the page honors `prefers-reduced-motion`.
+- **The server** runs in the session that opened it, on `127.0.0.1` and a random free port. Every URL starts with a random token (`http://127.0.0.1:<port>/<token>/`); a request without it, with another `Host` header, or that is not a GET is refused with 403, so other local pages cannot read the net. The page is a built static bundle (`dist/gui`); the stream (`/<token>/events`) sends the full snapshot on connect and on every change, a `ping` every 15 s, and a `problem` event when Herdr or intercom cannot be read. The net is read only while a page listens.
+- **Running it again** reuses the server, prints the URL, and opens the browser again. `/boss gui stop` stops it, and so does closing the session. A server started again in the same session asks for its old port and token, so a page that is still open reconnects by itself; if the port is taken it gets a new URL.
+- **Background tabs.** The page treats a stream as dead after 45 s without a message and reconnects with a backoff of 1 s doubling to 30 s (±20 %), giving up after 8 failures until the tab is used again. Coming back (visible, focus, `pageshow`, `online`) reconnects at once when the stream is closed or has been quiet for 20 s, and takes a fresh full snapshot instead of replaying what was missed. While disconnected, the map is dimmed and the banner says so with the time of the last update. A hidden tab pauses its animations, draws only the newest snapshot when it returns, and holds no timer beyond the watchdog.
+- **Icons** come from [game-icons.net](https://game-icons.net) by Lorc and Delapouite, [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) (details in [`gui/ICONS.md`](../gui/ICONS.md)). Nothing is loaded from the network: no CDN, fonts, or runtime dependencies.
+
+![The browser view changing state](straw-net-gui.gif)
+
 ## Tools
 
 | Tool | Available to | What it does |
@@ -59,6 +75,7 @@ Where the data comes from: pi-intercom `listSessions()` (status `idle`, `thinkin
 | `/boss` | Join if needed, then become this tab's main agent. |
 | `/boss status` | Show `boss_status`. |
 | `/boss tower` | Open this workspace's tower if none runs, then focus its tab. |
+| `/boss gui` | Open the whole net in the browser (any session; joins nothing). `/boss gui stop` stops the server. |
 
 `/boss`, `boss_join`, and the reminder are unavailable in a sub workspace.
 
@@ -86,10 +103,16 @@ Opening a missing tower needs a pi session.
 
 ```bash
 npm install
-npm run check   # tsc --noEmit
-npm test        # node --test, against a fake Herdr and a fake intercom broker
+npm run check      # tsc --noEmit for the extension and for the page
+npm run gui:build  # builds the page into dist/gui (npm test and npm pack do this first)
+npm test           # node --test, against a fake Herdr and a fake intercom broker
+npm run gui:dev    # the page with hot reload against a demo net; see below
 ```
 
-The dashboard has its own file (`src/dashboard.ts`, budget 200 lines) and its rendering is a pure function of a snapshot, so tests drive it without a terminal.
+The dashboard has its own file (`src/dashboard.ts`, budget 200 lines) and its rendering is a pure function of a snapshot, so tests drive it without a terminal. The browser view's data and server (`src/net.ts`, `src/gui.ts`) share a budget of 250 lines; `buildNet` turns sessions, panes, and workspaces into the JSON snapshot as a pure function, and `collectNet` reads Herdr and intercom and reuses the dashboard's subagent linking.
+
+The page is vanilla TypeScript in `gui/`, built by Vite (a development dependency only) into `dist/gui`, which ships in the npm package; `dist/` is not committed. The page diffs the DOM by element id, animates with CSS on `transform` and `opacity`, and its reconnect logic (`gui/stream.ts`) is tested with a fake stream and a fake clock.
+
+`npm run gui:dev` serves the page on a local port with hot reload, fed by a demo net with invented names that changes state every few seconds. The fixture's toolbar (bottom left) has **drop stream**, **go silent** (no messages, no error: the 45 s watchdog), and **restore**, to review the disconnected page. To point the dev page at a live stream instead, run `/boss gui` and start the dev server with its URL: `GUI_LIVE=http://127.0.0.1:<port>/<token>/ npm run gui:dev`.
 
 Prompts are plain markdown in `prompts/`, read at session start, so an edit applies after `/reload`.

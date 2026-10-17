@@ -2,21 +2,11 @@
 
 **Many pi agents, one project, no collisions.** pi-straw-boss gives the agents you run across [Herdr](https://herdr.dev) tabs a light chain of command: a main agent per tab, a tower per workspace, and a live view of who is doing what.
 
-<!-- /boss gui screenshot goes here -->
+![The straw net in the browser: three workspaces with their towers, agents, a subagent, and an outpost, with live states](docs/straw-net-gui.png)
 
-```text
-╭─ ⠸ tower · Alpha ─────────────────────────────────────────── head tower ─╮
-│ this net                                                                 │
-│ ├─ tab api-main                                                          │
-│ │  ├─ ○ api-main        main                                             │
-│ │  │  └─ ⠏ psb-sleeper  subagent  bash                                   │
-│ │  └─ ○ docs-member     member                                           │
-│ └─ tab other                                                             │
-│    └─ ? ops-main        main      waiting on a question                  │
-│ other towers                                                             │
-│ ✓ Beta                  tower                                            │
-╰──────────────────────────────────────────────────────────────────────────╯
-```
+<p align="center"><sub><code>/boss gui</code>: every workspace of the net, live, in your browser. <a href="docs/straw-net-gui.gif">Watch it move</a>.</sub></p>
+
+![The tower's dashboard in the terminal: this net's tabs, agents, and subagents, and the other towers](docs/tower-dashboard.png)
 
 ## Why
 
@@ -26,6 +16,7 @@ Run a few agents on the same project and they start stepping on each other: two 
 - **A main agent per tab.** The first to join a tab coordinates it; `/boss` takes over.
 - **A tower per workspace.** It opens on demand in its own tab, pinned first, and coordinates the main agents and the other towers. You don't need to talk to it.
 - **A live dashboard** in the tower: who joined, and what they and their subagents are doing.
+- **A browser view** of the whole net, `/boss gui`: every workspace as a base with its tower, agents, and subagents, animated and read-only.
 - **Broadcast** to a tab, a workspace, every tower, or every session.
 
 ## Install
@@ -41,6 +32,7 @@ You need pi running inside Herdr 0.9.4 or newer, and [pi-intercom](https://www.n
 1. Open pi in a Herdr tab and give it work. When the work needs to share or coordinate, the agent joins the net. You can also type `/boss`.
 2. Type `/boss status` to see each tab's main agent and the towers.
 3. Type `/boss tower` to open the workspace's tower and watch its dashboard. Agents open it themselves when they call it.
+4. Type `/boss gui` from any session to see the whole net in your browser.
 
 ## Tools and commands
 
@@ -52,13 +44,14 @@ You need pi running inside Herdr 0.9.4 or newer, and [pi-intercom](https://www.n
 | `boss_broadcast` | Message a tab, a workspace, all towers, or every session. |
 | `/boss` | Join and become this tab's main agent. |
 | `/boss status`, `/boss tower` | Show the status; open and focus the tower. |
+| `/boss gui`, `/boss gui stop` | Open the net in the browser (any session, joins nothing); stop its server. |
 
 Subagents and sessions in Herdr worktree workspaces never join: the session that launched them speaks for them. Outside Herdr the extension does nothing.
 
 ## Learn more
 
-[How it works](docs/how-it-works.md) covers roles, the tower, the dashboard, what the extension writes, and how Claude Code or Codex agents can find a tower.
+[How it works](docs/how-it-works.md) covers roles, the tower, the dashboard, the browser view, what the extension writes, and how Claude Code or Codex agents can find a tower.
 
 ## License
 
-MIT
+MIT. The browser view's icons come from [game-icons.net](https://game-icons.net) (Lorc and Delapouite, [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)); see [gui/ICONS.md](gui/ICONS.md).

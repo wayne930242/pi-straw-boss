@@ -19,6 +19,8 @@ jobs:
           registry-url: https://registry.npmjs.org
       - run: npm ci
       - run: npm run check
+      - name: Build the browser view
+        run: npm run gui:build
       - run: npm test
       - name: Tag matches package version
         run: test "v$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"

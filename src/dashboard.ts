@@ -34,7 +34,12 @@ const MAX_ROWS = 18;
 const MAX_WIDTH = 76;
 const MAX_CHILDREN = 8;
 
-const markOf = (status?: string): Mark => HERDR_MARK[status ?? ""] ?? "unknown";
+export const markOf = (status?: string): Mark => HERDR_MARK[status ?? ""] ?? "unknown";
+/** A session is waiting when its pane is blocked on a question, else working or idle by its intercom status, else by Herdr's own. */
+export function sessionMark(s: Session, pane?: Pane): Mark {
+	const busy = s.status ? s.status !== "idle" : undefined;
+	return pane?.agent_status === "blocked" ? "waiting" : busy === undefined ? markOf(pane?.agent_status) : busy ? "working" : "idle";
+}
 const pad = (text: string, width: number) => text + " ".repeat(Math.max(0, width - visibleWidth(text)));
 
 /** The pure half: a snapshot in, a framed tree out. One shared spinner frame animates every working row. */
@@ -69,7 +74,7 @@ function readJson(path: string): Record<string, unknown> {
 }
 
 /** The subagents a pi session launched: live ones, plus those that finished in the last 10 minutes. */
-function subagents(parent: Pane | undefined, all: Pane[], now: number): Row[] {
+export function subagents(parent: Pane | undefined, all: Pane[], now: number): Row[] {
 	const file = parent?.agent_session?.value;
 	if (!file) return [];
 	const dir = join(dirname(file), "artifacts", basename(file, ".jsonl").split("_").pop()!);
@@ -109,9 +114,7 @@ export async function collect({ run, sessions, workspaceId, now = Date.now() }: 
 	const head = headOf(all);
 	const mine = all.find((w) => w.workspace_id === workspaceId);
 	const sessionRow = (s: Session, role: string): Row => {
-		const pane = ps.find((p) => p.pane_id === s.herdrLocation?.paneId);
-		const busy = s.status ? s.status !== "idle" : undefined;
-		const mark: Mark = pane?.agent_status === "blocked" ? "waiting" : busy === undefined ? markOf(pane?.agent_status) : busy ? "working" : "idle";
+		const mark = sessionMark(s, ps.find((p) => p.pane_id === s.herdrLocation?.paneId));
 		return { group: "net", depth: 1, mark, text: s.name ?? s.id, kind: role, note: { working: s.status, waiting: "waiting on a question" }[mark as "working"] };
 	};
 	const joined = live.filter((s) => s.herdrLocation?.workspace?.id === workspaceId).flatMap((s) => {

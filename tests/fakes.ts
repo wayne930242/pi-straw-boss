@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { createStrawBoss } from "../src/index.ts";
+import { createStrawBoss, type Deps } from "../src/index.ts";
 
 export const PROMPT_DIR = fileURLToPath(new URL("../prompts", import.meta.url));
 const NAMESPACE = /^[a-z0-9][a-z0-9._/-]{0,63}$/;
@@ -219,7 +219,7 @@ export class FakeBroker {
 	}
 }
 
-export interface AgentOptions { id: string; name?: string; pane: string; env?: Record<string, string>; entries?: { customType: string; data: unknown }[]; outsideHerdr?: boolean; noIntercom?: boolean; ui?: boolean }
+export interface AgentOptions { id: string; name?: string; pane: string; env?: Record<string, string>; entries?: { customType: string; data: unknown }[]; outsideHerdr?: boolean; noIntercom?: boolean; ui?: boolean; deps?: Partial<Deps> }
 
 export interface FakeTui { renders: number; requestRender(): void }
 type WidgetFactory = (tui: FakeTui, theme: { fg(tone: string, text: string): string; bold(text: string): string }) => { render(width: number): string[]; dispose?(): void };
@@ -285,7 +285,7 @@ export class Agent {
 		if (!options.noIntercom) events.on("intercom:outbox-request", (request) => world.broker.outbox(this, request as { requestId: string; to: string; message: string }));
 		world.broker.connect(this);
 		// The extension's waits are real in production; here they are capped so timeouts take milliseconds.
-		createStrawBoss({ run: world.herdr.runFor(this.pane), api: world.herdr.api, env, sleep: (ms) => sleep(Math.min(ms, 2)), promptDir: PROMPT_DIR })(pi);
+		createStrawBoss({ run: world.herdr.runFor(this.pane), api: world.herdr.api, env, sleep: (ms) => sleep(Math.min(ms, 2)), promptDir: PROMPT_DIR, ...options.deps })(pi);
 	}
 
 	emit(channel: string, data: unknown): void {
