@@ -170,8 +170,8 @@ export function mountFocus({ data, restart, openTile, online }: FocusDeps) {
 			text(chan, "b", open ? "channel open" : state === "recent" ? "channel closed" : "no channel");
 		}
 		chat?.setLive(m === "working" ? `${doing(u!.note, m)}` : urgent(m) ? LABEL[m] : "", m);
-		composer?.update({ name: u?.name ?? info?.name ?? route.key, control: Boolean(u?.control), live: state ? state === "live" : Boolean(u), mark: m, online: online(), asking: Boolean(u?.pending) });
-		asker?.update(u?.pending, m === "waiting" && Boolean(u?.control) && online()); // its question, read-only above the composer
+		composer?.update({ name: u?.name ?? info?.name ?? route.key, control: Boolean(u?.control), live: state ? state === "live" : Boolean(u), mark: m, online: online(), asking: Boolean(u?.pending), answerable: Boolean(u?.pending?.answer) });
+		asker?.update(u?.pending, m === "waiting" && Boolean(u?.control) && online()); // its dialog above the composer, answerable or not
 	}
 	/** Focus that fell to the page (the dialog that opened this route closed, its link gone) lands in the comms: the box, or the log on a touch screen. */
 	const claim = () => setTimeout(() => route.view === "session" && (document.activeElement ?? document.body) === document.body && (matchMedia("(pointer: fine)").matches && composer?.ready() ? composer.box : chat?.log)?.focus({ preventScroll: true }));
@@ -187,7 +187,7 @@ export function mountFocus({ data, restart, openTile, online }: FocusDeps) {
 		};
 		chat = mountChat(sessionView.querySelector(".chat-root")!, data(key), { who, link, openTile });
 		const send = data(key).post ?? postTo(key);
-		[composer, asker] = [mountComposer(sessionView.querySelector(".composer-root")!, key, send), mountAsk(sessionView.querySelector(".ask-root")!, () => send("focus", {}))];
+		[composer, asker] = [mountComposer(sessionView.querySelector(".composer-root")!, key, send), mountAsk(sessionView.querySelector(".ask-root")!, send)];
 		chat.reveal(route.at);
 		queue.splice(0).forEach(apply);
 		(drawDossier(), claim());

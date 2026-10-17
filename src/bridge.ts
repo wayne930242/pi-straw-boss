@@ -1,0 +1,170 @@
+import { createHash, randomUUID } from "node:crypto";
+import { readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { type Answer, type Bus, type Dialog, OWNERS, type OwnerAdapter, type Verdict } from "./owners.ts";
+
+// The bridge runs in every pi session inside Herdr, subagents included. It turns the owners' dialog events (owners.ts) into one list of open
+// dialogs, relays it to the one running GUI server (gui.json in the state directory names its session G), and hands the server's answers to
+// the owners. It never touches ctx.ui and never judges an answer's meaning: the owner does. Transport is pi-intercom's extension channel
+// straw-boss/gui/<sha256(G) prefix>, where only G is owner-eligible: dialogs and acks go to the owner, answers come from it (ownerOnly, and
+// checked here against G and the owner's epoch); when G is this session the hub (dialogs.ts) is called in-process instead.
+// Per dialog: open → settling (an answer is with the owner) → open again if refused, or closed by the owner's `closed`, the end of its tool
+// call, or the session's end. An answer whose verdict does not come within 2 s leaves it `unknown`: later answers get `busy` until it closes.
+
+export const REGISTER = "intercom:extension-register";
+const VERDICT_MS = 2000, POLL_MS = 2000, KEEP_MS = 120_000, KEEP = 16, MAX_GUIS = 8, MAX_MESSAGE = 15 * 1024;
+export const guiNamespace = (g: string) => `straw-boss/gui/${createHash("sha256").update(g).digest("hex").slice(0, 32)}`;
+export type Outcome = "accepted" | "rejected" | "stale" | "busy" | "unknown";
+export interface Ack { version: 1; type: "ack"; bridgeId: string; id: string; answerId: string; outcome: Outcome; reason?: string; by?: string }
+/** `closed`: dialogs closed in the last 2 minutes (at most 16), so an answer that comes late hears who closed it, and a resent one that won, that it won. */
+export interface Dialogs { version: 1; type: "dialogs"; bridgeId: string; pane: string; file: string | null; dialogs: Dialog[]; closed: Closed[] }
+export interface Closed { id: string; by: string; answerId?: string }
+export type ToHub = Dialogs | Ack;
+export interface AnswerMessage extends Answer { version: 1; type: "answer"; to: string }
+/** The hub when it runs in this session: it takes what a remote bridge would publish, from this session's id. */
+export interface LocalHub { receive(from: string, msg: ToHub): void }
+/** What the hub calls on the bridge of its own session. */
+export interface Bridge { deliver(msg: AnswerMessage, reply: (ack: Ack) => void): void; sync(): void }
+interface Channel { snapshot(): { connected: boolean; owner?: { sessionId: string; epoch: string } }; publish(payload: unknown, options?: { audience?: "owner" | "capable" }): void }
+interface Rec { adapter: OwnerAdapter; d: Dialog; state: "open" | "settling" | "unknown" | "closed"; answerId?: string; accepted?: boolean; by?: string; at?: number; last?: Ack; waiting: ((ack: Ack) => void)[] }
+type Event = { type: string; fromSessionId?: string; owner?: { sessionId: string; epoch: string }; payload?: Record<string, unknown> };
+
+export function startBridge(pi: ExtensionAPI, { env, dir, local }: { env: NodeJS.ProcessEnv; dir: string; local(): LocalHub | undefined }): Bridge {
+	const bus = pi.events as Bus, bridgeId = randomUUID(), recs = new Map<string, Rec>(), calls = new Map<string, { tool: string; signal?: AbortSignal; stop?: () => void }>();
+	const chans = new Map<string, Channel>(), me = () => env.PI_INTERCOM_SESSION_ID ?? "";
+	let g: string | undefined, seen: number | undefined, poll: ReturnType<typeof setInterval> | undefined, offs: (() => void)[] = [], warned = false;
+	let file: () => string | undefined = () => undefined, tell = (_text: string) => {};
+	const open = () => [...recs.values()].filter((r) => r.state !== "closed");
+
+	// Where the dialogs go: the hub in this process while it runs here, else G's channel while G owns it.
+	const target = () => (local() ? me() : g);
+	const send = (to: string | undefined, msg: ToHub) => {
+		if (to && to === me()) return local()?.receive(to, msg);
+		const ch = to ? chans.get(to) : undefined;
+		if (ch?.snapshot().connected && ch.snapshot().owner?.sessionId === to) try { ch.publish(msg, { audience: "owner" }); } catch {} // a broker that dropped meanwhile resends on `connection`
+	};
+	const push = (final = false) => {
+		if (!target()) return;
+		const dialogs = final ? [] : open().map((r) => ({ ...r.d, ...(r.state !== "open" ? { busy: true as const } : {}) }));
+		const closed = final ? [] : [...recs.values()].filter((r) => r.state === "closed").map((r) => ({ id: r.d.id, by: r.by!, ...(r.by === "remote" && r.answerId ? { answerId: r.answerId } : {}) }));
+		let msg: Dialogs = { version: 1, type: "dialogs", bridgeId, pane: env.HERDR_PANE_ID!, file: file() ?? null, dialogs, closed };
+		if (JSON.stringify(msg).length > MAX_MESSAGE) msg = { ...msg, dialogs: dialogs.map(({ select, questions, ...d }) => ({ ...d, big: true as const })) }; // shown read-only: too long to show
+		send(target(), msg);
+	};
+	// gui.json names the server's session; it is read at the first dialog and then on every mtime change, checked every 2 s while a dialog is open.
+	const follow = () => {
+		const at = statSync(join(dir, "gui.json"), { throwIfNoEntry: false })?.mtimeMs ?? 0;
+		if (at === seen) return false;
+		seen = at;
+		try {
+			g = (JSON.parse(readFileSync(join(dir, "gui.json"), "utf8")) as { ownerSession?: string }).ownerSession || undefined;
+		} catch {
+			g = undefined;
+		}
+		if (g && g !== me() && !chans.has(g)) join_(g);
+		push();
+		return true;
+	};
+	const join_ = (to: string) => {
+		if (chans.size >= MAX_GUIS) return void (warned || ((warned = true), tell(`Straw Boss: ${MAX_GUIS} GUI servers came and went in this session; answer its dialogs in the terminal until it restarts`)));
+		let ch: Channel | undefined;
+		try {
+			pi.events.emit(REGISTER, { namespace: guiNamespace(to), ownerEligible: false, onReady: (c: Channel) => (ch = c), onEvent: (e: Event) => ch && onEvent(to, ch, e) });
+		} catch {} // pi-intercom missing or refusing: its dialogs stay read-only
+		if (ch) chans.set(to, ch);
+	};
+	const onEvent = (from: string, ch: Channel, e: Event) => {
+		if (e.type === "owner" || e.type === "connection") return from === g && push();
+		const owner = ch.snapshot().owner, p = e.payload;
+		// Only G's own session, as the broker's current owner of this channel and the server gui.json names now, may answer or ask for a sync.
+		if (e.type !== "message" || p?.version !== 1 || e.fromSessionId !== from || owner?.sessionId !== from || e.owner?.epoch !== owner.epoch) return;
+		if (p.type === "sync" && from === g) push();
+		// SAFETY: deliver checks the fields it uses before it hands anything to an owner.
+		if (p.type === "answer" && p.to === bridgeId && from === g) deliver(p as unknown as AnswerMessage, (ack) => send(from, ack));
+	};
+	const watch = () => {
+		if (open().length && !poll) (poll = setInterval(follow, POLL_MS)).unref?.();
+		else if (!open().length && poll) (clearInterval(poll), (poll = undefined));
+	};
+	const changed = () => {
+		for (const [id, r] of recs) if (r.state === "closed" && (Date.now() - r.at! > KEEP_MS || recs.size > KEEP)) recs.delete(id);
+		watch();
+		if (!follow()) push();
+	};
+
+	const report = {
+		open(adapter: OwnerAdapter, d: Dialog) {
+			const call = d.toolCallId ? calls.get(d.toolCallId) : undefined;
+			if (d.toolCallId && call?.tool !== adapter.tool) return; // only a call in flight of the owner's own tool
+			recs.set(d.id, { adapter, d, state: "open", waiting: [] });
+			if (call?.signal?.aborted) adapter.cancel?.(bus, d);
+			changed();
+		},
+		closed(id: string, by?: string) {
+			const r = recs.get(id);
+			if (!r || r.state === "closed") return;
+			[r.state, r.at, r.by] = ["closed", Date.now(), by ?? (r.accepted ? "remote" : "local")];
+			changed();
+		},
+	};
+	const ack = (r: Rec, a: Answer, outcome: Outcome, extra: { reason?: string; by?: string } = {}): Ack => ({ version: 1, type: "ack", bridgeId, id: r.d.id, answerId: a.answerId, outcome, ...extra });
+	function deliver(a: AnswerMessage, reply: (ack: Ack) => void) {
+		if (typeof a.id !== "string" || typeof a.answerId !== "string" || typeof a.digest !== "string") return;
+		const r = recs.get(a.id);
+		if (!r) return reply({ version: 1, type: "ack", bridgeId, id: String(a.id), answerId: String(a.answerId), outcome: "stale", by: "gone" });
+		if (r.state === "closed") return reply(ack(r, a, r.by === "remote" && r.answerId === a.answerId ? "accepted" : "stale", { by: r.by }));
+		if (r.state !== "open") return r.answerId !== a.answerId ? reply(ack(r, a, "busy")) : r.last ? reply(r.last) : void r.waiting.push(reply);
+		[r.state, r.answerId] = ["settling", a.answerId];
+		let off: (() => void) | undefined, timer: ReturnType<typeof setTimeout> | undefined, done = false;
+		const finish = (v?: Verdict) => {
+			if (done) return;
+			done = true;
+			off?.(), clearTimeout(timer);
+			let out: Ack;
+			if (r.state === "closed") out = ack(r, a, r.by === "remote" && r.answerId === a.answerId ? "accepted" : "stale", { by: r.by });
+			else if (!v) (r.state = "unknown"), (out = ack(r, a, "unknown"));
+			else if (v.accepted) (r.accepted = true), (out = ack(r, a, "accepted"));
+			else if (v.reason === "closed") out = ack(r, a, "stale", { by: "local" }); // the owner had settled it already; its close follows
+			else (r.state = "open"), (r.answerId = undefined), (out = ack(r, a, "rejected", { reason: v.reason ?? "malformed" }));
+			if (r.state !== "open") r.last = out; // what a resend of the same answer gets
+			[reply, ...r.waiting.splice(0)].forEach((to) => to(out));
+			push();
+		};
+		try {
+			off = r.adapter.answer(bus, r.d, { id: r.d.id, answerId: a.answerId, digest: a.digest, choice: a.choice, answers: Array.isArray(a.answers) ? a.answers : undefined }, finish);
+		} catch {
+			finish({ accepted: false, reason: "malformed" }); // an answer an adapter could not even map; the owner never saw it
+		}
+		if (done) return off?.();
+		timer = setTimeout(finish, VERDICT_MS);
+		push();
+	}
+
+	pi.on("session_start", (_e, ctx) => {
+		offs.forEach((off) => off());
+		file = () => ctx.sessionManager.getSessionFile();
+		tell = (text) => ctx.hasUI && ctx.ui.notify(text, "warning");
+		offs = OWNERS.map((o) => o.listen(bus, report));
+	});
+	pi.on("tool_execution_start", (e, ctx) => {
+		const signal = ctx.signal, entry: { tool: string; signal?: AbortSignal; stop?: () => void } = { tool: e.toolName, signal };
+		const cancel = () => open().filter((r) => r.d.toolCallId === e.toolCallId).forEach((r) => r.adapter.cancel?.(bus, r.d));
+		if (signal) (signal.addEventListener("abort", cancel, { once: true }), (entry.stop = () => signal.removeEventListener("abort", cancel)));
+		calls.set(e.toolCallId, entry);
+	});
+	pi.on("tool_execution_end", (e) => {
+		calls.get(e.toolCallId)?.stop?.();
+		calls.delete(e.toolCallId);
+		open().filter((r) => r.d.toolCallId === e.toolCallId).forEach((r) => report.closed(r.d.id, r.accepted ? "remote" : "error")); // the owner failed to say so
+	});
+	pi.on("session_shutdown", () => {
+		open().forEach((r) => report.closed(r.d.id, "error"));
+		push(true);
+		[...calls.values()].forEach((c) => c.stop?.());
+		calls.clear();
+		offs.splice(0).forEach((off) => off());
+		(clearInterval(poll), (poll = undefined));
+	});
+	return { deliver, sync: () => ((seen = -1), follow()) };
+}

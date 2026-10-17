@@ -1,10 +1,11 @@
 import { open, stat } from "node:fs/promises";
 import { type Json, parse } from "./items.ts";
-import type { Net } from "./net.ts";
+import type { Net, Unit } from "./net.ts";
+import type { Answerable, Dialog } from "./owners.ts";
 
-// What a waiting session waits on, for display only: the current branch's newest assistant message's tool call with no result yet, read from the end of
-// its session file. The snapshot carries it so the alert and the session view can show an ask_user question (its context and options);
-// the user answers it in the terminal. Nothing here sends anything: answering from the browser is deferred (see the spec, "Pending dialogs").
+// What a waiting session waits on: the current branch's newest assistant message's tool call with no result yet, read from the end of
+// its session file. The snapshot carries it so the alert and the session view can show an ask_user question (its context and options).
+// A dialog the session's bridge relays (bridge.ts, dialogs.ts) joins it as `answer` when the page may answer it; nothing here sends anything.
 // Two tools are read: pi-ask-user's `ask_user` (one question with a context) and @juicesharp/rpiv-ask-user-question's `ask_user_question` (one to four questions
 // with a header, options with descriptions, and a multi-select flag; no context). Older session files hold the first, new ones the second.
 
@@ -12,8 +13,9 @@ const TAIL = 262_144, LIMIT = 16_777_216, CACHE = new Map<string, { sig: string;
 export interface Option { title: string; description?: string }
 /** `multiple`: it takes several choices; `freeform`: it takes the user's own words; `header`: the short tag ask_user_question gives a question. */
 export interface Ask { question: string; header?: string; context?: string; options: Option[]; multiple: boolean; freeform: boolean }
-/** What a waiting session waits on: `ask` for one question, `asks` for two to four (ask_user_question), else `why` there is nothing to show. */
-export interface Pending { callId: string; tool: string; ask?: Ask; asks?: Ask[]; why?: string }
+/** What a waiting session waits on: `ask` for one question, `asks` for two to four (ask_user_question), else `why` there is nothing to show; `answer` when the page may answer it. */
+export interface Pending { callId: string; tool: string; ask?: Ask; asks?: Ask[]; why?: string; answer?: Answerable }
+export const SEVERAL = "It waits on more than one dialog.";
 interface Call { id: string; name: string; args: Json }
 
 const clip = (v: unknown, n: number) => String(v ?? "").slice(0, n);
@@ -93,20 +95,28 @@ export async function pendingOf(file: string): Promise<Pending | undefined> {
 	if (hit?.sig === sig) return hit.pending;
 	const found = s ? await openCalls(file).catch(() => []) : [], calls = found === "cut" ? [] : found, [c] = calls;
 	const shape = c?.name === "ask_user" ? askOf(c.args) : c?.name === "ask_user_question" ? questionsOf(c.args) : { why: c?.name === "secret_drop" ? "It waits for a secret." : "It waits on a dialog." };
-	const pending = found === "cut" ? { callId: `cut:${sig}`, tool: "dialog", why: "Its call is too long to read here." } : c && { callId: c.id, tool: c.name, ...(calls.length > 1 ? { why: "It waits on more than one dialog." } : shape) };
+	const pending = found === "cut" ? { callId: `cut:${sig}`, tool: "dialog", why: "Its call is too long to read here." } : c && { callId: c.id, tool: c.name, ...(calls.length > 1 ? { why: SEVERAL } : shape) };
 	CACHE.set(file, { sig, pending });
 	if (CACHE.size > 64) CACHE.delete(CACHE.keys().next().value!);
 	return pending;
 }
 
-/** Adds what each waiting unit waits on to a snapshot. */
-export async function withPending(net: Net, fileOf: (key: string) => string | undefined): Promise<Net> {
-	const all = net.bases.flatMap((b) => [...(b.tower ? [b.tower] : []), ...[...b.tabs.flatMap((t) => t.units), ...b.outside].flatMap((u) => [u, ...u.subs])]);
+/** The dialogs bridges relay, by unit key, and how they join what the file says (dialogs.ts). */
+export interface Relayed { dialogsOf(key: string): Dialog[] | undefined; merge(key: string, file: Pending | undefined, dialogs: Dialog[], readable: boolean): Pending }
+
+/** Adds what each waiting unit waits on to a snapshot. A unit with a relayed dialog waits even before Herdr reports its pane blocked. */
+export async function withPending(net: Net, fileOf: (key: string) => string | undefined, relayed?: Relayed): Promise<Net> {
 	const jobs: Promise<unknown>[] = [];
-	for (const u of all) {
-		const file = u.mark === "waiting" ? fileOf(u.key) : undefined;
-		if (file) jobs.push(pendingOf(file).then((pending) => pending && (u.pending = pending)));
-	}
+	for (const b of net.bases)
+		for (const u of [...(b.tower ? [b.tower] : []), ...[...b.tabs.flatMap((t) => t.units), ...b.outside].flatMap((u) => [u, ...u.subs])]) {
+			const dialogs = relayed?.dialogsOf(u.key);
+			if (dialogs?.length) [u.mark, b.mark] = ["waiting", "waiting"];
+			if (dialogs?.length && u !== b.tower) (u as Unit).note = "waiting on a question";
+			const file = u.mark === "waiting" ? fileOf(u.key) : undefined;
+			const join = (p?: Pending) => (dialogs?.length ? relayed!.merge(u.key, p, dialogs, Boolean(file)) : p);
+			if (file) jobs.push(pendingOf(file).then((p) => (u.pending = join(p))));
+			else if (dialogs?.length) u.pending = join();
+		}
 	await Promise.all(jobs);
 	return net;
 }

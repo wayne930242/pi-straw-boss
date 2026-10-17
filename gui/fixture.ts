@@ -9,9 +9,10 @@ import type { Source } from "./stream.ts";
 // disconnected page. It stands in for the server's EventSource, so the real reconnect logic runs against it.
 
 const unit = (id: string, name: string, role: Unit["role"], mark: Mark, note?: string, subs: Unit[] = []): Unit => ({ id, key: id, control: true, name, role, mark, note, subs });
-// What a waiting demo unit waits on: a secret (odd), two questions at once as ask_user_question asks them (every fourth), or one question with a context.
+// What a waiting demo unit waits on: a secret (odd), two questions as ask_user_question asks them (every fourth), or robot_hand's selector; the last two answer.
 const two = [{ header: "Window", question: "When should the ops deploy go out?", options: [{ title: "Tonight 22:00", description: "Low traffic; on-call is awake." }, { title: "Tomorrow 08:00" }], multiple: false, freeform: true }, { header: "Notify", question: "Who should be told?", options: [{ title: "ops" }, { title: "billing" }, { title: "support" }], multiple: true, freeform: true }];
-const ask = (n: number): Unit["pending"] => (n % 2 ? { callId: `demo-${n}`, tool: "secret_drop", why: "It waits for a secret." } : n % 4 ? { callId: `demo-${n}`, tool: "ask_user_question", asks: two } : { callId: `demo-${n}`, tool: "ask_user", ask: { question: "When should the ops deploy go out?", context: "The billing fix is merged. Staging has been green for two hours.", options: [{ title: "Tonight 22:00", description: "Low traffic; on-call is awake." }, { title: "Tomorrow 08:00" }, { title: "Hold it" }], multiple: false, freeform: true } });
+const hand = { title: "Robot Hand — Deploy needs your sudo password\n\n  ! npm run deploy", copy: "npm run deploy", choices: [{ label: "Type it into a new Herdr pane (I press Enter)", note: "Opens a pane with the command typed; press Enter there" }, { label: "Put it in my prompt", note: "Lands in the terminal's prompt; press Enter there" }, { label: "Copy it to my clipboard", note: "Copies on this computer", localOnly: true as const }, { label: "No, thanks" }] };
+const ask = (n: number): Unit["pending"] => (n % 2 ? { callId: `demo-${n}`, tool: "secret_drop", why: "It waits for a secret." } : { callId: `demo-${n}`, ...(n % 4 ? { tool: "ask_user_question", asks: two, answer: { dialog: `d${n}`, digest: "0".repeat(64), questions: two } } : { tool: "robot_hand", answer: { dialog: `d${n}`, digest: "0".repeat(64), select: hand } }) });
 const demo = (): Net => ({
 	bases: [
 		{ id: "w1", label: "Harbor API", mark: "working", head: true, tower: { name: "tower · Harbor API", mark: "working", key: "t1", control: true }, outposts: [{ id: "w1-fix", label: "harbor-api-hotfix", mark: "working" }], outside: [unit("o1", "scratch-notes", "outside", "idle")], tabs: [
@@ -106,13 +107,19 @@ export function createFixture({ resume, tile, tick = 2500 }: { resume(): void; t
 		older: async (before) => page(before),
 		latest: async () => page(),
 		// Input is accepted, and shows in the log a moment later as pi would write it.
-		post: async (action, body) => (action === "input" && setTimeout(() => current?.send("history", { key, reset: false, items: [{ id: `you-${++live}`, kind: "user", at: new Date().toISOString(), text: String(body.text) }] }), 700), { ok: true, status: 200, body: {} }),
+		post: async (action, body) => (action === "answer" ? answered(key) : (action === "input" && setTimeout(() => current?.send("history", { key, reset: false, items: [{ id: `you-${++live}`, kind: "user", at: new Date().toISOString(), text: String(body.text) }] }), 700), { ok: true, status: 200, body: {} })),
 		doc: async (path) => (path.endsWith("rollout-plan.md") ? DEMO_DOC : undefined),
 		entry: async (id) => {
 			const item = history.find((i) => i.id === id);
 			return item && { ...item, thoughtText: item.kind === "assistant" ? "Thinking out loud about the rounding rules.\n\nCredit notes may need a separate sum." : undefined, text: item.more ? Array.from({ length: 120 }, (_, i) => `line ${i + 1} of the full tool result`).join("\n") : item.text };
 		},
 	});
+	/** An answer lands at once, and the unit goes back to work a moment later. */
+	const answered = (key: string) => {
+		const u = units(net).find((x) => x.key === key);
+		if (u) setTimeout(() => ((u.mark = "working"), (u.note = "thinking"), (u.pending = undefined), (net = structuredClone(net)), current?.send("message", net)), 1500);
+		return { ok: true, status: 200, body: { outcome: "accepted" } };
+	};
 	return { open: (watch) => new FixtureSource(watch), data, control };
 }
 

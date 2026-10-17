@@ -160,6 +160,8 @@ export class FakeBroker {
 	supported = true;
 	connected = true;
 	registrations: { id: string; namespace: string; ownerEligible: boolean }[] = [];
+	published: { from: string; ns: string; payload: unknown; options?: { audience?: string; ownerOnly?: boolean } }[] = [];
+	private epochs = new Map<string, string>();
 	events = 0;
 	private epoch = 0;
 	private herdr: FakeHerdr;
@@ -178,10 +180,14 @@ export class FakeBroker {
 		const ns = registration.namespace;
 		registration.onReady({
 			snapshot: () => ({ connected: this.connected, supported: this.supported, owner: this.ownerOf(ns), state: this.states.get(ns) }),
-			publish: (payload: unknown, options?: { audience?: string }) => {
-				const owner = this.owners.get(ns);
-				if (options?.audience === "capable") this.capable(ns).forEach((id) => this.deliver(id, ns, { type: "message", fromSessionId: agent.id, payload }));
-				else if (owner) this.deliver(owner, ns, { type: "message", fromSessionId: agent.id, payload });
+			// Receivers get the sender the broker assigns and the owner with its epoch; an ownerOnly message from anyone but the owner is dropped.
+			publish: (payload: unknown, options?: { audience?: string; ownerOnly?: boolean }) => {
+				const owner = this.owners.get(ns), event = { type: "message", fromSessionId: agent.id, owner: this.ownerOf(ns), payload };
+				if (!this.connected) throw new Error("Intercom is not connected");
+				this.published.push({ from: agent.id, ns, payload, options });
+				if (options?.ownerOnly && owner !== agent.id) return;
+				if (options?.audience === "capable") this.capable(ns).forEach((id) => this.deliver(id, ns, event));
+				else if (owner) this.deliver(owner, ns, event);
 			},
 			commitState: (payload: unknown) => {
 				if (this.owners.get(ns) !== agent.id) throw new Error(`Current session is not the owner of ${ns}`);
@@ -211,7 +217,7 @@ export class FakeBroker {
 	}
 	ownerOf(ns: string) {
 		const sessionId = this.owners.get(ns);
-		return sessionId ? { sessionId, epoch: "e" } : undefined;
+		return sessionId ? { sessionId, epoch: this.epochs.get(ns) ?? "e" } : undefined;
 	}
 
 	private capable(ns: string) {
@@ -223,6 +229,7 @@ export class FakeBroker {
 		if (winner) this.owners.set(ns, winner.id);
 		else this.owners.delete(ns);
 		const owner = winner ? { sessionId: winner.id, epoch: `e${++this.epoch}` } : undefined;
+		if (owner) this.epochs.set(ns, owner.epoch);
 		this.capable(ns).forEach((id) => this.deliver(id, ns, { type: "owner", ...(owner ? { owner } : {}) }));
 	}
 	private deliver(id: string, ns: string, event: Record<string, unknown>): void {
@@ -262,13 +269,16 @@ export class Agent {
 	overlays: (Overlay & { closed: boolean })[] = [];
 	/** What pi-intercom reports as this session's status. */
 	status = "idle";
+	/** The session file pi would name, and the run's abort signal (ctx.signal). */
+	file?: string;
+	signal?: AbortSignal;
 	/** Widgets set through ctx.ui.setWidget, and the live component of each. */
 	widgets = new Map<string, WidgetFactory | undefined>();
 	components = new Map<string, { render(width: number): string[]; dispose?(): void }>();
 	tui: FakeTui = { renders: 0, requestRender: () => void this.tui.renders++ };
 	stopped = false;
 	private handlers = new Map<string, ((event: unknown, ctx: unknown) => unknown)[]>();
-	private bus = new Map<string, ((data: unknown) => void)[]>();
+	readonly bus = new Map<string, ((data: unknown) => void)[]>();
 	private ctx: unknown;
 
 	world: World;
@@ -278,8 +288,10 @@ export class Agent {
 		this.name = options.name ?? options.id;
 		this.pane = options.pane;
 		this.entries = [...(options.entries ?? [])];
+		const self = this;
 		this.ctx = {
 			hasUI: Boolean(options.ui),
+			get signal() { return self.signal; },
 			ui: {
 				notify: (text: string, level?: string) => this.notices.push({ text, level }),
 				// An overlay stays open until it calls done; the test drives it through `overlays`.
@@ -291,7 +303,7 @@ export class Agent {
 					if (factory) this.components.set(key, factory(this.tui, { fg: (_tone, text) => text, bold: (text) => text }));
 				},
 			},
-			sessionManager: { getBranch: () => this.entries.map((e) => ({ type: "custom", customType: e.customType, data: e.data })) },
+			sessionManager: { getBranch: () => this.entries.map((e) => ({ type: "custom", customType: e.customType, data: e.data })), getSessionFile: () => this.file },
 		};
 		const env = { ...(options.outsideHerdr ? {} : { HERDR_PANE_ID: options.pane }), PI_INTERCOM_SESSION_ID: this.id, ...options.env };
 		const events = {
@@ -317,7 +329,12 @@ export class Agent {
 	}
 
 	emit(channel: string, data: unknown): void {
-		(this.bus.get(channel) ?? []).forEach((handler) => handler(data));
+		[...(this.bus.get(channel) ?? [])].forEach((handler) => handler(data));
+	}
+	/** Listens on the session's event bus as another extension would. */
+	on(channel: string, handler: (data: unknown) => void): () => void {
+		this.bus.set(channel, [...(this.bus.get(channel) ?? []), handler]);
+		return () => this.bus.set(channel, (this.bus.get(channel) ?? []).filter((h) => h !== handler));
 	}
 	get registered(): string[] {
 		return [...this.handlers.keys()];

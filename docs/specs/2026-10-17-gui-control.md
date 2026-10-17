@@ -464,6 +464,12 @@ on: the newest tool call on the path with no `toolResult` yet, if its tool is
 `pending` event; the session view shows a panel above the composer, the map and
 workspace cards show the amber `?` as today.
 
+**Answering (0.6.0)** goes through the dialog's owner, never through keys: pi-robot-hand's selector and
+rpiv-ask-user-question's questionnaires publish their dialogs on pi's event bus, a bridge in every session relays them to the GUI
+server's hub, and the page's answer goes back to the owner, which settles it as if the terminal had. See
+[Answering pi dialogs](2026-10-18-dialog-answers.md). The 0.5.x sections below stay as the record of why keys were rejected; the
+mirror, key pad, and keyed `ask_user` mapping further down were never built.
+
 #### Showing `ask_user` (0.5.0); answering deferred
 
 The user moved answering `ask_user` from the browser into 0.5.0 (2026-10-17), then deferred it again the same day after three
@@ -479,8 +485,9 @@ review rounds (below). 0.5.0 ships the question read-only.
   plain text (text nodes, never markup), "Answer it in the terminal." (and whether it takes several choices or its own words), and
   **Focus terminal**, which calls the existing `focus` endpoint (`agent.focus`, no keys) under the usual guards.
 - **Two question tools** (0.5.1; the user replaced pi-ask-user with @juicesharp/rpiv-ask-user-question 2.13.9, tool `ask_user_question`, and older session files still hold `ask_user`). `ask_user_question` takes `questions[1–4]`, each `{question, header (≤16 chars), options[2–4] {label, description, preview?}, multiSelect?}`, with "Type something." always appended and no context block. One question rides as `pending.ask` like an `ask_user` question (plus `header`); two to four ride as `pending.asks` (each clipped like a single one, a header ≤ 40 characters, previews not carried), and the page lists them with the header as a tag and, per question, whether it takes several choices or its own words. Display only: nothing is answered and no key is sent. **Known gap (not closed in 0.5.1):** a unit is `waiting` only while Herdr reports its pane `blocked`, which pi sends from the `herdr:blocked` event; rpiv-ask-user-question emits `rpiv:ask-user:blocked` instead and nothing translates it (`~/.pi/agent/extensions/herdr-agent-state.ts` listens to `herdr:blocked` only), so a session waiting on `ask_user_question` stays `working` in Herdr and in the net view, and the display above never triggers for it until a translator exists (live check: with the event translated by the harness, one question showed like an `ask_user` question and two as a list).
-- **No answer route.** `POST …/sessions/<key>/answer` does not exist (404), nothing derives keys or reads the screen, and the keys
-  endpoint stays Escape-only (0.5.0 narrowed its allow list to `esc`).
+- **No answer route in 0.5.x.** `POST …/sessions/<key>/answer` did not exist (404), nothing derived keys or read the screen, and the keys
+  endpoint stayed Escape-only (0.5.0 narrowed its allow list to `esc`). 0.6.0 adds the route for owner-relayed dialogs only
+  ([Answering pi dialogs](2026-10-18-dialog-answers.md)); still nothing derives keys or reads the screen, and keys stay Escape-only.
 
 **Why answering was deferred.** The built design (kept on the local branch `wip/ask-user-screen-check`) sent pi-ask-user's keys
 after reading the terminal (`pane.read`) to confirm the dialog was fresh: the right question, an empty filter, the select list
@@ -594,6 +601,10 @@ each session can:
 It is a separate decision because it puts code into every session and needs the
 intercom broker for control.
 
+0.6.0 builds the dialog part of it: a bridge in every Herdr pi session (subagents included) relays owner-published dialogs to the GUI
+server over an extension channel only the server's session may own, with answers checked against that owner and its epoch. The
+draft and streaming parts are not built. See [Answering pi dialogs](2026-10-18-dialog-answers.md).
+
 ## Security
 
 Control means typing into the user's terminals, so every write is guarded.
@@ -608,7 +619,7 @@ Control means typing into the user's terminals, so every write is guarded.
 | Agent-written HTML attacking the app | Documents are sandboxed without scripts and without same-origin; only files named by `show_doc`, and images, CSS, and fonts beside them, are served. The only GET that writes is the document answer, gated by a per-document nonce. |
 | Arbitrary file reads | Paths come only from the registry and `show_doc` calls; `realpath` and directory containment checks as in today's static serving (`gui.ts:85-86`). |
 | A reused pane id | Input requires the pane's current `agent_session.value` to be the session's file. |
-| An answer reaching the wrong dialog | 0.5.0 sends no answers: a pending question is shown read-only and there is no answer route (see [Showing `ask_user`](#showing-ask_user-050-answering-deferred)). |
+| An answer reaching the wrong dialog | No keys: the answer goes to the dialog's owner through the session's bridge. The answer names the dialog id and the digest of what the page showed and carries a page-minted `answerId` that takes effect at most once; the server reads the net afresh and requires the session's one open dialog, the file's open call of the owner's tool, and a matching digest; the bridge acts only on answers addressed to its `bridgeId` from the GUI server's session as the channel's current owner at its epoch, and the owner settles only an open dialog. A dialog that closed meanwhile answers `stale` (see [Answering pi dialogs](2026-10-18-dialog-answers.md#threat-model)). |
 | Exiting pi by accident | `ctrl+c` and `ctrl+d` are not sendable, and control characters in text are refused (they could end the bracketed paste); session-ending slash commands typed as text need a confirm the server checks (keys are not covered; see the keys API). |
 | Secrets | `secret_drop` is terminal only (above). No request body or typed text is logged by the server. |
 | Body abuse | Request bodies ≤ 64 KB; text ≤ 16 KB; one in-flight input per session. |

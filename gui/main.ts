@@ -38,7 +38,7 @@ const withPanels = (call: (p: Panels) => void) => {
 	panelsLoading ??= import("./layer.ts").then(({ mountPanels }) => (panels = mountPanels({
 		label: (ws) => latest?.bases.find((b) => b.id === ws)?.label ?? ws,
 		recent: async (key) => (await (fixture ? fixture.data(key).latest() : history(key, "?limit=12"))).items,
-		focus: (key) => fixture && (() => fixture.data(key).post!("focus", {})),
+		post: (key) => fixture && ((action, body) => fixture.data(key).post!(action, body)),
 	})));
 	void panelsLoading.then(call);
 };

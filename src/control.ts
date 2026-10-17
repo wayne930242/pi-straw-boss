@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
+import { ANSWER_ID, checkAnswer, CONTROL, type Hub, type Sent, type Target } from "./dialogs.ts";
 import { HerdrError, type HerdrCall, type Pane } from "./herdr.ts";
 import type { Found } from "./net.ts";
 
@@ -7,6 +8,7 @@ import type { Found } from "./net.ts";
 //   POST /<token>/api/sessions/<key>/input {text, as: "send" | "followUp", confirmed?}   the text, then Enter (or Alt+Enter while it works)
 //   POST /<token>/api/sessions/<key>/keys  {keys}                                        keys from an allow list; never Ctrl+C or Ctrl+D
 //   POST /<token>/api/sessions/<key>/focus                                               brings the session's pane forward in Herdr
+//   POST /<token>/api/sessions/<key>/answer {dialog, digest, answerId, choice | answers}  answers its dialog through its bridge (dialogs.ts); no keys
 //   POST /<token>/api/remote/pair                                                        a new one-time pairing URL and its QR, while remote access is on
 // Every write needs the page's own origin (Origin, Sec-Fetch-Site), a JSON body of at most 64 KB, and the CSRF secret the server wrote into
 // the page; the custom header forces a CORS preflight that is never approved. The key is resolved in the registry (paths and panes never come
@@ -18,11 +20,10 @@ export const MAX_TEXT = 16_384, MAX_BODY = 65_536, MAX_KEYS = 16;
 export const KEYS = new Set(["esc"]);
 /** Commands that end the session or switch its pane to another one: the page asks first, and the server refuses them unconfirmed. */
 export const ENDING = /^\s*\/(quit|exit|new|resume|fork|clone|import|reload)(?=\s|$)/;
-// Control characters would act as keys inside the paste (ESC[201~ ends it, after which anything is raw input, Ctrl+C included); tab and newline stay.
-const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
 
 export interface Reply { status: number; body: unknown }
-export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined }
+/** `answers.target` reads the net afresh, so the binding and the dialog are checked again for every answer. */
+export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; answers?: Pick<Hub, "replay" | "ended" | "send"> & { target(key: string): Promise<Target | undefined> } }
 
 const no = (status: number, error: string, reason: string): Reply => ({ status, body: { error, reason } });
 const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -59,11 +60,11 @@ export function checkText(text: unknown): string | Reply {
 	if (typeof text !== "string" || !text.trim()) return no(400, "bad_request", "There is no text to send.");
 	const typed = text.replace(/\r\n?/g, "\n");
 	if (Buffer.byteLength(typed) > MAX_TEXT) return no(413, "too_large", "The text is longer than 16 KB.");
-	if (CONTROL.test(typed)) return no(400, "control_character", "Control characters cannot be typed from the browser.");
+	if (CONTROL.test(typed)) return no(400, "control_character", "Control characters cannot be typed from the browser."); // they would act as keys inside the paste
 	return typed;
 }
 
-export function createControl({ lookup, call, csrf, canonical, pair }: ControlDeps) {
+export function createControl({ lookup, call, csrf, canonical, pair, answers }: ControlDeps) {
 	const busy = new Set<string>();
 	/** The origin checks, then the session checks, then one Herdr call. `parts` is the path after api/: sessions/<key>/<action>, or remote/pair. */
 	return async function handle(req: IncomingMessage, origin: string, [scope, key = "", action = ""]: string[]): Promise<Reply> {
@@ -78,7 +79,7 @@ export function createControl({ lookup, call, csrf, canonical, pair }: ControlDe
 			const paired = key === "pair" && !action ? pair?.() : undefined;
 			return paired ? { status: 200, body: paired } : key === "pair" && !action ? no(409, "remote_off", "Remote access is off; turn it on with /boss gui remote.") : no(404, "not_found", "No such action.");
 		}
-		if (!["input", "keys", "focus"].includes(action)) return no(404, "not_found", "No such action.");
+		if (!["input", "keys", "focus", "answer"].includes(action)) return no(404, "not_found", "No such action.");
 		const found = lookup(key);
 		if (!found) return no(404, "not_found", "No such session.");
 		if (!found.live || !found.pane || !found.file) return no(409, "not_live", "This session is no longer live in a pane.");
@@ -107,12 +108,26 @@ export function createControl({ lookup, call, csrf, canonical, pair }: ControlDe
 				if (pane.agent_status === "blocked" && keys.some((k) => k !== "esc")) throw no(409, "blocked", "While it waits on a dialog only Escape is sent from the browser; answer it in the terminal.");
 				return call("pane.send_input", { pane_id: pane.pane_id, keys }, 15_000);
 			};
+		} else if (action === "answer") {
+			const { dialog, digest, answerId } = json;
+			if (typeof dialog !== "string" || dialog.length > 64 || typeof digest !== "string" || !/^[0-9a-f]{64}$/.test(digest) || typeof answerId !== "string" || !ANSWER_ID.test(answerId)) return no(400, "bad_request", "The answer does not name its dialog.");
+			if (!answers) return no(503, "unavailable", "This server takes no answers.");
+			const known = answers.replay(answerId, key); // the same answer sent again (Check again) gets the outcome it had
+			if (known) return known;
+			job = async () => {
+				await live(found);
+				const target = await answers.target(key), ended = answers.ended(key, dialog, answerId); // answered in the terminal a moment ago, or by this very answer
+				if (target?.answer.dialog !== dialog || target.answer.digest !== digest) throw ended ?? no(409, "changed", "The question changed or is no longer open here; read it again.");
+				const checked = checkAnswer(target.answer, json, origin.startsWith("https:"));
+				if (typeof checked === "string") throw no(400, "bad_answer", checked);
+				return answers.send(key, target, { id: dialog, answerId, digest, ...checked });
+			};
 		} else job = async () => call("agent.focus", { target: (await live(found)).pane_id });
 		if (busy.has(key)) return no(429, "busy", "Another input to this session is still on its way.");
 		busy.add(key);
 		try {
-			await job();
-			return { status: 200, body: { accepted: true } };
+			const sent = (await job()) as Sent | undefined;
+			return sent?.body?.outcome ? sent : { status: 200, body: { accepted: true } };
 		} catch (error) {
 			return (error as Reply).status ? (error as Reply) : refused(error);
 		} finally {

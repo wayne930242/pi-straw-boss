@@ -11,12 +11,12 @@ afterEach(async () => {
 const prompt = (name: string) => readFileSync(`${PROMPT_DIR}/${name}.md`, "utf8").trim();
 const hex = (id: string) => `straw-boss/tab/${Buffer.from(id).toString("hex")}`;
 
-test("outside Herdr and in a pi-herdr-agents worker nothing registers and nothing is injected", async () => {
+test("outside Herdr nothing registers; a pi-herdr-agents worker runs only the dialog bridge; neither injects anything", async () => {
 	const outside = world.agent({ id: "out", pane: "none", outsideHerdr: true });
 	const worker = world.agent({ id: "worker", pane: "wA:p9", tab: "wA:t1", env: { PI_SUBAGENT_ID: "run-1" } });
 	for (const agent of [outside, worker]) {
 		await agent.start();
-		assert.deepEqual(agent.registered, [], `${agent.id} registered handlers`);
+		assert.deepEqual(agent.registered, agent === worker ? ["session_start", "tool_execution_start", "tool_execution_end", "session_shutdown"] : [], `${agent.id} registered handlers`);
 		assert.equal(agent.tools.size, 0);
 		assert.equal(agent.commands.size, 0);
 		assert.deepEqual(await agent.run(), {});

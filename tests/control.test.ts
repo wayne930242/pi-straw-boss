@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { ENDING as SERVER_ENDING, KEYS, MAX_TEXT } from "../src/control.ts";
+import type { Hub, Target } from "../src/dialogs.ts";
 import { startGui, type Gui } from "../src/gui.ts";
 import { HerdrError } from "../src/herdr.ts";
 import type { Found } from "../src/net.ts";
@@ -92,10 +93,66 @@ test("only Escape can be sent as a key until Phase 3, never Ctrl+C or Ctrl+D, al
 	assert.deepEqual(typed().map(([m, p]) => [m, p.keys ?? p.target]), [["pane.send_input", ["esc"]], ["pane.send_input", ["esc"]], ["agent.focus", "wA:p1"]]);
 });
 
-test("there is no answer route: a dialog is answered in the terminal, and nothing reaches Herdr", async () => {
-	const { gui, calls } = await setup({ pane: { agent_status: "blocked" } });
-	for (const body of [{ callId: "c1", choice: 0 }, { callId: "c1", text: "teal" }, { callId: "c1", cancel: true }]) assert.equal((await send(gui, "sessions/sess-1/answer", body)).status, 404);
-	assert.deepEqual(calls, []);
+/** A server whose hub answers for sess-1 with `target`; `send` records what reached the bridge and answers with `reply`. */
+async function answering({ reply = { status: 200, body: { outcome: "accepted" } } as { status: number; body: { outcome: string } } | Promise<{ status: number; body: { outcome: string } }>, pane = {} as Partial<Pane> } = {}) {
+	const calls: [string, Record<string, unknown>][] = [], sent: unknown[] = [], stored = new Map<string, { status: number; body: unknown }>();
+	const state: Pane = { pane_id: "wA:p1", agent: "pi", agent_status: "blocked", agent_session: { value: FILE }, ...pane };
+	const call = async (method: string, params: Record<string, unknown>) => (calls.push([method, params]), method === "pane.get" ? { pane: state } : {});
+	const answer = { dialog: "d1", digest: "a".repeat(64), select: { title: "T", choices: [{ label: "Run it" }, { label: "Copy", localOnly: true as const }] } };
+	const hub = {
+		target: { from: "S", bridgeId: "B", answer } as Target | undefined,
+		running: true, me: "G", start() {}, stop() {}, receive() {}, relayed: () => ({ dialogsOf: () => undefined, merge: () => ({ callId: "", tool: "" }) }),
+		replay: (id: string, key: string) => (key === "sess-1" ? stored.get(id) : undefined),
+		ended: (key: string, dialog: string) => (key === "sess-1" && dialog === "d-closed" ? { status: 200, body: { outcome: "stale", by: "local" } } : undefined),
+		send: async (_key: string, t: Target, a: { answerId: string }) => (sent.push({ to: t.bridgeId, ...a }), stored.set(a.answerId, await reply), reply),
+	};
+	const lookup = (key: string): Found | undefined => (key === "sess-1" ? { key, base: "wA", name: "billing", role: "main", file: FILE, pane: "wA:p1", live: true } : undefined);
+	const gui = await startGui({ read: async () => ({ bases: [] }), net: { lookup, workspace: () => [] }, call, hub: { ...hub, target: () => hub.target } as unknown as Hub, dir: join(scratch, "bundle"), pollMs: 50 });
+	running.push(gui);
+	return { gui, calls, sent, hub, answer, state, typed: () => calls.filter(([m]) => m !== "pane.get") };
+}
+const body = (extra: Record<string, unknown> = {}) => ({ dialog: "d1", digest: "a".repeat(64), answerId: "a".repeat(16), choice: 0, ...extra });
+
+test("answer: the bridge gets the checked answer, nothing is typed into Herdr, and the same answer again replays its outcome", async () => {
+	const { gui, sent, typed, calls } = await answering();
+	assert.deepEqual(await send(gui, "sessions/sess-1/answer", body()), { status: 200, body: { outcome: "accepted" } });
+	assert.deepEqual(sent, [{ to: "B", id: "d1", answerId: "a".repeat(16), digest: "a".repeat(64), choice: 0 }]);
+	assert.deepEqual(await send(gui, "sessions/sess-1/answer", body()), { status: 200, body: { outcome: "accepted" } });
+	assert.equal(sent.length, 1, "a replay never reaches the bridge again");
+	assert.deepEqual(typed(), [], "no key and no text reach Herdr");
+	assert.deepEqual(calls.map(([m]) => m), ["pane.get"], "only the pane check");
+});
+
+test("answer: the write guards, then the body, then the dialog it names must still be the one open here", async () => {
+	const { gui, sent, hub, state } = await answering();
+	assert.equal((await send(gui, "sessions/sess-1/answer", body(), { origin: "http://evil.test" })).status, 403);
+	assert.equal((await send(gui, "sessions/sess-1/answer", body(), { "x-sb-csrf": "nope" })).status, 403);
+	assert.equal((await send(gui, "sessions/sess-1/answer", body(), { "sec-fetch-site": "cross-site" })).status, 403);
+	assert.equal((await send(gui, "sessions/sess-1/answer", body(), { "content-type": "text/plain" })).status, 415);
+	assert.equal((await send(gui, "sessions/sess-1/answer", body(), {}, "GET")).status, 405);
+	for (const bad of [{ dialog: undefined }, { dialog: "x".repeat(65) }, { digest: "A".repeat(64) }, { digest: "a" }, { answerId: "short" }, { answerId: "a".repeat(15) + "!" }]) assert.equal((await send(gui, "sessions/sess-1/answer", body(bad))).status, 400, JSON.stringify(bad));
+	assert.equal((await send(gui, "sessions/sess-1/answer", body({ choice: 2, answerId: "b".repeat(16) }))).body.error, "bad_answer");
+	assert.equal((await send(gui, "sessions/sess-1/answer", body({ choice: 0, answers: [], answerId: "b".repeat(16) }))).body.error, "bad_answer");
+	assert.equal((await send(gui, "sessions/sess-1/answer", body({ digest: "b".repeat(64), answerId: "c".repeat(16) }))).body.error, "changed");
+	assert.equal((await send(gui, "sessions/sess-1/answer", body({ dialog: "d0", answerId: "c".repeat(16) }))).body.error, "changed");
+	assert.deepEqual(await send(gui, "sessions/sess-1/answer", body({ dialog: "d-closed", answerId: "c".repeat(16) })), { status: 200, body: { outcome: "stale", by: "local" } }, "answered in the terminal a moment ago");
+	hub.target = undefined;
+	assert.equal((await send(gui, "sessions/sess-1/answer", body({ answerId: "d".repeat(16) }))).status, 409, "no answerable dialog (a secret_drop has none)");
+	state.agent_session = { value: "/s/other.jsonl" };
+	assert.equal((await send(gui, "sessions/sess-1/answer", body({ answerId: "e".repeat(16) }))).body.error, "moved");
+	assert.equal((await send(gui, "sessions/nobody/answer", body({ answerId: "e".repeat(16) }))).status, 404);
+	assert.deepEqual(sent, []);
+});
+
+test("answer: one at a time per session; a bridge that never confirms is 504 unknown, and Check again asks once more", async () => {
+	let release!: (r: { status: number; body: { outcome: string } }) => void;
+	const { gui, sent } = await answering({ reply: new Promise((resolve) => (release = resolve)) });
+	const first = send(gui, "sessions/sess-1/answer", body());
+	await new Promise((resolve) => setTimeout(resolve, 30));
+	assert.equal((await send(gui, "sessions/sess-1/answer", body({ answerId: "b".repeat(16) }))).status, 429);
+	release({ status: 504, body: { outcome: "unknown" } });
+	assert.deepEqual(await first, { status: 504, body: { outcome: "unknown" } });
+	assert.equal(sent.length, 1);
 });
 
 test("commands that end or replace the session need confirmed, and the page and the server agree on which they are", async () => {

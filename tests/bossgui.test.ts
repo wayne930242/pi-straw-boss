@@ -64,7 +64,7 @@ test("any session can open the GUI: it shows the whole net with the viewer as a 
 	assert.deepEqual(seen.bases[0]!.outside, []);
 	assert.deepEqual(viewer.tokens, { sb_role: "member" });
 	assert.deepEqual(viewer.entries, [], "nothing written to the session");
-	assert.deepEqual(world.broker.registrations.filter((r) => r.id === "viewer").map((r) => r.namespace.split("/").slice(0, 2).join("/")), ["straw-boss/tab"], "it reads through its tab channel");
+	assert.deepEqual(world.broker.registrations.filter((r) => r.id === "viewer").map((r) => r.namespace.split("/").slice(0, 2).join("/")), ["straw-boss/tab", "straw-boss/gui"], "it reads through its tab channel; the server's dialog channel is its only other one");
 });
 
 test("running it again reuses the server and the URL and reopens the browser; stop closes it; a restart keeps the URL an open page has", async () => {
@@ -80,7 +80,7 @@ test("running it again reuses the server and the URL and reopens the browser; st
 	await viewer.command("gui stop");
 	await viewer.command("gui");
 	await snapshot(url);
-	assert.equal(world.broker.registrations.filter((r) => r.id === "viewer").length, 1, "one viewer channel for the session, however often the server restarts");
+	assert.deepEqual(world.broker.registrations.filter((r) => r.id === "viewer").map((r) => r.namespace.split("/")[1]), ["tab", "gui"], "one tab channel and one dialog channel for the session, however often the server restarts");
 	assert.equal(await status(url), 200);
 	await viewer.command("gui stop");
 	assert.ok(viewer.notices.some((n) => /GUI stopped/.test(n.text)));
@@ -117,7 +117,7 @@ test("a main agent and a tower can open it too, and a session in a sub workspace
 		assert.equal(seen.bases.find((b) => b.label === "Alpha")?.outposts[0]?.label, "Alpha feature", `${who.id} sees the sub workspace as an outpost`);
 	}
 	assert.deepEqual(sub.tokens, {}, "the sub workspace session joined nothing");
-	assert.deepEqual(world.broker.registrations.filter((r) => r.id === "sub-1").map((r) => [r.namespace.split("/").slice(0, 2).join("/"), r.ownerEligible]), [["straw-boss/view", false]], "it reads through a channel of its own that never takes part in a tab");
+	assert.deepEqual(world.broker.registrations.filter((r) => r.id === "sub-1").map((r) => [r.namespace.split("/").slice(0, 2).join("/"), r.ownerEligible]), [["straw-boss/gui", true], ["straw-boss/view", false]], "it reads through a channel of its own that never takes part in a tab (and its server's dialog channel)");
 });
 
 test("a browser that cannot be opened leaves the URL in a warning", async () => {

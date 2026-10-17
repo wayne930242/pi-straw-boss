@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { basename, join, sep } from "node:path";
 import { type Mark, markOf, type Row, sessionMark, subagents } from "./dashboard.ts";
 import { headOf, type HerdrRun, isSub, type Pane, panes, parentOf, type Session, workspaces, type Workspace } from "./herdr.ts";
-import { type Pending, withPending } from "./ask.ts";
+import { type Pending, type Relayed, withPending } from "./ask.ts";
 import { canonical } from "./history.ts";
 
 // The whole straw net as one JSON-able snapshot for the browser view: every workspace as a base with its tower, tabs, agents,
@@ -88,13 +88,13 @@ export async function collectNet({ run, sessions, now = Date.now(), refs, sessio
  * The net as the server reads it: each read also refreshes the registry. A key that left the net (the pane closed, or moved to
  * another session) stays findable for ten minutes, the window finished subagents already use, with the pane's new session as its successor.
  */
-export function netSource(env: { run: HerdrRun; sessions(): Promise<Session[]>; sessionDir?: string }) {
-	let refs = new Map<string, Ref>();
-	const gone = new Map<string, { ref: Ref; at: number }>();
+export function netSource(env: { run: HerdrRun; sessions(): Promise<Session[]>; sessionDir?: string; hub?: { relayed(sessions: Session[], refs: Map<string, Ref>): Relayed } }) {
+	let refs = new Map<string, Ref>(), live: Session[] = [];
+	const gone = new Map<string, { ref: Ref; at: number }>(), sessions = async () => (live = await env.sessions());
 	return {
 		async read(): Promise<Net> {
-			const next = new Map<string, Ref>(), at = Date.now();
-			const net = await withPending(await collectNet({ ...env, refs: next }), (key) => next.get(key)?.file); // what waiting units wait on
+			const next = new Map<string, Ref>(), at = Date.now(), net = await collectNet({ ...env, sessions, refs: next });
+			await withPending(net, (key) => next.get(key)?.file, env.hub?.relayed(live, next)); // what waiting units wait on, and the dialogs bridges relay
 			for (const [key, ref] of refs) if (!next.has(key)) gone.set(key, { ref, at });
 			for (const [key, old] of gone) if (next.has(key) || at - old.at > RECENT_MS) gone.delete(key);
 			refs = next;

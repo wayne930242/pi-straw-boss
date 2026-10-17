@@ -115,3 +115,28 @@ test("an ask_user_question call shows its questions: one reads like an ask_user 
 	assert.equal((await pendingOf(file(user("hi"), asked("old", ARGS))))?.ask?.question, "Pick a color");
 });
 
+
+test("the answer panel's pure rules: the body it sends, what it says for each outcome, local-only choices hidden from a remote page, controls drawn as U+FFFD", async () => {
+	const { bodyOf, offered, replyOf, said, visible } = await import("../gui/ask.ts");
+	const a = { dialog: "d1", digest: "f".repeat(64), select: { title: "T", choices: [{ label: "Run" }, { label: "Copy", localOnly: true as const }, { label: "No" }] } };
+	assert.deepEqual(bodyOf(a, { choice: 2 }, "id-1234567890abcdef"), { dialog: "d1", digest: "f".repeat(64), answerId: "id-1234567890abcdef", choice: 2 });
+	assert.deepEqual(offered(a, false).map((c) => [c.label, c.i]), [["Run", 0], ["Copy", 1], ["No", 2]]);
+	assert.deepEqual(offered(a, true).map((c) => [c.label, c.i]), [["Run", 0], ["No", 2]], "the index stays the owner's");
+	assert.deepEqual(replyOf(new Set([2, 0]), "  ", "note"), { choices: [0, 2], note: "note" });
+	assert.deepEqual(replyOf(new Set(), "own words", " "), { text: "own words" });
+	assert.equal(visible("a\u001b[31mb\tc\nd\u009be"), "a\ufffd[31mb\tc\nd\ufffde");
+	const r = (status: number, body: Record<string, unknown>) => ({ ok: status < 300, status, body });
+	assert.deepEqual(said(r(200, { outcome: "accepted" })), ["ok", "Answered."]);
+	assert.deepEqual(said(r(200, { outcome: "stale", by: "local" })), ["error", "It was already answered in the terminal."]);
+	assert.deepEqual(said(r(200, { outcome: "stale", by: "cancel" })), ["error", "It was dismissed in the terminal."]);
+	assert.deepEqual(said(r(200, { outcome: "stale", by: "gone" })), ["error", "It is no longer open."]);
+	assert.deepEqual(said(r(200, { outcome: "rejected", reason: "digest" })), ["error", "The question changed; read it again."]);
+	assert.deepEqual(said(r(200, { outcome: "busy" })), ["error", "Another answer is on its way; check the terminal."]);
+	assert.deepEqual(said(r(200, { outcome: "unknown" })), ["error", "Not confirmed. Check the terminal.", true]);
+	assert.deepEqual(said(r(504, { outcome: "unknown" })), ["error", "Not confirmed. Check the terminal.", true], "only an unknown outcome offers Check again");
+	assert.deepEqual(said(r(409, { error: "changed", reason: "The question changed or is no longer open here; read it again." })), ["error", "The question changed or is no longer open here; read it again."]);
+	const { blocked } = await import("../gui/composer.ts");
+	const unit = { name: "u", control: true, live: true, mark: "waiting" as const, online: true };
+	assert.equal(blocked({ ...unit, answerable: true }), "It waits on a dialog: answer it above, or in its terminal.");
+	assert.equal(blocked(unit), "It waits on a dialog; answer it in its terminal.");
+});

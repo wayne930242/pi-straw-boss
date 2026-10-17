@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static, type TSchema } from "typebox";
+import { startBridge } from "./bridge.ts";
 import { collect, startDashboard } from "./dashboard.ts";
+import { createHub, type Hub } from "./dialogs.ts";
 import { answers, type Gui, openBrowser, readRecord, sharedGui, startGui, urlOf } from "./gui.ts";
 import { netSource } from "./net.ts";
 import { copyText, pairingKeys, showLines } from "./pairing.ts";
@@ -49,8 +51,13 @@ const nameOf = (s?: Session) => (s ? (s.name ?? s.id) : "");
 
 export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdrCall(), tailscale: ts = tailscale, copy = copyText, env = process.env, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), promptDir = fileURLToPath(new URL("../prompts", import.meta.url)), bundle, openUrl = openBrowser, stateDir, autoTower = true }: Deps = {}) {
 	return function strawBoss(pi: ExtensionAPI): void {
-		// Outside Herdr there is no tab to coordinate. A pi-herdr-agents worker never joins: its parent represents it.
-		if (!env.HERDR_PANE_ID || env.PI_SUBAGENT_ID) return;
+		// Outside Herdr there is no tab to coordinate. Every session in Herdr relays its dialogs to the GUI (bridge.ts), subagents too: they ask
+		// questions as well. A pi-herdr-agents worker never joins: its parent represents it.
+		if (!env.HERDR_PANE_ID) return;
+		const guiDir = stateDir ?? join(env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "straw-boss");
+		let hub: Hub | undefined;
+		const bridge = startBridge(pi, { env, dir: guiDir, local: () => (hub?.running ? hub : undefined) });
+		if (env.PI_SUBAGENT_ID) return;
 		let isTower = env.STRAW_BOSS_ROLE === "tower";
 		let joined = false, isMain = false, holdsTower = false, requests = 0;
 		// The tab's live main agent as of the last refresh, and the main this session pinned as owner before the broker echoes it back.
@@ -59,7 +66,6 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 		let barred: string | undefined, dashboard: ReturnType<typeof startDashboard> | undefined, hasUI = false;
 		let prompts: Record<string, string> = {}, info: Record<string, string> = {}, saved: Saved = {};
 		let gui: Gui | undefined, viewer: Channel | undefined, opening: Promise<string> | undefined;
-		const guiDir = stateDir ?? join(env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "straw-boss");
 		let c!: Channel, at!: Place, ui: ExtensionContext["ui"] | undefined, timer: ReturnType<typeof setInterval> | undefined;
 		let queue: Promise<void> = Promise.resolve();
 		const me = () => env.PI_INTERCOM_SESSION_ID ?? "";
@@ -418,7 +424,8 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			// in this session share one start. A server started here has remote off, so a serve entry a crashed one left goes (remote takes it over).
 			opening ??= (async () => {
 				if (gui) return gui.url;
-				const shared = await sharedGui(guiDir, `${me() || "unknown"} (pane ${env.HERDR_PANE_ID})`, (prefer) => { const net = netSource({ run, sessions }); return startGui({ read: net.read, net, call, dir: bundle, ...prefer }); }, sleep);
+				const start = (prefer: { port?: number; token?: string; csrf?: string }, net = netSource({ run, sessions, hub: (hub = hub?.me === me() ? hub : createHub(pi, me(), bridge)) })) => startGui({ read: net.read, net, call, hub, dir: bundle, ...prefer });
+				const shared = await sharedGui(guiDir, [`${me() || "unknown"} (pane ${env.HERDR_PANE_ID})`, me()], start, sleep);
 				if ((gui = shared.mine) && mode !== "remote") await switchRemote(gui, false, guiDir, ts).catch(() => {});
 				return shared.url;
 			})().finally(() => (opening = undefined));

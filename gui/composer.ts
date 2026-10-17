@@ -15,13 +15,13 @@ const UNSURE = "Not confirmed. Check the terminal before sending again.";
 const WENT = "The original already went to the session; what is here is your edited copy, unsent.";
 type Note = [tone: string, text: string];
 export const ENDING = /^\s*\/(quit|exit|new|resume|fork|clone|import|reload)(?=\s|$)/;
-export type Post = (action: "input" | "keys" | "focus", body: Record<string, unknown>) => Promise<Answer>;
+export type Post = (action: "input" | "keys" | "focus" | "answer", body: Record<string, unknown>) => Promise<Answer>;
 type Flight = { sent?: string; answer: Promise<Answer> };
 // Sends on their way, by session key. They outlive a composer replaced meanwhile (the route left and came back), whose successor waits for
 // them before it sends again and settles its own box, so text is neither shown as unsent after it went nor sent twice.
 const flights = new Map<string, Flight>();
-/** `asking`: its question panel is on the page and carries Focus terminal, so the composer does not. */
-export interface Unit { name: string; control: boolean; live: boolean; mark: Mark; online: boolean; asking?: boolean }
+/** `asking`: its question panel is on the page and carries Focus terminal, so the composer does not; `answerable`: that panel answers it. */
+export interface Unit { name: string; control: boolean; live: boolean; mark: Mark; online: boolean; asking?: boolean; answerable?: boolean }
 
 /** The server's input API for one session. */
 export const postTo = (key: string): Post => (action, body) => post(`sessions/${encodeURIComponent(key)}/${action}`, body);
@@ -49,7 +49,7 @@ export function blocked(u: Unit): string | undefined {
 	if (!u.online) return "The stream is down; sending waits for it to come back.";
 	if (!u.live) return "This session is no longer live; its history stays readable.";
 	if (!u.control) return "No live pi pane backs this unit, so there is nothing to type into.";
-	if (u.mark === "waiting") return "It waits on a dialog; answer it in its terminal.";
+	if (u.mark === "waiting") return u.answerable ? "It waits on a dialog: answer it above, or in its terminal." : "It waits on a dialog; answer it in its terminal.";
 }
 
 export function mountComposer(root: HTMLElement, key: string, post: Post) {
