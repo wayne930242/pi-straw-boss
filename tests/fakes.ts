@@ -2,8 +2,28 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import jsqr from "jsqr";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { createStrawBoss, type Deps } from "../src/index.ts";
+
+// jsQR is CommonJS: Node hands its function over as the default export, while its types describe an ES module namespace.
+type Decode = (data: Uint8ClampedArray, width: number, height: number) => { data: string; version: number } | null;
+const jsQR = ((jsqr as unknown as { default?: Decode }).default ?? jsqr) as unknown as Decode;
+
+/** The code as a grayscale image (4 px per module, a 4-module quiet zone), read back by an independent decoder. */
+export function decode(m: boolean[][]) {
+	const scale = 4, n = (m.length + 8) * scale, px = new Uint8ClampedArray(n * n * 4);
+	for (let y = 0; y < n; y++)
+		for (let x = 0; x < n; x++) {
+			const dark = m[Math.floor(y / scale) - 4]?.[Math.floor(x / scale) - 4] ?? false, i = (y * n + x) * 4;
+			px.fill(dark ? 0 : 255, i, i + 3);
+			px[i + 3] = 255;
+		}
+	return jsQR(px, n, n);
+}
+
+/** The modules of a QR drawn for the terminal (`qrLines`: light as blocks, two rows per line), quiet zone included. */
+export const fromLines = (lines: string[]) => lines.flatMap((line) => [[...line].map((c) => c === " " || c === "▄"), [...line].map((c) => c === " " || c === "▀")]);
 
 export const PROMPT_DIR = fileURLToPath(new URL("../prompts", import.meta.url));
 const NAMESPACE = /^[a-z0-9][a-z0-9._/-]{0,63}$/;
@@ -225,6 +245,7 @@ export class FakeBroker {
 export interface AgentOptions { id: string; name?: string; pane: string; env?: Record<string, string>; entries?: { customType: string; data: unknown }[]; outsideHerdr?: boolean; noIntercom?: boolean; ui?: boolean; deps?: Partial<Deps> }
 
 export interface FakeTui { renders: number; requestRender(): void }
+export interface Overlay { render(width: number): string[]; handleInput?(data: string): void }
 type WidgetFactory = (tui: FakeTui, theme: { fg(tone: string, text: string): string; bold(text: string): string }) => { render(width: number): string[]; dispose?(): void };
 
 /** One pi session running the extension, plus the parts of pi and pi-intercom it talks to. */
@@ -237,6 +258,8 @@ export class Agent {
 	commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
 	entries: { customType: string; data: unknown }[];
 	notices: { text: string; level?: string }[] = [];
+	/** Each ctx.ui.custom overlay, open until it closes itself. */
+	overlays: (Overlay & { closed: boolean })[] = [];
 	/** What pi-intercom reports as this session's status. */
 	status = "idle";
 	/** Widgets set through ctx.ui.setWidget, and the live component of each. */
@@ -259,6 +282,8 @@ export class Agent {
 			hasUI: Boolean(options.ui),
 			ui: {
 				notify: (text: string, level?: string) => this.notices.push({ text, level }),
+				// An overlay stays open until it calls done; the test drives it through `overlays`.
+				custom: (factory: (tui: FakeTui, theme: unknown, keys: unknown, done: () => void) => Overlay) => new Promise<void>((resolve) => this.overlays.push({ ...factory(this.tui, {}, {}, () => ((this.overlays.at(-1)!.closed = true), resolve())), closed: false })),
 				setWidget: (key: string, factory?: WidgetFactory) => {
 					this.components.get(key)?.dispose?.();
 					this.components.delete(key);

@@ -1,5 +1,6 @@
-import { type FSWatcher, watch } from "node:fs";
+import { type FSWatcher, realpathSync, watch } from "node:fs";
 import { type FileHandle, open, stat } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import { FULL_LIMIT, type Item, type Json, parse, toItem } from "./items.ts";
 
 // The session reader: a pi session file in, pages of displayable items out, plus a live tail. Only an index stays in memory
@@ -16,6 +17,18 @@ import { FULL_LIMIT, type Item, type Json, parse, toItem } from "./items.ts";
 const CHUNK = 1 << 20, HEAD = 512, TAIL = 400, BIG = 16_384;
 export const PAGE = 150;
 const HIDDEN = new Set(["session", "custom", "label", "usage", "context_edit"]);
+
+/** A path with its symlinks resolved, as far as it exists (a file not written yet keeps its own name), so a check of where a file lives is about where it really is. */
+export function canonical(path?: string): string | undefined {
+	if (!path) return undefined;
+	for (let dir = resolve(path), rest = ""; ; rest = join(basename(dir), rest), dir = dirname(dir)) {
+		try {
+			return join(realpathSync(dir), rest);
+		} catch {
+			if (dir === dirname(dir)) return resolve(path);
+		}
+	}
+}
 
 export interface Change { reset: boolean; items: Item[]; before?: string }
 export interface Reader {

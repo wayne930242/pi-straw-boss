@@ -42,6 +42,9 @@ svg { display: block; }
 .stats dt, .tally dt { color: var(--dim); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
 .stats dd, .tally dd { font: 600 20px/1.1 var(--mono); }
 .stats [data-mark] dd, .tally [data-mark] dd, .count b { color: var(--c); }
+.pair-btn { padding: 6px 12px; border-radius: 12px; border: 1px solid var(--line); background: none; color: var(--dim); font: 600 12px var(--sans); letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; }
+.pair { display: grid; justify-items: center; gap: 12px; text-align: center; color: var(--dim); font-size: 13px; }
+.qr { width: min(100%, 300px); border-radius: 12px; shape-rendering: crispEdges; }
 .link { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
 .link i { width: 9px; height: 9px; border-radius: 50%; background: #4f5c7c; }
 .link[data-state="live"] i { background: #3ddc97; animation: blink 2.4s ease-in-out infinite; }
@@ -59,7 +62,7 @@ svg { display: block; }
 .links { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .wire { fill: none; stroke: rgba(56, 224, 255, 0.3); stroke-width: 1.5; stroke-dasharray: 3 7; stroke-linecap: round; }
 .packet { fill: #38e0ff; opacity: 0.9; }
-.bases { position: relative; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 30px; align-items: start; }
+.bases { position: relative; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 30px; align-items: start; }
 .empty { position: relative; color: var(--dim); text-align: center; padding: 120px 0; }
 
 .base { position: relative; padding: 16px; border-radius: 18px; border: 1px solid var(--line); background: linear-gradient(180deg, #16213c, #0c1324); box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35); }
@@ -154,7 +157,7 @@ svg { display: block; }
 [hidden] { display: none !important; }
 a { color: inherit; }
 /* Small capitals labels and one-line ellipses, shared by every route. */
-.crumbs, .tally dt, .comms-head small, .tx.you > header, .notice em, .rule summary, .dossier-in > .tag, .d-drones h4, .specs dt, .stop, .dialog .tag, .intel h4, .pending b, .rx b { color: var(--dim); font-size: 11px; font-style: normal; letter-spacing: 0.14em; text-transform: uppercase; }
+.crumbs, .tally dt, .comms-head small, .tx.you > header, .notice em, .rule summary, .dossier-in > .tag, .d-drones h4, .specs dt, .stop, .dialog .tag, .intel h4, .pending b { color: var(--dim); font-size: 11px; font-style: normal; letter-spacing: 0.14em; text-transform: uppercase; }
 .token .name, .drone .note, .count small, .sum, .where, .tile b { max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .md a, .bubble a, .notice a, .d-note a, .specs a, .crumbs a { color: #38e0ff; }
 
@@ -184,7 +187,7 @@ body[data-stale="true"] .work { opacity: 0.45; }
 .faces .badge { display: none; }
 .count { display: grid; min-width: 0; }
 .count b { font: 600 18px/1.1 var(--mono); }
-.count small, .comms-head p, .rx, .where, .queued, .d-line, .who p { color: var(--dim); font-size: 12px; }
+.count small, .comms-head p, .cmp-note, .where, .queued, .d-line, .who p { color: var(--dim); font-size: 12px; }
 
 /* Unit tokens: the plates of the focus views, sized by --s. */
 .token { position: relative; display: grid; justify-items: center; gap: 3px; width: 100%; padding: 10px 8px 9px; border-radius: 16px; border: 1px solid transparent; text-decoration: none; }
@@ -230,8 +233,8 @@ a.tower:hover::before { border-color: var(--c); }
 [data-group="outside"] .plate { filter: saturate(0.3); outline: 1px dashed rgba(139, 153, 186, 0.55); outline-offset: 4px; }
 
 /* The session route: the comms log and, in the side column, the unit's dossier. */
-.comms-in, .tile { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: calc(100vh - 190px); min-height: 380px; overflow: hidden; }
-.comms-head, .tile > header, .rx { display: flex; align-items: center; gap: 12px; padding: 12px 18px; background: var(--panel); }
+.comms-in, .tile { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: calc(var(--vvh, 100vh) - 190px); min-height: 380px; overflow: hidden; }
+.comms-head, .tile > header { display: flex; align-items: center; gap: 12px; padding: 12px 18px; background: var(--panel); }
 .ava { flex: none; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; color: #38e0ff; background: radial-gradient(circle at 35% 30%, #38e0ff47, #0b1222 72%); }
 .ava svg { width: 58%; height: 58%; }
 .comms-head h2 { font-size: 16px; }
@@ -242,9 +245,21 @@ a.tower:hover::before { border-color: var(--c); }
 .chat-top { height: 1px; }
 .chat-live { display: flex; align-items: center; gap: 10px; margin-top: 14px; padding-left: 44px; color: var(--c); font-size: 12px; }
 .chat-pill { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); border: 0; --c: #38e0ff; }
-/* The entry Open comms lands on, lit for a moment (an entry's containment makes it the containing block); the receive-only strip under the log. */
+/* The entry Open comms lands on, lit for a moment (an entry's containment makes it the containing block). */
 .lit::after { content: ""; position: absolute; inset: 0; border-radius: 14px; background: #38e0ff2e; animation: out 1s 1s forwards; }
-.rx { border-top: 1px solid var(--line); }
+/* The composer under the log: the box, Send (and Follow-up and Stop while it works), and one line for what happened or why not. */
+.composer { display: grid; gap: 8px; padding: 12px 18px 14px; border-top: 1px solid var(--line); background: var(--panel); }
+.cmp-row, .cmp-acts, .cmp-foot, .cmp-note { display: flex; gap: 8px; align-items: center; }
+.cmp-row { align-items: flex-end; gap: 10px; }
+.composer textarea { flex: 1; min-width: 0; resize: none; padding: 9px 12px; border-radius: 12px; border: 1px solid var(--line); background: #070c18; color: var(--text); font: 14px/1.4 var(--sans); }
+.composer textarea:focus { outline: none; border-color: #38e0ff80; box-shadow: 0 0 0 3px #38e0ff1f; }
+.composer button:disabled { opacity: 0.45; cursor: default; }
+.cmp-note { flex: 1; flex-wrap: wrap; min-height: 18px; }
+.cmp-note[data-tone="error"], .cmp-alt.cmp-stop { color: #ff8a9c; }
+.cmp-note[data-tone="ok"] { color: #3ddc97; }
+.cmp-note[data-tone="ask"] { color: var(--gold); }
+.cmp-link { border: 0; padding: 0; background: none; color: #38e0ff; font: 12px var(--sans); cursor: pointer; }
+.cmp-yes { padding: 3px 10px; border: 0; border-radius: 8px; background: var(--gold); color: #06101e; font: 600 12px var(--sans); cursor: pointer; }
 .tx { content-visibility: auto; contain-intrinsic-size: auto 90px; min-width: 0; }
 .tx time, .tx.note { color: var(--dim); font: 11px var(--mono); }
 .tx.you { display: grid; justify-items: end; gap: 5px; }
@@ -314,7 +329,7 @@ summary::-webkit-details-marker { display: none; }
 .tiles { flex: 1 1 0; display: flex; gap: 20px; min-width: 0; }
 .tile-tabs { display: none; }
 .tile { flex: 1 1 0; min-width: 0; position: sticky; top: 96px; border-radius: 22px; border: 1px solid var(--line); background: var(--panel); }
-.tile > header svg, .rx svg { width: 22px; height: 22px; color: var(--gold); }
+.tile > header svg { width: 22px; height: 22px; color: var(--gold); }
 .tile-body { overflow: auto; padding: 16px 20px; }
 .tiles.tabbed { flex-direction: column; gap: 8px; }
 .tiles.tabbed .tile-tabs { display: flex; gap: 6px; }
@@ -336,12 +351,37 @@ summary::-webkit-details-marker { display: none; }
 .said { font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
 .pending { margin-top: 8px; color: var(--c); font: 12px var(--mono); overflow-wrap: anywhere; }
 .dialog footer { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
-.go, .later, .chat-pill { padding: 7px 13px; border-radius: 10px; font: 600 13px var(--sans); text-decoration: none; cursor: pointer; }
+.go, .later, .chat-pill, .cmp-send, .cmp-alt { padding: 7px 13px; border-radius: 10px; font: 600 13px var(--sans); text-decoration: none; cursor: pointer; }
 .go, .chat-pill { background: var(--c); color: #06101e; }
-.later { border: 1px solid var(--line); background: none; color: var(--text); }
+.cmp-send { border: 0; background: #38e0ff; color: #06101e; }
+.later, .cmp-alt { border: 1px solid var(--line); background: none; color: var(--text); }
 .queued { margin-left: auto; }
 
 html.paused *, html.paused *::before, html.paused *::after { animation-play-state: paused !important; }
 @media (max-width: 1100px) { .stage { grid-template-columns: 1fr; } .side { position: static; } .stats { display: none; } }
-@media (max-width: 900px) { .work { flex-direction: column; align-items: stretch; } .tile { position: static; } .keep { flex-wrap: wrap; } }
+@media (max-width: 900px) { .work { flex-direction: column; align-items: stretch; } .view, .tiles { flex: none; } .tile { position: static; } .keep { flex-wrap: wrap; } }
+/* A phone: the HUD wraps and scrolls away, every column takes the full width, dialogs dock at the bottom, and the comms panel fits the
+   visual viewport (it shrinks with the on-screen keyboard), clear of the safe-area insets. */
+@media (max-width: 640px) {
+	.shell { padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); }
+	.hud { position: static; flex-wrap: wrap; gap: 10px; padding: 10px 12px; }
+	.brand p, .link span { display: none; }
+	.alerts { order: 3; flex: 1 1 100%; width: auto; }
+	.map, .zoom-in { padding: 14px; }
+	.bases { gap: 18px; }
+	.keep { padding: 6px; gap: 12px; }
+	.tower.big { width: 84px; height: 84px; }
+	.tally { flex-wrap: wrap; }
+	.col { width: 100%; }
+	.comms-in, .tile { height: calc(var(--vvh, 100dvh) - 16px); min-height: 300px; border-radius: 16px; }
+	.chat-scroll { padding: 12px; }
+	.bubble { max-width: 92%; }
+	.composer { padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); }
+	.cmp-row { flex-wrap: wrap; }
+	.composer textarea { flex: 1 1 100%; min-height: 64px; }
+	.cmp-acts { margin-left: auto; }
+	.dock { top: auto; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); width: calc(100vw - 20px); }
+}
+/* Touch: larger targets, and a 16 px box so the phone does not zoom in on focus. */
+@media (pointer: coarse) { .composer textarea { font-size: 16px; } .composer button, .go, .later, .x, .chat-pill, .pair-btn, .alerts { min-height: 40px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }

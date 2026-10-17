@@ -1,17 +1,23 @@
 import { execFile } from "node:child_process";
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { createReadStream, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, request, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readers } from "./history.ts";
+import { createControl, type Reply } from "./control.ts";
+import type { HerdrCall } from "./herdr.ts";
+import { canonical, readers } from "./history.ts";
 import type { Found, Net, Ref } from "./net.ts";
+import { qr } from "./qr.ts";
+import { type Access, cookieFor, createAccess } from "./remote.ts";
 import { api, type Hub, watchSession, type Watch, watchWorkspace } from "./watch.ts";
 
 // The browser view's server: serves the built page and one live stream of the net, read-only, on 127.0.0.1 only.
 // Every URL starts with a random token (/<token>/index.html, /<token>/events) and a request without it, or with another Host
-// header, is refused, so other local pages cannot read the net. The stream sends the full snapshot on connect and on every
+// header, is refused, so other local pages cannot read the net. The only writes are POSTs under /api/sessions and /api/remote (control.ts),
+// which also need the page's origin and a second secret the page carries in <meta name="sb-csrf">; every other request must be a GET.
+// While remote access is on (remote.ts), paired devices of this machine's Tailscale user reach the same server through `tailscale serve`. The stream sends the full snapshot on connect and on every
 // change, plus a `ping` event every 15 s so a client can tell a silent drop from a quiet net. It polls only while someone listens.
 // The page has routes (/<token>/w/<workspace>[/s/<session>]): any such URL answers the same index.html, which carries a <base href>
 // so its assets and the stream resolve from any depth. `events?watch=<session key>` adds that session's chat history to the stream,
@@ -26,20 +32,23 @@ const HEADERS = {
 	"content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; frame-ancestors 'none'",
 };
 
-export interface Gui { url: string; port: number; token: string; stop(): Promise<void> }
-/** `net` is the registry behind the net reading (the allow list of session keys); without it no session can be watched. */
-export interface GuiOptions { read(): Promise<Net>; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] }; dir?: string; port?: number; token?: string; pollMs?: number; pingMs?: number }
+export interface Gui { url: string; port: number; token: string; csrf: string; access: Access; stop(): Promise<void> }
+/** `net` is the registry behind the net reading (the allow list of session keys); without it no session can be watched. `call` reaches Herdr for input. */
+export interface GuiOptions { read(): Promise<Net>; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] }; call?: HerdrCall; dir?: string; port?: number; token?: string; csrf?: string; pollMs?: number; pingMs?: number }
 
-/** Starts the server. A preferred `port` (and `token`) is reused when free, so a restarted server keeps the URL an open page already has. */
-export async function startGui({ read, net, dir = BUNDLE, port = 0, token = randomBytes(16).toString("hex"), pollMs = 2000, pingMs = 15_000 }: GuiOptions): Promise<Gui> {
+/** Starts the server. A preferred `port` (with its `token` and `csrf`) is reused when free, so a restarted server keeps the URL and the page an open tab already has. */
+export async function startGui({ read, net, call, dir = BUNDLE, port = 0, token = randomBytes(16).toString("hex"), csrf = randomBytes(16).toString("hex"), pollMs = 2000, pingMs = 15_000 }: GuiOptions): Promise<Gui> {
 	try {
 		if (!statSync(join(dir, "index.html")).isFile()) throw new Error();
 	} catch {
 		throw new Error(`The GUI bundle is missing (${dir}); build it with npm run gui:build`);
 	}
-	const page = readFileSync(join(dir, "index.html"), "utf8").replace("<head>", `<head>\n<base href="/${token}/">`);
+	const page = readFileSync(join(dir, "index.html"), "utf8").replace("<head>", `<head>\n<base href="/${token}/">\n<meta name="sb-csrf" content="${csrf}">`);
 	const hub: Hub = { lookup: (key) => net?.lookup(key), workspace: (id) => net?.workspace(id) ?? [], readers: readers() };
-	const clients = new Map<ServerResponse, Watch | undefined>();
+	// Turning remote access off ends the streams of remote pages; their next request finds the cookie void.
+	const clients = new Map<ServerResponse, Watch | undefined>(), remotes = new Set<ServerResponse>(), access = createAccess(token, () => remotes.forEach((c) => c.end()));
+	const pair = (code = access.pair(), host = access.remote?.host, url = `https://${host}/${token}/pair/${code}`) => (code && host ? { url, rows: qr(url).map((row) => row.map(Number).join("")) } : undefined);
+	const control = createControl({ lookup: hub.lookup, call, csrf, canonical, pair });
 	let last: string | undefined, problem: string | undefined, inflight: Promise<void> | undefined;
 	let poll: ReturnType<typeof setInterval> | undefined, beat: ReturnType<typeof setInterval> | undefined;
 	const send = (to: ServerResponse, data: string, event?: string) => to.write(`${event ? `event: ${event}\n` : ""}data: ${data}\n\n`);
@@ -62,12 +71,9 @@ export async function startGui({ read, net, dir = BUNDLE, port = 0, token = rand
 		server.once("error", fail);
 		server.listen(at, "127.0.0.1", () => (server.off("error", fail), done()));
 	});
-	const allowed = (req: IncomingMessage, given: string | undefined) => {
-		const [a, b] = [Buffer.from(given ?? ""), Buffer.from(token)];
-		return req.method === "GET" && req.headers.host === `127.0.0.1:${(server.address() as AddressInfo).port}` && a.length === b.length && timingSafeEqual(a, b);
-	};
-	const events = (req: IncomingMessage, res: ServerResponse, target: string | null) => {
+	const events = (req: IncomingMessage, res: ServerResponse, target: string | null, remote: boolean) => {
 		res.writeHead(200, { ...HEADERS, "content-type": "text/event-stream", connection: "keep-alive" });
+		if (remote) remotes.add(res);
 		const to = (event: string, data: unknown) => send(res, JSON.stringify(data), event);
 		const watch = target?.startsWith("w:") ? watchWorkspace(hub, target.slice(2), to) : target ? watchSession(hub, target, to) : undefined;
 		clients.set(res, watch);
@@ -80,6 +86,7 @@ export async function startGui({ read, net, dir = BUNDLE, port = 0, token = rand
 		void (clients.size === 1 || !last ? tick() : watch?.refresh())?.catch(() => {});
 		req.on("close", () => {
 			clients.delete(res);
+			remotes.delete(res);
 			watch?.stop();
 			if (!clients.size) (clearInterval(poll), clearInterval(beat));
 		});
@@ -88,10 +95,11 @@ export async function startGui({ read, net, dir = BUNDLE, port = 0, token = rand
 		const url = new URL(req.url ?? "/", "http://local"), pathname = url.pathname;
 		const [, given, ...path] = pathname.split("/");
 		const fail = (code: number) => res.writeHead(code, { ...HEADERS, "content-type": "text/plain" }).end(code === 403 ? "forbidden" : "not found");
-		if (!allowed(req, given)) return void fail(403);
-		// The page loads its assets and the stream relative to its own URL, so that URL must end with a slash.
-		if (path.length === 0) return void res.writeHead(308, { ...HEADERS, location: `${pathname}/` }).end();
-		if (path.join("/") === "events") return events(req, res, url.searchParams.get("watch"));
+		const answer = ({ status, body }: Reply) => res.writeHead(status, { ...HEADERS, "content-type": TYPES[".json"] }).end(JSON.stringify(body));
+		const who = access.check(req, (server.address() as AddressInfo).port, given, path);
+		if ("status" in who) return void (who.status === 403 ? fail(403) : res.writeHead(401, { ...HEADERS, "content-type": "text/plain" }).end("This device is not paired: scan a new QR code from /boss gui remote."));
+		// A pairing code was just exchanged: the cookie is set, and the page reloads itself, so the cookie also rides on a same-site navigation.
+		if ("cookie" in who) return void res.writeHead(200, { ...HEADERS, "content-type": TYPES[".html"], "set-cookie": cookieFor(token, who.cookie) }).end(`<!doctype html><meta http-equiv="refresh" content="0;url=/${token}/"><p>Paired. Opening the straw net…</p>`);
 		if (path[0] === "api") {
 			let parts: string[];
 			try {
@@ -99,8 +107,13 @@ export async function startGui({ read, net, dir = BUNDLE, port = 0, token = rand
 			} catch {
 				return void fail(404);
 			}
-			return void api(hub, parts, url.searchParams).then(({ status, body }) => res.writeHead(status, { ...HEADERS, "content-type": TYPES[".json"] }).end(JSON.stringify(body)), () => fail(404));
+			if (parts[0] === "sessions" || parts[0] === "remote") return void control(req, who.origin, parts).then(answer, () => answer({ status: 500, body: { error: "internal", reason: "The request could not be handled." } }));
+			if (req.method === "GET") return void api(hub, parts, url.searchParams).then(answer, () => fail(404));
 		}
+		if (req.method !== "GET") return void fail(403);
+		// The page loads its assets and the stream relative to its own URL, so that URL must end with a slash.
+		if (path.length === 0) return void res.writeHead(308, { ...HEADERS, location: `${pathname}/` }).end();
+		if (path.join("/") === "events") return events(req, res, url.searchParams.get("watch"), who.remote);
 		if (path[0] === "w") return void res.writeHead(200, { ...HEADERS, "content-type": TYPES[".html"] }).end(page);
 		let file: string;
 		try {
@@ -121,7 +134,7 @@ export async function startGui({ read, net, dir = BUNDLE, port = 0, token = rand
 	}
 	const bound = (server.address() as AddressInfo).port;
 	return {
-		url: `http://127.0.0.1:${bound}/${token}/`, port: bound, token,
+		url: `http://127.0.0.1:${bound}/${token}/`, port: bound, token, csrf, access,
 		stop: () => new Promise<void>((done) => {
 			clearInterval(poll);
 			clearInterval(beat);
@@ -135,7 +148,7 @@ export async function startGui({ read, net, dir = BUNDLE, port = 0, token = rand
 // One server per machine. gui.json in the state directory records the running server (pid, port, token, owner session), and
 // gui.lock makes the check-and-start atomic, so a second /boss gui, from this session or another, opens the running server
 // instead of starting one. A dead server's port and token are reused, so a page left open reconnects to its successor.
-export interface GuiRecord { pid: number; port: number; token: string; owner: string }
+export interface GuiRecord { pid: number; port: number; token: string; csrf?: string; owner: string }
 export interface Shared { url: string; owner: string; mine?: Gui }
 const urlOf = (r: GuiRecord) => `http://127.0.0.1:${r.port}/${r.token}/`;
 
@@ -158,7 +171,7 @@ export const answers = (r: GuiRecord) =>
 		req.end();
 	});
 
-export async function sharedGui(dir: string, owner: string, start: (prefer: { port?: number; token?: string }) => Promise<Gui>, sleep: (ms: number) => Promise<void>): Promise<Shared> {
+export async function sharedGui(dir: string, owner: string, start: (prefer: { port?: number; token?: string; csrf?: string }) => Promise<Gui>, sleep: (ms: number) => Promise<void>): Promise<Shared> {
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	const lock = join(dir, "gui.lock");
 	for (let tries = 0; ; tries++) {
@@ -177,8 +190,8 @@ export async function sharedGui(dir: string, owner: string, start: (prefer: { po
 	try {
 		const record = readRecord(dir);
 		if (record && (await answers(record))) return { url: urlOf(record), owner: record.owner };
-		const gui = await start(record ? { port: record.port, token: record.token } : {});
-		writeFileSync(join(dir, "gui.json"), JSON.stringify({ pid: process.pid, port: gui.port, token: gui.token, owner }), { mode: 0o600 });
+		const gui = await start(record ? { port: record.port, token: record.token, csrf: record.csrf } : {});
+		writeFileSync(join(dir, "gui.json"), JSON.stringify({ pid: process.pid, port: gui.port, token: gui.token, csrf: gui.csrf, owner }), { mode: 0o600 });
 		return { url: gui.url, owner, mine: gui };
 	} finally {
 		rmSync(lock, { force: true });

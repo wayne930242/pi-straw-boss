@@ -3,6 +3,7 @@ import type { Item } from "../src/items.ts";
 import { h } from "./dom.ts";
 import { createFollow, reach } from "./follow.ts";
 import { mount, parse } from "./markdown.ts";
+import type { Post } from "./composer.ts";
 import type { Tile } from "./layer.ts";
 import { html, ICON } from "./render.ts";
 
@@ -70,12 +71,12 @@ export function createChat(cap = CAP) {
 }
 
 export interface HistoryEvent { key: string; state?: string; successor?: string; base?: string; name?: string; role?: string; reset?: boolean; items?: Item[]; before?: string; header?: { id?: string; cwd?: string }; unreadable?: number }
-/** `doc` reads a document a show_doc call named; only the dev fixture has one in this phase. */
-export interface Data { older(before: string): Promise<Page>; latest(): Promise<Page>; entry(id: string): Promise<Item | undefined>; doc?(path: string): Promise<string | undefined> }
-export interface Who { key: string; name: string; role: string; mark: Mark; note?: string }
+/** `doc` reads a document a show_doc call named; only the dev fixture has one in this phase. `post` stands in for the server's input API (composer.ts) in the dev fixture. */
+export interface Data { older(before: string): Promise<Page>; latest(): Promise<Page>; entry(id: string): Promise<Item | undefined>; doc?(path: string): Promise<string | undefined>; post?: Post }
+export interface Who { key: string; name: string; role: string; mark: Mark; note?: string; control?: boolean }
 export interface ChatDeps { who(): Who; link(name: string): HTMLAnchorElement | undefined; openTile(tile: Tile, focus?: boolean): void }
-/** `reveal` opens the log at an entry (scrolled into view and lit), or with none at the newest entry. */
-export interface Chat { apply(event: HistoryEvent): void; setLive(text: string, mark: Mark): void; reveal(at?: string): void }
+/** `reveal` opens the log at an entry (scrolled into view and lit), or with none at the newest entry. `log` is the scrolling log, a focus target. */
+export interface Chat { apply(event: HistoryEvent): void; setLive(text: string, mark: Mark): void; reveal(at?: string): void; log: HTMLElement }
 
 const clock = (at?: string) => (at ? new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }) : "");
 const size = (n: number) => (n >= 1024 ? `${(n / 1024).toFixed(n >= 10240 ? 0 : 1)} KB` : `${n} B`);
@@ -100,7 +101,7 @@ function plain(text: string) {
 export function mountChat(root: HTMLElement, data: Data, { who, link, openTile }: ChatDeps): Chat {
 	const model = createChat(), els = new Map<string, HTMLElement>();
 	const list = h("div", { class: "chat-list" }), top = h("div", { class: "chat-top" }), live = h("div", { class: "chat-live" }), pill = h("button", { class: "chat-pill", type: "button", hidden: "" }), empty = h("p", { class: "chat-empty" }, "No transmissions yet.");
-	const scroller = h("div", { class: "chat-scroll" }, top, list, live);
+	const scroller = h("div", { class: "chat-scroll", tabindex: "-1", "aria-label": "Comms log" }, top, list, live);
 	root.replaceChildren(scroller, pill);
 	const follow = createFollow();
 	let loading = false, loaded = false, target: string | undefined, held: HTMLElement | undefined, release = 0;
@@ -221,6 +222,7 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, openTile }
 	keep.observe(scroller);
 
 	return {
+		log: scroller,
 		apply(e) {
 			if (e.reset) {
 				paint(model.reset({ items: e.items ?? [], before: e.before }));

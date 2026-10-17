@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { get } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { readRecord } from "../src/gui.ts";
 import type { Net } from "../src/net.ts";
-import { type Agent, settle, until, World } from "./fakes.ts";
+import { type Agent, decode, fromLines, settle, until, World } from "./fakes.ts";
 
 let world = new World();
 const scratch = mkdtempSync(join(tmpdir(), "psb-bossgui-test-"));
@@ -165,4 +165,88 @@ test("when the session holding the server ends, the next /boss gui elsewhere sta
 	await b.command("gui");
 	assert.equal(urlOf(b), url, "an open page reconnects to the successor");
 	assert.equal(await status(url), 200);
+});
+
+/** A fake tailscale for /boss gui remote: this machine is box on the tailnet, and serve keeps one background config. */
+function fakeTailscale() {
+	let config: Record<string, unknown> = {};
+	const run = async (args: string[]) => {
+		if (args[0] === "status") return JSON.stringify({ BackendState: "Running", Self: { DNSName: "box.tail1.ts.net.", UserID: 7 }, User: { "7": { LoginName: "me@example.com" } } });
+		if (args.join(" ") === "serve status --json") return JSON.stringify(config);
+		if (args[1] === "--bg") config = { TCP: { "8443": { HTTPS: true } }, Web: { "box.tail1.ts.net:8443": { Handlers: { "/": { Proxy: args[3] } } } } };
+		if (args.join(" ") === "serve --https=8443 off") config = {};
+		return "";
+	};
+	return { run, config: () => config };
+}
+
+test("/boss gui remote serves this session's GUI on the tailnet with a pairing QR in an overlay; stop and the session's end take the entry down", async () => {
+	const ts = fakeTailscale(), copied: string[] = [], shown: string[] = [];
+	const a = world.agent({ id: "viewer-a", pane: "wA:p1", tab: "wA:t1", deps: { ...deps, tailscale: ts.run, copy: async (text) => void copied.push(text), openUrl: async (url) => void shown.push(url) } });
+	const b = world.agent({ id: "viewer-b", pane: "wB:p1", tab: "wB:t1", deps: { ...deps, tailscale: ts.run } });
+	await Promise.all([a.start(), b.start()]);
+	const before = opened.length, blocked: boolean[] = [];
+	// What the Herdr pi integration would hear (it counts herdr:blocked events), through the fake's private event bus.
+	(a as unknown as { bus: Map<string, ((data: unknown) => void)[]> }).bus.set("herdr:blocked", [(data) => blocked.push((data as { active: boolean }).active)]);
+	const command = a.command("gui remote");
+	await until(() => a.overlays.length === 1, "the QR overlay");
+	const overlay = a.overlays[0]!, screen = overlay.render(120);
+	assert.ok(screen.some((line) => line.includes("█")), "the QR shows in an overlay");
+	assert.deepEqual(screen.slice(-3), ["c  copy a new one-time link", "o  open one in this computer's browser", "Esc or q  close"], "with its keys under it");
+	assert.deepEqual(blocked, [true], "the session reads as waiting while the overlay takes its keys");
+	overlay.handleInput!("c");
+	await until(() => copied.length === 1, "the copy");
+	overlay.handleInput!("\x1b[111u"); // o, as the kitty keyboard protocol sends it
+	await until(() => shown.length === 1, "the open");
+	await until(() => overlay.render(120).at(-1)!.startsWith("Opened a new one-time link"), "the overlay saying so");
+	const record = readRecord(world.stateDir)!, pair = new RegExp(`^https://box\\.tail1\\.ts\\.net:8443/${record.token}/pair/([\\w-]{22})$`);
+	const shownQr = decode(fromLines(screen.slice(0, screen.indexOf("")))), codes = [shownQr?.data ?? "", ...copied, ...shown].map((url) => pair.exec(url)?.[1]);
+	assert.ok(codes.every(Boolean) && new Set(codes).size === 3, "the QR, c, and o each carry their own one-time code, so neither key spends the QR's");
+	assert.match(overlay.render(24).join(" "), /^This pane is 24 columns wide; the QR code needs \d+\. Widen it, or use Phone in the GUI\. {2}c {2}copy/, "a narrow pane says how wide the QR needs it, wrapped");
+	assert.ok(overlay.render(24).every((line) => [...line].length <= 24));
+	overlay.handleInput!("q");
+	await command;
+	assert.deepEqual(blocked, [true, false]);
+	assert.equal(opened.length, before, "no browser opens for remote access by itself");
+	assert.deepEqual(ts.config(), { TCP: { "8443": { HTTPS: true } }, Web: { "box.tail1.ts.net:8443": { Handlers: { "/": { Proxy: `http://127.0.0.1:${record.port}` } } } } });
+	assert.match(a.notices.at(-1)!.text, /Remote access is on for me@example.com, tailnet only: https:\/\/box\.tail1\.ts\.net:8443\//);
+	assert.ok(!a.notices.some((n) => n.text.includes("/pair/")), "the one-time code stays out of the notices");
+	await b.command("gui remote");
+	assert.match(b.notices.at(-1)!.text, /runs in session viewer-a .*; run \/boss gui remote there/);
+	await a.command("gui remote off");
+	assert.deepEqual(ts.config(), {});
+	const again = a.command("gui remote");
+	await until(() => a.overlays.length === 2, "the second overlay");
+	a.overlays[1]!.handleInput!("\x1b");
+	await again;
+	await a.command("gui stop");
+	assert.deepEqual(ts.config(), {}, "stopping the server removes the entry");
+	assert.deepEqual(a.notices.slice(-2).map((n) => n.text), ["Remote access is off; the Tailscale serve entry on 8443 is removed", "Straw net GUI stopped"]);
+	const third = a.command("gui remote");
+	await until(() => a.overlays.length === 3, "the third overlay");
+	a.overlays[2]!.handleInput!("\r");
+	await third;
+	await a.stop();
+	assert.deepEqual(ts.config(), {}, "so does the end of the session that runs it");
+});
+
+test("a serve entry a crashed server left is removed when the next server starts, and a moved one is left alone", async () => {
+	const ts = fakeTailscale(), a = world.agent({ id: "viewer-c", pane: "wA:p1", tab: "wA:t1", deps: { ...deps, tailscale: ts.run } });
+	await a.start();
+	await ts.run(["serve", "--bg", "--https=8443", "http://127.0.0.1:1"]);
+	writeFileSync(join(world.stateDir, "remote.json"), JSON.stringify({ target: "http://127.0.0.1:1" }));
+	await a.command("gui");
+	assert.deepEqual(ts.config(), {}, "nothing behind the old port is left on the tailnet");
+	assert.equal(existsSync(join(world.stateDir, "remote.json")), false);
+	await a.command("gui stop");
+	await ts.run(["serve", "--bg", "--https=8443", "http://127.0.0.1:2"]);
+	writeFileSync(join(world.stateDir, "remote.json"), JSON.stringify({ target: "http://127.0.0.1:1" }));
+	await a.command("gui");
+	assert.equal(JSON.stringify(ts.config()).includes("127.0.0.1:2"), true, "an entry that points elsewhere now is not ours to remove");
+	await a.command("gui stop");
+	// Recorded by a server whose process still runs (its session was too busy to answer): live, so it stays.
+	writeFileSync(join(world.stateDir, "remote.json"), JSON.stringify({ target: "http://127.0.0.1:2", pid: process.ppid }));
+	await a.command("gui");
+	assert.equal(JSON.stringify(ts.config()).includes("127.0.0.1:2"), true, "another live server's entry stays");
+	await a.stop();
 });

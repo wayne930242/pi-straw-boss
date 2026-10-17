@@ -24,7 +24,7 @@ after(async () => {
 });
 
 const net = (label: string): Net => ({ bases: [{ id: "w", label, mark: "idle", head: true, tower: null, tabs: [], outposts: [], outside: [] }] });
-async function serve(read: () => Promise<Net>, options: { pollMs?: number; pingMs?: number; port?: number; token?: string; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] } } = {}) {
+async function serve(read: () => Promise<Net>, options: { pollMs?: number; pingMs?: number; port?: number; token?: string; csrf?: string; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] } } = {}) {
 	const gui = await startGui({ read, dir, pollMs: 20, pingMs: 50, ...options });
 	running.push(gui);
 	return gui;
@@ -145,6 +145,9 @@ test("stop ends open streams and frees the port, and a restart with the same por
 	await assert.rejects(raw(gui, `/${gui.token}/`), /ECONNREFUSED/);
 	const again = await serve(async () => net("b"), { port: gui.port, token: gui.token });
 	assert.equal(again.url, gui.url);
+	assert.notEqual(again.csrf, gui.csrf, "without a preferred one, a new CSRF secret");
+	const kept = await serve(async () => net("c"), { token: again.token, csrf: again.csrf });
+	assert.equal(kept.csrf, again.csrf, "a restart can keep the page's CSRF secret, as sharedGui does from gui.json");
 	assert.equal((await raw(again, `/${again.token}/`)).status, 200);
 });
 
@@ -162,7 +165,9 @@ test("a missing bundle is refused with the command that builds it", async () => 
 test("a route that is not a file answers the page with <base href>, so assets and the stream resolve from any depth; the policy forbids framing and other bases", async () => {
 	const gui = await serve(async () => net("a"));
 	const page = await raw(gui, `/${gui.token}/`);
-	assert.ok(page.body.includes(`<head>\n<base href="/${gui.token}/">`), page.body);
+	assert.ok(page.body.includes(`<head>\n<base href="/${gui.token}/">\n<meta name="sb-csrf" content="${gui.csrf}">`), page.body);
+	assert.match(gui.csrf, /^[0-9a-f]{32}$/);
+	assert.notEqual(gui.csrf, gui.token, "the CSRF secret is a second secret");
 	for (const path of [`/${gui.token}/w/wA`, `/${gui.token}/w/wA/s/abc`, `/${gui.token}/w/a%20b/s/x%2Fy`, `/${gui.token}/w/wA/s/abc/`]) {
 		const deep = await raw(gui, path);
 		assert.deepEqual([deep.status, deep.body], [200, page.body], path);

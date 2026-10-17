@@ -1,0 +1,169 @@
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { request } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, test } from "node:test";
+import { ENDING as SERVER_ENDING, KEYS, MAX_TEXT } from "../src/control.ts";
+import { startGui, type Gui } from "../src/gui.ts";
+import { HerdrError } from "../src/herdr.ts";
+import type { Found } from "../src/net.ts";
+import { blocked, ENDING as PAGE_ENDING, MAX_TEXT as PAGE_MAX, settle } from "../gui/composer.ts";
+
+const scratch = mkdtempSync(join(tmpdir(), "psb-control-test-"));
+mkdirSync(join(scratch, "bundle"));
+writeFileSync(join(scratch, "bundle", "index.html"), "<!doctype html><html><head><title>Straw Net</title></head><body></body></html>");
+const running: Gui[] = [];
+after(async () => {
+	await Promise.all(running.map((g) => g.stop()));
+	rmSync(scratch, { recursive: true, force: true });
+});
+
+const FILE = "/s/2026_sess-1.jsonl";
+interface Pane { pane_id: string; agent?: string; agent_status?: string; agent_session?: { value: string } }
+/** A server with one live session (sess-1 in pane wA:p1) and a fake Herdr socket that records every call. */
+async function setup({ pane = {}, found = {}, fail }: { pane?: Partial<Pane>; found?: Partial<Found>; fail?: (method: string) => Error | undefined } = {}) {
+	const calls: [string, Record<string, unknown>][] = [];
+	let hold: Promise<void> | undefined;
+	const state: Pane = { pane_id: "wA:p1", agent: "pi", agent_status: "idle", agent_session: { value: FILE }, ...pane };
+	const call = async (method: string, params: Record<string, unknown>) => {
+		calls.push([method, params]);
+		const error = fail?.(method);
+		if (error) throw error;
+		if (method === "pane.get") return { pane: state };
+		await hold;
+		return {};
+	};
+	const lookup = (key: string): Found | undefined => (key === "sess-1" ? { key, base: "wA", name: "billing", role: "main", file: FILE, pane: "wA:p1", live: true, ...found } : undefined);
+	const gui = await startGui({ read: async () => ({ bases: [] }), net: { lookup, workspace: () => [] }, call, dir: join(scratch, "bundle"), pollMs: 50 });
+	running.push(gui);
+	return { gui, calls, state, typed: () => calls.filter(([m]) => m !== "pane.get"), holdWith: (p: Promise<void>) => (hold = p) };
+}
+/** One request with the page's own headers unless told otherwise. */
+function send(gui: Gui, path: string, body: unknown, headers: Record<string, string | undefined> = {}, method = "POST") {
+	const data = typeof body === "string" ? body : JSON.stringify(body);
+	const all: Record<string, string> = Object.fromEntries(Object.entries({ host: `127.0.0.1:${gui.port}`, origin: `http://127.0.0.1:${gui.port}`, "sec-fetch-site": "same-origin", "content-type": "application/json", "x-sb-csrf": gui.csrf, "content-length": String(Buffer.byteLength(data)), ...headers }).filter((e): e is [string, string] => e[1] !== undefined));
+	return new Promise<{ status: number; body: { accepted?: boolean; error?: string; reason?: string; url?: string; rows?: string[] } }>((resolve, reject) => {
+		const req = request({ host: "127.0.0.1", port: gui.port, path: `/${gui.token}/api/${path}`, method, headers: all, agent: false }, (res) => {
+			let text = "";
+			// A refusal before the API (token, Host) is plain text.
+			res.on("data", (c) => (text += c)).on("end", () => resolve({ status: res.statusCode!, body: /^application\/json/.test(String(res.headers["content-type"])) ? JSON.parse(text) : {} }));
+		});
+		req.on("error", reject).end(method === "GET" ? undefined : data);
+	});
+}
+const input = (gui: Gui, text: string, as = "send", extra: Record<string, unknown> = {}) => send(gui, "sessions/sess-1/input", { text, as, ...extra });
+
+test("send types the text with agent.prompt on the session's pane; a follow-up while it works uses Alt+Enter, while idle a prompt", async () => {
+	const { gui, typed, state } = await setup();
+	assert.deepEqual((await input(gui, "hello\r\nthere")).body, { accepted: true });
+	assert.deepEqual((await input(gui, "later", "followUp")).body, { accepted: true }, "idle: a follow-up is just a prompt");
+	state.agent_status = "working";
+	assert.equal((await input(gui, "steer me")).status, 200);
+	assert.equal((await input(gui, "after the task", "followUp")).status, 200);
+	assert.deepEqual(typed().map(([m, p]) => [m, p.target ?? p.pane_id, p.text, p.keys]), [
+		["agent.prompt", "wA:p1", "hello\nthere", undefined],
+		["agent.prompt", "wA:p1", "later", undefined],
+		["agent.prompt", "wA:p1", "steer me", undefined],
+		["pane.send_input", "wA:p1", "after the task", ["alt+enter"]],
+	], "CRLF becomes LF, and the text goes out exactly once each");
+});
+
+test("a session waiting on a dialog, a pane that left pi, and a pane reused by another session get nothing typed", async () => {
+	for (const [pane, error] of [[{ agent_status: "blocked" }, "blocked"], [{ agent: "shell" }, "not_pi"], [{ agent_session: { value: "/s/2026_other.jsonl" } }, "moved"]] as const) {
+		const { gui, typed } = await setup({ pane });
+		const r = await input(gui, "hi");
+		assert.deepEqual([r.status, r.body.error], [409, error]);
+		assert.deepEqual(typed(), [], `${error}: nothing typed`);
+	}
+	const gone = await setup({ found: { live: false } });
+	assert.deepEqual([(await input(gone.gui, "hi")).status, gone.calls.length], [409, 0], "a key that left the net does not reach Herdr");
+	assert.equal((await send(gone.gui, "sessions/nobody/input", { text: "hi", as: "send" })).status, 404);
+});
+
+test("keys come only from the allow list: never Ctrl+C or Ctrl+D, and only Escape while it waits on a dialog", async () => {
+	const { gui, typed, state } = await setup();
+	for (const keys of [["ctrl+c"], ["ctrl+d"], ["esc", "ctrl+c"], [], ["x"], Array(17).fill("esc"), "esc"]) assert.equal((await send(gui, "sessions/sess-1/keys", { keys })).status, 400, JSON.stringify(keys));
+	assert.ok(!KEYS.has("ctrl+c") && !KEYS.has("ctrl+d"));
+	assert.equal((await send(gui, "sessions/sess-1/keys", { keys: ["down", "enter"] })).status, 200);
+	state.agent_status = "blocked";
+	assert.deepEqual([(await send(gui, "sessions/sess-1/keys", { keys: ["1"] })).status, (await send(gui, "sessions/sess-1/keys", { keys: ["esc"] })).status], [409, 200], "a dialog may be a secret prompt: only Escape");
+	assert.equal((await send(gui, "sessions/sess-1/focus", {})).status, 200);
+	assert.deepEqual(typed().map(([m, p]) => [m, p.keys ?? p.target]), [["pane.send_input", ["down", "enter"]], ["pane.send_input", ["esc"]], ["agent.focus", "wA:p1"]]);
+});
+
+test("commands that end or replace the session need confirmed, and the page and the server agree on which they are", async () => {
+	const { gui, typed } = await setup();
+	for (const text of ["/quit", " /exit", "/new", "/resume abc", "/fork", "/clone", "/import ~/old.jsonl", "/reload"]) {
+		assert.equal((await input(gui, text)).body.error, "confirm", text);
+		assert.ok(PAGE_ENDING.test(text));
+	}
+	assert.deepEqual(typed(), []);
+	assert.equal((await input(gui, "/quit", "send", { confirmed: true })).status, 200);
+	for (const text of ["/quitter", "/model", "please /quit", "! ls"]) assert.equal((await input(gui, text)).status, 200, text);
+	assert.equal(PAGE_ENDING.source, SERVER_ENDING.source);
+	assert.equal(PAGE_MAX, MAX_TEXT);
+});
+
+test("text with control characters, empty text, text over 16 KB, and a bad body are refused before Herdr", async () => {
+	const { gui, calls } = await setup();
+	for (const text of ["a\x1b[201~\x03", "\x04", "a\u009bb", "   "]) assert.equal((await input(gui, text)).status, 400, JSON.stringify(text));
+	assert.equal((await input(gui, "é".repeat(MAX_TEXT / 2 + 1))).status, 413, "16 KB counts bytes");
+	assert.equal((await input(gui, "tab\tand\nline")).status, 200);
+	assert.equal((await input(gui, "x", "push")).status, 400);
+	assert.equal((await send(gui, "sessions/sess-1/input", "not json")).status, 400);
+	assert.equal((await send(gui, "sessions/sess-1/input", { text: "x".repeat(70_000), as: "send" })).status, 413, "the body is capped at 64 KB");
+	assert.equal(calls.length, 2, "only the good input reached Herdr (pane.get, agent.prompt)");
+});
+
+test("writes need the page's origin, same-origin fetch metadata, JSON, the CSRF secret, and POST", async () => {
+	const { gui, calls } = await setup();
+	const body = { text: "hi", as: "send" };
+	assert.equal((await send(gui, "sessions/sess-1/input", body, { origin: undefined })).status, 403, "no Origin");
+	assert.equal((await send(gui, "sessions/sess-1/input", body, { origin: "http://evil.example" })).status, 403);
+	assert.equal((await send(gui, "sessions/sess-1/input", body, { origin: `http://localhost:${gui.port}` })).status, 403);
+	assert.equal((await send(gui, "sessions/sess-1/input", body, { "sec-fetch-site": "cross-site" })).status, 403);
+	assert.equal((await send(gui, "sessions/sess-1/input", body, { "x-sb-csrf": undefined })).status, 403);
+	assert.equal((await send(gui, "sessions/sess-1/input", body, { "x-sb-csrf": "0".repeat(32) })).status, 403);
+	assert.equal((await send(gui, "sessions/sess-1/input", body, { "content-type": "text/plain" })).status, 415);
+	assert.equal((await send(gui, "sessions/sess-1/input", body, { host: "evil.example" })).status, 403, "a rebound Host");
+	assert.equal((await send(gui, "sessions/sess-1/input", body, {}, "GET")).status, 405);
+	assert.equal(calls.length, 0);
+	assert.equal((await send(gui, "sessions/sess-1/input", body, { "sec-fetch-site": undefined, "content-type": "application/json; charset=utf-8" })).status, 200, "a client without fetch metadata, and a charset, are fine");
+});
+
+test("one input per session at a time; a Herdr timeout is reported, not retried, and Herdr's own refusals keep their code", async () => {
+	let release!: () => void;
+	const busy = await setup();
+	busy.holdWith(new Promise<void>((resolve) => (release = resolve)));
+	const first = input(busy.gui, "one");
+	await new Promise((resolve) => setTimeout(resolve, 30));
+	assert.equal((await input(busy.gui, "two")).status, 429);
+	release();
+	assert.equal((await first).status, 200);
+	const slow = await setup({ fail: (m) => (m === "agent.prompt" ? new HerdrError("timeout", "no answer") : undefined) });
+	const r = await input(slow.gui, "hi");
+	assert.deepEqual([r.status, r.body.error], [504, "timeout"]);
+	assert.match(r.body.reason!, /Check the terminal/);
+	assert.equal(slow.typed().length, 1, "sent once");
+	const refused = await setup({ fail: (m) => (m === "agent.prompt" ? new HerdrError("agent_blocked", "blocked") : undefined) });
+	assert.deepEqual([(await input(refused.gui, "hi")).status, (await input(refused.gui, "hi")).body.error], [409, "agent_blocked"]);
+});
+
+test("a pairing code is refused while remote access is off", async () => {
+	const { gui } = await setup();
+	const r = await send(gui, "remote/pair", {});
+	assert.deepEqual([r.status, r.body.error], [409, "remote_off"]);
+});
+
+test("the composer clears only what was confirmed, and says why it cannot send", () => {
+	assert.equal(settle("hello", "hello"), "");
+	assert.equal(settle("hello\nmore", "hello"), "more", "text typed after the send stays");
+	assert.equal(settle("hellO", "hello"), "hellO", "an edit inside the sent text keeps everything");
+	const unit = { name: "u", control: true, live: true, mark: "idle" as const, online: true };
+	assert.equal(blocked(unit), undefined);
+	assert.match(blocked({ ...unit, online: false })!, /stream is down/);
+	assert.match(blocked({ ...unit, live: false })!, /no longer live/);
+	assert.match(blocked({ ...unit, control: false })!, /No live pi pane/);
+	assert.match(blocked({ ...unit, mark: "waiting" })!, /dialog/);
+});

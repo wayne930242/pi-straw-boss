@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { changes } from "../gui/log.ts";
 import type { Row } from "../src/dashboard.ts";
@@ -152,5 +155,27 @@ test("the registry keeps a key that left the net for ten minutes, names the pane
 		assert.equal(source.lookup("s1"), undefined, "after ten minutes the key is no longer in the allow list");
 	} finally {
 		Date.now = realNow;
+	}
+});
+
+test("the sessions-directory check resolves symlinks: a linked sessions directory works, a link that leads out does not", () => {
+	const root = realpathSync(mkdtempSync(join(tmpdir(), "psb-net-links-")));
+	try {
+		const real = join(root, "real-sessions"), outside = join(root, "elsewhere");
+		mkdirSync(join(real, "--work--"), { recursive: true });
+		mkdirSync(outside);
+		symlinkSync(real, join(root, "sessions"));
+		writeFileSync(join(real, "--work--", "2026_m1.jsonl"), "");
+		writeFileSync(join(outside, "2026_tower-a.jsonl"), "");
+		symlinkSync(join(outside, "2026_tower-a.jsonl"), join(real, "--work--", "2026_tower-a.jsonl"));
+		const at = (id: string, value: string) => (p: Pane) => (p.pane_id === id ? { ...p, agent: "pi", agent_session: { value } } : p);
+		const refs = new Map<string, Ref>();
+		const edits = [at("wA:p1", join(root, "sessions", "--work--", "2026_m1.jsonl")), at("wA:p5", join(real, "--work--", "2026_tower-a.jsonl")), at("wB:p1", join(root, "sessions", "--work--", "2026_tower-b.jsonl"))];
+		buildNet({ sessions, panes: panes.map((p) => edits.reduce((q, e) => e(q), p)), workspaces, sessionDir: join(root, "sessions"), children: () => [] }, refs);
+		assert.equal(refs.get("m1")?.file, join(real, "--work--", "2026_m1.jsonl"), "reached through the linked directory, kept as its real path");
+		assert.equal(refs.get("tower-a")?.file, undefined, "a link inside the directory that points outside it is not readable");
+		assert.equal(refs.get("tower-b")?.file, join(real, "--work--", "2026_tower-b.jsonl"), "a file not written yet resolves through its directory");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
 	}
 });

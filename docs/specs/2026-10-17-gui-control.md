@@ -300,56 +300,127 @@ The layer's DOM is a chunk of its own, loaded on the first alert, dialog, or til
 
 ## Phase 2: typing into a session (R5)
 
+Built in 0.5.0. Ideas taken from herdr-web-ui (v0.4.0, MIT; no code copied) and the ones left out are listed at the end of this section.
+
 ### Composer
 
-At the bottom of a session view whose unit has `control: true`:
+The composer replaces the 0.4.0 "receive only" strip at the bottom of a session view whose unit has `control: true`:
 
 | Control | Sends | When |
 |---|---|---|
-| Send (Enter in the box; Shift+Enter adds a line) | the text, then Enter | always; pi takes it as a new prompt when idle, a steering message while working (verified) |
-| Queue follow-up (Alt+Enter in the box) | the text, then Alt+Enter | only while the session works; otherwise the button is hidden |
-| Stop | Escape | while working, after a confirm ("queued messages go back to the terminal editor") |
+| Send (Enter in the box; Shift+Enter adds a line) | the text, then Enter | always; pi takes it as a new prompt when idle, a steering message while working (verified live) |
+| Follow-up (Alt+Enter in the box) | the text, then Alt+Enter | only while the session works; otherwise the button is hidden |
+| Stop | Escape | while working, after an inline confirm ("queued messages go back to the terminal editor") |
+| Focus terminal | `agent.focus` | always; brings the pane forward for what must be done there |
 
 - Text is capped at 16 KB (checked in the page and the server) and sent as typed:
   a leading `/` runs a pi command and a leading `!` a shell command, exactly as in
   the terminal. Commands that end or replace the session (`/quit`, `/exit`,
-  `/new`, `/resume`, `/fork`, `/reload`) ask for confirmation first (D5).
+  `/new`, `/resume`, `/fork`, `/clone`, `/import`, `/reload`) ask for an inline confirm first (D5),
+  and the server refuses them without `confirmed: true`. A confirm holds only for the exact text confirmed.
+- Control characters other than tab and newline are refused (page and server): inside the bracketed paste
+  `ESC[201~` would end the paste, after which anything is raw input, Ctrl+C included. CRLF and lone CR become LF.
 - After a send the box clears only when the server confirms Herdr accepted the
-  input; the message then shows up in the history when pi writes it.
-- Disabled, with the reason, when: the pane is gone or no longer runs pi; the
-  session is blocked on a dialog (Phase 3 shows it); the pane is a subagent and D7
-  says read-only; the stream is down.
+  input, and only the part that was sent: text typed meanwhile stays, and a sent part edited meanwhile stays whole.
+  The message then shows up in the history when pi writes it. A send Herdr did not confirm is never retried.
+- The draft is kept per session in `sessionStorage`, so a reload or a route change does not lose it. A send outlives
+  the composer that started it: the send itself settles the stored draft once when Herdr confirms it, a composer
+  mounted for that session meanwhile waits for it (Send stays disabled) and settles its own box, and a "Not confirmed"
+  note stands from the moment a send leaves until Herdr answers it (it stays after a timeout or network error), so the
+  next composer for that session warns before the text is sent again, also after a reload mid-send. Focus terminal and
+  Stop are off while a send is pending (one request per session at a time).
+- An IME's composing Enter belongs to the IME. On a touch screen (`pointer: coarse`) Enter adds a line and the Send button sends.
+- Disabled, with the reason, when: the stream is down; the session is no longer live; no live pi pane backs the unit;
+  the session waits on a dialog (Herdr's `blocked`). Subagents launched by pi-herdr-agents are typed into directly (D7).
 - **Unsent terminal drafts** (D2): input lands after whatever is in the terminal
   editor and is submitted with it, exactly as typing would. The composer says so
   in its placeholder. Phase 4 can detect a draft exactly.
+- **Focus.** Entering a session view with nothing focused (for example after **Open comms** with an empty queue) puts focus in the
+  composer on a fine pointer, else on the comms log (`tabindex="-1"`), never on `body`.
 
 ### Server: `src/control.ts`
 
-`POST /<t>/api/sessions/<key>/input {text, as: "send" | "followUp"}`:
+`POST /<t>/api/sessions/<key>/input {text, as: "send" | "followUp", confirmed?}`:
 
-1. Guards (see [Security](#security)); resolve `key` in the registry; `herdr pane get
-   <paneId>` and require `agent === "pi"` and `agent_session.value === file` (a
-   reused pane id is refused).
-2. `blocked` → 409 `{reason: "waiting on a dialog"}`; no input is sent.
-3. `send`, or `followUp` while not `working`: socket `agent.prompt {target: paneId,
-   text}` (bracketed paste and Enter in one write; Herdr itself refuses a blocked
-   agent).
-4. `followUp` while `working`: socket `pane.send_input {pane_id, text, keys:
-   ["alt+enter"]}`.
-5. One request in flight per session; a second gets 429. The reply is
-   `{accepted: true}` or Herdr's error code.
+1. Guards (see [Security](#security)), then the body (JSON object, ≤ 64 KB) and text checks; resolve `key` in the registry
+   (paths and panes never come from the browser).
+2. Socket `pane.get` right then: require `agent === "pi"` and that `agent_session.value`, symlinks resolved, is the session's
+   file (a reused pane id is refused with 409 `moved`).
+3. `blocked` → 409 `blocked`; no input is sent.
+4. `send`, or `followUp` while not `working`: socket `agent.prompt {target, text}` (bracketed paste and Enter in one write;
+   Herdr itself refuses a blocked agent with `agent_blocked`).
+5. `followUp` while `working`: socket `pane.send_input {pane_id, text, keys: ["alt+enter"]}`.
+6. One request in flight per session; a second gets 429. The reply is `{accepted: true}`, or `{error, reason}` with
+   Herdr's code kept (`agent_blocked`, `agent_not_found`, `pane_not_found` → 409; `timeout` → 504, not retried: Herdr's guide
+   says a timeout does not prove nothing arrived).
 
-`POST /<t>/api/sessions/<key>/keys {keys}` sends only keys from an allow list:
+`POST /<t>/api/sessions/<key>/keys {keys}` sends at most 16 keys from an allow list:
 `esc`, `enter`, `up`, `down`, `left`, `right`, `tab`, `shift+tab`, `space`,
 `backspace`, `pageup`, `pagedown`, `home`, `end`, `alt+up`, `alt+o`, `ctrl+g`, and
 the digits `1`–`9`. Never `ctrl+c` (a second one exits pi) or `ctrl+d` (exits on
-an empty editor).
+an empty editor). While the session is blocked only `esc` is sent: the dialog may be a masked secret prompt, and
+until Phase 3 can tell which, nothing else reaches it from the browser.
+The confirm for session-ending commands covers typed text only: keys act on whatever the terminal holds, so `up`
+then `enter` can resubmit a `/reload` from prompt history, `enter` submits a `/new` left unsent in the editor, and
+two `esc` on an empty editor run pi's double-Escape action. The page sends only `esc` (Stop) in 0.5.0; Phase 3's key
+pad must confirm such sequences itself or read the editor first (Phase 4).
 
-`POST /<t>/api/sessions/<key>/focus` runs `agent.focus` on the pane: the terminal
-comes forward for things that must be done there.
+`POST /<t>/api/sessions/<key>/focus` runs `agent.focus` on the pane.
 
-`herdr.ts` gains `herdrCall(method, params)` that returns `result` (today's
-`herdrApi` drops it).
+`herdr.ts` has `herdrCall(method, params, timeout)`: one request on Herdr's socket that returns `result`, rejects with
+`HerdrError` carrying Herdr's error code, and reassembles UTF-8 split across frames (`herdrApi` keeps dropping the result).
+
+Typed text and request bodies are never logged.
+
+### From herdr-web-ui
+
+Taken: input only through Herdr's own socket methods (`agent.prompt` for a prompt with Enter in one write, `pane.send_input`
+for keys), never by writing to the PTY ourselves; Herdr's `blocked` status as the "busy with a dialog" signal and its error
+codes passed to the page unchanged; a timeout reported as "not confirmed, check the terminal" rather than retried; clearing the
+box only after the server confirmed delivery; an IME-safe Enter and a touch-screen Enter that adds a line.
+Left out: its terminal-scrape draft and busy detection (reading the visible screen is fragile across pi versions, and D2
+merges a draft anyway; Phase 4 can know exactly); raw `ctrl+c` interrupts (Stop sends Escape; Ctrl+C and Ctrl+D are never
+sendable); its broad key passthrough (an allow list instead); and its LAN binding with a shared password (remote access here is
+tailnet only with per-device pairing, below).
+
+### Remote access over Tailscale (R6)
+
+Added to 0.5.0 by the user (2026-10-17). Decisions:
+
+1. **Exposure**: tailnet only, through `tailscale serve` over HTTPS. Never `tailscale funnel`; when Funnel is on for this
+   host, remote access refuses to start and leaves that entry alone.
+2. **Command**: `/boss gui remote` runs (or reuses) the GUI server in this session, adds one `tailscale serve --bg
+   --https=8443 http://127.0.0.1:<port>` entry, and shows a QR code of a one-time pairing URL
+   (`https://<MagicDNS name>:8443/<t>/pair/<code>`) in a pi overlay (never in the conversation the model reads), and in the
+   GUI through the HUD's **Phone** button. `/boss gui remote off`, `/boss gui stop`, and the end of the server's session
+   remove only this entry: 8443 is checked with `tailscale serve status --json` before and after, an entry is ours only when
+   it is the one HTTPS `/` proxy to our recorded target (`remote.json` in the state directory, with the owning process id, so an
+   entry a crashed session left is recognised and cleaned up, also by the next server that starts; an entry whose
+   owner still runs is never taken over or removed from another process), and other serve entries are never reset or touched. It fails with a clear message
+   when tailscale is missing, not connected, the node is tagged (no user to check against), MagicDNS is off, or 8443 serves
+   something else. The local-only `/boss gui` is unchanged.
+3. **Auth**: a pairing code is 128 random bits, works once, within ten minutes (expired codes are dropped first, and past sixteen waiting the oldest), and is used up by
+   its first presentation that passes the identity checks. It is exchanged for a session cookie (`sb_remote`, 256 bits,
+   HttpOnly, Secure, SameSite=Strict, `Path=/<t>/`, seven days) and the page reloads itself into the map. Every remote request
+   must carry `Host` exactly `<MagicDNS name>:8443`, no `Tailscale-Funnel-Request`, `Tailscale-User-Login` equal to this
+   machine's Tailscale user (from `tailscale status --json`), and the cookie; otherwise 403 (identity) or 401 (not paired).
+   A local request is `Host 127.0.0.1:<port>` with none of the `X-Forwarded-*`, `Forwarded`, `Via`, or `Tailscale-*`
+   headers serve always adds; anything else is treated as remote. Origin for writes is `https://<MagicDNS name>:8443`
+   remotely and `http://127.0.0.1:<port>` locally, and the CSRF secret applies to both. Turning remote off voids every code
+   and cookie and ends remote streams at once, and so does turning it on again as another Tailscale identity.
+4. **Pairing panel keys** (user, 2026-10-17): while the QR shows in the pi overlay, **c** copies a link to the clipboard
+   and **o** opens one in this computer's default browser; **Esc** or **q** (or Enter) closes it. The key hints show under
+   the QR. **Each press mints a fresh one-time pairing link**, so a copied or opened link never spends the QR's own code,
+   and an already paired browser is not needed. The clipboard and the opener are injectable (`Deps.copy`, `Deps.openUrl`)
+   and tested. While the overlay is open it takes every key, so the session reports `herdr:blocked` and input from the GUI
+   or Herdr is refused instead of vanishing into the overlay. A pane narrower than the QR says how wide it needs to be.
+5. **Phone layout**: map, workspace and session routes, the HUD, the alert queue, dialogs, tiles (as tabs), and the composer
+   work at about 390 px with touch: no horizontal overflow, 44 px touch targets, safe-area insets, and the composer kept
+   above the on-screen keyboard through `visualViewport` (`--vvh`). The game look is kept.
+
+The QR encoder is `src/qr.ts` with no dependency (byte mode, error correction level M, the smallest of versions 1–40 that
+fits, the mask with the lowest penalty), adapted in part from Project Nayuki's QR Code generator library (MIT, notice in
+`NOTICE.md`); `tests/qr.test.ts` decodes what it draws with an independent decoder. The package keeps no runtime dependencies.
 
 ## Phase 3: extension support
 
@@ -491,12 +562,14 @@ Control means typing into the user's terminals, so every write is guarded.
 | Threat | Guard |
 |---|---|
 | Another local page reads or drives the GUI | The 128-bit token in every path (existing); `Host` must be `127.0.0.1:<port>` (existing, also stops DNS rebinding). |
-| Cross-site request forgery | POST only for writes (GET on `/api/*` mutating paths answers 405); `Origin` must be `http://127.0.0.1:<port>`; `Sec-Fetch-Site`, when present, must be `same-origin`; `Content-Type: application/json`; header `X-SB-CSRF` must equal a second random secret injected into `index.html`. The custom header forces a CORS preflight that the server never approves. |
+| Exposure beyond this machine | Only through `tailscale serve` on the tailnet, never Funnel; a remote request needs the exact MagicDNS `Host`, this machine's user in `Tailscale-User-Login`, no Funnel marker, and a session cookie from a one-time pairing code (see [Remote access](#remote-access-over-tailscale-r6)). |
+| Someone else's serve entry | Straw Boss adds 8443 only when it is free or its own, and removes only its own entry, checked against `tailscale serve status --json`. |
+| Cross-site request forgery | POST only for writes (GET on `/api/*` mutating paths answers 405); `Origin` must be `http://127.0.0.1:<port>` (remotely `https://<MagicDNS name>:8443`); `Sec-Fetch-Site`, when present, must be `same-origin`; `Content-Type: application/json`; header `X-SB-CSRF` must equal a second random secret injected into `index.html`. The custom header forces a CORS preflight that the server never approves. |
 | Clickjacking | `frame-ancestors 'none'` on the app; documents allow only `'self'`. |
 | Agent-written HTML attacking the app | Documents are sandboxed without scripts and without same-origin; only files named by `show_doc`, and images, CSS, and fonts beside them, are served. The only GET that writes is the document answer, gated by a per-document nonce. |
 | Arbitrary file reads | Paths come only from the registry and `show_doc` calls; `realpath` and directory containment checks as in today's static serving (`gui.ts:85-86`). |
 | A reused pane id | Input requires the pane's current `agent_session.value` to be the session's file. |
-| Exiting pi by accident | `ctrl+c` and `ctrl+d` are not sendable; session-ending slash commands need a confirm. |
+| Exiting pi by accident | `ctrl+c` and `ctrl+d` are not sendable, and control characters in text are refused (they could end the bracketed paste); session-ending slash commands typed as text need a confirm the server checks (keys are not covered; see the keys API). |
 | Secrets | `secret_drop` is terminal only (above). No request body or typed text is logged by the server. |
 | Body abuse | Request bodies ≤ 64 KB; text ≤ 16 KB; one in-flight input per session. |
 
@@ -511,24 +584,30 @@ Control means typing into the user's terminals, so every write is guarded.
 | Terminal mirror | 1 read per second, only while open and visible | 15 ms, 9 KB |
 | Workspace cards | one 64 KB tail read per unit per change | 19 ms for 15 files |
 | Page JS (map chunk) | ≤ 15 KB raw, ≤ 6 KB gzip | 8.7 / 3.7 KB today |
-| Page JS (chat chunk incl. markdown, mirror, panels) | ≤ 35 KB raw, ≤ 12 KB gzip | |
-| CSS | ≤ 22.1 KB raw, ≤ 6.1 KB gzip (was 22 / 6; raised in 0.4.0 for the anchor highlight, the receive-only strip, and the title link) | 10.5 / 3.2 KB before Phase 1 |
+| Page JS (lazy chunks: chat, views, layer, pairing) | ≤ 35 KB raw, ≤ 14 KB gzip (was 12; raised in 0.5.0 for the composer, about 2.2 KB, and the pairing tile with its POST helper, about 1.1 KB) | |
+| CSS | ≤ 24.6 KB raw, ≤ 6.7 KB gzip (was 22 / 6; 22.1 / 6.1 in 0.4.0 for the anchor highlight, the receive-only strip, and the title link; 0.5.0 for the composer, the phone layout, and the pairing tile) | 10.5 / 3.2 KB before Phase 1 |
 | Mounted chat items | ≤ 600 | `content-visibility: auto` |
 | Runtime dependencies | none | as today |
 
 Measured after Phase 1 (0.4.0, `tests/imports.test.ts`): map chunk 14.1 KB (5.9 KB gzipped), lazy chunks together 24.1 KB (10.2 KB), stylesheet 22.1 KB (6.1 KB).
 The stylesheet has no room left (no unused rules remain, and folding repeated declarations into groups grows the gzipped size), so Phases 2 and 3 (composer, mirror, panels) need a new CSS figure before they start.
+Measured after Phase 2 (0.5.0): map chunk 14.5 KB (5,993 bytes gzipped), lazy chunks together 31.9 KB (13,994 bytes gzipped), stylesheet 24.5 KB (6.6 KB).
 
 Source budgets (lines): `src/history.ts` 250, `src/control.ts` 150, `src/gui.ts` +
-`src/net.ts` 300 together (226 today), `src/docs.ts` (document serving) 120;
+`src/net.ts` 320 together (300 until 0.5.0, raised for the CSRF meta, the POST routing, and the remote access check),
+`src/remote.ts` 165, `src/pairing.ts` 60, `src/qr.ts` 140, the rest of `src` 570 (540 until 0.5.0, raised for `herdrCall` and
+`/boss gui remote`), `gui/pair.ts` + `gui/post.ts` 50, `src/docs.ts` (document serving) 120;
 `gui/router.ts` 80, `gui/chat.ts` 250, `gui/markdown.ts` 180, `gui/composer.ts`
-120, `gui/mirror.ts` 120, `gui/panels.ts` 150.
+125 (120 until 0.5.0, raised so a send in flight outlives a composer the route replaced), `gui/mirror.ts` 120, `gui/panels.ts` 150.
 
 ## Failure behavior
 
 | Condition | Behavior |
 |---|---|
 | Session file missing (new session) | "No messages yet"; the reader waits for the file. |
+| Session stored outside pi's sessions directory (`--session-dir`, `PI_CODING_AGENT_SESSION_DIR`, or the `sessionDir` setting) | No history and no input: the server reads only `.jsonl` files under `sessions/` in `PI_CODING_AGENT_DIR` or `~/.pi/agent`, symlinks resolved. Following the setting is not cheap (it can differ per project and per launch, and widens what the server reads), so it is not supported. |
+| Tailscale missing, logged out, tagged, without MagicDNS, or 8443 taken | `/boss gui remote` says which and changes nothing. |
+| Remote turned off or the server's session ends | The serve entry goes; paired pages lose their stream and get 401 until paired again. |
 | File rewritten or truncated | Re-index and `history` reset; the page keeps its scroll position near the same entry id when it is still on the path. |
 | A line that does not parse | Skipped, counted in the rail ("1 unreadable entry"). |
 | Herdr input fails | The composer keeps the text and shows Herdr's error code (`agent_blocked`, `agent_not_found`, timeout). A timeout is not retried by the page: Herdr's guide says a timeout does not prove the input was not delivered. |
@@ -546,6 +625,9 @@ Unit tests run with `node --test` against fakes, like today (`tests/fakes.ts`).
 | `tests/items.test.ts` | Entry → item mapping for every row of the item table, tool results joined by `callId`, hidden kinds stay hidden, the pending-call rule. |
 | `tests/gui.test.ts` (extend) | Deep routes return `index.html` with `<base href>` and the CSRF meta; `events?watch=` sends `history` then appends; the API refuses a key not in the registry; `/api/*` GET on a write path → 405. |
 | `tests/control.test.ts` | With a fake Herdr socket: `send` → `agent.prompt` with the pane id; `followUp` while working → `pane.send_input` with `alt+enter`, while idle → `agent.prompt`; blocked → 409 and nothing sent; reused pane (file mismatch) → 409; key allow list refuses `ctrl+c` and `ctrl+d`; `secret_drop` pending refuses input and keys except `esc`; missing or wrong Origin, `Sec-Fetch-Site: cross-site`, missing CSRF header, wrong content type, body over 64 KB, second in-flight request. |
+| `tests/remote.test.ts` | Identity from `tailscale status`; serve entry added only on a free or own 8443, verified after, removed only when ours; Funnel refused; a pairing code works once and within ten minutes; remote requests need Host, user login, no Funnel marker, and the cookie; remote off ends remote streams; a missing clipboard command fails cleanly. |
+| `tests/qr.test.ts` | The encoder against known symbols. |
+| `tests/bossgui.test.ts` (extend) | `/boss gui remote` with a fake Tailscale: the overlay, its key hints, c and o each minting their own one-time link, the session blocked while it is open, Esc, q, Enter; remote off, stop, and the session's end take the entry down. |
 | `tests/docs.test.ts` | Only `show_doc`-named files are served, with the sandbox CSP; sibling images and CSS yes, `..` and other extensions no; form action rewritten; answer with a wrong nonce refused; answer typed as one message. |
 | `tests/askuser.test.ts` | The key mapping table above, from fixture calls; unsupported shapes fall back to the mirror. |
 | `tests/router.test.ts`, `tests/markdown.test.ts`, `tests/chat.test.ts` (page, pure functions) | Route parse and format with encoded ids; markdown never creates elements from raw HTML, only allowed link schemes, tables and fences; chat merge by entry id and `callId`, reset handling, 600-item cap. |
@@ -578,6 +660,11 @@ check and closed by it, confirmed by id and PID.
    with text is refused (curl with the right headers gets 409).
 9. Security probes with curl: no Origin, wrong Origin, no CSRF header, GET on the
    input path, wrong Host: all refused.
+9a. Remote: record `tailscale serve status --json`; `/boss gui remote`; open the pairing URL through the ts.net name
+   (curl is fine): the first use sets the cookie, the second is refused; a request without or with a wrong
+   `Tailscale-User-Login`, or without the cookie, is refused; type from the phone layout (`agent-browser set device`)
+   and see it arrive; press c in the overlay and check the copied link pairs once; `/boss gui remote off` and confirm
+   the serve status equals the recording. Phone screenshots `/tmp/psb-p2-phone-*.png`.
 10. Open the largest session file's unit (a real session, **read only**) and time
     the first paint; scroll to the top through older pages.
 11. Clean up: `agent-browser --session psb-live close`, `/boss gui stop`, exit pi
@@ -653,5 +740,7 @@ page.
 ## Decisions (user, 2026-10-17)
 
 The focus views follow the map's game language (user: 「我們一開始的設計模式就是要對齊遊戲」): the workspace route is the base zoomed in, the session route a unit dossier and comms log, one HUD on every route. Attention panels stack without covering the active one (「dialog 要考慮堆疊…不能蓋過現在的 dialog」), and documents tile beside the view (「show doc 那邊，直接看成 tiled dialog，在旁邊並排」); the rules are in [Overlay layer](#overlay-layer-stacked-dialogs-and-tiles).
+
+0.5.0 (user, 2026-10-17): remote access over Tailscale with a QR code and phone layouts, as in [Remote access](#remote-access-over-tailscale-r6), including the pairing panel's c and o keys, each minting a fresh one-time link.
 
 D1 (b), D2 merge, D3 keystrokes plus an upstream proposal, D4 the GUI renders show_doc, D5 allowed with confirms, D6 server stays in the session, D8 own renderer, D9 later, D10 shown with a divider: all as recommended. D7: a pi-herdr-agents subagent is typed into directly, like any session; no note and no routing through its parent or a coordinator.

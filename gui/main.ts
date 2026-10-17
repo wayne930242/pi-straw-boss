@@ -23,7 +23,7 @@ let focus: Focus | undefined, loading: Promise<Focus> | undefined;
 const withFocus = (call: (f: Focus) => void) => (focus ? call(focus) : void loading?.then(call));
 function loadFocus() {
 	loading ??= import("./views.ts").then(({ mountFocus }) => {
-		focus = mountFocus({ data, restart: () => stream.restart(), openTile });
+		focus = mountFocus({ data, restart: () => stream.restart(), openTile, online: () => status.state === "live" });
 		focus.show(current, current);
 		if (latest) focus.net(latest);
 		return focus;
@@ -83,6 +83,7 @@ function report(next: Status) {
 	document.body.dataset.stale = el("stage").dataset.stale = String(stale);
 	el("link").dataset.state = next.state;
 	el("link-text").textContent = { connecting: "connecting", live: "live", reconnecting: "reconnecting", offline: "offline" }[next.state];
+	if (focus && latest) focus.net(latest); // the composer follows the link state
 	const banner = el("banner");
 	banner.hidden = !stale && !next.problem;
 	const lead = next.state === "offline"
@@ -157,6 +158,7 @@ addEventListener("keydown", (event) => {
 	event.preventDefault();
 	if (!panels?.stack.close() && current.view !== "map") router.go(upOf(current));
 });
+el("pair").addEventListener("click", () => void import("./pair.ts").then(({ pairTile }) => openTile(pairTile(), true)));
 for (const event of ["focus", "pageshow", "online"]) window.addEventListener(event, () => !document.hidden && resume());
 report(status);
 navigate(router.route());

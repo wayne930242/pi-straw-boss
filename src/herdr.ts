@@ -2,10 +2,20 @@ import { execFile } from "node:child_process";
 import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 
 export type HerdrRun = (args: string[], timeoutMs?: number) => Promise<string>;
 /** One request on Herdr's socket API; rejects with the error Herdr answered. */
-export type HerdrApi = (method: string, params: object) => Promise<void>;
+export type HerdrApi = (method: string, params: Record<string, unknown>) => Promise<void>;
+/** The same request, resolving with Herdr's `result`; a rejection is a HerdrError with Herdr's code (or timeout, socket_error, bad_frame). */
+export type HerdrCall = (method: string, params: Record<string, unknown>, timeoutMs?: number) => Promise<unknown>;
+export class HerdrError extends Error {
+	code: string;
+	constructor(code: string, message: string) {
+		super(message);
+		this.code = code;
+	}
+}
 export type Sleep = (ms: number) => Promise<void>;
 export interface Place { paneId: string; tabId: string; workspaceId: string }
 export interface Workspace { workspace_id: string; label: string; agent_status?: string; tokens?: Record<string, string>; worktree?: { checkout_path?: string; is_linked_worktree?: boolean; repo_key?: string } }
@@ -56,21 +66,30 @@ export async function panes(run: HerdrRun, workspace?: string): Promise<Pane[]> 
 	return (await result(run, ["pane", "list", ...(workspace ? ["--workspace", workspace] : [])])).panes;
 }
 
-export const herdrApi = (socketPath = process.env.HERDR_SOCKET_PATH || join(homedir(), ".config", "herdr", "herdr.sock")): HerdrApi => (method, params) =>
+// Herdr answers one request per connection with one newline-ended frame, which may arrive in pieces (split anywhere, even inside a character).
+export const herdrCall = (socketPath = process.env.HERDR_SOCKET_PATH || join(homedir(), ".config", "herdr", "herdr.sock")): HerdrCall => (method, params, timeoutMs = 5000) =>
 	new Promise((resolve, reject) => {
-		const socket = createConnection(socketPath).setTimeout(5000);
+		const socket = createConnection(socketPath).setTimeout(timeoutMs), text = new StringDecoder("utf8");
 		let reply = "";
-		const end = (error?: Error) => (socket.destroy(), error ? reject(error) : resolve());
-		socket.on("connect", () => socket.write(`${JSON.stringify({ id: "straw-boss", method, params })}\n`));
+		const fail = (code: string, message: string) => (socket.destroy(), reject(new HerdrError(code, `herdr ${method} failed: ${code} ${message}`.trim())));
+		socket.on("connect", () => socket.write(`${JSON.stringify({ id: `straw-boss-${Date.now()}`, method, params })}\n`));
 		socket.on("data", (chunk) => {
-			reply += chunk;
+			reply += text.write(chunk);
 			if (!reply.includes("\n")) return;
-			const { error } = JSON.parse(reply.split("\n")[0]!) as { error?: { code?: string; message?: string } };
-			end(error && new Error(`herdr ${method} failed: ${error.code ?? ""} ${error.message ?? ""}`.trim()));
+			socket.destroy();
+			try {
+				const { result, error } = JSON.parse(reply.split("\n")[0]!) as { result?: unknown; error?: { code?: string; message?: string } };
+				if (error) fail(error.code ?? "herdr_error", error.message ?? "");
+				else resolve(result);
+			} catch {
+				fail("bad_frame", reply.slice(0, 200));
+			}
 		});
-		socket.on("timeout", () => end(new Error(`herdr ${method} timed out`)));
-		socket.on("error", (error) => end(new Error(`herdr ${method} failed: ${error.message}`)));
+		socket.on("timeout", () => fail("timeout", `no answer within ${timeoutMs} ms`));
+		socket.on("error", (error) => fail("socket_error", error.message));
+		socket.on("close", () => fail("closed", "the connection closed before an answer"));
 	});
+export const herdrApi = (socketPath?: string): HerdrApi => async (method, params) => void (await herdrCall(socketPath)(method, params));
 
 /** Writes display-and-discovery tokens (null clears one). Herdr takes the positional id before the options. */
 export function report(run: HerdrRun, kind: "pane" | "workspace", id: string, tokens: Record<string, string | null>) {

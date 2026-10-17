@@ -98,7 +98,7 @@ export function mountPanels(deps: PanelDeps) {
 		},
 		enter: (a) => dock.querySelector<HTMLElement>(`[data-key="${CSS.escape(a.key)}"] .go`)?.focus(),
 		focused: () => (document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : undefined),
-		restore: (target) => Boolean(target?.isConnected && !target.closest("[inert]") && (target.focus(), true)),
+		restore: (target) => Boolean(target?.isConnected && !target.closest("[inert]") && (target.focus(), document.activeElement === target)), // a disabled HUD alert does not take it
 	});
 	button.addEventListener("click", () => stack.next());
 	dock.addEventListener("click", (event) => {

@@ -45,7 +45,8 @@ You need pi running inside Herdr 0.9.4 or newer, and [pi-intercom](https://www.n
 | `boss_broadcast` | Message a tab, a workspace, all towers, or every session. |
 | `/boss` | Take over as this tab's main agent. |
 | `/boss status`, `/boss tower` | Show the status; open and focus the tower. |
-| `/boss gui`, `/boss gui stop` | Open the net in the browser (any session); stop its server. |
+| `/boss gui`, `/boss gui stop` | Open the net in the browser (any session, joins nothing); stop its server. Type into a session from its comms view. |
+| `/boss gui remote`, `/boss gui remote off` | Reach the GUI from your phone over your tailnet (`tailscale serve`, never Funnel): pair by QR code; off removes only its own serve entry. |
 
 Subagents and sessions in Herdr worktree workspaces never join: the session that launched them speaks for them. Outside Herdr the extension does nothing.
 

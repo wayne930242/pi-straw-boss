@@ -1,7 +1,8 @@
 import { homedir } from "node:os";
-import { basename, join, resolve, sep } from "node:path";
+import { basename, join, sep } from "node:path";
 import { type Mark, markOf, type Row, sessionMark, subagents } from "./dashboard.ts";
 import { headOf, type HerdrRun, isSub, type Pane, panes, parentOf, type Session, workspaces, type Workspace } from "./herdr.ts";
+import { canonical } from "./history.ts";
 
 // The whole straw net as one JSON-able snapshot for the browser view: every workspace as a base with its tower, tabs, agents,
 // and subagents (linked to their launcher the way the tower dashboard links them), and sub workspaces as outposts.
@@ -26,8 +27,9 @@ const RECENT_MS = 10 * 60_000;
  * that has a key is also written to `refs`, the server's allow list, with a file only from pi's `sessionDir`. A base's `outside` lists its other pi panes (D1).
  */
 export function buildNet({ sessions, panes: ps, workspaces: all, children, sessionDir = join(process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "sessions") }: NetInput, refs = new Map<string, Ref>()): Net {
-	// Readable: a .jsonl under pi's sessions directory, named for its intercom session (during /new the pane names the next file first).
-	const readable = (file?: string, id?: string) => (file?.endsWith(".jsonl") && resolve(file).startsWith(resolve(sessionDir) + sep) && (!id || basename(file).endsWith(`_${id}.jsonl`)) ? file : undefined);
+	// Readable: a .jsonl really under pi's sessions directory (symlinks resolved), named for its intercom session (during /new the pane names the
+	// next file first). The registry keeps the resolved path, so the reader and the input check compare like with like.
+	const root = canonical(sessionDir), readable = (file?: string, id?: string, real = file?.endsWith(".jsonl") ? canonical(file) : undefined) => (real && real.startsWith(root + sep) && (!id || basename(real).endsWith(`_${id}.jsonl`)) ? real : undefined);
 	const piFile = (pane: Pane | undefined, id: string) => readable(pane?.agent === "pi" ? pane.agent_session?.value : undefined, id);
 	const paneOf = (s: Session) => ps.find((p) => p.pane_id === s.herdrLocation?.paneId);
 	const note = (mark: Mark, status?: string) => ({ working: status, waiting: "waiting on a question" })[mark as "working"];

@@ -98,9 +98,11 @@ export function createFixture({ resume, tile, tick = 2500 }: { resume(): void; t
 		} }),
 	};
 	mountToolbar(control);
-	const data = (): Data => ({
+	const data = (key: string): Data => ({
 		older: async (before) => page(before),
 		latest: async () => page(),
+		// Input is accepted, and shows in the log a moment later as pi would write it.
+		post: async (action, body) => (action === "input" && setTimeout(() => current?.send("history", { key, reset: false, items: [{ id: `you-${++live}`, kind: "user", at: new Date().toISOString(), text: String(body.text) }] }), 700), { ok: true, status: 200, body: {} }),
 		doc: async (path) => (path.endsWith("rollout-plan.md") ? DEMO_DOC : undefined),
 		entry: async (id) => {
 			const item = history.find((i) => i.id === id);

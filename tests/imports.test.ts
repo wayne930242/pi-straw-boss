@@ -26,9 +26,9 @@ test("the module loads, its factory runs, and outside Herdr it registers nothing
 	assert.deepEqual(registered, []);
 });
 
-test("the manifest ships only src, the built GUI bundle, prompts, README, and LICENSE, has no runtime dependencies, builds the bundle before packing and testing, and points at a real entry", () => {
+test("the manifest ships only src, the built GUI bundle, prompts, README, NOTICE (the QR encoder's MIT notice), and LICENSE, has no runtime dependencies, builds the bundle before packing and testing, and points at a real entry", () => {
 	const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-	assert.deepEqual(manifest.files, ["src", "dist/gui", "prompts", "README.md", "LICENSE"]);
+	assert.deepEqual(manifest.files, ["src", "dist/gui", "prompts", "README.md", "NOTICE.md", "LICENSE"]);
 	assert.equal(manifest.dependencies, undefined);
 	assert.ok(manifest.devDependencies.vite, "the page is built with Vite, as a development dependency only");
 	assert.equal(manifest.scripts.prepack, "npm run gui:build");
@@ -45,26 +45,34 @@ test("the TypeScript source stays within its size budgets", () => {
 	const sum = (dir: string, list: string[]) => list.reduce((total, name) => total + count(`${dir}/${name}`), 0);
 	// The dashboard, the browser view's server and data code, and the session reader each have a budget of their own so the coordination code stays readable on its own.
 	assert.ok(count("src/dashboard.ts") <= 200, `src/dashboard.ts has ${count("src/dashboard.ts")} lines`);
-	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 300, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
+	// 0.5.0 raised the server's figure from 300 to 320 for the CSRF meta, the POST routing into control.ts, and the remote access check (pairing, remote streams).
+	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 320, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
+	// Input (the spec's figure), remote access over Tailscale, its terminal pairing panel (QR, c copies, o opens), and the QR encoder each have their own.
+	for (const [name, max] of [["control.ts", 150], ["remote.ts", 165], ["pairing.ts", 60], ["qr.ts", 140]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
 	assert.ok(count("src/history.ts") <= 250, `src/history.ts has ${count("src/history.ts")} lines`);
 	// The item mapping and the stream glue came out of the reader to keep it within its budget; the spec sets no figure for them.
 	assert.ok(count("src/items.ts") <= 100, `src/items.ts has ${count("src/items.ts")} lines`);
 	assert.ok(count("src/watch.ts") <= 90, `src/watch.ts has ${count("src/watch.ts")} lines`);
 	// Pane balance is a separate extension entry with its plain-JavaScript helper.
 	assert.ok(count("src/balance.ts") + count("src/balance.mjs") <= 220, "src/balance.ts and src/balance.mjs stay small");
-	const apart = ["dashboard.ts", "net.ts", "gui.ts", "history.ts", "items.ts", "watch.ts", "balance.ts"];
+	const apart = ["dashboard.ts", "net.ts", "gui.ts", "history.ts", "items.ts", "watch.ts", "balance.ts", "control.ts", "remote.ts", "pairing.ts", "qr.ts"];
 	const rest = sum("src", names("src").filter((name) => !apart.includes(name)));
-	assert.ok(rest <= 575, `the rest of src has ${rest} lines`);
+	// 0.4.1 raised it from 540 to 575 for claiming and promotion; 0.5.0 to 610 for herdrCall (Herdr's answers with their error codes, spec task 4) and the /boss gui remote command.
+	assert.ok(rest <= 610, `the rest of src has ${rest} lines`);
 	// The page: the files the spec budgets one by one, then this round's own figures (no figure in the spec): the focus views, the overlay
 	// layer (alert spotting and the stack model in the map's chunk, the layer's DOM and tiles in a chunk of their own), the dev-only demo, and everything else.
-	for (const [name, max] of [["router.ts", 80], ["chat.ts", 250], ["markdown.ts", 180], ["views.ts", 240], ["layer.ts", 150]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
+	for (const [name, max] of [["router.ts", 80], ["chat.ts", 250], ["markdown.ts", 180], ["views.ts", 240], ["layer.ts", 150], ["composer.ts", 125]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
+	// The composer's figure was the spec's 120; 0.5.0 raised it to 125 so a send in flight outlives a composer the route replaced (review R-1).
 	// The comms log's scroll rules (pinned to the end, reaching an anchor) are pure and live beside it.
 	assert.ok(count("gui/follow.ts") <= 50, `gui/follow.ts has ${count("gui/follow.ts")} lines`);
 	const overlay = sum("gui", ["alerts.ts", "overlay.ts"]);
 	assert.ok(overlay <= 110, `the overlay model has ${overlay} lines`);
 	const demo = sum("gui", ["fixture.ts", "demo-chat.ts"]);
 	assert.ok(demo <= 160, `the demo fixture has ${demo} lines`);
-	const shipped = new Set(["router.ts", "chat.ts", "follow.ts", "markdown.ts", "views.ts", "layer.ts", "alerts.ts", "overlay.ts", "fixture.ts", "demo-chat.ts"]);
+	// The phone pairing tile and the write helper it shares with the composer (0.5.0, no figure in the spec).
+	const pairing = sum("gui", ["pair.ts", "post.ts"]);
+	assert.ok(pairing <= 50, `the pairing tile has ${pairing} lines`);
+	const shipped = new Set(["router.ts", "chat.ts", "follow.ts", "markdown.ts", "views.ts", "layer.ts", "alerts.ts", "overlay.ts", "fixture.ts", "demo-chat.ts", "composer.ts", "pair.ts", "post.ts"]);
 	const page = sum("gui", names("gui").filter((name) => !shipped.has(name)));
 	assert.ok(page <= 540, `the page's TypeScript has ${page} lines`);
 });
@@ -86,7 +94,9 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	const chunks = assets.filter((name) => name.endsWith(".js") && name !== entry), css = assets.filter((name) => name.endsWith(".css"));
 	const total = (list: string[], measure: (name: string) => number) => list.reduce((sum, name) => sum + measure(name), 0);
 	assert.ok(size(entry).length <= 15_000 && gz(entry) <= 6_000, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 35_000 && total(chunks, gz) <= 12_000, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
-	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link.
-	assert.ok(total(css, (n) => size(n).length) <= 22_100 && total(css, gz) <= 6_100, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 35_000 && total(chunks, gz) <= 14_000, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
+	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
+	assert.ok(total(css, (n) => size(n).length) <= 24_600 && total(css, gz) <= 6_700, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });
