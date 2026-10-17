@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import fs, { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { get, request, type IncomingMessage } from "node:http";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -200,6 +201,34 @@ test("events?watch=<key> sends the newest history first, then each new entry, an
 	assert.ok(!plain.events.some((e) => e.event === "history"), "a stream with no watch carries no history");
 	watcher.close();
 	plain.close();
+});
+
+test("a stream that disconnects releases its reader: the session file is no longer watched", async () => {
+	const real = fs.watch;
+	let watching = 0;
+	fs.watch = ((...args: Parameters<typeof real>) => {
+		const watcher = real(...args), close = watcher.close.bind(watcher);
+		watching++;
+		watcher.close = () => (watching--, close());
+		return watcher;
+	}) as typeof real;
+	syncBuiltinESMExports();
+	try {
+		const s = session(named);
+		const gui = await serve(async () => net("a"), { net: s.net });
+		const stream = listen(gui, "k1");
+		await until(() => stream.events.some((e) => e.event === "history"), "the history");
+		assert.equal(watching, 1, "the watched session's file is watched");
+		stream.close();
+		await until(() => watching === 0, "the watcher closed after the disconnect");
+		const again = listen(gui, "k1");
+		await until(() => again.events.some((e) => e.event === "history") && watching === 1, "a new stream attaches again");
+		again.close();
+		await until(() => watching === 0, "and releases again");
+	} finally {
+		fs.watch = real;
+		syncBuiltinESMExports();
+	}
 });
 
 test("a key the registry does not know, or whose file is not known yet, is answered without touching the file system", async () => {

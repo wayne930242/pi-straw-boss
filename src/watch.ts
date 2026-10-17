@@ -11,13 +11,18 @@ export type Send = (event: string, data: unknown) => void;
 /** `refresh` runs after every net reading: it retries what could not attach yet and reports changes the file events missed. */
 export interface Watch { refresh(): Promise<void>; stop(): void }
 
-/** The history of one session: the newest page at once, then every change the reader reports; a state change when the key leaves the net. */
+/**
+ * The history of one session: the newest page at once, then every change the reader reports; a state change when the key leaves the net.
+ * A key whose file changes re-attaches (the page resets); a first page that fails releases the reader, and the next refresh tries again.
+ */
 export function watchSession(hub: Hub, key: string, send: Send): Watch {
 	let reader: Reader | undefined, file: string | undefined, unsub: (() => void) | undefined, signature: string | undefined, stopped = false, attaching = false;
 	const meta = (f?: Found) => ({ key, state: f ? (f.live ? "live" : "recent") : "unknown", successor: f?.successor, base: f?.base, name: f?.name, role: f?.role });
+	const detach = () => (unsub?.(), file && hub.readers.release(file), (reader = file = unsub = undefined));
 	async function refresh() {
 		if (stopped || attaching) return;
 		const found = hub.lookup(key), sig = JSON.stringify(meta(found));
+		if (reader && found?.file && found.file !== file) detach();
 		if (!reader && found?.file) {
 			attaching = true;
 			try {
@@ -26,12 +31,14 @@ export function watchSession(hub: Hub, key: string, send: Send): Watch {
 				const queued: unknown[] = [];
 				let ready = false;
 				unsub = reader.subscribe((change) => (ready ? send("history", { key, ...change }) : queued.push({ key, ...change })));
-				await reader.ready;
 				const { items, before } = await reader.page();
+				if (stopped || file !== found.file) return;
 				send("history", { ...meta(found), reset: true, items, before, header: reader.header(), unreadable: reader.unreadable() });
 				ready = true;
 				queued.forEach((change) => send("history", change));
 				signature = sig;
+			} catch {
+				detach();
 			} finally {
 				attaching = false;
 			}
@@ -45,8 +52,7 @@ export function watchSession(hub: Hub, key: string, send: Send): Watch {
 		refresh,
 		stop() {
 			stopped = true;
-			unsub?.();
-			if (file) hub.readers.release(file);
+			detach();
 		},
 	};
 }

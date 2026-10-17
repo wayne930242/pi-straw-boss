@@ -93,7 +93,8 @@ export function subagents(parent: Pane | undefined, all: Pane[], now: number): R
 			const activity = readJson(path);
 			// A child whose pane is gone, or back at a shell prompt, has finished.
 			const mark: Mark = pane?.agent === "pi" ? markOf(pane.agent_status) : "done";
-			let script: string | undefined, file = pane?.agent_session?.value;
+			// Only a pi pane's session file is the child's transcript; a reused pane running another agent is not read.
+			let script: string | undefined, file = pane?.agent === "pi" ? pane.agent_session?.value : undefined;
 			try {
 				script = readdirSync(join(dir, "subagent-scripts")).find((f) => f.endsWith(`-${id}.sh`));
 				file ??= readFileSync(join(dir, "subagent-scripts", script!), "utf8").match(/PI_SUBAGENT_SESSION='([^']+)'/)?.[1];

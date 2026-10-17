@@ -110,7 +110,7 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, openTile }
 	/** Scrolls the anchor into view and lights it; older pages load first when it is not mounted. Gone from the history, the log opens at the end. */
 	async function anchor(at: string) {
 		loading = true;
-		const found = await reach(model, data.older, at, (d) => (paint(d), touch(d))).finally(() => (loading = false));
+		const found = await reach(model, data, at, (d) => (paint(d), touch(d))).finally(() => (loading = false));
 		const el = els.get(at);
 		if (target !== at) return;
 		if (!found || !el) return toBottom();

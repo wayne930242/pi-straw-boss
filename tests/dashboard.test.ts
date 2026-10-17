@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { collect, type Row, render, type Snapshot, startDashboard, type Tone } from "../src/dashboard.ts";
+import { collect, type Row, render, type Snapshot, startDashboard, subagents, type Tone } from "../src/dashboard.ts";
 import { type FakeTui, settle, until, World } from "./fakes.ts";
 
 let world = new World();
@@ -99,6 +99,14 @@ function launch(parent: string, children: { id: string; name: string; ageMs?: nu
 	}
 	return file;
 }
+
+test("a subagent's file comes only from a pane running pi; a reused pane running another agent is not read", () => {
+	const file = launch("parent-x", [{ id: "kid-1", name: "kid" }]);
+	const parent = { pane_id: "wA:p1", tab_id: "wA:t1", workspace_id: "wA", agent: "pi", agent_session: { value: file } };
+	const child = (agent: string) => ({ pane_id: "wA:p30", tab_id: "wA:t1", workspace_id: "wA", agent, agent_status: "working", agent_session: { value: join(scratch, "sessions", "2026_kid-1.jsonl") } });
+	assert.equal(subagents(parent, [parent, child("pi")], Date.now())[0]!.file, join(scratch, "sessions", "2026_kid-1.jsonl"));
+	assert.deepEqual([subagents(parent, [parent, child("claude")], Date.now())[0]!.file, subagents(parent, [parent, child("claude")], Date.now())[0]!.pane], [undefined, undefined]);
+});
 
 test("collect shows this tower's net in detail (joined sessions by tab, subagents under their launcher) and one line per other tower", async () => {
 	const file = launch("parent-1", [

@@ -77,19 +77,20 @@ test("the log starts pinned to the newest entry and follows new ones; scrolled u
 	assert.equal(createFollow().button(true), "jump to latest", "a detached log always offers the latest");
 });
 
-test("an anchor in an older page is reached by loading older pages, and one that is gone is reported", async () => {
-	const history = Array.from({ length: 500 }, (_, i) => msg(`e${i}`));
+test("an anchor in an older page is reached by loading older pages, and one that is gone opens at the newest page", async () => {
+	const history = Array.from({ length: 1000 }, (_, i) => msg(`e${i}`));
 	const pageOf = (before?: string): Page => {
 		const end = before ? history.findIndex((i) => i.id === before) : history.length, start = Math.max(0, end - 150);
 		return { items: history.slice(start, end), before: start > 0 ? history[start]!.id : undefined };
 	};
-	const chat = createChat(), fetched: string[] = [], none: string[] = [];
+	const fetched: string[] = [], none: string[] = [], painted: number[] = [];
+	const data = { older: async (b: string) => (fetched.push(b), pageOf(b)), latest: async () => pageOf() };
+	const chat = createChat();
 	chat.reset(pageOf());
-	const painted: number[] = [];
-	assert.equal(await reach(chat, async (b) => (fetched.push(b), pageOf(b)), "e420", (d) => painted.push(d.added.length)), true);
+	assert.equal(await reach(chat, data, "e920", (d) => painted.push(d.added.length)), true);
 	assert.deepEqual(fetched, none, "an anchor in the first page needs no fetch");
-	assert.equal(await reach(chat, async (b) => (fetched.push(b), pageOf(b)), "e120", (d) => painted.push(d.added.length)), true);
-	assert.deepEqual([fetched, painted, chat.items[0]!.id], [["e350", "e200"], [150, 150], "e50"], "two older pages, each painted");
-	assert.equal(await reach(chat, async (b) => pageOf(b), "gone", () => {}), false, "an entry no longer in the history: the log opens at the end");
-	assert.equal(chat.before, undefined);
+	assert.equal(await reach(chat, data, "e620", (d) => painted.push(d.added.length)), true);
+	assert.deepEqual([fetched, painted, chat.items[0]!.id], [["e850", "e700"], [150, 150], "e550"], "two older pages, each painted");
+	assert.equal(await reach(chat, data, "gone", () => {}), false, "an entry no longer in the history");
+	assert.deepEqual([chat.items[0]!.id, chat.items.at(-1)!.id, chat.detached, chat.before], ["e850", "e999", false, "e850"], "the log is back at its newest page, attached to the live end");
 });

@@ -172,6 +172,47 @@ test("readers are shared per file, stop watching when released, and keep at most
 	assert.equal(made.length, 5);
 });
 
+/** Every id on the path, walking the pages back from the newest. */
+async function walk(r: Reader) {
+	const all: string[] = [];
+	for (let page = await r.page(undefined, 300); ; page = await r.page(page.before, 300)) {
+		all.unshift(...ids(page.items));
+		if (!page.before) return all;
+	}
+}
+
+test("entries appended while a multi-MB file is first indexed wait for the index, so the whole path is kept", async () => {
+	const path = file(), count = 5000, pad = "x".repeat(2000);
+	writeFileSync(path, lines([header(), ...Array.from({ length: count }, (_, i) => user(`e${i}`, i ? `e${i - 1}` : null, `${i} ${pad}`))]));
+	assert.ok(statSync(path).size > 9_000_000);
+	const r = reader(path, 5);
+	r.start();
+	await new Promise((resolve) => setTimeout(resolve, 5));
+	appendFileSync(path, lines([user(`e${count}`, `e${count - 1}`, "live 1")]));
+	await new Promise((resolve) => setTimeout(resolve, 10));
+	appendFileSync(path, lines([user(`e${count + 1}`, `e${count}`, "live 2")]));
+	await until(async () => (await r.page(undefined, 1)).items[0]?.id === `e${count + 1}`, "the appended entries");
+	const all = await walk(r);
+	assert.equal(r.unreadable(), 0);
+	assert.equal(all.length, count + 2, "no entry is cut off or skipped");
+	assert.deepEqual(all, Array.from({ length: count + 2 }, (_, i) => `e${i}`));
+});
+
+test("a read after a rewrite never uses the old index: the file is re-indexed first, and a cursor of the old file finds nothing", async () => {
+	const path = file(), next = `${path}.next`, pad = "y".repeat(2000);
+	writeFileSync(path, lines([header(), ...Array.from({ length: 3000 }, (_, i) => user(`o${i}`, i ? `o${i - 1}` : null, pad))]));
+	writeFileSync(next, lines([header("sess-2"), ...Array.from({ length: 3000 }, (_, i) => user(`n${i}`, i ? `n${i - 1}` : null, pad))]));
+	const r = reader(path, 5);
+	r.start();
+	await r.ready;
+	const reads = Array.from({ length: 20 }, (_, i) => r.page(`o${2900 - i * 100}`, 50));
+	renameSync(next, path);
+	// A read looks at the file first: the cursor of the replaced file is gone, so the page is empty instead of read at stale offsets.
+	for (const page of await Promise.all(reads)) assert.deepEqual([page.items.length, page.before], [0, undefined], "nothing read at the old offsets");
+	await until(async () => (await r.page(undefined, 1)).items[0]?.id === "n2999", "the rewritten file");
+	assert.equal((await walk(r)).length, 3000);
+});
+
 test("a 50 MB session indexes inside the budget and its first page is quick", { skip: !process.env.PERF && "set PERF=1" }, async () => {
 	const path = file();
 	const chunk = lines(Array.from({ length: 200 }, (_, i) => result(`p${i}`, i ? `p${i - 1}` : null, `c${i}`, "z".repeat(5000))));

@@ -1,4 +1,5 @@
-import { basename } from "node:path";
+import { homedir } from "node:os";
+import { basename, join, resolve, sep } from "node:path";
 import { type Mark, markOf, type Row, sessionMark, subagents } from "./dashboard.ts";
 import { headOf, type HerdrRun, isSub, type Pane, panes, parentOf, type Session, workspaces, type Workspace } from "./herdr.ts";
 
@@ -14,7 +15,7 @@ export interface Net { bases: Base[] }
 /** What the server may read for a key: the registry entry is the allow list, and paths never come from the browser. */
 export interface Ref { key: string; base: string; name: string; role: string; file?: string; pane?: string }
 export interface Found extends Ref { live: boolean; successor?: string }
-export interface NetInput { sessions: Session[]; panes: Pane[]; workspaces: Workspace[]; children(pane: Pane | undefined): Row[] }
+export interface NetInput { sessions: Session[]; panes: Pane[]; workspaces: Workspace[]; children(pane: Pane | undefined): Row[]; sessionDir?: string }
 
 const joinedRole = (token?: string): "main" | "member" | undefined => (token === "main" || token === "member" ? token : undefined);
 const RECENT_MS = 10 * 60_000;
@@ -22,9 +23,12 @@ const RECENT_MS = 10 * 60_000;
 /**
  * The pure half: sessions, panes, and workspaces in, the net out. Sessions that did not join (no main or member token) are left out,
  * and so are workspaces with no part in the net (no live tower, nobody joined): a base is a workspace the net reaches. Every unit
- * that has a key is also written to `refs`, the server's allow list. A base's `outside` lists its other pi panes (D1).
+ * that has a key is also written to `refs`, the server's allow list, with a file only from pi's `sessionDir`. A base's `outside` lists its other pi panes (D1).
  */
-export function buildNet({ sessions, panes: ps, workspaces: all, children }: NetInput, refs = new Map<string, Ref>()): Net {
+export function buildNet({ sessions, panes: ps, workspaces: all, children, sessionDir = join(process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "sessions") }: NetInput, refs = new Map<string, Ref>()): Net {
+	// Readable: a .jsonl under pi's sessions directory, named for its intercom session (during /new the pane names the next file first).
+	const readable = (file?: string, id?: string) => (file?.endsWith(".jsonl") && resolve(file).startsWith(resolve(sessionDir) + sep) && (!id || basename(file).endsWith(`_${id}.jsonl`)) ? file : undefined);
+	const piFile = (pane: Pane | undefined, id: string) => readable(pane?.agent === "pi" ? pane.agent_session?.value : undefined, id);
 	const paneOf = (s: Session) => ps.find((p) => p.pane_id === s.herdrLocation?.paneId);
 	const note = (mark: Mark, status?: string) => ({ working: status, waiting: "waiting on a question" })[mark as "working"];
 	const joined = sessions.flatMap((s) => {
@@ -44,10 +48,10 @@ export function buildNet({ sessions, panes: ps, workspaces: all, children }: Net
 			units: group.toSorted((a, b) => Number(b.role === "main") - Number(a.role === "main")).map(({ s, pane, role }): Unit => {
 				const mark = sessionMark(s, pane);
 				const subs = (rowsOf.get(s.id) ?? []).map((r): Unit => {
-					const key = keep({ key: r.id ?? `${s.id}/${r.text}`, base: w.workspace_id, name: r.text, role: "subagent", file: r.file, pane: r.pane });
+					const key = keep({ key: r.id ?? `${s.id}/${r.text}`, base: w.workspace_id, name: r.text, role: "subagent", file: readable(r.file), pane: r.pane });
 					return { id: key, key, control: Boolean(r.pane), name: r.text, role: "subagent", mark: r.mark, note: r.note, subs: [] };
 				});
-				const key = keep({ key: s.id, base: w.workspace_id, name: s.name ?? s.id, role, file: pane?.agent_session?.value, pane: pane?.pane_id });
+				const key = keep({ key: s.id, base: w.workspace_id, name: s.name ?? s.id, role, file: piFile(pane, s.id), pane: pane?.pane_id });
 				return { id: key, key, control: pane?.agent === "pi", name: s.name ?? s.id, role, mark, note: note(mark, s.status), subs };
 			}),
 		}));
@@ -58,30 +62,30 @@ export function buildNet({ sessions, panes: ps, workspaces: all, children }: Net
 			const key = s?.id ?? (file && basename(file, ".jsonl").split("_").pop());
 			if (!key) return [];
 			const name = s?.name ?? p.label ?? key.slice(0, 8), mark = s ? sessionMark(s, p) : markOf(p.agent_status);
-			keep({ key, base: w.workspace_id, name, role: "outside", file, pane: p.pane_id });
+			keep({ key, base: w.workspace_id, name, role: "outside", file: readable(file, s?.id), pane: p.pane_id });
 			return [{ id: key, key, control: true, name, role: "outside", mark, note: note(mark, s?.status), subs: [] }];
 		});
 		const marks = [...tabs.flatMap((t) => t.units.flatMap((u) => [u.mark, ...u.subs.map((c) => c.mark)])), ...outposts.map((o) => o.mark)];
 		// A base shows what needs attention most: a waiting unit, then a working one, else the workspace's own status.
 		const mark = (["waiting", "working"] as const).find((m) => marks.includes(m)) ?? markOf(w.agent_status);
 		if (!tower && !tabs.length) return [];
-		const named = tower && keep({ key: tower.id, base: w.workspace_id, name: tower.name ?? tower.id, role: "tower", file: towerPane?.agent_session?.value, pane: towerPane?.pane_id });
+		const named = tower && keep({ key: tower.id, base: w.workspace_id, name: tower.name ?? tower.id, role: "tower", file: piFile(towerPane, tower.id), pane: towerPane?.pane_id });
 		return [{ id: w.workspace_id, label: w.label, mark, head: w === headOf(all), tower: tower && named ? { name: tower.name ?? tower.id, mark: sessionMark(tower, towerPane), key: named, control: towerPane?.agent === "pi" } : null, tabs, outposts, outside }];
 	});
 	return { bases };
 }
 
 /** One reading of Herdr and intercom as a net. */
-export async function collectNet({ run, sessions, now = Date.now(), refs }: { run: HerdrRun; sessions(): Promise<Session[]>; now?: number; refs?: Map<string, Ref> }): Promise<Net> {
+export async function collectNet({ run, sessions, now = Date.now(), refs, sessionDir }: { run: HerdrRun; sessions(): Promise<Session[]>; now?: number; refs?: Map<string, Ref>; sessionDir?: string }): Promise<Net> {
 	const [live, ps, all] = [await sessions(), await panes(run), await workspaces(run)];
-	return buildNet({ sessions: live, panes: ps, workspaces: all, children: (pane) => subagents(pane, ps, now) }, refs);
+	return buildNet({ sessions: live, panes: ps, workspaces: all, children: (pane) => subagents(pane, ps, now), sessionDir }, refs);
 }
 
 /**
  * The net as the server reads it: each read also refreshes the registry. A key that left the net (the pane closed, or moved to
  * another session) stays findable for ten minutes, the window finished subagents already use, with the pane's new session as its successor.
  */
-export function netSource(env: { run: HerdrRun; sessions(): Promise<Session[]> }) {
+export function netSource(env: { run: HerdrRun; sessions(): Promise<Session[]>; sessionDir?: string }) {
 	let refs = new Map<string, Ref>();
 	const gone = new Map<string, { ref: Ref; at: number }>();
 	return {

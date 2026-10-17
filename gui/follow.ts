@@ -30,9 +30,14 @@ export function createFollow() {
 	};
 }
 
-/** Loads older pages until the entry `at` is mounted or the history runs out; true when it is mounted. */
-export async function reach(chat: Pick<Chat, "items" | "before" | "prepend">, older: (before: string) => Promise<Page>, at: string, painted: (d: Delta) => void) {
+/**
+ * Loads older pages until the entry `at` is mounted; true when it is. An entry no longer in the history leaves the log at its newest
+ * page instead (the walk back may have pushed the end out past the cap), so it opens at the end.
+ */
+export async function reach(chat: Pick<Chat, "items" | "before" | "prepend" | "reset">, data: { older(before: string): Promise<Page>; latest(): Promise<Page> }, at: string, painted: (d: Delta) => void) {
 	const has = () => chat.items.some((i) => i.id === at);
-	while (!has() && chat.before) painted(chat.prepend(await older(chat.before)));
-	return has();
+	while (!has() && chat.before) painted(chat.prepend(await data.older(chat.before)));
+	if (has()) return true;
+	painted(chat.reset(await data.latest()));
+	return false;
 }

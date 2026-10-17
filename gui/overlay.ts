@@ -20,11 +20,12 @@ const order = (a: Alert, b: Alert) => rankOf(a.mark) - rankOf(b.mark) || a.at - 
 export interface StackIO<F> { render(open: Alert[], queue: Alert[]): void; enter(alert: Alert): void; focused(): F | undefined; restore(target: F | undefined): boolean }
 
 export function createStack<F>(io: StackIO<F>) {
-	let open: { alert: Alert; back: F | undefined }[] = [], queue: Alert[] = [];
+	// `raised` is the state that raised an open dialog's alert; the dialog itself shows the unit's current state.
+	let open: { alert: Alert; back: F | undefined; raised: Alert["mark"] }[] = [], queue: Alert[] = [];
 	const draw = () => io.render(open.map((o) => o.alert), queue);
 	const show = (alert: Alert, back: F | undefined) => {
 		const i = open.findIndex((o) => o.alert.key === alert.key);
-		const entry = i >= 0 ? open.splice(i, 1)[0]! : { alert, back };
+		const entry = i >= 0 ? open.splice(i, 1)[0]! : { alert, back, raised: alert.mark };
 		open.push(entry);
 		queue = queue.filter((q) => q.key !== alert.key);
 		draw();
@@ -36,7 +37,7 @@ export function createStack<F>(io: StackIO<F>) {
 		/** A unit started to need attention: it waits in the queue, or refreshes its open dialog. Never opens or focuses anything. */
 		arrive(alert: Alert) {
 			const o = open.find((x) => x.alert.key === alert.key);
-			if (o) o.alert = { ...alert, at: o.alert.at };
+			if (o) [o.alert, o.raised] = [{ ...alert, at: o.alert.at }, alert.mark];
 			else {
 				const old = queue.find((q) => q.key === alert.key);
 				queue = [...queue.filter((q) => q.key !== alert.key), old && old.mark === alert.mark ? old : alert].sort(order);
@@ -57,13 +58,14 @@ export function createStack<F>(io: StackIO<F>) {
 		/**
 		 * Closes the top dialog and returns false when none is open. The dialog beneath comes back; with none beneath, the next queued
 		 * question or error does (it was waiting behind this one). "later" puts the closed alert back in the queue and reveals nothing
-		 * queued, so the user can always step out of the queue; "go" (Open comms) reveals nothing either: the user is going to that unit.
+		 * queued, so the user can always step out of the queue (an alert whose unit moved on meanwhile is stale and is dropped instead); "go"
+		 * (Open comms) reveals nothing either: the user is going to that unit.
 		 */
 		close(how: "close" | "later" | "go" = "close"): boolean {
 			const top = open.pop();
 			if (!top) return false;
 			const below = open.at(-1), next = how === "close" ? queue.find((q) => rankOf(q.mark) === 0) : undefined;
-			if (how === "later") queue = [...queue, top.alert].sort(order);
+			if (how === "later" && top.alert.mark === top.raised) queue = [...queue, top.alert].sort(order);
 			if (!below && next) {
 				show(next, top.back);
 				return true;

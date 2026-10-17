@@ -31,7 +31,10 @@ const DIVIDER = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
 const cells = (line: string) => line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
 const starts = (line: string, next?: string) => /^\s*(`{3,}|~{3,}|#{1,6}\s|>)/.test(line) || RULE.test(line) || LIST.test(line) || (line.includes("|") && next !== undefined && DIVIDER.test(next) && next.includes("-"));
 
-export function parse(md: string): N[] {
+/** Block quotes and lists nest at most 16 deep; anything deeper stays plain text, so hostile nesting can neither overflow the stack nor go quadratic. */
+export const MAX_DEPTH = 16;
+export function parse(md: string, depth = 0): N[] {
+	if (depth >= MAX_DEPTH) return [el("p", [md])];
 	const lines = md.replace(/\r\n?/g, "\n").split("\n"), out: N[] = [];
 	for (let i = 0; i < lines.length; ) {
 		const line = lines[i]!, next = lines[i + 1];
@@ -47,7 +50,7 @@ export function parse(md: string): N[] {
 		else if (/^\s*>/.test(line)) {
 			const body: string[] = [];
 			for (; i < lines.length && /^\s*>/.test(lines[i]!); i++) body.push(lines[i]!.replace(/^\s*> ?/, ""));
-			out.push(el("blockquote", parse(body.join("\n"))));
+			out.push(el("blockquote", parse(body.join("\n"), depth + 1)));
 		} else if (line.includes("|") && next !== undefined && DIVIDER.test(next) && next.includes("-")) {
 			const rows: string[][] = [];
 			for (i += 2; i < lines.length && lines[i]!.trim() && lines[i]!.includes("|"); i++) rows.push(cells(lines[i]!));
@@ -61,7 +64,7 @@ export function parse(md: string): N[] {
 				if (task) body[0] = task[2]!;
 				for (i++; i < lines.length && lines[i]!.trim() && lines[i]!.search(/\S/) > indent; i++) body.push(lines[i]!.replace(new RegExp(`^ {0,${indent + 2}}`), ""));
 				// A task item carries a check mark of its own (drawn by CSS) in front of its text, and no bullet.
-				const kids = parse(body.join("\n")), first = kids[0], done = task?.[1] !== " ";
+				const kids = parse(body.join("\n"), depth + 1), first = kids[0], done = task?.[1] !== " ";
 				if (task) (typeof first === "object" && first.tag === "p" ? first.kids : kids).unshift(el("i", done ? ["✓"] : [], { class: "check", "data-done": String(done), "aria-label": done ? "done" : "not done" }));
 				items.push(el("li", kids, task ? { class: "task" } : undefined));
 				if (!lines[i]?.trim() && lines[i + 1]?.match(LIST)?.[1]?.length === indent) i++;

@@ -68,6 +68,21 @@ test("Later puts the alert back in the queue and reveals nothing queued", () => 
 	assert.deepEqual([page.shown, page.queued, page.focus], [[], ["a", "b"], "page"]);
 });
 
+test("Later requeues an alert only while its unit still shows the state that raised it; one that moved on is stale and dropped", () => {
+	const { page, stack } = harness();
+	stack.arrive(alert("a", "waiting", 1));
+	stack.next();
+	stack.prune((key) => (key === "a" ? alert("a", "working", 5) : undefined));
+	assert.equal(stack.open[0]!.mark, "working", "the open dialog shows the unit's current state");
+	stack.close("later");
+	assert.deepEqual([page.shown, page.queued], [[], []], "not requeued as a plain working state");
+	stack.arrive(alert("b", "error", 2));
+	stack.next();
+	stack.arrive(alert("b", "waiting", 6));
+	stack.close("later");
+	assert.deepEqual(stack.queue.map((q) => [q.key, q.mark]), [["b", "waiting"]], "a new alert while open is what Later keeps");
+});
+
 test("Open comms closes the alert and reveals nothing queued over the comms the user is going to", () => {
 	const { page, stack } = harness();
 	stack.arrive(alert("e", "error", 1));

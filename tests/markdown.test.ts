@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { inline, type N, parse } from "../gui/markdown.ts";
+import { inline, MAX_DEPTH, type N, parse } from "../gui/markdown.ts";
 
 const tags = (nodes: N[]): string[] => nodes.flatMap((n) => (typeof n === "string" ? [] : [n.tag, ...tags(n.kids)]));
 const links = (nodes: N[]): string[] => nodes.flatMap((n) => (typeof n === "string" ? [] : [...(n.tag === "a" ? [n.attrs!.href!] : []), ...links(n.kids)]));
@@ -47,4 +47,18 @@ test("emphasis, strikethrough, and code spans nest; unmatched markers stay liter
 	const started = performance.now();
 	parse("**a ".repeat(30_000) + "\n\n" + "`x ".repeat(30_000) + "\n\n" + "[a](b ".repeat(20_000));
 	assert.ok(performance.now() - started < 1000, "unmatched markers are bounded");
+});
+
+/** How deep block quotes and lists nest in a tree. */
+const depthOf = (nodes: N[]): number => Math.max(0, ...nodes.map((n) => (typeof n === "string" ? 0 : Number(["blockquote", "ul", "ol"].includes(n.tag)) + depthOf(n.kids))));
+
+test("nesting stops at sixteen levels and the rest stays text, so deep quotes do not overflow and staircase lists stay fast", () => {
+	const quotes = parse(`${">".repeat(5000)} deep`);
+	assert.equal(depthOf(quotes), MAX_DEPTH);
+	const stairs = Array.from({ length: 3000 }, (_, i) => `${" ".repeat(i * 2)}- level ${i}`).join("\n"), started = performance.now();
+	const list = parse(stairs);
+	// The staircase is 9 MB of text (its indent grows to 6,000 spaces); capped it parses in about 0.2 s, uncapped it took over 3 s.
+	assert.ok(performance.now() - started < 1000, `a 3,000-line staircase took ${(performance.now() - started).toFixed(0)} ms`);
+	assert.equal(depthOf(list), MAX_DEPTH);
+	assert.ok(JSON.stringify(list).includes("level 2999"), "the deepest levels are kept as text");
 });

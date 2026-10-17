@@ -94,7 +94,7 @@ test("changes lists joins, leaves, and state changes, and nothing for the first 
 test("units carry a route key and say whether a live pi pane backs them; the registry holds exactly the keys the snapshot shows", () => {
 	const withFiles = panes.map((p) => (p.pane_id === "wA:p1" ? { ...p, agent: "pi", agent_session: { value: "/s/2026_m1.jsonl" } } : p.pane_id === "wA:p5" ? { ...p, agent: "pi", agent_session: { value: "/s/2026_tower-a.jsonl" } } : p));
 	const refs = new Map<string, Ref>();
-	const net = buildNet({ sessions, panes: withFiles, workspaces, children: (p) => (p?.pane_id === "wA:p1" ? [child("lint", "working", { id: "child-1", file: "/s/2026_child-1.jsonl", pane: "wA:p9" }), child("old", "done", { id: "child-2", file: "/s/2026_child-2.jsonl" })] : []) }, refs);
+	const net = buildNet({ sessions, panes: withFiles, workspaces, sessionDir: "/s", children: (p) => (p?.pane_id === "wA:p1" ? [child("lint", "working", { id: "child-1", file: "/s/2026_child-1.jsonl", pane: "wA:p9" }), child("old", "done", { id: "child-2", file: "/s/2026_child-2.jsonl" })] : []) }, refs);
 	const [main, member] = net.bases[0]!.tabs[0]!.units;
 	assert.deepEqual([main!.key, main!.control, member!.key, member!.control], ["m1", true, "mem", false], "only a pane running pi can be typed into");
 	assert.deepEqual(main!.subs.map((u) => [u.id, u.key, u.control]), [["child-1", "child-1", true], ["child-2", "child-2", false]], "a subagent is keyed by its child id, not by its name");
@@ -112,7 +112,7 @@ test("a base also lists its other pi panes as outside the net (D1), keyed by int
 		pane("wA:p9", "wA:t1", {}, { workspace_id: "wA", agent: "pi", agent_session: { value: "/s/2026_child-1.jsonl" } })];
 	const known = more.map((p) => (p.pane_id === "wA:p1" ? { ...p, workspace_id: "wA" } : p.pane_id === "wA:p5" ? { ...p, workspace_id: "wA", agent: "pi" } : p));
 	const refs = new Map<string, Ref>();
-	const net = buildNet({ sessions: [...sessions, session("loner2", "intercom-only", { ws: "wA", tab: "wA:t1", pane: "wA:p7" })], panes: known, workspaces, children: (p) => (p?.pane_id === "wA:p1" ? [child("lint", "working", { id: "child-1", pane: "wA:p9" })] : []) }, refs);
+	const net = buildNet({ sessions: [...sessions, session("loner2", "intercom-only", { ws: "wA", tab: "wA:t1", pane: "wA:p7" })], panes: known, workspaces, sessionDir: "/s", children: (p) => (p?.pane_id === "wA:p1" ? [child("lint", "working", { id: "child-1", pane: "wA:p9" })] : []) }, refs);
 	const outside = net.bases[0]!.outside;
 	assert.deepEqual(outside.map((u) => [u.key, u.name, u.role, u.mark, u.control]), [["sess-6", "scratch", "outside", "working", true], ["loner2", "intercom-only", "outside", "idle", true], ["other", "other", "outside", "unknown", true]]);
 	assert.equal(refs.get("sess-6")!.file, "/s/2026-10-17T00-00-00Z_sess-6.jsonl");
@@ -120,11 +120,25 @@ test("a base also lists its other pi panes as outside the net (D1), keyed by int
 	assert.deepEqual(net.bases[1]!.outside, []);
 });
 
+test("a file is recorded only for a pi pane, as a .jsonl under the sessions directory, and named for its intercom session", () => {
+	const at = (id: string, value: string, agent = "pi") => (p: Pane) => (p.pane_id === id ? { ...p, agent, agent_session: { value } } : p);
+	const read = (...edits: ((p: Pane) => Pane)[]) => {
+		const refs = new Map<string, Ref>();
+		buildNet({ sessions, panes: panes.map((p) => edits.reduce((q, e) => e(q), p)), workspaces, sessionDir: "/s", children: (p) => (p?.pane_id === "wA:p1" ? [child("c", "working", { id: "child-1", file: "/tmp/x_child-1.jsonl" })] : []) }, refs);
+		return [refs.get("m1")?.file, refs.get("tower-a")?.file, refs.get("child-1")?.file];
+	};
+	assert.deepEqual(read(at("wA:p1", "/s/d/2026_m1.jsonl"), at("wA:p5", "/s/2026_tower-a.jsonl")), ["/s/d/2026_m1.jsonl", "/s/2026_tower-a.jsonl", undefined], "a subagent file outside the directory is dropped");
+	assert.deepEqual(read(at("wA:p1", "/s/2026_next-session.jsonl")), [undefined, undefined, undefined], "during /new the pane names the next session's file: not paired with the old id");
+	assert.deepEqual(read(at("wA:p1", "/s/2026_m1.jsonl", "claude")), [undefined, undefined, undefined], "a pane running another agent is not read");
+	assert.deepEqual(read(at("wA:p1", "/etc/2026_m1.jsonl"), at("wA:p5", "/s/../etc/2026_tower-a.jsonl")), [undefined, undefined, undefined], "outside the directory, also through ..");
+	assert.deepEqual(read(at("wA:p1", "/s/2026_m1.txt")), [undefined, undefined, undefined], "only .jsonl files");
+});
+
 test("the registry keeps a key that left the net for ten minutes, names the pane's new session as its successor, and then forgets it", async () => {
 	let live: Session[] = [session("s1", "one", { ws: "wA", tab: "wA:t1", pane: "wA:p1" }), session("tower-a", "tower", { ws: "wA", tab: "wA:t3", pane: "wA:p5" })];
 	const ps = panes.map((p) => (p.pane_id === "wA:p1" ? { ...p, agent: "pi", agent_session: { value: "/s/2026_s1.jsonl" } } : p));
 	const herdr = async (args: string[]) => JSON.stringify({ result: args[0] === "pane" ? { panes: ps } : { workspaces } });
-	const source = netSource({ run: herdr, sessions: async () => live });
+	const source = netSource({ run: herdr, sessions: async () => live, sessionDir: "/s" });
 	await source.read();
 	assert.deepEqual([source.lookup("s1")?.live, source.lookup("s1")?.file, source.lookup("nope")], [true, "/s/2026_s1.jsonl", undefined]);
 	assert.deepEqual(source.workspace("wA").map((r) => r.key).sort(), ["s1", "tower-a"]);

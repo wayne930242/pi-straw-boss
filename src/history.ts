@@ -10,6 +10,8 @@ import { FULL_LIMIT, type Item, type Json, parse, toItem } from "./items.ts";
 // tens of milliseconds. A line neither matches is read and parsed once. The leaf is the last entry in file order (pi's own load
 // rule) and the view is the path from the leaf up through parentId, oldest first. A rewritten file (smaller, new inode, new header)
 // is re-indexed from scratch; a new entry whose parent is not the current leaf is a branch move. Both reset the page.
+// All index work and every read run one at a time, in order (`serial`): the first index ends before any append starts, and a page or
+// entry is never read while the index is being rebuilt under it.
 
 const CHUNK = 1 << 20, HEAD = 512, TAIL = 400, BIG = 16_384;
 export const PAGE = 150;
@@ -32,7 +34,12 @@ export function openReader(file: string, pollMs = 1000): Reader {
 	let ents: Ent[] = [], byId = new Map<string, number>(), path: number[] = [], bad = 0, size = 0, ino = -1, headText = "", head: Json | undefined;
 	let cur = { start: 0, len: 0, head: Buffer.alloc(0), tail: Buffer.alloc(0) };
 	const listeners = new Set<(c: Change) => void>();
-	let watcher: FSWatcher | undefined, timer: ReturnType<typeof setInterval> | undefined, running = false, again = false;
+	let watcher: FSWatcher | undefined, timer: ReturnType<typeof setInterval> | undefined, chain: Promise<unknown> = Promise.resolve(), queued = false;
+	const serial = <T>(task: () => Promise<T>): Promise<T> => {
+		const run = chain.then(task);
+		chain = run.catch(() => {});
+		return run;
+	};
 
 	const grab = async (fh: FileHandle, off: number, len: number) => {
 		const buf = Buffer.allocUnsafe(len);
@@ -98,7 +105,6 @@ export function openReader(file: string, pollMs = 1000): Reader {
 		return items;
 	}
 	async function page(before?: string, limit = PAGE) {
-		await ready;
 		const end = before === undefined ? path.length : path.findIndex((i) => ents[i]!.id === before);
 		const idx = path.slice(0, Math.max(0, end)), items = await load(idx, limit);
 		const oldest = items[0] && path.findIndex((i) => ents[i]!.id === items[0]!.id);
@@ -144,32 +150,31 @@ export function openReader(file: string, pollMs = 1000): Reader {
 			await fh.close();
 		}
 	};
-	async function refresh() {
-		if (running) return void (again = true);
-		running = true;
+	/** One look at the file: a rewrite re-indexes, new bytes are appended. Reads look first, so they never use an index of a replaced file. */
+	async function look() {
 		try {
-			do {
-				again = false;
-				const s = await stat(file).catch(() => undefined);
-				if (!s) continue; // a new session has no file until its first message: keep waiting for it
-				if (s.ino !== ino || s.size < size || (s.size > size && (await headChanged()))) {
-					await reindex();
-					emit({ reset: true, ...(await page()) });
-				} else if (s.size > size) await append(s.size);
-			} while (again);
+			const s = await stat(file).catch(() => undefined);
+			if (!s) return; // a new session has no file until its first message: keep waiting for it
+			if (s.ino !== ino || s.size < size || (s.size > size && (await headChanged()))) {
+				await reindex();
+				emit({ reset: true, ...(await page()) });
+			} else if (s.size > size) await append(s.size);
 		} catch {} // a read that fails (the file vanished mid-read) is retried by the next poll
-		finally {
-			running = false;
-		}
 	}
-	const ready: Promise<void> = reindex().catch(() => undefined);
+	/** A look queued behind the work already running; changes that arrive meanwhile queue one more. */
+	function refresh() {
+		if (queued) return;
+		queued = true;
+		void serial(() => ((queued = false), look()));
+	}
+	const ready: Promise<void> = serial(reindex).catch(() => undefined);
 	return {
 		ready,
 		header: () => head && { id: head.id, cwd: head.cwd },
 		unreadable: () => bad,
-		page,
-		entry: async (id) => {
-			await ready;
+		page: (before, limit) => serial(async () => (await look(), page(before, limit))),
+		entry: (id) => serial(async () => {
+			await look();
 			const i = byId.get(id), e = i === undefined ? undefined : ents[i];
 			if (!e) return undefined;
 			const fh = await open(file, "r");
@@ -179,16 +184,16 @@ export function openReader(file: string, pollMs = 1000): Reader {
 			} finally {
 				await fh.close();
 			}
-		},
+		}),
 		subscribe: (fn) => (listeners.add(fn), () => void listeners.delete(fn)),
 		start() {
 			if (timer) return;
 			timer = setInterval(() => void refresh(), pollMs).unref();
 			try {
-				watcher = watch(file, () => void refresh());
+				watcher = watch(file, refresh);
 				watcher.unref().on("error", () => {});
 			} catch {} // no file yet: the poll finds it
-			void ready.then(refresh);
+			refresh();
 		},
 		stop() {
 			clearInterval(timer);
