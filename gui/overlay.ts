@@ -1,7 +1,9 @@
 import { type Alert, rankOf } from "./alerts.ts";
 
 // One overlay layer for every panel the page opens. Two kinds:
-// - Dialogs stack in the dock. Only the user opens one (a click on a unit that waits, or on the HUD alert). A unit that starts to need
+// - Dialogs stack in the dock. A dialog the user is looking at is never covered by one they did not open: only an explicit open (a click
+//   on a unit that waits, on the HUD alert, or on a dialog peeking out beneath) comes to the top; any other open slides in beneath the
+//   top dialog, peeking out, and takes no focus, until the user closes the top one or clicks it. A unit that starts to need
 //   attention never opens anything: it joins the alert queue (questions and errors first, then plain state changes; oldest first in
 //   each), shown in the HUD. Closing the top dialog reveals the one beneath; with none beneath, the next queued question or error
 //   (plain state changes wait for the user). "Later" puts the alert back in the queue and reveals nothing queued; "Open comms" closes
@@ -23,13 +25,16 @@ export function createStack<F>(io: StackIO<F>) {
 	// `raised` is the state that raised an open dialog's alert; the dialog itself shows the unit's current state.
 	let open: { alert: Alert; back: F | undefined; raised: Alert["mark"] }[] = [], queue: Alert[] = [];
 	const draw = () => io.render(open.map((o) => o.alert), queue);
-	const show = (alert: Alert, back: F | undefined) => {
+	const show = (alert: Alert, back: F | undefined, user = true) => {
 		const i = open.findIndex((o) => o.alert.key === alert.key);
+		if (i >= 0 && !user) return; // already open: it stays where it is
 		const entry = i >= 0 ? open.splice(i, 1)[0]! : { alert, back, raised: alert.mark };
-		open.push(entry);
+		// Not the user's own open: beneath the top dialog, without focus. With none open there is nothing to cover.
+		if (!user && open.length) open.splice(open.length - 1, 0, entry);
+		else open.push(entry);
 		queue = queue.filter((q) => q.key !== alert.key);
 		draw();
-		io.enter(entry.alert);
+		if (user) io.enter(entry.alert);
 	};
 	return {
 		get open() { return open.map((o) => o.alert); },
@@ -50,8 +55,13 @@ export function createStack<F>(io: StackIO<F>) {
 			for (const o of open) o.alert = { ...o.alert, ...now(o.alert.key), at: o.alert.at };
 			draw();
 		},
-		/** The user opens a dialog (raised to the top if it is open already). */
-		show: (alert: Alert) => show(alert, io.focused()),
+		/** The user opens a dialog (raised to the top if it is open already). `user` false opens it beneath the top one, without focus. */
+		show: (alert: Alert, user = true) => show(alert, io.focused(), user),
+		/** The user clicked a dialog beneath the top one: it comes to the top. */
+		raise(key: string) {
+			const o = open.find((x) => x.alert.key === key);
+			if (o && o !== open.at(-1)) show(o.alert, io.focused());
+		},
 		next() {
 			if (queue[0]) show(queue[0], io.focused());
 		},

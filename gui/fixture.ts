@@ -9,11 +9,13 @@ import type { Source } from "./stream.ts";
 // disconnected page. It stands in for the server's EventSource, so the real reconnect logic runs against it.
 
 const unit = (id: string, name: string, role: Unit["role"], mark: Mark, note?: string, subs: Unit[] = []): Unit => ({ id, key: id, control: true, name, role, mark, note, subs });
+// What a waiting demo unit waits on: a question it shows (every other one), or a secret.
+const ask = (n: number): Unit["pending"] => (n % 2 ? { callId: `demo-${n}`, tool: "secret_drop", why: "It waits for a secret." } : { callId: `demo-${n}`, tool: "ask_user", ask: { question: "When should the ops deploy go out?", context: "The billing fix is merged. Staging has been green for two hours.", options: [{ title: "Tonight 22:00", description: "Low traffic; on-call is awake." }, { title: "Tomorrow 08:00" }, { title: "Hold it" }], multiple: false, freeform: true } });
 const demo = (): Net => ({
 	bases: [
 		{ id: "w1", label: "Harbor API", mark: "working", head: true, tower: { name: "tower · Harbor API", mark: "working", key: "t1", control: true }, outposts: [{ id: "w1-fix", label: "harbor-api-hotfix", mark: "working" }], outside: [unit("o1", "scratch-notes", "outside", "idle")], tabs: [
 			{ id: "w1:t1", label: "billing", units: [unit("a1", "billing-main", "main", "working", "tool:edit", [unit("a1/lint", "lint-sweep", "subagent", "working", "tool:bash"), unit("a1/docs", "docs-writer", "subagent", "done", "finished")]), unit("a2", "billing-tests", "member", "idle")] },
-			{ id: "w1:t2", label: "ops", units: [unit("a3", "ops-main", "main", "waiting", "waiting on a question")] },
+			{ id: "w1:t2", label: "ops", units: [{ ...unit("a3", "ops-main", "main", "waiting", "waiting on a question"), pending: ask(0) }] },
 		] },
 		{ id: "w2", label: "Lighthouse Web", mark: "working", head: false, tower: { name: "tower · Lighthouse Web", mark: "idle", key: "t2", control: true }, outposts: [], outside: [], tabs: [
 			{ id: "w2:t1", label: "checkout", units: [unit("b1", "checkout-main", "main", "working", "thinking", [unit("b1/e2e", "e2e-runner", "subagent", "working", "thinking")]), unit("b2", "checkout-style", "member", "working", "tool:read")] },
@@ -81,6 +83,7 @@ export function createFixture({ resume, tile, tick = 2500 }: { resume(): void; t
 		const options = NEXT[pick.mark];
 		pick.mark = step % 17 === 16 ? "error" : options[step % options.length]!;
 		pick.note = pick.mark === "working" ? "tool:edit" : pick.mark === "waiting" ? "waiting on a question" : undefined;
+		pick.pending = pick.mark === "waiting" ? ask(step) : undefined;
 		net = structuredClone(net);
 		step++;
 		current?.send("message", net);

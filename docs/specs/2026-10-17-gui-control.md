@@ -278,13 +278,14 @@ Phase 1 builds the layer with read-only content; Phase 2 and 3 dialogs (ask_user
 |---|---|
 | Arrival | A unit that turns `waiting` or `error` (a question or an error, rank 0), or after the first snapshot turns `done` (a plain state change, rank 1), raises an alert. An alert never opens a dialog and never moves focus: it joins the queue shown in the header (count, the faces of the first three units, the head's name and state). An alert for a unit whose dialog is open refreshes that dialog instead. |
 | Queue order | Rank first, then the oldest arrival. A repeated arrival keeps its place. |
-| Opening | Only the user opens a dialog: from the header alert (the head of the queue), or by clicking a unit that waits or failed (map, base, dossier; a modified click still follows the link). An opened dialog leaves the queue, goes on top, and takes focus; one already open comes to the top instead of opening twice. |
-| Stack | The top dialog is in front; dialogs beneath peek out above it, smaller and fainter, and are `inert`. |
+| Opening | Only the user opens a dialog on top: from the header alert (the head of the queue), by clicking a unit that waits or failed (map, base, dossier; a modified click still follows the link), or by clicking a dialog that peeks out beneath the top one. An opened dialog leaves the queue, goes on top, and takes focus; one already open comes to the top instead of opening twice. |
+| Not the user's open (user, 2026-10-17) | A dialog the user is looking at is never covered by one they did not open themselves. Any open without a direct user action on it (a dialog raised by an alert, the stream, the demo fixture) slides in **beneath** the top dialog, peeking out, and takes no focus; it comes to the front only when the user closes the top one or clicks it. One already open stays where it is. With no dialog open there is nothing to cover, and it still takes no focus. In 0.5.0 no code path opens a dialog this way (alerts queue); the model enforces the rule for Phase 3's arrivals. |
+| Stack | The top dialog is in front; dialogs beneath peek out above it, smaller and fainter, and are `inert`. A click on the part that peeks out raises that dialog (an `inert` element takes no click, so the layer catches it on the page). |
 | Closing | Close (× or Escape) removes the top dialog. The dialog beneath comes back; with none beneath, the next queued question or error does (it was waiting behind the closed one). Plain state changes stay queued until the user opens them. **Later** puts the alert back in the queue and reveals nothing queued, so the user can always step out; an alert whose unit moved on while its dialog was open is stale and is dropped instead. **Open comms** closes the alert and reveals nothing queued either, so no dialog covers the comms the user went to. |
 | Escape | Closes the top dialog only. With no dialog open, it goes up one route level. |
 | Focus | Each dialog remembers where focus was when it opened and returns it there on close (inside the dialog beneath, or the page element that opened the first); when that element is gone, focus moves into the dialog beneath. Dialogs are not modal: the page stays usable and nothing traps focus. |
 | Stale | A queued alert whose unit no longer shows the state that raised it leaves the queue by itself. An open dialog is never closed under the user; it shows the unit's current state. |
-| Phase 1 content | The unit (portrait, role, state, base), its last assistant line and the tool call it waits on (from the newest 12 history items, read when the alert arrives), **Open comms** (the session route at the entry the alert was about: `?at=` the reply with the tool call it waits on, else its last reply) and **Later**. |
+| Content | A question the unit waits on is shown read-only, with "Answer it in the terminal" and **Focus terminal** (0.5.0, see [Showing `ask_user`](#showing-ask_user-050-answering-deferred)). The unit (portrait, role, state, base), its last assistant line and the tool call it waits on (from the newest 12 history items, read when the alert arrives), **Open comms** (the session route at the entry the alert was about: `?at=` the reply with the tool call it waits on, else its last reply) and **Later**. |
 
 **Tiles** sit beside the current view and share its width.
 
@@ -295,7 +296,7 @@ Phase 1 builds the layer with read-only content; Phase 2 and 3 dialogs (ask_user
 | Narrow | When the width cannot hold the view and every tile side by side, the tiles become tabs within the tile area; below 900 px the tile area goes under the view. |
 | Phase 1 content | Read-only. `npm run gui:dev` demonstrates it with a demo document (the demo show_doc card's **open beside**, and the toolbar's **doc arrives**). The live server serves no documents until Phase 3. |
 
-The models are pure (`gui/overlay.ts` for the stack, `createTiles` in `gui/layer.ts`) and tested in `tests/overlay.test.ts`: arrival while a dialog is open queues instead of covering, close reveals the next in order, stale removal, Escape closes the top only, focus restore, tiles that arrive without focus, and the tile cap.
+The models are pure (`gui/overlay.ts` for the stack, `createTiles` in `gui/layer.ts`) and tested in `tests/overlay.test.ts`: arrival while a dialog is open queues instead of covering, an open the user did not make goes beneath without focus and comes up when the top one closes, an explicit open still goes on top, a click raises a dialog beneath, close reveals the next in order, stale removal, Escape closes the top only, focus restore, tiles that arrive without focus, and the tile cap.
 The layer's DOM is a chunk of its own, loaded on the first alert, dialog, or tile; only the alert spotting (`gui/alerts.ts`) is in the map's chunk.
 
 ## Phase 2: typing into a session (R5)
@@ -416,7 +417,8 @@ Added to 0.5.0 by the user (2026-10-17). Decisions:
    or Herdr is refused instead of vanishing into the overlay. A pane narrower than the QR says how wide it needs to be.
 5. **Phone layout**: map, workspace and session routes, the HUD, the alert queue, dialogs, tiles (as tabs), and the composer
    work at about 390 px with touch: no horizontal overflow, 44 px touch targets, safe-area insets, and the composer kept
-   above the on-screen keyboard through `visualViewport` (`--vvh`). The game look is kept.
+   above the on-screen keyboard through `visualViewport` (`--vvh`). The game look is kept. The net log folds away from its
+   heading anywhere, and on a phone shows only its two newest entries (user, 2026-10-17).
 
 The QR encoder is `src/qr.ts` with no dependency (byte mode, error correction level M, the smallest of versions 1–40 that
 fits, the mask with the lowest penalty), adapted in part from Project Nayuki's QR Code generator library (MIT, notice in
@@ -459,6 +461,40 @@ on: the newest tool call on the path with no `toolResult` yet, if its tool is
 `ask_user`, `robot_hand`, or `secret_drop`; otherwise "a dialog". It sends a
 `pending` event; the session view shows a panel above the composer, the map and
 workspace cards show the amber `?` as today.
+
+#### Showing `ask_user` (0.5.0); answering deferred
+
+The user moved answering `ask_user` from the browser into 0.5.0 (2026-10-17), then deferred it again the same day after three
+review rounds (below). 0.5.0 ships the question read-only.
+
+- **What it waits on** (`src/ask.ts`): for every unit Herdr reports `blocked` (`waiting`), the server reads the last 256 KB of its
+  session file and takes the newest assistant message's tool calls that have no `toolResult` yet (none once a user message follows).
+  It rides on the unit in the snapshot as `pending: {callId, tool, ask?: {question, context?, options[{title, description?}],
+  multiple, freeform}, why?}` (question ≤ 2,000 characters, context ≤ 8,000, at most 50 options, titles ≤ 200, descriptions ≤ 600),
+  cached while the file is unchanged. A `secret_drop` carries only "It waits for a secret." (never its label), several open calls or
+  a `questions` batch only a `why`.
+- **The page** shows, in the alert dialog and above the composer in the session view, the question, its context and options as
+  plain text (text nodes, never markup), "Answer it in the terminal." (and whether it takes several choices or its own words), and
+  **Focus terminal**, which calls the existing `focus` endpoint (`agent.focus`, no keys) under the usual guards.
+- **No answer route.** `POST …/sessions/<key>/answer` does not exist (404), nothing derives keys or reads the screen, and the keys
+  endpoint stays Escape-only (0.5.0 narrowed its allow list to `esc`).
+
+**Why answering was deferred.** The built design (kept on the local branch `wip/ask-user-screen-check`) sent pi-ask-user's keys
+after reading the terminal (`pane.read`) to confirm the dialog was fresh: the right question, an empty filter, the select list
+showing, the options in order. Each fresh review found a new way for that check to accept a dialog in a state the keys do not
+expect, so an answer could reach the agent wrong:
+
+| Round | Blocking finding | Fix tried |
+|---|---|---|
+| 1 | Transcript lines around the centered overlay could quote the literals the check searched for (`Filter: type to filter`, `v0.16.0`); a typed filter or an open editor passed. Also: `allowFreeform: "false"` (pi converts it, the file keeps it raw) and a lone `>` line fooling the input-box check. | Read only the one live box; anchor the input box as a block; only real booleans. |
+| 2 | Text the model writes inside the box (question, context, descriptions) could carry the same literals. | Match rows by position (the model's rows start with two spaces, the dialog's own with one); refuse questions quoting any marker (`MARKERS`). |
+| 3 | C-1: pi-ask-user keeps a custom-response draft after Esc and draws nothing for it, so own words were appended to the old draft; no screen check can see it. C-2: ANSI sequences in model text (`\x1b[3G`, a split SGR) draw rows that pass as the dialog's own and hide the markers. | Not fixed; the user chose to ship without answering. |
+
+The trend: a screen check cannot be made safe against model-written text. A safe version needs pi-ask-user, or a bridge
+extension in the same pi, to report the dialog's state (and take the answer) itself, not the terminal. Also open on that branch:
+C-3 (a context over three rows or a scrolled prompt always refuses), B-3 (an open dialog's panel follows the stream state only on
+the next snapshot), A-7 (click-to-raise listens on `document` in the capture phase and may take a click meant for a HUD element
+drawn over a peeking dialog; unverified, and it ships in 0.5.0 with the overlay rule).
 
 **Terminal mirror and key pad** (generic, works for any dialog): while the panel is
 open and the page visible, the server reads `pane.read {source: "visible", format:
@@ -569,6 +605,7 @@ Control means typing into the user's terminals, so every write is guarded.
 | Agent-written HTML attacking the app | Documents are sandboxed without scripts and without same-origin; only files named by `show_doc`, and images, CSS, and fonts beside them, are served. The only GET that writes is the document answer, gated by a per-document nonce. |
 | Arbitrary file reads | Paths come only from the registry and `show_doc` calls; `realpath` and directory containment checks as in today's static serving (`gui.ts:85-86`). |
 | A reused pane id | Input requires the pane's current `agent_session.value` to be the session's file. |
+| An answer reaching the wrong dialog | 0.5.0 sends no answers: a pending question is shown read-only and there is no answer route (see [Showing `ask_user`](#showing-ask_user-050-answering-deferred)). |
 | Exiting pi by accident | `ctrl+c` and `ctrl+d` are not sendable, and control characters in text are refused (they could end the bracketed paste); session-ending slash commands typed as text need a confirm the server checks (keys are not covered; see the keys API). |
 | Secrets | `secret_drop` is terminal only (above). No request body or typed text is logged by the server. |
 | Body abuse | Request bodies ≤ 64 KB; text ≤ 16 KB; one in-flight input per session. |
@@ -584,20 +621,21 @@ Control means typing into the user's terminals, so every write is guarded.
 | Terminal mirror | 1 read per second, only while open and visible | 15 ms, 9 KB |
 | Workspace cards | one 64 KB tail read per unit per change | 19 ms for 15 files |
 | Page JS (map chunk) | ≤ 15 KB raw, ≤ 6 KB gzip | 8.7 / 3.7 KB today |
-| Page JS (lazy chunks: chat, views, layer, pairing) | ≤ 35 KB raw, ≤ 14 KB gzip (was 12; raised in 0.5.0 for the composer, about 2.2 KB, and the pairing tile with its POST helper, about 1.1 KB) | |
-| CSS | ≤ 24.6 KB raw, ≤ 6.7 KB gzip (was 22 / 6; 22.1 / 6.1 in 0.4.0 for the anchor highlight, the receive-only strip, and the title link; 0.5.0 for the composer, the phone layout, and the pairing tile) | 10.5 / 3.2 KB before Phase 1 |
+| Page JS (lazy chunks: chat, views, layer, pairing, question) | ≤ 35 KB raw, ≤ 15.5 KB gzip (was 12; raised in 0.5.0 for the composer, about 2.2 KB, the pairing tile with its POST helper, about 1.1 KB, and the read-only question panel with its place in dialogs and the session view, about 1.1 KB) | |
+| CSS | ≤ 26 KB raw, ≤ 7 KB gzip (was 22 / 6; 22.1 / 6.1 in 0.4.0 for the anchor highlight, the receive-only strip, and the title link; 0.5.0 for the composer, the phone layout, the pairing tile, the question panel, and the folding net log) | 10.5 / 3.2 KB before Phase 1 |
 | Mounted chat items | ≤ 600 | `content-visibility: auto` |
 | Runtime dependencies | none | as today |
 
 Measured after Phase 1 (0.4.0, `tests/imports.test.ts`): map chunk 14.1 KB (5.9 KB gzipped), lazy chunks together 24.1 KB (10.2 KB), stylesheet 22.1 KB (6.1 KB).
 The stylesheet has no room left (no unused rules remain, and folding repeated declarations into groups grows the gzipped size), so Phases 2 and 3 (composer, mirror, panels) need a new CSS figure before they start.
-Measured after Phase 2 (0.5.0): map chunk 14.5 KB (5,993 bytes gzipped), lazy chunks together 31.9 KB (13,994 bytes gzipped), stylesheet 24.5 KB (6.6 KB).
+Measured for 0.5.0 (Phase 2, the read-only question, the net log fold): map chunk 14.6 KB (5,993 bytes gzipped), lazy chunks together 34.2 KB (15,105 bytes gzipped), stylesheet 25.9 KB (6.9 KB).
 
 Source budgets (lines): `src/history.ts` 250, `src/control.ts` 150, `src/gui.ts` +
 `src/net.ts` 320 together (300 until 0.5.0, raised for the CSRF meta, the POST routing, and the remote access check),
-`src/remote.ts` 165, `src/pairing.ts` 60, `src/qr.ts` 140, the rest of `src` 570 (540 until 0.5.0, raised for `herdrCall` and
+`src/remote.ts` 165, `src/pairing.ts` 60, `src/qr.ts` 140, `src/ask.ts` 80 (display only), `gui/ask.ts` 50, the rest of `src` 610 (540 until 0.5.0, raised for `herdrCall` and
 `/boss gui remote`), `gui/pair.ts` + `gui/post.ts` 50, `src/docs.ts` (document serving) 120;
-`gui/router.ts` 80, `gui/chat.ts` 250, `gui/markdown.ts` 180, `gui/composer.ts`
+`gui/router.ts` 80, `gui/chat.ts` 250, `gui/markdown.ts` 180, `gui/views.ts` 245 and `gui/layer.ts` 165 (240 and 150 until 0.5.0's question
+panel and raising a dialog beneath), the overlay model 115 (110), the demo fixture 165 (160), `gui/composer.ts`
 125 (120 until 0.5.0, raised so a send in flight outlives a composer the route replaced), `gui/mirror.ts` 120, `gui/panels.ts` 150.
 
 ## Failure behavior
@@ -626,6 +664,7 @@ Unit tests run with `node --test` against fakes, like today (`tests/fakes.ts`).
 | `tests/gui.test.ts` (extend) | Deep routes return `index.html` with `<base href>` and the CSRF meta; `events?watch=` sends `history` then appends; the API refuses a key not in the registry; `/api/*` GET on a write path → 405. |
 | `tests/control.test.ts` | With a fake Herdr socket: `send` → `agent.prompt` with the pane id; `followUp` while working → `pane.send_input` with `alt+enter`, while idle → `agent.prompt`; blocked → 409 and nothing sent; reused pane (file mismatch) → 409; key allow list refuses `ctrl+c` and `ctrl+d`; `secret_drop` pending refuses input and keys except `esc`; missing or wrong Origin, `Sec-Fetch-Site: cross-site`, missing CSRF header, wrong content type, body over 64 KB, second in-flight request. |
 | `tests/remote.test.ts` | Identity from `tailscale status`; serve entry added only on a free or own 8443, verified after, removed only when ours; Funnel refused; a pairing code works once and within ten minutes; remote requests need Host, user login, no Funnel marker, and the cookie; remote off ends remote streams; a missing clipboard command fails cleanly. |
+| `tests/ask.test.ts` | The open call from a session file (answered, a newer user message, siblings, two at once, `secret_drop` without its label); the question read for display (options coerced as pi-ask-user does, clipped, odd JSON); the snapshot's `pending`. `tests/control.test.ts`: there is no answer route (404, nothing reaches Herdr). |
 | `tests/qr.test.ts` | The encoder against known symbols. |
 | `tests/bossgui.test.ts` (extend) | `/boss gui remote` with a fake Tailscale: the overlay, its key hints, c and o each minting their own one-time link, the session blocked while it is open, Esc, q, Enter; remote off, stop, and the session's end take the entry down. |
 | `tests/docs.test.ts` | Only `show_doc`-named files are served, with the sandbox CSP; sibling images and CSS yes, `..` and other extensions no; form action rewritten; answer with a wrong nonce refused; answer typed as one message. |
@@ -724,6 +763,7 @@ page.
 ### 5. Pending dialogs, mirror, `secret_drop` guard, `ask_user`
 - **Files/area:** `src/control.ts`, `src/history.ts` (pending call), `gui/mirror.ts`, `gui/panels.ts`, `tests/askuser.test.ts`.
 - **Behavior:** `pending` and `mirror` events; key pad; structured `ask_user`; terminal-only `secret_drop`.
+- **Status:** 0.5.0 shows a pending `ask_user` read-only and the other dialogs as "answer in the terminal" (`src/ask.ts`, `gui/ask.ts`); answering is deferred until pi-ask-user or a bridge can report the dialog's state (see [Showing `ask_user`](#showing-ask_user-050-answering-deferred)). The mirror and the key pad remain.
 - **Acceptance:** tests pass; live check steps 6 and 8.
 - **Depends on:** task 4.
 
@@ -741,6 +781,6 @@ page.
 
 The focus views follow the map's game language (user: 「我們一開始的設計模式就是要對齊遊戲」): the workspace route is the base zoomed in, the session route a unit dossier and comms log, one HUD on every route. Attention panels stack without covering the active one (「dialog 要考慮堆疊…不能蓋過現在的 dialog」), and documents tile beside the view (「show doc 那邊，直接看成 tiled dialog，在旁邊並排」); the rules are in [Overlay layer](#overlay-layer-stacked-dialogs-and-tiles).
 
-0.5.0 (user, 2026-10-17): remote access over Tailscale with a QR code and phone layouts, as in [Remote access](#remote-access-over-tailscale-r6), including the pairing panel's c and o keys, each minting a fresh one-time link.
+0.5.0 (user, 2026-10-17): remote access over Tailscale with a QR code and phone layouts, as in [Remote access](#remote-access-over-tailscale-r6), including the pairing panel's c and o keys, each minting a fresh one-time link. Also in 0.5.0, after review in gui:dev: a dialog the user is reading is never covered by one they did not open (it goes beneath); the net log folds and stays small on a phone; and a pending `ask_user` is shown read-only (answering it from the browser was tried and deferred, see [Showing `ask_user`](#showing-ask_user-050-answering-deferred)).
 
 D1 (b), D2 merge, D3 keystrokes plus an upstream proposal, D4 the GUI renders show_doc, D5 allowed with confirms, D6 server stays in the session, D8 own renderer, D9 later, D10 shown with a divider: all as recommended. D7: a pi-herdr-agents subagent is typed into directly, like any session; no note and no routing through its parent or a coordinator.

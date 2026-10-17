@@ -133,6 +133,12 @@ svg { display: block; }
 .side { display: grid; gap: 16px; position: sticky; top: 96px; }
 .panel { padding: 14px 16px; border: 1px solid var(--line); border-radius: 18px; background: var(--panel); }
 .panel h2 { margin-bottom: 10px; color: var(--dim); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; }
+/* The net log folds away from its heading; a phone shows only its two newest entries. */
+.net-log summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; }
+.net-log summary::-webkit-details-marker { display: none; }
+.net-log summary::after { content: "▾"; color: var(--dim); transition: transform 0.2s; }
+.net-log:not([open]) summary::after { transform: rotate(-90deg); }
+.net-log:not([open]) h2 { margin-bottom: 0; }
 .log { list-style: none; padding: 0; display: grid; gap: 7px; max-height: 360px; overflow: hidden; }
 .log:empty::before { content: "Waiting for changes…"; color: var(--dim); font-size: 12px; }
 .log li { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; font-size: 12px; animation: slide 0.4s ease-out both; }
@@ -351,6 +357,20 @@ summary::-webkit-details-marker { display: none; }
 .said { font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
 .pending { margin-top: 8px; color: var(--c); font: 12px var(--mono); overflow-wrap: anywhere; }
 .dialog footer { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+/* A unit's question (ask_user), read-only: answered in the terminal. Amber, a thin ring all round, like a waiting unit. */
+.ask { display: grid; gap: 8px; margin: 10px 18px 0; padding: 12px 14px; border-radius: 14px; border: 1px solid #ffb02e59; background: #ffb02e0f; }
+.dialog .ask { margin: 10px 0 0; }
+.ask-q { font-weight: 600; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ask-ctx, .ask-why { color: var(--dim); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 9em; overflow: auto; }
+.ask-opts { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; counter-reset: opt; max-height: 16em; overflow: auto; }
+.ask-opt { display: grid; gap: 2px; padding: 7px 12px; border-radius: 10px; border: 1px solid var(--line); background: #070c18; font-size: 13px; overflow-wrap: anywhere; counter-increment: opt; }
+.ask-opt b::before { content: counter(opt) ". "; color: var(--dim); }
+.ask-opt small { color: var(--dim); font-size: 12px; }
+.ask-acts { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; justify-content: space-between; }
+.ask-term { color: var(--gold); font-size: 12px; }
+.ask button:disabled { opacity: 0.45; cursor: default; }
+.ask-note:empty { display: none; }
+.ask-note { font-size: 12px; color: var(--dim); } .ask-note[data-tone="error"] { color: #ff8a9c; }
 .go, .later, .chat-pill, .cmp-send, .cmp-alt { padding: 7px 13px; border-radius: 10px; font: 600 13px var(--sans); text-decoration: none; cursor: pointer; }
 .go, .chat-pill { background: var(--c); color: #06101e; }
 .cmp-send { border: 0; background: #38e0ff; color: #06101e; }
@@ -380,8 +400,9 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 	.cmp-row { flex-wrap: wrap; }
 	.composer textarea { flex: 1 1 100%; min-height: 64px; }
 	.cmp-acts { margin-left: auto; }
+	.log { max-height: none; } .log li:nth-child(n+3) { display: none; }
 	.dock { top: auto; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); width: calc(100vw - 20px); }
 }
 /* Touch: larger targets, and a 16 px box so the phone does not zoom in on focus. */
-@media (pointer: coarse) { .composer textarea { font-size: 16px; } .composer button, .go, .later, .x, .chat-pill, .pair-btn, .alerts { min-height: 40px; } }
+@media (pointer: coarse) { .composer textarea { font-size: 16px; } .composer button, .go, .later, .x, .chat-pill, .pair-btn, .alerts, .ask button { min-height: 40px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }

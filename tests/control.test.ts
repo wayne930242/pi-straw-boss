@@ -92,6 +92,12 @@ test("only Escape can be sent as a key until Phase 3, never Ctrl+C or Ctrl+D, al
 	assert.deepEqual(typed().map(([m, p]) => [m, p.keys ?? p.target]), [["pane.send_input", ["esc"]], ["pane.send_input", ["esc"]], ["agent.focus", "wA:p1"]]);
 });
 
+test("there is no answer route: a dialog is answered in the terminal, and nothing reaches Herdr", async () => {
+	const { gui, calls } = await setup({ pane: { agent_status: "blocked" } });
+	for (const body of [{ callId: "c1", choice: 0 }, { callId: "c1", text: "teal" }, { callId: "c1", cancel: true }]) assert.equal((await send(gui, "sessions/sess-1/answer", body)).status, 404);
+	assert.deepEqual(calls, []);
+});
+
 test("commands that end or replace the session need confirmed, and the page and the server agree on which they are", async () => {
 	const { gui, typed } = await setup();
 	for (const text of ["/quit", " /exit", "/new", "/resume abc", "/fork", "/clone", "/import ~/old.jsonl", "/reload"]) {

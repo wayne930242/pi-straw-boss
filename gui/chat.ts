@@ -1,3 +1,4 @@
+import type { Pending } from "../src/ask.ts";
 import type { Mark } from "../src/dashboard.ts";
 import type { Item } from "../src/items.ts";
 import { h } from "./dom.ts";
@@ -73,7 +74,7 @@ export function createChat(cap = CAP) {
 export interface HistoryEvent { key: string; state?: string; successor?: string; base?: string; name?: string; role?: string; reset?: boolean; items?: Item[]; before?: string; header?: { id?: string; cwd?: string }; unreadable?: number }
 /** `doc` reads a document a show_doc call named; only the dev fixture has one in this phase. `post` stands in for the server's input API (composer.ts) in the dev fixture. */
 export interface Data { older(before: string): Promise<Page>; latest(): Promise<Page>; entry(id: string): Promise<Item | undefined>; doc?(path: string): Promise<string | undefined>; post?: Post }
-export interface Who { key: string; name: string; role: string; mark: Mark; note?: string; control?: boolean }
+export interface Who { key: string; name: string; role: string; mark: Mark; note?: string; control?: boolean; pending?: Pending }
 export interface ChatDeps { who(): Who; link(name: string): HTMLAnchorElement | undefined; openTile(tile: Tile, focus?: boolean): void }
 /** `reveal` opens the log at an entry (scrolled into view and lit), or with none at the newest entry. `log` is the scrolling log, a focus target. */
 export interface Chat { apply(event: HistoryEvent): void; setLive(text: string, mark: Mark): void; reveal(at?: string): void; log: HTMLElement }

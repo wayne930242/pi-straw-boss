@@ -1,5 +1,7 @@
 import type { Item } from "../src/items.ts";
+import { type FocusPost, mountAsk } from "./ask.ts";
 import { type Alert, createStack } from "./overlay.ts";
+import { post } from "./post.ts";
 import { aim, byId, doing, fillPlate, html, mark, PLATE, sync, text } from "./render.ts";
 
 // The overlay layer's DOM, a chunk fetched on the first alert, dialog, or tile: the HUD alert with its queue, the dialogs in the dock (stacked; the
@@ -48,8 +50,9 @@ export function intel(items: Item[]): Intel {
 }
 export interface Intel { said?: string; pending?: string; at?: string; failed?: boolean }
 
-export interface PanelDeps { label(ws: string): string; recent(key: string): Promise<Item[]> }
-const dialogEl = () => html(`<section class="dialog" role="dialog" aria-modal="false" tabindex="-1"><header><b class="tag">alert</b><span class="where"></span><button class="x" type="button" aria-label="Close">×</button></header><div class="who">${PLATE}<div><h3></h3><p><em class="role"></em> <span class="state"></span></p></div></div><div class="intel"><h4>Last transmission</h4><p class="said">…</p><p class="pending" hidden><b>waiting on</b> <span></span></p></div><footer><a class="go">Open comms</a><button class="later" type="button">Later</button><span class="queued"></span></footer></section>`);
+/** `focus` is the demo fixture's stand-in for the server's focus endpoint. */
+export interface PanelDeps { label(ws: string): string; recent(key: string): Promise<Item[]>; focus?(key: string): FocusPost | undefined }
+const dialogEl = () => html(`<section class="dialog" role="dialog" aria-modal="false" tabindex="-1"><header><b class="tag">alert</b><span class="where"></span><button class="x" type="button" aria-label="Close">×</button></header><div class="who">${PLATE}<div><h3></h3><p><em class="role"></em> <span class="state"></span></p></div></div><div class="intel"><h4>Last transmission</h4><p class="said">…</p><p class="pending" hidden><b>waiting on</b> <span></span></p></div><div class="ask-root"></div><footer><a class="go">Open comms</a><button class="later" type="button">Later</button><span class="queued"></span></footer></section>`);
 const tileEl = () => html(`<section class="tile" tabindex="-1"><header><svg><use href="#i-doc"/></svg><b></b><button class="x" type="button" aria-label="Close document">×</button></header><div class="tile-body"></div></section>`);
 
 export function mountPanels(deps: PanelDeps) {
@@ -85,7 +88,11 @@ export function mountPanels(deps: PanelDeps) {
 		text(el, ".queued", queued ? `+${queued} queued` : "");
 		if (!intels.has(a.key)) learn(a);
 		tell(el, a);
+		let ask = asks.get(el);
+		if (!ask) asks.set(el, (ask = mountAsk(el.querySelector(".ask-root")!, deps.focus?.(a.key) ?? (() => post(`sessions/${encodeURIComponent(a.key)}/focus`, {})))));
+		ask.update(a.pending, a.mark === "waiting" && document.body.dataset.stale !== "true"); // what it waits on, read-only
 	};
+	const asks = new WeakMap<HTMLElement, ReturnType<typeof mountAsk>>();
 	const stack = createStack<HTMLElement>({
 		render(open, queue) {
 			sync(dock, open.map((a) => ({ ...a, id: a.key })), dialogEl, (el, a) => fill(el, a, open.length - 1 - open.findIndex((o) => o.key === a.key), queue.length));
@@ -101,6 +108,13 @@ export function mountPanels(deps: PanelDeps) {
 		restore: (target) => Boolean(target?.isConnected && !target.closest("[inert]") && (target.focus(), document.activeElement === target)), // a disabled HUD alert does not take it
 	});
 	button.addEventListener("click", () => stack.next());
+	// A dialog beneath the top one is inert, so a click on the part that peeks out falls through to the page: it raises that dialog instead.
+	document.addEventListener("click", (event) => {
+		const at = (el: Element) => { const r = el.getBoundingClientRect(); return event.clientX >= r.left && event.clientX <= r.right && event.clientY >= r.top && event.clientY <= r.bottom; };
+		const all = [...dock.querySelectorAll<HTMLElement>(".dialog:not(.leaving)")], hit = all.slice(0, -1).reverse().find(at);
+		if (event.defaultPrevented || !hit || !all.length || at(all.at(-1)!)) return; // a click another listener took (an alert link) stays its
+		event.preventDefault(), event.stopPropagation(), stack.raise(hit.dataset.key!);
+	}, true);
 	dock.addEventListener("click", (event) => {
 		const target = event.target as Element;
 		if (target.closest(".x")) stack.close();

@@ -2,16 +2,17 @@ import { homedir } from "node:os";
 import { basename, join, sep } from "node:path";
 import { type Mark, markOf, type Row, sessionMark, subagents } from "./dashboard.ts";
 import { headOf, type HerdrRun, isSub, type Pane, panes, parentOf, type Session, workspaces, type Workspace } from "./herdr.ts";
+import { type Pending, withPending } from "./ask.ts";
 import { canonical } from "./history.ts";
 
 // The whole straw net as one JSON-able snapshot for the browser view: every workspace as a base with its tower, tabs, agents,
 // and subagents (linked to their launcher the way the tower dashboard links them), and sub workspaces as outposts.
 
 /** `key` names the unit in routes and the API; `control` says a live pi pane backs it. `outside` units are pi panes the net does not hold (D1). */
-export interface Unit { id: string; key: string; control: boolean; name: string; role: "main" | "member" | "subagent" | "outside"; mark: Mark; note?: string; subs: Unit[] }
+export interface Unit { id: string; key: string; control: boolean; name: string; role: "main" | "member" | "subagent" | "outside"; mark: Mark; note?: string; subs: Unit[]; pending?: Pending }
 export interface Tab { id: string; label: string; units: Unit[] }
 export interface Outpost { id: string; label: string; mark: Mark }
-export interface Base { id: string; label: string; mark: Mark; head: boolean; tower: { name: string; mark: Mark; key: string; control: boolean } | null; tabs: Tab[]; outposts: Outpost[]; outside: Unit[] }
+export interface Base { id: string; label: string; mark: Mark; head: boolean; tower: { name: string; mark: Mark; key: string; control: boolean; pending?: Pending } | null; tabs: Tab[]; outposts: Outpost[]; outside: Unit[] }
 export interface Net { bases: Base[] }
 /** What the server may read for a key: the registry entry is the allow list, and paths never come from the browser. */
 export interface Ref { key: string; base: string; name: string; role: string; file?: string; pane?: string }
@@ -93,7 +94,7 @@ export function netSource(env: { run: HerdrRun; sessions(): Promise<Session[]>; 
 	return {
 		async read(): Promise<Net> {
 			const next = new Map<string, Ref>(), at = Date.now();
-			const net = await collectNet({ ...env, refs: next });
+			const net = await withPending(await collectNet({ ...env, refs: next }), (key) => next.get(key)?.file); // what waiting units wait on
 			for (const [key, ref] of refs) if (!next.has(key)) gone.set(key, { ref, at });
 			for (const [key, old] of gone) if (next.has(key) || at - old.at > RECENT_MS) gone.delete(key);
 			refs = next;

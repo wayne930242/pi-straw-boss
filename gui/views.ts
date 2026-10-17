@@ -1,6 +1,7 @@
 import type { Mark } from "../src/dashboard.ts";
 import type { Base, Net, Unit } from "../src/net.ts";
 import type { Chat, Data, HistoryEvent, Who } from "./chat.ts";
+import { mountAsk } from "./ask.ts";
 import { mountComposer, postTo } from "./composer.ts";
 import type { Tile } from "./layer.ts";
 import { aim, doing, fillPlate, html, LABEL, mark, PLATE, sync, text, urgent } from "./render.ts";
@@ -17,7 +18,7 @@ const MAX_QUEUE = 200;
 
 export function locate(net: Net | undefined, key: string): Found | undefined {
 	for (const base of net?.bases ?? []) {
-		if (base.tower?.key === key) return { u: { key, name: base.tower.name, role: "tower", mark: base.tower.mark, control: base.tower.control, subs: [] }, base };
+		if (base.tower?.key === key) return { u: { key, name: base.tower.name, role: "tower", mark: base.tower.mark, control: base.tower.control, pending: base.tower.pending, subs: [] }, base };
 		for (const [squad, units] of [...base.tabs.map((t) => [t.label, t.units] as const), [undefined, base.outside] as const])
 			for (const u of units) {
 				if (u.key === key) return { u, base, squad };
@@ -41,13 +42,13 @@ function fillToken(el: HTMLElement, u: { key?: string; name: string; role: strin
 const colEl = () => html(`<div class="col"><a class="token">${PLATE}<span class="name"></span><span class="line"><em class="role"></em><span class="note"></span></span></a><div class="say"><p></p></div><div class="drones"></div></div>`);
 const ZOOM = `<div class="zoom-in"><header class="base keep"><a class="tower big"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></a><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>head tower</span><h2></h2><p></p></div><dl class="tally"><div><dt>Squads</dt><dd></dd></div><div><dt>Units</dt><dd></dd></div><div data-mark="working"><dt>Working</dt><dd></dd></div><div data-mark="waiting"><dt>Waiting</dt><dd></dd></div></dl></header><div class="squads"></div><div class="camps"><section class="tab squad camp" data-group="outposts"><h3><svg><use href="#i-outpost"/></svg><b>Outposts</b><small></small></h3><div class="formation"></div></section><section class="tab squad camp" data-group="outside"><h3><svg><use href="#i-outside"/></svg><b>Outside the net</b><small>unaligned pi panes</small></h3><div class="formation"></div></section></div><p class="lost" hidden></p></div>`;
 const DOSSIER = `<div class="dossier-in"><span class="tag">unit dossier</span><div class="portrait">${PLATE}</div><h3></h3><p class="d-line"><em class="role"></em> <span class="state"></span></p><p class="d-note" hidden></p><dl class="specs"></dl><div class="d-drones" hidden><h4>Dispatched</h4><div class="formation"></div></div></div>`;
-const COMMS = `<div class="comms-in"><header class="comms-head"><span class="logo"><svg><use href="#i-comms"/></svg></span><div><h2><small>comms</small> <span></span></h2><p></p></div><span class="chan link" data-state="live"><i></i><b>channel open</b></span></header><div class="chat-root"></div><div class="composer-root"></div></div>`;
+const COMMS = `<div class="comms-in"><header class="comms-head"><span class="logo"><svg><use href="#i-comms"/></svg></span><div><h2><small>comms</small> <span></span></h2><p></p></div><span class="chan link" data-state="live"><i></i><b>channel open</b></span></header><div class="chat-root"></div><div class="ask-root"></div><div class="composer-root"></div></div>`;
 
 export function mountFocus({ data, restart, openTile, online }: FocusDeps) {
 	const $ = (id: string) => document.getElementById(id)!;
 	const [wsView, sessionView, dossier] = ["ws-view", "session-view", "dossier"].map($) as HTMLElement[];
 	let route: Route = { view: "map" }, net: Net | undefined, cards: Record<string, string> = {}, chat: Chat | undefined, queue: HistoryEvent[] = [], stale = false;
-	let info: HistoryEvent | undefined, model: string | undefined, ctx: number | undefined, entering = 0, composer: ReturnType<typeof mountComposer> | undefined;
+	let info: HistoryEvent | undefined, model: string | undefined, ctx: number | undefined, entering = 0, composer: ReturnType<typeof mountComposer> | undefined, asker: ReturnType<typeof mountAsk> | undefined;
 	const ws = () => (route.view === "map" ? "" : route.ws);
 	const linkTo = (r: Route, label: string) => {
 		const a = document.createElement("a");
@@ -170,6 +171,7 @@ export function mountFocus({ data, restart, openTile, online }: FocusDeps) {
 		}
 		chat?.setLive(m === "working" ? `${doing(u!.note, m)}` : urgent(m) ? LABEL[m] : "", m);
 		composer?.update({ name: u?.name ?? info?.name ?? route.key, control: Boolean(u?.control), live: state ? state === "live" : Boolean(u), mark: m, online: online() });
+		asker?.update(u?.pending, m === "waiting" && Boolean(u?.control) && online()); // its question, read-only above the composer
 	}
 	/** Focus that fell to the page (the dialog that opened this route closed, its link gone) lands in the comms: the box, or the log on a touch screen. */
 	const claim = () => setTimeout(() => route.view === "session" && (document.activeElement ?? document.body) === document.body && (matchMedia("(pointer: fine)").matches && composer?.ready() ? composer.box : chat?.log)?.focus({ preventScroll: true }));
@@ -184,7 +186,8 @@ export function mountFocus({ data, restart, openTile, online }: FocusDeps) {
 			return sub && linkTo({ view: "session", ws: locate(net, sub.key)?.base.id ?? ws(), key: sub.key }, name);
 		};
 		chat = mountChat(sessionView.querySelector(".chat-root")!, data(key), { who, link, openTile });
-		composer = mountComposer(sessionView.querySelector(".composer-root")!, key, data(key).post ?? postTo(key));
+		const send = data(key).post ?? postTo(key);
+		[composer, asker] = [mountComposer(sessionView.querySelector(".composer-root")!, key, send), mountAsk(sessionView.querySelector(".ask-root")!, () => send("focus", {}))];
 		chat.reveal(route.at);
 		queue.splice(0).forEach(apply);
 		(drawDossier(), claim());
@@ -203,13 +206,13 @@ export function mountFocus({ data, restart, openTile, online }: FocusDeps) {
 			wsView.hidden = next.view !== "workspace";
 			sessionView.hidden = dossier.hidden = next.view !== "session";
 			if (next.view === "session" && next.key !== key) {
-				[chat, composer, info, model, ctx, queue, stale] = [undefined, undefined, undefined, undefined, undefined, [], false];
+				[chat, composer, asker, info, model, ctx, queue, stale] = [undefined, undefined, undefined, undefined, undefined, undefined, [], false];
 				sessionView.replaceChildren(html(`<p class="lost">Opening the channel…</p>`));
 				void enter(next.key);
 			} else if (next.view === "session" && next.at !== at) (chat?.reveal(next.at), claim());
 			else if (next.view !== "session") {
 				entering++;
-				chat = composer = undefined;
+				chat = composer = asker = undefined;
 			}
 			draw();
 			if (next !== before) entrance(next, before, from);

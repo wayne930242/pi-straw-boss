@@ -190,3 +190,34 @@ test("an alert dialog tells the last assistant line and the tool call still open
 	assert.deepEqual(intel([{ id: "u", kind: "user", text: "go" }, { id: "r", kind: "result", callId: "c" }]).at, "u", "else the last entry that shows on its own");
 	assert.deepEqual(intel([]), { said: undefined, pending: undefined, at: undefined });
 });
+
+test("a dialog the user did not open slides in beneath the one they read, takes no focus, and comes up when the top one closes", () => {
+	const { page, stack } = harness();
+	stack.show(alert("a", "waiting", 1));
+	stack.show(alert("b", "error", 2), false);
+	assert.deepEqual([page.shown, page.focus, page.entered], [["b", "a"], "dialog:a", ["a"]], "beneath the top dialog, focus stays where the user reads");
+	stack.show(alert("a", "waiting", 1), false);
+	assert.deepEqual(page.shown, ["b", "a"], "one already open stays where it is");
+	stack.close();
+	assert.deepEqual([page.shown, page.focus], [["b"], "page"], "closing the top reveals it");
+	stack.show(alert("c", "waiting", 3));
+	assert.deepEqual([page.shown, page.focus], [["b", "c"], "dialog:c"], "an explicit open still goes on top");
+	stack.raise("b");
+	assert.deepEqual([page.shown, page.focus], [["c", "b"], "dialog:b"], "a click on the dialog peeking out beneath brings it up");
+	stack.raise("b");
+	assert.deepEqual(page.shown, ["c", "b"], "raising the top one changes nothing");
+	const empty = harness();
+	empty.stack.show(alert("d", "waiting", 4), false);
+	assert.deepEqual([empty.page.shown, empty.page.focus], [["d"], "page"], "with nothing open it covers nothing, and still takes no focus");
+});
+
+test("an alert carries the question its unit waits on, and an open dialog drops it once the unit stops waiting", () => {
+	const pending = { callId: "c1", tool: "ask_user", ask: { question: "Ship it?", options: [{ title: "yes" }], multiple: false, freeform: false } };
+	const net = (mark: Mark, p?: typeof pending): Net => ({ bases: [{ id: "w1", label: "w", mark, head: true, tower: null, outposts: [], outside: [], tabs: [{ id: "t", label: "t", units: [{ id: "a", key: "a", control: true, name: "a", role: "main", mark, subs: [], pending: p }] }] }] });
+	const { stack } = harness();
+	stack.show(alertsOf(net("waiting", pending), 1).get("a")!);
+	assert.equal(stack.open[0]!.pending?.callId, "c1");
+	const now = alertsOf(net("working"), 2);
+	stack.prune((key) => now.get(key));
+	assert.equal(stack.open[0]!.pending, undefined, "the refreshed dialog no longer shows the question");
+});
