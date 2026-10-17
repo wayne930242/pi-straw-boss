@@ -38,7 +38,8 @@ const snapshot = (url: string) =>
 	});
 const status = (url: string) =>
 	new Promise<number>((resolve, reject) => {
-		get(url, (res) => (res.resume(), resolve(res.statusCode!))).on("error", reject);
+		// No pooled socket: a kept-alive connection to a stopped server fails as a hang-up instead of a refusal.
+		get(url, { agent: false }, (res) => (res.resume(), resolve(res.statusCode!))).on("error", reject);
 	});
 
 async function net() {

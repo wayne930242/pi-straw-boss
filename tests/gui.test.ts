@@ -29,7 +29,7 @@ async function serve(read: () => Promise<Net>, options: { pollMs?: number; pingM
 /** One raw request, so the Host header and method can be chosen. */
 const raw = (gui: Gui, path: string, options: { host?: string; method?: string } = {}) =>
 	new Promise<{ status: number; headers: IncomingMessage["headers"]; body: string }>((resolve, reject) => {
-		const req = request({ host: "127.0.0.1", port: gui.port, path, method: options.method ?? "GET", headers: { host: options.host ?? `127.0.0.1:${gui.port}` } }, (res) => {
+		const req = request({ host: "127.0.0.1", port: gui.port, path, method: options.method ?? "GET", headers: { host: options.host ?? `127.0.0.1:${gui.port}` }, agent: false }, (res) => {
 			let body = "";
 			res.on("data", (chunk) => (body += chunk)).on("end", () => resolve({ status: res.statusCode!, headers: res.headers, body }));
 		});

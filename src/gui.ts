@@ -127,7 +127,7 @@ export function readRecord(dir: string): GuiRecord | undefined {
 /** Whether a recorded server answers its own page. */
 export const answers = (r: GuiRecord) =>
 	new Promise<boolean>((done) => {
-		const req = request({ host: "127.0.0.1", port: r.port, path: `/${r.token}/`, headers: { host: `127.0.0.1:${r.port}` }, timeout: 1000 }, (res) => {
+		const req = request({ host: "127.0.0.1", port: r.port, path: `/${r.token}/`, headers: { host: `127.0.0.1:${r.port}` }, agent: false, timeout: 1000 }, (res) => {
 			res.resume();
 			done(res.statusCode === 200);
 		});
