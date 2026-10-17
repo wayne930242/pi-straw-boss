@@ -1,6 +1,6 @@
 # Controlling pi sessions from `/boss gui`
 
-Status: proposed, 2026-10-17. Spec only; nothing here is implemented. Base:
+Status: Phase 1 implemented in 0.4.0 (routes, chat history, the overlay layer); Phases 2 to 4 proposed, 2026-10-17. Base:
 pi-straw-boss 0.3.1 (`3b71b19`), pi 1.3.0, Herdr 0.9.4, pi-intercom 0.17.1.
 
 ## Intent
@@ -158,8 +158,8 @@ Ships first (R3, R4). No POST endpoint exists in this phase.
 | Route | View |
 |---|---|
 | `/<t>/` | The net map, as today. |
-| `/<t>/w/<workspace id>` | One base, large: its tower, every tab and unit as a card with state, current activity, and its last assistant line; outposts; (D1) the workspace's other pi panes as "outside the net". |
-| `/<t>/w/<workspace id>/s/<key>` | One session: the chat on the left, a rail on the right (name, role, cwd, model, context use, status; Phase 3 panels). |
+| `/<t>/w/<workspace id>` | One base, zoomed in on the map's grid, in the map's game language: its tower, every tab as a squad of unit tokens (the map's icons and animated state badges) with each unit's last assistant line, subagents tethered under their launcher, outposts, and (D1) the workspace's other pi panes as unaligned units "outside the net". Entering zooms out of the base's spot on the map (transform and opacity only). |
+| `/<t>/w/<workspace id>/s/<key>` | One session: the chat as a comms log on the left, the unit's dossier in the side column (portrait with icon and state badge, role, state, model, context use, cwd, base, squad, launcher, dispatched subagents; Phase 3 panels). |
 
 - History API router (`pushState`, `popstate`), no reload; links are real `<a href>`
   so middle-click and copy-link work. Workspace and session ids are
@@ -259,6 +259,37 @@ result), capped at 1 MB.
   Phase 4.
 - The chat code and the markdown renderer load as a separate chunk on the first
   session route (`import()`), so the map loads as fast as today.
+
+### Overlay layer: stacked dialogs and tiles
+
+User direction, 2026-10-17: sessions that need attention pop up a panel to handle them, but a new one must never cover or steal focus from the panel the user is working in; documents such as show_doc open as tiled panels side by side instead.
+Phase 1 builds the layer with read-only content; Phase 2 and 3 dialogs (ask_user, robot_hand, secret_drop, the terminal mirror) and show_doc documents plug into it.
+
+**Dialogs** stack in one dock over the side column.
+
+| Rule | Behavior |
+|---|---|
+| Arrival | A unit that turns `waiting` or `error` (a question or an error, rank 0), or after the first snapshot turns `done` (a plain state change, rank 1), raises an alert. An alert never opens a dialog and never moves focus: it joins the queue shown in the header (count, the faces of the first three units, the head's name and state). An alert for a unit whose dialog is open refreshes that dialog instead. |
+| Queue order | Rank first, then the oldest arrival. A repeated arrival keeps its place. |
+| Opening | Only the user opens a dialog: from the header alert (the head of the queue), or by clicking a unit that waits or failed (map, base, dossier; a modified click still follows the link). An opened dialog leaves the queue, goes on top, and takes focus; one already open comes to the top instead of opening twice. |
+| Stack | The top dialog is in front; dialogs beneath peek out above it, smaller and fainter, and are `inert`. |
+| Closing | Close (× or Escape) removes the top dialog. The dialog beneath comes back; with none beneath, the next queued question or error does (it was waiting behind the closed one). Plain state changes stay queued until the user opens them. **Later** puts the alert back in the queue and reveals nothing queued, so the user can always step out. |
+| Escape | Closes the top dialog only. With no dialog open, it goes up one route level. |
+| Focus | Each dialog remembers where focus was when it opened and returns it there on close (inside the dialog beneath, or the page element that opened the first); when that element is gone, focus moves into the dialog beneath. Dialogs are not modal: the page stays usable and nothing traps focus. |
+| Stale | A queued alert whose unit no longer shows the state that raised it leaves the queue by itself. An open dialog is never closed under the user; it shows the unit's current state. |
+| Phase 1 content | The unit (portrait, role, state, base), its last assistant line and the tool call it waits on (from the newest 12 history items), **Open comms** (the session route) and **Later**. |
+
+**Tiles** sit beside the current view and share its width.
+
+| Rule | Behavior |
+|---|---|
+| Opening | A document opens as a tile beside the view (comms log, base, or map), never over a dialog. A tile the user opens takes focus and becomes active; one that arrives on its own (a show_doc call in Phase 3) shows beside the view without taking focus or the active tab. The same document is not opened twice. |
+| Room | Up to four tiles; past that the oldest closes. Each tile closes with its own ×; closing the active one activates its neighbour. |
+| Narrow | When the width cannot hold the view and every tile side by side, the tiles become tabs within the tile area; below 900 px the tile area goes under the view. |
+| Phase 1 content | Read-only. `npm run gui:dev` demonstrates it with a demo document (the demo show_doc card's **open beside**, and the toolbar's **doc arrives**). The live server serves no documents until Phase 3. |
+
+The models are pure (`gui/overlay.ts` for the stack, `createTiles` in `gui/layer.ts`) and tested in `tests/overlay.test.ts`: arrival while a dialog is open queues instead of covering, close reveals the next in order, stale removal, Escape closes the top only, focus restore, tiles that arrive without focus, and the tile cap.
+The layer's DOM is a chunk of its own, loaded on the first alert, dialog, or tile; only the alert spotting (`gui/alerts.ts`) is in the map's chunk.
 
 ## Phase 2: typing into a session (R5)
 
@@ -478,6 +509,9 @@ Control means typing into the user's terminals, so every write is guarded.
 | Mounted chat items | ≤ 600 | `content-visibility: auto` |
 | Runtime dependencies | none | as today |
 
+Measured after Phase 1 (0.4.0, `tests/imports.test.ts`): map chunk 14.1 KB (5.9 KB gzipped), lazy chunks together 24.1 KB (10.2 KB), stylesheet 21.9 KB (6.0 KB).
+The stylesheet has under 0.1 KB of its gzip budget left, so Phases 2 and 3 (composer, mirror, panels) need a new CSS figure before they start.
+
 Source budgets (lines): `src/history.ts` 250, `src/control.ts` 150, `src/gui.ts` +
 `src/net.ts` 300 together (226 today), `src/docs.ts` (document serving) 120;
 `gui/router.ts` 80, `gui/chat.ts` 250, `gui/markdown.ts` 180, `gui/composer.ts`
@@ -610,5 +644,7 @@ page.
 
 
 ## Decisions (user, 2026-10-17)
+
+The focus views follow the map's game language (user: 「我們一開始的設計模式就是要對齊遊戲」): the workspace route is the base zoomed in, the session route a unit dossier and comms log, one HUD on every route. Attention panels stack without covering the active one (「dialog 要考慮堆疊…不能蓋過現在的 dialog」), and documents tile beside the view (「show doc 那邊，直接看成 tiled dialog，在旁邊並排」); the rules are in [Overlay layer](#overlay-layer-stacked-dialogs-and-tiles).
 
 D1 (b), D2 merge, D3 keystrokes plus an upstream proposal, D4 the GUI renders show_doc, D5 allowed with confirms, D6 server stays in the session, D8 own renderer, D9 later, D10 shown with a divider: all as recommended. D7: a pi-herdr-agents subagent is typed into directly, like any session; no note and no routing through its parent or a coordinator.

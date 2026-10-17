@@ -17,7 +17,7 @@ import { headOf, type HerdrRun, isSub, type Pane, panes, parentOf, type Session,
 
 export type Mark = "working" | "waiting" | "idle" | "done" | "error" | "unknown";
 /** One line of the tree. `net` rows are tab (0) > session (1) > subagent (2); `towers` rows are flat. */
-export interface Row { group: "net" | "towers"; depth: number; mark: Mark; text: string; kind?: string; note?: string; workspace?: string }
+export interface Row { group: "net" | "towers"; depth: number; mark: Mark; text: string; kind?: string; note?: string; workspace?: string; id?: string; file?: string; pane?: string }
 export interface Snapshot { title: string; mark: Mark; head: boolean; rows: Row[] }
 export type Tone = "accent" | "warning" | "muted" | "success" | "dim" | "error" | "border" | "title";
 export type Paint = (tone: Tone, text: string) => string;
@@ -93,13 +93,14 @@ export function subagents(parent: Pane | undefined, all: Pane[], now: number): R
 			const activity = readJson(path);
 			// A child whose pane is gone, or back at a shell prompt, has finished.
 			const mark: Mark = pane?.agent === "pi" ? markOf(pane.agent_status) : "done";
-			let script: string | undefined;
+			let script: string | undefined, file = pane?.agent_session?.value;
 			try {
 				script = readdirSync(join(dir, "subagent-scripts")).find((f) => f.endsWith(`-${id}.sh`));
-			} catch {} // the launch script is only a fallback source for the name
+				file ??= readFileSync(join(dir, "subagent-scripts", script!), "utf8").match(/PI_SUBAGENT_SESSION='([^']+)'/)?.[1];
+			} catch {} // the launch script is only a fallback source for the name and the session file
 			const name = pane?.label ?? script?.slice(0, -`-${id}.sh`.length) ?? id.slice(0, 8);
 			const doing = activity.toolActive ? String(activity.toolName) : String(activity.phase ?? "");
-			return { group: "net" as const, depth: 2, mark, text: name, kind: "subagent", workspace: pane?.workspace_id, note: { working: doing, waiting: "waiting on a question", done: "finished" }[mark as "working"] };
+			return { group: "net" as const, depth: 2, mark, text: name, kind: "subagent", workspace: pane?.workspace_id, id, file, pane: pane?.agent === "pi" ? pane.pane_id : undefined, note: { working: doing, waiting: "waiting on a question", done: "finished" }[mark as "working"] };
 		})
 		.sort((a, b) => Number(a.mark === "done") - Number(b.mark === "done") || a.text.localeCompare(b.text))
 		.slice(0, MAX_CHILDREN);

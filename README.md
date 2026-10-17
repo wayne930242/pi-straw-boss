@@ -16,7 +16,7 @@ Run a few agents on the same project and they start stepping on each other: two 
 - **A main agent per tab.** The first to join a tab coordinates it; `/boss` takes over.
 - **A tower per workspace.** It opens on demand in its own tab, pinned first, and coordinates the main agents and the other towers. You don't need to talk to it.
 - **A live dashboard** in the tower: who joined, and what they and their subagents are doing.
-- **A browser view** of the whole net, `/boss gui`: every workspace as a base with its tower, agents, and subagents, animated and read-only.
+- **A browser view** of the whole net, `/boss gui`: every workspace as a base with its tower, agents, and subagents, animated and read-only. Click a base to zoom in, click a unit to read its chat as a live comms log; units that wait on you queue up as alerts.
 - **Broadcast** to a tab, a workspace, every tower, or every session.
 - **Tidy tabs.** When a pi starts in a tab or quits out of it, the tab's panes are made equal again, so workers split off one by one don't leave a chain of halves.
 

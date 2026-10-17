@@ -128,7 +128,7 @@ test("collect shows this tower's net in detail (joined sessions by tab, subagent
 	herdr.workspace("wB").agent_status = "idle";
 	const snap = await collect({ run: herdr.runFor("wA:p7"), sessions: () => world.broker.sessionList(), workspaceId: "wA" });
 	assert.deepEqual([snap.title, snap.mark, snap.head], ["Alpha", "waiting", true], "the title shows the most urgent state: a subagent waits on a question");
-	assert.deepEqual(norm(snap.rows.map(({ workspace: _, ...r }) => r)), norm([
+	assert.deepEqual(norm(snap.rows.map(({ workspace: _w, id: _i, file: _f, pane: _p, ...r }) => r)), norm([
 		net(0, "unknown", "tab work"),
 		net(1, "working", "Main One", "main", "tool:edit"),
 		net(2, "waiting", "asker", "subagent", "waiting on a question"),

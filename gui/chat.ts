@@ -1,0 +1,213 @@
+import type { Mark } from "../src/dashboard.ts";
+import type { Item } from "../src/items.ts";
+import { h } from "./dom.ts";
+import { mount, parse } from "./markdown.ts";
+import type { Tile } from "./layer.ts";
+import { html, ICON } from "./render.ts";
+
+// The comms log of one session. The model is pure: items merge by entry id (a repeated one is ignored), tool results attach to their call by
+// callId, a reset replaces everything, and at most 600 items stay mounted (the farthest page is dropped and fetched again on scroll).
+// The view builds DOM with `h` and the markdown renderer only, never from markup strings, and loads older pages when the top comes into view.
+
+export const CAP = 600;
+export interface Page { items: Item[]; before?: string }
+export interface Delta { rebuild: boolean; added: Item[]; touched: string[]; dropped: string[]; front: boolean }
+
+export function createChat(cap = CAP) {
+	let items: Item[] = [], before: string | undefined, detached = false;
+	const ids = new Set<string>(), results = new Map<string, Item>(), owner = new Map<string, string>();
+	const forget = (gone: Item[]) => gone.forEach((it) => (ids.delete(it.id), it.tools?.forEach((t) => (owner.delete(t.id), results.delete(t.id)))));
+	/** Takes the new items: results go to `results` (touching the call they answer), the rest are returned in order. */
+	function take(list: Item[], touched: Set<string>) {
+		const shown: Item[] = [];
+		for (const it of list) {
+			if (ids.has(it.id)) continue;
+			ids.add(it.id);
+			if (it.kind === "result" && it.callId) {
+				results.set(it.callId, it);
+				if (owner.has(it.callId)) touched.add(owner.get(it.callId)!);
+			} else {
+				it.tools?.forEach((t) => owner.set(t.id, it.id));
+				shown.push(it);
+			}
+		}
+		return shown;
+	}
+	const done = (d: Partial<Delta>): Delta => ({ rebuild: false, added: [], touched: [], dropped: [], front: false, ...d });
+	return {
+		get items() { return items; },
+		get before() { return before; },
+		get detached() { return detached; },
+		result: (callId: string) => results.get(callId),
+		reset(page: Page): Delta {
+			[items, before, detached] = [[], page.before, false];
+			ids.clear(), results.clear(), owner.clear();
+			items = take(page.items, new Set());
+			return done({ rebuild: true, added: items });
+		},
+		/** New items at the end. While the end is not mounted (an older page pushed it out) they are ignored; "latest" reloads. */
+		append(list: Item[]): Delta {
+			if (detached) return done({});
+			const touched = new Set<string>(), added = take(list, touched);
+			items.push(...added);
+			const dropped = items.length > cap ? items.splice(0, items.length - cap) : [];
+			forget(dropped);
+			if (dropped.length) before = items[0]!.id;
+			return done({ added, touched: [...touched], dropped: dropped.map((d) => d.id) });
+		},
+		/** An older page at the front; past the cap the newest items go and the chat is detached from the live end. */
+		prepend(page: Page): Delta {
+			const touched = new Set<string>(), added = take(page.items, touched);
+			items.unshift(...added);
+			before = page.before;
+			const dropped = items.length > cap ? items.splice(cap) : [];
+			forget(dropped);
+			if (dropped.length) detached = true;
+			return done({ added, touched: [...touched], dropped: dropped.map((d) => d.id), front: true });
+		},
+	};
+}
+
+export interface HistoryEvent { key: string; state?: string; successor?: string; base?: string; name?: string; role?: string; reset?: boolean; items?: Item[]; before?: string; header?: { id?: string; cwd?: string }; unreadable?: number }
+/** `doc` reads a document a show_doc call named; only the dev fixture has one in this phase. */
+export interface Data { older(before: string): Promise<Page>; latest(): Promise<Page>; entry(id: string): Promise<Item | undefined>; doc?(path: string): Promise<string | undefined> }
+export interface Who { key: string; name: string; role: string; mark: Mark; note?: string }
+export interface ChatDeps { who(): Who; link(name: string): HTMLAnchorElement | undefined; openTile(tile: Tile, focus?: boolean): void }
+export interface Chat { apply(event: HistoryEvent): void; setLive(text: string, mark: Mark): void }
+
+const clock = (at?: string) => (at ? new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }) : "");
+const size = (n: number) => (n >= 1024 ? `${(n / 1024).toFixed(n >= 10240 ? 0 : 1)} KB` : `${n} B`);
+const NOTICE: Record<string, string> = { intercom_message: "message from", subagent_result: "report from", subagent_ping: "question from", subagent_status: "status of", "pi-loop-monitor": "monitor", "memory-context": "memory", "doc-review": "form answers" };
+const icon = (name: string) => {
+	const span = html(`<span class="ava"><svg><use/></svg></span>`);
+	span.querySelector("use")!.setAttribute("href", `#i-${ICON[name] ?? name}`);
+	return span;
+};
+
+/** Plain text with line breaks and autolinks (user messages are not markdown). */
+function plain(text: string) {
+	const out: (Node | string)[] = [];
+	let at = 0;
+	for (const m of text.matchAll(/https?:\/\/[^\s<>)\]]+/g)) {
+		out.push(text.slice(at, m.index), h("a", { href: m[0], rel: "noopener noreferrer", target: "_blank" }, m[0]));
+		at = m.index + m[0].length;
+	}
+	return [...out, text.slice(at)];
+}
+
+export function mountChat(root: HTMLElement, data: Data, { who, link, openTile }: ChatDeps): Chat {
+	const model = createChat(), els = new Map<string, HTMLElement>();
+	const list = h("div", { class: "chat-list" }), top = h("div", { class: "chat-top" }), live = h("div", { class: "chat-live" }), pill = h("button", { class: "chat-pill", type: "button", hidden: "" }), empty = h("p", { class: "chat-empty" }, "No transmissions yet.");
+	const scroller = h("div", { class: "chat-scroll" }, top, list, live);
+	root.replaceChildren(scroller, pill);
+	let loading = false, unseen = 0;
+	const atBottom = () => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
+	const toBottom = () => ((scroller.scrollTop = scroller.scrollHeight), (unseen = 0), (pill.hidden = true));
+	const fetchBody = (button: HTMLButtonElement, body: HTMLElement, id: string, pick: (it: Item) => string | undefined) => {
+		button.disabled = true;
+		void data.entry(id).then((full) => {
+			const text = full && pick(full);
+			if (text === undefined) return void (button.textContent = "unavailable");
+			body.textContent = text;
+			button.remove();
+		}, () => (button.textContent = "unavailable"));
+	};
+	/** A show_doc document as a tile beside the comms log. */
+	const doc = (path: string) => openTile({ id: `doc:${path}`, title: path.split("/").pop() || path, body: () => {
+		const body = h("div", { class: "md" }, h("p", { class: "chat-empty" }, "Loading…"));
+		void data.doc!(path).then((md) => body.replaceChildren(md === undefined ? "Unavailable." : mount(parse(md))));
+		return body;
+	} });
+
+	/** A tool call as an action card: its state badge (running, done, failed), name, and one line; arguments and result inside. */
+	function action(t: NonNullable<Item["tools"]>[number]) {
+		const r = model.result(t.id), body = h("pre", { class: "out" }, r?.text ?? "");
+		const more = r?.more ? h("button", { class: "more", type: "button" }, `show all (${size(r.bytes ?? 0)})`) : null;
+		more?.addEventListener("click", () => fetchBody(more, body, r!.id, (it) => it.text));
+		const state = r ? (r.isError ? "error" : "done") : "working";
+		const open = t.name === "show_doc" && data.doc ? h("button", { class: "more open", type: "button" }, "open beside") : null;
+		open?.addEventListener("click", (event) => (event.preventDefault(), t.summary.split(", ").forEach(doc)));
+		return h("details", { class: "act" }, h("summary", { "data-mark": state }, h("b", { class: "badge" }), h("code", null, t.name), h("span", { class: "sum" }, t.summary), open), h("pre", { class: "args" }, t.args ?? ""), r && h("div", { class: "result" }, r.images ? h("em", null, `${r.images} image(s)`) : null, body, more));
+	}
+	function render(it: Item): HTMLElement {
+		const stamp = h("time", null, clock(it.at));
+		switch (it.kind) {
+			case "user": return h("article", { class: "tx you" }, h("header", null, stamp, h("b", null, "you"), icon("user")), h("div", { class: "bubble" }, ...plain(it.text ?? ""), it.images ? h("em", null, ` · ${it.images} image(s)`) : null));
+			case "assistant": {
+				const me = who(), body = h("pre", { class: "thought-text" }), more = it.thought ? h("button", { class: "thought", type: "button" }, it.thought < 0 ? "◇ thought · redacted" : `◇ thought · ${it.thought.toLocaleString()} chars`) : null;
+				if (it.thought && it.thought > 0) more?.addEventListener("click", () => fetchBody(more, body, it.id, (full) => full.thoughtText));
+				return h("article", { class: "tx in" }, icon(me.role), h("div", { class: "tx-body" }, h("header", null, h("b", null, me.name), it.model ? h("span", null, it.model) : null, stamp, it.stop ? h("span", { class: "stop", "data-mark": "error" }, it.stop) : null), more, body, it.text ? h("div", { class: "md" }, mount(parse(it.text))) : null, it.error ? h("p", { class: "fault" }, it.error) : null, ...(it.tools ?? []).map(action)));
+			}
+			case "bash": return h("article", { class: "tx sys" }, h("details", { class: "act" }, h("summary", { "data-mark": it.exit ? "error" : "done" }, h("b", { class: "badge" }), h("code", null, "shell"), h("span", { class: "sum" }, `! ${it.command}`), it.exit ? h("span", { class: "stop", "data-mark": "error" }, `exit ${it.exit}`) : null), it.text ? h("pre", { class: "out" }, it.text) : null));
+			case "notice": return h("article", { class: "tx sys" }, h("details", { class: "notice" }, h("summary", null, icon("comms"), h("em", null, "incoming"), NOTICE[it.type ?? ""] ?? it.type ?? "notice", " ", (it.from && link(it.from)) || (it.from ?? ""), stamp), h("pre", null, it.text ?? "")));
+			case "divider": return h("article", { class: "tx rule" }, h("details", null, h("summary", null, it.type === "compaction" ? `context compacted · ${(it.tokens ?? 0).toLocaleString()} tokens summarized` : "branch summary"), h("pre", null, it.text ?? "")));
+			default: return h("article", { class: "tx note" }, it.text ?? "", " ", stamp);
+		}
+	}
+	function paint(d: Delta) {
+		if (d.rebuild) {
+			els.clear();
+			list.replaceChildren();
+		}
+		for (const id of d.dropped) {
+			els.get(id)?.remove();
+			els.delete(id);
+		}
+		const made = d.added.map((it) => (els.set(it.id, render(it)), els.get(it.id)!));
+		if (d.front) list.prepend(...made);
+		else list.append(...made);
+		empty.remove();
+		if (!model.items.length) list.append(empty);
+		top.hidden = !model.before;
+	}
+	// Calls that just received a result are redrawn in place.
+	const touch = (d: Delta) => d.touched.forEach((id) => {
+		const old = els.get(id), it = model.items.find((x) => x.id === id);
+		if (old && it) {
+			const next = render(it);
+			old.replaceWith(next);
+			els.set(id, next);
+		}
+	});
+	const older = async () => {
+		if (loading || !model.before) return;
+		loading = true;
+		try {
+			const height = scroller.scrollHeight, d = model.prepend(await data.older(model.before));
+			paint(d);
+			touch(d);
+			scroller.scrollTop += scroller.scrollHeight - height;
+		} finally {
+			loading = false;
+		}
+		// A page too short to scroll leaves the top in view: keep going.
+		if (model.before && scroller.clientHeight && top.getBoundingClientRect().bottom >= scroller.getBoundingClientRect().top) void older();
+	};
+	new IntersectionObserver((seen) => seen.some((s) => s.isIntersecting) && void older(), { root: scroller }).observe(top);
+	pill.addEventListener("click", () => (model.detached ? void data.latest().then((page) => (paint(model.reset(page)), toBottom())) : toBottom()));
+	scroller.addEventListener("scroll", () => atBottom() && !model.detached && ((unseen = 0), (pill.hidden = true)), { passive: true });
+
+	return {
+		apply(e) {
+			if (e.reset) {
+				paint(model.reset({ items: e.items ?? [], before: e.before }));
+				toBottom();
+			} else if (e.items?.length) {
+				const stick = atBottom(), d = model.append(e.items);
+				paint(d);
+				touch(d);
+				if (stick && !model.detached) toBottom();
+				else if (d.added.length || model.detached) {
+					unseen += d.added.length;
+					pill.hidden = false;
+					pill.textContent = model.detached ? "jump to latest" : `${unseen} new`;
+				}
+			}
+		},
+		/** The unit's live state under the last transmission, with the same badge (spinner, hopping ?) as its token. */
+		setLive(text, m) {
+			live.dataset.mark = m;
+			if (live.lastChild?.textContent !== text) live.replaceChildren(...(text ? [h("b", { class: "badge" }), h("span", null, text)] : []));
+		},
+	};
+}

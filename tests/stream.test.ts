@@ -27,7 +27,7 @@ class FakeSource implements Source {
 	}
 }
 
-const net = (label: string): Net => ({ bases: [{ id: label, label, mark: "idle", head: true, tower: null, tabs: [], outposts: [] }] });
+const net = (label: string): Net => ({ bases: [{ id: label, label, mark: "idle", head: true, tower: null, tabs: [], outposts: [], outside: [] }] });
 
 /** A stream under a fake clock: timers fire only when the test advances time, and every connection is recorded. */
 function setup(random = 0.5) {
@@ -228,4 +228,28 @@ test("stop closes the source and clears every timer", () => {
 	t.sources[0]!.send("message", net("a"));
 	t.stream.stop();
 	assert.deepEqual([t.sources[0]!.closed, t.timers.size], [true, 0]);
+});
+
+test("restart opens a new connection at once for a route that watches something else; the old one is closed and its late events are ignored", () => {
+	const s = setup();
+	s.stream.start();
+	s.sources[0]!.send("message", net("a"));
+	s.stream.restart();
+	assert.deepEqual([s.sources.length, s.sources[0]!.closed], [2, true]);
+	s.sources[0]!.send("message", net("stale"));
+	s.sources[1]!.send("message", net("b"));
+	assert.deepEqual(s.nets, ["a", "b"], "only the current connection is heard");
+	assert.equal(s.state().state, "live");
+	s.stream.stop();
+});
+
+test("a failed first attempt after a restart still backs off like any other", () => {
+	const s = setup();
+	s.stream.start();
+	s.stream.restart();
+	s.sources[1]!.error();
+	assert.equal(s.state().state, "reconnecting");
+	s.advance(2000);
+	assert.equal(s.sources.length, 3);
+	s.stream.stop();
 });

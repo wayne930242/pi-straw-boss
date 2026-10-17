@@ -6,7 +6,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type, type Static, type TSchema } from "typebox";
 import { collect, startDashboard } from "./dashboard.ts";
 import { answers, type Gui, openBrowser, readRecord, sharedGui, startGui } from "./gui.ts";
-import { collectNet } from "./net.ts";
+import { netSource } from "./net.ts";
 import { ensureTower, headOf, herdrApi, type HerdrApi, herdrRun, type HerdrRun, isSub, type Pane, panes, parentOf, place, type Place, report, type Session, type Sleep, waitFor, workspaces, type Workspace } from "./herdr.ts";
 
 // pi-intercom's extension API as constants and minimal types: intercom is a runtime requirement, not an import.
@@ -357,7 +357,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), env = proces
 			// in this session share one start.
 			opening ??= (async () => {
 				if (gui) return gui.url;
-				const shared = await sharedGui(guiDir, `${me() || "unknown"} (pane ${env.HERDR_PANE_ID})`, (prefer) => startGui({ read: () => collectNet({ run, sessions }), dir: bundle, ...prefer }), sleep);
+				const shared = await sharedGui(guiDir, `${me() || "unknown"} (pane ${env.HERDR_PANE_ID})`, (prefer) => { const net = netSource({ run, sessions }); return startGui({ read: net.read, net, dir: bundle, ...prefer }); }, sleep);
 				gui = shared.mine;
 				return shared.url;
 			})().finally(() => (opening = undefined));

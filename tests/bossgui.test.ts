@@ -61,7 +61,8 @@ test("any session can open the GUI: it shows the whole net, joins nothing, takes
 	assert.deepEqual(opened.slice(-1), [url]);
 	const seen = await snapshot(url);
 	assert.deepEqual(seen.bases.map((b) => [b.label, b.tabs.flatMap((t) => t.units.map((u) => u.name))]), [["Alpha", ["api-main"]], ["Beta", ["ops-main"]]], "both workspaces, joined sessions only");
-	assert.ok(!JSON.stringify(seen).includes("just looking"), "the viewer is not in the net");
+	assert.ok(!JSON.stringify(seen.bases.map((b) => b.tabs)).includes("just looking"), "the viewer is not in the net");
+	assert.deepEqual(seen.bases[0]!.outside.map((u) => [u.name, u.role]), [["just looking", "outside"]], "it is a pi pane of the workspace, so the workspace route lists it as outside the net");
 	assert.deepEqual(viewer.tokens, {}, "no role token");
 	assert.deepEqual(viewer.entries, [], "nothing written to the session");
 	assert.deepEqual(world.broker.registrations.filter((r) => r.id === "viewer").map((r) => [r.namespace.split("/").slice(0, 2).join("/"), r.ownerEligible]), [["straw-boss/view", false]]);

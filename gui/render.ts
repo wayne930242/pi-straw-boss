@@ -1,42 +1,60 @@
 import type { Mark } from "../src/dashboard.ts";
 import type { Base, Net, Unit } from "../src/net.ts";
 import type { Entry } from "./log.ts";
+import { formatRoute, type Route } from "./router.ts";
 
 // Draws a net into the page by diffing: elements are keyed by id, created once, updated in place, and reordered, so only what changed
-// is touched and CSS transitions play on state changes. Motion is CSS on transform and opacity only.
+// is touched and CSS transitions play on state changes. Motion is CSS on transform and opacity only. The unit token (plate, icon, ring,
+// badge) and the keyed `sync` are shared with the focus views, so a unit looks and moves the same on every route.
 
-type Item = { id: string };
-const ICON: Record<string, string> = { main: "main", member: "member", subagent: "subagent", outpost: "outpost" };
-const LABEL: Record<Mark, string> = { working: "working", waiting: "waiting on a question", idle: "idle", done: "finished", error: "error", unknown: "no status" };
+export const ICON: Record<string, string> = { main: "main", member: "member", subagent: "subagent", outpost: "outpost", outside: "outside", tower: "tower" };
+export const LABEL: Record<Mark, string> = { working: "working", waiting: "waiting on a question", idle: "idle", done: "finished", error: "error", unknown: "no status" };
+/** Marks that ask for the user: a click on such a unit opens its alert instead of its route. */
+export const urgent = (m: Mark) => m === "waiting" || m === "error";
 
-/** Builds an element from one of this file's constant templates; data goes in afterwards through textContent and attributes only. */
-const html = (markup: string): HTMLElement => {
+/** Builds an element from one of the page's constant templates; data goes in afterwards through textContent and attributes only. */
+export const html = (markup: string): HTMLElement => {
 	const root = new DOMParser().parseFromString(markup.trim(), "text/html").body.firstElementChild;
 	if (!(root instanceof HTMLElement)) throw new Error("bad template");
 	return document.importNode(root, true);
 };
-const byId = <T extends Element>(id: string, kind: new () => T): T => {
+export const byId = <T extends Element>(id: string, kind: new () => T): T => {
 	const el = document.getElementById(id);
 	if (!(el instanceof kind)) throw new Error(`#${id} is missing from the page`);
 	return el;
 };
-const text = (el: Element, selector: string, value: string) => {
+export const text = (el: Element, selector: string, value: string) => {
 	const node = el.querySelector(selector)!;
 	if (node.textContent !== value) node.textContent = value;
 };
-const mark = (el: HTMLElement, value: Mark) => {
+/** Sets an element's state; a change (not the first value) plays the flash. */
+export const mark = (el: HTMLElement, value: Mark) => {
 	if (el.dataset.mark === value) return;
 	const changed = el.dataset.mark !== undefined;
 	el.dataset.mark = value;
 	if (changed) (el.classList.remove("flash"), void el.offsetWidth, el.classList.add("flash"));
 };
 /** "tool:edit" reads as "using edit". */
-const doing = (note: string | undefined, m: Mark) => (note ? note.replace(/^tool:/, "using ") : LABEL[m]);
+export const doing = (note: string | undefined, m: Mark) => (note ? note.replace(/^tool:/, "using ") : LABEL[m]);
+/** Points a link at a route: a real href, so middle-click and copy-link work, and data-route for the in-page router. */
+export const aim = (a: Element, route: Route | undefined) => {
+	a.toggleAttribute("hidden", !route);
+	if (!route) return;
+	a.setAttribute("href", formatRoute(route) || "./");
+	a.setAttribute("data-route", formatRoute(route));
+};
+/** The round unit token: icon, spinning ring, ping, and state badge. */
+export const PLATE = `<div class="plate"><i class="ring"></i><svg><use href="#i-main"/></svg><b class="badge"></b></div>`;
+export function fillPlate(plate: HTMLElement, role: string, m: Mark) {
+	mark(plate, m);
+	const use = plate.querySelector("use")!, href = `#i-${ICON[role] ?? "member"}`;
+	if (use.getAttribute("href") !== href) use.setAttribute("href", href);
+}
 
 /** Reconciles the children of `parent` with `items`: new ones enter, gone ones leave, the rest keep their element and move into order. */
-function sync<T extends Item>(parent: Element, items: T[], make: (item: T) => HTMLElement, fill: (el: HTMLElement, item: T) => void) {
+export function sync<T extends { id: string }>(parent: Element, items: T[], make: (item: T) => HTMLElement, fill: (el: HTMLElement, item: T) => void) {
 	const live = new Map<string, HTMLElement>();
-	for (const el of parent.children) if (!el.classList.contains("leaving")) live.set((el as HTMLElement).dataset.key!, el as HTMLElement);
+	for (const el of parent.children) if (!el.classList.contains("leaving") && (el as HTMLElement).dataset.key) live.set((el as HTMLElement).dataset.key!, el as HTMLElement);
 	let cursor = parent.firstElementChild;
 	for (const item of items) {
 		let el = live.get(item.id);
@@ -58,25 +76,29 @@ function sync<T extends Item>(parent: Element, items: T[], make: (item: T) => HT
 	}
 }
 
-const unitEl = () => html(`<div class="unit"><div class="card"><div class="plate"><i class="ring"></i><svg><use href="#i-main"/></svg><b class="badge"></b></div><div class="meta"><span class="name"></span><span class="line"><em class="role"></em><span class="note"></span></span></div></div><div class="subs"></div></div>`);
-function fillUnit(el: HTMLElement, u: Omit<Unit, "id" | "role" | "subs"> & { role: Unit["role"] | "outpost"; subs?: Unit[] }) {
+const unitEl = () => html(`<div class="unit"><div class="card"><a class="hit"></a>${PLATE}<div class="meta"><span class="name"></span><span class="line"><em class="role"></em><span class="note"></span></span></div></div><div class="subs"></div></div>`);
+function fillUnit(el: HTMLElement, u: Omit<Unit, "id" | "key" | "control" | "role" | "subs"> & { key?: string; role: Unit["role"] | "outpost"; subs?: Unit[] }) {
+	const ws = el.closest<HTMLElement>(".base")?.dataset.key, hit = el.querySelector(".hit")!;
+	aim(hit, u.key && ws ? { view: "session", ws, key: u.key } : undefined);
+	hit.setAttribute("aria-label", `${u.name}: ${doing(u.note, u.mark)}`);
+	hit.toggleAttribute("data-alert", urgent(u.mark));
 	mark(el, u.mark);
-	mark(el.querySelector<HTMLElement>(".plate")!, u.mark);
-	el.querySelector("use")!.setAttribute("href", `#i-${ICON[u.role]}`);
+	fillPlate(el.querySelector(".plate")!, u.role, u.mark);
 	text(el, ".name", u.name);
 	text(el, ".role", u.role);
 	text(el, ".note", doing(u.note, u.mark));
 	sync(el.querySelector(".subs")!, u.subs ?? [], unitEl, fillUnit);
 }
 
-const baseEl = () => html(`<section class="base"><header><div class="tower"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></div><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>head tower</span><h2></h2><p></p></div></header><div class="tabs"></div><div class="outposts"></div></section>`);
+const baseEl = () => html(`<section class="base"><header><div class="tower"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></div><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>head tower</span><h2><a class="enter-base"></a></h2><p></p></div></header><div class="tabs"></div><div class="outposts"></div></section>`);
 function fillBase(el: HTMLElement, b: Base) {
 	mark(el, b.mark);
 	el.classList.toggle("head", b.head);
 	const tower = el.querySelector<HTMLElement>(".tower")!;
 	tower.classList.toggle("ghost", !b.tower);
 	mark(tower, b.tower?.mark ?? "unknown");
-	text(el, "h2", b.label);
+	text(el, "h2 a", b.label);
+	aim(el.querySelector("h2 a")!, { view: "workspace", ws: b.id });
 	text(el, ".title p", b.tower ? `control tower · ${LABEL[b.tower.mark]}` : "no tower yet");
 	sync(el.querySelector(".tabs")!, b.tabs, () => html(`<div class="tab"><h3></h3><div class="units"></div></div>`), (tab, t) => {
 		text(tab, "h3", `tab ${t.label}`);
@@ -111,21 +133,24 @@ function wire(map: HTMLElement, svg: SVGSVGElement, still: boolean) {
 	svg.replaceChildren(...paths.flatMap((d) => [make("path", { class: "wire", d }), ...(still ? [] : [make("circle", { class: "packet", r: "3" }, make("animateMotion", { dur: "5s", repeatCount: "indefinite", path: d }))])]));
 }
 
-export interface Page { show(net: Net): void; log(entries: Entry[]): void; layout(): void; pause(paused: boolean): void }
+export interface Page { show(net: Net): void; stats(net: Net): void; log(entries: Entry[]): void; layout(): void; pause(paused: boolean): void; still(map: boolean): void }
 
 export function mountPage(): Page {
 	const [map, bases, links, log] = [byId("map", HTMLElement), byId("bases", HTMLElement), byId("links", SVGSVGElement), byId("log", HTMLElement)];
 	const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
-	const layout = () => wire(map, links, still);
+	const layout = () => !map.hidden && wire(map, links, still);
 	new ResizeObserver(layout).observe(map);
 	return {
 		layout,
-		show(net) {
-			sync(bases, net.bases, baseEl, fillBase);
-			byId("empty", HTMLElement).hidden = net.bases.length > 0;
+		/** The totals in the header: drawn for every route, since the header is always in view. */
+		stats(net) {
 			const units = net.bases.flatMap((b) => b.tabs.flatMap((t) => t.units.flatMap((u) => [u, ...u.subs])));
 			const count = (m?: Mark) => String(units.filter((u) => !m || u.mark === m).length);
 			for (const [id, value] of [["s-bases", String(net.bases.length)], ["s-agents", count()], ["s-working", count("working")], ["s-waiting", count("waiting")]] as const) byId(id, HTMLElement).textContent = value;
+		},
+		show(net) {
+			sync(bases, net.bases, baseEl, fillBase);
+			byId("empty", HTMLElement).hidden = net.bases.length > 0;
 			requestAnimationFrame(layout);
 		},
 		log(entries) {
@@ -141,7 +166,10 @@ export function mountPage(): Page {
 		},
 		pause(paused) {
 			document.documentElement.classList.toggle("paused", paused);
-			if (paused) links.pauseAnimations();
+		},
+		/** The wires' SVG animation runs only while the map is in view. */
+		still(hidden) {
+			if (hidden) links.pauseAnimations();
 			else links.unpauseAnimations();
 		},
 	};

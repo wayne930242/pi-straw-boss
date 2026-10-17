@@ -14,7 +14,7 @@ export const MAX_ATTEMPTS = 8;
 /** The part of EventSource the stream uses, so tests and the dev fixture can stand in for it. */
 export interface Source {
 	onError(handler: () => void): void;
-	listen(type: "message" | "ping" | "problem", handler: (data: string) => void): void;
+	listen(type: string, handler: (data: string) => void): void;
 	close(): void;
 }
 export interface Status {
@@ -36,7 +36,7 @@ export interface Deps {
 	onNet(net: Net): void;
 	onStatus(status: Status): void;
 }
-export interface Stream { start(): void; resume(): void; hide(): void; stop(): void }
+export interface Stream { start(): void; resume(): void; restart(): void; hide(): void; stop(): void }
 
 /** The delay before retry number `attempt` (1-based): 1 s doubling to 30 s, spread by ±20 % so tabs do not retry in step. */
 export const backoff = (attempt: number, random: number) => Math.min(MAX_MS, BASE_MS * 2 ** (attempt - 1)) * (0.8 + 0.4 * random);
@@ -108,6 +108,8 @@ export function createStream(deps: Deps): Stream {
 			set({ attempt: 0, state: status.state === "live" ? "reconnecting" : status.state });
 			connect();
 		},
+		// A route that watches something else, or a history that has to be fetched again, opens a new connection at once.
+		restart: connect,
 		// A hidden page keeps the watchdog but no retry timer.
 		hide() {
 			deps.clearTimeout(retry);

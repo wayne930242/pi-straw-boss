@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { changes } from "../gui/log.ts";
 import type { Row } from "../src/dashboard.ts";
 import type { Pane, Session, Workspace } from "../src/herdr.ts";
-import { buildNet, type Net } from "../src/net.ts";
+import { buildNet, type Net, netSource, type Ref } from "../src/net.ts";
 
 const ws = (id: string, label: string, extra: Partial<Workspace> = {}): Workspace => ({ workspace_id: id, label, tokens: {}, ...extra });
 const pane = (id: string, tab: string, tokens: Record<string, string> = {}, extra: Partial<Pane> = {}): Pane => ({ pane_id: id, tab_id: tab, tokens, ...extra });
@@ -82,11 +82,61 @@ test("changes lists joins, leaves, and state changes, and nothing for the first 
 	const unit = after.bases[0]!.tabs[0]!.units[0]!;
 	unit.mark = "waiting";
 	unit.subs = [];
-	after.bases[0]!.tabs[0]!.units.push({ id: "new", name: "fresh", role: "member", mark: "idle", subs: [] });
+	after.bases[0]!.tabs[0]!.units.push({ id: "new", key: "new", control: false, name: "fresh", role: "member", mark: "idle", subs: [] });
 	assert.deepEqual(changes(before, after), [
 		{ text: "api-main is waiting on a question", mark: "waiting" },
 		{ text: "fresh joined", mark: "idle" },
 		{ text: "lint left", mark: "idle" },
 	]);
 	assert.deepEqual(changes(after, after), []);
+});
+
+test("units carry a route key and say whether a live pi pane backs them; the registry holds exactly the keys the snapshot shows", () => {
+	const withFiles = panes.map((p) => (p.pane_id === "wA:p1" ? { ...p, agent: "pi", agent_session: { value: "/s/2026_m1.jsonl" } } : p.pane_id === "wA:p5" ? { ...p, agent: "pi", agent_session: { value: "/s/2026_tower-a.jsonl" } } : p));
+	const refs = new Map<string, Ref>();
+	const net = buildNet({ sessions, panes: withFiles, workspaces, children: (p) => (p?.pane_id === "wA:p1" ? [child("lint", "working", { id: "child-1", file: "/s/2026_child-1.jsonl", pane: "wA:p9" }), child("old", "done", { id: "child-2", file: "/s/2026_child-2.jsonl" })] : []) }, refs);
+	const [main, member] = net.bases[0]!.tabs[0]!.units;
+	assert.deepEqual([main!.key, main!.control, member!.key, member!.control], ["m1", true, "mem", false], "only a pane running pi can be typed into");
+	assert.deepEqual(main!.subs.map((u) => [u.id, u.key, u.control]), [["child-1", "child-1", true], ["child-2", "child-2", false]], "a subagent is keyed by its child id, not by its name");
+	assert.deepEqual([net.bases[0]!.tower?.key, net.bases[0]!.tower?.control], ["tower-a", true]);
+	assert.deepEqual([...refs.keys()].sort(), ["child-1", "child-2", "m1", "m2", "mem", "tower-a", "tower-b"]);
+	assert.deepEqual(refs.get("m1"), { key: "m1", base: "wA", name: "api-main", role: "main", file: "/s/2026_m1.jsonl", pane: "wA:p1" });
+	assert.equal(refs.get("child-2")!.file, "/s/2026_child-2.jsonl", "a finished subagent keeps its file");
+});
+
+test("a base also lists its other pi panes as outside the net (D1), keyed by intercom session or by file; panes the net holds are not repeated", () => {
+	const more = [...panes, pane("wA:p6", "wA:t1", {}, { workspace_id: "wA", agent: "pi", agent_status: "working", agent_session: { value: "/s/2026-10-17T00-00-00Z_sess-6.jsonl" }, label: "scratch" }),
+		pane("wA:p7", "wA:t1", {}, { workspace_id: "wA", agent: "pi", agent_session: { value: "/s/2026_loner-file.jsonl" } }),
+		pane("wA:p8", "wA:t1", {}, { workspace_id: "wA", agent: "pi" }),
+		pane("wA:p1x", "wA:t1", { sb_role: "main" }, { workspace_id: "wA", agent: "pi", agent_session: { value: "/s/2026_other.jsonl" } }),
+		pane("wA:p9", "wA:t1", {}, { workspace_id: "wA", agent: "pi", agent_session: { value: "/s/2026_child-1.jsonl" } })];
+	const known = more.map((p) => (p.pane_id === "wA:p1" ? { ...p, workspace_id: "wA" } : p.pane_id === "wA:p5" ? { ...p, workspace_id: "wA", agent: "pi" } : p));
+	const refs = new Map<string, Ref>();
+	const net = buildNet({ sessions: [...sessions, session("loner2", "intercom-only", { ws: "wA", tab: "wA:t1", pane: "wA:p7" })], panes: known, workspaces, children: (p) => (p?.pane_id === "wA:p1" ? [child("lint", "working", { id: "child-1", pane: "wA:p9" })] : []) }, refs);
+	const outside = net.bases[0]!.outside;
+	assert.deepEqual(outside.map((u) => [u.key, u.name, u.role, u.mark, u.control]), [["sess-6", "scratch", "outside", "working", true], ["loner2", "intercom-only", "outside", "idle", true], ["other", "other", "outside", "unknown", true]]);
+	assert.equal(refs.get("sess-6")!.file, "/s/2026-10-17T00-00-00Z_sess-6.jsonl");
+	assert.ok(!outside.some((u) => ["m1", "tower-a", "child-1"].includes(u.key)), "the tower, joined sessions and subagent panes belong to the net");
+	assert.deepEqual(net.bases[1]!.outside, []);
+});
+
+test("the registry keeps a key that left the net for ten minutes, names the pane's new session as its successor, and then forgets it", async () => {
+	let live: Session[] = [session("s1", "one", { ws: "wA", tab: "wA:t1", pane: "wA:p1" }), session("tower-a", "tower", { ws: "wA", tab: "wA:t3", pane: "wA:p5" })];
+	const ps = panes.map((p) => (p.pane_id === "wA:p1" ? { ...p, agent: "pi", agent_session: { value: "/s/2026_s1.jsonl" } } : p));
+	const herdr = async (args: string[]) => JSON.stringify({ result: args[0] === "pane" ? { panes: ps } : { workspaces } });
+	const source = netSource({ run: herdr, sessions: async () => live });
+	await source.read();
+	assert.deepEqual([source.lookup("s1")?.live, source.lookup("s1")?.file, source.lookup("nope")], [true, "/s/2026_s1.jsonl", undefined]);
+	assert.deepEqual(source.workspace("wA").map((r) => r.key).sort(), ["s1", "tower-a"]);
+	live = [session("s2", "one again", { ws: "wA", tab: "wA:t1", pane: "wA:p1" }), live[1]!];
+	await source.read();
+	assert.deepEqual([source.lookup("s1")?.live, source.lookup("s1")?.successor, source.lookup("s2")?.live], [false, "s2", true], "the old key stays readable and points at the pane's new session");
+	const realNow = Date.now;
+	Date.now = () => realNow() + 11 * 60_000;
+	try {
+		await source.read();
+		assert.equal(source.lookup("s1"), undefined, "after ten minutes the key is no longer in the allow list");
+	} finally {
+		Date.now = realNow;
+	}
 });

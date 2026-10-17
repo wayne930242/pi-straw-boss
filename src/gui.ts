@@ -5,12 +5,17 @@ import { createServer, type IncomingMessage, request, type ServerResponse } from
 import type { AddressInfo } from "node:net";
 import { extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Net } from "./net.ts";
+import { readers } from "./history.ts";
+import type { Found, Net, Ref } from "./net.ts";
+import { api, type Hub, watchSession, type Watch, watchWorkspace } from "./watch.ts";
 
 // The browser view's server: serves the built page and one live stream of the net, read-only, on 127.0.0.1 only.
 // Every URL starts with a random token (/<token>/index.html, /<token>/events) and a request without it, or with another Host
 // header, is refused, so other local pages cannot read the net. The stream sends the full snapshot on connect and on every
 // change, plus a `ping` event every 15 s so a client can tell a silent drop from a quiet net. It polls only while someone listens.
+// The page has routes (/<token>/w/<workspace>[/s/<session>]): any such URL answers the same index.html, which carries a <base href>
+// so its assets and the stream resolve from any depth. `events?watch=<session key>` adds that session's chat history to the stream,
+// `events?watch=w:<workspace id>` the last line of each session there; /api/history and /api/entry page through a session's file.
 
 export const BUNDLE = fileURLToPath(new URL("../dist/gui", import.meta.url));
 const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".json": "application/json" };
@@ -18,38 +23,41 @@ const HEADERS = {
 	"cache-control": "no-store",
 	"referrer-policy": "no-referrer",
 	"x-content-type-options": "nosniff",
-	"content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'",
+	"content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; frame-ancestors 'none'",
 };
 
 export interface Gui { url: string; port: number; token: string; stop(): Promise<void> }
-export interface GuiOptions { read(): Promise<Net>; dir?: string; port?: number; token?: string; pollMs?: number; pingMs?: number }
+/** `net` is the registry behind the net reading (the allow list of session keys); without it no session can be watched. */
+export interface GuiOptions { read(): Promise<Net>; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] }; dir?: string; port?: number; token?: string; pollMs?: number; pingMs?: number }
 
 /** Starts the server. A preferred `port` (and `token`) is reused when free, so a restarted server keeps the URL an open page already has. */
-export async function startGui({ read, dir = BUNDLE, port = 0, token = randomBytes(16).toString("hex"), pollMs = 2000, pingMs = 15_000 }: GuiOptions): Promise<Gui> {
+export async function startGui({ read, net, dir = BUNDLE, port = 0, token = randomBytes(16).toString("hex"), pollMs = 2000, pingMs = 15_000 }: GuiOptions): Promise<Gui> {
 	try {
 		if (!statSync(join(dir, "index.html")).isFile()) throw new Error();
 	} catch {
 		throw new Error(`The GUI bundle is missing (${dir}); build it with npm run gui:build`);
 	}
-	const clients = new Set<ServerResponse>();
-	let last: string | undefined, problem: string | undefined, busy = false;
+	const page = readFileSync(join(dir, "index.html"), "utf8").replace("<head>", `<head>\n<base href="/${token}/">`);
+	const hub: Hub = { lookup: (key) => net?.lookup(key), workspace: (id) => net?.workspace(id) ?? [], readers: readers() };
+	const clients = new Map<ServerResponse, Watch | undefined>();
+	let last: string | undefined, problem: string | undefined, inflight: Promise<void> | undefined;
 	let poll: ReturnType<typeof setInterval> | undefined, beat: ReturnType<typeof setInterval> | undefined;
-	const push = (data: string, event?: string) => clients.forEach((c) => c.write(`${event ? `event: ${event}\n` : ""}data: ${data}\n\n`));
-	const tick = async () => {
-		if (busy) return;
-		busy = true;
+	const send = (to: ServerResponse, data: string, event?: string) => to.write(`${event ? `event: ${event}\n` : ""}data: ${data}\n\n`);
+	const push = (data: string, event?: string) => clients.forEach((_, c) => send(c, data, event));
+	// One reading at a time; a caller that arrives meanwhile waits for the one in flight.
+	const tick = () => (inflight ??= (async () => {
 		try {
 			const json = JSON.stringify(await read());
 			if (json !== last || problem) push((last = json));
 			problem = undefined;
+			await Promise.all([...clients.values()].map((w) => w?.refresh().catch(() => {})));
 		} catch (error) {
 			// The stream stays up and says why the net is unreadable, once per distinct reason.
 			const message = (error as Error).message;
 			if (message !== problem) push(JSON.stringify(message), "problem");
 			problem = message;
 		}
-		busy = false;
-	};
+	})().finally(() => (inflight = undefined)));
 	const listen = (at: number) => new Promise<void>((done, fail) => {
 		server.once("error", fail);
 		server.listen(at, "127.0.0.1", () => (server.off("error", fail), done()));
@@ -58,28 +66,42 @@ export async function startGui({ read, dir = BUNDLE, port = 0, token = randomByt
 		const [a, b] = [Buffer.from(given ?? ""), Buffer.from(token)];
 		return req.method === "GET" && req.headers.host === `127.0.0.1:${(server.address() as AddressInfo).port}` && a.length === b.length && timingSafeEqual(a, b);
 	};
-	const events = (req: IncomingMessage, res: ServerResponse) => {
+	const events = (req: IncomingMessage, res: ServerResponse, target: string | null) => {
 		res.writeHead(200, { ...HEADERS, "content-type": "text/event-stream", connection: "keep-alive" });
-		clients.add(res);
+		const to = (event: string, data: unknown) => send(res, JSON.stringify(data), event);
+		const watch = target?.startsWith("w:") ? watchWorkspace(hub, target.slice(2), to) : target ? watchSession(hub, target, to) : undefined;
+		clients.set(res, watch);
 		if (last) res.write(`data: ${last}\n\n`);
 		if (clients.size === 1) {
 			poll = setInterval(() => void tick(), pollMs).unref();
 			beat = setInterval(() => push("", "ping"), pingMs).unref();
-			void tick();
 		}
+		// The registry is filled by reading the net, so a watched page starts once a reading exists.
+		void (clients.size === 1 || !last ? tick() : watch?.refresh())?.catch(() => {});
 		req.on("close", () => {
 			clients.delete(res);
+			watch?.stop();
 			if (!clients.size) (clearInterval(poll), clearInterval(beat));
 		});
 	};
 	const server = createServer((req, res) => {
-		const pathname = new URL(req.url ?? "/", "http://local").pathname;
+		const url = new URL(req.url ?? "/", "http://local"), pathname = url.pathname;
 		const [, given, ...path] = pathname.split("/");
 		const fail = (code: number) => res.writeHead(code, { ...HEADERS, "content-type": "text/plain" }).end(code === 403 ? "forbidden" : "not found");
 		if (!allowed(req, given)) return void fail(403);
 		// The page loads its assets and the stream relative to its own URL, so that URL must end with a slash.
 		if (path.length === 0) return void res.writeHead(308, { ...HEADERS, location: `${pathname}/` }).end();
-		if (path.join("/") === "events") return events(req, res);
+		if (path.join("/") === "events") return events(req, res, url.searchParams.get("watch"));
+		if (path[0] === "api") {
+			let parts: string[];
+			try {
+				parts = path.slice(1).map(decodeURIComponent);
+			} catch {
+				return void fail(404);
+			}
+			return void api(hub, parts, url.searchParams).then(({ status, body }) => res.writeHead(status, { ...HEADERS, "content-type": TYPES[".json"] }).end(JSON.stringify(body)), () => fail(404));
+		}
+		if (path[0] === "w") return void res.writeHead(200, { ...HEADERS, "content-type": TYPES[".html"] }).end(page);
 		let file: string;
 		try {
 			file = resolve(dir, decodeURIComponent(path.join("/")) || "index.html");
@@ -87,6 +109,7 @@ export async function startGui({ read, dir = BUNDLE, port = 0, token = randomByt
 		} catch {
 			return void fail(404);
 		}
+		if (file === join(resolve(dir), "index.html")) return void res.writeHead(200, { ...HEADERS, "content-type": TYPES[".html"] }).end(page);
 		res.writeHead(200, { ...HEADERS, "content-type": TYPES[extname(file)] ?? "application/octet-stream" });
 		createReadStream(file).pipe(res);
 	});
@@ -102,7 +125,7 @@ export async function startGui({ read, dir = BUNDLE, port = 0, token = randomByt
 		stop: () => new Promise<void>((done) => {
 			clearInterval(poll);
 			clearInterval(beat);
-			clients.forEach((c) => c.end());
+			clients.forEach((_, c) => c.end());
 			server.close(() => done());
 			server.closeAllConnections();
 		}),
