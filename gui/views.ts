@@ -40,7 +40,7 @@ function fillToken(el: HTMLElement, u: { key?: string; name: string; role: strin
 const colEl = () => html(`<div class="col"><a class="token">${PLATE}<span class="name"></span><span class="line"><em class="role"></em><span class="note"></span></span></a><div class="say"><p></p></div><div class="drones"></div></div>`);
 const ZOOM = `<div class="zoom-in"><header class="base keep"><a class="tower big"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></a><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>head tower</span><h2></h2><p></p></div><dl class="tally"><div><dt>Squads</dt><dd></dd></div><div><dt>Units</dt><dd></dd></div><div data-mark="working"><dt>Working</dt><dd></dd></div><div data-mark="waiting"><dt>Waiting</dt><dd></dd></div></dl></header><div class="squads"></div><div class="camps"><section class="tab squad camp" data-group="outposts"><h3><svg><use href="#i-outpost"/></svg><b>Outposts</b><small></small></h3><div class="formation"></div></section><section class="tab squad camp" data-group="outside"><h3><svg><use href="#i-outside"/></svg><b>Outside the net</b><small>unaligned pi panes</small></h3><div class="formation"></div></section></div><p class="lost" hidden></p></div>`;
 const DOSSIER = `<div class="dossier-in"><span class="tag">unit dossier</span><div class="portrait">${PLATE}</div><h3></h3><p class="d-line"><em class="role"></em> <span class="state"></span></p><p class="d-note" hidden></p><dl class="specs"></dl><div class="d-drones" hidden><h4>Dispatched</h4><div class="formation"></div></div></div>`;
-const COMMS = `<div class="comms-in"><header class="comms-head"><span class="logo"><svg><use href="#i-comms"/></svg></span><div><h2><small>comms</small> <span></span></h2><p></p></div><span class="chan link" data-state="live"><i></i><b>channel open</b></span></header><div class="chat-root"></div></div>`;
+const COMMS = `<div class="comms-in"><header class="comms-head"><span class="logo"><svg><use href="#i-comms"/></svg></span><div><h2><small>comms</small> <span></span></h2><p></p></div><span class="chan link" data-state="live"><i></i><b>channel open</b></span></header><div class="chat-root"></div><p class="rx"><svg><use href="#i-comms"/></svg><b>receive only</b><span>Replying from the browser comes in a later version. For now, reply in this unit's terminal pane in Herdr.</span></p></div>`;
 
 export function mountFocus({ data, restart, openTile }: FocusDeps) {
 	const $ = (id: string) => document.getElementById(id)!;
@@ -180,6 +180,7 @@ export function mountFocus({ data, restart, openTile }: FocusDeps) {
 			return sub && linkTo({ view: "session", ws: locate(net, sub.key)?.base.id ?? ws(), key: sub.key }, name);
 		};
 		chat = mountChat(sessionView.querySelector(".chat-root")!, data(key), { who, link, openTile });
+		chat.reveal(route.at);
 		queue.splice(0).forEach(apply);
 		drawDossier();
 	}
@@ -191,7 +192,7 @@ export function mountFocus({ data, restart, openTile }: FocusDeps) {
 	return {
 		locate: (key: string) => locate(net, key),
 		show(next: Route, before: Route, from?: DOMRect) {
-			const key = route.view === "session" ? route.key : undefined;
+			const [key, at] = route.view === "session" ? [route.key, route.at] : [];
 			if (next.view !== "workspace" || route.view !== "workspace" || next.ws !== route.ws) cards = {};
 			route = next;
 			wsView.hidden = next.view !== "workspace";
@@ -200,7 +201,8 @@ export function mountFocus({ data, restart, openTile }: FocusDeps) {
 				[chat, info, model, ctx, queue, stale] = [undefined, undefined, undefined, undefined, [], false];
 				sessionView.replaceChildren(html(`<p class="lost">Opening the channel…</p>`));
 				void enter(next.key);
-			} else if (next.view !== "session") {
+			} else if (next.view === "session" && next.at !== at) chat?.reveal(next.at);
+			else if (next.view !== "session") {
 				entering++;
 				chat = undefined;
 			}

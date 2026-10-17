@@ -55,8 +55,9 @@ Where the data comes from: pi-intercom `listSessions()` (status `idle`, `thinkin
 - **What it shows.** Each workspace the net reaches is a **base**: one with a live tower or with sessions that joined. Workspaces with neither are not shown, and neither are sessions that did not join. A base has its **control tower** (the head tower wears a crown; a base without a tower shows a dim ghost), each tab's main agent and members as units, subagents under the session that launched them (linked exactly as the dashboard does, wherever they run), and sub workspaces as **outposts** under their parent. A net log lists joins, leaves, and state changes as they arrive.
 - **States** look the same everywhere: working is a spinning ring (and a spinner badge), waiting on a question an amber `?` that hops with a pulsing ring, idle a dim `z`, finished a green `✓`, error a red `!`. Changes animate; the page honors `prefers-reduced-motion`.
 - **Routes.** The map is `/<token>/`.
-  A base opens as `/<token>/w/<workspace id>` and a unit as `/<token>/w/<workspace id>/s/<session key>`.
+  A base opens as `/<token>/w/<workspace id>` and a unit as `/<token>/w/<workspace id>/s/<session key>`, optionally with `?at=<entry id>` to open its comms at one entry.
   Links are real links (middle-click and copy-link work); a plain click, Back, and Forward change the view without reloading, and Escape goes up one level.
+  The **Straw Net** title in the header goes back to the map.
   A deep link loads straight into its view.
 - **A base, zoomed in.** The workspace route draws the base large on the map's grid: its control tower, each tab as a squad of unit tokens with the same icons and state badges, subagents tethered under the unit that launched them, outposts, and the workspace's other pi panes as unaligned units (outside the net, grey, with a dashed ring).
   Each unit shows its last assistant line, read from the end of its session file.
@@ -64,13 +65,18 @@ Where the data comes from: pi-intercom `listSessions()` (status `idle`, `thinkin
 - **A unit's comms.** The session route shows the session's chat as a comms log: your messages in gold on the right, the unit's transmissions on the left with its icon, each tool call as a collapsed action card with a state badge (running, done, failed), thinking folded behind its length, compactions as dividers.
   The side column shows the unit's dossier (portrait, role, state, model, context use, directory, base, squad, launcher, dispatched subagents).
   New entries appear when pi writes them; text still being streamed is not in the file yet, so it shows at the end of the reply.
+  The log opens at the newest entry and stays pinned there as new ones arrive.
+  Scrolled up, it stays where you are and a floating button offers the way back (**jump to latest**, or **N new** once entries arrived); the button scrolls to the end and pins the log again.
   Older pages load as you scroll up; at most 600 entries stay in the page.
+  A strip under the log says the channel is receive only: replying from the browser comes in a later version, and until then you reply in the unit's terminal pane.
   Markdown is rendered by the page's own renderer into DOM nodes, never as HTML, and only `http`, `https`, and `mailto` links are links.
 - **Alerts and panels.** A unit that starts waiting on a question or fails, and a subagent that finishes, raise an alert.
   An alert never opens anything by itself: it joins the queue in the header (questions and errors first, then the rest, oldest first), and leaves it again when the unit moves on.
   You open alerts from the queue or by clicking a unit that waits; they open as dialogs in the dock over the side column.
   A second dialog stacks on top, with the one beneath peeking out; closing the top reveals the one beneath, and with none beneath, the next queued question or error.
   **Later** puts the alert back in the queue and opens nothing else.
+  **Open comms** goes to the unit's comms at the entry the alert was about (read when the alert arrived: the reply with the tool call it waits on, else its last reply), loading older pages when needed, and lights that entry for a moment; the comms log stays there with **jump to latest** until you go down. It closes the alert without opening the next queued one, so nothing covers the comms you went to.
+  The entry is in the URL (`?at=`), so Back, Forward, and the link itself land on it again; opening a unit any other way starts at the newest entry.
   Escape closes the top dialog only, focus returns to where it was, and dialogs are not modal (the page stays usable, nothing traps focus).
   Documents open as **tiles** beside the current view instead, sharing its width; a tile that arrives by itself takes no focus, and narrow windows show tiles as tabs.
   In this release a dialog shows the unit, its last line, and the tool call it waits on, with a link to its comms; answering from the browser comes later.
@@ -142,7 +148,7 @@ The page is vanilla TypeScript in `gui/`, built by Vite (a development dependenc
 The map's chunk holds the map, the header, the router, and the alert spotting (`gui/alerts.ts`).
 The focus views (`gui/views.ts`), the comms log with the markdown renderer (`gui/chat.ts`, `gui/markdown.ts`), and the overlay layer's DOM and tiles (`gui/layer.ts`) load on first use.
 The overlay rules (`gui/overlay.ts` for the dialog stack, `createTiles` in `gui/layer.ts`) are pure and tested without a browser (`tests/overlay.test.ts`); phase 2 and 3 dialogs (ask_user, robot_hand, secret_drop) and show_doc documents plug into the same stack and tiles.
-Size budgets are checked by `tests/imports.test.ts`: the map's chunk ≤ 15 KB (6 KB gzipped), the lazy chunks together ≤ 35 KB (12 KB), the stylesheet ≤ 22 KB (6 KB).
+Size budgets are checked by `tests/imports.test.ts`: the map's chunk ≤ 15 KB (6 KB gzipped), the lazy chunks together ≤ 35 KB (12 KB), the stylesheet ≤ 22.1 KB (6.1 KB).
 
 `npm run gui:dev` serves the page on a local port with hot reload, fed by a demo net with invented names that changes state every few seconds. The demo includes a session with every kind of chat entry (open any unit), and the fixture's toolbar (bottom left) has **drop stream**, **go silent** (no messages, no error: the 45 s watchdog), **restore**, to review the disconnected page, and **doc arrives**, which opens a demo document as a tile the way a show_doc document will. To point the dev page at a live stream instead, run `/boss gui` and start the dev server with its URL: `GUI_LIVE=http://127.0.0.1:<port>/<token>/ npm run gui:dev`.
 

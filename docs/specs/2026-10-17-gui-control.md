@@ -246,8 +246,15 @@ result), capped at 1 MB.
 - **Long histories**: at most 150 items arrive at once; scrolling to the top fetches
   the previous page; every item gets `content-visibility: auto` with a
   `contain-intrinsic-size`, so off-screen items cost no layout; more than 600
-  mounted items drops the farthest page (refetched on scroll). The view sticks
-  to the bottom while the user is at the bottom; otherwise a "N new" pill appears.
+  mounted items drops the farthest page (refetched on scroll). The view opens at
+  the newest entry and stays pinned there (also while entries take their real
+  height as they render); scrolled up, a floating button shows "jump to latest",
+  or "N new" once entries arrived, and pins it again. A session route may carry
+  `?at=<entry id>`: the view loads older pages until that entry is mounted,
+  scrolls it into view, lights it for a moment, and shows "jump to latest"; an
+  entry no longer in the history opens at the end. Back, Forward, and deep links
+  reproduce it. Under the log, a receive-only strip says replying comes in a later
+  version and points to the unit's terminal pane (Phase 1 has no input).
 - **Markdown** (D8): a small renderer of its own that builds DOM nodes, never
   `innerHTML`: paragraphs, headings, lists, task lists, block quotes, fenced and
   inline code, emphasis, links (`http`, `https`, `mailto` only, `rel="noopener
@@ -273,11 +280,11 @@ Phase 1 builds the layer with read-only content; Phase 2 and 3 dialogs (ask_user
 | Queue order | Rank first, then the oldest arrival. A repeated arrival keeps its place. |
 | Opening | Only the user opens a dialog: from the header alert (the head of the queue), or by clicking a unit that waits or failed (map, base, dossier; a modified click still follows the link). An opened dialog leaves the queue, goes on top, and takes focus; one already open comes to the top instead of opening twice. |
 | Stack | The top dialog is in front; dialogs beneath peek out above it, smaller and fainter, and are `inert`. |
-| Closing | Close (× or Escape) removes the top dialog. The dialog beneath comes back; with none beneath, the next queued question or error does (it was waiting behind the closed one). Plain state changes stay queued until the user opens them. **Later** puts the alert back in the queue and reveals nothing queued, so the user can always step out. |
+| Closing | Close (× or Escape) removes the top dialog. The dialog beneath comes back; with none beneath, the next queued question or error does (it was waiting behind the closed one). Plain state changes stay queued until the user opens them. **Later** puts the alert back in the queue and reveals nothing queued, so the user can always step out. **Open comms** closes the alert and reveals nothing queued either, so no dialog covers the comms the user went to. |
 | Escape | Closes the top dialog only. With no dialog open, it goes up one route level. |
 | Focus | Each dialog remembers where focus was when it opened and returns it there on close (inside the dialog beneath, or the page element that opened the first); when that element is gone, focus moves into the dialog beneath. Dialogs are not modal: the page stays usable and nothing traps focus. |
 | Stale | A queued alert whose unit no longer shows the state that raised it leaves the queue by itself. An open dialog is never closed under the user; it shows the unit's current state. |
-| Phase 1 content | The unit (portrait, role, state, base), its last assistant line and the tool call it waits on (from the newest 12 history items), **Open comms** (the session route) and **Later**. |
+| Phase 1 content | The unit (portrait, role, state, base), its last assistant line and the tool call it waits on (from the newest 12 history items, read when the alert arrives), **Open comms** (the session route at the entry the alert was about: `?at=` the reply with the tool call it waits on, else its last reply) and **Later**. |
 
 **Tiles** sit beside the current view and share its width.
 
@@ -505,12 +512,12 @@ Control means typing into the user's terminals, so every write is guarded.
 | Workspace cards | one 64 KB tail read per unit per change | 19 ms for 15 files |
 | Page JS (map chunk) | ≤ 15 KB raw, ≤ 6 KB gzip | 8.7 / 3.7 KB today |
 | Page JS (chat chunk incl. markdown, mirror, panels) | ≤ 35 KB raw, ≤ 12 KB gzip | |
-| CSS | ≤ 22 KB raw, ≤ 6 KB gzip | 10.5 / 3.2 KB today |
+| CSS | ≤ 22.1 KB raw, ≤ 6.1 KB gzip (was 22 / 6; raised in 0.4.0 for the anchor highlight, the receive-only strip, and the title link) | 10.5 / 3.2 KB before Phase 1 |
 | Mounted chat items | ≤ 600 | `content-visibility: auto` |
 | Runtime dependencies | none | as today |
 
-Measured after Phase 1 (0.4.0, `tests/imports.test.ts`): map chunk 14.1 KB (5.9 KB gzipped), lazy chunks together 24.1 KB (10.2 KB), stylesheet 21.9 KB (6.0 KB).
-The stylesheet has under 0.1 KB of its gzip budget left, so Phases 2 and 3 (composer, mirror, panels) need a new CSS figure before they start.
+Measured after Phase 1 (0.4.0, `tests/imports.test.ts`): map chunk 14.1 KB (5.9 KB gzipped), lazy chunks together 24.1 KB (10.2 KB), stylesheet 22.1 KB (6.1 KB).
+The stylesheet has no room left (no unused rules remain, and folding repeated declarations into groups grows the gzipped size), so Phases 2 and 3 (composer, mirror, panels) need a new CSS figure before they start.
 
 Source budgets (lines): `src/history.ts` 250, `src/control.ts` 150, `src/gui.ts` +
 `src/net.ts` 300 together (226 today), `src/docs.ts` (document serving) 120;

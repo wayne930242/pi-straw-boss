@@ -38,14 +38,15 @@ export function createTiles(io: TilesIO) {
 	};
 }
 
-/** What an alert dialog tells from a session's newest items: its last assistant text, and the tool call still open (what it waits on). */
-export function intel(items: Item[]): { said?: string; pending?: string } {
+/** From a session's newest items when the alert arrives: its last line, the open tool call it waits on, and `at`, the entry Open comms lands on. */
+export function intel(items: Item[]): Intel {
 	const answered = new Set(items.flatMap((i) => (i.kind === "result" && i.callId ? [i.callId] : [])));
 	const replies = items.filter((i) => i.kind === "assistant"), last = replies.at(-1);
 	const open = last?.tools?.find((t) => !answered.has(t.id));
 	const said = replies.findLast((i) => i.text?.trim())?.text?.trim().split("\n").filter(Boolean).at(-1);
-	return { said: said?.slice(0, 280), pending: open && `${open.name} · ${open.summary}`.slice(0, 200) };
+	return { said: said?.slice(0, 280), pending: open && `${open.name} · ${open.summary}`.slice(0, 200), at: (last ?? items.findLast((i) => i.kind !== "result"))?.id };
 }
+export interface Intel { said?: string; pending?: string; at?: string; failed?: boolean }
 
 export interface PanelDeps { label(ws: string): string; recent(key: string): Promise<Item[]> }
 const dialogEl = () => html(`<section class="dialog" role="dialog" aria-modal="false" tabindex="-1"><header><b class="tag">alert</b><span class="where"></span><button class="x" type="button" aria-label="Close">×</button></header><div class="who">${PLATE}<div><h3></h3><p><em class="role"></em> <span class="state"></span></p></div></div><div class="intel"><h4>Last transmission</h4><p class="said">…</p><p class="pending" hidden><b>waiting on</b> <span></span></p></div><footer><a class="go">Open comms</a><button class="later" type="button">Later</button><span class="queued"></span></footer></section>`);
@@ -53,7 +54,21 @@ const tileEl = () => html(`<section class="tile" tabindex="-1"><header><svg><use
 
 export function mountPanels(deps: PanelDeps) {
 	const [dock, work, row, tabs, button] = [byId("dock", HTMLElement), byId("work", HTMLElement), byId("tiles", HTMLElement), byId("tile-tabs", HTMLElement), byId("alerts", HTMLButtonElement)];
-	const asked = new Set<string>();
+	// Read when the alert arrives (again on a new one), so Open comms lands on the entry the alert was about, not on what came after.
+	const intels = new Map<string, Intel>();
+	const tell = (el: HTMLElement, a: Alert, it = intels.get(a.key)) => {
+		text(el, ".said", it?.failed ? "History unavailable." : (it?.said ?? "No messages yet."));
+		el.querySelector<HTMLElement>(".pending")!.hidden = !it?.pending;
+		text(el, ".pending span", it?.pending ?? "");
+		aim(el.querySelector(".go")!, { view: "session", ws: a.ws, key: a.key, ...(it?.at && { at: it.at }) });
+	};
+	const learn = (a: Alert, wait: Intel = { said: "…" }) => {
+		intels.set(a.key, wait);
+		void deps.recent(a.key).then(intel, () => ({ failed: true })).then((it) => {
+			const el = intels.get(a.key) === wait && (intels.set(a.key, it), dock.querySelector<HTMLElement>(`.dialog[data-key="${CSS.escape(a.key)}"]`));
+			if (el) tell(el, a);
+		});
+	};
 	const fill = (el: HTMLElement, a: Alert, depth: number, queued: number) => {
 		mark(el, a.mark);
 		// The ones beneath peek out above the top dialog, smaller and fainter.
@@ -68,21 +83,12 @@ export function mountPanels(deps: PanelDeps) {
 		text(el, ".where", deps.label(a.ws));
 		text(el, ".tag", { waiting: "question", error: "error", done: "finished" }[a.mark as "done"] ?? "update");
 		text(el, ".queued", queued ? `+${queued} queued` : "");
-		aim(el.querySelector(".go")!, { view: "session", ws: a.ws, key: a.key });
-		// The newest items are read once per open dialog, when it first shows.
-		if (asked.has(a.key)) return;
-		asked.add(a.key);
-		void deps.recent(a.key).then((items) => {
-			const { said, pending } = intel(items);
-			text(el, ".said", said ?? "No messages yet.");
-			el.querySelector<HTMLElement>(".pending")!.hidden = !pending;
-			text(el, ".pending span", pending ?? "");
-		}, () => text(el, ".said", "History unavailable."));
+		if (!intels.has(a.key)) learn(a);
+		tell(el, a);
 	};
 	const stack = createStack<HTMLElement>({
 		render(open, queue) {
 			sync(dock, open.map((a) => ({ ...a, id: a.key })), dialogEl, (el, a) => fill(el, a, open.length - 1 - open.findIndex((o) => o.key === a.key), queue.length));
-			for (const key of asked) if (!open.some((a) => a.key === key)) asked.delete(key);
 			const head = queue[0];
 			button.disabled = !head;
 			button.dataset.mark = head?.mark ?? "unknown";
@@ -98,9 +104,10 @@ export function mountPanels(deps: PanelDeps) {
 	dock.addEventListener("click", (event) => {
 		const target = event.target as Element;
 		if (target.closest(".x")) stack.close();
-		else if (target.closest(".later")) stack.close(true);
-		// The link navigates (the router takes the click); the dialog it came from is done.
-		else if (target.closest(".go")) queueMicrotask(() => void stack.close());
+		else if (target.closest(".later")) stack.close("later");
+		// The link navigates to the unit's comms (the router takes the click); the dialog it came from is done, and nothing queued opens
+		// over the comms the user is going to.
+		else if (target.closest(".go")) queueMicrotask(() => void stack.close("go"));
 	});
 
 	let shown = 0;
@@ -136,7 +143,7 @@ export function mountPanels(deps: PanelDeps) {
 		stack,
 		/** A snapshot's alerts: the new ones queue, and the queue drops the ones whose unit moved on. */
 		alerts(fresh: Alert[], now: Map<string, Alert>) {
-			for (const alert of fresh) stack.arrive(alert);
+			for (const alert of fresh) learn(alert), stack.arrive(alert);
 			stack.prune((key) => now.get(key));
 		},
 	};

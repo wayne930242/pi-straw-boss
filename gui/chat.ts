@@ -1,6 +1,7 @@
 import type { Mark } from "../src/dashboard.ts";
 import type { Item } from "../src/items.ts";
 import { h } from "./dom.ts";
+import { createFollow, reach } from "./follow.ts";
 import { mount, parse } from "./markdown.ts";
 import type { Tile } from "./layer.ts";
 import { html, ICON } from "./render.ts";
@@ -73,7 +74,8 @@ export interface HistoryEvent { key: string; state?: string; successor?: string;
 export interface Data { older(before: string): Promise<Page>; latest(): Promise<Page>; entry(id: string): Promise<Item | undefined>; doc?(path: string): Promise<string | undefined> }
 export interface Who { key: string; name: string; role: string; mark: Mark; note?: string }
 export interface ChatDeps { who(): Who; link(name: string): HTMLAnchorElement | undefined; openTile(tile: Tile, focus?: boolean): void }
-export interface Chat { apply(event: HistoryEvent): void; setLive(text: string, mark: Mark): void }
+/** `reveal` opens the log at an entry (scrolled into view and lit), or with none at the newest entry. */
+export interface Chat { apply(event: HistoryEvent): void; setLive(text: string, mark: Mark): void; reveal(at?: string): void }
 
 const clock = (at?: string) => (at ? new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }) : "");
 const size = (n: number) => (n >= 1024 ? `${(n / 1024).toFixed(n >= 10240 ? 0 : 1)} KB` : `${n} B`);
@@ -100,9 +102,30 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, openTile }
 	const list = h("div", { class: "chat-list" }), top = h("div", { class: "chat-top" }), live = h("div", { class: "chat-live" }), pill = h("button", { class: "chat-pill", type: "button", hidden: "" }), empty = h("p", { class: "chat-empty" }, "No transmissions yet.");
 	const scroller = h("div", { class: "chat-scroll" }, top, list, live);
 	root.replaceChildren(scroller, pill);
-	let loading = false, unseen = 0;
+	const follow = createFollow();
+	let loading = false, loaded = false, target: string | undefined, held: HTMLElement | undefined, release = 0;
 	const atBottom = () => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
-	const toBottom = () => ((scroller.scrollTop = scroller.scrollHeight), (unseen = 0), (pill.hidden = true));
+	const button = (label = follow.button(model.detached)) => ((pill.hidden = !label), (pill.textContent = label ?? ""));
+	const toBottom = () => (follow.jump(), (held = undefined), (scroller.scrollTop = scroller.scrollHeight), button());
+	/** Scrolls the anchor into view and lights it; older pages load first when it is not mounted. Gone from the history, the log opens at the end. */
+	async function anchor(at: string) {
+		loading = true;
+		const found = await reach(model, data.older, at, (d) => (paint(d), touch(d))).finally(() => (loading = false));
+		const el = els.get(at);
+		if (target !== at) return;
+		if (!found || !el) return toBottom();
+		follow.hold();
+		held = el;
+		el.scrollIntoView({ block: "center" });
+		el.classList.remove("lit");
+		void el.offsetWidth;
+		el.classList.add("lit");
+		// Entries near it take their real height as they render (content-visibility), so it is kept in view until the user scrolls.
+		clearTimeout(release);
+		release = window.setTimeout(() => ((held = undefined), el.classList.remove("lit")), 2000);
+		button();
+	}
+	const settle = () => (target ? void anchor(target) : toBottom());
 	const fetchBody = (button: HTMLButtonElement, body: HTMLElement, id: string, pick: (it: Item) => string | undefined) => {
 		button.disabled = true;
 		void data.entry(id).then((full) => {
@@ -170,7 +193,7 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, openTile }
 		}
 	});
 	const older = async () => {
-		if (loading || !model.before) return;
+		if (loading || !model.before || !loaded) return;
 		loading = true;
 		try {
 			const height = scroller.scrollHeight, d = model.prepend(await data.older(model.before));
@@ -184,25 +207,36 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, openTile }
 		if (model.before && scroller.clientHeight && top.getBoundingClientRect().bottom >= scroller.getBoundingClientRect().top) void older();
 	};
 	new IntersectionObserver((seen) => seen.some((s) => s.isIntersecting) && void older(), { root: scroller }).observe(top);
-	pill.addEventListener("click", () => (model.detached ? void data.latest().then((page) => (paint(model.reset(page)), toBottom())) : toBottom()));
-	scroller.addEventListener("scroll", () => atBottom() && !model.detached && ((unseen = 0), (pill.hidden = true)), { passive: true });
+	pill.addEventListener("click", () => {
+		target = undefined;
+		if (model.detached) void data.latest().then((page) => (paint(model.reset(page)), toBottom()));
+		else toBottom();
+	});
+	scroller.addEventListener("scroll", () => (follow.scrolled(atBottom()), button()), { passive: true });
+	// The user's own scroll ends the hold, and a later reconnect then opens at the end instead of at the anchor again.
+	for (const input of ["wheel", "touchstart", "pointerdown", "keydown"]) scroller.addEventListener(input, () => (held = target = undefined), { passive: true });
+	// Entries change height as they render (content-visibility estimates the rest), so a pinned log is kept at the bottom, and a held anchor in view.
+	const keep = new ResizeObserver(() => (follow.pinned && !model.detached ? (scroller.scrollTop = scroller.scrollHeight) : held?.scrollIntoView({ block: "center" })));
+	keep.observe(list);
+	keep.observe(scroller);
 
 	return {
 		apply(e) {
 			if (e.reset) {
 				paint(model.reset({ items: e.items ?? [], before: e.before }));
-				toBottom();
+				loaded = true;
+				settle();
 			} else if (e.items?.length) {
-				const stick = atBottom(), d = model.append(e.items);
+				const d = model.append(e.items);
 				paint(d);
 				touch(d);
-				if (stick && !model.detached) toBottom();
-				else if (d.added.length || model.detached) {
-					unseen += d.added.length;
-					pill.hidden = false;
-					pill.textContent = model.detached ? "jump to latest" : `${unseen} new`;
-				}
+				if (follow.arrived(d.added.length) && !model.detached) toBottom();
+				else button();
 			}
+		},
+		reveal(at) {
+			target = at;
+			if (loaded) settle();
 		},
 		/** The unit's live state under the last transmission, with the same badge (spinner, hopping ?) as its token. */
 		setLive(text, m) {

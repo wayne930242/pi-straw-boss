@@ -58,11 +58,13 @@ test("the TypeScript source stays within its size budgets", () => {
 	// The page: the files the spec budgets one by one, then this round's own figures (no figure in the spec): the focus views, the overlay
 	// layer (alert spotting and the stack model in the map's chunk, the layer's DOM and tiles in a chunk of their own), the dev-only demo, and everything else.
 	for (const [name, max] of [["router.ts", 80], ["chat.ts", 250], ["markdown.ts", 180], ["views.ts", 240], ["layer.ts", 150]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
+	// The comms log's scroll rules (pinned to the end, reaching an anchor) are pure and live beside it.
+	assert.ok(count("gui/follow.ts") <= 50, `gui/follow.ts has ${count("gui/follow.ts")} lines`);
 	const overlay = sum("gui", ["alerts.ts", "overlay.ts"]);
 	assert.ok(overlay <= 110, `the overlay model has ${overlay} lines`);
 	const demo = sum("gui", ["fixture.ts", "demo-chat.ts"]);
 	assert.ok(demo <= 160, `the demo fixture has ${demo} lines`);
-	const shipped = new Set(["router.ts", "chat.ts", "markdown.ts", "views.ts", "layer.ts", "alerts.ts", "overlay.ts", "fixture.ts", "demo-chat.ts"]);
+	const shipped = new Set(["router.ts", "chat.ts", "follow.ts", "markdown.ts", "views.ts", "layer.ts", "alerts.ts", "overlay.ts", "fixture.ts", "demo-chat.ts"]);
 	const page = sum("gui", names("gui").filter((name) => !shipped.has(name)));
 	assert.ok(page <= 540, `the page's TypeScript has ${page} lines`);
 });
@@ -85,5 +87,6 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	const total = (list: string[], measure: (name: string) => number) => list.reduce((sum, name) => sum + measure(name), 0);
 	assert.ok(size(entry).length <= 15_000 && gz(entry) <= 6_000, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 35_000 && total(chunks, gz) <= 12_000, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
-	assert.ok(total(css, (n) => size(n).length) <= 22_000 && total(css, gz) <= 6_000, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link.
+	assert.ok(total(css, (n) => size(n).length) <= 22_100 && total(css, gz) <= 6_100, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });

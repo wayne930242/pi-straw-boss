@@ -21,6 +21,15 @@ test("ids with slashes, spaces, percent signs, and non-ASCII letters survive a r
 	assert.equal(formatRoute({ view: "session", ws: "a/b", key: "c d" }), "w/a%2Fb/s/c%20d");
 });
 
+test("a session route keeps the entry it opens at, and going up or watching ignores it", () => {
+	const at: Route = { view: "session", ws: "wA", key: "k/1", at: "e 9/x" };
+	assert.equal(formatRoute(at), "w/wA/s/k%2F1?at=e%209%2Fx");
+	assert.deepEqual(parseRoute(formatRoute(at)), at);
+	assert.deepEqual(parseRoute("w/wA/s/k?at="), { view: "session", ws: "wA", key: "k" }, "an empty anchor is no anchor");
+	assert.deepEqual(parseRoute("w/wA?at=e1"), { view: "workspace", ws: "wA" }, "only a session has an anchor");
+	assert.deepEqual([upOf(at), watchOf(at)], [{ view: "workspace", ws: "wA" }, "k/1"]);
+});
+
 test("anything that is not a route is the map, and a bad escape does not throw", () => {
 	for (const rel of ["w", "w/", "x/y", "w//s/k", "assets/app.js", "events"]) assert.deepEqual(parseRoute(rel), { view: "map" }, rel);
 	assert.deepEqual(parseRoute("w/%E0%A4%A"), { view: "workspace", ws: "%E0%A4%A" });

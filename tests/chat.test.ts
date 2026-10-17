@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CAP, createChat } from "../gui/chat.ts";
+import { CAP, createChat, type Page } from "../gui/chat.ts";
+import { createFollow, reach } from "../gui/follow.ts";
 import type { Item } from "../src/items.ts";
 
 const msg = (id: string): Item => ({ id, kind: "user", text: id });
@@ -56,4 +57,39 @@ test("results and calls of dropped items are forgotten with them", () => {
 	chat.reset({ items: [reply("a1", "c1"), res("r1", "c1"), msg("b"), msg("c")] });
 	chat.append([msg("d")]);
 	assert.deepEqual([ids(chat), chat.result("c1")], [["b", "c", "d"], undefined]);
+});
+
+test("the log starts pinned to the newest entry and follows new ones; scrolled up it offers the way back, and jumping pins it again", () => {
+	const f = createFollow();
+	assert.deepEqual([f.pinned, f.arrived(2), f.button(false)], [true, true, undefined], "opening a session any other way starts at the bottom and stays there");
+	f.scrolled(false);
+	assert.deepEqual([f.pinned, f.button(false)], [false, "jump to latest"], "not at the bottom: the floating button shows");
+	assert.equal(f.arrived(3), false, "new entries do not pull a reader down");
+	assert.equal(f.button(false), "3 new");
+	f.jump();
+	assert.deepEqual([f.pinned, f.button(false), f.arrived(1)], [true, undefined, true], "after the jump new entries keep it at the bottom");
+	f.scrolled(false);
+	f.arrived(1);
+	f.scrolled(true);
+	assert.deepEqual([f.pinned, f.button(false)], [true, undefined], "scrolling back to the bottom pins it too");
+	f.hold();
+	assert.deepEqual([f.pinned, f.button(false)], [false, "jump to latest"], "opening at an anchor reads from there");
+	assert.equal(createFollow().button(true), "jump to latest", "a detached log always offers the latest");
+});
+
+test("an anchor in an older page is reached by loading older pages, and one that is gone is reported", async () => {
+	const history = Array.from({ length: 500 }, (_, i) => msg(`e${i}`));
+	const pageOf = (before?: string): Page => {
+		const end = before ? history.findIndex((i) => i.id === before) : history.length, start = Math.max(0, end - 150);
+		return { items: history.slice(start, end), before: start > 0 ? history[start]!.id : undefined };
+	};
+	const chat = createChat(), fetched: string[] = [], none: string[] = [];
+	chat.reset(pageOf());
+	const painted: number[] = [];
+	assert.equal(await reach(chat, async (b) => (fetched.push(b), pageOf(b)), "e420", (d) => painted.push(d.added.length)), true);
+	assert.deepEqual(fetched, none, "an anchor in the first page needs no fetch");
+	assert.equal(await reach(chat, async (b) => (fetched.push(b), pageOf(b)), "e120", (d) => painted.push(d.added.length)), true);
+	assert.deepEqual([fetched, painted, chat.items[0]!.id], [["e350", "e200"], [150, 150], "e50"], "two older pages, each painted");
+	assert.equal(await reach(chat, async (b) => pageOf(b), "gone", () => {}), false, "an entry no longer in the history: the log opens at the end");
+	assert.equal(chat.before, undefined);
 });

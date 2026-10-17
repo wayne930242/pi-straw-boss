@@ -64,8 +64,18 @@ test("Later puts the alert back in the queue and reveals nothing queued", () => 
 	stack.arrive(alert("a", "waiting", 1));
 	stack.arrive(alert("b", "waiting", 2));
 	stack.next();
-	stack.close(true);
+	stack.close("later");
 	assert.deepEqual([page.shown, page.queued, page.focus], [[], ["a", "b"], "page"]);
+});
+
+test("Open comms closes the alert and reveals nothing queued over the comms the user is going to", () => {
+	const { page, stack } = harness();
+	stack.arrive(alert("e", "error", 1));
+	stack.arrive(alert("a", "waiting", 2));
+	stack.next();
+	assert.deepEqual([page.shown, page.queued], [["e"], ["a"]]);
+	stack.close("go");
+	assert.deepEqual([page.shown, page.queued, page.focus], [[], ["a"], "page"], "the question stays queued, focus returns to where it was");
 });
 
 test("Escape closes the top dialog only, and focus goes back to where it was before each one opened", () => {
@@ -160,6 +170,8 @@ test("an alert dialog tells the last assistant line and the tool call still open
 		{ id: "1", kind: "assistant", text: "first\nI will ask now.", tools: [{ id: "c1", name: "bash", summary: "ls" }] },
 		{ id: "2", kind: "result", callId: "c1" },
 		{ id: "3", kind: "assistant", text: "", tools: [{ id: "c2", name: "ask_user", summary: "Which deploy window?" }] },
-	]), { said: "I will ask now.", pending: "ask_user · Which deploy window?" });
-	assert.deepEqual(intel([]), { said: undefined, pending: undefined });
+	]), { said: "I will ask now.", pending: "ask_user · Which deploy window?", at: "3" }, "the alert is about the reply with the open call");
+	assert.deepEqual(intel([{ id: "u", kind: "user", text: "go" }, { id: "a", kind: "assistant", text: "failed" }, { id: "n", kind: "notice", text: "x" }]).at, "a", "else the last reply");
+	assert.deepEqual(intel([{ id: "u", kind: "user", text: "go" }, { id: "r", kind: "result", callId: "c" }]).at, "u", "else the last entry that shows on its own");
+	assert.deepEqual(intel([]), { said: undefined, pending: undefined, at: undefined });
 });
