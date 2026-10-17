@@ -48,6 +48,7 @@ test("call_tower without a tower opens a tower tab without focus, starts pi in i
 test("a leftover tower tab with a shell prompt is reused: pi starts in its pane and no new tab opens", async () => {
 	world.autoTowers();
 	world.herdr.addTab("wA:t8", "tower", "wA:p8", "shell");
+	world.herdr.pane("wA:p8").tokens.sb_role = "tower";
 	const a = await main();
 	await a.tool("call_tower", { message: "hi" });
 	assert.deepEqual(world.herdr.commands("tab", "create"), []);
@@ -55,8 +56,31 @@ test("a leftover tower tab with a shell prompt is reused: pi starts in its pane 
 	assert.equal(world.broker.delivered[0]?.to, "tower-wA");
 });
 
+test("a tab merely labelled tower (a subagent can be named so) is not a tower tab: a new one opens and the other is left alone", async () => {
+	world.autoTowers();
+	world.herdr.addTab("wA:t8", "tower", "wA:p8", "shell");
+	const a = await main();
+	await a.tool("call_tower", { message: "hi" });
+	assert.equal(world.herdr.commands("tab", "create").length, 1, "its own tab was created");
+	assert.ok(world.herdr.commands("agent", "start").every((args) => args[5] === "--pane" && args[6] !== "wA:p8"), "pi never started in the foreign tab");
+	assert.deepEqual(world.herdr.pane("wA:p8").tokens, {});
+	assert.ok(!world.herdr.moves.some((m) => m.tab_id === "wA:t8"));
+});
+
+test("a new tower tab is marked as a tower tab right after it is created, before pi starts in it", async () => {
+	world.autoTowers();
+	const a = await main();
+	await a.tool("call_tower", { message: "hi" });
+	const create = world.herdr.commands("tab", "create")[0]!;
+	const marks = world.herdr.commands("pane", "report-metadata").filter((args) => args.includes("sb_role=tower"));
+	const start = world.herdr.commands("agent", "start")[0]!;
+	assert.ok(marks.length >= 1);
+	assert.ok(world.herdr.calls.indexOf(create) < world.herdr.calls.indexOf(marks[0]!) && world.herdr.calls.indexOf(marks[0]!) < world.herdr.calls.indexOf(start));
+});
+
 test("a leftover tab that already runs pi is only waited on, and a tower that never publishes fails with the pane", async () => {
 	world.herdr.addTab("wA:t8", "tower", "wA:p8", "pi");
+	world.herdr.pane("wA:p8").tokens.sb_role = "tower";
 	const a = await main();
 	await assert.rejects(a.tool("call_tower", { message: "hi" }), /did not publish its token within 60 s \(pane wA:p8\)/);
 	assert.deepEqual(world.herdr.commands("agent", "start"), []);

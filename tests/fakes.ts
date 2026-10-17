@@ -15,13 +15,14 @@ export const settle = async () => {
 };
 
 interface Tokens { [name: string]: string }
-interface FakePane { pane_id: string; tab_id: string; workspace_id: string; agent?: string; tokens: Tokens }
+interface FakePane { pane_id: string; tab_id: string; workspace_id: string; agent?: string; agent_status?: string; agent_session?: { value: string }; label?: string; tokens: Tokens }
+interface FakeWorkspace { workspace_id: string; label: string; agent_status?: string; tokens: Tokens; worktree?: { checkout_path?: string; is_linked_worktree?: boolean; repo_key?: string } }
 
 /** A tiny Herdr: workspaces, tabs, panes, and the CLI subcommands the extension calls. */
 export class FakeHerdr {
-	workspaces = [
-		{ workspace_id: "wA", label: "Alpha", tokens: {} as Tokens, worktree: { checkout_path: "/w/alpha" } },
-		{ workspace_id: "wB", label: "Beta", tokens: {} as Tokens },
+	workspaces: FakeWorkspace[] = [
+		{ workspace_id: "wA", label: "Alpha", tokens: {}, worktree: { checkout_path: "/w/alpha" } },
+		{ workspace_id: "wB", label: "Beta", tokens: {} },
 	];
 	tabs = [
 		{ tab_id: "wA:t1", label: "work", workspace_id: "wA" },
@@ -31,6 +32,9 @@ export class FakeHerdr {
 	panes: FakePane[] = [];
 	calls: string[][] = [];
 	closed: string[] = [];
+	/** Socket API calls, and a switch that makes `tab.move` fail as an unreachable socket would. */
+	moves: { tab_id: string; insert_index: number }[] = [];
+	failMove = false;
 	wsTokenHistory: (string | undefined)[] = [];
 	onAgentStart?: (pane: FakePane) => void;
 	onTabClose?: (paneIds: string[]) => void;
@@ -60,6 +64,15 @@ export class FakeHerdr {
 	commands(group: string, cmd: string) {
 		return this.calls.filter((args) => args[0] === group && args[1] === cmd);
 	}
+	api = async (method: string, params: object) => {
+		if (method !== "tab.move") throw new Error(`unexpected herdr api call: ${method}`);
+		if (this.failMove) throw new Error("herdr tab.move failed: connect ENOENT");
+		const { tab_id, insert_index } = params as { tab_id: string; insert_index: number };
+		this.moves.push({ tab_id, insert_index });
+		const tab = this.tabs.find((t) => t.tab_id === tab_id);
+		if (!tab) throw new Error(`herdr tab.move failed: tab_not_found tab ${tab_id} not found`);
+		this.tabs = [...this.tabs.filter((t) => t !== tab).slice(0, insert_index), tab, ...this.tabs.filter((t) => t !== tab).slice(insert_index)];
+	};
 	runFor(self: string) {
 		return async (args: string[]) => this.handle(self, args);
 	}
@@ -169,6 +182,10 @@ export class FakeBroker {
 		if (status.status === "sent") this.delivered.push({ from: from.id, to: request.to, message: request.message, tokens: JSON.stringify(this.herdr.workspaces.map((w) => w.tokens.tower)) });
 		setImmediate(() => from.emit("intercom:outbox-result", { version: 1, requestId: request.requestId, ...status }));
 	}
+	/** What pi-intercom's listSessions() would answer right now. */
+	async sessionList() {
+		return [...this.sessions.values()].map((s) => this.info(s));
+	}
 	ownerOf(ns: string) {
 		const sessionId = this.owners.get(ns);
 		return sessionId ? { sessionId, epoch: "e" } : undefined;
@@ -196,12 +213,16 @@ export class FakeBroker {
 		return {
 			id: agent.id,
 			name: agent.name,
+			status: agent.status,
 			herdrLocation: pane && tab && workspace ? { status: "current", paneId: pane.pane_id, tab: { id: tab.tab_id, label: tab.label }, workspace: { id: workspace.workspace_id, label: workspace.label } } : { status: "not_hosted" },
 		};
 	}
 }
 
-export interface AgentOptions { id: string; name?: string; pane: string; env?: Record<string, string>; entries?: { customType: string; data: unknown }[]; outsideHerdr?: boolean; noIntercom?: boolean }
+export interface AgentOptions { id: string; name?: string; pane: string; env?: Record<string, string>; entries?: { customType: string; data: unknown }[]; outsideHerdr?: boolean; noIntercom?: boolean; ui?: boolean }
+
+export interface FakeTui { renders: number; requestRender(): void }
+type WidgetFactory = (tui: FakeTui, theme: { fg(tone: string, text: string): string; bold(text: string): string }) => { render(width: number): string[]; dispose?(): void };
 
 /** One pi session running the extension, plus the parts of pi and pi-intercom it talks to. */
 export class Agent {
@@ -213,6 +234,12 @@ export class Agent {
 	commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
 	entries: { customType: string; data: unknown }[];
 	notices: { text: string; level?: string }[] = [];
+	/** What pi-intercom reports as this session's status. */
+	status = "idle";
+	/** Widgets set through ctx.ui.setWidget, and the live component of each. */
+	widgets = new Map<string, WidgetFactory | undefined>();
+	components = new Map<string, { render(width: number): string[]; dispose?(): void }>();
+	tui: FakeTui = { renders: 0, requestRender: () => void this.tui.renders++ };
 	stopped = false;
 	private handlers = new Map<string, ((event: unknown, ctx: unknown) => unknown)[]>();
 	private bus = new Map<string, ((data: unknown) => void)[]>();
@@ -226,7 +253,16 @@ export class Agent {
 		this.pane = options.pane;
 		this.entries = [...(options.entries ?? [])];
 		this.ctx = {
-			ui: { notify: (text: string, level?: string) => this.notices.push({ text, level }) },
+			hasUI: Boolean(options.ui),
+			ui: {
+				notify: (text: string, level?: string) => this.notices.push({ text, level }),
+				setWidget: (key: string, factory?: WidgetFactory) => {
+					this.components.get(key)?.dispose?.();
+					this.components.delete(key);
+					this.widgets.set(key, factory);
+					if (factory) this.components.set(key, factory(this.tui, { fg: (_tone, text) => text, bold: (text) => text }));
+				},
+			},
 			sessionManager: { getBranch: () => this.entries.map((e) => ({ type: "custom", customType: e.customType, data: e.data })) },
 		};
 		const env = { ...(options.outsideHerdr ? {} : { HERDR_PANE_ID: options.pane }), PI_INTERCOM_SESSION_ID: this.id, ...options.env };
@@ -249,7 +285,7 @@ export class Agent {
 		if (!options.noIntercom) events.on("intercom:outbox-request", (request) => world.broker.outbox(this, request as { requestId: string; to: string; message: string }));
 		world.broker.connect(this);
 		// The extension's waits are real in production; here they are capped so timeouts take milliseconds.
-		createStrawBoss({ run: world.herdr.runFor(this.pane), env, sleep: (ms) => sleep(Math.min(ms, 2)), promptDir: PROMPT_DIR })(pi);
+		createStrawBoss({ run: world.herdr.runFor(this.pane), api: world.herdr.api, env, sleep: (ms) => sleep(Math.min(ms, 2)), promptDir: PROMPT_DIR })(pi);
 	}
 
 	emit(channel: string, data: unknown): void {
@@ -314,10 +350,10 @@ export class World {
 		return agent;
 	}
 	/** A tower session in a tower tab, as `herdr agent start` would leave it. */
-	tower(id: string, tab: string, pane: string): Agent {
+	tower(id: string, tab: string, pane: string, ui = false): Agent {
 		this.herdr.addTab(tab, "tower", undefined);
 		this.herdr.addPane(pane, tab);
-		return this.agent({ id, name: `tower · ${id}`, pane, tab, env: { STRAW_BOSS_ROLE: "tower" } });
+		return this.agent({ id, name: `tower · ${id}`, pane, tab, env: { STRAW_BOSS_ROLE: "tower" }, ui });
 	}
 	/** `herdr agent start` boots a tower session in the pane, as pi would. */
 	autoTowers(): void {

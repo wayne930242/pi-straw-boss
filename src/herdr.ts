@@ -1,11 +1,19 @@
 import { execFile } from "node:child_process";
+import { createConnection } from "node:net";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 export type HerdrRun = (args: string[], timeoutMs?: number) => Promise<string>;
+/** One request on Herdr's socket API; rejects with the error Herdr answered. */
+export type HerdrApi = (method: string, params: object) => Promise<void>;
 export type Sleep = (ms: number) => Promise<void>;
 export interface Place { paneId: string; tabId: string; workspaceId: string }
-export interface Workspace { workspace_id: string; label: string; tokens?: Record<string, string>; worktree?: { checkout_path?: string } }
-export interface Pane { pane_id: string; tab_id: string; agent?: string; tokens?: Record<string, string> }
-export interface TowerEnv { run: HerdrRun; sleep: Sleep; live(sessionId: string): Promise<boolean> }
+export interface Workspace { workspace_id: string; label: string; agent_status?: string; tokens?: Record<string, string>; worktree?: { checkout_path?: string; is_linked_worktree?: boolean; repo_key?: string } }
+export interface Pane { pane_id: string; tab_id: string; workspace_id?: string; agent?: string; agent_status?: string; agent_session?: { value: string }; label?: string; tokens?: Record<string, string> }
+export interface Location { status: string; workspace?: { id: string; label: string }; tab?: { id: string; label: string }; paneId?: string }
+/** A live pi-intercom session; `status` is idle, thinking, or tool:<name>. */
+export interface Session { id: string; name?: string; status?: string; herdrLocation?: Location }
+export interface TowerEnv { run: HerdrRun; sleep: Sleep; live(sessionId: string): Promise<boolean>; moveFirst(tabId: string): Promise<void> }
 
 const TTL_MS = 10 * 60_000;
 const START_MS = 30_000;
@@ -36,11 +44,33 @@ export async function place(run: HerdrRun): Promise<Place> {
 	return { paneId: pane.pane_id, tabId: pane.tab_id, workspaceId: pane.workspace_id };
 }
 
+/** A sub workspace is a linked git worktree that Herdr opened as its own workspace: it is treated like a subagent of its parent. */
+export const isSub = (w: Workspace) => w.worktree?.is_linked_worktree === true;
+export const parentOf = (all: Workspace[], w: Workspace) => all.find((p) => !isSub(p) && p.worktree?.repo_key !== undefined && p.worktree.repo_key === w.worktree?.repo_key);
+/** The head tower's workspace: the first one in list order that is not a sub workspace. */
+export const headOf = (all: Workspace[]) => all.find((w) => !isSub(w));
+
 export const workspaces = async (run: HerdrRun): Promise<Workspace[]> => (await result(run, ["workspace", "list"])).workspaces;
 
 export async function panes(run: HerdrRun, workspace?: string): Promise<Pane[]> {
 	return (await result(run, ["pane", "list", ...(workspace ? ["--workspace", workspace] : [])])).panes;
 }
+
+export const herdrApi = (socketPath = process.env.HERDR_SOCKET_PATH || join(homedir(), ".config", "herdr", "herdr.sock")): HerdrApi => (method, params) =>
+	new Promise((resolve, reject) => {
+		const socket = createConnection(socketPath).setTimeout(5000);
+		let reply = "";
+		const end = (error?: Error) => (socket.destroy(), error ? reject(error) : resolve());
+		socket.on("connect", () => socket.write(`${JSON.stringify({ id: "straw-boss", method, params })}\n`));
+		socket.on("data", (chunk) => {
+			reply += chunk;
+			if (!reply.includes("\n")) return;
+			const { error } = JSON.parse(reply.split("\n")[0]!) as { error?: { code?: string; message?: string } };
+			end(error && new Error(`herdr ${method} failed: ${error.code ?? ""} ${error.message ?? ""}`.trim()));
+		});
+		socket.on("timeout", () => end(new Error(`herdr ${method} timed out`)));
+		socket.on("error", (error) => end(new Error(`herdr ${method} failed: ${error.message}`)));
+	});
 
 /** Writes display-and-discovery tokens (null clears one). Herdr takes the positional id before the options. */
 export function report(run: HerdrRun, kind: "pane" | "workspace", id: string, tokens: Record<string, string | null>) {
@@ -67,7 +97,7 @@ export function ensureTower(env: TowerEnv, workspace: Workspace, cwd: string) {
 	return pending;
 }
 
-async function open({ run, sleep, live }: TowerEnv, workspace: Workspace, cwd: string) {
+async function open({ run, sleep, live, moveFirst }: TowerEnv, workspace: Workspace, cwd: string) {
 	const ws = workspace.workspace_id;
 	const held = async () => {
 		const id = (await workspaces(run)).find((w) => w.workspace_id === ws)?.tokens?.tower;
@@ -77,18 +107,22 @@ async function open({ run, sleep, live }: TowerEnv, workspace: Workspace, cwd: s
 	if (current) return { id: current, opened: false };
 
 	// A leftover tower tab is reused: a pane already running pi only needs its token awaited, a shell prompt gets pi started.
+	// The tab is told apart by the `sb_role=tower` pane token that only Straw Boss writes; a tab merely labelled "tower"
+	// (a pi-herdr-agents subagent can be named so) is someone else's.
 	let paneId: string;
 	let running = false;
-	const tab = (await result(run, ["tab", "list", "--workspace", ws])).tabs.find((t: { label: string }) => t.label === "tower");
-	if (tab) {
-		const root = (await panes(run, ws)).find((p) => p.tab_id === tab.tab_id);
-		if (!root) throw new Error(`Tower tab ${tab.tab_id} has no pane`);
-		paneId = root.pane_id;
-		running = root.agent === "pi";
+	const marked = (await panes(run, ws)).find((p) => p.tokens?.sb_role === "tower");
+	if (marked) {
+		paneId = marked.pane_id;
+		running = marked.agent === "pi";
+		await moveFirst(marked.tab_id);
 	} else {
 		const dir = workspace.worktree?.checkout_path ?? cwd;
 		const created = await result(run, ["tab", "create", "--workspace", ws, "--label", "tower", "--cwd", dir, "--no-focus", "--env", "STRAW_BOSS_ROLE=tower"]);
 		paneId = created.root_pane.pane_id;
+		// Marked at once, so a tab left without pi is recognised (while the marker lasts) and the label stays display only.
+		await report(run, "pane", paneId, { sb_role: "tower" });
+		await moveFirst(created.tab.tab_id);
 	}
 	if (!running) {
 		// Herdr agent names are unique across workspaces and lowercase only, so the name carries the lowercased workspace id.

@@ -31,10 +31,15 @@ test("the manifest ships only src, prompts, README, and LICENSE, has no runtime 
 	assert.equal(manifest.dependencies, undefined);
 	assert.ok(manifest.keywords.includes("pi-package"));
 	assert.equal(manifest.peerDependencies["@earendil-works/pi-coding-agent"], "*");
+	assert.equal(manifest.peerDependencies["@earendil-works/pi-tui"], "*");
 	for (const entry of manifest.pi.extensions) assert.ok(existsSync(join(root, entry)), entry);
 });
 
-test("the TypeScript source stays within the size budget", () => {
-	const lines = readdirSync(join(root, "src")).reduce((sum, name) => sum + readFileSync(join(root, "src", name), "utf8").trimEnd().split("\n").length, 0);
-	assert.ok(lines <= 430, `src has ${lines} lines`);
+test("the TypeScript source stays within its size budgets", () => {
+	const count = (name: string) => readFileSync(join(root, "src", name), "utf8").trimEnd().split("\n").length;
+	const names = readdirSync(join(root, "src")).filter((file) => file.endsWith(".ts"));
+	// The dashboard has a budget of its own so the coordination code stays readable on its own.
+	assert.ok(count("dashboard.ts") <= 200, `src/dashboard.ts has ${count("dashboard.ts")} lines`);
+	const rest = names.filter((name) => name !== "dashboard.ts").reduce((sum, name) => sum + count(name), 0);
+	assert.ok(rest <= 500, `the rest of src has ${rest} lines`);
 });

@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static, type TSchema } from "typebox";
-import { ensureTower, herdrRun, type HerdrRun, type Pane, panes, place, type Place, report, type Sleep, waitFor, workspaces, type Workspace } from "./herdr.ts";
+import { collect, startDashboard } from "./dashboard.ts";
+import { ensureTower, headOf, herdrApi, type HerdrApi, herdrRun, type HerdrRun, isSub, type Pane, panes, parentOf, place, type Place, report, type Session, type Sleep, waitFor, workspaces, type Workspace } from "./herdr.ts";
 
 // pi-intercom's extension API as constants and minimal types: intercom is a runtime requirement, not an import.
 const REGISTER = "intercom:extension-register";
@@ -18,8 +19,6 @@ const CONNECT_MS = 15_000;
 const SEND_MS = 30_000;
 const SETTLE_MS = 2000;
 
-interface Location { status: string; workspace?: { id: string; label: string }; tab?: { id: string; label: string }; paneId?: string }
-interface Session { id: string; name?: string; herdrLocation?: Location }
 interface Channel {
 	snapshot(): { connected: boolean; supported: boolean; owner?: { sessionId: string }; state?: { payload: unknown } };
 	publish(payload: unknown, options?: { audience?: "owner" | "capable" }): void;
@@ -31,7 +30,7 @@ interface Saved { asked?: boolean; joined?: boolean; tower?: boolean }
 type Role = "tower" | "main" | "member";
 type Scope = "tab" | "workspace" | "towers" | "all";
 type Member = ReturnType<typeof netMembers>[number];
-export interface Deps { run?: HerdrRun; env?: NodeJS.ProcessEnv; sleep?: Sleep; promptDir?: string }
+export interface Deps { run?: HerdrRun; api?: HerdrApi; env?: NodeJS.ProcessEnv; sleep?: Sleep; promptDir?: string }
 
 /** Live sessions whose pane carries an `sb_role` token: the sessions that joined the net, and towers. */
 function netMembers(sessions: Session[], ps: Pane[]) {
@@ -43,12 +42,14 @@ function netMembers(sessions: Session[], ps: Pane[]) {
 }
 const nameOf = (s?: Session) => (s ? (s.name ?? s.id) : "");
 
-export function createStrawBoss({ run = herdrRun, env = process.env, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), promptDir = fileURLToPath(new URL("../prompts", import.meta.url)) }: Deps = {}) {
+export function createStrawBoss({ run = herdrRun, api = herdrApi(), env = process.env, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), promptDir = fileURLToPath(new URL("../prompts", import.meta.url)) }: Deps = {}) {
 	return function strawBoss(pi: ExtensionAPI): void {
 		// Outside Herdr there is no tab to coordinate. A pi-herdr-agents worker never joins: its parent represents it.
 		if (!env.HERDR_PANE_ID || env.PI_SUBAGENT_ID) return;
 		let isTower = env.STRAW_BOSS_ROLE === "tower";
 		let asked = false, joined = false, isMain = false, holdsTower = false, requests = 0;
+		// Why this session cannot join: it sits in a sub workspace, or Herdr could not say whether it does.
+		let barred: string | undefined, dashboard: ReturnType<typeof startDashboard> | undefined, hasUI = false;
 		let prompts: Record<string, string> = {}, info: Record<string, string> = {}, saved: Saved = {};
 		let c!: Channel, at!: Place, ui: ExtensionContext["ui"] | undefined, timer: ReturnType<typeof setInterval> | undefined;
 		let queue: Promise<void> = Promise.resolve();
@@ -93,6 +94,7 @@ export function createStrawBoss({ run = herdrRun, env = process.env, sleep = (ms
 		const onEvent = (event: { type: string; fromSessionId?: string; payload?: { type?: string } }) => {
 			if (event.type === "message" && event.payload?.type === "claim") pin(event.fromSessionId);
 			else if (["connection", "owner", "state", "session_left"].includes(event.type)) void sync();
+			if (["presence_update", "session_joined", "session_left"].includes(event.type)) dashboard?.poke();
 		};
 		const refresh = async () => {
 			if (!joined) return;
@@ -124,6 +126,7 @@ export function createStrawBoss({ run = herdrRun, env = process.env, sleep = (ms
 		};
 		const joinNet = async (restored = false) => {
 			if (joined) return;
+			if (barred) throw new Error(barred);
 			at = await place(run);
 			connect(true);
 			await connected();
@@ -158,13 +161,17 @@ export function createStrawBoss({ run = herdrRun, env = process.env, sleep = (ms
 		const openTower = async (query?: string) => {
 			const all = await workspaces(run);
 			const found = all.filter((w) => (query ? w.workspace_id === query || w.label === query : w.workspace_id === at.workspaceId));
-			const [target] = found;
 			if (found.length !== 1) {
 				throw new Error(`${found.length ? "Several workspaces match" : "No workspace matches"} "${query}". Workspaces: ${all.map((w) => `${w.workspace_id} (${w.label})`).join(", ")}`);
 			}
+			// A sub workspace never has a tower: its parent workspace's tower serves it.
+			const asked = found[0]!;
+			const target = isSub(asked) ? parentOf(all, asked) : asked;
+			if (!target) throw new Error(`${asked.label} is a sub workspace with no open parent workspace, so it has no tower; open the parent workspace first`);
 			if (isTower && target.workspace_id === at.workspaceId) throw new Error("This session is the tower of that workspace");
 			const live = async (id: string) => (await c.listSessions()).some((s) => s.id === id);
-			return { target, ...(await ensureTower({ run, sleep, live }, target, process.cwd())) };
+			const moveFirst = (tabId: string) => api("tab.move", { tab_id: tabId, insert_index: 0 }).catch((error: Error) => tell(`Straw Boss: could not move the tower tab first: ${error.message}`, "warning"));
+			return { target, routed: target !== asked ? asked : undefined, ...(await ensureTower({ run, sleep, live, moveFirst }, target, process.cwd())) };
 		};
 		const status = async () => {
 			const sessions = await c.listSessions();
@@ -172,7 +179,7 @@ export function createStrawBoss({ run = herdrRun, env = process.env, sleep = (ms
 			const mine = all.find((w) => w.workspace_id === at.workspaceId);
 			const towerOf = (w?: Workspace) => {
 				const s = sessions.find((x) => x.id === w?.tokens?.tower);
-				return s && w && { workspace: w.label, id: s.id, name: nameOf(s), head: w === all[0] };
+				return s && w && { workspace: w.label, id: s.id, name: nameOf(s), head: w === headOf(all) };
 			};
 			const own = netMembers(sessions, ps).filter((m) => m.workspace.id === at.workspaceId && m.role !== "tower");
 			const tabs = Object.values(Object.groupBy(own, (m) => m.tab.id)).map((group = []) => ({
@@ -184,7 +191,7 @@ export function createStrawBoss({ run = herdrRun, env = process.env, sleep = (ms
 			return {
 				me: { id: me(), role: role() },
 				workspace: { id: at.workspaceId, label: mine?.label },
-				head: all[0]?.workspace_id,
+				head: headOf(all)?.workspace_id,
 				tower: towerOf(mine) ?? null,
 				tabs,
 				towers: all.filter((w) => w !== mine).flatMap((w) => towerOf(w) ?? []),
@@ -214,7 +221,8 @@ export function createStrawBoss({ run = herdrRun, env = process.env, sleep = (ms
 					const tower = await openTower(workspace);
 					const result = await send(tower.id, message);
 					if (result.status !== "sent") throw new Error(`The tower of ${tower.target.label} did not take the message: ${result.status} ${result.code ?? ""} ${result.detail ?? ""}`.trim());
-					const text = `Sent to the tower of ${tower.target.label}${tower.opened ? " (opened it)" : ""}. It replies through intercom.`;
+					const via = tower.routed ? ` (${tower.routed.label} is a sub workspace)` : "";
+					const text = `Sent to the tower of ${tower.target.label}${via}${tower.opened ? " (opened it)" : ""}. It replies through intercom.`;
 					return { text, details: { workspace: tower.target.workspace_id, towerId: tower.id, opened: tower.opened, status: result.status } };
 				});
 			tool("boss_broadcast", "Send one message to every other session in a scope. tab, workspace, and towers reach only sessions that joined the net; all reaches every pi session on this machine (for notices such as the boss going to sleep).",
@@ -243,14 +251,29 @@ export function createStrawBoss({ run = herdrRun, env = process.env, sleep = (ms
 				return;
 			}
 			holdsTower = true;
-			info = { workspace: ws?.label ?? at.workspaceId, head: all[0]?.label ?? "" };
+			info = { workspace: ws?.label ?? at.workspaceId, head: headOf(all)?.label ?? "" };
 			addNetTools();
 			keepFresh();
 			await publish();
+			// The dashboard lives exactly as long as this session holds the tower role.
+			if (hasUI) dashboard = startDashboard({ ui: ui!, collect: () => collect({ run, sessions: () => c.listSessions(), workspaceId: at.workspaceId }) });
 		};
 
-		pi.on("session_start", (_event, ctx) => {
+		// A session in a sub workspace (a linked git worktree) acts like a subagent: it never joins. Failing to tell bars it too.
+		const barReason = async () => {
+			try {
+				const { workspaceId } = await place(run);
+				const all = await workspaces(run);
+				const sub = all.find((w) => w.workspace_id === workspaceId);
+				return sub && isSub(sub) ? { text: `${sub.label} is a sub workspace, so this session cannot join the net; the main agent of its parent workspace represents it`, level: "info" as const } : undefined;
+			} catch (error) {
+				return { text: `Straw Boss could not tell whether this is a sub workspace: ${(error as Error).message}`, level: "error" as const };
+			}
+		};
+
+		pi.on("session_start", async (_event, ctx) => {
 			ui = ctx.ui;
+			hasUI = ctx.hasUI;
 			prompts = Object.fromEntries(PROMPTS.map((name) => [name, readFileSync(join(promptDir, `${name}.md`), "utf8").trim()]));
 			saved = Object.assign({}, ...ctx.sessionManager.getBranch().flatMap((e) => (e.type === "custom" && e.customType === ENTRY ? [e.data] : [])));
 			asked = Boolean(saved.asked);
@@ -260,12 +283,18 @@ export function createStrawBoss({ run = herdrRun, env = process.env, sleep = (ms
 			if (isTower) {
 				starting = startTower();
 			} else {
-				tool("boss_join", "Join this Herdr workspace's Straw Boss net when your current work competes for resources with, or collaborates with, other work in the workspace. The first session of a tab to join becomes its main agent; later ones are members.", Type.Object({}), async () => {
-					await joinNet();
-					const text = isMain ? `Joined as the main agent of tab ${info.tab}.` : `Joined tab ${info.tab} as a member; its main agent is ${info.main}.`;
-					return { text, details: { role: role() } };
-				});
-				if (saved.joined) starting = joinNet(true);
+				const bar = await barReason();
+				barred = bar?.text;
+				if (bar) {
+					tell(bar.text, bar.level);
+				} else {
+					tool("boss_join", "Join this Herdr workspace's Straw Boss net when your current work competes for resources with, or collaborates with, other work in the workspace. The first session of a tab to join becomes its main agent; later ones are members.", Type.Object({}), async () => {
+						await joinNet();
+						const text = isMain ? `Joined as the main agent of tab ${info.tab}.` : `Joined tab ${info.tab} as a member; its main agent is ${info.main}.`;
+						return { text, details: { role: role() } };
+					});
+					if (saved.joined) starting = joinNet(true);
+				}
 			}
 			starting?.catch((error: Error) => tell(`Straw Boss: ${error.message}`, "error"));
 		});
@@ -273,7 +302,7 @@ export function createStrawBoss({ run = herdrRun, env = process.env, sleep = (ms
 		pi.on("before_agent_start", (event) => {
 			const current = role();
 			// A session outside the net is asked once, at its first run, whether it should join.
-			const first = !current && !asked;
+			const first = !current && !asked && !barred;
 			if (first) {
 				asked = true;
 				pi.appendEntry(ENTRY, { asked: true });
@@ -286,6 +315,8 @@ export function createStrawBoss({ run = herdrRun, env = process.env, sleep = (ms
 		});
 
 		pi.on("session_shutdown", async () => {
+			dashboard?.stop();
+			dashboard = undefined;
 			clearInterval(timer);
 			timer = undefined;
 			const held = holdsTower;
