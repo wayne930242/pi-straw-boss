@@ -15,7 +15,7 @@ const OUTBOX = "intercom:outbox-request";
 const OUTBOX_RESULT = "intercom:outbox-result";
 const NAMESPACE = /^[a-z0-9][a-z0-9._/-]{0,63}$/;
 const ENTRY = "straw-boss";
-const PROMPTS = ["main", "tower", "member", "reminder"];
+const PROMPTS = ["main", "tower", "member", "member-no-main"];
 const REFRESH_MS = 4 * 60_000;
 const CLAIM_MS = 5000;
 const CONNECT_MS = 15_000;
@@ -29,11 +29,11 @@ interface Channel {
 	listSessions(): Promise<Session[]>;
 }
 interface SendResult { requestId?: string; status: string; code?: string; detail?: string }
-interface Saved { asked?: boolean; joined?: boolean; tower?: boolean }
+interface Saved { tower?: boolean }
 type Role = "tower" | "main" | "member";
 type Scope = "tab" | "workspace" | "towers" | "all";
 type Member = ReturnType<typeof netMembers>[number];
-export interface Deps { run?: HerdrRun; api?: HerdrApi; env?: NodeJS.ProcessEnv; sleep?: Sleep; promptDir?: string; bundle?: string; openUrl?: (url: string) => Promise<void>; stateDir?: string }
+export interface Deps { run?: HerdrRun; api?: HerdrApi; env?: NodeJS.ProcessEnv; sleep?: Sleep; promptDir?: string; bundle?: string; openUrl?: (url: string) => Promise<void>; stateDir?: string; autoTower?: boolean }
 
 /** Live sessions whose pane carries an `sb_role` token: the sessions that joined the net, and towers. */
 function netMembers(sessions: Session[], ps: Pane[]) {
@@ -45,12 +45,14 @@ function netMembers(sessions: Session[], ps: Pane[]) {
 }
 const nameOf = (s?: Session) => (s ? (s.name ?? s.id) : "");
 
-export function createStrawBoss({ run = herdrRun, api = herdrApi(), env = process.env, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), promptDir = fileURLToPath(new URL("../prompts", import.meta.url)), bundle, openUrl = openBrowser, stateDir }: Deps = {}) {
+export function createStrawBoss({ run = herdrRun, api = herdrApi(), env = process.env, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), promptDir = fileURLToPath(new URL("../prompts", import.meta.url)), bundle, openUrl = openBrowser, stateDir, autoTower = true }: Deps = {}) {
 	return function strawBoss(pi: ExtensionAPI): void {
 		// Outside Herdr there is no tab to coordinate. A pi-herdr-agents worker never joins: its parent represents it.
 		if (!env.HERDR_PANE_ID || env.PI_SUBAGENT_ID) return;
 		let isTower = env.STRAW_BOSS_ROLE === "tower";
-		let asked = false, joined = false, isMain = false, holdsTower = false, requests = 0;
+		let joined = false, isMain = false, holdsTower = false, requests = 0;
+		// The tab's live main agent as of the last refresh, and the main this session pinned as owner before the broker echoes it back.
+		let mainId: string | undefined, pinned: string | undefined, joining: Promise<void> | undefined;
 		// Why this session cannot join: it sits in a sub workspace, or Herdr could not say whether it does.
 		let barred: string | undefined, dashboard: ReturnType<typeof startDashboard> | undefined, hasUI = false;
 		let prompts: Record<string, string> = {}, info: Record<string, string> = {}, saved: Saved = {};
@@ -75,6 +77,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), env = proces
 				},
 			});
 		const connect = (eligible: boolean) => {
+			if (c) return; // a join that failed after registering retries on the channel it has
 			const namespace = `straw-boss/tab/${Buffer.from(at.tabId).toString("hex")}`;
 			if (!NAMESPACE.test(namespace)) throw new Error(`Tab id ${at.tabId} is too long for an intercom namespace (limit 24 characters)`);
 			pi.events.emit(REGISTER, { namespace, ownerEligible: eligible, onReady: (channel: Channel) => (c = channel), onEvent });
@@ -92,33 +95,53 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), env = proces
 			timer.unref();
 		};
 
-		// The owner records who is main. The first joiner pins itself, so a later owner change never swaps the main agent.
-		const pin = (main?: string) => {
-			if (main && c.snapshot().owner?.sessionId === me()) c.commitState({ v: 1, main, since: Date.now() });
+		// The owner records who is main. Promotion is first come, first served, and the main stays until it leaves: a later owner change never swaps it.
+		const pin = (main: string) => {
+			if (c.snapshot().owner?.sessionId !== me()) return;
+			c.commitState({ v: 1, main, since: Date.now() });
+			pinned = main;
 		};
-		const onEvent = (event: { type: string; fromSessionId?: string; payload?: { type?: string } }) => {
-			if (event.type === "message" && event.payload?.type === "claim") pin(event.fromSessionId);
-			else if (["connection", "owner", "state", "session_left"].includes(event.type)) void sync();
+		// The owner decides a claim: a tab has one main, so a claim is dropped while a live main exists, unless the user forced it with /boss.
+		const claim = async (from: string, force: boolean) => {
+			try {
+				if (c.snapshot().owner?.sessionId !== me()) return;
+				const current = pinned ?? (c.snapshot().state?.payload as { main?: string } | undefined)?.main;
+				if (!force && current && current !== from && (await c.listSessions()).some((s) => s.id === current)) return;
+				pin(from);
+			} catch (error) {
+				tell(`Straw Boss: ${(error as Error).message}`, "warning");
+			}
+		};
+		const onEvent = (event: { type: string; fromSessionId?: string; owner?: { sessionId: string }; payload?: { type?: string; force?: boolean } }) => {
+			// Ownership moved away: what this session pinned as owner is no longer its to defend.
+			if (event.type === "owner" && event.owner?.sessionId !== me()) pinned = undefined;
+			// A join that failed at start (intercom not connected yet, no owner yet) is retried when the channel changes.
+			if (!joined && !barred && !isTower && c && ["connection", "owner"].includes(event.type)) void joinNet().catch(() => {});
+			if (event.type === "message" && event.payload?.type === "claim" && event.fromSessionId) {
+				const [from, force] = [event.fromSessionId, Boolean(event.payload.force)];
+				queue = queue.then(() => claim(from, force));
+			} else if (["connection", "owner", "state", "session_left"].includes(event.type)) void sync();
 			if (["presence_update", "session_joined", "session_left"].includes(event.type)) dashboard?.poke();
 		};
 		const refresh = async () => {
 			if (!joined) return;
 			try {
 				const snap = c.snapshot();
+				if (snap.owner?.sessionId !== me()) pinned = undefined;
 				const sessions = await c.listSessions();
-				let main = (snap.state?.payload as { main?: string } | undefined)?.main;
-				if (!sessions.some((s) => s.id === main)) {
-					// The pinned main is gone: the owner is main until it pins itself.
-					main = snap.owner?.sessionId;
-					pin(main);
-				}
+				// A main that has left leaves the tab without one until a member promotes.
+				const recorded = (snap.state?.payload as { main?: string } | undefined)?.main;
+				if (pinned === recorded) pinned = undefined; // the broker has echoed it
+				mainId = sessions.find((s) => s.id === (pinned ?? recorded))?.id;
 				const ws = (await workspaces(run)).find((w) => w.workspace_id === at.workspaceId);
 				const tab = sessions.find((s) => s.id === me())?.herdrLocation?.tab?.label ?? at.tabId;
-				info = { tab, workspace: ws?.label ?? at.workspaceId, main: nameOf(sessions.find((s) => s.id === main)), tower: nameOf(sessions.find((s) => s.id === ws?.tokens?.tower)) };
+				info = { tab, workspace: ws?.label ?? at.workspaceId, main: nameOf(sessions.find((s) => s.id === mainId)), tower: nameOf(sessions.find((s) => s.id === ws?.tokens?.tower)) };
 				const wasMain = isMain;
-				isMain = main === me();
+				isMain = mainId === me();
 				if (isMain !== wasMain) tell(`This session is ${isMain ? "now" : "no longer"} the main agent of ${info.tab}`);
 				await publish();
+				// The workspace's first main opens the tower at once; later mains find it open.
+				if (isMain && !wasMain && autoTower) void openTower().catch((error: Error) => tell(`Straw Boss: could not open the tower: ${error.message}`, "warning"));
 			} catch (error) {
 				tell(`Straw Boss: ${(error as Error).message}`, "warning");
 			}
@@ -129,27 +152,40 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), env = proces
 			if (await waitFor(sleep, () => channel.snapshot().connected && channel.snapshot().supported, CONNECT_MS)) return;
 			throw new Error(channel.snapshot().connected ? "The intercom broker lacks extension-bus-v1" : "pi-intercom is not connected");
 		};
-		const joinNet = async (restored = false) => {
-			if (joined) return;
-			if (barred) throw new Error(barred);
-			at = await place(run);
-			connect(true);
-			await connected();
-			if (!(await waitFor(sleep, () => c.snapshot().owner, CLAIM_MS))) throw new Error("No intercom owner was elected for this tab");
-			joined = true;
-			if (!restored) pi.appendEntry(ENTRY, { asked: true, joined: true });
-			addNetTools();
-			keepFresh();
-			await sync();
-		};
-		const takeover = async () => {
+		// Every joinable session joins at start as a member (owner-eligible, so the tab channel always has an owner). One join at a time.
+		const joinNet = () =>
+			(joining ??= (async () => {
+				if (joined) return;
+				if (barred) throw new Error(barred);
+				at = await place(run);
+				connect(true);
+				await connected();
+				if (!(await waitFor(sleep, () => c.snapshot().owner, CLAIM_MS))) throw new Error("No intercom owner was elected for this tab");
+				joined = true;
+				addNetTools();
+				addPromote();
+				keepFresh();
+				await sync();
+			})().catch((error) => {
+				joining = undefined;
+				throw error;
+			}));
+		// Becoming the tab's main agent. Without `force` a tab that already has a live main refuses; /boss forces.
+		const promote = async (force: boolean): Promise<{ promoted: boolean; text: string }> => {
 			await joinNet();
-			if (!isMain) {
-				if (c.snapshot().owner?.sessionId === me()) pin(me());
-				else c.publish({ type: "claim" }, { audience: "owner" });
-				if (!(await waitFor(sleep, () => isMain, CLAIM_MS))) throw new Error("The owner did not confirm the takeover within 5 s");
+			await sync();
+			if (isMain) return { promoted: true, text: `You are already the main agent of tab ${info.tab}.` };
+			const refused = () => ({ promoted: false, text: `Tab ${info.tab} already has a main agent, ${info.main}. Stay a member: you may dispatch your own subagents, but tell ${info.main} through intercom first what you will do and which resources you will use.` });
+			if (!force && mainId) return refused();
+			if (c.snapshot().owner?.sessionId === me()) await (queue = queue.then(() => claim(me(), force)));
+			else c.publish({ type: "claim", force }, { audience: "owner" });
+			if (!(await waitFor(sleep, () => isMain, CLAIM_MS))) {
+				await sync();
+				if (isMain) return { promoted: true, text: `You are now the main agent of tab ${info.tab}.` };
+				if (!force && mainId && mainId !== me()) return refused();
+				throw new Error("The owner did not confirm the promotion within 5 s");
 			}
-			return `This session is the main agent of tab ${info.tab}`;
+			return { promoted: true, text: `You are now the main agent of tab ${info.tab}.` };
 		};
 		const send = (to: string, message: string) =>
 			new Promise<SendResult>((resolve) => {
@@ -237,6 +273,13 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), env = proces
 				}),
 				({ message, scope }) => broadcast(message, scope ?? "workspace"));
 		}
+		function addPromote() {
+			tool("boss_promote", "Become the main agent of this Herdr tab when your work grows: several steps, dispatching workers, or touching more than one app. Refused when the tab already has a main agent.", Type.Object({}), async () => {
+				const { promoted, text } = await promote(false);
+				if (!promoted) throw new Error(text);
+				return { text, details: { role: role() } };
+			});
+		}
 		const startTower = async () => {
 			at = await place(run);
 			connect(false);
@@ -281,7 +324,6 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), env = proces
 			hasUI = ctx.hasUI;
 			prompts = Object.fromEntries(PROMPTS.map((name) => [name, readFileSync(join(promptDir, `${name}.md`), "utf8").trim()]));
 			saved = Object.assign({}, ...ctx.sessionManager.getBranch().flatMap((e) => (e.type === "custom" && e.customType === ENTRY ? [e.data] : [])));
-			asked = Boolean(saved.asked);
 			isTower ||= Boolean(saved.tower);
 			// Starting runs in the background: pi awaits session_start handlers in turn, and pi-intercom connects in its own, after this one.
 			let starting: Promise<void> | undefined;
@@ -293,12 +335,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), env = proces
 				if (bar) {
 					tell(bar.text, bar.level);
 				} else {
-					tool("boss_join", "Join this Herdr workspace's Straw Boss net when your current work competes for resources with, or collaborates with, other work in the workspace. The first session of a tab to join becomes its main agent; later ones are members.", Type.Object({}), async () => {
-						await joinNet();
-						const text = isMain ? `Joined as the main agent of tab ${info.tab}.` : `Joined tab ${info.tab} as a member; its main agent is ${info.main}.`;
-						return { text, details: { role: role() } };
-					});
-					if (saved.joined) starting = joinNet(true);
+					starting = joinNet();
 				}
 			}
 			starting?.catch((error: Error) => tell(`Straw Boss: ${error.message}`, "error"));
@@ -306,17 +343,20 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), env = proces
 
 		pi.on("before_agent_start", (event) => {
 			const current = role();
-			// A session outside the net is asked once, at its first run, whether it should join.
-			const first = !current && !asked && !barred;
-			if (first) {
-				asked = true;
-				pi.appendEntry(ENTRY, { asked: true });
-			}
-			let text: string | undefined;
-			if (current) text = render(prompts[current]);
-			else if (first) text = render(prompts.reminder);
-			if (text) event.systemPromptOptions.sections[ENTRY] = text;
+			const name = current === "member" && !mainId ? "member-no-main" : current;
+			if (name) event.systemPromptOptions.sections[ENTRY] = render(prompts[name]);
 			else delete event.systemPromptOptions.sections[ENTRY];
+		});
+
+		// A member that dispatches a subagent without promoting is promoted here, before the subagent starts, unless the tab already has a main.
+		pi.on("tool_call", async (event) => {
+			if (event.toolName !== "subagent" || isTower || barred) return;
+			try {
+				await joinNet();
+				if (!isMain) await promote(false);
+			} catch (error) {
+				tell(`Straw Boss: ${(error as Error).message}`, "warning");
+			}
 		});
 
 		pi.on("session_shutdown", async () => {
@@ -367,14 +407,14 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), env = proces
 		};
 
 		pi.registerCommand("boss", {
-			description: "Join this tab's Straw Boss net and become its main agent. /boss status shows the coordinators; /boss tower opens and focuses the workspace tower; /boss gui opens the net in the browser (/boss gui stop closes it).",
+			description: "Take over as this tab's main agent (every session already joins as a member). /boss status shows the coordinators; /boss tower opens and focuses the workspace tower; /boss gui opens the net in the browser (/boss gui stop closes it).",
 			handler: async (args, ctx) => {
 				ui = ctx.ui;
 				try {
 					if (/^gui( stop)?$/.test(args.trim())) return await guiCommand(args.trim() === "gui stop");
-					if (args.trim() === "status") return tell(joined || isTower ? JSON.stringify(await status(), null, 2) : "Not in the net. /boss joins it.");
+					if (args.trim() === "status") return tell(joined || isTower ? JSON.stringify(await status(), null, 2) : "Not in the net: still joining, or this session cannot join.");
 					if (isTower) throw new Error("This session is the tower, not a main agent");
-					if (args.trim() !== "tower") return tell(await takeover());
+					if (args.trim() !== "tower") return tell((await promote(true)).text);
 					await joinNet();
 					const tower = await openTower();
 					const where = (await c.listSessions()).find((s) => s.id === tower.id)?.herdrLocation;

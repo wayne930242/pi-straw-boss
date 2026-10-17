@@ -47,11 +47,11 @@ async function net() {
 	const main = world.agent({ id: "main-1", name: "api-main", pane: "wA:p1", tab: "wA:t1" });
 	const other = world.agent({ id: "main-b", name: "ops-main", pane: "wB:p1", tab: "wB:t1" });
 	await Promise.all([main.start(), other.start()]);
-	await Promise.all([main.join(), other.join()]);
+	await Promise.all([main.promote(), other.promote()]);
 	return { main, other };
 }
 
-test("any session can open the GUI: it shows the whole net, joins nothing, takes no role, and opens the browser", async () => {
+test("any session can open the GUI: it shows the whole net with the viewer as a member, adds no channel of its own, and opens the browser", async () => {
 	await net();
 	const viewer = world.agent({ id: "viewer", name: "just looking", pane: "wA:p2", tab: "wA:t2", deps });
 	await viewer.start();
@@ -60,13 +60,11 @@ test("any session can open the GUI: it shows the whole net, joins nothing, takes
 	assert.match(url, /^http:\/\/127\.0\.0\.1:\d+\/[0-9a-f]{32}\/$/);
 	assert.deepEqual(opened.slice(-1), [url]);
 	const seen = await snapshot(url);
-	assert.deepEqual(seen.bases.map((b) => [b.label, b.tabs.flatMap((t) => t.units.map((u) => u.name))]), [["Alpha", ["api-main"]], ["Beta", ["ops-main"]]], "both workspaces, joined sessions only");
-	assert.ok(!JSON.stringify(seen.bases.map((b) => b.tabs)).includes("just looking"), "the viewer is not in the net");
-	assert.deepEqual(seen.bases[0]!.outside.map((u) => [u.name, u.role]), [["just looking", "outside"]], "it is a pi pane of the workspace, so the workspace route lists it as outside the net");
-	assert.deepEqual(viewer.tokens, {}, "no role token");
+	assert.deepEqual(seen.bases.map((b) => [b.label, b.tabs.flatMap((t) => t.units.map((u) => [u.name, u.role]))]), [["Alpha", [["api-main", "main"], ["just looking", "member"]]], ["Beta", [["ops-main", "main"]]]], "both workspaces; the viewer joined at start as a member");
+	assert.deepEqual(seen.bases[0]!.outside, []);
+	assert.deepEqual(viewer.tokens, { sb_role: "member" });
 	assert.deepEqual(viewer.entries, [], "nothing written to the session");
-	assert.deepEqual(world.broker.registrations.filter((r) => r.id === "viewer").map((r) => [r.namespace.split("/").slice(0, 2).join("/"), r.ownerEligible]), [["straw-boss/view", false]]);
-	assert.deepEqual([...viewer.tools.keys()], ["boss_join"], "still outside the net");
+	assert.deepEqual(world.broker.registrations.filter((r) => r.id === "viewer").map((r) => r.namespace.split("/").slice(0, 2).join("/")), ["straw-boss/tab"], "it reads through its tab channel");
 });
 
 test("running it again reuses the server and the URL and reopens the browser; stop closes it; a restart keeps the URL an open page has", async () => {
@@ -112,13 +110,14 @@ test("a main agent and a tower can open it too, and a session in a sub workspace
 	const tower = world.tower("tower-wB", "wB:t9", "wB:p9", false);
 	const sub = world.agent({ id: "sub-1", pane: "wS:p1", deps });
 	await Promise.all([main.start(), tower.start(), sub.start()]);
-	await main.join();
-	for (const who of [main, sub]) {
+	await main.promote();
+	for (const who of [sub, main]) {
 		await who.command("gui");
 		const seen = await snapshot(urlOf(who));
 		assert.equal(seen.bases.find((b) => b.label === "Alpha")?.outposts[0]?.label, "Alpha feature", `${who.id} sees the sub workspace as an outpost`);
 	}
 	assert.deepEqual(sub.tokens, {}, "the sub workspace session joined nothing");
+	assert.deepEqual(world.broker.registrations.filter((r) => r.id === "sub-1").map((r) => [r.namespace.split("/").slice(0, 2).join("/"), r.ownerEligible]), [["straw-boss/view", false]], "it reads through a channel of its own that never takes part in a tab");
 });
 
 test("a browser that cannot be opened leaves the URL in a warning", async () => {

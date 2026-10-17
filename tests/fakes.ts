@@ -288,7 +288,7 @@ export class Agent {
 		if (!options.noIntercom) events.on("intercom:outbox-request", (request) => world.broker.outbox(this, request as { requestId: string; to: string; message: string }));
 		world.broker.connect(this);
 		// The extension's waits are real in production; here they are capped so timeouts take milliseconds.
-		createStrawBoss({ run: world.herdr.runFor(this.pane), api: world.herdr.api, env, sleep: (ms) => sleep(Math.min(ms, 2)), promptDir: PROMPT_DIR, stateDir: world.stateDir, ...options.deps })(pi);
+		createStrawBoss({ run: world.herdr.runFor(this.pane), api: world.herdr.api, env, sleep: (ms) => sleep(Math.min(ms, 2)), promptDir: PROMPT_DIR, stateDir: world.stateDir, autoTower: false, ...options.deps })(pi);
 	}
 
 	emit(channel: string, data: unknown): void {
@@ -322,11 +322,16 @@ export class Agent {
 	async command(args = ""): Promise<void> {
 		await this.commands.get("boss")!.handler(args, this.ctx);
 	}
-	async join(): Promise<string> {
-		const result = await this.tool("boss_join");
-		const first = result.content[0];
+	/** boss_promote; a refusal comes back as its text. */
+	async promote(): Promise<string> {
+		const text = await this.tool("boss_promote").then((result) => (result.content[0] as { text: string }).text, (error: Error) => error.message);
 		await settle();
-		return first?.type === "text" ? first.text : "";
+		return text;
+	}
+	/** pi's tool_call event for a call of `name`, as pi fires it before the tool runs. */
+	async toolCall(name: string): Promise<void> {
+		await this.fire("tool_call", { toolName: name, toolCallId: "call", input: {} });
+		await settle();
 	}
 	async stop(): Promise<void> {
 		if (this.stopped) return;

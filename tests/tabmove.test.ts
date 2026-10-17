@@ -60,7 +60,7 @@ test("herdrApi rejects with Herdr's error code, and with the reason when the soc
 const main = async () => {
 	const a = world.agent({ id: "main-1", pane: "wA:p1", tab: "wA:t1" });
 	await a.start();
-	await a.join();
+	await a.promote();
 	return a;
 };
 const order = () => world.herdr.tabs.filter((t) => t.workspace_id === "wA").map((t) => t.tab_id);

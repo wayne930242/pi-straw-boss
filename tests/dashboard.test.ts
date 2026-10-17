@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { collectNet } from "../src/net.ts";
 import { collect, type Row, render, type Snapshot, startDashboard, subagents, type Tone } from "../src/dashboard.ts";
 import { type FakeTui, settle, until, World } from "./fakes.ts";
 
@@ -122,9 +123,9 @@ test("collect shows this tower's net in detail (joined sessions by tab, subagent
 	const member = world.agent({ id: "member-1", name: "Member", pane: "wA:p2", tab: "wA:t1" });
 	const other = world.agent({ id: "main-2", name: "Docs", pane: "wA:p3", tab: "wA:t2" });
 	const elsewhere = world.agent({ id: "main-b", name: "Beta Main", pane: "wB:p1", tab: "wB:t1" });
-	const loner = world.agent({ id: "loner", name: "Not joined", pane: "wA:p4", tab: "wA:t1" });
+	const loner = world.agent({ id: "loner", name: "Late member", pane: "wA:p4", tab: "wA:t1" });
 	await Promise.all([tower.start(), towerB.start(), main.start(), member.start(), other.start(), elsewhere.start(), loner.start()]);
-	await Promise.all([main.join(), member.join(), other.join(), elsewhere.join()]);
+	await Promise.all([main.promote(), member.promote(), other.promote(), elsewhere.promote()]);
 	main.status = "tool:edit";
 	other.status = "idle";
 	herdr.pane("wA:p1").agent_session = { value: file };
@@ -143,6 +144,7 @@ test("collect shows this tower's net in detail (joined sessions by tab, subagent
 		net(2, "working", "builder", "subagent", "bash"),
 		net(2, "done", "reviewer", "subagent", "finished"),
 		net(1, "idle", "Member", "member"),
+		net(1, "idle", "Late member", "member"),
 		net(0, "unknown", "tab docs"),
 		net(1, "idle", "Docs", "main"),
 		row("towers", 0, "idle", "Beta", "tower"),
@@ -158,7 +160,7 @@ test("subagents are grouped under the session that launched them wherever they r
 	world.herdr.addTab("wS:t1", "child", "wS:p1");
 	const main = world.agent({ id: "main-1", name: "Main", pane: "wA:p1", tab: "wA:t1" });
 	await main.start();
-	await main.join();
+	await main.promote();
 	world.herdr.pane("wA:p1").agent_session = { value: file };
 	Object.assign(world.herdr.pane("wB:p5"), { agent_session: { value: join(scratch, "sessions", "2026-10-17T00-00-03-000Z_far-1111.jsonl") }, agent_status: "working", label: "farchild" });
 	Object.assign(world.herdr.pane("wS:p1"), { agent_session: { value: join(scratch, "sessions", "2026-10-17T00-00-04-000Z_wt-2222.jsonl") }, agent_status: "working", label: "wtchild" });
@@ -166,15 +168,33 @@ test("subagents are grouped under the session that launched them wherever they r
 	assert.deepEqual(rows.map((r) => [r.depth, r.text]), [[0, "tab work"], [1, "Main"], [2, "farchild"], [2, "wtchild"], [0, "plain-sub"]], "children sit under Main; the worktree child's workspace is not listed again; Beta, where a child runs, is not a tower");
 });
 
-test("a blocked pane marks its session as waiting, and sessions that have not joined, subagents, and towers are not listed as members", async () => {
+test("a member that launched subagents keeps them when it is promoted: the dashboard and the GUI net count them under it as main, with no re-registration", async () => {
+	const file = launch("parent-3", [{ id: "kid-1", name: "builder", activity: { phase: "active" } }]);
+	const member = world.agent({ id: "parent-3", name: "Solo", pane: "wA:p1", tab: "wA:t1" });
+	await member.start();
+	world.herdr.pane("wA:p1").agent_session = { value: file };
+	Object.assign(world.herdr.addPane("wA:p20", "wA:t1"), { agent_status: "working", label: "builder", agent_session: { value: join(scratch, "sessions", "2026-10-17T00-00-01-000Z_kid-1.jsonl") } });
+	const read = async () => {
+		const [src, sessions] = [world.herdr.runFor("wA:p1"), () => world.broker.sessionList()];
+		const rows = (await collect({ run: src, sessions, workspaceId: "wA" })).rows.map((r) => [r.depth, r.text, r.kind]);
+		const unit = (await collectNet({ run: src, sessions, sessionDir: join(scratch, "sessions") })).bases[0]!.tabs[0]!.units[0]!;
+		return { rows, unit: [unit.name, unit.role, unit.subs.map((u) => [u.name, u.role, u.key])] };
+	};
+	const subs = [["builder", "subagent", "kid-1"]];
+	assert.deepEqual(await read(), { rows: [[0, "tab work", undefined], [1, "Solo", "member"], [2, "builder", "subagent"]], unit: ["Solo", "member", subs] });
+	await member.promote();
+	assert.deepEqual(await read(), { rows: [[0, "tab work", undefined], [1, "Solo", "main"], [2, "builder", "subagent"]], unit: ["Solo", "main", subs] });
+});
+
+test("a blocked pane marks its session as waiting, and pi-herdr-agents workers and towers are not listed as members", async () => {
 	const loner = world.agent({ id: "loner", pane: "wA:p4", tab: "wA:t1" });
 	const worker = world.agent({ id: "worker", pane: "wA:p5", tab: "wA:t1", env: { PI_SUBAGENT_ID: "run" } });
 	const main = world.agent({ id: "main-1", pane: "wA:p1", tab: "wA:t1" });
 	await Promise.all([loner.start(), worker.start(), main.start()]);
-	await main.join();
+	await main.promote();
 	world.herdr.pane("wA:p1").agent_status = "blocked";
 	const { rows } = await collect({ run: world.herdr.runFor("wA:p1"), sessions: () => world.broker.sessionList(), workspaceId: "wA" });
-	assert.deepEqual(rows.filter((r) => r.depth === 1).map((r) => [r.text, r.mark]), [["main-1", "waiting"]]);
+	assert.deepEqual(rows.filter((r) => r.depth === 1).map((r) => [r.text, r.mark]), [["main-1", "waiting"], ["loner", "idle"]], "the main first, then the member that joined at start");
 });
 
 test("sub workspaces hang under their parent as one line each, without their sessions, and do not take the head mark", async () => {
@@ -263,7 +283,7 @@ test("intercom presence and session events re-read at once instead of waiting fo
 	const tower = world.tower("tower-wA", "wA:t7", "wA:p7", true);
 	const main = world.agent({ id: "main-1", name: "Main One", pane: "wA:p1", tab: "wA:t1" });
 	await Promise.all([tower.start(), main.start()]);
-	await main.join();
+	await main.promote();
 	const component = tower.components.get(KEY)!;
 	const tell = (type: string) => world.broker.sessions.get("tower-wA")!.regs.forEach((registration) => registration.onEvent({ type, session: {} }));
 	const sees = (pattern: RegExp) => component.render(80).some((line) => pattern.test(line));
@@ -282,7 +302,7 @@ test("a yielding tower, a headless tower, and a main agent never show the dashbo
 	const headless = world.tower("headless", "wB:t5", "wB:p5");
 	const main = world.agent({ id: "main-1", pane: "wA:p1", tab: "wA:t1", ui: true });
 	await Promise.all([holder.start(), yielding.start(), headless.start(), main.start()]);
-	await main.join();
+	await main.promote();
 	await settle();
 	assert.ok(holder.components.has(KEY));
 	assert.equal(yielding.components.size, 0);

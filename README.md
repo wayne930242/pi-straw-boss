@@ -12,9 +12,9 @@
 
 Run a few agents on the same project and they start stepping on each other: two dev servers on one port, two branches editing the same migration, and no agent knows the others exist. pi-straw-boss lets them find each other and coordinate, without a scheduler or a new service.
 
-- **Opt-in net.** Each session is asked once whether its work shares resources or needs to collaborate. Only those that say yes join.
-- **A main agent per tab.** The first to join a tab coordinates it; `/boss` takes over.
-- **A tower per workspace.** It opens on demand in its own tab, pinned first, and coordinates the main agents and the other towers. You don't need to talk to it.
+- **Everyone joins.** Each pi in Herdr joins its tab's net at start as a member; nothing to ask or remember.
+- **A main agent per tab, by promotion.** An agent whose work grows calls `boss_promote`, or is promoted when it first dispatches a subagent. A tab has one main, and nobody takes it over except you with `/boss`.
+- **A tower per workspace.** It opens with the workspace's first main in its own tab, pinned first, and coordinates the main agents and the other towers. You don't need to talk to it.
 - **A live dashboard** in the tower: who joined, and what they and their subagents are doing.
 - **A browser view** of the whole net, `/boss gui`: every workspace as a base with its tower, agents, and subagents, animated and read-only. Click a base to zoom in, click a unit to read its chat as a live comms log; units that wait on you queue up as alerts.
 - **Broadcast** to a tab, a workspace, every tower, or every session.
@@ -30,7 +30,7 @@ You need pi running inside Herdr 0.9.4 or newer, and [pi-intercom](https://www.n
 
 ## Quick start
 
-1. Open pi in a Herdr tab and give it work. When the work needs to share or coordinate, the agent joins the net. You can also type `/boss`.
+1. Open pi in a Herdr tab and give it work. It joins the net by itself; when its work grows it promotes itself to the tab's main agent, which also opens the workspace tower. You can take over with `/boss`.
 2. Type `/boss status` to see each tab's main agent and the towers.
 3. Type `/boss tower` to open the workspace's tower and watch its dashboard. Agents open it themselves when they call it.
 4. Type `/boss gui` from any session to see the whole net in your browser.
@@ -39,13 +39,13 @@ You need pi running inside Herdr 0.9.4 or newer, and [pi-intercom](https://www.n
 
 | Name | What it does |
 |---|---|
-| `boss_join` | Join this tab's net. |
+| `boss_promote` | Become this tab's main agent (refused while it has one). |
 | `boss_status` | Main agents, this workspace's tower, and the other towers. |
 | `call_tower` | Message this workspace's tower, or another workspace's. |
 | `boss_broadcast` | Message a tab, a workspace, all towers, or every session. |
-| `/boss` | Join and become this tab's main agent. |
+| `/boss` | Take over as this tab's main agent. |
 | `/boss status`, `/boss tower` | Show the status; open and focus the tower. |
-| `/boss gui`, `/boss gui stop` | Open the net in the browser (any session, joins nothing); stop its server. |
+| `/boss gui`, `/boss gui stop` | Open the net in the browser (any session); stop its server. |
 
 Subagents and sessions in Herdr worktree workspaces never join: the session that launched them speaks for them. Outside Herdr the extension does nothing.
 

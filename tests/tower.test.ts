@@ -13,7 +13,7 @@ const textOf = (result: { content: { type: string; text?: string }[] }) => resul
 async function main(id = "main-1", pane = "wA:p1", tab = "wA:t1") {
 	const agent = world.agent({ id, pane, tab });
 	await agent.start();
-	await agent.join();
+	await agent.promote();
 	return agent;
 }
 
@@ -219,7 +219,7 @@ test("/boss tower opens the workspace tower and focuses its tab; /boss status sh
 	const a = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1" });
 	await a.start();
 	await a.command("status");
-	assert.equal(a.notices.at(-1)?.text, "Not in the net. /boss joins it.");
+	assert.match(a.notices.at(-1)!.text, /"role": "member"/);
 	await a.command("tower");
 	await until(() => world.herdr.commands("tab", "focus").length === 1, "tab focus");
 	assert.deepEqual(world.herdr.commands("tab", "focus"), [["tab", "focus", "wA:t100"]]);

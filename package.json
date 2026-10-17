@@ -1,7 +1,7 @@
 {
   "name": "pi-straw-boss",
-  "version": "0.4.0",
-  "description": "Straw Boss coordination for pi in Herdr: sessions join a tab's net by choice, the first joiner is its main agent, a workspace tower opens on demand with a live monitoring dashboard, and boss_broadcast reaches the rest",
+  "version": "0.4.1",
+  "description": "Straw Boss coordination for pi in Herdr: every pi in Herdr joins its tab's net, a session promotes itself to main agent when its work grows, the workspace tower opens with the first main and has a live monitoring dashboard, and boss_broadcast reaches the rest",
   "type": "module",
   "license": "MIT",
   "author": "wayne930242",

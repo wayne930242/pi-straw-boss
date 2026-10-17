@@ -54,7 +54,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	assert.ok(count("src/balance.ts") + count("src/balance.mjs") <= 220, "src/balance.ts and src/balance.mjs stay small");
 	const apart = ["dashboard.ts", "net.ts", "gui.ts", "history.ts", "items.ts", "watch.ts", "balance.ts"];
 	const rest = sum("src", names("src").filter((name) => !apart.includes(name)));
-	assert.ok(rest <= 540, `the rest of src has ${rest} lines`);
+	assert.ok(rest <= 575, `the rest of src has ${rest} lines`);
 	// The page: the files the spec budgets one by one, then this round's own figures (no figure in the spec): the focus views, the overlay
 	// layer (alert spotting and the stack model in the map's chunk, the layer's DOM and tiles in a chunk of their own), the dev-only demo, and everything else.
 	for (const [name, max] of [["router.ts", 80], ["chat.ts", 250], ["markdown.ts", 180], ["views.ts", 240], ["layer.ts", 150]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);

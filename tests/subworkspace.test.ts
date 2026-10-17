@@ -60,7 +60,7 @@ test("broadcast scopes tab, workspace, and towers skip sub workspace sessions; s
 	const a = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1" });
 	const s = world.agent({ id: "sub-1", pane: "wS:p1" });
 	await Promise.all([tower.start(), a.start(), s.start()]);
-	await a.join();
+	await a.promote();
 	await a.tool("boss_broadcast", { message: "net", scope: "workspace" });
 	assert.deepEqual(world.broker.delivered.map((d) => d.to), ["tower-wA"]);
 	await a.tool("boss_broadcast", { message: "everyone", scope: "all" });
@@ -72,7 +72,7 @@ test("call_tower for a sub workspace routes to its parent's tower, opening it on
 	world.autoTowers();
 	const a = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1" });
 	await a.start();
-	await a.join();
+	await a.promote();
 	const result = await a.tool("call_tower", { message: "the feature branch needs port 3000", workspace: "Alpha feature" });
 	assert.equal(world.broker.delivered[0]?.to, "tower-wA");
 	assert.match(textOf(result), /Sent to the tower of Alpha \(Alpha feature is a sub workspace\) \(opened it\)/);
@@ -85,7 +85,7 @@ test("call_tower for a sub workspace whose parent workspace is not open is an er
 	withSub({ parent: false });
 	const a = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1" });
 	await a.start();
-	await a.join();
+	await a.promote();
 	await assert.rejects(a.tool("call_tower", { message: "hi", workspace: "wS" }), /Alpha feature is a sub workspace with no open parent workspace/);
 	assert.deepEqual(world.herdr.commands("tab", "create"), []);
 });

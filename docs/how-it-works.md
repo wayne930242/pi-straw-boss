@@ -4,21 +4,23 @@ The full behavior behind the [README](../README.md).
 
 ## How it works
 
-Joining is a choice, never forced.
+Joining is automatic; the chain of command is earned.
 
-1. A session that is not in the net gets one short reminder at the start of its first task, asking whether its current work competes with other work in the workspace for resources (ports, databases, files, branches) or needs to collaborate with it.
-2. If yes, it calls `boss_join` (or the human types `/boss`). It can also join later, whenever it discovers the need. The reminder is not repeated, and a session that never joins is left alone: no prompt, no listing, no broadcasts (except scope `all`).
-3. The first session of a tab to join is the tab's **main agent**; later joiners are **members**. `/boss` in a member takes the role over.
-4. Subagents launched by pi-herdr-agents (recognised by `PI_SUBAGENT_ID`) never join. Their parent represents them.
-5. A **sub workspace** is treated like a subagent too. `herdr worktree create` opens a linked git worktree as its own workspace (`worktree.is_linked_worktree: true`); its parent is the workspace with the same `repo_key` that is not linked. Sessions there get no reminder and no `boss_join`, `/boss` is refused, and they receive only scope `all` broadcasts. A sub workspace never gets a tower: `call_tower` from it, or aimed at it, goes to the parent workspace's tower (opened there on demand), and fails with a clear error when no parent workspace is open.
+1. Every joinable pi in Herdr joins its tab's net at session start as a **member**: no reminder, no question. It does not join outside Herdr, as a pi-herdr-agents subagent (`PI_SUBAGENT_ID`, its parent represents it), in a sub workspace (below), or as the tower itself.
+2. A member becomes its tab's **main agent** by promotion. The agent calls `boss_promote` when its work grows (several steps, dispatching workers, more than one app); the member prompt says so. A member that calls pi-herdr-agents' `subagent` tool without promoting is promoted automatically, before the subagent starts.
+3. A tab has one main. An agent never takes over an existing one: while the tab's main is live, `boss_promote` is refused with a message and the automatic promotion is skipped. The member may still dispatch its own subagents, but its prompt tells it to first message the main through intercom with what it will do and which resources it will use.
+4. A main never demotes. When its session ends, the tab has no main until a member promotes (the members' prompt then offers promotion). `/boss` is the user's manual takeover: it makes this session the tab's main even when another is.
+5. The workspace's first main opens the workspace tower at once; later mains, in any tab, find it open. The tower stays open when mains leave.
+6. A promoted session keeps the subagents it launched: the dashboard and the browser view link subagents through the launcher's session file, not through its role, so they count under it as main with no re-registration.
+7. A **sub workspace** is treated like a subagent too. `herdr worktree create` opens a linked git worktree as its own workspace (`worktree.is_linked_worktree: true`); its parent is the workspace with the same `repo_key` that is not linked. Sessions there never join, `/boss` is refused, and they receive only scope `all` broadcasts. A sub workspace never gets a tower: `call_tower` from it, or aimed at it, goes to the parent workspace's tower (opened there on demand), and fails with a clear error when no parent workspace is open.
 
 | Role | Who | Gets |
 |---|---|---|
-| main agent | first joiner of a tab, or the `/boss` taker-over | a short prompt: split work by app, brief workers, check results, ask the boss before merging or deploying |
-| member | later joiners of a tab | a short prompt naming the main agent and the tower |
+| main agent | the member that promotes first in a tab, or the `/boss` taker-over | a short prompt: split work by app, brief workers, check results, ask the boss before merging or deploying |
+| member | every other joined session | a short prompt: with a main in the tab, tell it before dispatching subagents; without one, promote when the work grows |
 | tower | one per workspace, in its own tab labelled `tower` | a prompt for coordinating agents and repairing coordination friction; it never asks the user |
 
-The tower is opened on demand by `call_tower` (or `/boss tower`), without taking focus, and answers through intercom. Its tab is moved to the first position of the workspace right after it is created (or adopted), through Herdr's socket API (`tab.move`, no focus change); a failed move is reported as a warning and ignored. A tower tab is recognised by the `sb_role=tower` pane token that only Straw Boss writes, never by its label, because a pi-herdr-agents subagent can be named `tower`. If two towers ever race in one workspace, the live token holder wins, otherwise the lower tab id, and the other closes its own tab. Towers of different workspaces reach each other with `call_tower`; the **head tower** is the tower of the first workspace in `herdr workspace list` order that is not a sub workspace, so there is no election.
+The tower is opened by the workspace's first main (or earlier on demand, by `call_tower` or `/boss tower`), without taking focus, and answers through intercom. Its tab is moved to the first position of the workspace right after it is created (or adopted), through Herdr's socket API (`tab.move`, no focus change); a failed move is reported as a warning and ignored. A tower tab is recognised by the `sb_role=tower` pane token that only Straw Boss writes, never by its label, because a pi-herdr-agents subagent can be named `tower`. If two towers ever race in one workspace, the live token holder wins, otherwise the lower tab id, and the other closes its own tab. Towers of different workspaces reach each other with `call_tower`; the **head tower** is the tower of the first workspace in `herdr workspace list` order that is not a sub workspace, so there is no election.
 
 ## Tower dashboard
 
@@ -51,7 +53,7 @@ Where the data comes from: pi-intercom `listSessions()` (status `idle`, `thinkin
 
 ![The browser view](straw-net-gui.png)
 
-- **Any session can open it**, in a Herdr workspace or a sub workspace, joined or not. It joins nothing, writes no token, and changes no role; a session outside the net reads the sessions through a channel of its own (`straw-boss/view/<hex of the pane id>`, never owner-eligible) that takes no part in any tab. Outside Herdr the extension is inactive, so there is no command.
+- **Any session can open it**, in a Herdr workspace or a sub workspace, joined or not. It changes no role and writes no token; a joined session reads the sessions through its tab channel, and one that cannot join (a sub workspace) through a channel of its own (`straw-boss/view/<hex of the pane id>`, never owner-eligible) that takes no part in any tab. Outside Herdr the extension is inactive, so there is no command.
 - **What it shows.** Each workspace the net reaches is a **base**: one with a live tower or with sessions that joined. Workspaces with neither are not shown, and neither are sessions that did not join. A base has its **control tower** (the head tower wears a crown; a base without a tower shows a dim ghost), each tab's main agent and members as units, subagents under the session that launched them (linked exactly as the dashboard does, wherever they run), and sub workspaces as **outposts** under their parent. A net log lists joins, leaves, and state changes as they arrive.
 - **States** look the same everywhere: working is a spinning ring (and a spinner badge), waiting on a question an amber `?` that hops with a pulsing ring, idle a dim `z`, finished a green `✓`, error a red `!`. Changes animate; the page honors `prefers-reduced-motion`.
 - **Routes.** The map is `/<token>/`.
@@ -98,25 +100,25 @@ The work runs in `src/balance.mjs` as a detached `node` process: `balance.mjs no
 
 | Tool | Available to | What it does |
 |---|---|---|
-| `boss_join` | sessions not yet in the net | Join this tab's net; the first joiner is main. |
+| `boss_promote` | joined sessions that are not the tower | Become this tab's main agent; refused while the tab has a live main. |
 | `boss_status` | joined sessions and towers | The main agent of each tab, this workspace's tower, the head tower, and the other towers. |
 | `call_tower` | joined sessions and towers | Send a message to this workspace's tower, or another workspace's by id or exact label. Opens the tower tab when none runs. |
-| `boss_broadcast` | joined sessions and towers | One message to every other session in a scope. `tab`, `workspace` and `towers` reach only sessions that joined the net; `all` reaches every pi session on the machine, joined or not (for notices such as going to sleep). Default `workspace`. |
+| `boss_broadcast` | joined sessions and towers | One message to every other session in a scope. `tab`, `workspace` and `towers` reach only sessions that joined the net (nearly every pi in Herdr, not sub workspace sessions); `all` reaches every pi session on the machine, joined or not (for notices such as going to sleep). Default `workspace`. |
 
 | Command | Effect |
 |---|---|
-| `/boss` | Join if needed, then become this tab's main agent. |
+| `/boss` | Take over as this tab's main agent, even when it has one. |
 | `/boss status` | Show `boss_status`. |
 | `/boss tower` | Open this workspace's tower if none runs, then focus its tab. |
 | `/boss gui` | Open the whole net in the browser (any session; joins nothing). `/boss gui stop` stops the server. |
 
-`/boss`, `boss_join`, and the reminder are unavailable in a sub workspace.
+`/boss` and `boss_promote` are unavailable in a sub workspace.
 
 ## What it writes
 
 - Herdr pane token `sb_role` (`main`, `member` or `tower`; a tower tab is also marked right after it is created) and workspace token `tower` (the tower's intercom session id), both refreshed every 4 minutes with a 10 minute TTL and cleared at shutdown.
-- A pi session entry `straw-boss` (`asked`, `joined`, `tower`) so a resumed session keeps its place without a second reminder.
-- One intercom extension channel per tab, `straw-boss/tab/<hex of the tab id>`, registered only by joined sessions and towers. Tab ids over 24 characters are refused.
+- A pi session entry `straw-boss` (`tower`) so a resumed tower keeps its role. Members write no entry: every session joins at start, so entries saved by 0.4.0 (`asked`, `joined`) are ignored.
+- One intercom extension channel per tab, `straw-boss/tab/<hex of the tab id>`, registered by every joined session and tower; the channel's owner (the first to join) only records the main, and it is not the main by that. Tab ids over 24 characters are refused.
 
 The tower tab is labelled `tower` and its Herdr agent is named `tower-<workspace id>` in lowercase (Herdr agent names are unique per server).
 

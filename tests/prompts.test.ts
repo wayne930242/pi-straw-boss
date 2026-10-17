@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import { PROMPT_DIR } from "./fakes.ts";
 
-const BUDGETS: Record<string, number> = { "main.md": 150, "tower.md": 150, "member.md": 50, "reminder.md": 70 };
+const BUDGETS: Record<string, number> = { "main.md": 150, "tower.md": 150, "member.md": 80, "member-no-main.md": 80 };
 const PLACEHOLDERS = new Set(["tab", "workspace", "main", "tower", "head", "dir"]);
 const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
 

@@ -9,7 +9,11 @@ beforeEach(async () => {
 	world = new World();
 	a1 = world.agent({ id: "a1", pane: "wA:p1", tab: "wA:t1" });
 	const a2 = world.agent({ id: "a2", pane: "wA:p2", tab: "wA:t1" });
-	world.agent({ id: "a3", pane: "wA:p3", tab: "wA:t1" }); // never joins
+	// a3 sits in a sub workspace of Alpha, so it never joins.
+	world.herdr.workspace("wA").worktree = { checkout_path: "/w/alpha", is_linked_worktree: false, repo_key: "/r/alpha" };
+	world.herdr.workspaces.push({ workspace_id: "wS", label: "Alpha feature", tokens: {}, worktree: { checkout_path: "/w/f", is_linked_worktree: true, repo_key: "/r/alpha" } });
+	world.herdr.addTab("wS:t1", "feature", "wS:p3");
+	world.agent({ id: "a3", pane: "wS:p3" });
 	const c = world.agent({ id: "c", pane: "wA:p4", tab: "wA:t2" });
 	const d = world.agent({ id: "d", pane: "wB:p1", tab: "wB:t1" });
 	tower = world.tower("tower-wA", "wA:t7", "wA:p7");
@@ -17,7 +21,7 @@ beforeEach(async () => {
 	world.agent({ id: "worker", pane: "wA:p5", tab: "wA:t1", env: { PI_SUBAGENT_ID: "run-1" } });
 	world.agent({ id: "outside", pane: "none", outsideHerdr: true });
 	await Promise.all(world.agents.map((agent) => agent.start()));
-	for (const agent of [a1, a2, c, d]) await agent.join();
+	for (const agent of [a1, a2, c, d]) await agent.promote();
 	assert.ok(tower && towerB);
 	world.broker.delivered.length = 0;
 });
@@ -29,7 +33,7 @@ const sent = async (agent: Agent, scope?: string) => {
 	return world.broker.delivered.map((d) => d.to).sort();
 };
 
-test("tab, workspace, and towers reach only sessions that joined the net and skip the sender", async () => {
+test("tab, workspace, and towers reach only sessions that joined the net and skip the sender; a session that joined as a member is reached", async () => {
 	assert.deepEqual(await sent(a1, "tab"), ["a2"]);
 	assert.deepEqual(await sent(a1, "workspace"), ["a2", "c", "tower-wA"]);
 	assert.deepEqual(await sent(a1), ["a2", "c", "tower-wA"], "workspace is the default scope");
@@ -55,7 +59,7 @@ test("one failed recipient fails the call after the others were reported, and th
 test("a broadcast with no recipients succeeds and says so", async () => {
 	const lonely = world.agent({ id: "lonely", pane: "wB:p5", tab: "wB:t1" });
 	await lonely.start();
-	await lonely.join();
+	await lonely.promote();
 	const result = await lonely.tool("boss_broadcast", { message: "anyone?", scope: "tab" });
 	assert.match(result.content.map((c) => (c.type === "text" ? c.text : "")).join(""), /Broadcast to 1 session\(s\)/);
 });
