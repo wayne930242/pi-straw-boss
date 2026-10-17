@@ -1,44 +1,8 @@
 # pi-straw-boss
 
-Straw Boss coordination for [pi](https://pi.dev) sessions that run in [Herdr](https://herdr.dev): a session **joins** a small net when its work competes or collaborates with other work in the workspace, the first to join a tab becomes its **main agent**, one **tower** per workspace opens on demand (with a live monitoring dashboard), and `boss_broadcast` reaches the rest. No tracking, no scheduler, no new service: the extension is glue over pi-intercom and Herdr metadata.
+**Many pi agents, one project, no collisions.** pi-straw-boss gives the agents you run across [Herdr](https://herdr.dev) tabs a light chain of command: a main agent per tab, a tower per workspace, and a live view of who is doing what.
 
-## Requirements
-
-- pi, running inside a Herdr pane
-- [pi-intercom](https://www.npmjs.com/package/pi-intercom) 0.17.1 or newer
-- Herdr 0.9.4 or newer (the socket API `tab.move` for the tower tab position)
-
-Outside Herdr the extension does nothing.
-
-## Install
-
-```bash
-pi install npm:pi-straw-boss
-```
-
-While developing: `pi install ~/projects/pi-straw-boss` loads the working tree, and `/reload` picks up edits.
-
-## How it works
-
-Joining is a choice, never forced.
-
-1. A session that is not in the net gets one short reminder at the start of its first task, asking whether its current work competes with other work in the workspace for resources (ports, databases, files, branches) or needs to collaborate with it.
-2. If yes, it calls `boss_join` (or the human types `/boss`). It can also join later, whenever it discovers the need. The reminder is not repeated, and a session that never joins is left alone: no prompt, no listing, no broadcasts (except scope `all`).
-3. The first session of a tab to join is the tab's **main agent**; later joiners are **members**. `/boss` in a member takes the role over.
-4. Subagents launched by pi-herdr-agents (recognised by `PI_SUBAGENT_ID`) never join. Their parent represents them.
-5. A **sub workspace** is treated like a subagent too. `herdr worktree create` opens a linked git worktree as its own workspace (`worktree.is_linked_worktree: true`); its parent is the workspace with the same `repo_key` that is not linked. Sessions there get no reminder and no `boss_join`, `/boss` is refused, and they receive only scope `all` broadcasts. A sub workspace never gets a tower: `call_tower` from it, or aimed at it, goes to the parent workspace's tower (opened there on demand), and fails with a clear error when no parent workspace is open.
-
-| Role | Who | Gets |
-|---|---|---|
-| main agent | first joiner of a tab, or the `/boss` taker-over | a short prompt: split work by app, brief workers, check results, ask the boss before merging or deploying |
-| member | later joiners of a tab | a short prompt naming the main agent and the tower |
-| tower | one per workspace, in its own tab labelled `tower` | a prompt for coordinating agents and repairing coordination friction; it never asks the user |
-
-The tower is opened on demand by `call_tower` (or `/boss tower`), without taking focus, and answers through intercom. Its tab is moved to the first position of the workspace right after it is created (or adopted), through Herdr's socket API (`tab.move`, no focus change); a failed move is reported as a warning and ignored. A tower tab is recognised by the `sb_role=tower` pane token that only Straw Boss writes, never by its label, because a pi-herdr-agents subagent can be named `tower`. If two towers ever race in one workspace, the live token holder wins, otherwise the lower tab id, and the other closes its own tab. Towers of different workspaces reach each other with `call_tower`; the **head tower** is the tower of the first workspace in `herdr workspace list` order that is not a sub workspace, so there is no election.
-
-## Tower dashboard
-
-A tower session with a TUI shows a monitoring widget above its editor. It is read-only: it never takes focus, never prompts, and is shown only while the session holds the tower role (a tower that yields, a headless tower, and main agents never show it).
+<!-- /boss gui screenshot goes here -->
 
 ```text
 ╭─ ⠸ tower · Alpha ─────────────────────────────────────────── head tower ─╮
@@ -54,61 +18,46 @@ A tower session with a TUI shows a monitoring widget above its editor. It is rea
 ╰──────────────────────────────────────────────────────────────────────────╯
 ```
 
-- **This net**, in detail: the sessions that joined in this workspace, by tab (main agent first, then members), each with the subagents it launched, and this workspace's sub workspaces. Sessions that did not join are not listed, and neither is anything in other workspaces.
-- **Other towers**: one line per workspace that has a live tower (workspace, status, and `head tower` for the head one).
-- One glyph and theme color per state: a spinner in the accent color for working, `?` warning for waiting on a question, `○` dim for idle, `✓` success for done, `✗` error. Colors come from the active pi theme. The title mark shows the most urgent state of the net.
-- The spinner runs at 8 fps only while something is working. The data is polled every 3 s while the widget exists, and an intercom presence, join, or leave event re-reads at once (at most every 0.5 s). Shutdown, or losing the tower role, removes the widget and every timer.
+## Why
 
-Where the data comes from: pi-intercom `listSessions()` (status `idle`, `thinking`, `tool:<name>`, and the Herdr location of each session), `herdr pane list` (`sb_role` token, Herdr's agent status where `blocked` means waiting on a question, and the pi session file), and `herdr workspace list` (workspace status, `tower` token, linked-worktree fields). Subagents are linked to their parent through pi-herdr-agents' own layout: the parent's session file names its artifacts directory, `subagent-activity/<child id>.json` there records each child's activity, and the child's pane session file contains the child id. So a subagent is grouped under the session that launched it wherever it runs, and it never counts as a net member of the workspace or tab it sits in.
+Run a few agents on the same project and they start stepping on each other: two dev servers on one port, two branches editing the same migration, and no agent knows the others exist. pi-straw-boss lets them find each other and coordinate, without a scheduler or a new service.
 
-## Tools
+- **Opt-in net.** Each session is asked once whether its work shares resources or needs to collaborate. Only those that say yes join.
+- **A main agent per tab.** The first to join a tab coordinates it; `/boss` takes over.
+- **A tower per workspace.** It opens on demand in its own tab, pinned first, and coordinates the main agents and the other towers. You don't need to talk to it.
+- **A live dashboard** in the tower: who joined, and what they and their subagents are doing.
+- **Broadcast** to a tab, a workspace, every tower, or every session.
 
-| Tool | Available to | What it does |
-|---|---|---|
-| `boss_join` | sessions not yet in the net | Join this tab's net; the first joiner is main. |
-| `boss_status` | joined sessions and towers | The main agent of each tab, this workspace's tower, the head tower, and the other towers. |
-| `call_tower` | joined sessions and towers | Send a message to this workspace's tower, or another workspace's by id or exact label. Opens the tower tab when none runs. |
-| `boss_broadcast` | joined sessions and towers | One message to every other session in a scope. `tab`, `workspace` and `towers` reach only sessions that joined the net; `all` reaches every pi session on the machine, joined or not (for notices such as going to sleep). Default `workspace`. |
+## Install
 
-| Command | Effect |
+```bash
+pi install npm:pi-straw-boss
+```
+
+You need pi running inside Herdr 0.9.4 or newer, and [pi-intercom](https://www.npmjs.com/package/pi-intercom) 0.17.1 or newer. [pi-herdr-agents](https://github.com/giuseppecrj/pi-herdr-agents) is optional: with it, subagents show up under the session that launched them.
+
+## Quick start
+
+1. Open pi in a Herdr tab and give it work. When the work needs to share or coordinate, the agent joins the net. You can also type `/boss`.
+2. Type `/boss status` to see each tab's main agent and the towers.
+3. Type `/boss tower` to open the workspace's tower and watch its dashboard. Agents open it themselves when they call it.
+
+## Tools and commands
+
+| Name | What it does |
 |---|---|
-| `/boss` | Join if needed, then become this tab's main agent. |
-| `/boss status` | Show `boss_status`. |
-| `/boss tower` | Open this workspace's tower if none runs, then focus its tab. |
+| `boss_join` | Join this tab's net. |
+| `boss_status` | Main agents, this workspace's tower, and the other towers. |
+| `call_tower` | Message this workspace's tower, or another workspace's. |
+| `boss_broadcast` | Message a tab, a workspace, all towers, or every session. |
+| `/boss` | Join and become this tab's main agent. |
+| `/boss status`, `/boss tower` | Show the status; open and focus the tower. |
 
-`/boss`, `boss_join`, and the reminder are unavailable in a sub workspace.
+Subagents and sessions in Herdr worktree workspaces never join: the session that launched them speaks for them. Outside Herdr the extension does nothing.
 
-## What it writes
+## Learn more
 
-- Herdr pane token `sb_role` (`main`, `member` or `tower`; a tower tab is also marked right after it is created) and workspace token `tower` (the tower's intercom session id), both refreshed every 4 minutes with a 10 minute TTL and cleared at shutdown.
-- A pi session entry `straw-boss` (`asked`, `joined`, `tower`) so a resumed session keeps its place without a second reminder.
-- One intercom extension channel per tab, `straw-boss/tab/<hex of the tab id>`, registered only by joined sessions and towers. Tab ids over 24 characters are refused.
-
-The tower tab is labelled `tower` and its Herdr agent is named `tower-<workspace id>` in lowercase (Herdr agent names are unique per server).
-
-## From Claude Code or Codex
-
-Read-only discovery works from any shell in a Herdr pane:
-
-```bash
-herdr workspace get "$HERDR_WORKSPACE_ID" | jq -r '.result.workspace.tokens.tower'
-herdr pane list --workspace "$HERDR_WORKSPACE_ID" | jq -r '.result.panes[] | select(.tokens.sb_role) | [.pane_id, .tokens.sb_role] | @tsv'
-node ~/.pi/agent/npm/node_modules/pi-intercom/cli.mjs ask --to "$TOWER_SESSION_ID" --text "<message>"
-```
-
-Opening a missing tower needs a pi session.
-
-## Development
-
-```bash
-npm install
-npm run check   # tsc --noEmit
-npm test        # node --test, against a fake Herdr and a fake intercom broker
-```
-
-The dashboard has its own file (`src/dashboard.ts`, budget 200 lines) and its rendering is a pure function of a snapshot, so tests drive it without a terminal.
-
-Prompts are plain markdown in `prompts/`, read at session start, so an edit applies after `/reload`.
+[How it works](docs/how-it-works.md) covers roles, the tower, the dashboard, what the extension writes, and how Claude Code or Codex agents can find a tower.
 
 ## License
 
