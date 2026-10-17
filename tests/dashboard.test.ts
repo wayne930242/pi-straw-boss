@@ -37,6 +37,9 @@ const sample = snapshot([
 test("render draws a rounded frame with a title, section headers, a tree, and aligned columns", () => {
 	assert.deepEqual(render(sample, 0, 100, plain), [
 		"╭─ ⠋ tower · Alpha ─────────────────────────────────────────── head tower ─╮",
+		"│ Control tower: main agents talk here (call_tower).                       │",
+		"│ GUI not running; /boss gui opens it                                      │",
+		"│                                                                          │",
 		"│ this net                                                                 │",
 		"│ ├─ tab work                                                              │",
 		"│ │  ├─ ⠋ Main One     main           tool:edit                            │",
@@ -66,9 +69,14 @@ test("each state has one glyph and one theme color, and the frame uses the borde
 	for (const expected of ["<accent:⠋>", "<warning:?>", "<dim:○>", "<success:✓>", "<error:✗>", "<title:tower · Alpha>", "<border:╭─>", "<accent:head tower>", "<muted:this net>"]) assert.ok(lines.includes(expected), expected);
 });
 
+test("a running GUI's link is shown under the description", () => {
+	const lines = render({ ...snapshot([]), gui: "http://127.0.0.1:5000/t/" }, 0, 76, plain);
+	assert.match(lines[2]!, /^│ GUI {2}http:\/\/127\.0\.0\.1:5000\/t\/ +│$/);
+});
+
 test("nothing joined yet is said once, and the other-towers section is omitted when there are none", () => {
 	const lines = render(snapshot([]), 0, 60, plain);
-	assert.deepEqual(lines.slice(1, -1).map((l) => l.replace(/\s+│$/, "")), ["│ this net", "│   nothing has joined yet"]);
+	assert.deepEqual(lines.slice(1, -1).map((l) => l.replace(/\s+│$/, "")), ["│ Control tower: main agents talk here (call_tower).", "│ GUI not running; /boss gui opens it", "│", "│ this net", "│   nothing has joined yet"]);
 });
 
 test("every line fits the width with real ANSI styling, at any width, and the frame stops growing at 76 columns", () => {
@@ -80,7 +88,7 @@ test("every line fits the width with real ANSI styling, at any width, and the fr
 		assert.ok(lines.every((line) => visibleWidth(line) <= 76));
 	}
 	const lines = render(long, 0, 200, plain);
-	assert.equal(lines.length, 1 + 1 + 18 + 1 + 1, "top, section header, the shown rows, the count of the rest, bottom");
+	assert.equal(lines.length, 1 + 3 + 1 + 18 + 1 + 1, "top, the intro, section header, the shown rows, the count of the rest, bottom");
 	assert.match(lines.at(-2)!, /… 7 more/);
 });
 

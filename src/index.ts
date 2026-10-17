@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static, type TSchema } from "typebox";
 import { collect, startDashboard } from "./dashboard.ts";
-import { answers, type Gui, openBrowser, readRecord, sharedGui, startGui } from "./gui.ts";
+import { answers, type Gui, openBrowser, readRecord, sharedGui, startGui, urlOf } from "./gui.ts";
 import { netSource } from "./net.ts";
 import { copyText, pairingKeys, showLines } from "./pairing.ts";
 import { type Run, switchRemote, tailscale } from "./remote.ts";
@@ -316,7 +316,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			keepFresh();
 			await publish();
 			// The dashboard lives exactly as long as this session holds the tower role.
-			if (hasUI) dashboard = startDashboard({ ui: ui!, collect: () => collect({ run, sessions: () => c.listSessions(), workspaceId: at.workspaceId }) });
+			if (hasUI) dashboard = startDashboard({ ui: ui!, collect: () => collect({ run, sessions: () => c.listSessions(), workspaceId: at.workspaceId, gui: async () => { const r = readRecord(guiDir); return r && (await answers(r)) ? urlOf(r) : undefined; } }) });
 		};
 
 		// A session in a sub workspace (a linked git worktree) acts like a subagent: it never joins. Failing to tell bars it too.

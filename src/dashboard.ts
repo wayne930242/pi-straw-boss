@@ -18,10 +18,10 @@ import { headOf, type HerdrRun, isSub, type Pane, panes, parentOf, type Session,
 export type Mark = "working" | "waiting" | "idle" | "done" | "error" | "unknown";
 /** One line of the tree. `net` rows are tab (0) > session (1) > subagent (2); `towers` rows are flat. */
 export interface Row { group: "net" | "towers"; depth: number; mark: Mark; text: string; kind?: string; note?: string; workspace?: string; id?: string; file?: string; pane?: string }
-export interface Snapshot { title: string; mark: Mark; head: boolean; rows: Row[] }
+export interface Snapshot { title: string; mark: Mark; head: boolean; rows: Row[]; gui?: string }
 export type Tone = "accent" | "warning" | "muted" | "success" | "dim" | "error" | "border" | "title";
 export type Paint = (tone: Tone, text: string) => string;
-export interface Sources { run: HerdrRun; sessions(): Promise<Session[]>; workspaceId: string; now?: number }
+export interface Sources { run: HerdrRun; sessions(): Promise<Session[]>; workspaceId: string; now?: number; gui?(): Promise<string | undefined> }
 
 const KEY = "straw-boss-dashboard";
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -43,7 +43,7 @@ export function sessionMark(s: Session, pane?: Pane): Mark {
 const pad = (text: string, width: number) => text + " ".repeat(Math.max(0, width - visibleWidth(text)));
 
 /** The pure half: a snapshot in, a framed tree out. One shared spinner frame animates every working row. */
-export function render({ title, mark, head, rows }: Snapshot, frame: number, width: number, paint: Paint): string[] {
+export function render({ title, mark, head, rows, gui }: Snapshot, frame: number, width: number, paint: Paint): string[] {
 	const total = Math.min(width, MAX_WIDTH), inner = Math.max(8, total - 4);
 	const glyph = (m: Mark) => paint(TONE[m], m === "working" ? SPINNER[frame % SPINNER.length]! : GLYPH[m as Exclude<Mark, "working">]);
 	const shown = rows.slice(0, MAX_ROWS);
@@ -58,7 +58,9 @@ export function render({ title, mark, head, rows }: Snapshot, frame: number, wid
 		const at = shown.flatMap((r, i) => (r.group === group ? [i] : []));
 		return at.length || empty ? [paint("muted", name), ...(at.length ? at.map(line) : [paint("dim", `  ${empty}`)])] : [];
 	};
-	const body = [...section("net", "this net", "nothing has joined yet"), ...section("towers", "other towers"), ...(rows.length > MAX_ROWS ? [paint("muted", `… ${rows.length - MAX_ROWS} more`)] : [])];
+	// What this pane is, and where the browser view lives, come before the tree.
+	const intro = [paint("dim", "Control tower: main agents talk here (call_tower)."), gui ? `${paint("muted", "GUI")}  ${paint("accent", gui)}` : paint("dim", "GUI not running; /boss gui opens it"), ""];
+	const body = [...intro, ...section("net", "this net", "nothing has joined yet"), ...section("towers", "other towers"), ...(rows.length > MAX_ROWS ? [paint("muted", `… ${rows.length - MAX_ROWS} more`)] : [])];
 	const [name, tag] = [` ${glyph(mark)} ${paint("title", `tower · ${title}`)} `, head ? ` ${paint("accent", "head tower")} ` : ""];
 	const dashes = "─".repeat(Math.max(1, total - 4 - visibleWidth(name) - visibleWidth(tag)));
 	const frameLine = (text: string) => paint("border", "│ ") + pad(truncateToWidth(text, inner), inner) + paint("border", " │");
@@ -114,7 +116,7 @@ export function subagents(parent: Pane | undefined, all: Pane[], now: number): R
  * One reading of the world as rows: this tower's own net in detail (each tab's joined sessions with their subagents, then its
  * sub workspaces), and one summary line for every other tower. Other workspaces' sessions, and sessions that did not join, are not listed.
  */
-export async function collect({ run, sessions, workspaceId, now = Date.now() }: Sources): Promise<Snapshot> {
+export async function collect({ run, sessions, workspaceId, now = Date.now(), gui }: Sources): Promise<Snapshot> {
 	const [live, ps, all] = [await sessions(), await panes(run), await workspaces(run)];
 	const head = headOf(all);
 	const mine = all.find((w) => w.workspace_id === workspaceId);
@@ -139,7 +141,7 @@ export async function collect({ run, sessions, workspaceId, now = Date.now() }: 
 	for (const w of all.filter((x) => x !== mine && !isSub(x) && live.some((s) => s.id === x.tokens?.tower))) rows.push({ group: "towers", depth: 0, mark: markOf(w.agent_status), text: w.label, kind: w === head ? "head tower" : "tower" });
 	// The title shows what needs attention most: a waiting row, then a working one, else the workspace's own status.
 	const attention = (["waiting", "working"] as const).find((m) => rows.some((r) => r.mark === m));
-	return { title: mine?.label ?? workspaceId, mark: attention ?? markOf(mine?.agent_status), head: Boolean(mine) && mine === head, rows };
+	return { title: mine?.label ?? workspaceId, mark: attention ?? markOf(mine?.agent_status), head: Boolean(mine) && mine === head, rows, gui: await gui?.().catch(() => undefined) };
 }
 
 export interface Dashboard { poke(): void; stop(): void }

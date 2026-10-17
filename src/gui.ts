@@ -150,7 +150,7 @@ export async function startGui({ read, net, call, dir = BUNDLE, port = 0, token 
 // instead of starting one. A dead server's port and token are reused, so a page left open reconnects to its successor.
 export interface GuiRecord { pid: number; port: number; token: string; csrf?: string; owner: string }
 export interface Shared { url: string; owner: string; mine?: Gui }
-const urlOf = (r: GuiRecord) => `http://127.0.0.1:${r.port}/${r.token}/`;
+export const urlOf = (r: GuiRecord) => `http://127.0.0.1:${r.port}/${r.token}/`;
 
 export function readRecord(dir: string): GuiRecord | undefined {
 	try {

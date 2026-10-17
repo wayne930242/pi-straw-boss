@@ -24,10 +24,13 @@ The tower is opened by the workspace's first main (or earlier on demand, by `cal
 
 ## Tower dashboard
 
-A tower session with a TUI shows a monitoring widget above its editor. It is read-only: it never takes focus, never prompts, and is shown only while the session holds the tower role (a tower that yields, a headless tower, and main agents never show it).
+A tower session with a TUI shows a monitoring widget above its editor. It is read-only: it never takes focus, never prompts, and is shown only while the session holds the tower role (a tower that yields, a headless tower, and main agents never show it). Its first lines say what the pane is, the channel main agents reach each other through with `call_tower`, and give the straw net GUI's link while a GUI server answers (otherwise that `/boss gui` opens it).
 
 ```text
 ╭─ ⠸ tower · Alpha ─────────────────────────────────────────── head tower ─╮
+│ Control tower: main agents talk here (call_tower).                       │
+│ GUI  http://127.0.0.1:52662/<token>/                                     │
+│                                                                          │
 │ this net                                                                 │
 │ ├─ tab api-main                                                          │
 │ │  ├─ ○ api-main        main                                             │
