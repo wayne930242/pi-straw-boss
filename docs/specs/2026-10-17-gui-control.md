@@ -1,6 +1,6 @@
 # Controlling pi sessions from `/boss gui`
 
-Status: Phase 1 implemented in 0.4.0 (routes, chat history, the overlay layer); Phases 2 to 4 proposed, 2026-10-17. Base:
+Status: Phase 1 implemented in 0.4.0 (routes, chat history, the overlay layer); Phase 2 in 0.5.0, with the follow-ups of 0.5.1 (see [0.5.1 follow-ups](#051-follow-ups)); Phases 3 to 4 proposed, 2026-10-17. Base:
 pi-straw-boss 0.3.1 (`3b71b19`), pi 1.3.0, Herdr 0.9.4, pi-intercom 0.17.1.
 
 ## Intent
@@ -280,11 +280,12 @@ Phase 1 builds the layer with read-only content; Phase 2 and 3 dialogs (ask_user
 | Queue order | Rank first, then the oldest arrival. A repeated arrival keeps its place. |
 | Opening | Only the user opens a dialog on top: from the header alert (the head of the queue), by clicking a unit that waits or failed (map, base, dossier; a modified click still follows the link), or by clicking a dialog that peeks out beneath the top one. An opened dialog leaves the queue, goes on top, and takes focus; one already open comes to the top instead of opening twice. |
 | Not the user's open (user, 2026-10-17) | A dialog the user is looking at is never covered by one they did not open themselves. Any open without a direct user action on it (a dialog raised by an alert, the stream, the demo fixture) slides in **beneath** the top dialog, peeking out, and takes no focus; it comes to the front only when the user closes the top one or clicks it. One already open stays where it is. With no dialog open there is nothing to cover, and it still takes no focus. In 0.5.0 no code path opens a dialog this way (alerts queue); the model enforces the rule for Phase 3's arrivals. |
-| Stack | The top dialog is in front; dialogs beneath peek out above it, smaller and fainter, and are `inert`. A click on the part that peeks out raises that dialog (an `inert` element takes no click, so the layer catches it on the page). |
+| Stack | The top dialog is in front; dialogs beneath peek out above it, smaller and fainter, and are `inert`. A click on the part that peeks out raises that dialog (an `inert` element takes no click, so the layer catches it on the page), unless the click really hit something that takes clicks under the strip (a HUD button such as Phone, a link): that control keeps it (checked in the browser with six stacked dialogs, whose oldest strip reaches the Phone button; A-7). |
 | Closing | Close (× or Escape) removes the top dialog. The dialog beneath comes back; with none beneath, the next queued question or error does (it was waiting behind the closed one). Plain state changes stay queued until the user opens them. **Later** puts the alert back in the queue and reveals nothing queued, so the user can always step out; an alert whose unit moved on while its dialog was open is stale and is dropped instead. **Open comms** closes the alert and reveals nothing queued either, so no dialog covers the comms the user went to. |
 | Escape | Closes the top dialog only. With no dialog open, it goes up one route level. |
 | Focus | Each dialog remembers where focus was when it opened and returns it there on close (inside the dialog beneath, or the page element that opened the first); when that element is gone, focus moves into the dialog beneath. Dialogs are not modal: the page stays usable and nothing traps focus. |
-| Stale | A queued alert whose unit no longer shows the state that raised it leaves the queue by itself. An open dialog is never closed under the user; it shows the unit's current state. |
+| Stale | A queued alert whose unit no longer shows the state that raised it leaves the queue by itself. An open dialog is never closed under the user; it shows the unit's current state, and when the unit left the net it shows **gone** ("left the net"): no question, no Focus terminal, no Open comms; **Later** and × remain, and Later does not requeue it. |
+| Queue count | The header (its tooltip) and every dialog count the queue the same way: `N need(s) you` for questions and errors, which closing reveals next, and `M finished` for plain state changes, which only the user opens. The 0.5.0 live check showed "+2 queued" beside one other waiting session because the count included a finished subagent's alert; it was counted correctly but not named. |
 | Content | A question the unit waits on is shown read-only, with "Answer it in the terminal" and **Focus terminal** (0.5.0, see [Showing `ask_user`](#showing-ask_user-050-answering-deferred)). The unit (portrait, role, state, base), its last assistant line and the tool call it waits on (from the newest 12 history items, read when the alert arrives), **Open comms** (the session route at the entry the alert was about: `?at=` the reply with the tool call it waits on, else its last reply) and **Later**. |
 
 **Tiles** sit beside the current view and share its width.
@@ -324,6 +325,7 @@ The composer replaces the 0.4.0 "receive only" strip at the bottom of a session 
 - After a send the box clears only when the server confirms Herdr accepted the
   input, and only the part that was sent: text typed meanwhile stays, and a sent part edited meanwhile stays whole.
   The message then shows up in the history when pi writes it. A send Herdr did not confirm is never retried.
+- What the page could not say when an answer came (the route had left, or the page reloaded) is kept with the draft and shown once when the composer returns: a refusal's reason, "Not confirmed", or, when the sent text was edited meanwhile, that the original already went. "Your edits stayed" is said only about a box that holds edits (an empty box means the browser refused storage). Focus terminal is disabled while the stream is down and hidden while the question panel above the composer carries one.
 - The draft is kept per session in `sessionStorage`, so a reload or a route change does not lose it. A send outlives
   the composer that started it: the send itself settles the stored draft once when Herdr confirms it, a composer
   mounted for that session meanwhile waits for it (Send stays disabled) and settles its own box, and a "Not confirmed"
@@ -395,9 +397,9 @@ Added to 0.5.0 by the user (2026-10-17). Decisions:
    (`https://<MagicDNS name>:8443/<t>/pair/<code>`) in a pi overlay (never in the conversation the model reads), and in the
    GUI through the HUD's **Phone** button. `/boss gui remote off`, `/boss gui stop`, and the end of the server's session
    remove only this entry: 8443 is checked with `tailscale serve status --json` before and after, an entry is ours only when
-   it is the one HTTPS `/` proxy to our recorded target (`remote.json` in the state directory, with the owning process id, so an
-   entry a crashed session left is recognised and cleaned up, also by the next server that starts; an entry whose
-   owner still runs is never taken over or removed from another process), and other serve entries are never reset or touched. It fails with a clear message
+   it is the one HTTPS `/` proxy to our recorded target (`remote.json` in the state directory, with the owning process id and that process's start time, so an
+   entry a crashed session left is recognised and cleaned up, also by the next server that starts, even when another process now holds its PID; an entry whose
+   owner still runs, with the start time that was recorded, is never taken over or removed from another process. An entry recorded before start times were written counts as the owner's only if its process started before the file was written), and other serve entries are never reset or touched. It fails with a clear message
    when tailscale is missing, not connected, the node is tagged (no user to check against), MagicDNS is off, or 8443 serves
    something else. The local-only `/boss gui` is unchanged.
 3. **Auth**: a pairing code is 128 random bits, works once, within ten minutes (expired codes are dropped first, and past sixteen waiting the oldest), and is used up by
@@ -476,6 +478,7 @@ review rounds (below). 0.5.0 ships the question read-only.
 - **The page** shows, in the alert dialog and above the composer in the session view, the question, its context and options as
   plain text (text nodes, never markup), "Answer it in the terminal." (and whether it takes several choices or its own words), and
   **Focus terminal**, which calls the existing `focus` endpoint (`agent.focus`, no keys) under the usual guards.
+- **Two question tools** (0.5.1; the user replaced pi-ask-user with @juicesharp/rpiv-ask-user-question 2.13.9, tool `ask_user_question`, and older session files still hold `ask_user`). `ask_user_question` takes `questions[1–4]`, each `{question, header (≤16 chars), options[2–4] {label, description, preview?}, multiSelect?}`, with "Type something." always appended and no context block. One question rides as `pending.ask` like an `ask_user` question (plus `header`); two to four ride as `pending.asks` (each clipped like a single one, a header ≤ 40 characters, previews not carried), and the page lists them with the header as a tag and, per question, whether it takes several choices or its own words. Display only: nothing is answered and no key is sent. **Known gap (not closed in 0.5.1):** a unit is `waiting` only while Herdr reports its pane `blocked`, which pi sends from the `herdr:blocked` event; rpiv-ask-user-question emits `rpiv:ask-user:blocked` instead and nothing translates it (`~/.pi/agent/extensions/herdr-agent-state.ts` listens to `herdr:blocked` only), so a session waiting on `ask_user_question` stays `working` in Herdr and in the net view, and the display above never triggers for it until a translator exists (live check: with the event translated by the harness, one question showed like an `ask_user` question and two as a list).
 - **No answer route.** `POST …/sessions/<key>/answer` does not exist (404), nothing derives keys or reads the screen, and the keys
   endpoint stays Escape-only (0.5.0 narrowed its allow list to `esc`).
 
@@ -621,8 +624,8 @@ Control means typing into the user's terminals, so every write is guarded.
 | Terminal mirror | 1 read per second, only while open and visible | 15 ms, 9 KB |
 | Workspace cards | one 64 KB tail read per unit per change | 19 ms for 15 files |
 | Page JS (map chunk) | ≤ 15 KB raw, ≤ 6 KB gzip | 8.7 / 3.7 KB today |
-| Page JS (lazy chunks: chat, views, layer, pairing, question) | ≤ 35 KB raw, ≤ 15.5 KB gzip (was 12; raised in 0.5.0 for the composer, about 2.2 KB, the pairing tile with its POST helper, about 1.1 KB, and the read-only question panel with its place in dialogs and the session view, about 1.1 KB) | |
-| CSS | ≤ 26 KB raw, ≤ 7 KB gzip (was 22 / 6; 22.1 / 6.1 in 0.4.0 for the anchor highlight, the receive-only strip, and the title link; 0.5.0 for the composer, the phone layout, the pairing tile, the question panel, and the folding net log) | 10.5 / 3.2 KB before Phase 1 |
+| Page JS (lazy chunks: chat, views, layer, pairing, question) | ≤ 36.5 KB raw, ≤ 16.2 KB gzip (0.5.1: the composer's note and gone dialogs, about 0.7 KB gzipped; was 35 / 15.5 in 0.5.0, 12 before; raised in 0.5.0 for the composer, about 2.2 KB, the pairing tile with its POST helper, about 1.1 KB, and the read-only question panel with its place in dialogs and the session view, about 1.1 KB) | |
+| CSS | ≤ 26.5 KB raw, ≤ 7 KB gzip (0.5.1: the queue line in dialogs; was 22 / 6; 22.1 / 6.1 in 0.4.0 for the anchor highlight, the receive-only strip, and the title link; 0.5.0 for the composer, the phone layout, the pairing tile, the question panel, and the folding net log) | 10.5 / 3.2 KB before Phase 1 |
 | Mounted chat items | ≤ 600 | `content-visibility: auto` |
 | Runtime dependencies | none | as today |
 
@@ -632,11 +635,11 @@ Measured for 0.5.0 (Phase 2, the read-only question, the net log fold): map chun
 
 Source budgets (lines): `src/history.ts` 250, `src/control.ts` 150, `src/gui.ts` +
 `src/net.ts` 320 together (300 until 0.5.0, raised for the CSRF meta, the POST routing, and the remote access check),
-`src/remote.ts` 165, `src/pairing.ts` 60, `src/qr.ts` 140, `src/ask.ts` 80 (display only), `gui/ask.ts` 50, the rest of `src` 610 (540 until 0.5.0, raised for `herdrCall` and
-`/boss gui remote`), `gui/pair.ts` + `gui/post.ts` 50, `src/docs.ts` (document serving) 120;
-`gui/router.ts` 80, `gui/chat.ts` 250, `gui/markdown.ts` 180, `gui/views.ts` 245 and `gui/layer.ts` 165 (240 and 150 until 0.5.0's question
-panel and raising a dialog beneath), the overlay model 115 (110), the demo fixture 165 (160), `gui/composer.ts`
-125 (120 until 0.5.0, raised so a send in flight outlives a composer the route replaced), `gui/mirror.ts` 120, `gui/panels.ts` 150.
+`src/remote.ts` 185 (165 until 0.5.1: start times), `src/pairing.ts` 60, `src/qr.ts` 140, `src/ask.ts` 115 (display only; 80 until 0.5.1: the branch's path, a window that grows, and ask_user_question), `gui/ask.ts` 50, the rest of `src` 620 (540 until 0.5.0, raised for `herdrCall` and
+`/boss gui remote`; 610 until 0.5.1: a join retry that follows its tab), `gui/pair.ts` + `gui/post.ts` 50, `src/docs.ts` (document serving) 120;
+`gui/router.ts` 80, `gui/chat.ts` 250, `gui/markdown.ts` 180, `gui/views.ts` 245 and `gui/layer.ts` 175 (240 and 150 until 0.5.0's question
+panel and raising a dialog beneath; 165 until 0.5.1), the overlay model 125 (115 until 0.5.1; 110), the demo fixture 165 (160), `gui/composer.ts`
+165 (120 until 0.5.0, raised so a send in flight outlives a composer the route replaced; 125 until 0.5.1, raised for the note a send leaves), `gui/mirror.ts` 120, `gui/panels.ts` 150.
 
 ## Failure behavior
 
@@ -784,3 +787,23 @@ The focus views follow the map's game language (user: 「我們一開始的設�
 0.5.0 (user, 2026-10-17): remote access over Tailscale with a QR code and phone layouts, as in [Remote access](#remote-access-over-tailscale-r6), including the pairing panel's c and o keys, each minting a fresh one-time link. Also in 0.5.0, after review in gui:dev: a dialog the user is reading is never covered by one they did not open (it goes beneath); the net log folds and stays small on a phone; and a pending `ask_user` is shown read-only (answering it from the browser was tried and deferred, see [Showing `ask_user`](#showing-ask_user-050-answering-deferred)).
 
 D1 (b), D2 merge, D3 keystrokes plus an upstream proposal, D4 the GUI renders show_doc, D5 allowed with confirms, D6 server stays in the session, D8 own renderer, D9 later, D10 shown with a divider: all as recommended. D7: a pi-herdr-agents subagent is typed into directly, like any session; no note and no routing through its parent or a coordinator.
+
+## 0.5.1 follow-ups
+
+Fixes for what the reviews of 0.4.1 and 0.5.0 left open (user, 2026-10-17). No new behavior beyond what is listed.
+
+| # | Change | Test |
+|---|---|---|
+| 1 | A join that failed after registering and retries when the session's tab moved registers on the tab it is in now (it used to reuse the first tab's channel, so the session could become a second main there). A tab left behind stays registered (intercom has no unregister): if this session owns that channel it still decides that tab's claims (so its members can promote), and nothing else it says reaches this session; coming back to a tab reuses its channel. | `tests/net.test.ts` (tab moved); live: 0.5.0 gave two mains, 0.5.1 one |
+| 2 | `subagent_resume` promotes like `subagent`, under the same rules (a live main is never taken over). | `tests/promote.test.ts`; live |
+| 3 | Two non-owner members promoting at once leave exactly one main; a session entry saved by 0.4.0 (`asked`, then `joined`) joins as a member and never takes over a live main. | `tests/net.test.ts` |
+| 4 | The dashboard matches a subagent's pane by the file name pi-herdr-agents gives it, `<timestamp>_<id>-<hex>-<hex>-<hex>.jsonl` (the random suffix is part of the real name, so a bare `_<id>.jsonl` match found no real subagent; the review caught it), so `kid` does not match `kid-2` or `kidney`. | `tests/dashboard.test.ts` |
+| 5 | The "+N queued" count: see Queue count in the overlay rules. | `tests/overlay.test.ts` (tally); live |
+| 6 | A dialog whose unit left the net is marked gone, without actions. | `tests/overlay.test.ts`; live |
+| 7 | The page redraws its dialogs when the stream state changes, so Focus terminal is off at once while disconnected (the composer's Focus terminal too). | `tests/overlay.test.ts` (redraw), `tests/composer.test.ts`; live |
+| 8 | One Focus terminal in the session view: the question panel's; the composer's is hidden while a question shows. | `tests/composer.test.ts`; live |
+| 9 | Remote ownership: `remote.json` records the owner's PID and start time (`ps -o lstart=` read in the C locale and UTC, so processes with another LANG or TZ agree); a PID another process holds is not the owner. | `tests/remote.test.ts`; live with the real Tailscale: 0.5.0 refused with "Port 8443 already serves something else", 0.5.1 took the entry over, and an entry whose recorded process really runs was left alone |
+| 10 | Composer notes: a refusal while away, an edit of text that already went, no "your edits stayed" for an empty box; a plain-text note left by 0.5.0 still shows. | `tests/composer.test.ts` |
+| 11 | A-7: a click that really hit a control under a peeking strip stays that control's. | browser, six stacked dialogs (Phone button under the oldest strip kept its click; a click on the bare HUD bar under a strip raised it) |
+| 12 | F-5: the pending call is the newest unanswered one on the current branch (the path from the file's last entry through `parentId`); a call past the 256 KB window is read from further back (to 16 MB) and shown clipped; past that it says it is too long. A file whose entries loop through `parentId` reads as undecided. | `tests/ask.test.ts` |
+| 13 | `ask_user_question` (above): the pending display reads both question tools; the chat's call line reads `question (+N more)`. | `tests/ask.test.ts`, `tests/items.test.ts`; live |

@@ -12,7 +12,7 @@ import { headOf, type HerdrRun, isSub, type Pane, panes, parentOf, type Session,
 //  - `herdr pane list`: per pane the `sb_role` token (main, member), the pi session file, and Herdr's agent_status
 //    (blocked means the agent waits on a question); `herdr workspace list`: workspace status, `tower` token, worktree.
 //  - pi-herdr-agents subagents: a child's activity file lives at <sessions dir>/artifacts/<parent session id>/
-//    subagent-activity/<child id>.json, and its pane's session file name starts with `<timestamp>_<child id>`.
+//    subagent-activity/<child id>.json, and its pane's session file is named `<timestamp>_<child id>-<8 hex>-<8 hex>-<4 hex>.jsonl` (pi-herdr-agents makes it so).
 //    The parent pane's own session file names the artifacts directory, so children group under the session that launched them.
 
 export type Mark = "working" | "waiting" | "idle" | "done" | "error" | "unknown";
@@ -65,6 +65,9 @@ export function render({ title, mark, head, rows }: Snapshot, frame: number, wid
 	return [paint("border", "╭─") + name + paint("border", dashes) + tag + paint("border", "─╮"), ...body.map(frameLine), paint("border", `╰${"─".repeat(total - 2)}╯`)].map((l) => truncateToWidth(l, width));
 }
 
+/** Whether a session file is the child `id`'s: pi-herdr-agents names it `<timestamp>_<id>-<hex>-<hex>-<hex>.jsonl`, so `kid` does not match `kid-2`'s or `kidney`'s. */
+const ownFile = (file: string | undefined, id: string) => new RegExp(`_${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(-[0-9a-f]{1,8}-[0-9a-f]{1,8}-[0-9a-f]{1,4})?\\.jsonl$`).test(file ?? "");
+
 function readJson(path: string): Record<string, unknown> {
 	try {
 		return JSON.parse(readFileSync(path, "utf8"));
@@ -86,7 +89,7 @@ export function subagents(parent: Pane | undefined, all: Pane[], now: number): R
 		.map((name) => {
 			const id = name.replace(/\.json$/, "");
 			const path = join(dir, "subagent-activity", name);
-			return { id, path, pane: all.find((p) => p.agent_session?.value.includes(`_${id}`)), age: now - statSync(path).mtimeMs };
+			return { id, path, pane: all.find((p) => ownFile(p.agent_session?.value, id)), age: now - statSync(path).mtimeMs };
 		})
 		.filter((c) => c.pane || c.age < RECENT_MS)
 		.map(({ id, path, pane }) => {

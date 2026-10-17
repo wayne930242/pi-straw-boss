@@ -5,7 +5,7 @@ import type { Net, Unit } from "../src/net.ts";
 // Spots the units that need the user in each snapshot of the net. It is all the alert code the map's chunk carries: the queue, the
 // dialogs, and the HUD alert load with the overlay layer (overlay.ts, layer.ts) once the first alert arrives.
 
-export interface Alert { key: string; ws: string; name: string; role: string; mark: Mark; note?: string; at: number; pending?: Pending }
+export interface Alert { key: string; ws: string; name: string; role: string; mark: Mark; note?: string; at: number; pending?: Pending; gone?: boolean }
 /** Questions and errors outrank plain state changes. */
 export const rankOf = (m: Mark) => (m === "waiting" || m === "error" ? 0 : 1);
 

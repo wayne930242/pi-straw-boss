@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { after, mock, test } from "node:test";
 import { startGui, type Gui } from "../src/gui.ts";
 import type { Found } from "../src/net.ts";
-import { createAccess, identity, PORT, type Run, serveOff, serveOn, switchRemote } from "../src/remote.ts";
+import { createAccess, identity, PORT, type Run, runs, serveOff, serveOn, startOf, switchRemote } from "../src/remote.ts";
 import { copyText } from "../src/pairing.ts";
 import { until } from "./fakes.ts";
 
@@ -188,7 +188,7 @@ test("switchRemote turns the entry on with a QR and records it, and off removes 
 	const on = await switchRemote(gui, true, dir, ts.run);
 	assert.match(on.text, /Remote access is on for me@example.com, tailnet only/);
 	assert.ok(on.lines!.length > 20 && on.lines!.some((l) => l.includes("█")), "a QR to scan");
-	assert.deepEqual(JSON.parse(readFileSync(join(dir, "remote.json"), "utf8")), { target: "http://127.0.0.1:5000", pid: process.pid });
+	assert.deepEqual(JSON.parse(readFileSync(join(dir, "remote.json"), "utf8")), { target: "http://127.0.0.1:5000", pid: process.pid, started: startOf(process.pid) });
 	assert.deepEqual(gui.access.remote, { host: HOST, login: LOGIN });
 	const off = await switchRemote(gui, false, dir, ts.run);
 	assert.deepEqual([off.changed, gui.access.remote, existsSync(join(dir, "remote.json"))], [true, undefined, false]);
@@ -201,6 +201,55 @@ test("switchRemote turns the entry on with a QR and records it, and off removes 
 	const missing: Run = async () => Promise.reject(new Error("Tailscale is not installed (no tailscale command on PATH)"));
 	await assert.rejects(switchRemote(gui, true, dir, missing), /not installed/);
 	assert.equal(gui.access.remote, undefined);
+});
+
+test("a recorded server counts as running only when its PID is alive and that process is the one that wrote the entry", () => {
+	const at = Date.parse("Sat Oct 17 22:00:00 2026 UTC"), same = () => "Sat Oct 17 21:00:00 2026";
+	assert.equal(runs({ pid: process.pid, started: "Sat Oct 17 21:00:00 2026" }, at, same), true, "same PID, same start time");
+	assert.equal(runs({ pid: process.pid, started: "Sat Oct 17 21:00:00 2026" }, at, () => "Sat Oct 17 23:30:00 2026"), false, "the PID went to a process that started later");
+	assert.equal(runs({ pid: 2 ** 22 + 1, started: "x" }, at, same), false, "no such process");
+	assert.equal(runs({ started: "x" }, at, same), false, "no PID");
+	assert.equal(runs({ pid: process.pid }, at, () => "Sat Oct 17 21:00:00 2026"), true, "an entry from before start times: the process is older than the file");
+	assert.equal(runs({ pid: process.pid }, at, () => "Sat Oct 17 22:30:00 2026"), false, "an entry from before start times: the process started after the file was written, so it did not write it");
+	assert.equal(runs({ pid: process.pid, started: "x" }, at, () => undefined), true, "ps cannot say: another live server's entry is not taken for stale");
+	assert.match(startOf(process.pid) ?? "", /\d{4}$/, "ps names this process's start time");
+	// Two pi processes with another LANG or TZ write and read the same text, so a live server's entry is not taken for a crashed one's.
+	const [lc, tz] = [process.env.LC_ALL, process.env.TZ], here = startOf(process.pid);
+	try {
+		Object.assign(process.env, { LC_ALL: "zh_TW.UTF-8", TZ: "Asia/Taipei" });
+		assert.equal(startOf(process.pid), here, "the recorded start time does not depend on the reader's locale or time zone");
+		assert.equal(runs({ pid: process.pid, started: here }, at, startOf), true);
+	} finally {
+		for (const [key, value] of [["LC_ALL", lc], ["TZ", tz]] as const) value === undefined ? delete process.env[key] : (process.env[key] = value);
+	}
+	assert.equal(runs({ pid: process.pid }, Date.now() - 3600_000, () => "Sat Oct 17 21:00:00 2026"), false, "an older-format entry: the process started after the file (read as UTC) was written");
+	assert.equal(startOf(2 ** 22 + 1), undefined);
+});
+
+test("an entry whose server crashed and whose PID another process now holds is taken over, while the entry of a server that really runs stays", async () => {
+	const dir = join(scratch, "reused");
+	mkdirSync(dir, { recursive: true });
+	const gui = { port: 5000, token: "t".repeat(32), access: createAccess("t".repeat(32)) }, old = "http://127.0.0.1:4000";
+	const record = (started?: string) => writeFileSync(join(dir, "remote.json"), JSON.stringify({ target: old, pid: process.ppid, started }));
+	// The recorded PID is alive (the test runner's parent) but it is another process than the crashed server was.
+	record("Mon Jan  1 00:00:00 2001");
+	const crashed = fakeTailscale({ ...theirs, ...entry(old) });
+	await switchRemote(gui, true, dir, crashed.run);
+	assert.equal(JSON.stringify(crashed.config()).includes("127.0.0.1:5000"), true, "remote came on over the leftover entry");
+	assert.equal(JSON.stringify(crashed.config()).includes("127.0.0.1:4000"), false);
+	gui.access.disable();
+	record("Mon Jan  1 00:00:00 2001");
+	const cleaned = fakeTailscale({ ...theirs, ...entry(old) });
+	assert.equal((await switchRemote(gui, false, dir, cleaned.run)).changed, true);
+	assert.deepEqual(cleaned.config(), theirs, "off removes the crashed server's leftover entry and nothing else");
+	// The same PID with the start time the live process really has: that server runs, its entry is not ours.
+	record(startOf(process.ppid));
+	const live = fakeTailscale({ ...theirs, ...entry(old) });
+	await assert.rejects(switchRemote(gui, true, dir, live.run), /already serves something else/);
+	assert.deepEqual(live.changes(), [], "nothing was changed");
+	assert.equal(gui.access.remote, undefined);
+	assert.deepEqual((await switchRemote(gui, false, dir, live.run)).changed, false, "remote off finds nothing of its own to remove");
+	assert.equal(JSON.stringify(live.config()).includes("127.0.0.1:4000"), true, "turning remote off here leaves a live server's entry alone");
 });
 
 test("copying with a clipboard command that is missing rejects with the reason and leaves the process running", async () => {

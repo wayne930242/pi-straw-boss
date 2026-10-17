@@ -37,6 +37,20 @@ test("a member whose tab already has a main is not promoted by a subagent call, 
 	assert.deepEqual(b.notices, [], "a refusal is silent for the automatic path");
 });
 
+test("resuming a subagent promotes like dispatching one, and a tab that has a main refuses it the same way", async () => {
+	const a = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1" });
+	const b = world.agent({ id: "b", pane: "wA:p2", tab: "wA:t1" });
+	await Promise.all([a.start(), b.start()]);
+	await a.toolCall("subagent_resume");
+	assert.deepEqual([a.tokens, b.tokens], [{ sb_role: "main" }, { sb_role: "member" }]);
+	await b.toolCall("subagent_resume");
+	assert.deepEqual([a.tokens, b.tokens], [{ sb_role: "main" }, { sb_role: "member" }], "a live main is never taken over");
+	assert.deepEqual(b.notices, []);
+	await a.toolCall("subagent_send");
+	await b.toolCall("subagents_list");
+	assert.equal(b.tokens.sb_role, "member", "only subagent and subagent_resume promote");
+});
+
 test("each tab has its own main: members of two tabs both promote, and they share one tower in the workspace", async () => {
 	world.autoTowers();
 	const a = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1", deps: tower });

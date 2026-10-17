@@ -49,7 +49,9 @@ test("the TypeScript source stays within its size budgets", () => {
 	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 320, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
 	// Input (the spec's figure), remote access over Tailscale, its terminal pairing panel (QR, c copies, o opens), and the QR encoder each have their own.
 	// What a waiting session waits on (0.5.0, read for display only; answering is deferred) has its own as well.
-	for (const [name, max] of [["control.ts", 150], ["remote.ts", 165], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 80]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
+	// 0.5.1 raised remote.ts from 165 to 185 (a recorded server counts as running only if its process started when the entry says: a reused PID
+	// is not the owner) and ask.ts from 80 to 115 (the current branch's path instead of a line scan, a window that grows for a long call, and ask_user_question's list of questions).
+	for (const [name, max] of [["control.ts", 150], ["remote.ts", 185], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 115]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
 	assert.ok(count("src/history.ts") <= 250, `src/history.ts has ${count("src/history.ts")} lines`);
 	// The item mapping and the stream glue came out of the reader to keep it within its budget; the spec sets no figure for them.
 	assert.ok(count("src/items.ts") <= 100, `src/items.ts has ${count("src/items.ts")} lines`);
@@ -58,19 +60,23 @@ test("the TypeScript source stays within its size budgets", () => {
 	assert.ok(count("src/balance.ts") + count("src/balance.mjs") <= 220, "src/balance.ts and src/balance.mjs stay small");
 	const apart = ["dashboard.ts", "net.ts", "gui.ts", "history.ts", "items.ts", "watch.ts", "balance.ts", "control.ts", "remote.ts", "pairing.ts", "qr.ts", "ask.ts"];
 	const rest = sum("src", names("src").filter((name) => !apart.includes(name)));
-	// 0.4.1 raised it from 540 to 575 for claiming and promotion; 0.5.0 to 610 for herdrCall (Herdr's answers with their error codes, spec task 4) and the /boss gui remote command.
-	assert.ok(rest <= 610, `the rest of src has ${rest} lines`);
+	// 0.4.1 raised it from 540 to 575 for claiming and promotion; 0.5.0 to 610 for herdrCall (Herdr's answers with their error codes, spec task 4) and the /boss gui remote command;
+	// 0.5.1 to 620 for a join retry that follows its session to another tab.
+	assert.ok(rest <= 620, `the rest of src has ${rest} lines`);
 	// The page: the files the spec budgets one by one, then this round's own figures (no figure in the spec): the focus views, the overlay
 	// layer (alert spotting and the stack model in the map's chunk, the layer's DOM and tiles in a chunk of their own), the dev-only demo, and everything else.
-	for (const [name, max] of [["router.ts", 80], ["chat.ts", 250], ["markdown.ts", 180], ["views.ts", 245], ["layer.ts", 165], ["composer.ts", 125], ["ask.ts", 50]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
+	for (const [name, max] of [["router.ts", 80], ["chat.ts", 250], ["markdown.ts", 180], ["views.ts", 245], ["layer.ts", 175], ["composer.ts", 165], ["ask.ts", 50]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
 	// 0.5.0 raised views.ts from 240 to 245 and layer.ts from 150 to 165 for the read-only question panel (gui/ask.ts) in the session view and
 	// in alert dialogs, and layer.ts also for raising a dialog that peeks out beneath the top one.
-	// The composer's figure was the spec's 120; 0.5.0 raised it to 125 so a send in flight outlives a composer the route replaced (review R-1).
+	// The composer's figure was the spec's 120; 0.5.0 raised it to 125 so a send in flight outlives a composer the route replaced (review R-1);
+	// 0.5.1 to 165 for the note a send leaves when no composer is there to say it (a refusal's reason, an edit of text that already went) and the three pure rules around it.
+	// 0.5.1 raised layer.ts from 165 to 175: dialogs of units that left the net, one queue count in the header and every dialog, a click that really hit a control.
 	// The comms log's scroll rules (pinned to the end, reaching an anchor) are pure and live beside it.
 	assert.ok(count("gui/follow.ts") <= 50, `gui/follow.ts has ${count("gui/follow.ts")} lines`);
 	const overlay = sum("gui", ["alerts.ts", "overlay.ts"]);
-	// 0.5.0 raised it from 110 to 115: dialogs the user did not open go beneath the top one, and alerts carry the question.
-	assert.ok(overlay <= 115, `the overlay model has ${overlay} lines`);
+	// 0.5.0 raised it from 110 to 115: dialogs the user did not open go beneath the top one, and alerts carry the question;
+	// 0.5.1 to 125 for the queue count in words, a dialog whose unit left the net, and redraw.
+	assert.ok(overlay <= 125, `the overlay model has ${overlay} lines`);
 	const demo = sum("gui", ["fixture.ts", "demo-chat.ts"]);
 	// 0.5.0 raised it from 160 to 165 for a demo question and a demo secret.
 	assert.ok(demo <= 165, `the demo fixture has ${demo} lines`);
@@ -100,10 +106,11 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	const total = (list: string[], measure: (name: string) => number) => list.reduce((sum, name) => sum + measure(name), 0);
 	assert.ok(size(entry).length <= 15_000 && gz(entry) <= 6_000, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
-	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 35_000 && total(chunks, gz) <= 15_500, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
+	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 36_500 && total(chunks, gz) <= 16_200, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
-	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone.
-	assert.ok(total(css, (n) => size(n).length) <= 26_000 && total(css, gz) <= 7_000, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
+	assert.ok(total(css, (n) => size(n).length) <= 26_500 && total(css, gz) <= 7_000, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });

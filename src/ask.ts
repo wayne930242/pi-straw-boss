@@ -2,16 +2,18 @@ import { open, stat } from "node:fs/promises";
 import { type Json, parse } from "./items.ts";
 import type { Net } from "./net.ts";
 
-// What a waiting session waits on, for display only: its newest assistant message's one tool call with no result yet, read from the end of
+// What a waiting session waits on, for display only: the current branch's newest assistant message's tool call with no result yet, read from the end of
 // its session file. The snapshot carries it so the alert and the session view can show an ask_user question (its context and options);
 // the user answers it in the terminal. Nothing here sends anything: answering from the browser is deferred (see the spec, "Pending dialogs").
+// Two tools are read: pi-ask-user's `ask_user` (one question with a context) and @juicesharp/rpiv-ask-user-question's `ask_user_question` (one to four questions
+// with a header, options with descriptions, and a multi-select flag; no context). Older session files hold the first, new ones the second.
 
-const TAIL = 262_144, CACHE = new Map<string, { sig: string; pending?: Pending }>();
+const TAIL = 262_144, LIMIT = 16_777_216, CACHE = new Map<string, { sig: string; pending?: Pending }>();
 export interface Option { title: string; description?: string }
-/** `multiple`: it takes several choices; `freeform`: it takes the user's own words. */
-export interface Ask { question: string; context?: string; options: Option[]; multiple: boolean; freeform: boolean }
-/** What a waiting session waits on: the question when it is one ask_user question, else `why` there is nothing to show. */
-export interface Pending { callId: string; tool: string; ask?: Ask; why?: string }
+/** `multiple`: it takes several choices; `freeform`: it takes the user's own words; `header`: the short tag ask_user_question gives a question. */
+export interface Ask { question: string; header?: string; context?: string; options: Option[]; multiple: boolean; freeform: boolean }
+/** What a waiting session waits on: `ask` for one question, `asks` for two to four (ask_user_question), else `why` there is nothing to show. */
+export interface Pending { callId: string; tool: string; ask?: Ask; asks?: Ask[]; why?: string }
 interface Call { id: string; name: string; args: Json }
 
 const clip = (v: unknown, n: number) => String(v ?? "").slice(0, n);
@@ -23,23 +25,46 @@ const option = (o: unknown): Option | undefined => {
 	return title ? { title: clip(title.trim(), 200), ...(typeof r.description === "string" && r.description.trim() ? { description: clip(r.description, 600) } : {}) } : undefined;
 };
 
-/** The unanswered tool calls of the newest assistant message, read from the file's last 256 KB; none once a user message follows it. */
-export async function openCalls(file: string): Promise<Call[]> {
+/**
+ * The unanswered tool calls of the current branch's newest assistant message, none once a user message follows it. The branch is the path
+ * from the file's last entry up through parentId (pi's own rule, as history.ts reads it), so a branch left behind never shows. The window is
+ * the file's last 256 KB; when the path leaves it before reaching a decisive entry (one very long call), the window grows to `LIMIT`, and
+ * past that the answer is "cut".
+ */
+export async function openCalls(file: string): Promise<Call[] | "cut"> {
 	const fh = await open(file, "r");
 	try {
-		const { size } = await fh.stat(), start = Math.max(0, size - TAIL), buf = Buffer.alloc(size - start);
-		await fh.read(buf, 0, buf.length, start);
-		const answered = new Set<string>();
-		for (const line of buf.toString("utf8").split("\n").slice(start ? 1 : 0).reverse()) {
-			const m = line.includes('"message"') ? parse(line)?.message : undefined;
-			if (m?.role === "toolResult") answered.add(String(m.toolCallId));
-			if (m?.role === "user") return [];
-			if (m?.role === "assistant") return (Array.isArray(m.content) ? m.content : []).filter((b: Json) => b?.type === "toolCall" && !answered.has(String(b.id))).map((b: Json) => ({ id: String(b.id), name: String(b.name), args: b.arguments ?? {} }));
+		const { size } = await fh.stat();
+		for (let span = TAIL; ; span *= 4) {
+			const start = Math.max(0, size - span), buf = Buffer.alloc(size - start);
+			await fh.read(buf, 0, buf.length, start);
+			const found = walk(buf.toString("utf8").split("\n").slice(start ? 1 : 0), start > 0);
+			if (found !== "cut" || span >= LIMIT) return found;
 		}
-		return [];
 	} finally {
 		await fh.close();
 	}
+}
+const LINK = /"id":"([^"]+)","parentId":(?:null|"([^"]*)")/;
+function walk(lines: string[], partial: boolean): Call[] | "cut" {
+	const entries = new Map<string, { parent?: string; m?: Json }>();
+	let leaf: string | undefined;
+	for (const line of lines) {
+		const link = LINK.exec(line.slice(0, 300)) ?? LINK.exec(line.slice(-200));
+		if (!link) continue;
+		leaf = link[1]!;
+		entries.set(leaf, { parent: link[2], m: line.includes('"message"') ? parse(line)?.message : undefined });
+	}
+	const answered = new Set<string>();
+	for (let at = leaf, steps = 0; at && steps++ <= entries.size; at = entries.get(at)!.parent) { // a path longer than the file has a cycle: nothing decisive
+		const e = entries.get(at);
+		if (!e) return partial ? "cut" : [];
+		const m = e.m;
+		if (m?.role === "toolResult") answered.add(String(m.toolCallId));
+		if (m?.role === "user") return [];
+		if (m?.role === "assistant") return (Array.isArray(m.content) ? m.content : []).filter((b: Json) => b?.type === "toolCall" && !answered.has(String(b.id))).map((b: Json) => ({ id: String(b.id), name: String(b.name), args: b.arguments ?? {} }));
+	}
+	return partial && !leaf ? "cut" : [];
 }
 
 /** The question to show, or why there is none. Shown as plain text; the page never turns it into markup. */
@@ -51,13 +76,24 @@ export function askOf(a: Json): { ask: Ask } | { why: string } {
 	return { ask: { question: clip(a.question, 2000), ...(context && { context }), options, multiple: a.allowMultiple === true, freeform: !options.length || a.allowFreeform !== false } };
 }
 
+/** ask_user_question's questions: one reads like an ask_user question, two to four come as a list; "Type something." is always offered, so its own words are always taken. */
+export function questionsOf(a: Json): { ask: Ask } | { asks: Ask[] } | { why: string } {
+	const asks: Ask[] = [];
+	for (const q of (Array.isArray(a.questions) ? a.questions : []).slice(0, 4)) {
+		if (typeof q?.question !== "string" || !q.question.trim()) return { why: "Its question could not be read." };
+		const options = (Array.isArray(q.options) ? q.options : []).map(option).filter((o: Option | undefined): o is Option => Boolean(o)).slice(0, 50);
+		asks.push({ question: clip(q.question, 2000), ...(typeof q.header === "string" && q.header.trim() ? { header: clip(q.header.trim(), 40) } : {}), options, multiple: q.multiSelect === true, freeform: true });
+	}
+	return asks.length === 1 ? { ask: asks[0]! } : asks.length ? { asks } : { why: "Its question could not be read." };
+}
+
 /** What a waiting session waits on, for the snapshot; cached while the file is unchanged. */
 export async function pendingOf(file: string): Promise<Pending | undefined> {
 	const s = await stat(file).catch(() => undefined), sig = s ? `${s.size}:${s.mtimeMs}` : "", hit = CACHE.get(file);
 	if (hit?.sig === sig) return hit.pending;
-	const calls = s ? await openCalls(file).catch(() => []) : [], [c] = calls;
-	const shape = c?.name === "ask_user" ? askOf(c.args) : { why: c?.name === "secret_drop" ? "It waits for a secret." : "It waits on a dialog." };
-	const pending = c && { callId: c.id, tool: c.name, ...(calls.length > 1 ? { why: "It waits on more than one dialog." } : shape) };
+	const found = s ? await openCalls(file).catch(() => []) : [], calls = found === "cut" ? [] : found, [c] = calls;
+	const shape = c?.name === "ask_user" ? askOf(c.args) : c?.name === "ask_user_question" ? questionsOf(c.args) : { why: c?.name === "secret_drop" ? "It waits for a secret." : "It waits on a dialog." };
+	const pending = found === "cut" ? { callId: `cut:${sig}`, tool: "dialog", why: "Its call is too long to read here." } : c && { callId: c.id, tool: c.name, ...(calls.length > 1 ? { why: "It waits on more than one dialog." } : shape) };
 	CACHE.set(file, { sig, pending });
 	if (CACHE.size > 64) CACHE.delete(CACHE.keys().next().value!);
 	return pending;

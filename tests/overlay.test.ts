@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { Mark } from "../src/dashboard.ts";
 import type { Net } from "../src/net.ts";
 import { type Alert, alertsOf, arrivals } from "../gui/alerts.ts";
-import { createStack } from "../gui/overlay.ts";
+import { createStack, tally } from "../gui/overlay.ts";
 import { createTiles, intel, MAX_TILES, type Tile } from "../gui/layer.ts";
 
 const alert = (key: string, mark: Mark, at: number): Alert => ({ key, ws: "w1", name: key, role: "main", mark, at });
@@ -220,4 +220,48 @@ test("an alert carries the question its unit waits on, and an open dialog drops 
 	const now = alertsOf(net("working"), 2);
 	stack.prune((key) => now.get(key));
 	assert.equal(stack.open[0]!.pending, undefined, "the refreshed dialog no longer shows the question");
+});
+
+test("the queue count says what is in it: one session waiting beside a unit that only finished reads as 1 needs you and 1 finished, never as two questions", () => {
+	const { page, stack } = harness();
+	const queue = () => stack.queue;
+	// The live check: a dialog is open for one session, another asks a question, and a subagent finished earlier.
+	stack.arrive(alert("scout", "done", 1));
+	stack.show(alert("p2", "waiting", 2));
+	stack.arrive(alert("p1", "waiting", 3));
+	assert.deepEqual(page.queued, ["p1", "scout"]);
+	assert.equal(tally(queue()), "1 needs you · 1 finished");
+	assert.equal(tally(queue().slice(0, 1)), "1 needs you");
+	assert.equal(tally(queue().slice(1)), "1 finished");
+	assert.equal(tally([alert("a", "waiting", 1), alert("b", "error", 2), alert("c", "done", 3), alert("d", "done", 4)]), "2 need you · 2 finished");
+	assert.equal(tally([]), "");
+	// What the count promises is what the queue holds: every counted unit is a distinct alert that still shows its state, and none is the open dialog's own.
+	stack.prune((key) => ({ p1: alert("p1", "waiting", 3), p2: alert("p2", "waiting", 2), scout: alert("scout", "done", 1) })[key]);
+	assert.deepEqual(queue().map((a) => a.key), ["p1", "scout"]);
+	stack.prune((key) => ({ p2: alert("p2", "waiting", 2), scout: alert("scout", "done", 1) })[key]);
+	assert.equal(tally(queue()), "1 finished", "a question that was answered leaves the count at once");
+});
+
+test("a dialog whose unit left the net stays open without its question or actions, and shows the unit again if it comes back", () => {
+	const { page, stack } = harness();
+	const waiting = { ...alert("a", "waiting", 1), pending: { callId: "c1", tool: "ask_user", why: "It waits on a dialog." }, note: "waiting on a question" };
+	stack.show(waiting);
+	stack.prune(() => waiting);
+	assert.deepEqual([stack.open[0]!.gone, stack.open[0]!.mark, stack.open[0]!.pending?.callId], [undefined, "waiting", "c1"]);
+	stack.prune(() => undefined);
+	assert.deepEqual([page.shown, stack.open[0]!.gone, stack.open[0]!.mark, stack.open[0]!.pending, stack.open[0]!.note], [["a"], true, "unknown", undefined, undefined], "never closed under the user");
+	stack.prune(() => waiting);
+	assert.deepEqual([stack.open[0]!.gone, stack.open[0]!.mark, stack.open[0]!.pending?.callId], [undefined, "waiting", "c1"], "a unit that is back shows again");
+	stack.prune(() => undefined);
+	stack.close("later");
+	assert.deepEqual([page.shown, page.queued], [[], []], "Later on a gone unit does not put it back in the queue");
+});
+
+test("redraw draws the same models again, so the page can follow the stream state without waiting for a snapshot", () => {
+	let draws = 0;
+	const stack = createStack<string>({ render: () => draws++, enter() {}, focused: () => undefined, restore: () => true });
+	stack.show(alert("a", "waiting", 1));
+	const before = draws;
+	stack.redraw();
+	assert.equal(draws, before + 1);
 });

@@ -7,20 +7,41 @@ import { type Answer, post } from "./post.ts";
 // leading / or ! runs a pi or shell command. It lands after any unsent text in that terminal's editor and is submitted with it (D2). Commands
 // that end or replace the session ask first, and so does Stop; the server refuses them unconfirmed as well. Only text the server confirmed
 // Herdr took leaves the box (edits made meanwhile stay), and a send Herdr did not confirm is never retried. An IME's composing Enter is the
-// IME's; on a touch screen Enter adds a line and the Send button sends. The draft is kept per session for this tab.
+// IME's; on a touch screen Enter adds a line and the Send button sends. The draft is kept per session for this tab, and so is what the page could
+// not say when the answer came (the route had left, or the page reloaded): a refusal's reason, an unconfirmed send, an edit of text that already went.
 
 export const MAX_TEXT = 16_384;
 const UNSURE = "Not confirmed. Check the terminal before sending again.";
+const WENT = "The original already went to the session; what is here is your edited copy, unsent.";
+type Note = [tone: string, text: string];
 export const ENDING = /^\s*\/(quit|exit|new|resume|fork|clone|import|reload)(?=\s|$)/;
 export type Post = (action: "input" | "keys" | "focus", body: Record<string, unknown>) => Promise<Answer>;
 type Flight = { sent?: string; answer: Promise<Answer> };
 // Sends on their way, by session key. They outlive a composer replaced meanwhile (the route left and came back), whose successor waits for
 // them before it sends again and settles its own box, so text is neither shown as unsent after it went nor sent twice.
 const flights = new Map<string, Flight>();
-export interface Unit { name: string; control: boolean; live: boolean; mark: Mark; online: boolean }
+/** `asking`: its question panel is on the page and carries Focus terminal, so the composer does not. */
+export interface Unit { name: string; control: boolean; live: boolean; mark: Mark; online: boolean; asking?: boolean }
 
 /** The server's input API for one session. */
 export const postTo = (key: string): Post => (action, body) => post(`sessions/${encodeURIComponent(key)}/${action}`, body);
+/** The note an answer leaves for a composer that is not there to say it: a refusal's reason, an unconfirmed send, or an edit of text that already went. */
+export function aftermath(r: Answer, stored: string | undefined, sent: string): Note | undefined {
+	if (!r.ok) return ["error", r.status === 504 ? UNSURE : (r.body.reason ?? `Refused (${r.status}).`)];
+	if (stored && !stored.startsWith(sent)) return ["ok", WENT];
+}
+/** A stored note: ours is JSON [tone, text]; 0.5.0 stored the plain text of its note, shown as it is. */
+export const recall = (raw: string | null): Note | undefined => {
+	try {
+		return raw?.startsWith("[") ? (JSON.parse(raw) as Note) : raw ? ["error", raw] : undefined;
+	} catch {
+		return ["error", raw!];
+	}
+};
+/** What a mounted composer says once Herdr took `sent`; an empty box (the draft could not be stored) holds no edits. */
+export const confirmed = (box: string, sent: string) => (box !== "" && !box.startsWith(sent) ? "Sent as it was; your edits stayed here, unsent." : "Sent. It shows in the log once pi writes it.");
+/** Focus terminal: hidden when nothing live backs it or the question panel carries one, and not clickable while a request is on its way or the stream is down. */
+export const focusButton = (u: Unit, busy: boolean) => ({ hidden: !u.live || !u.control || Boolean(u.asking), disabled: busy || !u.online });
 /** What stays in the box once `sent` was accepted: what was typed after it, or everything when the sent part was edited meanwhile. */
 export const settle = (now: string, sent: string) => (now.startsWith(sent) ? now.slice(sent.length).replace(/^\n/, "") : now);
 /** Why nothing can be sent right now, or undefined. */
@@ -57,10 +78,20 @@ export function mountComposer(root: HTMLElement, key: string, post: Post) {
 		say(question, "ask", yes, no);
 		yes.focus();
 	};
+	const [noteKey, read] = [`${store}:note`, () => { try { return sessionStorage.getItem(store) ?? ""; } catch { return undefined; } }];
+	const stash = (n?: Note) => keep(() => (n ? sessionStorage.setItem(noteKey, JSON.stringify(n)) : sessionStorage.removeItem(noteKey)));
 	function call(action: "input" | "keys" | "focus", body: Record<string, unknown>, sent?: string) {
-		const flight = { sent, answer: post(action, body) }, note = (on: boolean) => keep(() => (on ? sessionStorage.setItem(`${store}:note`, UNSURE) : sessionStorage.removeItem(`${store}:note`)));
-		// The send settles the stored draft once, mounted composer or not; its note warns a page reloaded before Herdr answered, and stays on a timeout.
-		if (sent !== undefined) note(true), flights.set(key, flight), void flight.answer.then((r) => (r.ok && keep(() => sessionStorage.setItem(store, settle(sessionStorage.getItem(store) ?? "", sent))), note(r.status === 504)), () => note(true));
+		const flight = { sent, answer: post(action, body) };
+		// The send settles the stored draft once, mounted composer or not. Its note is written before the answer (a page reloaded before Herdr
+		// answered must warn) and after it (a refusal's reason, or an edit of the sent text, for a composer that is not there to say it).
+		if (sent !== undefined) {
+			stash(["error", UNSURE]), flights.set(key, flight);
+			void flight.answer.then((r) => {
+				const now = read();
+				if (r.ok && now !== undefined) keep(() => sessionStorage.setItem(store, settle(now, sent)));
+				stash(aftermath(r, now, sent));
+			}, () => stash(["error", UNSURE]));
+		}
 		return land(flight);
 	}
 	/** Waits for a send, this composer's or one a replaced composer started, and settles the box; a detached composer touches nothing. */
@@ -69,11 +100,12 @@ export function mountComposer(root: HTMLElement, key: string, post: Post) {
 		try {
 			const r = await flight.answer;
 			if (!form.isConnected) return;
-			if (!r.ok) return say(r.body.reason ?? `Refused (${r.status}).`, "error");
+			if (!r.ok) return (r.status === 504 || stash(), say(r.body.reason ?? `Refused (${r.status}).`, "error")); // shown here, so only an unconfirmed send keeps its note
 			if (sent === undefined) return say("");
-			const edited = !box.value.startsWith(sent);
+			stash();
+			const said = confirmed(box.value, sent);
 			(box.value = settle(box.value, sent)), save(), grow();
-			say(edited ? "Sent as it was; your edits stayed here, unsent." : "Sent. It shows in the log once pi writes it.", "ok");
+			say(said, "ok");
 		} catch {
 			say(UNSURE, "error");
 		} finally {
@@ -96,8 +128,8 @@ export function mountComposer(root: HTMLElement, key: string, post: Post) {
 		box.placeholder = why ?? `Message ${unit.name} · ${touch ? "" : "Enter sends, Shift+Enter adds a line · "}lands after any unsent text in its terminal`;
 		send.disabled = busy || Boolean(why);
 		follow.hidden = stop.hidden = !working || Boolean(why);
-		follow.disabled = stop.disabled = focus.disabled = busy;
-		focus.hidden = !unit.live || !unit.control;
+		follow.disabled = stop.disabled = busy;
+		Object.assign(focus, focusButton(unit, busy));
 	}
 	form.addEventListener("submit", (event) => (event.preventDefault(), submit("send")));
 	follow.onclick = () => submit("followUp");
@@ -120,6 +152,10 @@ export function mountComposer(root: HTMLElement, key: string, post: Post) {
 	if (vv) (vv.addEventListener("resize", fit), fit());
 	grow();
 	if (flights.has(key)) void land(flights.get(key)!);
-	else keep(() => (say(sessionStorage.getItem(`${store}:note`) ?? "", "error"), sessionStorage.removeItem(`${store}:note`)));
+	else keep(() => {
+		const kept = recall(sessionStorage.getItem(noteKey));
+		sessionStorage.removeItem(noteKey);
+		if (kept) say(kept[1], kept[0]);
+	});
 	return { box, update: (next: Unit) => ((unit = next), draw()), ready: () => !blocked(unit) };
 }

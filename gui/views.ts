@@ -170,7 +170,7 @@ export function mountFocus({ data, restart, openTile, online }: FocusDeps) {
 			text(chan, "b", open ? "channel open" : state === "recent" ? "channel closed" : "no channel");
 		}
 		chat?.setLive(m === "working" ? `${doing(u!.note, m)}` : urgent(m) ? LABEL[m] : "", m);
-		composer?.update({ name: u?.name ?? info?.name ?? route.key, control: Boolean(u?.control), live: state ? state === "live" : Boolean(u), mark: m, online: online() });
+		composer?.update({ name: u?.name ?? info?.name ?? route.key, control: Boolean(u?.control), live: state ? state === "live" : Boolean(u), mark: m, online: online(), asking: Boolean(u?.pending) });
 		asker?.update(u?.pending, m === "waiting" && Boolean(u?.control) && online()); // its question, read-only above the composer
 	}
 	/** Focus that fell to the page (the dialog that opened this route closed, its link gone) lands in the comms: the box, or the log on a touch screen. */

@@ -356,10 +356,13 @@ summary::-webkit-details-marker { display: none; }
 .intel h4 { margin-bottom: 4px; }
 .said { font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
 .pending { margin-top: 8px; color: var(--c); font: 12px var(--mono); overflow-wrap: anywhere; }
-.dialog footer { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+.dialog footer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; }
 /* A unit's question (ask_user), read-only: answered in the terminal. Amber, a thin ring all round, like a waiting unit. */
 .ask { display: grid; gap: 8px; margin: 10px 18px 0; padding: 12px 14px; border-radius: 14px; border: 1px solid #ffb02e59; background: #ffb02e0f; }
 .dialog .ask { margin: 10px 0 0; }
+.ask-one { display: grid; gap: 8px; } .ask-one + .ask-one { margin-top: 8px; }
+.ask-head { justify-self: start; padding: 1px 9px; border-radius: 999px; background: #ffb02e24; color: var(--gold); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; }
+.ask-how { color: var(--dim); font-size: 12px; }
 .ask-q { font-weight: 600; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ask-ctx, .ask-why { color: var(--dim); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 9em; overflow: auto; }
 .ask-opts { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; counter-reset: opt; max-height: 16em; overflow: auto; }
@@ -375,7 +378,7 @@ summary::-webkit-details-marker { display: none; }
 .go, .chat-pill { background: var(--c); color: #06101e; }
 .cmp-send { border: 0; background: #38e0ff; color: #06101e; }
 .later, .cmp-alt { border: 1px solid var(--line); background: none; color: var(--text); }
-.queued { margin-left: auto; }
+.queued { flex: 1 0 100%; color: var(--dim); font-size: 12px; } .queued:empty { display: none; }
 
 html.paused *, html.paused *::before, html.paused *::after { animation-play-state: paused !important; }
 @media (max-width: 1100px) { .stage { grid-template-columns: 1fr; } .side { position: static; } .stats { display: none; } }

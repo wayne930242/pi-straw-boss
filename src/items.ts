@@ -36,6 +36,7 @@ function toolLine(name: string, a: Json): string {
 		case "subagent": case "subagent_resume": return [a.name, a.agent].filter(Boolean).join(" · ");
 		case "intercom": return [a.action, a.to, first(a.message, 80)].filter(Boolean).join(" ");
 		case "ask_user": return first(a.question ?? a.questions?.[0]?.question);
+		case "ask_user_question": return first(a.questions?.[0]?.question) + (a.questions?.length > 1 ? ` (+${a.questions.length - 1} more)` : "");
 		case "show_doc": return first([a.paths].flat().join(", "));
 		case "todo": return [a.action, first(a.subject ?? a.id, 80)].filter(Boolean).join(" ");
 		case "MonitorCreate": return first(a.description ?? a.command);

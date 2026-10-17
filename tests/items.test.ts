@@ -17,12 +17,12 @@ test("an assistant message has markdown text, thinking as a size, one summary li
 	const a = item(assistant("a1", "u1", [
 		{ type: "thinking", thinking: "let me think", thinkingSignature: "sig" }, text("Done."),
 		call("t1", "bash", { command: "git status\nsecond line" }), call("t2", "read", { path: "/a/b.ts" }), call("t3", "edit", { path: "/a/c.ts", edits: [] }),
-		call("t4", "subagent", { name: "lint", agent: "worker" }), call("t5", "intercom", { action: "send", to: "main", message: "hi\nthere" }), call("t6", "ask_user", { questions: [{ question: "Which?" }] }),
+		call("t4", "subagent", { name: "lint", agent: "worker" }), call("t5", "intercom", { action: "send", to: "main", message: "hi\nthere" }), call("t6", "ask_user", { questions: [{ question: "Which?" }] }), call("t11", "ask_user_question", { questions: [{ question: "Which lib?" }, { question: "Which tz?" }, { question: "Which locale?" }] }), call("t12", "ask_user_question", { questions: [{ question: "Only one?" }] }),
 		call("t7", "show_doc", { paths: ["/a/x.html", "/a/y.md"] }), call("t8", "todo", { action: "create", subject: "write tests" }), call("t9", "MonitorCreate", { description: "wait for deploy", command: "x" }), call("t10", "mystery", { first: "arg", second: 2 }),
 	], { stopReason: "toolUse" })) as Item;
 	assert.deepEqual([a.kind, a.text, a.thought, a.model, a.ctx, a.stop], ["assistant", "Done.", 12, "m-1", 1234, undefined]);
 	assert.deepEqual(a.tools!.map((t) => [t.name, t.summary]), [
-		["bash", "git status"], ["read", "/a/b.ts"], ["edit", "/a/c.ts"], ["subagent", "lint · worker"], ["intercom", "send main hi"], ["ask_user", "Which?"],
+		["bash", "git status"], ["read", "/a/b.ts"], ["edit", "/a/c.ts"], ["subagent", "lint · worker"], ["intercom", "send main hi"], ["ask_user", "Which?"], ["ask_user_question", "Which lib? (+2 more)"], ["ask_user_question", "Only one?"],
 		["show_doc", "/a/x.html, /a/y.md"], ["todo", "create write tests"], ["MonitorCreate", "wait for deploy"], ["mystery", "(arg)"],
 	]);
 	assert.equal(a.thoughtText, undefined, "thinking text is fetched on click");

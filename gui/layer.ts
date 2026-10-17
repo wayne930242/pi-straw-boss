@@ -1,6 +1,6 @@
 import type { Item } from "../src/items.ts";
 import { type FocusPost, mountAsk } from "./ask.ts";
-import { type Alert, createStack } from "./overlay.ts";
+import { type Alert, createStack, tally } from "./overlay.ts";
 import { post } from "./post.ts";
 import { aim, byId, doing, fillPlate, html, mark, PLATE, sync, text } from "./render.ts";
 
@@ -12,6 +12,7 @@ import { aim, byId, doing, fillPlate, html, mark, PLATE, sync, text } from "./re
 export interface Tile { id: string; title: string; body(): HTMLElement }
 export interface TilesIO { render(tiles: Tile[], active: string | undefined): void; enter(tile: Tile): void }
 export const MAX_TILES = 4;
+const CLICKABLE = "a, button, input, textarea, select, summary, label, [role=button]";
 
 export function createTiles(io: TilesIO) {
 	let tiles: Tile[] = [], active: string | undefined;
@@ -60,10 +61,11 @@ export function mountPanels(deps: PanelDeps) {
 	// Read when the alert arrives (again on a new one), so Open comms lands on the entry the alert was about, not on what came after.
 	const intels = new Map<string, Intel>();
 	const tell = (el: HTMLElement, a: Alert, it = intels.get(a.key)) => {
+		const gone = el.dataset.gone === "true"; // a unit that left the net has no comms to open and nothing it waits on
 		text(el, ".said", it?.failed ? "History unavailable." : (it?.said ?? "No messages yet."));
-		el.querySelector<HTMLElement>(".pending")!.hidden = !it?.pending;
+		el.querySelector<HTMLElement>(".pending")!.hidden = !it?.pending || gone;
 		text(el, ".pending span", it?.pending ?? "");
-		aim(el.querySelector(".go")!, { view: "session", ws: a.ws, key: a.key, ...(it?.at && { at: it.at }) });
+		aim(el.querySelector(".go")!, gone ? undefined : { view: "session", ws: a.ws, key: a.key, ...(it?.at && { at: it.at }) });
 	};
 	const learn = (a: Alert, wait: Intel = { said: "…" }) => {
 		intels.set(a.key, wait);
@@ -72,8 +74,9 @@ export function mountPanels(deps: PanelDeps) {
 			if (el) tell(el, a);
 		});
 	};
-	const fill = (el: HTMLElement, a: Alert, depth: number, queued: number) => {
+	const fill = (el: HTMLElement, a: Alert, depth: number, queue: Alert[]) => {
 		mark(el, a.mark);
+		el.dataset.gone = String(Boolean(a.gone));
 		// The ones beneath peek out above the top dialog, smaller and fainter.
 		el.style.transform = depth ? `translateY(${-12 * depth}px) scale(${1 - 0.06 * depth})` : "";
 		el.style.opacity = String(Math.max(0, 1 - 0.3 * depth));
@@ -82,24 +85,25 @@ export function mountPanels(deps: PanelDeps) {
 		fillPlate(el.querySelector(".plate")!, a.role, a.mark);
 		text(el, "h3", a.name);
 		text(el, ".role", a.role === "outside" ? "unaligned" : a.role);
-		text(el, ".state", doing(a.note, a.mark));
+		text(el, ".state", a.gone ? "left the net" : doing(a.note, a.mark));
 		text(el, ".where", deps.label(a.ws));
-		text(el, ".tag", { waiting: "question", error: "error", done: "finished" }[a.mark as "done"] ?? "update");
-		text(el, ".queued", queued ? `+${queued} queued` : "");
+		text(el, ".tag", a.gone ? "gone" : ({ waiting: "question", error: "error", done: "finished" }[a.mark as "done"] ?? "update"));
+		text(el, ".queued", queue.length ? `Also queued: ${tally(queue)}` : "");
 		if (!intels.has(a.key)) learn(a);
 		tell(el, a);
 		let ask = asks.get(el);
 		if (!ask) asks.set(el, (ask = mountAsk(el.querySelector(".ask-root")!, deps.focus?.(a.key) ?? (() => post(`sessions/${encodeURIComponent(a.key)}/focus`, {})))));
-		ask.update(a.pending, a.mark === "waiting" && document.body.dataset.stale !== "true"); // what it waits on, read-only
+		ask.update(a.pending, a.mark === "waiting" && document.body.dataset.stale !== "true"); // what it waits on, read-only; the stream state redraws it (report in main.ts)
 	};
 	const asks = new WeakMap<HTMLElement, ReturnType<typeof mountAsk>>();
 	const stack = createStack<HTMLElement>({
 		render(open, queue) {
-			sync(dock, open.map((a) => ({ ...a, id: a.key })), dialogEl, (el, a) => fill(el, a, open.length - 1 - open.findIndex((o) => o.key === a.key), queue.length));
+			sync(dock, open.map((a) => ({ ...a, id: a.key })), dialogEl, (el, a) => fill(el, a, open.length - 1 - open.findIndex((o) => o.key === a.key), queue));
 			const head = queue[0];
 			button.disabled = !head;
 			button.dataset.mark = head?.mark ?? "unknown";
 			text(button, "#alert-count", String(queue.length));
+			button.title = queue.length ? `Alerts: ${tally(queue)}` : "";
 			text(button, "#alert-text", head ? `${head.name} · ${doing(head.note, head.mark)}` : "no alerts");
 			sync(button.querySelector(".faces")!, queue.slice(0, 3).map((a) => ({ ...a, id: a.key })), () => html(PLATE), (face, a) => fillPlate(face, a.role, a.mark));
 		},
@@ -108,11 +112,12 @@ export function mountPanels(deps: PanelDeps) {
 		restore: (target) => Boolean(target?.isConnected && !target.closest("[inert]") && (target.focus(), document.activeElement === target)), // a disabled HUD alert does not take it
 	});
 	button.addEventListener("click", () => stack.next());
-	// A dialog beneath the top one is inert, so a click on the part that peeks out falls through to the page: it raises that dialog instead.
+	// A dialog beneath the top one is inert, so a click on the part that peeks out falls through to the page: it raises that dialog instead,
+	// unless the click really hit something that takes clicks (a HUD button or a link under the strip), which keeps it.
 	document.addEventListener("click", (event) => {
 		const at = (el: Element) => { const r = el.getBoundingClientRect(); return event.clientX >= r.left && event.clientX <= r.right && event.clientY >= r.top && event.clientY <= r.bottom; };
 		const all = [...dock.querySelectorAll<HTMLElement>(".dialog:not(.leaving)")], hit = all.slice(0, -1).reverse().find(at);
-		if (event.defaultPrevented || !hit || !all.length || at(all.at(-1)!)) return; // a click another listener took (an alert link) stays its
+		if (event.defaultPrevented || !hit || !all.length || at(all.at(-1)!) || (event.target as Element | null)?.closest?.(CLICKABLE)) return; // a click another listener took (an alert link) or a control under the strip stays its
 		event.preventDefault(), event.stopPropagation(), stack.raise(hit.dataset.key!);
 	}, true);
 	dock.addEventListener("click", (event) => {

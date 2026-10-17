@@ -78,12 +78,17 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 					return { content: [{ type: "text", text }], details };
 				},
 			});
+		// A join that failed after registering retries on the tab the session is in now: its channel when it has registered there already, else a new
+		// one. Intercom has no unregister, so a tab left behind stays registered; see `onEvent` for what that channel still does.
+		const channels = new Map<string, Channel>();
+		const use = (channel: Channel) => ((pinned = channel === c ? pinned : undefined), (c = channel)); // what was pinned on another tab's channel is not this one's
 		const connect = (eligible: boolean) => {
-			if (c) return; // a join that failed after registering retries on the channel it has
 			const namespace = `straw-boss/tab/${Buffer.from(at.tabId).toString("hex")}`;
+			if (channels.has(namespace)) return void use(channels.get(namespace)!);
 			if (!NAMESPACE.test(namespace)) throw new Error(`Tab id ${at.tabId} is too long for an intercom namespace (limit 24 characters)`);
-			pi.events.emit(REGISTER, { namespace, ownerEligible: eligible, onReady: (channel: Channel) => (c = channel), onEvent });
-			if (!c) throw new Error("pi-intercom is not loaded (Straw Boss needs pi-intercom >= 0.17.1)");
+			let mine: Channel | undefined;
+			pi.events.emit(REGISTER, { namespace, ownerEligible: eligible, onReady: (channel: Channel) => { mine = channel; channels.set(namespace, channel); use(channel); }, onEvent: (event: Event) => mine && onEvent(mine, event) });
+			if (!mine) throw new Error("pi-intercom is not loaded (Straw Boss needs pi-intercom >= 0.17.1)");
 		};
 
 		// Tokens are display and discovery only: a failed write waits for the next refresh, liveness comes from intercom.
@@ -98,31 +103,36 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 		};
 
 		// The owner records who is main. Promotion is first come, first served, and the main stays until it leaves: a later owner change never swaps it.
-		const pin = (main: string) => {
-			if (c.snapshot().owner?.sessionId !== me()) return;
-			c.commitState({ v: 1, main, since: Date.now() });
-			pinned = main;
+		const pin = (channel: Channel, main: string) => {
+			if (channel.snapshot().owner?.sessionId !== me()) return;
+			channel.commitState({ v: 1, main, since: Date.now() });
+			if (channel === c) pinned = main;
 		};
 		// The owner decides a claim: a tab has one main, so a claim is dropped while a live main exists, unless the user forced it with /boss.
-		const claim = async (from: string, force: boolean) => {
+		const claim = async (channel: Channel, from: string, force: boolean) => {
 			try {
-				if (c.snapshot().owner?.sessionId !== me()) return;
-				const current = pinned ?? (c.snapshot().state?.payload as { main?: string } | undefined)?.main;
-				if (!force && current && current !== from && (await c.listSessions()).some((s) => s.id === current)) return;
-				pin(from);
+				if (channel.snapshot().owner?.sessionId !== me()) return;
+				const current = (channel === c ? pinned : undefined) ?? (channel.snapshot().state?.payload as { main?: string } | undefined)?.main;
+				if (!force && current && current !== from && (await channel.listSessions()).some((s) => s.id === current)) return;
+				pin(channel, from);
 			} catch (error) {
 				tell(`Straw Boss: ${(error as Error).message}`, "warning");
 			}
 		};
-		const onEvent = (event: { type: string; fromSessionId?: string; owner?: { sessionId: string }; payload?: { type?: string; force?: boolean } }) => {
+		type Event = { type: string; fromSessionId?: string; owner?: { sessionId: string }; payload?: { type?: string; force?: boolean } };
+		// A tab this session left stays registered, and if the session owns that channel it still decides that tab's claims (or its members could
+		// never promote); nothing else that channel says concerns the session's role.
+		const onEvent = (channel: Channel, event: Event) => {
+			if (event.type === "message" && event.payload?.type === "claim" && event.fromSessionId) {
+				const [from, force] = [event.fromSessionId, Boolean(event.payload.force)];
+				queue = queue.then(() => claim(channel, from, force));
+			}
+			if (channel !== c) return;
 			// Ownership moved away: what this session pinned as owner is no longer its to defend.
 			if (event.type === "owner" && event.owner?.sessionId !== me()) pinned = undefined;
 			// A join that failed at start (intercom not connected yet, no owner yet) is retried when the channel changes.
-			if (!joined && !barred && !isTower && c && ["connection", "owner"].includes(event.type)) void joinNet().catch(() => {});
-			if (event.type === "message" && event.payload?.type === "claim" && event.fromSessionId) {
-				const [from, force] = [event.fromSessionId, Boolean(event.payload.force)];
-				queue = queue.then(() => claim(from, force));
-			} else if (["connection", "owner", "state", "session_left"].includes(event.type)) void sync();
+			if (!joined && !barred && !isTower && ["connection", "owner"].includes(event.type)) void joinNet().catch(() => {});
+			if (["connection", "owner", "state", "session_left"].includes(event.type)) void sync();
 			if (["presence_update", "session_joined", "session_left"].includes(event.type)) dashboard?.poke();
 		};
 		const refresh = async () => {
@@ -179,7 +189,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			if (isMain) return { promoted: true, text: `You are already the main agent of tab ${info.tab}.` };
 			const refused = () => ({ promoted: false, text: `Tab ${info.tab} already has a main agent, ${info.main}. Stay a member: you may dispatch your own subagents, but tell ${info.main} through intercom first what you will do and which resources you will use.` });
 			if (!force && mainId) return refused();
-			if (c.snapshot().owner?.sessionId === me()) await (queue = queue.then(() => claim(me(), force)));
+			if (c.snapshot().owner?.sessionId === me()) await (queue = queue.then(() => claim(c, me(), force)));
 			else c.publish({ type: "claim", force }, { audience: "owner" });
 			if (!(await waitFor(sleep, () => isMain, CLAIM_MS))) {
 				await sync();
@@ -350,9 +360,9 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			else delete event.systemPromptOptions.sections[ENTRY];
 		});
 
-		// A member that dispatches a subagent without promoting is promoted here, before the subagent starts, unless the tab already has a main.
+		// A member that dispatches or resumes a subagent without promoting is promoted here, before the subagent starts, unless the tab already has a main.
 		pi.on("tool_call", async (event) => {
-			if (event.toolName !== "subagent" || isTower || barred) return;
+			if (!["subagent", "subagent_resume"].includes(event.toolName) || isTower || barred) return;
 			try {
 				await joinNet();
 				if (!isMain) await promote(false);

@@ -47,6 +47,19 @@ test("a session saved with asked: true that never joined joins on its next start
 	assert.equal(a.entries.length, 1, "no new entry");
 });
 
+test("entries saved by 0.4.0 (asked, then joined) bring the session back as a member, never as main, and write nothing", async () => {
+	const old = [{ customType: "straw-boss", data: { asked: true } }, { customType: "straw-boss", data: { asked: true, joined: true } }];
+	const a = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1" });
+	const b = world.agent({ id: "b", pane: "wA:p2", tab: "wA:t1", entries: old });
+	await a.start();
+	await a.promote();
+	await b.start();
+	assert.deepEqual([a.tokens, b.tokens], [{ sb_role: "main" }, { sb_role: "member" }], "a saved join does not take over the live main");
+	assert.ok(b.tools.has("boss_promote"));
+	assert.equal(b.entries.length, 2, "no new entry");
+	assert.match((await b.run())["straw-boss"]!, /whose main agent is a\./);
+});
+
 test("boss_promote makes the first caller the main agent; a second caller is refused while that main lives", async () => {
 	const a = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1" });
 	const b = world.agent({ id: "b", pane: "wA:p2", tab: "wA:t1" });
@@ -81,6 +94,20 @@ test("two members promoting at the same moment leave one main in the tab", async
 	const results = await Promise.all([a.promote(), b.promote(), c.promote()]);
 	assert.equal(results.filter((text) => /now the main agent/.test(text)).length, 1, results.join(" | "));
 	assert.equal([a, b, c].filter((x) => x.tokens.sb_role === "main").length, 1);
+});
+
+test("two members that are not the owner promote at the same moment: exactly one is main and the other is refused", async () => {
+	const owner = world.agent({ id: "owner", pane: "wA:p1", tab: "wA:t1" });
+	const b = world.agent({ id: "b", pane: "wA:p2", tab: "wA:t1" });
+	const c = world.agent({ id: "c", pane: "wA:p3", tab: "wA:t1" });
+	await Promise.all([owner.start(), b.start(), c.start()]);
+	assert.equal(world.broker.owners.get(hex("wA:t1")), "owner");
+	const [rb, rc] = await Promise.all([b.promote(), c.promote()]);
+	assert.deepEqual([rb, rc].filter((text) => /now the main agent/.test(text)).length, 1, `${rb} | ${rc}`);
+	assert.deepEqual([rb, rc].filter((text) => /already has a main agent/.test(text)).length, 1, `${rb} | ${rc}`);
+	const mains = [owner, b, c].filter((x) => x.tokens.sb_role === "main");
+	assert.equal(mains.length, 1);
+	assert.equal(state()?.main, mains[0]!.id, "the channel records the one that won");
 });
 
 test("/boss from a member forces a claim even when the tab has a main; the two swap their pane tokens", async () => {
@@ -188,3 +215,65 @@ test("a join that failed at start is retried when the channel reports a connecti
 	assert.equal(world.broker.registrations.length, 1, "no second registration");
 	assert.ok(a.tools.has("boss_promote"));
 });
+
+test("a join that failed and retries after its tab moved registers on the tab it is in now, and does not become a second main there", async () => {
+	const main = world.agent({ id: "main", pane: "wA:p2", tab: "wA:t2" });
+	await main.start();
+	await main.promote();
+	world.broker.connected = false;
+	const a = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1" });
+	await a.start();
+	await until(() => a.notices.some((n) => n.level === "error" && /not connected/.test(n.text)), "the failed join");
+	assert.equal(a.regs.has(hex("wA:t1")), true, "it registered on the first tab before failing");
+	world.herdr.pane("wA:p1").tab_id = "wA:t2"; // the pane moved to the tab that has a main
+	world.broker.connected = true;
+	await a.toolCall("subagent"); // the retry, then the automatic promotion
+	assert.equal(a.regs.has(hex("wA:t2")), true, "it re-registered on the current tab");
+	assert.deepEqual([a.tokens, main.tokens], [{ sb_role: "member" }, { sb_role: "main" }], "one main in the tab");
+	assert.equal(state("wA:t2")?.main, "main");
+	assert.match(await a.promote(), /already has a main agent, main/);
+	// The tab it left stays registered (intercom has no unregister) and this session may own that channel: it still decides that tab's claims,
+	// so a member who arrives there can promote, and this session's own role is not touched.
+	const late = world.agent({ id: "late", pane: "wA:p3", tab: "wA:t1" });
+	await late.start();
+	assert.equal(world.broker.owners.get(hex("wA:t1")), "a", "the session that left is still the owner of its first tab's channel");
+	assert.match(await late.promote(), /now the main agent of tab work/);
+	assert.equal(state("wA:t1")?.main, "late");
+	assert.deepEqual([a.tokens, main.tokens, late.tokens], [{ sb_role: "member" }, { sb_role: "main" }, { sb_role: "main" }], "one main per tab");
+	assert.equal(state("wA:t2")?.main, "main", "the tab it is in now is untouched");
+});
+
+test("a session whose join fails on a tab, again on another, and then back on the first reuses its first channel instead of registering twice", async () => {
+	world.broker.connected = false;
+	const a = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1" });
+	await a.start();
+	await until(() => a.notices.some((n) => /not connected/.test(n.text)), "the first failure");
+	world.herdr.pane("wA:p1").tab_id = "wA:t2";
+	await a.toolCall("subagent");
+	assert.deepEqual(world.broker.registrations.map((r) => r.namespace), [hex("wA:t1"), hex("wA:t2")], "a second tab, a second registration; still not connected");
+	world.herdr.pane("wA:p1").tab_id = "wA:t1";
+	world.broker.connected = true;
+	await a.toolCall("subagent");
+	await until(() => a.tokens.sb_role === "main", "the join on the first tab again");
+	assert.deepEqual(world.broker.registrations.map((r) => r.namespace), [hex("wA:t1"), hex("wA:t2")], "the first tab's channel was reused (a second registration of it would be refused by intercom)");
+	assert.equal(state("wA:t1")?.main, "a");
+});
+
+test("what a session pinned as owner of the tab it left is not carried to the tab it joins, so it can promote there", async () => {
+	world.broker.connected = false;
+	const a = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1" });
+	await a.start();
+	await until(() => a.notices.some((n) => /not connected/.test(n.text)), "the failed join");
+	world.broker.connected = true;
+	const m = world.agent({ id: "m", pane: "wA:p3", tab: "wA:t1" });
+	await m.start();
+	assert.equal(world.broker.owners.get(hex("wA:t1")), "a", "the session whose join failed owns its first tab's channel");
+	assert.match(await m.promote(), /now the main agent/);
+	assert.equal(state("wA:t1")?.main, "m", "it decided the claim as that channel's owner, and pinned it");
+	world.herdr.pane("wA:p1").tab_id = "wA:t2"; // the pane moved to an empty tab
+	await a.toolCall("subagent"); // the retry, then the automatic promotion
+	assert.equal(a.tokens.sb_role, "main", "the pin of the other tab's main does not make this tab look as if it had one");
+	assert.equal(state("wA:t2")?.main, "a");
+	assert.equal(state("wA:t1")?.main, "m");
+});
+

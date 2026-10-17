@@ -3,29 +3,44 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { askOf, openCalls, pendingOf, withPending } from "../src/ask.ts";
+import { askOf, openCalls, pendingOf, questionsOf, withPending } from "../src/ask.ts";
 import type { Net } from "../src/net.ts";
 
 const scratch = mkdtempSync(join(tmpdir(), "psb-ask-test-"));
 after(() => rmSync(scratch, { recursive: true, force: true }));
 
+/** The open calls; a window that could not decide ("cut") fails the test. */
+const calls = async (f: string) => {
+	const found = await openCalls(f);
+	if (found === "cut") throw new Error("the window could not decide");
+	return found;
+};
 const ARGS = { question: "Pick a color", context: "Which theme to ship.", options: [{ title: "red", description: "warm" }, { title: "green" }, { title: "blue" }], allowFreeform: true };
 // Session entries as pi writes them (one per line).
 const user = (text: string) => JSON.stringify({ type: "message", id: `u-${text}`, message: { role: "user", content: [{ type: "text", text }] } });
 const asked = (id: string, args: unknown = ARGS, name = "ask_user", more: { id: string; name: string }[] = []) => JSON.stringify({ type: "message", id: `a-${id}`, message: { role: "assistant", content: [{ type: "text", text: "Asking." }, { type: "toolCall", id, name, arguments: args }, ...more.map((m) => ({ type: "toolCall", id: m.id, name: m.name, arguments: {} }))] } });
 const result = (id: string, text: string) => JSON.stringify({ type: "message", id: `r-${id}`, message: { role: "toolResult", toolCallId: id, toolName: "ask_user", content: [{ type: "text", text }] } });
 let n = 0;
+/** A session file whose entries link to the one before them (type, id, parentId first, as pi writes them), unless an entry names its parent. */
 const file = (...lines: string[]) => {
 	const f = join(scratch, `2026_s${++n}.jsonl`);
-	writeFileSync(f, `${JSON.stringify({ type: "session", id: `s${n}` })}\n${lines.map((l) => `${l}\n`).join("")}`);
+	let before: string | null = null;
+	const body = lines.map((l) => {
+		const { type, id, parentId = before, ...rest } = JSON.parse(l);
+		before = id;
+		return `${JSON.stringify({ type, id, parentId, ...rest })}\n`;
+	});
+	writeFileSync(f, `${JSON.stringify({ type: "session", id: `s${n}` })}\n${body.join("")}`);
 	return f;
 };
+/** The same entry written under `parent`, which is how a move to an earlier entry shows in the file. */
+const under = (parent: string, line: string) => JSON.stringify({ ...JSON.parse(line), parentId: parent });
 
 test("the pending call is the one unanswered tool call of the newest assistant message, and none once the user spoke after it", async () => {
-	assert.deepEqual((await openCalls(file(user("hi"), asked("c1")))).map((c) => [c.id, c.name]), [["c1", "ask_user"]]);
-	assert.deepEqual(await openCalls(file(user("hi"), asked("c1"), result("c1", "User answered: red"))), []);
-	assert.deepEqual(await openCalls(file(asked("c1"), user("never mind"))), [], "a newer user message means the turn ended");
-	assert.deepEqual((await openCalls(file(asked("c1", ARGS, "ask_user", [{ id: "c2", name: "bash" }]), result("c2", "ok")))).map((c) => c.id), ["c1"], "a sibling call that finished does not count");
+	assert.deepEqual((await calls(file(user("hi"), asked("c1")))).map((c) => [c.id, c.name]), [["c1", "ask_user"]]);
+	assert.deepEqual(await calls(file(user("hi"), asked("c1"), result("c1", "User answered: red"))), []);
+	assert.deepEqual(await calls(file(asked("c1"), user("never mind"))), [], "a newer user message means the turn ended");
+	assert.deepEqual((await calls(file(asked("c1", ARGS, "ask_user", [{ id: "c2", name: "bash" }]), result("c2", "ok")))).map((c) => c.id), ["c1"], "a sibling call that finished does not count");
 	assert.equal((await pendingOf(file(asked("c1", ARGS, "ask_user", [{ id: "c2", name: "ask_user" }]))))?.why, "It waits on more than one dialog.");
 	assert.deepEqual(await pendingOf(file(asked("s1", { label: "Token" }, "secret_drop"))), { callId: "s1", tool: "secret_drop", why: "It waits for a secret." }, "a secret's label is not carried");
 	assert.equal(await pendingOf(join(scratch, "missing.jsonl")), undefined);
@@ -49,3 +64,54 @@ test("a snapshot carries what each waiting unit waits on; others carry nothing",
 	const [a, b] = net.bases[0]!.tabs[0]!.units;
 	assert.deepEqual([a!.pending?.callId, a!.pending?.ask?.question, b!.pending], ["c9", "Pick a color", undefined]);
 });
+
+test("only the current branch counts: a call left on a branch the user moved away from shows nothing, and the new branch's call shows", async () => {
+	const moved = JSON.stringify({ type: "model_change", id: "m1", provider: "p", modelId: "m" });
+	assert.deepEqual(await calls(file(user("hi"), asked("c1"), under("u-hi", moved))), [], "the leaf's path ends at the user message, not at the old branch's call");
+	assert.deepEqual((await calls(file(user("hi"), asked("c1"), user("never mind"), under("u-hi", asked("c2"))))).map((c) => c.id), ["c2"], "the newest branch's call, not the old branch's, and not the user message that followed the old one");
+	const custom = JSON.stringify({ type: "custom", customType: "straw-boss", data: { tower: true }, id: "k1", parentId: "a-c1", timestamp: "2026-10-17T00:00:00.000Z" });
+	assert.deepEqual((await calls(file(user("hi"), asked("c1"), custom))).map((c) => c.id), ["c1"], "entries that end with their id and parent are links of the path too");
+	assert.deepEqual(await calls(file(user("hi"), asked("c1"), under("a-c1", result("c1", "red")), under("u-hi", user("again")))), [], "a move back to the user message");
+});
+
+test("a call longer than the 256 KB window is still read: its question shows clipped, and a call past 16 MB says it is too long instead of showing nothing", async () => {
+	const context = "ctx ".repeat(100_000);
+	const big = await pendingOf(file(user("hi"), asked("big", { ...ARGS, context })));
+	assert.equal(big?.ask?.question, "Pick a color");
+	assert.equal(big?.ask?.context?.length, 8000, "the context is clipped, not dropped");
+	assert.equal((await pendingOf(file(user("hi"), asked("big2", { ...ARGS, context }), result("big2", "red"))))?.callId, undefined, "answered, so nothing waits");
+	const huge = await pendingOf(file(user("hi"), asked("huge", { question: "Q", context: "x".repeat(17_000_000) })));
+	assert.deepEqual([huge?.tool, huge?.why, huge?.ask], ["dialog", "Its call is too long to read here.", undefined]);
+});
+
+test("a session file whose entries point at each other in a loop is read as undecided, not forever", async () => {
+	const loop = (id: string, parentId: string) => JSON.stringify({ type: "model_change", id, parentId, provider: "p", modelId: "m" });
+	assert.deepEqual(await calls(file(loop("m1", "m1"))), [], "an entry that is its own parent");
+	assert.deepEqual(await calls(file(loop("a", "b"), loop("b", "a"))), [], "two that point at each other");
+	assert.equal(await pendingOf(file(user("hi"), asked("c1"), loop("a", "b"), loop("b", "a"))), undefined, "nothing waits that can be shown");
+});
+
+// @juicesharp/rpiv-ask-user-question 2.13.9 (tool/types.ts): 1 to 4 questions, each {question, header, options[2-4]{label, description, preview?}, multiSelect?}; "Type something." is always offered.
+const Q1 = { question: "Which library should we use for dates?", header: "Library", options: [{ label: "date-fns", description: "Small and tree-shakeable.", preview: "import { format } from 'date-fns'" }, { label: "dayjs", description: "Moment-like API." }], multiSelect: false };
+const Q2 = { question: "Which features do you want?", header: "Features", options: [{ label: "tz", description: "Time zones." }, { label: "i18n", description: "Locales." }, { label: "rrule", description: "Recurrence." }], multiSelect: true };
+
+test("an ask_user_question call shows its questions: one reads like an ask_user question, several come as a list with header, options with descriptions, and multi-select; its own words are always taken", async () => {
+	assert.deepEqual(questionsOf({ questions: [Q1] }), { ask: { question: Q1.question, header: "Library", options: [{ title: "date-fns", description: "Small and tree-shakeable." }, { title: "dayjs", description: "Moment-like API." }], multiple: false, freeform: true } }, "a preview is not shown");
+	const two = questionsOf({ questions: [Q1, Q2] }) as { asks: { header?: string; multiple: boolean; options: unknown[] }[] };
+	assert.deepEqual(two.asks.map((a) => [a.header, a.multiple, a.options.length]), [["Library", false, 2], ["Features", true, 3]]);
+	assert.equal((questionsOf({ questions: Array.from({ length: 6 }, () => Q1) }) as { asks: unknown[] }).asks.length, 4, "at most four, as the tool allows");
+	assert.equal((questionsOf({ questions: [{ ...Q1, header: "H".repeat(100), question: "Q".repeat(5000) }] }) as { ask: { header: string; question: string } }).ask.header.length, 40, "clipped");
+	assert.deepEqual(Object.keys((questionsOf({ questions: [{ question: "Bare?", options: [] }] }) as { ask: object }).ask), ["question", "options", "multiple", "freeform"], "a missing header is simply absent");
+	for (const bad of [{}, { questions: [] }, { questions: "x" }, { questions: [Q1, { header: "x" }] }, { questions: [null] }, { questions: [{ question: " " }] }]) assert.match((questionsOf(bad as never) as { why: string }).why, /could not be read/);
+	// From a session file, through the snapshot's reader; a single question looks like pi-ask-user's, two or more come as `asks`; answered, it waits for nothing.
+	const one = await pendingOf(file(user("hi"), asked("q1", { questions: [Q1] }, "ask_user_question")));
+	assert.deepEqual([one?.callId, one?.tool, one?.ask?.header, one?.asks, one?.why], ["q1", "ask_user_question", "Library", undefined, undefined]);
+	const many = await pendingOf(file(user("hi"), asked("q2", { questions: [Q1, Q2] }, "ask_user_question")));
+	assert.deepEqual([many?.tool, many?.ask, many?.asks?.map((a) => a.question)], ["ask_user_question", undefined, [Q1.question, Q2.question]]);
+	assert.equal(await pendingOf(file(user("hi"), asked("q3", { questions: [Q1] }, "ask_user_question"), result("q3", "User answered"))), undefined);
+	assert.equal((await pendingOf(file(user("hi"), asked("q4", { questions: [Q1] }, "ask_user_question", [{ id: "q5", name: "ask_user_question" }]))))?.why, "It waits on more than one dialog.");
+	assert.deepEqual((await pendingOf(file(user("hi"), asked("q6", { questions: [{ question: "" }] }, "ask_user_question"))))?.why, "Its question could not be read.");
+	// pi-ask-user's own tool stays readable: older session files hold it.
+	assert.equal((await pendingOf(file(user("hi"), asked("old", ARGS))))?.ask?.question, "Pick a color");
+});
+

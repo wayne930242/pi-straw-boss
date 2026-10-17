@@ -85,6 +85,7 @@ function report(next: Status) {
 	el("link").dataset.state = next.state;
 	el("link-text").textContent = { connecting: "connecting", live: "live", reconnecting: "reconnecting", offline: "offline" }[next.state];
 	if (focus && latest) focus.net(latest); // the composer follows the link state
+	panels?.stack.redraw(); // and so do the dialogs' Focus terminal buttons
 	const banner = el("banner");
 	banner.hidden = !stale && !next.problem;
 	const lead = next.state === "offline"

@@ -104,9 +104,23 @@ function launch(parent: string, children: { id: string; name: string; ageMs?: nu
 test("a subagent's file comes only from a pane running pi; a reused pane running another agent is not read", () => {
 	const file = launch("parent-x", [{ id: "kid-1", name: "kid" }]);
 	const parent = { pane_id: "wA:p1", tab_id: "wA:t1", workspace_id: "wA", agent: "pi", agent_session: { value: file } };
-	const child = (agent: string) => ({ pane_id: "wA:p30", tab_id: "wA:t1", workspace_id: "wA", agent, agent_status: "working", agent_session: { value: join(scratch, "sessions", "2026_kid-1.jsonl") } });
-	assert.equal(subagents(parent, [parent, child("pi")], Date.now())[0]!.file, join(scratch, "sessions", "2026_kid-1.jsonl"));
+	const child = (agent: string) => ({ pane_id: "wA:p30", tab_id: "wA:t1", workspace_id: "wA", agent, agent_status: "working", agent_session: { value: join(scratch, "sessions", "2026_kid-1-1a2b3c4d-5e6f7a8b-9c0d.jsonl") } });
+	assert.equal(subagents(parent, [parent, child("pi")], Date.now())[0]!.file, join(scratch, "sessions", "2026_kid-1-1a2b3c4d-5e6f7a8b-9c0d.jsonl"));
 	assert.deepEqual([subagents(parent, [parent, child("claude")], Date.now())[0]!.file, subagents(parent, [parent, child("claude")], Date.now())[0]!.pane], [undefined, undefined]);
+});
+
+test("a subagent's pane is matched by the file name pi-herdr-agents gives it (<timestamp>_<id>-<hex>-<hex>-<hex>.jsonl), not by a substring of another session's name", () => {
+	const file = launch("parent-y", [{ id: "kid", name: "kid" }]);
+	const parent = { pane_id: "wA:p1", tab_id: "wA:t1", workspace_id: "wA", agent: "pi", agent_session: { value: file } };
+	const pane = (id: string, name: string) => ({ pane_id: id, tab_id: "wA:t1", workspace_id: "wA", agent: "pi", agent_status: "working", agent_session: { value: join(scratch, "sessions", name) } });
+	const [lookalike, other, plain, own] = [pane("wA:p30", "2026-10-17T00-00-00-000Z_kid-2-1a2b3c4d-5e6f7a8b-9c0d.jsonl"), pane("wA:p31", "2026-10-17T00-00-00-000Z_kidney-1a2b3c4d-5e6f7a8b-9c0d.jsonl"), pane("wA:p33", "2026-10-17T00-00-00-000Z_kid.jsonl"), pane("wA:p32", "2026-10-17T00-00-00-000Z_kid-9f8e7d6c-5b4a3d2c-1e0f.jsonl")];
+	assert.equal(subagents(parent, [parent, lookalike, other], Date.now())[0]!.pane, undefined, "kid-2 and kidney are other sessions");
+	assert.equal(subagents(parent, [parent, lookalike, other, own], Date.now())[0]!.pane, "wA:p32", "the real name, with the random suffix pi-herdr-agents adds, matches");
+	assert.equal(subagents(parent, [parent, plain], Date.now())[0]!.pane, "wA:p33", "so does a name without the suffix");
+	// A real pair from this machine (the child id is a UUID, and the file name carries pi-herdr-agents' own 8-8-4 hex suffix).
+	const real = launch("parent-z", [{ id: "77fc3d96-7480-42e5-bc0b-4d20b329659e", name: "scout" }]);
+	const live = pane("wA:p34", "2026-10-17T14-05-51-519Z_77fc3d96-7480-42e5-bc0b-4d20b329659e-b6aa547c-3fa1a816-297c.jsonl");
+	assert.equal(subagents({ ...parent, agent_session: { value: real } }, [parent, live], Date.now())[0]!.pane, "wA:p34");
 });
 
 test("collect shows this tower's net in detail (joined sessions by tab, subagents under their launcher) and one line per other tower", async () => {
@@ -129,9 +143,9 @@ test("collect shows this tower's net in detail (joined sessions by tab, subagent
 	main.status = "tool:edit";
 	other.status = "idle";
 	herdr.pane("wA:p1").agent_session = { value: file };
-	herdr.addPane("wA:p20", "wA:t1").agent_session = { value: join(scratch, "sessions", "2026-10-17T00-00-01-000Z_c-run-aaaa-bbbb.jsonl") };
+	herdr.addPane("wA:p20", "wA:t1").agent_session = { value: join(scratch, "sessions", "2026-10-17T00-00-01-000Z_c-run-1a2b3c4d-5e6f7a8b-9c0d.jsonl") };
 	Object.assign(herdr.pane("wA:p20"), { agent_status: "working", label: "builder" });
-	herdr.addPane("wA:p21", "wA:t1").agent_session = { value: join(scratch, "sessions", "2026-10-17T00-00-02-000Z_c-ask-cccc.jsonl") };
+	herdr.addPane("wA:p21", "wA:t1").agent_session = { value: join(scratch, "sessions", "2026-10-17T00-00-02-000Z_c-ask-2b3c4d5e-6f7a8b9c-0d1e.jsonl") };
 	Object.assign(herdr.pane("wA:p21"), { agent_status: "blocked", label: "asker" });
 	herdr.workspace("wA").agent_status = "working";
 	herdr.workspace("wB").agent_status = "idle";
@@ -162,8 +176,8 @@ test("subagents are grouped under the session that launched them wherever they r
 	await main.start();
 	await main.promote();
 	world.herdr.pane("wA:p1").agent_session = { value: file };
-	Object.assign(world.herdr.pane("wB:p5"), { agent_session: { value: join(scratch, "sessions", "2026-10-17T00-00-03-000Z_far-1111.jsonl") }, agent_status: "working", label: "farchild" });
-	Object.assign(world.herdr.pane("wS:p1"), { agent_session: { value: join(scratch, "sessions", "2026-10-17T00-00-04-000Z_wt-2222.jsonl") }, agent_status: "working", label: "wtchild" });
+	Object.assign(world.herdr.pane("wB:p5"), { agent_session: { value: join(scratch, "sessions", "2026-10-17T00-00-03-000Z_far-3c4d5e6f-7a8b9c0d-1e2f.jsonl") }, agent_status: "working", label: "farchild" });
+	Object.assign(world.herdr.pane("wS:p1"), { agent_session: { value: join(scratch, "sessions", "2026-10-17T00-00-04-000Z_wt-4d5e6f7a-8b9c0d1e-2f3a.jsonl") }, agent_status: "working", label: "wtchild" });
 	const { rows } = await collect({ run: world.herdr.runFor("wA:p1"), sessions: () => world.broker.sessionList(), workspaceId: "wA" });
 	assert.deepEqual(rows.map((r) => [r.depth, r.text]), [[0, "tab work"], [1, "Main"], [2, "farchild"], [2, "wtchild"], [0, "plain-sub"]], "children sit under Main; the worktree child's workspace is not listed again; Beta, where a child runs, is not a tower");
 });
@@ -173,7 +187,7 @@ test("a member that launched subagents keeps them when it is promoted: the dashb
 	const member = world.agent({ id: "parent-3", name: "Solo", pane: "wA:p1", tab: "wA:t1" });
 	await member.start();
 	world.herdr.pane("wA:p1").agent_session = { value: file };
-	Object.assign(world.herdr.addPane("wA:p20", "wA:t1"), { agent_status: "working", label: "builder", agent_session: { value: join(scratch, "sessions", "2026-10-17T00-00-01-000Z_kid-1.jsonl") } });
+	Object.assign(world.herdr.addPane("wA:p20", "wA:t1"), { agent_status: "working", label: "builder", agent_session: { value: join(scratch, "sessions", "2026-10-17T00-00-01-000Z_kid-1-1a2b3c4d-5e6f7a8b-9c0d.jsonl") } });
 	const read = async () => {
 		const [src, sessions] = [world.herdr.runFor("wA:p1"), () => world.broker.sessionList()];
 		const rows = (await collect({ run: src, sessions, workspaceId: "wA" })).rows.map((r) => [r.depth, r.text, r.kind]);

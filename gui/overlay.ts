@@ -18,6 +18,11 @@ import { type Alert, rankOf } from "./alerts.ts";
 
 export type { Alert };
 const order = (a: Alert, b: Alert) => rankOf(a.mark) - rankOf(b.mark) || a.at - b.at;
+/** The queue in words, the same in the header and in every dialog: what needs the user, and what only finished (closing never reveals those). */
+export const tally = (queue: Alert[]) => {
+	const asking = queue.filter((a) => rankOf(a.mark) === 0).length, rest = queue.length - asking;
+	return [asking && `${asking} need${asking === 1 ? "s" : ""} you`, rest && `${rest} finished`].filter(Boolean).join(" · ");
+};
 
 export interface StackIO<F> { render(open: Alert[], queue: Alert[]): void; enter(alert: Alert): void; focused(): F | undefined; restore(target: F | undefined): boolean }
 
@@ -49,12 +54,17 @@ export function createStack<F>(io: StackIO<F>) {
 			}
 			draw();
 		},
-		/** Drops queued alerts whose unit no longer shows the state that raised them; open dialogs take the unit's current state. */
+		/** Drops queued alerts whose unit no longer shows the state that raised them; open dialogs take the unit's current state, or show `gone` when the unit left the net. */
 		prune(now: (key: string) => Alert | undefined) {
 			queue = queue.filter((q) => now(q.key)?.mark === q.mark);
-			for (const o of open) o.alert = { ...o.alert, ...now(o.alert.key), at: o.alert.at };
+			for (const o of open) {
+				const unit = now(o.alert.key);
+				o.alert = unit ? { ...o.alert, ...unit, gone: undefined, at: o.alert.at } : { ...o.alert, mark: "unknown", note: undefined, pending: undefined, gone: true };
+			}
 			draw();
 		},
+		/** Draws again with the same models, for what the page knows that the models do not (the stream state). */
+		redraw: draw,
 		/** The user opens a dialog (raised to the top if it is open already). `user` false opens it beneath the top one, without focus. */
 		show: (alert: Alert, user = true) => show(alert, io.focused(), user),
 		/** The user clicked a dialog beneath the top one: it comes to the top. */

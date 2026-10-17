@@ -1,13 +1,13 @@
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { join } from "node:path";
 import { qr, qrLines } from "./qr.ts";
 
 // Remote access over Tailscale, tailnet only (never Funnel). `/boss gui remote` adds one `tailscale serve` entry, HTTPS on 8443 to the local
-// server, only when 8443 is free or already ours (remote.json in the state directory remembers our target, so an entry a crashed session
-// left is recognised); turning it off, `/boss gui stop`, and the end of the server's session remove that one entry and nothing else.
+// server, only when 8443 is free or already ours (remote.json in the state directory remembers our target, the server's PID, and when that
+// process started, so an entry a crashed session left is recognised even after its PID went to another process); turning it off, `/boss gui stop`, and the end of the server's session remove that one entry and nothing else.
 // Which request is which: serve passes the client's Host through but always adds X-Forwarded-* and Tailscale-* headers (and replaces any a
 // client sent), so a local request is Host 127.0.0.1:<port> with none of them. A remote one needs Host exactly <MagicDNS name>:8443,
 // no Funnel marker, Tailscale-User-Login equal to this machine's user, and a session cookie (HttpOnly, Secure, SameSite=Strict, scoped to
@@ -131,6 +131,25 @@ const alive = (pid: unknown) => {
 		return (error as NodeJS.ErrnoException).code === "EPERM";
 	}
 };
+/** When a process started, as `ps` prints it in the C locale and UTC (so two pi processes with other LANG or TZ write and read the same text); undefined when ps cannot say. A PID reused after a crash belongs to a process that started later. */
+export const startOf = (pid: number): string | undefined => {
+	try {
+		return execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", timeout: 2000, stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, LC_ALL: "C", TZ: "UTC" } }).trim() || undefined;
+	} catch {
+		return undefined;
+	}
+};
+/**
+ * Whether the server that recorded an entry still runs: its PID is alive and that process is the one that wrote the entry (same start
+ * time; an entry from before start times were recorded: a process that started after the file was written is not its writer). When ps
+ * cannot say, the entry counts as live, so another live server's entry is never taken for stale.
+ */
+export function runs({ pid, started }: { pid?: unknown; started?: string }, wrote: number, start: (pid: number) => string | undefined = startOf) {
+	if (!alive(pid)) return false;
+	const now = start(pid as number);
+	if (!now) return true;
+	return started ? now === started : !(Date.parse(`${now} UTC`) > wrote);
+}
 export const cookieFor = (token: string, value: string) => `sb_remote=${value}; Path=/${token}/; Max-Age=${SESSION_MS / 1000}; HttpOnly; Secure; SameSite=Strict`;
 
 /**
@@ -141,8 +160,8 @@ export async function switchRemote(gui: { port: number; token: string; access: A
 	const target = `http://127.0.0.1:${gui.port}`, file = join(dir, "remote.json");
 	let stale: string | undefined;
 	try {
-		const { target: was, pid } = JSON.parse(readFileSync(file, "utf8"));
-		stale = pid === process.pid || !alive(pid) ? was : undefined; // another live server's entry (its session too busy to answer) is not stale
+		const record = JSON.parse(readFileSync(file, "utf8"));
+		stale = record.pid === process.pid || !runs(record, statSync(file).mtimeMs) ? record.target : undefined; // another live server's entry (its session too busy to answer) is not stale
 	} catch {} // no entry was recorded
 	if (!on) {
 		// An entry a crashed session left (recorded in remote.json) is cleaned up too, while it still points where it was recorded.
@@ -156,7 +175,7 @@ export async function switchRemote(gui: { port: number; token: string; access: A
 	}
 	const id = await identity(run);
 	await serveOn(run, id.host, target, stale);
-	writeFileSync(file, JSON.stringify({ target, pid: process.pid }), { mode: 0o600 });
+	writeFileSync(file, JSON.stringify({ target, pid: process.pid, started: startOf(process.pid) }), { mode: 0o600 });
 	gui.access.enable(id);
 	// Every link is a new one-time pairing URL: the QR's own, and one per press of c or o in the overlay.
 	const link = () => `https://${id.host}/${gui.token}/pair/${gui.access.pair()}`;
