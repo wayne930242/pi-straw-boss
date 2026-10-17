@@ -30,7 +30,8 @@
   "pi": {
     "extensions": [
       "./src/index.ts",
-      "./src/balance.ts"
+      "./src/balance.ts",
+      "./src/blocked.ts"
     ]
   },
   "scripts": {
