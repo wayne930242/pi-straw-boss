@@ -362,8 +362,8 @@ an empty editor). While the session is blocked only `esc` is sent: the dialog ma
 until Phase 3 can tell which, nothing else reaches it from the browser.
 The confirm for session-ending commands covers typed text only: keys act on whatever the terminal holds, so `up`
 then `enter` can resubmit a `/reload` from prompt history, `enter` submits a `/new` left unsent in the editor, and
-two `esc` on an empty editor run pi's double-Escape action. The page sends only `esc` (Stop) in 0.5.0; Phase 3's key
-pad must confirm such sequences itself or read the editor first (Phase 4).
+two `esc` on an empty editor run pi's double-Escape action. In 0.5.0 the server accepts only `esc` (Stop), the one key the page sends; the list above is Phase 3's, and its key
+pad must confirm such sequences itself or read the editor first (Phase 4) before the server widens it.
 
 `POST /<t>/api/sessions/<key>/focus` runs `agent.focus` on the pane.
 

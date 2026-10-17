@@ -14,7 +14,8 @@ import type { Found } from "./net.ts";
 // One request per session is in flight at a time. Typed text is never logged; a Herdr timeout is not retried: it does not prove nothing arrived.
 
 export const MAX_TEXT = 16_384, MAX_BODY = 65_536, MAX_KEYS = 16;
-export const KEYS = new Set(["esc", "enter", "up", "down", "left", "right", "tab", "shift+tab", "space", "backspace", "pageup", "pagedown", "home", "end", "alt+up", "alt+o", "ctrl+g", ..."123456789"]);
+// Only Escape (Stop) until Phase 3: other keys act on whatever the terminal holds, so up then enter could resubmit a /reload unconfirmed.
+export const KEYS = new Set(["esc"]);
 /** Commands that end the session or switch its pane to another one: the page asks first, and the server refuses them unconfirmed. */
 export const ENDING = /^\s*\/(quit|exit|new|resume|fork|clone|import|reload)(?=\s|$)/;
 // Control characters would act as keys inside the paste (ESC[201~ ends it, after which anything is raw input, Ctrl+C included); tab and newline stay.

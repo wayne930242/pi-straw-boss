@@ -81,15 +81,15 @@ test("a session waiting on a dialog, a pane that left pi, and a pane reused by a
 	assert.equal((await send(gone.gui, "sessions/nobody/input", { text: "hi", as: "send" })).status, 404);
 });
 
-test("keys come only from the allow list: never Ctrl+C or Ctrl+D, and only Escape while it waits on a dialog", async () => {
+test("only Escape can be sent as a key until Phase 3, never Ctrl+C or Ctrl+D, also while it waits on a dialog", async () => {
 	const { gui, typed, state } = await setup();
-	for (const keys of [["ctrl+c"], ["ctrl+d"], ["esc", "ctrl+c"], [], ["x"], Array(17).fill("esc"), "esc"]) assert.equal((await send(gui, "sessions/sess-1/keys", { keys })).status, 400, JSON.stringify(keys));
+	for (const keys of [["ctrl+c"], ["ctrl+d"], ["esc", "ctrl+c"], [], ["x"], ["up", "enter"], ["enter"], ["down", "enter"], Array(17).fill("esc"), "esc"]) assert.equal((await send(gui, "sessions/sess-1/keys", { keys })).status, 400, JSON.stringify(keys));
 	assert.ok(!KEYS.has("ctrl+c") && !KEYS.has("ctrl+d"));
-	assert.equal((await send(gui, "sessions/sess-1/keys", { keys: ["down", "enter"] })).status, 200);
+	assert.equal((await send(gui, "sessions/sess-1/keys", { keys: ["esc"] })).status, 200);
 	state.agent_status = "blocked";
-	assert.deepEqual([(await send(gui, "sessions/sess-1/keys", { keys: ["1"] })).status, (await send(gui, "sessions/sess-1/keys", { keys: ["esc"] })).status], [409, 200], "a dialog may be a secret prompt: only Escape");
+	assert.deepEqual([(await send(gui, "sessions/sess-1/keys", { keys: ["1"] })).status, (await send(gui, "sessions/sess-1/keys", { keys: ["esc"] })).status], [400, 200], "a dialog may be a secret prompt: only Escape");
 	assert.equal((await send(gui, "sessions/sess-1/focus", {})).status, 200);
-	assert.deepEqual(typed().map(([m, p]) => [m, p.keys ?? p.target]), [["pane.send_input", ["down", "enter"]], ["pane.send_input", ["esc"]], ["agent.focus", "wA:p1"]]);
+	assert.deepEqual(typed().map(([m, p]) => [m, p.keys ?? p.target]), [["pane.send_input", ["esc"]], ["pane.send_input", ["esc"]], ["agent.focus", "wA:p1"]]);
 });
 
 test("commands that end or replace the session need confirmed, and the page and the server agree on which they are", async () => {
