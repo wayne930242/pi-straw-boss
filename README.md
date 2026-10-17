@@ -18,6 +18,7 @@ Run a few agents on the same project and they start stepping on each other: two 
 - **A live dashboard** in the tower: who joined, and what they and their subagents are doing.
 - **A browser view** of the whole net, `/boss gui`: every workspace as a base with its tower, agents, and subagents, animated and read-only.
 - **Broadcast** to a tab, a workspace, every tower, or every session.
+- **Tidy tabs.** When a pi starts in a tab or quits out of it, the tab's panes are made equal again, so workers split off one by one don't leave a chain of halves.
 
 ## Install
 

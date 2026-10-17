@@ -44,8 +44,10 @@ test("the TypeScript source stays within its size budgets", () => {
 	// The dashboard and the browser view's server and data code each have a budget of their own so the coordination code stays readable on its own.
 	assert.ok(count("src/dashboard.ts") <= 200, `src/dashboard.ts has ${count("src/dashboard.ts")} lines`);
 	const server = ["net.ts", "gui.ts"].reduce((sum, name) => sum + count(`src/${name}`), 0);
+	// Pane balance is a separate extension entry with its plain-JavaScript helper.
+	assert.ok(count("src/balance.ts") + count("src/balance.mjs") <= 220, "src/balance.ts and src/balance.mjs stay small");
 	assert.ok(server <= 250, `src/net.ts and src/gui.ts have ${server} lines`);
-	const rest = names("src").filter((name) => !["dashboard.ts", "net.ts", "gui.ts"].includes(name)).reduce((sum, name) => sum + count(`src/${name}`), 0);
+	const rest = names("src").filter((name) => !["dashboard.ts", "net.ts", "gui.ts", "balance.ts"].includes(name)).reduce((sum, name) => sum + count(`src/${name}`), 0);
 	assert.ok(rest <= 540, `the rest of src has ${rest} lines`);
 	const page = names("gui").reduce((sum, name) => sum + count(`gui/${name}`), 0);
 	assert.ok(page <= 520, `the page's TypeScript has ${page} lines`);
