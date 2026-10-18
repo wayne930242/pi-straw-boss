@@ -125,6 +125,25 @@ export async function waitFor<T>(sleep: Sleep, check: () => T | Promise<T>, ms: 
 	}
 }
 
+/** A new tab in `dir` that does not take focus, with `env` (NAME=value) in its panes. */
+export async function createTab(run: HerdrRun, workspace: string, dir: string, env: string[], label?: string) {
+	const created = await result(run, ["tab", "create", "--workspace", workspace, ...(label ? ["--label", label] : []), "--cwd", dir, "--no-focus", ...env.flatMap((e) => ["--env", e])]);
+	return { tabId: created.tab.tab_id as string, paneId: created.root_pane.pane_id as string };
+}
+
+/** Starts pi in the pane under a Herdr agent name. A new tab's shell may not be at its prompt yet: herdr answers agent_pane_busy until it is, and any other failure is final. */
+export async function startPi(run: HerdrRun, sleep: Sleep, name: string, paneId: string, piArgs: string[]) {
+	const start = ["agent", "start", name, "--kind", "pi", "--pane", paneId, "--timeout", String(START_MS), "--", ...piArgs];
+	for (let attempt = 1; ; attempt++) {
+		try {
+			return await run(start, START_MS + 5000);
+		} catch (error) {
+			if (attempt === START_ATTEMPTS || !(error as Error).message.includes("agent_pane_busy")) throw error;
+			await sleep(500);
+		}
+	}
+}
+
 /** The live tower of a workspace, opening its `tower` tab when there is none. One opening at a time per workspace. */
 export function ensureTower(env: TowerEnv, workspace: Workspace, cwd: string) {
 	const existing = opening.get(workspace.workspace_id);
@@ -155,25 +174,15 @@ async function open({ run, sleep, live, moveFirst, model }: TowerEnv, workspace:
 		await moveFirst(marked.tab_id);
 	} else {
 		const dir = workspace.worktree?.checkout_path ?? cwd;
-		const created = await result(run, ["tab", "create", "--workspace", ws, "--label", TOWER_LABEL, "--cwd", dir, "--no-focus", "--env", "STRAW_BOSS_ROLE=tower"]);
-		paneId = created.root_pane.pane_id;
+		const created = await createTab(run, ws, dir, ["STRAW_BOSS_ROLE=tower"], TOWER_LABEL);
+		paneId = created.paneId;
 		// Marked at once, so a tab left without pi is recognised (while the marker lasts) and the label stays display only.
 		await report(run, "pane", paneId, { sb_role: "tower" });
-		await moveFirst(created.tab.tab_id);
+		await moveFirst(created.tabId);
 	}
 	if (!running) {
 		// Herdr agent names are unique across workspaces and lowercase only, so the name carries the lowercased workspace id.
-		const start = ["agent", "start", `tower-${ws.toLowerCase()}`, "--kind", "pi", "--pane", paneId, "--timeout", String(START_MS), "--", "--name", `tower · ${workspace.label}`, ...(model ? ["--model", model] : [])];
-		// A new tab's shell may not be at its prompt yet: herdr answers agent_pane_busy until it is, and any other failure is final.
-		for (let attempt = 1; ; attempt++) {
-			try {
-				await run(start, START_MS + 5000);
-				break;
-			} catch (error) {
-				if (attempt === START_ATTEMPTS || !(error as Error).message.includes("agent_pane_busy")) throw error;
-				await sleep(500);
-			}
-		}
+		await startPi(run, sleep, `tower-${ws.toLowerCase()}`, paneId, ["--name", `tower · ${workspace.label}`, ...(model ? ["--model", model] : [])]);
 	}
 	const id = await waitFor(sleep, held, TOWER_WAIT_MS, 1000);
 	if (!id) throw new Error(`The tower of ${workspace.label} did not publish its token within ${TOWER_WAIT_MS / 1000} s (pane ${paneId})`);

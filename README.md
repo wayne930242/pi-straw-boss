@@ -14,7 +14,7 @@ Run a few agents on the same project and they start stepping on each other: two 
 
 - **Everyone joins.** Each pi in Herdr joins its tab's net at start as a member; nothing to ask or remember.
 - **A main agent per tab, by promotion.** An agent whose work grows calls `boss_promote`, or is promoted when it first dispatches a subagent. A tab has one main, and nobody takes it over except you with `/boss`.
-- **A tower per workspace.** It opens with the workspace's first main in its own tab, pinned first, and coordinates the main agents and the other towers. You don't need to talk to it.
+- **A tower per workspace.** It opens with the workspace's first main in its own tab, pinned first, and coordinates the main agents and the other towers, and opens a tab with a main agent for work no session owns. You don't need to talk to it.
 - **A live dashboard** in the tower: who joined, and what they and their subagents are doing.
 - **A browser view** of the whole net, `/boss gui`: every workspace as a base with its tower, agents, and subagents, animated and read-only. Click a base to zoom in, click a unit to read its chat as a live comms log; units that wait on you queue up as alerts.
 - **Broadcast** to a tab, a workspace, every tower, or every session.
@@ -46,6 +46,7 @@ The tower only routes and coordinates, so it can run a lighter model: set `tower
 | `boss_promote` | Become this tab's main agent (refused while it has one). |
 | `boss_status` | Main agents, this workspace's tower, and the other towers. |
 | `call_tower` | Message this workspace's tower, or another workspace's. |
+| `boss_open_main` | Tower only: open a tab with a new main agent for a request no session owns. |
 | `boss_broadcast` | Message a tab, a workspace, all towers, or every session. |
 | `/boss` | Take over as this tab's main agent. |
 | `/boss status`, `/boss tower` | Show the status; open and focus the tower. |

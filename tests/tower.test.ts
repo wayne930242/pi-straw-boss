@@ -139,7 +139,7 @@ test("the tower registers its tab channel as not owner-eligible, writes both tok
 	await tower.start();
 	assert.deepEqual(world.broker.registrations.map((r) => [r.id, r.ownerEligible]), [["tower-wA", false]]);
 	assert.deepEqual([tower.tokens, world.herdr.workspace("wA").tokens], [{ sb_role: "tower" }, { tower: "tower-wA" }]);
-	assert.deepEqual([...tower.tools.keys()].sort(), ["boss_broadcast", "boss_status", "call_tower"]);
+	assert.deepEqual([...tower.tools.keys()].sort(), ["boss_broadcast", "boss_open_main", "boss_status", "call_tower"]);
 	assert.deepEqual(tower.entries, [{ customType: "straw-boss", data: { tower: true, workspaceId: "wA" } }]);
 	assert.match((await tower.run())["straw-boss"]!, /^You are the tower of Herdr workspace Alpha;/);
 

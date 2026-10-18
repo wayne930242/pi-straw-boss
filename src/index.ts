@@ -11,6 +11,7 @@ import { createHub, type Hub } from "./dialogs.ts";
 import { answers, type Gui, openBrowser, readRecord, sharedGui, startGui, urlOf } from "./gui.ts";
 import { netSource } from "./net.ts";
 import { clearOrder, markKids, netTokens } from "./order.ts";
+import { opener } from "./opener.ts";
 import { orphans } from "./orphan.ts";
 import { copyText, pairingKeys, showLines } from "./pairing.ts";
 import { type Run, switchRemote, tailscale } from "./remote.ts";
@@ -64,6 +65,8 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 		const bridge = startBridge(pi, { env, dir: guiDir, local: () => (hub?.running ? hub : undefined) });
 		if (env.PI_SUBAGENT_ID) return;
 		let isTower = env.STRAW_BOSS_ROLE === "tower";
+		// A tab the tower opened for a request starts its pi with this role: it promotes itself as soon as it has joined (opener.ts).
+		const opensAsMain = env.STRAW_BOSS_ROLE === "main";
 		let joined = false, isMain = false, holdsTower = false, requests = 0;
 		const nonce = randomUUID().slice(0, 8);
 		// The tab's live main agent as of the last refresh, and the main this session pinned as owner before the broker echoes it back.
@@ -318,6 +321,21 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 				return { text, details: { role: role() } };
 			});
 		}
+		// Tower only. The tower runs no commands: this is its one way to start work, in a new tab of its own workspace.
+		function addOpenMain() {
+			const open = opener({ run, sleep, workspaceId: at.workspaceId, cwd: process.cwd(), sessions: () => c.listSessions(), send });
+			tool("boss_open_main", "Open a new tab in this workspace with a new pi as its main agent and hand it a request that no session owns. Does not ask the boss and does not take focus. Opens at most one main per request; when it fails, tell the sender.",
+				Type.Object({
+					request: Type.String({ description: "The sender's request exactly as it reached you, with every boss decision it quotes kept verbatim." }),
+					sender: Type.String({ description: "The intercom name or session id of the session that made the request; the new main reports back to it." }),
+					label: Type.Optional(Type.String({ description: "A short label for the new tab." })),
+				}),
+				async (input) => {
+					const opened = await open(input);
+					const text = opened.repeated ? `A main was already opened for this request (tab ${opened.tab}); nothing new opened.` : `Opened tab ${opened.tab} with a main agent (session ${opened.main}) and handed it the request. It reports to ${opened.sender}.`;
+					return { text, details: opened };
+				});
+		}
 		const startTower = async () => {
 			at = await place(run);
 			connect(false);
@@ -339,6 +357,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			holdsTower = true;
 			info = { workspace: ws?.label ?? at.workspaceId, head: headOf(all)?.label ?? "" };
 			addNetTools();
+			addOpenMain();
 			keepFresh();
 			await publish();
 			// The dashboard lives exactly as long as this session holds the tower role.
@@ -379,7 +398,10 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 				if (bar) {
 					tell(bar.text, bar.level);
 				} else {
-					starting = joinNet();
+					starting = joinNet().then(async () => {
+						const taken = opensAsMain && (await promote(false));
+						if (taken && !taken.promoted) tell(taken.text, "warning");
+					});
 				}
 			}
 			starting?.catch((error: Error) => tell(`Straw Boss: ${error.message}`, "error"));

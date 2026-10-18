@@ -3,7 +3,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import { PROMPT_DIR } from "./fakes.ts";
 
-const BUDGETS: Record<string, number> = { "main.md": 150, "tower.md": 150, "member.md": 80, "member-no-main.md": 80 };
+// tower.md was 150 words; the rule for opening a main for unowned work (boss_open_main: no asking the boss, what to pass, once, report a failure) took it to 180.
+const BUDGETS: Record<string, number> = { "main.md": 150, "tower.md": 180, "member.md": 80, "member-no-main.md": 80 };
 const PLACEHOLDERS = new Set(["tab", "workspace", "main", "tower", "head", "dir"]);
 const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
 

@@ -39,7 +39,7 @@ export const settle = async () => {
 };
 
 interface Tokens { [name: string]: string }
-interface FakePane { pane_id: string; tab_id: string; workspace_id: string; agent?: string; agent_status?: string; agent_session?: { value: string }; label?: string; tokens: Tokens; processes?: { argv?: string[]; argv0?: string; name?: string }[] }
+interface FakePane { pane_id: string; tab_id: string; workspace_id: string; agent?: string; agent_status?: string; agent_session?: { value: string }; label?: string; tokens: Tokens; env?: string[]; cwd?: string; processes?: { argv?: string[]; argv0?: string; name?: string }[] }
 interface FakeWorkspace { workspace_id: string; label: string; agent_status?: string; tokens: Tokens; worktree?: { checkout_path?: string; is_linked_worktree?: boolean; repo_key?: string } }
 
 /** A tiny Herdr: workspaces, tabs, panes, and the CLI subcommands the extension calls. */
@@ -117,7 +117,8 @@ export class FakeHerdr {
 		if (group === "tab" && cmd === "list") return out({ tabs: this.tabs.filter((t) => t.workspace_id === flag("--workspace")) });
 		if (group === "tab" && cmd === "create") {
 			const id = `${flag("--workspace")}:t${this.next++}`;
-			this.addTab(id, flag("--label")!, `${flag("--workspace")}:p${this.next++}`, "shell");
+			this.addTab(id, flag("--label") ?? "", `${flag("--workspace")}:p${this.next++}`, "shell");
+			Object.assign(this.panes.at(-1)!, { cwd: flag("--cwd"), env: args.flatMap((arg, i) => (arg === "--env" ? [args[i + 1]!] : [])) });
 			return out({ tab: { tab_id: id }, root_pane: { pane_id: this.panes.at(-1)!.pane_id } });
 		}
 		if (group === "agent" && cmd === "start") {
@@ -429,6 +430,10 @@ export class World {
 	/** `herdr agent start` boots a tower session in the pane, as pi would. */
 	autoTowers(): void {
 		this.herdr.onAgentStart = (pane) => void this.agent({ id: `tower-${pane.workspace_id}`, name: `tower · ${pane.workspace_id}`, pane: pane.pane_id, env: { STRAW_BOSS_ROLE: "tower" } }).start();
+	}
+	/** A pi started in a tab the tower opened for a request: it runs with the role the tab was created with, and joins and promotes as `opensAsMain` says. */
+	autoMains(deps: Partial<Deps> = {}): void {
+		this.herdr.onAgentStart = (pane) => void this.agent({ id: `opened-${pane.pane_id}`, name: `main · ${pane.workspace_id}`, pane: pane.pane_id, env: { STRAW_BOSS_ROLE: pane.env?.find((e) => e.startsWith("STRAW_BOSS_ROLE="))?.slice(16) ?? "" }, deps }).start();
 	}
 	activity(): number {
 		return this.herdr.calls.length + this.broker.events + this.agents.reduce((sum, a) => sum + a.entries.length, 0);
