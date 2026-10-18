@@ -78,28 +78,47 @@ test("a subagent's key is its launcher's key plus one segment, so it sorts right
 	];
 	const kids = descendants(parent, "000.1.001.0.000", "Parent session", ps, Date.now());
 	assert.deepEqual(kids, [
-		{ pane: "wS:p1", order: "000.1.001.0.000.00", mark: `${ARROW} Parent session` },
-		{ pane: "wS:p2", order: "000.1.001.0.000.00.00", mark: `${ARROW} aaa` },
-		{ pane: "wA:p20", order: "000.1.001.0.000.01", mark: `${ARROW} Parent session` },
+		{ pane: "wS:p1", order: "000.1.001.0.000.000", mark: `${ARROW} Parent session` },
+		{ pane: "wS:p2", order: "000.1.001.0.000.000.000", mark: `${ARROW} aaa` },
+		{ pane: "wA:p20", order: "000.1.001.0.000.001", mark: `${ARROW} Parent session` },
 	], "the finished subagent has no pane and gets nothing, a subagent's own subagent hangs under it");
 	const order = byKey({ parent: "000.1.001.0.000", sibling: "000.1.001.1.001", ...Object.fromEntries(kids.map((k) => [k.pane, k.order])) });
 	assert.deepEqual(order, ["parent", "wS:p1", "wS:p2", "wA:p20", "sibling"]);
 });
 
-test("nesting stops at three levels, and a long launcher name is cut to fit the sidebar", () => {
-	let file = launch("chain-0", [{ id: "c1", name: "c1" }]);
-	const chain = [pane("p0", "wA:t1", { agent_session: { value: file } })];
-	for (const [i, id] of ["c1", "c2", "c3", "c4"].entries()) {
-		const next = kidFile(id);
-		chain.push(pane(`p${i + 1}`, "wA:t1", { agent_status: "working", label: id, agent_session: { value: next } }));
-		if (id !== "c4") launch(`${id}-1a2b3c4d-5e6f7a8b-9c0d`, [{ id: `c${i + 2}`, name: `c${i + 2}` }]);
+/** A chain of `levels` subagents, each launched by the one before; pane `p0` is the session at the top. */
+function chain(levels: number): Pane[] {
+	const ids = Array.from({ length: levels }, (_, i) => `c${i + 1}`);
+	const ps = [pane("p0", "wA:t1", { agent_session: { value: launch("chain-0", [{ id: "c1", name: "c1" }]) } })];
+	for (const [i, id] of ids.entries()) {
+		ps.push(pane(`p${i + 1}`, "wA:t1", { agent_status: "working", label: id, agent_session: { value: kidFile(id) } }));
+		if (i + 1 < levels) launch(`${id}-1a2b3c4d-5e6f7a8b-9c0d`, [{ id: ids[i + 1]!, name: ids[i + 1]! }]);
 	}
-	file = "";
-	const kids = descendants(chain[0], "000.0", "x".repeat(40), chain, Date.now());
-	assert.deepEqual(kids.map((k) => k.pane), ["p1", "p2", "p3"], "the fourth level stays unmarked");
-	assert.deepEqual(kids.map((k) => k.order), ["000.0.00", "000.0.00.00", "000.0.00.00.00"]);
+	return ps;
+}
+
+test("nesting is followed down to six levels, and a long launcher name is cut to fit the sidebar", () => {
+	const ps = chain(8);
+	const kids = descendants(ps[0], "000.0", "x".repeat(40), ps, Date.now());
+	assert.deepEqual(kids.map((k) => k.pane), ["p1", "p2", "p3", "p4", "p5", "p6"], "a seventh level stays unmarked");
+	assert.deepEqual(kids.map((k) => k.order), ["000.0.000", "000.0.000.000", "000.0.000.000.000", "000.0.000.000.000.000", "000.0.000.000.000.000.000", "000.0.000.000.000.000.000.000"]);
 	assert.equal(kids[0]!.mark, `${ARROW} ${"x".repeat(23)}…`);
 	assert.deepEqual(descendants(undefined, "000.0", "x", [], 0), []);
+});
+
+test("every live subagent gets a key, past the eight the dashboard lists, so none sorts outside its launcher's span; a launch record that leads back to the launcher is ignored", () => {
+	const names = Array.from({ length: 12 }, (_, i) => `k${String(i).padStart(2, "0")}`);
+	const file = launch("crowd", names.map((name) => ({ id: name, name })));
+	const parent = pane("p0", "wA:t1", { agent_session: { value: file } });
+	const ps = [parent, ...names.map((name, i) => kidPane(`kid${i}`, "wA:t1", name, name))];
+	const kids = descendants(parent, "000.0", "Crowd", ps, Date.now());
+	assert.deepEqual(kids.map((k) => k.pane), names.map((_, i) => `kid${i}`));
+	assert.deepEqual(kids.map((k) => k.order.slice(-4)), names.map((_, i) => `.${String(i).padStart(3, "0")}`));
+	assert.deepEqual(byKey(Object.fromEntries(kids.map((k) => [k.pane, k.order]))), kids.map((k) => k.pane), "string order is launch order");
+
+	// The first subagent's launch records name a child whose session file is the launcher's own, a cycle that must neither loop nor mark the launcher.
+	launch("k00-1a2b3c4d-5e6f7a8b-9c0d", [{ id: "crowd", name: "crowd" }]);
+	assert.deepEqual(descendants(parent, "000.0", "Crowd", [parent, kidPane("kid0", "wA:t1", "k00", "k00")], Date.now()).map((k) => k.pane), ["kid0"]);
 });
 
 test("netTokens reads Herdr for a session's own tokens (a tower has no mark) and its subagents'; markKids writes them and clears the panes it no longer marks", async () => {
@@ -110,17 +129,29 @@ test("netTokens reads Herdr for a session's own tokens (a tower has no mark) and
 	const run = world.herdr.runFor("wA:p1"), place = { paneId: "wA:p1", tabId: "wA:t1", workspaceId: "wA" };
 
 	const main = await netTokens(run, place, "main", "Main");
-	assert.deepEqual(main, { own: { sb_order: "000.1.000.0.000", sb_mark: MARK.main }, kids: [{ pane: "wS:p1", order: "000.1.000.0.000.00", mark: `${ARROW} Main` }] });
+	assert.deepEqual(main, { own: { sb_order: "000.1.000.0.000", sb_mark: MARK.main }, kids: [{ pane: "wS:p1", order: "000.1.000.0.000.000", mark: `${ARROW} Main` }] });
 	assert.deepEqual((await netTokens(run, place, "tower", "Main")).own, { sb_order: "000.0", sb_mark: null }, "a tower's tab already carries the glyph");
 	assert.deepEqual((await netTokens(run, { ...place, paneId: "wA:p99" }, "member", "Main")).own, { sb_order: null, sb_mark: MARK.member }, "a pane Herdr does not list has no key");
 
 	const marked = await markKids(run, main.kids, new Set(["wS:old"]));
 	assert.deepEqual([...marked], ["wS:p1"]);
-	assert.deepEqual(world.herdr.pane("wS:p1").tokens, { sb_order: "000.1.000.0.000.00", sb_mark: `${ARROW} Main` });
+	assert.deepEqual(world.herdr.pane("wS:p1").tokens, { sb_order: "000.1.000.0.000.000", sb_mark: `${ARROW} Main` });
 	world.herdr.addPane("wS:old", "wS:t1").tokens = { sb_order: "x", sb_mark: "y" };
 	await markKids(run, [], new Set(["wS:old", "wS:gone"])); // a pane that already closed is no error
 	assert.deepEqual(world.herdr.pane("wS:old").tokens, {});
 });
+
+/** A main agent in wA:t1 whose subagent runs in a worktree sub workspace; the main has published, so both carry tokens. */
+async function launcher() {
+	world.herdr.workspaces.unshift({ workspace_id: "wS", label: "Alpha feature", tokens: {}, worktree: { is_linked_worktree: true, repo_key: "/r/alpha" } });
+	world.herdr.addTab("wS:t1", "child", "wS:p1");
+	const a = world.agent({ id: "a", name: "Solo", pane: "wA:p1", tab: "wA:t1" });
+	world.herdr.pane("wA:p1").agent_session = { value: launch("a", [{ id: "kid-a", name: "aaa" }]) };
+	Object.assign(world.herdr.pane("wS:p1"), { agent: "pi", agent_status: "working", label: "aaa", agent_session: { value: kidFile("kid-a") } });
+	await a.start();
+	await a.promote();
+	return { a, raw: (id: string) => world.herdr.pane(id).tokens };
+}
 
 test("a session publishes its key and mark with its role, rewrites them when it is promoted, and the subagents it launched get theirs on the 4 minute refresh", async () => {
 	mock.timers.enable({ apis: ["setInterval"] });
@@ -143,7 +174,7 @@ test("a session publishes its key and mark with its role, rewrites them when it 
 	Object.assign(world.herdr.pane("wS:p1"), { agent: "pi", agent_status: "working", label: "aaa", agent_session: { value: kidFile("kid-a") } });
 	await a.promote();
 	assert.deepEqual(raw("wA:p1"), { sb_role: "main", sb_order: "000.1.000.0.000", sb_mark: MARK.main }, "promotion rewrites both");
-	assert.deepEqual(raw("wS:p1"), { sb_order: "000.1.000.0.000.00", sb_mark: `${ARROW} Solo` }, "the subagent in the worktree workspace hangs under its launcher");
+	assert.deepEqual(raw("wS:p1"), { sb_order: "000.1.000.0.000.000", sb_mark: `${ARROW} Solo` }, "the subagent in the worktree workspace hangs under its launcher");
 	assert.deepEqual(byKey(Object.fromEntries(["wA:p7", "wA:p1", "wS:p1", "wA:p2", "wA:p3"].map((id) => [id, raw(id).sb_order]))), ["wA:p7", "wA:p1", "wS:p1", "wA:p2", "wA:p3"]);
 
 	// The subagent finishes: its pane is back at a shell, and the next refresh takes its tokens away.
@@ -156,4 +187,29 @@ test("a session publishes its key and mark with its role, rewrites them when it 
 
 	await a.fire("session_shutdown");
 	assert.deepEqual(raw("wA:p1"), {}, "shutdown clears the role, the key and the mark");
+});
+
+test("a refresh that cannot read Herdr keeps the subagents' tokens instead of clearing them", async () => {
+	mock.timers.enable({ apis: ["setInterval"] });
+	const { raw } = await launcher();
+	const marked = { sb_order: "000.1.000.0.000.000", sb_mark: `${ARROW} Solo` };
+	assert.deepEqual(raw("wS:p1"), marked);
+	world.herdr.failReads = true;
+	mock.timers.tick(4 * 60_000);
+	await settle();
+	assert.deepEqual(raw("wS:p1"), marked, "the subagent keeps its place until a refresh can say it is gone");
+	assert.equal(raw("wA:p1").sb_role, "main");
+	world.herdr.failReads = false;
+	mock.timers.tick(4 * 60_000);
+	await settle();
+	assert.deepEqual(raw("wS:p1"), marked);
+});
+
+test("shutdown waits for a publish in flight, so no token is written after it clears them", async () => {
+	mock.timers.enable({ apis: ["setInterval"] });
+	const { a, raw } = await launcher();
+	mock.timers.tick(4 * 60_000); // a refresh starts, and has not finished
+	await a.fire("session_shutdown");
+	await settle();
+	assert.deepEqual([raw("wA:p1"), raw("wS:p1")], [{}, {}]);
 });

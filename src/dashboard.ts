@@ -78,8 +78,8 @@ function readJson(path: string): Record<string, unknown> {
 	}
 }
 
-/** The subagents a pi session launched: live ones, plus those that finished in the last 10 minutes. */
-export function subagents(parent: Pane | undefined, all: Pane[], now: number): Row[] {
+/** The subagents a pi session launched: live ones, plus those that finished in the last 10 minutes. The dashboard shows the first `limit`. */
+export function subagents(parent: Pane | undefined, all: Pane[], now: number, limit = MAX_CHILDREN): Row[] {
 	const file = parent?.agent_session?.value;
 	if (!file) return [];
 	const dir = join(dirname(file), "artifacts", basename(file, ".jsonl").split("_").pop()!);
@@ -109,7 +109,7 @@ export function subagents(parent: Pane | undefined, all: Pane[], now: number): R
 			return { group: "net" as const, depth: 2, mark, text: name, kind: "subagent", workspace: pane?.workspace_id, id, file, pane: pane?.agent === "pi" ? pane.pane_id : undefined, note: { working: doing, waiting: "waiting on a question", done: "finished" }[mark as "working"] };
 		})
 		.sort((a, b) => Number(a.mark === "done") - Number(b.mark === "done") || a.text.localeCompare(b.text))
-		.slice(0, MAX_CHILDREN);
+		.slice(0, limit);
 }
 
 /**

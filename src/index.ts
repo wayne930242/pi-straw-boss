@@ -9,7 +9,7 @@ import { collect, startDashboard } from "./dashboard.ts";
 import { createHub, type Hub } from "./dialogs.ts";
 import { answers, type Gui, openBrowser, readRecord, sharedGui, startGui, urlOf } from "./gui.ts";
 import { netSource } from "./net.ts";
-import { clearOrder, type Kid, markKids, netTokens } from "./order.ts";
+import { clearOrder, markKids, netTokens } from "./order.ts";
 import { copyText, pairingKeys, showLines } from "./pairing.ts";
 import { type Run, switchRemote, tailscale } from "./remote.ts";
 import { ensureTower, headOf, herdrApi, type HerdrApi, herdrCall, type HerdrCall, herdrRun, type HerdrRun, isSub, type Pane, panes, parentOf, place, type Place, report, type Session, type Sleep, waitFor, workspaces, type Workspace } from "./herdr.ts";
@@ -101,16 +101,20 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 		};
 
 		// Tokens are display and discovery only: a failed write waits for the next refresh, liveness comes from intercom.
-		const publish = async (known?: Session[]) => {
+		// One publish at a time, and shutdown waits for the one in flight: a write that lands after the clear would leave tokens behind.
+		let publishing: Promise<void> = Promise.resolve();
+		const publishOnce = async (known?: Session[]) => {
 			const sbRole = role();
 			if (sbRole) {
 				ownName = nameOf((known ?? (await c.listSessions().catch(() => []))).find((s) => s.id === me())) || ownName;
-				const net = await netTokens(run, at, sbRole, ownName || me().slice(0, 8)).catch(() => ({ own: {}, kids: [] as Kid[] }));
-				await report(run, "pane", at.paneId, { sb_role: sbRole, ...net.own }).catch(() => {});
-				kids = await markKids(run, net.kids, kids);
+				// A failed read of Herdr leaves the subagents' tokens as they are; their TTL still runs.
+				const net = await netTokens(run, at, sbRole, ownName || me().slice(0, 8)).catch(() => undefined);
+				await report(run, "pane", at.paneId, { sb_role: sbRole, ...net?.own }).catch(() => {});
+				if (net) kids = await markKids(run, net.kids, kids);
 			}
 			if (holdsTower) await report(run, "workspace", at.workspaceId, { tower: me() }).catch(() => {});
 		};
+		const publish = (known?: Session[]) => (publishing = publishing.then(() => publishOnce(known)).catch(() => {}));
 		const keepFresh = () => {
 			timer ??= setInterval(() => void publish(), REFRESH_MS);
 			timer.unref();
@@ -393,6 +397,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			dashboard = undefined;
 			clearInterval(timer);
 			timer = undefined;
+			await publishing;
 			const held = holdsTower;
 			holdsTower = false;
 			if (!role() || !at) return;

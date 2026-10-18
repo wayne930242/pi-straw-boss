@@ -59,6 +59,8 @@ export class FakeHerdr {
 	/** Socket API calls, and a switch that makes `tab.move` fail as an unreachable socket would. */
 	moves: { tab_id: string; insert_index: number }[] = [];
 	failMove = false;
+	/** Makes every `list` call fail, as a Herdr that cannot answer. */
+	failReads = false;
 	wsTokenHistory: (string | undefined)[] = [];
 	onAgentStart?: (pane: FakePane) => void;
 	onTabClose?: (paneIds: string[]) => void;
@@ -106,6 +108,7 @@ export class FakeHerdr {
 		const [group, cmd] = args;
 		const flag = (name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
 		const out = (result: unknown) => JSON.stringify({ result });
+		if (this.failReads && cmd === "list") throw new Error(`herdr ${args.join(" ")} failed: not answering`);
 		if (group === "pane" && cmd === "current") return out({ pane: this.pane(self) });
 		if (group === "workspace" && cmd === "list") return out({ workspaces: this.workspaces });
 		if (group === "pane" && cmd === "list") return out({ panes: this.panes.filter((p) => !flag("--workspace") || p.workspace_id === flag("--workspace")) });

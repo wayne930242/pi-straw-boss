@@ -84,8 +84,16 @@ test("a failed install leaves no state behind and is rethrown", async () => {
 	assert.equal(herdr.view, undefined);
 	assert.equal(store.state, undefined);
 
-	const refused = { ...deps(fakeHerdr(), memoryStore()), call: async () => ({ type: "agent_view", active: false }) };
-	await assert.rejects(toggle(refused), /did not install the view/);
+	const refused = fakeHerdr(), unsaved = memoryStore();
+	await assert.rejects(toggle({ ...deps(refused, unsaved), call: async (method, params) => (method === "agent.view.set" ? { type: "agent_view", active: false } : refused.handle(method, params)) }), /did not install the view/);
+	assert.ok(refused.clears.length === 1 && refused.clears[0].source === SOURCE, "a view that may be installed is cleared before the error goes out");
+});
+
+test("a view that was installed but whose state could not be saved is cleared, so a later press cannot lose track of it", async () => {
+	const herdr = fakeHerdr(), store = { read: async () => undefined, write: async () => Promise.reject(new Error("ENOSPC")) };
+	await assert.rejects(toggle(deps(herdr, store)), /ENOSPC/);
+	assert.equal(herdr.view, undefined);
+	assert.deepEqual(herdr.clears, [{ source: SOURCE }]);
 });
 
 /** A fake Herdr socket: each connection gets `answer` with the request it read. */

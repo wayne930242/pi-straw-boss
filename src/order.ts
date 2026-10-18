@@ -7,13 +7,15 @@ import { type HerdrRun, type HerdrTab, isSub, type Pane, panes, type Place, repo
 //    its own subagents after it in turn. Segments are fixed-width and `.`-separated, so plain string order is the numeric order of every segment,
 //    and a subagent's key is its parent's key plus one more segment, which sorts after the parent and before the parent's next sibling.
 //  - `sb_mark`: a short label that says what a net member is, a star for a main agent, a dot for a member, and an arrow and the launcher's name for a subagent.
-//    A tower has none: its tab already carries the lighthouse glyph.
+//    A tower has none: its tab already carries the radio tower glyph.
 // A session writes them for itself and for the subagents it launched, which never join and write nothing, on the same 4 minute refresh as `sb_role`.
 
 /** The glyphs sit in Hack Nerd Font and MesloLGS NF: Font Awesome's star (U+F005), the middle dot, and the down-right arrow. */
 export const MARK = { main: "\uf005 main", member: "\u00b7 member" } as const;
 export const ARROW = "\u21b3";
-const MAX_DEPTH = 3;
+// The dashboard shows eight subagents per session, but every live one is keyed: one left out would sort outside its launcher's span. Three digits count them.
+const MAX_KIDS = 999;
+const MAX_DEPTH = 6;
 const NAME_MAX = 24;
 const part = (n: number, width = 3) => String(n).padStart(width, "0");
 const short = (name: string) => (name.length > NAME_MAX ? `${name.slice(0, NAME_MAX - 1)}…` : name);
@@ -31,13 +33,17 @@ export function orderKey(role: "tower" | "main" | "member", pane: Pane, ps: Pane
 	return tab < 0 || slot < 0 ? undefined : `${part(base)}.1.${part(tab)}.${role === "main" ? 0 : 1}.${part(slot)}`;
 }
 
-/** The tokens of the live subagents below a session, each keyed after its launcher. Subagents that finished have no pane to mark. */
-export function descendants(parent: Pane | undefined, key: string, name: string, ps: Pane[], now: number, depth = 1): Kid[] {
+/**
+ * The tokens of the live subagents below a session, each keyed after its launcher, down to six levels. Subagents that finished have no pane to mark;
+ * a pane already marked on the way down (a cycle in the launch records) is not marked again.
+ */
+export function descendants(parent: Pane | undefined, key: string, name: string, ps: Pane[], now: number, depth = 1, seen = new Set<string>(parent ? [parent.pane_id] : [])): Kid[] {
 	if (!parent) return [];
-	return subagents(parent, ps, now).flatMap((row, i) => {
-		if (!row.pane) return [];
-		const order = `${key}.${part(i, 2)}`;
-		return [{ pane: row.pane, order, mark: `${ARROW} ${short(name)}` }, ...(depth < MAX_DEPTH ? descendants(ps.find((p) => p.pane_id === row.pane), order, row.text, ps, now, depth + 1) : [])];
+	return subagents(parent, ps, now, MAX_KIDS).flatMap((row, i) => {
+		if (!row.pane || seen.has(row.pane)) return [];
+		seen.add(row.pane);
+		const order = `${key}.${part(i)}`;
+		return [{ pane: row.pane, order, mark: `${ARROW} ${short(name)}` }, ...(depth < MAX_DEPTH ? descendants(ps.find((p) => p.pane_id === row.pane), order, row.text, ps, now, depth + 1, seen) : [])];
 	});
 }
 

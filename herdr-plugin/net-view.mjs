@@ -92,8 +92,14 @@ export async function toggle({ call, store, source, instance }) {
 		return { on: false };
 	}
 	const view = await call("agent.view.set", { source, ...netView() });
-	if (!view.active || view.source !== source) throw new Error(`herdr agent.view.set did not install the view: ${JSON.stringify(view)}`);
-	await store.write({ on: true, instance });
+	try {
+		if (!view.active || view.source !== source) throw new Error(`herdr agent.view.set did not install the view: ${JSON.stringify(view)}`);
+		await store.write({ on: true, instance });
+	} catch (error) {
+		// Without the state a later press would install the view again and never clear it.
+		await call("agent.view.clear", { source }).catch(() => {});
+		throw error;
+	}
 	return { on: true };
 }
 
