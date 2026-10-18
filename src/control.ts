@@ -18,7 +18,7 @@ import { ENDING } from "./probe.ts";
 //   POST /<token>/api/sessions/<key>/mirror {stream, on}                                  shows the pane's screen on that page's stream (mirror.ts), or stops
 //   POST /<token>/api/remote/pair                                                        a new one-time pairing URL and its QR, while remote access is on
 //   POST /<token>/api/remote/on                                                          turns remote access on in the server's session, then a pairing URL and its QR (never remote)
-//   POST /<token>/api/dirs, open/main, open/tower                                        a folder picker, a new main, a new base with its tower (spawn.ts)
+//   POST /<token>/api/dirs, open/base, open/member, open/main                            a folder picker, a new base with a member, a new member, a new main (spawn.ts)
 //   POST /<token>/api/server/stop {by, take}                                             stops the server: another session's /boss gui stop or takeover (never remote)
 // Every write needs the page's own origin (Origin, Sec-Fetch-Site), a JSON body of at most 64 KB, and the CSRF secret the server wrote into
 // the page; the custom header forces a CORS preflight that is never approved. The key is resolved in the registry (paths and panes never come

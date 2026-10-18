@@ -173,6 +173,14 @@ addEventListener("keydown", (event) => {
 	if (!panels?.stack.close() && current.view !== "map") router.go(upOf(current));
 });
 el("pair").addEventListener("click", () => void import("./pair.ts").then(({ pairTile }) => openTile(pairTile(), true)));
+// The opening buttons on the map and in a base (data-open with data-ws and data-tab) open their tile, read against the newest net.
+document.addEventListener("click", (event) => {
+	const button = (event.target as Element | null)?.closest?.<HTMLElement>("button[data-open]");
+	if (button) void import("./spawn.ts").then(({ openingOf, spawnTile }) => {
+		const opening = openingOf(button, latest?.bases ?? []);
+		if (opening) openTile(spawnTile(opening), true);
+	});
+});
 for (const event of ["focus", "pageshow", "online"]) window.addEventListener(event, () => !document.hidden && resume());
 report(status);
 navigate(router.route());

@@ -26,7 +26,7 @@ const demo = (): Net => ({
 		{ id: "w3", label: "Orchard Data", mark: "idle", head: false, tower: { name: "tower · Orchard Data", mark: "done", key: "t3", control: true }, outposts: [], outside: [], tabs: [
 			{ id: "w3:t1", label: "etl", units: [unit("c1", "etl-main", "main", "idle")] },
 		] },
-		{ id: "w4", label: "Quarry Tools", mark: "idle", head: false, tower: null, outposts: [], outside: [], tabs: [] },
+		{ id: "w4", label: "Quarry Tools", mark: "idle", head: false, tower: null, outposts: [], outside: [], tabs: [{ id: "w4:t1", label: "quarry", units: [unit("d1", "quarry-scout", "member", "idle")] }] },
 	],
 });
 

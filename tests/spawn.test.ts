@@ -5,11 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { readRecord } from "../src/gui.ts";
-import { TOWER_LABEL } from "../src/herdr.ts";
 import { listDirs, pickable } from "../src/spawn.ts";
 import { until, World } from "./fakes.ts";
 
-// The opening API (spawn.ts): a folder picker held inside home, a new main in a base, and a new base with its tower, through a GUI a session started.
+// The opening API (spawn.ts): a folder picker held inside home, a new base with its first member, a new member in a base without a tower, and a new
+// main in a base with one, through a GUI a session started. The page never opens a tower: a member that promotes itself does.
 
 const scratch = realpathSync(mkdtempSync(join(tmpdir(), "psb-spawn-test-")));
 const home = join(scratch, "home"), outside = join(scratch, "outside"), bundle = join(scratch, "bundle");
@@ -65,9 +65,48 @@ test("the picker starts in the base's own folder, and in home when that folder i
 	assert.deepEqual([(await post("dirs", { path: outside })).status, (await post("dirs", { path: join(home, ".secret") })).body.error], [400, "not_allowed"]);
 });
 
-test("a new main opens in an unfocused tab of the base in the picked folder, promotes itself, and gets the first message typed in", async () => {
+/** Gives wA a live tower: the viewer's own session stands in for it. */
+const tower = () => (world.herdr.workspace("wA").tokens.tower = "viewer-a");
+
+test("a new base opens as a workspace in the picked folder with one member and no tower, and gets the first message typed in", async () => {
 	world.autoMains();
 	const { post, calls } = await gui();
+	const dir = join(home, "beta");
+	const answer = await post("open/base", { dir, label: "", prompt: "Look around" });
+	assert.equal(answer.status, 200, JSON.stringify(answer.body));
+	assert.deepEqual(world.herdr.commands("workspace", "create"), [["workspace", "create", "--cwd", dir, "--label", "beta", "--no-focus", "--env", "STRAW_BOSS_ROLE=member"]]);
+	const ws = answer.body.workspace as string, pane = answer.body.pane as string;
+	assert.deepEqual(world.herdr.panes.filter((p) => p.workspace_id === ws).map((p) => [p.pane_id, p.tokens.sb_role]), [[pane, "member"]]);
+	assert.equal(world.herdr.workspace(ws).tokens.tower, undefined, "no tower opens with the base");
+	assert.deepEqual(world.herdr.commands("tab", "create"), [], "no tower tab either");
+	assert.deepEqual(calls.filter((c) => c.method === "agent.prompt"), [{ method: "agent.prompt", params: { target: pane, text: "Look around" } }]);
+	assert.deepEqual((await post("open/base", { dir, label: "x".repeat(65) })).body.error, "bad_request");
+	assert.equal((await post("open/tower", { dir, label: "" })).status, 404, "the page cannot open a tower");
+});
+
+test("a base without a tower takes a member beside a tab's main in its folder, or in a new tab in the picked folder, and no main", async () => {
+	world.autoMains();
+	const { post } = await gui();
+	const dir = join(home, "projects", "alpha");
+	world.herdr.addPane("wA:p7", "wA:t2", "shell");
+	world.herdr.addPane("wA:p8", "wA:t2");
+	Object.assign(world.herdr.pane("wA:p8"), { cwd: dir, tokens: { sb_role: "main" } });
+	const beside = await post("open/member", { workspace: "wA", tab: "wA:t2", dir: outside, prompt: "" });
+	assert.equal(beside.status, 200, JSON.stringify(beside.body));
+	assert.deepEqual(world.herdr.commands("pane", "split"), [["pane", "split", "wA:p8", "--direction", "right", "--cwd", dir, "--no-focus", "--env", "STRAW_BOSS_ROLE=member"]], "the folder is the main's, never the browser's");
+	assert.deepEqual([beside.body.tab, world.herdr.pane(beside.body.pane as string).tokens.sb_role], ["wA:t2", "member"]);
+	const fresh = await post("open/member", { workspace: "wA", dir: join(home, "beta") });
+	assert.equal(fresh.status, 200, JSON.stringify(fresh.body));
+	assert.deepEqual(world.herdr.commands("tab", "create"), [["tab", "create", "--workspace", "wA", "--label", "beta", "--cwd", join(home, "beta"), "--no-focus", "--env", "STRAW_BOSS_ROLE=member"]]);
+	assert.equal(world.herdr.pane(fresh.body.pane as string).tokens.sb_role, "member");
+	assert.deepEqual([(await post("open/main", { workspace: "wA", dir })).status, (await post("open/main", { workspace: "wA", dir })).body.error], [409, "no_tower"]);
+	assert.equal((await post("open/member", { workspace: "wA", tab: "wA:t99" })).status, 404);
+});
+
+test("a base with a tower takes a new main in an unfocused tab of the picked folder, which promotes itself, and no member", async () => {
+	world.autoMains();
+	const { post, calls } = await gui();
+	tower();
 	const dir = join(home, "projects", "alpha");
 	const answer = await post("open/main", { workspace: "wA", dir, prompt: "Read the README" });
 	assert.equal(answer.status, 200, JSON.stringify(answer.body));
@@ -79,34 +118,26 @@ test("a new main opens in an unfocused tab of the base in the picked folder, pro
 	const empty = await post("open/main", { workspace: "wA", dir: join(home, "beta"), prompt: "  " });
 	assert.equal(empty.status, 200);
 	assert.equal(calls.filter((c) => c.method === "agent.prompt").length, 1, "a blank first message types nothing");
-});
-
-test("a new base opens as a workspace in the picked folder whose first tab becomes its tower", async () => {
-	world.autoMains();
-	const { post } = await gui();
-	const dir = join(home, "beta");
-	const answer = await post("open/tower", { dir, label: "" });
-	assert.equal(answer.status, 200, JSON.stringify(answer.body));
-	assert.deepEqual(world.herdr.commands("workspace", "create"), [["workspace", "create", "--cwd", dir, "--label", "beta", "--no-focus", "--env", "STRAW_BOSS_ROLE=tower"]]);
-	const ws = answer.body.workspace as string, tabs = world.herdr.tabs.filter((t) => t.workspace_id === ws);
-	assert.deepEqual(tabs.map((t) => t.label), [TOWER_LABEL], "no empty shell tab is left beside the tower");
-	assert.equal(world.herdr.workspace(ws).tokens.tower, answer.body.tower);
-	assert.equal(world.herdr.panes.find((p) => p.workspace_id === ws)?.agent, "pi");
-	assert.deepEqual((await post("open/tower", { dir, label: "x".repeat(65) })).body.error, "bad_request");
+	assert.equal((await post("open/member", { workspace: "wA", dir })).body.error, "has_tower");
+	world.herdr.workspace("wA").tokens.tower = "gone-tower";
+	assert.equal((await post("open/member", { workspace: "wA", dir })).status, 200, "a token its tower left behind is no tower");
 });
 
 test("an opening is refused outside home or for a missing base, and one that fails closes what it created", async () => {
 	const { post } = await gui();
-	assert.equal((await post("open/main", { workspace: "wA", dir: outside })).body.error, "not_allowed");
-	assert.equal((await post("open/tower", { dir: join(home, ".secret") })).body.error, "not_allowed");
-	assert.equal((await post("open/main", { workspace: "wZ", dir: home })).status, 404);
-	world.herdr.busy = 99; // every agent start fails: the new tab never gets its pi
-	const failed = await post("open/main", { workspace: "wA", dir: home });
+	assert.equal((await post("open/member", { workspace: "wA", dir: outside })).body.error, "not_allowed");
+	assert.equal((await post("open/base", { dir: join(home, ".secret") })).body.error, "not_allowed");
+	assert.equal((await post("open/member", { workspace: "wZ", dir: home })).status, 404);
+	world.herdr.busy = 99; // every agent start fails: nothing new ever gets its pi
+	const failed = await post("open/member", { workspace: "wA", dir: home });
 	assert.deepEqual([failed.status, failed.body.error], [502, "open_failed"]);
 	const created = world.herdr.commands("tab", "create").at(-1)!;
 	await until(() => world.herdr.closed.length > 0, "the tab closed");
 	assert.equal(world.herdr.tabs.some((t) => t.label === "home" || t.tab_id === created[2]), false);
-	const base = await post("open/tower", { dir: home, label: "Home" });
+	world.herdr.addPane("wA:p7", "wA:t2", "shell");
+	assert.equal((await post("open/member", { workspace: "wA", tab: "wA:t2" })).status, 502);
+	assert.deepEqual(world.herdr.panes.filter((p) => p.tab_id === "wA:t2").map((p) => p.pane_id), ["wA:p7"], "the split pane is closed again");
+	const base = await post("open/base", { dir: home, label: "Home" });
 	assert.equal(base.status, 502);
-	assert.deepEqual(world.herdr.workspaces.map((w) => w.workspace_id).filter((id) => !["wA", "wB"].includes(id)), [], "the workspace it created is closed again");
+	assert.deepEqual(world.herdr.workspaces.map((w) => w.workspace_id).filter((id) => !["wA", "wB"].includes(id)), [], "the workspace it created is closed again: no base is left empty");
 });

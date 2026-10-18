@@ -135,6 +135,17 @@ export class FakeHerdr {
 			Object.assign(this.panes.at(-1)!, { cwd: flag("--cwd"), env: args.flatMap((arg, i) => (arg === "--env" ? [args[i + 1]!] : [])) });
 			return out({ workspace: { workspace_id: ws, label: flag("--label") }, tab: { tab_id: tab }, root_pane: { pane_id: this.panes.at(-1)!.pane_id } });
 		}
+		if (group === "pane" && cmd === "split") {
+			const lead = this.pane(args[2]!), id = `${lead.workspace_id}:p${this.next++}`;
+			this.addPane(id, lead.tab_id, "shell");
+			Object.assign(this.panes.at(-1)!, { cwd: flag("--cwd"), env: args.flatMap((arg, i) => (arg === "--env" ? [args[i + 1]!] : [])) });
+			return out({ pane: { pane_id: id } });
+		}
+		if (group === "pane" && cmd === "close") {
+			this.closed.push(args[2]!);
+			this.panes = this.panes.filter((p) => p.pane_id !== args[2]);
+			return out({});
+		}
 		if (group === "workspace" && cmd === "close") {
 			this.closed.push(args[2]!);
 			this.workspaces = this.workspaces.filter((w) => w.workspace_id !== args[2]);

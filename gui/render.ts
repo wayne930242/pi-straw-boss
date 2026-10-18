@@ -99,7 +99,17 @@ function fillUnit(el: HTMLElement, u: Omit<Unit, "id" | "key" | "control" | "rol
 	sync(el.querySelector(".subs")!, u.subs ?? [], unitEl, fillUnit);
 }
 
-const baseEl = () => html(`<section class="base"><header><div class="tower"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></div><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>${m.head_tower()}</span><h2><a class="enter-base"></a></h2><p></p></div></header><div class="tabs"></div><div class="outposts" data-label="${m.outposts()}"></div></section>`);
+/** Points an opening button at its base (main.ts opens the tile): a base with a tower takes mains, one without takes members, a squad only members. */
+export function aimOpening(button: HTMLElement, b: Base, tab?: string) {
+	const kind = b.tower ? "main" : "member";
+	button.hidden = Boolean(tab && b.tower);
+	button.dataset.open = kind;
+	button.dataset.ws = b.id;
+	if (tab) button.dataset.tab = tab;
+	if (button.textContent !== (kind === "main" ? m.open_main() : m.open_member())) button.textContent = kind === "main" ? m.open_main() : m.open_member();
+}
+
+const baseEl = () => html(`<section class="base"><header><div class="tower"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></div><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>${m.head_tower()}</span><h2><a class="enter-base"></a></h2><p></p></div></header><div class="spawn-btns"><button type="button" class="pair-btn"></button></div><div class="tabs"></div><div class="outposts" data-label="${m.outposts()}"></div></section>`);
 function fillBase(el: HTMLElement, b: Base) {
 	mark(el, b.mark);
 	el.classList.toggle("head", b.head);
@@ -109,8 +119,10 @@ function fillBase(el: HTMLElement, b: Base) {
 	text(el, "h2 a", b.label);
 	aim(el.querySelector("h2 a")!, { view: "workspace", ws: b.id });
 	text(el, ".title p", b.tower ? m.control_tower({ state: LABEL[b.tower.mark]() }) : m.no_tower());
-	sync(el.querySelector(".tabs")!, b.tabs, () => html(`<div class="tab"><h3></h3><div class="units"></div></div>`), (tab, t) => {
-		text(tab, "h3", m.tab_label({ label: t.label }));
+	aimOpening(el.querySelector(".spawn-btns button")!, b);
+	sync(el.querySelector(".tabs")!, b.tabs, () => html(`<div class="tab"><h3><span></span><button type="button" class="tab-add"></button></h3><div class="units"></div></div>`), (tab, t) => {
+		text(tab, "h3 span", m.tab_label({ label: t.label }));
+		aimOpening(tab.querySelector(".tab-add")!, b, t.id);
 		sync(tab.querySelector(".units")!, t.units, unitEl, fillUnit);
 	});
 	sync(el.querySelector(".outposts")!, b.outposts.map((o) => ({ id: o.id, name: o.label, role: "outpost" as const, mark: o.mark, note: o.mark === "unknown" ? m.no_agent() : undefined })), unitEl, fillUnit);

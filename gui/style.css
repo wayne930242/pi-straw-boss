@@ -47,6 +47,12 @@ svg { display: block; }
 .pair { display: grid; justify-items: center; gap: 12px; text-align: center; color: var(--dim); font-size: 13px; }
 .qr { width: min(100%, 300px); border-radius: 12px; shape-rendering: crispEdges; }
 .spawn-btns { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 4px; }
+.base > .spawn-btns { margin: -4px 0 12px; }
+.tab h3 { display: flex; align-items: center; gap: 8px; }
+.tab-add { margin-left: auto; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line); background: none; color: var(--dim); font: 600 11px var(--sans); letter-spacing: 0.08em; cursor: pointer; }
+.squad .tab-add { margin-left: 0; }
+.tab-add:hover, .new-base:hover { color: #38e0ff; border-color: #38e0ff; }
+.new-base { min-height: 140px; border-radius: 18px; border: 1px dashed var(--line); background: none; color: var(--dim); font: 600 14px var(--sans); letter-spacing: 0.08em; cursor: pointer; }
 .spawn .go { --c: #38e0ff; border: 0; }
 .spawn { display: grid; gap: 10px; color: var(--dim); font-size: 13px; }
 .spawn-at { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; }
