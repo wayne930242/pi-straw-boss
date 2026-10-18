@@ -1,15 +1,19 @@
 import { subagents } from "./dashboard.ts";
 import { ARROW, type HerdrRun, type HerdrTab, isSub, MARK, type Pane, panes, type Place, report, tabs, workspaces, type Workspace } from "./herdr.ts";
 
-// Two display tokens for the sidebar plugin and for Herdr's own Agents rows, written next to `sb_role`:
+// Three display tokens for the sidebar plugin and for Herdr's own Agents rows, written next to `sb_role`:
 //  - `sb_order`: a sort key that lays the net out as the head tower's workspace first, then the other workspaces in Herdr's order, in each the tower
 //    and then the tabs in tab order, in each tab the main agent and then the members, and every subagent right after the session that launched it,
 //    its own subagents after it in turn. Segments are fixed-width and `.`-separated, so plain string order is the numeric order of every segment,
 //    and a subagent's key is its parent's key plus one more segment, which sorts after the parent and before the parent's next sibling.
 //  - `sb_mark`: a short label that says what a net member is, a star alone for a main agent, a person (U+F007) alone for a member, and `[sub]` and the launcher's name for a subagent.
 //    A tower has none: its tab already carries the radio tower glyph.
+//  - `sb_indent`: a tree branch on a subagent alone, like Herdr's Spaces panel draws a worktree: `├─` while a later subagent of the same launcher is marked, `└─` on the last. A row put before the state icon shows it as the
+//    indent under the launcher. A tower, a main agent and a member carry none.
 // A session writes them for itself and for the subagents it launched, which never join and write nothing, on the same 4 minute refresh as `sb_role`.
 
+/** What `sb_indent` holds on a subagent: the branch to it from its launcher, and `last` for the youngest marked sibling. */
+export const INDENT = { more: "\u251c\u2500", last: "\u2514\u2500" } as const;
 // The dashboard shows eight subagents per session, but every live one is keyed: one left out would sort outside its launcher's span. Three digits count them.
 const MAX_KIDS = 999;
 const NAME_MAX = 24;
@@ -35,26 +39,26 @@ export function orderKey(role: "tower" | "main" | "member", pane: Pane, ps: Pane
  */
 export function descendants(parent: Pane | undefined, key: string, name: string, ps: Pane[], now: number, seen = new Set<string>(parent ? [parent.pane_id] : [])): Kid[] {
 	if (!parent) return [];
-	return subagents(parent, ps, now, MAX_KIDS).flatMap((row, i) => {
+	return subagents(parent, ps, now, MAX_KIDS).flatMap((row, i, rows) => {
 		if (!row.pane || seen.has(row.pane)) return [];
 		seen.add(row.pane);
-		const order = `${key}.${part(i)}`;
-		return [{ pane: row.pane, order, mark: `${ARROW} ${short(name)}` }, ...descendants(ps.find((p) => p.pane_id === row.pane), order, row.text, ps, now, seen)];
+		const order = `${key}.${part(i)}`, indent = rows.slice(i + 1).some((r) => r.pane && !seen.has(r.pane)) ? INDENT.more : INDENT.last;
+		return [{ pane: row.pane, order, mark: `${ARROW} ${short(name)}`, indent }, ...descendants(ps.find((p) => p.pane_id === row.pane), order, row.text, ps, now, seen)];
 	});
 }
 
-/** The subagent panes a session marks: each gets `sb_order` and `sb_mark`. */
-export interface Kid { pane: string; order: string; mark: string }
+/** The subagent panes a session marks: each gets `sb_order`, `sb_mark` and `sb_indent`. */
+export interface Kid { pane: string; order: string; mark: string; indent: string }
 
 /**
- * What a session publishes besides its role: its own two tokens (null clears them when Herdr cannot place the session, and a tower has no
- * mark) and those of the subagents it launched. Reads Herdr only.
+ * What a session publishes besides its role: its own tokens (null clears them when Herdr cannot place the session, a tower has no mark, and none
+ * has an indent, which clears the one a pane keeps from when it ran a subagent) and those of the subagents it launched. Reads Herdr only.
  */
 export async function netTokens(run: HerdrRun, place: Place, role: "tower" | "main" | "member", name: string, now = Date.now()): Promise<{ own: Record<string, string | null>; kids: Kid[]; joined: Set<string> }> {
 	const [ps, all, tabList] = [await panes(run), await workspaces(run), await tabs(run, place.workspaceId)];
 	const pane = ps.find((p) => p.pane_id === place.paneId), key = pane && orderKey(role, pane, ps, all, tabList);
 	const joined = new Set(ps.filter((p) => p.tokens?.sb_role).map((p) => p.pane_id));
-	return { own: { sb_order: key ?? null, sb_mark: role === "tower" ? null : MARK[role] }, kids: key ? descendants(pane, key, name, ps, now) : [], joined };
+	return { own: { sb_order: key ?? null, sb_mark: role === "tower" ? null : MARK[role], sb_indent: null }, kids: key ? descendants(pane, key, name, ps, now) : [], joined };
 }
 
 /**
@@ -62,11 +66,11 @@ export async function netTokens(run: HerdrRun, place: Place, role: "tower" | "ma
  * (a shell where a subagent ran can start a pi that writes its own). Returns the panes now marked. A failed write waits for the next refresh.
  */
 export async function markKids(run: HerdrRun, kids: Kid[], before: Set<string>, joined = new Set<string>()): Promise<Set<string>> {
-	for (const kid of kids) await report(run, "pane", kid.pane, { sb_order: kid.order, sb_mark: kid.mark }).catch(() => {});
+	for (const kid of kids) await report(run, "pane", kid.pane, { sb_order: kid.order, sb_mark: kid.mark, sb_indent: kid.indent }).catch(() => {});
 	const marked = new Set(kids.map((k) => k.pane));
 	await clearOrder(run, [...before].filter((id) => !marked.has(id) && !joined.has(id)));
 	return marked;
 }
 
-/** Removes both tokens from panes, ignoring a pane that has already closed. */
-export const clearOrder = (run: HerdrRun, paneIds: string[]) => Promise.all(paneIds.map((id) => report(run, "pane", id, { sb_order: null, sb_mark: null }).catch(() => {})));
+/** Removes the three tokens from panes, ignoring a pane that has already closed. */
+export const clearOrder = (run: HerdrRun, paneIds: string[]) => Promise.all(paneIds.map((id) => report(run, "pane", id, { sb_order: null, sb_mark: null, sb_indent: null }).catch(() => {})));

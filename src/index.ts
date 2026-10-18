@@ -403,7 +403,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			const held = holdsTower;
 			holdsTower = false;
 			if (!role() || !at) return;
-			await report(run, "pane", at.paneId, { sb_role: null, sb_order: null, sb_mark: null }).catch(() => {});
+			await report(run, "pane", at.paneId, { sb_role: null, sb_order: null, sb_mark: null, sb_indent: null }).catch(() => {});
 			await clearOrder(run, [...kids]);
 			if (held) await report(run, "workspace", at.workspaceId, { tower: null }).catch(() => {});
 		});
