@@ -280,7 +280,7 @@ export class Agent {
 	pane: string;
 	regs = new Map<string, Registration>();
 	tools = new Map<string, ToolDefinition>();
-	commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void> }>();
+	commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void>; getArgumentCompletions?(prefix: string): { value: string }[] | null }>();
 	entries: { customType: string; data: unknown }[];
 	notices: { text: string; level?: string }[] = [];
 	/** Each ctx.ui.custom overlay, open until it closes itself. */
@@ -337,7 +337,7 @@ export class Agent {
 			events,
 			on: (type: string, handler: (event: unknown, ctx: unknown) => unknown) => this.handlers.set(type, [...(this.handlers.get(type) ?? []), handler]),
 			registerTool: (tool: ToolDefinition) => this.tools.set(tool.name, tool),
-			registerCommand: (name: string, command: { handler(args: string, ctx: unknown): Promise<void> }) => this.commands.set(name, command),
+			registerCommand: (name: string, command: { handler(args: string, ctx: unknown): Promise<void>; getArgumentCompletions?(prefix: string): { value: string }[] | null }) => this.commands.set(name, command),
 			appendEntry: (customType: string, data: unknown) => this.entries.push({ customType, data }),
 		} as unknown as ExtensionAPI;
 		// pi-intercom's side of the extension API.

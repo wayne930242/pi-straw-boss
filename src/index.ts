@@ -29,6 +29,8 @@ const REFRESH_MS = 4 * 60_000;
 const KID_MARK_MS = [3_000, 15_000];
 const NUDGE_MS = 15_000;
 const CLAIM_MS = 5000;
+/** What Tab completes after /boss; a bare /boss (take over as the main agent) has nothing to complete. */
+const BOSS_ARGUMENTS = Object.entries({ status: "Show the coordinators", tower: "Open and focus the workspace tower", gui: "Open the net in the browser", "gui stop": "Close the browser GUI", "gui remote": "Open the GUI to your phone over Tailscale", "gui remote off": "Close the Tailscale entry" }).map(([value, description]) => ({ value, label: value, description }));
 const CONNECT_MS = 15_000;
 const SEND_MS = 30_000;
 const SETTLE_MS = 2000;
@@ -534,6 +536,11 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 
 		pi.registerCommand("boss", {
 			description: "Take over as this tab's main agent (every session already joins as a member). /boss status shows the coordinators; /boss tower opens and focuses the workspace tower; /boss gui opens the net in the browser (/boss gui stop closes it; /boss gui remote opens it to your phone over Tailscale, /boss gui remote off closes that).",
+			// pi passes the whole argument text and replaces it with the chosen value, so each value is a full argument line.
+			getArgumentCompletions: (prefix) => {
+				const items = BOSS_ARGUMENTS.filter((item) => item.value.startsWith(prefix.trimStart()));
+				return items.length ? items : null;
+			},
 			handler: async (args, ctx) => {
 				ui = ctx.ui;
 				try {

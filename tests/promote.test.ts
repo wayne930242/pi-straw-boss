@@ -104,3 +104,13 @@ test("sessions that never join do not promote: a subagent call in a sub workspac
 	assert.deepEqual(world.broker.registrations.map((r) => r.id), ["tower-wA"]);
 	assert.deepEqual(world.herdr.commands("tab", "create"), []);
 });
+
+test("Tab after /boss completes its subcommands as whole argument lines, and nothing for text that matches none", async () => {
+	const a = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1" });
+	await a.start();
+	const complete = (prefix: string) => a.commands.get("boss")!.getArgumentCompletions!(prefix)?.map((item) => item.value) ?? null;
+	assert.deepEqual(complete(""), ["status", "tower", "gui", "gui stop", "gui remote", "gui remote off"]);
+	assert.deepEqual(complete("gui r"), ["gui remote", "gui remote off"]);
+	assert.deepEqual(complete("t"), ["tower"]);
+	assert.equal(complete("x"), null);
+});
