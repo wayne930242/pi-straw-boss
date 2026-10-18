@@ -78,7 +78,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 		let c!: Channel, at!: Place, ui: ExtensionContext["ui"] | undefined, timer: ReturnType<typeof setInterval> | undefined;
 		let queue: Promise<void> = Promise.resolve();
 		// This session's intercom name, which the subagents it launched show as their launcher, and the subagent panes it has marked.
-		let ownName = "", kids = new Set<string>();
+		let ownName = "", openedBy: string | undefined, kids = new Set<string>();
 		// Watches for subagents this session launched whose result can no longer reach it (orphan.ts).
 		let nudges: ReturnType<typeof orphans> | undefined, nudgeTimer: ReturnType<typeof setInterval> | undefined;
 		const me = () => env.PI_INTERCOM_SESSION_ID ?? "";
@@ -119,7 +119,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 				ownName = nameOf((known ?? (await c.listSessions().catch(() => []))).find((s) => s.id === me())) || ownName;
 				// A failed read of Herdr leaves the subagents' tokens as they are; their TTL still runs.
 				const net = await netTokens(run, at, sbRole, ownName || me().slice(0, 8)).catch(() => undefined);
-				await report(run, "pane", at.paneId, { sb_role: sbRole, ...net?.own }).catch(() => {});
+				await report(run, "pane", at.paneId, { sb_role: sbRole, ...net?.own, ...(openedBy ? { sb_opened_by: openedBy } : {}) }).catch(() => {});
 				if (net) kids = await markKids(run, net.kids, kids, net.joined);
 			}
 			if (holdsTower && !stopped) await report(run, "workspace", at.workspaceId, { tower: me() }).catch(() => {});
@@ -376,6 +376,17 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			}
 		};
 
+		// STRAW_BOSS_ROLE=main stays in the new tab's shell, so a later pi started there would self-promote. The tower's one-time pane token is what
+		// authorises it: this pi consumes the token and keeps the opener's marker (sb_opened_by) fresh, which the tower counts to enforce its limits.
+		const claimOpened = async () => {
+			if (!opensAsMain) return false;
+			const mine = (await panes(run, at.workspaceId).catch(() => [])).find((p) => p.pane_id === at.paneId);
+			if (mine?.tokens?.sb_open_main !== "1") return false;
+			openedBy = mine.tokens.sb_opened_by;
+			await report(run, "pane", at.paneId, { sb_open_main: null }).catch(() => {});
+			return true;
+		};
+
 		pi.on("session_start", async (_event, ctx) => {
 			stopped = false;
 			ui = ctx.ui;
@@ -399,7 +410,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 					tell(bar.text, bar.level);
 				} else {
 					starting = joinNet().then(async () => {
-						const taken = opensAsMain && (await promote(false));
+						const taken = (await claimOpened()) && (await promote(false));
 						if (taken && !taken.promoted) tell(taken.text, "warning");
 					});
 				}
@@ -445,7 +456,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			const held = holdsTower;
 			holdsTower = false;
 			if (!role() || !at) return;
-			await report(run, "pane", at.paneId, { sb_role: null, sb_order: null, sb_mark: null, sb_indent: null, sb_tab: null }).catch(() => {});
+			await report(run, "pane", at.paneId, { sb_role: null, sb_opened_by: null, sb_order: null, sb_mark: null, sb_indent: null, sb_tab: null }).catch(() => {});
 			await clearOrder(run, [...kids]);
 			if (held) await report(run, "workspace", at.workspaceId, { tower: null }).catch(() => {});
 		});

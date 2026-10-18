@@ -1,11 +1,16 @@
 import { createHash, randomUUID } from "node:crypto";
-import { createTab, panes, startPi, type HerdrRun, type Session, type Sleep, waitFor, workspaces } from "./herdr.ts";
+import { createTab, report, panes, startPi, type HerdrRun, type Session, type Sleep, waitFor, workspaces } from "./herdr.ts";
 
 // The one thing a tower does besides routing: when no session owns a request, it opens a main for it (docs/how-it-works.md, "Opening a main").
 // It is narrow on purpose: one new tab in the tower's own workspace, started without focus, in which Straw Boss starts pi. It types into no pane
 // that already exists, and `STRAW_BOSS_ROLE=main` makes that pi promote itself once it has joined (index.ts).
 
 const MAIN_WAIT_MS = 60_000;
+/** At most this many mains opened by towers are alive in one workspace, and at most one per sender. */
+const MAX_OPENED_MAINS = 2;
+
+/** A limit was hit: nothing opened, and the same request may be tried again once an opened main has finished. */
+class OpenLimitError extends Error {}
 
 export interface OpenerEnv {
 	run: HerdrRun;
@@ -31,7 +36,7 @@ export const handoff = (workspace: string, sender: Session, request: string) =>
 	].join("\n");
 
 /**
- * Opens a main for a request, once. The same sender and request never open a second main, whether the first attempt is still running, succeeded,
+ * Opens a main for a request, once, within the limits above. The same sender and request never open a second main, whether the first attempt is still running, succeeded,
  * or failed (a failed attempt closes the tab it created and is not retried: the sender hears of it instead).
  */
 export function opener(env: OpenerEnv) {
@@ -44,8 +49,16 @@ export function opener(env: OpenerEnv) {
 		const sender = matches[0]!;
 		const workspace = (await workspaces(run)).find((w) => w.workspace_id === env.workspaceId);
 		if (!workspace) throw new Error(`Workspace ${env.workspaceId} is not open any more`);
+		// Limits come from live Herdr panes carrying the marker below, so they hold across a tower restart: a closed tab takes its marker with it, and
+		// a main that died leaves one that expires with its token TTL. Opens are serialised, so the count and the marker cannot race.
+		const marked = (await panes(run, workspace.workspace_id)).filter((p) => p.tokens?.sb_opened_by);
+		const ofSender = marked.filter((p) => p.tokens!.sb_opened_by === sender.id).length;
+		if (ofSender) throw new OpenLimitError(`Sender ${sender.name ?? sender.id} already has ${ofSender === 1 ? "an opened main" : `${ofSender} opened mains`} running in workspace ${workspace.label}; a sender gets one at a time. Wait for it to finish, or send the request to it.`);
+		if (marked.length >= MAX_OPENED_MAINS) throw new OpenLimitError(`Workspace ${workspace.label} already has ${marked.length} mains opened by its tower (the limit is ${MAX_OPENED_MAINS}); try again when one has finished.`);
 		const { tabId, paneId } = await createTab(run, workspace.workspace_id, workspace.worktree?.checkout_path ?? env.cwd, ["STRAW_BOSS_ROLE=main"], label);
 		try {
+			// The marker counts toward the limits at once; sb_open_main authorises exactly one pi in this shell to promote itself (it consumes the token).
+			await report(run, "pane", paneId, { sb_opened_by: sender.id, sb_open_main: "1" });
 			// Herdr agent names are unique across workspaces and lowercase only.
 			await startPi(run, sleep, `main-${randomUUID().slice(0, 8)}`, paneId, ["--name", `main · ${label ?? workspace.label}`]);
 			// The pi is the tab's main once it has published its role; only then does it get the request, so its first prompt is the main agent's.
@@ -63,12 +76,15 @@ export function opener(env: OpenerEnv) {
 			throw error;
 		}
 	};
+	let queue: Promise<unknown> = Promise.resolve();
 	return (input: OpenRequest): Promise<Opened> => {
 		const key = createHash("sha256").update(JSON.stringify([input.sender, input.request])).digest("hex");
 		const prior = seen.get(key);
 		if (prior) return prior.then((opened) => ({ ...opened, repeated: true as const }), (error: Error) => Promise.reject(new Error(`A main was already tried for this request and is not opened again: ${error.message}`)));
-		const pending = open(input);
+		const pending = queue.then(() => open(input), () => open(input));
+		queue = pending.catch(() => {});
 		seen.set(key, pending);
+		pending.catch((error) => error instanceof OpenLimitError && seen.get(key) === pending && seen.delete(key));
 		return pending;
 	};
 }

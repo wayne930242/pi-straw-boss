@@ -17,7 +17,15 @@ async function net() {
 	const sender = world.agent({ id: "sender-1", name: "docs-main", pane: "wA:p1", tab: "wA:t1" });
 	await sender.start();
 	await sender.promote();
+	for (const [n, pane] of [["2", "wA:p2"], ["3", "wA:p3"]] as const) await world.agent({ id: `sender-${n}`, name: `other-${n}`, pane, tab: "wA:t1" }).start();
 	return { tower, sender };
+}
+// A tower restart: the old tower session ends and a fresh one in the same pane starts with none of the old one's memory.
+async function restart(old: { stop(): Promise<void> }) {
+	await old.stop();
+	const fresh = world.agent({ id: "tower-wA-2", name: "tower · wA-2", pane: "wA:p7", env: { STRAW_BOSS_ROLE: "tower" } });
+	await fresh.start();
+	return fresh;
 }
 // The first tab and pane the fake opens in a fresh world.
 const NEW = { tab: "wA:t100", pane: "wA:p101", main: "opened-wA:p101" };
@@ -71,8 +79,56 @@ test("a different request opens its own main", async () => {
 	world.autoMains();
 	const { tower } = await net();
 	await tower.tool("boss_open_main", { request: REQUEST, sender: "sender-1" });
-	await tower.tool("boss_open_main", { request: "Rebuild the index.", sender: "sender-1" });
+	await tower.tool("boss_open_main", { request: "Rebuild the index.", sender: "sender-2" });
 	assert.equal(world.herdr.commands("tab", "create").length, 2);
+});
+
+test("a sender gets one opened main at a time, also after the tower restarted; the refusal names the reason and the same request may be tried again", async () => {
+	world.autoMains();
+	const { tower } = await net();
+	await tower.tool("boss_open_main", { request: REQUEST, sender: "sender-1" });
+	await assert.rejects(tower.tool("boss_open_main", { request: "Rebuild the index.", sender: "docs-main" }), /already has an opened main running in workspace .*one at a time/);
+	const fresh = await restart(tower);
+	await assert.rejects(fresh.tool("boss_open_main", { request: "Rebuild the index again.", sender: "sender-1" }), /already has an opened main running/);
+	assert.equal(world.herdr.commands("tab", "create").length, 1);
+	world.herdr.panes = world.herdr.panes.filter((p) => p.pane_id !== NEW.pane); // the opened main finished
+	await fresh.tool("boss_open_main", { request: "Rebuild the index again.", sender: "sender-1" });
+	assert.equal(world.herdr.commands("tab", "create").length, 2);
+});
+
+test("a workspace has at most two live mains opened by towers, counted from live panes so a restarted tower keeps counting", async () => {
+	world.autoMains();
+	const { tower } = await net();
+	await tower.tool("boss_open_main", { request: "one", sender: "sender-1" });
+	await tower.tool("boss_open_main", { request: "two", sender: "sender-2" });
+	await assert.rejects(tower.tool("boss_open_main", { request: "three", sender: "sender-3" }), /already has 2 mains opened by its tower \(the limit is 2\)/);
+	const fresh = await restart(tower);
+	await assert.rejects(fresh.tool("boss_open_main", { request: "three", sender: "sender-3" }), /limit is 2/);
+	assert.equal(world.herdr.commands("tab", "create").length, 2);
+	world.herdr.panes = world.herdr.panes.filter((p) => p.pane_id !== NEW.pane);
+	await fresh.tool("boss_open_main", { request: "three", sender: "sender-3" });
+	assert.equal(world.herdr.commands("tab", "create").length, 3);
+});
+
+test("concurrent opens by one sender or past the cap cannot both pass the check", async () => {
+	world.autoMains();
+	const { tower } = await net();
+	const results = await Promise.allSettled([1, 2, 3].map((n) => tower.tool("boss_open_main", { request: `r${n}`, sender: "sender-1" })));
+	assert.deepEqual(results.map((r) => r.status), ["fulfilled", "rejected", "rejected"]);
+	assert.equal(world.herdr.commands("tab", "create").length, 1);
+});
+
+test("the main role in a tab's shell does not make a later pi there promote itself: the one-time pane token authorises only the pi the tower started", async () => {
+	world.autoMains();
+	const { tower } = await net();
+	await tower.tool("boss_open_main", { request: REQUEST, sender: "sender-1" });
+	const pane = world.herdr.panes.find((p) => p.pane_id === NEW.pane)!;
+	assert.equal(pane.tokens.sb_open_main, undefined, "the token was consumed");
+	assert.equal(pane.tokens.sb_opened_by, "sender-1", "the limit marker stays while the main lives");
+	await world.agents.find((a) => a.id === NEW.main)!.stop();
+	const later = world.agent({ id: "later", pane: NEW.pane, env: { STRAW_BOSS_ROLE: "main" } });
+	await later.start();
+	assert.notEqual(later.tokens.sb_role, "main");
 });
 
 test("a sender that is not a live session fails before anything opens", async () => {
@@ -114,11 +170,13 @@ test("only the tower has the tool; a pi started with the main role promotes itse
 	const { tower, sender } = await net();
 	assert.ok(tower.tools.has("boss_open_main"));
 	assert.ok(!sender.tools.has("boss_open_main"));
-	const second = world.agent({ id: "late", pane: "wA:p2", tab: "wA:t1", env: { STRAW_BOSS_ROLE: "main" } });
+	const second = world.agent({ id: "late", pane: "wA:p20", tab: "wA:t1", env: { STRAW_BOSS_ROLE: "main" } });
+	world.herdr.panes.find((p) => p.pane_id === "wA:p20")!.tokens.sb_open_main = "1"; // as the tower marks a pane it opens
 	await second.start();
 	assert.equal(second.tokens.sb_role, "member", "a live main is never taken over");
 	assert.ok(second.notices.some((n) => n.level === "warning" && /already has a main agent, docs-main/.test(n.text)));
-	const fresh = world.agent({ id: "fresh", pane: "wA:p3", tab: "wA:t2", env: { STRAW_BOSS_ROLE: "main" } });
+	const fresh = world.agent({ id: "fresh", pane: "wA:p30", tab: "wA:t2", env: { STRAW_BOSS_ROLE: "main" } });
+	world.herdr.panes.find((p) => p.pane_id === "wA:p30")!.tokens.sb_open_main = "1";
 	await fresh.start();
 	assert.equal(fresh.tokens.sb_role, "main");
 });
