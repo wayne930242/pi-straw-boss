@@ -222,7 +222,7 @@ Add them to a row of `[ui.sidebar.agents]` in `config.toml`.
 `$sb_indent` goes before the state icon, so a subagent hangs under its launcher as the worktrees do in the Spaces panel; Herdr puts its own ` · ` after it, and an agent without the token shows nothing.
 `$sb_name` goes right after the state icon, so a subagent row says which subagent it is even when Herdr has lost the pane's label.
 In `$sb_mark` a main agent's star and a member's person are bold, and the rule that hides the `[sub]` mark leaves a subagent without one, because the branch already says what it is. The snippet leaves the colors to your Herdr theme; add an `fg` to a rule to color a mark.
-Every agent fits one row: the row shows `$sb_tab` instead of Herdr's `tab`, so a main agent and a member show their tab the same way; an agent outside the net (or a session that has not reloaded since 0.14.0, whose main agent still carries its tab in the mark) shows no tab label there.
+Every agent fits one row: the row shows `$sb_tab` instead of Herdr's `tab`, so a main agent and a member show their tab the same way; an agent outside the net (or a session that has not reloaded since 0.13.1, whose main agent still carries its tab in the mark) shows no tab label there.
 
 ```toml
 [ui.sidebar.agents]
