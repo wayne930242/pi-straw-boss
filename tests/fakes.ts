@@ -65,6 +65,17 @@ export class FakeHerdr {
 	wsTokenHistory: (string | undefined)[] = [];
 	onAgentStart?: (pane: FakePane) => void;
 	onTabClose?: (paneIds: string[]) => void;
+	/** Herdr's event stream, as `events.subscribe` delivers it: workspace token changes, closed panes, and agents detected in a pane. */
+	private listeners = new Set<{ types: string[]; on: (e: { event: string; data: Record<string, unknown> } | null) => void }>();
+	events = (types: string[], on: (e: { event: string; data: Record<string, unknown> } | null) => void) => {
+		const l = { types, on };
+		this.listeners.add(l);
+		queueMicrotask(() => this.listeners.has(l) && on(null));
+		return () => void this.listeners.delete(l);
+	};
+	private emit(type: string, event: string, data: Record<string, unknown>) {
+		for (const l of [...this.listeners]) if (l.types.includes(type)) queueMicrotask(() => l.on({ event, data }));
+	}
 	private next = 100;
 	/** A new server starts with no tokens: the old one kept them in memory. Panes, tabs and workspaces stay, as after a live handoff. */
 	restart(): void {
@@ -143,6 +154,7 @@ export class FakeHerdr {
 		}
 		if (group === "pane" && cmd === "close") {
 			this.closed.push(args[2]!);
+			this.emit("pane.closed", "pane_closed", { pane_id: args[2]!, workspace_id: args[2]!.split(":")[0]! });
 			const tab = this.panes.find((p) => p.pane_id === args[2])?.tab_id;
 			this.panes = this.panes.filter((p) => p.pane_id !== args[2]);
 			if (!this.panes.some((p) => p.tab_id === tab)) this.tabs = this.tabs.filter((t) => t.tab_id !== tab); // as Herdr closes an emptied tab
@@ -168,6 +180,7 @@ export class FakeHerdr {
 			this.agentNames.set(args[2]!, flag("--pane")!);
 			const pane = this.pane(flag("--pane")!);
 			pane.agent = "pi";
+			this.emit("pane.agent_detected", "pane_agent_detected", { pane_id: pane.pane_id, workspace_id: pane.workspace_id, agent: "pi" });
 			this.onAgentStart?.(pane);
 			return out({});
 		}
@@ -180,6 +193,7 @@ export class FakeHerdr {
 				if (arg === "--clear-token") delete target[args[i + 1]!];
 			});
 			if (group === "workspace") this.wsTokenHistory.push(target.tower);
+			if (group === "workspace") this.emit("workspace.metadata_updated", "workspace_metadata_updated", { workspace: this.workspace(args[2]!) });
 			return out({});
 		}
 		if (group === "tab" && cmd === "close") {
@@ -379,7 +393,7 @@ export class Agent {
 		if (!options.noIntercom) events.on("intercom:outbox-request", (request) => world.broker.outbox(this, request as { requestId: string; to: string; message: string }));
 		world.broker.connect(this);
 		// The extension's waits are real in production; here they are capped so timeouts take milliseconds.
-		createStrawBoss({ run: world.herdr.runFor(this.pane), api: world.herdr.api, watch: world.watch, env, sleep: (ms) => sleep(Math.min(ms, 2)), promptDir: PROMPT_DIR, stateDir: world.stateDir, autoTower: false, later: (_pid, args) => void world.herdr.runFor(this.pane)(args), ...options.deps })(pi);
+		createStrawBoss({ run: world.herdr.runFor(this.pane), api: world.herdr.api, watch: world.watch, env, sleep: (ms) => sleep(Math.min(ms, 2)), promptDir: PROMPT_DIR, stateDir: world.stateDir, autoTower: false, later: (_pid, args) => void world.herdr.runFor(this.pane)(args), events: world.herdr.events, ...options.deps })(pi);
 	}
 
 	emit(channel: string, data: unknown): void {

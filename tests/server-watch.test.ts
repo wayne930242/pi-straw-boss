@@ -4,7 +4,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { herdrWatch } from "../src/server-watch.ts";
+import { herdrEvents, herdrWatch } from "../src/server-watch.ts";
 import { until } from "./fakes.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "psb-watch-"));
@@ -133,4 +133,22 @@ test("a watch does not keep the process alive: neither its socket nor its retry 
 	await server.stop();
 	const down = `import { herdrWatch } from ${JSON.stringify(src)}; herdrWatch(${JSON.stringify(server.path)})(() => {});`;
 	execFileSync(process.execPath, ["--input-type=module", "-e", down], { timeout: 5000 });
+});
+
+test("the event stream subscribes to the asked types, delivers each event (split anywhere), and says null after each (re)connection", async () => {
+	await server.start();
+	const got: unknown[] = [];
+	stops.push(herdrEvents(server.path, FAST)(["workspace.metadata_updated", "pane.closed"], (e) => got.push(e)));
+	await until(() => got.length === 1, "the first connection");
+	assert.deepEqual(server.requests[0]!.params, { subscriptions: [{ type: "workspace.metadata_updated" }, { type: "pane.closed" }] });
+	const [socket] = server.sockets;
+	const frame = `${JSON.stringify({ event: "pane_closed", data: { pane_id: "wA:p2", workspace_id: "wA" } })}\n${JSON.stringify({ event: "workspace_metadata_updated", data: { workspace: { workspace_id: "wB" } } })}\n`;
+	socket!.write(frame.slice(0, 20));
+	socket!.write(frame.slice(20));
+	await until(() => got.length === 3, "both events");
+	assert.deepEqual(got.slice(0, 2), [null, { event: "pane_closed", data: { pane_id: "wA:p2", workspace_id: "wA" } }]);
+	await server.stop();
+	await server.start(); // a new server on the same path
+	await until(() => got.length === 4, "a new server");
+	assert.equal(got[3], null, "events may have been missed: check again");
 });

@@ -91,10 +91,11 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.15.0 raised control.ts to 176 for sessions/<key>/upload, a file's bytes under the same origin and CSRF checks, handed to upload.ts (50 at most).
 	// 0.15.0 raised spawn.ts from 123 to 168: a base opens with a member and no tower, a base without a tower takes members (split into a squad or in
 	// a new tab), only one with a tower takes mains, and every opening shares the start, join wait, first message, and close-on-failure.
+	// 0.17.2 raised server-watch.ts to 110 for herdrEvents, the event stream the tower guard listens to.
 	// 0.17.0 raised bridge.ts to 206 for `close`, the session asked to quit as /boss close does, and its answer.
 	// 0.17.0 raised dialogs.ts to 217 for the hub's side of `close`: the request, its answer, and its drop when the server stops.
 	// 0.17.0 raised control.ts to 178 for close/unit, close/tab, close/base, handed to closer.ts (70 at most).
-	for (const [name, max] of [["commands.ts", 32], ["control.ts", 178], ["closer.ts", 70], ["upload.ts", 50], ["spawn.ts", 168], ["remote.ts", 185], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 125], ["bridge.ts", 206], ["owners.ts", 120], ["dialogs.ts", 217], ["order.ts", 81], ["mirror.ts", 135], ["probe.ts", 40], ["keys.ts", 80], ["documents.ts", 80], ["docs.ts", 150], ["orphan.ts", 115], ["opener.ts", 90], ["server-watch.ts", 60]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
+	for (const [name, max] of [["commands.ts", 32], ["control.ts", 178], ["closer.ts", 70], ["upload.ts", 50], ["spawn.ts", 168], ["remote.ts", 185], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 125], ["bridge.ts", 206], ["owners.ts", 120], ["dialogs.ts", 217], ["order.ts", 81], ["mirror.ts", 135], ["probe.ts", 40], ["keys.ts", 80], ["documents.ts", 80], ["docs.ts", 150], ["orphan.ts", 115], ["opener.ts", 90], ["server-watch.ts", 110]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
 	assert.ok(count("src/history.ts") <= 250, `src/history.ts has ${count("src/history.ts")} lines`);
 	// The item mapping and the stream glue came out of the reader to keep it within its budget; the spec sets no figure for them.
 	assert.ok(count("src/items.ts") <= 100, `src/items.ts has ${count("src/items.ts")} lines`);
@@ -123,11 +124,14 @@ test("the TypeScript source stays within its size budgets", () => {
 	// stays gone past a /reload's grace, and opens a base's tower by its own rule (two members while another base has one); and closing (/boss close and
 	// the bridge's close: quit as /quit, then the pane closes after pi has exited).
 	// 0.17.1 to 857: a quitting tower records the members it leaves, and the two-member rule waits for the base to grow past them.
-	assert.ok(rest <= 857, `the rest of src has ${rest} lines`);
+	// 0.17.2 to 885: the guard checks on Herdr's events (a workspace's tokens, this workspace's panes, the tab channel's owner) instead of every
+	// 5 s, sets one timer for a check that has to wait, runs one check at a time, and can be left out (couple) where a test is about something else.
+	assert.ok(rest <= 885, `the rest of src has ${rest} lines`);
 	// The page: the files the spec budgets one by one, then this round's own figures (no figure in the spec): the focus views, the overlay
 	// layer (alert spotting and the stack model in the map's chunk, the layer's DOM and tiles in a chunk of their own), the dev-only demo, and everything else.
+	// 0.17.2 raised views.ts to 267 for the location bar: a subagent under its launcher's level, and the middle levels folded into "…" on a phone.
 	// 0.17.0 raised views.ts to 259 for the close buttons of a base, its squads, and a unit (a subagent's is its launcher's to close).
-	for (const [name, max] of [["router.ts", 80], ["chat.ts", 251], ["markdown.ts", 180], ["views.ts", 259], ["layer.ts", 181], ["composer.ts", 190], ["ask.ts", 156], ["mirror.ts", 146], ["keypad.ts", 60], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
+	for (const [name, max] of [["router.ts", 80], ["chat.ts", 251], ["markdown.ts", 180], ["views.ts", 267], ["layer.ts", 181], ["composer.ts", 190], ["ask.ts", 156], ["mirror.ts", 146], ["keypad.ts", 60], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
 	// 0.10.0: the page's text comes from Paraglide's messages (gui/messages), which raised chat.ts, views.ts, layer.ts, ask.ts, mirror.ts, and doc.ts by one
 	// line each for the messages import; the strings replaced in place. gui/i18n.ts picks the locale (the menu's choice, the browser's languages with
 	// Chinese by script) and translates index.html's static text: 50 lines, no figure in a spec.
@@ -220,7 +224,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// 0.14.0 to 72.6 KB / 30.6 KB for the composer's `/` menu (gui/slash.ts) and the follow-up button's hint, in both languages.
 	// 0.15.0 to 74.3 KB / 31.1 KB for the new base, member, and squad member tiles, and the composer's file paste, drop, and picker, in both languages.
 	// 0.17.0 to 74.9 KB / 31.3 KB for the close button in a unit's view and the close confirmations in both languages.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 74_900 && total(chunks, gz) <= 31_300, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// 0.17.2 to 75.1 KB / 31.3 KB for the launcher levels in the location bar.
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 75_100 && total(chunks, gz) <= 31_300, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
@@ -232,6 +237,6 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// 0.13.0 to 32.7 KB / 8.375 KB for the opening tile: the base view's button row, the folder path and grid, the form fields, and the open button's colour (about 0.7 KB, 0.1 KB gzipped).
 	// 0.14.0 to 33.3 KB / 8.475 KB for the `/` menu above the composer: its box, rows, the lit row, and the name and description (about 0.6 KB, 0.1 KB gzipped).
 	// 0.15.0 to 34.05 KB / 8.625 KB for the opening buttons: a squad's small + Member, the base card's row, and the dashed + New base card, and short form tiles keeping their own height (about 0.7 KB, 0.15 KB gzipped).
-	// 0.17.0 to 34.25 KB / 8.67 KB for the close buttons.
-	assert.ok(total(css, (n) => size(n).length) <= 34_250 && total(css, gz) <= 8_670, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// 0.17.0 to 34.25 KB / 8.67 KB for the close buttons; 0.17.2 to 34.9 KB / 8.85 KB for runs of chat messages that show their avatar once and the folding location bar.
+	assert.ok(total(css, (n) => size(n).length) <= 34_900 && total(css, gz) <= 8_850, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });

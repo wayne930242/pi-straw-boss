@@ -18,7 +18,7 @@ import { createSpawn } from "./spawn.ts";
 import { orphans } from "./orphan.ts";
 import { copyText, pairingKeys, showLines } from "./pairing.ts";
 import { type Run, switchRemote, tailscale } from "./remote.ts";
-import { type HerdrWatch, herdrWatch } from "./server-watch.ts";
+import { type HerdrEvents, herdrEvents, type HerdrWatch, herdrWatch } from "./server-watch.ts";
 import { ensureTower, headOf, towerModel, herdrApi, type HerdrApi, herdrCall, type HerdrCall, herdrRun, type HerdrRun, isSub, type Pane, panes, parentOf, place, type Place, report, type Session, type Sleep, waitFor, workspaces, type Workspace } from "./herdr.ts";
 
 // pi-intercom's extension API as constants and minimal types: intercom is a runtime requirement, not an import.
@@ -37,9 +37,9 @@ const BOSS_ARGUMENTS = Object.entries({ status: "Show the coordinators", close: 
 const CONNECT_MS = 15_000;
 const SEND_MS = 30_000;
 const SETTLE_MS = 2000;
-// The tower and the mains go together (guard below): how often a tab's owner checks, how long a tower may be gone (a /reload) before the
-// mains are cleared, and how long a fresh main's tower may take to open.
-const GUARD_MS = 5000, TOWER_GRACE_MS = 15_000, TOWER_OPEN_MS = 60_000;
+// The tower and the mains go together (guard below): Herdr's events start each check, and a sweep every GUARD_MS catches what no event tells; how
+// long a tower may be gone (a /reload) before the mains are cleared, and how long a fresh main's tower may take to open.
+const GUARD_MS = 4 * 60_000, TOWER_GRACE_MS = 15_000, TOWER_OPEN_MS = 60_000;
 /** Closes a pane once the pi process `pid` has exited, from a process of its own, so pi's shutdown runs to the end first. */
 const afterExit = (pid: number, args: string[]) => {
 	const herdr = process.env.HERDR_BIN_PATH || "herdr";
@@ -58,7 +58,7 @@ interface Saved { tower?: boolean }
 type Role = "tower" | "main" | "member";
 type Scope = "tab" | "workspace" | "towers" | "all";
 type Member = ReturnType<typeof netMembers>[number];
-export interface Deps { run?: HerdrRun; api?: HerdrApi; call?: HerdrCall; tailscale?: Run; copy?: (text: string) => Promise<void>; env?: NodeJS.ProcessEnv; sleep?: Sleep; promptDir?: string; bundle?: string; openUrl?: (url: string) => Promise<void>; watch?: HerdrWatch; stateDir?: string; autoTower?: boolean; nudgeMs?: number; version?: string; guardMs?: number; now?: () => number; later?: (pid: number, args: string[]) => void }
+export interface Deps { run?: HerdrRun; api?: HerdrApi; call?: HerdrCall; tailscale?: Run; copy?: (text: string) => Promise<void>; env?: NodeJS.ProcessEnv; sleep?: Sleep; promptDir?: string; bundle?: string; openUrl?: (url: string) => Promise<void>; watch?: HerdrWatch; stateDir?: string; autoTower?: boolean; nudgeMs?: number; version?: string; guardMs?: number; couple?: boolean; events?: HerdrEvents; now?: () => number; later?: (pid: number, args: string[]) => void }
 
 /** Live sessions whose pane carries an `sb_role` token: the sessions that joined the net, and towers. */
 function netMembers(sessions: Session[], ps: Pane[]) {
@@ -70,7 +70,7 @@ function netMembers(sessions: Session[], ps: Pane[]) {
 }
 const nameOf = (s?: Session) => (s ? (s.name ?? s.id) : "");
 
-export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdrCall(), tailscale: ts = tailscale, copy = copyText, env = process.env, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), promptDir = fileURLToPath(new URL("../prompts", import.meta.url)), bundle, openUrl = openBrowser, watch = herdrWatch(), stateDir, autoTower = true, nudgeMs = NUDGE_MS, version = VERSION, guardMs = GUARD_MS, now = Date.now, later = afterExit }: Deps = {}) {
+export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdrCall(), tailscale: ts = tailscale, copy = copyText, env = process.env, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), promptDir = fileURLToPath(new URL("../prompts", import.meta.url)), bundle, openUrl = openBrowser, watch = herdrWatch(), stateDir, autoTower = true, nudgeMs = NUDGE_MS, version = VERSION, guardMs = GUARD_MS, couple = true, events = herdrEvents(), now = Date.now, later = afterExit }: Deps = {}) {
 	return function strawBoss(pi: ExtensionAPI): void {
 		// Outside Herdr there is no tab to coordinate. Every session in Herdr relays its dialogs to the GUI (bridge.ts), subagents too: they ask
 		// questions as well. A pi-herdr-agents worker never joins: its parent represents it.
@@ -79,7 +79,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 		let hub: Hub | undefined;
 		// Closing is this session's own: the GUI asks its bridge, /boss close asks here, and only a session that runs this extension can (not a subagent).
 		let closeSelf: ((keepPane: boolean) => string | undefined) | undefined;
-		const bridge = startBridge(pi, { env, dir: guiDir, local: () => (hub?.running ? hub : undefined), close: (keep) => closeSelf?.(keep) ?? "A subagent is closed by the session that launched it." });
+		const bridge = startBridge(pi, { env, dir: guiDir, local: () => (hub?.running ? hub : undefined), close: (keep) => (closeSelf ? closeSelf(keep) : "A subagent is closed by the session that launched it.") });
 		if (env.PI_SUBAGENT_ID) return;
 		let isTower = env.STRAW_BOSS_ROLE === "tower";
 		// A tab the tower opened for a request starts its pi with this role: it promotes itself as soon as it has joined (opener.ts).
@@ -174,41 +174,64 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 				tell(`Straw Boss: ${(error as Error).message}`, "warning");
 			}
 		};
-		// A base has mains only while it has a tower. The owner of each tab channel, its earliest member, checks every guardMs: with a live tower
-		// and no live main it promotes itself; with no tower for TOWER_GRACE_MS (at once when the tower quit) it clears the tab's main, unless that
-		// main is younger than TOWER_OPEN_MS and its tower may still be opening. A demoted main keeps its subagents.
-		let missing: number | undefined, guardTimer: ReturnType<typeof setInterval> | undefined;
-		const guard = async () => {
-			if (!joined || isTower || stopped || c.snapshot().owner?.sessionId !== me()) return void (missing = undefined);
-			const sessions = await c.listSessions(), ws = (await workspaces(run)).find((w) => w.workspace_id === at.workspaceId);
+		// A base has mains only while it has a tower. The owner of each tab channel, its earliest member, checks when Herdr says a workspace's tokens
+		// or this workspace's panes changed, and every guardMs: with a live tower and no live main it promotes itself; with no tower for
+		// TOWER_GRACE_MS (at once when the tower quit) it clears the tab's main, unless that main is younger than TOWER_OPEN_MS and its tower may
+		// still be opening. A check that has to wait for either sets one timer for it. A demoted main keeps its subagents.
+		let missing: number | undefined, guardTimer: ReturnType<typeof setInterval> | undefined, unlisten: (() => void) | undefined;
+		let soon: ReturnType<typeof setTimeout> | undefined, soonAt = Infinity, checking = false, again: boolean | undefined;
+		const guard = async (joining = false) => {
+			const owner = c.snapshot().owner?.sessionId === me();
+			if (!joined || isTower || stopped || (!owner && !joining)) return void (missing = undefined);
+			const sessions = await c.listSessions(), all = await workspaces(run), ws = all.find((w) => w.workspace_id === at.workspaceId);
 			const live = (id?: string) => Boolean(id && sessions.some((s) => s.id === id));
 			const state = c.snapshot().state?.payload as { main?: string; since?: number } | undefined, main = pinned ?? state?.main;
 			if (live(ws?.tokens?.tower)) {
 				missing = undefined;
-				if (!live(main)) await claim(c, me(), false);
+				if (owner && !live(main)) await claim(c, me(), false);
 				return;
 			}
 			// A tower opens by itself when this base has two members while another base already has one: they start to collide (the other rule, a
-			// member dispatching a subagent, promotes it in tool_call, and a promotion opens the tower).
-			if (autoTower) {
-				const all = await panes(run), members = all.filter((p) => p.workspace_id === at.workspaceId && ["member", "main"].includes(p.tokens?.sb_role ?? ""));
-				const towers = (await workspaces(run)).filter((w) => w.workspace_id !== at.workspaceId && live(w.tokens?.tower));
-				// A tower closed on purpose stays closed until the base grows past the members it had then (a subagent or /boss tower opens it any time).
-				const closedAt = Number(ws?.tokens?.sb_tower_quit ?? -1);
-				if (members.length >= 2 && members.length > closedAt && towers.length) return void (await openTower(undefined, true));
+			// member dispatching a subagent, promotes it in tool_call, and a promotion opens the tower). A member that joins checks it too.
+			// A tower closed on purpose stays closed until the base grows past the members it had then (a subagent or /boss tower opens it any time).
+			if (autoTower && all.some((w) => w.workspace_id !== at.workspaceId && live(w.tokens?.tower))) {
+				const members = (await panes(run, at.workspaceId)).filter((p) => ["member", "main"].includes(p.tokens?.sb_role ?? "")).length;
+				if (members >= 2 && members > Number(ws?.tokens?.sb_tower_quit ?? -1)) return void (await openTower(undefined, true));
 			}
+			if (!owner) return;
 			missing ??= now();
-			if (!live(main) || (pinned && pinned !== state?.main) || now() - (state?.since ?? 0) < TOWER_OPEN_MS) return;
+			if (!live(main) || (pinned && pinned !== state?.main)) return;
+			if (now() - (state?.since ?? 0) < TOWER_OPEN_MS) return later_((state?.since ?? 0) + TOWER_OPEN_MS);
 			if (ws?.tokens?.sb_tower_quit !== undefined || now() - missing >= TOWER_GRACE_MS) pin(c);
+			else later_(missing + TOWER_GRACE_MS);
+		};
+		/** One check at a time, queued with the claims; a request during a check runs once more after it. */
+		const check = (joining = false) => {
+			if (!couple) return;
+			if (checking) return void (again = Boolean(again) || joining);
+			checking = true;
+			queue = queue.then(() => guard(joining).catch(() => {})).finally(() => {
+				checking = false;
+				const next = again;
+				again = undefined;
+				if (next !== undefined) check(next);
+			});
+		};
+		/** A check at `at` (on the clock `now`), keeping only the earliest one asked for. */
+		const later_ = (when: number) => {
+			if (when >= soonAt) return;
+			clearTimeout(soon);
+			soonAt = when;
+			(soon = setTimeout(() => ((soonAt = Infinity), check()), Math.max(0, when - now()) + 50)).unref();
 		};
 		const keepGuard = () => {
-			let checking = false; // one check at a time: a slow Herdr must not pile checks up in the queue
-			const tick = () => {
-				if (checking) return;
-				checking = true;
-				queue = queue.then(() => guard().catch(() => {})).finally(() => (checking = false));
-			};
-			if (guardMs && !guardTimer) (guardTimer = setInterval(tick, guardMs)).unref();
+			if (!couple) return;
+			if (guardMs && !guardTimer) (guardTimer = setInterval(() => check(), guardMs)).unref();
+			unlisten ??= events(["workspace.metadata_updated", "pane.closed", "pane.agent_detected"], (e) => {
+				const ws = e && (e.event === "workspace_metadata_updated" ? undefined : String(e.data.workspace_id ?? (e.data.pane as { workspace_id?: string } | undefined)?.workspace_id ?? ""));
+				if (!e || ws === undefined || ws === at.workspaceId) check(); // any workspace's tokens (its tower), this one's panes, or a reconnection
+			});
+			check(true);
 		};
 		type Event = { type: string; fromSessionId?: string; owner?: { sessionId: string }; payload?: { type?: string; force?: boolean } };
 		// A tab this session left stays registered, and if the session owns that channel it still decides that tab's claims (or its members could
@@ -224,6 +247,8 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			// A join that failed at start (intercom not connected yet, no owner yet) is retried when the channel changes.
 			if (!joined && !barred && !isTower && ["connection", "owner"].includes(event.type)) void joinNet().catch(() => {});
 			if (["connection", "owner", "state", "session_left"].includes(event.type)) void sync();
+			// The tab's owner or main may have changed hands (a main that left): the new owner checks the tab under its tower.
+			if (joined && ["owner", "session_left"].includes(event.type)) check();
 			if (["presence_update", "session_joined", "session_left"].includes(event.type)) dashboard?.poke();
 		};
 		const refresh = async () => {
@@ -549,7 +574,9 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			clearInterval(timer);
 			timer = undefined;
 			clearInterval(guardTimer);
-			guardTimer = undefined;
+			clearTimeout(soon);
+			unlisten?.();
+			[guardTimer, unlisten, soonAt] = [undefined, undefined, Infinity];
 			clearInterval(nudgeTimer);
 			nudges?.stop();
 			unwatch?.();

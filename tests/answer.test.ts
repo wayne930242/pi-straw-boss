@@ -145,3 +145,13 @@ test("an owner that stays silent: the answer is not confirmed, Check again repla
 	await until(async () => !unitB(await snapshot(url))?.pending, "the dialog closed");
 	assert.deepEqual(await post(url, csrf, "sessions/B/answer", body), { status: 200, body: { outcome: "accepted" } }, "the owner took it after all");
 });
+
+test("a close from the page reaches the session's own bridge: it answers yes, quits as /quit would, and its pane closes", async () => {
+	const { b, url, csrf } = await setup();
+	await until(async () => unitB(await snapshot(url)), "B in the snapshot");
+	// B's bridge finds the new server at its next look at gui.json (within 2 s); until then the server cannot reach it.
+	let r = await post(url, csrf, "close/unit", { key: "B" });
+	for (let i = 0; i < 60 && /did not answer/.test(String(r.body.reason)); i++) (await new Promise((done) => setTimeout(done, 50)), (r = await post(url, csrf, "close/unit", { key: "B" })));
+	assert.equal(r.status, 200, JSON.stringify(r.body));
+	await until(() => b.stopped && world.herdr.closed.includes("wA:p2"), "B quit and its pane closed");
+});

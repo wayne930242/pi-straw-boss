@@ -4,6 +4,8 @@ import { until, World } from "./fakes.ts";
 
 // The tower and the mains go together (index.ts, the guard): a live tower promotes each tab's earliest member, and a tower that quits, or stays
 // gone past the grace a /reload gets, clears every main. A main stays while its tower may still be opening, and a tower outlives its last main.
+// Herdr's events start the checks (`deps`, no sweep); the tests that move the clock past a grace use `swept`, a fast sweep standing in for the
+// timer a check sets, since the fake clock does not move real timers.
 
 let world = new World(), clock = 1_000_000;
 afterEach(async () => {
@@ -11,10 +13,10 @@ afterEach(async () => {
 	world = new World();
 	clock = 1_000_000;
 });
-const deps = { guardMs: 50, now: () => clock };
+const deps = { guardMs: 0, now: () => clock }, swept = { guardMs: 50, now: () => clock };
 const role = (pane: string) => world.herdr.pane(pane).tokens.sb_role;
-async function member(id: string, pane: string, tab: string) {
-	const a = world.agent({ id, pane, tab, deps });
+async function member(id: string, pane: string, tab: string, d: typeof deps = deps) {
+	const a = world.agent({ id, pane, tab, deps: d });
 	await a.start();
 	return a;
 }
@@ -50,7 +52,7 @@ test("a tower that quits turns every main back into a member at once, and the to
 
 test("a tower gone for less than the grace (a /reload) keeps the mains; gone past it, they are cleared", async () => {
 	await world.tower("tower-wA", "wA:t7", "wA:p7").start();
-	await member("a", "wA:p1", "wA:t1");
+	await member("a", "wA:p1", "wA:t1", swept);
 	await until(() => role("wA:p1") === "main", "a promoted");
 	clock += 61_000;
 	delete world.herdr.workspace("wA").tokens.tower; // as a reloading tower leaves it, with no quit said
@@ -63,7 +65,7 @@ test("a tower gone for less than the grace (a /reload) keeps the mains; gone pas
 });
 
 test("a member that promotes in a base without a tower stays main while its tower may still be opening", async () => {
-	const a = await member("a", "wA:p1", "wA:t1");
+	const a = await member("a", "wA:p1", "wA:t1", swept);
 	await a.promote();
 	await ticks();
 	clock += 30_000;

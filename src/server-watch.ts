@@ -56,3 +56,51 @@ export const herdrWatch = (socketPath = process.env.HERDR_SOCKET_PATH || join(ho
 		socket?.destroy();
 	};
 };
+
+/** Herdr's events of the given types, `onEvent` for each and `null` after every (re)connection, when some may have been missed. Returns the stop function. */
+export type HerdrEvents = (types: string[], onEvent: (event: { event: string; data: Record<string, unknown> } | null) => void) => () => void;
+
+/** One `events.subscribe` connection that reconnects like the watch above (0.25 s, 0.5 s, 1 s, then every 2 s) and never keeps pi alive. */
+export const herdrEvents = (socketPath = process.env.HERDR_SOCKET_PATH || join(homedir(), ".config", "herdr", "herdr.sock"), retryMs = RETRY_MS): HerdrEvents => (types, onEvent) => {
+	let socket: Socket | undefined, timer: ReturnType<typeof setTimeout> | undefined, stopped = false, retries = 0;
+	const attempt = () => {
+		const text = new StringDecoder("utf8");
+		let acked = false, ended = false, buffer = "";
+		const end = () => {
+			if (ended) return;
+			ended = true;
+			current.destroy();
+			if (!stopped) timer = setTimeout(attempt, retryMs[Math.min(retries++, retryMs.length - 1)]).unref();
+		};
+		const current = (socket = createConnection(socketPath).setTimeout(ACK_MS));
+		current.unref();
+		current.on("connect", () => current.write(`${JSON.stringify({ id: `straw-boss-events-${Date.now()}`, method: "events.subscribe", params: { subscriptions: types.map((type) => ({ type })) } })}\n`));
+		current.on("data", (chunk) => {
+			buffer += text.write(chunk);
+			for (let at = buffer.indexOf("\n"); at >= 0 && !ended; at = buffer.indexOf("\n")) {
+				const line = buffer.slice(0, at);
+				buffer = buffer.slice(at + 1);
+				try {
+					const frame = JSON.parse(line) as { result?: { type?: string }; event?: string; data?: Record<string, unknown> };
+					if (!acked) {
+						if (frame.result?.type !== "subscription_started") return end();
+						[acked, retries] = [true, 0];
+						current.setTimeout(0);
+						onEvent(null);
+					} else if (typeof frame.event === "string" && frame.data) onEvent({ event: frame.event, data: frame.data });
+				} catch {
+					return end();
+				}
+			}
+		});
+		current.on("timeout", end);
+		current.on("error", end);
+		current.on("close", end);
+	};
+	attempt();
+	return () => {
+		stopped = true;
+		clearTimeout(timer);
+		socket?.destroy();
+	};
+};

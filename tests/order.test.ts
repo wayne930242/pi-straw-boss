@@ -200,9 +200,10 @@ test("a session publishes its key and mark with its role, rewrites them when it 
 	world.herdr.addTab("wS:t1", "child", "wS:p1");
 	const tower = world.tower("tower-wA", "wA:t7", "wA:p7");
 	await tower.start();
-	const a = world.agent({ id: "a", name: "Solo", pane: "wA:p1", tab: "wA:t1" });
-	const b = world.agent({ id: "b", name: "Other", pane: "wA:p2", tab: "wA:t1" });
-	const c = world.agent({ id: "c", name: "Docs", pane: "wA:p3", tab: "wA:t2" });
+	// The tower stays alongside members here (couple: false): this test is about the marks, and a live tower would promote them (coupling.test.ts).
+	const a = world.agent({ id: "a", name: "Solo", pane: "wA:p1", tab: "wA:t1", deps: { couple: false } });
+	const b = world.agent({ id: "b", name: "Other", pane: "wA:p2", tab: "wA:t1", deps: { couple: false } });
+	const c = world.agent({ id: "c", name: "Docs", pane: "wA:p3", tab: "wA:t2", deps: { couple: false } });
 	world.herdr.pane("wA:p1").agent_session = { value: launch("a", [{ id: "kid-a", name: "aaa" }]) };
 	await Promise.all([a.start(), b.start(), c.start()]);
 	const raw = (id: string) => world.herdr.pane(id).tokens;

@@ -126,7 +126,8 @@ test("the main role in a tab's shell does not make a later pi there promote itse
 	assert.equal(pane.tokens.sb_open_main, undefined, "the token was consumed");
 	assert.equal(pane.tokens.sb_opened_by, "sender-1", "the limit marker stays while the main lives");
 	await world.agents.find((a) => a.id === NEW.main)!.stop();
-	const later = world.agent({ id: "later", pane: NEW.pane, env: { STRAW_BOSS_ROLE: "main" } });
+	// couple: false, or the live tower would promote it as the tab's earliest member (coupling.test.ts); this test is about the one-time token.
+	const later = world.agent({ id: "later", pane: NEW.pane, env: { STRAW_BOSS_ROLE: "main" }, deps: { couple: false } });
 	await later.start();
 	assert.notEqual(later.tokens.sb_role, "main");
 });
