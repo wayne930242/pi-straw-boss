@@ -181,6 +181,8 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor }: 
 		const made = d.added.map((it) => (els.set(it.id, render(it)), els.get(it.id)!));
 		if (d.front) list.prepend(...made);
 		else list.append(...made);
+		// A message that just arrived or went out comes in with a motion; older pages and a redraw do not.
+		if (loaded && !d.front && !d.rebuild) made.forEach((el) => (el.classList.add("fresh"), (el.dataset.born = String(Date.now()))));
 		empty.remove();
 		if (!model.items.length) list.append(empty);
 		top.hidden = !model.before;
@@ -190,6 +192,7 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor }: 
 		const old = els.get(id), it = model.items.find((x) => x.id === id);
 		if (old && it) {
 			const next = render(it);
+			if (old.classList.contains("fresh") && Date.now() - Number(old.dataset.born ?? 0) < 400) next.classList.add("fresh"); // its motion goes on
 			old.replaceWith(next);
 			els.set(id, next);
 		}

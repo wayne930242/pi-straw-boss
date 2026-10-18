@@ -176,6 +176,9 @@ svg { display: block; }
 @keyframes flash { 40% { transform: scale(1.12); } }
 @keyframes slide { from { opacity: 0; transform: translateX(10px); } }
 @keyframes zoom { from { opacity: 0; transform: scale(0.45); } }
+@keyframes come-in { from { opacity: 0; transform: translateX(-14px) scale(0.98); } }
+@keyframes go-out { from { opacity: 0; transform: translateX(14px) scale(0.98); } }
+.tx.fresh { animation: come-in 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both; } .tx.you.fresh { animation-name: go-out; }
 [hidden] { display: none !important; }
 a { color: inherit; }
 /* Small capitals labels and one-line ellipses, shared by every route. */
