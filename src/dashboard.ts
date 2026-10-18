@@ -110,7 +110,7 @@ export function subagents(parent: Pane | undefined, all: Pane[], now: number, li
 				script = readdirSync(join(dir, "subagent-scripts")).find((f) => f.endsWith(`-${id}.sh`));
 				file ??= readFileSync(join(dir, "subagent-scripts", script!), "utf8").match(/PI_SUBAGENT_SESSION='([^']+)'/)?.[1];
 			} catch {} // the launch script is only a fallback source for the name and the session file
-			const name = pane?.label ?? script?.slice(0, -`-${id}.sh`.length) ?? id.slice(0, 8);
+			const name = pane?.label || (script?.slice(0, -`-${id}.sh`.length) ?? id.slice(0, 8));
 			const doing = activity.toolActive ? String(activity.toolName) : String(activity.phase ?? "");
 			return { group: "net" as const, depth: 2, mark, text: name, kind: "subagent", workspace: pane?.workspace_id, id, file, pane: pane?.agent === "pi" ? pane.pane_id : undefined, note: { working: doing, waiting: "waiting on a question", done: "finished" }[mark as "working"] };
 		})
