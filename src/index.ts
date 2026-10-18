@@ -102,17 +102,17 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 
 		// Tokens are display and discovery only: a failed write waits for the next refresh, liveness comes from intercom.
 		// One publish at a time, and shutdown waits for the one in flight: a write that lands after the clear would leave tokens behind.
-		let publishing: Promise<void> = Promise.resolve();
+		let publishing: Promise<void> = Promise.resolve(), stopped = false;
 		const publishOnce = async (known?: Session[]) => {
-			const sbRole = role();
+			const sbRole = stopped ? undefined : role();
 			if (sbRole) {
 				ownName = nameOf((known ?? (await c.listSessions().catch(() => []))).find((s) => s.id === me())) || ownName;
 				// A failed read of Herdr leaves the subagents' tokens as they are; their TTL still runs.
 				const net = await netTokens(run, at, sbRole, ownName || me().slice(0, 8)).catch(() => undefined);
 				await report(run, "pane", at.paneId, { sb_role: sbRole, ...net?.own }).catch(() => {});
-				if (net) kids = await markKids(run, net.kids, kids);
+				if (net) kids = await markKids(run, net.kids, kids, net.joined);
 			}
-			if (holdsTower) await report(run, "workspace", at.workspaceId, { tower: me() }).catch(() => {});
+			if (holdsTower && !stopped) await report(run, "workspace", at.workspaceId, { tower: me() }).catch(() => {});
 		};
 		const publish = (known?: Session[]) => (publishing = publishing.then(() => publishOnce(known)).catch(() => {}));
 		const keepFresh = () => {
@@ -350,6 +350,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 		};
 
 		pi.on("session_start", async (_event, ctx) => {
+			stopped = false;
 			ui = ctx.ui;
 			hasUI = ctx.hasUI;
 			prompts = Object.fromEntries(PROMPTS.map((name) => [name, readFileSync(join(promptDir, `${name}.md`), "utf8").trim()]));
@@ -397,6 +398,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			dashboard = undefined;
 			clearInterval(timer);
 			timer = undefined;
+			stopped = true; // a refresh still in flight must not write tokens after they are cleared
 			await publishing;
 			const held = holdsTower;
 			holdsTower = false;

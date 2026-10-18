@@ -97,12 +97,14 @@ function chain(levels: number): Pane[] {
 	return ps;
 }
 
-test("nesting is followed down to six levels, and a long launcher name is cut to fit the sidebar", () => {
+test("nesting is followed at any depth, and a long launcher name is cut to fit the sidebar", () => {
 	const ps = chain(8);
 	const kids = descendants(ps[0], "000.0", "x".repeat(40), ps, Date.now());
-	assert.deepEqual(kids.map((k) => k.pane), ["p1", "p2", "p3", "p4", "p5", "p6"], "a seventh level stays unmarked");
-	assert.deepEqual(kids.map((k) => k.order), ["000.0.000", "000.0.000.000", "000.0.000.000.000", "000.0.000.000.000.000", "000.0.000.000.000.000.000", "000.0.000.000.000.000.000.000"]);
+	assert.deepEqual(kids.map((k) => k.pane), ["p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8"]);
+	assert.deepEqual(kids.map((k) => k.order), Array.from({ length: 8 }, (_, i) => `000.0${".000".repeat(i + 1)}`));
+	assert.deepEqual(byKey(Object.fromEntries(kids.map((k) => [k.pane, k.order]))), kids.map((k) => k.pane), "each level sorts after the one that launched it");
 	assert.equal(kids[0]!.mark, `${ARROW} ${"x".repeat(23)}…`);
+	assert.equal(kids[1]!.mark, `${ARROW} c1`, "a nested subagent names its own launcher");
 	assert.deepEqual(descendants(undefined, "000.0", "x", [], 0), []);
 });
 
@@ -129,7 +131,7 @@ test("netTokens reads Herdr for a session's own tokens (a tower has no mark) and
 	const run = world.herdr.runFor("wA:p1"), place = { paneId: "wA:p1", tabId: "wA:t1", workspaceId: "wA" };
 
 	const main = await netTokens(run, place, "main", "Main");
-	assert.deepEqual(main, { own: { sb_order: "000.1.000.0.000", sb_mark: MARK.main }, kids: [{ pane: "wS:p1", order: "000.1.000.0.000.000", mark: `${ARROW} Main` }] });
+	assert.deepEqual(main, { own: { sb_order: "000.1.000.0.000", sb_mark: MARK.main }, kids: [{ pane: "wS:p1", order: "000.1.000.0.000.000", mark: `${ARROW} Main` }], joined: new Set() });
 	assert.deepEqual((await netTokens(run, place, "tower", "Main")).own, { sb_order: "000.0", sb_mark: null }, "a tower's tab already carries the glyph");
 	assert.deepEqual((await netTokens(run, { ...place, paneId: "wA:p99" }, "member", "Main")).own, { sb_order: null, sb_mark: MARK.member }, "a pane Herdr does not list has no key");
 
@@ -152,6 +154,17 @@ async function launcher() {
 	await a.promote();
 	return { a, raw: (id: string) => world.herdr.pane(id).tokens };
 }
+
+test("markKids leaves a pane alone when it has joined the net since it ran a subagent: its tokens are its own now", async () => {
+	world.herdr.addPane("wA:p1", "wA:t1");
+	world.herdr.addPane("wA:p9", "wA:t1").tokens = { sb_role: "member", sb_order: "000.1.000.1.001", sb_mark: MARK.member };
+	world.herdr.addPane("wA:p8", "wA:t1").tokens = { sb_order: "000.1.000.0.000.000", sb_mark: `${ARROW} Main` };
+	const run = world.herdr.runFor("wA:p1");
+	await markKids(run, [], new Set(["wA:p9", "wA:p8"]), new Set(["wA:p9"]));
+	assert.deepEqual(world.herdr.pane("wA:p9").tokens, { sb_role: "member", sb_order: "000.1.000.1.001", sb_mark: MARK.member });
+	assert.deepEqual(world.herdr.pane("wA:p8").tokens, {}, "a pane that is still no more than a former subagent is cleared");
+	assert.deepEqual((await netTokens(run, { paneId: "wA:p1", tabId: "wA:t1", workspaceId: "wA" }, "member", "x")).joined, new Set(["wA:p9"]));
+});
 
 test("a session publishes its key and mark with its role, rewrites them when it is promoted, and the subagents it launched get theirs on the 4 minute refresh", async () => {
 	mock.timers.enable({ apis: ["setInterval"] });
@@ -209,6 +222,17 @@ test("shutdown waits for a publish in flight, so no token is written after it cl
 	mock.timers.enable({ apis: ["setInterval"] });
 	const { a, raw } = await launcher();
 	mock.timers.tick(4 * 60_000); // a refresh starts, and has not finished
+	await a.fire("session_shutdown");
+	await settle();
+	assert.deepEqual([raw("wA:p1"), raw("wS:p1")], [{}, {}]);
+});
+
+test("a refresh already running when the session shuts down writes no token after the clear", async () => {
+	const { a, raw } = await launcher();
+	const b = world.agent({ id: "b", name: "Other", pane: "wA:p2", tab: "wA:t1" });
+	await b.start();
+	await settle();
+	world.broker.disconnect(b); // a's channel hears session_left and starts a refresh
 	await a.fire("session_shutdown");
 	await settle();
 	assert.deepEqual([raw("wA:p1"), raw("wS:p1")], [{}, {}]);
