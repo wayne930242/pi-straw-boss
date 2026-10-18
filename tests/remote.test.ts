@@ -222,7 +222,7 @@ test("a recorded server counts as running only when its PID is alive and that pr
 	} finally {
 		for (const [key, value] of [["LC_ALL", lc], ["TZ", tz]] as const) value === undefined ? delete process.env[key] : (process.env[key] = value);
 	}
-	assert.equal(runs({ pid: process.pid }, Date.now() - 3600_000, () => "Sat Oct 17 21:00:00 2026"), false, "an older-format entry: the process started after the file (read as UTC) was written");
+	assert.equal(runs({ pid: process.pid }, Date.parse("Sat Oct 17 20:00:00 2026 UTC"), () => "Sat Oct 17 21:00:00 2026"), false, "an older-format entry: the process started after the file (read as UTC) was written");
 	assert.equal(startOf(2 ** 22 + 1), undefined);
 });
 
