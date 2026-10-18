@@ -218,6 +218,27 @@ test("a session publishes its key and mark with its role, rewrites them when it 
 	assert.deepEqual(raw("wA:p1"), {}, "shutdown clears the role, the key and the mark");
 });
 
+test("a subagent the session launches is marked within seconds of the launch, not at the 4 minute refresh", async () => {
+	const { a, raw } = await launcher();
+	mock.timers.enable({ apis: ["setTimeout"] });
+	world.herdr.addTab("wS:t2", "child2", "wS:p2");
+	world.herdr.pane("wA:p1").agent_session = { value: launch("a", [{ id: "kid-a", name: "aaa" }, { id: "kid-b", name: "bbb" }]) };
+	await a.toolResult("subagent");
+	Object.assign(world.herdr.pane("wS:p2"), { agent: "pi", agent_status: "working", label: "bbb", agent_session: { value: kidFile("kid-b") } });
+	assert.equal(raw("wS:p2").sb_order, undefined);
+	mock.timers.tick(3_000);
+	await settle();
+	assert.deepEqual(raw("wS:p2"), { sb_order: "000.1.000.0.000.001", sb_mark: `${ARROW} Solo`, sb_indent: INDENT.last });
+	assert.equal(raw("wS:p1").sb_indent, INDENT.more, "the older sibling gets the branch to a later one");
+	mock.timers.tick(15_000);
+	await settle();
+	world.herdr.calls.length = 0;
+	await a.toolResult("bash");
+	mock.timers.tick(15_000);
+	await settle();
+	assert.deepEqual(world.herdr.commands("pane", "report-metadata"), [], "another tool's result publishes nothing");
+});
+
 test("a refresh that cannot read Herdr keeps the subagents' tokens instead of clearing them", async () => {
 	mock.timers.enable({ apis: ["setInterval"] });
 	const { raw } = await launcher();

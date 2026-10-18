@@ -151,7 +151,7 @@ A session that ends clears its own and its subagents'.
   A tower, a main agent and a member carry none, and a session clears the one a pane kept from when it ran a subagent.
 
 The tokens rest on Herdr's order as of the session's last refresh, so moving a tab or workspace shows in the net view within 4 minutes, and a subagent that has a new sibling gets its `├─` at the next refresh.
-A subagent is marked while its pane runs pi, and its tokens go at the next refresh once it has finished.
+A subagent is marked while its pane runs pi: its launcher publishes again 3 and 15 seconds after a `subagent` or `subagent_resume` call returns, so a new subagent hangs under it within seconds, and its tokens go at the next refresh once it has finished.
 
 **Sidebar rows.**
 The tokens also show the roles in Herdr's own grouped view, which a plugin cannot reorder.

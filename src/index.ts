@@ -22,6 +22,7 @@ const NAMESPACE = /^[a-z0-9][a-z0-9._/-]{0,63}$/;
 const ENTRY = "straw-boss";
 const PROMPTS = ["main", "tower", "member", "member-no-main"];
 const REFRESH_MS = 4 * 60_000;
+const KID_MARK_MS = [3_000, 15_000];
 const CLAIM_MS = 5000;
 const CONNECT_MS = 15_000;
 const SEND_MS = 30_000;
@@ -388,6 +389,11 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			} catch (error) {
 				tell(`Straw Boss: ${(error as Error).message}`, "warning");
 			}
+		});
+
+		// A launched subagent is marked within seconds, once its pane shows its session file, instead of at the next 4 minute refresh.
+		pi.on("tool_result", (event) => {
+			if (["subagent", "subagent_resume"].includes(event.toolName) && !isTower && !barred && role()) for (const ms of KID_MARK_MS) setTimeout(() => void publish(), ms).unref();
 		});
 
 		pi.on("session_shutdown", async () => {

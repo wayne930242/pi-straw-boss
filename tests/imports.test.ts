@@ -79,8 +79,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.7.0 to 650 for the order and mark tokens each session publishes with its role (order.ts, which has its own figure), the tab list they read,
 	// and one publish at a time that shutdown waits for. 0.6.10 to 661: the role marks moved from order.ts to herdr.ts beside the tower label, so the
 	// dashboard draws the sidebar's glyphs without importing order.ts, which imports the dashboard, and the towerModel setting (read at each tower
-	// start and passed to pi as --model).
-	assert.ok(rest <= 661, `the rest of src has ${rest} lines`);
+	// start and passed to pi as --model); 0.8.0 to 667 to mark a launched subagent within seconds of the launch.
+	assert.ok(rest <= 667, `the rest of src has ${rest} lines`);
 	// The page: the files the spec budgets one by one, then this round's own figures (no figure in the spec): the focus views, the overlay
 	// layer (alert spotting and the stack model in the map's chunk, the layer's DOM and tiles in a chunk of their own), the dev-only demo, and everything else.
 	for (const [name, max] of [["router.ts", 80], ["chat.ts", 250], ["markdown.ts", 180], ["views.ts", 245], ["layer.ts", 180], ["composer.ts", 165], ["ask.ts", 155], ["mirror.ts", 145], ["keypad.ts", 60]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);

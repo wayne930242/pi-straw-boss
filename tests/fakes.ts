@@ -381,6 +381,11 @@ export class Agent {
 		await this.fire("tool_call", { toolName: name, toolCallId: "call", input: {} });
 		await settle();
 	}
+	/** pi's tool_result event for a call of `name`, as pi fires it after the tool returned. */
+	async toolResult(name: string): Promise<void> {
+		await this.fire("tool_result", { toolName: name, toolCallId: "call", input: {}, content: [], isError: false });
+		await settle();
+	}
 	async stop(): Promise<void> {
 		if (this.stopped) return;
 		this.stopped = true;
