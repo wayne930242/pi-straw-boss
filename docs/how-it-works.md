@@ -220,8 +220,8 @@ The tokens also show the roles in Herdr's own grouped view, which a plugin canno
 Add them to a row of `[ui.sidebar.agents]` in `config.toml`.
 `$sb_indent` goes before the state icon, so a subagent hangs under its launcher as the worktrees do in the Spaces panel; Herdr puts its own ` · ` after it, and an agent without the token shows nothing.
 `$sb_name` goes right after the state icon, so a subagent row says which subagent it is even when Herdr has lost the pane's label.
-In `$sb_mark` a main agent's star and a member's person are bold, and the rule that hides the `[sub]` mark leaves a subagent without one, because the branch already says what it is. The snippet leaves the colors to your Herdr theme; add an `fg` to a rule to color a mark.
-Every agent fits one row, and a main agent and a member read the same: glyph, tab label, then the workspace. The row leaves out Herdr's `tab`, which the mark already carries.
+The first row hides `$sb_mark`; the `[sub]` mark stays hidden because the branch already says what it is. The snippet leaves the colors to your Herdr theme; add an `fg` to a rule to color a mark.
+Herdr drops a row whose every item is hidden, so the second row, which shows `$sb_mark` only when it starts with the star or the person, gives a main agent and a member the same second line (`<glyph> <tab>`, bold) and leaves every other agent one line. The first row leaves out Herdr's `tab`, which the mark already carries.
 
 ```toml
 [ui.sidebar.agents]
@@ -232,11 +232,12 @@ rows = [
     { token = "$sb_name" },
     { token = "$sb_mark", rules = [
       { starts_with = "[sub]", hide = true },
-      { starts_with = "\uF005", bold = true },
-      { starts_with = "\uF007", bold = true },
+      { starts_with = "\uF005", hide = true },
+      { starts_with = "\uF007", hide = true },
     ] },
     "machine", "workspace",
   ],
+  [{ token = "$sb_mark", rules = [{ starts_with = "\uF005", bold = true }, { starts_with = "\uF007", bold = true }, { contains = "", hide = true }] }],
 ]
 ```
 
