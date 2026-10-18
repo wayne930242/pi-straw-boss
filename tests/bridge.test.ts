@@ -83,7 +83,7 @@ test("G's channel from the start when gui.json names another session (the server
 	s.own();
 	assert.deepEqual(s.published.map((p) => [p.ns, p.audience]), [[guiNamespace("G"), "owner"]]);
 	const list = s.published[0]!.payload as Dialogs;
-	assert.deepEqual({ ...list, bridgeId: "" }, { version: 1, type: "dialogs", bridgeId: "", pane: "wA:p1", file: "/s/2026_S.jsonl", dialogs: [{ owner: "robot-hand", id: "d1", toolCallId: "c1", digest: DIGEST, select: SELECT }], closed: [] });
+	assert.deepEqual({ ...list, bridgeId: "" }, { version: 1, type: "dialogs", bridgeId: "", pane: "wA:p1", file: "/s/2026_S.jsonl", dialogs: [{ owner: "robot-hand", id: "d1", toolCallId: "c1", digest: DIGEST, select: SELECT }], closed: [], documents: [] });
 	s.regs[0]!.onEvent({ type: "connection", connected: true });
 	assert.equal(s.lists().length, 2, "resent when the connection comes back");
 	s.events.emit("robot-hand:closed", { version: 1, id: "d1", by: "local" });
@@ -340,4 +340,100 @@ hs.get("session_start")({}, { hasUI: false, ui: {}, sessionManager: { getSession
 	const start = Date.now(), run = spawnSync(process.execPath, ["--input-type=module", "-e", code], { timeout: 10_000 });
 	assert.equal(run.status, 0, String(run.stderr));
 	assert.ok(Date.now() - start < 5000, "it did not wait for the 2 s timer");
+});
+
+/** pi-herdr-doc-review 0.4.x on the bus, as its README's "Browser viewers" describes it: the list, the request, and a form with its result. */
+const DOC = { id: "6f1e2d3c-4b5a-4968-8776-655443322110", path: "/work/docs/plan.html", kind: "html", display: "docs/plan.html", reason: "Plan ready", revision: 1, onScreen: true };
+function docReview(s: ReturnType<typeof session>, documents: Record<string, unknown>[] = [DOC]) {
+	const forms: Record<string, unknown>[] = [], requests: unknown[] = [];
+	const offs = [
+		s.events.on("doc-review:documents-request", (r) => (requests.push(r), s.events.emit("doc-review:documents", { version: 1, documents }))),
+		s.events.on("doc-review:form", (raw) => {
+			const f = raw as Record<string, unknown>;
+			forms.push(f);
+			s.events.emit("doc-review:form-result", { version: 1, id: "other", answerId: f.answerId, accepted: true });
+			s.events.emit("doc-review:form-result", { version: 1, id: f.id, answerId: f.answerId, accepted: f.fields instanceof Array && f.fields.length > 0, ...(f.fields instanceof Array && f.fields.length ? {} : { reason: "empty" }) });
+		}),
+	];
+	return { forms, requests, publish: (docs: Record<string, unknown>[]) => s.events.emit("doc-review:documents", { version: 1, documents: docs }), off: () => offs.forEach((off) => off()) };
+}
+const docsSent = (s: ReturnType<typeof session>) => s.published.filter((p) => p.payload.type === "dialogs").map((p) => p.payload as Dialogs);
+
+test("documents: the owner's list goes to G with the dialogs, asked for at the session's start, so a reloaded bridge sees the documents already open", () => {
+	const s = session(), owner = docReview(s);
+	s.own();
+	assert.equal(docsSent(s).at(-1)!.documents?.length, 0, "the owner was not listening before this bridge started");
+	s.fire("session_start");
+	assert.deepEqual(owner.requests, [{ version: 1 }], "the list is asked for once per start");
+	assert.deepEqual(docsSent(s).at(-1)!.documents, [DOC]);
+	owner.publish([{ ...DOC, revision: 2 }]);
+	assert.equal(docsSent(s).at(-1)!.documents![0]!.revision, 2, "a new revision goes at once");
+	s.events.emit("doc-review:documents", { version: 2, documents: [] });
+	assert.equal(docsSent(s).at(-1)!.documents![0]!.revision, 2, "a list of another version is ignored");
+	owner.publish([{ ...DOC, reason: "r".repeat(5000) }]);
+	assert.equal(docsSent(s).at(-1)!.documents![0]!.reason.length, 2048, "a long reason (show_doc sets no limit) is cut, not refused");
+	owner.publish([{ ...DOC, revision: "3" }]);
+	assert.deepEqual(docsSent(s).at(-1)!.documents, [], "a v1 list out of shape counts as none: the older list never stays");
+	owner.publish(Array.from({ length: 32 }, (_, i) => ({ ...DOC, id: `doc-${i}`, display: "d".repeat(400), reason: "r".repeat(400) })));
+	const cut = docsSent(s).at(-1)!;
+	assert.deepEqual([cut.documents, cut.docsCut], [[], true], "a list over the 15 KiB message cap goes as none, with the reason");
+	const cjk = Array.from({ length: 20 }, (_, i) => ({ ...DOC, id: `doc-${i}`, display: `文件/規格-${i}.html`, reason: "請審閱這份規格".repeat(40) }));
+	assert.ok(JSON.stringify(cjk).length < 14 * 1024 && Buffer.byteLength(JSON.stringify(cjk)) > 15 * 1024, "under the cap in characters, over it in bytes");
+	owner.publish(cjk);
+	assert.equal(docsSent(s).at(-1)!.docsCut, true, "the cap counts bytes: CJK text is three bytes a character");
+	owner.publish([DOC]);
+	assert.deepEqual([docsSent(s).at(-1)!.documents, docsSent(s).at(-1)!.docsCut], [[DOC], undefined]);
+	s.open();
+	assert.equal(docsSent(s).at(-1)!.dialogs.length, 1, "the dialogs still go");
+	s.fire("session_shutdown");
+	assert.deepEqual([docsSent(s).at(-1)!.documents, docsSent(s).at(-1)!.dialogs], [[], []], "the session's end sends none");
+	owner.off();
+});
+
+test("documents: a form answer from G for this bridge reaches the owner as doc-review:form, and its own result goes back; anyone else's is ignored", () => {
+	const s = session(), owner = docReview(s);
+	s.fire("session_start");
+	s.own();
+	const to = bridgeIdOf(s), form = (extra: Record<string, unknown> = {}) => ({ version: 1, type: "form", to, id: DOC.id, answerId: "n".repeat(32), fields: [["choice", "b"]], ...extra });
+	const results = () => s.published.filter((p) => p.payload.type === "form-result").map((p) => [p.audience, p.payload]);
+	s.message(form(), { from: "X" });
+	s.message(form(), { epoch: "e0" });
+	s.message(form({ to: "someone-else" }));
+	s.message(form({ version: 2 }));
+	s.message(form({ fields: [["a", 1]] }));
+	s.message(form({ fields: Array.from({ length: 65 }, () => ["a", "b"]) }));
+	s.message(form({ answerId: "x".repeat(65) }));
+	assert.deepEqual([owner.forms.length, results().length], [0, 0], "another sender, epoch, bridge, version, or a malformed form reaches nobody");
+	s.message(form());
+	assert.deepEqual(owner.forms, [{ version: 1, id: DOC.id, answerId: "n".repeat(32), fields: [["choice", "b"]] }]);
+	assert.deepEqual(results(), [["owner", { version: 1, type: "form-result", bridgeId: to, id: DOC.id, answerId: "n".repeat(32), accepted: true }]], "its own document's result only");
+	s.message(form({ answerId: "e".repeat(32), fields: [] }));
+	assert.deepEqual(results().at(-1)![1], { version: 1, type: "form-result", bridgeId: to, id: DOC.id, answerId: "e".repeat(32), accepted: false, reason: "empty" });
+	s.message(form({ id: "not-listed" }));
+	assert.deepEqual(results().at(-1)![1], { version: 1, type: "form-result", bridgeId: to, id: "not-listed", answerId: "n".repeat(32), accepted: false, reason: "closed" }, "a document this session does not list: closed, and the owner hears nothing");
+	owner.publish([{ ...DOC, kind: "text" }]);
+	s.message(form({ answerId: "t".repeat(32) }));
+	assert.equal((results().at(-1)![1] as { reason?: string }).reason, "closed", "a text document takes no form");
+	assert.equal(owner.forms.length, 2);
+	owner.off();
+	s.fire("session_shutdown");
+});
+
+test("documents: an owner that never answers a form leaves it unanswered here (the server says not confirmed) and its listener goes after 4 s", () => {
+	mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+	try {
+		const s = session(), owner = docReview(s);
+		s.fire("session_start");
+		owner.off();
+		s.own();
+		const listeners = s.count();
+		s.message({ version: 1, type: "form", to: bridgeIdOf(s), id: DOC.id, answerId: "n".repeat(32), fields: [["a", "b"]] });
+		assert.equal(s.count(), listeners + 1, "waiting for the result");
+		mock.timers.tick(4000);
+		assert.equal(s.count(), listeners, "the result listener is gone");
+		assert.equal(s.published.filter((p) => p.payload.type === "form-result").length, 0);
+		s.fire("session_shutdown");
+	} finally {
+		mock.timers.reset();
+	}
 });

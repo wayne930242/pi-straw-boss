@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Pending, type Relayed, SEVERAL } from "./ask.ts";
-import { type Ack, type AnswerMessage, type Bridge, type Dialogs, guiNamespace, type LocalHub, REGISTER, type ToHub } from "./bridge.ts";
+import { type Ack, type AnswerMessage, type Bridge, type Dialogs, type FormMessage, type FormReply, guiNamespace, type LocalHub, REGISTER, type ToHub } from "./bridge.ts";
+import { createCaps, type Doc, docsOf, type Fields, fieldsOk, type FormResult, type Shelf } from "./documents.ts";
 import type { Session } from "./herdr.ts";
 import { canonical } from "./history.ts";
 import type { Ref } from "./net.ts";
@@ -12,9 +13,10 @@ import { checkProbe, type Editor } from "./probe.ts";
 // bridge's pane, decides whether the page may answer it, and carries an answer to that bridge. A list counts only from the session intercom
 // places on that pane, for the unit whose session file it names. The page may answer a dialog only when it is the session's one open dialog,
 // with no answer on its way, belonging to the file's one open call (never a secret_drop), with a digest that matches its content.
-// The same binding, for every bridge whether it holds a dialog or not, tells where to ask what a session's editor would submit (`probe`).
+// The same binding, for every bridge whether it holds a dialog or not, tells where to ask what a session's editor would submit (`probe`), and
+// gives the unit the documents its bridge lists, each by a capability (documents.ts), and carries a form answer for one to that bridge.
 
-const ACK_MS = 5000, PROBE_MS = 1000, KEEP_MS = 600_000, KEEP = 256, MAX_TEXT = 8192, MAX_NOTE = 2048, MAX_ALL = 12_288;
+const ACK_MS = 5000, PROBE_MS = 1000, FORM_MS = 5000, KEEP_MS = 600_000, KEEP = 256, MAX_TEXT = 8192, MAX_NOTE = 2048, MAX_ALL = 12_288;
 export const ANSWER_ID = /^[A-Za-z0-9_-]{16,64}$/, CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
 interface Channel { snapshot(): { connected: boolean; owner?: { sessionId: string; epoch: string } }; publish(payload: unknown, options?: { audience?: "owner" | "capable"; ownerOnly?: boolean }): void }
 type Event = { type: string; fromSessionId?: string; sessionId?: string; owner?: { sessionId: string; epoch: string }; payload?: unknown };
@@ -25,6 +27,11 @@ export type Hub = ReturnType<typeof createHub>;
 
 const str = (v: unknown): v is string => typeof v === "string";
 const opt = (v: unknown) => v === undefined || str(v);
+/** Waits up to `ms` for the reply filed under `k`; undefined when none came (or the hub stopped). */
+const wait = <T>(map: Map<string, (x?: T) => void>, k: string, ms: number) => new Promise<T | undefined>((resolve) => {
+	const timer = setTimeout(() => settle(), ms), settle = (x?: T) => (clearTimeout(timer), map.delete(k), resolve(x));
+	map.set(k, settle);
+});
 /** A relayed dialog, checked so a malformed message cannot break the net reading. */
 const valid = (d: Dialog) => str(d?.owner) && str(d.id) && d.id.length <= 64 && /^[0-9a-f]{64}$/.test(String(d.digest)) && opt(d.toolCallId) &&
 	(d.select === undefined || (str(d.select?.title) && Array.isArray(d.select.choices) && d.select.choices.every((c) => str(c?.label) && opt(c.note)) && opt(d.select.copy))) &&
@@ -57,6 +64,8 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 	let channel: Channel | undefined, epoch: string | undefined, active = false, change = () => {};
 	let bound = new Map<string, { from: string; b: Dialogs }>(), targets = new Map<string, Target>(), reach = new Map<string, { from: string; bridgeId: string }>();
 	const bridges = new Map<string, Dialogs>(), waiting = new Map<string, (ack?: Ack) => void>(), done = new Map<string, { key: string; at: number; sent: Sent }>(), probes = new Map<string, (e?: Editor) => void>();
+	const caps = createCaps(), forms = new Map<string, (r?: FormReply) => void>();
+	let shelves = new Map<string, Shelf>();
 	const owner = () => channel?.snapshot().owner?.sessionId === me;
 	const sync = () => {
 		local.sync();
@@ -65,9 +74,11 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 	const receive = (from: string, msg: ToHub) => {
 		if (!active || msg?.version !== 1 || !str(msg.bridgeId)) return;
 		const closed = msg.type === "dialogs" && Array.isArray(msg.closed) && msg.closed.length <= 16 && msg.closed.every((c) => str(c?.id) && str(c.by) && opt(c.answerId));
-		if (closed && str(msg.pane) && (msg.file === null || str(msg.file)) && Array.isArray(msg.dialogs) && msg.dialogs.every(valid)) (bridges.set(from, msg), change());
+		const docs = msg.type === "dialogs" && (msg.documents === undefined ? [] : docsOf({ version: 1, documents: msg.documents })); // documents out of shape go alone, as if cut
+		if (closed && str(msg.pane) && (msg.file === null || str(msg.file)) && Array.isArray(msg.dialogs) && msg.dialogs.every(valid)) (bridges.set(from, docs ? { ...msg, documents: docs } : { ...msg, documents: [], docsCut: true }), change());
 		if (msg.type === "ack") waiting.get([from, msg.bridgeId, msg.id, msg.answerId].join("\n"))?.(msg);
 		if (msg.type === "probe-result") probes.get([from, msg.bridgeId, msg.probeId].join("\n"))?.(checkProbe({ ...msg }));
+		if (msg.type === "form-result" && typeof msg.accepted === "boolean" && opt(msg.reason) && (msg.reason?.length ?? 0) <= 512) forms.get([from, msg.bridgeId, msg.id, msg.answerId].join("\n"))?.(msg);
 	};
 	const onEvent = (e: Event) => {
 		if (e.type === "owner" && e.owner?.sessionId === me && e.owner.epoch !== epoch && (epoch = e.owner.epoch) && active) sync();
@@ -90,7 +101,7 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 	const hub: LocalHub & {
 		readonly running: boolean; readonly me: string; start(onChange: () => void): void; stop(): void; relayed(sessions: Session[], refs: Map<string, Ref>): Relayed; target(key: string): Target | undefined;
 		replay(answerId: string, key: string): Sent | undefined; ended(key: string, dialog: string, answerId: string): Sent | undefined; send(key: string, t: Target, a: Omit<AnswerMessage, "version" | "type" | "to">): Promise<Sent>;
-		probe(key: string): Promise<Editor | undefined>;
+		probe(key: string): Promise<Editor | undefined>; doc(cap: string): { key: string; doc: Doc } | undefined; form(cap: string, answerId: string, fields: Fields): Promise<FormResult | undefined>;
 	} = {
 		receive,
 		get running() { return active; },
@@ -108,19 +119,23 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 		},
 		stop() {
 			active = false;
-			[bridges, bound, targets, reach].forEach((m) => m.clear());
-			[...waiting.values(), ...probes.values()].forEach((w) => w());
+			[bridges, bound, targets, reach, shelves].forEach((m) => m.clear());
+			caps.clear(); // a capability lives as long as its server
+			[...waiting.values(), ...probes.values(), ...forms.values()].forEach((w) => w());
 		},
 		/** Binds each relayed list to a unit, from this net reading's sessions and registry. */
 		relayed(sessions, refs) {
 			[bound, targets, reach] = [new Map(), new Map(), new Map()];
+			const shelved: { key: string; from: string; bridgeId: string; docs: Doc[] }[] = [], cut = new Set<string>();
 			for (const [from, b] of bridges) {
 				const file = sessions.find((s) => s.id === from)?.herdrLocation?.paneId === b.pane ? canonical(b.file ?? undefined) : undefined;
 				const ref = file && [...refs.values()].find((r) => r.pane === b.pane && r.file === file);
-				if (ref) reach.set(ref.key, { from, bridgeId: b.bridgeId });
+				if (ref) (reach.set(ref.key, { from, bridgeId: b.bridgeId }), shelved.push({ key: ref.key, from, bridgeId: b.bridgeId, docs: b.documents ?? [] }), b.docsCut && cut.add(ref.key));
 				if (ref && (b.dialogs.length || b.closed.length)) bound.set(ref.key, { from, b });
 			}
-			return { dialogsOf: (key) => bound.get(key)?.b.dialogs, merge };
+			const cards = caps.bind(shelved, new Set([...bridges].flatMap(([from, b]) => (b.documents ?? []).map((d) => `${from}\n${b.bridgeId}\n${d.id}`))));
+			shelves = new Map([...cards].flatMap(([key, docs]): [string, Shelf][] => (docs.length || cut.has(key) ? [[key, { ...(docs.length ? { docs } : {}), ...(cut.has(key) ? { docsCut: true as const } : {}) }]] : [])));
+			return { dialogsOf: (key) => bound.get(key)?.b.dialogs, merge, docsOf: (key) => shelves.get(key) };
 		},
 		/** How a dialog that is no longer open here ended: `accepted` for the answer that won it, else `stale` with who closed it. */
 		ended(key, dialog, answerId) {
@@ -135,10 +150,7 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 		/** Publishes the answer to its bridge (or calls this session's) and waits up to 5 s for the bridge's ack. */
 		async send(key, t, a) {
 			const msg: AnswerMessage = { version: 1, type: "answer", to: t.bridgeId, ...a }, k = [t.from, t.bridgeId, a.id, a.answerId].join("\n");
-			const ack = new Promise<Ack | undefined>((resolve) => {
-				const timer = setTimeout(() => settle(), ACK_MS), settle = (x?: Ack) => (clearTimeout(timer), waiting.delete(k), resolve(x));
-				waiting.set(k, settle);
-			});
+			const ack = wait(waiting, k, ACK_MS);
 			try {
 				if (t.from === me) local.deliver(msg, (x) => receive(me, x));
 				else if (owner()) channel!.publish(msg, { audience: "capable", ownerOnly: true });
@@ -159,11 +171,7 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 			const t = reach.get(key);
 			if (!t || !active) return undefined;
 			if (t.from === me) return checkProbe({ ...local.probe() });
-			const probeId = randomUUID(), k = [t.from, t.bridgeId, probeId].join("\n");
-			const got = new Promise<Editor | undefined>((resolve) => {
-				const timer = setTimeout(() => settle(), PROBE_MS), settle = (e?: Editor) => (clearTimeout(timer), probes.delete(k), resolve(e));
-				probes.set(k, settle);
-			});
+			const probeId = randomUUID(), k = [t.from, t.bridgeId, probeId].join("\n"), got = wait(probes, k, PROBE_MS);
 			try {
 				if (!owner()) throw new Error("not the owner");
 				channel!.publish({ version: 1, type: "probe", to: t.bridgeId, probeId }, { audience: "capable", ownerOnly: true });
@@ -171,6 +179,27 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 				probes.get(k)?.(); // unreachable: the editor stays unknown
 			}
 			return got;
+		},
+		/** A listed document by its capability, as its bridge lists it now (a list that changed since the reading counts, a bridge that left does not). */
+		doc(cap) {
+			const at = caps.find(cap), b = at && bridges.get(at.from), doc = at && b?.bridgeId === at.bridgeId ? b.documents?.find((d) => d.id === at.id) : undefined;
+			return doc && { key: at!.key, doc };
+		},
+		/** A form answer for the document `cap`, to its bridge (or this session's), waiting up to 5 s for the owner's result. One answerId is sent once (docs.ts spends its nonce first). */
+		async form(cap, answerId, fields) {
+			const at = caps.find(cap), k = at && [at.from, at.bridgeId, at.id, answerId].join("\n");
+			if (!ANSWER_ID.test(answerId) || !fieldsOk(fields)) return { accepted: false, reason: "invalid" };
+			if (!at || !k || !active || !hub.doc(cap)) return { accepted: false, reason: "closed" };
+			const msg: FormMessage = { version: 1, type: "form", to: at.bridgeId, id: at.id, answerId, fields }, got = wait(forms, k, FORM_MS);
+			try {
+				if (at.from === me) local.form(msg, (r) => receive(me, r));
+				else if (owner()) channel!.publish(msg, { audience: "capable", ownerOnly: true });
+				else throw new Error("not the owner");
+			} catch {
+				forms.get(k)?.(); // unreachable: not confirmed
+			}
+			const r = await got;
+			return r && { accepted: r.accepted, ...(str(r.reason) ? { reason: r.reason } : {}) };
 		},
 	};
 	return hub;

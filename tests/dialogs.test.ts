@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { after, mock, test } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { withPending } from "../src/ask.ts";
-import { type Ack, type AnswerMessage, type Dialogs, guiNamespace, REGISTER } from "../src/bridge.ts";
+import { type Ack, type AnswerMessage, type Dialogs, type FormMessage, type FormReply, guiNamespace, REGISTER } from "../src/bridge.ts";
+import type { Doc } from "../src/documents.ts";
 import { createHub } from "../src/dialogs.ts";
 import { canonical } from "../src/history.ts";
 import type { Net, Ref } from "../src/net.ts";
@@ -30,12 +31,14 @@ const net = (): Net => ({ bases: [{ id: "wA", label: "Alpha", mark: "working", h
 function hub({ me = "G", owner = "G" } = {}) {
 	const published: { payload: unknown; options: unknown }[] = [], delivered: AnswerMessage[] = [], changes: number[] = [];
 	let reg: { onEvent(e: Record<string, unknown>): void } | undefined, reply: ((a: AnswerMessage) => Ack | undefined) | undefined, editor: Editor = { editor: "empty" };
+	const forms: FormMessage[] = [];
+	let formReply: ((m: FormMessage) => FormReply | undefined) | undefined;
 	const events = { emit: (ch: string, r: never) => ch === REGISTER && ((reg = r), (r as { onReady(c: unknown): void }).onReady({ snapshot: () => ({ connected: true, owner: { sessionId: owner, epoch: "e1" } }), publish: (payload: unknown, options: unknown) => void published.push({ payload, options }) })), on: () => () => {} };
-	const local = { deliver: (m: AnswerMessage, r: (a: Ack) => void) => { delivered.push(m); const a = reply?.(m); if (a) r(a); }, sync: () => {}, probe: () => editor };
+	const local = { deliver: (m: AnswerMessage, r: (a: Ack) => void) => { delivered.push(m); const a = reply?.(m); if (a) r(a); }, sync: () => {}, probe: () => editor, form: (m: FormMessage, r: (x: FormReply) => void) => { forms.push(m); const x = formReply?.(m); if (x) r(x); } };
 	const h = createHub({ events } as unknown as ExtensionAPI, me, local);
 	h.start(() => changes.push(1));
 	const list = (dialogs: Dialog[], extra: Partial<Dialogs> = {}): Dialogs => ({ version: 1, type: "dialogs", bridgeId: "B", pane: "wA:p1", file: null, dialogs, closed: [], ...extra });
-	return { h, published, delivered, changes, list, event: (e: Record<string, unknown>) => reg?.onEvent(e), answerWith: (f: typeof reply) => (reply = f), editorIs: (e: Editor) => (editor = e) };
+	return { h, published, delivered, changes, list, forms, event: (e: Record<string, unknown>) => reg?.onEvent(e), answerWith: (f: typeof reply) => (reply = f), editorIs: (e: Editor) => (editor = e), formWith: (f: typeof formReply) => (formReply = f) };
 }
 /** The snapshot as the server reads it: S is the unit on pane wA:p1 with session file `path`. */
 async function read(x: ReturnType<typeof hub>, path: string | undefined, { pane = "wA:p1", from = "S" } = {}) {
@@ -211,4 +214,115 @@ test("probe: no bound bridge, another pane or file, a hub that does not own the 
 	assert.deepEqual(await own.h.probe("S"), { editor: "command" });
 	own.h.stop();
 	assert.equal(await own.h.probe("S"), undefined, "a stopped hub asks nobody");
+});
+
+/** A document as pi-herdr-doc-review 0.4.x lists it (its README's "Browser viewers"). */
+const doc = (extra: Partial<Doc> = {}): Doc => ({ id: "0b5c7d0e-6a2e-4d43-9a8e-1d2f3a4b5c6d", path: "/work/docs/plan.html", kind: "html", display: "docs/plan.html", reason: "Plan ready", revision: 1, onScreen: true, ...extra });
+
+test("documents: a bridge's list binds to the unit on its pane with its file, each by a capability; paths and owner ids never reach the snapshot", async () => {
+	const x = hub(), path = file([]), two = doc({ id: "second", path: "/work/notes.md", kind: "text", display: "notes.md", revision: 3, onScreen: false });
+	x.h.receive("S", x.list([], { file: path, documents: [doc(), two] }));
+	const { unit } = await read(x, path);
+	assert.equal(unit.docs?.length, 2);
+	for (const card of unit.docs!) assert.match(card.cap, /^[0-9a-f]{32}$/, "128 random bits");
+	assert.notEqual(unit.docs![0]!.cap, unit.docs![1]!.cap);
+	assert.deepEqual(unit.docs!.map((card) => ({ ...card, cap: undefined })), [{ cap: undefined, display: "docs/plan.html", kind: "html", reason: "Plan ready", revision: 1, onScreen: true }, { cap: undefined, display: "notes.md", kind: "text", reason: "Plan ready", revision: 3, onScreen: false }]);
+	assert.ok(!JSON.stringify(unit).includes("/work") && !JSON.stringify(unit).includes(doc().id), "no path or owner id in the snapshot");
+	assert.deepEqual(x.h.doc(unit.docs![0]!.cap), { key: "S", doc: doc() }, "the server finds the document, path and all, by its capability");
+	assert.equal(x.h.doc("f".repeat(32)), undefined, "an unknown capability finds nothing");
+	for (const [what, opts] of [["another pane", { pane: "wA:p2" }], ["another session on the pane", { from: "T" }]] as const) {
+		const other = await read(x, path, opts);
+		assert.equal(other.unit.docs, undefined, what);
+		assert.equal(x.h.doc(unit.docs![0]!.cap), undefined, `${what}: its capability no longer serves`);
+	}
+	assert.equal((await read(x, file([]))).unit.docs, undefined, "a unit with another file");
+});
+
+test("documents: capabilities stay with their document across readings and revisions, change with the bridge, and go when the list drops it, the session leaves, or the server stops", async () => {
+	const x = hub(), path = file([]);
+	x.h.receive("S", x.list([], { file: path, documents: [doc()] }));
+	const cap = (await read(x, path)).unit.docs![0]!.cap;
+	x.h.receive("S", x.list([], { file: path, documents: [doc({ revision: 2, onScreen: false })] }));
+	const again = (await read(x, path)).unit.docs![0]!;
+	assert.deepEqual([again.cap, again.revision, again.onScreen], [cap, 2, false], "the revision passes through, the capability stays");
+	assert.equal(x.h.doc(cap)?.doc.revision, 2);
+	x.h.receive("S", x.list([], { file: path, documents: [] }));
+	assert.equal(x.h.doc(cap), undefined, "a list without it serves it no more, before the next reading");
+	assert.equal((await read(x, path)).unit.docs, undefined);
+	x.h.receive("S", x.list([], { file: path, documents: [doc()] }));
+	const fresh = (await read(x, path)).unit.docs![0]!.cap;
+	assert.notEqual(fresh, cap, "listed again: a new capability");
+	x.h.receive("S", x.list([], { file: path, documents: [doc()], bridgeId: "B2" }));
+	assert.notEqual((await read(x, path)).unit.docs![0]!.cap, fresh, "another bridge (pi restarted on the pane): another capability");
+	x.event({ type: "session_left", sessionId: "S" });
+	assert.equal((await read(x, path)).unit.docs, undefined, "the session left");
+	x.h.receive("S", x.list([], { file: path, documents: [doc()], bridgeId: "B2" }));
+	const before = (await read(x, path)).unit.docs![0]!.cap;
+	x.h.stop();
+	x.h.start(() => {});
+	x.h.receive("S", x.list([], { file: path, documents: [doc()], bridgeId: "B2" }));
+	const after = (await read(x, path)).unit.docs![0]!.cap;
+	assert.notEqual(after, before, "a new server mints new capabilities");
+	assert.equal(x.h.doc(before), undefined);
+});
+
+test("documents: a list that is not contract v1 drops only the documents (as if cut), the dialogs stay; a list cut for size says so on the unit", async () => {
+	const x = hub(), path = file([["c1", "robot_hand"]]);
+	for (const bad of [[doc({ path: "relative/plan.html" })], [doc({ kind: "pdf" as never })], [doc({ revision: 0 })], [doc(), doc()], Array.from({ length: 33 }, (_, i) => doc({ id: `d${i}` }))]) {
+		x.h.receive("S", x.list([dialog()], { file: path, documents: bad }));
+		const { unit } = await read(x, path);
+		assert.deepEqual([unit.docs, unit.docsCut, unit.pending?.answer?.dialog], [undefined, true, "d1"], JSON.stringify(bad).slice(0, 80));
+	}
+	x.h.receive("S", x.list([], { file: path, documents: [], docsCut: true }));
+	const { unit } = await read(x, path);
+	assert.deepEqual([unit.docs, unit.docsCut], [undefined, true]);
+});
+
+test("documents: a form answer goes to the bound bridge (ownerOnly over the channel, or in-process), and only its own result counts, within 5 s", async () => {
+	const x = hub(), path = file([]);
+	x.h.receive("S", x.list([], { file: path, documents: [doc()] }));
+	const cap = (await read(x, path)).unit.docs![0]!.cap, answerId = "n".repeat(32), fields: [string, string][] = [["choice", "b"]];
+	const sent = x.h.form(cap, answerId, fields), out = x.published.at(-1)!;
+	assert.deepEqual(out, { payload: { version: 1, type: "form", to: "B", id: doc().id, answerId, fields }, options: { audience: "capable", ownerOnly: true } });
+	const result = (extra: Record<string, unknown> = {}) => ({ version: 1, type: "form-result", bridgeId: "B", id: doc().id, answerId, accepted: true, ...extra }) as never;
+	x.h.receive("T", result());
+	x.h.receive("S", result({ bridgeId: "B2" }));
+	x.h.receive("S", result({ answerId: "m".repeat(32) }));
+	x.h.receive("S", result({ id: "other" }));
+	x.h.receive("S", result({ accepted: false, reason: "empty" }));
+	assert.deepEqual(await sent, { accepted: false, reason: "empty" }, "another session's, bridge's, answer's, or document's result is not this one");
+	assert.deepEqual(await x.h.form("f".repeat(32), answerId, fields), { accepted: false, reason: "closed" }, "an unknown capability sends nothing");
+	const count = x.published.length;
+	for (const [id, f] of [["short", fields], ["n".repeat(65), fields], [answerId, [["a", 1]]]] as const) assert.deepEqual(await x.h.form(cap, id, f as never), { accepted: false, reason: "invalid" }, `${id.slice(0, 8)} ${JSON.stringify(f)}`);
+	assert.equal(x.published.length, count, "a malformed answer is refused here, not left to time out");
+	mock.timers.enable({ apis: ["setTimeout"] });
+	try {
+		const silent = x.h.form(cap, "s".repeat(32), fields);
+		mock.timers.tick(4999);
+		await Promise.resolve();
+		mock.timers.tick(1);
+		assert.equal(await silent, undefined, "no result within 5 s: not confirmed");
+	} finally {
+		mock.timers.reset();
+	}
+	const own = hub({ me: "S", owner: "S" });
+	own.h.receive("S", own.list([], { file: path, documents: [doc()] }));
+	const mine = (await read(own, path)).unit.docs![0]!.cap;
+	own.formWith((m) => ({ version: 1, type: "form-result", bridgeId: "B", id: m.id, answerId: m.answerId, accepted: true }));
+	assert.deepEqual(await own.h.form(mine, answerId, fields), { accepted: true }, "in its own session the hub hands it to its bridge");
+	assert.deepEqual(own.forms.map((m) => [m.to, m.id, m.answerId]), [["B", doc().id, answerId]]);
+	const other = hub({ owner: "Z" });
+	other.h.receive("S", other.list([], { file: path, documents: [doc()] }));
+	assert.equal(await other.h.form((await read(other, path)).unit.docs![0]!.cap, answerId, fields), undefined, "not the channel's owner: nothing can be sent");
+});
+
+test("documents: a tower carries its documents too, in the snapshot's JSON", async () => {
+	const x = hub(), path = file([]);
+	x.h.receive("S", x.list([], { file: path, documents: [doc()] }));
+	const refs = new Map<string, Ref>([["S", { key: "S", base: "wA", name: "tower", role: "tower", file: path, pane: "wA:p1" }]]);
+	const out: Net = { bases: [{ id: "wA", label: "Alpha", mark: "idle", head: true, tower: { name: "tower", mark: "idle", key: "S", control: true }, outposts: [], outside: [], tabs: [] }] };
+	await withPending(out, (key) => refs.get(key)?.file, x.h.relayed([{ id: "S", herdrLocation: { status: "current", paneId: "wA:p1" } }], refs));
+	const tower = JSON.parse(JSON.stringify(out)).bases[0].tower;
+	assert.deepEqual(tower.docs.map((d: { display: string }) => d.display), ["docs/plan.html"]);
+	assert.equal(tower.docsCut, undefined);
 });

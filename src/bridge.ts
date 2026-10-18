@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { type Doc, type Fields, fieldsOk, listenDocs, submitForm } from "./documents.ts";
 import { type Answer, type Bus, type Dialog, OWNERS, type OwnerAdapter, type Verdict } from "./owners.ts";
 import { type Editor, probeEditor } from "./probe.ts";
 
@@ -13,7 +14,8 @@ import { type Editor, probeEditor } from "./probe.ts";
 // Per dialog: open → settling (an answer is with the owner) → open again if refused, or closed by the owner's `closed`, the end of its tool
 // call, or the session's end. An answer whose verdict does not come within 2 s leaves it `unknown`: later answers get `busy` until it closes.
 // The bridge follows gui.json from the session's start (a stat every 2 s), so it is on G's channel whenever a server runs: the key pad's
-// Enter guard asks it what the editor would submit (`probe`, probe.ts), and it answers with a class and at most a command name, never the draft.
+// Enter guard asks it what the editor would submit (`probe`, probe.ts), and it answers with a class and at most a command name, never the draft. It relays
+// the documents the session shows with its dialogs (documents.ts) and hands a form answer for one of them to their owner.
 
 export const REGISTER = "intercom:extension-register";
 const VERDICT_MS = 2000, POLL_MS = 2000, KEEP_MS = 120_000, KEEP = 16, MAX_GUIS = 8, MAX_MESSAGE = 15 * 1024;
@@ -21,15 +23,18 @@ export const guiNamespace = (g: string) => `straw-boss/gui/${createHash("sha256"
 export type Outcome = "accepted" | "rejected" | "stale" | "busy" | "unknown";
 export interface Ack { version: 1; type: "ack"; bridgeId: string; id: string; answerId: string; outcome: Outcome; reason?: string; by?: string }
 /** `closed`: dialogs closed in the last 2 minutes (at most 16), so an answer that comes late hears who closed it, and a resent one that won, that it won. */
-export interface Dialogs { version: 1; type: "dialogs"; bridgeId: string; pane: string; file: string | null; dialogs: Dialog[]; closed: Closed[] }
+/** `documents`: what the document owner lists now; `docsCut` when they did not fit the message (they are dropped first). */
+export interface Dialogs { version: 1; type: "dialogs"; bridgeId: string; pane: string; file: string | null; dialogs: Dialog[]; closed: Closed[]; documents?: Doc[]; docsCut?: true }
 export interface Closed { id: string; by: string; answerId?: string }
 export interface ProbeResult extends Editor { version: 1; type: "probe-result"; bridgeId: string; probeId: string }
-export type ToHub = Dialogs | Ack | ProbeResult;
+export interface FormReply { version: 1; type: "form-result"; bridgeId: string; id: string; answerId: string; accepted: boolean; reason?: string }
+export type ToHub = Dialogs | Ack | ProbeResult | FormReply;
+export interface FormMessage { version: 1; type: "form"; to: string; id: string; answerId: string; fields: Fields }
 export interface AnswerMessage extends Answer { version: 1; type: "answer"; to: string }
 /** The hub when it runs in this session: it takes what a remote bridge would publish, from this session's id. */
 export interface LocalHub { receive(from: string, msg: ToHub): void }
 /** What the hub calls on the bridge of its own session. */
-export interface Bridge { deliver(msg: AnswerMessage, reply: (ack: Ack) => void): void; sync(): void; probe(): Editor }
+export interface Bridge { deliver(msg: AnswerMessage, reply: (ack: Ack) => void): void; sync(): void; probe(): Editor; form(msg: FormMessage, reply: (r: FormReply) => void): void }
 interface Channel { snapshot(): { connected: boolean; owner?: { sessionId: string; epoch: string } }; publish(payload: unknown, options?: { audience?: "owner" | "capable" }): void }
 interface Rec { adapter: OwnerAdapter; d: Dialog; state: "open" | "settling" | "unknown" | "closed"; answerId?: string; accepted?: boolean; by?: string; at?: number; last?: Ack; waiting: ((ack: Ack) => void)[] }
 type Event = { type: string; fromSessionId?: string; owner?: { sessionId: string; epoch: string }; payload?: Record<string, unknown> };
@@ -38,7 +43,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local }: { env: NodeJS
 	const bus = pi.events as Bus, bridgeId = randomUUID(), recs = new Map<string, Rec>(), calls = new Map<string, { tool: string; signal?: AbortSignal; stop?: () => void }>();
 	const chans = new Map<string, Channel>(), me = () => env.PI_INTERCOM_SESSION_ID ?? "";
 	let g: string | undefined, gpid = 0, seen: number | undefined, poll: ReturnType<typeof setInterval> | undefined, offs: (() => void)[] = [], warned = false;
-	let file: () => string | undefined = () => undefined, tell = (_text: string) => {}, editor = (): Editor => ({ editor: "unknown" });
+	let file: () => string | undefined = () => undefined, tell = (_text: string) => {}, editor = (): Editor => ({ editor: "unknown" }), docs: Doc[] = [];
 	const open = () => [...recs.values()].filter((r) => r.state !== "closed");
 	const alive = () => { try { return gpid > 0 && (process.kill(gpid, 0), true); } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; } }; // a server that died without removing gui.json gets no probe answers
 
@@ -53,8 +58,10 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local }: { env: NodeJS
 		if (!target()) return;
 		const dialogs = final ? [] : open().map((r) => ({ ...r.d, ...(r.state !== "open" ? { busy: true as const } : {}) }));
 		const closed = final ? [] : [...recs.values()].filter((r) => r.state === "closed").map((r) => ({ id: r.d.id, by: r.by!, ...(r.by === "remote" && r.answerId ? { answerId: r.answerId } : {}) }));
-		let msg: Dialogs = { version: 1, type: "dialogs", bridgeId, pane: env.HERDR_PANE_ID!, file: file() ?? null, dialogs, closed };
-		if (JSON.stringify(msg).length > MAX_MESSAGE) msg = { ...msg, dialogs: dialogs.map(({ select, questions, ...d }) => ({ ...d, big: true as const })) }; // shown read-only: too long to show
+		let msg: Dialogs = { version: 1, type: "dialogs", bridgeId, pane: env.HERDR_PANE_ID!, file: file() ?? null, dialogs, closed, documents: final ? [] : docs };
+		const big = () => Buffer.byteLength(JSON.stringify(msg)) > MAX_MESSAGE; // in bytes, as the broker counts
+		if (big()) msg = { ...msg, documents: [], docsCut: true }; // the documents go first: they stay in the terminal, and the unit says so
+		if (big()) msg = { ...msg, dialogs: dialogs.map(({ select, questions, ...d }) => ({ ...d, big: true as const })) }; // shown read-only: too long to show
 		send(target(), msg);
 	};
 	// gui.json names the server's session; it is read at the session's start and then on every mtime change, checked every 2 s (unref'd).
@@ -87,7 +94,8 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local }: { env: NodeJS
 		// Only G's own session, as the broker's current owner of this channel and the server gui.json names now, may answer, probe, or ask for a sync.
 		if (e.type !== "message" || p?.version !== 1 || e.fromSessionId !== from || owner?.sessionId !== from || e.owner?.epoch !== owner.epoch) return;
 		if (p.type === "sync" && from === g) push();
-		// SAFETY: deliver checks the fields it uses before it hands anything to an owner.
+		// SAFETY: deliver and form check the fields they use before they hand anything to an owner.
+		if (p.type === "form" && p.to === bridgeId && from === g) form(p as unknown as FormMessage, (r) => send(from, r));
 		if (p.type === "answer" && p.to === bridgeId && from === g) deliver(p as unknown as AnswerMessage, (ack) => send(from, ack));
 		if (p.type === "probe" && p.to === bridgeId && from === g && alive() && typeof p.probeId === "string" && p.probeId.length <= 64) send(from, { version: 1, type: "probe-result", bridgeId, probeId: p.probeId, ...editor() });
 	};
@@ -144,12 +152,20 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local }: { env: NodeJS
 		push();
 	}
 
+	/** A form answer for a listed HTML document goes to its owner, which delivers it as a Chawan submission and replays a repeated answerId. */
+	function form(m: FormMessage, reply: (r: FormReply) => void) {
+		const out = (r: { accepted: boolean; reason?: string }) => reply({ version: 1, type: "form-result", bridgeId, id: m.id, answerId: m.answerId, ...r });
+		if (typeof m.id !== "string" || typeof m.answerId !== "string" || m.answerId.length > 64 || !fieldsOk(m.fields)) return;
+		if (docs.some((d) => d.id === m.id && d.kind === "html")) submitForm(bus, m.id, m.answerId, m.fields, out);
+		else out({ accepted: false, reason: "closed" });
+	}
 	pi.on("session_start", (_e, ctx) => {
 		offs.forEach((off) => off());
+		docs = [];
 		file = () => ctx.sessionManager.getSessionFile();
 		tell = (text) => ctx.hasUI && ctx.ui.notify(text, "warning");
 		editor = () => probeEditor(ctx);
-		offs = OWNERS.map((o) => o.listen(bus, report));
+		offs = [...OWNERS.map((o) => o.listen(bus, report)), listenDocs(bus, (d) => ((docs = d), changed()))];
 		seen = -1; // a new session file (/new, /resume) is told to the server at once
 		follow();
 		if (!poll) (poll = setInterval(follow, POLL_MS)).unref?.();
@@ -166,6 +182,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local }: { env: NodeJS
 		open().filter((r) => r.d.toolCallId === e.toolCallId).forEach((r) => report.closed(r.d.id, r.accepted ? "remote" : "error")); // the owner failed to say so
 	});
 	pi.on("session_shutdown", () => {
+		docs = [];
 		open().forEach((r) => report.closed(r.d.id, "error"));
 		push(true);
 		[...calls.values()].forEach((c) => c.stop?.());
@@ -173,5 +190,5 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local }: { env: NodeJS
 		offs.splice(0).forEach((off) => off());
 		(clearInterval(poll), (poll = undefined));
 	});
-	return { deliver, sync: () => ((seen = -1), follow()), probe: () => editor() };
+	return { deliver, sync: () => ((seen = -1), follow()), probe: () => editor(), form };
 }

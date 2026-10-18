@@ -103,15 +103,16 @@ export async function pendingOf(file: string): Promise<Pending | undefined> {
 /** Whether one of the file's open calls is secret_drop (or the file could not be read through; a missing one, a new session, is not): the terminal mirror hides, and the key pad sends only Escape, while it is. */
 export const waitsForSecret = async (file: string) => (await pendingOf(file), CACHE.get(file)?.secret !== false); // dropped from the cache meanwhile: hidden until the next look
 
-/** The dialogs bridges relay, by unit key, and how they join what the file says (dialogs.ts). */
-export interface Relayed { dialogsOf(key: string): Dialog[] | undefined; merge(key: string, file: Pending | undefined, dialogs: Dialog[], readable: boolean): Pending }
+/** The dialogs bridges relay, by unit key, and how they join what the file says (dialogs.ts); `docsOf`, the documents they list. */
+export interface Relayed { dialogsOf(key: string): Dialog[] | undefined; merge(key: string, file: Pending | undefined, dialogs: Dialog[], readable: boolean): Pending; docsOf?(key: string): Pick<Unit, "docs" | "docsCut"> | undefined }
 
-/** Adds what each waiting unit waits on to a snapshot. A unit with a relayed dialog waits even before Herdr reports its pane blocked. */
+/** Adds what each waiting unit waits on, and the documents each unit shows, to a snapshot. A unit with a relayed dialog waits even before Herdr reports its pane blocked. */
 export async function withPending(net: Net, fileOf: (key: string) => string | undefined, relayed?: Relayed): Promise<Net> {
 	const jobs: Promise<unknown>[] = [];
 	for (const b of net.bases)
 		for (const u of [...(b.tower ? [b.tower] : []), ...[...b.tabs.flatMap((t) => t.units), ...b.outside].flatMap((u) => [u, ...u.subs])]) {
 			const dialogs = relayed?.dialogsOf(u.key);
+			Object.assign(u, relayed?.docsOf?.(u.key));
 			if (dialogs?.length) [u.mark, b.mark] = ["waiting", "waiting"];
 			if (dialogs?.length && u !== b.tower) (u as Unit).note = "waiting on a question";
 			const file = u.mark === "waiting" ? fileOf(u.key) : undefined;
