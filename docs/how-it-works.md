@@ -192,9 +192,10 @@ A session that ends clears its own and its subagents'.
   A main agent's or member's is `WWW.1.TTT.R.PPP`: `WWW` is the place of its workspace among the base workspaces (a sub workspace does not count, and the head tower's is `000`), `TTT` the place of its tab in the workspace, `R` is `0` for a main agent and `1` for a member, and `PPP` the place of its pane in the tab.
   Each subagent adds one `.NNN` segment, its place among the live and finished subagents of its launcher, at any depth (the dashboard lists eight per session, the keys cover every live one).
   Every number is zero-padded, so plain string order is numeric order, and a subagent's key sorts after its launcher's and before the launcher's next sibling's.
-- `sb_mark` says what a net member is, in a few characters: a star (Font Awesome's, U+F005) and its tab's label for a main agent, a person (Font Awesome's, U+F007) and its tab's label for a member, and `[sub] <launcher>` for a subagent, with the launcher's name cut to 24 characters.
+- `sb_mark` says what a net member is, in a few characters: a star alone (Font Awesome's, U+F005) for a main agent, a person alone (Font Awesome's, U+F007) for a member, and `[sub] <launcher>` for a subagent, with the launcher's name cut to 24 characters.
   A tower has none: its tab already carries the radio tower glyph.
-- `sb_tab` is no longer written (0.7.2 to 0.13.1 wrote a tab label there); a session clears it, since the tab label is in `sb_mark`.
+- `sb_main_tab` is a main agent's tab label and `sb_member_tab` a member's, one token per role because a Herdr rule sees only its own token, so a row colors each by role.
+  Every other agent carries neither, and a session clears the `sb_tab` that 0.7.2 to 0.13.1 wrote.
 - `sb_indent` is on a subagent alone, and is the branch to it from its launcher, drawn like the worktrees in Herdr's Spaces panel: `├─` while a later subagent of the same launcher is marked, `└─` on the last one.
   Subagents of one launcher are siblings at every depth.
   A tower, a main agent and a member carry none, and a session clears the one a pane kept from when it ran a subagent.
@@ -220,8 +221,8 @@ The tokens also show the roles in Herdr's own grouped view, which a plugin canno
 Add them to a row of `[ui.sidebar.agents]` in `config.toml`.
 `$sb_indent` goes before the state icon, so a subagent hangs under its launcher as the worktrees do in the Spaces panel; Herdr puts its own ` · ` after it, and an agent without the token shows nothing.
 `$sb_name` goes right after the state icon, so a subagent row says which subagent it is even when Herdr has lost the pane's label.
-The first row hides `$sb_mark`; the `[sub]` mark stays hidden because the branch already says what it is. The snippet leaves the colors to your Herdr theme; add an `fg` to a rule to color a mark.
-Herdr drops a row whose every item is hidden, so the second row, which shows `$sb_mark` only when it starts with the star or the person, gives a main agent and a member the same second line (`<glyph> <tab>`, bold) and leaves every other agent one line. The first row leaves out Herdr's `tab`, which the mark already carries.
+Every glyph sits in the first row; the `[sub]` mark stays hidden because the branch already says what it is. The snippet leaves the colors to your Herdr theme; add an `fg` to a rule to color a mark.
+Herdr drops a row whose every item is empty, so the second row, the tab label from `$sb_main_tab` or `$sb_member_tab`, gives a main agent and a member a second line and leaves every other agent one line; give the two tokens the colors of the star and the person. The first row leaves out Herdr's `tab`, which the second row carries.
 
 ```toml
 [ui.sidebar.agents]
@@ -232,12 +233,12 @@ rows = [
     { token = "$sb_name" },
     { token = "$sb_mark", rules = [
       { starts_with = "[sub]", hide = true },
-      { starts_with = "\uF005", hide = true },
-      { starts_with = "\uF007", hide = true },
+      { starts_with = "\uF005", bold = true },
+      { starts_with = "\uF007", bold = true },
     ] },
     "machine", "workspace",
   ],
-  [{ token = "$sb_mark", rules = [{ starts_with = "\uF005", bold = true }, { starts_with = "\uF007", bold = true }, { contains = "", hide = true }] }],
+  [{ token = "$sb_main_tab", bold = true }, { token = "$sb_member_tab", bold = true }],
 ]
 ```
 
