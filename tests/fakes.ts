@@ -6,6 +6,7 @@ import jsqr from "jsqr";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { TOWER_LABEL } from "../src/herdr.ts";
 import { createStrawBoss, type Deps } from "../src/index.ts";
+import type { HerdrWatch } from "../src/server-watch.ts";
 
 // jsQR is CommonJS: Node hands its function over as the default export, while its types describe an ES module namespace.
 type Decode = (data: Uint8ClampedArray, width: number, height: number) => { data: string; version: number } | null;
@@ -65,6 +66,12 @@ export class FakeHerdr {
 	onAgentStart?: (pane: FakePane) => void;
 	onTabClose?: (paneIds: string[]) => void;
 	private next = 100;
+	/** A new server starts with no tokens: the old one kept them in memory. Panes, tabs and workspaces stay, as after a live handoff. */
+	restart(): void {
+		for (const holder of [...this.panes, ...this.workspaces]) holder.tokens = {};
+		this.wsTokenHistory.length = 0;
+		this.calls.length = 0;
+	}
 	private agentNames = new Set<string>();
 	/** The next this-many `agent start` calls fail with agent_pane_busy, as a new tab's shell does before its prompt. */
 	busy = 0;
@@ -338,7 +345,7 @@ export class Agent {
 		if (!options.noIntercom) events.on("intercom:outbox-request", (request) => world.broker.outbox(this, request as { requestId: string; to: string; message: string }));
 		world.broker.connect(this);
 		// The extension's waits are real in production; here they are capped so timeouts take milliseconds.
-		createStrawBoss({ run: world.herdr.runFor(this.pane), api: world.herdr.api, env, sleep: (ms) => sleep(Math.min(ms, 2)), promptDir: PROMPT_DIR, stateDir: world.stateDir, autoTower: false, ...options.deps })(pi);
+		createStrawBoss({ run: world.herdr.runFor(this.pane), api: world.herdr.api, watch: world.watch, env, sleep: (ms) => sleep(Math.min(ms, 2)), promptDir: PROMPT_DIR, stateDir: world.stateDir, autoTower: false, ...options.deps })(pi);
 	}
 
 	emit(channel: string, data: unknown): void {
@@ -408,6 +415,19 @@ export class World {
 	herdr = new FakeHerdr();
 	broker = new FakeBroker(this.herdr);
 	agents: Agent[] = [];
+	/** The Herdr server watches the sessions hold open: `takeover` tells every one that a new server answers. */
+	watchers = new Set<{ onTakeover(): void }>();
+	watch: HerdrWatch = (onTakeover) => {
+		const watcher = { onTakeover }; // one per watch, even for the same callback
+		this.watchers.add(watcher);
+		return () => void this.watchers.delete(watcher);
+	};
+	/** A new Herdr server takes over (an update handoff, or a stop and start): tokens are gone, and each watch hears the server come back. */
+	async takeover(): Promise<void> {
+		this.herdr.restart();
+		for (const watcher of [...this.watchers]) watcher.onTakeover();
+		await this.quiet();
+	}
 	/** The state directory of the one-GUI-per-machine record, private to this world. */
 	stateDir = mkdtempSync(join(tmpdir(), "psb-state-test-"));
 
