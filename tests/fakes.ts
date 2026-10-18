@@ -340,8 +340,10 @@ export class Agent {
 	get registered(): string[] {
 		return [...this.handlers.keys()];
 	}
+	/** The pane's role tokens; the order and mark tokens (order.ts) have their own tests. */
 	get tokens(): Tokens {
-		return this.world.herdr.pane(this.pane).tokens;
+		const { sb_order: _order, sb_mark: _mark, ...role } = this.world.herdr.pane(this.pane).tokens;
+		return role;
 	}
 	async fire(type: string, event: Record<string, unknown> = {}): Promise<void> {
 		for (const handler of this.handlers.get(type) ?? []) await handler({ type, ...event }, this.ctx);

@@ -19,6 +19,7 @@ Run a few agents on the same project and they start stepping on each other: two 
 - **A browser view** of the whole net, `/boss gui`: every workspace as a base with its tower, agents, and subagents, animated and read-only. Click a base to zoom in, click a unit to read its chat as a live comms log; units that wait on you queue up as alerts.
 - **Broadcast** to a tab, a workspace, every tower, or every session.
 - **Tidy tabs.** When a pi starts in a tab or quits out of it, the tab's panes are made equal again, so workers split off one by one don't leave a chain of halves.
+- **A net view in Herdr's sidebar.** An optional plugin turns the Agents list into the net, towers first and each subagent under its launcher, on one key.
 
 ## Install
 
@@ -49,6 +50,32 @@ You need pi running inside Herdr 0.9.4 or newer, and [pi-intercom](https://www.n
 | `/boss gui remote`, `/boss gui remote off` | Reach the GUI from your phone over your tailnet (`tailscale serve`, never Funnel): pair by QR code; off removes only its own serve entry. |
 
 Subagents and sessions in Herdr worktree workspaces never join: the session that launched them speaks for them. Outside Herdr the extension does nothing.
+
+## Net view in the sidebar
+
+An optional Herdr plugin in [`herdr-plugin/`](herdr-plugin) turns the sidebar's Agents list into a net view.
+It lists the head tower's workspace first, in each workspace the tower, then each tab's main agent and members, and every subagent right under the session that launched it, even in a worktree workspace.
+One key switches to it, and the same key switches back to Herdr's own view.
+pi-straw-boss writes the sort key (`sb_order`) and a role label (`sb_mark`) the view and your sidebar rows can use.
+It needs Herdr 0.9.3 or newer and node.
+
+Link it from a checkout, then bind a key in Herdr's `config.toml`:
+
+```bash
+herdr plugin link /path/to/pi-straw-boss/herdr-plugin
+```
+
+```toml
+[[keys.command]]
+key = "prefix+alt+n"
+type = "plugin_action"
+command = "wayne930242.straw-boss.net"
+description = "toggle the straw net view"
+```
+
+Run `herdr server reload-config` to load the key, and `herdr plugin unlink wayne930242.straw-boss` to remove the plugin.
+`herdr plugin install wayne930242/pi-straw-boss/herdr-plugin` installs it from GitHub instead of a checkout.
+[How it works](docs/how-it-works.md#sidebar-net-view) has the tokens and a sidebar rows snippet that shows each member's role in Herdr's own view too.
 
 ## Learn more
 

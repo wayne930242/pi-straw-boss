@@ -9,6 +9,7 @@ import { collect, startDashboard } from "./dashboard.ts";
 import { createHub, type Hub } from "./dialogs.ts";
 import { answers, type Gui, openBrowser, readRecord, sharedGui, startGui, urlOf } from "./gui.ts";
 import { netSource } from "./net.ts";
+import { clearOrder, type Kid, markKids, netTokens } from "./order.ts";
 import { copyText, pairingKeys, showLines } from "./pairing.ts";
 import { type Run, switchRemote, tailscale } from "./remote.ts";
 import { ensureTower, headOf, herdrApi, type HerdrApi, herdrCall, type HerdrCall, herdrRun, type HerdrRun, isSub, type Pane, panes, parentOf, place, type Place, report, type Session, type Sleep, waitFor, workspaces, type Workspace } from "./herdr.ts";
@@ -68,6 +69,8 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 		let gui: Gui | undefined, viewer: Channel | undefined, opening: Promise<string> | undefined;
 		let c!: Channel, at!: Place, ui: ExtensionContext["ui"] | undefined, timer: ReturnType<typeof setInterval> | undefined;
 		let queue: Promise<void> = Promise.resolve();
+		// This session's intercom name, which the subagents it launched show as their launcher, and the subagent panes it has marked.
+		let ownName = "", kids = new Set<string>();
 		const me = () => env.PI_INTERCOM_SESSION_ID ?? "";
 		const role = (): Role | undefined => {
 			if (isTower) return "tower";
@@ -98,9 +101,14 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 		};
 
 		// Tokens are display and discovery only: a failed write waits for the next refresh, liveness comes from intercom.
-		const publish = async () => {
+		const publish = async (known?: Session[]) => {
 			const sbRole = role();
-			if (sbRole) await report(run, "pane", at.paneId, { sb_role: sbRole }).catch(() => {});
+			if (sbRole) {
+				ownName = nameOf((known ?? (await c.listSessions().catch(() => []))).find((s) => s.id === me())) || ownName;
+				const net = await netTokens(run, at, sbRole, ownName || me().slice(0, 8)).catch(() => ({ own: {}, kids: [] as Kid[] }));
+				await report(run, "pane", at.paneId, { sb_role: sbRole, ...net.own }).catch(() => {});
+				kids = await markKids(run, net.kids, kids);
+			}
 			if (holdsTower) await report(run, "workspace", at.workspaceId, { tower: me() }).catch(() => {});
 		};
 		const keepFresh = () => {
@@ -157,7 +165,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 				const wasMain = isMain;
 				isMain = mainId === me();
 				if (isMain !== wasMain) tell(`This session is ${isMain ? "now" : "no longer"} the main agent of ${info.tab}`);
-				await publish();
+				await publish(sessions);
 				// The workspace's first main opens the tower at once; later mains find it open.
 				if (isMain && !wasMain && autoTower) void openTower().catch((error: Error) => tell(`Straw Boss: could not open the tower: ${error.message}`, "warning"));
 			} catch (error) {
@@ -388,7 +396,8 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			const held = holdsTower;
 			holdsTower = false;
 			if (!role() || !at) return;
-			await report(run, "pane", at.paneId, { sb_role: null }).catch(() => {});
+			await report(run, "pane", at.paneId, { sb_role: null, sb_order: null, sb_mark: null }).catch(() => {});
+			await clearOrder(run, [...kids]);
 			if (held) await report(run, "workspace", at.workspaceId, { tower: null }).catch(() => {});
 		});
 

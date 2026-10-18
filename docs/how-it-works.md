@@ -110,6 +110,92 @@ A second extension entry, `src/balance.ts`, keeps Herdr tabs even. When a pi sta
 
 The work runs in `src/balance.mjs` as a detached `node` process: `balance.mjs now <pane>` at start, `balance.mjs after-close <pane> <tab>` at quit, because the quitting pi exits before Herdr closes its pane. Each resize is planned from a freshly read layout, and a per-tab lock under the system temp directory (`pi-straw-boss-pane-balance/`) makes concurrent sessions take turns instead of applying the same change twice.
 
+## Sidebar net view
+
+The optional Herdr plugin in `herdr-plugin/` (id `wayne930242.straw-boss`, action `net`) toggles the sidebar's Agents list between Herdr's own view and a net view.
+The net view lists the head tower's workspace first, then the other workspaces in Herdr's order.
+In each workspace the tower comes first, then the tabs in their order, and in each tab the main agent and then the members.
+Every subagent sits directly under the session that launched it, including one that pi-herdr-agents opened in a worktree sub workspace.
+Agents the net does not know come last in Herdr's own order, so nothing is hidden and an agent that waits for you stays on the list.
+The sidebar header reads `net` while the view is on.
+The same order drives the collapsed sidebar, the mobile list, mouse targets, and `focus_agent` numbering and next/previous navigation.
+Herdr's `agent.list`, notifications, and attention counts do not change.
+
+**The tokens.**
+Every session in the net writes two display tokens next to `sb_role`, in the same report, on the same 4 minute refresh and with the same 10 minute TTL.
+It writes them on the panes of the subagents it launched as well, because those never join and write nothing themselves.
+A session that ends clears its own and its subagents'.
+
+- `sb_order` is the sort key.
+  A tower's is `WWW.0`.
+  A main agent's or member's is `WWW.1.TTT.R.PPP`: `WWW` is the place of its workspace among the base workspaces (a sub workspace does not count, and the head tower's is `000`), `TTT` the place of its tab in the workspace, `R` is `0` for a main agent and `1` for a member, and `PPP` the place of its pane in the tab.
+  Each subagent adds one `.NN` segment, its place among the live and finished subagents of its launcher, down to three levels.
+  Every number is zero-padded, so plain string order is numeric order, and a subagent's key sorts after its launcher's and before the launcher's next sibling's.
+- `sb_mark` says what a net member is, in a few characters: a star (Font Awesome's, U+F005) and `main` for a main agent, `· member` for a member, and `↳ <launcher>` for a subagent, with the launcher's name cut to 24 characters.
+  A tower has none: its tab already carries the radio tower glyph.
+
+Both tokens and both rest on Herdr's order as of the session's last refresh, so moving a tab or workspace shows in the net view within 4 minutes.
+A subagent is marked while its pane runs pi, and its tokens go at the next refresh once it has finished.
+
+**Sidebar rows.**
+`sb_mark` also shows the roles in Herdr's own grouped view, which a plugin cannot reorder.
+Add it to a row of `[ui.sidebar.agents]` in `config.toml`: the mark is dim for members and subagents, and a gold bold star marks a main agent.
+Agents without the token (towers, and anything outside the net) show nothing for it.
+
+```toml
+[ui.sidebar.agents]
+rows = [
+  ["state_icon", "machine", "workspace", "tab"],
+  [
+    { token = "$sb_mark", dim = true, rules = [
+      { starts_with = "\uF005", fg = "#f9e2af", bold = true, dim = false },
+    ] },
+    "agent",
+  ],
+]
+```
+
+This is Herdr's default layout with the mark put before the agent name; add the `$sb_mark` entry to your own rows if you have changed them.
+`herdr config check` accepts the snippet, and `herdr server reload-config` applies it.
+
+**Install.**
+Link the plugin from a checkout and bind the action to a key:
+
+```bash
+herdr plugin link /path/to/pi-straw-boss/herdr-plugin
+herdr plugin action list --plugin wayne930242.straw-boss
+herdr plugin action invoke wayne930242.straw-boss.net
+```
+
+```toml
+[[keys.command]]
+key = "prefix+alt+n"
+type = "plugin_action"
+command = "wayne930242.straw-boss.net"
+description = "toggle the straw net view"
+```
+
+`prefix+?` lists the keys that are taken, `herdr server reload-config` loads a new binding, and `herdr plugin unlink wayne930242.straw-boss` removes the plugin.
+The plugin needs Herdr 0.9.3 or newer and uses a Unix socket, so it runs on macOS and Linux only.
+The tokens come from the sessions, so a session that still runs an older pi-straw-boss (before 0.7.0) has none until pi reloads it, and sorts after the others.
+
+**How the view works.**
+The view is one `agent.view.set` request on Herdr's socket, which the CLI has no command for, sorted by the `sb_order` token ascending.
+Herdr sorts a present value before a missing one, so agents without the token keep Herdr's own order after the net.
+The plugin writes no tokens of its own.
+
+**The toggle.**
+Herdr cannot say whether a view is active, so the action records "on" and the identity of the running server (the socket file's inode and creation time) in `net-view.json` in the plugin's state directory.
+The next press clears the view with `agent.view.clear` named to this plugin's own source, so it never clears a view that another owner installed.
+A restarted server drops its view, and its different identity makes the stored state count as off, so one press turns the view on.
+A view another owner installed over this one also counts as off: the press installs this one again.
+
+**Limits.**
+Herdr keeps one Agents view per server, so another plugin's view and this one replace each other.
+Unlinking or disabling the plugin while the view is on drops the view at once; the first press after linking it again only resets the state, and the second turns the view on.
+Herdr starts plugin commands with the PATH of the process that started its server, and a Herdr launched from a macOS app has only `/usr/bin:/bin:/usr/sbin:/sbin`.
+`run.sh` therefore looks for node on PATH, in Homebrew's, `/usr/local`, mise, asdf, and volta directories, and through a login shell, and says so in the plugin log (`herdr plugin log list --plugin wayne930242.straw-boss`) when it finds none.
+
 ## Tools
 
 | Tool | Available to | What it does |
@@ -131,6 +217,7 @@ The work runs in `src/balance.mjs` as a detached `node` process: `balance.mjs no
 ## What it writes
 
 - Herdr pane token `sb_role` (`main`, `member` or `tower`; a tower tab is also marked right after it is created) and workspace token `tower` (the tower's intercom session id), both refreshed every 4 minutes with a 10 minute TTL and cleared at shutdown.
+- Pane tokens `sb_order` (a sort key) and `sb_mark` (a role label) next to `sb_role`, and the same two on the panes of the subagents the session launched, with the same refresh and TTL; they feed the sidebar net view and the optional rows below (see [Sidebar net view](#sidebar-net-view)).
 - A pi session entry `straw-boss` (`tower`) so a resumed tower keeps its role. Members write no entry: every session joins at start, so entries saved by 0.4.0 (`asked`, `joined`) are ignored.
 - While remote access is on, one `tailscale serve` entry (HTTPS 8443, proxying to the GUI server), removed when it goes off.
 - One intercom extension channel per tab, `straw-boss/tab/<hex of the tab id>`, registered by every joined session and tower; the channel's owner (the first to join) only records the main, and it is not the main by that. Tab ids over 24 characters are refused.
@@ -167,6 +254,9 @@ The map's chunk holds the map, the header, the router, and the alert spotting (`
 The focus views (`gui/views.ts`), the comms log with the markdown renderer (`gui/chat.ts`, `gui/markdown.ts`), and the overlay layer's DOM and tiles (`gui/layer.ts`) load on first use.
 The overlay rules (`gui/overlay.ts` for the dialog stack, `createTiles` in `gui/layer.ts`) are pure and tested without a browser (`tests/overlay.test.ts`); phase 2 and 3 dialogs (ask_user, robot_hand, secret_drop) and show_doc documents plug into the same stack and tiles.
 Size budgets are checked by `tests/imports.test.ts`: the map's chunk ≤ 15 KB (6 KB gzipped), the lazy chunks together ≤ 35 KB (12 KB), the stylesheet ≤ 22.1 KB (6.1 KB).
+
+The sidebar plugin is plain JavaScript in `herdr-plugin/` and imports nothing from `src/`, so the folder works wherever Herdr links or installs it.
+`tests/netview.test.ts` drives it against a fake Herdr that keeps tokens and the one active view, and against a real Unix socket.
 
 `npm run gui:dev` serves the page on a local port with hot reload, fed by a demo net with invented names that changes state every few seconds. The demo includes a session with every kind of chat entry (open any unit), and the fixture's toolbar (bottom left) has **drop stream**, **go silent** (no messages, no error: the 45 s watchdog), **restore**, to review the disconnected page, and **doc arrives**, which opens a demo document as a tile the way a show_doc document will. To point the dev page at a live stream instead, run `/boss gui` and start the dev server with its URL: `GUI_LIVE=http://127.0.0.1:<port>/<token>/ npm run gui:dev`.
 

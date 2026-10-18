@@ -20,6 +20,7 @@ export type Sleep = (ms: number) => Promise<void>;
 export interface Place { paneId: string; tabId: string; workspaceId: string }
 export interface Workspace { workspace_id: string; label: string; agent_status?: string; tokens?: Record<string, string>; worktree?: { checkout_path?: string; is_linked_worktree?: boolean; repo_key?: string } }
 export interface Pane { pane_id: string; tab_id: string; workspace_id?: string; agent?: string; agent_status?: string; agent_session?: { value: string }; label?: string; tokens?: Record<string, string> }
+export interface HerdrTab { tab_id: string; workspace_id: string; label?: string }
 export interface Location { status: string; workspace?: { id: string; label: string }; tab?: { id: string; label: string }; paneId?: string }
 /** A live pi-intercom session; `status` is idle, thinking, or tool:<name>. */
 export interface Session { id: string; name?: string; status?: string; herdrLocation?: Location }
@@ -64,6 +65,9 @@ export const parentOf = (all: Workspace[], w: Workspace) => all.find((p) => !isS
 export const headOf = (all: Workspace[]) => all.find((w) => !isSub(w));
 
 export const workspaces = async (run: HerdrRun): Promise<Workspace[]> => (await result(run, ["workspace", "list"])).workspaces;
+
+/** The tabs of one workspace in Herdr's tab order. */
+export const tabs = async (run: HerdrRun, workspace: string): Promise<HerdrTab[]> => (await result(run, ["tab", "list", "--workspace", workspace])).tabs;
 
 export async function panes(run: HerdrRun, workspace?: string): Promise<Pane[]> {
 	return (await result(run, ["pane", "list", ...(workspace ? ["--workspace", workspace] : [])])).panes;
