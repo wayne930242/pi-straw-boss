@@ -16,6 +16,7 @@ import { ENDING } from "./probe.ts";
 //   POST /<token>/api/sessions/<key>/mirror {stream, on}                                  shows the pane's screen on that page's stream (mirror.ts), or stops
 //   POST /<token>/api/remote/pair                                                        a new one-time pairing URL and its QR, while remote access is on
 //   POST /<token>/api/remote/on                                                          turns remote access on in the server's session, then a pairing URL and its QR (never remote)
+//   POST /<token>/api/dirs, open/main, open/tower                                        a folder picker, a new main, a new base with its tower (spawn.ts)
 //   POST /<token>/api/server/stop {by, take}                                             stops the server: another session's /boss gui stop or takeover (never remote)
 // Every write needs the page's own origin (Origin, Sec-Fetch-Site), a JSON body of at most 64 KB, and the CSRF secret the server wrote into
 // the page; the custom header forces a CORS preflight that is never approved. The key is resolved in the registry (paths and panes never come
@@ -27,7 +28,7 @@ export { ENDING };
 
 export interface Reply { status: number; body: unknown }
 /** `answers.target` reads the net afresh, so the binding and the dialog are checked again for every answer. */
-export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; remoteOn?(): Promise<void>; stop?(asked: Asked): void; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; answers?: Pick<Hub, "replay" | "ended" | "send" | "probe"> & { target(key: string): Promise<Target | undefined> } }
+export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; remoteOn?(): Promise<void>; spawn?(parts: string[], json: Record<string, unknown>): Promise<Reply>; stop?(asked: Asked): void; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; answers?: Pick<Hub, "replay" | "ended" | "send" | "probe"> & { target(key: string): Promise<Target | undefined> } }
 
 const no = (status: number, error: string, reason: string): Reply => ({ status, body: { error, reason } });
 const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -68,7 +69,7 @@ export function checkText(text: unknown): string | Reply {
 	return typed;
 }
 
-export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, stop, mirrors, secret = async () => true, answers }: ControlDeps) {
+export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, spawn, stop, mirrors, secret = async () => true, answers }: ControlDeps) {
 	const busy = new Set<string>();
 	const pad = createKeys({ fresh: (id, key, pane) => mirrors?.fresh(id, key, pane) ?? false, secret, answerable: async (key) => Boolean(await answers?.target(key)), probe: async (key) => answers?.probe(key) });
 	/** The origin checks, then the session checks, then one Herdr call. `parts` is the path after api/: sessions/<key>/<action>, remote/pair, or server/stop. */
@@ -85,6 +86,7 @@ export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, s
 			if (key !== "stop" || action || !stop) return no(404, "not_found", "No such action.");
 			return typeof by === "string" && by.length <= 200 && typeof take === "boolean" ? (stop({ by, take }), { status: 202, body: { stopping: true } }) : no(400, "bad_request", "A stop names who asks.");
 		}
+		if (scope === "dirs" || scope === "open") return spawn && !action ? spawn([scope, key], read.json) : no(spawn ? 404 : 503, spawn ? "not_found" : "unavailable", spawn ? "No such action." : "This server opens nothing.");
 		if (scope === "remote" && key === "on" && !action) {
 			if (!remoteOn) return no(503, "unavailable", "This server cannot turn remote access on.");
 			const failed = await remoteOn().then(() => undefined, (error: Error) => error.message);

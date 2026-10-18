@@ -281,5 +281,21 @@
 	"no_answer": "The server did not answer.",
 	"remote_off_ask": "Remote access is off. Turn it on so a phone on your tailnet can open this page? Only devices signed in to Tailscale as this machine's user can pair; Funnel is never used.",
 	"remote_turn_on": "Turn on remote access",
-	"remote_turning_on": "Turning remote access on…"
+	"remote_turning_on": "Turning remote access on…",
+	"open_main": "+ Main",
+	"open_tower": "+ Tower",
+	"open_main_title": "New main agent in {base}",
+	"open_tower_title": "New base and its tower",
+	"folder_here": "Folder:",
+	"folder_up": "Up",
+	"asking_dirs": "Reading folders…",
+	"folder_empty": "No folders here.",
+	"folder_cut": "Showing the first 500 folders.",
+	"first_prompt": "First message (optional)",
+	"base_name": "Base name",
+	"open_main_go": "Open the main here",
+	"open_tower_go": "Open the base here",
+	"opening": "Opening… this can take up to a minute.",
+	"opened_main": "The main is open in a new squad of {base}.",
+	"opened_tower": "The base and its tower are open."
 }

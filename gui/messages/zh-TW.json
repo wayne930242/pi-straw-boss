@@ -239,5 +239,21 @@
 	"no_answer": "伺服器沒有回應。",
 	"remote_off_ask": "遠端存取還沒開啟。要開啟，讓你 tailnet 上的手機可以開這個頁面嗎？只有用這台電腦的 Tailscale 帳號登入的裝置能配對，絕不使用 Funnel。",
 	"remote_turn_on": "開啟遠端存取",
-	"remote_turning_on": "正在開啟遠端存取…"
+	"remote_turning_on": "正在開啟遠端存取…",
+	"open_main": "＋主智慧體",
+	"open_tower": "＋塔台",
+	"open_main_title": "在 {base} 開新的主智慧體",
+	"open_tower_title": "開新的基地與塔台",
+	"folder_here": "資料夾：",
+	"folder_up": "上一層",
+	"asking_dirs": "正在讀取資料夾…",
+	"folder_empty": "這裡沒有資料夾。",
+	"folder_cut": "只顯示前 500 個資料夾。",
+	"first_prompt": "第一句指令（選填）",
+	"base_name": "基地名稱",
+	"open_main_go": "在這裡開主智慧體",
+	"open_tower_go": "在這裡開基地",
+	"opening": "開啟中…最多可能要一分鐘。",
+	"opened_main": "已在 {base} 的新小隊開好主智慧體。",
+	"opened_tower": "基地和塔台已經開好。"
 }

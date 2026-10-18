@@ -128,6 +128,26 @@ export class FakeHerdr {
 			Object.assign(this.panes.at(-1)!, { cwd: flag("--cwd"), env: args.flatMap((arg, i) => (arg === "--env" ? [args[i + 1]!] : [])) });
 			return out({ tab: { tab_id: id }, root_pane: { pane_id: this.panes.at(-1)!.pane_id } });
 		}
+		if (group === "workspace" && cmd === "create") {
+			const ws = `w${this.next++}`, tab = `${ws}:t${this.next++}`;
+			this.workspaces.push({ workspace_id: ws, label: flag("--label") ?? "", tokens: {} });
+			this.addTab(tab, "", `${ws}:p${this.next++}`, "shell");
+			Object.assign(this.panes.at(-1)!, { cwd: flag("--cwd"), env: args.flatMap((arg, i) => (arg === "--env" ? [args[i + 1]!] : [])) });
+			return out({ workspace: { workspace_id: ws, label: flag("--label") }, tab: { tab_id: tab }, root_pane: { pane_id: this.panes.at(-1)!.pane_id } });
+		}
+		if (group === "workspace" && cmd === "close") {
+			this.closed.push(args[2]!);
+			this.workspaces = this.workspaces.filter((w) => w.workspace_id !== args[2]);
+			this.tabs = this.tabs.filter((t) => t.workspace_id !== args[2]);
+			this.panes = this.panes.filter((p) => p.workspace_id !== args[2]);
+			return out({});
+		}
+		if (group === "tab" && cmd === "rename") {
+			const tab = this.tabs.find((t) => t.tab_id === args[2]);
+			if (!tab) throw new Error(`herdr tab rename failed: tab_not_found ${args[2]}`);
+			tab.label = args.slice(3).join(" ");
+			return out({});
+		}
 		if (group === "agent" && cmd === "start") {
 			if (this.busy-- > 0) throw new Error(`herdr ${args.join(" ")} failed: agent_pane_busy: agent target pane ${flag("--pane")} is not an available shell`);
 			if (!/^[a-z][a-z0-9_-]{0,31}$/.test(args[2]!)) throw new Error(`herdr agent start failed: invalid_agent_name: ${args[2]}`);
