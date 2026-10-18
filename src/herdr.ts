@@ -50,8 +50,11 @@ async function result(run: HerdrRun, args: string[], timeoutMs?: number) {
 	}
 }
 
-// The tower tab is labelled with the Nerd Font radio tower glyph (md-radio_tower, U+F043B) alone.
+// The tower tab is labelled with the Nerd Font radio tower glyph (md-radio_tower, U+F043B) alone. The role marks (the `sb_mark` token, and the
+// dashboard's rows) are Font Awesome's star (U+F005) for a main agent and person (U+F007) for a member, and `[sub]` for a subagent.
 export const TOWER_LABEL = "\u{f043b}";
+export const MARK = { main: "\uf005", member: "\uf007" } as const;
+export const ARROW = "[sub]";
 
 export async function place(run: HerdrRun): Promise<Place> {
 	const pane = (await result(run, ["pane", "current"])).pane;

@@ -6,6 +6,7 @@ import { afterEach, test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { collectNet } from "../src/net.ts";
 import { collect, type Row, render, type Snapshot, startDashboard, subagents, type Tone } from "../src/dashboard.ts";
+import { ARROW, MARK, TOWER_LABEL } from "../src/herdr.ts";
 import { type FakeTui, settle, until, World } from "./fakes.ts";
 
 let world = new World();
@@ -34,39 +35,43 @@ const sample = snapshot([
 	row("towers", 0, "done", "Gamma", "tower"),
 ]);
 
-test("render draws a rounded frame with a title, section headers, a tree, and aligned columns", () => {
+test("render draws a rounded frame with a title, section headers, a tree with the sidebar's role marks, and aligned columns", () => {
+	// The role glyphs are one column each, as pi-tui counts them and as Herdr's sidebar draws them: [sub] is five.
+	const [T, S, P] = [TOWER_LABEL, MARK.main, MARK.member];
 	assert.deepEqual(render(sample, 0, 100, plain), [
-		"╭─ ⠋ tower · Alpha ─────────────────────────────────────────── head tower ─╮",
+		`╭─ ⠋ ${T} Alpha ───────────────────────────────────────────────── head tower ─╮`,
 		"│ Control tower: main agents talk here (call_tower).                       │",
 		"│ GUI not running; /boss gui opens it                                      │",
 		"│                                                                          │",
 		"│ this net                                                                 │",
 		"│ ├─ tab work                                                              │",
-		"│ │  ├─ ⠋ Main One     main           tool:edit                            │",
-		"│ │  │  ├─ ? asker     subagent       waiting on a question                │",
-		"│ │  │  └─ ✓ reviewer  subagent       finished                             │",
-		"│ │  └─ ○ Member       member                                              │",
+		`│ │  ├─ ⠋ ${S} Main One         main           tool:edit                      │`,
+		`│ │  │  ├─ ? ${ARROW} asker     subagent       waiting on a question          │`,
+		`│ │  │  └─ ✓ ${ARROW} reviewer  subagent       finished                       │`,
+		`│ │  └─ ○ ${P} Member           member                                        │`,
 		"│ ├─ tab docs                                                              │",
-		"│ │  └─ ✗ Docs         main           boom                                 │",
-		"│ └─ ⠋ Alpha feature   sub workspace                                       │",
+		`│ │  └─ ✗ ${S} Docs             main           boom                           │`,
+		"│ └─ ⠋ Alpha feature         sub workspace                                 │",
 		"│ other towers                                                             │",
-		"│ ○ Beta               head tower                                          │",
-		"│ ✓ Gamma              tower                                               │",
+		`│ ○ ${T} Beta                   head tower                                    │`,
+		`│ ✓ ${T} Gamma                  tower                                         │`,
 		"╰──────────────────────────────────────────────────────────────────────────╯",
 	]);
 });
 
 test("the spinner advances with the frame and nothing else changes; the head tag shows only on the head tower", () => {
 	const [a, b] = [render(sample, 0, 100, plain), render(sample, 1, 100, plain)];
-	assert.equal(b[0]!.includes("⠙ tower · Alpha"), true);
+	assert.equal(b[0]!.includes(`⠙ ${TOWER_LABEL} Alpha`), true);
 	assert.deepEqual(b.filter((l, i) => l !== a[i]).length, 3, "the title, the main agent, and the sub workspace animate");
 	assert.ok(!render(snapshot(sample.rows, false), 0, 100, plain)[0]!.includes("head tower"));
 });
 
-test("each state has one glyph and one theme color, and the frame uses the border and title colors", () => {
+test("each state has one glyph and one theme color, each role mark its own tone, and the frame uses the border and title colors", () => {
 	const tagged = (tone: Tone, text: string) => `<${tone}:${text}>`;
 	const lines = render(sample, 0, 100, tagged).join("\n");
-	for (const expected of ["<accent:⠋>", "<warning:?>", "<dim:○>", "<success:✓>", "<error:✗>", "<title:tower · Alpha>", "<border:╭─>", "<accent:head tower>", "<muted:this net>"]) assert.ok(lines.includes(expected), expected);
+	const marks = [`<tower:${TOWER_LABEL}> <title:Alpha>`, `<main:${MARK.main}> Main One`, `<member:${MARK.member}> Member`, `<dim:${ARROW}> asker`, `<tower:${TOWER_LABEL}> Beta`];
+	for (const expected of ["<accent:⠋>", "<warning:?>", "<dim:○>", "<success:✓>", "<error:✗>", "<border:╭─>", "<accent:head tower>", "<muted:this net>", ...marks]) assert.ok(lines.includes(expected), expected);
+	assert.ok(lines.includes("<border:└─ ><accent:⠋> Alpha feature"), "a sub workspace has no role mark");
 });
 
 test("a running GUI's link is shown under the description", () => {
@@ -81,14 +86,16 @@ test("nothing joined yet is said once, and the other-towers section is omitted w
 
 test("every line fits the width with real ANSI styling, at any width, and the frame stops growing at 76 columns", () => {
 	const styled = (tone: Tone, text: string) => `\u001b[1;3${tone.length % 7}m${text}\u001b[0m`;
-	const long = snapshot(Array.from({ length: 25 }, (_, i) => net(1, "idle", `a-very-long-session-name-${i} `.repeat(3), "member", "x".repeat(40))));
-	for (const width of [12, 20, 40, 76, 77, 200]) {
+	// Every role mark is among the rows, so a Nerd Font glyph miscounted anywhere would push a line past the width.
+	const kinds = ["member", "main", "subagent", "tower", "head tower"];
+	const long = snapshot(Array.from({ length: 25 }, (_, i) => row(i % 5 > 2 ? "towers" : "net", i % 5 > 2 ? 0 : 1 + Number(i % 5 === 2), "idle", `a-very-long-session-name-${i} `.repeat(3), kinds[i % 5], "x".repeat(40))));
+	for (const width of [8, 12, 20, 40, 76, 77, 200]) {
 		const lines = render(long, 2, width, styled);
 		assert.ok(lines.every((line) => visibleWidth(line) <= width), `width ${width}`);
 		assert.ok(lines.every((line) => visibleWidth(line) <= 76));
 	}
 	const lines = render(long, 0, 200, plain);
-	assert.equal(lines.length, 1 + 3 + 1 + 18 + 1 + 1, "top, the intro, section header, the shown rows, the count of the rest, bottom");
+	assert.equal(lines.length, 1 + 3 + 2 + 18 + 1 + 1, "top, the intro, the two section headers, the shown rows, the count of the rest, bottom");
 	assert.match(lines.at(-2)!, /… 7 more/);
 });
 
@@ -230,13 +237,13 @@ test("sub workspaces hang under their parent as one line each, without their ses
 	assert.deepEqual(norm([snap.head, snap.rows]), norm([true, [net(0, "working", "Alpha feature", "sub workspace")]]));
 });
 
-function fakeUi() {
+function fakeUi(theme = { fg: plain, bold: (text: string) => text }) {
 	const tui: FakeTui = { renders: 0, requestRender: () => void tui.renders++ };
 	const state: { factory?: unknown; component?: { render(w: number): string[]; dispose?(): void } } = {};
 	const ui = {
 		setWidget: (_key: string, factory?: (t: FakeTui, theme: { fg(tone: string, text: string): string; bold(text: string): string }) => { render(w: number): string[]; dispose?(): void }) => {
 			state.component?.dispose?.();
-			state.component = factory?.(tui, { fg: plain, bold: (text) => text });
+			state.component = factory?.(tui, theme);
 			state.factory = factory;
 		},
 	};
@@ -250,12 +257,12 @@ test("the spinner timer runs only while a row is working, and stop() ends every 
 	let reads = 0;
 	const dashboard = startDashboard({ ui: ui as never, collect: async () => (reads++, snap), frameMs: 5, pollMs: 40, minGapMs: 0 });
 	const title = () => state.component?.render(80)[0] ?? "";
-	await until(() => title().includes("⠋ tower · Alpha"), "first frame");
+	await until(() => title().includes(`⠋ ${TOWER_LABEL} Alpha`), "first frame");
 	const frames = new Set<string>();
 	await until(() => (frames.add(title().slice(3, 4)), frames.size >= 3), "animation frames to change");
 	// Nothing is working any more: after the next poll the spinner stops asking for renders.
 	snap = { ...snapshot([net(1, "idle", "Main One", "main")]), mark: "idle" };
-	await until(() => title().includes("○ tower · Alpha"), "idle title");
+	await until(() => title().includes(`○ ${TOWER_LABEL} Alpha`), "idle title");
 	await sleep(20);
 	const before = tui.renders;
 	await sleep(30);
@@ -265,6 +272,15 @@ test("the spinner timer runs only while a row is working, and stop() ends every 
 	const stopped = reads;
 	await sleep(100);
 	assert.equal(reads, stopped, "the poll stopped");
+});
+
+test("the role marks take the sidebar's Catppuccin colors as theme roles: tower yellow, main blue, member green, all bold, and [sub] overlay0", async () => {
+	const { state, ui } = fakeUi({ fg: (tone, text) => `<${tone}:${text}>`, bold: (text) => `*${text}*` });
+	const dashboard = startDashboard({ ui: ui as never, collect: async () => sample, pollMs: 100_000 });
+	await until(() => (state.component?.render(100).length ?? 0) > 5, "first reading");
+	const lines = state.component!.render(100).join("\n");
+	for (const expected of [`*<warning:${TOWER_LABEL}>*`, "*<accent:Alpha>*", `*<syntaxFunction:${MARK.main}>*`, `*<success:${MARK.member}>*`, `<dim:${ARROW}>`]) assert.ok(lines.includes(expected), expected);
+	dashboard.stop();
 });
 
 test("poke re-reads early but not more often than the minimum gap, and a failing read shows an error row instead of throwing", async () => {
@@ -291,8 +307,8 @@ test("a tower with a UI shows the dashboard once it holds the role, and shutdown
 	await tower.start();
 	const component = tower.components.get(KEY);
 	assert.ok(component, "the widget is set");
-	await until(() => component.render(80)[0]!.includes("tower · Alpha"), "the first reading");
-	assert.match(component.render(80)[0]!, /^╭─ ⠋ tower · Alpha ─+ head tower ─╮$/);
+	await until(() => component.render(80)[0]!.includes(`${TOWER_LABEL} Alpha`), "the first reading");
+	assert.match(component.render(80)[0]!, new RegExp(`^╭─ ⠋ ${TOWER_LABEL} Alpha ─+ head tower ─╮$`, "u"));
 	await tower.stop();
 	assert.equal(tower.components.has(KEY), false);
 	assert.equal(tower.widgets.get(KEY), undefined, "setWidget(key, undefined) removed it");

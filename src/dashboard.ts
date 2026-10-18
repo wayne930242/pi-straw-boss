@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { headOf, type HerdrRun, isSub, type Pane, panes, parentOf, type Session, workspaces, type Workspace } from "./herdr.ts";
+import { ARROW, headOf, type HerdrRun, isSub, MARK, type Pane, panes, parentOf, type Session, TOWER_LABEL, workspaces, type Workspace } from "./herdr.ts";
 
 // The tower's monitoring screen: a widget above the editor, never focused, redrawn only while something is working.
 //
@@ -19,7 +19,7 @@ export type Mark = "working" | "waiting" | "idle" | "done" | "error" | "unknown"
 /** One line of the tree. `net` rows are tab (0) > session (1) > subagent (2); `towers` rows are flat. */
 export interface Row { group: "net" | "towers"; depth: number; mark: Mark; text: string; kind?: string; note?: string; workspace?: string; id?: string; file?: string; pane?: string }
 export interface Snapshot { title: string; mark: Mark; head: boolean; rows: Row[]; gui?: string }
-export type Tone = "accent" | "warning" | "muted" | "success" | "dim" | "error" | "border" | "title";
+export type Tone = "accent" | "warning" | "muted" | "success" | "dim" | "error" | "border" | "title" | "tower" | "main" | "member";
 export type Paint = (tone: Tone, text: string) => string;
 export interface Sources { run: HerdrRun; sessions(): Promise<Session[]>; workspaceId: string; now?: number; gui?(): Promise<string | undefined> }
 
@@ -29,6 +29,8 @@ const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", 
 const GLYPH: Record<Exclude<Mark, "working">, string> = { waiting: "?", idle: "○", done: "✓", error: "✗", unknown: "·" };
 const TONE: Record<Mark, Tone> = { working: "accent", waiting: "warning", idle: "dim", done: "success", error: "error", unknown: "muted" };
 const HERDR_MARK: Record<string, Mark> = { working: "working", blocked: "waiting", idle: "idle", done: "done" };
+// A row's role mark goes before its name, the same glyph and color as Herdr's sidebar shows (src/herdr.ts); a tab or sub workspace has none.
+const ROLE: Record<string, [Tone, string]> = { main: ["main", MARK.main], member: ["member", MARK.member], subagent: ["dim", ARROW], tower: ["tower", TOWER_LABEL], "head tower": ["tower", TOWER_LABEL] };
 const RECENT_MS = 10 * 60_000;
 const MAX_ROWS = 18;
 const MAX_WIDTH = 76;
@@ -51,7 +53,8 @@ export function render({ title, mark, head, rows, gui }: Snapshot, frame: number
 	const last = (i: number) => i < 0 || shown.slice(i + 1).find((r) => r.group === shown[i]!.group && r.depth <= shown[i]!.depth)?.depth !== shown[i]!.depth;
 	const ancestor = (i: number, depth: number) => shown.findLastIndex((r, k) => k < i && r.group === shown[i]!.group && r.depth === depth);
 	const prefix = (i: number) => (shown[i]!.group === "net" ? Array.from({ length: shown[i]!.depth }, (_, d) => (last(ancestor(i, d)) ? "   " : "│  ")).join("") + (last(i) ? "└─ " : "├─ ") : "");
-	const cells = shown.map((r, i) => paint("border", prefix(i)) + (r.mark === "unknown" && !r.kind ? "" : `${glyph(r.mark)} `) + r.text);
+	const role = (kind?: string) => (kind && ROLE[kind] ? `${paint(...ROLE[kind]!)} ` : "");
+	const cells = shown.map((r, i) => paint("border", prefix(i)) + (r.mark === "unknown" && !r.kind ? "" : `${glyph(r.mark)} `) + role(r.kind) + r.text);
 	const [w1, w2] = [Math.max(...cells.map(visibleWidth), 0), Math.max(...shown.map((r) => r.kind?.length ?? 0))];
 	const line = (i: number) => `${pad(cells[i]!, w1)}  ${paint("muted", (shown[i]!.kind ?? "").padEnd(w2))}  ${paint("dim", shown[i]!.note ?? "")}`.trimEnd();
 	const section = (group: Row["group"], name: string, empty?: string) => {
@@ -61,7 +64,7 @@ export function render({ title, mark, head, rows, gui }: Snapshot, frame: number
 	// What this pane is, and where the browser view lives, come before the tree.
 	const intro = [paint("dim", "Control tower: main agents talk here (call_tower)."), gui ? `${paint("muted", "GUI")}  ${paint("accent", gui)}` : paint("dim", "GUI not running; /boss gui opens it"), ""];
 	const body = [...intro, ...section("net", "this net", "nothing has joined yet"), ...section("towers", "other towers"), ...(rows.length > MAX_ROWS ? [paint("muted", `… ${rows.length - MAX_ROWS} more`)] : [])];
-	const [name, tag] = [` ${glyph(mark)} ${paint("title", `tower · ${title}`)} `, head ? ` ${paint("accent", "head tower")} ` : ""];
+	const [name, tag] = [` ${glyph(mark)} ${role("tower")}${paint("title", title)} `, head ? ` ${paint("accent", "head tower")} ` : ""];
 	const dashes = "─".repeat(Math.max(1, total - 4 - visibleWidth(name) - visibleWidth(tag)));
 	const frameLine = (text: string) => paint("border", "│ ") + pad(truncateToWidth(text, inner), inner) + paint("border", " │");
 	return [paint("border", "╭─") + name + paint("border", dashes) + tag + paint("border", "─╮"), ...body.map(frameLine), paint("border", `╰${"─".repeat(total - 2)}╯`)].map((l) => truncateToWidth(l, width));
@@ -181,7 +184,9 @@ export function startDashboard({ ui, collect: read, frameMs = 125, pollMs = 3000
 		};
 		live = { poke: () => void (Date.now() - last >= minGapMs && refresh()), stop };
 		void refresh();
-		const paint: Paint = (tone, text) => (tone === "title" ? theme.bold(theme.fg("accent", text)) : theme.fg(tone, text));
+		// The role tones are the sidebar's Catppuccin Mocha colors, as theme roles: yellow, blue, and green, bold (`dim` is overlay0 for `[sub]`).
+		const strong: Partial<Record<Tone, "accent" | "warning" | "syntaxFunction" | "success">> = { title: "accent", tower: "warning", main: "syntaxFunction", member: "success" };
+		const paint: Paint = (tone, text) => (strong[tone] ? theme.bold(theme.fg(strong[tone], text)) : theme.fg(tone as Exclude<Tone, "title" | "tower" | "main" | "member">, text));
 		return { render: (width) => render(snap, frame, width, paint), invalidate() {}, dispose: stop };
 	});
 	return { poke: () => live?.poke(), stop: () => (ui.setWidget(KEY, undefined), live?.stop(), (live = undefined), undefined) };

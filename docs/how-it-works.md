@@ -27,24 +27,25 @@ The tower is opened by the workspace's first main (or earlier on demand, by `cal
 A tower session with a TUI shows a monitoring widget above its editor. It is read-only: it never takes focus, never prompts, and is shown only while the session holds the tower role (a tower that yields, a headless tower, and main agents never show it). Its first lines say what the pane is, the channel main agents reach each other through with `call_tower`, and give the straw net GUI's link while a GUI server answers (otherwise that `/boss gui` opens it).
 
 ```text
-╭─ ⠸ tower · Alpha ─────────────────────────────────────────── head tower ─╮
+╭─ ? 󰐻 Alpha ───────────────────────────────────────────────── head tower ─╮
 │ Control tower: main agents talk here (call_tower).                       │
 │ GUI  http://127.0.0.1:52662/<token>/                                     │
 │                                                                          │
 │ this net                                                                 │
 │ ├─ tab api-main                                                          │
-│ │  ├─ ○ api-main        main                                             │
-│ │  │  └─ ⠏ psb-sleeper  subagent  bash                                   │
-│ │  └─ ○ docs-member     member                                           │
+│ │  ├─ ○  api-main            main                                       │
+│ │  │  └─ ⠸ [sub] psb-sleeper  subagent  bash                             │
+│ │  └─ ○  docs-member         member                                     │
 │ └─ tab other                                                             │
-│    └─ ? ops-main        main      waiting on a question                  │
+│    └─ ?  ops-main            main      waiting on a question            │
 │ other towers                                                             │
-│ ✓ Beta                  tower                                            │
+│ ✓ 󰐻 Beta                      tower                                      │
 ╰──────────────────────────────────────────────────────────────────────────╯
 ```
 
 - **This net**, in detail: the sessions that joined in this workspace, by tab (main agent first, then members), each with the subagents it launched, and this workspace's sub workspaces. Sessions that did not join are not listed, and neither is anything in other workspaces.
 - **Other towers**: one line per workspace that has a live tower (workspace, status, and `head tower` for the head one).
+- Each row carries the role mark Herdr's sidebar shows (see [Sidebar net view](#sidebar-net-view)), in Nerd Font glyphs one column wide: the radio tower (U+F043B) for a tower and in the title, Font Awesome's star (U+F005) for a main agent and person (U+F007) for a member, and `[sub]` for a subagent. A tab and a sub workspace have none. The marks take the sidebar's Catppuccin Mocha colors through pi theme roles: the tower `warning` (yellow), the star `syntaxFunction` (blue), the person `success` (green), all bold, and `[sub]` `dim` (overlay0). In the Catppuccin Mocha theme these are the sidebar's colors exactly; another theme gives its own colors for those roles.
 - One glyph and theme color per state: a spinner in the accent color for working, `?` warning for waiting on a question, `○` dim for idle, `✓` success for done, `✗` error. Colors come from the active pi theme. The title mark shows the most urgent state of the net.
 - The spinner runs at 8 fps only while something is working. The data is polled every 3 s while the widget exists, and an intercom presence, join, or leave event re-reads at once (at most every 0.5 s). Shutdown, or losing the tower role, removes the widget and every timer.
 
@@ -139,7 +140,7 @@ A subagent is marked while its pane runs pi, and its tokens go at the next refre
 
 **Sidebar rows.**
 `sb_mark` also shows the roles in Herdr's own grouped view, which a plugin cannot reorder.
-Add it to a row of `[ui.sidebar.agents]` in `config.toml`: the mark is dim for members and subagents, and a gold bold star marks a main agent.
+Add it to a row of `[ui.sidebar.agents]` in `config.toml`: the snippet colors the marks as the tower dashboard does, in Catppuccin Mocha, a blue bold star for a main agent, a green bold person for a member, and an overlay0 `[sub]` for a subagent.
 Agents without the token (towers, and anything outside the net) show nothing for it.
 
 ```toml
@@ -147,8 +148,10 @@ Agents without the token (towers, and anything outside the net) show nothing for
 rows = [
   ["state_icon", "machine", "workspace", "tab"],
   [
-    { token = "$sb_mark", dim = true, rules = [
-      { starts_with = "\uF005", fg = "#f9e2af", bold = true, dim = false },
+    { token = "$sb_mark", fg = "#9399b2", rules = [
+      { starts_with = "\uF005", fg = "#89b4fa", bold = true },
+      { starts_with = "\uF007", fg = "#a6e3a1", bold = true },
+      { starts_with = "[sub]", fg = "#6c7086" },
     ] },
     "agent",
   ],
@@ -223,7 +226,7 @@ Herdr starts plugin commands with the PATH of the process that started its serve
 - One intercom extension channel per tab, `straw-boss/tab/<hex of the tab id>`, registered by every joined session and tower; the channel's owner (the first to join) only records the main, and it is not the main by that. Tab ids over 24 characters are refused.
 - The dialog channel `straw-boss/gui/<sha256 prefix of the server's session id>`: registered owner-eligible only by the session running the GUI server, and joined by a session (subagents included) only while it has a dialog open and `gui.json` (which records the server's session as `ownerSession`) names another session.
 
-The tower tab is labelled `tower` and its Herdr agent is named `tower-<workspace id>` in lowercase (Herdr agent names are unique per server).
+The tower tab is labelled with the radio tower glyph (U+F043B) alone and its Herdr agent is named `tower-<workspace id>` in lowercase (Herdr agent names are unique per server).
 
 ## From Claude Code or Codex
 

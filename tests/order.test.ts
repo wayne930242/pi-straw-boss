@@ -3,8 +3,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, mock, test } from "node:test";
-import { ARROW, descendants, MARK, markKids, netTokens, orderKey } from "../src/order.ts";
-import type { HerdrTab, Pane, Workspace } from "../src/herdr.ts";
+import { descendants, markKids, netTokens, orderKey } from "../src/order.ts";
+import { ARROW, type HerdrTab, MARK, type Pane, type Workspace } from "../src/herdr.ts";
 import { settle, until, World } from "./fakes.ts";
 
 let world = new World();

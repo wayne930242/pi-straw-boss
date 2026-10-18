@@ -70,8 +70,9 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.4.1 raised it from 540 to 575 for claiming and promotion; 0.5.0 to 610 for herdrCall (Herdr's answers with their error codes, spec task 4) and the /boss gui remote command;
 	// 0.5.1 to 620 for a join retry that follows its session to another tab; 0.6.0 to 630 to start the dialog bridge before the subagent return and the hub with the server.
 	// 0.7.0 to 650 for the order and mark tokens each session publishes with its role (order.ts, which has its own figure), the tab list they read,
-	// and one publish at a time that shutdown waits for.
-	assert.ok(rest <= 650, `the rest of src has ${rest} lines`);
+	// and one publish at a time that shutdown waits for. 0.6.10 to 653: the role marks moved from order.ts to herdr.ts beside the tower label, so the
+	// dashboard draws the sidebar's glyphs without importing order.ts, which imports the dashboard.
+	assert.ok(rest <= 653, `the rest of src has ${rest} lines`);
 	// The page: the files the spec budgets one by one, then this round's own figures (no figure in the spec): the focus views, the overlay
 	// layer (alert spotting and the stack model in the map's chunk, the layer's DOM and tiles in a chunk of their own), the dev-only demo, and everything else.
 	for (const [name, max] of [["router.ts", 80], ["chat.ts", 250], ["markdown.ts", 180], ["views.ts", 245], ["layer.ts", 175], ["composer.ts", 165], ["ask.ts", 152]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);

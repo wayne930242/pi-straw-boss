@@ -1,5 +1,5 @@
 import { subagents } from "./dashboard.ts";
-import { type HerdrRun, type HerdrTab, isSub, type Pane, panes, type Place, report, tabs, workspaces, type Workspace } from "./herdr.ts";
+import { ARROW, type HerdrRun, type HerdrTab, isSub, MARK, type Pane, panes, type Place, report, tabs, workspaces, type Workspace } from "./herdr.ts";
 
 // Two display tokens for the sidebar plugin and for Herdr's own Agents rows, written next to `sb_role`:
 //  - `sb_order`: a sort key that lays the net out as the head tower's workspace first, then the other workspaces in Herdr's order, in each the tower
@@ -10,9 +10,6 @@ import { type HerdrRun, type HerdrTab, isSub, type Pane, panes, type Place, repo
 //    A tower has none: its tab already carries the radio tower glyph.
 // A session writes them for itself and for the subagents it launched, which never join and write nothing, on the same 4 minute refresh as `sb_role`.
 
-/** The glyphs sit in Hack Nerd Font and MesloLGS NF: Font Awesome's star (U+F005), the middle dot, and the `[subagent]` tag. */
-export const MARK = { main: "\uf005", member: "\uf007" } as const;
-export const ARROW = "[sub]";
 // The dashboard shows eight subagents per session, but every live one is keyed: one left out would sort outside its launcher's span. Three digits count them.
 const MAX_KIDS = 999;
 const NAME_MAX = 24;
