@@ -29,7 +29,7 @@ const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", 
 const GLYPH: Record<Exclude<Mark, "working">, string> = { waiting: "?", idle: "○", done: "✓", error: "✗", unknown: "·" };
 const TONE: Record<Mark, Tone> = { working: "accent", waiting: "warning", idle: "dim", done: "success", error: "error", unknown: "muted" };
 const HERDR_MARK: Record<string, Mark> = { working: "working", blocked: "waiting", idle: "idle", done: "done" };
-// A row's role mark goes before its name, the same glyph and color as Herdr's sidebar shows (src/herdr.ts); a tab or sub workspace has none.
+// A row's role mark goes before its name, the same glyph as Herdr's sidebar shows (src/herdr.ts); a tab or sub workspace has none.
 const ROLE: Record<string, [Tone, string]> = { main: ["main", MARK.main], member: ["member", MARK.member], subagent: ["dim", ARROW], tower: ["tower", TOWER_LABEL], "head tower": ["tower", TOWER_LABEL] };
 const RECENT_MS = 10 * 60_000;
 const MAX_ROWS = 18;
@@ -184,8 +184,8 @@ export function startDashboard({ ui, collect: read, frameMs = 125, pollMs = 3000
 		};
 		live = { poke: () => void (Date.now() - last >= minGapMs && refresh()), stop };
 		void refresh();
-		// The role tones are the sidebar's Catppuccin Mocha colors, as theme roles: yellow, blue, and green, bold (`dim` is overlay0 for `[sub]`).
-		const strong: Partial<Record<Tone, "accent" | "warning" | "syntaxFunction" | "success">> = { title: "accent", tower: "warning", main: "syntaxFunction", member: "success" };
+		// Every color is a theme role. The title and the role marks are bold: the tower in warning, a main agent in accent, a member in success.
+		const strong: Partial<Record<Tone, "accent" | "warning" | "success">> = { title: "accent", tower: "warning", main: "accent", member: "success" };
 		const paint: Paint = (tone, text) => (strong[tone] ? theme.bold(theme.fg(strong[tone], text)) : theme.fg(tone as Exclude<Tone, "title" | "tower" | "main" | "member">, text));
 		return { render: (width) => render(snap, frame, width, paint), invalidate() {}, dispose: stop };
 	});

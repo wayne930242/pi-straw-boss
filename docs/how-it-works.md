@@ -45,7 +45,7 @@ A tower session with a TUI shows a monitoring widget above its editor. It is rea
 
 - **This net**, in detail: the sessions that joined in this workspace, by tab (main agent first, then members), each with the subagents it launched, and this workspace's sub workspaces. Sessions that did not join are not listed, and neither is anything in other workspaces.
 - **Other towers**: one line per workspace that has a live tower (workspace, status, and `head tower` for the head one).
-- Each row carries the role mark Herdr's sidebar shows (see [Sidebar net view](#sidebar-net-view)), in Nerd Font glyphs one column wide: the radio tower (U+F043B) for a tower and in the title, Font Awesome's star (U+F005) for a main agent and person (U+F007) for a member, and `[sub]` for a subagent. A tab and a sub workspace have none. The marks take the sidebar's Catppuccin Mocha colors through pi theme roles: the tower `warning` (yellow), the star `syntaxFunction` (blue), the person `success` (green), all bold, and `[sub]` `dim` (overlay0). In the Catppuccin Mocha theme these are the sidebar's colors exactly; another theme gives its own colors for those roles.
+- Each row carries the role mark Herdr's sidebar shows (see [Sidebar net view](#sidebar-net-view)), in Nerd Font glyphs one column wide: the radio tower (U+F043B) for a tower and in the title, Font Awesome's star (U+F005) for a main agent and person (U+F007) for a member, and `[sub]` for a subagent. A tab and a sub workspace have none. Their colors are pi theme roles, so they follow the active theme: the tower `warning`, the star `accent`, the person `success`, all bold, and `[sub]` `dim`.
 - One glyph and theme color per state: a spinner in the accent color for working, `?` warning for waiting on a question, `○` dim for idle, `✓` success for done, `✗` error. Colors come from the active pi theme. The title mark shows the most urgent state of the net.
 - The spinner runs at 8 fps only while something is working. The data is polled every 3 s while the widget exists, and an intercom presence, join, or leave event re-reads at once (at most every 0.5 s). Shutdown, or losing the tower role, removes the widget and every timer.
 
@@ -140,7 +140,7 @@ A subagent is marked while its pane runs pi, and its tokens go at the next refre
 
 **Sidebar rows.**
 `sb_mark` also shows the roles in Herdr's own grouped view, which a plugin cannot reorder.
-Add it to a row of `[ui.sidebar.agents]` in `config.toml`: the snippet colors the marks as the tower dashboard does, in Catppuccin Mocha, a blue bold star for a main agent, a green bold person for a member, and an overlay0 `[sub]` for a subagent.
+Add it to a row of `[ui.sidebar.agents]` in `config.toml`: the snippet makes a main agent's star and a member's person bold and a subagent's `[sub]` dim, and leaves the colors to your Herdr theme; add an `fg` to a rule to color a mark.
 Agents without the token (towers, and anything outside the net) show nothing for it.
 
 ```toml
@@ -148,10 +148,10 @@ Agents without the token (towers, and anything outside the net) show nothing for
 rows = [
   ["state_icon", "machine", "workspace", "tab"],
   [
-    { token = "$sb_mark", fg = "#9399b2", rules = [
-      { starts_with = "\uF005", fg = "#89b4fa", bold = true },
-      { starts_with = "\uF007", fg = "#a6e3a1", bold = true },
-      { starts_with = "[sub]", fg = "#6c7086" },
+    { token = "$sb_mark", rules = [
+      { starts_with = "\uF005", bold = true },
+      { starts_with = "\uF007", bold = true },
+      { starts_with = "[sub]", dim = true },
     ] },
     "agent",
   ],

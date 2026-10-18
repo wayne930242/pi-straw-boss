@@ -274,12 +274,12 @@ test("the spinner timer runs only while a row is working, and stop() ends every 
 	assert.equal(reads, stopped, "the poll stopped");
 });
 
-test("the role marks take the sidebar's Catppuccin colors as theme roles: tower yellow, main blue, member green, all bold, and [sub] overlay0", async () => {
+test("the role marks take their colors from theme roles: the tower warning, a main agent accent, a member success, all bold, and [sub] dim", async () => {
 	const { state, ui } = fakeUi({ fg: (tone, text) => `<${tone}:${text}>`, bold: (text) => `*${text}*` });
 	const dashboard = startDashboard({ ui: ui as never, collect: async () => sample, pollMs: 100_000 });
 	await until(() => (state.component?.render(100).length ?? 0) > 5, "first reading");
 	const lines = state.component!.render(100).join("\n");
-	for (const expected of [`*<warning:${TOWER_LABEL}>*`, "*<accent:Alpha>*", `*<syntaxFunction:${MARK.main}>*`, `*<success:${MARK.member}>*`, `<dim:${ARROW}>`]) assert.ok(lines.includes(expected), expected);
+	for (const expected of [`*<warning:${TOWER_LABEL}>*`, "*<accent:Alpha>*", `*<accent:${MARK.main}>*`, `*<success:${MARK.member}>*`, `<dim:${ARROW}>`]) assert.ok(lines.includes(expected), expected);
 	dashboard.stop();
 });
 
