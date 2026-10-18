@@ -301,5 +301,11 @@
 	"opened_base": "The base is open with its first member.",
 	"attach": "Attach files",
 	"uploading": "Uploading…",
-	"file_too_large": "{name} is larger than 20 MB."
+	"file_too_large": "{name} is larger than 20 MB.",
+	"close_base": "Close base {name}",
+	"close_squad": "Close squad {name}",
+	"close_base_ask": "Close base {name}? Every agent in it and its tower quit.",
+	"close_squad_ask": "Close squad {name}? Every agent in it quits.",
+	"close_unit_ask": "Close {name}? It quits pi and its pane closes.",
+	"close_tower_ask": "Close the tower {name}? The base's mains become members again."
 }

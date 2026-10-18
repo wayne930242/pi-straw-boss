@@ -34,7 +34,9 @@ function session({ me = "S", gui = "G" as string | undefined, env = {} as Record
 	const cmds: { name: string; source: string; description?: string }[] = [];
 	const pi = { events, getCommands: () => cmds, on: (type: string, h: (e: unknown, ctx: unknown) => void) => handlers.set(type, [...(handlers.get(type) ?? []), h]) } as unknown as ExtensionAPI;
 	const hub: { current?: LocalHub & { got: [string, ToHub][] } } = {};
-	const bridge = startBridge(pi, { env: { HERDR_PANE_ID: "wA:p1", PI_INTERCOM_SESSION_ID: me, ...env }, dir, local: () => hub.current });
+	const closes: boolean[] = [];
+	let closeWhy: string | undefined;
+	const bridge = startBridge(pi, { env: { HERDR_PANE_ID: "wA:p1", PI_INTERCOM_SESSION_ID: me, ...env }, dir, local: () => hub.current, close: (keepPane) => (closes.push(keepPane), closeWhy) });
 	const ctx = { hasUI: true, ui: { notify: (t: string) => notices.push(t) }, sessionManager: { getSessionFile: () => "/s/2026_S.jsonl" }, signal: undefined as AbortSignal | undefined };
 	const fire = (type: string, e: Record<string, unknown> = {}) => (handlers.get(type) ?? []).forEach((h) => h({ type, ...e }, ctx));
 	const record = (ownerSession?: string, pid = process.pid) => writeFileSync(join(dir, "gui.json"), JSON.stringify({ pid, port: 1, token: "t", owner: "x", ...(ownerSession ? { ownerSession } : {}) }));
@@ -43,6 +45,7 @@ function session({ me = "S", gui = "G" as string | undefined, env = {} as Record
 	const count = () => [...bus.values()].reduce((n, hs) => n + hs.length, 0);
 	const s = {
 		dir, regs, published, owners, notices, ctx, hub, bridge, fire, record, count, events, cmds,
+		closes, set closeWhy(v: string | undefined) { closeWhy = v; },
 		set connected(v: boolean) { connected = v; },
 		/** G becomes the owner of its channel, with an epoch, as the broker announces it. */
 		own(g = "G", epoch = "e1") {

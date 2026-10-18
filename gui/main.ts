@@ -173,6 +173,17 @@ addEventListener("keydown", (event) => {
 	if (!panels?.stack.close() && current.view !== "map") router.go(upOf(current));
 });
 el("pair").addEventListener("click", () => void import("./pair.ts").then(({ pairTile }) => openTile(pairTile(), true)));
+// A close button asks first, then posts close/unit, close/tab, or close/base; the net shows what went, and a refusal says why.
+document.addEventListener("click", (event) => {
+	const b = (event.target as Element | null)?.closest?.<HTMLElement>("button[data-close]"), d = b?.dataset;
+	if (!b || !d) return;
+	event.preventDefault();
+	const ask = d.close === "base" ? m.close_base_ask : d.close === "tab" ? m.close_squad_ask : d.role === "tower" ? m.close_tower_ask : m.close_unit_ask;
+	if (!confirm(ask({ name: d.name ?? "" }))) return;
+	b.toggleAttribute("disabled", true);
+	void import("./post.ts").then(({ post }) => post(`close/${d.close}`, d.close === "unit" ? { key: d.key } : { workspace: d.ws, ...(d.tab && { tab: d.tab }) }))
+		.then((r) => r.ok || alert(r.body.reason ?? m.refused({ status: r.status })), () => alert(m.no_answer())).finally(() => b.toggleAttribute("disabled", false));
+});
 // The opening buttons on the map and in a base (data-open with data-ws and data-tab) open their tile, read against the newest net.
 document.addEventListener("click", (event) => {
 	const button = (event.target as Element | null)?.closest?.<HTMLElement>("button[data-open]");

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Pending, type Relayed, SEVERAL } from "./ask.ts";
-import { type Ack, type AnswerMessage, type Bridge, type Dialogs, type FormMessage, type FormReply, guiNamespace, type LocalHub, REGISTER, type ToHub } from "./bridge.ts";
+import { type Ack, type AnswerMessage, type Bridge, type CloseResult, type Dialogs, type FormMessage, type FormReply, guiNamespace, type LocalHub, REGISTER, type ToHub } from "./bridge.ts";
 import { createCaps, type Doc, docsOf, type Fields, fieldsOk, type FormResult, type Shelf } from "./documents.ts";
 import type { Session } from "./herdr.ts";
 import { canonical } from "./history.ts";
@@ -66,6 +66,7 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 	let channel: Channel | undefined, epoch: string | undefined, active = false, change = () => {};
 	let bound = new Map<string, { from: string; b: Dialogs }>(), targets = new Map<string, Target>(), reach = new Map<string, { from: string; bridgeId: string }>();
 	const bridges = new Map<string, Dialogs>(), waiting = new Map<string, (ack?: Ack) => void>(), done = new Map<string, { key: string; at: number; sent: Sent }>(), probes = new Map<string, (e?: Editor) => void>(), lists = new Map<string, (c?: Cmd[]) => void>();
+	const closes = new Map<string, (r?: Pick<CloseResult, "accepted" | "reason">) => void>();
 	const caps = createCaps(), forms = new Map<string, (r?: FormReply) => void>();
 	let shelves = new Map<string, Shelf>();
 	const owner = () => channel?.snapshot().owner?.sessionId === me;
@@ -81,6 +82,7 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 		if (msg.type === "ack") waiting.get([from, msg.bridgeId, msg.id, msg.answerId].join("\n"))?.(msg);
 		if (msg.type === "probe-result") probes.get([from, msg.bridgeId, msg.probeId].join("\n"))?.(checkProbe({ ...msg }));
 		if (msg.type === "commands-result" && str(msg.reqId)) lists.get([from, msg.bridgeId, msg.reqId].join("\n"))?.(checkCommands(msg.commands));
+		if (msg.type === "close-result" && str(msg.reqId) && typeof msg.accepted === "boolean" && opt(msg.reason) && (msg.reason?.length ?? 0) <= 512) closes.get([from, msg.bridgeId, msg.reqId].join("\n"))?.({ accepted: msg.accepted, ...(msg.reason ? { reason: msg.reason } : {}) });
 		if (msg.type === "form-result" && typeof msg.accepted === "boolean" && opt(msg.reason) && (msg.reason?.length ?? 0) <= 512) forms.get([from, msg.bridgeId, msg.id, msg.answerId].join("\n"))?.(msg);
 	};
 	const onEvent = (e: Event) => {
@@ -118,7 +120,7 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 	const hub: LocalHub & {
 		readonly running: boolean; readonly me: string; start(onChange: () => void): void; stop(): void; relayed(sessions: Session[], refs: Map<string, Ref>): Relayed; target(key: string): Target | undefined;
 		replay(answerId: string, key: string): Sent | undefined; ended(key: string, dialog: string, answerId: string): Sent | undefined; send(key: string, t: Target, a: Omit<AnswerMessage, "version" | "type" | "to">): Promise<Sent>;
-		probe(key: string): Promise<Editor | undefined>; commands(key: string, prefix: string): Promise<Cmd[] | undefined>; doc(cap: string): { key: string; doc: Doc } | undefined; form(cap: string, answerId: string, fields: Fields): Promise<FormResult | undefined>;
+		probe(key: string): Promise<Editor | undefined>; commands(key: string, prefix: string): Promise<Cmd[] | undefined>; close(key: string, keepPane: boolean): Promise<{ accepted: boolean; reason?: string } | undefined>; doc(cap: string): { key: string; doc: Doc } | undefined; form(cap: string, answerId: string, fields: Fields): Promise<FormResult | undefined>;
 	} = {
 		receive,
 		get running() { return active; },
@@ -138,7 +140,7 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 			active = false;
 			[bridges, bound, targets, reach, shelves].forEach((m) => m.clear());
 			caps.clear(); // a capability lives as long as its server
-			[...waiting.values(), ...probes.values(), ...lists.values(), ...forms.values()].forEach((w) => w());
+			[...waiting.values(), ...probes.values(), ...lists.values(), ...forms.values(), ...closes.values()].forEach((w) => w());
 		},
 		/** Binds each relayed list to a unit, from this net reading's sessions and registry. */
 		relayed(sessions, refs) {
@@ -186,6 +188,8 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 		/** What the session's editor would submit (unknown when undefined). */
 		probe: (key) => request(key, probes, () => checkProbe({ ...local.probe() }), (probeId) => ({ type: "probe", probeId })),
 		/** The session's commands that match `prefix`, as its bridge lists them. */
+		/** Asks the session to quit as /boss close does (keeping its pane when `keepPane`); undefined when its bridge did not answer. */
+		close: (key, keepPane) => request(key, closes, () => local.close(keepPane), (reqId) => ({ type: "close", reqId, keepPane })),
 		commands: (key, prefix) => request(key, lists, () => checkCommands(local.commands(prefix)), (reqId) => ({ type: "commands", reqId, prefix })),
 		/** A listed document by its capability, as its bridge lists it now (a list that changed since the reading counts, a bridge that left does not). */
 		doc(cap) {

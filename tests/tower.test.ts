@@ -116,13 +116,14 @@ test("a glyph tab that runs an agent or holds other panes is not a leftover: it 
 	assert.deepEqual(world.herdr.closed, []);
 });
 
-test("a tower that quits closes its own tab when the tab holds only its pane", async () => {
+test("a tower that quits closes its own pane, which closes a tab it emptied", async () => {
 	const tower = world.tower("tower-wA", "wA:t7", "wA:p7");
 	await tower.start();
 	await tower.stop();
-	assert.deepEqual(world.herdr.closed, ["wA:t7"]);
+	assert.deepEqual(world.herdr.closed, ["wA:p7"]);
 	assert.deepEqual(world.herdr.panes.filter((p) => p.tab_id === "wA:t7"), []);
-	assert.deepEqual(world.herdr.workspace("wA").tokens, {});
+	assert.ok(!world.herdr.tabs.some((t) => t.tab_id === "wA:t7"));
+	assert.deepEqual(world.herdr.workspace("wA").tokens, { sb_tower_quit: "1" }, "the token goes, and the quit says so: the mains are cleared at once");
 });
 
 test("reload, new, resume and fork keep the tower's tab", async () => {
@@ -134,12 +135,12 @@ test("reload, new, resume and fork keep the tower's tab", async () => {
 	}
 });
 
-test("a tower that quits leaves a tab alone that holds other panes", async () => {
+test("a tower that quits closes its pane but leaves the other panes of its tab", async () => {
 	const tower = world.tower("tower-wA", "wA:t7", "wA:p7");
 	await tower.start();
 	world.herdr.addPane("wA:p77", "wA:t7", "shell");
 	await tower.stop();
-	assert.deepEqual(world.herdr.closed, []);
+	assert.deepEqual(world.herdr.closed, ["wA:p7"]);
 	assert.ok(world.herdr.panes.some((p) => p.pane_id === "wA:p77"));
 });
 
@@ -199,7 +200,7 @@ test("a shell that never becomes available fails with the busy answer and its pa
 test("two callers racing to open the tower open one tab", async () => {
 	world.autoTowers();
 	const a = await main("a", "wA:p1", "wA:t1");
-	const b = await main("b", "wA:p2", "wA:t1");
+	const b = await main("b", "wA:p2", "wA:t2");
 	await Promise.all([a.tool("call_tower", { message: "from a" }), b.tool("call_tower", { message: "from b" })]);
 	assert.equal(world.herdr.commands("tab", "create").length, 1);
 	assert.deepEqual(world.broker.delivered.map((d) => d.to), ["tower-wA", "tower-wA"]);
@@ -299,12 +300,14 @@ test("call_tower resolves a workspace by id or exact label; towers reach the hea
 	await assert.rejects(a.tool("call_tower", { message: "x" }), /did not take the message: failed delivery_failed/);
 });
 
-test("/boss tower opens the workspace tower and focuses its tab; /boss status shows the coordinators", async () => {
+test("/boss tower opens the workspace tower by hand and focuses its tab, call_tower from a member opens nothing; /boss status shows the coordinators", async () => {
 	world.autoTowers();
 	const a = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1" });
 	await a.start();
 	await a.command("status");
 	assert.match(a.notices.at(-1)!.text, /"role": "member"/);
+	await assert.rejects(a.tool("call_tower", { message: "x" }), /no tower yet/, "call_tower from a member opens no tower");
+	assert.deepEqual(world.herdr.commands("tab", "create"), []);
 	await a.command("tower");
 	await until(() => world.herdr.commands("tab", "focus").length === 1, "tab focus");
 	assert.deepEqual(world.herdr.commands("tab", "focus"), [["tab", "focus", "wA:t100"]]);

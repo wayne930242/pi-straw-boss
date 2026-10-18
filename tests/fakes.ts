@@ -143,7 +143,9 @@ export class FakeHerdr {
 		}
 		if (group === "pane" && cmd === "close") {
 			this.closed.push(args[2]!);
+			const tab = this.panes.find((p) => p.pane_id === args[2])?.tab_id;
 			this.panes = this.panes.filter((p) => p.pane_id !== args[2]);
+			if (!this.panes.some((p) => p.tab_id === tab)) this.tabs = this.tabs.filter((t) => t.tab_id !== tab); // as Herdr closes an emptied tab
 			return out({});
 		}
 		if (group === "workspace" && cmd === "close") {
@@ -343,6 +345,7 @@ export class Agent {
 		this.ctx = {
 			hasUI: Boolean(options.ui),
 			get signal() { return self.signal; },
+			shutdown: () => void self.stop("quit"), // pi quits as /quit would
 			ui: {
 				notify: (text: string, level?: string) => this.notices.push({ text, level }),
 				// An overlay stays open until it calls done; the test drives it through `overlays`.
@@ -376,7 +379,7 @@ export class Agent {
 		if (!options.noIntercom) events.on("intercom:outbox-request", (request) => world.broker.outbox(this, request as { requestId: string; to: string; message: string }));
 		world.broker.connect(this);
 		// The extension's waits are real in production; here they are capped so timeouts take milliseconds.
-		createStrawBoss({ run: world.herdr.runFor(this.pane), api: world.herdr.api, watch: world.watch, env, sleep: (ms) => sleep(Math.min(ms, 2)), promptDir: PROMPT_DIR, stateDir: world.stateDir, autoTower: false, ...options.deps })(pi);
+		createStrawBoss({ run: world.herdr.runFor(this.pane), api: world.herdr.api, watch: world.watch, env, sleep: (ms) => sleep(Math.min(ms, 2)), promptDir: PROMPT_DIR, stateDir: world.stateDir, autoTower: false, later: (_pid, args) => void world.herdr.runFor(this.pane)(args), ...options.deps })(pi);
 	}
 
 	emit(channel: string, data: unknown): void {
@@ -394,6 +397,12 @@ export class Agent {
 	get tokens(): Tokens {
 		const { sb_order: _order, sb_mark: _mark, sb_indent: _indent, sb_name: _name, sb_tab: _tab, sb_main_tab: _mt, sb_member_tab: _bt, ...role } = this.world.herdr.pane(this.pane).tokens;
 		return role;
+	}
+	/** Fires one event and returns the last answer a handler gave (a tool_call's block, for instance). */
+	async fireResult(type: string, event: Record<string, unknown> = {}): Promise<unknown> {
+		let last: unknown;
+		for (const handler of this.handlers.get(type) ?? []) last = (await handler({ type, ...event }, this.ctx)) ?? last;
+		return last;
 	}
 	async fire(type: string, event: Record<string, unknown> = {}): Promise<void> {
 		for (const handler of this.handlers.get(type) ?? []) await handler({ type, ...event }, this.ctx);

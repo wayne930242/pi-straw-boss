@@ -18,6 +18,7 @@ import { type Editor, probeEditor } from "./probe.ts";
 // Enter guard asks it what the editor would submit (`probe`, probe.ts), and it answers with a class and at most a command name, never the draft. It relays
 // the documents the session shows with its dialogs (documents.ts) and hands a form answer for one of them to their owner. The composer's `/` menu
 // asks it (`commands`) for the session's commands that match what is typed, and it answers with their names, sources, and descriptions.
+// A close button asks it (`close`) to quit its session the way /boss close does (index.ts), which answers whether it will.
 
 export const REGISTER = "intercom:extension-register";
 const VERDICT_MS = 2000, POLL_MS = 2000, KEEP_MS = 120_000, KEEP = 16, MAX_GUIS = 8, MAX_MESSAGE = 15 * 1024;
@@ -31,18 +32,20 @@ export interface Closed { id: string; by: string; answerId?: string }
 export interface ProbeResult extends Editor { version: 1; type: "probe-result"; bridgeId: string; probeId: string }
 export interface CommandsResult { version: 1; type: "commands-result"; bridgeId: string; reqId: string; commands: Cmd[] }
 export interface FormReply { version: 1; type: "form-result"; bridgeId: string; id: string; answerId: string; accepted: boolean; reason?: string }
-export type ToHub = Dialogs | Ack | ProbeResult | FormReply | CommandsResult;
+export interface CloseResult { version: 1; type: "close-result"; bridgeId: string; reqId: string; accepted: boolean; reason?: string }
+export type ToHub = Dialogs | Ack | ProbeResult | FormReply | CommandsResult | CloseResult;
 export interface FormMessage { version: 1; type: "form"; to: string; id: string; answerId: string; fields: Fields }
 export interface AnswerMessage extends Answer { version: 1; type: "answer"; to: string }
 /** The hub when it runs in this session: it takes what a remote bridge would publish, from this session's id. */
 export interface LocalHub { receive(from: string, msg: ToHub): void }
 /** What the hub calls on the bridge of its own session. */
-export interface Bridge { deliver(msg: AnswerMessage, reply: (ack: Ack) => void): void; sync(): void; probe(): Editor; commands(prefix: string): Cmd[]; form(msg: FormMessage, reply: (r: FormReply) => void): void }
+export interface Bridge { deliver(msg: AnswerMessage, reply: (ack: Ack) => void): void; sync(): void; probe(): Editor; commands(prefix: string): Cmd[]; form(msg: FormMessage, reply: (r: FormReply) => void): void; close(keepPane: boolean): { accepted: boolean; reason?: string } }
 interface Channel { snapshot(): { connected: boolean; owner?: { sessionId: string; epoch: string } }; publish(payload: unknown, options?: { audience?: "owner" | "capable" }): void }
 interface Rec { adapter: OwnerAdapter; d: Dialog; state: "open" | "settling" | "unknown" | "closed"; answerId?: string; accepted?: boolean; by?: string; at?: number; last?: Ack; waiting: ((ack: Ack) => void)[] }
 type Event = { type: string; fromSessionId?: string; owner?: { sessionId: string; epoch: string }; payload?: Record<string, unknown> };
 
-export function startBridge(pi: ExtensionAPI, { env, dir, local }: { env: NodeJS.ProcessEnv; dir: string; local(): LocalHub | undefined }): Bridge {
+/** `close` quits the session (keeping its pane when `keepPane`), or says why it cannot. */
+export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env: NodeJS.ProcessEnv; dir: string; local(): LocalHub | undefined; close(keepPane: boolean): string | undefined }): Bridge {
 	const bus = pi.events as Bus, bridgeId = randomUUID(), recs = new Map<string, Rec>(), calls = new Map<string, { tool: string; signal?: AbortSignal; stop?: () => void }>();
 	const chans = new Map<string, Channel>(), me = () => env.PI_INTERCOM_SESSION_ID ?? "";
 	let g: string | undefined, gpid = 0, seen: number | undefined, poll: ReturnType<typeof setInterval> | undefined, offs: (() => void)[] = [], warned = false;
@@ -93,7 +96,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local }: { env: NodeJS
 	const onEvent = (from: string, ch: Channel, e: Event) => {
 		if (e.type === "owner" || e.type === "connection") return from === g && push();
 		const owner = ch.snapshot().owner, p = e.payload;
-		if (p?.type === "probe" || p?.type === "commands") follow(); // a probe goes only to the server gui.json names at this moment
+		if (p?.type === "probe" || p?.type === "commands" || p?.type === "close") follow(); // a probe goes only to the server gui.json names at this moment
 		// Only G's own session, as the broker's current owner of this channel and the server gui.json names now, may answer, probe, or ask for a sync.
 		if (e.type !== "message" || p?.version !== 1 || e.fromSessionId !== from || owner?.sessionId !== from || e.owner?.epoch !== owner.epoch) return;
 		if (p.type === "sync" && from === g) push();
@@ -101,7 +104,12 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local }: { env: NodeJS
 		if (p.type === "form" && p.to === bridgeId && from === g) form(p as unknown as FormMessage, (r) => send(from, r));
 		if (p.type === "answer" && p.to === bridgeId && from === g) deliver(p as unknown as AnswerMessage, (ack) => send(from, ack));
 		if (p.type === "probe" && p.to === bridgeId && from === g && alive() && typeof p.probeId === "string" && p.probeId.length <= 64) send(from, { version: 1, type: "probe-result", bridgeId, probeId: p.probeId, ...editor() });
+		if (p.type === "close" && p.to === bridgeId && from === g && alive() && typeof p.reqId === "string" && p.reqId.length <= 64 && typeof p.keepPane === "boolean") send(from, { version: 1, type: "close-result", bridgeId, reqId: p.reqId, ...shut(p.keepPane) });
 		if (p.type === "commands" && p.to === bridgeId && from === g && alive() && typeof p.reqId === "string" && p.reqId.length <= 64 && typeof p.prefix === "string" && p.prefix.length <= MAX_PREFIX) send(from, { version: 1, type: "commands-result", bridgeId, reqId: p.reqId, commands: listCommands(pi, p.prefix) });
+	};
+	const shut = (keepPane: boolean) => {
+		const why = close(keepPane);
+		return why ? { accepted: false, reason: why } : { accepted: true };
 	};
 	const changed = () => {
 		for (const [id, r] of recs) if (r.state === "closed" && (Date.now() - r.at! > KEEP_MS || recs.size > KEEP)) recs.delete(id);
@@ -194,5 +202,5 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local }: { env: NodeJS
 		offs.splice(0).forEach((off) => off());
 		(clearInterval(poll), (poll = undefined));
 	});
-	return { deliver, sync: () => ((seen = -1), follow()), probe: () => editor(), commands: (prefix) => listCommands(pi, prefix), form };
+	return { deliver, sync: () => ((seen = -1), follow()), probe: () => editor(), commands: (prefix) => listCommands(pi, prefix), form, close: shut };
 }

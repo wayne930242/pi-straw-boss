@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -12,6 +13,7 @@ import { answers, type Gui, markReload, newer, openBrowser, readRecord, requestS
 import { netSource } from "./net.ts";
 import { clearOrder, markKids, netTokens } from "./order.ts";
 import { opener } from "./opener.ts";
+import { createCloser } from "./closer.ts";
 import { createSpawn } from "./spawn.ts";
 import { orphans } from "./orphan.ts";
 import { copyText, pairingKeys, showLines } from "./pairing.ts";
@@ -31,10 +33,19 @@ const KID_MARK_MS = [3_000, 15_000];
 const NUDGE_MS = 15_000;
 const CLAIM_MS = 5000;
 /** What Tab completes after /boss; a bare /boss (take over as the main agent) has nothing to complete. */
-const BOSS_ARGUMENTS = Object.entries({ status: "Show the coordinators", tower: "Open and focus the workspace tower", gui: "Open the net in the browser", "gui stop": "Close the browser GUI", "gui remote": "Open the GUI to your phone over Tailscale", "gui remote off": "Close the Tailscale entry" }).map(([value, description]) => ({ value, label: value, description }));
+const BOSS_ARGUMENTS = Object.entries({ status: "Show the coordinators", close: "Quit this session and close its pane", tower: "Open and focus the workspace tower", gui: "Open the net in the browser", "gui stop": "Close the browser GUI", "gui remote": "Open the GUI to your phone over Tailscale", "gui remote off": "Close the Tailscale entry" }).map(([value, description]) => ({ value, label: value, description }));
 const CONNECT_MS = 15_000;
 const SEND_MS = 30_000;
 const SETTLE_MS = 2000;
+// The tower and the mains go together (guard below): how often a tab's owner checks, how long a tower may be gone (a /reload) before the
+// mains are cleared, and how long a fresh main's tower may take to open.
+const GUARD_MS = 5000, TOWER_GRACE_MS = 15_000, TOWER_OPEN_MS = 60_000;
+/** Closes a pane once the pi process `pid` has exited, from a process of its own, so pi's shutdown runs to the end first. */
+const afterExit = (pid: number, args: string[]) => {
+	const herdr = process.env.HERDR_BIN_PATH || "herdr";
+	const script = `i=0; while kill -0 ${pid} 2>/dev/null && [ $i -lt 120 ]; do sleep 0.5; i=$((i+1)); done; exec "$0" "$@"`;
+	spawn("sh", ["-c", script, herdr, ...args], { detached: true, stdio: "ignore" }).unref();
+};
 
 interface Channel {
 	snapshot(): { connected: boolean; supported: boolean; owner?: { sessionId: string }; state?: { payload: unknown } };
@@ -47,7 +58,7 @@ interface Saved { tower?: boolean }
 type Role = "tower" | "main" | "member";
 type Scope = "tab" | "workspace" | "towers" | "all";
 type Member = ReturnType<typeof netMembers>[number];
-export interface Deps { run?: HerdrRun; api?: HerdrApi; call?: HerdrCall; tailscale?: Run; copy?: (text: string) => Promise<void>; env?: NodeJS.ProcessEnv; sleep?: Sleep; promptDir?: string; bundle?: string; openUrl?: (url: string) => Promise<void>; watch?: HerdrWatch; stateDir?: string; autoTower?: boolean; nudgeMs?: number; version?: string }
+export interface Deps { run?: HerdrRun; api?: HerdrApi; call?: HerdrCall; tailscale?: Run; copy?: (text: string) => Promise<void>; env?: NodeJS.ProcessEnv; sleep?: Sleep; promptDir?: string; bundle?: string; openUrl?: (url: string) => Promise<void>; watch?: HerdrWatch; stateDir?: string; autoTower?: boolean; nudgeMs?: number; version?: string; guardMs?: number; now?: () => number; later?: (pid: number, args: string[]) => void }
 
 /** Live sessions whose pane carries an `sb_role` token: the sessions that joined the net, and towers. */
 function netMembers(sessions: Session[], ps: Pane[]) {
@@ -59,14 +70,16 @@ function netMembers(sessions: Session[], ps: Pane[]) {
 }
 const nameOf = (s?: Session) => (s ? (s.name ?? s.id) : "");
 
-export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdrCall(), tailscale: ts = tailscale, copy = copyText, env = process.env, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), promptDir = fileURLToPath(new URL("../prompts", import.meta.url)), bundle, openUrl = openBrowser, watch = herdrWatch(), stateDir, autoTower = true, nudgeMs = NUDGE_MS, version = VERSION }: Deps = {}) {
+export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdrCall(), tailscale: ts = tailscale, copy = copyText, env = process.env, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), promptDir = fileURLToPath(new URL("../prompts", import.meta.url)), bundle, openUrl = openBrowser, watch = herdrWatch(), stateDir, autoTower = true, nudgeMs = NUDGE_MS, version = VERSION, guardMs = GUARD_MS, now = Date.now, later = afterExit }: Deps = {}) {
 	return function strawBoss(pi: ExtensionAPI): void {
 		// Outside Herdr there is no tab to coordinate. Every session in Herdr relays its dialogs to the GUI (bridge.ts), subagents too: they ask
 		// questions as well. A pi-herdr-agents worker never joins: its parent represents it.
 		if (!env.HERDR_PANE_ID) return;
 		const guiDir = stateDir ?? join(env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "straw-boss");
 		let hub: Hub | undefined;
-		const bridge = startBridge(pi, { env, dir: guiDir, local: () => (hub?.running ? hub : undefined) });
+		// Closing is this session's own: the GUI asks its bridge, /boss close asks here, and only a session that runs this extension can (not a subagent).
+		let closeSelf: ((keepPane: boolean) => string | undefined) | undefined;
+		const bridge = startBridge(pi, { env, dir: guiDir, local: () => (hub?.running ? hub : undefined), close: (keep) => closeSelf?.(keep) ?? "A subagent is closed by the session that launched it." });
 		if (env.PI_SUBAGENT_ID) return;
 		let isTower = env.STRAW_BOSS_ROLE === "tower";
 		// A tab the tower opened for a request starts its pi with this role: it promotes itself as soon as it has joined (opener.ts).
@@ -126,7 +139,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 				await report(run, "pane", at.paneId, { sb_role: sbRole, ...net?.own, ...(openedBy ? { sb_opened_by: openedBy } : {}) }).catch(() => {});
 				if (net) kids = await markKids(run, net.kids, kids, net.joined);
 			}
-			if (holdsTower && !stopped) await report(run, "workspace", at.workspaceId, { tower: me() }).catch(() => {});
+			if (holdsTower && !stopped) await report(run, "workspace", at.workspaceId, { tower: me(), sb_tower_quit: null }).catch(() => {});
 		};
 		const publish = (known?: Session[]) => (publishing = publishing.then(() => publishOnce(known)).catch(() => {}));
 		// A new Herdr server (an update handoff, or a stop and start) starts without the tokens of the one before. Writing them waits for no refresh:
@@ -145,9 +158,9 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 		};
 
 		// The owner records who is main. Promotion is first come, first served, and the main stays until it leaves: a later owner change never swaps it.
-		const pin = (channel: Channel, main: string) => {
+		const pin = (channel: Channel, main?: string) => {
 			if (channel.snapshot().owner?.sessionId !== me()) return;
-			channel.commitState({ v: 1, main, since: Date.now() });
+			channel.commitState({ v: 1, ...(main ? { main } : {}), since: now() });
 			if (channel === c) pinned = main;
 		};
 		// The owner decides a claim: a tab has one main, so a claim is dropped while a live main exists, unless the user forced it with /boss.
@@ -160,6 +173,40 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			} catch (error) {
 				tell(`Straw Boss: ${(error as Error).message}`, "warning");
 			}
+		};
+		// A base has mains only while it has a tower. The owner of each tab channel, its earliest member, checks every guardMs: with a live tower
+		// and no live main it promotes itself; with no tower for TOWER_GRACE_MS (at once when the tower quit) it clears the tab's main, unless that
+		// main is younger than TOWER_OPEN_MS and its tower may still be opening. A demoted main keeps its subagents.
+		let missing: number | undefined, guardTimer: ReturnType<typeof setInterval> | undefined;
+		const guard = async () => {
+			if (!joined || isTower || stopped || c.snapshot().owner?.sessionId !== me()) return void (missing = undefined);
+			const sessions = await c.listSessions(), ws = (await workspaces(run)).find((w) => w.workspace_id === at.workspaceId);
+			const live = (id?: string) => Boolean(id && sessions.some((s) => s.id === id));
+			const state = c.snapshot().state?.payload as { main?: string; since?: number } | undefined, main = pinned ?? state?.main;
+			if (live(ws?.tokens?.tower)) {
+				missing = undefined;
+				if (!live(main)) await claim(c, me(), false);
+				return;
+			}
+			// A tower opens by itself when this base has two members while another base already has one: they start to collide (the other rule, a
+			// member dispatching a subagent, promotes it in tool_call, and a promotion opens the tower).
+			if (autoTower) {
+				const all = await panes(run), members = all.filter((p) => p.workspace_id === at.workspaceId && ["member", "main"].includes(p.tokens?.sb_role ?? ""));
+				const towers = (await workspaces(run)).filter((w) => w.workspace_id !== at.workspaceId && live(w.tokens?.tower));
+				if (members.length >= 2 && towers.length) return void (await openTower(undefined, true));
+			}
+			missing ??= now();
+			if (!live(main) || (pinned && pinned !== state?.main) || now() - (state?.since ?? 0) < TOWER_OPEN_MS) return;
+			if (ws?.tokens?.sb_tower_quit === "1" || now() - missing >= TOWER_GRACE_MS) pin(c);
+		};
+		const keepGuard = () => {
+			let checking = false; // one check at a time: a slow Herdr must not pile checks up in the queue
+			const tick = () => {
+				if (checking) return;
+				checking = true;
+				queue = queue.then(() => guard().catch(() => {})).finally(() => (checking = false));
+			};
+			if (guardMs && !guardTimer) (guardTimer = setInterval(tick, guardMs)).unref();
 		};
 		type Event = { type: string; fromSessionId?: string; owner?: { sessionId: string }; payload?: { type?: string; force?: boolean } };
 		// A tab this session left stays registered, and if the session owns that channel it still decides that tab's claims (or its members could
@@ -195,7 +242,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 				if (isMain !== wasMain) tell(`This session is ${isMain ? "now" : "no longer"} the main agent of ${info.tab}`);
 				await publish(sessions);
 				// The workspace's first main opens the tower at once; later mains find it open.
-				if (isMain && !wasMain && autoTower) void openTower().catch((error: Error) => tell(`Straw Boss: could not open the tower: ${error.message}`, "warning"));
+				if (isMain && !wasMain && autoTower) void openTower(undefined, true).catch((error: Error) => tell(`Straw Boss: could not open the tower: ${error.message}`, "warning"));
 			} catch (error) {
 				tell(`Straw Boss: ${(error as Error).message}`, "warning");
 			}
@@ -219,6 +266,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 				addNetTools();
 				addPromote();
 				keepFresh();
+				keepGuard();
 				await sync();
 			})().catch((error) => {
 				joining = undefined;
@@ -254,7 +302,8 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 				const timeout = setTimeout(() => done({ status: "failed", detail: `no result within ${SEND_MS / 1000} s` }), SEND_MS);
 				pi.events.emit(OUTBOX, { version: 1, requestId, extensionId: "pi-straw-boss", extensionName: "Pi Straw Boss", to, message });
 			});
-		const openTower = async (query?: string) => {
+		/** The tower of this workspace, or of another by id or label. A missing tower is opened only in this workspace: by /boss tower, by a main, or by the guard's rule. */
+		const openTower = async (query?: string, create = isMain) => {
 			const all = await workspaces(run);
 			const found = all.filter((w) => (query ? w.workspace_id === query || w.label === query : w.workspace_id === at.workspaceId));
 			if (found.length !== 1) {
@@ -266,6 +315,11 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			if (!target) throw new Error(`${asked.label} is a sub workspace with no open parent workspace, so it has no tower; open the parent workspace first`);
 			if (isTower && target.workspace_id === at.workspaceId) throw new Error("This session is the tower of that workspace");
 			const live = async (id: string) => (await c.listSessions()).some((s) => s.id === id);
+			const held = target.tokens?.tower;
+			if (!create || target.workspace_id !== at.workspaceId) {
+				if (held && (await live(held))) return { target, routed: target !== asked ? asked : undefined, id: held, opened: false };
+				throw new Error(`${target.label} has no tower yet: it opens when a member there promotes itself to main`);
+			}
 			const moveFirst = (tabId: string) => api("tab.move", { tab_id: tabId, insert_index: 0 }).catch((error: Error) => tell(`Straw Boss: could not move the tower tab first: ${error.message}`, "warning"));
 			return { target, routed: target !== asked ? asked : undefined, ...(await ensureTower({ run, sleep, live, moveFirst, model: towerModel(guiDir) }, target, process.cwd())) };
 		};
@@ -365,6 +419,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			// A second tower in one workspace yields before it publishes: the live token holder wins, otherwise the lower tab id.
 			if ((holder && holder !== me() && sessions.some((s) => s.id === holder)) || (rival && rival.tab_id < at.tabId)) {
 				await report(run, "pane", at.paneId, { sb_role: null });
+				closing = { keepPane: true }; // its tab goes with it already
 				await run(["tab", "close", at.tabId]);
 				return;
 			}
@@ -405,6 +460,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			stopped = false;
 			ui = ctx.ui;
 			hasUI = ctx.hasUI;
+			quit = () => ctx.shutdown();
 			prompts = Object.fromEntries(PROMPTS.map((name) => [name, readFileSync(join(promptDir, `${name}.md`), "utf8").trim()]));
 			saved = Object.assign({}, ...ctx.sessionManager.getBranch().flatMap((e) => (e.type === "custom" && e.customType === ENTRY ? [e.data] : [])));
 			isTower ||= Boolean(saved.tower);
@@ -452,8 +508,10 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 		});
 
 		// A member that dispatches or resumes a subagent without promoting is promoted here, before the subagent starts, unless the tab already has a main.
+		// A tower only coordinates: it dispatches no subagent (one would outlive it with no one to take its result), and opens a main for the work instead.
 		pi.on("tool_call", async (event) => {
-			if (!["subagent", "subagent_resume"].includes(event.toolName) || isTower || barred) return;
+			if (!["subagent", "subagent_resume"].includes(event.toolName) || barred) return;
+			if (isTower) return { block: true, reason: "A tower dispatches no subagents. Open a main for this work with boss_open_main, or route it to the main that owns it." };
 			try {
 				await joinNet();
 				if (!isMain) await promote(false);
@@ -467,7 +525,19 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			if (["subagent", "subagent_resume"].includes(event.toolName) && !isTower && !barred && role()) for (const ms of KID_MARK_MS) setTimeout(() => void publish(), ms).unref();
 		});
 
+		// Closing: pi quits as /quit would (its shutdown clears this session's tokens; a tower's quit clears the mains), then its pane closes, which
+		// closes an emptied tab and an emptied base with it. `keepPane` leaves the pane to a caller that closes the whole tab or base.
+		let quit: (() => void) | undefined, closing: { keepPane: boolean } | undefined;
+		closeSelf = (keepPane) => {
+			if (!quit) return "This session has not started yet.";
+			closing ??= { keepPane };
+			setTimeout(() => quit?.(), 50); // after the answer has gone out
+			return undefined;
+		};
+
 		pi.on("session_shutdown", async (event) => {
+			// A closed session, and a tower that quits however it was asked, take their pane with them (and an emptied tab); a /reload, /new, resume or fork keeps it.
+			if ((closing ? !closing.keepPane : isTower) && event.reason === "quit" && env.HERDR_PANE_ID) later(process.pid, ["pane", "close", env.HERDR_PANE_ID]);
 			if (gui && event.reason !== "quit") markReload(guiDir, me()); // a /reload, /new, or /resume starts it again in this process
 			if (gui) await switchRemote(gui, false, guiDir, ts).catch(() => {});
 			await gui?.stop();
@@ -476,6 +546,8 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			dashboard = undefined;
 			clearInterval(timer);
 			timer = undefined;
+			clearInterval(guardTimer);
+			guardTimer = undefined;
 			clearInterval(nudgeTimer);
 			nudges?.stop();
 			unwatch?.();
@@ -487,13 +559,8 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			if (!role() || !at) return;
 			await report(run, "pane", at.paneId, { sb_role: null, sb_opened_by: null, sb_order: null, sb_mark: null, sb_indent: null, sb_name: null, sb_tab: null, sb_main_tab: null, sb_member_tab: null }).catch(() => {});
 			await clearOrder(run, [...kids]);
-			if (held) await report(run, "workspace", at.workspaceId, { tower: null }).catch(() => {});
-			// A tower that quits leaves its tab as a plain shell: close the tab, but only when this pane is all it holds. A reload, /new, resume or fork keeps the tab.
-			if (isTower && event.reason === "quit") {
-				const all = await panes(run, at.workspaceId).catch(() => []);
-				const tab = all.find((p) => p.pane_id === at.paneId)?.tab_id;
-				if (tab && all.every((p) => p.tab_id !== tab || p.pane_id === at.paneId)) await run(["tab", "close", tab]).catch(() => {});
-			}
+			// A tower that quits says so, so the mains are cleared at once instead of after the grace a /reload gets.
+			if (held) await report(run, "workspace", at.workspaceId, { tower: null, ...(event.reason === "quit" ? { sb_tower_quit: "1" } : {}) }).catch(() => {});
 		});
 
 		// /boss gui is a read-only viewer: any session may open it, and it joins nothing and writes no token. A session outside the net
@@ -524,7 +591,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 		const share = (take = false, remote = false) =>
 			(opening ??= (async () => {
 				if (gui) return { url: gui.url, owner: label(), mine: gui };
-				const start = (prefer: { port?: number; token?: string; csrf?: string }, net = netSource({ run, sessions, hub: (hub = hub?.me === me() ? hub : createHub(pi, me(), bridge)) })) => startGui({ read: net.read, net, call, hub, dir: bundle, ...prefer, onStop: (asked) => void stopOwn(asked), onRemote: async () => tell((await switchRemote(gui!, true, guiDir, ts)).text), spawn: createSpawn({ run, sleep, call, live: async (id) => (await sessions()).some((s) => s.id === id) }) });
+				const start = (prefer: { port?: number; token?: string; csrf?: string }, net = netSource({ run, sessions, hub: (hub = hub?.me === me() ? hub : createHub(pi, me(), bridge)) })) => startGui({ read: net.read, net, call, hub, dir: bundle, ...prefer, onStop: (asked) => void stopOwn(asked), onRemote: async () => tell((await switchRemote(gui!, true, guiDir, ts)).text), spawn: createSpawn({ run, sleep, call, live: async (id) => (await sessions()).some((s) => s.id === id) }), close: createCloser({ run, sleep, me, sessions, ask: async (key, keepPane) => hub?.close(key, keepPane) }) });
 				const shared = await sharedGui(guiDir, [label(), me()], start, sleep, { version, take });
 				if ((gui = shared.mine) && !remote) await switchRemote(gui, false, guiDir, ts).catch(() => {});
 				return shared;
@@ -552,7 +619,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 		};
 
 		pi.registerCommand("boss", {
-			description: "Take over as this tab's main agent (every session already joins as a member). /boss status shows the coordinators; /boss tower opens and focuses the workspace tower; /boss gui opens the net in the browser (/boss gui stop closes it; /boss gui remote opens it to your phone over Tailscale, /boss gui remote off closes that).",
+			description: "Take over as this tab's main agent (every session already joins as a member). /boss status shows the coordinators; /boss tower focuses the workspace tower (a main opens it when there is none); /boss close quits this session and closes its pane; /boss gui opens the net in the browser (/boss gui stop closes it; /boss gui remote opens it to your phone over Tailscale, /boss gui remote off closes that).",
 			// pi passes the whole argument text and replaces it with the chosen value, so each value is a full argument line.
 			getArgumentCompletions: (prefix) => {
 				const items = BOSS_ARGUMENTS.filter((item) => item.value.startsWith(prefix.trimStart()));
@@ -562,11 +629,13 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 				ui = ctx.ui;
 				try {
 					if (/^gui( stop| remote( off)?)?$/.test(args.trim())) return await guiCommand(args.trim().slice(4));
+					const why = args.trim() === "close" ? (closeSelf?.(false) ?? "") : undefined;
+					if (why !== undefined) return void (why && tell(why, "error"));
 					if (args.trim() === "status") return tell(joined || isTower ? JSON.stringify(await status(), null, 2) : "Not in the net: still joining, or this session cannot join.");
 					if (isTower) throw new Error("This session is the tower, not a main agent");
 					if (args.trim() !== "tower") return tell((await promote(true)).text);
 					await joinNet();
-					const tower = await openTower();
+					const tower = await openTower(undefined, true); // anyone may open the tower by hand
 					const where = (await c.listSessions()).find((s) => s.id === tower.id)?.herdrLocation;
 					if (where?.tab) await run(["tab", "focus", where.tab.id]);
 				} catch (error) {

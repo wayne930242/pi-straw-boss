@@ -109,7 +109,15 @@ export function aimOpening(button: HTMLElement, b: Base, tab?: string) {
 	if (button.textContent !== (kind === "main" ? m.open_main() : m.open_member())) button.textContent = kind === "main" ? m.open_main() : m.open_member();
 }
 
-const baseEl = () => html(`<section class="base"><header><div class="tower"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></div><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>${m.head_tower()}</span><h2><a class="enter-base"></a></h2><p></p></div></header><div class="spawn-btns"><button type="button" class="pair-btn"></button></div><div class="tabs"></div><div class="outposts" data-label="${m.outposts()}"></div></section>`);
+/** Points a close button at its base or squad (main.ts asks first, then posts close/base or close/tab). */
+export function aimClose(button: HTMLElement, b: Base, tab?: { id: string; label: string }) {
+	button.dataset.ws = b.id;
+	button.dataset.name = tab ? tab.label : b.label;
+	if (tab) button.dataset.tab = tab.id;
+	button.setAttribute("aria-label", tab ? m.close_squad({ name: tab.label }) : m.close_base({ name: b.label }));
+}
+
+const baseEl = () => html(`<section class="base"><header><div class="tower"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></div><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>${m.head_tower()}</span><h2><a class="enter-base"></a></h2><p></p></div><button type="button" class="close-x" data-close="base">×</button></header><div class="spawn-btns"><button type="button" class="pair-btn"></button></div><div class="tabs"></div><div class="outposts" data-label="${m.outposts()}"></div></section>`);
 function fillBase(el: HTMLElement, b: Base) {
 	mark(el, b.mark);
 	el.classList.toggle("head", b.head);
@@ -120,8 +128,10 @@ function fillBase(el: HTMLElement, b: Base) {
 	aim(el.querySelector("h2 a")!, { view: "workspace", ws: b.id });
 	text(el, ".title p", b.tower ? m.control_tower({ state: LABEL[b.tower.mark]() }) : m.no_tower());
 	aimOpening(el.querySelector(".spawn-btns button")!, b);
-	sync(el.querySelector(".tabs")!, b.tabs, () => html(`<div class="tab"><h3><span></span><button type="button" class="tab-add"></button></h3><div class="units"></div></div>`), (tab, t) => {
+	aimClose(el.querySelector("header .close-x")!, b);
+	sync(el.querySelector(".tabs")!, b.tabs, () => html(`<div class="tab"><h3><span></span><button type="button" class="tab-add"></button><button type="button" class="close-x" data-close="tab">×</button></h3><div class="units"></div></div>`), (tab, t) => {
 		text(tab, "h3 span", m.tab_label({ label: t.label }));
+		aimClose(tab.querySelector(".close-x")!, b, t);
 		aimOpening(tab.querySelector(".tab-add")!, b, t.id);
 		sync(tab.querySelector(".units")!, t.units, unitEl, fillUnit);
 	});

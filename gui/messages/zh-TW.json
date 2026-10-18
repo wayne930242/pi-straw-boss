@@ -259,5 +259,11 @@
 	"opened_base": "基地已經開好，第一位成員已就位。",
 	"attach": "附加檔案",
 	"uploading": "上傳中…",
-	"file_too_large": "{name} 超過 20 MB。"
+	"file_too_large": "{name} 超過 20 MB。",
+	"close_base": "關閉基地 {name}",
+	"close_squad": "關閉小隊 {name}",
+	"close_base_ask": "要關閉基地 {name} 嗎？裡面所有 agent 和塔台都會退出。",
+	"close_squad_ask": "要關閉小隊 {name} 嗎？裡面所有 agent 都會退出。",
+	"close_unit_ask": "要關閉 {name} 嗎？它會退出 pi，窗格也會關掉。",
+	"close_tower_ask": "要關閉塔台 {name} 嗎？這個基地的主智慧體都會降格成成員。"
 }

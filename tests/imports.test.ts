@@ -91,7 +91,10 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.15.0 raised control.ts to 176 for sessions/<key>/upload, a file's bytes under the same origin and CSRF checks, handed to upload.ts (50 at most).
 	// 0.15.0 raised spawn.ts from 123 to 168: a base opens with a member and no tower, a base without a tower takes members (split into a squad or in
 	// a new tab), only one with a tower takes mains, and every opening shares the start, join wait, first message, and close-on-failure.
-	for (const [name, max] of [["commands.ts", 32], ["control.ts", 176], ["upload.ts", 50], ["spawn.ts", 168], ["remote.ts", 185], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 125], ["bridge.ts", 198], ["owners.ts", 120], ["dialogs.ts", 213], ["order.ts", 81], ["mirror.ts", 135], ["probe.ts", 40], ["keys.ts", 80], ["documents.ts", 80], ["docs.ts", 150], ["orphan.ts", 115], ["opener.ts", 90], ["server-watch.ts", 60]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
+	// 0.17.0 raised bridge.ts to 206 for `close`, the session asked to quit as /boss close does, and its answer.
+	// 0.17.0 raised dialogs.ts to 217 for the hub's side of `close`: the request, its answer, and its drop when the server stops.
+	// 0.17.0 raised control.ts to 178 for close/unit, close/tab, close/base, handed to closer.ts (70 at most).
+	for (const [name, max] of [["commands.ts", 32], ["control.ts", 178], ["closer.ts", 70], ["upload.ts", 50], ["spawn.ts", 168], ["remote.ts", 185], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 125], ["bridge.ts", 206], ["owners.ts", 120], ["dialogs.ts", 217], ["order.ts", 81], ["mirror.ts", 135], ["probe.ts", 40], ["keys.ts", 80], ["documents.ts", 80], ["docs.ts", 150], ["orphan.ts", 115], ["opener.ts", 90], ["server-watch.ts", 60]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
 	assert.ok(count("src/history.ts") <= 250, `src/history.ts has ${count("src/history.ts")} lines`);
 	// The item mapping and the stream glue came out of the reader to keep it within its budget; the spec sets no figure for them.
 	assert.ok(count("src/items.ts") <= 100, `src/items.ts has ${count("src/items.ts")} lines`);
@@ -101,7 +104,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// The blocked relay (rpiv-ask-user-question, and pi's own dialog prompts) is its own extension entry too. It was 25 lines for the rpiv relay alone;
 	// the dialog relay raised it to 42 for the label of a dialog's title and the signed count that keeps the pairs balanced when pi delivers an end ahead of its start, and the guard for an end that reaches a retired runtime.
 	assert.ok(count("src/blocked.ts") <= 42, "src/blocked.ts stays small");
-	const apart = ["commands.ts", "dashboard.ts", "net.ts", "gui.ts", "history.ts", "items.ts", "watch.ts", "balance.ts", "control.ts", "remote.ts", "pairing.ts", "qr.ts", "ask.ts", "blocked.ts", "bridge.ts", "owners.ts", "dialogs.ts", "order.ts", "mirror.ts", "probe.ts", "keys.ts", "documents.ts", "docs.ts", "orphan.ts", "opener.ts", "spawn.ts", "upload.ts", "server-watch.ts"];
+	const apart = ["commands.ts", "dashboard.ts", "net.ts", "gui.ts", "history.ts", "items.ts", "watch.ts", "balance.ts", "control.ts", "remote.ts", "pairing.ts", "qr.ts", "ask.ts", "blocked.ts", "bridge.ts", "owners.ts", "dialogs.ts", "order.ts", "mirror.ts", "probe.ts", "keys.ts", "documents.ts", "docs.ts", "orphan.ts", "opener.ts", "spawn.ts", "upload.ts", "closer.ts", "server-watch.ts"];
 	const rest = sum("src", names("src").filter((name) => !apart.includes(name)));
 	// 0.4.1 raised it from 540 to 575 for claiming and promotion; 0.5.0 to 610 for herdrCall (Herdr's answers with their error codes, spec task 4) and the /boss gui remote command;
 	// 0.5.1 to 620 for a join retry that follows its session to another tab; 0.6.0 to 630 to start the dialog bridge before the subagent return and the hub with the server.
@@ -116,10 +119,14 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.11.0 to 783 for /boss gui from any session (index.ts, 16 lines): stop asks the running server, remote and remote off take it over first,
 	// the owner's stop through onStop says who stopped it, and session start brings back the server a /reload or /new stopped (after a /new, once the new session's id shows) or takes over an older one.
 	// 0.13.0 to 784 for the opening API (spawn.ts, which has its own figure): index.ts hands it to the GUI with the tower opening it reuses (1 line).
-	assert.ok(rest <= 784, `the rest of src has ${rest} lines`);
+	// 0.17.0 to 855 for the tower and the mains going together (index.ts): the guard that promotes under a live tower, clears the mains when it quits or
+	// stays gone past a /reload's grace, and opens a base's tower by its own rule (two members while another base has one); and closing (/boss close and
+	// the bridge's close: quit as /quit, then the pane closes after pi has exited).
+	assert.ok(rest <= 855, `the rest of src has ${rest} lines`);
 	// The page: the files the spec budgets one by one, then this round's own figures (no figure in the spec): the focus views, the overlay
 	// layer (alert spotting and the stack model in the map's chunk, the layer's DOM and tiles in a chunk of their own), the dev-only demo, and everything else.
-	for (const [name, max] of [["router.ts", 80], ["chat.ts", 251], ["markdown.ts", 180], ["views.ts", 254], ["layer.ts", 181], ["composer.ts", 190], ["ask.ts", 156], ["mirror.ts", 146], ["keypad.ts", 60], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
+	// 0.17.0 raised views.ts to 259 for the close buttons of a base, its squads, and a unit (a subagent's is its launcher's to close).
+	for (const [name, max] of [["router.ts", 80], ["chat.ts", 251], ["markdown.ts", 180], ["views.ts", 259], ["layer.ts", 181], ["composer.ts", 190], ["ask.ts", 156], ["mirror.ts", 146], ["keypad.ts", 60], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
 	// 0.10.0: the page's text comes from Paraglide's messages (gui/messages), which raised chat.ts, views.ts, layer.ts, ask.ts, mirror.ts, and doc.ts by one
 	// line each for the messages import; the strings replaced in place. gui/i18n.ts picks the locale (the menu's choice, the browser's languages with
 	// Chinese by script) and translates index.html's static text: 50 lines, no figure in a spec.
@@ -166,7 +173,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// names and the server's fixed status words as messages (a note it does not know shows as it is).
 	// 0.11.0 to 558 for main.ts reloading a page whose stream says hello from another build than the one the server wrote into it.
 	// 0.15.0 to 578 for the opening buttons on the map: render.ts points a base's and each squad's at + Main or + Member, main.ts opens their tile.
-	assert.ok(page <= 578, `the page's TypeScript has ${page} lines`);
+	// 0.17.0 to 598 for the close buttons: render.ts aims a base's and each squad's (aimClose), main.ts confirms and posts every close.
+	assert.ok(page <= 598, `the page's TypeScript has ${page} lines`);
 });
 
 test("the built page is small, self-contained (no remote URLs, fonts, or imports), and carries no demo fixture", { skip: !existsSync(join(root, "dist/gui/index.html")) && "run npm run gui:build first" }, () => {
@@ -192,7 +200,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// every message calls it, and the header's, map's, log's, and banner's messages, each a function per locale with both languages' strings.
 	// 0.11.0 to 24.75 KB / 9.78 KB for the reload of a page whose server now runs another build (a newer pi-straw-boss took it over).
 	// 0.15.0 to 25.65 KB / 10 KB for the map's opening buttons (+ New base, a base's and a squad's + Main or + Member) and their click handler.
-	assert.ok(size(entry).length <= 25_650 && gz(entry) <= 10_000, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// 0.17.0 raised the map chunk to 27.7 KB / 10.7 KB for the close buttons on bases and squads and the confirmation before each close.
+	assert.ok(size(entry).length <= 27_700 && gz(entry) <= 10_700, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).
@@ -209,7 +218,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// 0.13.0 to 71.6 KB / 30.2 KB: the opening tile (a folder picker and two forms, its own chunk loaded on click) and the base view's two buttons, in both languages.
 	// 0.14.0 to 72.6 KB / 30.6 KB for the composer's `/` menu (gui/slash.ts) and the follow-up button's hint, in both languages.
 	// 0.15.0 to 74.3 KB / 31.1 KB for the new base, member, and squad member tiles, and the composer's file paste, drop, and picker, in both languages.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 74_300 && total(chunks, gz) <= 31_100, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// 0.17.0 to 74.9 KB / 31.3 KB for the close button in a unit's view and the close confirmations in both languages.
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 74_900 && total(chunks, gz) <= 31_300, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
@@ -221,5 +231,6 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// 0.13.0 to 32.7 KB / 8.375 KB for the opening tile: the base view's button row, the folder path and grid, the form fields, and the open button's colour (about 0.7 KB, 0.1 KB gzipped).
 	// 0.14.0 to 33.3 KB / 8.475 KB for the `/` menu above the composer: its box, rows, the lit row, and the name and description (about 0.6 KB, 0.1 KB gzipped).
 	// 0.15.0 to 34.05 KB / 8.625 KB for the opening buttons: a squad's small + Member, the base card's row, and the dashed + New base card, and short form tiles keeping their own height (about 0.7 KB, 0.15 KB gzipped).
-	assert.ok(total(css, (n) => size(n).length) <= 34_050 && total(css, gz) <= 8_625, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// 0.17.0 to 34.25 KB / 8.67 KB for the close buttons.
+	assert.ok(total(css, (n) => size(n).length) <= 34_250 && total(css, gz) <= 8_670, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });

@@ -34,7 +34,7 @@ function hub({ me = "G", owner = "G" } = {}) {
 	const forms: FormMessage[] = [];
 	let formReply: ((m: FormMessage) => FormReply | undefined) | undefined;
 	const events = { emit: (ch: string, r: never) => ch === REGISTER && ((reg = r), (r as { onReady(c: unknown): void }).onReady({ snapshot: () => ({ connected: true, owner: { sessionId: owner, epoch: "e1" } }), publish: (payload: unknown, options: unknown) => void published.push({ payload, options }) })), on: () => () => {} };
-	const local = { deliver: (m: AnswerMessage, r: (a: Ack) => void) => { delivered.push(m); const a = reply?.(m); if (a) r(a); }, sync: () => {}, probe: () => editor, commands: () => [], form: (m: FormMessage, r: (x: FormReply) => void) => { forms.push(m); const x = formReply?.(m); if (x) r(x); } };
+	const local = { deliver: (m: AnswerMessage, r: (a: Ack) => void) => { delivered.push(m); const a = reply?.(m); if (a) r(a); }, sync: () => {}, probe: () => editor, commands: () => [], close: () => ({ accepted: true }), form: (m: FormMessage, r: (x: FormReply) => void) => { forms.push(m); const x = formReply?.(m); if (x) r(x); } };
 	const h = createHub({ events } as unknown as ExtensionAPI, me, local);
 	h.start(() => changes.push(1));
 	const list = (dialogs: Dialog[], extra: Partial<Dialogs> = {}): Dialogs => ({ version: 1, type: "dialogs", bridgeId: "B", pane: "wA:p1", file: null, dialogs, closed: [], ...extra });

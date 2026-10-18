@@ -185,6 +185,6 @@ test("the tower prompt lets it open a main without asking the boss, and keeps it
 	const text = readFileSync(`${PROMPT_DIR}/tower.md`, "utf8");
 	assert.match(text, /open a main with boss_open_main without asking the boss/);
 	assert.match(text, /verbatim/);
-	assert.match(text, /Do no work yourself: no commands, process signals, or edits/);
+	assert.match(text, /Do no work yourself: no commands, process signals, edits, or subagents/);
 	assert.match(text, /Never ask the boss \(no ask_user, robot_hand, focus changes\)/);
 });

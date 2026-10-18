@@ -52,6 +52,8 @@ svg { display: block; }
 .tab-add { margin-left: auto; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line); background: none; color: var(--dim); font: 600 11px var(--sans); letter-spacing: 0.08em; cursor: pointer; }
 .squad .tab-add { margin-left: 0; }
 .tab-add:hover, .new-base:hover { color: #38e0ff; border-color: #38e0ff; }
+.close-x { margin-left: 6px; padding: 0 7px; border: 0; border-radius: 8px; background: none; color: var(--dim); font: 600 16px/1.4 var(--sans); cursor: pointer; } .close-x:hover { color: #ff8a9c; }
+.base > header .close-x, .zoom-in header .close-x { margin-left: auto; align-self: flex-start; } .d-close:hover { color: #ff8a9c; }
 .new-base { min-height: 140px; border-radius: 18px; border: 1px dashed var(--line); background: none; color: var(--dim); font: 600 14px var(--sans); letter-spacing: 0.08em; cursor: pointer; }
 .spawn .go { --c: #38e0ff; border: 0; }
 .spawn { display: grid; gap: 10px; color: var(--dim); font-size: 13px; }
