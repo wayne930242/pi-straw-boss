@@ -130,7 +130,7 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 		box.placeholder = why ?? m.placeholder({ name: unit.name });
 		send.disabled = busy || Boolean(why) || !box.value.trim(); // nothing typed, nothing to send
 		follow.hidden = stop.hidden = !working || Boolean(why);
-		follow.disabled = stop.disabled = busy;
+		[follow.disabled, stop.disabled] = [send.disabled, busy]; // a follow-up needs a message too
 	}
 	/** Uploads the files one by one and puts each stored path where the cursor is, as a word of its own. */
 	async function attachAll(files: File[]) {
