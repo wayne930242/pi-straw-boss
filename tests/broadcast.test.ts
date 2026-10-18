@@ -63,3 +63,13 @@ test("a broadcast with no recipients succeeds and says so", async () => {
 	const result = await lonely.tool("boss_broadcast", { message: "anyone?", scope: "tab" });
 	assert.match(result.content.map((c) => (c.type === "text" ? c.text : "")).join(""), /Broadcast to 1 session\(s\)/);
 });
+
+test("a restarted pi keeps its session id, and what it sends carries a message id the broker has not seen from that session", async () => {
+	world.broker.delivered.length = 0;
+	await a1.tool("boss_broadcast", { message: "one", scope: "tab" });
+	await a1.stop();
+	const again = world.agent({ id: "a1", pane: "wA:p1", tab: "wA:t1" });
+	await again.start();
+	await again.tool("boss_broadcast", { message: "two", scope: "tab" });
+	assert.deepEqual(world.broker.delivered.map((d) => [d.to, d.message]), [["a2", "one"], ["a2", "two"]]);
+});

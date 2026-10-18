@@ -59,6 +59,31 @@ A tower session with a TUI shows a monitoring widget above its editor. It is rea
 
 Where the data comes from: pi-intercom `listSessions()` (status `idle`, `thinking`, `tool:<name>`, and the Herdr location of each session), `herdr pane list` (`sb_role` token, Herdr's agent status where `blocked` means waiting on a question, and the pi session file), and `herdr workspace list` (workspace status, `tower` token, linked-worktree fields). Subagents are linked to their parent through pi-herdr-agents' own layout: the parent's session file names its artifacts directory, `subagent-activity/<child id>.json` there records each child's activity, and the child's pane session file contains the child id. So a subagent is grouped under the session that launched it wherever it runs, and it never counts as a net member of the workspace or tab it sits in.
 
+## Orphaned subagents
+
+A subagent's result reaches the session that launched it only while that session's own process keeps pi-herdr-agents' watchers and its registry of launched children (`runningSubagents`, in the process-wide slot `globalThis[Symbol.for("pi-subagents/runtime")]`).
+`/reload`, `/new`, `/resume` and `/fork` keep them, quitting pi suppresses the delivery, and a crash or restart drops them for good: pi-herdr-agents does not recover watchers after a full restart.
+A subagent that stays open after it finished, an interactive one for instance, is then stranded: it sits done in its pane and nobody is told.
+
+Every session in Herdr that is not itself a subagent checks for this every 15 seconds.
+While no subagent of the session is stranded, a check reads the registry and one directory; only a subagent that is not tracked and whose own activity says it waits brings a pi-intercom session listing, and after that one `herdr pane list` per check (and one `herdr pane process-info` when it is about to be asked).
+A subagent is asked to report when all of these hold:
+
+- **Its launcher no longer tracks it.** Its id is not in that registry. When the registry cannot be read (pi-herdr-agents is not loaded, or no longer keeps it there) nothing is known to be lost, so nothing is sent.
+- **Its result is not in the launcher's transcript.** No `subagent_result` or `subagent_ping` message names the child's session file.
+- **It has finished.** Its activity file says `waiting` (it ended its turn), its pane runs pi and Herdr says `done` (or `idle`, which a pane becomes once someone has looked at it), and pi-intercom says the session in that pane is `idle`. A child that works, waits on a question, or has not started is left alone.
+- **It was found so twice in a row,** 15 seconds apart, so that a delivery just going out is not taken for a lost one.
+- **Its pane runs the child itself.** The foreground processes of the pane (`herdr pane process-info`) include the launch script this session wrote for that run, `artifacts/<session id>/subagent-scripts/<name>-<run id>.sh`. A pane that only reuses the run's session file, such as a run another session resumed or a pi someone started on that file, is not the child, and neither is a pane whose processes Herdr does not list.
+
+Straw Boss then sends that session one intercom message: the launcher's session id and name, and the request to send its final report to that session through intercom and stop.
+The launcher shows a notification.
+It sends at most one message per run, where a run is a child id: its activity file is named after it, and the child's own `/reload` starts that file again, so its creation time says nothing about a run.
+The run is written to the launcher's session (a `straw-boss` entry with a `nudged` key) before the message goes out, so a restart does not repeat it, and a send that fails is shown as a warning and not tried again.
+A child whose pane cannot be found or does not run its launch script, or that has no pi-intercom session of its own, is given up on after four looks, until the next session start (a reload counts).
+A subagent whose process has exited cannot be asked; its result stays in its session file.
+A resumed run (`subagent_resume`) has an id of its own that nothing in its pane's session file names, so it is never found and never asked.
+The subagent's own launcher does this, not a tower: only the launcher's process knows what it tracks, so a tower never nudges the subagents of other sessions, and a subagent that launches subagents of its own does not (it runs no Straw Boss).
+
 ## Browser view
 
 `/boss gui` shows the whole net in your default browser: a game-style map, live and animated, where you can read any unit's comms and type into its session.
@@ -262,7 +287,8 @@ Herdr starts plugin commands with the PATH of the process that started its serve
 
 - Herdr pane token `sb_role` (`main`, `member` or `tower`; a tower tab is also marked right after it is created) and workspace token `tower` (the tower's intercom session id), both refreshed every 4 minutes with a 10 minute TTL and cleared at shutdown.
 - Pane tokens `sb_order` (a sort key), `sb_mark` (a role label) and, on subagents, `sb_indent` (a tree branch) next to `sb_role`, and the subagent ones on the panes of the subagents the session launched, with the same refresh and TTL; they feed the sidebar net view and the optional rows below (see [Sidebar net view](#sidebar-net-view)).
-- A pi session entry `straw-boss` (`tower`) so a resumed tower keeps its role. Members write no entry: every session joins at start, so entries saved by 0.4.0 (`asked`, `joined`) are ignored.
+- A pi session entry `straw-boss` (`tower`) so a resumed tower keeps its role. Members write no entry for their role: every session joins at start, so entries saved by 0.4.0 (`asked`, `joined`) are ignored. The one other entry carries `nudged`, a subagent run that was asked to report (see [Orphaned subagents](#orphaned-subagents)).
+- Every message it sends through intercom (`boss_broadcast`, `call_tower`, the nudge) has a message id with a nonce of the current process: pi-intercom refuses an id it saw from a session again with other content, and a restarted pi keeps its session id.
 - While remote access is on, one `tailscale serve` entry (HTTPS 8443, proxying to the GUI server), removed when it goes off.
 - One intercom extension channel per tab, `straw-boss/tab/<hex of the tab id>`, registered by every joined session and tower; the channel's owner (the first to join) only records the main, and it is not the main by that. Tab ids over 24 characters are refused.
 - The dialog channel `straw-boss/gui/<sha256 prefix of the server's session id>`: registered owner-eligible only by the session running the GUI server, and joined by every session (subagents included) while `gui.json` (which records the server's session as `ownerSession`) names another session; each session checks `gui.json` once every 2 s from its start. Besides dialogs it carries the session's document list (pi-herdr-doc-review's ids, paths, display names, reasons, revisions; the bridge asks the owner for the list again when it starts, so a session that reloads lists what is open) and form answers addressed to one document and once per answer id, and the key pad's editor check: the server asks a session's bridge what Enter would submit, and the bridge answers with a class (empty, text, another slash or `!` command, or unknown) and at most the name of a command that ends or replaces the session, never the draft, and only to the server `gui.json` names now whose process is alive.

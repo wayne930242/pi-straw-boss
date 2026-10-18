@@ -39,7 +39,7 @@ export const settle = async () => {
 };
 
 interface Tokens { [name: string]: string }
-interface FakePane { pane_id: string; tab_id: string; workspace_id: string; agent?: string; agent_status?: string; agent_session?: { value: string }; label?: string; tokens: Tokens }
+interface FakePane { pane_id: string; tab_id: string; workspace_id: string; agent?: string; agent_status?: string; agent_session?: { value: string }; label?: string; tokens: Tokens; processes?: { argv?: string[]; argv0?: string; name?: string }[] }
 interface FakeWorkspace { workspace_id: string; label: string; agent_status?: string; tokens: Tokens; worktree?: { checkout_path?: string; is_linked_worktree?: boolean; repo_key?: string } }
 
 /** A tiny Herdr: workspaces, tabs, panes, and the CLI subcommands the extension calls. */
@@ -110,6 +110,8 @@ export class FakeHerdr {
 		const out = (result: unknown) => JSON.stringify({ result });
 		if (this.failReads && cmd === "list") throw new Error(`herdr ${args.join(" ")} failed: not answering`);
 		if (group === "pane" && cmd === "current") return out({ pane: this.pane(self) });
+		// The foreground processes of a pane, as Herdr lists them (a launch script shows its argv; pi shows only its argv0).
+		if (group === "pane" && cmd === "process-info") return out({ process_info: { pane_id: flag("--pane"), foreground_processes: this.pane(flag("--pane")!).processes ?? [] } });
 		if (group === "workspace" && cmd === "list") return out({ workspaces: this.workspaces });
 		if (group === "pane" && cmd === "list") return out({ panes: this.panes.filter((p) => !flag("--workspace") || p.workspace_id === flag("--workspace")) });
 		if (group === "tab" && cmd === "list") return out({ tabs: this.tabs.filter((t) => t.workspace_id === flag("--workspace")) });
@@ -209,9 +211,13 @@ export class FakeBroker {
 		for (const ns of agent.regs.keys()) this.elect(ns);
 		for (const other of this.sessions.values()) for (const ns of other.regs.keys()) this.deliver(other.id, ns, { type: "session_left", sessionId: agent.id });
 	}
+	/** What each sender's message id carried: pi-intercom refuses an id again with other content, and a restarted pi keeps its session id. */
+	private ids = new Map<string, string>();
 	outbox(from: Agent, request: { requestId: string; to: string; message: string }): void {
-		const target = this.sessions.get(request.to);
-		const status = !target ? { status: "blocked", code: "target_not_found" } : this.failing.has(request.to) ? { status: "failed", code: "delivery_failed" } : { status: "sent" };
+		const target = this.sessions.get(request.to), used = `${from.id}|${request.requestId}`;
+		const reused = this.ids.has(used) && this.ids.get(used) !== request.message;
+		this.ids.set(used, this.ids.get(used) ?? request.message);
+		const status = reused ? { status: "failed", code: "delivery_failed", detail: "Message id was reused with different authored content" } : !target ? { status: "blocked", code: "target_not_found" } : this.failing.has(request.to) ? { status: "failed", code: "delivery_failed" } : { status: "sent" };
 		if (status.status === "sent") this.delivered.push({ from: from.id, to: request.to, message: request.message, tokens: JSON.stringify(this.herdr.workspaces.map((w) => w.tokens.tower)) });
 		setImmediate(() => from.emit("intercom:outbox-result", { version: 1, requestId: request.requestId, ...status }));
 	}
@@ -275,6 +281,8 @@ export class Agent {
 	status = "idle";
 	/** The session file pi would name, and the run's abort signal (ctx.signal). */
 	file?: string;
+	/** Entries of the transcript besides the extension's own (custom messages, for instance), as ctx.sessionManager.getEntries() returns them. */
+	transcript: { type: string; customType?: string; details?: unknown }[] = [];
 	signal?: AbortSignal;
 	/** Widgets set through ctx.ui.setWidget, and the live component of each. */
 	widgets = new Map<string, WidgetFactory | undefined>();
@@ -307,7 +315,7 @@ export class Agent {
 					if (factory) this.components.set(key, factory(this.tui, { fg: (_tone, text) => text, bold: (text) => text }));
 				},
 			},
-			sessionManager: { getBranch: () => this.entries.map((e) => ({ type: "custom", customType: e.customType, data: e.data })), getSessionFile: () => this.file },
+			sessionManager: { getBranch: () => this.entries.map((e) => ({ type: "custom", customType: e.customType, data: e.data })), getEntries: () => [...this.transcript, ...this.entries.map((e) => ({ type: "custom", customType: e.customType, data: e.data }))], getSessionFile: () => this.file },
 		};
 		const env = { ...(options.outsideHerdr ? {} : { HERDR_PANE_ID: options.pane }), PI_INTERCOM_SESSION_ID: this.id, ...options.env };
 		const events = {

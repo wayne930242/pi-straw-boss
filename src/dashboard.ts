@@ -71,9 +71,12 @@ export function render({ title, mark, head, rows, gui }: Snapshot, frame: number
 }
 
 /** Whether a session file is the child `id`'s: pi-herdr-agents names it `<timestamp>_<id>-<hex>-<hex>-<hex>.jsonl`, so `kid` does not match `kid-2`'s or `kidney`'s. */
-const ownFile = (file: string | undefined, id: string) => new RegExp(`_${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(-[0-9a-f]{1,8}-[0-9a-f]{1,8}-[0-9a-f]{1,4})?\\.jsonl$`).test(file ?? "");
+export const ownFile = (file: string | undefined, id: string) => new RegExp(`_${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(-[0-9a-f]{1,8}-[0-9a-f]{1,8}-[0-9a-f]{1,4})?\\.jsonl$`).test(file ?? "");
 
-function readJson(path: string): Record<string, unknown> {
+/** The artifacts directory pi-herdr-agents keeps for the session file `file`: its launch records and the activity of the children it launched. */
+export const artifacts = (file: string) => join(dirname(file), "artifacts", basename(file, ".jsonl").split("_").pop()!);
+
+export function readJson(path: string): Record<string, unknown> {
 	try {
 		return JSON.parse(readFileSync(path, "utf8"));
 	} catch {
@@ -85,7 +88,7 @@ function readJson(path: string): Record<string, unknown> {
 export function subagents(parent: Pane | undefined, all: Pane[], now: number, limit = MAX_CHILDREN): Row[] {
 	const file = parent?.agent_session?.value;
 	if (!file) return [];
-	const dir = join(dirname(file), "artifacts", basename(file, ".jsonl").split("_").pop()!);
+	const dir = artifacts(file);
 	let files: string[] = [];
 	try {
 		files = readdirSync(join(dir, "subagent-activity"));

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +11,7 @@ import { createHub, type Hub } from "./dialogs.ts";
 import { answers, type Gui, openBrowser, readRecord, sharedGui, startGui, urlOf } from "./gui.ts";
 import { netSource } from "./net.ts";
 import { clearOrder, markKids, netTokens } from "./order.ts";
+import { orphans } from "./orphan.ts";
 import { copyText, pairingKeys, showLines } from "./pairing.ts";
 import { type Run, switchRemote, tailscale } from "./remote.ts";
 import { ensureTower, headOf, towerModel, herdrApi, type HerdrApi, herdrCall, type HerdrCall, herdrRun, type HerdrRun, isSub, type Pane, panes, parentOf, place, type Place, report, type Session, type Sleep, waitFor, workspaces, type Workspace } from "./herdr.ts";
@@ -23,6 +25,7 @@ const ENTRY = "straw-boss";
 const PROMPTS = ["main", "tower", "member", "member-no-main"];
 const REFRESH_MS = 4 * 60_000;
 const KID_MARK_MS = [3_000, 15_000];
+const NUDGE_MS = 15_000;
 const CLAIM_MS = 5000;
 const CONNECT_MS = 15_000;
 const SEND_MS = 30_000;
@@ -39,7 +42,7 @@ interface Saved { tower?: boolean }
 type Role = "tower" | "main" | "member";
 type Scope = "tab" | "workspace" | "towers" | "all";
 type Member = ReturnType<typeof netMembers>[number];
-export interface Deps { run?: HerdrRun; api?: HerdrApi; call?: HerdrCall; tailscale?: Run; copy?: (text: string) => Promise<void>; env?: NodeJS.ProcessEnv; sleep?: Sleep; promptDir?: string; bundle?: string; openUrl?: (url: string) => Promise<void>; stateDir?: string; autoTower?: boolean }
+export interface Deps { run?: HerdrRun; api?: HerdrApi; call?: HerdrCall; tailscale?: Run; copy?: (text: string) => Promise<void>; env?: NodeJS.ProcessEnv; sleep?: Sleep; promptDir?: string; bundle?: string; openUrl?: (url: string) => Promise<void>; stateDir?: string; autoTower?: boolean; nudgeMs?: number }
 
 /** Live sessions whose pane carries an `sb_role` token: the sessions that joined the net, and towers. */
 function netMembers(sessions: Session[], ps: Pane[]) {
@@ -51,7 +54,7 @@ function netMembers(sessions: Session[], ps: Pane[]) {
 }
 const nameOf = (s?: Session) => (s ? (s.name ?? s.id) : "");
 
-export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdrCall(), tailscale: ts = tailscale, copy = copyText, env = process.env, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), promptDir = fileURLToPath(new URL("../prompts", import.meta.url)), bundle, openUrl = openBrowser, stateDir, autoTower = true }: Deps = {}) {
+export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdrCall(), tailscale: ts = tailscale, copy = copyText, env = process.env, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), promptDir = fileURLToPath(new URL("../prompts", import.meta.url)), bundle, openUrl = openBrowser, stateDir, autoTower = true, nudgeMs = NUDGE_MS }: Deps = {}) {
 	return function strawBoss(pi: ExtensionAPI): void {
 		// Outside Herdr there is no tab to coordinate. Every session in Herdr relays its dialogs to the GUI (bridge.ts), subagents too: they ask
 		// questions as well. A pi-herdr-agents worker never joins: its parent represents it.
@@ -62,6 +65,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 		if (env.PI_SUBAGENT_ID) return;
 		let isTower = env.STRAW_BOSS_ROLE === "tower";
 		let joined = false, isMain = false, holdsTower = false, requests = 0;
+		const nonce = randomUUID().slice(0, 8);
 		// The tab's live main agent as of the last refresh, and the main this session pinned as owner before the broker echoes it back.
 		let mainId: string | undefined, pinned: string | undefined, joining: Promise<void> | undefined;
 		// Why this session cannot join: it sits in a sub workspace, or Herdr could not say whether it does.
@@ -72,6 +76,8 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 		let queue: Promise<void> = Promise.resolve();
 		// This session's intercom name, which the subagents it launched show as their launcher, and the subagent panes it has marked.
 		let ownName = "", kids = new Set<string>();
+		// Watches for subagents this session launched whose result can no longer reach it (orphan.ts).
+		let nudges: ReturnType<typeof orphans> | undefined, nudgeTimer: ReturnType<typeof setInterval> | undefined;
 		const me = () => env.PI_INTERCOM_SESSION_ID ?? "";
 		const role = (): Role | undefined => {
 			if (isTower) return "tower";
@@ -220,7 +226,8 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 		};
 		const send = (to: string, message: string) =>
 			new Promise<SendResult>((resolve) => {
-				const requestId = `straw-boss-${me()}-${++requests}`;
+				// pi-intercom keeps a message id per sender session and refuses it again with other content, and a restarted pi keeps its session id: the id carries this process's own nonce.
+				const requestId = `straw-boss-${me()}-${nonce}-${++requests}`;
 				const done = (result: SendResult) => {
 					off();
 					clearTimeout(timeout);
@@ -357,6 +364,11 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			prompts = Object.fromEntries(PROMPTS.map((name) => [name, readFileSync(join(promptDir, `${name}.md`), "utf8").trim()]));
 			saved = Object.assign({}, ...ctx.sessionManager.getBranch().flatMap((e) => (e.type === "custom" && e.customType === ENTRY ? [e.data] : [])));
 			isTower ||= Boolean(saved.tower);
+			const log = ctx.sessionManager;
+			clearInterval(nudgeTimer);
+			nudges?.stop();
+			nudges = orphans({ run, file: () => log.getSessionFile(), entries: () => log.getEntries(), sessions, send, type: ENTRY, remember: (key) => pi.appendEntry(ENTRY, { nudged: key }), me, tell });
+			nudgeTimer = setInterval(() => void nudges?.poll().catch(() => {}), nudgeMs).unref();
 			// Starting runs in the background: pi awaits session_start handlers in turn, and pi-intercom connects in its own, after this one.
 			let starting: Promise<void> | undefined;
 			if (isTower) {
@@ -404,6 +416,8 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			dashboard = undefined;
 			clearInterval(timer);
 			timer = undefined;
+			clearInterval(nudgeTimer);
+			nudges?.stop();
 			stopped = true; // a refresh still in flight must not write tokens after they are cleared
 			await publishing;
 			const held = holdsTower;
