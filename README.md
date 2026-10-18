@@ -36,6 +36,8 @@ You need pi running inside Herdr 0.9.4 or newer, and [pi-intercom](https://www.n
 3. Type `/boss tower` to open the workspace's tower and watch its dashboard. Agents open it themselves when they call it.
 4. Type `/boss gui` from any session to see the whole net in your browser.
 
+The tower only routes and coordinates, so it can run a lighter model: set `towerModel` in `~/.pi/agent/straw-boss/config.json` ([how it works](docs/how-it-works.md#how-it-works)).
+
 ## Tools and commands
 
 | Name | What it does |

@@ -22,6 +22,14 @@ Joining is automatic; the chain of command is earned.
 
 The tower is opened by the workspace's first main (or earlier on demand, by `call_tower` or `/boss tower`), without taking focus, and answers through intercom. Its tab is moved to the first position of the workspace right after it is created (or adopted), through Herdr's socket API (`tab.move`, no focus change); a failed move is reported as a warning and ignored. A tower tab is recognised by the `sb_role=tower` pane token that only Straw Boss writes, never by its label, because a pi-herdr-agents subagent can be named `tower`. If two towers ever race in one workspace, the live token holder wins, otherwise the lower tab id, and the other closes its own tab. Towers of different workspaces reach each other with `call_tower`; the **head tower** is the tower of the first workspace in `herdr workspace list` order that is not a sub workspace, so there is no election.
 
+The tower runs pi's default model unless you set one for it in `~/.pi/agent/straw-boss/config.json` (under `PI_CODING_AGENT_DIR` when that is set):
+
+```json
+{ "towerModel": "claude-bridge/claude-sonnet-5-5" }
+```
+
+Straw Boss passes it to pi as `--model` whenever it starts a tower, and reads the file at each start, so a change applies to the next tower without a reload. A tower already running keeps its model; restart it (or switch with `/model` in its pane) to change that one.
+
 ## Tower dashboard
 
 A tower session with a TUI shows a monitoring widget above its editor. It is read-only: it never takes focus, never prompts, and is shown only while the session holds the tower role (a tower that yields, a headless tower, and main agents never show it). Its first lines say what the pane is, the channel main agents reach each other through with `call_tower`, and give the straw net GUI's link while a GUI server answers (otherwise that `/boss gui` opens it).

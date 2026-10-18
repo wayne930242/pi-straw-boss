@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, mock, test } from "node:test";
+import { towerModel } from "../src/herdr.ts";
 import { settle, until, World } from "./fakes.ts";
 
 let world = new World();
@@ -43,6 +46,17 @@ test("call_tower without a tower opens a tower tab without focus, starts pi in i
 	assert.equal((result.details as { opened: boolean }).opened, true);
 	assert.match(textOf(result), /opened it/);
 	assert.deepEqual(world.herdr.commands("tab", "focus"), []);
+});
+
+test("the tower starts with the user's towerModel from config.json, and with pi's default model without one", async () => {
+	world.autoTowers();
+	writeFileSync(join(world.stateDir, "config.json"), JSON.stringify({ towerModel: " claude-bridge/claude-sonnet-5-5 " }));
+	const a = await main();
+	await a.tool("call_tower", { message: "need the tower" });
+	assert.deepEqual(world.herdr.commands("agent", "start")[0]?.slice(-4), ["--name", "tower · Alpha", "--model", "claude-bridge/claude-sonnet-5-5"]);
+	assert.equal(towerModel(join(world.stateDir, "missing")), undefined, "no config file means pi's default");
+	writeFileSync(join(world.stateDir, "config.json"), "{ not json");
+	assert.equal(towerModel(world.stateDir), undefined, "an unreadable file means pi's default");
 });
 
 test("a leftover tower tab with a shell prompt is reused: pi starts in its pane and no new tab opens", async () => {

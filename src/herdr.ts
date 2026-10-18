@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -24,7 +25,7 @@ export interface HerdrTab { tab_id: string; workspace_id: string; label?: string
 export interface Location { status: string; workspace?: { id: string; label: string }; tab?: { id: string; label: string }; paneId?: string }
 /** A live pi-intercom session; `status` is idle, thinking, or tool:<name>. */
 export interface Session { id: string; name?: string; status?: string; herdrLocation?: Location }
-export interface TowerEnv { run: HerdrRun; sleep: Sleep; live(sessionId: string): Promise<boolean>; moveFirst(tabId: string): Promise<void> }
+export interface TowerEnv { run: HerdrRun; sleep: Sleep; live(sessionId: string): Promise<boolean>; moveFirst(tabId: string): Promise<void>; model?: string }
 
 const TTL_MS = 10 * 60_000;
 const START_MS = 30_000;
@@ -48,6 +49,13 @@ async function result(run: HerdrRun, args: string[], timeoutMs?: number) {
 	} catch {
 		throw new Error(`herdr ${args.join(" ")} returned invalid JSON: ${output.slice(0, 200)}`);
 	}
+}
+
+/** The user's `towerModel` from `config.json` in the state directory, read at each tower start; anything unreadable means pi's default model. */
+export function towerModel(stateDir: string): string | undefined {
+	let model: unknown;
+	try { model = (JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8")) as { towerModel?: unknown }).towerModel; } catch { /* pi's default */ }
+	return typeof model === "string" && model.trim() ? model.trim() : undefined;
 }
 
 // The tower tab is labelled with the Nerd Font radio tower glyph (md-radio_tower, U+F043B) alone. The role marks (the `sb_mark` token, and the
@@ -126,7 +134,7 @@ export function ensureTower(env: TowerEnv, workspace: Workspace, cwd: string) {
 	return pending;
 }
 
-async function open({ run, sleep, live, moveFirst }: TowerEnv, workspace: Workspace, cwd: string) {
+async function open({ run, sleep, live, moveFirst, model }: TowerEnv, workspace: Workspace, cwd: string) {
 	const ws = workspace.workspace_id;
 	const held = async () => {
 		const id = (await workspaces(run)).find((w) => w.workspace_id === ws)?.tokens?.tower;
@@ -155,7 +163,7 @@ async function open({ run, sleep, live, moveFirst }: TowerEnv, workspace: Worksp
 	}
 	if (!running) {
 		// Herdr agent names are unique across workspaces and lowercase only, so the name carries the lowercased workspace id.
-		const start = ["agent", "start", `tower-${ws.toLowerCase()}`, "--kind", "pi", "--pane", paneId, "--timeout", String(START_MS), "--", "--name", `tower · ${workspace.label}`];
+		const start = ["agent", "start", `tower-${ws.toLowerCase()}`, "--kind", "pi", "--pane", paneId, "--timeout", String(START_MS), "--", "--name", `tower · ${workspace.label}`, ...(model ? ["--model", model] : [])];
 		// A new tab's shell may not be at its prompt yet: herdr answers agent_pane_busy until it is, and any other failure is final.
 		for (let attempt = 1; ; attempt++) {
 			try {

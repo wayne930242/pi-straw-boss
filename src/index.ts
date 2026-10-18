@@ -12,7 +12,7 @@ import { netSource } from "./net.ts";
 import { clearOrder, markKids, netTokens } from "./order.ts";
 import { copyText, pairingKeys, showLines } from "./pairing.ts";
 import { type Run, switchRemote, tailscale } from "./remote.ts";
-import { ensureTower, headOf, herdrApi, type HerdrApi, herdrCall, type HerdrCall, herdrRun, type HerdrRun, isSub, type Pane, panes, parentOf, place, type Place, report, type Session, type Sleep, waitFor, workspaces, type Workspace } from "./herdr.ts";
+import { ensureTower, headOf, towerModel, herdrApi, type HerdrApi, herdrCall, type HerdrCall, herdrRun, type HerdrRun, isSub, type Pane, panes, parentOf, place, type Place, report, type Session, type Sleep, waitFor, workspaces, type Workspace } from "./herdr.ts";
 
 // pi-intercom's extension API as constants and minimal types: intercom is a runtime requirement, not an import.
 const REGISTER = "intercom:extension-register";
@@ -242,7 +242,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			if (isTower && target.workspace_id === at.workspaceId) throw new Error("This session is the tower of that workspace");
 			const live = async (id: string) => (await c.listSessions()).some((s) => s.id === id);
 			const moveFirst = (tabId: string) => api("tab.move", { tab_id: tabId, insert_index: 0 }).catch((error: Error) => tell(`Straw Boss: could not move the tower tab first: ${error.message}`, "warning"));
-			return { target, routed: target !== asked ? asked : undefined, ...(await ensureTower({ run, sleep, live, moveFirst }, target, process.cwd())) };
+			return { target, routed: target !== asked ? asked : undefined, ...(await ensureTower({ run, sleep, live, moveFirst, model: towerModel(guiDir) }, target, process.cwd())) };
 		};
 		const status = async () => {
 			const sessions = await c.listSessions();
