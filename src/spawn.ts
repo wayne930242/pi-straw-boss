@@ -10,9 +10,9 @@ import { createTab, type HerdrCall, type HerdrRun, isSub, type Pane, panes, repo
 // page never opens one. A base with a tower takes new mains, each in a tab of its own. The picker never leaves home and never shows or enters a
 // hidden folder; a path from the browser is resolved (symlinks too) before it is listed or used. A new main is authorised to promote itself the
 // way the tower's opener does it (opener.ts), with no limits: the person asked for it. One open at a time; a failed one closes what it created.
-//   POST /<token>/api/dirs {path?, workspace?}                    the folders in `path`, or in the base's own folder, or in home
+//   POST /<token>/api/dirs {path?, workspace?, tab?}              the folders in `path`, or in the squad's or the base's own folder, or in home
 //   POST /<token>/api/open/base {dir, label, prompt?}             a new workspace in `dir` whose first tab holds a member
-//   POST /<token>/api/open/member {workspace, tab?, dir?, prompt?} a member split into `tab` in that tab's folder, or in a new tab in `dir`; no tower
+//   POST /<token>/api/open/member {workspace, tab?, dir?, prompt?} a member split into `tab` (in `dir`, else that tab's folder), or in a new tab in `dir`; no tower
 //   POST /<token>/api/open/main {workspace, dir, prompt?}         a new tab in the base whose pi becomes its main; the base has a tower
 
 const MAX_DIRS = 500, JOIN_WAIT_MS = 60_000, MAX_LABEL = 64;
@@ -53,6 +53,10 @@ export function createSpawn({ run, sleep, call, live, home = homedir() }: SpawnD
 		const here = await panes(run, ws.workspace_id);
 		const own = ws.worktree?.checkout_path ?? here.find((p) => p.tokens?.sb_role === "tower")?.cwd ?? here[0]?.cwd;
 		return (await pickable(own, home)) ?? (await realpath(home).catch(() => home));
+	};
+	const leadOf = async (workspaceId: string, tabId: unknown): Promise<Pane | undefined> => {
+		const here = (await panes(run, workspaceId)).filter((p) => p.tab_id === tabId);
+		return here.find((p) => p.tokens?.sb_role === "main") ?? here[0];
 	};
 	const towered = async (ws: Workspace) => Boolean(ws.tokens?.tower && (await live(ws.tokens.tower)));
 	const base = async (workspaceId: unknown): Promise<Workspace | Reply> => {
@@ -108,11 +112,10 @@ export function createSpawn({ run, sleep, call, live, home = homedir() }: SpawnD
 			const opened = await createTab(run, ws.workspace_id, dir, ["STRAW_BOSS_ROLE=member"], basename(dir) || dir);
 			created = { ...opened, close: ["tab", "close", opened.tabId] };
 		} else {
-			// The new member sits beside the tab's main, or its first pane, in that pane's folder: the folder never comes from the browser here.
-			const here = (await panes(run, ws.workspace_id)).filter((p) => p.tab_id === tabId);
-			const lead: Pane | undefined = here.find((p) => p.tokens?.sb_role === "main") ?? here[0];
+			// The new member sits beside the tab's main, or its first pane, in the picked folder, else in that pane's.
+			const lead = await leadOf(ws.workspace_id, tabId);
 			if (!lead) return no(404, "not_found", "That tab is not open any more.");
-			const cwd = (await pickable(lead.cwd, home)) ?? (await baseDir(ws.workspace_id));
+			const cwd = dir ?? (await pickable(lead.cwd, home)) ?? (await baseDir(ws.workspace_id));
 			const split = await result(run, ["pane", "split", lead.pane_id, "--direction", "right", "--cwd", cwd, "--no-focus", "--env", "STRAW_BOSS_ROLE=member"]);
 			const paneId: string = split.pane.pane_id;
 			created = { tabId: lead.tab_id, paneId, close: ["pane", "close", paneId] };
@@ -132,15 +135,16 @@ export function createSpawn({ run, sleep, call, live, home = homedir() }: SpawnD
 
 	return async function handle([scope, kind = ""]: string[], json: Record<string, unknown>): Promise<Reply> {
 		if (scope === "dirs" && !kind) {
-			const dir = json.path === undefined ? await baseDir(json.workspace) : await pickable(json.path, home);
+			const lead = json.path === undefined && typeof json.workspace === "string" && json.tab !== undefined ? await leadOf(json.workspace, json.tab) : undefined;
+			const dir = json.path !== undefined ? await pickable(json.path, home) : ((lead && (await pickable(lead.cwd, home))) ?? (await baseDir(json.workspace)));
 			if (!dir) return OUTSIDE;
 			return listDirs(dir, home).then((body) => ({ status: 200, body }), () => no(403, "unreadable", "This folder cannot be read."));
 		}
 		if (scope !== "open" || !["main", "member", "base"].includes(kind)) return no(404, "not_found", "No such action.");
 		const split = kind === "member" && json.tab !== undefined;
 		if (split && typeof json.tab !== "string") return no(400, "bad_request", "A tab is named by its id.");
-		const dir = split ? undefined : await pickable(json.dir, home);
-		if (!split && !dir) return OUTSIDE;
+		const dir = split && json.dir === undefined ? undefined : await pickable(json.dir, home);
+		if (!dir && !(split && json.dir === undefined)) return OUTSIDE;
 		let prompt: string | undefined, label = "";
 		if (typeof json.prompt === "string" && json.prompt.trim()) {
 			const typed = checkText(json.prompt);

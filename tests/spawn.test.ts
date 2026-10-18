@@ -91,10 +91,15 @@ test("a base without a tower takes a member beside a tab's main in its folder, o
 	world.herdr.addPane("wA:p7", "wA:t2", "shell");
 	world.herdr.addPane("wA:p8", "wA:t2");
 	Object.assign(world.herdr.pane("wA:p8"), { cwd: dir, tokens: { sb_role: "main" } });
-	const beside = await post("open/member", { workspace: "wA", tab: "wA:t2", dir: outside, prompt: "" });
+	assert.equal((await post("dirs", { workspace: "wA", tab: "wA:t2" })).body.path, dir, "the picker starts in the squad's folder");
+	assert.equal((await post("open/member", { workspace: "wA", tab: "wA:t2", dir: outside })).body.error, "not_allowed");
+	const beside = await post("open/member", { workspace: "wA", tab: "wA:t2", prompt: "" });
 	assert.equal(beside.status, 200, JSON.stringify(beside.body));
-	assert.deepEqual(world.herdr.commands("pane", "split"), [["pane", "split", "wA:p8", "--direction", "right", "--cwd", dir, "--no-focus", "--env", "STRAW_BOSS_ROLE=member"]], "the folder is the main's, never the browser's");
+	assert.deepEqual(world.herdr.commands("pane", "split"), [["pane", "split", "wA:p8", "--direction", "right", "--cwd", dir, "--no-focus", "--env", "STRAW_BOSS_ROLE=member"]], "without a pick, the main's folder");
 	assert.deepEqual([beside.body.tab, world.herdr.pane(beside.body.pane as string).tokens.sb_role], ["wA:t2", "member"]);
+	const picked = await post("open/member", { workspace: "wA", tab: "wA:t2", dir: join(home, "beta") });
+	assert.equal(picked.status, 200, JSON.stringify(picked.body));
+	assert.equal(world.herdr.commands("pane", "split").at(-1)![6], join(home, "beta"), "a picked folder is used in the squad");
 	const fresh = await post("open/member", { workspace: "wA", dir: join(home, "beta") });
 	assert.equal(fresh.status, 200, JSON.stringify(fresh.body));
 	assert.deepEqual(world.herdr.commands("tab", "create"), [["tab", "create", "--workspace", "wA", "--label", "beta", "--cwd", join(home, "beta"), "--no-focus", "--env", "STRAW_BOSS_ROLE=member"]]);

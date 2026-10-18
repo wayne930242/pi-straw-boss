@@ -171,7 +171,6 @@ export function mountPage(): Page {
 		},
 		show(net) {
 			sync(bases, net.bases, baseEl, fillBase);
-			byId("empty", HTMLElement).hidden = net.bases.length > 0;
 			requestAnimationFrame(layout);
 		},
 		log(entries) {

@@ -78,7 +78,6 @@ svg { display: block; }
 .wire { fill: none; stroke: rgba(56, 224, 255, 0.3); stroke-width: 1.5; stroke-dasharray: 3 7; stroke-linecap: round; }
 .packet { fill: #38e0ff; opacity: 0.9; }
 .bases { position: relative; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 30px; align-items: start; }
-.empty { position: relative; color: var(--dim); text-align: center; padding: 120px 0; }
 
 .base { position: relative; padding: 16px; border-radius: 18px; border: 1px solid var(--line); background: linear-gradient(180deg, #16213c, #0c1324); box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35); }
 .base.head { background: linear-gradient(180deg, rgba(255, 209, 102, 0.1), transparent 38%), linear-gradient(180deg, #16213c, #0c1324); }
@@ -362,6 +361,8 @@ summary::-webkit-details-marker { display: none; }
 .tile { grid-template-columns: minmax(0, 1fr); } .tile > header b { flex: 1; min-width: 0; } /* a long unit name ends in an ellipsis, never widens the tile */
 .tile-body { overflow: auto; padding: 16px 20px; }
 .tiles.tabbed { flex-direction: column; gap: 8px; }
+.tile:has(.spawn, .pair) { height: auto; min-height: 0; max-height: calc(var(--vvh, 100vh) - 190px); align-self: flex-start; } /* a short form keeps its own height */
+.spawn .chat-empty { padding: 0; text-align: left; } .spawn .chat-empty:empty { display: none; }
 .tiles.tabbed .tile-tabs { display: flex; gap: 6px; }
 .tiles.tabbed .tile:not(.active) { display: none; } .tiles.tabbed .tile { flex: none; } /* its own height, not the column's share */
 .tab-btn.active, .open { border-color: rgba(255, 209, 102, 0.4); color: var(--gold); }

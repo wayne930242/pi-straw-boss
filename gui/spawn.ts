@@ -24,7 +24,7 @@ export function spawnTile(o: Opening): Tile {
 		const say = (text: string) => (note.textContent = text);
 		const show = (path?: string) => {
 			say(m.asking_dirs());
-			void post("dirs", path ? { path } : base ? { workspace: base.id } : {}).then((r) => {
+			void post("dirs", path ? { path } : base ? { workspace: base.id, ...(tab && { tab: tab.id }) } : {}).then((r) => {
 				if (!r.ok) return say(r.body.reason ?? m.refused({ status: r.status }));
 				at = r.body as unknown as Listing;
 				const rel = at.path === at.home ? "~" : at.path.startsWith(`${at.home}/`) ? `~/${at.path.slice(at.home.length + 1)}` : at.path;
@@ -41,8 +41,8 @@ export function spawnTile(o: Opening): Tile {
 		};
 		up.onclick = () => at?.parent && show(at.parent);
 		go.onclick = () => {
-			if (!tab && !at) return;
-			const dir = at?.path, text = prompt.value, body = o.kind === "base" ? { dir, label: name.value, prompt: text } : tab ? { workspace: base!.id, tab: tab.id, prompt: text } : { workspace: base!.id, dir, prompt: text };
+			if (!at) return;
+			const dir = at.path, text = prompt.value, body = o.kind === "base" ? { dir, label: name.value, prompt: text } : { workspace: base!.id, ...(tab && { tab: tab.id }), dir, prompt: text };
 			go.disabled = true;
 			say(m.opening());
 			void post(`open/${o.kind}`, body).then((r) => {
@@ -52,9 +52,8 @@ export function spawnTile(o: Opening): Tile {
 				say(o.kind === "base" ? m.opened_base() : o.kind === "main" ? m.opened_main({ base: base!.label }) : m.opened_member({ base: base!.label }));
 			}, () => say(m.no_answer())).finally(() => (go.disabled = false));
 		};
-		if (tab) return h("div", { class: "spawn" }, h("p", { class: "spawn-at" }, m.open_member_tab_note()), note, prompt, go);
 		show();
-		return h("div", { class: "spawn" }, ...(o.kind === "base" ? [h("p", { class: "spawn-at" }, m.open_base_note())] : []), h("p", { class: "spawn-at" }, m.folder_here(), " ", where, " ", up), list, note, ...(o.kind === "base" ? [name] : []), prompt, go);
+		return h("div", { class: "spawn" }, h("p", { class: "spawn-at" }, m.folder_here(), " ", where, " ", up), list, note, ...(o.kind === "base" ? [name] : []), prompt, go);
 	} };
 }
 

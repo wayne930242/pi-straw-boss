@@ -21,9 +21,9 @@ test("text edited after it was sent, while away, says the original already went;
 
 test("a composer claims 'your edits stayed' only when its box really holds edits, not when the browser refused storage and the box is empty", () => {
 	assert.match(confirmed("hellp", "hello"), /your edits stayed here, unsent/);
-	assert.match(confirmed("hello", "hello"), /^Sent\./);
-	assert.match(confirmed("hello more", "hello"), /^Sent\./);
-	assert.match(confirmed("", "hello"), /^Sent\./, "an empty box (nothing could be stored) holds no edits");
+	assert.equal(confirmed("hello", "hello"), "", "a plain send says nothing: it shows in the log");
+	assert.equal(confirmed("hello more", "hello"), "");
+	assert.equal(confirmed("", "hello"), "", "an empty box (nothing could be stored) holds no edits");
 });
 
 

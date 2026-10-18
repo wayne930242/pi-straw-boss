@@ -7,6 +7,7 @@ import { createKeys } from "./keys.ts";
 import type { Asked } from "./gui.ts";
 import type { createMirrors } from "./mirror.ts";
 import type { Found } from "./net.ts";
+import { upload } from "./upload.ts";
 import { ENDING } from "./probe.ts";
 
 // Typing into a session from the page, through Herdr's own input path only, as if typed in the terminal:
@@ -15,6 +16,7 @@ import { ENDING } from "./probe.ts";
 //   POST /<token>/api/sessions/<key>/focus                                               brings the session's pane forward in Herdr
 //   POST /<token>/api/sessions/<key>/commands {prefix}                                   its commands that match a typed `/prefix`, from its bridge (commands.ts); null when it did not say
 //   POST /<token>/api/sessions/<key>/answer {dialog, digest, answerId, choice | answers}  answers its dialog through its bridge (dialogs.ts); no keys
+//   POST /<token>/api/sessions/<key>/upload (the file's bytes)                            stores a pasted, dropped, or picked file, answers its path (upload.ts)
 //   POST /<token>/api/sessions/<key>/mirror {stream, on}                                  shows the pane's screen on that page's stream (mirror.ts), or stops
 //   POST /<token>/api/remote/pair                                                        a new one-time pairing URL and its QR, while remote access is on
 //   POST /<token>/api/remote/on                                                          turns remote access on in the server's session, then a pairing URL and its QR (never remote)
@@ -79,8 +81,10 @@ export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, s
 		if (req.method !== "POST") return no(405, "method", "Use POST.");
 		const site = req.headers["sec-fetch-site"], type = String(req.headers["content-type"] ?? "").split(";")[0]!.trim().toLowerCase();
 		if (req.headers.origin !== origin || (site !== undefined && site !== "same-origin")) return no(403, "origin", "Only the page itself may send input.");
-		if (type !== "application/json") return no(415, "content_type", "The body must be JSON.");
+		const file = scope === "sessions" && action === "upload";
+		if (type !== (file ? "application/octet-stream" : "application/json")) return no(415, "content_type", file ? "The body must be the file's bytes." : "The body must be JSON.");
 		if (!same(String(req.headers["x-sb-csrf"] ?? ""), csrf)) return no(403, "csrf", "The page's token is out of date; reload the page.");
+		if (file) return upload(req, lookup(key)); // its own size limit and reader (upload.ts)
 		const read = await body(req);
 		if ("status" in read) return read;
 		if (scope === "server") {
