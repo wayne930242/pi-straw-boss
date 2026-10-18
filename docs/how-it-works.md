@@ -177,7 +177,7 @@ description = "toggle the straw net view"
 
 `prefix+?` lists the keys that are taken, `herdr server reload-config` loads a new binding, and `herdr plugin unlink wayne930242.straw-boss` removes the plugin.
 The plugin needs Herdr 0.9.3 or newer and uses a Unix socket, so it runs on macOS and Linux only.
-The tokens come from the sessions, so a session that still runs an older pi-straw-boss (before 0.7.0) has none until pi reloads it, and sorts after the others.
+The tokens come from the sessions, so a session that still runs an older pi-straw-boss (before 0.6.5) has none until pi reloads it, and sorts after the others.
 
 **How the view works.**
 The view is one `agent.view.set` request on Herdr's socket, which the CLI has no command for, sorted by the `sb_order` token ascending.
