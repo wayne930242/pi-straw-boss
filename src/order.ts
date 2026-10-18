@@ -6,9 +6,9 @@ import { ARROW, type HerdrRun, type HerdrTab, isSub, MARK, type Pane, panes, typ
 //    and then the tabs in tab order, in each tab the main agent and then the members, and every subagent right after the session that launched it,
 //    its own subagents after it in turn. Segments are fixed-width and `.`-separated, so plain string order is the numeric order of every segment,
 //    and a subagent's key is its parent's key plus one more segment, which sorts after the parent and before the parent's next sibling.
-//  - `sb_mark`: a short label that says what a net member is, a star and its tab's label for a main agent, a person (U+F007) alone for a member, and `[sub]` and the launcher's name for a subagent.
+//  - `sb_mark`: a short label that says what a net member is, a star (U+F005) alone for a main agent, a person (U+F007) alone for a member, and `[sub]` and the launcher's name for a subagent.
 //    A tower has none: its tab already carries the radio tower glyph.
-//  - `sb_tab`: a member's tab label, which the first row shows in place of Herdr's tab item; a main agent's is in its mark instead.
+//  - `sb_tab`: a main agent's or member's tab label, which the row shows in place of Herdr's tab item.
 //  - `sb_indent`: a tree branch on a subagent alone, like Herdr's Spaces panel draws a worktree: `├─` while a later subagent of the same launcher is marked, `└─` on the last. A row put before the state icon shows it as the
 //    indent under the launcher. A tower, a main agent and a member carry none.
 //  - `sb_name`: a subagent's own name, as pi-herdr-agents shows it. Herdr's pane label held it until a new server dropped the label; a row can show the token instead. A subagent alone carries one.
@@ -60,10 +60,9 @@ export async function netTokens(run: HerdrRun, place: Place, role: "tower" | "ma
 	const [ps, all, tabList] = [await panes(run), await workspaces(run), await tabs(run, place.workspaceId)];
 	const pane = ps.find((p) => p.pane_id === place.paneId), key = pane && orderKey(role, pane, ps, all, tabList);
 	const joined = new Set(ps.filter((p) => p.tokens?.sb_role).map((p) => p.pane_id));
-	// A main agent's tab label goes in its mark, for a row of its own; a member's in `sb_tab`, which stands for the tab item in the first row.
+	// A main agent and a member carry their mark and their tab label alike, so both fit the same one row; `sb_tab` stands for Herdr's tab item.
 	const tab = tabList.find((t) => t.tab_id === pane?.tab_id)?.label || null;
-	const mark = role === "tower" ? null : role === "main" ? (tab ? `${MARK.main} ${tab}` : MARK.main) : MARK[role];
-	return { own: { sb_order: key ?? null, sb_mark: mark, sb_indent: null, sb_name: null, sb_tab: role === "member" ? tab : null }, kids: key ? descendants(pane, key, name, ps, now) : [], joined };
+	return { own: { sb_order: key ?? null, sb_mark: role === "tower" ? null : MARK[role], sb_indent: null, sb_name: null, sb_tab: role === "tower" ? null : tab }, kids: key ? descendants(pane, key, name, ps, now) : [], joined };
 }
 
 /**
