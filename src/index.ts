@@ -441,7 +441,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			if (["subagent", "subagent_resume"].includes(event.toolName) && !isTower && !barred && role()) for (const ms of KID_MARK_MS) setTimeout(() => void publish(), ms).unref();
 		});
 
-		pi.on("session_shutdown", async () => {
+		pi.on("session_shutdown", async (event) => {
 			if (gui) await switchRemote(gui, false, guiDir, ts).catch(() => {});
 			await gui?.stop();
 			gui = undefined;
@@ -459,6 +459,12 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			await report(run, "pane", at.paneId, { sb_role: null, sb_opened_by: null, sb_order: null, sb_mark: null, sb_indent: null, sb_tab: null }).catch(() => {});
 			await clearOrder(run, [...kids]);
 			if (held) await report(run, "workspace", at.workspaceId, { tower: null }).catch(() => {});
+			// A tower that quits leaves its tab as a plain shell: close the tab, but only when this pane is all it holds. A reload, /new, resume or fork keeps the tab.
+			if (isTower && event.reason === "quit") {
+				const all = await panes(run, at.workspaceId).catch(() => []);
+				const tab = all.find((p) => p.pane_id === at.paneId)?.tab_id;
+				if (tab && all.every((p) => p.tab_id !== tab || p.pane_id === at.paneId)) await run(["tab", "close", tab]).catch(() => {});
+			}
 		});
 
 		// /boss gui is a read-only viewer: any session may open it, and it joins nothing and writes no token. A session outside the net

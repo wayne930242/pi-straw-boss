@@ -164,14 +164,24 @@ async function open({ run, sleep, live, moveFirst, model }: TowerEnv, workspace:
 
 	// A leftover tower tab is reused: a pane already running pi only needs its token awaited, a shell prompt gets pi started.
 	// The tab is told apart by the `sb_role=tower` pane token that only Straw Boss writes; a tab merely labelled "tower"
-	// (a pi-herdr-agents subagent can be named so) is someone else's.
+	// (a pi-herdr-agents subagent can be named so) is someone else's. A tab whose token was cleared (its tower quit) is still ours when it has
+	// exactly the tower label (the glyph), one pane, and no agent in it.
 	let paneId: string;
 	let running = false;
-	const marked = (await panes(run, ws)).find((p) => p.tokens?.sb_role === "tower");
-	if (marked) {
-		paneId = marked.pane_id;
-		running = marked.agent === "pi";
-		await moveFirst(marked.tab_id);
+	const here = await panes(run, ws);
+	const marked = here.find((p) => p.tokens?.sb_role === "tower");
+	const bare = marked ? [] : (await tabs(run, ws)).filter((t) => t.label === TOWER_LABEL).flatMap((t) => {
+		const inside = here.filter((p) => p.tab_id === t.tab_id);
+		return inside.length === 1 && !inside[0]!.agent && !inside[0]!.tokens?.sb_role ? [inside[0]!] : [];
+	});
+	const reused = marked ?? bare[0];
+	if (reused) {
+		paneId = reused.pane_id;
+		running = reused.agent === "pi";
+		if (!marked) await report(run, "pane", paneId, { sb_role: "tower" });
+		await moveFirst(reused.tab_id);
+		// Other shell-only leftovers are closed; failing to close one leaves a harmless tab, so it does not stop the tower.
+		for (const extra of bare.slice(1)) await run(["tab", "close", extra.tab_id]).catch(() => {});
 	} else {
 		const dir = workspace.worktree?.checkout_path ?? cwd;
 		const created = await createTab(run, ws, dir, ["STRAW_BOSS_ROLE=tower"], TOWER_LABEL);

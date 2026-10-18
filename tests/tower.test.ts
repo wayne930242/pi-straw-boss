@@ -81,6 +81,68 @@ test("a tab merely labelled tower (a subagent can be named so) is not a tower ta
 	assert.ok(!world.herdr.moves.some((m) => m.tab_id === "wA:t8"));
 });
 
+test("a leftover tab with the tower glyph, no token and no agent is reused: marked, moved first, pi started in it, no new tab", async () => {
+	world.autoTowers();
+	world.herdr.addTab("wA:t8", "\u{f043b}", "wA:p8", "shell");
+	const a = await main();
+	await a.tool("call_tower", { message: "hi" });
+	assert.deepEqual(world.herdr.commands("tab", "create"), []);
+	assert.deepEqual(world.herdr.commands("agent", "start").map((args) => args[5] + " " + args[6]), ["--pane wA:p8"]);
+	assert.ok(world.herdr.moves.some((m) => m.tab_id === "wA:t8" && m.insert_index === 0));
+	assert.equal(world.broker.delivered[0]?.to, "tower-wA");
+	assert.deepEqual(world.herdr.commands("tab", "focus"), []);
+});
+
+test("several leftover glyph tabs: one is reused and the other shell-only ones are closed", async () => {
+	world.autoTowers();
+	world.herdr.addTab("wA:t8", "\u{f043b}", "wA:p8", "shell");
+	world.herdr.addTab("wA:t9", "\u{f043b}", "wA:p9", "shell");
+	const a = await main();
+	await a.tool("call_tower", { message: "hi" });
+	assert.deepEqual(world.herdr.commands("tab", "create"), []);
+	assert.deepEqual(world.herdr.commands("agent", "start").map((args) => args[6]), ["wA:p8"]);
+	assert.deepEqual(world.herdr.closed, ["wA:t9"]);
+});
+
+test("a glyph tab that runs an agent or holds other panes is not a leftover: it is never typed into and a new tab opens", async () => {
+	world.autoTowers();
+	world.herdr.addTab("wA:t8", "\u{f043b}", "wA:p8", "pi");
+	world.herdr.addTab("wA:t9", "\u{f043b}", "wA:p9", "shell");
+	world.herdr.addPane("wA:p10", "wA:t9", "shell");
+	const a = await main();
+	await a.tool("call_tower", { message: "hi" });
+	assert.equal(world.herdr.commands("tab", "create").length, 1);
+	assert.ok(world.herdr.commands("agent", "start").every((args) => !["wA:p8", "wA:p9", "wA:p10"].includes(args[6]!)));
+	assert.deepEqual(world.herdr.closed, []);
+});
+
+test("a tower that quits closes its own tab when the tab holds only its pane", async () => {
+	const tower = world.tower("tower-wA", "wA:t7", "wA:p7");
+	await tower.start();
+	await tower.stop();
+	assert.deepEqual(world.herdr.closed, ["wA:t7"]);
+	assert.deepEqual(world.herdr.panes.filter((p) => p.tab_id === "wA:t7"), []);
+	assert.deepEqual(world.herdr.workspace("wA").tokens, {});
+});
+
+test("reload, new, resume and fork keep the tower's tab", async () => {
+	for (const reason of ["reload", "new", "resume", "fork"]) {
+		const tower = world.tower(`tower-${reason}`, `wA:t7${reason}`, `wA:p7${reason}`);
+		await tower.start();
+		await tower.fire("session_shutdown", { reason });
+		assert.deepEqual(world.herdr.closed, [], reason);
+	}
+});
+
+test("a tower that quits leaves a tab alone that holds other panes", async () => {
+	const tower = world.tower("tower-wA", "wA:t7", "wA:p7");
+	await tower.start();
+	world.herdr.addPane("wA:p77", "wA:t7", "shell");
+	await tower.stop();
+	assert.deepEqual(world.herdr.closed, []);
+	assert.ok(world.herdr.panes.some((p) => p.pane_id === "wA:p77"));
+});
+
 test("a new tower tab is marked as a tower tab right after it is created, before pi starts in it", async () => {
 	world.autoTowers();
 	const a = await main();

@@ -20,9 +20,9 @@ async function net() {
 	for (const [n, pane] of [["2", "wA:p2"], ["3", "wA:p3"]] as const) await world.agent({ id: `sender-${n}`, name: `other-${n}`, pane, tab: "wA:t1" }).start();
 	return { tower, sender };
 }
-// A tower restart: the old tower session ends and a fresh one in the same pane starts with none of the old one's memory.
-async function restart(old: { stop(): Promise<void> }) {
-	await old.stop();
+// A tower restart (/new, a reload): the old tower session ends without quitting, so its tab stays, and a fresh one in the same pane starts with none of the old one's memory.
+async function restart(old: { stop(reason?: string): Promise<void> }) {
+	await old.stop("new");
 	const fresh = world.agent({ id: "tower-wA-2", name: "tower · wA-2", pane: "wA:p7", env: { STRAW_BOSS_ROLE: "tower" } });
 	await fresh.start();
 	return fresh;

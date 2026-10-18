@@ -395,10 +395,11 @@ export class Agent {
 		await this.fire("tool_result", { toolName: name, toolCallId: "call", input: {}, content: [], isError: false });
 		await settle();
 	}
-	async stop(): Promise<void> {
+	/** Ends the session as pi does: a `quit` closes a tower's tab, any other reason (reload, new, resume, fork) keeps it. */
+	async stop(reason = "quit"): Promise<void> {
 		if (this.stopped) return;
 		this.stopped = true;
-		await this.fire("session_shutdown", { reason: "quit" });
+		await this.fire("session_shutdown", { reason });
 		this.world.broker.disconnect(this);
 	}
 }
