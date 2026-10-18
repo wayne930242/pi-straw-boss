@@ -22,7 +22,8 @@ export const docCsp = (origin: string) => `sandbox allow-forms allow-popups allo
 const escape = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 /** The document as served: other <base> tags dropped, links opening in a new tab, each `cgi-bin:pi-answer` form posting (GET) to this page's nonce,
- *  and what could undo that dropped: a referrer policy of its own (the URL holds the token) and the buttons' formaction, formmethod, formtarget. */
+ *  and what could undo that dropped: a referrer policy of its own (the URL holds the token) and the buttons' formaction, formmethod, formtarget.
+ *  Regexes over HTML text are a best effort (an entity or a quoted `>` gets past them); the sandbox and the CSP are what hold. */
 export function rewrite(html: string, nonce: string) {
 	const forms = html.replace(/<base\b[^>]*>|<meta\b[^>]*\bname\s*=\s*["']?referrer\b[^>]*>/gi, "").replace(/<[a-z][^>]*>/gi, (tag) => tag.replace(/\s(?:referrerpolicy|formaction|formmethod|formtarget)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*)/gi, "")).replace(/<form\b[^>]*>/gi, (tag) => (/\saction\s*=\s*(?:"\s*cgi-bin:pi-answer\s*"|'\s*cgi-bin:pi-answer\s*'|cgi-bin:pi-answer(?=[\s>/]))/i.test(tag) ? tag.replace(/\s(?:action|method|target)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*)/gi, "").replace(/^<form/i, `<form action="answer/${nonce}" method="get" target="_self"`) : tag));
 	const at = /<head\b[^>]*>/i.exec(forms) ?? /<html\b[^>]*>/i.exec(forms) ?? /<!doctype[^>]*>/i.exec(forms), cut = at ? at.index + at[0].length : 0;

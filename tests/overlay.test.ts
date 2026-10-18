@@ -192,6 +192,16 @@ test("a tile hears when it closes, by its × or pushed out by a fifth, once, and
 	assert.deepEqual(closed, ["b", "a"], "the terminal tile detaches its mirror on either");
 });
 
+test("a tile that arrives on its own never pushes out one the user opened: with four open it is refused, and hears so", () => {
+	const { page, model } = tiles(), closed: string[] = [], watched = (id: string): Tile => ({ ...tile(id), closed: () => closed.push(id) });
+	for (const id of ["term", "a", "b"]) model.open(watched(id));
+	model.open(watched("doc1"), false);
+	model.open(watched("doc2"), false);
+	assert.deepEqual([page.tiles, page.active, closed], [["term", "a", "b", "doc1"], "b", ["doc2"]]);
+	model.open(watched("doc1"), false);
+	assert.deepEqual(closed, ["doc2"], "one already open is not refused");
+});
+
 test("an alert dialog tells the last assistant line and the tool call still open", () => {
 	assert.deepEqual(intel([
 		{ id: "1", kind: "assistant", text: "first\nI will ask now.", tools: [{ id: "c1", name: "bash", summary: "ls" }] },

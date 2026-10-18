@@ -1,11 +1,11 @@
 import type { Pending } from "../src/ask.ts";
 import type { Mark } from "../src/dashboard.ts";
+import type { Shelf } from "../src/documents.ts";
 import type { Item } from "../src/items.ts";
 import { h } from "./dom.ts";
 import { createFollow, reach } from "./follow.ts";
 import { mount, parse } from "./markdown.ts";
 import type { Post } from "./composer.ts";
-import type { Tile } from "./layer.ts";
 import { html, ICON } from "./render.ts";
 
 // The comms log of one session. The model is pure: items merge by entry id (a repeated one is ignored), tool results attach to their call by
@@ -72,12 +72,13 @@ export function createChat(cap = CAP) {
 }
 
 export interface HistoryEvent { key: string; state?: string; successor?: string; base?: string; name?: string; role?: string; reset?: boolean; items?: Item[]; before?: string; header?: { id?: string; cwd?: string }; unreadable?: number }
-/** `doc` reads a document a show_doc call named; only the dev fixture has one in this phase. `post` stands in for the server's input API (composer.ts) in the dev fixture. */
-export interface Data { older(before: string): Promise<Page>; latest(): Promise<Page>; entry(id: string): Promise<Item | undefined>; doc?(path: string): Promise<string | undefined>; post?: Post }
-export interface Who { key: string; name: string; role: string; mark: Mark; note?: string; control?: boolean; pending?: Pending }
-export interface ChatDeps { who(): Who; link(name: string): HTMLAnchorElement | undefined; openTile(tile: Tile, focus?: boolean): void }
-/** `reveal` opens the log at an entry (scrolled into view and lit), or with none at the newest entry. `log` is the scrolling log, a focus target. */
-export interface Chat { apply(event: HistoryEvent): void; setLive(text: string, mark: Mark): void; reveal(at?: string): void; log: HTMLElement }
+/** `post` stands in for the server's input API (composer.ts) in the dev fixture. */
+export interface Data { older(before: string): Promise<Page>; latest(): Promise<Page>; entry(id: string): Promise<Item | undefined>; post?: Post }
+export interface Who extends Shelf { key: string; name: string; role: string; mark: Mark; note?: string; control?: boolean; pending?: Pending }
+/** `docFor` opens the document a show_doc path names while its session lists it (doc.ts), or is undefined. */
+export interface ChatDeps { who(): Who; link(name: string): HTMLAnchorElement | undefined; docFor?(path: string): (() => void) | undefined }
+/** `reveal` opens the log at an entry (scrolled into view and lit), or with none at the newest entry. `log` is the scrolling log, a focus target. `docs` shows Open beside on the show_doc cards whose document is listed now. */
+export interface Chat { apply(event: HistoryEvent): void; setLive(text: string, mark: Mark): void; reveal(at?: string): void; docs(): void; log: HTMLElement }
 
 const clock = (at?: string) => (at ? new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }) : "");
 const size = (n: number) => (n >= 1024 ? `${(n / 1024).toFixed(n >= 10240 ? 0 : 1)} KB` : `${n} B`);
@@ -99,8 +100,9 @@ function plain(text: string) {
 	return [...out, text.slice(at)];
 }
 
-export function mountChat(root: HTMLElement, data: Data, { who, link, openTile }: ChatDeps): Chat {
-	const model = createChat(), els = new Map<string, HTMLElement>();
+export function mountChat(root: HTMLElement, data: Data, { who, link, docFor }: ChatDeps): Chat {
+	const model = createChat(), els = new Map<string, HTMLElement>(), opens = new Set<{ paths: string[]; button: HTMLButtonElement; shown?: boolean }>(); // a card the log dropped leaves it
+	const docs = () => opens.forEach((o) => (o.button.isConnected ? ((o.shown = true), (o.button.hidden = !o.paths.some((p) => docFor?.(p)))) : o.shown && opens.delete(o)));
 	const list = h("div", { class: "chat-list" }), top = h("div", { class: "chat-top" }), live = h("div", { class: "chat-live" }), pill = h("button", { class: "chat-pill", type: "button", hidden: "" }), empty = h("p", { class: "chat-empty" }, "No transmissions yet.");
 	const scroller = h("div", { class: "chat-scroll", tabindex: "-1", "aria-label": "Comms log" }, top, list, live);
 	root.replaceChildren(scroller, pill);
@@ -137,12 +139,6 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, openTile }
 			button.remove();
 		}, () => (button.textContent = "unavailable"));
 	};
-	/** A show_doc document as a tile beside the comms log. */
-	const doc = (path: string) => openTile({ id: `doc:${path}`, title: path.split("/").pop() || path, body: () => {
-		const body = h("div", { class: "md" }, h("p", { class: "chat-empty" }, "Loading…"));
-		void data.doc!(path).then((md) => body.replaceChildren(md === undefined ? "Unavailable." : mount(parse(md))));
-		return body;
-	} });
 
 	/** A tool call of entry `of` as an action card: its state badge (running, done, failed), name, and one line; arguments (all of them on request) and result inside. */
 	function action(t: NonNullable<Item["tools"]>[number], of: string) {
@@ -150,8 +146,11 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, openTile }
 		whole?.addEventListener("click", () => fetchBody(whole, args, of, (it) => ((x) => x && `${x.args ?? ""}${x.cut ? "\n… (cut at 1 MB)" : ""}`)(it.tools?.find((x) => x.id === t.id))));
 		const more = r?.more ? h("button", { class: "more", type: "button" }, `show all (${size(r.bytes ?? 0)})`) : null;
 		more?.addEventListener("click", () => fetchBody(more, body, r!.id, (it) => it.text));
-		const open = t.name === "show_doc" && data.doc ? h("button", { class: "more open", type: "button" }, "open beside") : null;
-		open?.addEventListener("click", (event) => (event.preventDefault(), t.summary.split(", ").forEach(doc)));
+		// Open beside while the document is listed: the session shows it now, so the server serves it (a card whose document closed stays text).
+		const open = t.name === "show_doc" && docFor ? h("button", { class: "more open", type: "button", hidden: "" }, "open beside") : null;
+		open?.addEventListener("click", (event) => (event.preventDefault(), t.summary.split(", ").forEach((p) => docFor?.(p)?.())));
+		if (open) opens.add({ paths: t.summary.split(", "), button: open });
+		if (open) queueMicrotask(docs);
 		return h("details", { class: "act" }, h("summary", { "data-mark": r ? (r.isError ? "error" : "done") : "working" }, h("b", { class: "badge" }), h("code", null, t.name), h("span", { class: "sum" }, t.summary), open), args, whole, r && h("div", { class: "result" }, r.images ? h("em", null, `${r.images} image(s)`) : null, body, more));
 	}
 	function render(it: Item): HTMLElement {
@@ -224,6 +223,7 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, openTile }
 
 	return {
 		log: scroller,
+		docs,
 		apply(e) {
 			if (e.reset) {
 				paint(model.reset({ items: e.items ?? [], before: e.before }));

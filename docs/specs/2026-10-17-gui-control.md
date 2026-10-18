@@ -650,7 +650,43 @@ endpoint). The same refusal applies to text sent to any session whose pending ca
 is `secret_drop`, so a secret never passes through the browser, the server, or
 Herdr input from the GUI.
 
+### Documents (0.8.0)
+
+Built from the Phase 3 plan of 2026-10-18 (tasks 5 to 8, U6 on its cap path). It replaces the plan below, which Straw Boss would have
+carried out alone; here the package that shows the documents owns them, as the dialog owners own their dialogs.
+
+**Owner contract.** pi-herdr-doc-review 0.4.0 or newer (its README, "Browser viewers") publishes `doc-review:documents` `{version: 1,
+documents}` on pi's event bus at every change, answers `doc-review:documents-request` with the current list, and takes form answers as
+`doc-review:form` `{version, id, answerId, fields}`, replying on `doc-review:form-result`; a repeated `answerId` gets its first result
+and delivers nothing again. Chawan and nvim behave as before.
+
+**Relay and binding (`src/documents.ts`, `src/bridge.ts`, `src/dialogs.ts`).** The bridge in every Herdr pi keeps the owner's last list
+(at most 32, display cut to 1024 and reason to 2048 characters; another version or shape is ignored, never guessed at) and sends it in
+its dialogs message; it asks for the list again when it starts. A list that would push the message past the channel's size goes alone
+(`docsCut`), so documents never hold back dialogs. The hub binds a bridge's documents to a unit by the dialog binding rule (pane and
+session file) and gives each document a capability, 128 random bits, stable while the server, the bridge, and the owner's id stay the
+same. The snapshot carries cards `{cap, display, kind, reason, revision, onScreen}` per unit: never a path or the owner's id. A form
+answer goes back through the bridge that listed the document, once per `answerId`, with a 4 s timeout.
+
+**Serving (`src/docs.ts`).** Described in [how it works](../how-it-works.md#browser-view): routes by capability, a one-time nonce per
+page view for its forms, a CSP `sandbox` without scripts on every `/doc/` response with the server's origin named (WebKit does not
+match `'self'` in a sandboxed document), fonts with `Access-Control-Allow-Origin: *` (Chrome fetches them from the opaque origin in
+CORS mode), and a 409 "Reload the document" page for a navigation to the document from its own frame (WebKit's Back after an answer),
+which gets no new nonce. Remotely `/doc/` needs the Tailscale identity and the capability but not the cookie (U6): Chrome withholds a
+SameSite=Strict cookie from a sandboxed frame's subresource and form requests, which a live probe on 2026-10-18 showed (Chrome and
+Chromium withhold it, WebKit sends it).
+
+**Page (`gui/doc.ts`).** Tiles in the overlay layer (icon: Scroll Unfurled): an HTML document in an `<iframe sandbox="allow-forms
+allow-popups allow-popups-to-escape-sandbox">`, a text document fetched as JSON and rendered read only. Arrival: the first snapshot of a
+unit opens nothing; afterwards a display name the unit did not list before (not a capability, which a restarted server or bridge mints
+afresh) opens as a tile without focus, only while the page shows that unit's comms, and only while fewer than four tiles are open: an
+arrival never pushes out a tile the user opened. A revision reloads a tile that shows and marks a hidden one until it shows. The dossier
+lists the unit's documents; a unit token's parchment badge counts those on screen (a tower has the dossier list only); a `show_doc` card offers **open beside** while a path it names resolves (against the
+session's `cwd`) to a listed document's display.
+
 ### `show_doc` in the browser (R2)
+
+Superseded by [Documents (0.8.0)](#documents-080); kept as the first plan.
 
 - The session view lists the HTML documents its `show_doc` calls opened (paths
   from the call, resolved against the session header `cwd`, then `realpath`). A
@@ -725,9 +761,9 @@ Control means typing into the user's terminals, so every write is guarded.
 | Exposure beyond this machine | Only through `tailscale serve` on the tailnet, never Funnel; a remote request needs the exact MagicDNS `Host`, this machine's user in `Tailscale-User-Login`, no Funnel marker, and a session cookie from a one-time pairing code (see [Remote access](#remote-access-over-tailscale-r6)). |
 | Someone else's serve entry | Straw Boss adds 8443 only when it is free or its own, and removes only its own entry, checked against `tailscale serve status --json`. |
 | Cross-site request forgery | POST only for writes (GET on `/api/*` mutating paths answers 405); `Origin` must be `http://127.0.0.1:<port>` (remotely `https://<MagicDNS name>:8443`); `Sec-Fetch-Site`, when present, must be `same-origin`; `Content-Type: application/json`; header `X-SB-CSRF` must equal a second random secret injected into `index.html`. The custom header forces a CORS preflight that the server never approves. |
-| Clickjacking | `frame-ancestors 'none'` on the app; documents allow only `'self'`. |
-| Agent-written HTML attacking the app | Documents are sandboxed without scripts and without same-origin; only files named by `show_doc`, and images, CSS, and fonts beside them, are served. The only GET that writes is the document answer, gated by a per-document nonce. |
-| Arbitrary file reads | Paths come only from the registry and `show_doc` calls; `realpath` and directory containment checks as in today's static serving (`gui.ts:85-86`). |
+| Clickjacking | `frame-ancestors 'none'` on the app; documents allow only the server's own origin. The app frames only its own pages (`frame-src 'self'`) and sends `Cross-Origin-Opener-Policy: same-origin`, so a page a document opens cannot steer the app's tab. |
+| Agent-written HTML attacking the app | Documents are sandboxed without scripts and without same-origin, by the frame's attribute and by every `/doc/` response's CSP; only documents a session's owner lists now, and images, CSS, and fonts under their own directory, are served. The only GET that writes is the document answer, gated by a one-time nonce bound to the document; it reaches the owner through the bridge that listed the document, once per answer id. Remotely a document's requests need the Tailscale identity and its capability, not the pairing cookie: a device of the same Tailscale user that holds a document's link can read it and answer its form. Answers ride a GET URL, as in Chawan, and stay in browser history. |
+| Arbitrary file reads | Paths come only from the registry and the document owner's list, never from the browser; `realpath` and directory containment checks as in today's static serving (`gui.ts:85-86`). |
 | A reused pane id | Input requires the pane's current `agent_session.value` to be the session's file. |
 | An answer reaching the wrong dialog | No keys: the answer goes to the dialog's owner through the session's bridge. The answer names the dialog id and the digest of what the page showed and carries a page-minted `answerId` that takes effect at most once; the server reads the net afresh and requires the session's one open dialog, the file's open call of the owner's tool, and a matching digest; the bridge acts only on answers addressed to its `bridgeId` from the GUI server's session as the channel's current owner at its epoch, and the owner settles only an open dialog. A dialog that closed meanwhile answers `stale` (see [Answering pi dialogs](2026-10-18-dialog-answers.md#threat-model)). |
 | Exiting pi by accident | `ctrl+c` and `ctrl+d` are not sendable, and control characters in text are refused (they could end the bracketed paste); session-ending slash commands typed as text need a confirm the server checks (keys are not covered; see the keys API). |

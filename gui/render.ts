@@ -45,10 +45,13 @@ export const aim = (a: Element, route: Route | undefined) => {
 };
 /** The round unit token: icon, spinning ring, ping, and state badge. */
 export const PLATE = `<div class="plate"><i class="ring"></i><svg><use href="#i-main"/></svg><b class="badge"></b></div>`;
-export function fillPlate(plate: HTMLElement, role: string, m: Mark) {
+/** `docs`: the unit's documents; those on screen in its terminal show as a scroll badge with their count. */
+export function fillPlate(plate: HTMLElement, role: string, m: Mark, docs?: { onScreen: boolean }[]) {
 	mark(plate, m);
-	const use = plate.querySelector("use")!, href = `#i-${ICON[role] ?? "member"}`;
+	const use = plate.querySelector("use")!, href = `#i-${ICON[role] ?? "member"}`, n = docs?.filter((d) => d.onScreen).length;
 	if (use.getAttribute("href") !== href) use.setAttribute("href", href);
+	if (n) plate.dataset.docs = String(n);
+	else delete plate.dataset.docs;
 }
 
 /** Reconciles the children of `parent` with `items`: new ones enter, gone ones leave, the rest keep their element and move into order. */
@@ -83,7 +86,7 @@ function fillUnit(el: HTMLElement, u: Omit<Unit, "id" | "key" | "control" | "rol
 	hit.setAttribute("aria-label", `${u.name}: ${doing(u.note, u.mark)}`);
 	hit.toggleAttribute("data-alert", urgent(u.mark));
 	mark(el, u.mark);
-	fillPlate(el.querySelector(".plate")!, u.role, u.mark);
+	fillPlate(el.querySelector(".plate")!, u.role, u.mark, u.docs);
 	text(el, ".name", u.name);
 	text(el, ".role", u.role);
 	text(el, ".note", doing(u.note, u.mark));

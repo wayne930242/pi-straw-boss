@@ -3,6 +3,7 @@ import type { Base, Net, Unit } from "../src/net.ts";
 import type { Chat, Data, HistoryEvent, Who } from "./chat.ts";
 import { mountAsk } from "./ask.ts";
 import { mountComposer, postTo } from "./composer.ts";
+import { docFor, docList, docTile, shelve } from "./doc.ts";
 import type { Tile } from "./layer.ts";
 import { aim, doing, fillPlate, html, LABEL, mark, PLATE, sync, text, urgent } from "./render.ts";
 import type { Route } from "./router.ts";
@@ -18,7 +19,7 @@ const MAX_QUEUE = 200;
 
 export function locate(net: Net | undefined, key: string): Found | undefined {
 	for (const base of net?.bases ?? []) {
-		if (base.tower?.key === key) return { u: { key, name: base.tower.name, role: "tower", mark: base.tower.mark, control: base.tower.control, pending: base.tower.pending, subs: [] }, base };
+		if (base.tower?.key === key) return { u: { key, name: base.tower.name, role: "tower", mark: base.tower.mark, control: base.tower.control, pending: base.tower.pending, docs: base.tower.docs, docsCut: base.tower.docsCut, subs: [] }, base };
 		for (const [squad, units] of [...base.tabs.map((t) => [t.label, t.units] as const), [undefined, base.outside] as const])
 			for (const u of units) {
 				if (u.key === key) return { u, base, squad };
@@ -29,25 +30,26 @@ export function locate(net: Net | undefined, key: string): Found | undefined {
 }
 
 const tokenEl = () => html(`<a class="token">${PLATE}<span class="name"></span><span class="line"><em class="role"></em><span class="note"></span></span></a>`);
-function fillToken(el: HTMLElement, u: { key?: string; name: string; role: string; mark: Mark; note?: string }, ws: string) {
+function fillToken(el: HTMLElement, u: { key?: string; name: string; role: string; mark: Mark; note?: string; docs?: { onScreen: boolean }[] }, ws: string) {
 	aim(el, u.key ? { view: "session", ws, key: u.key } : undefined);
 	el.toggleAttribute("hidden", false);
 	el.toggleAttribute("data-alert", Boolean(u.key) && urgent(u.mark));
 	mark(el, u.mark);
-	fillPlate(el.querySelector(".plate")!, u.role, u.mark);
+	fillPlate(el.querySelector(".plate")!, u.role, u.mark, u.docs);
 	text(el, ".name", u.name);
 	text(el, ".role", u.role === "outside" ? "unaligned" : u.role);
 	text(el, ".note", doing(u.note, u.mark));
 }
 const colEl = () => html(`<div class="col"><a class="token">${PLATE}<span class="name"></span><span class="line"><em class="role"></em><span class="note"></span></span></a><div class="say"><p></p></div><div class="drones"></div></div>`);
 const ZOOM = `<div class="zoom-in"><header class="base keep"><a class="tower big"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></a><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>head tower</span><h2></h2><p></p></div><dl class="tally"><div><dt>Squads</dt><dd></dd></div><div><dt>Units</dt><dd></dd></div><div data-mark="working"><dt>Working</dt><dd></dd></div><div data-mark="waiting"><dt>Waiting</dt><dd></dd></div></dl></header><div class="squads"></div><div class="camps"><section class="tab squad camp" data-group="outposts"><h3><svg><use href="#i-outpost"/></svg><b>Outposts</b><small></small></h3><div class="formation"></div></section><section class="tab squad camp" data-group="outside"><h3><svg><use href="#i-outside"/></svg><b>Outside the net</b><small>unaligned pi panes</small></h3><div class="formation"></div></section></div><p class="lost" hidden></p></div>`;
-const DOSSIER = `<div class="dossier-in"><span class="tag">unit dossier</span><div class="portrait">${PLATE}</div><h3></h3><p class="d-line"><em class="role"></em> <span class="state"></span></p><p class="d-note" hidden></p><dl class="specs"></dl><button class="cmp-link d-term" type="button" hidden>Terminal</button><div class="d-drones" hidden><h4>Dispatched</h4><div class="formation"></div></div></div>`;
+const DOSSIER = `<div class="dossier-in"><span class="tag">unit dossier</span><div class="portrait">${PLATE}</div><h3></h3><p class="d-line"><em class="role"></em> <span class="state"></span></p><p class="d-note" hidden></p><dl class="specs"></dl><button class="cmp-link d-term" type="button" hidden>Terminal</button><div class="d-docs" hidden><h4>Documents</h4><div class="d-doc-list"></div><p class="d-docs-cut" hidden>More than the relay carries: read them in the terminal.</p></div><div class="d-drones" hidden><h4>Dispatched</h4><div class="formation"></div></div></div>`;
 const COMMS = `<div class="comms-in"><header class="comms-head"><span class="logo"><svg><use href="#i-comms"/></svg></span><div><h2><small>comms</small> <span></span></h2><p></p></div><span class="chan link" data-state="live"><i></i><b>channel open</b></span></header><div class="chat-root"></div><div class="ask-root"></div><div class="composer-root"></div></div>`;
 
 export function mountFocus({ data, restart, openTile, openTerminal, online }: FocusDeps) {
 	const $ = (id: string) => document.getElementById(id)!;
 	const [wsView, sessionView, dossier] = ["ws-view", "session-view", "dossier"].map($) as HTMLElement[];
 	let route: Route = { view: "map" }, net: Net | undefined, cards: Record<string, string> = {}, chat: Chat | undefined, queue: HistoryEvent[] = [], stale = false;
+	const seen = new Map<string, Set<string>>(); // each unit's documents at the last snapshot: what is new arrives
 	let info: HistoryEvent | undefined, model: string | undefined, ctx: number | undefined, entering = 0, composer: ReturnType<typeof mountComposer> | undefined, asker: ReturnType<typeof mountAsk> | undefined;
 	const ws = () => (route.view === "map" ? "" : route.ws);
 	const linkTo = (r: Route, label: string) => {
@@ -159,6 +161,8 @@ export function mountFocus({ data, restart, openTile, openTerminal, online }: Fo
 		}));
 		const term = root.querySelector<HTMLButtonElement>(".d-term")!, key = route.key, name = u?.name ?? info?.name ?? key; // the pane's screen, in a tile beside the comms
 		[term.hidden, term.onclick] = [!u?.control, () => openTerminal(key, name)];
+		docList(root.querySelector(".d-docs")!, u?.docs, u?.docsCut, (card) => openTile(docTile(name, card)));
+		chat?.docs();
 		const drones = root.querySelector<HTMLElement>(".d-drones")!;
 		drones.hidden = !u?.subs.length;
 		sync(drones.querySelector(".formation")!, (u?.subs ?? []).map((s) => ({ ...s, id: s.key })), tokenEl, (el, s) => (el.classList.add("drone"), fillToken(el, s, ws())));
@@ -187,7 +191,8 @@ export function mountFocus({ data, restart, openTile, openTerminal, online }: Fo
 			const hit = locate(net, key), sub = hit?.u.subs.find((s) => s.name === name) ?? net?.bases.flatMap((b) => [...b.tabs.flatMap((t) => t.units), ...b.outside]).find((x) => x.name === name);
 			return sub && linkTo({ view: "session", ws: locate(net, sub.key)?.base.id ?? ws(), key: sub.key }, name);
 		};
-		chat = mountChat(sessionView.querySelector(".chat-root")!, data(key), { who, link, openTile });
+		const opener = (path: string, card = docFor(locate(net, key)?.u.docs, info?.header?.cwd, path)) => card && (() => openTile(docTile(who().name, card)));
+		chat = mountChat(sessionView.querySelector(".chat-root")!, data(key), { who, link, docFor: opener });
 		const send = data(key).post ?? postTo(key);
 		[composer, asker] = [mountComposer(sessionView.querySelector(".composer-root")!, key, send), mountAsk(sessionView.querySelector(".ask-root")!, send, undefined, () => openTerminal(key, who().name))];
 		chat.reveal(route.at);
@@ -221,6 +226,7 @@ export function mountFocus({ data, restart, openTile, openTerminal, online }: Fo
 		},
 		net(next: Net) {
 			net = next;
+			shelve(next, seen, route.view === "session" ? route.key : undefined, (unit, card) => openTile(docTile(unit, card), false));
 			if (route.view !== "map") draw();
 		},
 		cards(next: Record<string, string>) {

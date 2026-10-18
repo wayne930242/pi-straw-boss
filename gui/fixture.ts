@@ -1,8 +1,8 @@
 import type { Mark } from "../src/dashboard.ts";
 import type { Net, Unit } from "../src/net.ts";
 import type { Data, Page } from "./chat.ts";
-import { DEMO_DOC, demoHistory, demoScreen, WHOLE } from "./demo-chat.ts";
-import type { Tile } from "./layer.ts";
+import { DEMO_DOC, DEMO_PAGE, demoHistory, demoScreen, WHOLE } from "./demo-chat.ts";
+import { docHooks } from "./doc.ts";
 import type { Source } from "./stream.ts";
 
 // The demo net for `npm run gui:dev`: invented names, state changes on a timer, and a stream that can be dropped to see the
@@ -13,10 +13,11 @@ const unit = (id: string, name: string, role: Unit["role"], mark: Mark, note?: s
 const two = [{ header: "Window", question: "When should the ops deploy go out?", options: [{ title: "Tonight 22:00", description: "Low traffic; on-call is awake." }, { title: "Tomorrow 08:00" }], multiple: false, freeform: true }, { header: "Notify", question: "Who should be told?", options: [{ title: "ops" }, { title: "billing" }, { title: "support" }], multiple: true, freeform: true }];
 const hand = { title: "Robot Hand — Deploy needs your sudo password\n\n  ! npm run deploy", copy: "npm run deploy", choices: [{ label: "Type it into a new Herdr pane (I press Enter)", note: "Opens a pane with the command typed; press Enter there" }, { label: "Put it in my prompt", note: "Lands in the terminal's prompt; press Enter there" }, { label: "Copy it to my clipboard", note: "Copies on this computer", localOnly: true as const }, { label: "No, thanks" }] };
 const ask = (n: number): Unit["pending"] => (n % 2 ? { callId: `demo-${n}`, tool: "secret_drop", why: "It waits for a secret." } : { callId: `demo-${n}`, ...(n % 4 ? { tool: "ask_user_question", asks: two, answer: { dialog: `d${n}`, digest: "0".repeat(64), questions: two } } : { tool: "robot_hand", answer: { dialog: `d${n}`, digest: "0".repeat(64), select: hand } }) });
+const doc = (cap: string, display: string, reason: string, revision = 1) => ({ cap, display, kind: display.endsWith(".html") ? ("html" as const) : ("text" as const), reason, revision, onScreen: true });
 const demo = (): Net => ({
 	bases: [
 		{ id: "w1", label: "Harbor API", mark: "working", head: true, tower: { name: "tower · Harbor API", mark: "working", key: "t1", control: true }, outposts: [{ id: "w1-fix", label: "harbor-api-hotfix", mark: "working" }], outside: [unit("o1", "scratch-notes", "outside", "idle")], tabs: [
-			{ id: "w1:t1", label: "billing", units: [unit("a1", "billing-main", "main", "working", "tool:edit", [unit("a1/lint", "lint-sweep", "subagent", "working", "tool:bash"), unit("a1/docs", "docs-writer", "subagent", "done", "finished")]), unit("a2", "billing-tests", "member", "idle")] },
+			{ id: "w1:t1", label: "billing", units: [{ ...unit("a1", "billing-main", "main", "working", "tool:edit", [unit("a1/lint", "lint-sweep", "subagent", "working", "tool:bash"), unit("a1/docs", "docs-writer", "subagent", "done", "finished")]), docs: [doc("plan", "docs/rollout-plan.md", "Rollout plan ready"), doc("review", "docs/ledger-review.html", "Review the ledger fix and pick a window")] }, unit("a2", "billing-tests", "member", "idle")] },
 			{ id: "w1:t2", label: "ops", units: [{ ...unit("a3", "ops-main", "main", "waiting", "waiting on a question"), pending: ask(0) }] },
 		] },
 		{ id: "w2", label: "Lighthouse Web", mark: "working", head: false, tower: { name: "tower · Lighthouse Web", mark: "idle", key: "t2", control: true }, outposts: [], outside: [], tabs: [
@@ -35,8 +36,10 @@ const units = (net: Net) => net.bases.flatMap((b) => b.tabs.flatMap((t) => t.uni
 
 export interface Control { drop(): void; silence(): void; restore(): void; doc(): void }
 
-export function createFixture({ resume, tile, tick = 2500 }: { resume(): void; tile(tile: Tile): void; tick?: number }): { open(watch: string | null): Source; data(key: string): Data; control: Control } {
-	let net = demo(), step = 0, waits = 0, dropped = false, silent = false, current: FixtureSource | undefined, live = 0;
+export function createFixture({ resume, tick = 2500 }: { resume(): void; tick?: number }): { open(watch: string | null): Source; data(key: string): Data; control: Control } {
+	let net = demo(), step = 0, waits = 0, dropped = false, silent = false, current: FixtureSource | undefined, live = 0, notes = 0;
+	// The demo documents stand in for the server's: the HTML one as a data: page, the text ones from here.
+	[docHooks.src, docHooks.load] = [() => `data:text/html;charset=utf-8,${encodeURIComponent(DEMO_PAGE)}`, async (cap) => ({ text: cap === "plan" ? DEMO_DOC : `# Notes ${cap.slice(5)}\n\nA demo document that arrived on its own.` })];
 	const history = demoHistory();
 	/** The page of the chat that ends before `before` (the end of the history when absent), the way the server pages. */
 	const page = (before?: string): Page => {
@@ -95,13 +98,8 @@ export function createFixture({ resume, tile, tick = 2500 }: { resume(): void; t
 		drop: () => ((dropped = true), current?.fail()),
 		silence: () => (silent = true),
 		restore: () => ((dropped = false), (silent = false), resume()),
-		// A document arrives on its own (as a show_doc call will in phase 3): it opens as a tile and takes no focus.
-		doc: () => tile({ id: "doc:docs/review-notes.md", title: "review-notes.md", body: () => {
-			const body = document.createElement("div");
-			body.className = "md";
-			void import("./markdown.ts").then(({ mount, parse }) => body.append(mount(parse(DEMO_DOC.replace("Rollout plan", "Review notes")))));
-			return body;
-		} }),
+		// billing-main shows a new document: on its comms it opens as a tile without focus; elsewhere its token gets the scroll badge.
+		doc: () => ((units(net).find((u) => u.key === "a1")!.docs = [...(units(net).find((u) => u.key === "a1")!.docs ?? []), doc(`note-${++notes}`, `docs/notes-${notes}.md`, "Notes for review")]), (net = structuredClone(net)), current?.send("message", net)),
 	};
 	mountToolbar(control);
 	const data = (key: string): Data => ({
@@ -109,7 +107,6 @@ export function createFixture({ resume, tile, tick = 2500 }: { resume(): void; t
 		latest: async () => page(),
 		// Input is accepted, and shows in the log a moment later as pi would write it.
 		post: async (action, body) => (action === "answer" ? answered(key) : action === "mirror" ? mirror(key, body.on === true) : action === "keys" && body.key === "enter" && !body.confirmed ? { ok: false, status: 409, body: { error: "confirm", confirm: "reload", reason: "Enter would run /reload (or the command picked in pi's menu, if it is open), which ends or replaces this session. Enter goes to whatever has focus in the terminal; confirm to send it." } } : (action === "input" && setTimeout(() => current?.send("history", { key, reset: false, items: [{ id: `you-${++live}`, kind: "user", at: new Date().toISOString(), text: String(body.text) }] }), 700), { ok: true, status: 200, body: {} })),
-		doc: async (path) => (path.endsWith("rollout-plan.md") ? DEMO_DOC : undefined),
 		entry: async (id) => {
 			const item = history.find((i) => i.id === id);
 			return item && { ...item, thoughtText: item.kind === "assistant" ? "Thinking out loud about the rounding rules.\n\nCredit notes may need a separate sum." : undefined, tools: item.tools?.map((t) => (t.cut ? { ...t, args: WHOLE, cut: undefined } : t)), text: item.more ? Array.from({ length: 120 }, (_, i) => `line ${i + 1} of the full tool result`).join("\n") : item.text };

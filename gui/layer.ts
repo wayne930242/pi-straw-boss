@@ -11,7 +11,7 @@ import { aim, byId, doing, fillPlate, html, mark, PLATE, sync, text } from "./re
 // view's width side by side and turn into tabs when it runs out. Opening a tile never covers or closes a dialog, and a tile that
 // arrives on its own shows beside the view without taking focus or the active tab.
 
-/** `icon` names the header's symbol (a document by default); `closed` runs when the tile closes, by its × or pushed out by a fifth. */
+/** `icon` names the header's symbol (a document by default); `closed` runs when the tile closes, by its × or pushed out by a fifth, or is refused. */
 export interface Tile { id: string; title: string; body(): HTMLElement; icon?: string; closed?(): void }
 export interface TilesIO { render(tiles: Tile[], active: string | undefined): void; enter(tile: Tile): void }
 export const MAX_TILES = 4;
@@ -23,8 +23,9 @@ export function createTiles(io: TilesIO) {
 	return {
 		get tiles() { return tiles; },
 		get active() { return active; },
-		/** `focus` is false for a tile that arrives on its own. Past four tiles the oldest closes. */
+		/** `focus` is false for a tile that arrives on its own, which never pushes one out: with four open it is refused. Past four the oldest closes. */
 		open(tile: Tile, focus = true) {
+			if (!focus && tiles.length >= MAX_TILES && !tiles.some((t) => t.id === tile.id)) return void tile.closed?.();
 			if (!tiles.some((t) => t.id === tile.id)) (tiles = [...tiles, tile]).slice(0, -MAX_TILES).forEach((t) => t.closed?.());
 			tiles = tiles.slice(-MAX_TILES);
 			if (focus || !tiles.some((t) => t.id === active)) active = tile.id;

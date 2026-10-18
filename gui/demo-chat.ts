@@ -9,6 +9,9 @@ const REPLY = "Here is what I found in `billing/ledger.ts`:\n\n- The rounding ha
 
 export const DEMO_DOC = "# Rollout plan\n\nRead-only demo document, opened as a tile beside the comms log.\n\n## Steps\n\n1. Ship the ledger fix to staging\n2. Watch the rounding metric for a day\n3. Promote to production\n\n- [x] regression test written\n- [ ] credit notes reviewed\n\n| window | owner |\n|---|---|\n| Tue 16:00 | ops-main |\n\n> Raw <b>HTML</b> stays text here too.";
 
+/** A demo HTML document as show_doc pages look (no script, a pi-answer form), shown in the sandboxed frame. */
+export const DEMO_PAGE = `<!doctype html><meta charset="utf-8"><style>body{margin:0;padding:22px;font:15px/1.55 Georgia,serif;background:#f6efdc;color:#2b2416}h1{margin:0 0 4px;font-size:22px}p.k{margin:0 0 14px;color:#7a6a48;font:12px system-ui}table{border-collapse:collapse;margin:10px 0}td,th{border:1px solid #cdbf98;padding:4px 10px}form{margin-top:14px;padding:12px;border:1px dashed #b49b62;border-radius:8px}button{padding:5px 14px}</style><h1>Ledger fix review</h1><p class="k">billing-main · for review</p><p>Rounding now happens <b>after</b> the tax is applied, and credit notes count.</p><table><tr><th>check</th><th>result</th></tr><tr><td>unit</td><td>43 passed</td></tr><tr><td>staging</td><td>green</td></tr></table><form action="cgi-bin:pi-answer"><label><input type="radio" name="window" value="tonight" checked> Tonight 22:00</label><br><label><input type="radio" name="window" value="tomorrow"> Tomorrow 08:00</label><br><button>Send to billing-main</button></form>`;
+
 /** Items in file order: round r is a user message, a thinking assistant with two tool calls and their results, then a reply. */
 export function demoHistory(rounds = 70): Item[] {
 	const out: Item[] = [{ id: "m0", kind: "meta", text: "model demo/harbor-1", at: at(0) }, { id: "m1", kind: "meta", text: "thinking medium", at: at(0) }];

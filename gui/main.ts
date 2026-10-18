@@ -120,7 +120,7 @@ function live(watch: string | null): Source {
 
 const api = (path: string) => fetch(`api/${path}`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))));
 const history = (key: string, query = "") => api(`history/${encodeURIComponent(key)}${query}`);
-const fixture = __LIVE__ ? undefined : (await import("./fixture.ts")).createFixture({ resume: () => stream.resume(), tile: (tile) => openTile(tile, false) });
+const fixture = __LIVE__ ? undefined : (await import("./fixture.ts")).createFixture({ resume: () => stream.resume() });
 const data = (key: string): Data => fixture?.data(key) ?? { older: (before) => history(key, `?before=${encodeURIComponent(before)}`), latest: () => history(key), entry: (id) => api(`entry/${encodeURIComponent(key)}/${encodeURIComponent(id)}`).catch(() => undefined) };
 const open = () => {
 	const source = fixture ? fixture.open(watchOf(current)) : live(watchOf(current));
