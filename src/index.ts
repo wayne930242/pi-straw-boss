@@ -523,7 +523,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 		const share = (take = false, remote = false) =>
 			(opening ??= (async () => {
 				if (gui) return { url: gui.url, owner: label(), mine: gui };
-				const start = (prefer: { port?: number; token?: string; csrf?: string }, net = netSource({ run, sessions, hub: (hub = hub?.me === me() ? hub : createHub(pi, me(), bridge)) })) => startGui({ read: net.read, net, call, hub, dir: bundle, ...prefer, onStop: (asked) => void stopOwn(asked) });
+				const start = (prefer: { port?: number; token?: string; csrf?: string }, net = netSource({ run, sessions, hub: (hub = hub?.me === me() ? hub : createHub(pi, me(), bridge)) })) => startGui({ read: net.read, net, call, hub, dir: bundle, ...prefer, onStop: (asked) => void stopOwn(asked), onRemote: async () => tell((await switchRemote(gui!, true, guiDir, ts)).text) });
 				const shared = await sharedGui(guiDir, [label(), me()], start, sleep, { version, take });
 				if ((gui = shared.mine) && !remote) await switchRemote(gui, false, guiDir, ts).catch(() => {});
 				return shared;

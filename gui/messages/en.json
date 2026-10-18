@@ -13,7 +13,7 @@
 	"alerts_title": "Alerts: {tally}",
 	"no_alerts": "no alerts",
 	"pair_button": "Phone",
-	"pair_title": "Pair a phone over Tailscale (/boss gui remote turns remote access on)",
+	"pair_title": "Pair a phone over Tailscale",
 	"link_connecting": "connecting",
 	"link_live": "live",
 	"link_reconnecting": "reconnecting",
@@ -71,9 +71,17 @@
 	"units": "Units",
 	"unit_count": [
 		{
-			"declarations": ["input count", "local countPlural = count: plural"],
-			"selectors": ["countPlural"],
-			"match": { "countPlural=one": "{count} unit", "countPlural=other": "{count} units" }
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} unit",
+				"countPlural=other": "{count} units"
+			}
 		}
 	],
 	"outposts": "Outposts",
@@ -102,9 +110,17 @@
 	"tokens": "{count} tokens",
 	"entry_count": [
 		{
-			"declarations": ["input count", "local countPlural = count: plural"],
-			"selectors": ["countPlural"],
-			"match": { "countPlural=one": "{count} entry", "countPlural=other": "{count} entries" }
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} entry",
+				"countPlural=other": "{count} entries"
+			}
 		}
 	],
 	"opening_channel": "Opening the channel…",
@@ -154,9 +170,17 @@
 	"also_queued": "Also queued: {tally}",
 	"tally_need": [
 		{
-			"declarations": ["input count", "local countPlural = count: plural"],
-			"selectors": ["countPlural"],
-			"match": { "countPlural=one": "{count} needs you", "countPlural=other": "{count} need you" }
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} needs you",
+				"countPlural=other": "{count} need you"
+			}
 		}
 	],
 	"tally_finished": "{count} finished",
@@ -254,5 +278,8 @@
 	"new_code": "New code",
 	"asking_code": "Asking for a pairing code…",
 	"pair_scan": "Scan it with a phone signed in to Tailscale as this machine's user. It works once, within ten minutes.",
-	"no_answer": "The server did not answer."
+	"no_answer": "The server did not answer.",
+	"remote_off_ask": "Remote access is off. Turn it on so a phone on your tailnet can open this page? Only devices signed in to Tailscale as this machine's user can pair; Funnel is never used.",
+	"remote_turn_on": "Turn on remote access",
+	"remote_turning_on": "Turning remote access on…"
 }

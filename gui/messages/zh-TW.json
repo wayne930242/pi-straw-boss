@@ -13,7 +13,7 @@
 	"alerts_title": "警示：{tally}",
 	"no_alerts": "無警示",
 	"pair_button": "手機",
-	"pair_title": "透過 Tailscale 配對手機（/boss gui remote 會開啟遠端存取）",
+	"pair_title": "透過 Tailscale 配對手機",
 	"link_connecting": "連線中",
 	"link_live": "即時",
 	"link_reconnecting": "重新連線中",
@@ -236,5 +236,8 @@
 	"new_code": "新的配對碼",
 	"asking_code": "正在取得配對碼…",
 	"pair_scan": "用以本機使用者身分登入 Tailscale 的手機掃描。只能用一次，十分鐘內有效。",
-	"no_answer": "伺服器沒有回應。"
+	"no_answer": "伺服器沒有回應。",
+	"remote_off_ask": "遠端存取還沒開啟。要開啟，讓你 tailnet 上的手機可以開這個頁面嗎？只有用這台電腦的 Tailscale 帳號登入的裝置能配對，絕不使用 Funnel。",
+	"remote_turn_on": "開啟遠端存取",
+	"remote_turning_on": "正在開啟遠端存取…"
 }

@@ -4,7 +4,8 @@ import { m } from "./paraglide/messages.js";
 import { post } from "./post.ts";
 
 // The phone pairing tile, its own small chunk: a fresh one-time pairing URL from the server as a QR code (dark modules on white, drawn
-// as one SVG path, never markup), while remote access is on. The code works once, within ten minutes; New code asks for another.
+// as one SVG path, never markup). While remote access is off the tile asks first; Turn on opens it to the tailnet from the server's session and
+// shows the code it answers with. The code works once, within ten minutes; New code asks for another.
 
 const NS = "http://www.w3.org/2000/svg";
 function square(rows: string[]) {
@@ -23,15 +24,18 @@ function square(rows: string[]) {
 export function pairTile(): Tile {
 	return { id: "pair", title: m.pair_tile(), body: () => {
 		const body = h("div", { class: "pair" }), again = h("button", { type: "button", class: "later" }, m.new_code());
-		const ask = () => {
-			body.replaceChildren(h("p", { class: "chat-empty" }, m.asking_code()));
-			void post("remote/pair", {}).then((r) => {
+		const on = h("button", { type: "button", class: "pair-btn" }, m.remote_turn_on());
+		const ask = (path = "remote/pair", waiting = m.asking_code()) => {
+			body.replaceChildren(h("p", { class: "chat-empty" }, waiting));
+			void post(path, {}).then((r) => {
 				const rows = r.body.rows, url = String(r.body.url ?? "");
-				if (!r.ok || !Array.isArray(rows)) return body.replaceChildren(h("p", null, r.body.reason ?? m.refused({ status: r.status })), again);
+				if (r.body.error === "remote_off") return body.replaceChildren(h("p", null, m.remote_off_ask()), on);
+				if (!r.ok || !Array.isArray(rows)) return body.replaceChildren(h("p", null, r.body.reason ?? m.refused({ status: r.status })), path === "remote/on" ? on : again);
 				body.replaceChildren(square(rows.map(String)), h("p", null, m.pair_scan()), h("p", null, h("code", null, new URL(url).host)), again);
 			}, () => body.replaceChildren(h("p", null, m.no_answer()), again));
 		};
-		again.onclick = ask;
+		on.onclick = () => ask("remote/on", m.remote_turning_on());
+		again.onclick = () => ask();
 		ask();
 		return body;
 	} };

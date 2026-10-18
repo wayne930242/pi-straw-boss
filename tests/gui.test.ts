@@ -25,7 +25,7 @@ after(async () => {
 });
 
 const net = (label: string): Net => ({ bases: [{ id: "w", label, mark: "idle", head: true, tower: null, tabs: [], outposts: [], outside: [] }] });
-async function serve(read: () => Promise<Net>, options: { pollMs?: number; pingMs?: number; port?: number; token?: string; csrf?: string; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] }; call?: (method: string, params: Record<string, unknown>) => Promise<unknown>; onStop?(asked: Asked): void } = {}, bundle = dir) {
+async function serve(read: () => Promise<Net>, options: { pollMs?: number; pingMs?: number; port?: number; token?: string; csrf?: string; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] }; call?: (method: string, params: Record<string, unknown>) => Promise<unknown>; onStop?(asked: Asked): void; onRemote?(): Promise<void> } = {}, bundle = dir) {
 	const gui = await startGui({ read, dir: bundle, pollMs: 20, pingMs: 50, ...options });
 	running.push(gui);
 	return gui;
@@ -118,6 +118,33 @@ test("another session's stop request ends the server through onStop; one without
 	assert.equal(await requestStop(record, { by: "s", take: true }, nap), true);
 	assert.deepEqual(asked, [{ by: "s", take: true }]);
 	await assert.rejects(raw(gui, `/${gui.token}/`), /ECONNREFUSED/);
+});
+
+test("the page turns remote access on through onRemote and gets a pairing code at once; a failure says why; a paired device cannot ask", async () => {
+	const host = "box.tail1.ts.net:8443";
+	let fail: string | undefined, calls = 0;
+	const gui: Gui = await serve(async () => net("a"), { onRemote: async () => (calls++, fail ? Promise.reject(new Error(fail)) : gui.access.enable({ host, login: "me@example.com" })) });
+	const post = (path: string, headers: Record<string, string> = {}) =>
+		new Promise<{ status: number; body: { error?: string; reason?: string; url?: string; rows?: string[] } }>((done, reject) => {
+			const req = request({ host: "127.0.0.1", port: gui.port, path: `/${gui.token}/api/${path}`, method: "POST", agent: false, headers: { host: `127.0.0.1:${gui.port}`, origin: `http://127.0.0.1:${gui.port}`, "content-type": "application/json", "x-sb-csrf": gui.csrf, ...headers } }, (res) => {
+				let body = "";
+				res.on("data", (c) => (body += c)).on("end", () => done({ status: res.statusCode!, body: body.startsWith("{") ? JSON.parse(body) : {} }));
+			});
+			req.on("error", reject).end("{}");
+		});
+	const off = await post("remote/pair");
+	assert.deepEqual([off.status, off.body.error], [409, "remote_off"], "the page learns it is off and can offer to turn it on");
+	fail = "Tailscale is not running";
+	assert.deepEqual(await post("remote/on").then((r) => [r.status, r.body.error, r.body.reason]), [502, "remote_failed", "Tailscale is not running"]);
+	fail = undefined;
+	const on = await post("remote/on");
+	assert.equal(on.status, 200);
+	assert.match(String(on.body.url), new RegExp(`^https://${host.replace(/\./g, "\\.")}/${gui.token}/pair/`));
+	assert.ok(Array.isArray(on.body.rows) && on.body.rows.length > 20, "with the QR's rows");
+	const tailnet = { host, "tailscale-user-login": "me@example.com", "x-forwarded-for": "100.87.7.97" };
+	const cookie = await new Promise<string>((done) => request({ host: "127.0.0.1", port: gui.port, path: `/${gui.token}/pair/${gui.access.pair()}`, headers: tailnet, agent: false }, (res) => (res.resume(), done(String(res.headers["set-cookie"]).split(";")[0]!))).end());
+	assert.equal((await post("remote/on", { ...tailnet, cookie, origin: `https://${host}` })).status, 403, "a paired device cannot ask");
+	assert.equal(calls, 2);
 });
 
 test("a request without the token, with a wrong one, with another Host header, or that is not a GET is refused", async () => {

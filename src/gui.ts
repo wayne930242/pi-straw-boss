@@ -41,12 +41,12 @@ const HEADERS = {
 export interface Gui { url: string; port: number; token: string; csrf: string; access: Access; stop(): Promise<void> }
 /** `net` is the registry behind the net reading (the allow list of session keys); without it no session can be watched. `call` reaches Herdr for input. */
 /** `hub` carries answers to the dialogs bridges relay (dialogs.ts); it runs exactly as long as the server. */
-/** `onStop` takes another session's stop request (requestStop), so the owner also takes its remote entry down; without it the server stops itself. */
-export interface GuiOptions { read(): Promise<Net>; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] }; call?: HerdrCall; hub?: Hub; dir?: string; port?: number; token?: string; csrf?: string; pollMs?: number; pingMs?: number; onStop?(asked: Asked): void }
+/** `onRemote` turns remote access on from the page, in the session that runs the server. `onStop` takes another session's stop request (requestStop), so the owner also takes its remote entry down; without it the server stops itself. */
+export interface GuiOptions { read(): Promise<Net>; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] }; call?: HerdrCall; hub?: Hub; dir?: string; port?: number; token?: string; csrf?: string; pollMs?: number; pingMs?: number; onStop?(asked: Asked): void; onRemote?(): Promise<void> }
 export interface Asked { by: string; take: boolean }
 
 /** Starts the server. A preferred `port` (with its `token` and `csrf`) is reused when free, so a restarted server keeps the URL and the page an open tab already has. */
-export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, token = randomBytes(16).toString("hex"), csrf = randomBytes(16).toString("hex"), pollMs = 2000, pingMs = 15_000, onStop }: GuiOptions): Promise<Gui> {
+export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, token = randomBytes(16).toString("hex"), csrf = randomBytes(16).toString("hex"), pollMs = 2000, pingMs = 15_000, onStop, onRemote }: GuiOptions): Promise<Gui> {
 	try {
 		if (!statSync(join(dir, "index.html")).isFile()) throw new Error();
 	} catch {
@@ -63,7 +63,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, t
 	const pair = (code = access.pair(), host = access.remote?.host, url = `https://${host}/${token}/pair/${code}`) => (code && host ? { url, rows: qr(url).map((row) => row.map(Number).join("")) } : undefined);
 	const mirrors = createMirrors({ call, lookup: (key) => net?.lookup(key), secret: waitsForSecret, canonical }), docs = hub && createDocs(hub, (key) => net?.lookup(key)?.name ?? key);
 	const stop = (asked: Asked) => void setTimeout(() => (onStop ? onStop(asked) : void halt()), 10); // after the reply has gone out
-	const control = createControl({ lookup: (key) => net?.lookup(key), call, csrf, canonical, pair, mirrors, stop, secret: waitsForSecret, answers: hub && { replay: hub.replay, ended: hub.ended, send: hub.send, probe: hub.probe, target: async (key) => (await tick(), hub.target(key)) } });
+	const control = createControl({ lookup: (key) => net?.lookup(key), call, csrf, canonical, pair, remoteOn: onRemote, mirrors, stop, secret: waitsForSecret, answers: hub && { replay: hub.replay, ended: hub.ended, send: hub.send, probe: hub.probe, target: async (key) => (await tick(), hub.target(key)) } });
 	let last: string | undefined, problem: string | undefined, inflight: Promise<void> | undefined;
 	let poll: ReturnType<typeof setInterval> | undefined, beat: ReturnType<typeof setInterval> | undefined;
 	const send = (to: ServerResponse, data: string, event?: string) => to.writableEnded || to.write(`${event ? `event: ${event}\n` : ""}data: ${data}\n\n`); // a reading in flight at stop ends after the streams
@@ -128,7 +128,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, t
 			} catch {
 				return void fail(404);
 			}
-			if (parts[0] === "server" && who.remote) return void fail(403); // only a session on this machine stops the server
+			if ((parts[0] === "server" || parts.join("/") === "remote/on") && who.remote) return void fail(403); // only this machine stops the server or opens it to the tailnet
 			if (["sessions", "remote", "server"].includes(parts[0]!)) return void control(req, who.origin, parts).then(answer, () => answer({ status: 500, body: { error: "internal", reason: "The request could not be handled." } }));
 			if (req.method === "GET") return void (parts[0] === "doc" && docs ? answer(docs.text(parts[1] ?? "")) : api(files, parts, url.searchParams).then(answer, () => fail(404)));
 		}

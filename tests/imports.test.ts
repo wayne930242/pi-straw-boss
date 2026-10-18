@@ -83,7 +83,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// The watch on the Herdr server (server-watch.ts, unreleased) has no figure in a spec: one subscription connection whose closing says a new server took over, the
 	// acknowledgement read off the socket, the retry ladder, and the stop. Its wiring in index.ts is counted with the rest below.
 	// 0.11.0 raised control.ts from 150 to 156 for server/stop: another session's stop or takeover, checked like every write, never from a paired device.
-	for (const [name, max] of [["control.ts", 156], ["remote.ts", 185], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 125], ["bridge.ts", 195], ["owners.ts", 120], ["dialogs.ts", 210], ["order.ts", 81], ["mirror.ts", 135], ["probe.ts", 40], ["keys.ts", 80], ["documents.ts", 80], ["docs.ts", 150], ["orphan.ts", 115], ["opener.ts", 90], ["server-watch.ts", 60]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
+	// 0.12.0 to 163 for remote/on: the pairing tile turns remote access on from the page and answers with a code, or why it could not.
+	for (const [name, max] of [["control.ts", 163], ["remote.ts", 185], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 125], ["bridge.ts", 195], ["owners.ts", 120], ["dialogs.ts", 210], ["order.ts", 81], ["mirror.ts", 135], ["probe.ts", 40], ["keys.ts", 80], ["documents.ts", 80], ["docs.ts", 150], ["orphan.ts", 115], ["opener.ts", 90], ["server-watch.ts", 60]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
 	assert.ok(count("src/history.ts") <= 250, `src/history.ts has ${count("src/history.ts")} lines`);
 	// The item mapping and the stream glue came out of the reader to keep it within its budget; the spec sets no figure for them.
 	assert.ok(count("src/items.ts") <= 100, `src/items.ts has ${count("src/items.ts")} lines`);
@@ -189,7 +190,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// 3.8 KB, 1.45 KB gzipped with Open beside and the dossier). The Phase 3 plan proposed 50 KB / 21.5 KB for the terminal tile, key pad, and document
 	// tile together, estimating the document tile at about 1 KB gzipped: this is 2 KB raw and 1 KB gzipped over that proposal.
 	// 0.10.0 to 67.1 KB / 28.05 KB for the messages of the focus views, comms, dialogs, and tiles in both languages (Paraglide, as in the map chunk).
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 67_100 && total(chunks, gz) <= 28_050, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// 0.12.0 to 67.85 KB / 28.35 KB for the pairing tile asking to turn remote access on, in both languages.
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 67_850 && total(chunks, gz) <= 28_350, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { createServer, get } from "node:http";
+import { createServer, get, request } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -298,6 +298,27 @@ test("/boss gui remote serves this session's GUI on the tailnet with a pairing Q
 	await third;
 	await a.stop();
 	assert.deepEqual(ts.config(), {}, "so does the end of the session that runs it");
+});
+
+test("the page's Turn on remote access serves the GUI on the tailnet from the server's session and answers with a pairing code", async () => {
+	const ts = fakeTailscale();
+	const a = world.agent({ id: "viewer-a", pane: "wA:p1", tab: "wA:t1", deps: { ...deps, tailscale: ts.run } });
+	await a.start();
+	await a.command("gui");
+	const r = readRecord(world.stateDir)!;
+	const answer = await new Promise<{ status: number; body: { url?: string } }>((done, fail) => {
+		const req = request({ host: "127.0.0.1", port: r.port, path: `/${r.token}/api/remote/on`, method: "POST", agent: false, headers: { host: `127.0.0.1:${r.port}`, origin: `http://127.0.0.1:${r.port}`, "content-type": "application/json", "x-sb-csrf": r.csrf! } }, (res) => {
+			let body = "";
+			res.on("data", (c) => (body += c)).on("end", () => done({ status: res.statusCode!, body: JSON.parse(body) }));
+		});
+		req.on("error", fail).end("{}");
+	});
+	assert.equal(answer.status, 200);
+	assert.match(String(answer.body.url), new RegExp(`^https://box\\.tail1\\.ts\\.net:8443/${r.token}/pair/`));
+	assert.deepEqual(ts.config(), { TCP: { "8443": { HTTPS: true } }, Web: { "box.tail1.ts.net:8443": { Handlers: { "/": { Proxy: `http://127.0.0.1:${r.port}` } } } } });
+	assert.match(a.notices.at(-1)!.text, /^Remote access is on for me@example.com/);
+	await a.command("gui stop");
+	assert.deepEqual(ts.config(), {});
 });
 
 test("a serve entry a crashed server left is removed when the next server starts, and a moved one is left alone", async () => {
