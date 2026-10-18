@@ -1,6 +1,6 @@
 # pi-straw-boss
 
-English | [繁體中文](README.zh-TW.md)
+English | [繁體中文](https://github.com/wayne930242/pi-straw-boss/blob/main/README.zh-TW.md)
 
 **Many pi agents, one project, no collisions.** pi-straw-boss gives the agents you run across [Herdr](https://herdr.dev) tabs a light chain of command: a main agent per tab, a tower per workspace, and a live view of who is doing what.
 
