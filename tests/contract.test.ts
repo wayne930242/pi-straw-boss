@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { checkAnswer } from "../src/dialogs.ts";
+import { checkProbe, probeEditor } from "../src/probe.ts";
 import { type Bus, type Dialog, digestOf, mcpAdapter, OWNERS, questionsDigest, robotHand, rpiv, selectDigest, selectOf } from "../src/owners.ts";
 
 /** pi's event bus as far as owners use it: listeners run synchronously inside emit. */
@@ -122,4 +123,16 @@ test("the server checks an answer against what the page may answer: a select's o
 	];
 	for (const [answers, why] of cases) assert.match(String(checkAnswer(qs, { answers }, false)), why, JSON.stringify(answers).slice(0, 80));
 	assert.equal(typeof checkAnswer(qs, { choice: 0, answers: [{ choices: [0] }, { choices: [0] }] }, false), "string");
+});
+
+test("probe contract: the editor's class, the ending command by name only, and the server takes nothing else", () => {
+	const ui = (text: unknown) => ({ hasUI: true, ui: { getEditorText: () => text } }) as never;
+	const cases: [unknown, unknown][] = [["/reload", { editor: "text", ending: "reload" }], ["\n /quit", { editor: "text", ending: "quit" }], ["/exit now", { editor: "text", ending: "exit" }], ["/re", { editor: "command" }], ["/re ", { editor: "command" }], ["/re\n", { editor: "command" }], ["/im foo", { editor: "command" }], [" /compact now", { editor: "command" }], ["/model", { editor: "command" }], ["/reload-all", { editor: "command" }], ["say /reload", { editor: "text" }], ["!rm -rf build", { editor: "command" }], [" !ls", { editor: "command" }], ["it's done!", { editor: "text" }], ["", { editor: "empty" }], [" \t", { editor: "empty" }], [undefined, { editor: "unknown" }], [42, { editor: "unknown" }]];
+	for (const [text, want] of cases) assert.deepEqual(probeEditor(ui(text)), want, JSON.stringify(text));
+	assert.deepEqual(probeEditor({ hasUI: false, ui: { getEditorText: () => "/quit" } } as never), { editor: "unknown" });
+	assert.deepEqual(probeEditor(undefined), { editor: "unknown" });
+	for (const name of ["quit", "exit", "new", "resume", "fork", "clone", "import", "reload"]) assert.deepEqual(checkProbe({ editor: "text", ending: name }), { editor: "text", ending: name });
+	for (const ok of ["empty", "text", "command", "unknown"]) assert.deepEqual(checkProbe({ editor: ok, extra: "dropped" }), { editor: ok });
+	for (const bad of [undefined, {}, { editor: "draft" }, { editor: "text", ending: "model" }, { editor: "text", ending: "RELOAD" }, { editor: "text", ending: "reload x" }, { editor: "text", ending: 1 }, { editor: "command", ending: "new" }, { editor: "unknown", ending: "quit" }])
+		assert.equal(checkProbe(bad as never), undefined, JSON.stringify(bad));
 });

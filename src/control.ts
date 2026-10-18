@@ -4,6 +4,7 @@ import { ANSWER_ID, checkAnswer, CONTROL, type Hub, type Sent, type Target } fro
 import { HerdrError, type HerdrCall, type Pane } from "./herdr.ts";
 import type { createMirrors } from "./mirror.ts";
 import type { Found } from "./net.ts";
+import { ENDING } from "./probe.ts";
 
 // Typing into a session from the page, through Herdr's own input path only, as if typed in the terminal:
 //   POST /<token>/api/sessions/<key>/input {text, as: "send" | "followUp", confirmed?}   the text, then Enter (or Alt+Enter while it works)
@@ -20,8 +21,7 @@ import type { Found } from "./net.ts";
 export const MAX_TEXT = 16_384, MAX_BODY = 65_536, MAX_KEYS = 16;
 // Only Escape (Stop) until Phase 3: other keys act on whatever the terminal holds, so up then enter could resubmit a /reload unconfirmed.
 export const KEYS = new Set(["esc"]);
-/** Commands that end the session or switch its pane to another one: the page asks first, and the server refuses them unconfirmed. */
-export const ENDING = /^\s*\/(quit|exit|new|resume|fork|clone|import|reload)(?=\s|$)/;
+export { ENDING };
 
 export interface Reply { status: number; body: unknown }
 /** `answers.target` reads the net afresh, so the binding and the dialog are checked again for every answer. */

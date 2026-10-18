@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, test } from "node:test";
+import { after, mock, test } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Ack, type Dialogs, guiNamespace, type LocalHub, REGISTER, startBridge, type ToHub } from "../src/bridge.ts";
 import { selectDigest } from "../src/owners.ts";
@@ -35,7 +36,7 @@ function session({ me = "S", gui = "G" as string | undefined, env = {} as Record
 	const bridge = startBridge(pi, { env: { HERDR_PANE_ID: "wA:p1", PI_INTERCOM_SESSION_ID: me, ...env }, dir, local: () => hub.current });
 	const ctx = { hasUI: true, ui: { notify: (t: string) => notices.push(t) }, sessionManager: { getSessionFile: () => "/s/2026_S.jsonl" }, signal: undefined as AbortSignal | undefined };
 	const fire = (type: string, e: Record<string, unknown> = {}) => (handlers.get(type) ?? []).forEach((h) => h({ type, ...e }, ctx));
-	const record = (ownerSession?: string) => writeFileSync(join(dir, "gui.json"), JSON.stringify({ pid: 1, port: 1, token: "t", owner: "x", ...(ownerSession ? { ownerSession } : {}) }));
+	const record = (ownerSession?: string, pid = process.pid) => writeFileSync(join(dir, "gui.json"), JSON.stringify({ pid, port: 1, token: "t", owner: "x", ...(ownerSession ? { ownerSession } : {}) }));
 	if (gui) record(gui);
 	fire("session_start");
 	const count = () => [...bus.values()].reduce((n, hs) => n + hs.length, 0);
@@ -72,11 +73,11 @@ function session({ me = "S", gui = "G" as string | undefined, env = {} as Record
 const answer = (answerId = "a".repeat(16), extra: Record<string, unknown> = {}) => ({ version: 1, type: "answer", to: "", id: "d1", answerId, digest: DIGEST, choice: 0, ...extra });
 const bridgeIdOf = (s: ReturnType<typeof session>) => (s.published.find((p) => p.payload.type === "dialogs")!.payload as Dialogs).bridgeId;
 
-test("no channel until a dialog opens and gui.json names another session; then the list goes to G only while G owns the channel", async () => {
+test("G's channel from the start when gui.json names another session (the server may probe the editor); the list goes to G only while G owns the channel", async () => {
 	const s = session();
-	assert.equal(s.regs.length, 0, "nothing registered at start");
+	assert.deepEqual(s.regs.map((r) => [r.namespace, r.ownerEligible]), [[guiNamespace("G"), false]], "registered at start, never owner-eligible");
 	s.open();
-	assert.deepEqual(s.regs.map((r) => [r.namespace, r.ownerEligible]), [[guiNamespace("G"), false]]);
+	assert.equal(s.regs.length, 1, "a dialog adds no channel");
 	assert.match(guiNamespace("G"), /^straw-boss\/gui\/[0-9a-f]{32}$/);
 	assert.equal(s.published.length, 0, "no owner yet: nothing sent");
 	s.own();
@@ -97,7 +98,7 @@ test("pendings are taken only for a call of the owner's own tool in flight, in c
 	s.fire("tool_execution_start", { toolCallId: "c9", toolName: "bash", args: {} });
 	s.events.emit("robot-hand:pending", { version: 1, id: "x2", toolCallId: "c9", digest: DIGEST, select: SELECT });
 	s.open("x3", "c1", { version: 2 });
-	assert.equal(s.regs.length, 0, "nothing taken, so nothing relayed");
+	assert.deepEqual(s.lists(), [[]], "nothing taken, so nothing relayed but the empty list of the start");
 	s.open("d1", "c2");
 	s.own();
 	assert.deepEqual(s.lists().at(-1)!.map((d) => d.id), ["d1"]);
@@ -248,4 +249,95 @@ test("without pi-intercom, or with a broker that drops, nothing breaks and the d
 	t.connected = false;
 	t.events.emit("robot-hand:closed", { version: 1, id: "d1", by: "local" });
 	assert.equal(t.lists().length, 1, "nothing sent while disconnected");
+});
+
+test("a probe from G for this bridge is answered with what Enter would submit, as a class and at most a command name, never the draft", () => {
+	const s = session(), drafts: [string | undefined, Record<string, unknown>][] = [["/reload", { editor: "text", ending: "reload" }], ["  /new  please", { editor: "text", ending: "new" }], ["fix the secret token sk-123", { editor: "text" }], ["", { editor: "empty" }], ["   \n ", { editor: "empty" }], ["/re", { editor: "command" }], ["/re ", { editor: "command" }], ["/", { editor: "command" }], ["/model x", { editor: "command" }], ["/reloaded", { editor: "command" }]];
+	s.own();
+	const to = bridgeIdOf(s), ui = s.ctx.ui as Record<string, unknown>;
+	for (const [i, [draft, want]] of drafts.entries()) {
+		ui.getEditorText = () => draft;
+		s.message({ version: 1, type: "probe", to, probeId: `p${i}` });
+		const got = s.published.at(-1)!;
+		assert.deepEqual([got.audience, got.payload], ["owner", { version: 1, type: "probe-result", bridgeId: to, probeId: `p${i}`, ...want }], JSON.stringify(draft));
+		if (draft && want.editor === "text" && !want.ending) assert.ok(!JSON.stringify(got.payload).includes("secret"), "the draft never leaves");
+	}
+	ui.getEditorText = () => { throw new Error("no editor"); };
+	s.message({ version: 1, type: "probe", to, probeId: "t" });
+	assert.equal((s.published.at(-1)!.payload as { editor: string }).editor, "unknown", "an editor that cannot be read");
+	s.ctx.hasUI = false;
+	s.message({ version: 1, type: "probe", to, probeId: "u" });
+	assert.equal((s.published.at(-1)!.payload as { editor: string }).editor, "unknown", "no UI (print mode)");
+	assert.deepEqual(s.bridge.probe(), { editor: "unknown" }, "the hub of this session asks in-process");
+	s.ctx.hasUI = true;
+	ui.getEditorText = () => "/fork";
+	assert.deepEqual(s.bridge.probe(), { editor: "text", ending: "fork" });
+});
+
+test("a probe counts only from G as the channel's current owner, at its epoch, for this bridge, from the server gui.json names now", () => {
+	const s = session();
+	s.own();
+	(s.ctx.ui as Record<string, unknown>).getEditorText = () => "/quit";
+	const to = bridgeIdOf(s), results = () => s.published.filter((p) => p.payload.type === "probe-result").length;
+	s.message({ version: 1, type: "probe", to, probeId: "a" }, { from: "X" });
+	s.message({ version: 1, type: "probe", to, probeId: "b" }, { epoch: "e0" });
+	s.message({ version: 1, type: "probe", to: "someone-else", probeId: "c" });
+	s.message({ version: 2, type: "probe", to, probeId: "d" });
+	s.message({ version: 1, type: "probe", to, probeId: "x".repeat(65) });
+	s.message({ version: 1, type: "probe", to });
+	assert.equal(results(), 0);
+	s.record("H");
+	s.bridge.sync();
+	s.message({ version: 1, type: "probe", to, probeId: "e" });
+	assert.equal(results(), 0, "a server gui.json no longer names");
+	s.record("G");
+	s.bridge.sync();
+	s.record("H");
+	utimesSync(join(s.dir, "gui.json"), new Date(), new Date(Date.now() + 5000));
+	s.message({ version: 1, type: "probe", to, probeId: "e2" });
+	assert.equal(results(), 0, "gui.json was rewritten a moment ago, before the 2 s check: the probe reads it first");
+	s.record("G");
+	s.bridge.sync();
+	s.message({ version: 1, type: "probe", to, probeId: "f" });
+	assert.equal(results(), 1);
+	s.record("G", 2 ** 22 + 7);
+	s.bridge.sync();
+	s.message({ version: 1, type: "probe", to, probeId: "g" });
+	assert.equal(results(), 1, "gui.json names a server whose process is gone");
+	rmSync(join(s.dir, "gui.json"));
+	s.bridge.sync();
+	s.message({ version: 1, type: "probe", to, probeId: "h" });
+	assert.equal(results(), 1, "no gui.json: no server");
+});
+
+test("a bridge follows gui.json from the start: a server that starts later is joined within 2 s, and /new tells it the new file at once", () => {
+	mock.timers.enable({ apis: ["setInterval"] });
+	try {
+		const s = session({ gui: "" });
+		assert.equal(s.regs.length, 0, "no server yet");
+		s.record("G");
+		mock.timers.tick(2000);
+		assert.deepEqual(s.regs.map((r) => r.namespace), [guiNamespace("G")]);
+		s.own();
+		const n = s.lists().length;
+		s.ctx.sessionManager.getSessionFile = () => "/s/2026_new.jsonl";
+		s.fire("session_start");
+		assert.equal(s.lists().length, n + 1);
+		assert.equal((s.published.at(-1)!.payload as Dialogs).file, "/s/2026_new.jsonl");
+		s.fire("session_shutdown");
+	} finally {
+		mock.timers.reset();
+	}
+});
+
+test("the gui.json check keeps no process alive: a session with a bridge and no server exits on its own", () => {
+	const dir = mkdtempSync(join(tmpdir(), "psb-bridge-test-"));
+	dirs.push(dir);
+	const code = `import { startBridge } from ${JSON.stringify(new URL("../src/bridge.ts", import.meta.url).href)};
+const hs = new Map(), pi = { events: { on: () => () => {}, emit: () => {} }, on: (t, h) => hs.set(t, h) };
+startBridge(pi, { env: { HERDR_PANE_ID: "wA:p1", PI_INTERCOM_SESSION_ID: "S" }, dir: ${JSON.stringify(dir)}, local: () => undefined });
+hs.get("session_start")({}, { hasUI: false, ui: {}, sessionManager: { getSessionFile: () => undefined } });`;
+	const start = Date.now(), run = spawnSync(process.execPath, ["--input-type=module", "-e", code], { timeout: 10_000 });
+	assert.equal(run.status, 0, String(run.stderr));
+	assert.ok(Date.now() - start < 5000, "it did not wait for the 2 s timer");
 });

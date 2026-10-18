@@ -10,6 +10,7 @@ import { createHub } from "../src/dialogs.ts";
 import { canonical } from "../src/history.ts";
 import type { Net, Ref } from "../src/net.ts";
 import { type Dialog, selectDigest } from "../src/owners.ts";
+import type { Editor } from "../src/probe.ts";
 import { assistant, call, header, lines, user } from "./sessions.ts";
 
 const scratch = mkdtempSync(join(tmpdir(), "psb-dialogs-test-"));
@@ -28,13 +29,13 @@ const net = (): Net => ({ bases: [{ id: "wA", label: "Alpha", mark: "working", h
 /** A hub for session G with a fake intercom channel, a local bridge that records what it was handed, and session S on pane wA:p1. */
 function hub({ me = "G", owner = "G" } = {}) {
 	const published: { payload: unknown; options: unknown }[] = [], delivered: AnswerMessage[] = [], changes: number[] = [];
-	let reg: { onEvent(e: Record<string, unknown>): void } | undefined, reply: ((a: AnswerMessage) => Ack | undefined) | undefined;
+	let reg: { onEvent(e: Record<string, unknown>): void } | undefined, reply: ((a: AnswerMessage) => Ack | undefined) | undefined, editor: Editor = { editor: "empty" };
 	const events = { emit: (ch: string, r: never) => ch === REGISTER && ((reg = r), (r as { onReady(c: unknown): void }).onReady({ snapshot: () => ({ connected: true, owner: { sessionId: owner, epoch: "e1" } }), publish: (payload: unknown, options: unknown) => void published.push({ payload, options }) })), on: () => () => {} };
-	const local = { deliver: (m: AnswerMessage, r: (a: Ack) => void) => { delivered.push(m); const a = reply?.(m); if (a) r(a); }, sync: () => {} };
+	const local = { deliver: (m: AnswerMessage, r: (a: Ack) => void) => { delivered.push(m); const a = reply?.(m); if (a) r(a); }, sync: () => {}, probe: () => editor };
 	const h = createHub({ events } as unknown as ExtensionAPI, me, local);
 	h.start(() => changes.push(1));
 	const list = (dialogs: Dialog[], extra: Partial<Dialogs> = {}): Dialogs => ({ version: 1, type: "dialogs", bridgeId: "B", pane: "wA:p1", file: null, dialogs, closed: [], ...extra });
-	return { h, published, delivered, changes, list, event: (e: Record<string, unknown>) => reg?.onEvent(e), answerWith: (f: typeof reply) => (reply = f) };
+	return { h, published, delivered, changes, list, event: (e: Record<string, unknown>) => reg?.onEvent(e), answerWith: (f: typeof reply) => (reply = f), editorIs: (e: Editor) => (editor = e) };
 }
 /** The snapshot as the server reads it: S is the unit on pane wA:p1 with session file `path`. */
 async function read(x: ReturnType<typeof hub>, path: string | undefined, { pane = "wA:p1", from = "S" } = {}) {
@@ -161,4 +162,53 @@ test("no ack within 5 s is unknown and is not stored, so Check again asks the br
 		mock.timers.reset();
 	}
 	assert.match(guiNamespace("G"), /^straw-boss\/gui\//);
+});
+
+test("probe: the hub asks the bridge bound to the unit's pane and file, a bridge with no dialog too, and takes only its matching, well-formed answer", async () => {
+	const x = hub(), path = file([]);
+	x.h.receive("S", x.list([], { file: path }));
+	await read(x, path);
+	const asked = x.h.probe("S"), sent = x.published.at(-1)!;
+	const probe = sent.payload as { version: number; type: string; to: string; probeId: string };
+	assert.deepEqual([probe.version, probe.type, probe.to, sent.options], [1, "probe", "B", { audience: "capable", ownerOnly: true }]);
+	const result = (extra: Record<string, unknown>): Record<string, unknown> => ({ version: 1, type: "probe-result", bridgeId: "B", probeId: probe.probeId, editor: "text", ...extra });
+	x.h.receive("X", result({ ending: "new" }) as never);
+	x.h.receive("S", result({ bridgeId: "B2", ending: "new" }) as never);
+	x.h.receive("S", result({ probeId: "other", ending: "new" }) as never);
+	x.h.receive("S", result({ ending: "reload" }) as never);
+	assert.deepEqual(await asked, { editor: "text", ending: "reload" }, "the answer of another session, bridge, or probe is not this one");
+	for (const [bad, why] of [[{ editor: "draft" }, "an unknown class"], [{ ending: "rm" }, "an ending that is not one"], [{ editor: "empty", ending: "quit" }, "an ending on an empty editor"], [{ ending: "reload now" }, "anything beyond the name"]] as const) {
+		const again = x.h.probe("S"), id = (x.published.at(-1)!.payload as { probeId: string }).probeId;
+		x.h.receive("S", { ...result(bad), probeId: id } as never);
+		assert.equal(await again, undefined, why);
+	}
+});
+
+test("probe: no bound bridge, another pane or file, a hub that does not own the channel, or a silent bridge is unknown; in its own session the hub asks its bridge in-process", async () => {
+	const x = hub(), path = file([]);
+	assert.equal(await x.h.probe("S"), undefined, "no bridge at all");
+	x.h.receive("S", x.list([], { file: path }));
+	await read(x, path, { pane: "wA:p9" });
+	const before = x.published.length;
+	assert.equal(await x.h.probe("S"), undefined, "intercom places the bridge's session on another pane");
+	await read(x, file([]));
+	assert.equal(await x.h.probe("S"), undefined, "the unit's file is another one");
+	assert.equal(x.published.length, before, "nothing was asked");
+	await read(x, path);
+	const start = Date.now();
+	assert.equal(await x.h.probe("S"), undefined, "a bridge that never answers");
+	assert.ok(Date.now() - start >= 950, "after a second");
+	const other = hub({ owner: "Z" });
+	other.h.receive("S", other.list([], { file: path }));
+	await read(other, path);
+	assert.equal(await other.h.probe("S"), undefined, "not the channel's owner: nothing can be asked");
+	const own = hub({ me: "S", owner: "S" });
+	own.h.receive("S", own.list([], { file: path }));
+	await read(own, path);
+	own.editorIs({ editor: "text", ending: "new" });
+	assert.deepEqual(await own.h.probe("S"), { editor: "text", ending: "new" });
+	own.editorIs({ editor: "command" });
+	assert.deepEqual(await own.h.probe("S"), { editor: "command" });
+	own.h.stop();
+	assert.equal(await own.h.probe("S"), undefined, "a stopped hub asks nobody");
 });

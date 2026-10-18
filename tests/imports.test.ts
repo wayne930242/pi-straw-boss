@@ -58,8 +58,10 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.6.10 raised order.ts from 75 to 80 for `sb_indent`, the branch a subagent hangs on (its two glyphs and the check for a later marked sibling).
 	// The dialog bridge (in every session), the owner adapters, and the hub have the spec's own figures; owners.ts is 120 instead of 90 because
 	// rpiv-ask-user-question replaced pi-ask-user and speaks its own channel (prompt, answer, verdict codes, blocked), which its adapter maps.
-	// The terminal mirror's reader (0.7.0) has the Phase 3 plan's figure.
-	for (const [name, max] of [["control.ts", 150], ["remote.ts", 185], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 125], ["bridge.ts", 170], ["owners.ts", 120], ["dialogs.ts", 160], ["order.ts", 80], ["mirror.ts", 130]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
+	// The terminal mirror's reader (0.7.0) has the Phase 3 plan's figure, and so does the bridge's editor check (probe.ts, task 3), which
+	// raised bridge.ts from 170 to 190 (the probe message, following gui.json from the start, the server's pid check) and dialogs.ts from
+	// 160 to 185 (the probe sent and awaited for 1 s, and the bridges every reading binds by pane and file).
+	for (const [name, max] of [["control.ts", 150], ["remote.ts", 185], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 125], ["bridge.ts", 190], ["owners.ts", 120], ["dialogs.ts", 185], ["order.ts", 80], ["mirror.ts", 130], ["probe.ts", 40]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
 	assert.ok(count("src/history.ts") <= 250, `src/history.ts has ${count("src/history.ts")} lines`);
 	// The item mapping and the stream glue came out of the reader to keep it within its budget; the spec sets no figure for them.
 	assert.ok(count("src/items.ts") <= 100, `src/items.ts has ${count("src/items.ts")} lines`);
@@ -68,7 +70,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	assert.ok(count("src/balance.ts") + count("src/balance.mjs") <= 220, "src/balance.ts and src/balance.mjs stay small");
 	// The rpiv-ask-user-question blocked relay is its own extension entry too.
 	assert.ok(count("src/blocked.ts") <= 25, "src/blocked.ts stays small");
-	const apart = ["dashboard.ts", "net.ts", "gui.ts", "history.ts", "items.ts", "watch.ts", "balance.ts", "control.ts", "remote.ts", "pairing.ts", "qr.ts", "ask.ts", "blocked.ts", "bridge.ts", "owners.ts", "dialogs.ts", "order.ts", "mirror.ts"];
+	const apart = ["dashboard.ts", "net.ts", "gui.ts", "history.ts", "items.ts", "watch.ts", "balance.ts", "control.ts", "remote.ts", "pairing.ts", "qr.ts", "ask.ts", "blocked.ts", "bridge.ts", "owners.ts", "dialogs.ts", "order.ts", "mirror.ts", "probe.ts"];
 	const rest = sum("src", names("src").filter((name) => !apart.includes(name)));
 	// 0.4.1 raised it from 540 to 575 for claiming and promotion; 0.5.0 to 610 for herdrCall (Herdr's answers with their error codes, spec task 4) and the /boss gui remote command;
 	// 0.5.1 to 620 for a join retry that follows its session to another tab; 0.6.0 to 630 to start the dialog bridge before the subagent return and the hub with the server.

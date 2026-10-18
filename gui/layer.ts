@@ -171,7 +171,7 @@ export function mountPanels(deps: PanelDeps) {
 		terminal,
 		/** A snapshot's alerts: the new ones queue, and the queue drops the ones whose unit moved on. */
 		alerts(fresh: Alert[], now: Map<string, Alert>) {
-			for (const alert of fresh) learn(alert), stack.arrive(alert);
+			for (const alert of fresh) void (learn(alert), stack.arrive(alert));
 			stack.prune((key) => now.get(key));
 		},
 	};

@@ -557,6 +557,33 @@ hidden and attaches again when it shows, and detaches when it closes, by its × 
 again after it ended tries again. While no tile shows, the page keeps no timer for it. `npm run gui:dev` has a demo pane whose screen
 changes every second.
 
+**Editor check (`src/probe.ts`, the bridge, and the hub).** Before the key pad's Enter goes out, the server asks the session's own
+bridge what Enter would submit. The server's hub publishes `{version: 1, type: "probe", to: <bridgeId>, probeId}` on G's channel
+(owner only, to the bridge bound to the unit's pane and session file by the last reading), and the bridge answers `{version: 1, type:
+"probe-result", bridgeId, probeId, editor, ending?}` from `ctx.ui.getEditorText()`, its only use of `ctx.ui` besides notices: `empty`;
+`text` with `ending` when the draft starts with one of the commands that end or replace the session (`/quit`, `/exit`, `/new`,
+`/resume`, `/fork`, `/clone`, `/import`, `/reload`; the one `ENDING` rule the composer's text check uses too); `command` for any
+other draft that starts with `/` (after whitespace), such as `/re` or `/re ` with a word after it: with pi's command menu open (the
+pad's tab or backspace opens it), Enter completes the word and runs the result at once (`pi-tui` `editor.js`, "Fall through to
+submit"), so it may become any command, and any draft that starts with `!`, which Enter runs as a shell command (`up` recalls
+earlier ones); other `text`; and `unknown` without a UI or when the editor cannot be read. The draft itself
+never leaves the session. An ending command is named as the draft holds it: with pi's command menu open, Enter runs the command
+picked there, which may be another one (an extension's `/new-worktree` under `/new`), so the confirm says so. The bridge reads
+gui.json again before it answers, and answers only G, as the broker's current owner at
+its epoch, for its own `bridgeId`, while gui.json names G and the process it records is alive; a server that gui.json no longer
+names gets nothing, and neither does one whose process is gone (gui.json stays after a server stops; its successor rewrites it). The hub
+takes only a reply from the session it asked, for the bridge and `probeId` it asked, in one of the classes and with an ending that is
+one of the commands by name; anything else, no bound bridge, or no reply within 1 s is unknown. A fresh `probeId` per check means a
+reply to an older check never counts. In its own session the hub asks its bridge in-process.
+
+*Deviation from the Phase 3 plan.* The plan had the hub publish `sync {want: "probe"}` when a mirror attaches and the bridge stay on
+the channel for 10 minutes after the last probe. That cannot be built: a bridge that has not registered G's namespace cannot receive
+the sync, and pi-intercom has no way to unregister an extension namespace (the 0.6.0 bridge also stayed registered after its first
+dialog). Instead every bridge follows gui.json from the session's start, one `stat` every 2 s on an unref'd timer, and registers G's
+channel as soon as a server runs, sending its (usually empty) dialog list so the hub can bind its pane and file; `/new` and
+`/resume` send the new file at once. The cost is that every pi session in Herdr registers on the GUI channel while a server runs,
+not only sessions that opened a dialog; with no server it costs one `stat` every 2 s. Accepted by the main agent on 2026-10-18.
+
 **`ask_user`, structured** (pi-ask-user 0.16.x; other versions use the mirror):
 the panel shows the context (markdown), the question, the options with
 descriptions, and a text field when `allowFreeform` is not false. Mapping, from

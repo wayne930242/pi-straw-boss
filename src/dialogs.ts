@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Pending, type Relayed, SEVERAL } from "./ask.ts";
 import { type Ack, type AnswerMessage, type Bridge, type Dialogs, guiNamespace, type LocalHub, REGISTER, type ToHub } from "./bridge.ts";
@@ -5,13 +6,15 @@ import type { Session } from "./herdr.ts";
 import { canonical } from "./history.ts";
 import type { Ref } from "./net.ts";
 import { type Answerable, type Dialog, OWNERS, questionsDigest, type Reply, selectDigest } from "./owners.ts";
+import { checkProbe, type Editor } from "./probe.ts";
 
 // The hub, in the session that runs the GUI server: it takes the dialog lists bridges relay (bridge.ts), binds each to the unit on the
 // bridge's pane, decides whether the page may answer it, and carries an answer to that bridge. A list counts only from the session intercom
 // places on that pane, for the unit whose session file it names. The page may answer a dialog only when it is the session's one open dialog,
 // with no answer on its way, belonging to the file's one open call (never a secret_drop), with a digest that matches its content.
+// The same binding, for every bridge whether it holds a dialog or not, tells where to ask what a session's editor would submit (`probe`).
 
-const ACK_MS = 5000, KEEP_MS = 600_000, KEEP = 256, MAX_TEXT = 8192, MAX_NOTE = 2048, MAX_ALL = 12_288;
+const ACK_MS = 5000, PROBE_MS = 1000, KEEP_MS = 600_000, KEEP = 256, MAX_TEXT = 8192, MAX_NOTE = 2048, MAX_ALL = 12_288;
 export const ANSWER_ID = /^[A-Za-z0-9_-]{16,64}$/, CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
 interface Channel { snapshot(): { connected: boolean; owner?: { sessionId: string; epoch: string } }; publish(payload: unknown, options?: { audience?: "owner" | "capable"; ownerOnly?: boolean }): void }
 type Event = { type: string; fromSessionId?: string; sessionId?: string; owner?: { sessionId: string; epoch: string }; payload?: unknown };
@@ -52,8 +55,8 @@ export function checkAnswer(t: Answerable, json: Record<string, unknown>, remote
 
 export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 	let channel: Channel | undefined, epoch: string | undefined, active = false, change = () => {};
-	let bound = new Map<string, { from: string; b: Dialogs }>(), targets = new Map<string, Target>();
-	const bridges = new Map<string, Dialogs>(), waiting = new Map<string, (ack?: Ack) => void>(), done = new Map<string, { key: string; at: number; sent: Sent }>();
+	let bound = new Map<string, { from: string; b: Dialogs }>(), targets = new Map<string, Target>(), reach = new Map<string, { from: string; bridgeId: string }>();
+	const bridges = new Map<string, Dialogs>(), waiting = new Map<string, (ack?: Ack) => void>(), done = new Map<string, { key: string; at: number; sent: Sent }>(), probes = new Map<string, (e?: Editor) => void>();
 	const owner = () => channel?.snapshot().owner?.sessionId === me;
 	const sync = () => {
 		local.sync();
@@ -64,6 +67,7 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 		const closed = msg.type === "dialogs" && Array.isArray(msg.closed) && msg.closed.length <= 16 && msg.closed.every((c) => str(c?.id) && str(c.by) && opt(c.answerId));
 		if (closed && str(msg.pane) && (msg.file === null || str(msg.file)) && Array.isArray(msg.dialogs) && msg.dialogs.every(valid)) (bridges.set(from, msg), change());
 		if (msg.type === "ack") waiting.get([from, msg.bridgeId, msg.id, msg.answerId].join("\n"))?.(msg);
+		if (msg.type === "probe-result") probes.get([from, msg.bridgeId, msg.probeId].join("\n"))?.(checkProbe({ ...msg }));
 	};
 	const onEvent = (e: Event) => {
 		if (e.type === "owner" && e.owner?.sessionId === me && e.owner.epoch !== epoch && (epoch = e.owner.epoch) && active) sync();
@@ -86,6 +90,7 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 	const hub: LocalHub & {
 		readonly running: boolean; readonly me: string; start(onChange: () => void): void; stop(): void; relayed(sessions: Session[], refs: Map<string, Ref>): Relayed; target(key: string): Target | undefined;
 		replay(answerId: string, key: string): Sent | undefined; ended(key: string, dialog: string, answerId: string): Sent | undefined; send(key: string, t: Target, a: Omit<AnswerMessage, "version" | "type" | "to">): Promise<Sent>;
+		probe(key: string): Promise<Editor | undefined>;
 	} = {
 		receive,
 		get running() { return active; },
@@ -103,15 +108,16 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 		},
 		stop() {
 			active = false;
-			[bridges, bound, targets].forEach((m) => m.clear());
-			[...waiting.values()].forEach((w) => w());
+			[bridges, bound, targets, reach].forEach((m) => m.clear());
+			[...waiting.values(), ...probes.values()].forEach((w) => w());
 		},
 		/** Binds each relayed list to a unit, from this net reading's sessions and registry. */
 		relayed(sessions, refs) {
-			[bound, targets] = [new Map(), new Map()];
+			[bound, targets, reach] = [new Map(), new Map(), new Map()];
 			for (const [from, b] of bridges) {
 				const file = sessions.find((s) => s.id === from)?.herdrLocation?.paneId === b.pane ? canonical(b.file ?? undefined) : undefined;
 				const ref = file && [...refs.values()].find((r) => r.pane === b.pane && r.file === file);
+				if (ref) reach.set(ref.key, { from, bridgeId: b.bridgeId });
 				if (ref && (b.dialogs.length || b.closed.length)) bound.set(ref.key, { from, b });
 			}
 			return { dialogsOf: (key) => bound.get(key)?.b.dialogs, merge };
@@ -147,6 +153,24 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 			if (["accepted", "rejected", "stale"].includes(x.outcome)) done.set(a.answerId, { key, at: Date.now(), sent });
 			for (const [id, old] of done) if (done.size > KEEP || Date.now() - old.at > KEEP_MS) done.delete(id);
 			return sent;
+		},
+		/** What the session's editor would submit, from the bridge bound to its pane and file: undefined with no such bridge or no answer within 1 s. */
+		async probe(key) {
+			const t = reach.get(key);
+			if (!t || !active) return undefined;
+			if (t.from === me) return checkProbe({ ...local.probe() });
+			const probeId = randomUUID(), k = [t.from, t.bridgeId, probeId].join("\n");
+			const got = new Promise<Editor | undefined>((resolve) => {
+				const timer = setTimeout(() => settle(), PROBE_MS), settle = (e?: Editor) => (clearTimeout(timer), probes.delete(k), resolve(e));
+				probes.set(k, settle);
+			});
+			try {
+				if (!owner()) throw new Error("not the owner");
+				channel!.publish({ version: 1, type: "probe", to: t.bridgeId, probeId }, { audience: "capable", ownerOnly: true });
+			} catch {
+				probes.get(k)?.(); // unreachable: the editor stays unknown
+			}
+			return got;
 		},
 	};
 	return hub;

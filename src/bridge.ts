@@ -3,14 +3,17 @@ import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Answer, type Bus, type Dialog, OWNERS, type OwnerAdapter, type Verdict } from "./owners.ts";
+import { type Editor, probeEditor } from "./probe.ts";
 
 // The bridge runs in every pi session inside Herdr, subagents included. It turns the owners' dialog events (owners.ts) into one list of open
 // dialogs, relays it to the one running GUI server (gui.json in the state directory names its session G), and hands the server's answers to
-// the owners. It never touches ctx.ui and never judges an answer's meaning: the owner does. Transport is pi-intercom's extension channel
+// the owners. Of ctx.ui it uses only notices and the editor check (getEditorText), and it never judges an answer's meaning: the owner does. Transport is pi-intercom's extension channel
 // straw-boss/gui/<sha256(G) prefix>, where only G is owner-eligible: dialogs and acks go to the owner, answers come from it (ownerOnly, and
 // checked here against G and the owner's epoch); when G is this session the hub (dialogs.ts) is called in-process instead.
 // Per dialog: open → settling (an answer is with the owner) → open again if refused, or closed by the owner's `closed`, the end of its tool
 // call, or the session's end. An answer whose verdict does not come within 2 s leaves it `unknown`: later answers get `busy` until it closes.
+// The bridge follows gui.json from the session's start (a stat every 2 s), so it is on G's channel whenever a server runs: the key pad's
+// Enter guard asks it what the editor would submit (`probe`, probe.ts), and it answers with a class and at most a command name, never the draft.
 
 export const REGISTER = "intercom:extension-register";
 const VERDICT_MS = 2000, POLL_MS = 2000, KEEP_MS = 120_000, KEEP = 16, MAX_GUIS = 8, MAX_MESSAGE = 15 * 1024;
@@ -20,12 +23,13 @@ export interface Ack { version: 1; type: "ack"; bridgeId: string; id: string; an
 /** `closed`: dialogs closed in the last 2 minutes (at most 16), so an answer that comes late hears who closed it, and a resent one that won, that it won. */
 export interface Dialogs { version: 1; type: "dialogs"; bridgeId: string; pane: string; file: string | null; dialogs: Dialog[]; closed: Closed[] }
 export interface Closed { id: string; by: string; answerId?: string }
-export type ToHub = Dialogs | Ack;
+export interface ProbeResult extends Editor { version: 1; type: "probe-result"; bridgeId: string; probeId: string }
+export type ToHub = Dialogs | Ack | ProbeResult;
 export interface AnswerMessage extends Answer { version: 1; type: "answer"; to: string }
 /** The hub when it runs in this session: it takes what a remote bridge would publish, from this session's id. */
 export interface LocalHub { receive(from: string, msg: ToHub): void }
 /** What the hub calls on the bridge of its own session. */
-export interface Bridge { deliver(msg: AnswerMessage, reply: (ack: Ack) => void): void; sync(): void }
+export interface Bridge { deliver(msg: AnswerMessage, reply: (ack: Ack) => void): void; sync(): void; probe(): Editor }
 interface Channel { snapshot(): { connected: boolean; owner?: { sessionId: string; epoch: string } }; publish(payload: unknown, options?: { audience?: "owner" | "capable" }): void }
 interface Rec { adapter: OwnerAdapter; d: Dialog; state: "open" | "settling" | "unknown" | "closed"; answerId?: string; accepted?: boolean; by?: string; at?: number; last?: Ack; waiting: ((ack: Ack) => void)[] }
 type Event = { type: string; fromSessionId?: string; owner?: { sessionId: string; epoch: string }; payload?: Record<string, unknown> };
@@ -33,9 +37,10 @@ type Event = { type: string; fromSessionId?: string; owner?: { sessionId: string
 export function startBridge(pi: ExtensionAPI, { env, dir, local }: { env: NodeJS.ProcessEnv; dir: string; local(): LocalHub | undefined }): Bridge {
 	const bus = pi.events as Bus, bridgeId = randomUUID(), recs = new Map<string, Rec>(), calls = new Map<string, { tool: string; signal?: AbortSignal; stop?: () => void }>();
 	const chans = new Map<string, Channel>(), me = () => env.PI_INTERCOM_SESSION_ID ?? "";
-	let g: string | undefined, seen: number | undefined, poll: ReturnType<typeof setInterval> | undefined, offs: (() => void)[] = [], warned = false;
-	let file: () => string | undefined = () => undefined, tell = (_text: string) => {};
+	let g: string | undefined, gpid = 0, seen: number | undefined, poll: ReturnType<typeof setInterval> | undefined, offs: (() => void)[] = [], warned = false;
+	let file: () => string | undefined = () => undefined, tell = (_text: string) => {}, editor = (): Editor => ({ editor: "unknown" });
 	const open = () => [...recs.values()].filter((r) => r.state !== "closed");
+	const alive = () => { try { return gpid > 0 && (process.kill(gpid, 0), true); } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; } }; // a server that died without removing gui.json gets no probe answers
 
 	// Where the dialogs go: the hub in this process while it runs here, else G's channel while G owns it.
 	const target = () => (local() ? me() : g);
@@ -52,13 +57,14 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local }: { env: NodeJS
 		if (JSON.stringify(msg).length > MAX_MESSAGE) msg = { ...msg, dialogs: dialogs.map(({ select, questions, ...d }) => ({ ...d, big: true as const })) }; // shown read-only: too long to show
 		send(target(), msg);
 	};
-	// gui.json names the server's session; it is read at the first dialog and then on every mtime change, checked every 2 s while a dialog is open.
+	// gui.json names the server's session; it is read at the session's start and then on every mtime change, checked every 2 s (unref'd).
 	const follow = () => {
 		const at = statSync(join(dir, "gui.json"), { throwIfNoEntry: false })?.mtimeMs ?? 0;
 		if (at === seen) return false;
 		seen = at;
 		try {
-			g = (JSON.parse(readFileSync(join(dir, "gui.json"), "utf8")) as { ownerSession?: string }).ownerSession || undefined;
+			const r = JSON.parse(readFileSync(join(dir, "gui.json"), "utf8")) as { pid?: number; ownerSession?: string };
+			[g, gpid] = [r.ownerSession || undefined, Number(r.pid) || 0];
 		} catch {
 			g = undefined;
 		}
@@ -77,19 +83,16 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local }: { env: NodeJS
 	const onEvent = (from: string, ch: Channel, e: Event) => {
 		if (e.type === "owner" || e.type === "connection") return from === g && push();
 		const owner = ch.snapshot().owner, p = e.payload;
-		// Only G's own session, as the broker's current owner of this channel and the server gui.json names now, may answer or ask for a sync.
+		if (p?.type === "probe") follow(); // a probe goes only to the server gui.json names at this moment
+		// Only G's own session, as the broker's current owner of this channel and the server gui.json names now, may answer, probe, or ask for a sync.
 		if (e.type !== "message" || p?.version !== 1 || e.fromSessionId !== from || owner?.sessionId !== from || e.owner?.epoch !== owner.epoch) return;
 		if (p.type === "sync" && from === g) push();
 		// SAFETY: deliver checks the fields it uses before it hands anything to an owner.
 		if (p.type === "answer" && p.to === bridgeId && from === g) deliver(p as unknown as AnswerMessage, (ack) => send(from, ack));
-	};
-	const watch = () => {
-		if (open().length && !poll) (poll = setInterval(follow, POLL_MS)).unref?.();
-		else if (!open().length && poll) (clearInterval(poll), (poll = undefined));
+		if (p.type === "probe" && p.to === bridgeId && from === g && alive() && typeof p.probeId === "string" && p.probeId.length <= 64) send(from, { version: 1, type: "probe-result", bridgeId, probeId: p.probeId, ...editor() });
 	};
 	const changed = () => {
 		for (const [id, r] of recs) if (r.state === "closed" && (Date.now() - r.at! > KEEP_MS || recs.size > KEEP)) recs.delete(id);
-		watch();
 		if (!follow()) push();
 	};
 
@@ -145,7 +148,11 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local }: { env: NodeJS
 		offs.forEach((off) => off());
 		file = () => ctx.sessionManager.getSessionFile();
 		tell = (text) => ctx.hasUI && ctx.ui.notify(text, "warning");
+		editor = () => probeEditor(ctx);
 		offs = OWNERS.map((o) => o.listen(bus, report));
+		seen = -1; // a new session file (/new, /resume) is told to the server at once
+		follow();
+		if (!poll) (poll = setInterval(follow, POLL_MS)).unref?.();
 	});
 	pi.on("tool_execution_start", (e, ctx) => {
 		const signal = ctx.signal, entry: { tool: string; signal?: AbortSignal; stop?: () => void } = { tool: e.toolName, signal };
@@ -166,5 +173,5 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local }: { env: NodeJS
 		offs.splice(0).forEach((off) => off());
 		(clearInterval(poll), (poll = undefined));
 	});
-	return { deliver, sync: () => ((seen = -1), follow()) };
+	return { deliver, sync: () => ((seen = -1), follow()), probe: () => editor() };
 }
