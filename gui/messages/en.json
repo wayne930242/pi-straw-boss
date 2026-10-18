@@ -21,7 +21,7 @@
 	"location": "Location",
 	"all_bases": "all bases",
 	"documents": "Documents",
-	"net_log": "Net log",
+	"net_log": "Logs",
 	"states": "States",
 	"credit": "Icons from game-icons.net by Lorc and Delapouite, CC BY 3.0.",
 	"banner_offline": "Disconnected. Gave up after {tries} tries; it reconnects when you return to this tab.",
@@ -307,5 +307,6 @@
 	"close_base_ask": "Close base {name}? Every agent in it and its tower quit.",
 	"close_squad_ask": "Close squad {name}? Every agent in it quits.",
 	"close_unit_ask": "Close {name}? It quits pi and its pane closes.",
-	"close_tower_ask": "Close the tower {name}? The base's mains become members again."
+	"close_tower_ask": "Close the tower {name}? The base's mains become members again.",
+	"close_unit": "Close {name}"
 }

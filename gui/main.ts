@@ -52,8 +52,19 @@ const openTile = (tile: Tile, take?: boolean) => withPanels((p) => p.tiles.open(
 
 // The header, the alert queue, and the focus views follow every snapshot. A hidden page keeps only the newest snapshot and draws it
 // when it comes back, so a background tab does no DOM work; the net log follows on every route, the map is drawn only while in view.
+// The tab's icon carries the count of units waiting on an answer, a hidden tab's above all; a browser that keeps the first icon shows it plain.
+const tabIcon = document.querySelector<HTMLLinkElement>('link[rel="icon"]'), plainIcon = tabIcon && decodeURIComponent(tabIcon.href.slice(tabIcon.href.indexOf(",") + 1));
+let badged = 0;
+function badge(net: Net) {
+	const n = net.bases.flatMap((b) => [...(b.tower ? [b.tower] : []), ...[...b.tabs.flatMap((t) => t.units), ...b.outside].flatMap((u) => [u, ...u.subs])]).filter((u) => u.mark === "waiting" || u.pending).length;
+	if (!tabIcon || !plainIcon || n === badged) return;
+	badged = n;
+	const dot = `<circle cx='23' cy='9' r='9' fill='#ffd166' stroke='#0b1220' stroke-width='2'/><text x='23' y='13' text-anchor='middle' font-family='sans-serif' font-size='${n > 9 ? 9 : 12}' font-weight='700' fill='#06101e'>${n > 9 ? "9+" : n}</text>`;
+	tabIcon.href = `data:image/svg+xml,${encodeURIComponent(n ? plainIcon.replace("</svg>", `${dot}</svg>`) : plainIcon)}`;
+}
 function show(net: Net) {
 	latest = pending = net;
+	badge(net);
 	if (document.hidden) return;
 	page.stats(net);
 	const now = alertsOf(net, Date.now()), fresh = arrivals(known, now);

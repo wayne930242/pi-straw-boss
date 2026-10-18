@@ -21,7 +21,7 @@
 	"location": "位置",
 	"all_bases": "所有基地",
 	"documents": "文件",
-	"net_log": "網的動態",
+	"net_log": "Logs",
 	"states": "狀態",
 	"credit": "圖示來自 game-icons.net（Lorc、Delapouite），CC BY 3.0。",
 	"banner_offline": "連線中斷。重試 {tries} 次後放棄；回到此分頁時會重新連線。",
@@ -265,5 +265,6 @@
 	"close_base_ask": "要關閉基地 {name} 嗎？裡面所有 agent 和塔台都會退出。",
 	"close_squad_ask": "要關閉小隊 {name} 嗎？裡面所有 agent 都會退出。",
 	"close_unit_ask": "要關閉 {name} 嗎？它會退出 pi，窗格也會關掉。",
-	"close_tower_ask": "要關閉塔台 {name} 嗎？這個基地的主智慧體都會降格成成員。"
+	"close_tower_ask": "要關閉塔台 {name} 嗎？這個基地的主智慧體都會降格成成員。",
+	"close_unit": "關閉 {name}"
 }
