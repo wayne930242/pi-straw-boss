@@ -25,8 +25,8 @@ after(async () => {
 });
 
 const net = (label: string): Net => ({ bases: [{ id: "w", label, mark: "idle", head: true, tower: null, tabs: [], outposts: [], outside: [] }] });
-async function serve(read: () => Promise<Net>, options: { pollMs?: number; pingMs?: number; port?: number; token?: string; csrf?: string; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] }; call?: (method: string, params: Record<string, unknown>) => Promise<unknown> } = {}) {
-	const gui = await startGui({ read, dir, pollMs: 20, pingMs: 50, ...options });
+async function serve(read: () => Promise<Net>, options: { pollMs?: number; pingMs?: number; port?: number; token?: string; csrf?: string; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] }; call?: (method: string, params: Record<string, unknown>) => Promise<unknown> } = {}, bundle = dir) {
+	const gui = await startGui({ read, dir: bundle, pollMs: 20, pingMs: 50, ...options });
 	running.push(gui);
 	return gui;
 }
@@ -76,6 +76,20 @@ test("the page and its assets are served under the token, with no caching and a 
 	assert.equal((await raw(gui, `/${gui.token}/assets/missing.js`)).status, 404);
 	assert.equal((await raw(gui, `/${gui.token}/..%2fsecret.txt`)).status, 404, "nothing outside the bundle is served");
 	assert.equal((await raw(gui, `/${gui.token}/assets/..%2f..%2fsecret.txt`)).status, 404);
+});
+
+test("a package update that replaces the bundle under a running server leaves its page and assets as they were at start", async () => {
+	const own = join(scratch, "updated");
+	mkdirSync(join(own, "assets"), { recursive: true });
+	writeFileSync(join(own, "index.html"), "<!doctype html><html><head></head><body>old</body></html>");
+	writeFileSync(join(own, "assets", "old.js"), "old()");
+	const gui = await serve(async () => net("a"), {}, own);
+	rmSync(join(own, "assets", "old.js"));
+	writeFileSync(join(own, "assets", "new.js"), "next()");
+	writeFileSync(join(own, "index.html"), "<!doctype html><html><head></head><body>new</body></html>");
+	assert.match((await raw(gui, `/${gui.token}/`)).body, /old/);
+	assert.deepEqual(await raw(gui, `/${gui.token}/assets/old.js`).then((r) => [r.status, r.body]), [200, "old()"]);
+	assert.equal((await raw(gui, `/${gui.token}/assets/new.js`)).status, 404, "a file added after start is not served");
 });
 
 test("a request without the token, with a wrong one, with another Host header, or that is not a GET is refused", async () => {

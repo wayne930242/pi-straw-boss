@@ -1,9 +1,9 @@
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { createReadStream, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, request, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { extname, join, resolve, sep } from "node:path";
+import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { waitsForSecret } from "./ask.ts";
 import { createControl, type Reply } from "./control.ts";
@@ -49,7 +49,9 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, t
 	} catch {
 		throw new Error(`The GUI bundle is missing (${dir}); build it with npm run gui:build`);
 	}
-	const page = readFileSync(join(dir, "index.html"), "utf8").replace("<head>", `<head>\n<base href="/${token}/">\n<meta name="sb-csrf" content="${csrf}">`);
+	// The whole bundle is read once: a package update replaces dist/gui under a running server, whose page names the old assets.
+	const bundle = new Map(readdirSync(dir, { recursive: true, encoding: "utf8" }).filter((f) => statSync(join(dir, f)).isFile()).map((f) => [f.split("\\").join("/"), readFileSync(join(dir, f))]));
+	const page = bundle.get("index.html")!.toString("utf8").replace("<head>", `<head>\n<base href="/${token}/">\n<meta name="sb-csrf" content="${csrf}">`);
 	const files: Files = { lookup: (key) => net?.lookup(key), workspace: (id) => net?.workspace(id) ?? [], readers: readers() };
 	// Turning remote access off ends the streams of remote pages; their next request finds the cookie void.
 	const clients = new Map<ServerResponse, Watch | undefined>(), remotes = new Set<ServerResponse>(), access = createAccess(token, () => remotes.forEach((c) => c.end()));
@@ -130,14 +132,14 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, t
 		if (path[0] === "w") return void res.writeHead(200, { ...HEADERS, "content-type": TYPES[".html"] }).end(page);
 		let file: string;
 		try {
-			file = resolve(dir, decodeURIComponent(path.join("/")) || "index.html");
-			if (!file.startsWith(resolve(dir) + sep) || !statSync(file).isFile()) throw new Error();
+			file = decodeURIComponent(path.join("/")) || "index.html";
 		} catch {
 			return void fail(404);
 		}
-		if (file === join(resolve(dir), "index.html")) return void res.writeHead(200, { ...HEADERS, "content-type": TYPES[".html"] }).end(page);
-		res.writeHead(200, { ...HEADERS, "content-type": TYPES[extname(file)] ?? "application/octet-stream" });
-		createReadStream(file).pipe(res);
+		if (file === "index.html") return void res.writeHead(200, { ...HEADERS, "content-type": TYPES[".html"] }).end(page);
+		const body = bundle.get(file);
+		if (!body) return void fail(404);
+		res.writeHead(200, { ...HEADERS, "content-type": TYPES[extname(file)] ?? "application/octet-stream" }).end(body);
 	});
 	try {
 		await listen(port);
