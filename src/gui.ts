@@ -9,6 +9,7 @@ import { waitsForSecret } from "./ask.ts";
 import { createControl, type Reply } from "./control.ts";
 import type { HerdrCall } from "./herdr.ts";
 import type { Hub } from "./dialogs.ts";
+import { createDocs } from "./docs.ts";
 import { canonical, readers } from "./history.ts";
 import { createMirrors } from "./mirror.ts";
 import type { Found, Net, Ref } from "./net.ts";
@@ -32,7 +33,8 @@ const HEADERS = {
 	"cache-control": "no-store",
 	"referrer-policy": "no-referrer",
 	"x-content-type-options": "nosniff",
-	"content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; frame-ancestors 'none'",
+	"cross-origin-opener-policy": "same-origin", // a page a document's link opens cannot steer this tab
+	"content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; base-uri 'self'; frame-ancestors 'none'",
 };
 
 export interface Gui { url: string; port: number; token: string; csrf: string; access: Access; stop(): Promise<void> }
@@ -52,7 +54,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, t
 	// Turning remote access off ends the streams of remote pages; their next request finds the cookie void.
 	const clients = new Map<ServerResponse, Watch | undefined>(), remotes = new Set<ServerResponse>(), access = createAccess(token, () => remotes.forEach((c) => c.end()));
 	const pair = (code = access.pair(), host = access.remote?.host, url = `https://${host}/${token}/pair/${code}`) => (code && host ? { url, rows: qr(url).map((row) => row.map(Number).join("")) } : undefined);
-	const mirrors = createMirrors({ call, lookup: (key) => net?.lookup(key), secret: waitsForSecret, canonical });
+	const mirrors = createMirrors({ call, lookup: (key) => net?.lookup(key), secret: waitsForSecret, canonical }), docs = hub && createDocs(hub, (key) => net?.lookup(key)?.name ?? key);
 	const control = createControl({ lookup: (key) => net?.lookup(key), call, csrf, canonical, pair, mirrors, secret: waitsForSecret, answers: hub && { replay: hub.replay, ended: hub.ended, send: hub.send, probe: hub.probe, target: async (key) => (await tick(), hub.target(key)) } });
 	let last: string | undefined, problem: string | undefined, inflight: Promise<void> | undefined;
 	let poll: ReturnType<typeof setInterval> | undefined, beat: ReturnType<typeof setInterval> | undefined;
@@ -110,6 +112,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, t
 		if ("status" in who) return void (who.status === 403 ? fail(403) : res.writeHead(401, { ...HEADERS, "content-type": "text/plain" }).end("This device is not paired: scan a new QR code from /boss gui remote."));
 		// A pairing code was just exchanged: the cookie is set, and the page reloads itself, so the cookie also rides on a same-site navigation.
 		if ("cookie" in who) return void res.writeHead(200, { ...HEADERS, "content-type": TYPES[".html"], "set-cookie": cookieFor(token, who.cookie) }).end(`<!doctype html><meta http-equiv="refresh" content="0;url=/${token}/"><p>Paired. Opening the straw net…</p>`);
+		if (path[0] === "doc") return void (docs ? docs.serve(req, res, path.slice(1), who.origin).catch(() => res.destroy()) : fail(404)); // the documents sessions show (docs.ts)
 		if (path[0] === "api") {
 			let parts: string[];
 			try {
@@ -118,7 +121,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, t
 				return void fail(404);
 			}
 			if (parts[0] === "sessions" || parts[0] === "remote") return void control(req, who.origin, parts).then(answer, () => answer({ status: 500, body: { error: "internal", reason: "The request could not be handled." } }));
-			if (req.method === "GET") return void api(files, parts, url.searchParams).then(answer, () => fail(404));
+			if (req.method === "GET") return void (parts[0] === "doc" && docs ? answer(docs.text(parts[1] ?? "")) : api(files, parts, url.searchParams).then(answer, () => fail(404)));
 		}
 		if (req.method !== "GET") return void fail(403);
 		// The page loads its assets and the stream relative to its own URL, so that URL must end with a slash.

@@ -118,8 +118,8 @@ export function createAccess(token: string, ended: () => void = () => {}) {
 				sessions.set(cookie, now + SESSION_MS);
 				return { cookie };
 			}
-			const cookie = /(?:^|;\s*)sb_remote=([0-9a-f]{64})(?:;|$)/.exec(h.cookie ?? "")?.[1];
-			return cookie && (sessions.get(cookie) ?? 0) > now ? { origin: `https://${remote.host}`, remote: true } : { status: 401 };
+			const cookie = /(?:^|;\s*)sb_remote=([0-9a-f]{64})(?:;|$)/.exec(h.cookie ?? "")?.[1]; // a document's own requests (/doc/) come without it from Chrome's sandboxed frame: docs.ts takes the capability instead
+			return (cookie && (sessions.get(cookie) ?? 0) > now) || path[0] === "doc" ? { origin: `https://${remote.host}`, remote: true } : { status: 401 };
 		},
 	};
 }
