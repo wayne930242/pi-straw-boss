@@ -57,12 +57,11 @@ An optional Herdr plugin in [`herdr-plugin/`](herdr-plugin) turns the sidebar's 
 It lists the head tower's workspace first, in each workspace the tower, then each tab's main agent and members, and every subagent right under the session that launched it, even in a worktree workspace.
 One key switches to it, and the same key switches back to Herdr's own view.
 pi-straw-boss writes the sort key (`sb_order`) and a role label (`sb_mark`) the view and your sidebar rows can use.
-The label is the same mark the tower dashboard shows before each name, in Nerd Font glyphs: a star for a main agent, a person for a member, and `[sub]` with the launcher's name for a subagent; the tower's tab carries a radio tower.
 It needs Herdr 0.9.3 or newer and node.
 
-<p align="center"><img src="docs/sidebar-net-view.png" width="235" alt="Herdr's sidebar in the net view: each tower first, then its workspace's main agents marked with a star, a subagent tagged [sub] under the main agent that launched it, and a member marked with a person"></p>
+<p align="center"><img src="docs/sidebar-net-view.png" width="308" alt="Herdr's sidebar in the net view, one row per agent: each workspace's tower with the radio tower glyph first, main agents marked with a star and members with a person, and every subagent indented under the session that launched it"></p>
 
-<p align="center"><sub>The net view with <code>$sb_mark</code> in the sidebar rows; the colors come from your own Herdr config.</sub></p>
+<p align="center"><sub>The net view with each agent's role mark. <a href="docs/how-it-works.md#sidebar-net-view">How it works</a> has the sidebar rows that show them.</sub></p>
 
 Link it from a checkout, then bind a key in Herdr's `config.toml`:
 
