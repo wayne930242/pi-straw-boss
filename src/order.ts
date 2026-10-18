@@ -10,9 +10,9 @@ import { type HerdrRun, type HerdrTab, isSub, type Pane, panes, type Place, repo
 //    A tower has none: its tab already carries the radio tower glyph.
 // A session writes them for itself and for the subagents it launched, which never join and write nothing, on the same 4 minute refresh as `sb_role`.
 
-/** The glyphs sit in Hack Nerd Font and MesloLGS NF: Font Awesome's star (U+F005), the middle dot, and the down-right arrow. */
+/** The glyphs sit in Hack Nerd Font and MesloLGS NF: Font Awesome's star (U+F005), the middle dot, and the box-drawing tree branch. */
 export const MARK = { main: "\uf005", member: "\u00b7 member" } as const;
-export const ARROW = "\u21b3";
+export const ARROW = "\u2514\u2500";
 // The dashboard shows eight subagents per session, but every live one is keyed: one left out would sort outside its launcher's span. Three digits count them.
 const MAX_KIDS = 999;
 const NAME_MAX = 24;

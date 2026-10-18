@@ -131,7 +131,7 @@ A session that ends clears its own and its subagents'.
   A main agent's or member's is `WWW.1.TTT.R.PPP`: `WWW` is the place of its workspace among the base workspaces (a sub workspace does not count, and the head tower's is `000`), `TTT` the place of its tab in the workspace, `R` is `0` for a main agent and `1` for a member, and `PPP` the place of its pane in the tab.
   Each subagent adds one `.NNN` segment, its place among the live and finished subagents of its launcher, at any depth (the dashboard lists eight per session, the keys cover every live one).
   Every number is zero-padded, so plain string order is numeric order, and a subagent's key sorts after its launcher's and before the launcher's next sibling's.
-- `sb_mark` says what a net member is, in a few characters: a star alone (Font Awesome's, U+F005) for a main agent, `· member` for a member, and `↳ <launcher>` for a subagent, with the launcher's name cut to 24 characters.
+- `sb_mark` says what a net member is, in a few characters: a star alone (Font Awesome's, U+F005) for a main agent, `· member` for a member, and `└─ <launcher>` for a subagent (a tree branch, as Herdr draws worktrees in the Spaces panel), with the launcher's name cut to 24 characters.
   A tower has none: its tab already carries the radio tower glyph.
 
 Both tokens rest on Herdr's order as of the session's last refresh, so moving a tab or workspace shows in the net view within 4 minutes.
