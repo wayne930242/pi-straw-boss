@@ -194,8 +194,8 @@ A session that ends clears its own and its subagents'.
   Every number is zero-padded, so plain string order is numeric order, and a subagent's key sorts after its launcher's and before the launcher's next sibling's.
 - `sb_mark` says what a net member is, in a few characters: a star alone (Font Awesome's, U+F005) for a main agent, a person alone (Font Awesome's, U+F007) for a member, and `[sub] <launcher>` for a subagent, with the launcher's name cut to 24 characters.
   A tower has none: its tab already carries the radio tower glyph.
-- `sb_main_tab` is a main agent's tab label and `sb_member_tab` a member's, one token per role because a Herdr rule sees only its own token, so a row colors each by role.
-  Every other agent carries neither, and a session clears the `sb_tab` that 0.7.2 to 0.13.1 wrote.
+- `sb_main_tab` is a main agent's tab label and `sb_tab` a member's, one token per role because a Herdr rule sees only its own token, so a row colors each by role.
+  A member's keeps the `sb_tab` name it has had since 0.7.2, so the row works with sessions that have not reloaded; every other agent carries neither.
 - `sb_indent` is on a subagent alone, and is the branch to it from its launcher, drawn like the worktrees in Herdr's Spaces panel: `├─` while a later subagent of the same launcher is marked, `└─` on the last one.
   Subagents of one launcher are siblings at every depth.
   A tower, a main agent and a member carry none, and a session clears the one a pane kept from when it ran a subagent.
@@ -222,7 +222,7 @@ Add them to a row of `[ui.sidebar.agents]` in `config.toml`.
 `$sb_indent` goes before the state icon, so a subagent hangs under its launcher as the worktrees do in the Spaces panel; Herdr puts its own ` · ` after it, and an agent without the token shows nothing.
 `$sb_name` goes right after the state icon, so a subagent row says which subagent it is even when Herdr has lost the pane's label.
 Every glyph sits in the first row; the `[sub]` mark stays hidden because the branch already says what it is. The snippet leaves the colors to your Herdr theme; add an `fg` to a rule to color a mark.
-Herdr drops a row whose every item is empty, so the second row, the tab label from `$sb_main_tab` or `$sb_member_tab`, gives a main agent and a member a second line and leaves every other agent one line; give the two tokens the colors of the star and the person. The first row leaves out Herdr's `tab`, which the second row carries.
+Herdr drops a row whose every item is empty, so the second row, the tab label from `$sb_main_tab` or `$sb_tab`, gives a main agent and a member a second line and leaves every other agent one line; give the two tokens the colors of the star and the person. The first row leaves out Herdr's `tab`, which the second row carries.
 
 ```toml
 [ui.sidebar.agents]
@@ -238,7 +238,7 @@ rows = [
     ] },
     "machine", "workspace",
   ],
-  [{ token = "$sb_main_tab", bold = true }, { token = "$sb_member_tab", bold = true }],
+  [{ token = "$sb_main_tab", bold = true }, { token = "$sb_tab", bold = true }],
 ]
 ```
 

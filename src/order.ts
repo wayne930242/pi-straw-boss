@@ -8,8 +8,8 @@ import { ARROW, type HerdrRun, type HerdrTab, isSub, MARK, type Pane, panes, typ
 //    and a subagent's key is its parent's key plus one more segment, which sorts after the parent and before the parent's next sibling.
 //  - `sb_mark`: a short label that says what a net member is, a star (U+F005) alone for a main agent, a person (U+F007) alone for a member, and `[sub]` and the launcher's name for a subagent.
 //    A tower has none: its tab already carries the radio tower glyph.
-//  - `sb_main_tab` / `sb_member_tab`: a main agent's or a member's tab label, one token per role so a row can color each (a Herdr rule sees only its own token).
-//    `sb_tab`, which 0.7.2 to 0.13.1 wrote, is cleared.
+//  - `sb_main_tab` / `sb_tab`: a main agent's or a member's tab label, one token per role so a row can color each (a Herdr rule sees only its own token).
+//    A member's keeps the `sb_tab` name it has had since 0.7.2, so a row reading it works with sessions that have not reloaded; 0.13.3's `sb_member_tab` is cleared.
 //  - `sb_indent`: a tree branch on a subagent alone, like Herdr's Spaces panel draws a worktree: `├─` while a later subagent of the same launcher is marked, `└─` on the last. A row put before the state icon shows it as the
 //    indent under the launcher. A tower, a main agent and a member carry none.
 //  - `sb_name`: a subagent's own name, as pi-herdr-agents shows it. Herdr's pane label held it until a new server dropped the label; a row can show the token instead. A subagent alone carries one.
@@ -62,7 +62,7 @@ export async function netTokens(run: HerdrRun, place: Place, role: "tower" | "ma
 	const pane = ps.find((p) => p.pane_id === place.paneId), key = pane && orderKey(role, pane, ps, all, tabList);
 	const joined = new Set(ps.filter((p) => p.tokens?.sb_role).map((p) => p.pane_id));
 	const tab = tabList.find((t) => t.tab_id === pane?.tab_id)?.label || null;
-	const labels = { sb_main_tab: role === "main" ? tab : null, sb_member_tab: role === "member" ? tab : null, sb_tab: null };
+	const labels = { sb_main_tab: role === "main" ? tab : null, sb_tab: role === "member" ? tab : null, sb_member_tab: null };
 	return { own: { sb_order: key ?? null, sb_mark: role === "tower" ? null : MARK[role], sb_indent: null, sb_name: null, ...labels }, kids: key ? descendants(pane, key, name, ps, now) : [], joined };
 }
 
