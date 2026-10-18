@@ -181,6 +181,15 @@ test("a new tab whose shell is not at its prompt yet is retried until herdr acce
 	assert.equal(world.broker.delivered[0]?.to, "tower-wA");
 });
 
+test("an adopted glyph tab whose shell stays busy gives its tower token back, so the next open does not count it as the tower", async () => {
+	world.herdr.addTab("wA:t8", "\u{f043b}", "wA:p8", "shell");
+	world.herdr.busy = 1000;
+	const a = await main();
+	await assert.rejects(a.tool("call_tower", { message: "hi" }), /agent_pane_busy/);
+	assert.equal(world.herdr.pane("wA:p8").tokens.sb_role, undefined);
+	assert.deepEqual(world.herdr.commands("tab", "close"), [], "the user's tab stays");
+});
+
 test("a shell that never becomes available fails with the busy answer and its pane", async () => {
 	world.herdr.busy = 1000;
 	const a = await main();

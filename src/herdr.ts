@@ -192,7 +192,11 @@ async function open({ run, sleep, live, moveFirst, model }: TowerEnv, workspace:
 	}
 	if (!running) {
 		// Herdr agent names are unique across workspaces and lowercase only, so the name carries the lowercased workspace id.
-		await startPi(run, sleep, `tower-${ws.toLowerCase()}`, paneId, ["--name", `tower · ${workspace.label}`, ...(model ? ["--model", model] : [])]);
+		// An adopted shell that turns out busy (the user runs something there) gives the token back, so the next open does not count it as the tower.
+		await startPi(run, sleep, `tower-${ws.toLowerCase()}`, paneId, ["--name", `tower · ${workspace.label}`, ...(model ? ["--model", model] : [])]).catch(async (error: unknown) => {
+			if (reused && !marked) await report(run, "pane", paneId, { sb_role: null }).catch(() => {});
+			throw error;
+		});
 	}
 	const id = await waitFor(sleep, held, TOWER_WAIT_MS, 1000);
 	if (!id) throw new Error(`The tower of ${workspace.label} did not publish its token within ${TOWER_WAIT_MS / 1000} s (pane ${paneId})`);
