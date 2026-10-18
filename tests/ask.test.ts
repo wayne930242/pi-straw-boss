@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { askOf, openCalls, pendingOf, questionsOf, withPending } from "../src/ask.ts";
+import { askOf, openCalls, pendingOf, questionsOf, waitsForSecret, withPending } from "../src/ask.ts";
 import type { Net } from "../src/net.ts";
 
 const scratch = mkdtempSync(join(tmpdir(), "psb-ask-test-"));
@@ -80,8 +80,9 @@ test("a call longer than the 256 KB window is still read: its question shows cli
 	assert.equal(big?.ask?.question, "Pick a color");
 	assert.equal(big?.ask?.context?.length, 8000, "the context is clipped, not dropped");
 	assert.equal((await pendingOf(file(user("hi"), asked("big2", { ...ARGS, context }), result("big2", "red"))))?.callId, undefined, "answered, so nothing waits");
-	const huge = await pendingOf(file(user("hi"), asked("huge", { question: "Q", context: "x".repeat(17_000_000) })));
+	const cut = file(user("hi"), asked("huge", { question: "Q", context: "x".repeat(17_000_000) })), huge = await pendingOf(cut);
 	assert.deepEqual([huge?.tool, huge?.why, huge?.ask], ["dialog", "Its call is too long to read here.", undefined]);
+	assert.equal(await waitsForSecret(cut), true, "a call too long to read might be a secret: the terminal mirror hides");
 });
 
 test("a session file whose entries point at each other in a loop is read as undecided, not forever", async () => {
@@ -139,4 +140,13 @@ test("the answer panel's pure rules: the body it sends, what it says for each ou
 	const unit = { name: "u", control: true, live: true, mark: "waiting" as const, online: true };
 	assert.equal(blocked({ ...unit, answerable: true }), "It waits on a dialog: answer it above, or in its terminal.");
 	assert.equal(blocked(unit), "It waits on a dialog; answer it in its terminal.");
+});
+
+test("waitsForSecret: any open call of secret_drop, and a file that cannot be read through; a missing file (a new session) is not", async () => {
+	assert.equal(await waitsForSecret(file(user("hi"), asked("c1", {}, "secret_drop"))), true);
+	assert.equal(await waitsForSecret(file(user("hi"), asked("c1", ARGS, "ask_user", [{ id: "c2", name: "secret_drop" }]))), true, "the second of two open calls");
+	assert.equal(await waitsForSecret(file(user("hi"), asked("c1"))), false);
+	assert.equal(await waitsForSecret(file(user("hi"), asked("c1", {}, "secret_drop"), result("c1", "done"))), false, "answered");
+	assert.equal(await waitsForSecret(join(scratch, "missing.jsonl")), false);
+	assert.equal(await waitsForSecret(scratch), true, "a path that cannot be read as a file hides the mirror");
 });

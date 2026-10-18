@@ -506,14 +506,41 @@ C-3 (a context over three rows or a scrolled prompt always refuses), B-3 (an ope
 the next snapshot), A-7 (click-to-raise listens on `document` in the capture phase and may take a click meant for a HUD element
 drawn over a peeking dialog; unverified, and it ships in 0.5.0 with the overlay rule).
 
-**Terminal mirror and key pad** (generic, works for any dialog): while the panel is
-open and the page visible, the server reads `pane.read {source: "visible", format:
-"ansi"}` once a second (about 15 ms, 9 KB) and sends it as `mirror` on the stream;
-the page draws it in a fixed monospace box (a small ANSI SGR to spans converter, no
-cursor addressing needed since the snapshot is already laid out). Under it, a key
-pad of the allowed keys and a one-line text field sent with `pane.send_input {text}`
-(bracketed paste, no Enter). This answers robot_hand's select, multi-select and
-batch `ask_user`, `/monitors`, confirmations, and anything else in a pi TUI.
+**Terminal mirror and key pad** (0.5.0's plan, kept as the record): a mirror read once a second while a panel is open, a key pad of
+the allowed keys, and a one-line text field. It was never built in that form; 0.7.0 built the design below instead.
+
+### Terminal mirror and key pad (0.7.0)
+
+Planned in the Phase 3 plan of 2026-10-18 (U1, U4, U5, and U7 accepted as recommended). The mirror shows what a session's pane shows;
+the key pad under it works the dialogs and selectors no owner relays (pi's own `/model` and `/tree`, pi-ask-user's `ask_user`). The rule
+from the 0.5.x screen-check rounds holds: the server never decides what to send from what the screen shows. The mirror is display
+only, a key leaves the browser only when the user taps it, and where a key's effect can be dangerous the session's own bridge checks it
+against pi's editor, never against the screen.
+
+**Server (`src/mirror.ts`).** Herdr has no change signal for a pane (`events.wait` takes no output match; `pane.get.revision` and
+`pane.read.revision` stay put while the screen changes), and `pane.read` over the socket takes about 0.3 ms, so the server polls and
+diffs, as herdr-web-ui's fallback does. One reader per mirrored session calls `pane.read {source: "visible", format: "ansi",
+strip_ansi: false}` through `herdrCall`, every 250 ms while the screen changed in the last 2 s and every second otherwise. It reads
+`pane.get` (still pi, on the session's file, else the mirror ends) and `pane.layout` (the pane's width) every 2 s; the rows are the
+read's lines, at most 120 (the bottom ones). Each row is sanitized on the server: SGR (`CSI … m` with digits and separators only)
+stays; every other CSI (cursor moves such as a model-written `\x1b[3G`, private modes), OSC (links such as OSC 8, titles), DCS, SOS,
+PM, APC, any other escape, and every C0 and C1 control are removed, a row is cut at 4 KB, and a row never ends inside an escape (an SGR
+split at the end of the row, or cut short by the next escape, is dropped). Nothing reads the rows for meaning: the module exports no
+predicate over them, which `tests/mirror.test.ts` asserts.
+
+A reader sends `mirror` events on the streams attached to it: `{key, seq, rows, cols, set: [[index, row]…]}` with only the changed
+rows, `whole: true` with every row on attach, after a change of width or row count, and every 10 s, and an empty `set` once a second
+while nothing changes, so a page (and the key pad's guard) knows the stream is current. A page joining a running reader gets every row
+at once, without another read. While the session file's open call is `secret_drop` (U4) nothing is read, not even the size; the streams
+hear `{key, hidden: true}` once a second instead, and every row again afterwards. A reader ends with `{key, ended: reason}` when its unit
+leaves the registry or the pane runs something else, or after 10 failed reads in a row.
+
+**Subscription.** The tab keeps its one EventSource (HTTP/1.1 allows six connections per origin). On connect the server sends `hello
+{stream}`, 128 random bits per stream. `POST /<t>/api/sessions/<key>/mirror {stream, on}` attaches that stream to the session's
+mirror, or detaches it, under every write guard (Origin, `Sec-Fetch-Site`, JSON, CSRF, and remotely the Tailscale identity and the
+paired cookie). The reads are shared by every stream on a session and stop at once when the last one detaches or its stream closes.
+Limits: 2 mirrors per stream and 6 mirrored sessions per server, else 429 with the reason; an unknown stream or a bad body is 400, a
+session no longer live is 409. Reconnecting with `watch=…&mirror=1` was rejected: every toggle would resend 150 history items.
 
 **`ask_user`, structured** (pi-ask-user 0.16.x; other versions use the mirror):
 the panel shows the context (markdown), the question, the options with
@@ -632,7 +659,7 @@ Control means typing into the user's terminals, so every write is guarded.
 | First history paint after a click (150 items) | ≤ 300 ms for the largest file | index + one ranged read |
 | Server heap per indexed session | ≤ 16 MB | 7 MB measured for 54 MB |
 | New lines to the page | ≤ 1.5 s after pi writes them (watch event, 1 s poll fallback) | |
-| Terminal mirror | 1 read per second, only while open and visible | 15 ms, 9 KB |
+| Terminal mirror (0.7.0) | at most 4 reads a second per mirrored session while it changes, 1 when calm, shared by its viewers, none without one; at most 2 per page and 6 per server | `pane.read` over the socket: 0.3 ms, about 9 KB |
 | Workspace cards | one 64 KB tail read per unit per change | 19 ms for 15 files |
 | Page JS (map chunk) | ≤ 15 KB raw, ≤ 6 KB gzip | 8.7 / 3.7 KB today |
 | Page JS (lazy chunks: chat, views, layer, pairing, question) | ≤ 36.5 KB raw, ≤ 16.2 KB gzip (0.5.1: the composer's note and gone dialogs, about 0.7 KB gzipped; was 35 / 15.5 in 0.5.0, 12 before; raised in 0.5.0 for the composer, about 2.2 KB, the pairing tile with its POST helper, about 1.1 KB, and the read-only question panel with its place in dialogs and the session view, about 1.1 KB) | |

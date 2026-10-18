@@ -9,7 +9,7 @@ import type { Answerable, Dialog } from "./owners.ts";
 // Two tools are read: pi-ask-user's `ask_user` (one question with a context) and @juicesharp/rpiv-ask-user-question's `ask_user_question` (one to four questions
 // with a header, options with descriptions, and a multi-select flag; no context). Older session files hold the first, new ones the second.
 
-const TAIL = 262_144, LIMIT = 16_777_216, CACHE = new Map<string, { sig: string; pending?: Pending }>();
+const TAIL = 262_144, LIMIT = 16_777_216, CACHE = new Map<string, { sig: string; pending?: Pending; secret: boolean }>();
 export interface Option { title: string; description?: string }
 /** `multiple`: it takes several choices; `freeform`: it takes the user's own words; `header`: the short tag ask_user_question gives a question. */
 export interface Ask { question: string; header?: string; context?: string; options: Option[]; multiple: boolean; freeform: boolean }
@@ -93,13 +93,15 @@ export function questionsOf(a: Json): { ask: Ask } | { asks: Ask[] } | { why: st
 export async function pendingOf(file: string): Promise<Pending | undefined> {
 	const s = await stat(file).catch(() => undefined), sig = s ? `${s.size}:${s.mtimeMs}` : "", hit = CACHE.get(file);
 	if (hit?.sig === sig) return hit.pending;
-	const found = s ? await openCalls(file).catch(() => []) : [], calls = found === "cut" ? [] : found, [c] = calls;
+	const found = s ? await openCalls(file).catch(() => null) : [], calls = !found || found === "cut" ? [] : found, [c] = calls;
 	const shape = c?.name === "ask_user" ? askOf(c.args) : c?.name === "ask_user_question" ? questionsOf(c.args) : { why: c?.name === "secret_drop" ? "It waits for a secret." : "It waits on a dialog." };
 	const pending = found === "cut" ? { callId: `cut:${sig}`, tool: "dialog", why: "Its call is too long to read here." } : c && { callId: c.id, tool: c.name, ...(calls.length > 1 ? { why: SEVERAL } : shape) };
-	CACHE.set(file, { sig, pending });
+	CACHE.set(file, { sig, pending, secret: !found || found === "cut" || calls.some((x) => x.name === "secret_drop") }); // a file it could not read through counts as a secret
 	if (CACHE.size > 64) CACHE.delete(CACHE.keys().next().value!);
 	return pending;
 }
+/** Whether one of the file's open calls is secret_drop (or the file could not be read through; a missing one, a new session, is not): the terminal mirror hides, and the key pad sends only Escape, while it is. */
+export const waitsForSecret = async (file: string) => (await pendingOf(file), CACHE.get(file)?.secret !== false); // dropped from the cache meanwhile: hidden until the next look
 
 /** The dialogs bridges relay, by unit key, and how they join what the file says (dialogs.ts). */
 export interface Relayed { dialogsOf(key: string): Dialog[] | undefined; merge(key: string, file: Pending | undefined, dialogs: Dialog[], readable: boolean): Pending }

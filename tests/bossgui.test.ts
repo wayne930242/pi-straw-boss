@@ -30,8 +30,9 @@ const snapshot = (url: string) =>
 			let buffer = "";
 			res.on("data", (chunk: string) => {
 				buffer += chunk;
-				const line = buffer.split("\n").find((l) => l.startsWith("data: "));
-				if (line && buffer.includes("\n\n")) (req.destroy(), resolve(JSON.parse(line.slice(6)) as Net));
+				// The first plain message: named events (hello) come before it.
+				const block = buffer.split("\n\n").slice(0, -1).find((b) => !b.startsWith("event: "));
+				if (block) (req.destroy(), resolve(JSON.parse(block.slice(6)) as Net));
 			});
 		});
 		req.on("error", reject);

@@ -5,10 +5,12 @@ import { createServer, type IncomingMessage, request, type ServerResponse } from
 import type { AddressInfo } from "node:net";
 import { extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { waitsForSecret } from "./ask.ts";
 import { createControl, type Reply } from "./control.ts";
 import type { HerdrCall } from "./herdr.ts";
 import type { Hub } from "./dialogs.ts";
 import { canonical, readers } from "./history.ts";
+import { createMirrors } from "./mirror.ts";
 import type { Found, Net, Ref } from "./net.ts";
 import { qr } from "./qr.ts";
 import { type Access, cookieFor, createAccess } from "./remote.ts";
@@ -50,7 +52,8 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, t
 	// Turning remote access off ends the streams of remote pages; their next request finds the cookie void.
 	const clients = new Map<ServerResponse, Watch | undefined>(), remotes = new Set<ServerResponse>(), access = createAccess(token, () => remotes.forEach((c) => c.end()));
 	const pair = (code = access.pair(), host = access.remote?.host, url = `https://${host}/${token}/pair/${code}`) => (code && host ? { url, rows: qr(url).map((row) => row.map(Number).join("")) } : undefined);
-	const control = createControl({ lookup: (key) => net?.lookup(key), call, csrf, canonical, pair, answers: hub && { replay: hub.replay, ended: hub.ended, send: hub.send, target: async (key) => (await tick(), hub.target(key)) } });
+	const mirrors = createMirrors({ call, lookup: (key) => net?.lookup(key), secret: waitsForSecret, canonical });
+	const control = createControl({ lookup: (key) => net?.lookup(key), call, csrf, canonical, pair, mirrors, answers: hub && { replay: hub.replay, ended: hub.ended, send: hub.send, target: async (key) => (await tick(), hub.target(key)) } });
 	let last: string | undefined, problem: string | undefined, inflight: Promise<void> | undefined;
 	let poll: ReturnType<typeof setInterval> | undefined, beat: ReturnType<typeof setInterval> | undefined;
 	const send = (to: ServerResponse, data: string, event?: string) => to.writableEnded || to.write(`${event ? `event: ${event}\n` : ""}data: ${data}\n\n`); // a reading in flight at stop ends after the streams
@@ -76,7 +79,10 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, t
 	const events = (req: IncomingMessage, res: ServerResponse, target: string | null, remote: boolean) => {
 		res.writeHead(200, { ...HEADERS, "content-type": "text/event-stream", connection: "keep-alive" });
 		if (remote) remotes.add(res);
-		const to = (event: string, data: unknown) => send(res, JSON.stringify(data), event);
+		// `hello` names this stream: the page attaches terminal mirrors to it (mirror.ts), and they end with it.
+		const to = (event: string, data: unknown) => send(res, JSON.stringify(data), event), stream = randomBytes(16).toString("hex");
+		mirrors.open(stream, to);
+		to("hello", { stream });
 		const watch = target?.startsWith("w:") ? watchWorkspace(files, target.slice(2), to) : target ? watchSession(files, target, to) : undefined;
 		clients.set(res, watch);
 		if (last) res.write(`data: ${last}\n\n`);
@@ -89,6 +95,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, t
 		req.on("close", () => {
 			clients.delete(res);
 			remotes.delete(res);
+			mirrors.close(stream);
 			watch?.stop();
 			if (!clients.size) (clearInterval(poll), clearInterval(beat));
 		});
@@ -140,6 +147,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, t
 		url: `http://127.0.0.1:${bound}/${token}/`, port: bound, token, csrf, access,
 		stop: () => new Promise<void>((done) => {
 			hub?.stop();
+			mirrors.stop();
 			clearInterval(poll);
 			clearInterval(beat);
 			clients.forEach((_, c) => c.end());

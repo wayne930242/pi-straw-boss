@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { startGui, type Gui } from "../src/gui.ts";
+import { canonical } from "../src/history.ts";
 import type { Found, Ref } from "../src/net.ts";
 import type { Net } from "../src/net.ts";
 import { until } from "./fakes.ts";
@@ -24,7 +25,7 @@ after(async () => {
 });
 
 const net = (label: string): Net => ({ bases: [{ id: "w", label, mark: "idle", head: true, tower: null, tabs: [], outposts: [], outside: [] }] });
-async function serve(read: () => Promise<Net>, options: { pollMs?: number; pingMs?: number; port?: number; token?: string; csrf?: string; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] } } = {}) {
+async function serve(read: () => Promise<Net>, options: { pollMs?: number; pingMs?: number; port?: number; token?: string; csrf?: string; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] }; call?: (method: string, params: Record<string, unknown>) => Promise<unknown> } = {}) {
 	const gui = await startGui({ read, dir, pollMs: 20, pingMs: 50, ...options });
 	running.push(gui);
 	return gui;
@@ -293,4 +294,38 @@ test("the API pages older history and returns one entry in full, only for keys i
 	for (const path of ["/api/history/nobody", "/api/entry/nobody/u3", "/api/entry/k1/missing", "/api/entry/k1", "/api/other/k1", "/api/history/%E0%A4%A", "/api/"]) assert.equal((await raw(gui, `/${gui.token}${path}`)).status, 404, path);
 	assert.equal((await raw(gui, `/api/history/k1`)).status, 403, "the token is still required");
 	assert.equal((await raw(gui, `/${gui.token}/api/history/k1`, { method: "POST" })).status, 403, "and nothing here writes");
+});
+
+test("each stream is named in hello; a page attaches the terminal mirror to its own stream, under the write guards, and closing the stream stops the reads", async () => {
+	const file = canonical(join(scratch, "2026_k1.jsonl"))!, reads: string[] = [];
+	const call = async (method: string, params: Record<string, unknown>) => {
+		if (method === "pane.get") return { pane: { pane_id: "p1", agent: "pi", agent_session: { value: file } } };
+		if (method === "pane.layout") return { layout: { panes: [{ pane_id: "p1", rect: { width: 40 } }] } };
+		reads.push(String(params.pane_id));
+		return { read: { text: "hello\r\n\x1b]8;;https://x.test\x07world\x1b]8;;\x07" } };
+	};
+	const lookup = (key: string): Found | undefined => (key === "k1" ? { key, base: "w", name: "k1", role: "main", file, pane: "p1", live: true } : undefined);
+	const gui = await serve(async () => net("a"), { net: { lookup, workspace: () => [] }, call });
+	const a = listen(gui), b = listen(gui);
+	await until(() => a.events.some((e) => e.event === "hello") && b.events.some((e) => e.event === "hello"), "hello");
+	const id = (s: typeof a) => (JSON.parse(s.events.find((e) => e.event === "hello")!.data) as { stream: string }).stream;
+	assert.match(id(a), /^[0-9a-f]{32}$/);
+	assert.notEqual(id(a), id(b));
+	const post = (body: unknown, headers: Record<string, string> = {}) => new Promise<number>((resolve, reject) => {
+		const data = JSON.stringify(body);
+		request({ host: "127.0.0.1", port: gui.port, path: `/${gui.token}/api/sessions/k1/mirror`, method: "POST", agent: false, headers: { host: `127.0.0.1:${gui.port}`, origin: `http://127.0.0.1:${gui.port}`, "content-type": "application/json", "x-sb-csrf": gui.csrf, ...headers } }, (res) => (res.resume(), resolve(res.statusCode!))).on("error", reject).end(data);
+	});
+	assert.equal(await post({ stream: id(a), on: true }, { "x-sb-csrf": "nope" }), 403, "the write guards apply");
+	assert.equal(await post({ stream: id(a), on: true }, { origin: "http://evil.test" }), 403);
+	assert.equal(reads.length, 0);
+	assert.equal(await post({ stream: id(a), on: true }), 200);
+	await until(() => a.events.some((e) => e.event === "mirror"), "a frame");
+	assert.deepEqual(JSON.parse(a.events.find((e) => e.event === "mirror")!.data), { key: "k1", seq: 1, rows: 2, cols: 40, whole: true, set: [[0, "hello"], [1, "world"]] });
+	assert.ok(!b.events.some((e) => e.event === "mirror"), "only the stream that asked");
+	a.close();
+	await new Promise((resolve) => setTimeout(resolve, 100));
+	const n = reads.length;
+	await new Promise((resolve) => setTimeout(resolve, 1200));
+	assert.equal(reads.length, n, "the closed stream took its mirror with it");
+	b.close();
 });
