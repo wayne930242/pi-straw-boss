@@ -193,11 +193,13 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			if (autoTower) {
 				const all = await panes(run), members = all.filter((p) => p.workspace_id === at.workspaceId && ["member", "main"].includes(p.tokens?.sb_role ?? ""));
 				const towers = (await workspaces(run)).filter((w) => w.workspace_id !== at.workspaceId && live(w.tokens?.tower));
-				if (members.length >= 2 && towers.length) return void (await openTower(undefined, true));
+				// A tower closed on purpose stays closed until the base grows past the members it had then (a subagent or /boss tower opens it any time).
+				const closedAt = Number(ws?.tokens?.sb_tower_quit ?? -1);
+				if (members.length >= 2 && members.length > closedAt && towers.length) return void (await openTower(undefined, true));
 			}
 			missing ??= now();
 			if (!live(main) || (pinned && pinned !== state?.main) || now() - (state?.since ?? 0) < TOWER_OPEN_MS) return;
-			if (ws?.tokens?.sb_tower_quit === "1" || now() - missing >= TOWER_GRACE_MS) pin(c);
+			if (ws?.tokens?.sb_tower_quit !== undefined || now() - missing >= TOWER_GRACE_MS) pin(c);
 		};
 		const keepGuard = () => {
 			let checking = false; // one check at a time: a slow Herdr must not pile checks up in the queue
@@ -559,8 +561,10 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			if (!role() || !at) return;
 			await report(run, "pane", at.paneId, { sb_role: null, sb_opened_by: null, sb_order: null, sb_mark: null, sb_indent: null, sb_name: null, sb_tab: null, sb_main_tab: null, sb_member_tab: null }).catch(() => {});
 			await clearOrder(run, [...kids]);
-			// A tower that quits says so, so the mains are cleared at once instead of after the grace a /reload gets.
-			if (held) await report(run, "workspace", at.workspaceId, { tower: null, ...(event.reason === "quit" ? { sb_tower_quit: "1" } : {}) }).catch(() => {});
+			// A tower that quits says so with the members the base has, so the mains are cleared at once instead of after the grace a /reload gets,
+			// and the guard opens no new tower until the base grows past them.
+			const members = event.reason === "quit" && held ? (await panes(run, at.workspaceId).catch(() => [])).filter((p) => ["member", "main"].includes(p.tokens?.sb_role ?? "")).length : 0;
+			if (held) await report(run, "workspace", at.workspaceId, { tower: null, ...(event.reason === "quit" ? { sb_tower_quit: String(members) } : {}) }).catch(() => {});
 		});
 
 		// /boss gui is a read-only viewer: any session may open it, and it joins nothing and writes no token. A session outside the net

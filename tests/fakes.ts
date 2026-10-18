@@ -72,7 +72,7 @@ export class FakeHerdr {
 		this.wsTokenHistory.length = 0;
 		this.calls.length = 0;
 	}
-	private agentNames = new Set<string>();
+	private agentNames = new Map<string, string>(); // name → pane: Herdr frees a name with its pane (checked on Herdr itself)
 	/** The next this-many `agent start` calls fail with agent_pane_busy, as a new tab's shell does before its prompt. */
 	busy = 0;
 
@@ -164,8 +164,8 @@ export class FakeHerdr {
 		if (group === "agent" && cmd === "start") {
 			if (this.busy-- > 0) throw new Error(`herdr ${args.join(" ")} failed: agent_pane_busy: agent target pane ${flag("--pane")} is not an available shell`);
 			if (!/^[a-z][a-z0-9_-]{0,31}$/.test(args[2]!)) throw new Error(`herdr agent start failed: invalid_agent_name: ${args[2]}`);
-			if (this.agentNames.has(args[2]!)) throw new Error(`herdr agent start failed: agent_name_taken: agent name ${args[2]} is already used`);
-			this.agentNames.add(args[2]!);
+			if (this.panes.some((p) => p.pane_id === this.agentNames.get(args[2]!))) throw new Error(`herdr agent start failed: agent_name_taken: agent name ${args[2]} is already used`);
+			this.agentNames.set(args[2]!, flag("--pane")!);
 			const pane = this.pane(flag("--pane")!);
 			pane.agent = "pi";
 			this.onAgentStart?.(pane);
@@ -490,7 +490,9 @@ export class World {
 	}
 	/** `herdr agent start` boots a tower session in the pane, as pi would. */
 	autoTowers(): void {
-		this.herdr.onAgentStart = (pane) => void this.agent({ id: `tower-${pane.workspace_id}`, name: `tower · ${pane.workspace_id}`, pane: pane.pane_id, env: { STRAW_BOSS_ROLE: "tower" } }).start();
+		// A tower that comes back after one quit is a new session, with an id of its own.
+		const id = (ws: string) => (this.agents.some((a) => a.id === `tower-${ws}`) ? `tower-${ws}-${this.agents.length}` : `tower-${ws}`);
+		this.herdr.onAgentStart = (pane) => void this.agent({ id: id(pane.workspace_id), name: `tower · ${pane.workspace_id}`, pane: pane.pane_id, env: { STRAW_BOSS_ROLE: "tower" } }).start();
 	}
 	/** A pi started in a tab the tower opened for a request: it runs with the role the tab was created with, and joins and promotes as `opensAsMain` says. */
 	autoMains(deps: Partial<Deps> = {}): void {

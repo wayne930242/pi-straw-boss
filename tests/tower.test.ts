@@ -123,7 +123,7 @@ test("a tower that quits closes its own pane, which closes a tab it emptied", as
 	assert.deepEqual(world.herdr.closed, ["wA:p7"]);
 	assert.deepEqual(world.herdr.panes.filter((p) => p.tab_id === "wA:t7"), []);
 	assert.ok(!world.herdr.tabs.some((t) => t.tab_id === "wA:t7"));
-	assert.deepEqual(world.herdr.workspace("wA").tokens, { sb_tower_quit: "1" }, "the token goes, and the quit says so: the mains are cleared at once");
+	assert.deepEqual(world.herdr.workspace("wA").tokens, { sb_tower_quit: "0" }, "the token goes, and the quit says so with the members it leaves: the mains are cleared at once");
 });
 
 test("reload, new, resume and fork keep the tower's tab", async () => {

@@ -104,3 +104,19 @@ test("a tower dispatches no subagent: the call is blocked and points to boss_ope
 	assert.equal(r?.block, true);
 	assert.match(r!.reason!, /boss_open_main/);
 });
+
+test("a tower closed on purpose stays closed while the base keeps its members, and opens again once one more joins", async () => {
+	world.autoTowers();
+	const auto = { ...deps, autoTower: true };
+	await world.tower("tower-wB", "wB:t7", "wB:p7").start();
+	for (const [id, pane, tab] of [["a", "wA:p1", "wA:t1"], ["b", "wA:p2", "wA:t2"]]) await world.agent({ id, pane, tab, deps: auto }).start();
+	await until(() => world.herdr.workspace("wA").tokens.tower, "Alpha's tower opened by the rule");
+	await world.agents.find((x) => x.id === "tower-wA")!.stop();
+	assert.equal(world.herdr.workspace("wA").tokens.sb_tower_quit, "2");
+	await ticks(4);
+	assert.equal(world.herdr.workspace("wA").tokens.tower, undefined, "not opened again for the same two members");
+	world.herdr.addTab("wA:t3", "three", undefined);
+	world.herdr.addPane("wA:p3", "wA:t3");
+	await world.agent({ id: "c", pane: "wA:p3", tab: "wA:t3", deps: auto }).start();
+	await until(() => world.herdr.workspace("wA").tokens.tower, "a third member opens it again");
+});
