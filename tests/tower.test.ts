@@ -32,7 +32,7 @@ test("call_tower without a tower opens a tower tab without focus, starts pi in i
 	const a = await main();
 	const result = await a.tool("call_tower", { message: "need the tower" });
 	const [create] = world.herdr.commands("tab", "create");
-	assert.deepEqual(create, ["tab", "create", "--workspace", "wA", "--label", "tower", "--cwd", "/w/alpha", "--no-focus", "--env", "STRAW_BOSS_ROLE=tower"]);
+	assert.deepEqual(create, ["tab", "create", "--workspace", "wA", "--label", "\u{f09ff}", "--cwd", "/w/alpha", "--no-focus", "--env", "STRAW_BOSS_ROLE=tower"]);
 	const [start] = world.herdr.commands("agent", "start");
 	assert.deepEqual(start?.slice(0, 7), ["agent", "start", "tower-wa", "--kind", "pi", "--pane", world.herdr.panes.find((p) => p.tab_id === "wA:t100")?.pane_id]);
 	assert.deepEqual(start?.slice(-2), ["--name", "tower · Alpha"]);

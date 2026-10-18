@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import jsqr from "jsqr";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { TOWER_LABEL } from "../src/herdr.ts";
 import { createStrawBoss, type Deps } from "../src/index.ts";
 
 // jsQR is CommonJS: Node hands its function over as the default export, while its types describe an ES module namespace.
@@ -403,7 +404,7 @@ export class World {
 	}
 	/** A tower session in a tower tab, as `herdr agent start` would leave it. */
 	tower(id: string, tab: string, pane: string, ui = false): Agent {
-		this.herdr.addTab(tab, "tower", undefined);
+		this.herdr.addTab(tab, TOWER_LABEL, undefined);
 		this.herdr.addPane(pane, tab);
 		return this.agent({ id, name: `tower · ${id}`, pane, tab, env: { STRAW_BOSS_ROLE: "tower" }, ui });
 	}

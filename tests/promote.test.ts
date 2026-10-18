@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
+import { TOWER_LABEL } from "../src/herdr.ts";
 import { until, World } from "./fakes.ts";
 
 let world = new World();
@@ -8,7 +9,7 @@ afterEach(async () => {
 	world = new World();
 });
 const tower = { autoTower: true };
-const towerTabs = () => world.herdr.commands("tab", "create").filter((c) => c.includes("tower"));
+const towerTabs = () => world.herdr.commands("tab", "create").filter((c) => c.includes("STRAW_BOSS_ROLE=tower"));
 
 test("a member that dispatches a subagent in a tab with no main is promoted before the call runs, and the tower opens", async () => {
 	world.autoTowers();
@@ -22,7 +23,7 @@ test("a member that dispatches a subagent in a tab with no main is promoted befo
 	assert.ok(a.notices.some((n) => n.text === "This session is now the main agent of work"));
 	await until(() => world.herdr.workspace("wA").tokens.tower === "tower-wA", "the workspace tower");
 	assert.equal(towerTabs().length, 1);
-	assert.equal(world.herdr.tabs[0]?.label, "tower", "the tower tab is first");
+	assert.equal(world.herdr.tabs[0]?.label, TOWER_LABEL, "the tower tab is first");
 	await world.quiet(); // the opening in flight settles before the next test (the in-flight guard is per process)
 });
 

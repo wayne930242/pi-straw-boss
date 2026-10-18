@@ -4,7 +4,7 @@ import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { herdrApi } from "../src/herdr.ts";
+import { herdrApi, TOWER_LABEL } from "../src/herdr.ts";
 import { World } from "./fakes.ts";
 
 let world = new World();
@@ -69,7 +69,7 @@ test("a new tower tab moves to the first position right after it is created, bef
 	world.autoTowers();
 	const a = await main();
 	await a.tool("call_tower", { message: "hi" });
-	const created = world.herdr.tabs.find((t) => t.label === "tower")!;
+	const created = world.herdr.tabs.find((t) => t.label === TOWER_LABEL)!;
 	assert.deepEqual(world.herdr.moves, [{ tab_id: created.tab_id, insert_index: 0 }]);
 	assert.equal(order()[0], created.tab_id);
 	assert.deepEqual(world.herdr.commands("tab", "focus"), [], "moving never changes focus");

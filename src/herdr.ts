@@ -49,6 +49,9 @@ async function result(run: HerdrRun, args: string[], timeoutMs?: number) {
 	}
 }
 
+// The tower tab is labelled with the Nerd Font lighthouse glyph (md-lighthouse, U+F09FF) alone.
+export const TOWER_LABEL = "\u{f09ff}";
+
 export async function place(run: HerdrRun): Promise<Place> {
 	const pane = (await result(run, ["pane", "current"])).pane;
 	return { paneId: pane.pane_id, tabId: pane.tab_id, workspaceId: pane.workspace_id };
@@ -137,7 +140,7 @@ async function open({ run, sleep, live, moveFirst }: TowerEnv, workspace: Worksp
 		await moveFirst(marked.tab_id);
 	} else {
 		const dir = workspace.worktree?.checkout_path ?? cwd;
-		const created = await result(run, ["tab", "create", "--workspace", ws, "--label", "tower", "--cwd", dir, "--no-focus", "--env", "STRAW_BOSS_ROLE=tower"]);
+		const created = await result(run, ["tab", "create", "--workspace", ws, "--label", TOWER_LABEL, "--cwd", dir, "--no-focus", "--env", "STRAW_BOSS_ROLE=tower"]);
 		paneId = created.root_pane.pane_id;
 		// Marked at once, so a tab left without pi is recognised (while the marker lasts) and the label stays display only.
 		await report(run, "pane", paneId, { sb_role: "tower" });
