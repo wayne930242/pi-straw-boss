@@ -34,7 +34,7 @@ function hub({ me = "G", owner = "G" } = {}) {
 	const forms: FormMessage[] = [];
 	let formReply: ((m: FormMessage) => FormReply | undefined) | undefined;
 	const events = { emit: (ch: string, r: never) => ch === REGISTER && ((reg = r), (r as { onReady(c: unknown): void }).onReady({ snapshot: () => ({ connected: true, owner: { sessionId: owner, epoch: "e1" } }), publish: (payload: unknown, options: unknown) => void published.push({ payload, options }) })), on: () => () => {} };
-	const local = { deliver: (m: AnswerMessage, r: (a: Ack) => void) => { delivered.push(m); const a = reply?.(m); if (a) r(a); }, sync: () => {}, probe: () => editor, form: (m: FormMessage, r: (x: FormReply) => void) => { forms.push(m); const x = formReply?.(m); if (x) r(x); } };
+	const local = { deliver: (m: AnswerMessage, r: (a: Ack) => void) => { delivered.push(m); const a = reply?.(m); if (a) r(a); }, sync: () => {}, probe: () => editor, commands: () => [], form: (m: FormMessage, r: (x: FormReply) => void) => { forms.push(m); const x = formReply?.(m); if (x) r(x); } };
 	const h = createHub({ events } as unknown as ExtensionAPI, me, local);
 	h.start(() => changes.push(1));
 	const list = (dialogs: Dialog[], extra: Partial<Dialogs> = {}): Dialogs => ({ version: 1, type: "dialogs", bridgeId: "B", pane: "wA:p1", file: null, dialogs, closed: [], ...extra });
@@ -183,6 +183,25 @@ test("probe: the hub asks the bridge bound to the unit's pane and file, a bridge
 	for (const [bad, why] of [[{ editor: "draft" }, "an unknown class"], [{ ending: "rm" }, "an ending that is not one"], [{ editor: "empty", ending: "quit" }, "an ending on an empty editor"], [{ ending: "reload now" }, "anything beyond the name"]] as const) {
 		const again = x.h.probe("S"), id = (x.published.at(-1)!.payload as { probeId: string }).probeId;
 		x.h.receive("S", { ...result(bad), probeId: id } as never);
+		assert.equal(await again, undefined, why);
+	}
+});
+
+test("commands: the hub asks the bound bridge for a prefix and takes only its matching, well-formed list", async () => {
+	const x = hub(), path = file([]);
+	assert.equal(await x.h.commands("S", "re"), undefined, "no bridge at all");
+	x.h.receive("S", x.list([], { file: path }));
+	await read(x, path);
+	const asked = x.h.commands("S", "re"), sent = x.published.at(-1)!, req = sent.payload as { type: string; to: string; reqId: string; prefix: string };
+	assert.deepEqual([req.type, req.to, req.prefix, sent.options], ["commands", "B", "re", { audience: "capable", ownerOnly: true }]);
+	const result = (commands: unknown, extra: Record<string, unknown> = {}) => ({ version: 1, type: "commands-result", bridgeId: "B", reqId: req.reqId, commands, ...extra }) as never;
+	x.h.receive("X", result([{ name: "rm", source: "prompt" }]));
+	x.h.receive("S", result([{ name: "rm", source: "prompt" }], { reqId: "other" }));
+	x.h.receive("S", result([{ name: "review", source: "prompt", description: "Review it", extra: 1 }]));
+	assert.deepEqual(await asked, [{ name: "review", source: "prompt", description: "Review it" }], "only its fields, and only this request's answer");
+	for (const [bad, why] of [[[{ name: "a b", source: "prompt" }], "a name with a space"], [[{ name: "a", source: "builtin" }], "an unknown source"], [Array(31).fill({ name: "a", source: "skill" }), "more than 30"], ["x", "not a list"]] as const) {
+		const again = x.h.commands("S", ""), id = (x.published.at(-1)!.payload as { reqId: string }).reqId;
+		x.h.receive("S", { ...(result(bad) as object), reqId: id } as never);
 		assert.equal(await again, undefined, why);
 	}
 });

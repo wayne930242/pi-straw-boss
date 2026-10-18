@@ -31,7 +31,8 @@ function session({ me = "S", gui = "G" as string | undefined, env = {} as Record
 		regs.push(r);
 		r.onReady({ snapshot: () => ({ connected, owner: owners.get(r.namespace) }), publish: (payload: ToHub, o?: { audience?: string }) => void published.push({ ns: r.namespace, payload, audience: o?.audience }) });
 	});
-	const pi = { events, on: (type: string, h: (e: unknown, ctx: unknown) => void) => handlers.set(type, [...(handlers.get(type) ?? []), h]) } as unknown as ExtensionAPI;
+	const cmds: { name: string; source: string; description?: string }[] = [];
+	const pi = { events, getCommands: () => cmds, on: (type: string, h: (e: unknown, ctx: unknown) => void) => handlers.set(type, [...(handlers.get(type) ?? []), h]) } as unknown as ExtensionAPI;
 	const hub: { current?: LocalHub & { got: [string, ToHub][] } } = {};
 	const bridge = startBridge(pi, { env: { HERDR_PANE_ID: "wA:p1", PI_INTERCOM_SESSION_ID: me, ...env }, dir, local: () => hub.current });
 	const ctx = { hasUI: true, ui: { notify: (t: string) => notices.push(t) }, sessionManager: { getSessionFile: () => "/s/2026_S.jsonl" }, signal: undefined as AbortSignal | undefined };
@@ -41,7 +42,7 @@ function session({ me = "S", gui = "G" as string | undefined, env = {} as Record
 	fire("session_start");
 	const count = () => [...bus.values()].reduce((n, hs) => n + hs.length, 0);
 	const s = {
-		dir, regs, published, owners, notices, ctx, hub, bridge, fire, record, count, events,
+		dir, regs, published, owners, notices, ctx, hub, bridge, fire, record, count, events, cmds,
 		set connected(v: boolean) { connected = v; },
 		/** G becomes the owner of its channel, with an epoch, as the broker announces it. */
 		own(g = "G", epoch = "e1") {
@@ -272,6 +273,24 @@ test("a probe from G for this bridge is answered with what Enter would submit, a
 	s.ctx.hasUI = true;
 	ui.getEditorText = () => "/fork";
 	assert.deepEqual(s.bridge.probe(), { editor: "text", ending: "fork" });
+});
+
+test("a commands request from G for this bridge is answered with the session's commands that match, and only from G for this bridge", () => {
+	const s = session();
+	s.own();
+	s.cmds.push({ name: "review", source: "prompt", description: "Review the diff" }, { name: "skill:release", source: "skill" }, { name: "boss", source: "extension", description: "x".repeat(400) });
+	const to = bridgeIdOf(s), results = () => s.published.filter((p) => p.payload.type === "commands-result").map((p) => p.payload as unknown as { reqId: string; commands: { name: string }[] });
+	s.message({ version: 1, type: "commands", to, reqId: "r1", prefix: "re" });
+	assert.deepEqual(results().map((r) => [r.reqId, r.commands.map((c) => c.name)]), [["r1", ["review", "skill:release"]]], "names that start with it, then names that contain it");
+	s.message({ version: 1, type: "commands", to, reqId: "r2", prefix: "" });
+	assert.equal(results().at(-1)!.commands.length, 3);
+	s.message({ version: 1, type: "commands", to, reqId: "a", prefix: "re" }, { from: "X" });
+	s.message({ version: 1, type: "commands", to: "someone-else", reqId: "b", prefix: "re" });
+	s.message({ version: 1, type: "commands", to, reqId: "c", prefix: "x".repeat(65) });
+	s.message({ version: 1, type: "commands", to, reqId: "d" });
+	s.message({ version: 1, type: "commands", to, reqId: "x".repeat(65), prefix: "" });
+	assert.equal(results().length, 2, "another sender, another bridge, a prefix too long or missing, an id too long");
+	assert.deepEqual(s.bridge.commands("bo").map((c) => c.name), ["boss"], "the hub of this session asks in-process");
 });
 
 test("a probe counts only from G as the channel's current owner, at its epoch, for this bridge, from the server gui.json names now", () => {

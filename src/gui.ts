@@ -63,7 +63,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, t
 	const pair = (code = access.pair(), host = access.remote?.host, url = `https://${host}/${token}/pair/${code}`) => (code && host ? { url, rows: qr(url).map((row) => row.map(Number).join("")) } : undefined);
 	const mirrors = createMirrors({ call, lookup: (key) => net?.lookup(key), secret: waitsForSecret, canonical }), docs = hub && createDocs(hub, (key) => net?.lookup(key)?.name ?? key);
 	const stop = (asked: Asked) => void setTimeout(() => (onStop ? onStop(asked) : void halt()), 10); // after the reply has gone out
-	const control = createControl({ lookup: (key) => net?.lookup(key), call, csrf, canonical, pair, remoteOn: onRemote, spawn, mirrors, stop, secret: waitsForSecret, answers: hub && { replay: hub.replay, ended: hub.ended, send: hub.send, probe: hub.probe, target: async (key) => (await tick(), hub.target(key)) } });
+	const control = createControl({ lookup: (key) => net?.lookup(key), call, csrf, canonical, pair, remoteOn: onRemote, spawn, mirrors, stop, secret: waitsForSecret, answers: hub && { replay: hub.replay, ended: hub.ended, send: hub.send, probe: hub.probe, commands: hub.commands, target: async (key) => (await tick(), hub.target(key)) } });
 	let last: string | undefined, problem: string | undefined, inflight: Promise<void> | undefined;
 	let poll: ReturnType<typeof setInterval> | undefined, beat: ReturnType<typeof setInterval> | undefined;
 	const send = (to: ServerResponse, data: string, event?: string) => to.writableEnded || to.write(`${event ? `event: ${event}\n` : ""}data: ${data}\n\n`); // a reading in flight at stop ends after the streams

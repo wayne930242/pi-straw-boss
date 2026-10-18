@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
+import { MAX_PREFIX } from "./commands.ts";
 import { ANSWER_ID, checkAnswer, CONTROL, type Hub, type Sent, type Target } from "./dialogs.ts";
 import { HerdrError, type HerdrCall, type Pane } from "./herdr.ts";
 import { createKeys } from "./keys.ts";
@@ -12,6 +13,7 @@ import { ENDING } from "./probe.ts";
 //   POST /<token>/api/sessions/<key>/input {text, as: "send" | "followUp", confirmed?}   the text, then Enter (or Alt+Enter while it works)
 //   POST /<token>/api/sessions/<key>/keys  {key, stream, confirmed?}                     one key pad key under its mirror (keys.ts), or Stop's {keys: ["esc"]}
 //   POST /<token>/api/sessions/<key>/focus                                               brings the session's pane forward in Herdr
+//   POST /<token>/api/sessions/<key>/commands {prefix}                                   its commands that match a typed `/prefix`, from its bridge (commands.ts); null when it did not say
 //   POST /<token>/api/sessions/<key>/answer {dialog, digest, answerId, choice | answers}  answers its dialog through its bridge (dialogs.ts); no keys
 //   POST /<token>/api/sessions/<key>/mirror {stream, on}                                  shows the pane's screen on that page's stream (mirror.ts), or stops
 //   POST /<token>/api/remote/pair                                                        a new one-time pairing URL and its QR, while remote access is on
@@ -28,7 +30,7 @@ export { ENDING };
 
 export interface Reply { status: number; body: unknown }
 /** `answers.target` reads the net afresh, so the binding and the dialog are checked again for every answer. */
-export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; remoteOn?(): Promise<void>; spawn?(parts: string[], json: Record<string, unknown>): Promise<Reply>; stop?(asked: Asked): void; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; answers?: Pick<Hub, "replay" | "ended" | "send" | "probe"> & { target(key: string): Promise<Target | undefined> } }
+export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; remoteOn?(): Promise<void>; spawn?(parts: string[], json: Record<string, unknown>): Promise<Reply>; stop?(asked: Asked): void; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; answers?: Pick<Hub, "replay" | "ended" | "send" | "probe" | "commands"> & { target(key: string): Promise<Target | undefined> } }
 
 const no = (status: number, error: string, reason: string): Reply => ({ status, body: { error, reason } });
 const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -98,10 +100,15 @@ export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, s
 			return paired ? { status: 200, body: paired } : key === "pair" && !action ? no(409, "remote_off", "Remote access is off.") : no(404, "not_found", "No such action.");
 		}
 		if (action === "mirror") return mirrors ? mirrors.toggle(key, read.json) : no(503, "unavailable", "This server shows no terminals.");
-		if (!["input", "keys", "focus", "answer"].includes(action)) return no(404, "not_found", "No such action.");
+		if (!["input", "keys", "focus", "answer", "commands"].includes(action)) return no(404, "not_found", "No such action.");
 		const found = lookup(key);
 		if (!found) return no(404, "not_found", "No such session.");
 		if (!found.live || !found.pane || !found.file) return no(409, "not_live", "This session is no longer live in a pane.");
+		if (action === "commands") { // a read: no Herdr call, and it never waits for or blocks a send
+			const { prefix } = read.json;
+			if (typeof prefix !== "string" || prefix.length > MAX_PREFIX || /\s/.test(prefix)) return no(400, "bad_request", "A prefix is the start of a command name.");
+			return { status: 200, body: { commands: (await answers?.commands(key, prefix)) ?? null } };
+		}
 		if (!call) return no(503, "unavailable", "This server cannot reach Herdr.");
 		const { json } = read;
 		let job: () => Promise<unknown>;

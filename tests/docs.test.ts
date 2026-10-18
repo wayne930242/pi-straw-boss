@@ -40,7 +40,7 @@ const accept = (m: FormMessage): FormReply | undefined => ({ version: 1, type: "
 async function serve({ me = "S", owner, reply = accept }: { me?: string; owner?: string; reply?: typeof accept } = {}) {
 	const forms: FormMessage[] = [], channelOwner = owner ?? me;
 	const events = { emit: (ch: string, r: never) => ch === REGISTER && (r as { onReady(c: unknown): void }).onReady({ snapshot: () => ({ connected: true, owner: { sessionId: channelOwner, epoch: "e1" } }), publish: () => {} }), on: () => () => {} };
-	const local = { deliver: () => {}, sync: () => {}, probe: () => ({ editor: "empty" as const }), form: (m: FormMessage, r: (x: FormReply) => void) => { forms.push(m); const x = reply(m); if (x) r(x); } };
+	const local = { deliver: () => {}, sync: () => {}, probe: () => ({ editor: "empty" as const }), commands: () => [], form: (m: FormMessage, r: (x: FormReply) => void) => { forms.push(m); const x = reply(m); if (x) r(x); } };
 	const hub = createHub({ events } as unknown as ExtensionAPI, me, local);
 	const found: Found = { key: "S", base: "wA", name: "billing-main", role: "main", file: canonical(sessionFile), pane: "wA:p1", live: true };
 	const gui = await startGui({ read: async () => ({ bases: [] }), net: { lookup: (key) => (key === "S" ? found : undefined), workspace: () => [] }, hub, dir: bundle, pollMs: 50, pingMs: 1000 });

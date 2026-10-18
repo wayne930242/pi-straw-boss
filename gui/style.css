@@ -275,6 +275,13 @@ a.tower:hover::before { border-color: var(--c); }
 .cmp-note[data-tone="ok"] { color: #3ddc97; }
 .cmp-note[data-tone="ask"] { color: var(--gold); }
 .cmp-link { border: 0; padding: 0; background: none; color: #38e0ff; font: 12px var(--sans); cursor: pointer; }
+/* The `/` menu above the box: the session's matching commands, the chosen one lit. */
+.composer { position: relative; }
+.slash { position: absolute; left: 18px; right: 18px; bottom: calc(100% - 6px); z-index: 5; max-height: 260px; overflow-y: auto; margin: 0; padding: 4px; list-style: none; border: 1px solid var(--line); border-radius: 12px; background: #0b1324; box-shadow: 0 8px 24px #0008; }
+.slash li { display: flex; gap: 10px; align-items: baseline; padding: 6px 10px; border-radius: 8px; cursor: pointer; }
+.slash li[aria-selected="true"] { background: #38e0ff1f; }
+.slash b { color: #38e0ff; font: 600 13px var(--mono); white-space: nowrap; }
+.slash span { min-width: 0; overflow: hidden; color: var(--dim); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .cmp-yes { padding: 3px 10px; border: 0; border-radius: 8px; background: var(--gold); color: #06101e; font: 600 12px var(--sans); cursor: pointer; }
 .tx { content-visibility: auto; contain-intrinsic-size: auto 90px; min-width: 0; }
 .tx time, .tx.note { color: var(--dim); font: 11px var(--mono); }

@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { aftermath, confirmed, focusButton, recall, type Unit } from "../gui/composer.ts";
+import { aftermath, confirmed, recall } from "../gui/composer.ts";
 import type { Answer } from "../gui/post.ts";
 
 const answer = (status: number, reason?: string): Answer => ({ ok: status < 400, status, body: reason ? { reason } : {} });
-const unit: Unit = { name: "a", control: true, live: true, mark: "idle", online: true };
 
 test("an answer that arrives while the composer is gone leaves its reason for the next one: a refusal says why, a timeout says it is unconfirmed", () => {
 	assert.deepEqual(aftermath(answer(409, "It waits on a dialog; answer it in its terminal."), "hello", "hello"), ["error", "It waits on a dialog; answer it in its terminal."]);
@@ -27,14 +26,6 @@ test("a composer claims 'your edits stayed' only when its box really holds edits
 	assert.match(confirmed("", "hello"), /^Sent\./, "an empty box (nothing could be stored) holds no edits");
 });
 
-test("Focus terminal is one button per session view and goes quiet with the stream: hidden under a question panel, disabled while offline or busy", () => {
-	assert.deepEqual(focusButton(unit, false), { hidden: false, disabled: false });
-	assert.deepEqual(focusButton({ ...unit, asking: true }, false), { hidden: true, disabled: false }, "the question panel carries it");
-	assert.equal(focusButton({ ...unit, online: false }, false).disabled, true, "offline");
-	assert.equal(focusButton(unit, true).disabled, true, "a request on its way");
-	assert.equal(focusButton({ ...unit, control: false }, false).hidden, true);
-	assert.equal(focusButton({ ...unit, live: false }, false).hidden, true);
-});
 
 test("a stored note is read back as written: ours as [tone, text], a plain-text one from 0.5.0 as an error line, nothing as nothing", () => {
 	assert.deepEqual(recall(JSON.stringify(["ok", "Sent."])), ["ok", "Sent."]);

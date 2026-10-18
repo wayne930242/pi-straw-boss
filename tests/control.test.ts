@@ -213,6 +213,7 @@ async function answering({ reply = { status: 200, body: { outcome: "accepted" } 
 		replay: (id: string, key: string) => (key === "sess-1" ? stored.get(id) : undefined),
 		ended: (key: string, dialog: string) => (key === "sess-1" && dialog === "d-closed" ? { status: 200, body: { outcome: "stale", by: "local" } } : undefined),
 		send: async (_key: string, t: Target, a: { answerId: string }) => (sent.push({ to: t.bridgeId, ...a }), stored.set(a.answerId, await reply), reply),
+		commands: async (_key: string, prefix: string) => (prefix === "silent" ? undefined : [{ name: `${prefix}x`, source: "skill" }]),
 	};
 	const lookup = (key: string): Found | undefined => (key === "sess-1" ? { key, base: "wA", name: "billing", role: "main", file: FILE, pane: "wA:p1", live: true } : undefined);
 	const gui = await startGui({ read: async () => ({ bases: [] }), net: { lookup, workspace: () => [] }, call, hub: { ...hub, target: () => hub.target } as unknown as Hub, dir: join(scratch, "bundle"), pollMs: 50 });
@@ -220,6 +221,15 @@ async function answering({ reply = { status: 200, body: { outcome: "accepted" } 
 	return { gui, calls, sent, hub, answer, state, typed: () => calls.filter(([m]) => m !== "pane.get") };
 }
 const body = (extra: Record<string, unknown> = {}) => ({ dialog: "d1", digest: "a".repeat(64), answerId: "a".repeat(16), choice: 0, ...extra });
+
+test("commands: the session's matching commands come from its bridge with no Herdr call; a prefix that is no name start is refused, and a silent session gives null", async () => {
+	const { gui, calls } = await answering();
+	assert.deepEqual(await send(gui, "sessions/sess-1/commands", { prefix: "re" }), { status: 200, body: { commands: [{ name: "rex", source: "skill" }] } });
+	assert.deepEqual(await send(gui, "sessions/sess-1/commands", { prefix: "silent" }), { status: 200, body: { commands: null } });
+	for (const prefix of ["a b", "x".repeat(65), 3, undefined]) assert.equal((await send(gui, "sessions/sess-1/commands", { prefix })).status, 400, String(prefix));
+	assert.equal((await send(gui, "sessions/nope/commands", { prefix: "" })).status, 404);
+	assert.deepEqual(calls, [], "no Herdr call");
+});
 
 test("answer: the bridge gets the checked answer, nothing is typed into Herdr, and the same answer again replays its outcome", async () => {
 	const { gui, sent, typed, calls } = await answering();

@@ -7,12 +7,12 @@ import type { Answer } from "./post.ts";
 // The dialog a waiting unit has open, in the alert dialog and above the composer in the session view. A dialog its session's bridge relays
 // (robot_hand's selector, an ask_user_question questionnaire) is answered here: the page sends which choice or words, never keys, and the
 // owner in that session checks the answer against its own copy of the dialog. Anything else (a secret, two dialogs at once, a question the
-// server cannot match) shows read-only, to answer in the terminal (Focus terminal brings its pane forward). An answer that was not confirmed
+// server cannot match) shows read-only, to answer in the terminal (Show terminal opens it here). An answer that was not confirmed
 // is never sent again as a new one: Check again resends the same answer, which the server and the bridge recognise by its id. A panel belongs
 // to its dialog (its id and digest): the net's updates leave what the user picked, typed, and noted, even across a spell the server shows the
 // dialog read-only (an answer on its way) or not at all, and only another dialog starts afresh.
 
-export type AnswerPost = (action: "answer" | "focus", body: Record<string, unknown>) => Promise<Answer>;
+export type AnswerPost = (action: "answer", body: Record<string, unknown>) => Promise<Answer>;
 type Pick = { choice?: number; answers?: Reply[] };
 const how = (a: Ask) => (a.multiple ? m.ask_several() : a.freeform && a.options.length ? m.ask_own_words() : "");
 /** One question, read-only: its header tag, the question, its context, its options, and (in a list of several) how it is answered. */
@@ -41,7 +41,7 @@ const final = (r: Answer) => ["accepted", "stale", "busy", "unknown"].includes(S
 /** A panel drawn for a pending. `done`: it takes no further answer from here; `sending`: its answer is on its way; `focus`: what had the focus in it
  * when it left the page (it takes it back on coming back); `lost`: the control that lost the focus by being disabled here (it takes it back when enabled); `busy`: refused while another answer was on its way, and `spell` once the server showed
  * that answer (read-only): the dialog answerable after it means that answer was refused, so this panel answers again. */
-interface Panel { key: string; el: HTMLElement; note: HTMLElement; go: HTMLButtonElement; send?: HTMLButtonElement; controls: (HTMLButtonElement | HTMLInputElement)[]; pick: () => Pick | undefined; done: boolean; sending: boolean; focus?: HTMLElement; lost?: HTMLButtonElement | HTMLInputElement; busy?: boolean; spell?: boolean }
+interface Panel { key: string; el: HTMLElement; note: HTMLElement; send?: HTMLButtonElement; controls: (HTMLButtonElement | HTMLInputElement)[]; pick: () => Pick | undefined; done: boolean; sending: boolean; focus?: HTMLElement; lost?: HTMLButtonElement | HTMLInputElement; busy?: boolean; spell?: boolean }
 /** A dialog the page may answer is known by its id and digest, under whichever call the server reads it; anything else by its call and why. */
 const keyOf = (p: Pending) => (p.answer ? `d\n${p.answer.dialog}\n${p.answer.digest}` : `c\n${p.callId}\n${p.why ?? ""}`);
 
@@ -55,7 +55,6 @@ export function mountAsk(root: HTMLElement, post: AnswerPost, remote = location.
 		if (!cur) return;
 		const had = document.activeElement as HTMLButtonElement | null, idle = !had || had === document.body;
 		if (!idle && had !== cur.lost) cur.lost = undefined; // the user took the focus elsewhere
-		cur.go.disabled = !ready || busy;
 		cur.controls.forEach((c) => (c.disabled = !ready || busy || cur!.done));
 		if (cur.send) cur.send.disabled = !ready || busy || cur.done || !cur.pick();
 		if (had && cur.el.contains(had) && had.disabled) cur.lost = had; // a browser moves the focus off a disabled control, to the body
@@ -87,7 +86,7 @@ export function mountAsk(root: HTMLElement, post: AnswerPost, remote = location.
 		if (copy) (copy.disabled = !navigator.clipboard), (copy.onclick = () => void navigator.clipboard.writeText(a.select!.copy!).then(() => say(x.note, "ok", m.copied()), () => say(x.note, "error", m.clipboard_refused())));
 		x.pick = () => (chosen === undefined ? undefined : { choice: chosen });
 		x.controls = opts;
-		return [h("pre", { class: "ask-title" }, visible(a.select!.title)), h("div", { class: "ask-opts", role: "radiogroup", "aria-label": m.choices() }, ...opts), h("div", { class: "ask-acts" }, x.send!, copy, x.go)];
+		return [h("pre", { class: "ask-title" }, visible(a.select!.title)), h("div", { class: "ask-opts", role: "radiogroup", "aria-label": m.choices() }, ...opts), h("div", { class: "ask-acts" }, x.send!, copy)];
 	}
 	/** A questionnaire: per question its options (one, or several), its own words, and a note; it goes when every question has an answer. */
 	function questions(x: Panel, a: Answerable) {
@@ -105,24 +104,16 @@ export function mountAsk(root: HTMLElement, post: AnswerPost, remote = location.
 			return h("div", { class: "ask-one" }, q.header && h("b", { class: "ask-head" }, q.header), h("p", { class: "ask-q" }, q.question), h("div", { class: "ask-opts", role: q.multiple ? "group" : "radiogroup", "aria-label": m.options() }, ...opts), s.text, s.note);
 		});
 		x.pick = () => (state.every((s) => s.picks.size || s.text.value.trim()) ? { answers: state.map((s) => replyOf(s.picks, s.text.value, s.note.value)) } : undefined);
-		return [...blocks, h("div", { class: "ask-acts" }, x.send!, x.go)];
+		return [...blocks, h("div", { class: "ask-acts" }, x.send!)];
 	}
 	function build(p: Pending): Panel {
 		const asks = p.asks ?? (p.ask ? [p.ask] : []), list = asks.length > 1, a = p.answer;
-		const x: Panel = { key: keyOf(p), el: h("section", { class: "ask" }), note: h("p", { class: "ask-note", role: "status", "aria-live": "polite" }), go: h("button", { type: "button", class: "cmp-link" }, m.focus_terminal()), controls: [], pick: () => undefined, done: false, sending: false };
-		x.go.onclick = async () => {
-			busy = true;
-			draw();
-			const r = await post("focus", {}).catch(() => undefined);
-			say(x.note, r?.ok ? "" : "error", r?.ok ? "" : (r?.body.reason ?? m.herdr_unreachable()));
-			busy = false;
-			draw();
-		};
+		const x: Panel = { key: keyOf(p), el: h("section", { class: "ask" }), note: h("p", { class: "ask-note", role: "status", "aria-live": "polite" }), controls: [], pick: () => undefined, done: false, sending: false };
 		if (a) (x.send = h("button", { type: "button", class: "ask-send" }, m.send_answer())).onclick = () => void (x.pick() && answer(x, bodyOf(a, x.pick()!, crypto.randomUUID())));
 		const term = h("p", { class: "ask-term" }, p.why && asks.length ? p.why : `${list ? m.answer_them() : m.answer_it()} ${list || !asks[0] ? "" : how(asks[0])}`.trim());
 		const show = terminal && p.tool !== "secret_drop" && h("button", { type: "button", class: "cmp-link" }, m.show_terminal());
 		if (show) show.onclick = terminal;
-		x.el.append(...(a ? (a.select ? select(x, a) : questions(x, a)) : [...(asks.length ? asks.map((y) => block(y, list)) : [h("p", { class: "ask-why" }, p.why ?? m.waits_dialog())]), h("div", { class: "ask-acts" }, term, show, x.go)]), x.note);
+		x.el.append(...(a ? (a.select ? select(x, a) : questions(x, a)) : [...(asks.length ? asks.map((y) => block(y, list)) : [h("p", { class: "ask-why" }, p.why ?? m.waits_dialog())]), h("div", { class: "ask-acts" }, term, show)]), x.note);
 		return x;
 	}
 	/** Puts a panel on the page, or none. The one leaving notes what had the focus in it, and on coming back takes it again (scrolled into view) if nothing else has it. */
