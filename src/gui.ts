@@ -53,7 +53,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, t
 	const clients = new Map<ServerResponse, Watch | undefined>(), remotes = new Set<ServerResponse>(), access = createAccess(token, () => remotes.forEach((c) => c.end()));
 	const pair = (code = access.pair(), host = access.remote?.host, url = `https://${host}/${token}/pair/${code}`) => (code && host ? { url, rows: qr(url).map((row) => row.map(Number).join("")) } : undefined);
 	const mirrors = createMirrors({ call, lookup: (key) => net?.lookup(key), secret: waitsForSecret, canonical });
-	const control = createControl({ lookup: (key) => net?.lookup(key), call, csrf, canonical, pair, mirrors, answers: hub && { replay: hub.replay, ended: hub.ended, send: hub.send, target: async (key) => (await tick(), hub.target(key)) } });
+	const control = createControl({ lookup: (key) => net?.lookup(key), call, csrf, canonical, pair, mirrors, secret: waitsForSecret, answers: hub && { replay: hub.replay, ended: hub.ended, send: hub.send, probe: hub.probe, target: async (key) => (await tick(), hub.target(key)) } });
 	let last: string | undefined, problem: string | undefined, inflight: Promise<void> | undefined;
 	let poll: ReturnType<typeof setInterval> | undefined, beat: ReturnType<typeof setInterval> | undefined;
 	const send = (to: ServerResponse, data: string, event?: string) => to.writableEnded || to.write(`${event ? `event: ${event}\n` : ""}data: ${data}\n\n`); // a reading in flight at stop ends after the streams
@@ -79,10 +79,10 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, t
 	const events = (req: IncomingMessage, res: ServerResponse, target: string | null, remote: boolean) => {
 		res.writeHead(200, { ...HEADERS, "content-type": "text/event-stream", connection: "keep-alive" });
 		if (remote) remotes.add(res);
-		// `hello` names this stream: the page attaches terminal mirrors to it (mirror.ts), and they end with it.
-		const to = (event: string, data: unknown) => send(res, JSON.stringify(data), event), stream = randomBytes(16).toString("hex");
+		// `hello` names this stream for the terminal mirrors it attaches (mirror.ts), which end with it; before the net's first reading, after it.
+		const to = (event: string, data: unknown) => send(res, JSON.stringify(data), event), stream = randomBytes(16).toString("hex"), hello = () => to("hello", { stream });
 		mirrors.open(stream, to);
-		to("hello", { stream });
+		if (last) hello();
 		const watch = target?.startsWith("w:") ? watchWorkspace(files, target.slice(2), to) : target ? watchSession(files, target, to) : undefined;
 		clients.set(res, watch);
 		if (last) res.write(`data: ${last}\n\n`);
@@ -90,8 +90,9 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, t
 			poll = setInterval(() => void tick(), pollMs).unref();
 			beat = setInterval(() => push("", "ping"), pingMs).unref();
 		}
-		// The registry is filled by reading the net, so a watched page starts once a reading exists.
-		void (clients.size === 1 || !last ? tick() : watch?.refresh())?.catch(() => {});
+		// The registry is filled by reading the net, so a watched page starts once a reading exists, and an attach finds its session then.
+		const first = !last;
+		void (clients.size === 1 || first ? tick() : watch?.refresh())?.catch(() => {}).finally(() => first && hello());
 		req.on("close", () => {
 			clients.delete(res);
 			remotes.delete(res);

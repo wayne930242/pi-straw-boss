@@ -108,7 +108,7 @@ export function createFixture({ resume, tile, tick = 2500 }: { resume(): void; t
 		older: async (before) => page(before),
 		latest: async () => page(),
 		// Input is accepted, and shows in the log a moment later as pi would write it.
-		post: async (action, body) => (action === "answer" ? answered(key) : action === "mirror" ? mirror(key, body.on === true) : (action === "input" && setTimeout(() => current?.send("history", { key, reset: false, items: [{ id: `you-${++live}`, kind: "user", at: new Date().toISOString(), text: String(body.text) }] }), 700), { ok: true, status: 200, body: {} })),
+		post: async (action, body) => (action === "answer" ? answered(key) : action === "mirror" ? mirror(key, body.on === true) : action === "keys" && body.key === "enter" && !body.confirmed ? { ok: false, status: 409, body: { error: "confirm", confirm: "reload", reason: "Enter would run /reload (or the command picked in pi's menu, if it is open), which ends or replaces this session. Enter goes to whatever has focus in the terminal; confirm to send it." } } : (action === "input" && setTimeout(() => current?.send("history", { key, reset: false, items: [{ id: `you-${++live}`, kind: "user", at: new Date().toISOString(), text: String(body.text) }] }), 700), { ok: true, status: 200, body: {} })),
 		doc: async (path) => (path.endsWith("rollout-plan.md") ? DEMO_DOC : undefined),
 		entry: async (id) => {
 			const item = history.find((i) => i.id === id);

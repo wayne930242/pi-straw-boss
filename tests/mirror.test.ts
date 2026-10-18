@@ -52,6 +52,11 @@ function setup({ secret = false } = {}) {
 test("the sanitizer keeps SGR and drops cursor moves, OSC links, other escapes, C0 and C1, and never ends inside an escape", () => {
 	assert.equal(sanitize("\x1b[0m\x1b[38;2;249;226;175m│\x1b[1;4mok\x1b[m"), "\x1b[0m\x1b[38;2;249;226;175m│\x1b[1;4mok\x1b[m", "Herdr's own SGR passes");
 	assert.equal(sanitize("model\x1b[3Gwritten"), "modelwritten", "a cursor move written by the model");
+	assert.equal(sanitize(" \x1b[0m\x1b[38;2;1;2;3mtick 7\x1b[0m      "), " \x1b[0m\x1b[38;2;1;2;3mtick 7\x1b[0m", "Herdr's padding after a reset goes");
+	assert.equal(sanitize("plain   "), "plain", "and in a row with no SGR");
+	assert.equal(sanitize("      "), "", "a blank row is empty");
+	assert.equal(sanitize("\x1b[44mbar   "), "\x1b[44mbar   ", "blanks in a colour stay: they show it");
+	assert.equal(sanitize("\x1b[0;7mpicked   "), "\x1b[0;7mpicked   ", "a reset with more after it is not the terminal's own colours");
 	assert.equal(sanitize("\x1b]8;;https://evil.test\x07link\x1b]8;;\x1b\\ end"), "link end", "OSC 8 with BEL and ST");
 	assert.equal(sanitize("a\x1b]0;title"), "a", "an OSC that never ends takes the rest of the row");
 	assert.equal(sanitize("a\x1bP1$r\x1b\\b\x1b_apc\x07c"), "abc", "DCS and APC");
@@ -131,23 +136,24 @@ test("the reads stop at once when the last stream detaches or closes, and the re
 	assert.deepEqual([m.active(), c.pending()], [[], 0]);
 });
 
-test("a stream is current only while it holds the mirror and was sent a frame in the last 3 s", async () => {
+test("a stream is current only while it holds the mirror, of the pane the key goes to, and was sent a frame in the last 3 s", async () => {
 	const { c, m, stream, on, off, state } = setup();
 	const a = stream("A"), b = stream("B");
-	assert.equal(m.fresh(a, "s1"), false, "not attached");
+	assert.equal(m.fresh(a, "s1", "p-s1"), false, "not attached");
 	on(a);
 	await c.advance(0);
-	assert.equal(m.fresh(a, "s1"), true);
-	assert.equal(m.fresh(b, "s1"), false, "another stream of the same page set is not current");
-	assert.equal(m.fresh(a, "s2"), false, "another session");
+	assert.equal(m.fresh(a, "s1", "p-s1"), true);
+	assert.equal(m.fresh(b, "s1", "p-s1"), false, "another stream of the same page set is not current");
+	assert.equal(m.fresh(a, "s2", "p-s2"), false, "another session");
+	assert.equal(m.fresh(a, "s1", "p-other"), false, "the session's pane now is another one than the mirror reads");
 	state.fail = true;
 	await c.advance(FRESH_MS + 1);
-	assert.equal(m.fresh(a, "s1"), false, "failing reads send nothing, so the stream goes stale");
+	assert.equal(m.fresh(a, "s1", "p-s1"), false, "failing reads send nothing, so the stream goes stale");
 	state.fail = false;
 	await c.advance(SLOW_MS);
-	assert.equal(m.fresh(a, "s1"), true);
+	assert.equal(m.fresh(a, "s1", "p-s1"), true);
 	off(a);
-	assert.equal(m.fresh(a, "s1"), false);
+	assert.equal(m.fresh(a, "s1", "p-s1"), false);
 });
 
 test("at most two mirrors per stream and six panes per server, refused with 429; a bad body or an unknown stream is 400", async () => {

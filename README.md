@@ -48,7 +48,7 @@ The tower only routes and coordinates, so it can run a lighter model: set `tower
 | `boss_broadcast` | Message a tab, a workspace, all towers, or every session. |
 | `/boss` | Take over as this tab's main agent. |
 | `/boss status`, `/boss tower` | Show the status; open and focus the tower. |
-| `/boss gui`, `/boss gui stop` | Open the net in the browser (any session, joins nothing); stop its server. Type into a session from its comms view; answer a waiting `robot_hand` selector or `ask_user_question` questionnaire there or in its alert (other dialogs show read-only, to answer in the terminal; `secret_drop` stays terminal-only). |
+| `/boss gui`, `/boss gui stop` | Open the net in the browser (any session, joins nothing); stop its server. Type into a session from its comms view, or work its terminal with the key pad under the terminal tile; answer a waiting `robot_hand` selector or `ask_user_question` questionnaire there or in its alert (other dialogs show read-only, to answer in the terminal; `secret_drop` stays terminal-only). |
 | `/boss gui remote`, `/boss gui remote off` | Reach the GUI from your phone over your tailnet (`tailscale serve`, never Funnel): pair by QR code; off removes only its own serve entry. |
 
 Subagents and sessions in Herdr worktree workspaces never join: the session that launched them speaks for them. Outside Herdr the extension does nothing.

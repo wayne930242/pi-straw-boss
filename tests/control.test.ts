@@ -1,15 +1,18 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { request } from "node:http";
+import { get, request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { ENDING as SERVER_ENDING, KEYS, MAX_TEXT } from "../src/control.ts";
+import { ENDING as SERVER_ENDING, MAX_TEXT } from "../src/control.ts";
 import type { Hub, Target } from "../src/dialogs.ts";
 import { startGui, type Gui } from "../src/gui.ts";
 import { HerdrError } from "../src/herdr.ts";
+import { canonical } from "../src/history.ts";
+import type { Editor } from "../src/probe.ts";
 import type { Found } from "../src/net.ts";
 import { blocked, ENDING as PAGE_ENDING, MAX_TEXT as PAGE_MAX, settle } from "../gui/composer.ts";
+import { assistant, call as toolCall, header, lines, user } from "./sessions.ts";
 
 const scratch = mkdtempSync(join(tmpdir(), "psb-control-test-"));
 mkdirSync(join(scratch, "bundle"));
@@ -82,15 +85,120 @@ test("a session waiting on a dialog, a pane that left pi, and a pane reused by a
 	assert.equal((await send(gone.gui, "sessions/nobody/input", { text: "hi", as: "send" })).status, 404);
 });
 
-test("only Escape can be sent as a key until Phase 3, never Ctrl+C or Ctrl+D, also while it waits on a dialog", async () => {
+test("Stop sends Escape alone with no mirror, never Ctrl+C or Ctrl+D; any other key needs the pad's form", async () => {
 	const { gui, typed, state } = await setup();
-	for (const keys of [["ctrl+c"], ["ctrl+d"], ["esc", "ctrl+c"], [], ["x"], ["up", "enter"], ["enter"], ["down", "enter"], Array(17).fill("esc"), "esc"]) assert.equal((await send(gui, "sessions/sess-1/keys", { keys })).status, 400, JSON.stringify(keys));
-	assert.ok(!KEYS.has("ctrl+c") && !KEYS.has("ctrl+d"));
+	for (const keys of [["ctrl+c"], ["ctrl+d"], ["esc", "ctrl+c"], [], ["x"], ["up", "enter"], ["enter"], ["down", "enter"], ["esc", "esc"], Array(17).fill("esc"), "esc"]) assert.equal((await send(gui, "sessions/sess-1/keys", { keys })).status, 400, JSON.stringify(keys));
+	state.agent_status = "working";
 	assert.equal((await send(gui, "sessions/sess-1/keys", { keys: ["esc"] })).status, 200);
 	state.agent_status = "blocked";
-	assert.deepEqual([(await send(gui, "sessions/sess-1/keys", { keys: ["1"] })).status, (await send(gui, "sessions/sess-1/keys", { keys: ["esc"] })).status], [400, 200], "a dialog may be a secret prompt: only Escape");
+	assert.equal((await send(gui, "sessions/sess-1/keys", { keys: ["esc"] })).status, 200, "also while it waits on a dialog");
 	assert.equal((await send(gui, "sessions/sess-1/focus", {})).status, 200);
 	assert.deepEqual(typed().map(([m, p]) => [m, p.keys ?? p.target]), [["pane.send_input", ["esc"]], ["pane.send_input", ["esc"]], ["agent.focus", "wA:p1"]]);
+});
+
+/** A server with a mirror on sess-1, whose session file is `entries`, the hub's dialog `target` and editor check `editor`, and a stream that said hello. */
+async function padded({ entries = [header(), user("u1", null, "go")] as unknown[], editor = { editor: "empty" } as Editor | undefined, answerable = false } = {}) {
+	const path = join(scratch, `pad-${Math.random().toString(36).slice(2)}_sess-1.jsonl`);
+	writeFileSync(path, lines(entries));
+	const file = canonical(path)!, calls: [string, Record<string, unknown>][] = [], w = { editor, answerable, status: "idle", probes: 0, moveDuringProbe: false, moved: false };
+	const call = async (method: string, params: Record<string, unknown>) => {
+		calls.push([method, { ...params, ...(method === "pane.send_input" && { at: Date.now() }) }]);
+		if (method === "pane.get") return { pane: { pane_id: "wA:p1", agent: "pi", agent_status: w.status, agent_session: { value: w.moved ? "/s/other_sess-9.jsonl" : file } } };
+		if (method === "pane.layout") return { layout: { panes: [{ pane_id: "wA:p1", rect: { width: 40 } }] } };
+		return method === "pane.read" ? { read: { text: "pi\r\n> " } } : {};
+	};
+	const target = { from: "S", bridgeId: "B", answer: { dialog: "d1", digest: "a".repeat(64), select: { title: "T", choices: [{ label: "A" }] } } } as Target;
+	const hub = { running: true, me: "G", start() {}, stop() {}, receive() {}, relayed: () => ({ dialogsOf: () => undefined, merge: () => ({ callId: "", tool: "" }) }), replay: () => undefined, ended: () => undefined, send: async () => ({ status: 200, body: {} }), target: () => (w.answerable ? target : undefined), probe: async () => (w.probes++, (w.moved = w.moveDuringProbe), w.editor) };
+	const lookup = (key: string): Found | undefined => (key === "sess-1" ? { key, base: "wA", name: "billing", role: "main", file, pane: "wA:p1", live: true } : undefined);
+	const gui = await startGui({ read: async () => ({ bases: [] }), net: { lookup, workspace: () => [] }, call, hub: hub as unknown as Hub, dir: join(scratch, "bundle"), pollMs: 50 });
+	running.push(gui);
+	const events: string[] = [];
+	const req = get(`${gui.url}events`, { headers: { host: `127.0.0.1:${gui.port}` } }, (res) => res.setEncoding("utf8").on("data", (c: string) => events.push(c)));
+	const wait = async (what: () => boolean) => { for (let i = 0; i < 100 && !what(); i++) await new Promise((r) => setTimeout(r, 20)); assert.ok(what()); };
+	await wait(() => events.join("").includes("event: hello"));
+	const stream = /"stream":"([0-9a-f]+)"/.exec(events.join(""))![1]!;
+	const sentKeys = () => calls.filter(([m]) => m === "pane.send_input").map(([, p]) => p.keys);
+	// (each send_input is recorded with the time Herdr got it)
+	return { gui, w, calls, stream, events, wait, sentKeys, close: () => req.destroy(), key: (key: string, extra: Record<string, unknown> = {}) => send(gui, "sessions/sess-1/keys", { key, stream, ...extra }), attach: async () => (assert.equal((await send(gui, "sessions/sess-1/mirror", { stream, on: true })).status, 200), await wait(() => events.join("").includes("event: mirror"))) };
+}
+
+test("the pad: one key per request, only with this page's mirror attached and current, and exactly that key reaches Herdr", async () => {
+	const p = await padded();
+	assert.equal((await p.key("up")).body.error, "no_mirror", "before the mirror is attached");
+	await p.attach();
+	assert.equal((await p.key("up", { stream: "f".repeat(32) })).body.error, "no_mirror", "another stream");
+	for (const k of ["a", "/", "!", "ctrl+c", "ctrl+d", "ctrl+g", "alt+enter"]) assert.equal((await p.key(k)).status, 400, k);
+	assert.equal((await send(p.gui, "sessions/sess-1/keys", { keys: ["up"], stream: p.stream })).status, 400, "the old form carries only Stop's Escape");
+	assert.equal((await p.key("up", { keys: ["enter"] })).status, 400, "one key per request");
+	for (const k of ["up", "down", "tab", "3"]) assert.deepEqual((await p.key(k)).body, { accepted: true });
+	assert.deepEqual(p.sentKeys(), [["up"], ["down"], ["tab"], ["3"]], "exactly pane.send_input {keys: [key]}");
+	assert.deepEqual((await p.key("pagedown")).body, { accepted: true });
+	assert.deepEqual(p.calls.filter(([m]) => m === "pane.send_text"), [["pane.send_text", { pane_id: "wA:p1", text: "\x1b[6~" }]], "a key Herdr cannot name goes as its fixed sequence");
+	assert.deepEqual((await p.key("enter")).body, { accepted: true }, "an empty editor: Enter goes");
+	await new Promise((r) => setTimeout(r, 1000)); // a fresh second
+	let ok = 0, last = await p.key("down");
+	for (; last.status === 200 && ok < 9; last = await p.key("down")) ok++;
+	assert.deepEqual([ok, last.status, last.body.error], [8, 429, "rate"], "8 keys a second");
+	assert.equal((await send(p.gui, "sessions/sess-1/mirror", { stream: p.stream, on: false })).status, 200);
+	await new Promise((r) => setTimeout(r, 1100));
+	assert.equal((await p.key("down")).body.error, "no_mirror", "detached");
+	p.close();
+});
+
+test("the pad: up recalls /reload, then Enter needs the confirm that names it; an unread editor and a slash command need theirs", async () => {
+	const p = await padded();
+	await p.attach();
+	assert.equal((await p.key("up")).status, 200);
+	p.w.editor = { editor: "text", ending: "reload" };
+	const asked = await p.key("enter");
+	assert.deepEqual([asked.status, asked.body.error, (asked.body as { confirm?: string }).confirm], [409, "confirm", "reload"]);
+	assert.match(String(asked.body.reason), /\/reload/);
+	assert.equal((await p.key("enter", { confirmed: true })).status, 409);
+	assert.equal((await p.key("enter", { confirmed: "reload" })).status, 200);
+	p.w.editor = undefined;
+	assert.equal(((await p.key("enter")).body as { confirm?: string }).confirm, "unread", "no bridge, or no answer in 1 s");
+	p.w.editor = { editor: "command" };
+	assert.equal(((await p.key("enter")).body as { confirm?: string }).confirm, "command");
+	assert.deepEqual(p.sentKeys(), [["up"], ["enter"]], "nothing unconfirmed reached Herdr");
+	p.w.editor = { editor: "empty" };
+	p.w.moveDuringProbe = true; // the pane switched to another session file while the bridge answered
+	assert.equal((await p.key("enter")).body.error, "moved");
+	assert.deepEqual(p.sentKeys(), [["up"], ["enter"]]);
+	p.close();
+});
+
+test("the pad: while the open call is secret_drop the mirror is hidden and only Escape goes; an answerable dialog takes only Escape too", async () => {
+	const p = await padded({ entries: [header(), user("u1", null, "go"), assistant("a1", "u1", [toolCall("c1", "secret_drop", { label: "token" })])] });
+	await p.attach();
+	await p.wait(() => p.events.join("").includes('"hidden":true'));
+	assert.ok(!/"set"/.test(p.events.join("")), "no rows were sent");
+	for (const k of ["1", "enter", "up"]) assert.equal((await p.key(k)).body.error, "blocked", k);
+	assert.equal(p.w.probes, 0);
+	assert.equal((await p.key("esc")).status, 200);
+	p.close();
+	const q = await padded({ answerable: true });
+	await q.attach();
+	q.w.status = "blocked";
+	assert.equal((await q.key("1")).body.error, "blocked");
+	assert.equal((await q.key("esc")).status, 200);
+	q.w.answerable = false;
+	assert.equal((await q.key("1")).status, 200, "a dialog the page cannot answer takes digits (U7)");
+	assert.deepEqual(q.sentKeys(), [["esc"], ["1"]]);
+	q.close();
+});
+
+test("the pad: a second Escape within 1 s to an idle session asks first; confirmed, pi gets its pair", async () => {
+	const p = await padded();
+	await p.attach();
+	assert.equal((await p.key("esc")).status, 200);
+	const second = await p.key("esc");
+	assert.deepEqual([second.status, (second.body as { confirm?: string }).confirm], [409, "double-esc"]);
+	await new Promise((r) => setTimeout(r, 600));
+	assert.equal((await p.key("esc", { confirmed: "double-esc" })).status, 200);
+	assert.deepEqual(p.sentKeys(), [["esc"], ["esc"], ["esc"]], "the pair as two writes of one Escape");
+	const [a, b] = p.calls.filter(([m]) => m === "pane.send_input").slice(-2).map(([, q]) => q.at as number);
+	assert.ok(b! - a! >= 50 && b! - a! < 400, `apart, and within pi's 500 ms (${b! - a!} ms)`);
+	p.close();
 });
 
 /** A server whose hub answers for sess-1 with `target`; `send` records what reached the bridge and answers with `reply`. */

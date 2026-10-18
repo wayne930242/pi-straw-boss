@@ -584,6 +584,47 @@ channel as soon as a server runs, sending its (usually empty) dialog list so the
 `/resume` send the new file at once. The cost is that every pi session in Herdr registers on the GUI channel while a server runs,
 not only sessions that opened a dialog; with no server it costs one `stat` every 2 s. Accepted by the main agent on 2026-10-18.
 
+**Key pad (`src/keys.ts`, `gui/keypad.ts`).** Under the mirror, in the same tile, so a key is always tapped with its screen in view:
+`esc tab ↑ enter` / `⇧tab ← ↓ →` / `space ⌫ home end pgup pgdn` / `1–9` folded away; 44 px targets on a phone. A key goes only from a
+trusted press of its own button (`isTrusted`), one per request, and the pad waits while it is on its way: no repeat, no sequence, and
+the module exports nothing but `keypad`. While the mirror is hidden for a secret only `esc` is enabled; while it is stale, ended, or
+paused, nothing. The page sends `POST …/keys {key, stream, confirmed?}`; the server checks, in order, after the write guards, the
+registry, and `pane.get` (still pi on this file):
+1. The key is one of the pad's 23 (Herdr's names), alone; letters, `/`, `!`, Ctrl and Alt combinations are not on the list. At most 8
+   keys a second reach a session (429). Herdr 0.9.4 has no names for `home`, `end`, `pageup`, and `pagedown` (`invalid_key`, live
+   check A), so those four go as the fixed sequences pi reads for them (`ESC[H`, `ESC[F`, `ESC[5~`, `ESC[6~`) with `pane.send_text`,
+   which writes them raw; only these constants take that path.
+2. The stream holds this session's mirror, reading the pane the key goes to, and was sent a frame in the last 3 s (a hidden mirror
+   sends one a second too); else 409 `no_mirror`.
+3. While the session file's open call is `secret_drop` (or the file cannot be read), or the hub holds an answerable dialog for the
+   unit, only `esc` (409 `blocked`). A dialog no owner relays takes the pad, digits included (U7).
+4. `enter` asks the bridge (above), every time, and checks rules 2 and 3 again after the answer, which can take a second. `ending`
+   needs `confirmed: "<command>"` while the bridge still names that command,
+   `command` needs `confirmed: "command"`, and `unknown` (no bridge, no answer within 1 s) needs `confirmed: "unread"`. The 409
+   `confirm` names the token and says why; Enter goes to whatever has focus, so a draft under a selector asks needlessly, on the
+   safe side.
+5. An `esc` to a session that neither works nor waits, within 1 s of when Herdr took the previous `esc` from the GUI (Stop's
+   included), runs pi's double-Escape action (tree or fork) and needs `confirmed: "double-esc"`. pi pairs two Escapes only within
+   500 ms, so a confirm that comes later sends both Escapes, as two writes 60 ms apart: Herdr writes `keys: ["esc", "esc"]` as one
+   `ESC ESC`, which a terminal without the kitty protocol reads as Ctrl+Alt+[. A confirm within 450 ms of the first sends one, which
+   pi pairs with it.
+6. `pane.send_input {pane_id, keys: [key]}` (or `pane.send_text` for the four above), not retried on a timeout. Keys are not logged.
+
+The composer's Stop keeps its 0.6.0 form, `{keys: ["esc"]}`: Escape alone, with no mirror, under rule 5. The pad's confirm shows inline
+under the keys with the server's reason, **Send Enter** (or **Send Escape**) and **Cancel**, which takes the focus, so a second or
+held Enter on the key that asked never confirms it. Enter with `/reload` in the editor asks to
+confirm `/reload`, which closes the hole that kept 0.5.0 at Escape only: the check reads pi's own editor at the moment Enter would
+submit, so it covers history, completion, and an unsent draft alike. (pi 0.x keeps prompts and `!` commands in its history, not its
+own slash commands, so `up` recalls `/reload now` or `!rm …`, which ask too; live check A.)
+
+*Found in live check A and fixed with the pad:* a server that has not read the net yet (just started, a page reconnecting) sends
+`hello` only after its first reading, so the tiles' attach finds their session instead of a 409 that left the tile stuck; a refused
+attach now ends the tile's mirror, so opening the terminal again retries. The server drops the blanks Herdr pads each row with when
+they are in the terminal's own colours (after a reset or no SGR): they were two thirds of a frame, and a screen scrolling four times
+a second measured 12.8 KB/s against the plan's 12, then 7.3. A long unit name in a tile's title ends in an ellipsis instead of
+widening the tile past a phone's width, and Fit width fits the longest row as well as the pane's columns (rows drawn before the pane
+narrowed stay wider).
+
 **`ask_user`, structured** (pi-ask-user 0.16.x; other versions use the mirror):
 the panel shows the context (markdown), the question, the options with
 descriptions, and a text field when `allowFreeform` is not false. Mapping, from

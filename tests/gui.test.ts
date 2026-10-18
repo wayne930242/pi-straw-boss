@@ -329,3 +329,21 @@ test("each stream is named in hello; a page attaches the terminal mirror to its 
 	assert.equal(reads.length, n, "the closed stream took its mirror with it");
 	b.close();
 });
+
+test("a server that has not read the net yet names the stream after its first reading, so a page reconnecting to a new server attaches its terminals to a known session", async () => {
+	let release = () => {};
+	const gate = new Promise<void>((resolve) => (release = resolve));
+	const gui = await serve(async () => (await gate, net("a")));
+	const a = listen(gui);
+	await new Promise((resolve) => setTimeout(resolve, 150));
+	const named = (s: ReturnType<typeof listen>) => s.events.map((e) => e.event).filter((e) => e !== "ping");
+	assert.deepEqual(named(a), [], "nothing but pings before the first reading");
+	release();
+	await until(() => a.events.some((e) => e.event === "hello"), "hello");
+	assert.deepEqual(named(a).slice(0, 2), ["message", "hello"], "the snapshot first, then the name");
+	const b = listen(gui);
+	await until(() => named(b).length >= 2, "b's first events");
+	assert.equal(named(b)[0], "hello", "once a reading exists, the name comes first as before");
+	a.close();
+	b.close();
+});

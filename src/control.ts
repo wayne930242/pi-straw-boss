@@ -2,13 +2,14 @@ import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import { ANSWER_ID, checkAnswer, CONTROL, type Hub, type Sent, type Target } from "./dialogs.ts";
 import { HerdrError, type HerdrCall, type Pane } from "./herdr.ts";
+import { createKeys } from "./keys.ts";
 import type { createMirrors } from "./mirror.ts";
 import type { Found } from "./net.ts";
 import { ENDING } from "./probe.ts";
 
 // Typing into a session from the page, through Herdr's own input path only, as if typed in the terminal:
 //   POST /<token>/api/sessions/<key>/input {text, as: "send" | "followUp", confirmed?}   the text, then Enter (or Alt+Enter while it works)
-//   POST /<token>/api/sessions/<key>/keys  {keys}                                        keys from an allow list; never Ctrl+C or Ctrl+D
+//   POST /<token>/api/sessions/<key>/keys  {key, stream, confirmed?}                     one key pad key under its mirror (keys.ts), or Stop's {keys: ["esc"]}
 //   POST /<token>/api/sessions/<key>/focus                                               brings the session's pane forward in Herdr
 //   POST /<token>/api/sessions/<key>/answer {dialog, digest, answerId, choice | answers}  answers its dialog through its bridge (dialogs.ts); no keys
 //   POST /<token>/api/sessions/<key>/mirror {stream, on}                                  shows the pane's screen on that page's stream (mirror.ts), or stops
@@ -18,14 +19,12 @@ import { ENDING } from "./probe.ts";
 // from the browser), and Herdr is asked right then that the pane still runs pi on that session's file, so a reused pane id is refused.
 // One request per session is in flight at a time. Typed text is never logged; a Herdr timeout is not retried: it does not prove nothing arrived.
 
-export const MAX_TEXT = 16_384, MAX_BODY = 65_536, MAX_KEYS = 16;
-// Only Escape (Stop) until Phase 3: other keys act on whatever the terminal holds, so up then enter could resubmit a /reload unconfirmed.
-export const KEYS = new Set(["esc"]);
+export const MAX_TEXT = 16_384, MAX_BODY = 65_536;
 export { ENDING };
 
 export interface Reply { status: number; body: unknown }
 /** `answers.target` reads the net afresh, so the binding and the dialog are checked again for every answer. */
-export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; answers?: Pick<Hub, "replay" | "ended" | "send"> & { target(key: string): Promise<Target | undefined> } }
+export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; answers?: Pick<Hub, "replay" | "ended" | "send" | "probe"> & { target(key: string): Promise<Target | undefined> } }
 
 const no = (status: number, error: string, reason: string): Reply => ({ status, body: { error, reason } });
 const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -66,8 +65,9 @@ export function checkText(text: unknown): string | Reply {
 	return typed;
 }
 
-export function createControl({ lookup, call, csrf, canonical, pair, mirrors, answers }: ControlDeps) {
+export function createControl({ lookup, call, csrf, canonical, pair, mirrors, secret = async () => true, answers }: ControlDeps) {
 	const busy = new Set<string>();
+	const pad = createKeys({ fresh: (id, key, pane) => mirrors?.fresh(id, key, pane) ?? false, secret, answerable: async (key) => Boolean(await answers?.target(key)), probe: async (key) => answers?.probe(key) });
 	/** The origin checks, then the session checks, then one Herdr call. `parts` is the path after api/: sessions/<key>/<action>, or remote/pair. */
 	return async function handle(req: IncomingMessage, origin: string, [scope, key = "", action = ""]: string[]): Promise<Reply> {
 		if (req.method !== "POST") return no(405, "method", "Use POST.");
@@ -103,13 +103,14 @@ export function createControl({ lookup, call, csrf, canonical, pair, mirrors, an
 					: call("agent.prompt", { target: pane.pane_id, text }, 15_000);
 			};
 		} else if (action === "keys") {
-			const keys = json.keys;
-			if (!Array.isArray(keys) || !keys.length || keys.length > MAX_KEYS || !keys.every((k) => typeof k === "string" && KEYS.has(k))) return no(400, "key", "Only keys from the allow list can be sent (never Ctrl+C or Ctrl+D).");
+			if (busy.has(key)) return no(429, "busy", "Another input to this session is still on its way.");
+			const asked = pad.check(key, json);
+			if ("status" in asked) return asked;
 			job = async () => {
-				const pane = await live(found);
-				// A dialog may be a masked secret prompt; until the page can tell which (phase 3), only Escape reaches a waiting session.
-				if (pane.agent_status === "blocked" && keys.some((k) => k !== "esc")) throw no(409, "blocked", "While it waits on a dialog only Escape is sent from the browser; answer it in the terminal.");
-				return call("pane.send_input", { pane_id: pane.pane_id, keys }, 15_000);
+				const plan = await pad.send(key, found, await live(found), asked);
+				if (asked.key === "enter") await live(found); // the editor check took up to a second: still pi, on this file
+				for (const [i, [method, params]] of plan.calls.entries()) await (i ? new Promise((r) => setTimeout(r, 60)) : Promise.resolve()).then(() => call(method, params, 15_000));
+				pad.sent(key, plan);
 			};
 		} else if (action === "answer") {
 			const { dialog, digest, answerId } = json;

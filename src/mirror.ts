@@ -19,9 +19,12 @@ interface Reader { key: string; pane: string; file: string; viewers: Map<string,
 
 // CSI (kept only as SGR: final m, no intermediates, digits and separators), OSC/DCS/SOS/PM/APC up to BEL or ST, any other escape, C0 and C1.
 const ESCAPES = /\x1b(?:\[([0-?]*)([ -/]*)([@-~]|(?=\x1b)|$)|[\]PX^_][^]*?(?:\x07|\x1b\\|$)|[ -/]*[0-~]?)|[\u0000-\u001f\u007f-\u009f]/g;
-/** One row as the page may draw it: SGR only, at most 4 KB, never ending inside an escape. */
+/** One row as the page may draw it: SGR only, at most 4 KB, never ending inside an escape, and without trailing blanks in the terminal's
+ *  own colours (after a reset or no SGR at all), which Herdr pads every row with: they show nothing and were two thirds of a frame. */
 export function sanitize(row: string): string {
-	const kept = row.replace(ESCAPES, (all, params?: string, inter?: string, final?: string) => (final === "m" && !inter && /^[0-9;:]{0,64}$/.test(params!) ? all : ""));
+	let kept = row.replace(ESCAPES, (all, params?: string, inter?: string, final?: string) => (final === "m" && !inter && /^[0-9;:]{0,64}$/.test(params!) ? all : ""));
+	const blank = / +$/.exec(kept), last = blank && kept.slice(0, blank.index).match(/\x1b\[[0-9;:]*m/g)?.at(-1);
+	if (blank && (!last || last === "\x1b[0m" || last === "\x1b[m")) kept = kept.slice(0, blank.index);
 	if (Buffer.byteLength(kept) <= MAX_ROW) return kept;
 	return Buffer.from(kept).subarray(0, MAX_ROW).toString("utf8").replace(/\ufffd$/, "").replace(/\x1b(\[[0-9;:]*)?$/, "");
 }
@@ -116,8 +119,8 @@ export function createMirrors({ call, lookup, secret, canonical, timer = timers 
 			else if (r.seq || r.hidden) deliver(r, []); // a page joining a running mirror gets every row at once
 			return { status: 200, body: { attached: true } };
 		},
-		/** Whether this stream holds the session's mirror and was sent a frame in the last 3 s (the key pad's precondition). */
-		fresh: (id: string, key: string) => { const v = readers.get(key)?.viewers.get(id); return Boolean(v && v.at && timer.now() - v.at <= FRESH_MS); },
+		/** Whether this stream holds the session's mirror, of this pane, and was sent a frame in the last 3 s (the key pad's precondition). */
+		fresh: (id: string, key: string, pane: string) => { const r = readers.get(key), v = r?.pane === pane ? r.viewers.get(id) : undefined; return Boolean(v && v.at && timer.now() - v.at <= FRESH_MS); },
 		/** The keys of the mirrors being read now. */
 		active: () => [...readers.keys()],
 		stop() {

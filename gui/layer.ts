@@ -1,5 +1,6 @@
 import type { Item } from "../src/items.ts";
 import { mountAsk } from "./ask.ts";
+import { keypad } from "./keypad.ts";
 import { mountTerminals } from "./mirror.ts";
 import { type Alert, createStack, tally } from "./overlay.ts";
 import { type Answer, post } from "./post.ts";
@@ -164,7 +165,7 @@ export function mountPanels(deps: PanelDeps) {
 		enter: (t) => requestAnimationFrame(() => row.querySelector<HTMLElement>(`.tile[data-key="${CSS.escape(t.id)}"]`)?.focus()),
 	});
 	new ResizeObserver(fit).observe(work);
-	const terminal = mountTerminals({ tiles, post: to, stream: deps.stream });
+	const terminal = mountTerminals({ tiles, post: to, stream: deps.stream, pad: keypad });
 	return {
 		tiles,
 		stack,
