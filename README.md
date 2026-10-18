@@ -1,5 +1,7 @@
 # pi-straw-boss
 
+English | [繁體中文](README.zh-TW.md)
+
 **Many pi agents, one project, no collisions.** pi-straw-boss gives the agents you run across [Herdr](https://herdr.dev) tabs a light chain of command: a main agent per tab, a tower per workspace, and a live view of who is doing what.
 
 ![The straw net in the browser: three workspaces with their towers, agents, a subagent, and an outpost, with live states](docs/straw-net-gui.png)
