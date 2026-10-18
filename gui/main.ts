@@ -111,6 +111,10 @@ function forward(kind: "history" | "cards", raw: string) {
 	} catch {} // the next event replaces it
 }
 
+// The build the server wrote into this page: a stream from another build (a newer pi-straw-boss took the server over) reloads the page,
+// whose lazy chunks that server no longer has.
+const build = document.querySelector<HTMLMetaElement>('meta[name="sb-build"]')?.content;
+const rebuilt = (raw: string) => Boolean(build && build !== (JSON.parse(raw) as { build?: string }).build);
 /** The real stream: the server's events, relative to the page's <base href> so the token path carries over from any route. */
 function live(watch: string | null): Source {
 	const es = new EventSource(watch ? `events?watch=${encodeURIComponent(watch)}` : "events");
@@ -130,7 +134,7 @@ const open = () => {
 	source.listen("history", (d) => forward("history", d));
 	source.listen("cards", (d) => forward("cards", d));
 	// The stream's name (terminal tiles attach to it) and their frames go to the overlay layer, which parses them.
-	source.listen("hello", (d) => ((hello = d), panels?.terminal.hello()));
+	source.listen("hello", (d) => (rebuilt(d) ? location.reload() : ((hello = d), panels?.terminal.hello())));
 	source.listen("mirror", (d) => panels?.terminal.frame(d));
 	return source;
 };

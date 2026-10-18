@@ -5,7 +5,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { startGui, type Gui } from "../src/gui.ts";
+import { type Asked, requestStop, startGui, type Gui } from "../src/gui.ts";
 import { canonical } from "../src/history.ts";
 import type { Found, Ref } from "../src/net.ts";
 import type { Net } from "../src/net.ts";
@@ -25,7 +25,7 @@ after(async () => {
 });
 
 const net = (label: string): Net => ({ bases: [{ id: "w", label, mark: "idle", head: true, tower: null, tabs: [], outposts: [], outside: [] }] });
-async function serve(read: () => Promise<Net>, options: { pollMs?: number; pingMs?: number; port?: number; token?: string; csrf?: string; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] }; call?: (method: string, params: Record<string, unknown>) => Promise<unknown> } = {}, bundle = dir) {
+async function serve(read: () => Promise<Net>, options: { pollMs?: number; pingMs?: number; port?: number; token?: string; csrf?: string; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] }; call?: (method: string, params: Record<string, unknown>) => Promise<unknown>; onStop?(asked: Asked): void } = {}, bundle = dir) {
 	const gui = await startGui({ read, dir: bundle, pollMs: 20, pingMs: 50, ...options });
 	running.push(gui);
 	return gui;
@@ -90,6 +90,34 @@ test("a package update that replaces the bundle under a running server leaves it
 	assert.match((await raw(gui, `/${gui.token}/`)).body, /old/);
 	assert.deepEqual(await raw(gui, `/${gui.token}/assets/old.js`).then((r) => [r.status, r.body]), [200, "old()"]);
 	assert.equal((await raw(gui, `/${gui.token}/assets/new.js`)).status, 404, "a file added after start is not served");
+});
+
+test("the page and each stream's hello name the bundle's build, so a page from another build can tell", async () => {
+	const gui = await serve(async () => net("a"));
+	const build = /<meta name="sb-build" content="([0-9a-f]{16})">/.exec((await raw(gui, `/${gui.token}/`)).body)?.[1];
+	assert.ok(build);
+	const s = listen(gui);
+	await until(() => s.events.some((e) => e.event === "hello"), "hello");
+	s.close();
+	assert.equal(JSON.parse(s.events.find((e) => e.event === "hello")!.data).build, build);
+});
+
+test("another session's stop request ends the server through onStop; one without the CSRF secret, or from a paired device, is refused", async () => {
+	const asked: Asked[] = [];
+	const gui: Gui = await serve(async () => net("a"), { onStop: (a) => (asked.push(a), void gui.stop()) });
+	const record = { pid: process.pid, port: gui.port, token: gui.token, csrf: gui.csrf, owner: "x" }, nap = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+	assert.equal(await requestStop({ ...record, csrf: "wrong" }, { by: "s", take: false }, nap), false);
+	const host = "box.tail1.ts.net:8443", tailnet = { host, "tailscale-user-login": "me@example.com", "x-forwarded-for": "100.87.7.97" };
+	gui.access.enable({ host, login: "me@example.com" });
+	const post = (path: string, headers: Record<string, string>, method = "POST") =>
+		new Promise<IncomingMessage>((done, fail) => request({ host: "127.0.0.1", port: gui.port, path, method, headers, agent: false }, (res) => (res.resume(), done(res))).on("error", fail).end(method === "POST" ? "{}" : undefined));
+	const cookie = String((await post(`/${gui.token}/pair/${gui.access.pair()}`, tailnet, "GET")).headers["set-cookie"]).split(";")[0]!;
+	const remote = await post(`/${gui.token}/api/server/stop`, { ...tailnet, cookie, origin: `https://${host}`, "content-type": "application/json", "x-sb-csrf": gui.csrf });
+	assert.equal(remote.statusCode, 403, "a paired device cannot stop the server");
+	assert.deepEqual(asked, []);
+	assert.equal(await requestStop(record, { by: "s", take: true }, nap), true);
+	assert.deepEqual(asked, [{ by: "s", take: true }]);
+	await assert.rejects(raw(gui, `/${gui.token}/`), /ECONNREFUSED/);
 });
 
 test("a request without the token, with a wrong one, with another Host header, or that is not a GET is refused", async () => {

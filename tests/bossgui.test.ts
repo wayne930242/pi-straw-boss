@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { get } from "node:http";
+import { createServer, get } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
@@ -139,7 +141,7 @@ test("without a built bundle the command says how to build it", async () => {
 	assert.match(viewer.notices.find((n) => n.level === "error")!.text, /npm run gui:build/);
 });
 
-test("one server per machine: two calls at once in one session, and a call from another session, open the same server", async () => {
+test("one server per machine: two calls at once in one session, and a call from another session, open the same server; a stop from any session stops it", async () => {
 	const a = world.agent({ id: "viewer-a", pane: "wA:p1", tab: "wA:t1", deps });
 	const b = world.agent({ id: "viewer-b", pane: "wB:p1", tab: "wB:t1", deps });
 	await Promise.all([a.start(), b.start()]);
@@ -149,10 +151,69 @@ test("one server per machine: two calls at once in one session, and a call from 
 	assert.equal(new Set(urls).size, 1, "every call got the same URL");
 	const record = readRecord(world.stateDir)!;
 	assert.equal(`http://127.0.0.1:${record.port}/${record.token}/`, urls[0], "gui.json records the running server");
-	const other = record.owner.startsWith("viewer-a") ? b : a;
+	const [owner, other] = record.owner.startsWith("viewer-a") ? [a, b] : [b, a];
 	await other.command("gui stop");
-	assert.match(other.notices.at(-1)!.text, /runs in session viewer-[ab] \(pane w[AB]:p1\); stop it there/);
-	assert.equal(await status(urls[0]!), 200, "a stop from another session leaves the server running");
+	assert.match(other.notices.at(-1)!.text, /^Straw net GUI stopped \(it ran in session viewer-[ab] \(pane w[AB]:p1\)\)$/);
+	await assert.rejects(status(urls[0]!), /ECONNREFUSED/, "a stop from another session stops the server");
+	await until(() => /^Straw net GUI stopped from session viewer-[ab] \(pane w[AB]:p1\)$/.test(owner.notices.at(-1)?.text ?? ""), "the owner's notice");
+});
+
+test("a session with a newer pi-straw-boss takes the running server over when it starts, on the same URL; an older one leaves it", async () => {
+	const a = world.agent({ id: "viewer-a", pane: "wA:p1", tab: "wA:t1", deps: { ...deps, version: "1.0.0" } });
+	await a.start();
+	await a.command("gui");
+	const url = urlOf(a), before = opened.length;
+	const b = world.agent({ id: "viewer-b", pane: "wB:p1", tab: "wB:t1", deps: { ...deps, version: "1.1.0" } });
+	await b.start();
+	await until(() => readRecord(world.stateDir)?.version === "1.1.0", "the takeover");
+	const record = readRecord(world.stateDir)!;
+	assert.deepEqual([record.owner, `http://127.0.0.1:${record.port}/${record.token}/`], ["viewer-b (pane wB:p1)", url], "the new server keeps the URL an open page has");
+	assert.equal(await status(url), 200);
+	await until(() => a.notices.at(-1)?.text === "The straw net GUI moved to session viewer-b (pane wB:p1)", "the old owner's notice");
+	const c = world.agent({ id: "viewer-c", pane: "wC:p1", tab: "wC:t1", deps: { ...deps, version: "0.12.0" } });
+	await c.start();
+	await c.command("gui");
+	assert.equal(urlOf(c), url);
+	assert.equal(readRecord(world.stateDir)!.owner, "viewer-b (pane wB:p1)", "an older session opens the newer server as it is");
+	assert.equal(opened.length, before + 1, "a takeover opens no browser");
+});
+
+test("the server a session ran comes back on its URL after the session's /reload or /new, and not after it quits", async () => {
+	const a = world.agent({ id: "viewer", pane: "wA:p1", tab: "wA:t1", deps });
+	await a.start();
+	await a.command("gui");
+	const url = urlOf(a);
+	await a.stop("reload");
+	await assert.rejects(status(url), /ECONNREFUSED/);
+	const reloaded = world.agent({ id: "viewer", pane: "wA:p1", tab: "wA:t1", deps });
+	await reloaded.fire("session_start", { reason: "reload" });
+	await until(() => status(url).then((code) => code === 200, () => false), "the server again");
+	assert.equal(readRecord(world.stateDir)!.reload, undefined, "the new record carries no reload mark");
+	await reloaded.stop("new");
+	const fresh = world.agent({ id: "viewer-new", pane: "wA:p1", tab: "wA:t1", deps });
+	await fresh.fire("session_start", { reason: "new" });
+	await until(() => readRecord(world.stateDir)?.ownerSession === "viewer-new", "the server under the new session");
+	assert.equal(await status(url), 200, "a /new keeps it too, owned by the new session");
+	await fresh.stop();
+	const next = world.agent({ id: "viewer", pane: "wA:p1", tab: "wA:t1", deps });
+	await next.start();
+	await assert.rejects(status(url), /ECONNREFUSED/, "a session that quit does not bring it back");
+});
+
+test("a server from before 0.11.0, which cannot hand over, keeps running; stop, remote, and the URL say where it runs", async () => {
+	const old = createServer((req, res) => res.writeHead(req.url === "/tok/" ? 200 : 404).end()).listen(0, "127.0.0.1");
+	await once(old, "listening");
+	const port = (old.address() as AddressInfo).port;
+	writeFileSync(join(world.stateDir, "gui.json"), JSON.stringify({ pid: process.pid, port, token: "tok", csrf: "c", owner: "old (pane wZ:p1)" }));
+	const a = world.agent({ id: "viewer-a", pane: "wA:p1", tab: "wA:t1", deps });
+	await a.start();
+	for (const mode of ["gui stop", "gui remote", "gui remote off"]) {
+		await a.command(mode);
+		assert.match(a.notices.at(-1)!.text, /^The straw net GUI runs in session old \(pane wZ:p1\) on a pi-straw-boss older than 0\.11\.0/, mode);
+	}
+	await a.command("gui");
+	assert.deepEqual(a.notices.slice(-2).map((n) => [n.level, n.text.split(";")[0]]), [["warning", "The straw net GUI runs in session old (pane wZ:p1) on a pi-straw-boss older than 0.11.0, which cannot hand it over"], ["info", `Straw net GUI: http://127.0.0.1:${port}/tok/`]]);
+	old.close();
 });
 
 test("when the session holding the server ends, the next /boss gui elsewhere starts it again on the same URL", async () => {
@@ -212,10 +273,18 @@ test("/boss gui remote serves this session's GUI on the tailnet with a pairing Q
 	assert.deepEqual(ts.config(), { TCP: { "8443": { HTTPS: true } }, Web: { "box.tail1.ts.net:8443": { Handlers: { "/": { Proxy: `http://127.0.0.1:${record.port}` } } } } });
 	assert.match(a.notices.at(-1)!.text, /Remote access is on for me@example.com, tailnet only: https:\/\/box\.tail1\.ts\.net:8443\//);
 	assert.ok(!a.notices.some((n) => n.text.includes("/pair/")), "the one-time code stays out of the notices");
-	await b.command("gui remote");
-	assert.match(b.notices.at(-1)!.text, /runs in session viewer-a .*; run \/boss gui remote there/);
+	// Another session's remote takes the server over on the same URL, and its remote off takes it back with the entry gone.
+	const moved = b.command("gui remote");
+	await until(() => b.overlays.length === 1, "b's overlay");
+	b.overlays[0]!.handleInput!("q");
+	await moved;
+	const taken = readRecord(world.stateDir)!;
+	assert.deepEqual([taken.owner, taken.port, taken.token], ["viewer-b (pane wB:p1)", record.port, record.token]);
+	assert.equal((ts.config() as { Web: Record<string, { Handlers: { "/": { Proxy: string } } }> }).Web["box.tail1.ts.net:8443"]!.Handlers["/"].Proxy, `http://127.0.0.1:${record.port}`);
+	assert.ok(a.notices.some((n) => n.text === "The straw net GUI moved to session viewer-b (pane wB:p1)"));
 	await a.command("gui remote off");
 	assert.deepEqual(ts.config(), {});
+	assert.equal(readRecord(world.stateDir)!.owner, "viewer-a (pane wA:p1)");
 	const again = a.command("gui remote");
 	await until(() => a.overlays.length === 2, "the second overlay");
 	a.overlays[1]!.handleInput!("\x1b");

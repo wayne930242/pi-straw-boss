@@ -8,7 +8,7 @@ import { Type, type Static, type TSchema } from "typebox";
 import { startBridge } from "./bridge.ts";
 import { collect, startDashboard } from "./dashboard.ts";
 import { createHub, type Hub } from "./dialogs.ts";
-import { answers, type Gui, openBrowser, readRecord, sharedGui, startGui, urlOf } from "./gui.ts";
+import { answers, type Gui, markReload, newer, openBrowser, readRecord, requestStop, type Shared, sharedGui, startGui, urlOf, VERSION } from "./gui.ts";
 import { netSource } from "./net.ts";
 import { clearOrder, markKids, netTokens } from "./order.ts";
 import { opener } from "./opener.ts";
@@ -46,7 +46,7 @@ interface Saved { tower?: boolean }
 type Role = "tower" | "main" | "member";
 type Scope = "tab" | "workspace" | "towers" | "all";
 type Member = ReturnType<typeof netMembers>[number];
-export interface Deps { run?: HerdrRun; api?: HerdrApi; call?: HerdrCall; tailscale?: Run; copy?: (text: string) => Promise<void>; env?: NodeJS.ProcessEnv; sleep?: Sleep; promptDir?: string; bundle?: string; openUrl?: (url: string) => Promise<void>; watch?: HerdrWatch; stateDir?: string; autoTower?: boolean; nudgeMs?: number }
+export interface Deps { run?: HerdrRun; api?: HerdrApi; call?: HerdrCall; tailscale?: Run; copy?: (text: string) => Promise<void>; env?: NodeJS.ProcessEnv; sleep?: Sleep; promptDir?: string; bundle?: string; openUrl?: (url: string) => Promise<void>; watch?: HerdrWatch; stateDir?: string; autoTower?: boolean; nudgeMs?: number; version?: string }
 
 /** Live sessions whose pane carries an `sb_role` token: the sessions that joined the net, and towers. */
 function netMembers(sessions: Session[], ps: Pane[]) {
@@ -58,7 +58,7 @@ function netMembers(sessions: Session[], ps: Pane[]) {
 }
 const nameOf = (s?: Session) => (s ? (s.name ?? s.id) : "");
 
-export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdrCall(), tailscale: ts = tailscale, copy = copyText, env = process.env, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), promptDir = fileURLToPath(new URL("../prompts", import.meta.url)), bundle, openUrl = openBrowser, watch = herdrWatch(), stateDir, autoTower = true, nudgeMs = NUDGE_MS }: Deps = {}) {
+export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdrCall(), tailscale: ts = tailscale, copy = copyText, env = process.env, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), promptDir = fileURLToPath(new URL("../prompts", import.meta.url)), bundle, openUrl = openBrowser, watch = herdrWatch(), stateDir, autoTower = true, nudgeMs = NUDGE_MS, version = VERSION }: Deps = {}) {
 	return function strawBoss(pi: ExtensionAPI): void {
 		// Outside Herdr there is no tab to coordinate. Every session in Herdr relays its dialogs to the GUI (bridge.ts), subagents too: they ask
 		// questions as well. A pi-herdr-agents worker never joins: its parent represents it.
@@ -77,7 +77,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 		// Why this session cannot join: it sits in a sub workspace, or Herdr could not say whether it does.
 		let barred: string | undefined, dashboard: ReturnType<typeof startDashboard> | undefined, hasUI = false;
 		let prompts: Record<string, string> = {}, info: Record<string, string> = {}, saved: Saved = {};
-		let gui: Gui | undefined, viewer: Channel | undefined, opening: Promise<string> | undefined;
+		let gui: Gui | undefined, viewer: Channel | undefined, opening: Promise<Shared> | undefined;
 		let c!: Channel, at!: Place, ui: ExtensionContext["ui"] | undefined, timer: ReturnType<typeof setInterval> | undefined;
 		let queue: Promise<void> = Promise.resolve(), unwatch: (() => void) | undefined;
 		// This session's intercom name, which the subagents it launched show as their launcher, and the subagent panes it has marked.
@@ -400,7 +400,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			return true;
 		};
 
-		pi.on("session_start", async (_event, ctx) => {
+		pi.on("session_start", async (event, ctx) => {
 			stopped = false;
 			ui = ctx.ui;
 			hasUI = ctx.hasUI;
@@ -433,6 +433,14 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 				}
 			}
 			starting?.catch((error: Error) => tell(`Straw Boss: ${error.message}`, "error"));
+			// The GUI this process ran before a /reload, /new, or /resume starts again on its URL, and a session newer than the running server
+			// takes it over, once pi-intercom has published this session's id: the server's dialogs are routed by it.
+			// A /new, /resume, or /fork is another session: it waits for the new id, not the one pi-intercom may still show from before.
+			const record = readRecord(guiDir), back = record?.reload && record.pid === process.pid && event.reason !== "startup";
+			const ready = () => Boolean(me()) && (!back || event.reason === "reload" || me() !== record!.ownerSession);
+			if (back || (record && newer(version, record.version))) void (async () => {
+				if ((await waitFor(sleep, ready, CONNECT_MS)) && (back || (await answers(record!)))) await share();
+			})().catch(() => {});
 		});
 
 		pi.on("before_agent_start", (event) => {
@@ -459,6 +467,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 		});
 
 		pi.on("session_shutdown", async (event) => {
+			if (gui && event.reason !== "quit") markReload(guiDir, me()); // a /reload, /new, or /resume starts it again in this process
 			if (gui) await switchRemote(gui, false, guiDir, ts).catch(() => {});
 			await gui?.stop();
 			gui = undefined;
@@ -497,36 +506,43 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			}
 			return (c ?? viewer!).listSessions();
 		};
-		// `mode` is "", "stop", "remote", or "remote off". Remote access (remote.ts) belongs to the session that runs the server.
+		const label = () => `${me() || "unknown"} (pane ${env.HERDR_PANE_ID})`;
+		// This session's server stops, its remote entry first: /boss gui stop here, another session's stop or takeover (`asked`), or the session's end.
+		const stopOwn = async (asked?: { by: string; take: boolean }) => {
+			const running = gui;
+			gui = undefined;
+			if (!running) return false;
+			const off = await switchRemote(running, false, guiDir, ts).catch((error: Error) => ({ text: error.message, changed: true }));
+			if (off.changed) tell(off.text);
+			await running.stop();
+			tell(!asked ? "Straw net GUI stopped" : asked.take ? `The straw net GUI moved to session ${asked.by}` : `Straw net GUI stopped from session ${asked.by}`);
+			return true;
+		};
+		// One server per machine: a second /boss gui, here or in another session, opens the one that runs, unless `take` (or a newer version) takes it
+		// over. Two calls in flight in this session share one start. A server started here has remote off, so a serve entry a crashed one left goes.
+		const share = (take = false, remote = false) =>
+			(opening ??= (async () => {
+				if (gui) return { url: gui.url, owner: label(), mine: gui };
+				const start = (prefer: { port?: number; token?: string; csrf?: string }, net = netSource({ run, sessions, hub: (hub = hub?.me === me() ? hub : createHub(pi, me(), bridge)) })) => startGui({ read: net.read, net, call, hub, dir: bundle, ...prefer, onStop: (asked) => void stopOwn(asked) });
+				const shared = await sharedGui(guiDir, [label(), me()], start, sleep, { version, take });
+				if ((gui = shared.mine) && !remote) await switchRemote(gui, false, guiDir, ts).catch(() => {});
+				return shared;
+			})().finally(() => (opening = undefined)));
+		const older = (owner: string) => `The straw net GUI runs in session ${owner} on a pi-straw-boss older than 0.11.0, which cannot hand it over; /reload that session or run the command there`;
+		// `mode` is "", "stop", "remote", or "remote off", and works from any session: remote access (remote.ts) goes with the server, so a session takes it over first.
 		const guiCommand = async (mode: string) => {
-			const elsewhere = async (what: string) => {
-				const record = readRecord(guiDir);
-				return tell(record && (await answers(record)) ? `The straw net GUI runs in session ${record.owner}; ${what}` : "The straw net GUI is not running");
-			};
 			if (mode === "stop") {
-				const running = gui;
-				gui = undefined;
-				if (running) {
-					const off = await switchRemote(running, false, guiDir, ts).catch((error: Error) => ({ text: error.message, changed: true }));
-					if (off.changed) tell(off.text);
-					return (await running.stop(), tell("Straw net GUI stopped"));
-				}
-				return elsewhere("stop it there with /boss gui stop");
+				if (await stopOwn()) return;
+				const record = readRecord(guiDir);
+				if (!record || !(await answers(record))) return tell("The straw net GUI is not running");
+				return tell((await requestStop(record, { by: label(), take: false }, sleep)) ? `Straw net GUI stopped (it ran in session ${record.owner})` : older(record.owner));
 			}
-			if (mode === "remote off") return gui ? tell((await switchRemote(gui, false, guiDir, ts)).text) : elsewhere("turn remote access off there with /boss gui remote off");
-			// One server per machine: a second /boss gui, here or in another session, opens the one that runs. Two calls in flight
-			// in this session share one start. A server started here has remote off, so a serve entry a crashed one left goes (remote takes it over).
-			opening ??= (async () => {
-				if (gui) return gui.url;
-				const start = (prefer: { port?: number; token?: string; csrf?: string }, net = netSource({ run, sessions, hub: (hub = hub?.me === me() ? hub : createHub(pi, me(), bridge)) })) => startGui({ read: net.read, net, call, hub, dir: bundle, ...prefer });
-				const shared = await sharedGui(guiDir, [`${me() || "unknown"} (pane ${env.HERDR_PANE_ID})`, me()], start, sleep);
-				if ((gui = shared.mine) && mode !== "remote") await switchRemote(gui, false, guiDir, ts).catch(() => {});
-				return shared.url;
-			})().finally(() => (opening = undefined));
-			const url = await opening;
+			const { url, owner, stale } = await share(mode.startsWith("remote"), mode === "remote");
+			if (mode.startsWith("remote") && !gui) return tell(older(owner));
+			if (stale) tell(older(owner), "warning");
+			if (mode === "remote off") return tell((await switchRemote(gui!, false, guiDir, ts)).text);
 			if (mode === "remote") {
-				if (!gui) return elsewhere("run /boss gui remote there");
-				const { text, lines, link } = await switchRemote(gui, true, guiDir, ts), block = (active: boolean) => pi.events.emit("herdr:blocked", { active, label: "Showing the remote pairing QR code" });
+				const { text, lines, link } = await switchRemote(gui!, true, guiDir, ts), block = (active: boolean) => pi.events.emit("herdr:blocked", { active, label: "Showing the remote pairing QR code" });
 				tell(text);
 				return void (lines && link && ui && (await showLines(ui, lines, { block, keys: pairingKeys(link, copy, openUrl) })));
 			}
