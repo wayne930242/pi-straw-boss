@@ -15,7 +15,7 @@ class El {
 	dataset: Record<string, string> = {};
 	onclick: (() => void) | null = null;
 	oninput: (() => void) | null = null;
-	disabled = false;
+	private off = false;
 	value = "";
 	readonly tagName: string;
 	constructor(tagName: string) {
@@ -48,6 +48,14 @@ class El {
 	focus() {
 		page.focused = this;
 	}
+	/** A browser drops the focus from a control that becomes disabled (to the body). */
+	get disabled() {
+		return this.off;
+	}
+	set disabled(v: boolean) {
+		this.off = v;
+		if (v && page.focused === this) page.focused = undefined;
+	}
 	scrollIntoView() {}
 	get textContent(): string {
 		return this.kids.map((kid) => (typeof kid === "string" ? kid : kid.textContent)).join("");
@@ -64,7 +72,7 @@ class El {
 		return this.kids.flatMap((kid) => (kid instanceof El ? [...(match(kid) ? [kid] : []), ...kid.all(match)] : []));
 	}
 }
-const page = { body: new El("body"), focused: undefined as El | undefined, createElement: (tag: string) => new El(tag), get activeElement() { return page.focused && page.body.contains(page.focused) ? page.focused : page.body; } };
+const page = { addEventListener: (type: string, on: (e: { target: unknown }) => void) => (page.on[type] = on), on: {} as Record<string, (e: { target: unknown }) => void>, body: new El("body"), focused: undefined as El | undefined, createElement: (tag: string) => new El(tag), get activeElement() { return page.focused && page.body.contains(page.focused) ? page.focused : page.body; } };
 Object.assign(globalThis, { document: page });
 const { mountAsk } = await import("../gui/ask.ts");
 
@@ -206,4 +214,76 @@ test("a different dialog, or the same one with another digest, starts empty, and
 	choices()[0]!.click();
 	button("Send answer")!.click();
 	assert.deepEqual([sent[0]!.body.dialog, sent[0]!.body.digest, sent[0]!.body.choice], ["m3", selectDigest(changed), 0]);
+});
+
+test("an answer refused as busy closes the panel only while the other answer is on its way: when the dialog is answerable again, so is the panel, with its choice", async () => {
+	const panel = mount();
+	panel.update(approval("m1"), true);
+	choices()[1]!.click();
+	button("Send answer")!.click();
+	await reply({ outcome: "busy" });
+	assert.equal(choices()[0]!.disabled, true, "another answer is on its way");
+	panel.update(onItsWay("m1"), true);
+	panel.update(approval("m1"), true);
+	assert.equal(choices()[0]!.disabled, false, "the other answer was refused: it can be answered here again");
+	assert.deepEqual(checked(), [1]);
+	button("Send answer")!.click();
+	assert.equal(sent.length, 2);
+	assert.notEqual(sent[1]!.body.answerId, sent[0]!.body.answerId, "a new answer, since the first was never taken");
+});
+
+test("the outcome lingers six seconds after the unit moves on, however often the net updates meanwhile", async () => {
+	mock.timers.enable({ apis: ["setTimeout"] });
+	try {
+		const panel = mount();
+		panel.update(approval("m1"), true);
+		choices()[0]!.click();
+		button("Send answer")!.click();
+		await reply({ outcome: "accepted" });
+		for (let i = 0; i < 3; i++) (panel.update(undefined, true), mock.timers.tick(2000));
+		assert.equal(root.kids.length, 0, "cleared six seconds after the unit moved on");
+	} finally {
+		mock.timers.reset();
+	}
+});
+
+test("the focus comes back to the control that had it after a brief disconnect, and to Send after a refusal", async () => {
+	const panel = mount();
+	panel.update(approval("m1"), true);
+	choices()[1]!.click();
+	choices()[1]!.focus();
+	panel.update(approval("m1"), false);
+	assert.equal(page.activeElement, page.body, "a disabled control loses the focus");
+	panel.update(approval("m1"), true);
+	assert.equal(page.activeElement, choices()[1], "and gets it back on reconnecting");
+	button("Send answer")!.focus();
+	button("Send answer")!.click();
+	assert.equal(page.activeElement, page.body);
+	await reply({ outcome: "rejected", reason: "not-allowed" });
+	assert.equal(page.activeElement, button("Send answer"), "Send has it again after the refusal");
+	page.focused = undefined; // the user clicks elsewhere on the page
+	panel.update(approval("m1"), true);
+	assert.equal(page.activeElement, page.body, "a focus the user moved away is not taken back by the next update");
+});
+
+test("busy after the other answer's read-only echo came before the reply still lets the panel answer again once the dialog is open", async () => {
+	const panel = mount();
+	panel.update(approval("m1"), true);
+	choices()[0]!.click();
+	button("Send answer")!.click();
+	panel.update(onItsWay("m1"), true);
+	await reply({ outcome: "busy" });
+	panel.update(approval("m1"), true);
+	assert.equal(choices()[0]!.disabled, false);
+	assert.deepEqual(checked(), [0]);
+});
+
+test("a click on the page outside the panel keeps the focus where the user put it when the panel is enabled again", () => {
+	const panel = mount();
+	panel.update(approval("m1"), true);
+	choices()[1]!.focus();
+	panel.update(approval("m1"), false);
+	page.on.pointerdown!({ target: page.body });
+	panel.update(approval("m1"), true);
+	assert.equal(page.activeElement, page.body);
 });

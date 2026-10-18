@@ -144,15 +144,15 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, openTile }
 		return body;
 	} });
 
-	/** A tool call as an action card: its state badge (running, done, failed), name, and one line; arguments and result inside. */
-	function action(t: NonNullable<Item["tools"]>[number]) {
-		const r = model.result(t.id), body = h("pre", { class: "out" }, r?.text ?? "");
+	/** A tool call of entry `of` as an action card: its state badge (running, done, failed), name, and one line; arguments (all of them on request) and result inside. */
+	function action(t: NonNullable<Item["tools"]>[number], of: string) {
+		const r = model.result(t.id), body = h("pre", { class: "out" }, r?.text ?? ""), args = h("pre", { class: "args" }, t.args ?? ""), whole = t.cut ? h("button", { class: "more", type: "button" }, "show all arguments") : null;
+		whole?.addEventListener("click", () => fetchBody(whole, args, of, (it) => ((x) => x && `${x.args ?? ""}${x.cut ? "\n… (cut at 1 MB)" : ""}`)(it.tools?.find((x) => x.id === t.id))));
 		const more = r?.more ? h("button", { class: "more", type: "button" }, `show all (${size(r.bytes ?? 0)})`) : null;
 		more?.addEventListener("click", () => fetchBody(more, body, r!.id, (it) => it.text));
-		const state = r ? (r.isError ? "error" : "done") : "working";
 		const open = t.name === "show_doc" && data.doc ? h("button", { class: "more open", type: "button" }, "open beside") : null;
 		open?.addEventListener("click", (event) => (event.preventDefault(), t.summary.split(", ").forEach(doc)));
-		return h("details", { class: "act" }, h("summary", { "data-mark": state }, h("b", { class: "badge" }), h("code", null, t.name), h("span", { class: "sum" }, t.summary), open), h("pre", { class: "args" }, t.args ?? ""), r && h("div", { class: "result" }, r.images ? h("em", null, `${r.images} image(s)`) : null, body, more));
+		return h("details", { class: "act" }, h("summary", { "data-mark": r ? (r.isError ? "error" : "done") : "working" }, h("b", { class: "badge" }), h("code", null, t.name), h("span", { class: "sum" }, t.summary), open), args, whole, r && h("div", { class: "result" }, r.images ? h("em", null, `${r.images} image(s)`) : null, body, more));
 	}
 	function render(it: Item): HTMLElement {
 		const stamp = h("time", null, clock(it.at));
@@ -161,7 +161,7 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, openTile }
 			case "assistant": {
 				const me = who(), body = h("pre", { class: "thought-text" }), more = it.thought ? h("button", { class: "thought", type: "button" }, it.thought < 0 ? "◇ thought · redacted" : `◇ thought · ${it.thought.toLocaleString()} chars`) : null;
 				if (it.thought && it.thought > 0) more?.addEventListener("click", () => fetchBody(more, body, it.id, (full) => full.thoughtText));
-				return h("article", { class: "tx in" }, icon(me.role), h("div", { class: "tx-body" }, h("header", null, h("b", null, me.name), it.model ? h("span", null, it.model) : null, stamp, it.stop ? h("span", { class: "stop", "data-mark": "error" }, it.stop) : null), more, body, it.text ? h("div", { class: "md" }, mount(parse(it.text))) : null, it.error ? h("p", { class: "fault" }, it.error) : null, ...(it.tools ?? []).map(action)));
+				return h("article", { class: "tx in" }, icon(me.role), h("div", { class: "tx-body" }, h("header", null, h("b", null, me.name), it.model ? h("span", null, it.model) : null, stamp, it.stop ? h("span", { class: "stop", "data-mark": "error" }, it.stop) : null), more, body, it.text ? h("div", { class: "md" }, mount(parse(it.text))) : null, it.error ? h("p", { class: "fault" }, it.error) : null, ...(it.tools ?? []).map((t) => action(t, it.id))));
 			}
 			case "bash": return h("article", { class: "tx sys" }, h("details", { class: "act" }, h("summary", { "data-mark": it.exit ? "error" : "done" }, h("b", { class: "badge" }), h("code", null, "shell"), h("span", { class: "sum" }, `! ${it.command}`), it.exit ? h("span", { class: "stop", "data-mark": "error" }, `exit ${it.exit}`) : null), it.text ? h("pre", { class: "out" }, it.text) : null));
 			case "notice": return h("article", { class: "tx sys" }, h("details", { class: "notice" }, h("summary", null, icon("comms"), h("em", null, "incoming"), NOTICE[it.type ?? ""] ?? it.type ?? "notice", " ", (it.from && link(it.from)) || (it.from ?? ""), stamp), h("pre", null, it.text ?? "")));

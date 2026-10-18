@@ -23,7 +23,7 @@ test("an assistant message has markdown text, thinking as a size, one summary li
 	assert.deepEqual([a.kind, a.text, a.thought, a.model, a.ctx, a.stop], ["assistant", "Done.", 12, "m-1", 1234, undefined]);
 	assert.deepEqual(a.tools!.map((t) => [t.name, t.summary]), [
 		["bash", "git status"], ["read", "/a/b.ts"], ["edit", "/a/c.ts"], ["subagent", "lint · worker"], ["intercom", "send main hi"], ["ask_user", "Which?"], ["ask_user_question", "Which lib? (+2 more)"], ["ask_user_question", "Only one?"],
-		["show_doc", "/a/x.html, /a/y.md"], ["todo", "create write tests"], ["MonitorCreate", "wait for deploy"], ["mystery", "(arg)"],
+		["show_doc", "/a/x.html, /a/y.md"], ["todo", "create write tests"], ["MonitorCreate", "wait for deploy"], ["mystery", "(first: arg)"],
 	]);
 	assert.equal(a.thoughtText, undefined, "thinking text is fetched on click");
 	assert.ok(a.tools!.every((t) => t.args?.startsWith("{")), "the arguments stay whole inside the card");
@@ -39,10 +39,19 @@ test("a question tool's summary is its questions' headers, short enough for a ph
 		call("t1", "ask_user_question", { questions: two }), call("t2", "ask_user_question", { questions: [two[0]] }), call("t3", "ask_user_question", { questions: [two[0], { question: "No header?" }] }),
 		call("t4", "ask_user", { question: "Which?\nmore context", options: ["a", "b"] }),
 		call("t5", "mystery", { config: { deep: true }, items: [{ a: 1 }] }), call("t6", "mystery", { config: { deep: true }, path: "src/a.ts" }), call("t7", "mystery", {}),
+		call("t8", "ask_user_question", { questions: JSON.stringify(two) }), call("t9", "ask_user_question", { questions: "not json" }), call("t10", "ask_user_question", { questions: JSON.stringify({ question: "Solo?" }) }), call("t11", "ask_user_question", { questions: "42" }),
 	])) as Item;
-	assert.deepEqual(a.tools!.map((t) => t.summary), ["Phone · Channels", "Phone", "Ship the phone check? (+1 more)", "Which?", "(config, items)", "(src/a.ts)", "()"]);
+	assert.deepEqual(a.tools!.map((t) => t.summary), ["Phone · Channels", "Phone", "Ship the phone check? (+1 more)", "Which?", "(config, items)", "(path: src/a.ts)", "()", "Phone · Channels", "not json", "Solo?", "42"]);
 	assert.ok(!a.tools!.some((t) => /[{}[\]]|\[object/.test(t.summary)), "no summary is raw JSON");
 	assert.match(a.tools![0]!.args!, /"Which channels\?"/, "the full questions stay reachable inside the card");
+});
+
+test("a tool call's arguments past 1500 characters are marked cut, and the full entry carries them whole", () => {
+	const long = assistant("a1", "u1", [call("t1", "write", { path: "a.ts", content: "x".repeat(4000) }), call("t2", "bash", { command: "ls" })]);
+	const [cut, short] = (item(long) as Item).tools!;
+	assert.deepEqual([cut!.args!.length, cut!.cut, short!.cut], [1500, true, undefined]);
+	const whole = (item(long, true) as Item).tools![0]!;
+	assert.deepEqual([whole.args!.length > 4000, whole.cut], [true, undefined]);
 });
 
 test("a tool result carries its call id, a 2 KB preview, and its size; the full entry lifts the cap", () => {

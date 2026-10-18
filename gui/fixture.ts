@@ -1,7 +1,7 @@
 import type { Mark } from "../src/dashboard.ts";
 import type { Net, Unit } from "../src/net.ts";
 import type { Data, Page } from "./chat.ts";
-import { DEMO_DOC, demoHistory } from "./demo-chat.ts";
+import { DEMO_DOC, demoHistory, WHOLE } from "./demo-chat.ts";
 import type { Tile } from "./layer.ts";
 import type { Source } from "./stream.ts";
 
@@ -9,7 +9,7 @@ import type { Source } from "./stream.ts";
 // disconnected page. It stands in for the server's EventSource, so the real reconnect logic runs against it.
 
 const unit = (id: string, name: string, role: Unit["role"], mark: Mark, note?: string, subs: Unit[] = []): Unit => ({ id, key: id, control: true, name, role, mark, note, subs });
-// What a waiting demo unit waits on: a secret (odd), two questions as ask_user_question asks them (every fourth), or robot_hand's selector; the last two answer.
+// What the nth wait is on: a secret (odd), two questions as ask_user_question asks them (n % 4 == 2), or robot_hand's selector; the last two answer.
 const two = [{ header: "Window", question: "When should the ops deploy go out?", options: [{ title: "Tonight 22:00", description: "Low traffic; on-call is awake." }, { title: "Tomorrow 08:00" }], multiple: false, freeform: true }, { header: "Notify", question: "Who should be told?", options: [{ title: "ops" }, { title: "billing" }, { title: "support" }], multiple: true, freeform: true }];
 const hand = { title: "Robot Hand — Deploy needs your sudo password\n\n  ! npm run deploy", copy: "npm run deploy", choices: [{ label: "Type it into a new Herdr pane (I press Enter)", note: "Opens a pane with the command typed; press Enter there" }, { label: "Put it in my prompt", note: "Lands in the terminal's prompt; press Enter there" }, { label: "Copy it to my clipboard", note: "Copies on this computer", localOnly: true as const }, { label: "No, thanks" }] };
 const ask = (n: number): Unit["pending"] => (n % 2 ? { callId: `demo-${n}`, tool: "secret_drop", why: "It waits for a secret." } : { callId: `demo-${n}`, ...(n % 4 ? { tool: "ask_user_question", asks: two, answer: { dialog: `d${n}`, digest: "0".repeat(64), questions: two } } : { tool: "robot_hand", answer: { dialog: `d${n}`, digest: "0".repeat(64), select: hand } }) });
@@ -36,7 +36,7 @@ const units = (net: Net) => net.bases.flatMap((b) => b.tabs.flatMap((t) => t.uni
 export interface Control { drop(): void; silence(): void; restore(): void; doc(): void }
 
 export function createFixture({ resume, tile, tick = 2500 }: { resume(): void; tile(tile: Tile): void; tick?: number }): { open(watch: string | null): Source; data(key: string): Data; control: Control } {
-	let net = demo(), step = 0, dropped = false, silent = false, current: FixtureSource | undefined, live = 0;
+	let net = demo(), step = 0, waits = 0, dropped = false, silent = false, current: FixtureSource | undefined, live = 0;
 	const history = demoHistory();
 	/** The page of the chat that ends before `before` (the end of the history when absent), the way the server pages. */
 	const page = (before?: string): Page => {
@@ -82,10 +82,11 @@ export function createFixture({ resume, tile, tick = 2500 }: { resume(): void; t
 	setInterval(() => {
 		const all = units(net);
 		const pick = all[step % all.length]!;
+		if (pick.pending?.answer) return void step++; // a dialog the page can answer stays until it is answered
 		const options = NEXT[pick.mark];
 		pick.mark = step % 17 === 16 ? "error" : options[step % options.length]!;
 		pick.note = pick.mark === "working" ? "tool:edit" : pick.mark === "waiting" ? "waiting on a question" : undefined;
-		pick.pending = pick.mark === "waiting" ? ask(step) : undefined;
+		pick.pending = pick.mark === "waiting" ? ask(++waits) : undefined;
 		net = structuredClone(net);
 		step++;
 		current?.send("message", net);
@@ -111,13 +112,13 @@ export function createFixture({ resume, tile, tick = 2500 }: { resume(): void; t
 		doc: async (path) => (path.endsWith("rollout-plan.md") ? DEMO_DOC : undefined),
 		entry: async (id) => {
 			const item = history.find((i) => i.id === id);
-			return item && { ...item, thoughtText: item.kind === "assistant" ? "Thinking out loud about the rounding rules.\n\nCredit notes may need a separate sum." : undefined, text: item.more ? Array.from({ length: 120 }, (_, i) => `line ${i + 1} of the full tool result`).join("\n") : item.text };
+			return item && { ...item, thoughtText: item.kind === "assistant" ? "Thinking out loud about the rounding rules.\n\nCredit notes may need a separate sum." : undefined, tools: item.tools?.map((t) => (t.cut ? { ...t, args: WHOLE, cut: undefined } : t)), text: item.more ? Array.from({ length: 120 }, (_, i) => `line ${i + 1} of the full tool result`).join("\n") : item.text };
 		},
 	});
 	/** An answer lands at once, and the unit goes back to work a moment later. */
 	const answered = (key: string) => {
-		const u = units(net).find((x) => x.key === key);
-		if (u) setTimeout(() => ((u.mark = "working"), (u.note = "thinking"), (u.pending = undefined), (net = structuredClone(net)), current?.send("message", net)), 1500);
+		// The unit is found when the answer lands: the tick clones the net meanwhile.
+		setTimeout((u = units(net).find((x) => x.key === key)) => u && ((u.mark = "working"), (u.note = "thinking"), (u.pending = undefined), (net = structuredClone(net)), current?.send("message", net)), 1500);
 		return { ok: true, status: 200, body: { outcome: "accepted" } };
 	};
 	return { open: (watch) => new FixtureSource(watch), data, control };
@@ -126,13 +127,15 @@ export function createFixture({ resume, tile, tick = 2500 }: { resume(): void; t
 function mountToolbar(control: Control) {
 	const bar = document.createElement("div");
 	bar.style.cssText = "position:fixed;left:12px;bottom:12px;z-index:9;display:flex;gap:8px;align-items:center;padding:8px 10px;border-radius:12px;background:#0e1628;border:1px solid #2a3a60;font:12px system-ui;color:#8b99ba";
-	bar.append("demo fixture:");
-	for (const [label, run] of [["drop stream", control.drop], ["go silent", control.silence], ["restore", control.restore], ["doc arrives", control.doc]] as const) {
+	// On a phone it folds to a "demo" tab in the right margin, which no panel reaches; a tap shows the rest.
+	const phone = innerWidth < 640;
+	if (phone) bar.style.cssText += ";left:auto;bottom:auto;right:0;top:40%;writing-mode:vertical-rl;flex-direction:column;padding:6px 1px;gap:4px";
+	const buttons = [["demo", () => buttons.slice(1).forEach((b) => (b.style.display = b.style.display ? "" : "none"))], ["drop stream", control.drop], ["go silent", control.silence], ["restore", control.restore], ["doc arrives", control.doc]].map(([label, run]) => {
 		const button = document.createElement("button");
-		button.textContent = label;
-		button.style.cssText = "all:unset;cursor:pointer;padding:3px 9px;border-radius:8px;background:#1a2748;color:#dbe6ff";
-		button.onclick = run;
-		bar.append(button);
-	}
+		[button.textContent, button.onclick] = [label as string, run as () => void];
+		button.style.cssText = `all:unset;cursor:pointer;padding:3px 9px;border-radius:8px;background:#1a2748;color:#dbe6ff;${phone ? "padding:8px 1px;" : ""}${label !== "demo" && phone ? "display:none" : ""}`;
+		return button;
+	});
+	bar.append(...buttons);
 	document.body.append(bar);
 }

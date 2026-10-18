@@ -7,7 +7,7 @@ import { basename } from "node:path";
 const PREVIEW = 2048, FULL = 1 << 20, TEXT = 100_000, LAST_BYTES = 65_536;
 export const FULL_LIMIT = FULL;
 
-export interface Tool { id: string; name: string; summary: string; args?: string }
+export interface Tool { id: string; name: string; summary: string; args?: string; cut?: true }
 export interface Item {
 	id: string; kind: "user" | "assistant" | "result" | "bash" | "notice" | "divider" | "meta"; at?: string; text?: string; more?: boolean; images?: number; pics?: string[];
 	thought?: number; thoughtText?: string; tools?: Tool[]; model?: string; stop?: string; error?: string; ctx?: number;
@@ -38,15 +38,18 @@ function toolLine(name: string, a: Json): string {
 		case "read": case "edit": case "write": return first(a.path ?? a.file_path);
 		case "subagent": case "subagent_resume": return [a.name, a.agent].filter(Boolean).join(" · ");
 		case "intercom": return [a.action, a.to, first(a.message, 80)].filter(Boolean).join(" ");
-		case "ask_user": case "ask_user_question": return asked(Array.isArray(a.questions) ? a.questions : [a]);
+		// A model may give `questions` as a JSON string; one that is not JSON shows as written.
+		case "ask_user": case "ask_user_question": { const qs = typeof a.questions === "string" ? (parse(a.questions) ?? a.questions) : a.questions; return Array.isArray(qs) ? asked(qs) : qs && typeof qs === "object" ? asked([qs]) : qs !== undefined && typeof a.questions === "string" ? first(a.questions) : asked([a]); }
 		case "show_doc": return first([a.paths].flat().join(", "));
 		case "todo": return [a.action, first(a.subject ?? a.id, 80)].filter(Boolean).join(" ");
 		case "MonitorCreate": return first(a.description ?? a.command);
-		// Another tool shows its first plain argument; one with only structured arguments shows their names, never "[object Object]".
-		default: return `(${first(Object.values(a).find((v) => ["string", "number", "boolean"].includes(typeof v)) ?? Object.keys(a).join(", "), 100)})`;
+		// Another tool shows its first plain argument by name; one with only structured arguments shows their names, never "[object Object]".
+		default: { const plain = Object.entries(a).find(([, v]) => ["string", "number", "boolean"].includes(typeof v)); return `(${first(plain ? `${plain[0]}: ${plain[1]}` : Object.keys(a).join(", "), 100)})`; }
 	}
 }
 
+/** A tool call: its line, and its arguments up to `cap` (`cut` when longer; the one-entry fetch carries them whole). */
+const tool = (b: Json, cap: number, args = JSON.stringify(b.arguments ?? {}, null, 1)): Tool => ({ id: b.id, name: b.name, summary: toolLine(b.name, b.arguments ?? {}), args: clip(args, cap), ...(args.length > cap ? { cut: true as const } : {}) });
 /** One session entry as an item, or undefined for kinds the chat does not show. `full` lifts the preview caps (thinking text, whole tool result). */
 export function toItem(d: Json, len: number, full = false): Item | undefined {
 	const base = { id: String(d.id), at: d.timestamp as string | undefined };
@@ -57,7 +60,7 @@ export function toItem(d: Json, len: number, full = false): Item | undefined {
 		case "assistant": {
 			const thinking = blocks(m.content).filter((b) => b?.type === "thinking");
 			const thought = thinking.reduce((n, b) => n + String(b.thinking ?? "").length, 0);
-			const tools = blocks(m.content).filter((b) => b?.type === "toolCall").map((b): Tool => ({ id: b.id, name: b.name, summary: toolLine(b.name, b.arguments ?? {}), args: clip(JSON.stringify(b.arguments ?? {}, null, 1), full ? FULL : 1500) }));
+			const tools = blocks(m.content).filter((b) => b?.type === "toolCall").map((b): Tool => tool(b, full ? FULL : 1500));
 			const stop = ["error", "aborted", "length"].includes(m.stopReason) ? m.stopReason : undefined;
 			return { ...base, kind: "assistant", text: clip(textOf(m.content), TEXT), thought: thought || (thinking.length ? -1 : undefined), ...(full ? { thoughtText: thinking.map((b) => b.thinking).join("\n\n") } : {}), tools, model: m.model, stop, error: m.errorMessage, ctx: m.usage?.totalTokens };
 		}
