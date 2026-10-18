@@ -1,13 +1,14 @@
 // @ts-nocheck: the plugin script is plain JavaScript and the fake Herdr's panes are loose test data.
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { once } from "node:events";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { fileStore, instanceOf, main, netView, socketCall, toggle } from "../herdr-plugin/net-view.mjs";
+import { fileStore, instanceOf, main, netView, socketCall, startup, toggle } from "../herdr-plugin/net-view.mjs";
 
 const PLUGIN = fileURLToPath(new URL("../herdr-plugin/", import.meta.url));
 
@@ -44,8 +45,16 @@ function memoryStore() {
 
 const deps = (herdr, store, instance = "server-1") => ({ call: (method, params) => herdr.handle(method, params), store, source: SOURCE, instance });
 
-test("netView sorts by the sb_order token, ascending, and filters nothing", () => {
-	assert.deepEqual(netView(), { label: "net", sort: [{ field: { token: "sb_order" }, order: "asc" }] });
+test("netView sorts by the sb_order token, ascending, then by Herdr's own place order, and filters nothing", () => {
+	assert.deepEqual(netView(), {
+		label: "net",
+		sort: [
+			{ field: { token: "sb_order" }, order: "asc" },
+			{ field: "workspace_order", order: "asc" },
+			{ field: "tab_order", order: "asc" },
+			{ field: "pane_order", order: "asc" },
+		],
+	}, "an agent without the token comes last, and the agents without it stay in a fixed order");
 	assert.equal("filter" in netView(), false, "agents outside the net stay visible, after the net");
 });
 
@@ -76,6 +85,60 @@ test("a state left by an earlier server, or a view another owner installed over 
 	assert.deepEqual(await toggle(deps(herdr, store, "server-2")), { on: true }, "the stored on is stale, so the press brings this view back");
 	assert.equal(herdr.view.source, SOURCE);
 	assert.ok(herdr.clears.every((params) => params.source === SOURCE));
+});
+
+test("startup turns the view on without a press, and the key then toggles it off and on again", async () => {
+	const herdr = fakeHerdr(), store = memoryStore();
+	assert.deepEqual(await startup(deps(herdr, store)), { on: true });
+	assert.deepEqual(herdr.view, { source: SOURCE, label: "net", sort: netView().sort, filter: undefined }, "the same view the key installs, owned as plugin:<id>");
+	assert.deepEqual(store.state, { on: true, instance: "server-1" });
+	assert.deepEqual(herdr.clears, [], "startup never clears: a server that has just started has no view to clear");
+
+	assert.deepEqual(await toggle(deps(herdr, store)), { on: false }, "the first press after startup turns it off, not on again");
+	assert.equal(herdr.view, undefined);
+	assert.deepEqual(await toggle(deps(herdr, store)), { on: true });
+	assert.equal(herdr.view.source, SOURCE);
+});
+
+test("a server that has just started is on by default whatever an earlier server left in the state", async () => {
+	for (const left of [undefined, { on: true, instance: "server-1" }, { on: false, instance: "server-1" }]) {
+		const herdr = fakeHerdr(), store = memoryStore();
+		store.state = left;
+		assert.deepEqual(await startup(deps(herdr, store, "server-2")), { on: true }, `after ${JSON.stringify(left)}`);
+		assert.equal(herdr.view.source, SOURCE);
+		assert.deepEqual(store.state, { on: true, instance: "server-2" });
+	}
+});
+
+test("a startup that runs again in the same server keeps a press that turned the view off, and installs again over its own on", async () => {
+	const herdr = fakeHerdr(), store = memoryStore();
+	await startup(deps(herdr, store));
+	await toggle(deps(herdr, store));
+	herdr.calls.length = 0;
+	assert.deepEqual(await startup(deps(herdr, store)), { on: false }, "this server's own off stands");
+	assert.equal(herdr.view, undefined);
+	assert.deepEqual(herdr.calls, [], "and it asks Herdr for nothing");
+
+	await toggle(deps(herdr, store)); // on again
+	assert.deepEqual(await startup(deps(herdr, store)), { on: true });
+	assert.equal(herdr.view.source, SOURCE, "the same view replaced by itself");
+	assert.deepEqual(store.state, { on: true, instance: "server-1" });
+});
+
+test("startup replaces another owner's view, as a press does, and a failed install leaves no view and no state", async () => {
+	const herdr = fakeHerdr(), store = memoryStore();
+	herdr.view = { source: "plugin:someone.else", label: "theirs" };
+	await startup(deps(herdr, store));
+	assert.equal(herdr.view.source, SOURCE);
+
+	const broken = fakeHerdr({ failView: true }), unsaved = memoryStore();
+	await assert.rejects(startup(deps(broken, unsaved)), (error) => error.code === "invalid_params");
+	assert.equal(broken.view, undefined);
+	assert.equal(unsaved.state, undefined);
+
+	const lost = fakeHerdr();
+	await assert.rejects(startup(deps(lost, { read: async () => undefined, write: async () => Promise.reject(new Error("ENOSPC")) })), /ENOSPC/);
+	assert.equal(lost.view, undefined, "a view whose state could not be saved is cleared again");
 });
 
 test("a failed install leaves no state behind and is rethrown", async () => {
@@ -166,18 +229,60 @@ test("main runs the action against a real socket: on, then off, with its state u
 		assert.equal(herdr.view, undefined);
 		assert.deepEqual(lines, ["net view on", "net view off"]);
 		await assert.rejects(main({ HERDR_SOCKET_PATH: fake.path }), /is a Herdr plugin action/);
+
+		// The startup hook of a new server (no state of this server yet): on without a press, and the state is the toggle's own.
+		rmSync(join(fake.dir, "state", "net-view.json"));
+		await main(env, ["startup"]);
+		assert.equal(herdr.view.source, SOURCE);
+		assert.deepEqual(JSON.parse(readFileSync(join(fake.dir, "state", "net-view.json"), "utf8")), { on: true, instance: instanceOf(fake.path) });
+		await main(env);
+		assert.equal(herdr.view, undefined, "the key's first press after startup turns the view off");
+		await main(env, ["startup"]);
+		assert.equal(herdr.view, undefined, "a startup that runs again in this server leaves its off alone");
+		assert.deepEqual(lines.slice(2), ["net view on", "net view off", "net view off"]);
+		await assert.rejects(main(env, ["start"]), /takes no argument/);
+		await assert.rejects(main(env, ["startup", "now"]), /takes no argument/);
 	} finally {
 		console.log = log;
 		fake.close();
 	}
 });
 
-test("the manifest declares the action, its minimum Herdr version, and a command whose files exist", () => {
+test("the manifest declares the startup hook and the action, the minimum Herdr version, and commands whose files exist", () => {
 	const manifest = readFileSync(join(PLUGIN, "herdr-plugin.toml"), "utf8");
 	assert.match(manifest, /^id = "wayne930242\.straw-boss"$/m, "the view's source is plugin:<this id>");
 	assert.match(manifest, /^min_herdr_version = "0\.9\.3"$/m);
+	assert.match(manifest, /\[\[startup\]\]\ncommand = \["\/bin\/bash", "run\.sh", "net-view\.mjs", "startup"\]/);
+	assert.equal(manifest.match(/\[\[startup\]\]/g).length, 1, "one hook, and it is the one-shot startup of net-view.mjs");
 	assert.match(manifest, /\[\[actions\]\]\nid = "net"\ntitle = .*\ncontexts = \["global"\]\ncommand = \["\/bin\/bash", "run\.sh", "net-view\.mjs"\]/);
 	for (const file of ["run.sh", "net-view.mjs"]) assert.ok(existsSync(join(PLUGIN, file)), file);
+});
+
+test("the startup command from the manifest turns the view on and then exits by itself, leaving no process behind", async () => {
+	const herdr = fakeHerdr();
+	const fake = await socket(async (request, reply) => reply(`${JSON.stringify({ id: request.id, result: await herdr.handle(request.method, request.params) })}\n`));
+	const manifest = readFileSync(join(PLUGIN, "herdr-plugin.toml"), "utf8");
+	const command = JSON.parse(manifest.match(/\[\[startup\]\]\ncommand = (\[.*\])/)[1]);
+	// Herdr runs it from the plugin directory with the plugin's environment and the PATH of whatever started the server.
+	const env = { PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, HOME: fake.dir, HERDR_PLUGIN_ID: "wayne930242.straw-boss", HERDR_PLUGIN_STATE_DIR: join(fake.dir, "state"), HERDR_SOCKET_PATH: fake.path, HERDR_PLUGIN_EVENT: "startup" };
+	const child = spawn(command[0], command.slice(1), { cwd: PLUGIN, env, stdio: ["ignore", "pipe", "pipe"] });
+	let out = "", err = "";
+	child.stdout.on("data", (chunk) => (out += chunk));
+	child.stderr.on("data", (chunk) => (err += chunk));
+	const limit = setTimeout(() => child.kill("SIGKILL"), 15_000);
+	try {
+		const [code, signal] = await once(child, "close");
+		assert.deepEqual([code, signal, err], [0, null, ""], "the hook ends by itself with success: it is not a daemon");
+		assert.equal(out.trim(), "net view on");
+		assert.equal(herdr.view.source, SOURCE);
+		assert.deepEqual(JSON.parse(readFileSync(join(fake.dir, "state", "net-view.json"), "utf8")), { on: true, instance: instanceOf(fake.path) });
+		assert.equal(child.exitCode, 0);
+		assert.throws(() => process.kill(child.pid, 0), { code: "ESRCH" }, "no process of the hook is left");
+	} finally {
+		clearTimeout(limit);
+		child.kill("SIGKILL");
+		fake.close();
+	}
 });
 
 test("run.sh runs the script with the node on PATH, from the plugin directory, passing its arguments", () => {

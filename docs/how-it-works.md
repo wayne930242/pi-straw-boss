@@ -117,13 +117,14 @@ The optional Herdr plugin in `herdr-plugin/` (id `wayne930242.straw-boss`, actio
 The net view lists the head tower's workspace first, then the other workspaces in Herdr's order.
 In each workspace the tower comes first, then the tabs in their order, and in each tab the main agent and then the members.
 Every subagent sits directly under the session that launched it, including one that pi-herdr-agents opened in a worktree sub workspace.
-Agents the net does not know come last in Herdr's own order, so nothing is hidden and an agent that waits for you stays on the list.
+Agents the net does not know come last, in Herdr's workspace, tab and pane order, so nothing is hidden and an agent that waits for you stays on the list.
 The sidebar header reads `net` while the view is on.
+The view is on by default: the plugin turns it on when the Herdr server starts, and the key switches it off and on again.
 The same order drives the collapsed sidebar, the mobile list, mouse targets, and `focus_agent` numbering and next/previous navigation.
 Herdr's `agent.list`, notifications, and attention counts do not change.
 
 **The tokens.**
-Every session in the net writes two display tokens next to `sb_role`, in the same report, on the same 4 minute refresh and with the same 10 minute TTL.
+Every session in the net writes display tokens next to `sb_role`, in the same report, on the same 4 minute refresh and with the same 10 minute TTL.
 It writes them on the panes of the subagents it launched as well, because those never join and write nothing themselves.
 A session that ends clears its own and its subagents'.
 
@@ -134,35 +135,43 @@ A session that ends clears its own and its subagents'.
   Every number is zero-padded, so plain string order is numeric order, and a subagent's key sorts after its launcher's and before the launcher's next sibling's.
 - `sb_mark` says what a net member is, in a few characters: a star alone (Font Awesome's, U+F005) for a main agent, a person alone (Font Awesome's, U+F007) for a member, and `[sub] <launcher>` for a subagent, with the launcher's name cut to 24 characters.
   A tower has none: its tab already carries the radio tower glyph.
+- `sb_indent` is on a subagent alone, and is the branch to it from its launcher, drawn like the worktrees in Herdr's Spaces panel: `├─` while a later subagent of the same launcher is marked, `└─` on the last one.
+  Subagents of one launcher are siblings at every depth.
+  A tower, a main agent and a member carry none, and a session clears the one a pane kept from when it ran a subagent.
 
-Both tokens rest on Herdr's order as of the session's last refresh, so moving a tab or workspace shows in the net view within 4 minutes.
+The tokens rest on Herdr's order as of the session's last refresh, so moving a tab or workspace shows in the net view within 4 minutes, and a subagent that has a new sibling gets its `├─` at the next refresh.
 A subagent is marked while its pane runs pi, and its tokens go at the next refresh once it has finished.
 
 **Sidebar rows.**
-`sb_mark` also shows the roles in Herdr's own grouped view, which a plugin cannot reorder.
-Add it to a row of `[ui.sidebar.agents]` in `config.toml`: the snippet makes a main agent's star and a member's person bold and a subagent's `[sub]` dim, and leaves the colors to your Herdr theme; add an `fg` to a rule to color a mark.
-Agents without the token (towers, and anything outside the net) show nothing for it.
+The tokens also show the roles in Herdr's own grouped view, which a plugin cannot reorder.
+Add them to a row of `[ui.sidebar.agents]` in `config.toml`.
+`$sb_indent` goes before the state icon, so a subagent hangs under its launcher as the worktrees do in the Spaces panel; Herdr puts its own ` · ` after it, and an agent without the token shows nothing.
+In `$sb_mark` a main agent's star and a member's person are bold, and the rule that hides the `[sub]` mark leaves a subagent one line, because the branch already says what it is. The snippet leaves the colors to your Herdr theme; add an `fg` to a rule to color a mark.
+Everything sits on one row, so every agent takes one line; a second row for the agent name would make it two.
 
 ```toml
 [ui.sidebar.agents]
 rows = [
-  ["state_icon", "machine", "workspace", "tab"],
   [
+    { token = "$sb_indent", dim = true },
+    "state_icon",
     { token = "$sb_mark", rules = [
+      { starts_with = "[sub]", hide = true },
       { starts_with = "\uF005", bold = true },
       { starts_with = "\uF007", bold = true },
-      { starts_with = "[sub]", dim = true },
     ] },
-    "agent",
+    "machine", "workspace", "tab",
   ],
 ]
 ```
 
-This is Herdr's default layout with the mark put before the agent name; add the `$sb_mark` entry to your own rows if you have changed them.
+Herdr's default has a second row with the agent name; put `"agent"` back in a row of its own, or in this one, if you want it.
+The token colours take hex values only, so add an `fg` to a token or a rule to taste.
 `herdr config check` accepts the snippet, and `herdr server reload-config` applies it.
 
 **Install.**
-Link the plugin from a checkout and bind the action to a key:
+Link the plugin from a checkout and bind the action to a key.
+Herdr runs the startup hook when a server starts, not when a plugin is linked, so a server that is already running shows the view after one press of the key, or after a restart:
 
 ```bash
 herdr plugin link /path/to/pi-straw-boss/herdr-plugin
@@ -183,14 +192,21 @@ The plugin needs Herdr 0.9.3 or newer and uses a Unix socket, so it runs on macO
 The tokens come from the sessions, so a session that still runs an older pi-straw-boss (before 0.6.5) has none until pi reloads it, and sorts after the others.
 
 **How the view works.**
-The view is one `agent.view.set` request on Herdr's socket, which the CLI has no command for, sorted by the `sb_order` token ascending.
-Herdr sorts a present value before a missing one, so agents without the token keep Herdr's own order after the net.
+The view is one `agent.view.set` request on Herdr's socket, which the CLI has no command for, sorted by the `sb_order` token ascending, then by Herdr's workspace, tab and pane order.
+Herdr sorts a present value before a missing one, so agents without the token come after the net, and among themselves in that place order.
 The plugin writes no tokens of its own.
+Herdr servers before 0.9.4 do not sort an installed view again when tokens change (0.9.4 does): the order stays as it was at the last install until the view is switched off and on again, so press the key twice to refresh it.
+
+**On at start.**
+`[[startup]]` in the manifest runs `net-view.mjs startup` once after the server has restored its session, and again when a new server takes over in an update handoff.
+It installs the same view as the key and exits at once; no process stays running, and a failure (Herdr refusing the view) is in the plugin log and does not stop the server.
+Every server start turns the view on, whatever an earlier server left: a press that turned it off lasts until the server stops.
+The one exception is a startup that runs again in the same server, which leaves that server's own "off" alone.
 
 **The toggle.**
 Herdr cannot say whether a view is active, so the action records "on" and the identity of the running server (the socket file's inode and creation time) in `net-view.json` in the plugin's state directory.
 The next press clears the view with `agent.view.clear` named to this plugin's own source, so it never clears a view that another owner installed.
-A restarted server drops its view, and its different identity makes the stored state count as off, so one press turns the view on.
+A restarted server drops its view, and its different identity makes the stored state count as off; the startup hook then turns the view on and records it, so the first press switches it off.
 A view another owner installed over this one also counts as off: the press installs this one again.
 
 **Limits.**
@@ -220,7 +236,7 @@ Herdr starts plugin commands with the PATH of the process that started its serve
 ## What it writes
 
 - Herdr pane token `sb_role` (`main`, `member` or `tower`; a tower tab is also marked right after it is created) and workspace token `tower` (the tower's intercom session id), both refreshed every 4 minutes with a 10 minute TTL and cleared at shutdown.
-- Pane tokens `sb_order` (a sort key) and `sb_mark` (a role label) next to `sb_role`, and the same two on the panes of the subagents the session launched, with the same refresh and TTL; they feed the sidebar net view and the optional rows below (see [Sidebar net view](#sidebar-net-view)).
+- Pane tokens `sb_order` (a sort key), `sb_mark` (a role label) and, on subagents, `sb_indent` (a tree branch) next to `sb_role`, and the subagent ones on the panes of the subagents the session launched, with the same refresh and TTL; they feed the sidebar net view and the optional rows below (see [Sidebar net view](#sidebar-net-view)).
 - A pi session entry `straw-boss` (`tower`) so a resumed tower keeps its role. Members write no entry: every session joins at start, so entries saved by 0.4.0 (`asked`, `joined`) are ignored.
 - While remote access is on, one `tailscale serve` entry (HTTPS 8443, proxying to the GUI server), removed when it goes off.
 - One intercom extension channel per tab, `straw-boss/tab/<hex of the tab id>`, registered by every joined session and tower; the channel's owner (the first to join) only records the main, and it is not the main by that. Tab ids over 24 characters are refused.

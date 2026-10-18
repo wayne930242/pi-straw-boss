@@ -1,10 +1,14 @@
 id = "wayne930242.straw-boss"
 name = "Straw Boss"
-version = "0.1.0"
+version = "0.2.0"
 min_herdr_version = "0.9.3"
-description = "Toggle the sidebar Agents list into a straw net view: towers first, then main agents, then members"
+description = "Turn the sidebar Agents list into a straw net view when Herdr starts, and toggle it by key: towers first, then main agents, then members"
 # agent.view.set is a socket method, and the script reaches it over a Unix socket.
 platforms = ["macos", "linux"]
+
+# Runs once after the server restores its session, and exits: the net view is on by default.
+[[startup]]
+command = ["/bin/bash", "run.sh", "net-view.mjs", "startup"]
 
 [[actions]]
 id = "net"

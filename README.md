@@ -19,7 +19,7 @@ Run a few agents on the same project and they start stepping on each other: two 
 - **A browser view** of the whole net, `/boss gui`: every workspace as a base with its tower, agents, and subagents, animated and read-only. Click a base to zoom in, click a unit to read its chat as a live comms log; units that wait on you queue up as alerts.
 - **Broadcast** to a tab, a workspace, every tower, or every session.
 - **Tidy tabs.** When a pi starts in a tab or quits out of it, the tab's panes are made equal again, so workers split off one by one don't leave a chain of halves.
-- **A net view in Herdr's sidebar.** An optional plugin turns the Agents list into the net, towers first and each subagent under its launcher, on one key.
+- **A net view in Herdr's sidebar.** An optional plugin turns the Agents list into the net, towers first and each subagent under its launcher, on by default and switched by one key.
 
 ## Install
 
@@ -55,8 +55,8 @@ Subagents and sessions in Herdr worktree workspaces never join: the session that
 
 An optional Herdr plugin in [`herdr-plugin/`](herdr-plugin) turns the sidebar's Agents list into a net view.
 It lists the head tower's workspace first, in each workspace the tower, then each tab's main agent and members, and every subagent right under the session that launched it, even in a worktree workspace.
-One key switches to it, and the same key switches back to Herdr's own view.
-pi-straw-boss writes the sort key (`sb_order`) and a role label (`sb_mark`) the view and your sidebar rows can use.
+The view is on whenever the Herdr server starts, and one key switches it off and on again.
+pi-straw-boss writes the sort key (`sb_order`), a role label (`sb_mark`) and, on subagents, a tree branch (`sb_indent`) the view and your sidebar rows can use.
 It needs Herdr 0.9.3 or newer and node.
 
 <p align="center"><img src="docs/sidebar-net-view.png" width="308" alt="Herdr's sidebar in the net view, one row per agent: each workspace's tower with the radio tower glyph first, main agents marked with a star and members with a person, and every subagent indented under the session that launched it"></p>
