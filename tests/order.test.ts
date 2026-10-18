@@ -132,7 +132,8 @@ test("netTokens reads Herdr for a session's own tokens (a tower has no mark) and
 
 	const main = await netTokens(run, place, "main", "Main");
 	assert.equal(MARK.main, "\uf005", "a main agent is marked by the star alone");
-	assert.equal(ARROW, "[subagent]", "a subagent is tagged in words, then its launcher");
+	assert.equal(ARROW, "[sub]", "a subagent is tagged in words, then its launcher");
+	assert.equal(MARK.member, "\uf007", "a member is marked by the person glyph alone");
 	assert.deepEqual(main, { own: { sb_order: "000.1.000.0.000", sb_mark: MARK.main }, kids: [{ pane: "wS:p1", order: "000.1.000.0.000.000", mark: `${ARROW} Main` }], joined: new Set() });
 	assert.deepEqual((await netTokens(run, place, "tower", "Main")).own, { sb_order: "000.0", sb_mark: null }, "a tower's tab already carries the glyph");
 	assert.deepEqual((await netTokens(run, { ...place, paneId: "wA:p99" }, "member", "Main")).own, { sb_order: null, sb_mark: MARK.member }, "a pane Herdr does not list has no key");

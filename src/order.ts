@@ -6,13 +6,13 @@ import { type HerdrRun, type HerdrTab, isSub, type Pane, panes, type Place, repo
 //    and then the tabs in tab order, in each tab the main agent and then the members, and every subagent right after the session that launched it,
 //    its own subagents after it in turn. Segments are fixed-width and `.`-separated, so plain string order is the numeric order of every segment,
 //    and a subagent's key is its parent's key plus one more segment, which sorts after the parent and before the parent's next sibling.
-//  - `sb_mark`: a short label that says what a net member is, a star alone for a main agent, a dot and `member` for a member, and `[subagent]` and the launcher's name for a subagent.
+//  - `sb_mark`: a short label that says what a net member is, a star alone for a main agent, a person (U+F007) alone for a member, and `[sub]` and the launcher's name for a subagent.
 //    A tower has none: its tab already carries the radio tower glyph.
 // A session writes them for itself and for the subagents it launched, which never join and write nothing, on the same 4 minute refresh as `sb_role`.
 
 /** The glyphs sit in Hack Nerd Font and MesloLGS NF: Font Awesome's star (U+F005), the middle dot, and the `[subagent]` tag. */
-export const MARK = { main: "\uf005", member: "\u00b7 member" } as const;
-export const ARROW = "[subagent]";
+export const MARK = { main: "\uf005", member: "\uf007" } as const;
+export const ARROW = "[sub]";
 // The dashboard shows eight subagents per session, but every live one is keyed: one left out would sort outside its launcher's span. Three digits count them.
 const MAX_KIDS = 999;
 const NAME_MAX = 24;
