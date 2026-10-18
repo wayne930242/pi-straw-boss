@@ -78,8 +78,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Pane balance is a separate extension entry with its plain-JavaScript helper.
 	assert.ok(count("src/balance.ts") + count("src/balance.mjs") <= 220, "src/balance.ts and src/balance.mjs stay small");
 	// The blocked relay (rpiv-ask-user-question, and pi's own dialog prompts) is its own extension entry too. It was 25 lines for the rpiv relay alone;
-	// the dialog relay raised it to 41 for the label of a dialog's title and the signed count that keeps the pairs balanced when pi delivers an end ahead of its start.
-	assert.ok(count("src/blocked.ts") <= 41, "src/blocked.ts stays small");
+	// the dialog relay raised it to 42 for the label of a dialog's title and the signed count that keeps the pairs balanced when pi delivers an end ahead of its start, and the guard for an end that reaches a retired runtime.
+	assert.ok(count("src/blocked.ts") <= 42, "src/blocked.ts stays small");
 	const apart = ["dashboard.ts", "net.ts", "gui.ts", "history.ts", "items.ts", "watch.ts", "balance.ts", "control.ts", "remote.ts", "pairing.ts", "qr.ts", "ask.ts", "blocked.ts", "bridge.ts", "owners.ts", "dialogs.ts", "order.ts", "mirror.ts", "probe.ts", "keys.ts", "documents.ts", "docs.ts"];
 	const rest = sum("src", names("src").filter((name) => !apart.includes(name)));
 	// 0.4.1 raised it from 540 to 575 for claiming and promotion; 0.5.0 to 610 for herdrCall (Herdr's answers with their error codes, spec task 4) and the /boss gui remote command;

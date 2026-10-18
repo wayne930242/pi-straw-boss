@@ -34,7 +34,8 @@ export default function blockedRelay(pi: ExtensionAPI): void {
 		const was = depth > 0;
 		depth += by;
 		if (was === depth > 0) return;
-		pi.events.emit("herdr:blocked", depth > 0 ? { active: true, label: labelOf(event) } : { active: false });
+		// An end that arrives after a reload or new session retired this runtime cannot be relayed; that runtime has no dialog left to report.
+		try { pi.events.emit("herdr:blocked", depth > 0 ? { active: true, label: labelOf(event) } : { active: false }); } catch {}
 	};
 	pi.on("ui_prompt_start", dialog(1));
 	pi.on("ui_prompt_end", dialog(-1));
