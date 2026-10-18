@@ -61,6 +61,15 @@ svg { display: block; }
 .modes button { white-space: nowrap; padding: 4px 14px; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--dim); font: 600 12px var(--sans); cursor: pointer; }
 .modes button[aria-pressed="true"] { border-color: #38e0ff; color: #38e0ff; background: #38e0ff14; }
 .term-root { min-height: 0; padding: 10px 16px 14px; } .term-root .term-tile { height: 100%; }
+/* The todo list above the composer, as pi's widget shows it in the terminal: ○ waiting, ◐ in progress, ✓ done. */
+.todos { margin: 0 16px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 12px; background: rgba(14, 22, 40, 0.85); font-size: 13px; }
+.todos summary { display: flex; gap: 10px; align-items: baseline; min-width: 0; list-style: none; cursor: pointer; } .todos summary::-webkit-details-marker { display: none; }
+.todos summary b { flex: none; color: #b48cff; font-weight: 600; } .todos summary span { min-width: 0; overflow: hidden; color: var(--dim); white-space: nowrap; text-overflow: ellipsis; }
+.todos summary::after { content: "▸"; margin-left: auto; color: var(--dim); } .todos[open] summary::after { content: "▾"; }
+.todos ol { display: grid; gap: 3px; max-height: 30vh; overflow-y: auto; margin: 6px 0 2px; padding: 0; list-style: none; }
+.todos li { margin: 0; font: 13px/1.5 var(--sans); } .todos li::before { content: "○"; display: inline-block; width: 1.4em; color: var(--dim); } .todos li.in_progress { color: #38e0ff; } .todos li.in_progress::before { content: "◐"; }
+.todos li.completed { color: var(--dim); text-decoration: line-through; } .todos li.completed::before { content: "✓"; color: #3ddc97; }
+.in-term .todos { display: none; }
 .new-base { min-height: 140px; border-radius: 18px; border: 1px dashed var(--line); background: none; color: var(--dim); font: 600 14px var(--sans); letter-spacing: 0.08em; cursor: pointer; }
 .spawn .go { --c: #38e0ff; border: 0; }
 .spawn { display: grid; gap: 10px; color: var(--dim); font-size: 13px; }

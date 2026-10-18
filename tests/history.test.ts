@@ -227,3 +227,29 @@ test("a 50 MB session indexes inside the budget and its first page is quick", { 
 	assert.ok(performance.now() - started <= 300, "first page within 300 ms");
 	assert.equal(first.items.length, 150);
 });
+
+test("the todo list is the newest rpiv-todo snapshot on the branch: its own entries first, else its tool's results; it comes with the change that adds one", async () => {
+	const path = file();
+	const tasks = (n: number, done = 0) => Array.from({ length: n }, (_, i) => ({ id: i + 1, subject: `task ${i + 1}`, status: i < done ? "completed" : i === done ? "in_progress" : "pending", ...(i === done && { activeForm: `doing ${i + 1}` }) }));
+	const todoResult = (id: string, parentId: string, list: unknown[]) => message(id, parentId, { role: "toolResult", toolCallId: `c-${id}`, toolName: "todo", content: [text("ok")], details: { action: "create", params: {}, tasks: list, nextId: list.length + 1 }, isError: false, timestamp: 1 });
+	// rpiv-todo writes `type` and `customType` before `id`, as the real entries do.
+	const snapshot = (id: string, parentId: string, list: unknown[]) => ({ type: "custom", customType: "rpiv-todo-state", data: { action: "update", params: {}, tasks: list, nextId: list.length + 1 }, id, parentId, timestamp: "2026-10-17T08:00:02.000Z" });
+	writeFileSync(path, lines([header(), user("u1", null, "go"), todoResult("r1", "u1", tasks(2))]));
+	const r = reader(path);
+	await r.ready;
+	assert.deepEqual((await r.todos())?.map((t) => [t.subject, t.status]), [["task 1", "in_progress"], ["task 2", "pending"]], "an older session: the tool's result");
+	const changes: Change[] = [];
+	r.subscribe((c) => changes.push(c));
+	r.start();
+	appendFileSync(path, lines([snapshot("s1", "r1", [...tasks(3, 1), { id: 9, subject: "gone", status: "deleted" }]), todoResult("r2", "s1", tasks(1))]));
+	await until(() => changes.some((c) => c.todos), "a change with the list");
+	assert.deepEqual(changes.find((c) => c.todos)!.todos!.map((t) => t.status), ["completed", "in_progress", "pending"], "the entry wins over a later result, and a deleted task is left out");
+	assert.equal(changes.find((c) => c.todos)!.todos![1]!.activeForm, "doing 2");
+	changes.length = 0;
+	appendFileSync(path, lines([user("u2", "r2", "more")]));
+	await until(() => changes.length, "the next change");
+	assert.equal(changes[0]!.todos, undefined, "a change without a snapshot carries no list");
+	const empty = file();
+	writeFileSync(empty, lines([header(), user("u1", null, "hi")]));
+	assert.equal(await reader(empty).todos(), null);
+});

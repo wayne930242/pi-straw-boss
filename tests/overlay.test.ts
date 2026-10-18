@@ -83,6 +83,15 @@ test("Later requeues an alert only while its unit still shows the state that rai
 	assert.deepEqual(stack.queue.map((q) => [q.key, q.mark]), [["b", "waiting"]], "a new alert while open is what Later keeps");
 });
 
+test("a finished unit's alert is resolved once opened: Later does not put it back", () => {
+	const { page, stack } = harness();
+	stack.arrive(alert("d", "done", 1));
+	assert.deepEqual(page.queued, ["d"]);
+	stack.next();
+	stack.close("later");
+	assert.deepEqual([page.shown, page.queued], [[], []]);
+});
+
 test("Open comms closes the alert and reveals nothing queued over the comms the user is going to", () => {
 	const { page, stack } = harness();
 	stack.arrive(alert("e", "error", 1));

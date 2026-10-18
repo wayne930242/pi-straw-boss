@@ -2,6 +2,7 @@ import type { Item } from "../src/items.ts";
 import { mountAsk } from "./ask.ts";
 import { keypad } from "./keypad.ts";
 import { mountTerminals } from "./mirror.ts";
+import { rankOf } from "./alerts.ts";
 import { type Alert, createStack, tally } from "./overlay.ts";
 import { m } from "./paraglide/messages.js";
 import { type Answer, post } from "./post.ts";
@@ -97,6 +98,7 @@ export function mountPanels(deps: PanelDeps) {
 		text(el, ".where", deps.label(a.ws));
 		text(el, ".tag", a.gone ? m.tag_gone() : ({ waiting: m.tag_question, error: m.tag_error, done: m.tag_finished }[a.mark as "done"] ?? m.tag_update)());
 		text(el, ".queued", queue.length ? m.also_queued({ tally: tally(queue) }) : "");
+		el.querySelector<HTMLElement>(".later")!.hidden = rankOf(a.mark) !== 0; // a finished one is read once opened: nothing to keep for later
 		if (!intels.has(a.key)) learn(a);
 		tell(el, a);
 		let ask = asks.get(el);

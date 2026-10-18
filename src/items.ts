@@ -8,6 +8,15 @@ const PREVIEW = 2048, FULL = 1 << 20, TEXT = 100_000, LAST_BYTES = 65_536;
 export const FULL_LIMIT = FULL;
 
 export interface Tool { id: string; name: string; summary: string; args?: string; cut?: true }
+/** One task of a session's todo list, as @juicesharp/rpiv-todo keeps it (its snapshot entries and todo results); deleted ones are left out. */
+export interface Todo { id: number; subject: string; status: "pending" | "in_progress" | "completed"; activeForm?: string }
+const STATUSES = new Set(["pending", "in_progress", "completed"]);
+/** The open tasks of a todo snapshot (`{ tasks, nextId }`), checked field by field; anything else is no list. */
+export function todosOf(snapshot: unknown): Todo[] | undefined {
+	const s = snapshot as { tasks?: unknown; nextId?: unknown } | undefined;
+	if (!s || !Array.isArray(s.tasks) || typeof s.nextId !== "number") return undefined;
+	return s.tasks.slice(0, 200).flatMap((t: Json) => (typeof t?.id === "number" && typeof t.subject === "string" && STATUSES.has(t.status) ? [{ id: t.id, subject: t.subject.slice(0, 300), status: t.status, ...(typeof t.activeForm === "string" && { activeForm: t.activeForm.slice(0, 120) }) }] : []));
+}
 export interface Item {
 	id: string; kind: "user" | "assistant" | "result" | "bash" | "notice" | "divider" | "meta"; at?: string; text?: string; more?: boolean; images?: number; pics?: string[];
 	thought?: number; thoughtText?: string; tools?: Tool[]; model?: string; stop?: string; error?: string; ctx?: number;

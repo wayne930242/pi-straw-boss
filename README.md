@@ -30,7 +30,24 @@ Run a few agents on the same project and they start stepping on each other: two 
 pi install npm:pi-straw-boss
 ```
 
-You need pi running inside Herdr 0.9.4 or newer, and [pi-intercom](https://www.npmjs.com/package/pi-intercom) 0.17.1 or newer. [pi-herdr-agents](https://github.com/giuseppecrj/pi-herdr-agents) is optional: with it, subagents show up under the session that launched them.
+### Requirements
+
+- pi running inside [Herdr](https://herdr.dev) 0.9.4 or newer.
+- [pi-intercom](https://www.npmjs.com/package/pi-intercom) 0.17.1 or newer: the net's channels, messages, and the GUI's dialog relay run over it.
+
+### Works with
+
+Each of these is optional. When it is installed, Straw Boss picks it up; without it, the rest works as before.
+
+| Package | What Straw Boss does with it |
+| --- | --- |
+| [pi-herdr-agents](https://github.com/giuseppecrj/pi-herdr-agents) | Subagents show under the session that launched them, in the tower dashboard, the sidebar, and the GUI; a member that dispatches one is promoted to main and its tower opens. |
+| [@juicesharp/rpiv-ask-user-question](https://www.npmjs.com/package/@juicesharp/rpiv-ask-user-question) 2.13 or newer | `ask_user_question` questionnaires can be answered from the GUI, and a waiting one marks its unit as waiting. |
+| [pi-robot-hand](https://www.npmjs.com/package/pi-robot-hand) 0.3.0 or newer | `robot_hand` selectors can be answered from the GUI. |
+| [pi-herdr-doc-review](https://www.npmjs.com/package/pi-herdr-doc-review) 0.4.0 or newer | Documents a session shows open beside its comms: HTML in a sandboxed frame whose form answers the agent, text read-only. |
+| [@juicesharp/rpiv-todo](https://www.npmjs.com/package/@juicesharp/rpiv-todo) 2.13 or newer | A session's todo list shows above its composer in the GUI, read from the session file. |
+
+Other dialogs (`select`, `confirm`, `input`, and `editor` from any extension, `ask_user` from pi-ask-user) show read-only in the GUI, with the terminal one tap away.
 
 ## Quick start
 

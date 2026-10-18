@@ -266,5 +266,7 @@
 	"close_squad_ask": "要關閉小隊 {name} 嗎？裡面所有 agent 都會退出。",
 	"close_unit_ask": "要關閉 {name} 嗎？它會退出 pi，窗格也會關掉。",
 	"close_tower_ask": "要關閉塔台 {name} 嗎？這個基地的主智慧體都會降格成成員。",
-	"close_unit": "關閉 {name}"
+	"close_unit": "關閉 {name}",
+	"todos_count": "待辦 {done}/{total}",
+	"todos_done": "全部完成"
 }

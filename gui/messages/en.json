@@ -308,5 +308,7 @@
 	"close_squad_ask": "Close squad {name}? Every agent in it quits.",
 	"close_unit_ask": "Close {name}? It quits pi and its pane closes.",
 	"close_tower_ask": "Close the tower {name}? The base's mains become members again.",
-	"close_unit": "Close {name}"
+	"close_unit": "Close {name}",
+	"todos_count": "Todos {done}/{total}",
+	"todos_done": "All done"
 }

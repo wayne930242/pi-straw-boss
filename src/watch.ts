@@ -33,7 +33,7 @@ export function watchSession(hub: Hub, key: string, send: Send): Watch {
 				unsub = reader.subscribe((change) => (ready ? send("history", { key, ...change }) : queued.push({ key, ...change })));
 				const { items, before } = await reader.page();
 				if (stopped || file !== found.file) return;
-				send("history", { ...meta(found), reset: true, items, before, header: reader.header(), unreadable: reader.unreadable() });
+				send("history", { ...meta(found), reset: true, items, before, header: reader.header(), unreadable: reader.unreadable(), todos: await reader.todos() });
 				ready = true;
 				queued.forEach((change) => send("history", change));
 				signature = sig;

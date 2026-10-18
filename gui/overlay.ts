@@ -7,7 +7,8 @@ import { m } from "./paraglide/messages.js";
 //   top dialog, peeking out, and takes no focus, until the user closes the top one or clicks it. A unit that starts to need
 //   attention never opens anything: it joins the alert queue (questions and errors first, then plain state changes; oldest first in
 //   each), shown in the HUD. Closing the top dialog reveals the one beneath; with none beneath, the next queued question or error
-//   (plain state changes wait for the user). "Later" puts the alert back in the queue and reveals nothing queued; "Open comms" closes
+//   (plain state changes wait for the user). A finished unit's alert is resolved once it is opened. "Later" puts a question or an
+//   error back in the queue and reveals nothing queued; "Open comms" closes
 //   the alert and reveals nothing either, since the user is going to that unit. Escape closes the top dialog only. Focus moves into a dialog when it opens and goes back to where it was when it closes. Dialogs are not modal: the
 //   page stays usable, nothing traps focus, and dialogs beneath the top are inert. A queued alert whose unit no longer needs attention
 //   leaves the queue by itself; an open dialog stays open and shows the unit's current state.
@@ -86,7 +87,8 @@ export function createStack<F>(io: StackIO<F>) {
 			const top = open.pop();
 			if (!top) return false;
 			const below = open.at(-1), next = how === "close" ? queue.find((q) => rankOf(q.mark) === 0) : undefined;
-			if (how === "later" && top.alert.mark === top.raised) queue = [...queue, top.alert].sort(order);
+			// A finished unit's alert is read once it is opened: only a question or an error goes back for later.
+			if (how === "later" && top.alert.mark === top.raised && rankOf(top.raised) === 0) queue = [...queue, top.alert].sort(order);
 			if (!below && next) {
 				show(next, top.back);
 				return true;

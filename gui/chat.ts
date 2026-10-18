@@ -1,7 +1,7 @@
 import type { Pending } from "../src/ask.ts";
 import type { Mark } from "../src/dashboard.ts";
 import type { Shelf } from "../src/documents.ts";
-import type { Item } from "../src/items.ts";
+import type { Item, Todo } from "../src/items.ts";
 import { h } from "./dom.ts";
 import { createFollow, reach } from "./follow.ts";
 import { mount, parse } from "./markdown.ts";
@@ -72,7 +72,7 @@ export function createChat(cap = CAP) {
 	};
 }
 
-export interface HistoryEvent { key: string; state?: string; successor?: string; base?: string; name?: string; role?: string; reset?: boolean; items?: Item[]; before?: string; header?: { id?: string; cwd?: string }; unreadable?: number }
+export interface HistoryEvent { key: string; state?: string; successor?: string; base?: string; name?: string; role?: string; reset?: boolean; items?: Item[]; before?: string; header?: { id?: string; cwd?: string }; unreadable?: number; todos?: Todo[] | null }
 /** `post` stands in for the server's input API (composer.ts) in the dev fixture. */
 export interface Data { older(before: string): Promise<Page>; latest(): Promise<Page>; entry(id: string): Promise<Item | undefined>; post?: Post }
 export interface Who extends Shelf { key: string; name: string; role: string; mark: Mark; note?: string; control?: boolean; pending?: Pending }

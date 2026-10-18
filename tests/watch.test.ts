@@ -10,6 +10,7 @@ function hub(found: Found) {
 	const reader = (file: string): Reader => ({
 		ready: Promise.resolve(),
 		header: () => ({ id: file }),
+		todos: async () => null,
 		unreadable: () => 0,
 		page: async () => {
 			if (fail.delete(file)) throw new Error("vanished");

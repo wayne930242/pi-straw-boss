@@ -58,7 +58,7 @@ export function createFixture({ resume, tick = 2500 }: { resume(): void; tick?: 
 			if (dropped) return;
 			if (watch?.startsWith("w:")) this.timers.push(setTimeout(() => this.send("cards", { a1: "I merged the billing branch and the tests pass.", a3: "Waiting for your answer about the deploy window." }), 250));
 			else if (watch) {
-				this.timers.push(setTimeout(() => this.send("history", { key: watch, state: "live", reset: true, ...page(), header: { id: watch, cwd: "/work/harbor-api" }, unreadable: 0 }), 250));
+				this.timers.push(setTimeout(() => this.send("history", { key: watch, state: "live", reset: true, ...page(), header: { id: watch, cwd: "/work/harbor-api" }, unreadable: 0, todos: [{ id: 1, subject: "Find where the rounding happens", status: "completed" }, { id: 2, subject: "Fix the ledger rounding before tax", status: "in_progress", activeForm: "fixing the ledger rounding" }, { id: 3, subject: "Add a regression test for credit notes", status: "pending" }] }), 250));
 				// A new reply every few seconds, so the page shows a live chat.
 				this.timers.push(setInterval(() => {
 					const n = ++live, call = `live-c${n}`;

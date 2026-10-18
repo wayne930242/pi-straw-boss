@@ -1,5 +1,6 @@
 import type { Mark } from "../src/dashboard.ts";
 import type { Base, Net, Unit } from "../src/net.ts";
+import type { Todo } from "../src/items.ts";
 import type { Chat, Data, HistoryEvent, Who } from "./chat.ts";
 import { mountAsk } from "./ask.ts";
 import { mountComposer, postTo } from "./composer.ts";
@@ -44,7 +45,7 @@ function fillToken(el: HTMLElement, u: { key?: string; name: string; role: strin
 const colEl = () => html(`<div class="col"><a class="token">${PLATE}<span class="name"></span><span class="line"><em class="role"></em><span class="note"></span></span></a><div class="say"><p></p></div><div class="drones"></div></div>`);
 const ZOOM = () => `<div class="zoom-in"><header class="base keep"><a class="tower big"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></a><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>${m.head_tower()}</span><h2></h2><p></p></div><button type="button" class="close-x" data-close="base">×</button><dl class="tally"><div><dt>${m.squads()}</dt><dd></dd></div><div><dt>${m.units()}</dt><dd></dd></div><div data-mark="working"><dt>${m.stat_working()}</dt><dd></dd></div><div data-mark="waiting"><dt>${m.stat_waiting()}</dt><dd></dd></div></dl></header><div class="spawn-btns"><button type="button" class="pair-btn"></button></div><div class="squads"></div><div class="camps"><section class="tab squad camp" data-group="outposts"><h3><svg><use href="#i-outpost"/></svg><b>${m.outposts()}</b><small></small></h3><div class="formation"></div></section><section class="tab squad camp" data-group="outside"><h3><svg><use href="#i-outside"/></svg><b>${m.outside_net()}</b><small>${m.outside_note()}</small></h3><div class="formation"></div></section></div><p class="lost" hidden></p></div>`;
 const DOSSIER = () => `<div class="dossier-in"><span class="tag">${m.unit_dossier()}</span><div class="portrait">${PLATE}</div><h3></h3><p class="d-line"><em class="role"></em> <span class="state"></span></p><p class="d-note" hidden></p><dl class="specs"></dl><button class="cmp-link d-term" type="button" hidden>${m.terminal()}</button><button class="cmp-link d-close" type="button" data-close="unit" hidden>${m.close()}</button><div class="d-docs" hidden><h4>${m.documents()}</h4><div class="d-doc-list"></div><p class="d-docs-cut" hidden>${m.docs_cut()}</p></div><div class="d-drones" hidden><h4>${m.dispatched()}</h4><div class="formation"></div></div></div>`;
-const COMMS = () => `<div class="comms-in"><header class="comms-head"><span class="logo"><svg><use href="#i-comms"/></svg></span><div class="head-id"><h2><small>${m.comms()}</small> <span></span></h2><p></p></div><div class="modes" role="group"><button type="button" data-mode="chat" aria-pressed="true">${m.comms()}</button><button type="button" data-mode="term" aria-pressed="false">${m.terminal()}</button></div><span class="chan link" data-state="live"><i></i><b>${m.channel_open()}</b></span><button type="button" class="close-x head-close" data-close="unit" hidden>×</button></header><div class="chat-root"></div><div class="ask-root"></div><div class="composer-root"></div><div class="term-root" hidden></div></div>`;
+const COMMS = () => `<div class="comms-in"><header class="comms-head"><span class="logo"><svg><use href="#i-comms"/></svg></span><div class="head-id"><h2><small>${m.comms()}</small> <span></span></h2><p></p></div><div class="modes" role="group"><button type="button" data-mode="chat" aria-pressed="true">${m.comms()}</button><button type="button" data-mode="term" aria-pressed="false">${m.terminal()}</button></div><span class="chan link" data-state="live"><i></i><b>${m.channel_open()}</b></span><button type="button" class="close-x head-close" data-close="unit" hidden>×</button></header><div class="chat-root"></div><details class="todos" hidden><summary><b></b><span></span></summary><ol></ol></details><div class="ask-root"></div><div class="composer-root"></div><div class="term-root" hidden></div></div>`;
 
 export function mountFocus({ data, restart, openTile, embedTerminal, online }: FocusDeps) {
 	const $ = (id: string) => document.getElementById(id)!;
@@ -197,6 +198,7 @@ export function mountFocus({ data, restart, openTile, embedTerminal, online }: F
 			close.setAttribute("aria-label", m.close_unit({ name }));
 			close.hidden = !u?.control || u.role === "subagent";
 		}
+		drawTodos(info?.todos);
 		chat?.setLive(mk === "working" ? `${doing(u!.note, mk)}` : urgent(mk) ? LABEL[mk]() : "", mk);
 		composer?.update({ name: u?.name ?? info?.name ?? route.key, control: Boolean(u?.control), live: state ? state === "live" : Boolean(u), mark: mk, online: online(), answerable: Boolean(u?.pending?.answer) });
 		asker?.update(u?.pending, mk === "waiting" && Boolean(u?.control) && online()); // its dialog above the composer, answerable or not
@@ -227,6 +229,17 @@ export function mountFocus({ data, restart, openTile, embedTerminal, online }: F
 	function apply(e: HistoryEvent) {
 		chat?.apply(e);
 		for (const it of e.items ?? []) if (it.kind === "assistant") [model, ctx] = [it.model ?? model, it.ctx ?? ctx];
+	}
+	/** The session's todo list above the composer: folded to the count and the task in progress, unfolded to every task. */
+	function drawTodos(list: Todo[] | null | undefined) {
+		const box = sessionView.querySelector<HTMLDetailsElement>(".todos");
+		if (!box) return;
+		box.hidden = !list?.length;
+		if (!list?.length) return;
+		const done = list.filter((t) => t.status === "completed").length, now = list.find((t) => t.status === "in_progress");
+		text(box, "summary b", m.todos_count({ done, total: list.length }));
+		text(box, "summary span", now ? (now.activeForm ?? now.subject) : done === list.length ? m.todos_done() : "");
+		box.querySelector("ol")!.replaceChildren(...list.map((t) => Object.assign(document.createElement("li"), { textContent: t.subject, className: t.status })));
 	}
 	/** The session view shows its chat or its terminal, one at a time; the terminal mirrors the pane only while it shows. */
 	let unembed: (() => void) | undefined, pendingMode: "term" | undefined, modeTurn = 0;

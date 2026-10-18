@@ -1,7 +1,7 @@
 import { type FSWatcher, realpathSync, watch } from "node:fs";
 import { type FileHandle, open, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
-import { FULL_LIMIT, type Item, type Json, parse, toItem } from "./items.ts";
+import { FULL_LIMIT, type Item, type Json, parse, type Todo, toItem, todosOf } from "./items.ts";
 
 // The session reader: a pi session file in, pages of displayable items out, plus a live tail. Only an index stays in memory
 // (type, id, parent, role, offset, length per entry); item content is read from the file by offset for the page being sent.
@@ -30,18 +30,21 @@ export function canonical(path?: string): string | undefined {
 	}
 }
 
-export interface Change { reset: boolean; items: Item[]; before?: string }
+/** `todos` comes with a change that holds a new todo snapshot (and with every reset): the list, or null when the branch has none. */
+export interface Change { reset: boolean; items: Item[]; before?: string; todos?: Todo[] | null }
 export interface Reader {
 	ready: Promise<void>;
 	header(): { id?: string; cwd?: string } | undefined;
 	unreadable(): number;
 	page(before?: string, limit?: number): Promise<{ items: Item[]; before?: string }>;
+	/** The newest todo list on the branch, or null. */
+	todos(): Promise<Todo[] | null>;
 	entry(id: string): Promise<Item | undefined>;
 	subscribe(fn: (change: Change) => void): () => void;
 	start(): void;
 	stop(): void;
 }
-interface Ent { type: string; role?: string; id: string; parent: string | null; off: number; len: number }
+interface Ent { type: string; role?: string; id: string; parent: string | null; off: number; len: number; todo?: "entry" | "result" }
 
 export function openReader(file: string, pollMs = 1000): Reader {
 	let ents: Ent[] = [], byId = new Map<string, number>(), path: number[] = [], bad = 0, size = 0, ino = -1, headText = "", head: Json | undefined;
@@ -69,7 +72,9 @@ export function openReader(file: string, pollMs = 1000): Reader {
 			[type, id, parent] = [d.type, d.id, d.parentId === null ? "null" : `"${d.parentId}"`];
 		}
 		const role = type === "message" ? h.match(/"message":\{"role":"(\w+)"/)?.[1] : undefined;
-		byId.set(id!, ents.push({ type: type!, role, id: id!, parent: parent === "null" ? null : parent!.slice(1, -1), off: start, len }) - 1);
+		// rpiv-todo's snapshots: its own entries (written for every change), else the details of its tool's results (older sessions).
+		const todo = type === "custom" && h.includes('"customType":"rpiv-todo-state"') ? "entry" : role === "toolResult" && h.includes('"toolName":"todo"') ? "result" : undefined;
+		byId.set(id!, ents.push({ type: type!, role, id: id!, parent: parent === "null" ? null : parent!.slice(1, -1), off: start, len, ...(todo && { todo }) }) - 1);
 	}
 	/** Feeds file bytes starting at `at`; a line cut by the end of the data stays in `cur` until its newline arrives. */
 	async function feed(fh: FileHandle, chunk: Buffer, at: number) {
@@ -117,6 +122,17 @@ export function openReader(file: string, pollMs = 1000): Reader {
 		}
 		return items;
 	}
+	async function todos(): Promise<Todo[] | null> {
+		const on = path.filter((i) => ents[i]!.todo), last = on.findLast((i) => ents[i]!.todo === "entry") ?? on.at(-1);
+		if (last === undefined) return null;
+		const e = ents[last]!, fh = await open(file, "r");
+		try {
+			const d = parse((await grab(fh, e.off, Math.min(e.len, 1 << 20))).toString("utf8"));
+			return todosOf(e.todo === "entry" ? d?.data : d?.message?.details) ?? null;
+		} finally {
+			await fh.close();
+		}
+	}
 	async function page(before?: string, limit = PAGE) {
 		const end = before === undefined ? path.length : path.findIndex((i) => ents[i]!.id === before);
 		const idx = path.slice(0, Math.max(0, end)), items = await load(idx, limit);
@@ -150,10 +166,10 @@ export function openReader(file: string, pollMs = 1000): Reader {
 		if (!added.length) return;
 		if (added.every((e, k) => e.parent === (k ? added[k - 1]!.id : leaf === undefined ? null : ents[leaf]!.id))) {
 			path.push(...added.map((_, k) => n + k));
-			return emit({ reset: false, items: await load(path.slice(from)) });
+			return emit({ reset: false, items: await load(path.slice(from)), ...(added.some((e) => e.todo) && { todos: await todos() }) });
 		}
 		path = pathTo(ents.length - 1);
-		emit({ reset: true, ...(await page()) });
+		emit({ reset: true, ...(await page()), todos: await todos() });
 	}
 	const headChanged = async () => {
 		const fh = await open(file, "r");
@@ -170,7 +186,7 @@ export function openReader(file: string, pollMs = 1000): Reader {
 			if (!s) return; // a new session has no file until its first message: keep waiting for it
 			if (s.ino !== ino || s.size < size || (s.size > size && (await headChanged()))) {
 				await reindex();
-				emit({ reset: true, ...(await page()) });
+				emit({ reset: true, ...(await page()), todos: await todos() });
 			} else if (s.size > size) await append(s.size);
 		} catch {} // a read that fails (the file vanished mid-read) is retried by the next poll
 	}
@@ -186,6 +202,7 @@ export function openReader(file: string, pollMs = 1000): Reader {
 		header: () => head && { id: head.id, cwd: head.cwd },
 		unreadable: () => bad,
 		page: (before, limit) => serial(async () => (await look(), page(before, limit))),
+		todos: () => serial(todos),
 		entry: (id) => serial(async () => {
 			await look();
 			const i = byId.get(id), e = i === undefined ? undefined : ents[i];
