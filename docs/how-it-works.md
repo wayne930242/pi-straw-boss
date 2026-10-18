@@ -199,6 +199,10 @@ A session that ends clears its own and its subagents'.
 - `sb_indent` is on a subagent alone, and is the branch to it from its launcher, drawn like the worktrees in Herdr's Spaces panel: `├─` while a later subagent of the same launcher is marked, `└─` on the last one.
   Subagents of one launcher are siblings at every depth.
   A tower, a main agent and a member carry none, and a session clears the one a pane kept from when it ran a subagent.
+- `sb_name` is on a subagent alone, and is its own name as pi-herdr-agents shows it, cut to 24 characters like the launcher's name in `sb_mark`.
+  The name comes from the pane's Herdr label while it has one, else from the launch script's name.
+  Herdr keeps the label in the server's memory too, so after a new server the label is gone and a row would show only the workspace's name; the token comes back with the others (see below) and a row can show it instead.
+  A tower, a main agent and a member carry none, and a session clears the one a pane kept from when it ran a subagent.
 
 The tokens rest on Herdr's order as of the session's last refresh, so moving a tab or workspace shows in the net view within 4 minutes, and a subagent that has a new sibling gets its `├─` at the next refresh.
 A subagent is marked while its pane runs pi: its launcher publishes again 3 and 15 seconds after a `subagent` or `subagent_resume` call returns, so a new subagent hangs under it within seconds, and its tokens go at the next refresh once it has finished.
@@ -216,6 +220,7 @@ The sidebar plugin needs nothing more: its startup hook turns the view on when t
 The tokens also show the roles in Herdr's own grouped view, which a plugin cannot reorder.
 Add them to a row of `[ui.sidebar.agents]` in `config.toml`.
 `$sb_indent` goes before the state icon, so a subagent hangs under its launcher as the worktrees do in the Spaces panel; Herdr puts its own ` · ` after it, and an agent without the token shows nothing.
+`$sb_name` goes right after the state icon, so a subagent row says which subagent it is even when Herdr has lost the pane's label.
 In `$sb_mark` a member's person is bold, and the rule that hides the `[sub]` mark leaves a subagent one line, because the branch already says what it is. The snippet leaves the colors to your Herdr theme; add an `fg` to a rule to color a mark.
 Herdr drops a row whose every item is hidden, so the second row, which shows `$sb_mark` only when it starts with the star, gives a main agent a second line (`★ <tab>`) and leaves every other agent one line.
 The first row shows `$sb_tab` instead of Herdr's `tab`, so a main agent's tab label is not shown twice; an agent outside the net (or a session that has not reloaded since 0.7.2) shows no tab label there.
@@ -226,6 +231,7 @@ rows = [
   [
     { token = "$sb_indent", dim = true },
     "state_icon",
+    { token = "$sb_name" },
     { token = "$sb_mark", rules = [
       { starts_with = "[sub]", hide = true },
       { starts_with = "\uF005", hide = true },
@@ -310,7 +316,7 @@ Herdr starts plugin commands with the PATH of the process that started its serve
 
 - Herdr pane token `sb_role` (`main`, `member` or `tower`; a tower tab is also marked right after it is created; a tab opened for a request is created with the environment variable `STRAW_BOSS_ROLE=main`, which makes its pi promote itself) and workspace token `tower` (the tower's intercom session id), both refreshed every 4 minutes with a 10 minute TTL, written again at once when a new Herdr server takes over (see [A new Herdr server](#sidebar-net-view)), and cleared at shutdown (a tower that quits then closes its own tab if it holds only that pane).
 - Herdr pane tokens `sb_opened_by` (the sender's intercom session id, on a pane a tower opened for a request; refreshed by its main and cleared at shutdown, so the open limits count only live opened mains) and `sb_open_main` (a one-time mark the opener sets, consumed by the first pi that promotes itself from it).
-- Pane tokens `sb_order` (a sort key), `sb_mark` (a role label) and, on subagents, `sb_indent` (a tree branch) next to `sb_role`, and the subagent ones on the panes of the subagents the session launched, with the same refresh, TTL and takeover rewrite; they feed the sidebar net view and the optional rows below (see [Sidebar net view](#sidebar-net-view)).
+- Pane tokens `sb_order` (a sort key), `sb_mark` (a role label) and, on subagents, `sb_indent` (a tree branch) and `sb_name` (the subagent's name) next to `sb_role`, and the subagent ones on the panes of the subagents the session launched, with the same refresh, TTL and takeover rewrite; they feed the sidebar net view and the optional rows below (see [Sidebar net view](#sidebar-net-view)).
 - A pi session entry `straw-boss` (`tower`) so a resumed tower keeps its role. Members write no entry for their role: every session joins at start, so entries saved by 0.4.0 (`asked`, `joined`) are ignored. The one other entry carries `nudged`, a subagent run that was asked to report (see [Orphaned subagents](#orphaned-subagents)).
 - Every message it sends through intercom (`boss_broadcast`, `call_tower`, the nudge, the request handed to an opened main) has a message id with a nonce of the current process: pi-intercom refuses an id it saw from a session again with other content, and a restarted pi keeps its session id.
 - One `events.subscribe` connection to Herdr's socket per joined session or tower, which carries no events of interest and is read only for its closing (see [A new Herdr server](#sidebar-net-view)).

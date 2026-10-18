@@ -68,7 +68,7 @@ test("the subagents a session marked get their tokens back too", async () => {
 		await a.start();
 		await a.promote();
 		const marked = { ...tokens("wS:p1") };
-		assert.deepEqual(Object.keys(marked).sort(), ["sb_indent", "sb_mark", "sb_order"]);
+		assert.deepEqual(Object.keys(marked).sort(), ["sb_indent", "sb_mark", "sb_name", "sb_order"]);
 		await world.takeover();
 		assert.deepEqual(tokens("wS:p1"), marked);
 	} finally {

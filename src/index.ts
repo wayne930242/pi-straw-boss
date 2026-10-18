@@ -473,7 +473,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			const held = holdsTower;
 			holdsTower = false;
 			if (!role() || !at) return;
-			await report(run, "pane", at.paneId, { sb_role: null, sb_opened_by: null, sb_order: null, sb_mark: null, sb_indent: null, sb_tab: null }).catch(() => {});
+			await report(run, "pane", at.paneId, { sb_role: null, sb_opened_by: null, sb_order: null, sb_mark: null, sb_indent: null, sb_name: null, sb_tab: null }).catch(() => {});
 			await clearOrder(run, [...kids]);
 			if (held) await report(run, "workspace", at.workspaceId, { tower: null }).catch(() => {});
 			// A tower that quits leaves its tab as a plain shell: close the tab, but only when this pane is all it holds. A reload, /new, resume or fork keeps the tab.

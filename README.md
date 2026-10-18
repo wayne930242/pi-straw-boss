@@ -60,7 +60,7 @@ Subagents and sessions in Herdr worktree workspaces never join: the session that
 An optional Herdr plugin in [`herdr-plugin/`](herdr-plugin) turns the sidebar's Agents list into a net view.
 It lists the head tower's workspace first, in each workspace the tower, then each tab's main agent and members, and every subagent right under the session that launched it, even in a worktree workspace.
 The view is on whenever the Herdr server starts, and one key switches it off and on again.
-pi-straw-boss writes the sort key (`sb_order`), a role label (`sb_mark`) and, on subagents, a tree branch (`sb_indent`) the view and your sidebar rows can use.
+pi-straw-boss writes the sort key (`sb_order`), a role label (`sb_mark`) and, on subagents, a tree branch (`sb_indent`) and the subagent's name (`sb_name`) the view and your sidebar rows can use.
 It needs Herdr 0.9.3 or newer and node.
 
 <p align="center"><img src="docs/sidebar-net-view.png" width="308" alt="Herdr's sidebar in the net view: each workspace's tower with the radio tower glyph first, each main agent on two rows with a star and its tab's label, and every subagent on a tree branch under the session that launched it"></p>

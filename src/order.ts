@@ -1,7 +1,7 @@
 import { subagents } from "./dashboard.ts";
 import { ARROW, type HerdrRun, type HerdrTab, isSub, MARK, type Pane, panes, type Place, report, tabs, workspaces, type Workspace } from "./herdr.ts";
 
-// Four display tokens for the sidebar plugin and for Herdr's own Agents rows, written next to `sb_role`:
+// Five display tokens for the sidebar plugin and for Herdr's own Agents rows, written next to `sb_role`:
 //  - `sb_order`: a sort key that lays the net out as the head tower's workspace first, then the other workspaces in Herdr's order, in each the tower
 //    and then the tabs in tab order, in each tab the main agent and then the members, and every subagent right after the session that launched it,
 //    its own subagents after it in turn. Segments are fixed-width and `.`-separated, so plain string order is the numeric order of every segment,
@@ -11,6 +11,7 @@ import { ARROW, type HerdrRun, type HerdrTab, isSub, MARK, type Pane, panes, typ
 //  - `sb_tab`: a member's tab label, which the first row shows in place of Herdr's tab item; a main agent's is in its mark instead.
 //  - `sb_indent`: a tree branch on a subagent alone, like Herdr's Spaces panel draws a worktree: `├─` while a later subagent of the same launcher is marked, `└─` on the last. A row put before the state icon shows it as the
 //    indent under the launcher. A tower, a main agent and a member carry none.
+//  - `sb_name`: a subagent's own name, as pi-herdr-agents shows it. Herdr's pane label held it until a new server dropped the label; a row can show the token instead. A subagent alone carries one.
 // A session writes them for itself and for the subagents it launched, which never join and write nothing, on the same 4 minute refresh as `sb_role`.
 
 /** What `sb_indent` holds on a subagent: the branch to it from its launcher, and `last` for the youngest marked sibling. */
@@ -44,16 +45,16 @@ export function descendants(parent: Pane | undefined, key: string, name: string,
 		if (!row.pane || seen.has(row.pane)) return [];
 		seen.add(row.pane);
 		const order = `${key}.${part(i)}`, indent = rows.slice(i + 1).some((r) => r.pane && !seen.has(r.pane)) ? INDENT.more : INDENT.last;
-		return [{ pane: row.pane, order, mark: `${ARROW} ${short(name)}`, indent }, ...descendants(ps.find((p) => p.pane_id === row.pane), order, row.text, ps, now, seen)];
+		return [{ pane: row.pane, order, mark: `${ARROW} ${short(name)}`, indent, name: short(row.text) }, ...descendants(ps.find((p) => p.pane_id === row.pane), order, row.text, ps, now, seen)];
 	});
 }
 
-/** The subagent panes a session marks: each gets `sb_order`, `sb_mark` and `sb_indent`. */
-export interface Kid { pane: string; order: string; mark: string; indent: string }
+/** The subagent panes a session marks: each gets `sb_order`, `sb_mark`, `sb_indent` and `sb_name`. */
+export interface Kid { pane: string; order: string; mark: string; indent: string; name: string }
 
 /**
  * What a session publishes besides its role: its own tokens (null clears them when Herdr cannot place the session, a tower has no mark, and none
- * has an indent, which clears the one a pane keeps from when it ran a subagent) and those of the subagents it launched. Reads Herdr only.
+ * has an indent or a name, which clears the ones a pane keeps from when it ran a subagent) and those of the subagents it launched. Reads Herdr only.
  */
 export async function netTokens(run: HerdrRun, place: Place, role: "tower" | "main" | "member", name: string, now = Date.now()): Promise<{ own: Record<string, string | null>; kids: Kid[]; joined: Set<string> }> {
 	const [ps, all, tabList] = [await panes(run), await workspaces(run), await tabs(run, place.workspaceId)];
@@ -62,7 +63,7 @@ export async function netTokens(run: HerdrRun, place: Place, role: "tower" | "ma
 	// A main agent's tab label goes in its mark, for a row of its own; a member's in `sb_tab`, which stands for the tab item in the first row.
 	const tab = tabList.find((t) => t.tab_id === pane?.tab_id)?.label || null;
 	const mark = role === "tower" ? null : role === "main" ? (tab ? `${MARK.main} ${tab}` : MARK.main) : MARK[role];
-	return { own: { sb_order: key ?? null, sb_mark: mark, sb_indent: null, sb_tab: role === "member" ? tab : null }, kids: key ? descendants(pane, key, name, ps, now) : [], joined };
+	return { own: { sb_order: key ?? null, sb_mark: mark, sb_indent: null, sb_name: null, sb_tab: role === "member" ? tab : null }, kids: key ? descendants(pane, key, name, ps, now) : [], joined };
 }
 
 /**
@@ -70,11 +71,11 @@ export async function netTokens(run: HerdrRun, place: Place, role: "tower" | "ma
  * (a shell where a subagent ran can start a pi that writes its own). Returns the panes now marked. A failed write waits for the next refresh.
  */
 export async function markKids(run: HerdrRun, kids: Kid[], before: Set<string>, joined = new Set<string>()): Promise<Set<string>> {
-	for (const kid of kids) await report(run, "pane", kid.pane, { sb_order: kid.order, sb_mark: kid.mark, sb_indent: kid.indent }).catch(() => {});
+	for (const kid of kids) await report(run, "pane", kid.pane, { sb_order: kid.order, sb_mark: kid.mark, sb_indent: kid.indent, sb_name: kid.name }).catch(() => {});
 	const marked = new Set(kids.map((k) => k.pane));
 	await clearOrder(run, [...before].filter((id) => !marked.has(id) && !joined.has(id)));
 	return marked;
 }
 
-/** Removes the three tokens from panes, ignoring a pane that has already closed. */
-export const clearOrder = (run: HerdrRun, paneIds: string[]) => Promise.all(paneIds.map((id) => report(run, "pane", id, { sb_order: null, sb_mark: null, sb_indent: null }).catch(() => {})));
+/** Removes the four tokens from panes, ignoring a pane that has already closed. */
+export const clearOrder = (run: HerdrRun, paneIds: string[]) => Promise.all(paneIds.map((id) => report(run, "pane", id, { sb_order: null, sb_mark: null, sb_indent: null, sb_name: null }).catch(() => {})));
