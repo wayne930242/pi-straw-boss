@@ -14,7 +14,7 @@ import type { Route } from "./router.ts";
 // unaligned units. The session route is the unit's comms log (chat.ts, its own chunk) over the composer (composer.ts), with its dossier in the
 // side column. Both are drawn in place with the map's keyed `sync` and unit plates, so state changes animate the same way on every route.
 
-export interface FocusDeps { data(key: string): Data; restart(): void; openTile(tile: Tile, focus?: boolean): void; openTerminal(key: string, name: string): void; online(): boolean }
+export interface FocusDeps { data(key: string): Data; restart(): void; openTile(tile: Tile, focus?: boolean): void; embedTerminal(key: string, name: string, host: HTMLElement): Promise<() => void>; online(): boolean }
 type Found = { u: Who & { subs: Unit[] }; base: Base; squad?: string; launcher?: Unit };
 const MAX_QUEUE = 200;
 
@@ -44,9 +44,9 @@ function fillToken(el: HTMLElement, u: { key?: string; name: string; role: strin
 const colEl = () => html(`<div class="col"><a class="token">${PLATE}<span class="name"></span><span class="line"><em class="role"></em><span class="note"></span></span></a><div class="say"><p></p></div><div class="drones"></div></div>`);
 const ZOOM = () => `<div class="zoom-in"><header class="base keep"><a class="tower big"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></a><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>${m.head_tower()}</span><h2></h2><p></p></div><button type="button" class="close-x" data-close="base">×</button><dl class="tally"><div><dt>${m.squads()}</dt><dd></dd></div><div><dt>${m.units()}</dt><dd></dd></div><div data-mark="working"><dt>${m.stat_working()}</dt><dd></dd></div><div data-mark="waiting"><dt>${m.stat_waiting()}</dt><dd></dd></div></dl></header><div class="spawn-btns"><button type="button" class="pair-btn"></button></div><div class="squads"></div><div class="camps"><section class="tab squad camp" data-group="outposts"><h3><svg><use href="#i-outpost"/></svg><b>${m.outposts()}</b><small></small></h3><div class="formation"></div></section><section class="tab squad camp" data-group="outside"><h3><svg><use href="#i-outside"/></svg><b>${m.outside_net()}</b><small>${m.outside_note()}</small></h3><div class="formation"></div></section></div><p class="lost" hidden></p></div>`;
 const DOSSIER = () => `<div class="dossier-in"><span class="tag">${m.unit_dossier()}</span><div class="portrait">${PLATE}</div><h3></h3><p class="d-line"><em class="role"></em> <span class="state"></span></p><p class="d-note" hidden></p><dl class="specs"></dl><button class="cmp-link d-term" type="button" hidden>${m.terminal()}</button><button class="cmp-link d-close" type="button" data-close="unit" hidden>${m.close()}</button><div class="d-docs" hidden><h4>${m.documents()}</h4><div class="d-doc-list"></div><p class="d-docs-cut" hidden>${m.docs_cut()}</p></div><div class="d-drones" hidden><h4>${m.dispatched()}</h4><div class="formation"></div></div></div>`;
-const COMMS = () => `<div class="comms-in"><header class="comms-head"><span class="logo"><svg><use href="#i-comms"/></svg></span><div><h2><small>${m.comms()}</small> <span></span></h2><p></p></div><span class="chan link" data-state="live"><i></i><b>${m.channel_open()}</b></span></header><div class="chat-root"></div><div class="ask-root"></div><div class="composer-root"></div></div>`;
+const COMMS = () => `<div class="comms-in"><header class="comms-head"><span class="logo"><svg><use href="#i-comms"/></svg></span><div><h2><small>${m.comms()}</small> <span></span></h2><p></p></div><div class="modes" role="group"><button type="button" data-mode="chat" aria-pressed="true">${m.comms()}</button><button type="button" data-mode="term" aria-pressed="false">${m.terminal()}</button></div><span class="chan link" data-state="live"><i></i><b>${m.channel_open()}</b></span></header><div class="chat-root"></div><div class="ask-root"></div><div class="composer-root"></div><div class="term-root" hidden></div></div>`;
 
-export function mountFocus({ data, restart, openTile, openTerminal, online }: FocusDeps) {
+export function mountFocus({ data, restart, openTile, embedTerminal, online }: FocusDeps) {
 	const $ = (id: string) => document.getElementById(id)!;
 	const [wsView, sessionView, dossier] = ["ws-view", "session-view", "dossier"].map($) as HTMLElement[];
 	let route: Route = { view: "map" }, net: Net | undefined, cards: Record<string, string> = {}, chat: Chat | undefined, queue: HistoryEvent[] = [], stale = false;
@@ -173,7 +173,8 @@ export function mountFocus({ data, restart, openTile, openTerminal, online }: Fo
 			return row;
 		}));
 		const term = root.querySelector<HTMLButtonElement>(".d-term")!, key = route.key, name = u?.name ?? info?.name ?? key; // the pane's screen, in a tile beside the comms
-		[term.hidden, term.onclick] = [!u?.control, () => openTerminal(key, name)];
+		[term.hidden, term.onclick] = [!u?.control, () => setMode("term")];
+		sessionView.querySelector<HTMLElement>(".modes")?.toggleAttribute("hidden", !u?.control);
 		const shut = root.querySelector<HTMLButtonElement>(".d-close")!; // a subagent is its launcher's to close
 		Object.assign(shut.dataset, { key, name, role: u?.role ?? "" });
 		shut.hidden = !u?.control || u.role === "subagent";
@@ -210,7 +211,10 @@ export function mountFocus({ data, restart, openTile, openTerminal, online }: Fo
 		const opener = (path: string, card = docFor(locate(net, key)?.u.docs, info?.header?.cwd, path)) => card && (() => openTile(docTile(who().name, card)));
 		chat = mountChat(sessionView.querySelector(".chat-root")!, data(key), { who, link, docFor: opener });
 		const send = data(key).post ?? postTo(key);
-		[composer, asker] = [mountComposer(sessionView.querySelector(".composer-root")!, key, send), mountAsk(sessionView.querySelector(".ask-root")!, send, undefined, () => openTerminal(key, who().name))];
+		[composer, asker] = [mountComposer(sessionView.querySelector(".composer-root")!, key, send), mountAsk(sessionView.querySelector(".ask-root")!, send, undefined, () => setMode("term"))];
+		sessionView.querySelectorAll<HTMLButtonElement>(".modes button").forEach((b) => (b.onclick = () => setMode(b.dataset.mode as "chat" | "term")));
+		if (pendingMode === "term") setMode("term");
+		pendingMode = undefined;
 		chat.reveal(route.at);
 		queue.splice(0).forEach(apply);
 		(drawDossier(), claim());
@@ -219,8 +223,31 @@ export function mountFocus({ data, restart, openTile, openTerminal, online }: Fo
 		chat?.apply(e);
 		for (const it of e.items ?? []) if (it.kind === "assistant") [model, ctx] = [it.model ?? model, it.ctx ?? ctx];
 	}
+	/** The session view shows its chat or its terminal, one at a time; the terminal mirrors the pane only while it shows. */
+	let unembed: (() => void) | undefined, pendingMode: "term" | undefined, modeTurn = 0;
+	function setMode(mode: "chat" | "term") {
+		if (route.view !== "session") return;
+		const key = route.key, root = sessionView.querySelector<HTMLElement>(".comms-in");
+		if (!root) return void (pendingMode = mode === "term" ? "term" : undefined);
+		root.querySelectorAll<HTMLButtonElement>(".modes button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
+		for (const sel of [".chat-root", ".ask-root", ".composer-root"]) root.querySelector<HTMLElement>(sel)!.hidden = mode === "term";
+		const host = root.querySelector<HTMLElement>(".term-root")!;
+		host.hidden = mode !== "term";
+		root.classList.toggle("in-term", mode === "term");
+		unembed?.();
+		unembed = undefined;
+		if (mode !== "term") return claim();
+		const turn = ++modeTurn, name = locate(net, key)?.u.name ?? info?.name ?? key;
+		void embedTerminal(key, name, host).then((off) => (turn === modeTurn && route.view === "session" && route.key === key ? (unembed = off) : off()));
+	}
+	const leaveMode = () => (modeTurn++, unembed?.(), (unembed = undefined));
 	const draw = () => (crumbs(), route.view === "workspace" ? drawWorkspace() : drawDossier());
 	return {
+		/** Shows a session's terminal: its view, in terminal mode (an alert's "terminal" asks for it). */
+		terminal(key: string) {
+			if (route.view === "session" && route.key === key) setMode("term");
+			else pendingMode = "term";
+		},
 		locate: (key: string) => locate(net, key),
 		show(next: Route, before: Route, from?: DOMRect) {
 			const [key, at] = route.view === "session" ? [route.key, route.at] : [];
@@ -228,6 +255,7 @@ export function mountFocus({ data, restart, openTile, openTerminal, online }: Fo
 			route = next;
 			wsView.hidden = next.view !== "workspace";
 			sessionView.hidden = dossier.hidden = next.view !== "session";
+			if (next.view !== "session" || next.key !== key) leaveMode();
 			if (next.view === "session" && next.key !== key) {
 				[chat, composer, asker, info, model, ctx, queue, stale] = [undefined, undefined, undefined, undefined, undefined, undefined, [], false];
 				sessionView.replaceChildren(html(`<p class="lost">${m.opening_channel()}</p>`));

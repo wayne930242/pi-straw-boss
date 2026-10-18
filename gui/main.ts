@@ -27,7 +27,7 @@ let focus: Focus | undefined, loading: Promise<Focus> | undefined;
 const withFocus = (call: (f: Focus) => void) => (focus ? call(focus) : void loading?.then(call));
 function loadFocus() {
 	loading ??= import("./views.ts").then(({ mountFocus }) => {
-		focus = mountFocus({ data, restart: () => stream.restart(), openTile, openTerminal: (key, name) => withPanels((p) => p.terminal.open(key, name)), online: () => status.state === "live" });
+		focus = mountFocus({ data, restart: () => stream.restart(), openTile, embedTerminal: (key, name, host) => new Promise((done) => withPanels((p) => done(p.terminal.embed(key, name, host)))), online: () => status.state === "live" });
 		focus.show(current, current);
 		if (latest) focus.net(latest);
 		return focus;
@@ -44,6 +44,7 @@ const withPanels = (call: (p: Panels) => void) => {
 		recent: async (key) => (await (fixture ? fixture.data(key).latest() : history(key, "?limit=12"))).items,
 		post: (key) => fixture && ((action, body) => fixture.data(key).post!(action as Parameters<Post>[0], body)),
 		stream: () => hello,
+		showTerminal: (ws, key) => (panels?.stack.close(), focus?.terminal(key), router.go({ view: "session", ws, key })),
 	})));
 	void panelsLoading.then(call);
 };
@@ -173,16 +174,29 @@ addEventListener("keydown", (event) => {
 	if (!panels?.stack.close() && current.view !== "map") router.go(upOf(current));
 });
 el("pair").addEventListener("click", () => void import("./pair.ts").then(({ pairTile }) => openTile(pairTile(), true)));
-// A close button asks first, then posts close/unit, close/tab, or close/base; the net shows what went, and a refusal says why.
+// A close button asks first in the page's own dialog (a browser confirm can be dismissed by an attached tool before it is seen), then posts
+// close/unit, close/tab, or close/base; the net shows what went, and a refusal says why in the same dialog.
+const sheet = (text: string, yes?: string): Promise<boolean> => new Promise((done) => {
+	const d = document.createElement("dialog"), p = document.createElement("p"), row = document.createElement("div");
+	const button = (label: string, cls: string, answer: boolean) => Object.assign(document.createElement("button"), { type: "button", className: cls, textContent: label, onclick: () => (d.close(), done(answer)) });
+	[d.className, p.textContent, row.className] = ["sheet", text, "sheet-row"];
+	row.append(...(yes ? [button(m.cancel(), "later", false), button(yes, "sheet-yes", true)] : [button(m.close(), "later", false)]));
+	d.append(p, row);
+	d.addEventListener("close", () => (d.remove(), done(false)));
+	document.body.append(d);
+	d.showModal();
+});
 document.addEventListener("click", (event) => {
 	const b = (event.target as Element | null)?.closest?.<HTMLElement>("button[data-close]"), d = b?.dataset;
 	if (!b || !d) return;
 	event.preventDefault();
 	const ask = d.close === "base" ? m.close_base_ask : d.close === "tab" ? m.close_squad_ask : d.role === "tower" ? m.close_tower_ask : m.close_unit_ask;
-	if (!confirm(ask({ name: d.name ?? "" }))) return;
-	b.toggleAttribute("disabled", true);
-	void import("./post.ts").then(({ post }) => post(`close/${d.close}`, d.close === "unit" ? { key: d.key } : { workspace: d.ws, ...(d.tab && { tab: d.tab }) }))
-		.then((r) => r.ok || alert(r.body.reason ?? m.refused({ status: r.status })), () => alert(m.no_answer())).finally(() => b.toggleAttribute("disabled", false));
+	void sheet(ask({ name: d.name ?? "" }), m.close()).then((yes) => {
+		if (!yes) return;
+		b.toggleAttribute("disabled", true);
+		void import("./post.ts").then(({ post }) => post(`close/${d.close}`, d.close === "unit" ? { key: d.key } : { workspace: d.ws, ...(d.tab && { tab: d.tab }) }))
+			.then((r) => r.ok || sheet(r.body.reason ?? m.refused({ status: r.status })), () => sheet(m.no_answer())).finally(() => b.toggleAttribute("disabled", false));
+	});
 });
 // The opening buttons on the map and in a base (data-open with data-ws and data-tab) open their tile, read against the newest net.
 document.addEventListener("click", (event) => {

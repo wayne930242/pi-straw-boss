@@ -124,6 +124,14 @@ export function mountTerminals({ tiles, post, stream, pad }: { tiles: { open(til
 			if (t?.ended) void ((t.ended = false), say(t, m.connecting()), attach(t, true));
 			tiles.open(t?.tile ?? make(key, name), true);
 		},
+		/** Shows a session's terminal inside `host` (the session view's terminal mode) until the returned function takes it away. */
+		embed(key: string, name: string, host: HTMLElement): () => void {
+			const t = open.get(key);
+			if (t?.ended) void ((t.ended = false), say(t, m.connecting()), attach(t, true));
+			const tile = t?.tile ?? make(key, name);
+			host.replaceChildren(tile.body());
+			return () => (tile.closed?.(), host.replaceChildren());
+		},
 		/** A new stream said hello: every open tile attaches to it. */
 		hello: () => open.forEach((t) => !t.parked && !t.ended && attach(t, true)),
 		/** One `mirror` event from the stream. */

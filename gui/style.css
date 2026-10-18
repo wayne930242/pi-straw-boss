@@ -54,6 +54,13 @@ svg { display: block; }
 .tab-add:hover, .new-base:hover { color: #38e0ff; border-color: #38e0ff; }
 .close-x { margin-left: 6px; padding: 0 7px; border: 0; border-radius: 8px; background: none; color: var(--dim); font: 600 16px/1.4 var(--sans); cursor: pointer; } .close-x:hover { color: #ff8a9c; }
 .base > header .close-x, .zoom-in header .close-x { margin-left: auto; align-self: flex-start; } .d-close:hover { color: #ff8a9c; }
+.sheet { margin: auto; max-width: min(420px, calc(100vw - 32px)); padding: 18px 20px; border: 1px solid var(--line); border-radius: 16px; background: #0e1628; color: var(--text); font: 14px/1.5 var(--sans); }
+.sheet::backdrop { background: #02050c99; } .sheet p { margin: 0 0 14px; } .sheet-row { display: flex; justify-content: flex-end; gap: 10px; } .sheet .later { padding: 6px 14px; border-radius: 10px; cursor: pointer; }
+.sheet-yes { padding: 6px 14px; border: 0; border-radius: 10px; background: #ff8a9c; color: #06101e; font: 600 13px var(--sans); cursor: pointer; }
+.modes { display: flex; gap: 4px; margin-left: auto; } .modes[hidden] { display: none; } .modes + .chan { margin-left: 12px; }
+.modes button { white-space: nowrap; padding: 4px 14px; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--dim); font: 600 12px var(--sans); cursor: pointer; }
+.modes button[aria-pressed="true"] { border-color: #38e0ff; color: #38e0ff; background: #38e0ff14; }
+.term-root { min-height: 0; padding: 10px 16px 14px; } .term-root .term-tile { height: 100%; }
 .new-base { min-height: 140px; border-radius: 18px; border: 1px dashed var(--line); background: none; color: var(--dim); font: 600 14px var(--sans); letter-spacing: 0.08em; cursor: pointer; }
 .spawn .go { --c: #38e0ff; border: 0; }
 .spawn { display: grid; gap: 10px; color: var(--dim); font-size: 13px; }
@@ -485,6 +492,8 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 	.col { width: 100%; }
 	.comms-in, .tile { height: calc(var(--vvh, 100dvh) - 16px); min-height: 300px; border-radius: 16px; }
 	.chat-scroll { padding: 12px; }
+	.comms-head { flex-wrap: wrap; row-gap: 8px; } .comms-head .chan b { white-space: nowrap; }
+	.modes { order: 3; flex: 1 0 100%; margin-left: 0; } .modes button { flex: 1; padding: 6px 0; } .modes + .chan { margin-left: auto; }
 	.crumbs { gap: 6px; } .crumbs > * + *::before { margin-right: 6px; } .crumbs > * { max-width: 16ch; }
 	.crumbs:not(.open) > .mid { display: none; } .crumbs:not(.open) > .crumb-more { display: block; flex: none; }
 	.crumbs.open { flex-wrap: wrap; row-gap: 4px; }
