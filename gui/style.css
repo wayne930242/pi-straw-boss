@@ -433,7 +433,10 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .term-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; }
 .term-state { color: var(--dim); } .term-state[data-tone="ok"] { color: #3ddc97; } .term-state[data-tone="error"] { color: #ff8a9c; }
 .term-scroll { overflow: auto; overscroll-behavior: contain; padding: 8px 10px; border-radius: 14px; border: 1px solid var(--line); background: #090d18; }
-.term { width: max-content; min-width: 100%; color: #cdd6f4; font: 12px/1.3 var(--mono); white-space: pre; transition: opacity .2s; }
+/* Nerd Font icons in a pane's screen (private-use code points only): an installed Nerd Font first, else the bundled symbols (Nerd Fonts 3.5.1,
+   MIT, NOTICE.md), which the browser fetches only when such a glyph shows. */
+@font-face { font-family: "SB Nerd Symbols"; src: local("SymbolsNFM"), local("Symbols Nerd Font Mono"), local("HackNFM-Regular"), url("./fonts/SymbolsNerdFontMono.woff2") format("woff2"); unicode-range: U+E000-F8FF, U+F0000-FFFFD; font-display: swap; }
+.term { width: max-content; min-width: 100%; color: #cdd6f4; font: 12px/1.3 var(--mono); font-family: ui-monospace, "SF Mono", Menlo, Consolas, "SB Nerd Symbols", monospace; white-space: pre; transition: opacity .2s; }
 .term .tr { min-height: 1.3em; } .term.stale { opacity: .5; } .term.hidden { display: none; }
 .d-term { margin-top: 12px; font-size: 13px; }
 /* Documents: a parchment badge with the count of those open for review on a unit's plate, the dossier's list, and the tile's frame or text. */
