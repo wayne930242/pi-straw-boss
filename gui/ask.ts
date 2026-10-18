@@ -44,7 +44,8 @@ interface Panel { key: string; el: HTMLElement; note: HTMLElement; go: HTMLButto
 /** A dialog the page may answer is known by its id and digest, under whichever call the server reads it; anything else by its call and why. */
 const keyOf = (p: Pending) => (p.answer ? `d\n${p.answer.dialog}\n${p.answer.digest}` : `c\n${p.callId}\n${p.why ?? ""}`);
 
-export function mountAsk(root: HTMLElement, post: AnswerPost, remote = location.hostname !== "127.0.0.1") {
+/** `terminal` opens the session's terminal tile: a read-only panel offers it (Show terminal), except for a secret, whose mirror stays hidden. */
+export function mountAsk(root: HTMLElement, post: AnswerPost, remote = location.hostname !== "127.0.0.1", terminal?: () => void) {
 	// `cur` is the panel on show, drawn for `shown`; `kept` is the newest one that answers, which comes back as it was when its dialog does.
 	let shown: Pending | undefined, cur: Panel | undefined, kept: Panel | undefined, ready = false, busy = false, leave: ReturnType<typeof setTimeout> | undefined;
 	for (const type of ["focusin", "pointerdown"]) document.addEventListener(type, (e) => cur && !cur.el.contains(e.target as Node) && (cur.lost = undefined)); // the user went elsewhere
@@ -118,7 +119,9 @@ export function mountAsk(root: HTMLElement, post: AnswerPost, remote = location.
 		};
 		if (a) (x.send = h("button", { type: "button", class: "ask-send" }, "Send answer")).onclick = () => void (x.pick() && answer(x, bodyOf(a, x.pick()!, crypto.randomUUID())));
 		const term = h("p", { class: "ask-term" }, p.why && asks.length ? p.why : `${list ? "Answer them" : "Answer it"} in the terminal. ${list || !asks[0] ? "" : how(asks[0])}`.trim());
-		x.el.append(...(a ? (a.select ? select(x, a) : questions(x, a)) : [...(asks.length ? asks.map((y) => block(y, list)) : [h("p", { class: "ask-why" }, p.why ?? "It waits on a dialog.")]), h("div", { class: "ask-acts" }, term, x.go)]), x.note);
+		const show = terminal && p.tool !== "secret_drop" && h("button", { type: "button", class: "cmp-link" }, "Show terminal");
+		if (show) show.onclick = terminal;
+		x.el.append(...(a ? (a.select ? select(x, a) : questions(x, a)) : [...(asks.length ? asks.map((y) => block(y, list)) : [h("p", { class: "ask-why" }, p.why ?? "It waits on a dialog.")]), h("div", { class: "ask-acts" }, term, show, x.go)]), x.note);
 		return x;
 	}
 	/** Puts a panel on the page, or none. The one leaving notes what had the focus in it, and on coming back takes it again (scrolled into view) if nothing else has it. */

@@ -31,3 +31,9 @@ export function demoHistory(rounds = 70): Item[] {
 	}
 	return out;
 }
+
+/** A demo pane's screen at tick n, as pi in a framed theme draws it (SGR only): the spinner and the test count change every tick. */
+export function demoScreen(name: string, n: number): string[] {
+	const [gold, dim, ok, rule] = ["\x1b[38;2;249;226;175m", "\x1b[2m", "\x1b[38;5;114m", "─".repeat(58)], end = "\x1b[0m";
+	return [`${gold}╭─ pi · ${name} ${rule.slice(name.length + 8)}╮${end}`, "", ` \x1b[1;38;2;137;180;250mYou${end}  ship the billing fix and run the tests`, "", ` ${ok}●${end} bash ${dim}npm test -- billing${end}`, `   ${ok}✓${end} ${41 + (n % 9)} passed ${dim}· 0 failed${end}`, ` ${ok}●${end} edit ${dim}billing/ledger.ts${end} \x1b[32m+12\x1b[0m \x1b[31m-3${end}`, "", ` \x1b[33m${"⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[n % 10]}${end} Working… ${dim}(${n}s · esc to interrupt)${end}`, "", `${gold}╭${rule}╮${end}`, `${gold}│${end} \x1b[7m ${end}${" ".repeat(56)}${gold}│${end}`, `${gold}╰${rule}╯${end}`, ` \x1b[38;2;203;166;247mharbor-1${end} ${dim}· 42k tokens · ~/work/harbor-api${end}`];
+}

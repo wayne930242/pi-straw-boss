@@ -542,6 +542,21 @@ paired cookie). The reads are shared by every stream on a session and stop at on
 Limits: 2 mirrors per stream and 6 mirrored sessions per server, else 429 with the reason; an unknown stream or a bad body is 400, a
 session no longer live is 409. Reconnecting with `watch=…&mirror=1` was rejected: every toggle would resend 150 history items.
 
+**Page (`gui/mirror.ts`, in the overlay layer's chunk).** The terminal is a **tile**, following the tile rules: the user opens it, so it
+takes focus, never over a dialog, and as tabs or under the view when narrow. It opens from the dossier's **Terminal** button (a unit
+with a live pi pane) and from **Show terminal** in a read-only dialog panel (pi-ask-user's `ask_user`, several dialogs, "a dialog", too
+long to show); an answerable panel answers itself and a `secret_drop` panel's mirror stays hidden, so neither offers it. Rows are `<div>`s
+of spans built from text nodes only, never markup: SGR maps to classes for the 16 colours (text and background, inverse included) and
+the attributes (bold, dim, italic, underline, strike), and 256-colour and truecolor values become `rgb()` styles only after each part is
+checked to be 0–255; unknown codes change nothing, and any other escape or control is dropped. Monospace, `white-space: pre`, actual
+size with sideways scroll by default, opened scrolled to the bottom; **Fit width** sets the font size from the tile's width and the
+pane's columns (6 px at least). CJK alignment follows the browser's font, a known small drift. The status line says "Live · cols×rows",
+"Hidden while it waits for a secret", why it ended, or "Paused while this tab is hidden"; a mirror with no frame for 3 s dims. The
+tile attaches the page's stream when it opens and again on a new stream's `hello` (after a reconnect), detaches 5 s after the tab is
+hidden and attaches again when it shows, and detaches when it closes, by its × or pushed out by a fifth tile. Opening the terminal
+again after it ended tries again. While no tile shows, the page keeps no timer for it. `npm run gui:dev` has a demo pane whose screen
+changes every second.
+
 **`ask_user`, structured** (pi-ask-user 0.16.x; other versions use the mirror):
 the panel shows the context (markdown), the question, the options with
 descriptions, and a text field when `allowFreeform` is not false. Mapping, from

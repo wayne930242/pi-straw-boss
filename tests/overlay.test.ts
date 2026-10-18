@@ -180,6 +180,18 @@ test("closing a tile activates its neighbour, and past four tiles the oldest clo
 	assert.deepEqual(page.tiles, ["b", "c", "d", "e"]);
 });
 
+test("a tile hears when it closes, by its × or pushed out by a fifth, once, and not when it is opened again", () => {
+	const { model } = tiles(), closed: string[] = [], watched = (id: string): Tile => ({ ...tile(id), closed: () => closed.push(id) });
+	for (const id of ["a", "b", "c", "d"]) model.open(watched(id));
+	model.open(watched("a"));
+	assert.deepEqual(closed, [], "opening an open tile again closes nothing");
+	model.close("b");
+	model.close("b");
+	model.open(watched("e"));
+	model.open(watched("f"));
+	assert.deepEqual(closed, ["b", "a"], "the terminal tile detaches its mirror on either");
+});
+
 test("an alert dialog tells the last assistant line and the tool call still open", () => {
 	assert.deepEqual(intel([
 		{ id: "1", kind: "assistant", text: "first\nI will ask now.", tools: [{ id: "c1", name: "bash", summary: "ls" }] },

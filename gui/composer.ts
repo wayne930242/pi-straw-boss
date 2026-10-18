@@ -15,7 +15,7 @@ const UNSURE = "Not confirmed. Check the terminal before sending again.";
 const WENT = "The original already went to the session; what is here is your edited copy, unsent.";
 type Note = [tone: string, text: string];
 export const ENDING = /^\s*\/(quit|exit|new|resume|fork|clone|import|reload)(?=\s|$)/;
-export type Post = (action: "input" | "keys" | "focus" | "answer", body: Record<string, unknown>) => Promise<Answer>;
+export type Post = (action: "input" | "keys" | "focus" | "answer" | "mirror", body: Record<string, unknown>) => Promise<Answer>;
 type Flight = { sent?: string; answer: Promise<Answer> };
 // Sends on their way, by session key. They outlive a composer replaced meanwhile (the route left and came back), whose successor waits for
 // them before it sends again and settles its own box, so text is neither shown as unsent after it went nor sent twice.

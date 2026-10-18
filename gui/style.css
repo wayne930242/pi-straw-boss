@@ -391,6 +391,20 @@ div.ask-opts { max-height: none; } button.ask-opt { text-align: left; color: var
 
 html.paused *, html.paused *::before, html.paused *::after { animation-play-state: paused !important; }
 @media (max-width: 1100px) { .stage { grid-template-columns: 1fr; } .side { position: static; } .stats { display: none; } }
+/* The terminal tile: the pane's screen as the server sent it (SGR only), display only, with the 16 colours of a dark terminal. */
+.term-tile { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 10px; height: 100%; }
+.tile-body:has(.term-tile) { overflow: hidden; padding: 12px 14px; }
+.term-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; }
+.term-state { color: var(--dim); } .term-state[data-tone="ok"] { color: #3ddc97; } .term-state[data-tone="error"] { color: #ff8a9c; }
+.term-scroll { overflow: auto; overscroll-behavior: contain; padding: 8px 10px; border-radius: 14px; border: 1px solid var(--line); background: #090d18; }
+.term { width: max-content; min-width: 100%; color: #cdd6f4; font: 12px/1.3 var(--mono); white-space: pre; transition: opacity .2s; }
+.term .tr { min-height: 1.3em; } .term.stale { opacity: .5; } .term.hidden { display: none; }
+.d-term { margin-top: 12px; font-size: 13px; }
+.c0 { color: #45475a; } .cz { color: #090d18; } .c1 { color: #f38ba8; } .c2 { color: #a6e3a1; } .c3 { color: #f9e2af; } .c4 { color: #89b4fa; } .c5 { color: #f5c2e7; } .c6 { color: #94e2d5; } .c7 { color: #bac2de; }
+.c8 { color: #585b70; } .c9 { color: #f37799; } .c10 { color: #89d88b; } .c11 { color: #ebd391; } .c12 { color: #74a8fc; } .c13 { color: #f2aede; } .c14 { color: #6bd7ca; } .c15 { color: #a6adc8; }
+.k0 { background: #090d18; } .k1 { background: #f38ba8; } .k2 { background: #a6e3a1; } .k3 { background: #f9e2af; } .k4 { background: #89b4fa; } .k5 { background: #f5c2e7; } .k6 { background: #94e2d5; } .k7, .kz { background: #bac2de; }
+.k8 { background: #585b70; } .k9 { background: #f37799; } .k10 { background: #89d88b; } .k11 { background: #ebd391; } .k12 { background: #74a8fc; } .k13 { background: #f2aede; } .k14 { background: #6bd7ca; } .k15 { background: #a6adc8; }
+.tb { font-weight: 700; } .td { opacity: .6; } .ti { font-style: italic; } .tu { text-decoration: underline; } .ts { text-decoration: line-through; } .tu.ts { text-decoration: underline line-through; }
 @media (max-width: 900px) { .work { flex-direction: column; align-items: stretch; } .view, .tiles { flex: none; } .tile { position: static; } .keep { flex-wrap: wrap; } }
 /* A phone: the HUD wraps and scrolls away, every column takes the full width, dialogs dock at the bottom, and the comms panel fits the
    visual viewport (it shrinks with the on-screen keyboard), clear of the safe-area insets. */
@@ -416,5 +430,5 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 	.dock { top: auto; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); width: calc(100vw - 20px); }
 }
 /* Touch: larger targets, and a 16 px box so the phone does not zoom in on focus. */
-@media (pointer: coarse) { .composer textarea, .ask input { font-size: 16px; } .composer button, .go, .later, .x, .chat-pill, .pair-btn, .alerts, .ask button { min-height: 40px; } }
+@media (pointer: coarse) { .composer textarea, .ask input { font-size: 16px; } .composer button, .go, .later, .x, .chat-pill, .pair-btn, .alerts, .ask button, .term-bar button, .d-term { min-height: 40px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }

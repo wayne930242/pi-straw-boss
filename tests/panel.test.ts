@@ -287,3 +287,16 @@ test("a click on the page outside the panel keeps the focus where the user put i
 	panel.update(approval("m1"), true);
 	assert.equal(page.activeElement, page.body);
 });
+
+test("a read-only panel offers Show terminal (the session's mirror); a secret and an answerable dialog do not", () => {
+	let shown = 0;
+	const ask = mountAsk(root as unknown as HTMLElement, async () => ({ ok: true, status: 200, body: {} }), false, () => void shown++);
+	const button = () => root.all((el) => el.textContent === "Show terminal")[0];
+	ask.update({ callId: "c1", tool: "ask_user", why: "It waits on a dialog." }, true);
+	button()!.click();
+	assert.equal(shown, 1);
+	ask.update({ callId: "c2", tool: "secret_drop", why: "It waits for a secret." }, true);
+	assert.equal(button(), undefined, "a secret's screen stays hidden");
+	ask.update(approval(), true);
+	assert.equal(button(), undefined, "an answerable dialog answers itself");
+});

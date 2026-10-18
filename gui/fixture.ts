@@ -1,7 +1,7 @@
 import type { Mark } from "../src/dashboard.ts";
 import type { Net, Unit } from "../src/net.ts";
 import type { Data, Page } from "./chat.ts";
-import { DEMO_DOC, demoHistory, WHOLE } from "./demo-chat.ts";
+import { DEMO_DOC, demoHistory, demoScreen, WHOLE } from "./demo-chat.ts";
 import type { Tile } from "./layer.ts";
 import type { Source } from "./stream.ts";
 
@@ -51,7 +51,7 @@ export function createFixture({ resume, tile, tick = 2500 }: { resume(): void; t
 			current = this;
 			// A dropped server answers a connection with an error, as a stopped one would.
 			if (dropped) this.timers.push(setTimeout(() => this.fail(), 300));
-			else this.timers.push(setTimeout(() => this.send("message", net), 150), setInterval(() => this.send("ping", ""), 15_000));
+			else this.timers.push(setTimeout(() => this.send("hello", { stream: "demo" }), 100), setTimeout(() => this.send("message", net), 150), setInterval(() => this.send("ping", ""), 15_000));
 			if (dropped) return;
 			if (watch?.startsWith("w:")) this.timers.push(setTimeout(() => this.send("cards", { a1: "I merged the billing branch and the tests pass.", a3: "Waiting for your answer about the deploy window." }), 250));
 			else if (watch) {
@@ -108,13 +108,21 @@ export function createFixture({ resume, tile, tick = 2500 }: { resume(): void; t
 		older: async (before) => page(before),
 		latest: async () => page(),
 		// Input is accepted, and shows in the log a moment later as pi would write it.
-		post: async (action, body) => (action === "answer" ? answered(key) : (action === "input" && setTimeout(() => current?.send("history", { key, reset: false, items: [{ id: `you-${++live}`, kind: "user", at: new Date().toISOString(), text: String(body.text) }] }), 700), { ok: true, status: 200, body: {} })),
+		post: async (action, body) => (action === "answer" ? answered(key) : action === "mirror" ? mirror(key, body.on === true) : (action === "input" && setTimeout(() => current?.send("history", { key, reset: false, items: [{ id: `you-${++live}`, kind: "user", at: new Date().toISOString(), text: String(body.text) }] }), 700), { ok: true, status: 200, body: {} })),
 		doc: async (path) => (path.endsWith("rollout-plan.md") ? DEMO_DOC : undefined),
 		entry: async (id) => {
 			const item = history.find((i) => i.id === id);
 			return item && { ...item, thoughtText: item.kind === "assistant" ? "Thinking out loud about the rounding rules.\n\nCredit notes may need a separate sum." : undefined, tools: item.tools?.map((t) => (t.cut ? { ...t, args: WHOLE, cut: undefined } : t)), text: item.more ? Array.from({ length: 120 }, (_, i) => `line ${i + 1} of the full tool result`).join("\n") : item.text };
 		},
 	});
+	/** A demo terminal: its screen once a second while a tile shows it, every row first, then the two rows that change. */
+	const panes = new Map<string, ReturnType<typeof setInterval>>();
+	const mirror = (key: string, on: boolean, n = 0, name = units(net).find((u) => u.key === key)?.name ?? key) => {
+		clearInterval(panes.get(key));
+		const beat = (rows = demoScreen(name, n++)) => current?.send("mirror", { key, seq: n, rows: rows.length, cols: 60, ...(n === 1 && { whole: true }), set: n === 1 ? rows.map((r, i) => [i, r]) : [5, 8].map((i) => [i, rows[i]]) });
+		if (on) (beat(), panes.set(key, setInterval(beat, 1000)));
+		return { ok: true, status: 200, body: { attached: on } };
+	};
 	/** An answer lands at once, and the unit goes back to work a moment later. */
 	const answered = (key: string) => {
 		// The unit is found when the answer lands: the tick clones the net meanwhile.

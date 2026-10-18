@@ -1,15 +1,17 @@
 import type { Item } from "../src/items.ts";
-import { type AnswerPost, mountAsk } from "./ask.ts";
+import { mountAsk } from "./ask.ts";
+import { mountTerminals } from "./mirror.ts";
 import { type Alert, createStack, tally } from "./overlay.ts";
-import { post } from "./post.ts";
+import { type Answer, post } from "./post.ts";
 import { aim, byId, doing, fillPlate, html, mark, PLATE, sync, text } from "./render.ts";
 
 // The overlay layer's DOM, a chunk fetched on the first alert, dialog, or tile: the HUD alert with its queue, the dialogs in the dock (stacked; the
-// rules are in overlay.ts), and the tiles beside the current view. A tile is a document (show_doc in phase 3, a demo document in the dev fixture); tiles share the
+// rules are in overlay.ts), and the tiles beside the current view. A tile is a document (a demo document in the dev fixture) or a session's terminal (mirror.ts); tiles share the
 // view's width side by side and turn into tabs when it runs out. Opening a tile never covers or closes a dialog, and a tile that
 // arrives on its own shows beside the view without taking focus or the active tab.
 
-export interface Tile { id: string; title: string; body(): HTMLElement }
+/** `icon` names the header's symbol (a document by default); `closed` runs when the tile closes, by its × or pushed out by a fifth. */
+export interface Tile { id: string; title: string; body(): HTMLElement; icon?: string; closed?(): void }
 export interface TilesIO { render(tiles: Tile[], active: string | undefined): void; enter(tile: Tile): void }
 export const MAX_TILES = 4;
 const CLICKABLE = "a, button, input, textarea, select, summary, label, [role=button]";
@@ -22,7 +24,8 @@ export function createTiles(io: TilesIO) {
 		get active() { return active; },
 		/** `focus` is false for a tile that arrives on its own. Past four tiles the oldest closes. */
 		open(tile: Tile, focus = true) {
-			if (!tiles.some((t) => t.id === tile.id)) tiles = [...tiles, tile].slice(-MAX_TILES);
+			if (!tiles.some((t) => t.id === tile.id)) (tiles = [...tiles, tile]).slice(0, -MAX_TILES).forEach((t) => t.closed?.());
+			tiles = tiles.slice(-MAX_TILES);
 			if (focus || !tiles.some((t) => t.id === active)) active = tile.id;
 			draw();
 			if (focus) io.enter(tiles.find((t) => t.id === tile.id)!);
@@ -30,6 +33,7 @@ export function createTiles(io: TilesIO) {
 		close(id: string) {
 			const i = tiles.findIndex((t) => t.id === id);
 			if (i < 0) return;
+			tiles[i]!.closed?.();
 			tiles = tiles.filter((t) => t.id !== id);
 			if (active === id) active = (tiles[i] ?? tiles[i - 1])?.id;
 			draw();
@@ -51,8 +55,9 @@ export function intel(items: Item[]): Intel {
 }
 export interface Intel { said?: string; pending?: string; at?: string; failed?: boolean }
 
-/** `post` is the demo fixture's stand-in for the server's focus and answer endpoints. */
-export interface PanelDeps { label(ws: string): string; recent(key: string): Promise<Item[]>; post?(key: string): AnswerPost | undefined }
+/** `post` is the demo fixture's stand-in for the server's session endpoints; `stream` the newest `hello` of the page's stream, as it came. */
+export type SessionPost = (action: string, body: Record<string, unknown>) => Promise<Answer>;
+export interface PanelDeps { label(ws: string): string; recent(key: string): Promise<Item[]>; post?(key: string): SessionPost | undefined; stream(): string }
 const dialogEl = () => html(`<section class="dialog" role="dialog" aria-modal="false" tabindex="-1"><header><b class="tag">alert</b><span class="where"></span><button class="x" type="button" aria-label="Close">×</button></header><div class="who">${PLATE}<div><h3></h3><p><em class="role"></em> <span class="state"></span></p></div></div><div class="intel"><h4>Last transmission</h4><p class="said">…</p><p class="pending" hidden><b>waiting on</b> <span></span></p></div><div class="ask-root"></div><footer><a class="go">Open comms</a><button class="later" type="button">Later</button><span class="queued"></span></footer></section>`);
 const tileEl = () => html(`<section class="tile" tabindex="-1"><header><svg><use href="#i-doc"/></svg><b></b><button class="x" type="button" aria-label="Close document">×</button></header><div class="tile-body"></div></section>`);
 
@@ -92,10 +97,10 @@ export function mountPanels(deps: PanelDeps) {
 		if (!intels.has(a.key)) learn(a);
 		tell(el, a);
 		let ask = asks.get(el);
-		if (!ask) asks.set(el, (ask = mountAsk(el.querySelector(".ask-root")!, deps.post?.(a.key) ?? ((action, body) => post(`sessions/${encodeURIComponent(a.key)}/${action}`, body)))));
+		if (!ask) asks.set(el, (ask = mountAsk(el.querySelector(".ask-root")!, to(a.key), undefined, () => terminal.open(a.key, a.name))));
 		ask.update(a.pending, a.mark === "waiting" && document.body.dataset.stale !== "true"); // what it waits on, answerable or not; the stream state redraws it (report in main.ts)
 	};
-	const asks = new WeakMap<HTMLElement, ReturnType<typeof mountAsk>>();
+	const asks = new WeakMap<HTMLElement, ReturnType<typeof mountAsk>>(), to = (key: string): SessionPost => deps.post?.(key) ?? ((action, body) => post(`sessions/${encodeURIComponent(key)}/${action}`, body));
 	const stack = createStack<HTMLElement>({
 		render(open, queue) {
 			sync(dock, open.map((a) => ({ ...a, id: a.key })), dialogEl, (el, a) => fill(el, a, open.length - 1 - open.findIndex((o) => o.key === a.key), queue));
@@ -136,6 +141,8 @@ export function mountPanels(deps: PanelDeps) {
 			row.hidden = !list.length;
 			sync(row, list, (t) => {
 				const el = tileEl();
+				el.querySelector("use")!.setAttribute("href", `#${t.icon ?? "i-doc"}`);
+				el.querySelector(".x")!.setAttribute("aria-label", `Close ${t.title}`);
 				el.querySelector(".tile-body")!.append(t.body());
 				el.querySelector(".x")!.addEventListener("click", () => tiles.close(t.id));
 				return el;
@@ -157,9 +164,11 @@ export function mountPanels(deps: PanelDeps) {
 		enter: (t) => requestAnimationFrame(() => row.querySelector<HTMLElement>(`.tile[data-key="${CSS.escape(t.id)}"]`)?.focus()),
 	});
 	new ResizeObserver(fit).observe(work);
+	const terminal = mountTerminals({ tiles, post: to, stream: deps.stream });
 	return {
 		tiles,
 		stack,
+		terminal,
 		/** A snapshot's alerts: the new ones queue, and the queue drops the ones whose unit moved on. */
 		alerts(fresh: Alert[], now: Map<string, Alert>) {
 			for (const alert of fresh) learn(alert), stack.arrive(alert);

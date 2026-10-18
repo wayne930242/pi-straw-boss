@@ -1,6 +1,7 @@
 import "./style.css";
 import type { Net } from "../src/net.ts";
 import type { Data, HistoryEvent } from "./chat.ts";
+import type { Post } from "./composer.ts";
 import { changes } from "./log.ts";
 import { type Alert, alertsOf, arrivals } from "./alerts.ts";
 import type { mountPanels, Tile } from "./layer.ts";
@@ -14,7 +15,7 @@ const el = (id: string) => document.getElementById(id)!;
 const time = (at?: number) => (at ? new Date(at).toLocaleTimeString([], { hour12: false }) : "never");
 
 let shown: Net | undefined, logged: Net | undefined, latest: Net | undefined, pending: Net | undefined, status: Status = { state: "connecting", attempt: 0 };
-let current: Route = { view: "map" }, started = false, known: Map<string, Alert> | undefined;
+let current: Route = { view: "map" }, started = false, known: Map<string, Alert> | undefined, hello = "";
 
 // The focus views (the zoomed-in base, the session's comms and dossier) are a separate chunk, fetched on the first route that is not the
 // map. Calls made before it arrives wait in order, and it starts with the latest net.
@@ -23,7 +24,7 @@ let focus: Focus | undefined, loading: Promise<Focus> | undefined;
 const withFocus = (call: (f: Focus) => void) => (focus ? call(focus) : void loading?.then(call));
 function loadFocus() {
 	loading ??= import("./views.ts").then(({ mountFocus }) => {
-		focus = mountFocus({ data, restart: () => stream.restart(), openTile, online: () => status.state === "live" });
+		focus = mountFocus({ data, restart: () => stream.restart(), openTile, openTerminal: (key, name) => withPanels((p) => p.terminal.open(key, name)), online: () => status.state === "live" });
 		focus.show(current, current);
 		if (latest) focus.net(latest);
 		return focus;
@@ -38,7 +39,8 @@ const withPanels = (call: (p: Panels) => void) => {
 	panelsLoading ??= import("./layer.ts").then(({ mountPanels }) => (panels = mountPanels({
 		label: (ws) => latest?.bases.find((b) => b.id === ws)?.label ?? ws,
 		recent: async (key) => (await (fixture ? fixture.data(key).latest() : history(key, "?limit=12"))).items,
-		post: (key) => fixture && ((action, body) => fixture.data(key).post!(action, body)),
+		post: (key) => fixture && ((action, body) => fixture.data(key).post!(action as Parameters<Post>[0], body)),
+		stream: () => hello,
 	})));
 	void panelsLoading.then(call);
 };
@@ -124,6 +126,9 @@ const open = () => {
 	const source = fixture ? fixture.open(watchOf(current)) : live(watchOf(current));
 	source.listen("history", (d) => forward("history", d));
 	source.listen("cards", (d) => forward("cards", d));
+	// The stream's name (terminal tiles attach to it) and their frames go to the overlay layer, which parses them.
+	source.listen("hello", (d) => ((hello = d), panels?.terminal.hello()));
+	source.listen("mirror", (d) => panels?.terminal.frame(d));
 	return source;
 };
 // A click on a unit that waits or failed opens its alert through the dock rather than its route; a modified click still follows the link.

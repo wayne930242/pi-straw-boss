@@ -12,7 +12,7 @@ import type { Route } from "./router.ts";
 // unaligned units. The session route is the unit's comms log (chat.ts, its own chunk) over the composer (composer.ts), with its dossier in the
 // side column. Both are drawn in place with the map's keyed `sync` and unit plates, so state changes animate the same way on every route.
 
-export interface FocusDeps { data(key: string): Data; restart(): void; openTile(tile: Tile, focus?: boolean): void; online(): boolean }
+export interface FocusDeps { data(key: string): Data; restart(): void; openTile(tile: Tile, focus?: boolean): void; openTerminal(key: string, name: string): void; online(): boolean }
 type Found = { u: Who & { subs: Unit[] }; base: Base; squad?: string; launcher?: Unit };
 const MAX_QUEUE = 200;
 
@@ -41,10 +41,10 @@ function fillToken(el: HTMLElement, u: { key?: string; name: string; role: strin
 }
 const colEl = () => html(`<div class="col"><a class="token">${PLATE}<span class="name"></span><span class="line"><em class="role"></em><span class="note"></span></span></a><div class="say"><p></p></div><div class="drones"></div></div>`);
 const ZOOM = `<div class="zoom-in"><header class="base keep"><a class="tower big"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></a><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>head tower</span><h2></h2><p></p></div><dl class="tally"><div><dt>Squads</dt><dd></dd></div><div><dt>Units</dt><dd></dd></div><div data-mark="working"><dt>Working</dt><dd></dd></div><div data-mark="waiting"><dt>Waiting</dt><dd></dd></div></dl></header><div class="squads"></div><div class="camps"><section class="tab squad camp" data-group="outposts"><h3><svg><use href="#i-outpost"/></svg><b>Outposts</b><small></small></h3><div class="formation"></div></section><section class="tab squad camp" data-group="outside"><h3><svg><use href="#i-outside"/></svg><b>Outside the net</b><small>unaligned pi panes</small></h3><div class="formation"></div></section></div><p class="lost" hidden></p></div>`;
-const DOSSIER = `<div class="dossier-in"><span class="tag">unit dossier</span><div class="portrait">${PLATE}</div><h3></h3><p class="d-line"><em class="role"></em> <span class="state"></span></p><p class="d-note" hidden></p><dl class="specs"></dl><div class="d-drones" hidden><h4>Dispatched</h4><div class="formation"></div></div></div>`;
+const DOSSIER = `<div class="dossier-in"><span class="tag">unit dossier</span><div class="portrait">${PLATE}</div><h3></h3><p class="d-line"><em class="role"></em> <span class="state"></span></p><p class="d-note" hidden></p><dl class="specs"></dl><button class="cmp-link d-term" type="button" hidden>Terminal</button><div class="d-drones" hidden><h4>Dispatched</h4><div class="formation"></div></div></div>`;
 const COMMS = `<div class="comms-in"><header class="comms-head"><span class="logo"><svg><use href="#i-comms"/></svg></span><div><h2><small>comms</small> <span></span></h2><p></p></div><span class="chan link" data-state="live"><i></i><b>channel open</b></span></header><div class="chat-root"></div><div class="ask-root"></div><div class="composer-root"></div></div>`;
 
-export function mountFocus({ data, restart, openTile, online }: FocusDeps) {
+export function mountFocus({ data, restart, openTile, openTerminal, online }: FocusDeps) {
 	const $ = (id: string) => document.getElementById(id)!;
 	const [wsView, sessionView, dossier] = ["ws-view", "session-view", "dossier"].map($) as HTMLElement[];
 	let route: Route = { view: "map" }, net: Net | undefined, cards: Record<string, string> = {}, chat: Chat | undefined, queue: HistoryEvent[] = [], stale = false;
@@ -157,6 +157,8 @@ export function mountFocus({ data, restart, openTile, online }: FocusDeps) {
 			row.lastElementChild!.append(v!);
 			return row;
 		}));
+		const term = root.querySelector<HTMLButtonElement>(".d-term")!, key = route.key, name = u?.name ?? info?.name ?? key; // the pane's screen, in a tile beside the comms
+		[term.hidden, term.onclick] = [!u?.control, () => openTerminal(key, name)];
 		const drones = root.querySelector<HTMLElement>(".d-drones")!;
 		drones.hidden = !u?.subs.length;
 		sync(drones.querySelector(".formation")!, (u?.subs ?? []).map((s) => ({ ...s, id: s.key })), tokenEl, (el, s) => (el.classList.add("drone"), fillToken(el, s, ws())));
@@ -187,7 +189,7 @@ export function mountFocus({ data, restart, openTile, online }: FocusDeps) {
 		};
 		chat = mountChat(sessionView.querySelector(".chat-root")!, data(key), { who, link, openTile });
 		const send = data(key).post ?? postTo(key);
-		[composer, asker] = [mountComposer(sessionView.querySelector(".composer-root")!, key, send), mountAsk(sessionView.querySelector(".ask-root")!, send)];
+		[composer, asker] = [mountComposer(sessionView.querySelector(".composer-root")!, key, send), mountAsk(sessionView.querySelector(".ask-root")!, send, undefined, () => openTerminal(key, who().name))];
 		chat.reveal(route.at);
 		queue.splice(0).forEach(apply);
 		(drawDossier(), claim());
