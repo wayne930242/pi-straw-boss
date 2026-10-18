@@ -345,7 +345,7 @@ export class Agent {
 	}
 	/** The pane's role tokens; the order, mark and indent tokens (order.ts) have their own tests. */
 	get tokens(): Tokens {
-		const { sb_order: _order, sb_mark: _mark, sb_indent: _indent, ...role } = this.world.herdr.pane(this.pane).tokens;
+		const { sb_order: _order, sb_mark: _mark, sb_indent: _indent, sb_tab: _tab, ...role } = this.world.herdr.pane(this.pane).tokens;
 		return role;
 	}
 	async fire(type: string, event: Record<string, unknown> = {}): Promise<void> {

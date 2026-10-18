@@ -61,7 +61,7 @@ The view is on whenever the Herdr server starts, and one key switches it off and
 pi-straw-boss writes the sort key (`sb_order`), a role label (`sb_mark`) and, on subagents, a tree branch (`sb_indent`) the view and your sidebar rows can use.
 It needs Herdr 0.9.3 or newer and node.
 
-<p align="center"><img src="docs/sidebar-net-view.png" width="308" alt="Herdr's sidebar in the net view, one row per agent: each workspace's tower with the radio tower glyph first, main agents marked with a star and members with a person, and every subagent indented under the session that launched it"></p>
+<p align="center"><img src="docs/sidebar-net-view.png" width="308" alt="Herdr's sidebar in the net view: each workspace's tower with the radio tower glyph first, each main agent on two rows with a star and its tab's label, and every subagent on a tree branch under the session that launched it"></p>
 
 <p align="center"><sub>The net view with each agent's role mark. <a href="docs/how-it-works.md#sidebar-net-view">How it works</a> has the sidebar rows that show them.</sub></p>
 

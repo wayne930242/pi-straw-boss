@@ -142,8 +142,10 @@ A session that ends clears its own and its subagents'.
   A main agent's or member's is `WWW.1.TTT.R.PPP`: `WWW` is the place of its workspace among the base workspaces (a sub workspace does not count, and the head tower's is `000`), `TTT` the place of its tab in the workspace, `R` is `0` for a main agent and `1` for a member, and `PPP` the place of its pane in the tab.
   Each subagent adds one `.NNN` segment, its place among the live and finished subagents of its launcher, at any depth (the dashboard lists eight per session, the keys cover every live one).
   Every number is zero-padded, so plain string order is numeric order, and a subagent's key sorts after its launcher's and before the launcher's next sibling's.
-- `sb_mark` says what a net member is, in a few characters: a star (Font Awesome's, U+F005) and `main` for a main agent, a person alone (Font Awesome's, U+F007) for a member, and `[sub] <launcher>` for a subagent, with the launcher's name cut to 24 characters.
+- `sb_mark` says what a net member is, in a few characters: a star (Font Awesome's, U+F005) and its tab's label for a main agent, a person alone (Font Awesome's, U+F007) for a member, and `[sub] <launcher>` for a subagent, with the launcher's name cut to 24 characters.
   A tower has none: its tab already carries the radio tower glyph.
+- `sb_tab` is a member's tab label, so the first row can show the tab for members while a main agent's label moves to its own row in `sb_mark`.
+  A tower, a main agent and a subagent carry none.
 - `sb_indent` is on a subagent alone, and is the branch to it from its launcher, drawn like the worktrees in Herdr's Spaces panel: `├─` while a later subagent of the same launcher is marked, `└─` on the last one.
   Subagents of one launcher are siblings at every depth.
   A tower, a main agent and a member carry none, and a session clears the one a pane kept from when it ran a subagent.
@@ -156,7 +158,8 @@ The tokens also show the roles in Herdr's own grouped view, which a plugin canno
 Add them to a row of `[ui.sidebar.agents]` in `config.toml`.
 `$sb_indent` goes before the state icon, so a subagent hangs under its launcher as the worktrees do in the Spaces panel; Herdr puts its own ` · ` after it, and an agent without the token shows nothing.
 In `$sb_mark` a member's person is bold, and the rule that hides the `[sub]` mark leaves a subagent one line, because the branch already says what it is. The snippet leaves the colors to your Herdr theme; add an `fg` to a rule to color a mark.
-Herdr drops a row whose every item is hidden, so the second row, which shows `$sb_mark` only when it starts with the star, gives a main agent a second line (`★ main`) and leaves every other agent one line.
+Herdr drops a row whose every item is hidden, so the second row, which shows `$sb_mark` only when it starts with the star, gives a main agent a second line (`★ <tab>`) and leaves every other agent one line.
+The first row shows `$sb_tab` instead of Herdr's `tab`, so a main agent's tab label is not shown twice; an agent outside the net (or a session that has not reloaded since 0.7.2) shows no tab label there.
 
 ```toml
 [ui.sidebar.agents]
@@ -169,7 +172,7 @@ rows = [
       { starts_with = "\uF005", hide = true },
       { starts_with = "\uF007", bold = true },
     ] },
-    "machine", "workspace", "tab",
+    "machine", "workspace", { token = "$sb_tab" },
   ],
   [{ token = "$sb_mark", rules = [{ starts_with = "\uF005", bold = true }, { contains = "", hide = true }] }],
 ]

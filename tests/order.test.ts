@@ -139,9 +139,9 @@ test("netTokens reads Herdr for a session's own tokens (a tower has no mark) and
 	assert.equal(ARROW, "[sub]", "a subagent is tagged in words, then its launcher");
 	assert.equal(MARK.member, "\uf007", "a member is marked by the person glyph alone");
 	assert.deepEqual(INDENT, { more: "├─", last: "└─" }, "a subagent hangs on a tree branch, like a worktree in Herdr's Spaces panel");
-	assert.deepEqual(main, { own: { sb_order: "000.1.000.0.000", sb_mark: `${MARK.main} main`, sb_indent: null }, kids: [{ pane: "wS:p1", order: "000.1.000.0.000.000", mark: `${ARROW} Main`, indent: INDENT.last }], joined: new Set() }, "a main agent carries no indent; its only subagent has the last branch");
-	assert.deepEqual((await netTokens(run, place, "tower", "Main")).own, { sb_order: "000.0", sb_mark: null, sb_indent: null }, "a tower's tab already carries the glyph, and a tower is not indented");
-	assert.deepEqual((await netTokens(run, { ...place, paneId: "wA:p99" }, "member", "Main")).own, { sb_order: null, sb_mark: MARK.member, sb_indent: null }, "a pane Herdr does not list has no key");
+	assert.deepEqual(main, { own: { sb_order: "000.1.000.0.000", sb_mark: `${MARK.main} work`, sb_indent: null, sb_tab: null }, kids: [{ pane: "wS:p1", order: "000.1.000.0.000.000", mark: `${ARROW} Main`, indent: INDENT.last }], joined: new Set() }, "a main agent carries no indent; its only subagent has the last branch");
+	assert.deepEqual((await netTokens(run, place, "tower", "Main")).own, { sb_order: "000.0", sb_mark: null, sb_indent: null, sb_tab: null }, "a tower's tab already carries the glyph, and a tower is not indented");
+	assert.deepEqual((await netTokens(run, { ...place, paneId: "wA:p99" }, "member", "Main")).own, { sb_order: null, sb_mark: MARK.member, sb_indent: null, sb_tab: null }, "a pane Herdr does not list has no key");
 
 	const marked = await markKids(run, main.kids, new Set(["wS:old"]));
 	assert.deepEqual([...marked], ["wS:p1"]);
@@ -179,7 +179,7 @@ test("a pane that ran a subagent and now hosts a session drops the indent it kep
 	world.herdr.pane("wA:p3").tokens = { sb_order: "000.1.000.0.000.000", sb_mark: `${ARROW} Main`, sb_indent: INDENT.more };
 	await c.start();
 	await until(() => world.herdr.pane("wA:p3").tokens.sb_order === "000.1.001.1.000", "its own key");
-	assert.deepEqual(world.herdr.pane("wA:p3").tokens, { sb_role: "member", sb_order: "000.1.001.1.000", sb_mark: MARK.member }, "no indent: it is a member now");
+	assert.deepEqual(world.herdr.pane("wA:p3").tokens, { sb_role: "member", sb_order: "000.1.001.1.000", sb_mark: MARK.member, sb_tab: "docs" }, "no indent: it is a member now");
 });
 
 test("a session publishes its key and mark with its role, rewrites them when it is promoted, and the subagents it launched get theirs on the 4 minute refresh", async () => {
@@ -196,13 +196,13 @@ test("a session publishes its key and mark with its role, rewrites them when it 
 	const raw = (id: string) => world.herdr.pane(id).tokens;
 	await until(() => raw("wA:p3").sb_order, "every session's key");
 	assert.deepEqual(raw("wA:p7"), { sb_role: "tower", sb_order: "000.0" }, "the tower: first, and no mark");
-	assert.deepEqual(raw("wA:p1"), { sb_role: "member", sb_order: "000.1.000.1.000", sb_mark: MARK.member });
-	assert.deepEqual(raw("wA:p3"), { sb_role: "member", sb_order: "000.1.001.1.000", sb_mark: MARK.member });
+	assert.deepEqual(raw("wA:p1"), { sb_role: "member", sb_order: "000.1.000.1.000", sb_mark: MARK.member, sb_tab: "work" });
+	assert.deepEqual(raw("wA:p3"), { sb_role: "member", sb_order: "000.1.001.1.000", sb_mark: MARK.member, sb_tab: "docs" });
 	assert.equal(raw("wS:p1").sb_order, undefined, "a subagent is marked only once its pane runs it");
 
 	Object.assign(world.herdr.pane("wS:p1"), { agent: "pi", agent_status: "working", label: "aaa", agent_session: { value: kidFile("kid-a") } });
 	await a.promote();
-	assert.deepEqual(raw("wA:p1"), { sb_role: "main", sb_order: "000.1.000.0.000", sb_mark: `${MARK.main} main` }, "promotion rewrites both");
+	assert.deepEqual(raw("wA:p1"), { sb_role: "main", sb_order: "000.1.000.0.000", sb_mark: `${MARK.main} work` }, "promotion moves the tab label into the mark and clears sb_tab");
 	assert.deepEqual(raw("wS:p1"), { sb_order: "000.1.000.0.000.000", sb_mark: `${ARROW} Solo`, sb_indent: INDENT.last }, "the subagent in the worktree workspace hangs under its launcher, on the last branch");
 	assert.deepEqual(byKey(Object.fromEntries(["wA:p7", "wA:p1", "wS:p1", "wA:p2", "wA:p3"].map((id) => [id, raw(id).sb_order]))), ["wA:p7", "wA:p1", "wS:p1", "wA:p2", "wA:p3"]);
 

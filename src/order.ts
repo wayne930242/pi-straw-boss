@@ -1,13 +1,14 @@
 import { subagents } from "./dashboard.ts";
 import { ARROW, type HerdrRun, type HerdrTab, isSub, MARK, type Pane, panes, type Place, report, tabs, workspaces, type Workspace } from "./herdr.ts";
 
-// Three display tokens for the sidebar plugin and for Herdr's own Agents rows, written next to `sb_role`:
+// Four display tokens for the sidebar plugin and for Herdr's own Agents rows, written next to `sb_role`:
 //  - `sb_order`: a sort key that lays the net out as the head tower's workspace first, then the other workspaces in Herdr's order, in each the tower
 //    and then the tabs in tab order, in each tab the main agent and then the members, and every subagent right after the session that launched it,
 //    its own subagents after it in turn. Segments are fixed-width and `.`-separated, so plain string order is the numeric order of every segment,
 //    and a subagent's key is its parent's key plus one more segment, which sorts after the parent and before the parent's next sibling.
-//  - `sb_mark`: a short label that says what a net member is, a star and `main` for a main agent, a person (U+F007) alone for a member, and `[sub]` and the launcher's name for a subagent.
+//  - `sb_mark`: a short label that says what a net member is, a star and its tab's label for a main agent, a person (U+F007) alone for a member, and `[sub]` and the launcher's name for a subagent.
 //    A tower has none: its tab already carries the radio tower glyph.
+//  - `sb_tab`: a member's tab label, which the first row shows in place of Herdr's tab item; a main agent's is in its mark instead.
 //  - `sb_indent`: a tree branch on a subagent alone, like Herdr's Spaces panel draws a worktree: `├─` while a later subagent of the same launcher is marked, `└─` on the last. A row put before the state icon shows it as the
 //    indent under the launcher. A tower, a main agent and a member carry none.
 // A session writes them for itself and for the subagents it launched, which never join and write nothing, on the same 4 minute refresh as `sb_role`.
@@ -58,7 +59,10 @@ export async function netTokens(run: HerdrRun, place: Place, role: "tower" | "ma
 	const [ps, all, tabList] = [await panes(run), await workspaces(run), await tabs(run, place.workspaceId)];
 	const pane = ps.find((p) => p.pane_id === place.paneId), key = pane && orderKey(role, pane, ps, all, tabList);
 	const joined = new Set(ps.filter((p) => p.tokens?.sb_role).map((p) => p.pane_id));
-	return { own: { sb_order: key ?? null, sb_mark: role === "tower" ? null : role === "main" ? `${MARK.main} main` : MARK[role], sb_indent: null }, kids: key ? descendants(pane, key, name, ps, now) : [], joined };
+	// A main agent's tab label goes in its mark, for a row of its own; a member's in `sb_tab`, which stands for the tab item in the first row.
+	const tab = tabList.find((t) => t.tab_id === pane?.tab_id)?.label || null;
+	const mark = role === "tower" ? null : role === "main" ? (tab ? `${MARK.main} ${tab}` : MARK.main) : MARK[role];
+	return { own: { sb_order: key ?? null, sb_mark: mark, sb_indent: null, sb_tab: role === "member" ? tab : null }, kids: key ? descendants(pane, key, name, ps, now) : [], joined };
 }
 
 /**
