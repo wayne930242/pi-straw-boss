@@ -43,6 +43,7 @@ svg { display: block; }
 .stats dd, .tally dd { font: 600 20px/1.1 var(--mono); }
 .stats [data-mark] dd, .tally [data-mark] dd, .count b { color: var(--c); }
 .pair-btn { padding: 6px 12px; border-radius: 12px; border: 1px solid var(--line); background: none; color: var(--dim); font: 600 12px var(--sans); letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; }
+.lang { text-transform: none; } .lang option { background: var(--bg); color: var(--text); }
 .pair { display: grid; justify-items: center; gap: 12px; text-align: center; color: var(--dim); font-size: 13px; }
 .qr { width: min(100%, 300px); border-radius: 12px; shape-rendering: crispEdges; }
 .link { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
@@ -94,7 +95,7 @@ svg { display: block; }
 .units, .subs { display: grid; gap: 8px; }
 .outposts { display: grid; gap: 8px; margin-top: 12px; }
 .outposts:empty { display: none; }
-.outposts::before { content: "Outposts"; color: var(--dim); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
+.outposts::before { content: attr(data-label); color: var(--dim); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
 
 .card { position: relative; display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 12px; background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255, 255, 255, 0.06); transition: background-color 0.4s; }
 .unit[data-mark="waiting"] > .card { background: rgba(255, 176, 46, 0.11); }
@@ -140,7 +141,7 @@ svg { display: block; }
 .net-log:not([open]) summary::after { transform: rotate(-90deg); }
 .net-log:not([open]) h2 { margin-bottom: 0; }
 .log { list-style: none; padding: 0; display: grid; gap: 7px; max-height: 360px; overflow: hidden; }
-.log:empty::before { content: "Waiting for changes…"; color: var(--dim); font-size: 12px; }
+.log:empty::before { content: attr(data-empty); color: var(--dim); font-size: 12px; }
 .log li { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; font-size: 12px; animation: slide 0.4s ease-out both; }
 .log li::before { content: ""; width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: var(--c); }
 .log time { grid-column: 2; font: 11px var(--mono); color: var(--dim); }

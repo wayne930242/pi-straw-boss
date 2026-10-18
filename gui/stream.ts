@@ -1,4 +1,5 @@
 import type { Net } from "../src/net.ts";
+import { m } from "./paraglide/messages.js";
 
 // The page's connection to the net: one live stream that is judged by what it delivers, not by its readyState, because a
 // background tab can be throttled or frozen and the stream may drop without an error. The server sends the full snapshot on
@@ -83,13 +84,13 @@ export function createStream(deps: Deps): Stream {
 			if (source !== mine) return;
 			const net = parse<Net>(data);
 			if (net) deps.onNet(net);
-			set({ problem: net ? undefined : "the server sent a snapshot the page cannot read" });
+			set({ problem: net ? undefined : m.problem_snapshot() });
 			heard();
 		});
 		mine.listen("ping", () => source === mine && heard());
 		mine.listen("problem", (data) => {
 			if (source !== mine) return;
-			set({ problem: parse<string>(data) ?? "the server reported a problem the page cannot read" });
+			set({ problem: parse<string>(data) ?? m.problem_unknown() });
 			heard();
 		});
 		// A first attempt that never answers is caught by the same watchdog.

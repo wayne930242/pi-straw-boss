@@ -3,6 +3,7 @@ import type { Net } from "../src/net.ts";
 import { h } from "./dom.ts";
 import type { Tile } from "./layer.ts";
 import { mount, parse } from "./markdown.ts";
+import { m } from "./paraglide/messages.js";
 
 // The documents a session shows (show_doc, or a Mini SDD folder opening on its own), served by capability (src/docs.ts). An HTML document is a
 // tile with a frame sandboxed twice, by its attribute here and by the server's policy: no scripts and an opaque origin, its CSS, images, and
@@ -40,8 +41,8 @@ function load(o: Open) {
 	if (o.frame) return void (o.frame.src = src(o.card.cap));
 	const cap = o.card.cap, md = /\.(md|markdown)$/i.test(o.card.display), seq = ++o.seq; // only the latest load lands
 	void (docHooks.load?.(cap) ?? fetch(`api/doc/${encodeURIComponent(cap)}`, { cache: "no-store" }).then((r) => (r.ok ? (r.json() as Promise<{ text: string }>) : undefined))).then(
-		(d) => o.seq !== seq || (d ? o.body.replaceChildren(md ? h("div", { class: "md" }, mount(parse(d.text))) : h("pre", { class: "doc-pre" }, d.text)) : fail(o, "Unavailable: no longer open in its session.")),
-		() => o.seq !== seq || fail(o, "The server could not be reached."),
+		(d) => o.seq !== seq || (d ? o.body.replaceChildren(md ? h("div", { class: "md" }, mount(parse(d.text))) : h("pre", { class: "doc-pre" }, d.text)) : fail(o, m.doc_gone())),
+		() => o.seq !== seq || fail(o, m.unreachable()),
 	);
 }
 
@@ -49,9 +50,9 @@ function load(o: Open) {
 export function docTile(unit: string, card: DocCard): Tile {
 	const had = open.get(card.cap);
 	if (had) return had.tile;
-	const name = card.display.split("/").pop() || card.display, frame = card.kind === "html" ? h("iframe", { class: "doc-frame", sandbox: SANDBOX, referrerpolicy: "no-referrer", title: `${card.display}, shown by ${unit}` }) : undefined;
-	const reload = h("button", { type: "button", class: "cmp-link" }, "Reload"), tab = frame && h("a", { class: "cmp-link", href: src(card.cap), target: "_blank", rel: "noopener noreferrer" }, "Open in a new tab");
-	const body = frame ?? h("div", { class: "doc-text" }, h("p", { class: "chat-empty" }, "Loading…")), state = h("span", { class: "term-state", role: "status" }), off = h("em", { class: "doc-off" }, "off screen in the terminal");
+	const name = card.display.split("/").pop() || card.display, frame = card.kind === "html" ? h("iframe", { class: "doc-frame", sandbox: SANDBOX, referrerpolicy: "no-referrer", title: m.shown_by({ display: card.display, unit }) }) : undefined;
+	const reload = h("button", { type: "button", class: "cmp-link" }, m.reload()), tab = frame && h("a", { class: "cmp-link", href: src(card.cap), target: "_blank", rel: "noopener noreferrer" }, m.open_new_tab());
+	const body = frame ?? h("div", { class: "doc-text" }, h("p", { class: "chat-empty" }, m.loading())), state = h("span", { class: "term-state", role: "status" }), off = h("em", { class: "doc-off" }, m.off_screen());
 	const wrap = h("div", { class: "doc-tile" }, h("div", { class: "term-bar doc-bar" }, h("span", { class: "doc-why" }, card.reason), off, state, h("span", { class: "doc-acts" }, reload, tab)), body);
 	const io = new IntersectionObserver(([e]) => ((o.shown = Boolean(e?.isIntersecting)), o.shown && !o.gone && (o.failed || o.loaded !== o.card.revision) && load(o)));
 	const tile: Tile = { id: `doc:${card.cap}`, title: `${name} · ${unit}`, icon: "i-doc", body: () => wrap, closed: () => (open.delete(card.cap), io.disconnect()) };
@@ -83,7 +84,7 @@ export function refreshDocs(cards: Map<string, DocCard>) {
 	for (const o of open.values()) {
 		const c = cards.get(o.card.cap);
 		if (!c) {
-			if (!o.gone) say(o, "No longer listed: closed in its session, or the session ended.", "error");
+			if (!o.gone) say(o, m.doc_unlisted(), "error");
 			o.gone = true;
 			continue;
 		}
@@ -91,7 +92,7 @@ export function refreshDocs(cards: Map<string, DocCard>) {
 		[o.card, o.gone, o.off.hidden] = [c, false, c.onScreen];
 		if (c.revision === o.loaded && !back) continue;
 		if (o.shown) load(o);
-		else if (c.revision !== o.loaded) say(o, "Updated: the new version loads when this tile shows.");
+		else if (c.revision !== o.loaded) say(o, m.doc_updated());
 	}
 }
 
@@ -99,7 +100,7 @@ export function refreshDocs(cards: Map<string, DocCard>) {
 export function docList(root: HTMLElement, cards: DocCard[] | undefined, cut: boolean | undefined, show: (card: DocCard) => void) {
 	root.hidden = !cards?.length && !cut;
 	root.querySelector(".d-doc-list")!.replaceChildren(...(cards ?? []).map((c) => {
-		const b = h("button", { type: "button", class: "d-doc", title: c.reason }, h("b", null, c.display), h("small", null, c.onScreen ? c.reason : `${c.reason} · off screen`));
+		const b = h("button", { type: "button", class: "d-doc", title: c.reason }, h("b", null, c.display), h("small", null, c.onScreen ? c.reason : m.off_screen_short({ reason: c.reason })));
 		b.onclick = () => show(c);
 		return b;
 	}));

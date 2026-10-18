@@ -5,7 +5,8 @@ import { mountAsk } from "./ask.ts";
 import { mountComposer, postTo } from "./composer.ts";
 import { docFor, docList, docTile, shelve } from "./doc.ts";
 import type { Tile } from "./layer.ts";
-import { aim, doing, fillPlate, html, LABEL, mark, PLATE, sync, text, urgent } from "./render.ts";
+import { m } from "./paraglide/messages.js";
+import { aim, doing, fillPlate, html, LABEL, mark, PLATE, roleName, sync, text, urgent } from "./render.ts";
 import type { Route } from "./router.ts";
 
 // The focus views, a separate chunk loaded on the first route that is not the map. The workspace route is its base zoomed in: the
@@ -37,13 +38,13 @@ function fillToken(el: HTMLElement, u: { key?: string; name: string; role: strin
 	mark(el, u.mark);
 	fillPlate(el.querySelector(".plate")!, u.role, u.mark, u.docs);
 	text(el, ".name", u.name);
-	text(el, ".role", u.role === "outside" ? "unaligned" : u.role);
+	text(el, ".role", roleName(u.role));
 	text(el, ".note", doing(u.note, u.mark));
 }
 const colEl = () => html(`<div class="col"><a class="token">${PLATE}<span class="name"></span><span class="line"><em class="role"></em><span class="note"></span></span></a><div class="say"><p></p></div><div class="drones"></div></div>`);
-const ZOOM = `<div class="zoom-in"><header class="base keep"><a class="tower big"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></a><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>head tower</span><h2></h2><p></p></div><dl class="tally"><div><dt>Squads</dt><dd></dd></div><div><dt>Units</dt><dd></dd></div><div data-mark="working"><dt>Working</dt><dd></dd></div><div data-mark="waiting"><dt>Waiting</dt><dd></dd></div></dl></header><div class="squads"></div><div class="camps"><section class="tab squad camp" data-group="outposts"><h3><svg><use href="#i-outpost"/></svg><b>Outposts</b><small></small></h3><div class="formation"></div></section><section class="tab squad camp" data-group="outside"><h3><svg><use href="#i-outside"/></svg><b>Outside the net</b><small>unaligned pi panes</small></h3><div class="formation"></div></section></div><p class="lost" hidden></p></div>`;
-const DOSSIER = `<div class="dossier-in"><span class="tag">unit dossier</span><div class="portrait">${PLATE}</div><h3></h3><p class="d-line"><em class="role"></em> <span class="state"></span></p><p class="d-note" hidden></p><dl class="specs"></dl><button class="cmp-link d-term" type="button" hidden>Terminal</button><div class="d-docs" hidden><h4>Documents</h4><div class="d-doc-list"></div><p class="d-docs-cut" hidden>More than the relay carries: read them in the terminal.</p></div><div class="d-drones" hidden><h4>Dispatched</h4><div class="formation"></div></div></div>`;
-const COMMS = `<div class="comms-in"><header class="comms-head"><span class="logo"><svg><use href="#i-comms"/></svg></span><div><h2><small>comms</small> <span></span></h2><p></p></div><span class="chan link" data-state="live"><i></i><b>channel open</b></span></header><div class="chat-root"></div><div class="ask-root"></div><div class="composer-root"></div></div>`;
+const ZOOM = () => `<div class="zoom-in"><header class="base keep"><a class="tower big"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></a><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>${m.head_tower()}</span><h2></h2><p></p></div><dl class="tally"><div><dt>${m.squads()}</dt><dd></dd></div><div><dt>${m.units()}</dt><dd></dd></div><div data-mark="working"><dt>${m.stat_working()}</dt><dd></dd></div><div data-mark="waiting"><dt>${m.stat_waiting()}</dt><dd></dd></div></dl></header><div class="squads"></div><div class="camps"><section class="tab squad camp" data-group="outposts"><h3><svg><use href="#i-outpost"/></svg><b>${m.outposts()}</b><small></small></h3><div class="formation"></div></section><section class="tab squad camp" data-group="outside"><h3><svg><use href="#i-outside"/></svg><b>${m.outside_net()}</b><small>${m.outside_note()}</small></h3><div class="formation"></div></section></div><p class="lost" hidden></p></div>`;
+const DOSSIER = () => `<div class="dossier-in"><span class="tag">${m.unit_dossier()}</span><div class="portrait">${PLATE}</div><h3></h3><p class="d-line"><em class="role"></em> <span class="state"></span></p><p class="d-note" hidden></p><dl class="specs"></dl><button class="cmp-link d-term" type="button" hidden>${m.terminal()}</button><div class="d-docs" hidden><h4>${m.documents()}</h4><div class="d-doc-list"></div><p class="d-docs-cut" hidden>${m.docs_cut()}</p></div><div class="d-drones" hidden><h4>${m.dispatched()}</h4><div class="formation"></div></div></div>`;
+const COMMS = () => `<div class="comms-in"><header class="comms-head"><span class="logo"><svg><use href="#i-comms"/></svg></span><div><h2><small>${m.comms()}</small> <span></span></h2><p></p></div><span class="chan link" data-state="live"><i></i><b>${m.channel_open()}</b></span></header><div class="chat-root"></div><div class="ask-root"></div><div class="composer-root"></div></div>`;
 
 export function mountFocus({ data, restart, openTile, openTerminal, online }: FocusDeps) {
 	const $ = (id: string) => document.getElementById(id)!;
@@ -68,7 +69,7 @@ export function mountFocus({ data, restart, openTile, openTerminal, online }: Fo
 			return node;
 		};
 		const nav = $("crumbs"), r = route;
-		if (r.view === "map") return nav.replaceChildren(part("b", "Straw Net"), part("span", "all bases"));
+		if (r.view === "map") return nav.replaceChildren(part("b", "Straw Net"), part("span", m.all_bases()));
 		const label = net?.bases.find((b) => b.id === r.ws)?.label ?? r.ws, name = r.view === "session" ? (locate(net, r.key)?.u.name ?? info?.name ?? r.key) : "";
 		nav.replaceChildren(part("a", "Straw Net", { view: "map" }), r.view === "workspace" ? part("b", label) : part("a", label, { view: "workspace", ws: r.ws }), ...(name ? [part("b", name)] : []));
 	}
@@ -90,11 +91,11 @@ export function mountFocus({ data, restart, openTile, openTerminal, online }: Fo
 	}
 
 	function drawWorkspace() {
-		if (!wsView.firstElementChild) wsView.append(html(ZOOM));
+		if (!wsView.firstElementChild) wsView.append(html(ZOOM()));
 		const root = wsView.firstElementChild as HTMLElement, base = net?.bases.find((b) => b.id === ws());
 		const lost = root.querySelector<HTMLElement>(".lost")!;
 		lost.hidden = Boolean(base);
-		lost.textContent = net ? "This workspace is not part of the net." : "Waiting for the net…";
+		lost.textContent = net ? m.lost_workspace() : m.waiting_net();
 		root.classList.toggle("void", !base);
 		if (!base) return;
 		const keep = root.querySelector<HTMLElement>(".keep")!;
@@ -107,7 +108,7 @@ export function mountFocus({ data, restart, openTile, openTerminal, online }: Fo
 		tower.toggleAttribute("hidden", false);
 		tower.toggleAttribute("data-alert", Boolean(base.tower && urgent(base.tower.mark)));
 		text(root, "h2", base.label);
-		text(root, ".title p", base.tower ? `control tower · ${LABEL[base.tower.mark]}` : "no tower yet");
+		text(root, ".title p", base.tower ? m.control_tower({ state: LABEL[base.tower.mark]() }) : m.no_tower());
 		const all = base.tabs.flatMap((t) => t.units.flatMap((u) => [u, ...u.subs]));
 		[base.tabs.length, all.length, all.filter((u) => u.mark === "working").length, all.filter((u) => u.mark === "waiting").length].forEach((n, i) => (root.querySelectorAll("dd")[i]!.textContent = String(n)));
 		const fillCol = (col: HTMLElement, u: Unit) => {
@@ -119,9 +120,9 @@ export function mountFocus({ data, restart, openTile, openTerminal, online }: Fo
 			sync(col.querySelector(".drones")!, u.subs, tokenEl, (el, s) => (el.classList.add("drone"), fillToken(el, s, base.id)));
 		};
 		sync(root.querySelector(".squads")!, base.tabs, () => html(`<section class="tab squad"><h3><i class="flag"></i><b></b><small></small></h3><div class="formation"></div></section>`), (el, t) => {
-			text(el, "h3 b", `squad ${t.label}`);
+			text(el, "h3 b", m.squad_label({ label: t.label }));
 			const busy = t.units.flatMap((u) => [u, ...u.subs]);
-			text(el, "h3 small", `${busy.length} unit${busy.length === 1 ? "" : "s"}`);
+			text(el, "h3 small", m.unit_count({ count: busy.length }));
 			mark(el, (["waiting", "error", "working"] as const).find((m) => busy.some((u) => u.mark === m)) ?? "idle");
 			sync(el.querySelector(".formation")!, t.units, colEl, fillCol);
 		});
@@ -130,28 +131,28 @@ export function mountFocus({ data, restart, openTile, openTerminal, online }: Fo
 			el.hidden = !list.length;
 			sync(el.querySelector(".formation")!, list, tokenEl, (t, u) => fillToken(t, u, base.id));
 		};
-		camp("outposts", base.outposts.map((o) => ({ id: o.id, name: o.label, role: "outpost", mark: o.mark, note: o.mark === "unknown" ? "no agent running" : undefined })));
+		camp("outposts", base.outposts.map((o) => ({ id: o.id, name: o.label, role: "outpost", mark: o.mark, note: o.mark === "unknown" ? m.no_agent() : undefined })));
 		camp("outside", base.outside);
 	}
 
 	function drawDossier() {
 		if (route.view !== "session") return;
-		if (!dossier.firstElementChild) dossier.append(html(DOSSIER));
-		const root = dossier.firstElementChild as HTMLElement, hit = locate(net, route.key), u = hit?.u, m = u?.mark ?? "unknown";
-		mark(root, m);
-		fillPlate(root.querySelector(".plate")!, u?.role ?? info?.role ?? "member", m);
+		if (!dossier.firstElementChild) dossier.append(html(DOSSIER()));
+		const root = dossier.firstElementChild as HTMLElement, hit = locate(net, route.key), u = hit?.u, mk = u?.mark ?? "unknown";
+		mark(root, mk);
+		fillPlate(root.querySelector(".plate")!, u?.role ?? info?.role ?? "member", mk);
 		text(root, "h3", u?.name ?? info?.name ?? route.key);
-		text(root, ".role", u?.role === "outside" ? "unaligned" : (u?.role ?? info?.role ?? "session"));
-		text(root, ".state", u ? doing(u.note, m) : "not in the net");
+		text(root, ".role", roleName(u?.role ?? info?.role ?? "session"));
+		text(root, ".state", u ? doing(u.note, mk) : m.not_in_net());
 		const note = root.querySelector<HTMLElement>(".d-note")!, state = info?.state;
 		note.hidden = state !== "recent" && state !== "unknown";
-		note.replaceChildren(state === "unknown" ? "Not in the net (it may have ended more than ten minutes ago)." : "No longer live; its history stays readable for ten minutes.");
-		if (info?.successor) note.append(" Now: ", linkTo({ view: "session", ws: ws(), key: info.successor }, locate(net, info.successor)?.u.name ?? "the new session"));
+		note.replaceChildren(state === "unknown" ? m.note_unknown() : m.note_recent());
+		if (info?.successor) note.append(` ${m.successor()} `, linkTo({ view: "session", ws: ws(), key: info.successor }, locate(net, info.successor)?.u.name ?? m.new_session()));
 		const rows: [string, string | Node | undefined][] = [
-			["model", model], ["context", ctx ? `${ctx.toLocaleString()} tokens` : undefined], ["directory", info?.header?.cwd],
-			["base", hit && linkTo({ view: "workspace", ws: hit.base.id }, hit.base.label)], ["squad", hit?.squad],
-			["launcher", hit?.launcher && linkTo({ view: "session", ws: hit.base.id, key: hit.launcher.key }, hit.launcher.name)],
-			["unreadable", info?.unreadable ? `${info.unreadable} entr${info.unreadable === 1 ? "y" : "ies"}` : undefined],
+			[m.spec_model(), model], [m.spec_context(), ctx ? m.tokens({ count: ctx.toLocaleString() }) : undefined], [m.spec_directory(), info?.header?.cwd],
+			[m.spec_base(), hit && linkTo({ view: "workspace", ws: hit.base.id }, hit.base.label)], [m.spec_squad(), hit?.squad],
+			[m.spec_launcher(), hit?.launcher && linkTo({ view: "session", ws: hit.base.id, key: hit.launcher.key }, hit.launcher.name)],
+			[m.spec_unreadable(), info?.unreadable ? m.entry_count({ count: info.unreadable }) : undefined],
 		];
 		root.querySelector(".specs")!.replaceChildren(...rows.filter(([, v]) => v).map(([k, v]) => {
 			const row = html(`<div><dt></dt><dd></dd></div>`);
@@ -170,14 +171,14 @@ export function mountFocus({ data, restart, openTile, openTerminal, online }: Fo
 		const head = sessionView.querySelector<HTMLElement>(".comms-head");
 		if (head) {
 			text(head, "h2 span", u?.name ?? info?.name ?? "");
-			text(head, "p", [hit?.base.label, hit?.squad && `squad ${hit.squad}`].filter(Boolean).join(" · "));
+			text(head, "p", [hit?.base.label, hit?.squad && m.squad_label({ label: hit.squad })].filter(Boolean).join(" · "));
 			const chan = head.querySelector<HTMLElement>(".chan")!, open = state === "live" || (!state && u);
 			chan.dataset.state = open ? "live" : "closed";
-			text(chan, "b", open ? "channel open" : state === "recent" ? "channel closed" : "no channel");
+			text(chan, "b", open ? m.channel_open() : state === "recent" ? m.channel_closed() : m.no_channel());
 		}
-		chat?.setLive(m === "working" ? `${doing(u!.note, m)}` : urgent(m) ? LABEL[m] : "", m);
-		composer?.update({ name: u?.name ?? info?.name ?? route.key, control: Boolean(u?.control), live: state ? state === "live" : Boolean(u), mark: m, online: online(), asking: Boolean(u?.pending), answerable: Boolean(u?.pending?.answer) });
-		asker?.update(u?.pending, m === "waiting" && Boolean(u?.control) && online()); // its dialog above the composer, answerable or not
+		chat?.setLive(mk === "working" ? `${doing(u!.note, mk)}` : urgent(mk) ? LABEL[mk]() : "", mk);
+		composer?.update({ name: u?.name ?? info?.name ?? route.key, control: Boolean(u?.control), live: state ? state === "live" : Boolean(u), mark: mk, online: online(), asking: Boolean(u?.pending), answerable: Boolean(u?.pending?.answer) });
+		asker?.update(u?.pending, mk === "waiting" && Boolean(u?.control) && online()); // its dialog above the composer, answerable or not
 	}
 	/** Focus that fell to the page (the dialog that opened this route closed, its link gone) lands in the comms: the box, or the log on a touch screen. */
 	const claim = () => setTimeout(() => route.view === "session" && (document.activeElement ?? document.body) === document.body && (matchMedia("(pointer: fine)").matches && composer?.ready() ? composer.box : chat?.log)?.focus({ preventScroll: true }));
@@ -185,7 +186,7 @@ export function mountFocus({ data, restart, openTile, openTerminal, online }: Fo
 	async function enter(key: string) {
 		const turn = ++entering, { mountChat } = await import("./chat.ts");
 		if (turn !== entering || route.view !== "session") return;
-		sessionView.replaceChildren(html(COMMS));
+		sessionView.replaceChildren(html(COMMS()));
 		const who = () => locate(net, key)?.u ?? { key, name: info?.name ?? key, role: info?.role ?? "member", mark: "unknown" as Mark };
 		const link = (name: string) => {
 			const hit = locate(net, key), sub = hit?.u.subs.find((s) => s.name === name) ?? net?.bases.flatMap((b) => [...b.tabs.flatMap((t) => t.units), ...b.outside]).find((x) => x.name === name);
@@ -214,7 +215,7 @@ export function mountFocus({ data, restart, openTile, openTerminal, online }: Fo
 			sessionView.hidden = dossier.hidden = next.view !== "session";
 			if (next.view === "session" && next.key !== key) {
 				[chat, composer, asker, info, model, ctx, queue, stale] = [undefined, undefined, undefined, undefined, undefined, undefined, [], false];
-				sessionView.replaceChildren(html(`<p class="lost">Opening the channel…</p>`));
+				sessionView.replaceChildren(html(`<p class="lost">${m.opening_channel()}</p>`));
 				void enter(next.key);
 			} else if (next.view === "session" && next.at !== at) (chat?.reveal(next.at), claim());
 			else if (next.view !== "session") {

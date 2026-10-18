@@ -6,6 +6,7 @@ import { h } from "./dom.ts";
 import { createFollow, reach } from "./follow.ts";
 import { mount, parse } from "./markdown.ts";
 import type { Post } from "./composer.ts";
+import { m } from "./paraglide/messages.js";
 import { html, ICON } from "./render.ts";
 
 // The comms log of one session. The model is pure: items merge by entry id (a repeated one is ignored), tool results attach to their call by
@@ -82,7 +83,7 @@ export interface Chat { apply(event: HistoryEvent): void; setLive(text: string, 
 
 const clock = (at?: string) => (at ? new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }) : "");
 const size = (n: number) => (n >= 1024 ? `${(n / 1024).toFixed(n >= 10240 ? 0 : 1)} KB` : `${n} B`);
-const NOTICE: Record<string, string> = { intercom_message: "message from", subagent_result: "report from", subagent_ping: "question from", subagent_status: "status of", "pi-loop-monitor": "monitor", "memory-context": "memory", "doc-review": "form answers" };
+const NOTICE: Record<string, () => string> = { intercom_message: m.notice_intercom, subagent_result: m.notice_result, subagent_ping: m.notice_ping, subagent_status: m.notice_status, "pi-loop-monitor": m.notice_monitor, "memory-context": m.notice_memory, "doc-review": m.notice_doc_review };
 const icon = (name: string) => {
 	const span = html(`<span class="ava"><svg><use/></svg></span>`);
 	span.querySelector("use")!.setAttribute("href", `#i-${ICON[name] ?? name}`);
@@ -103,8 +104,8 @@ function plain(text: string) {
 export function mountChat(root: HTMLElement, data: Data, { who, link, docFor }: ChatDeps): Chat {
 	const model = createChat(), els = new Map<string, HTMLElement>(), opens = new Set<{ paths: string[]; button: HTMLButtonElement; shown?: boolean }>(); // a card the log dropped leaves it
 	const docs = () => opens.forEach((o) => (o.button.isConnected ? ((o.shown = true), (o.button.hidden = !o.paths.some((p) => docFor?.(p)))) : o.shown && opens.delete(o)));
-	const list = h("div", { class: "chat-list" }), top = h("div", { class: "chat-top" }), live = h("div", { class: "chat-live" }), pill = h("button", { class: "chat-pill", type: "button", hidden: "" }), empty = h("p", { class: "chat-empty" }, "No transmissions yet.");
-	const scroller = h("div", { class: "chat-scroll", tabindex: "-1", "aria-label": "Comms log" }, top, list, live);
+	const list = h("div", { class: "chat-list" }), top = h("div", { class: "chat-top" }), live = h("div", { class: "chat-live" }), pill = h("button", { class: "chat-pill", type: "button", hidden: "" }), empty = h("p", { class: "chat-empty" }, m.no_transmissions());
+	const scroller = h("div", { class: "chat-scroll", tabindex: "-1", "aria-label": m.comms_log() }, top, list, live);
 	root.replaceChildren(scroller, pill);
 	const follow = createFollow();
 	let loading = false, loaded = false, target: string | undefined, held: HTMLElement | undefined, release = 0;
@@ -134,37 +135,37 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor }: 
 		button.disabled = true;
 		void data.entry(id).then((full) => {
 			const text = full && pick(full);
-			if (text === undefined) return void (button.textContent = "unavailable");
+			if (text === undefined) return void (button.textContent = m.unavailable());
 			body.textContent = text;
 			button.remove();
-		}, () => (button.textContent = "unavailable"));
+		}, () => (button.textContent = m.unavailable()));
 	};
 
 	/** A tool call of entry `of` as an action card: its state badge (running, done, failed), name, and one line; arguments (all of them on request) and result inside. */
 	function action(t: NonNullable<Item["tools"]>[number], of: string) {
-		const r = model.result(t.id), body = h("pre", { class: "out" }, r?.text ?? ""), args = h("pre", { class: "args" }, t.args ?? ""), whole = t.cut ? h("button", { class: "more", type: "button" }, "show all arguments") : null;
-		whole?.addEventListener("click", () => fetchBody(whole, args, of, (it) => ((x) => x && `${x.args ?? ""}${x.cut ? "\n… (cut at 1 MB)" : ""}`)(it.tools?.find((x) => x.id === t.id))));
-		const more = r?.more ? h("button", { class: "more", type: "button" }, `show all (${size(r.bytes ?? 0)})`) : null;
+		const r = model.result(t.id), body = h("pre", { class: "out" }, r?.text ?? ""), args = h("pre", { class: "args" }, t.args ?? ""), whole = t.cut ? h("button", { class: "more", type: "button" }, m.show_all_arguments()) : null;
+		whole?.addEventListener("click", () => fetchBody(whole, args, of, (it) => ((x) => x && `${x.args ?? ""}${x.cut ? `\n${m.cut_at()}` : ""}`)(it.tools?.find((x) => x.id === t.id))));
+		const more = r?.more ? h("button", { class: "more", type: "button" }, m.show_all({ size: size(r.bytes ?? 0) })) : null;
 		more?.addEventListener("click", () => fetchBody(more, body, r!.id, (it) => it.text));
 		// Open beside while the document is listed: the session shows it now, so the server serves it (a card whose document closed stays text).
-		const open = t.name === "show_doc" && docFor ? h("button", { class: "more open", type: "button", hidden: "" }, "open beside") : null;
+		const open = t.name === "show_doc" && docFor ? h("button", { class: "more open", type: "button", hidden: "" }, m.open_beside()) : null;
 		open?.addEventListener("click", (event) => (event.preventDefault(), t.summary.split(", ").forEach((p) => docFor?.(p)?.())));
 		if (open) opens.add({ paths: t.summary.split(", "), button: open });
 		if (open) queueMicrotask(docs);
-		return h("details", { class: "act" }, h("summary", { "data-mark": r ? (r.isError ? "error" : "done") : "working" }, h("b", { class: "badge" }), h("code", null, t.name), h("span", { class: "sum" }, t.summary), open), args, whole, r && h("div", { class: "result" }, r.images ? h("em", null, `${r.images} image(s)`) : null, body, more));
+		return h("details", { class: "act" }, h("summary", { "data-mark": r ? (r.isError ? "error" : "done") : "working" }, h("b", { class: "badge" }), h("code", null, t.name), h("span", { class: "sum" }, t.summary), open), args, whole, r && h("div", { class: "result" }, r.images ? h("em", null, m.images({ count: r.images })) : null, body, more));
 	}
 	function render(it: Item): HTMLElement {
 		const stamp = h("time", null, clock(it.at));
 		switch (it.kind) {
-			case "user": return h("article", { class: "tx you" }, h("header", null, stamp, h("b", null, "you"), icon("user")), h("div", { class: "bubble" }, ...plain(it.text ?? ""), it.images ? h("em", null, ` · ${it.images} image(s)`) : null));
+			case "user": return h("article", { class: "tx you" }, h("header", null, stamp, h("b", null, m.you()), icon("user")), h("div", { class: "bubble" }, ...plain(it.text ?? ""), it.images ? h("em", null, ` · ${m.images({ count: it.images })}`) : null));
 			case "assistant": {
-				const me = who(), body = h("pre", { class: "thought-text" }), more = it.thought ? h("button", { class: "thought", type: "button" }, it.thought < 0 ? "◇ thought · redacted" : `◇ thought · ${it.thought.toLocaleString()} chars`) : null;
+				const me = who(), body = h("pre", { class: "thought-text" }), more = it.thought ? h("button", { class: "thought", type: "button" }, it.thought < 0 ? m.thought_redacted() : m.thought_chars({ count: it.thought.toLocaleString() })) : null;
 				if (it.thought && it.thought > 0) more?.addEventListener("click", () => fetchBody(more, body, it.id, (full) => full.thoughtText));
 				return h("article", { class: "tx in" }, icon(me.role), h("div", { class: "tx-body" }, h("header", null, h("b", null, me.name), it.model ? h("span", null, it.model) : null, stamp, it.stop ? h("span", { class: "stop", "data-mark": "error" }, it.stop) : null), more, body, it.text ? h("div", { class: "md" }, mount(parse(it.text))) : null, it.error ? h("p", { class: "fault" }, it.error) : null, ...(it.tools ?? []).map((t) => action(t, it.id))));
 			}
-			case "bash": return h("article", { class: "tx sys" }, h("details", { class: "act" }, h("summary", { "data-mark": it.exit ? "error" : "done" }, h("b", { class: "badge" }), h("code", null, "shell"), h("span", { class: "sum" }, `! ${it.command}`), it.exit ? h("span", { class: "stop", "data-mark": "error" }, `exit ${it.exit}`) : null), it.text ? h("pre", { class: "out" }, it.text) : null));
-			case "notice": return h("article", { class: "tx sys" }, h("details", { class: "notice" }, h("summary", null, icon("comms"), h("em", null, "incoming"), NOTICE[it.type ?? ""] ?? it.type ?? "notice", " ", (it.from && link(it.from)) || (it.from ?? ""), stamp), h("pre", null, it.text ?? "")));
-			case "divider": return h("article", { class: "tx rule" }, h("details", null, h("summary", null, it.type === "compaction" ? `context compacted · ${(it.tokens ?? 0).toLocaleString()} tokens summarized` : "branch summary"), h("pre", null, it.text ?? "")));
+			case "bash": return h("article", { class: "tx sys" }, h("details", { class: "act" }, h("summary", { "data-mark": it.exit ? "error" : "done" }, h("b", { class: "badge" }), h("code", null, "shell"), h("span", { class: "sum" }, `! ${it.command}`), it.exit ? h("span", { class: "stop", "data-mark": "error" }, m.exit_code({ code: it.exit })) : null), it.text ? h("pre", { class: "out" }, it.text) : null));
+			case "notice": return h("article", { class: "tx sys" }, h("details", { class: "notice" }, h("summary", null, icon("comms"), h("em", null, m.incoming()), NOTICE[it.type ?? ""]?.() ?? it.type ?? m.notice(), " ", (it.from && link(it.from)) || (it.from ?? ""), stamp), h("pre", null, it.text ?? "")));
+			case "divider": return h("article", { class: "tx rule" }, h("details", null, h("summary", null, it.type === "compaction" ? m.compacted({ tokens: (it.tokens ?? 0).toLocaleString() }) : m.branch_summary()), h("pre", null, it.text ?? "")));
 			default: return h("article", { class: "tx note" }, it.text ?? "", " ", stamp);
 		}
 	}

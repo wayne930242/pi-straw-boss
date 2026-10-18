@@ -1,6 +1,7 @@
 import type { Mark } from "../src/dashboard.ts";
 import type { Base, Net, Unit } from "../src/net.ts";
 import type { Entry } from "./log.ts";
+import { m } from "./paraglide/messages.js";
 import { formatRoute, type Route } from "./router.ts";
 
 // Draws a net into the page by diffing: elements are keyed by id, created once, updated in place, and reordered, so only what changed
@@ -8,7 +9,12 @@ import { formatRoute, type Route } from "./router.ts";
 // badge) and the keyed `sync` are shared with the focus views, so a unit looks and moves the same on every route.
 
 export const ICON: Record<string, string> = { main: "main", member: "member", subagent: "subagent", outpost: "outpost", outside: "outside", tower: "tower" };
-export const LABEL: Record<Mark, string> = { working: "working", waiting: "waiting on a question", idle: "idle", done: "finished", error: "error", unknown: "no status" };
+export const LABEL: Record<Mark, () => string> = { working: m.mark_working, waiting: m.mark_waiting, idle: m.mark_idle, done: m.mark_done, error: m.mark_error, unknown: m.mark_unknown };
+const ROLE: Record<string, () => string> = { main: m.role_main, member: m.role_member, subagent: m.role_subagent, tower: m.role_tower, outpost: m.role_outpost, outside: m.role_outside, session: m.role_session };
+/** The server's fixed status words; any other note (a subagent's tool or phase) shows as it is. */
+const NOTE: Record<string, () => string> = { thinking: m.note_thinking, idle: m.mark_idle, "waiting on a question": m.mark_waiting, finished: m.mark_done };
+/** A role as the page names it; one it does not know shows as it is. */
+export const roleName = (role: string) => (Object.hasOwn(ROLE, role) ? ROLE[role]!() : role);
 /** Marks that ask for the user: a click on such a unit opens its alert instead of its route. */
 export const urgent = (m: Mark) => m === "waiting" || m === "error";
 
@@ -35,7 +41,7 @@ export const mark = (el: HTMLElement, value: Mark) => {
 	if (changed) (el.classList.remove("flash"), void el.offsetWidth, el.classList.add("flash"));
 };
 /** "tool:edit" reads as "using edit". */
-export const doing = (note: string | undefined, m: Mark) => (note ? note.replace(/^tool:/, "using ") : LABEL[m]);
+export const doing = (note: string | undefined, mk: Mark) => (note ? (note.startsWith("tool:") ? m.using({ tool: note.slice(5) }) : Object.hasOwn(NOTE, note) ? NOTE[note]!() : note) : LABEL[mk]());
 /** Points a link at a route: a real href, so middle-click and copy-link work, and data-route for the in-page router. */
 export const aim = (a: Element, route: Route | undefined) => {
 	a.toggleAttribute("hidden", !route);
@@ -88,12 +94,12 @@ function fillUnit(el: HTMLElement, u: Omit<Unit, "id" | "key" | "control" | "rol
 	mark(el, u.mark);
 	fillPlate(el.querySelector(".plate")!, u.role, u.mark, u.docs);
 	text(el, ".name", u.name);
-	text(el, ".role", u.role);
+	text(el, ".role", roleName(u.role));
 	text(el, ".note", doing(u.note, u.mark));
 	sync(el.querySelector(".subs")!, u.subs ?? [], unitEl, fillUnit);
 }
 
-const baseEl = () => html(`<section class="base"><header><div class="tower"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></div><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>head tower</span><h2><a class="enter-base"></a></h2><p></p></div></header><div class="tabs"></div><div class="outposts"></div></section>`);
+const baseEl = () => html(`<section class="base"><header><div class="tower"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></div><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>${m.head_tower()}</span><h2><a class="enter-base"></a></h2><p></p></div></header><div class="tabs"></div><div class="outposts" data-label="${m.outposts()}"></div></section>`);
 function fillBase(el: HTMLElement, b: Base) {
 	mark(el, b.mark);
 	el.classList.toggle("head", b.head);
@@ -102,12 +108,12 @@ function fillBase(el: HTMLElement, b: Base) {
 	mark(tower, b.tower?.mark ?? "unknown");
 	text(el, "h2 a", b.label);
 	aim(el.querySelector("h2 a")!, { view: "workspace", ws: b.id });
-	text(el, ".title p", b.tower ? `control tower · ${LABEL[b.tower.mark]}` : "no tower yet");
+	text(el, ".title p", b.tower ? m.control_tower({ state: LABEL[b.tower.mark]() }) : m.no_tower());
 	sync(el.querySelector(".tabs")!, b.tabs, () => html(`<div class="tab"><h3></h3><div class="units"></div></div>`), (tab, t) => {
-		text(tab, "h3", `tab ${t.label}`);
+		text(tab, "h3", m.tab_label({ label: t.label }));
 		sync(tab.querySelector(".units")!, t.units, unitEl, fillUnit);
 	});
-	sync(el.querySelector(".outposts")!, b.outposts.map((o) => ({ id: o.id, name: o.label, role: "outpost" as const, mark: o.mark, note: o.mark === "unknown" ? "no agent running" : undefined })), unitEl, fillUnit);
+	sync(el.querySelector(".outposts")!, b.outposts.map((o) => ({ id: o.id, name: o.label, role: "outpost" as const, mark: o.mark, note: o.mark === "unknown" ? m.no_agent() : undefined })), unitEl, fillUnit);
 }
 
 /** Draws the head tower's wires to every other tower, with a packet travelling along each, in the map's own coordinates. */

@@ -1,4 +1,5 @@
 import { type Alert, rankOf } from "./alerts.ts";
+import { m } from "./paraglide/messages.js";
 
 // One overlay layer for every panel the page opens. Two kinds:
 // - Dialogs stack in the dock. A dialog the user is looking at is never covered by one they did not open: only an explicit open (a click
@@ -21,7 +22,7 @@ const order = (a: Alert, b: Alert) => rankOf(a.mark) - rankOf(b.mark) || a.at - 
 /** The queue in words, the same in the header and in every dialog: what needs the user, and what only finished (closing never reveals those). */
 export const tally = (queue: Alert[]) => {
 	const asking = queue.filter((a) => rankOf(a.mark) === 0).length, rest = queue.length - asking;
-	return [asking && `${asking} need${asking === 1 ? "s" : ""} you`, rest && `${rest} finished`].filter(Boolean).join(" · ");
+	return [asking && m.tally_need({ count: asking }), rest && m.tally_finished({ count: rest })].filter(Boolean).join(" · ");
 };
 
 export interface StackIO<F> { render(open: Alert[], queue: Alert[]): void; enter(alert: Alert): void; focused(): F | undefined; restore(target: F | undefined): boolean }

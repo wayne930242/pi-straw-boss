@@ -1,4 +1,6 @@
 import "./style.css";
+import { startI18n } from "./i18n.ts";
+import { m } from "./paraglide/messages.js";
 import type { Net } from "../src/net.ts";
 import type { Data, HistoryEvent } from "./chat.ts";
 import type { Post } from "./composer.ts";
@@ -10,9 +12,10 @@ import { createRouter, parseRoute, type Route, upOf, watchOf } from "./router.ts
 import { createStream, type Source, type Status } from "./stream.ts";
 import type { mountFocus } from "./views.ts";
 
+startI18n();
 const page = mountPage();
 const el = (id: string) => document.getElementById(id)!;
-const time = (at?: number) => (at ? new Date(at).toLocaleTimeString([], { hour12: false }) : "never");
+const time = (at?: number) => (at ? new Date(at).toLocaleTimeString([], { hour12: false }) : m.never());
 
 let shown: Net | undefined, logged: Net | undefined, latest: Net | undefined, pending: Net | undefined, status: Status = { state: "connecting", attempt: 0 };
 let current: Route = { view: "map" }, started = false, known: Map<string, Alert> | undefined, hello = "";
@@ -85,19 +88,19 @@ function report(next: Status) {
 	const stale = next.state === "reconnecting" || next.state === "offline";
 	document.body.dataset.stale = el("stage").dataset.stale = String(stale);
 	el("link").dataset.state = next.state;
-	el("link-text").textContent = { connecting: "connecting", live: "live", reconnecting: "reconnecting", offline: "offline" }[next.state];
+	el("link-text").textContent = { connecting: m.link_connecting, live: m.link_live, reconnecting: m.link_reconnecting, offline: m.link_offline }[next.state]();
 	if (focus && latest) focus.net(latest); // the composer follows the link state
 	panels?.stack.redraw(); // and so do the dialogs' Focus terminal buttons
 	const banner = el("banner");
 	banner.hidden = !stale && !next.problem;
 	const lead = next.state === "offline"
-		? `Disconnected. Gave up after ${next.attempt - 1} tries; it reconnects when you return to this tab.`
+		? m.banner_offline({ tries: next.attempt - 1 })
 		: next.state === "reconnecting"
-			? `Disconnected from the straw net. Reconnecting${next.attempt ? ` (try ${next.attempt})` : ""}… The view shows the last known state.`
-			: `The server is up but cannot read the net: ${next.problem}`;
+			? next.attempt ? m.banner_reconnecting_try({ attempt: next.attempt }) : m.banner_reconnecting()
+			: m.banner_problem({ problem: next.problem ?? "" });
 	const last = document.createElement("b");
 	last.textContent = time(next.lastContact);
-	banner.replaceChildren(`${lead} Last update `, last, ".");
+	banner.replaceChildren(`${lead} ${m.banner_last()} `, last, m.banner_end());
 }
 
 /** A history or cards event from the stream; one the page cannot read is dropped. */

@@ -104,7 +104,10 @@ test("the TypeScript source stays within its size budgets", () => {
 	assert.ok(rest <= 767, `the rest of src has ${rest} lines`);
 	// The page: the files the spec budgets one by one, then this round's own figures (no figure in the spec): the focus views, the overlay
 	// layer (alert spotting and the stack model in the map's chunk, the layer's DOM and tiles in a chunk of their own), the dev-only demo, and everything else.
-	for (const [name, max] of [["router.ts", 80], ["chat.ts", 250], ["markdown.ts", 180], ["views.ts", 251], ["layer.ts", 180], ["composer.ts", 165], ["ask.ts", 155], ["mirror.ts", 145], ["keypad.ts", 60], ["doc.ts", 107]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
+	for (const [name, max] of [["router.ts", 80], ["chat.ts", 251], ["markdown.ts", 180], ["views.ts", 252], ["layer.ts", 181], ["composer.ts", 165], ["ask.ts", 156], ["mirror.ts", 146], ["keypad.ts", 60], ["doc.ts", 108], ["i18n.ts", 50]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
+	// Unreleased: the page's text comes from Paraglide's messages (gui/messages), which raised chat.ts, views.ts, layer.ts, ask.ts, mirror.ts, and doc.ts by one
+	// line each for the messages import; the strings replaced in place. gui/i18n.ts picks the locale (the menu's choice, the browser's languages with
+	// Chinese by script) and translates index.html's static text: 50 lines, no figure in a spec.
 	// 0.8.0 raised views.ts from 245 to 251 for the documents: the dossier's list, a document that arrives opening beside the comms, and the show_doc
 	// card's lookup for Open beside. The document tile and its rules (gui/doc.ts, 0.8.0) had the Phase 3 plan's 80; it takes 107, 27 over that figure:
 	// beyond the tile, its frame, and revisions it holds the arrival rules (by display name, units that left forgotten), the show_doc path match,
@@ -136,17 +139,21 @@ test("the TypeScript source stays within its size budgets", () => {
 	// The phone pairing tile and the write helper it shares with the composer (0.5.0, no figure in the spec).
 	const pairing = sum("gui", ["pair.ts", "post.ts"]);
 	assert.ok(pairing <= 50, `the pairing tile has ${pairing} lines`);
-	const shipped = new Set(["router.ts", "chat.ts", "follow.ts", "markdown.ts", "views.ts", "layer.ts", "alerts.ts", "overlay.ts", "fixture.ts", "demo-chat.ts", "composer.ts", "pair.ts", "post.ts", "ask.ts", "mirror.ts", "keypad.ts", "doc.ts"]);
+	const shipped = new Set(["router.ts", "chat.ts", "follow.ts", "markdown.ts", "views.ts", "layer.ts", "alerts.ts", "overlay.ts", "fixture.ts", "demo-chat.ts", "composer.ts", "pair.ts", "post.ts", "ask.ts", "mirror.ts", "keypad.ts", "doc.ts", "i18n.ts"]);
 	const page = sum("gui", names("gui").filter((name) => !shipped.has(name)));
 	// 0.8.0 raised it from 540 to 543 for the scroll badge with the count of a unit's documents on its plate (render.ts).
-	assert.ok(page <= 543, `the page's TypeScript has ${page} lines`);
+	// Unreleased to 554 for the messages: the import in main.ts, render.ts, log.ts, and stream.ts, the locale started in main.ts, and render.ts's role
+	// names and the server's fixed status words as messages (a note it does not know shows as it is).
+	assert.ok(page <= 554, `the page's TypeScript has ${page} lines`);
 });
 
 test("the built page is small, self-contained (no remote URLs, fonts, or imports), and carries no demo fixture", { skip: !existsSync(join(root, "dist/gui/index.html")) && "run npm run gui:build first" }, () => {
 	const dir = join(root, "dist/gui");
 	const files = [join(dir, "index.html"), ...readdirSync(join(dir, "assets")).map((name) => join(dir, "assets", name))];
 	const text = files.map((file) => readFileSync(file, "utf8")).join("\n");
-	const remote = [...text.matchAll(/https?:\/\/[^\s"'`)]+/g)].map((m) => m[0]).filter((url) => url !== "http://www.w3.org/2000/svg");
+	// Paraglide's runtime names two placeholder origins in its URL helpers and its docs in an error message; the page fetches none of them.
+	const named = ["http://www.w3.org/2000/svg", "http://example.com", "http://fallback.com", "https://paraglidejs.com/errors#no-locale-found"];
+	const remote = [...text.matchAll(/https?:\/\/[^\s"'`)]+/g)].map((m) => m[0]).filter((url) => !named.includes(url));
 	assert.deepEqual(remote, [], "nothing is fetched from elsewhere");
 	assert.ok(!/@import|<link[^>]+href="https?:/.test(text));
 	assert.ok(!text.includes("Harbor API") && !text.includes("demo fixture") && !text.includes("harbor-1"), "the demo fixture stays out of the bundle");
@@ -159,7 +166,9 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	const chunks = assets.filter((name) => name.endsWith(".js") && name !== entry), css = assets.filter((name) => name.endsWith(".css"));
 	const total = (list: string[], measure: (name: string) => number) => list.reduce((sum, name) => sum + measure(name), 0);
 	// 0.7.0 raised the gzip figure from 6 KB to 6.1 KB: the page's one stream lives in this chunk, so it routes the terminal tiles' hello and frames to the layer.
-	assert.ok(size(entry).length <= 15_000 && gz(entry) <= 6_100, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// Unreleased to 24.7 KB / 9.75 KB for English and Traditional Chinese (Paraglide): its runtime, about 5 KB raw, whose locale getter stays whole because
+	// every message calls it, and the header's, map's, log's, and banner's messages, each a function per locale with both languages' strings.
+	assert.ok(size(entry).length <= 24_700 && gz(entry) <= 9_750, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).
@@ -171,7 +180,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// 0.8.0 to 52 KB / 22.5 KB for the document tiles (gui/doc.ts: the sandboxed frame, text and markdown, revisions, arrivals, the dossier list; about
 	// 3.8 KB, 1.45 KB gzipped with Open beside and the dossier). The Phase 3 plan proposed 50 KB / 21.5 KB for the terminal tile, key pad, and document
 	// tile together, estimating the document tile at about 1 KB gzipped: this is 2 KB raw and 1 KB gzipped over that proposal.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 52_000 && total(chunks, gz) <= 22_500, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// Unreleased to 67.1 KB / 28.05 KB for the messages of the focus views, comms, dialogs, and tiles in both languages (Paraglide, as in the map chunk).
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 67_100 && total(chunks, gz) <= 28_050, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.

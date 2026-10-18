@@ -3,8 +3,9 @@ import { mountAsk } from "./ask.ts";
 import { keypad } from "./keypad.ts";
 import { mountTerminals } from "./mirror.ts";
 import { type Alert, createStack, tally } from "./overlay.ts";
+import { m } from "./paraglide/messages.js";
 import { type Answer, post } from "./post.ts";
-import { aim, byId, doing, fillPlate, html, mark, PLATE, sync, text } from "./render.ts";
+import { aim, byId, doing, fillPlate, html, mark, PLATE, roleName, sync, text } from "./render.ts";
 
 // The overlay layer's DOM, a chunk fetched on the first alert, dialog, or tile: the HUD alert with its queue, the dialogs in the dock (stacked; the
 // rules are in overlay.ts), and the tiles beside the current view. A tile is a document (a demo document in the dev fixture) or a session's terminal (mirror.ts); tiles share the
@@ -60,8 +61,8 @@ export interface Intel { said?: string; pending?: string; at?: string; failed?: 
 /** `post` is the demo fixture's stand-in for the server's session endpoints; `stream` the newest `hello` of the page's stream, as it came. */
 export type SessionPost = (action: string, body: Record<string, unknown>) => Promise<Answer>;
 export interface PanelDeps { label(ws: string): string; recent(key: string): Promise<Item[]>; post?(key: string): SessionPost | undefined; stream(): string }
-const dialogEl = () => html(`<section class="dialog" role="dialog" aria-modal="false" tabindex="-1"><header><b class="tag">alert</b><span class="where"></span><button class="x" type="button" aria-label="Close">×</button></header><div class="who">${PLATE}<div><h3></h3><p><em class="role"></em> <span class="state"></span></p></div></div><div class="intel"><h4>Last transmission</h4><p class="said">…</p><p class="pending" hidden><b>waiting on</b> <span></span></p></div><div class="ask-root"></div><footer><a class="go">Open comms</a><button class="later" type="button">Later</button><span class="queued"></span></footer></section>`);
-const tileEl = () => html(`<section class="tile" tabindex="-1"><header><svg><use href="#i-doc"/></svg><b></b><button class="x" type="button" aria-label="Close document">×</button></header><div class="tile-body"></div></section>`);
+const dialogEl = () => html(`<section class="dialog" role="dialog" aria-modal="false" tabindex="-1"><header><b class="tag">${m.dialog_alert()}</b><span class="where"></span><button class="x" type="button" aria-label="${m.close()}">×</button></header><div class="who">${PLATE}<div><h3></h3><p><em class="role"></em> <span class="state"></span></p></div></div><div class="intel"><h4>${m.last_transmission()}</h4><p class="said">…</p><p class="pending" hidden><b>${m.waiting_on()}</b> <span></span></p></div><div class="ask-root"></div><footer><a class="go">${m.open_comms()}</a><button class="later" type="button">${m.later()}</button><span class="queued"></span></footer></section>`);
+const tileEl = () => html(`<section class="tile" tabindex="-1"><header><svg><use href="#i-doc"/></svg><b></b><button class="x" type="button" aria-label="${m.close_document()}">×</button></header><div class="tile-body"></div></section>`);
 
 export function mountPanels(deps: PanelDeps) {
 	const [dock, work, row, tabs, button] = [byId("dock", HTMLElement), byId("work", HTMLElement), byId("tiles", HTMLElement), byId("tile-tabs", HTMLElement), byId("alerts", HTMLButtonElement)];
@@ -69,7 +70,7 @@ export function mountPanels(deps: PanelDeps) {
 	const intels = new Map<string, Intel>();
 	const tell = (el: HTMLElement, a: Alert, it = intels.get(a.key)) => {
 		const gone = el.dataset.gone === "true"; // a unit that left the net has no comms to open and nothing it waits on
-		text(el, ".said", it?.failed ? "History unavailable." : (it?.said ?? "No messages yet."));
+		text(el, ".said", it?.failed ? m.history_unavailable() : (it?.said ?? m.no_messages()));
 		el.querySelector<HTMLElement>(".pending")!.hidden = !it?.pending || gone;
 		text(el, ".pending span", it?.pending ?? "");
 		aim(el.querySelector(".go")!, gone ? undefined : { view: "session", ws: a.ws, key: a.key, ...(it?.at && { at: it.at }) });
@@ -91,11 +92,11 @@ export function mountPanels(deps: PanelDeps) {
 		el.setAttribute("aria-label", `${a.name}: ${doing(a.note, a.mark)}`);
 		fillPlate(el.querySelector(".plate")!, a.role, a.mark);
 		text(el, "h3", a.name);
-		text(el, ".role", a.role === "outside" ? "unaligned" : a.role);
-		text(el, ".state", a.gone ? "left the net" : doing(a.note, a.mark));
+		text(el, ".role", roleName(a.role));
+		text(el, ".state", a.gone ? m.left_net() : doing(a.note, a.mark));
 		text(el, ".where", deps.label(a.ws));
-		text(el, ".tag", a.gone ? "gone" : ({ waiting: "question", error: "error", done: "finished" }[a.mark as "done"] ?? "update"));
-		text(el, ".queued", queue.length ? `Also queued: ${tally(queue)}` : "");
+		text(el, ".tag", a.gone ? m.tag_gone() : ({ waiting: m.tag_question, error: m.tag_error, done: m.tag_finished }[a.mark as "done"] ?? m.tag_update)());
+		text(el, ".queued", queue.length ? m.also_queued({ tally: tally(queue) }) : "");
 		if (!intels.has(a.key)) learn(a);
 		tell(el, a);
 		let ask = asks.get(el);
@@ -110,8 +111,8 @@ export function mountPanels(deps: PanelDeps) {
 			button.disabled = !head;
 			button.dataset.mark = head?.mark ?? "unknown";
 			text(button, "#alert-count", String(queue.length));
-			button.title = queue.length ? `Alerts: ${tally(queue)}` : "";
-			text(button, "#alert-text", head ? `${head.name} · ${doing(head.note, head.mark)}` : "no alerts");
+			button.title = queue.length ? m.alerts_title({ tally: tally(queue) }) : "";
+			text(button, "#alert-text", head ? `${head.name} · ${doing(head.note, head.mark)}` : m.no_alerts());
 			sync(button.querySelector(".faces")!, queue.slice(0, 3).map((a) => ({ ...a, id: a.key })), () => html(PLATE), (face, a) => fillPlate(face, a.role, a.mark));
 		},
 		enter: (a) => dock.querySelector<HTMLElement>(`[data-key="${CSS.escape(a.key)}"] .go`)?.focus(),
@@ -144,7 +145,7 @@ export function mountPanels(deps: PanelDeps) {
 			sync(row, list, (t) => {
 				const el = tileEl();
 				el.querySelector("use")!.setAttribute("href", `#${t.icon ?? "i-doc"}`);
-				el.querySelector(".x")!.setAttribute("aria-label", `Close ${t.title}`);
+				el.querySelector(".x")!.setAttribute("aria-label", m.close_tile({ title: t.title }));
 				el.querySelector(".tile-body")!.append(t.body());
 				el.querySelector(".x")!.addEventListener("click", () => tiles.close(t.id));
 				return el;

@@ -1,3 +1,5 @@
+import { m as msg } from "./paraglide/messages.js";
+
 // A small markdown renderer of its own (D8): text in, a tree of plain nodes out, then DOM nodes built from the tree. Nothing is ever
 // parsed as HTML, so raw HTML in the text stays text; links keep only the http, https, and mailto schemes. No syntax highlighting.
 
@@ -65,7 +67,7 @@ export function parse(md: string, depth = 0): N[] {
 				for (i++; i < lines.length && lines[i]!.trim() && lines[i]!.search(/\S/) > indent; i++) body.push(lines[i]!.replace(new RegExp(`^ {0,${indent + 2}}`), ""));
 				// A task item carries a check mark of its own (drawn by CSS) in front of its text, and no bullet.
 				const kids = parse(body.join("\n"), depth + 1), first = kids[0], done = task?.[1] !== " ";
-				if (task) (typeof first === "object" && first.tag === "p" ? first.kids : kids).unshift(el("i", done ? ["✓"] : [], { class: "check", "data-done": String(done), "aria-label": done ? "done" : "not done" }));
+				if (task) (typeof first === "object" && first.tag === "p" ? first.kids : kids).unshift(el("i", done ? ["✓"] : [], { class: "check", "data-done": String(done), "aria-label": done ? msg.task_done() : msg.task_open() }));
 				items.push(el("li", kids, task ? { class: "task" } : undefined));
 				if (!lines[i]?.trim() && lines[i + 1]?.match(LIST)?.[1]?.length === indent) i++;
 			}

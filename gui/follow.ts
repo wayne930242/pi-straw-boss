@@ -1,4 +1,5 @@
 import type { createChat, Delta, Page } from "./chat.ts";
+import { m } from "./paraglide/messages.js";
 
 // Where the comms log stands and how it gets to an entry: pure rules, tested without a browser; chat.ts applies them to the scroller.
 
@@ -26,7 +27,7 @@ export function createFollow() {
 		},
 		jump: () => void ((pinned = true), (unseen = 0)),
 		/** The button's text, or undefined when it hides. A detached log (its end not mounted) always offers it. */
-		button: (detached: boolean) => (pinned && !detached ? undefined : unseen && !detached ? `${unseen} new` : "jump to latest"),
+		button: (detached: boolean) => (pinned && !detached ? undefined : unseen && !detached ? m.new_entries({ count: unseen }) : m.jump_latest()),
 	};
 }
 

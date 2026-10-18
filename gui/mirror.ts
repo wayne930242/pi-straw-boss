@@ -1,5 +1,6 @@
 import { h } from "./dom.ts";
 import type { Tile } from "./layer.ts";
+import { m } from "./paraglide/messages.js";
 import type { Answer } from "./post.ts";
 
 // The terminal tile: what a session's pane shows, drawn from the server's `mirror` frames (src/mirror.ts) on this tab's one stream. Rows are
@@ -92,8 +93,8 @@ export function mountTerminals({ tiles, post, stream, pad }: { tiles: { open(til
 	const say = (t: Term, text: string, tone = "") => (t.pad?.update(), (t.state.textContent !== text || t.state.dataset.tone !== tone) && ((t.state.dataset.tone = tone), (t.state.textContent = text))); // a status that stays is not announced again
 	// One request at a time per tile, so an off sent right after an on reaches the server after it.
 	// A refused or failed attach ends the tile's mirror, so opening the terminal again tries again.
-	const refused = (t: Term, why: string) => ((t.ended = true), say(t, `${why} Open the terminal again to retry.`, "error"));
-	const attach = (t: Term, on: boolean, s = id()) => s && void (t.queue = t.queue.then(() => t.post("mirror", { stream: s, on }).then((r) => on && !r.ok && refused(t, r.body.reason ?? `Refused (${r.status}).`), () => on && refused(t, "The server could not be reached."))));
+	const refused = (t: Term, why: string) => ((t.ended = true), say(t, m.retry_terminal({ why }), "error"));
+	const attach = (t: Term, on: boolean, s = id()) => s && void (t.queue = t.queue.then(() => t.post("mirror", { stream: s, on }).then((r) => on && !r.ok && refused(t, r.body.reason ?? m.refused({ status: r.status })), () => on && refused(t, m.unreachable()))));
 	// The widest of the pane's columns and its longest row: rows drawn before the pane narrowed stay wider until they are redrawn.
 	const fit = (t: Term, n = Math.max(t.cols, ...[...t.box.children].map((r) => r.textContent?.length ?? 0))) => (t.box.style.fontSize = t.fit.getAttribute("aria-pressed") === "true" && n ? `${Math.max(6, Math.floor((t.scroll.clientWidth - 20) / (n * 0.6)))}px` : "");
 	const stale = (t: Term) => Date.now() - t.seen > STALE_MS;
@@ -101,11 +102,11 @@ export function mountTerminals({ tiles, post, stream, pad }: { tiles: { open(til
 	const watch = () => (clearInterval(tick), (tick = open.size && !document.hidden ? setInterval(() => open.forEach((t) => (t.box.classList.toggle("stale", stale(t)), t.pad?.update())), 1000) : undefined));
 	document.addEventListener("visibilitychange", () => (watch(), open.forEach((t) => {
 		clearTimeout(t.away);
-		if (document.hidden) t.away = setTimeout(() => ((t.parked = true), attach(t, false), say(t, "Paused while this tab is hidden.")), AWAY_MS);
+		if (document.hidden) t.away = setTimeout(() => ((t.parked = true), attach(t, false), say(t, m.paused_hidden())), AWAY_MS);
 		else if (t.parked) void ((t.parked = false), attach(t, true));
 	})));
 	const make = (key: string, name: string): Tile => {
-		const t: Term = { key, box: h("div", { class: "term", role: "group", "aria-label": `Terminal of ${name}, read only` }), scroll: h("div", { class: "term-scroll", tabindex: "0" }), state: h("p", { class: "term-state", role: "status" }, "Connecting…"), fit: h("button", { type: "button", class: "cmp-link", "aria-pressed": "false" }, "Fit width"), post: post(key), cols: 0, seen: 0, parked: false, first: true, ended: false, queue: Promise.resolve() };
+		const t: Term = { key, box: h("div", { class: "term", role: "group", "aria-label": m.terminal_of({ name }) }), scroll: h("div", { class: "term-scroll", tabindex: "0" }), state: h("p", { class: "term-state", role: "status" }, m.connecting()), fit: h("button", { type: "button", class: "cmp-link", "aria-pressed": "false" }, m.fit_width()), post: post(key), cols: 0, seen: 0, parked: false, first: true, ended: false, queue: Promise.resolve() };
 		t.fit.onclick = () => (t.fit.setAttribute("aria-pressed", String(t.fit.getAttribute("aria-pressed") !== "true")), fit(t));
 		t.scroll.append(t.box);
 		new ResizeObserver(() => fit(t)).observe(t.scroll);
@@ -114,13 +115,13 @@ export function mountTerminals({ tiles, post, stream, pad }: { tiles: { open(til
 		watch();
 		const state = (): TermState => (t.parked || t.ended || stale(t) ? "off" : t.box.classList.contains("hidden") ? "hidden" : "live");
 		t.pad = pad?.({ name, state, post: t.post, stream: id });
-		return (t.tile = { id: `term:${key}`, title: `Terminal · ${name}`, icon: "i-comms", body: () => h("div", { class: "term-tile" }, h("div", { class: "term-bar" }, t.state, t.fit), t.scroll, t.pad?.el), closed: () => (clearTimeout(t.away), attach(t, false), open.delete(key), watch()) });
+		return (t.tile = { id: `term:${key}`, title: m.terminal_title({ name }), icon: "i-comms", body: () => h("div", { class: "term-tile" }, h("div", { class: "term-bar" }, t.state, t.fit), t.scroll, t.pad?.el), closed: () => (clearTimeout(t.away), attach(t, false), open.delete(key), watch()) });
 	};
 	return {
 		/** Opens (or brings forward) the tile of a session's terminal, the user's own act, so it takes focus; a mirror that ended tries again. */
 		open(key: string, name: string) {
 			const t = open.get(key);
-			if (t?.ended) void ((t.ended = false), say(t, "Connecting…"), attach(t, true));
+			if (t?.ended) void ((t.ended = false), say(t, m.connecting()), attach(t, true));
 			tiles.open(t?.tile ?? make(key, name), true);
 		},
 		/** A new stream said hello: every open tile attaches to it. */
@@ -132,13 +133,13 @@ export function mountTerminals({ tiles, post, stream, pad }: { tiles: { open(til
 			const t = open.get(f.key);
 			if (!t) return;
 			t.box.classList.toggle("hidden", Boolean(f.hidden || f.ended));
-			if (f.ended) return refused(t, `The mirror ended: ${f.ended}`);
+			if (f.ended) return refused(t, m.mirror_ended({ why: f.ended }));
 			[t.seen, t.ended] = [Date.now(), false];
 			t.box.classList.remove("stale");
-			if (f.hidden) return applyFrame(t.box, { key: t.key, rows: 0 }), say(t, "Hidden while it waits for a secret; type it in the terminal.");
+			if (f.hidden) return applyFrame(t.box, { key: t.key, rows: 0 }), say(t, m.mirror_hidden());
 			applyFrame(t.box, f);
 			if (f.whole || (f.cols && f.cols !== t.cols)) void ((t.cols = f.cols || t.cols), fit(t));
-			say(t, `Live · ${t.cols}×${t.box.children.length}`, "ok");
+			say(t, m.mirror_live({ cols: t.cols, rows: t.box.children.length }), "ok");
 			if (t.first && f.whole) void ((t.first = false), requestAnimationFrame(() => (t.scroll.scrollTop = t.scroll.scrollHeight)));
 		},
 	};

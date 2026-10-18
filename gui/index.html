@@ -23,50 +23,51 @@
 </defs></svg>
 <div class="shell">
   <header class="hud">
-    <a class="brand" href="./" data-route="" aria-label="Straw Net: all bases">
+    <a class="brand" href="./" data-route="" aria-label="Straw Net: all bases" data-m-label="brand_label">
       <span class="logo"><svg><use href="#i-tower"/></svg></span>
-      <div><h1>Straw Net</h1><p>live net · comms</p></div>
+      <div><h1>Straw Net</h1><p data-m="tagline">live net · comms</p></div>
     </a>
-    <dl class="stats" aria-label="Net totals">
-      <div><dt>Bases</dt><dd id="s-bases">0</dd></div>
-      <div><dt>Agents</dt><dd id="s-agents">0</dd></div>
-      <div data-mark="working"><dt>Working</dt><dd id="s-working">0</dd></div>
-      <div data-mark="waiting"><dt>Waiting</dt><dd id="s-waiting">0</dd></div>
+    <dl class="stats" aria-label="Net totals" data-m-label="totals_label">
+      <div><dt data-m="stat_bases">Bases</dt><dd id="s-bases">0</dd></div>
+      <div><dt data-m="stat_agents">Agents</dt><dd id="s-agents">0</dd></div>
+      <div data-mark="working"><dt data-m="stat_working">Working</dt><dd id="s-working">0</dd></div>
+      <div data-mark="waiting"><dt data-m="stat_waiting">Waiting</dt><dd id="s-waiting">0</dd></div>
     </dl>
-    <button class="alerts" id="alerts" type="button" data-mark="unknown" aria-label="Alerts" disabled><span class="faces" id="alert-faces"></span><span class="count"><b id="alert-count">0</b><small id="alert-text">no alerts</small></span></button>
-    <button class="pair-btn" id="pair" type="button" title="Pair a phone over Tailscale (/boss gui remote turns remote access on)">Phone</button>
+    <button class="alerts" id="alerts" type="button" data-mark="unknown" aria-label="Alerts" data-m-label="alerts" disabled><span class="faces" id="alert-faces"></span><span class="count"><b id="alert-count">0</b><small id="alert-text" data-m="no_alerts">no alerts</small></span></button>
+    <button class="pair-btn" id="pair" type="button" title="Pair a phone over Tailscale (/boss gui remote turns remote access on)" data-m="pair_button" data-m-title="pair_title">Phone</button>
+    <select class="pair-btn lang" id="lang" aria-label="Language" data-m-label="language"></select>
     <div class="link" id="link" data-state="connecting"><i></i><span id="link-text">connecting</span></div>
   </header>
   <div class="banner" id="banner" role="status" hidden></div>
-  <nav class="crumbs" id="crumbs" aria-label="Location"><b>Straw Net</b><span>all bases</span></nav>
+  <nav class="crumbs" id="crumbs" aria-label="Location" data-m-label="location"><b>Straw Net</b><span data-m="all_bases">all bases</span></nav>
   <div class="stage" id="stage">
     <div class="work" id="work">
       <main class="map view" id="map">
         <svg class="links" id="links" aria-hidden="true"></svg>
         <div class="bases" id="bases"></div>
-        <p class="empty" id="empty" hidden>No workspaces yet. Open a pi session in Herdr and the net appears here.</p>
+        <p class="empty" id="empty" data-m="empty_map" hidden>No workspaces yet. Open a pi session in Herdr and the net appears here.</p>
       </main>
       <section class="zoom view" id="ws-view" hidden></section>
       <section class="comms view" id="session-view" hidden></section>
-      <div class="tiles" id="tiles" hidden><nav class="tile-tabs" id="tile-tabs" aria-label="Documents"></nav></div>
+      <div class="tiles" id="tiles" hidden><nav class="tile-tabs" id="tile-tabs" aria-label="Documents" data-m-label="documents"></nav></div>
     </div>
     <aside class="side">
       <section class="panel dossier" id="dossier" hidden></section>
-      <details class="panel net-log" open><summary><h2>Net log</h2></summary><ol class="log" id="log"></ol></details>
-      <section class="panel" id="legend"><h2>States</h2>
+      <details class="panel net-log" open><summary><h2 data-m="net_log">Net log</h2></summary><ol class="log" id="log" data-m-empty="waiting_changes"></ol></details>
+      <section class="panel" id="legend"><h2 data-m="states">States</h2>
         <ul class="legend">
-          <li data-mark="working"><b class="badge"></b>working</li>
-          <li data-mark="waiting"><b class="badge"></b>waiting on a question</li>
-          <li data-mark="idle"><b class="badge"></b>idle</li>
-          <li data-mark="done"><b class="badge"></b>finished</li>
-          <li data-mark="error"><b class="badge"></b>error</li>
+          <li data-mark="working"><b class="badge"></b><span data-m="mark_working">working</span></li>
+          <li data-mark="waiting"><b class="badge"></b><span data-m="mark_waiting">waiting on a question</span></li>
+          <li data-mark="idle"><b class="badge"></b><span data-m="mark_idle">idle</span></li>
+          <li data-mark="done"><b class="badge"></b><span data-m="mark_done">finished</span></li>
+          <li data-mark="error"><b class="badge"></b><span data-m="mark_error">error</span></li>
         </ul>
       </section>
-      <p class="credit">Icons from game-icons.net by Lorc and Delapouite, CC BY 3.0.</p>
+      <p class="credit" data-m="credit">Icons from game-icons.net by Lorc and Delapouite, CC BY 3.0.</p>
     </aside>
   </div>
 </div>
-<div class="dock" id="dock" aria-label="Alerts" role="region"></div>
+<div class="dock" id="dock" aria-label="Alerts" data-m-label="alerts" role="region"></div>
 <script type="module" src="./main.ts"></script>
 </body>
 </html>

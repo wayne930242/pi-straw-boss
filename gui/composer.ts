@@ -1,5 +1,6 @@
 import type { Mark } from "../src/dashboard.ts";
 import { h } from "./dom.ts";
+import { m } from "./paraglide/messages.js";
 import { type Answer, post } from "./post.ts";
 
 // The composer under a unit's comms log. What is typed goes to the unit's terminal through Herdr, as if typed there: Enter sends it (a
@@ -11,8 +12,6 @@ import { type Answer, post } from "./post.ts";
 // not say when the answer came (the route had left, or the page reloaded): a refusal's reason, an unconfirmed send, an edit of text that already went.
 
 export const MAX_TEXT = 16_384;
-const UNSURE = "Not confirmed. Check the terminal before sending again.";
-const WENT = "The original already went to the session; what is here is your edited copy, unsent.";
 type Note = [tone: string, text: string];
 export const ENDING = /^\s*\/(quit|exit|new|resume|fork|clone|import|reload)(?=\s|$)/;
 export type Post = (action: "input" | "keys" | "focus" | "answer" | "mirror", body: Record<string, unknown>) => Promise<Answer>;
@@ -27,8 +26,8 @@ export interface Unit { name: string; control: boolean; live: boolean; mark: Mar
 export const postTo = (key: string): Post => (action, body) => post(`sessions/${encodeURIComponent(key)}/${action}`, body);
 /** The note an answer leaves for a composer that is not there to say it: a refusal's reason, an unconfirmed send, or an edit of text that already went. */
 export function aftermath(r: Answer, stored: string | undefined, sent: string): Note | undefined {
-	if (!r.ok) return ["error", r.status === 504 ? UNSURE : (r.body.reason ?? `Refused (${r.status}).`)];
-	if (stored && !stored.startsWith(sent)) return ["ok", WENT];
+	if (!r.ok) return ["error", r.status === 504 ? m.unsure() : (r.body.reason ?? m.refused({ status: r.status }))];
+	if (stored && !stored.startsWith(sent)) return ["ok", m.went()];
 }
 /** A stored note: ours is JSON [tone, text]; 0.5.0 stored the plain text of its note, shown as it is. */
 export const recall = (raw: string | null): Note | undefined => {
@@ -39,24 +38,24 @@ export const recall = (raw: string | null): Note | undefined => {
 	}
 };
 /** What a mounted composer says once Herdr took `sent`; an empty box (the draft could not be stored) holds no edits. */
-export const confirmed = (box: string, sent: string) => (box !== "" && !box.startsWith(sent) ? "Sent as it was; your edits stayed here, unsent." : "Sent. It shows in the log once pi writes it.");
+export const confirmed = (box: string, sent: string) => (box !== "" && !box.startsWith(sent) ? m.sent_edited() : m.sent());
 /** Focus terminal: hidden when nothing live backs it or the question panel carries one, and not clickable while a request is on its way or the stream is down. */
 export const focusButton = (u: Unit, busy: boolean) => ({ hidden: !u.live || !u.control || Boolean(u.asking), disabled: busy || !u.online });
 /** What stays in the box once `sent` was accepted: what was typed after it, or everything when the sent part was edited meanwhile. */
 export const settle = (now: string, sent: string) => (now.startsWith(sent) ? now.slice(sent.length).replace(/^\n/, "") : now);
 /** Why nothing can be sent right now, or undefined. */
 export function blocked(u: Unit): string | undefined {
-	if (!u.online) return "The stream is down; sending waits for it to come back.";
-	if (!u.live) return "This session is no longer live; its history stays readable.";
-	if (!u.control) return "No live pi pane backs this unit, so there is nothing to type into.";
-	if (u.mark === "waiting") return u.answerable ? "It waits on a dialog: answer it above, or in its terminal." : "It waits on a dialog; answer it in its terminal.";
+	if (!u.online) return m.blocked_offline();
+	if (!u.live) return m.blocked_ended();
+	if (!u.control) return m.blocked_no_pane();
+	if (u.mark === "waiting") return u.answerable ? m.blocked_answer_above() : m.blocked_answer_terminal();
 }
 
 export function mountComposer(root: HTMLElement, key: string, post: Post) {
 	const store = `sb-draft:${key}`, touch = matchMedia("(pointer: coarse)").matches;
-	const box = h("textarea", { rows: "1", maxlength: String(MAX_TEXT), "aria-label": "Message", enterkeyhint: touch ? "enter" : "send" });
-	const send = h("button", { type: "submit", class: "cmp-send" }, "Send"), follow = h("button", { type: "button", class: "cmp-alt", title: "Alt+Enter" }, "Follow-up"), stop = h("button", { type: "button", class: "cmp-alt cmp-stop" }, "Stop");
-	const note = h("p", { class: "cmp-note", role: "status", "aria-live": "polite" }), focus = h("button", { type: "button", class: "cmp-link" }, "Focus terminal");
+	const box = h("textarea", { rows: "1", maxlength: String(MAX_TEXT), "aria-label": m.message(), enterkeyhint: touch ? "enter" : "send" });
+	const send = h("button", { type: "submit", class: "cmp-send" }, m.send()), follow = h("button", { type: "button", class: "cmp-alt", title: "Alt+Enter" }, m.follow_up()), stop = h("button", { type: "button", class: "cmp-alt cmp-stop" }, m.stop());
+	const note = h("p", { class: "cmp-note", role: "status", "aria-live": "polite" }), focus = h("button", { type: "button", class: "cmp-link" }, m.focus_terminal());
 	const form = h("form", { class: "composer" }, h("div", { class: "cmp-row" }, box, h("div", { class: "cmp-acts" }, send, follow, stop)), h("div", { class: "cmp-foot" }, note, focus));
 	root.replaceChildren(form);
 	let unit: Unit = { name: "", control: false, live: false, mark: "unknown", online: false }, busy = false, asking = false;
@@ -71,7 +70,7 @@ export function mountComposer(root: HTMLElement, key: string, post: Post) {
 	const say = (text: string, tone = "", ...kids: HTMLElement[]) => ((note.dataset.tone = tone), note.replaceChildren(text, ...kids));
 	/** An inline confirm in the note line: the action runs only on its button. */
 	const ask = (question: string, label: string, run: () => void) => {
-		const yes = h("button", { type: "button", class: "cmp-yes" }, label), no = h("button", { type: "button", class: "cmp-link" }, "Cancel");
+		const yes = h("button", { type: "button", class: "cmp-yes" }, label), no = h("button", { type: "button", class: "cmp-link" }, m.cancel());
 		asking = true;
 		yes.onclick = () => ((asking = false), run());
 		no.onclick = () => ((asking = false), say(""), box.focus());
@@ -85,29 +84,29 @@ export function mountComposer(root: HTMLElement, key: string, post: Post) {
 		// The send settles the stored draft once, mounted composer or not. Its note is written before the answer (a page reloaded before Herdr
 		// answered must warn) and after it (a refusal's reason, or an edit of the sent text, for a composer that is not there to say it).
 		if (sent !== undefined) {
-			stash(["error", UNSURE]), flights.set(key, flight);
+			stash(["error", m.unsure()]), flights.set(key, flight);
 			void flight.answer.then((r) => {
 				const now = read();
 				if (r.ok && now !== undefined) keep(() => sessionStorage.setItem(store, settle(now, sent)));
 				stash(aftermath(r, now, sent));
-			}, () => stash(["error", UNSURE]));
+			}, () => stash(["error", m.unsure()]));
 		}
 		return land(flight);
 	}
 	/** Waits for a send, this composer's or one a replaced composer started, and settles the box; a detached composer touches nothing. */
 	async function land(flight: Flight, { sent } = flight) {
-		(busy = true), (asking = false), draw(), say(sent === undefined ? "" : "Sending…"); // a request replaces an open confirm
+		(busy = true), (asking = false), draw(), say(sent === undefined ? "" : m.sending()); // a request replaces an open confirm
 		try {
 			const r = await flight.answer;
 			if (!form.isConnected) return;
-			if (!r.ok) return (r.status === 504 || stash(), say(r.body.reason ?? `Refused (${r.status}).`, "error")); // shown here, so only an unconfirmed send keeps its note
+			if (!r.ok) return (r.status === 504 || stash(), say(r.body.reason ?? m.refused({ status: r.status }), "error")); // shown here, so only an unconfirmed send keeps its note
 			if (sent === undefined) return say("");
 			stash();
 			const said = confirmed(box.value, sent);
 			(box.value = settle(box.value, sent)), save(), grow();
 			say(said, "ok");
 		} catch {
-			say(UNSURE, "error");
+			say(m.unsure(), "error");
 		} finally {
 			if (flights.get(key) === flight) flights.delete(key);
 			(busy = false), draw();
@@ -118,14 +117,14 @@ export function mountComposer(root: HTMLElement, key: string, post: Post) {
 		const text = box.value, why = blocked(unit), confirmed = sure === text;
 		if (busy || asking || !text.trim()) return;
 		if (why) return say(why, "error");
-		if (new TextEncoder().encode(text).length > MAX_TEXT) return say("The text is longer than 16 KB; shorten it.", "error");
+		if (new TextEncoder().encode(text).length > MAX_TEXT) return say(m.too_long(), "error");
 		const command = !confirmed && text.match(ENDING)?.[0].trim();
-		if (command) return ask(`${command} ends this session or switches its pane to another one.`, `Send ${command}`, () => submit(as, text));
+		if (command) return ask(m.ends_session({ command }), m.send_command({ command }), () => submit(as, text));
 		void call("input", { text, as, confirmed }, text);
 	}
 	function draw() {
 		const why = blocked(unit), working = unit.mark === "working";
-		box.placeholder = why ?? `Message ${unit.name} · ${touch ? "" : "Enter sends, Shift+Enter adds a line · "}lands after any unsent text in its terminal`;
+		box.placeholder = why ?? (touch ? m.placeholder_touch : m.placeholder)({ name: unit.name });
 		send.disabled = busy || Boolean(why);
 		follow.hidden = stop.hidden = !working || Boolean(why);
 		follow.disabled = stop.disabled = busy;
@@ -133,7 +132,7 @@ export function mountComposer(root: HTMLElement, key: string, post: Post) {
 	}
 	form.addEventListener("submit", (event) => (event.preventDefault(), submit("send")));
 	follow.onclick = () => submit("followUp");
-	stop.onclick = () => ask("Stop the current task? Queued messages go back to its terminal editor.", "Stop", () => void (busy || call("keys", { keys: ["esc"] })));
+	stop.onclick = () => ask(m.stop_ask(), m.stop(), () => void (busy || call("keys", { keys: ["esc"] })));
 	focus.onclick = () => void (busy || call("focus", {})); // one request per session at a time: a pending send keeps the others off
 	box.addEventListener("input", () => (save(), grow()));
 	// Escape anywhere in the composer cancels an open question, and in a box with text stays here instead of leaving the route.

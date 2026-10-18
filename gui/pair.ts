@@ -1,5 +1,6 @@
 import { h } from "./dom.ts";
 import type { Tile } from "./layer.ts";
+import { m } from "./paraglide/messages.js";
 import { post } from "./post.ts";
 
 // The phone pairing tile, its own small chunk: a fresh one-time pairing URL from the server as a QR code (dark modules on white, drawn
@@ -11,7 +12,7 @@ function square(rows: string[]) {
 	svg.setAttribute("viewBox", `-4 -4 ${n + 8} ${n + 8}`);
 	svg.setAttribute("class", "qr");
 	svg.setAttribute("role", "img");
-	svg.setAttribute("aria-label", "Pairing QR code");
+	svg.setAttribute("aria-label", m.pair_qr());
 	for (const [k, v] of Object.entries({ x: "-4", y: "-4", width: String(n + 8), height: String(n + 8), fill: "#fff" })) bg.setAttribute(k, v);
 	dots.setAttribute("d", rows.flatMap((row, y) => [...row].flatMap((c, x) => (c === "1" ? [`M${x} ${y}h1v1h-1z`] : []))).join(""));
 	dots.setAttribute("fill", "#06101e");
@@ -20,15 +21,15 @@ function square(rows: string[]) {
 }
 
 export function pairTile(): Tile {
-	return { id: "pair", title: "Pair a phone", body: () => {
-		const body = h("div", { class: "pair" }), again = h("button", { type: "button", class: "later" }, "New code");
+	return { id: "pair", title: m.pair_tile(), body: () => {
+		const body = h("div", { class: "pair" }), again = h("button", { type: "button", class: "later" }, m.new_code());
 		const ask = () => {
-			body.replaceChildren(h("p", { class: "chat-empty" }, "Asking for a pairing code…"));
+			body.replaceChildren(h("p", { class: "chat-empty" }, m.asking_code()));
 			void post("remote/pair", {}).then((r) => {
 				const rows = r.body.rows, url = String(r.body.url ?? "");
-				if (!r.ok || !Array.isArray(rows)) return body.replaceChildren(h("p", null, r.body.reason ?? `Refused (${r.status}).`), again);
-				body.replaceChildren(square(rows.map(String)), h("p", null, "Scan it with a phone signed in to Tailscale as this machine's user. It works once, within ten minutes."), h("p", null, h("code", null, new URL(url).host)), again);
-			}, () => body.replaceChildren(h("p", null, "The server did not answer."), again));
+				if (!r.ok || !Array.isArray(rows)) return body.replaceChildren(h("p", null, r.body.reason ?? m.refused({ status: r.status })), again);
+				body.replaceChildren(square(rows.map(String)), h("p", null, m.pair_scan()), h("p", null, h("code", null, new URL(url).host)), again);
+			}, () => body.replaceChildren(h("p", null, m.no_answer()), again));
 		};
 		again.onclick = ask;
 		ask();
