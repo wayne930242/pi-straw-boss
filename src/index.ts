@@ -565,7 +565,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 		pi.on("session_shutdown", async (event) => {
 			// A closed session, and a tower that quits however it was asked, take their pane with them (and an emptied tab); a /reload, /new, resume or fork keeps it.
 			if ((closing ? !closing.keepPane : isTower) && event.reason === "quit" && env.HERDR_PANE_ID) later(process.pid, ["pane", "close", env.HERDR_PANE_ID]);
-			if (gui && event.reason !== "quit") markReload(guiDir, me()); // a /reload, /new, or /resume starts it again in this process
+			if (gui && event.reason !== "quit") markReload(guiDir); // a /reload, /new, or /resume starts it again in this process
 			if (gui) await switchRemote(gui, false, guiDir, ts).catch(() => {});
 			await gui?.stop();
 			gui = undefined;

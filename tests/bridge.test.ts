@@ -95,6 +95,30 @@ test("G's channel from the start when gui.json names another session (the server
 	assert.deepEqual((s.published.at(-1)!.payload as Dialogs).closed, [{ id: "d1", by: "local" }], "with who closed it");
 });
 
+test("the session's queue goes with the dialogs: messages typed while it works, until their turn takes them or pi empties the queue", () => {
+	const s = session();
+	s.own();
+	let waiting = true;
+	(s.ctx as unknown as { hasPendingMessages(): boolean }).hasPendingMessages = () => waiting;
+	const queued = () => (s.published.filter((p) => p.payload.type === "dialogs").at(-1)!.payload as Dialogs).queued;
+	s.fire("input", { text: "check refunds too", source: "interactive", streamingBehavior: "steer" });
+	s.fire("input", { text: "then summarize", source: "interactive", streamingBehavior: "followUp" });
+	s.fire("input", { text: "a prompt while idle", source: "interactive" });
+	assert.deepEqual(queued(), [{ text: "check refunds too", as: "steer" }, { text: "then summarize", as: "followUp" }]);
+	s.fire("message_start", { message: { role: "assistant", content: [] } });
+	s.fire("message_start", { message: { role: "user", content: [{ type: "text", text: "check refunds too" }] } });
+	assert.deepEqual(queued(), [{ text: "then summarize", as: "followUp" }], "its user message took the steer");
+	s.fire("message_start", { message: { role: "user", content: "changed by another extension" } });
+	assert.equal(queued(), undefined, "a text that matches nothing takes the oldest");
+	for (let i = 0; i < 7; i++) s.fire("input", { text: i ? `m${i}` : "x".repeat(300), source: "interactive", streamingBehavior: "steer" });
+	assert.deepEqual([queued()!.length, queued()![0]!.text.length, queued()![0]!.text.endsWith("…"), queued()![4]!.text], [5, 200, true, "m4"], "the five oldest, each cut");
+	s.bridge.sync();
+	assert.equal(queued()!.length, 5, "kept while pi says messages wait");
+	waiting = false;
+	s.bridge.sync();
+	assert.equal(queued(), undefined, "cleared once pi's queue is empty (Esc, Alt+Up)");
+});
+
 test("pendings are taken only for a call of the owner's own tool in flight, in contract v1", () => {
 	const s = session();
 	s.own();

@@ -15,7 +15,7 @@ import { createMirrors } from "./mirror.ts";
 import type { Found, Net, Ref } from "./net.ts";
 import { qr } from "./qr.ts";
 import { type Access, cookieFor, createAccess } from "./remote.ts";
-import { api, type Hub as Files, watchSession, type Watch, watchWorkspace } from "./watch.ts";
+import { api, type Hub as Files, image, watchSession, type Watch, watchWorkspace } from "./watch.ts";
 
 // The browser view's server: serves the built page and one live stream of the net, read-only, on 127.0.0.1 only.
 // Every URL starts with a random token (/<token>/index.html, /<token>/events) and a request without it, or with another Host
@@ -130,6 +130,8 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, t
 			}
 			if ((parts[0] === "server" || parts.join("/") === "remote/on") && who.remote) return void fail(403); // only this machine stops the server or opens it to the tailnet
 			if (["sessions", "remote", "server", "dirs", "open", "close"].includes(parts[0]!)) return void control(req, who.origin, parts).then(answer, () => answer({ status: 500, body: { error: "internal", reason: "The request could not be handled." } }));
+			// An entry never changes once written, so its image is cached for a day; the token in the URL keeps it to this page.
+			if (req.method === "GET" && parts[0] === "image") return void image(files, parts.slice(1)).then((p) => (p ? res.writeHead(200, { ...HEADERS, "content-type": p.type, "cache-control": "private, max-age=86400" }).end(p.bytes) : fail(404)), () => fail(404));
 			if (req.method === "GET") return void (parts[0] === "doc" && docs ? answer(docs.text(parts[1] ?? "")) : api(files, parts, url.searchParams).then(answer, () => fail(404)));
 		}
 		if (req.method !== "GET") return void fail(403);
@@ -200,10 +202,13 @@ export function readRecord(dir: string): GuiRecord | undefined {
 	}
 }
 
-/** Marks this session's record, so the extension that loads after its /reload starts the server again on the same URL. */
-export function markReload(dir: string, session: string) {
+/**
+ * Marks the record of the server this process runs, so the extension that loads after its /reload starts it again on the same URL.
+ * Matched by pid, not by session id: pi-intercom, loaded first, has already cleared PI_INTERCOM_SESSION_ID when this runs at shutdown.
+ */
+export function markReload(dir: string, pid = process.pid) {
 	const record = readRecord(dir);
-	if (record?.ownerSession === session) writeFileSync(join(dir, "gui.json"), JSON.stringify({ ...record, reload: true }), { mode: 0o600 });
+	if (record?.pid === pid) writeFileSync(join(dir, "gui.json"), JSON.stringify({ ...record, reload: true }), { mode: 0o600 });
 }
 
 /** Asks a recorded server to stop, as its own page would, and waits until it is gone; false when it refused (a server from before 0.11.0) or stayed up. */

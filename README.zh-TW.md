@@ -30,7 +30,24 @@
 pi install npm:pi-straw-boss
 ```
 
-pi 要跑在 Herdr 0.9.4 以上，另外需要 [pi-intercom](https://www.npmjs.com/package/pi-intercom) 0.17.1 以上。[pi-herdr-agents](https://github.com/giuseppecrj/pi-herdr-agents) 可裝可不裝：裝了的話，子智慧體會顯示在開出它的 session 底下。
+### 需求
+
+- pi 要跑在 [Herdr](https://herdr.dev) 0.9.4 以上。
+- [pi-intercom](https://www.npmjs.com/package/pi-intercom) 0.17.1 以上：網的頻道、訊息，以及 GUI 轉送對話框，都是透過它。
+
+### 支援的套件
+
+下面的套件都可裝可不裝。裝了，Straw Boss 會自動接上；沒裝，其他功能照常運作。
+
+| 套件 | Straw Boss 怎麼用它 |
+| --- | --- |
+| [pi-herdr-agents](https://github.com/giuseppecrj/pi-herdr-agents) | 子智慧體會顯示在開出它的 session 底下，塔台面板、側邊欄和 GUI 都看得到；成員派出子智慧體時，會升格成主智慧體，塔台也會跟著開。 |
+| [@juicesharp/rpiv-ask-user-question](https://www.npmjs.com/package/@juicesharp/rpiv-ask-user-question) 2.13 以上 | `ask_user_question` 問卷可以在 GUI 作答，等待作答的問卷也會讓該單位顯示為等待中。 |
+| [pi-robot-hand](https://www.npmjs.com/package/pi-robot-hand) 0.3.0 以上 | `robot_hand` 選單可以在 GUI 作答。 |
+| [pi-herdr-doc-review](https://www.npmjs.com/package/pi-herdr-doc-review) 0.4.0 以上 | session 展示的文件會開在它的通訊畫面旁邊：HTML 放在沙箱框架裡，表單送出的內容會回給 agent；文字檔只能讀。 |
+| [@juicesharp/rpiv-todo](https://www.npmjs.com/package/@juicesharp/rpiv-todo) 2.13 以上 | session 的待辦清單會顯示在 GUI 的輸入框上方，內容從 session 檔讀取。 |
+
+其他對話框（任何 extension 的 `select`、`confirm`、`input`、`editor`，以及 pi-ask-user 的 `ask_user`）在 GUI 裡只能看，可以一鍵切到終端機回答。
 
 ## 快速開始
 

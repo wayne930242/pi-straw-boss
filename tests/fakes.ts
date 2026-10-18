@@ -344,6 +344,7 @@ export class Agent {
 	components = new Map<string, { render(width: number): string[]; dispose?(): void }>();
 	tui: FakeTui = { renders: 0, requestRender: () => void this.tui.renders++ };
 	stopped = false;
+	env?: Record<string, string | undefined>;
 	private handlers = new Map<string, ((event: unknown, ctx: unknown) => unknown)[]>();
 	readonly bus = new Map<string, ((data: unknown) => void)[]>();
 	private ctx: unknown;
@@ -373,7 +374,8 @@ export class Agent {
 			},
 			sessionManager: { getBranch: () => this.entries.map((e) => ({ type: "custom", customType: e.customType, data: e.data })), getEntries: () => [...this.transcript, ...this.entries.map((e) => ({ type: "custom", customType: e.customType, data: e.data }))], getSessionFile: () => this.file },
 		};
-		const env = { ...(options.outsideHerdr ? {} : { HERDR_PANE_ID: options.pane }), PI_INTERCOM_SESSION_ID: this.id, ...options.env };
+		const env: Record<string, string | undefined> = { ...(options.outsideHerdr ? {} : { HERDR_PANE_ID: options.pane }), PI_INTERCOM_SESSION_ID: this.id, ...options.env };
+		this.env = env;
 		const events = {
 			on: (channel: string, handler: (data: unknown) => void) => {
 				this.bus.set(channel, [...(this.bus.get(channel) ?? []), handler]);
@@ -460,6 +462,8 @@ export class Agent {
 	async stop(reason = "quit"): Promise<void> {
 		if (this.stopped) return;
 		this.stopped = true;
+		// pi-intercom loads before Straw Boss, and its own session_shutdown has put back the session id it found at start (none) by now.
+		delete this.env?.PI_INTERCOM_SESSION_ID;
 		await this.fire("session_shutdown", { reason });
 		this.world.broker.disconnect(this);
 	}

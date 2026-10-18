@@ -10,10 +10,12 @@ import { canonical } from "./history.ts";
 // and subagents (linked to their launcher the way the tower dashboard links them), and sub workspaces as outposts.
 
 /** `key` names the unit in routes and the API; `control` says a live pi pane backs it. `outside` units are pi panes the net does not hold (D1). */
-export interface Unit extends Shelf { id: string; key: string; control: boolean; name: string; role: "main" | "member" | "subagent" | "outside"; mark: Mark; note?: string; subs: Unit[]; pending?: Pending }
+/** A message typed while the agent works, waiting in pi's queue: `steer` reaches it at its next turn, `followUp` when the run ends. */
+export interface Queued { text: string; as: "steer" | "followUp" }
+export interface Unit extends Shelf { queued?: Queued[]; id: string; key: string; control: boolean; name: string; role: "main" | "member" | "subagent" | "outside"; mark: Mark; note?: string; subs: Unit[]; pending?: Pending }
 export interface Tab { id: string; label: string; units: Unit[] }
 export interface Outpost { id: string; label: string; mark: Mark }
-export interface Base { id: string; label: string; mark: Mark; head: boolean; tower: ({ name: string; mark: Mark; key: string; control: boolean; pending?: Pending } & Shelf) | null; tabs: Tab[]; outposts: Outpost[]; outside: Unit[] }
+export interface Base { id: string; label: string; mark: Mark; head: boolean; tower: ({ name: string; mark: Mark; key: string; control: boolean; pending?: Pending; queued?: Queued[] } & Shelf) | null; tabs: Tab[]; outposts: Outpost[]; outside: Unit[] }
 export interface Net { bases: Base[] }
 /** What the server may read for a key: the registry entry is the allow list, and paths never come from the browser. */
 export interface Ref { key: string; base: string; name: string; role: string; file?: string; pane?: string }

@@ -10,7 +10,7 @@ import { canonical } from "../src/history.ts";
 import type { Found, Ref } from "../src/net.ts";
 import type { Net } from "../src/net.ts";
 import { until } from "./fakes.ts";
-import { assistant, header, lines, text, user } from "./sessions.ts";
+import { assistant, header, lines, message, text, user } from "./sessions.ts";
 
 const scratch = mkdtempSync(join(tmpdir(), "psb-gui-test-"));
 const dir = join(scratch, "bundle");
@@ -367,6 +367,17 @@ test("the API pages older history and returns one entry in full, only for keys i
 	for (const path of ["/api/history/nobody", "/api/entry/nobody/u3", "/api/entry/k1/missing", "/api/entry/k1", "/api/other/k1", "/api/history/%E0%A4%A", "/api/"]) assert.equal((await raw(gui, `/${gui.token}${path}`)).status, 404, path);
 	assert.equal((await raw(gui, `/api/history/k1`)).status, 403, "the token is still required");
 	assert.equal((await raw(gui, `/${gui.token}/api/history/k1`, { method: "POST" })).status, 403, "and nothing here writes");
+});
+
+test("an entry's images are served one by one as their bytes, png, jpeg, gif, or webp only, for keys in the registry", async () => {
+	const pic = (mimeType: string, bytes: string) => ({ type: "image", mimeType, data: Buffer.from(bytes).toString("base64") });
+	const s = session([header(), message("u1", null, { role: "user", content: [{ type: "text", text: "look" }, pic("image/png", "PNG-BYTES"), pic("image/svg+xml", "<svg/>"), pic("image/webp", "WEBP-BYTES")], timestamp: 1 })]);
+	const gui = await serve(async () => net("a"), { net: s.net });
+	const first = await raw(gui, `/${gui.token}/api/image/k1/u1/0`), second = await raw(gui, `/${gui.token}/api/image/k1/u1/1`);
+	assert.deepEqual([first.status, first.body, first.headers["content-type"], first.headers["cache-control"], first.headers["x-content-type-options"]], [200, "PNG-BYTES", "image/png", "private, max-age=86400", "nosniff"]);
+	assert.deepEqual([second.status, second.body, second.headers["content-type"]], [200, "WEBP-BYTES", "image/webp"], "the svg is skipped, so the index counts the shown images");
+	for (const path of ["/api/image/k1/u1/2", "/api/image/k1/u1/-1", "/api/image/k1/u1/x", "/api/image/k1/u1", "/api/image/nobody/u1/0", "/api/image/k1/missing/0"]) assert.equal((await raw(gui, `/${gui.token}${path}`)).status, 404, path);
+	assert.equal((await raw(gui, `/api/image/k1/u1/0`)).status, 403, "the token is still required");
 });
 
 test("each stream is named in hello; a page attaches the terminal mirror to its own stream, under the write guards, and closing the stream stops the reads", async () => {

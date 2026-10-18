@@ -49,6 +49,8 @@ svg { display: block; }
 .spawn-btns { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 4px; }
 .base > .spawn-btns { margin: -4px 0 12px; }
 .tab h3 { display: flex; align-items: center; gap: 8px; }
+/* A squad's name stays on one line beside its buttons, cut short with an ellipsis. */
+.tab h3 > span, .squad h3 > b { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; } .tab h3 > button { flex: none; }
 .tab-add { margin-left: auto; flex: none; white-space: nowrap; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line); background: none; color: var(--dim); font: 600 11px var(--sans); letter-spacing: 0.08em; cursor: pointer; }
 .squad .tab-add { margin-left: 0; }
 .tab-add:hover, .new-base:hover { color: #38e0ff; border-color: #38e0ff; }
@@ -61,6 +63,22 @@ svg { display: block; }
 .modes button { white-space: nowrap; padding: 4px 14px; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--dim); font: 600 12px var(--sans); cursor: pointer; }
 .modes button[aria-pressed="true"] { border-color: #38e0ff; color: #38e0ff; background: #38e0ff14; }
 .term-root { min-height: 0; padding: 10px 16px 14px; } .term-root .term-tile { height: 100%; }
+/* Images in the chat as thumbnails; the lightbox shows one over the whole page, fitted, or at its own size when tapped. */
+.pics { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px; margin-top: 8px; }
+.pic { padding: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: #0b1220; line-height: 0; cursor: zoom-in; }
+.pic { max-width: 100%; } .pic img { display: block; max-width: 240px; max-height: 180px; } .pic-gone { color: var(--dim); font-size: 12px; }
+.lightbox { width: 100vw; max-width: none; height: 100dvh; max-height: none; margin: 0; padding: 0; overflow: auto; border: 0; background: rgba(4, 8, 16, 0.94); }
+.lightbox[open] { display: grid; place-items: center; } .lightbox::backdrop { background: transparent; }
+.lightbox img { max-width: 94vw; max-height: 88dvh; object-fit: contain; cursor: zoom-in; } .lightbox.zoom[open] { place-items: start; }
+.lightbox.zoom img { max-width: none; max-height: none; cursor: zoom-out; }
+.lightbox button { position: fixed; display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid var(--line); border-radius: 50%; background: rgba(14, 22, 40, 0.85); color: var(--text); font-size: 26px; line-height: 1; }
+.lightbox button[hidden] { display: none; } .lb-close { top: 14px; right: 14px; } .lb-prev, .lb-next { top: calc(50% - 22px); } .lb-prev { left: 14px; } .lb-next { right: 14px; }
+.lb-count { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); color: var(--dim); font: 13px var(--mono); }
+/* Queued messages under the chat, as the dimmed bubbles they will become: at most three lines each. */
+.queue-list { display: grid; justify-items: end; gap: 4px; margin: 0 16px 6px; }
+.queue-list p { max-width: min(80%, 640px); margin: 0; padding: 6px 12px; overflow: hidden; border: 1px dashed rgba(56, 224, 255, 0.45); border-radius: 12px; color: var(--dim); font-size: 14px; line-height: 1.45; white-space: pre-wrap; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.queue-list b { margin-right: 8px; color: #38e0ff; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; }
+.in-term .queue-list { display: none; }
 /* The todo list above the composer, as pi's widget shows it in the terminal: ○ waiting, ◐ in progress, ✓ done. */
 .todos { margin: 0 16px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 12px; background: rgba(14, 22, 40, 0.85); font-size: 13px; }
 .todos summary { display: flex; gap: 10px; align-items: baseline; min-width: 0; list-style: none; cursor: pointer; } .todos summary::-webkit-details-marker { display: none; }

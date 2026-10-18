@@ -64,6 +64,20 @@ test("a relayed dialog binds to the unit on its pane with its file: it waits at 
 	assert.equal((await read(x, path)).unit.pending, undefined, "a list naming another file is not this unit's");
 });
 
+test("a relayed queue goes to its unit, oldest first; one out of shape is left out while the dialogs still go", async () => {
+	const x = hub(), path = file([]);
+	const queued = [{ text: "also check refunds", as: "steer" as const }, { text: "then summarize", as: "followUp" as const }];
+	x.h.receive("S", x.list([], { file: path, queued }));
+	assert.deepEqual((await read(x, path)).unit.queued, queued);
+	for (const bad of [[{ text: "x", as: "later" }], [{ text: 1, as: "steer" }], [{ text: "x".repeat(201), as: "steer" }], Array.from({ length: 6 }, () => ({ text: "x", as: "steer" }))]) {
+		x.h.receive("S", x.list([dialog()], { file: path, queued: bad as never }));
+		const { unit } = await read(x, path);
+		assert.deepEqual([unit.queued, unit.mark], [undefined, "waiting"], JSON.stringify(bad).slice(0, 40));
+	}
+	x.h.receive("S", x.list([], { file: path }));
+	assert.equal((await read(x, path)).unit.queued, undefined, "an emptied queue clears");
+});
+
 test("each rule that keeps a dialog in the terminal says why", async () => {
 	const x = hub(), robot = file([["c1", "robot_hand"]]), two = file([["c1", "robot_hand"], ["c2", "bash"]]), secret = file([["c1", "secret_drop"]]);
 	const why = async (dialogs: Dialog[], path: string | undefined = robot) => {

@@ -1,7 +1,7 @@
 import "./style.css";
 import { startI18n } from "./i18n.ts";
 import { m } from "./paraglide/messages.js";
-import type { Net } from "../src/net.ts";
+import type { Net, Unit } from "../src/net.ts";
 import type { Data, HistoryEvent } from "./chat.ts";
 import type { Post } from "./composer.ts";
 import { changes } from "./log.ts";
@@ -140,7 +140,7 @@ function live(watch: string | null): Source {
 const api = (path: string) => fetch(`api/${path}`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))));
 const history = (key: string, query = "") => api(`history/${encodeURIComponent(key)}${query}`);
 const fixture = __LIVE__ ? undefined : (await import("./fixture.ts")).createFixture({ resume: () => stream.resume() });
-const data = (key: string): Data => fixture?.data(key) ?? { older: (before) => history(key, `?before=${encodeURIComponent(before)}`), latest: () => history(key), entry: (id) => api(`entry/${encodeURIComponent(key)}/${encodeURIComponent(id)}`).catch(() => undefined) };
+const data = (key: string): Data => fixture?.data(key) ?? { older: (before) => history(key, `?before=${encodeURIComponent(before)}`), latest: () => history(key), entry: (id) => api(`entry/${encodeURIComponent(key)}/${encodeURIComponent(id)}`).catch(() => undefined), pic: (id, n) => `api/image/${encodeURIComponent(key)}/${encodeURIComponent(id)}/${n}` };
 const open = () => {
 	const source = fixture ? fixture.open(watchOf(current)) : live(watchOf(current));
 	source.listen("history", (d) => forward("history", d));
@@ -178,9 +178,9 @@ document.addEventListener("visibilitychange", () => {
 	withFocus((f) => f.wake());
 	resume();
 });
-// Escape closes the top dialog; with none open it goes up one route.
+// Escape closes the top dialog; with none open it goes up one route. A modal (a close confirmation, the lightbox) takes it for itself.
 addEventListener("keydown", (event) => {
-	if (event.key !== "Escape" || event.defaultPrevented) return;
+	if (event.key !== "Escape" || event.defaultPrevented || document.querySelector("dialog.sheet[open], dialog.lightbox[open]")) return;
 	event.preventDefault();
 	if (!panels?.stack.close() && current.view !== "map") router.go(upOf(current));
 });
@@ -197,6 +197,14 @@ const sheet = (text: string, yes?: string): Promise<boolean> => new Promise((don
 	document.body.append(d);
 	d.showModal();
 });
+/** A view of what was just closed goes up to what is left: a closed base to the map, a closed squad or unit to its base. */
+const leave = (d: DOMStringMap) => {
+	if (current.view === "map") return;
+	if (d.close === "base") return void (current.ws === d.ws && router.go({ view: "map" }));
+	const keys = (units: Unit[]): string[] => units.flatMap((u) => [u.key, ...keys(u.subs)]);
+	const tab = d.close === "tab" && current.ws === d.ws ? latest?.bases.find((x) => x.id === d.ws)?.tabs.find((t) => t.id === d.tab) : undefined;
+	if (current.view === "session" && (d.close === "unit" ? current.key === d.key : tab && keys(tab.units).includes(current.key))) router.go({ view: "workspace", ws: current.ws });
+};
 document.addEventListener("click", (event) => {
 	const b = (event.target as Element | null)?.closest?.<HTMLElement>("button[data-close]"), d = b?.dataset;
 	if (!b || !d) return;
@@ -206,7 +214,7 @@ document.addEventListener("click", (event) => {
 		if (!yes) return;
 		b.toggleAttribute("disabled", true);
 		void import("./post.ts").then(({ post }) => post(`close/${d.close}`, d.close === "unit" ? { key: d.key } : { workspace: d.ws, ...(d.tab && { tab: d.tab }) }))
-			.then((r) => r.ok || sheet(r.body.reason ?? m.refused({ status: r.status })), () => sheet(m.no_answer())).finally(() => b.toggleAttribute("disabled", false));
+			.then((r) => (r.ok ? leave(d) : sheet(r.body.reason ?? m.refused({ status: r.status }))), () => sheet(m.no_answer())).finally(() => b.toggleAttribute("disabled", false));
 	});
 });
 // The opening buttons on the map and in a base (data-open with data-ws and data-tab) open their tile, read against the newest net.

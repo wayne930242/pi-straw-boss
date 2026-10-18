@@ -5,6 +5,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Doc, type Fields, fieldsOk, listenDocs, submitForm } from "./documents.ts";
 import { type Answer, type Bus, type Dialog, OWNERS, type OwnerAdapter, type Verdict } from "./owners.ts";
 import { type Cmd, listCommands, MAX_PREFIX } from "./commands.ts";
+import type { Queued } from "./net.ts";
 import { type Editor, probeEditor } from "./probe.ts";
 
 // The bridge runs in every pi session inside Herdr, subagents included. It turns the owners' dialog events (owners.ts) into one list of open
@@ -19,15 +20,21 @@ import { type Editor, probeEditor } from "./probe.ts";
 // the documents the session shows with its dialogs (documents.ts) and hands a form answer for one of them to their owner. The composer's `/` menu
 // asks it (`commands`) for the session's commands that match what is typed, and it answers with their names, sources, and descriptions.
 // A close button asks it (`close`) to quit its session the way /boss close does (index.ts), which answers whether it will.
+// It relays the session's queue too: pi tells extensions only whether messages wait (hasPendingMessages), so the bridge keeps what it saw
+// typed while the agent works (`input` with a streaming behavior) and drops one when its user message starts; a queue pi emptied another
+// way (Esc, Alt+Up) clears at the next check.
 
 export const REGISTER = "intercom:extension-register";
 const VERDICT_MS = 2000, POLL_MS = 2000, KEEP_MS = 120_000, KEEP = 16, MAX_GUIS = 8, MAX_MESSAGE = 15 * 1024;
+/** At most this many queued messages go to the GUI (the oldest, which are delivered first), each cut to this many characters. */
+export const MAX_QUEUED = 5, QUEUED_TEXT = 200;
+const clipQueued = (text: string) => (text.length > QUEUED_TEXT ? `${text.slice(0, QUEUED_TEXT - 1)}…` : text);
 export const guiNamespace = (g: string) => `straw-boss/gui/${createHash("sha256").update(g).digest("hex").slice(0, 32)}`;
 export type Outcome = "accepted" | "rejected" | "stale" | "busy" | "unknown";
 export interface Ack { version: 1; type: "ack"; bridgeId: string; id: string; answerId: string; outcome: Outcome; reason?: string; by?: string }
 /** `closed`: dialogs closed in the last 2 minutes (at most 16), so an answer that comes late hears who closed it, and a resent one that won, that it won. */
-/** `documents`: what the document owner lists now; `docsCut` when they did not fit the message (they are dropped first). */
-export interface Dialogs { version: 1; type: "dialogs"; bridgeId: string; pane: string; file: string | null; dialogs: Dialog[]; closed: Closed[]; documents?: Doc[]; docsCut?: true }
+/** `documents`: what the document owner lists now; `docsCut` when they did not fit the message (they are dropped first). `queued`: the session's queue, oldest first. */
+export interface Dialogs { version: 1; type: "dialogs"; bridgeId: string; pane: string; file: string | null; dialogs: Dialog[]; closed: Closed[]; documents?: Doc[]; docsCut?: true; queued?: Queued[] }
 export interface Closed { id: string; by: string; answerId?: string }
 export interface ProbeResult extends Editor { version: 1; type: "probe-result"; bridgeId: string; probeId: string }
 export interface CommandsResult { version: 1; type: "commands-result"; bridgeId: string; reqId: string; commands: Cmd[] }
@@ -50,6 +57,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 	const chans = new Map<string, Channel>(), me = () => env.PI_INTERCOM_SESSION_ID ?? "";
 	let g: string | undefined, gpid = 0, seen: number | undefined, poll: ReturnType<typeof setInterval> | undefined, offs: (() => void)[] = [], warned = false;
 	let file: () => string | undefined = () => undefined, tell = (_text: string) => {}, editor = (): Editor => ({ editor: "unknown" }), docs: Doc[] = [];
+	let queued: Queued[] = [], waits = () => false;
 	const open = () => [...recs.values()].filter((r) => r.state !== "closed");
 	const alive = () => { try { return gpid > 0 && (process.kill(gpid, 0), true); } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; } }; // a server that died without removing gui.json gets no probe answers
 
@@ -64,7 +72,8 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 		if (!target()) return;
 		const dialogs = final ? [] : open().map((r) => ({ ...r.d, ...(r.state !== "open" ? { busy: true as const } : {}) }));
 		const closed = final ? [] : [...recs.values()].filter((r) => r.state === "closed").map((r) => ({ id: r.d.id, by: r.by!, ...(r.by === "remote" && r.answerId ? { answerId: r.answerId } : {}) }));
-		let msg: Dialogs = { version: 1, type: "dialogs", bridgeId, pane: env.HERDR_PANE_ID!, file: file() ?? null, dialogs, closed, documents: final ? [] : docs };
+		const queue = final ? [] : queued.slice(0, MAX_QUEUED).map((q) => ({ ...q, text: clipQueued(q.text) }));
+		let msg: Dialogs = { version: 1, type: "dialogs", bridgeId, pane: env.HERDR_PANE_ID!, file: file() ?? null, dialogs, closed, documents: final ? [] : docs, ...(queue.length ? { queued: queue } : {}) };
 		const big = () => Buffer.byteLength(JSON.stringify(msg)) > MAX_MESSAGE; // in bytes, as the broker counts
 		if (big()) msg = { ...msg, documents: [], docsCut: true }; // the documents go first: they stay in the terminal, and the unit says so
 		if (big()) msg = { ...msg, dialogs: dialogs.map(({ select, questions, ...d }) => ({ ...d, big: true as const })) }; // shown read-only: too long to show
@@ -73,6 +82,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 	// gui.json names the server's session; it is read at the session's start and then on every mtime change, checked every 2 s (unref'd).
 	const follow = () => {
 		const at = statSync(join(dir, "gui.json"), { throwIfNoEntry: false })?.mtimeMs ?? 0;
+		if (queued.length && !waits()) requeue([]); // pi emptied its queue without delivering (Esc, Alt+Up)
 		if (at === seen) return false;
 		seen = at;
 		try {
@@ -171,9 +181,29 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 		if (docs.some((d) => d.id === m.id && d.kind === "html")) submitForm(bus, m.id, m.answerId, m.fields, out);
 		else out({ accepted: false, reason: "closed" });
 	}
+	const requeue = (next: Queued[]) => {
+		if (next.length === queued.length && next.every((q, i) => q === queued[i])) return;
+		queued = next;
+		push();
+	};
+	pi.on("input", (e) => {
+		if (e.streamingBehavior) requeue([...queued, { text: e.text, as: e.streamingBehavior }]);
+	});
+	pi.on("message_start", (e) => {
+		const msg = e.message as { role?: string; content?: unknown };
+		if (msg.role !== "user" || !queued.length) return;
+		const text = typeof msg.content === "string" ? msg.content : Array.isArray(msg.content) ? msg.content.map((b: { type?: string; text?: string }) => (b?.type === "text" ? (b.text ?? "") : "")).join("") : "";
+		const i = queued.findIndex((q) => q.text === text); // another extension may have changed the text: then the oldest went
+		requeue(queued.filter((_, j) => j !== Math.max(0, i)));
+	});
+	pi.on("agent_settled", () => {
+		if (queued.length && !waits()) requeue([]);
+	});
 	pi.on("session_start", (_e, ctx) => {
 		offs.forEach((off) => off());
 		docs = [];
+		queued = [];
+		waits = () => { try { return ctx.hasPendingMessages(); } catch { return false; } }; // a replaced session's context throws
 		file = () => ctx.sessionManager.getSessionFile();
 		tell = (text) => ctx.hasUI && ctx.ui.notify(text, "warning");
 		editor = () => probeEditor(ctx);
@@ -195,6 +225,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 	});
 	pi.on("session_shutdown", () => {
 		docs = [];
+		queued = [];
 		open().forEach((r) => report.closed(r.d.id, "error"));
 		push(true);
 		[...calls.values()].forEach((c) => c.stop?.());

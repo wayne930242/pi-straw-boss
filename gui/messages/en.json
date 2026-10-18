@@ -310,5 +310,13 @@
 	"close_tower_ask": "Close the tower {name}? The base's mains become members again.",
 	"close_unit": "Close {name}",
 	"todos_count": "Todos {done}/{total}",
-	"todos_done": "All done"
+	"todos_done": "All done",
+	"queued_steer": "Queued · steer",
+	"queued_follow": "Queued · follow-up",
+	"open_image": "Open image {n}",
+	"image_n": "Image {n}",
+	"image_unavailable": "Image unavailable",
+	"image_previous": "Previous image",
+	"image_next": "Next image",
+	"image_viewer": "Image viewer"
 }

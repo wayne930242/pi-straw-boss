@@ -75,6 +75,22 @@ export function watchWorkspace(hub: Hub, id: string, send: Send): Watch {
 	};
 }
 
+/**
+ * GET /api/image/<key>/<entry id>/<n>: the entry's n-th image (png, jpeg, gif, or webp; items.ts drops other types), as its bytes, so the
+ * page shows it with <img> instead of carrying base64 in the history.
+ */
+export async function image(hub: Hub, [key, id, n]: string[]): Promise<{ type: string; bytes: Buffer } | undefined> {
+	const found = key ? hub.lookup(key) : undefined, i = Number(n);
+	if (!found?.file || !id || !Number.isInteger(i) || i < 0) return undefined;
+	const reader = hub.readers.acquire(found.file);
+	try {
+		const pic = (await reader.entry(id))?.pics?.[i], hit = pic && /^data:(image\/(?:png|jpeg|jpg|gif|webp));base64,(.*)$/s.exec(pic);
+		return hit ? { type: hit[1]!, bytes: Buffer.from(hit[2]!, "base64") } : undefined;
+	} finally {
+		hub.readers.release(found.file);
+	}
+}
+
 /** GET /api/history/<key>?before=<entry id>&limit=<n> and GET /api/entry/<key>/<entry id>. */
 export async function api(hub: Hub, [kind, key, id]: string[], query: URLSearchParams): Promise<{ status: number; body: unknown }> {
 	const found = key ? hub.lookup(key) : undefined;

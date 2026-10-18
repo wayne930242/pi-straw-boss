@@ -2,6 +2,7 @@ import type { Pending } from "../src/ask.ts";
 import type { Mark } from "../src/dashboard.ts";
 import type { Shelf } from "../src/documents.ts";
 import type { Item, Todo } from "../src/items.ts";
+import type { Queued } from "../src/net.ts";
 import { h } from "./dom.ts";
 import { createFollow, reach } from "./follow.ts";
 import { mount, parse } from "./markdown.ts";
@@ -74,8 +75,9 @@ export function createChat(cap = CAP) {
 
 export interface HistoryEvent { key: string; state?: string; successor?: string; base?: string; name?: string; role?: string; reset?: boolean; items?: Item[]; before?: string; header?: { id?: string; cwd?: string }; unreadable?: number; todos?: Todo[] | null }
 /** `post` stands in for the server's input API (composer.ts) in the dev fixture. */
-export interface Data { older(before: string): Promise<Page>; latest(): Promise<Page>; entry(id: string): Promise<Item | undefined>; post?: Post }
-export interface Who extends Shelf { key: string; name: string; role: string; mark: Mark; note?: string; control?: boolean; pending?: Pending }
+/** `pic` is the URL of an entry's n-th image. */
+export interface Data { older(before: string): Promise<Page>; latest(): Promise<Page>; entry(id: string): Promise<Item | undefined>; pic?(id: string, n: number): string; post?: Post }
+export interface Who extends Shelf { key: string; name: string; role: string; mark: Mark; note?: string; control?: boolean; pending?: Pending; queued?: Queued[] }
 /** `docFor` opens the document a show_doc path names while its session lists it (doc.ts), or is undefined. */
 export interface ChatDeps { who(): Who; link(name: string): HTMLAnchorElement | undefined; docFor?(path: string): (() => void) | undefined }
 /** `reveal` opens the log at an entry (scrolled into view and lit), or with none at the newest entry. `log` is the scrolling log, a focus target. `docs` shows Open beside on the show_doc cards whose document is listed now. */
@@ -141,6 +143,17 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor }: 
 		}, () => (button.textContent = m.unavailable()));
 	};
 
+	/** An entry's images as thumbnails, each opening the lightbox on it; one that cannot be read says so in its place. */
+	function thumbs(id: string, count = 0) {
+		if (!count || !data.pic) return null;
+		const srcs = Array.from({ length: count }, (_, n) => data.pic!(id, n));
+		return h("div", { class: "pics" }, ...srcs.map((src, n) => {
+			const img = h("img", { src, alt: m.image_n({ n: n + 1 }), loading: "lazy", decoding: "async" }), b = h("button", { type: "button", class: "pic", "aria-label": m.open_image({ n: n + 1 }) }, img);
+			img.addEventListener("error", () => b.replaceWith(h("em", { class: "pic-gone" }, m.image_unavailable())));
+			b.addEventListener("click", () => void import("./lightbox.ts").then(({ lightbox }) => lightbox(srcs, n)));
+			return b;
+		}));
+	}
 	/** A tool call of entry `of` as an action card: its state badge (running, done, failed), name, and one line; arguments (all of them on request) and result inside. */
 	function action(t: NonNullable<Item["tools"]>[number], of: string) {
 		const r = model.result(t.id), body = h("pre", { class: "out" }, r?.text ?? ""), args = h("pre", { class: "args" }, t.args ?? ""), whole = t.cut ? h("button", { class: "more", type: "button" }, m.show_all_arguments()) : null;
@@ -152,16 +165,18 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor }: 
 		open?.addEventListener("click", (event) => (event.preventDefault(), t.summary.split(", ").forEach((p) => docFor?.(p)?.())));
 		if (open) opens.add({ paths: t.summary.split(", "), button: open });
 		if (open) queueMicrotask(docs);
-		return h("details", { class: "act" }, h("summary", { "data-mark": r ? (r.isError ? "error" : "done") : "working" }, h("b", { class: "badge" }), h("code", null, t.name), h("span", { class: "sum" }, t.summary), open), args, whole, r && h("div", { class: "result" }, r.images ? h("em", null, m.images({ count: r.images })) : null, body, more));
+		const card = h("details", { class: "act" }, h("summary", { "data-mark": r ? (r.isError ? "error" : "done") : "working" }, h("b", { class: "badge" }), h("code", null, t.name), h("span", { class: "sum" }, t.summary), open), args, whole, r && h("div", { class: "result" }, r.images ? h("em", null, m.images({ count: r.images })) : null, body, more));
+		const pics = r && thumbs(r.id, r.images); // shown under the card, closed or open
+		return pics ? [card, pics] : [card];
 	}
 	function render(it: Item): HTMLElement {
 		const stamp = h("time", null, clock(it.at));
 		switch (it.kind) {
-			case "user": return h("article", { class: "tx you" }, h("header", null, stamp, h("b", null, m.you()), icon("user")), h("div", { class: "bubble" }, ...plain(it.text ?? ""), it.images ? h("em", null, ` · ${m.images({ count: it.images })}`) : null));
+			case "user": return h("article", { class: "tx you" }, h("header", null, stamp, h("b", null, m.you()), icon("user")), h("div", { class: "bubble" }, ...plain(it.text ?? ""), thumbs(it.id, it.images)));
 			case "assistant": {
 				const me = who(), body = h("pre", { class: "thought-text" }), more = it.thought ? h("button", { class: "thought", type: "button" }, it.thought < 0 ? m.thought_redacted() : m.thought_chars({ count: it.thought.toLocaleString() })) : null;
 				if (it.thought && it.thought > 0) more?.addEventListener("click", () => fetchBody(more, body, it.id, (full) => full.thoughtText));
-				return h("article", { class: "tx in" }, icon(me.role), h("div", { class: "tx-body" }, h("header", null, h("b", null, me.name), it.model ? h("span", null, it.model) : null, stamp, it.stop ? h("span", { class: "stop", "data-mark": "error" }, it.stop) : null), more, body, it.text ? h("div", { class: "md" }, mount(parse(it.text))) : null, it.error ? h("p", { class: "fault" }, it.error) : null, ...(it.tools ?? []).map((t) => action(t, it.id))));
+				return h("article", { class: "tx in" }, icon(me.role), h("div", { class: "tx-body" }, h("header", null, h("b", null, me.name), it.model ? h("span", null, it.model) : null, stamp, it.stop ? h("span", { class: "stop", "data-mark": "error" }, it.stop) : null), more, body, it.text ? h("div", { class: "md" }, mount(parse(it.text))) : null, it.error ? h("p", { class: "fault" }, it.error) : null, ...(it.tools ?? []).flatMap((t) => action(t, it.id))));
 			}
 			case "bash": return h("article", { class: "tx sys" }, h("details", { class: "act" }, h("summary", { "data-mark": it.exit ? "error" : "done" }, h("b", { class: "badge" }), h("code", null, "shell"), h("span", { class: "sum" }, `! ${it.command}`), it.exit ? h("span", { class: "stop", "data-mark": "error" }, m.exit_code({ code: it.exit })) : null), it.text ? h("pre", { class: "out" }, it.text) : null));
 			case "notice": return h("article", { class: "tx sys" }, h("details", { class: "notice" }, h("summary", null, icon("comms"), h("em", null, m.incoming()), NOTICE[it.type ?? ""]?.() ?? it.type ?? m.notice(), " ", (it.from && link(it.from)) || (it.from ?? ""), stamp), h("pre", null, it.text ?? "")));

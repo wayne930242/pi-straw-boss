@@ -17,13 +17,13 @@ export function demoHistory(rounds = 70): Item[] {
 	const out: Item[] = [{ id: "m0", kind: "meta", text: "model demo/harbor-1", at: at(0) }, { id: "m1", kind: "meta", text: "thinking medium", at: at(0) }];
 	for (let r = 1; r <= rounds; r++) {
 		const t = r * 6;
-		out.push({ id: `u${r}`, kind: "user", text: r === 1 ? "Please check the ledger rounding.\nThe docs are at https://example.com/ledger" : `Round ${r}: and what about the credit notes?`, at: at(t) });
+		out.push({ id: `u${r}`, kind: "user", text: r === 1 ? "Please check the ledger rounding.\nThe docs are at https://example.com/ledger" : `Round ${r}: and what about the credit notes?`, ...(r === 70 ? { images: 2 } : {}), at: at(t) });
 		out.push({ id: `a${r}`, kind: "assistant", model: "harbor-1", at: at(t + 1), thought: 340, text: r % 9 === 0 ? undefined : "Let me look at the code first.", ctx: 12_000 + r * 900, tools: [
 			{ id: `c${r}a`, name: "bash", summary: "git grep -n sumLines", args: JSON.stringify({ command: "git grep -n sumLines", timeout: 30 }, null, 1) },
 			r === 68 ? { id: `c${r}b`, name: "write", summary: "billing/ledger.ts", args: WHOLE.slice(0, 1500), cut: true } : { id: `c${r}b`, name: "read", summary: "billing/ledger.ts", args: JSON.stringify({ path: "billing/ledger.ts" }, null, 1) },
 		] });
 		out.push({ id: `r${r}a`, kind: "result", callId: `c${r}a`, name: "bash", isError: r % 11 === 0, text: "billing/ledger.ts:42:export function sumLines(", bytes: 52, images: 0, at: at(t + 2) });
-		out.push({ id: `r${r}b`, kind: "result", callId: `c${r}b`, name: r === 68 ? "write" : "read", isError: false, text: LONG.slice(0, 2048), more: true, bytes: 40_000, images: 0, at: at(t + 3) });
+		out.push({ id: `r${r}b`, kind: "result", callId: `c${r}b`, name: r === 68 ? "write" : "read", isError: false, text: LONG.slice(0, 2048), more: true, bytes: 40_000, images: r === 70 ? 1 : 0, at: at(t + 3) });
 		out.push({ id: `b${r}`, kind: "assistant", model: "harbor-1", at: at(t + 4), text: REPLY, ctx: 13_000 + r * 900, stop: r === 7 ? "error" : undefined, error: r === 7 ? "Provider returned 529: overloaded" : undefined });
 		if (r === 20) out.push({ id: "k1", kind: "divider", type: "compaction", tokens: 184_000, text: "## Goal\nFix ledger rounding.\n\n## Done\nRead the ledger code.", at: at(t + 5) });
 		if (r === 30) out.push({ id: "n1", kind: "notice", type: "subagent_result", from: "lint-sweep", text: 'Sub-agent "lint-sweep" completed (4m 1s).\n\nNo findings.', link: "a1/lint", at: at(t + 5) });

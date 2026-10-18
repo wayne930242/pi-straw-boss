@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Pending, type Relayed, SEVERAL } from "./ask.ts";
-import { type Ack, type AnswerMessage, type Bridge, type CloseResult, type Dialogs, type FormMessage, type FormReply, guiNamespace, type LocalHub, REGISTER, type ToHub } from "./bridge.ts";
+import { type Ack, type AnswerMessage, type Bridge, type CloseResult, type Dialogs, type FormMessage, type FormReply, guiNamespace, type LocalHub, MAX_QUEUED, QUEUED_TEXT, REGISTER, type ToHub } from "./bridge.ts";
 import { createCaps, type Doc, docsOf, type Fields, fieldsOk, type FormResult, type Shelf } from "./documents.ts";
 import type { Session } from "./herdr.ts";
 import { canonical } from "./history.ts";
-import type { Ref } from "./net.ts";
+import type { Queued, Ref } from "./net.ts";
 import { type Answerable, type Dialog, OWNERS, questionsDigest, type Reply, selectDigest } from "./owners.ts";
 import { checkCommands, type Cmd } from "./commands.ts";
 import { checkProbe, type Editor } from "./probe.ts";
@@ -78,7 +78,9 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 		if (!active || msg?.version !== 1 || !str(msg.bridgeId)) return;
 		const closed = msg.type === "dialogs" && Array.isArray(msg.closed) && msg.closed.length <= 16 && msg.closed.every((c) => str(c?.id) && str(c.by) && opt(c.answerId));
 		const docs = msg.type === "dialogs" && (msg.documents === undefined ? [] : docsOf({ version: 1, documents: msg.documents })); // documents out of shape go alone, as if cut
-		if (closed && str(msg.pane) && (msg.file === null || str(msg.file)) && Array.isArray(msg.dialogs) && msg.dialogs.every(valid)) (bridges.set(from, docs ? { ...msg, documents: docs } : { ...msg, documents: [], docsCut: true }), change());
+		// A queue out of shape is left out; the dialogs and documents still go.
+		const queued = msg.type === "dialogs" && Array.isArray(msg.queued) && msg.queued.length <= MAX_QUEUED && msg.queued.every((q) => typeof q?.text === "string" && q.text.length <= QUEUED_TEXT && (q.as === "steer" || q.as === "followUp")) ? msg.queued.map(({ text, as }) => ({ text, as })) : undefined;
+		if (closed && str(msg.pane) && (msg.file === null || str(msg.file)) && Array.isArray(msg.dialogs) && msg.dialogs.every(valid)) (bridges.set(from, { ...msg, ...(docs ? { documents: docs } : { documents: [], docsCut: true as const }), queued }), change());
 		if (msg.type === "ack") waiting.get([from, msg.bridgeId, msg.id, msg.answerId].join("\n"))?.(msg);
 		if (msg.type === "probe-result") probes.get([from, msg.bridgeId, msg.probeId].join("\n"))?.(checkProbe({ ...msg }));
 		if (msg.type === "commands-result" && str(msg.reqId)) lists.get([from, msg.bridgeId, msg.reqId].join("\n"))?.(checkCommands(msg.commands));
@@ -145,16 +147,17 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 		/** Binds each relayed list to a unit, from this net reading's sessions and registry. */
 		relayed(sessions, refs) {
 			[bound, targets, reach] = [new Map(), new Map(), new Map()];
-			const shelved: { key: string; from: string; bridgeId: string; docs: Doc[] }[] = [], cut = new Set<string>();
+			const shelved: { key: string; from: string; bridgeId: string; docs: Doc[] }[] = [], cut = new Set<string>(), queues = new Map<string, Queued[]>();
 			for (const [from, b] of bridges) {
 				const file = sessions.find((s) => s.id === from)?.herdrLocation?.paneId === b.pane ? canonical(b.file ?? undefined) : undefined;
 				const ref = file && [...refs.values()].find((r) => r.pane === b.pane && r.file === file);
 				if (ref) (reach.set(ref.key, { from, bridgeId: b.bridgeId }), shelved.push({ key: ref.key, from, bridgeId: b.bridgeId, docs: b.documents ?? [] }), b.docsCut && cut.add(ref.key));
+				if (ref && b.queued?.length) queues.set(ref.key, b.queued);
 				if (ref && (b.dialogs.length || b.closed.length)) bound.set(ref.key, { from, b });
 			}
 			const cards = caps.bind(shelved, new Set([...bridges].flatMap(([from, b]) => (b.documents ?? []).map((d) => `${from}\n${b.bridgeId}\n${d.id}`))));
 			shelves = new Map([...cards].flatMap(([key, docs]): [string, Shelf][] => (docs.length || cut.has(key) ? [[key, { ...(docs.length ? { docs } : {}), ...(cut.has(key) ? { docsCut: true as const } : {}) }]] : [])));
-			return { dialogsOf: (key) => bound.get(key)?.b.dialogs, merge, docsOf: (key) => shelves.get(key) };
+			return { dialogsOf: (key) => bound.get(key)?.b.dialogs, merge, docsOf: (key) => shelves.get(key), queuedOf: (key) => queues.get(key) };
 		},
 		/** How a dialog that is no longer open here ended: `accepted` for the answer that won it, else `stale` with who closed it. */
 		ended(key, dialog, answerId) {

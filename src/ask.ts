@@ -1,6 +1,6 @@
 import { open, stat } from "node:fs/promises";
 import { type Json, parse } from "./items.ts";
-import type { Net, Unit } from "./net.ts";
+import type { Net, Queued, Unit } from "./net.ts";
 import type { Answerable, Dialog } from "./owners.ts";
 
 // What a waiting session waits on: the current branch's newest assistant message's tool call with no result yet, read from the end of
@@ -104,7 +104,7 @@ export async function pendingOf(file: string): Promise<Pending | undefined> {
 export const waitsForSecret = async (file: string) => (await pendingOf(file), CACHE.get(file)?.secret !== false); // dropped from the cache meanwhile: hidden until the next look
 
 /** The dialogs bridges relay, by unit key, and how they join what the file says (dialogs.ts); `docsOf`, the documents they list. */
-export interface Relayed { dialogsOf(key: string): Dialog[] | undefined; merge(key: string, file: Pending | undefined, dialogs: Dialog[], readable: boolean): Pending; docsOf?(key: string): Pick<Unit, "docs" | "docsCut"> | undefined }
+export interface Relayed { dialogsOf(key: string): Dialog[] | undefined; merge(key: string, file: Pending | undefined, dialogs: Dialog[], readable: boolean): Pending; docsOf?(key: string): Pick<Unit, "docs" | "docsCut"> | undefined; queuedOf?(key: string): Queued[] | undefined }
 
 /** Adds what each waiting unit waits on, and the documents each unit shows, to a snapshot. A unit with a relayed dialog waits even before Herdr reports its pane blocked. */
 export async function withPending(net: Net, fileOf: (key: string) => string | undefined, relayed?: Relayed): Promise<Net> {
@@ -113,6 +113,8 @@ export async function withPending(net: Net, fileOf: (key: string) => string | un
 		for (const u of [...(b.tower ? [b.tower] : []), ...[...b.tabs.flatMap((t) => t.units), ...b.outside].flatMap((u) => [u, ...u.subs])]) {
 			const dialogs = relayed?.dialogsOf(u.key);
 			Object.assign(u, relayed?.docsOf?.(u.key));
+			const queued = relayed?.queuedOf?.(u.key);
+			if (queued?.length) u.queued = queued;
 			if (dialogs?.length) [u.mark, b.mark] = ["waiting", "waiting"];
 			if (dialogs?.length && u !== b.tower) (u as Unit).note = "waiting on a question";
 			const file = u.mark === "waiting" ? fileOf(u.key) : undefined;
