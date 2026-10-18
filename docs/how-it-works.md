@@ -18,7 +18,7 @@ Joining is automatic; the chain of command is earned.
 |---|---|---|
 | main agent | the member that promotes first in a tab, or the `/boss` taker-over | a short prompt: split work by app, brief workers, check results, ask the boss before merging or deploying |
 | member | every other joined session | a short prompt: with a main in the tab, tell it before dispatching subagents; without one, promote when the work grows |
-| tower | one per workspace, in its own tab labelled with the Nerd Font lighthouse glyph (U+F09FF) | a prompt for coordinating agents and repairing coordination friction; it never asks the user |
+| tower | one per workspace, in its own tab labelled with the Nerd Font radio tower glyph (U+F043B) | a prompt for coordinating agents and repairing coordination friction; it never asks the user |
 
 The tower is opened by the workspace's first main (or earlier on demand, by `call_tower` or `/boss tower`), without taking focus, and answers through intercom. Its tab is moved to the first position of the workspace right after it is created (or adopted), through Herdr's socket API (`tab.move`, no focus change); a failed move is reported as a warning and ignored. A tower tab is recognised by the `sb_role=tower` pane token that only Straw Boss writes, never by its label, because a pi-herdr-agents subagent can be named `tower`. If two towers ever race in one workspace, the live token holder wins, otherwise the lower tab id, and the other closes its own tab. Towers of different workspaces reach each other with `call_tower`; the **head tower** is the tower of the first workspace in `herdr workspace list` order that is not a sub workspace, so there is no election.
 

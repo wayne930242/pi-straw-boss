@@ -49,8 +49,8 @@ async function result(run: HerdrRun, args: string[], timeoutMs?: number) {
 	}
 }
 
-// The tower tab is labelled with the Nerd Font lighthouse glyph (md-lighthouse, U+F09FF) alone.
-export const TOWER_LABEL = "\u{f09ff}";
+// The tower tab is labelled with the Nerd Font radio tower glyph (md-radio_tower, U+F043B) alone.
+export const TOWER_LABEL = "\u{f043b}";
 
 export async function place(run: HerdrRun): Promise<Place> {
 	const pane = (await result(run, ["pane", "current"])).pane;
