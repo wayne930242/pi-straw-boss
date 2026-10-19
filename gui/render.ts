@@ -1,5 +1,6 @@
 import type { Mark } from "../src/dashboard.ts";
 import type { Base, Net, Unit } from "../src/net.ts";
+import { mountCalm } from "./calm.ts";
 import { replay } from "./dom.ts";
 import type { Entry } from "./log.ts";
 import { m } from "./paraglide/messages.js";
@@ -174,6 +175,7 @@ export function mountPage(): Page {
 	const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
 	const layout = () => !map.hidden && wire(map, links, dots, still);
 	new ResizeObserver(layout).observe(map);
+	mountCalm();
 	return {
 		layout,
 		/** The totals in the header: drawn for every route, since the header is always in view. */

@@ -251,6 +251,11 @@ svg { display: block; }
 @keyframes come-in { from { opacity: 0; transform: translateX(-14px) scale(0.98); } }
 @keyframes go-out { from { opacity: 0; transform: translateX(14px) scale(0.98); } }
 .tx.fresh { animation: come-in 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both; } .tx.you.fresh { animation-name: go-out; }
+/* Calm (calm.ts): after a while without input, each infinite animation gives way to a still sign of the same state. */
+[data-calm] :is(.link i, .sweep, .pulse, .ring, .badge, .term-typing), [data-calm] :is(.plate, .badge)::after { animation: none !important; }
+[data-calm] .tower[data-mark="waiting"] .pulse { opacity: 0.55; }
+[data-calm] .plate[data-mark="waiting"]::after { opacity: 0.55; transform: scale(1.25); }
+[data-calm] .packet { animation-play-state: paused !important; opacity: 0; }
 [hidden] { display: none !important; }
 a { color: inherit; }
 /* Small capitals labels and one-line ellipses, shared by every route. */
