@@ -56,7 +56,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.20.0 to 386 for a unit's queue (Queued) and the image route, with its cache for entries that never change.
 	// 0.24.0 to 387 for a subagent's `ended` on its unit, so the page clears its finished alert.
 	// 0.25.0 to 388 for a unit's background monitors (the Monitor type on Unit and on the tower).
-	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 388, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
+	// 0.27.0 to 299: the one-server-per-machine record and handover (gui.json, requestStop, sharedGui) came out into handover.ts, which has its own figure.
+	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 299, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
 	// Input (the spec's figure), remote access over Tailscale, its terminal pairing panel (QR, c copies, o opens), and the QR encoder each have their own.
 	// What a waiting session waits on (0.5.0, read for display only; answering is deferred) has its own as well.
 	// 0.5.1 raised remote.ts from 165 to 185 (a recorded server counts as running only if its process started when the entry says: a reused PID
@@ -92,6 +93,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.14.0 raised control.ts to 172 for the `/` menu's read (sessions/<key>/commands: a prefix checked, the hub asked, no Herdr call), bridge.ts to 198
 	// for answering it with the session's matching commands, and dialogs.ts to 213 for the hub's request (probe and commands now share one helper);
 	// the listing and its check are src/commands.ts, 32 at most.
+	// 0.27.0 handover.ts (93 at most) holds what gui.ts held for sharing one server between sessions: gui.json's record, the stop request, the takeover.
 	// 0.15.0 raised control.ts to 176 for sessions/<key>/upload, a file's bytes under the same origin and CSRF checks, handed to upload.ts (50 at most).
 	// 0.15.0 raised spawn.ts from 123 to 168: a base opens with a member and no tower, a base without a tower takes members (split into a squad or in
 	// a new tab), only one with a tower takes mains, and every opening shares the start, join wait, first message, and close-on-failure.
@@ -103,7 +105,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// a paste inside the bracketed-paste markers, Delete, and Ctrl or Alt chords, with Ctrl+Z refused and Ctrl+D and a second Ctrl+C confirmed.
 	// 0.25.0 raised ask.ts to 130, bridge.ts to 242, and dialogs.ts to 223 to relay a session's background monitors with its dialogs, checked by
 	// the hub and set on its unit; monitors.ts (75 at most) follows them from pi-loop-monitor's events.
-	for (const [name, max] of [["commands.ts", 32], ["control.ts", 178], ["closer.ts", 70], ["upload.ts", 50], ["spawn.ts", 168], ["remote.ts", 185], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 130], ["bridge.ts", 242], ["owners.ts", 120], ["dialogs.ts", 223], ["monitors.ts", 75], ["order.ts", 81], ["mirror.ts", 135], ["probe.ts", 40], ["keys.ts", 103], ["documents.ts", 80], ["docs.ts", 150], ["orphan.ts", 115], ["opener.ts", 90], ["server-watch.ts", 110]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
+	for (const [name, max] of [["commands.ts", 32], ["control.ts", 178], ["closer.ts", 70], ["upload.ts", 50], ["spawn.ts", 168], ["remote.ts", 185], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 130], ["bridge.ts", 242], ["owners.ts", 120], ["dialogs.ts", 223], ["monitors.ts", 75], ["order.ts", 81], ["mirror.ts", 135], ["probe.ts", 40], ["keys.ts", 103], ["documents.ts", 80], ["docs.ts", 150], ["orphan.ts", 115], ["opener.ts", 90], ["server-watch.ts", 110], ["handover.ts", 93]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
 	// 0.19.0 to 258 for the todo list: rpiv-todo's snapshots marked as the index reads them, and the newest one read for a reset or a change that adds one.
 	assert.ok(count("src/history.ts") <= 258, `src/history.ts has ${count("src/history.ts")} lines`);
 	// The item mapping and the stream glue came out of the reader to keep it within its budget; the spec sets no figure for them.
@@ -116,7 +118,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// The blocked relay (rpiv-ask-user-question, and pi's own dialog prompts) is its own extension entry too. It was 25 lines for the rpiv relay alone;
 	// the dialog relay raised it to 42 for the label of a dialog's title and the signed count that keeps the pairs balanced when pi delivers an end ahead of its start, and the guard for an end that reaches a retired runtime.
 	assert.ok(count("src/blocked.ts") <= 42, "src/blocked.ts stays small");
-	const apart = ["commands.ts", "dashboard.ts", "net.ts", "gui.ts", "history.ts", "items.ts", "watch.ts", "balance.ts", "control.ts", "remote.ts", "pairing.ts", "qr.ts", "ask.ts", "blocked.ts", "bridge.ts", "owners.ts", "dialogs.ts", "monitors.ts", "order.ts", "mirror.ts", "probe.ts", "keys.ts", "documents.ts", "docs.ts", "orphan.ts", "opener.ts", "spawn.ts", "upload.ts", "closer.ts", "server-watch.ts"];
+	const apart = ["commands.ts", "dashboard.ts", "net.ts", "gui.ts", "history.ts", "items.ts", "watch.ts", "balance.ts", "control.ts", "remote.ts", "pairing.ts", "qr.ts", "ask.ts", "blocked.ts", "bridge.ts", "owners.ts", "dialogs.ts", "monitors.ts", "order.ts", "mirror.ts", "probe.ts", "keys.ts", "documents.ts", "docs.ts", "orphan.ts", "opener.ts", "spawn.ts", "upload.ts", "closer.ts", "server-watch.ts", "handover.ts"];
 	const rest = sum("src", names("src").filter((name) => !apart.includes(name)));
 	// 0.4.1 raised it from 540 to 575 for claiming and promotion; 0.5.0 to 610 for herdrCall (Herdr's answers with their error codes, spec task 4) and the /boss gui remote command;
 	// 0.5.1 to 620 for a join retry that follows its session to another tab; 0.6.0 to 630 to start the dialog bridge before the subagent return and the hub with the server.
@@ -138,7 +140,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.17.2 to 885: the guard checks on Herdr's events (a workspace's tokens, this workspace's panes, the tab channel's owner) instead of every
 	// 5 s, sets one timer for a check that has to wait, runs one check at a time, and can be left out (couple) where a test is about something else.
 	// 0.21.0 to 905: boss_rename (index.ts, 11 lines), and a role that changes during a run reaching the agent as a steer (rebrief, 9 lines).
-	assert.ok(rest <= 905, `the rest of src has ${rest} lines`);
+	// 0.27.0 to 906: index.ts imports handover.ts as well as gui.ts.
+	assert.ok(rest <= 906, `the rest of src has ${rest} lines`);
 	// The page: the files the spec budgets one by one, then this round's own figures (no figure in the spec): the focus views, the overlay
 	// layer (alert spotting and the stack model in the map's chunk, the layer's DOM and tiles in a chunk of their own), the dev-only demo, and everything else.
 	// 0.18.1 raised mirror.ts to 154 for embed, a terminal shown inside the session view instead of a tile.
