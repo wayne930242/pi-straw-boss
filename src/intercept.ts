@@ -7,7 +7,7 @@ import { type Bus, type Select, selectDigest, UI_PREFIX } from "./owners.ts";
 // (owners.ts, `uiPrompt`): a call opens pi's own terminal dialog as before and publishes the same dialog on pi's event bus, where the bridge relays
 // it like any owner's. The first answer wins and the other side is dismissed: a GUI answer aborts the terminal dialog through its signal (combined with
 // the caller's own) and the call resolves with that answer; a terminal answer closes the relayed dialog. The call's result is whatever pi's dialog or
-// the GUI answered, once. `input`, `editor` and `custom` are never touched (a secret may be typed there; docs/specs/2026-10-18-dialog-answers.md, SB-F001).
+// the GUI answered, once. `input`, `editor` and `custom` are never relayed, and their arguments and results pass untouched; they only count as open dialogs (a secret may be typed there; docs/specs/2026-10-18-dialog-answers.md, SB-F001).
 // Never breaking an extension's dialog: a call that cannot be relayed (see `relayable`), or whose relay fails to start, is the original call, untouched.
 // A dialog is relayed only when exactly one tool call is in flight (it binds to that call, the way the bash confirmation of an mp-infra hook does), no
 // secret_drop is, and no other dialog is open through the wrap; a dialog that opens over a relayed one withdraws it, as the page cannot tell which one an
@@ -21,13 +21,14 @@ type Opts = { signal?: AbortSignal; timeout?: number } | undefined;
 /** What pi's dialogs resolve with: the chosen option, or undefined, for a select; whether it was confirmed, for a confirm. */
 type Result = string | boolean | undefined;
 type Call = (title: string, second: unknown, opts?: Opts) => Promise<Result>;
-type Wrapped = Record<Kind, Call> & { [MARK]?: { restore(): void } };
+const PASS = ["input", "editor", "custom"] as const;
+type Wrapped = Record<Kind, Call> & Record<(typeof PASS)[number], (...a: never[]) => unknown> & { [MARK]?: { restore(): void } };
 /** A dialog on the bus: `answer` is the choice the GUI took, set once, before its terminal twin is aborted. */
 interface Relay { id: string; digest: string; count: number; ac: AbortController; by?: string; answer?: number; close(by: string): void }
 
 export function interceptUi(pi: ExtensionAPI): void {
 	const bus = pi.events as Bus, flying = new Map<string, string>(), relays = new Map<string, Relay>(), closed: string[] = [];
-	let open = 0, listening: (() => void) | undefined;
+	let open = 0, gen = 0, listening: (() => void) | undefined;
 	/** A listener that throws on the bus must not break the call: what is said after the dialog opened is best effort. */
 	const tell = (channel: string, data: unknown) => {
 		try {
@@ -89,7 +90,7 @@ export function interceptUi(pi: ExtensionAPI): void {
 		} catch {
 			relay = undefined; // never break the extension's dialog: this call is the original one
 		}
-		const done = () => void open--;
+		const done = leaving();
 		if (!relay) {
 			try {
 				return Promise.resolve(orig(title, second, opts)).finally(done);
@@ -114,6 +115,29 @@ export function interceptUi(pi: ExtensionAPI): void {
 		}
 	};
 
+	/** What a dialog calls once it ended: it leaves the count unless the count was reset meanwhile (a dialog that never ended cannot hold relaying off for good). */
+	const leaving = () => {
+		const g = gen;
+		return () => void (g === gen && open > 0 && open--);
+	};
+	const reset = () => {
+		gen++;
+		open = 0;
+		[...relays.values()].forEach((r) => r.close("error"));
+	};
+	/** `input`, `editor`, and `custom` only count: arguments and results go through untouched, and a dialog open over a relayed one withdraws it. */
+	const counted = <T extends (...a: never[]) => unknown>(orig: T): T => (function (this: unknown, ...args: never[]) {
+		if (open++ > 0) [...relays.values()].forEach((r) => r.close("error"));
+		const done = leaving();
+		try {
+			const out = orig.apply(this, args);
+			return out && typeof (out as Promise<unknown>).finally === "function" ? (out as Promise<unknown>).finally(done) : (done(), out);
+		} catch (error) {
+			done();
+			throw error;
+		}
+	}) as T;
+
 	let current: { ui: Wrapped } | undefined;
 	/** Wraps the context's `ui` unless it is wrapped already (by this copy or another) or is pi's shared no-op object. */
 	const ensure = (ctx: ExtensionContext) => {
@@ -122,21 +146,24 @@ export function interceptUi(pi: ExtensionAPI): void {
 			// SAFETY: pi's ExtensionUIContext has select and confirm with these signatures; MARK is a key no one else writes.
 			const ui = ctx.ui as unknown as Wrapped;
 			if (ui[MARK]) return;
-			const [select, confirm] = [ui.select, ui.confirm], mine = { select: dialog("select", (t, s, o) => select.call(ui, t, s, o)), confirm: dialog("confirm", (t, s, o) => confirm.call(ui, t, s, o)) };
+			const [select, confirm] = [ui.select, ui.confirm], origs = Object.fromEntries(PASS.map((k) => [k, ui[k]])) as Pick<Wrapped, (typeof PASS)[number]>;
+			const mine = { select: dialog("select", (t, s, o) => select.call(ui, t, s, o)), confirm: dialog("confirm", (t, s, o) => confirm.call(ui, t, s, o)), ...Object.fromEntries(PASS.filter((k) => typeof origs[k] === "function").map((k) => [k, counted(origs[k]).bind(ui)])) };
+			reset(); // a new ui object starts with no dialog open; one the old object never ended is forgotten
 			Object.assign(ui, mine);
-			ui[MARK] = { restore: () => ui.select === mine.select && ui.confirm === mine.confirm && (Object.assign(ui, { select, confirm }), delete ui[MARK]) } as never;
+			ui[MARK] = { restore: () => ui.select === mine.select && ui.confirm === mine.confirm && (Object.assign(ui, { select, confirm }, origs), delete ui[MARK]) } as never;
 			current = { ui };
 		} catch {} // a stale context or a frozen object: the dialogs stay as pi has them
 	};
 	pi.on("session_start", (_e, ctx) => ensure(ctx));
 	pi.on("tool_execution_start", (e, ctx) => (flying.set(e.toolCallId, e.toolName), ensure(ctx)));
 	pi.on("tool_execution_end", (e) => void flying.delete(e.toolCallId));
+	pi.on("agent_end", () => reset()); // nothing is open when the agent ended: a dialog that never settled is not counted any more
 	pi.on("session_shutdown", () => {
 		[...relays.values()].forEach((r) => r.close("error"));
 		listening?.();
 		listening = undefined;
 		flying.clear();
-		open = 0;
+		reset();
 		current?.ui[MARK]?.restore();
 		current = undefined;
 	});

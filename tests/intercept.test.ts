@@ -169,13 +169,15 @@ test("a dialog that cannot be shown is not relayed: no options, non-text options
 	assert.deepEqual(r.sent("pending"), []);
 });
 
-test("input, editor and custom are never touched; neither is a session without a UI", async () => {
+test("input, editor and custom are never relayed and their results pass untouched; neither is a session without a UI", async () => {
 	const r = rig();
-	const { input, editor, custom, notify } = r.ui;
+	const { notify } = r.ui;
 	await r.start();
-	assert.deepEqual([r.ui.input === input, r.ui.editor === editor, r.ui.custom === custom, r.ui.notify === notify], [true, true, true, true]);
+	assert.equal(r.ui.notify, notify);
 	assert.notEqual(r.ui.select, undefined);
 	assert.equal(await (r.ui.input as () => Promise<string>)(), "typed");
+	assert.equal(await (r.ui.editor as () => Promise<string>)(), "edited");
+	assert.equal(await (r.ui.custom as () => Promise<string>)(), "custom");
 	assert.deepEqual(r.seen, [], "nothing on the bus for them");
 	const bare = rig({ hasUI: false }), [select0, confirm0] = [bare.ui.select, bare.ui.confirm];
 	await bare.start();
@@ -293,4 +295,38 @@ test("with pi's real runner an extension's own ctx.ui.confirm in a tool_call han
 		delete (globalThis as { __verdict?: unknown }).__verdict;
 		rmSync(dir, { recursive: true, force: true });
 	}
+});
+
+test("an input, editor or custom opened over a relayed confirm withdraws it, and the page's answer is stale", async () => {
+	for (const kind of ["input", "editor", "custom"] as const) {
+		const r = rig();
+		let end!: (v: string) => void;
+		(r.ui as Record<string, unknown>)[kind] = (...args: unknown[]) => new Promise<string>((resolve) => (end = resolve)).then((v) => `${v}:${args.join(",")}`);
+		await r.start();
+		const asked = confirm(r), p = pending(r), typed = (r.ui as unknown as Record<string, (...a: unknown[]) => Promise<string>>)[kind]!("a", "b");
+		assert.deepEqual(r.sent("closed"), [{ version: 1, id: p.id, by: "error" }], `${kind} withdraws the relay`);
+		assert.deepEqual(r.answer(p.id, p.digest, [0]).map((x) => [x.accepted, x.reason]), [[false, "closed"]], kind);
+		end("x");
+		assert.equal(await typed, "x:a,b", "arguments and result pass untouched");
+		r.dialogs[0]!.settle(true);
+		assert.equal(await asked, true);
+		void confirm(r, "next", "m");
+		assert.equal(r.sent("pending").length, 2, `${kind}: relaying again once both ended`);
+	}
+});
+
+test("a dialog that never settles does not hold relaying off for good: agent_end and a new ui object reset the count", async () => {
+	const r = rig();
+	await r.start();
+	void confirm(r, "stuck", "m");
+	await r.end();
+	await r.fire("agent_end");
+	await r.start("c2");
+	void confirm(r, "after agent_end", "m");
+	assert.equal(r.sent("pending").length, 2, "agent_end forgot the stuck dialog");
+	await r.end("c2");
+	r.swap();
+	await r.start("c3");
+	void confirm(r, "after swap", "m");
+	assert.equal(r.sent("pending").length, 3, "a new ui object starts with nothing open");
 });
