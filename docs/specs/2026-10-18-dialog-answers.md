@@ -147,15 +147,20 @@ never touched: a secret may be typed there (SB-F001), and `custom` dialogs are w
 **What is relayed.** Only when all hold: exactly one tool call is in flight in the session (tracked from `tool_execution_start`/`end`, which pi emits
 before `tool_call` handlers run), and it is not `secret_drop`; no other dialog is open through the wrap (**depth**); a select has 1 to 100 string options;
 title plus message or options total at most 12,000 characters. Otherwise the dialog is terminal-only and the page keeps saying so. **Depth:** only the
-outermost dialog is relayed (as pi itself counts `ui_prompt_start`); a dialog that opens over a relayed one withdraws it (`closed {by: "error"}`) and is not
-relayed, because the page could not tell which dialog an answer would dismiss. The hub's own rules still apply on top: one open dialog, the digest, no
+outermost dialog is relayed. The wrap counts `select`, `confirm`, and also `input`, `editor`, and `custom` (pure pass-through there: never relayed, arguments and
+results untouched; pi's own `ui_prompt_start` counting leaves `custom` out, the wrap's does not, on purpose). A dialog of any of the five that opens over a
+relayed one withdraws it (`closed {by: "error"}`) and is not relayed, because the page could not tell which dialog an answer would dismiss, and a page answer
+could abort a stacked `input` or `custom` with it. The count resets when pi swaps its ui object and at `agent_end`, so a dialog that never settles cannot hold
+relaying off for good. The hub's own rules still apply on top: one open dialog, the digest, no
 answer on its way, the bound call among the session file's open calls, and a `secret_drop` among them keeps everything in the terminal.
 
 **Contract-owned dialogs are not relayed twice.** The adapter is marked `twin`. In the bridge (`report.open`), a twin and a non-twin dialog on the same
 `toolCallId` cannot both be open: a twin that arrives while an owner's dialog is open on that call is dropped, and an owner's dialog that arrives while a
 twin is open evicts the twin (when it is still `open`; one with an answer on its way is left to settle). So `robot_hand` (whose selector is
 announced on the bus before it calls `ctx.ui.select`), pi-code's gate, and `secret_drop` are each relayed only by their owner, with their notes, copy
-command, and rules. `ask_user_question` is a `ctx.ui.custom` screen and is not wrapped.
+command, and rules. `ask_user_question` is a `ctx.ui.custom` screen and is only counted. A twin is never relayed for a call whose tool has a contract owner (`robot_hand`, `secret_drop`,
+`ask_user_question`), even when the owner's dialog was refused or never came: it stays terminal-only, so a `localOnly` choice or a note cannot be lost to a raw relay.
+A twin the page shows says it "was opened while {tool} was running; it may not be about that call", since the wrap only knows which call was in flight.
 
 **Remote policy** (the user's decision, 2026-10-19: "遠端只能答 select，confirm 只能本機"). A paired device may answer a select but not a confirm. The
 server decides by the listener the request arrived on (`src/remote.ts`: the verdict's `remote` flag, which becomes the `https:` origin `control.ts`
