@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
 	CONFIRM_MS, PIN_GLYPH, PIN_TOKEN, RENAME_GRACE_MS, SWEEP_INTERVAL_MS,
-	applyOps, decideRemoval, emptyState, findCheckoutUser, noteParents, noteWorkspaces, onRename, planSweep, prunePanes, prunePins, set, shellIsIdle, togglePin,
+	applyOps, decideRemoval, emptyState, findCheckoutUser, noteParents, noteWorkspaces, onRename, planSweep, reopenPlan, prunePanes, prunePins, set, shellIsIdle, togglePin,
 } from "../herdr-reaper/decide.mjs";
 import { createStore, gitClient, gitReason, withLock } from "../herdr-reaper/io.mjs";
 import { SOURCE, runEvent, runPinToggle, runSweep } from "../herdr-reaper/sweep.mjs";
@@ -26,7 +26,7 @@ const tempDir = () => mkdtemp(join(tmpdir(), "pane-reaper-"));
 
 // Sweeps against a fake Herdr and git
 function world({ workspaces, panes, infos = {}, checkouts = {} }) {
-	const w = { workspaces: structuredClone(workspaces), panes: structuredClone(panes), calls: [], removed: [], logs: [], tokens: [], renamed: [] };
+	const w = { workspaces: structuredClone(workspaces), panes: structuredClone(panes), calls: [], removed: [], logs: [], tokens: [], renamed: [], created: [] };
 	const find = (id) => w.workspaces.find((candidate) => candidate.workspace_id === id);
 	w.herdr = {
 		listWorkspaces: async () => structuredClone(w.workspaces),
@@ -40,6 +40,12 @@ function world({ workspaces, panes, infos = {}, checkouts = {} }) {
 			w.panes = w.panes.filter((candidate) => candidate.pane_id !== id);
 			// Herdr closes the tab and then the workspace with the last pane.
 			if (!w.panes.some((candidate) => candidate.workspace_id === closed.workspace_id)) w.workspaces = w.workspaces.filter((candidate) => candidate.workspace_id !== closed.workspace_id);
+		},
+		createWorkspace: async (label, cwd) => {
+			const id = `n${w.workspaces.length + 1}`;
+			w.created.push([label, cwd]);
+			w.workspaces.push({ workspace_id: id, label, ...(cwd && cwd in checkouts ? { worktree: worktree(cwd) } : {}) });
+			return { workspace_id: id, label };
 		},
 		renameWorkspace: async (id, label) => {
 			w.renamed.push([id, label]);
@@ -1148,5 +1154,105 @@ test("Real git: a worktree with a changed, unpushed or nested-changed submodule 
 		for (const name of ["changed", "local", "nested"]) assert.ok(subGit(repo, "branch", "--list", name).includes(name));
 	} finally {
 		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("A pinned workspace that closes reopens on the same directory under the same name", async () => {
+	const dir = await tempDir();
+	try {
+		const w = world({ workspaces: [workspace("a", "kept"), workspace("b", "loose")], panes: [pane("a:p1", "a"), pane("b:p1", "b")], checkouts: { "/wt/kept": {}, "/wt/loose": {} } });
+		const deps = w.deps(createStore(dir));
+		await runEvent(deps, "workspace.created", { workspace_id: "a" });
+		await runPinToggle(deps, "a");
+		// The user renamed it while pinned: the name it had when it closed is the one it comes back with.
+		w.workspaces[0].label = "my name";
+		await runEvent(deps, "workspace.renamed", { workspace_id: "a" });
+
+		w.workspaces = w.workspaces.filter((candidate) => candidate.workspace_id !== "a");
+		await runEvent(deps, "workspace.closed", { workspace_id: "a" });
+		assert.deepEqual(w.created, [["my name", "/wt/kept"]]);
+		const reopened = w.workspaces.find((candidate) => candidate.label === "my name");
+		assert.equal(reopened.tokens[PIN_TOKEN], PIN_GLYPH, "the new workspace shows the pin");
+		const after = await deps.store.read();
+		assert.ok("/wt/kept" in after.pins, "the checkout pin carries over");
+		assert.equal(after.workspaces[reopened.workspace_id].label, "my name");
+		assert.equal(after.workspaces.a, undefined);
+		assert.deepEqual(w.renamed, [], "nothing is renamed");
+
+		// An unpinned workspace closes for good.
+		w.workspaces = w.workspaces.filter((candidate) => candidate.workspace_id !== "b");
+		await runEvent(deps, "workspace.closed", { workspace_id: "b" });
+		assert.equal(w.created.length, 1);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("A pinned workspace without a checkout reopens in the directory it was pinned in, and its pin moves to the new id", async () => {
+	const dir = await tempDir();
+	try {
+		const w = world({ workspaces: [{ workspace_id: "s", label: "scratch" }], panes: [pane("s:p1", "s", { cwd: "/tmp/notes", focused: true })] });
+		const deps = w.deps(createStore(dir));
+		await runEvent(deps, "workspace.created", { workspace_id: "s" });
+		await runPinToggle(deps, "s");
+		assert.equal((await deps.store.read()).pins["workspace:s"].cwd, "/tmp/notes");
+
+		w.workspaces = [];
+		await runEvent(deps, "workspace.closed", { workspace_id: "s" });
+		assert.deepEqual(w.created, [["scratch", "/tmp/notes"]]);
+		const pins = (await deps.store.read()).pins;
+		assert.deepEqual(Object.keys(pins), [`workspace:${w.workspaces[0].workspace_id}`]);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("reopenPlan: nothing when unpinned, unrecorded, or another workspace is open on the checkout; a gone checkout is not reopened", async () => {
+	const record = { createdAt: 0, label: "kept", checkout: "/wt/kept" };
+	const pinned = state({ workspaces: { a: record }, pins: { "/wt/kept": { preLabel: "kept" } } });
+	assert.deepEqual(reopenPlan("a", pinned, []), { label: "kept", cwd: "/wt/kept", checkout: "/wt/kept", key: "/wt/kept" });
+	assert.equal(reopenPlan("a", state({ workspaces: { a: record } }), []), null);
+	assert.equal(reopenPlan("z", pinned, []), null);
+	assert.equal(reopenPlan("a", pinned, [workspace("b", "kept")]), null);
+
+	const dir = await tempDir();
+	try {
+		const w = world({ workspaces: [workspace("a", "kept")], panes: [pane("a:p1", "a")], checkouts: { "/wt/kept": {} } });
+		const deps = w.deps(createStore(dir));
+		await runEvent(deps, "workspace.created", { workspace_id: "a" });
+		await runPinToggle(deps, "a");
+		w.workspaces = [];
+		w.git.exists = () => false;
+		await runEvent(deps, "workspace.closed", { workspace_id: "a" });
+		assert.deepEqual(w.created, []);
+		assert.ok(w.logs.some((line) => line.startsWith("skip reopening kept")), w.logs.join("\n"));
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("A pinned workspace whose last pane exits reopens from pane.exited, once even when workspace.closed reports it too", async () => {
+	const dir = await tempDir();
+	try {
+		const w = world({ workspaces: [workspace("a", "kept"), workspace("b", "other")], panes: [pane("a:p1", "a"), pane("b:p1", "b"), pane("b:p2", "b")], checkouts: { "/wt/kept": {}, "/wt/other": {} } });
+		const deps = w.deps(createStore(dir));
+		for (const id of ["a", "b"]) {
+			await runEvent(deps, "workspace.created", { workspace_id: id });
+			await runPinToggle(deps, id);
+		}
+
+		// A pane exits but another keeps its workspace open: nothing happens.
+		w.panes = w.panes.filter((candidate) => candidate.pane_id !== "b:p2");
+		await runEvent(deps, "pane.exited", { pane_id: "b:p2", workspace_id: "b" });
+		assert.deepEqual(w.created, []);
+		assert.ok("b" in (await deps.store.read()).workspaces);
+
+		// The last pane exits and Herdr removes the workspace without a closed event.
+		w.workspaces = w.workspaces.filter((candidate) => candidate.workspace_id !== "a");
+		w.panes = w.panes.filter((candidate) => candidate.workspace_id !== "a");
+		await Promise.all([runEvent(deps, "pane.exited", { pane_id: "a:p1", workspace_id: "a" }), runEvent(deps, "workspace.closed", { workspace_id: "a" })]);
+		assert.deepEqual(w.created, [["kept", "/wt/kept"]], "reopened exactly once");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
 	}
 });

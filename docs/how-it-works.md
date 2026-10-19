@@ -374,6 +374,16 @@ Bind it with `[[keys.command]]` (`prefix+i` in the README's example: `prefix+P` 
 A pin is also written to the plugin's state file, keyed by the checkout path, because Herdr drops workspace tokens when its server restarts: a sweep puts the token back, and the pin survives a workspace being closed and opened again.
 A workspace is pinned when either the token or the state entry says so, and a pinned workspace is skipped by every sweep and its checkout is never removed.
 
+**Reopening a pinned workspace.**
+Herdr has no hook that runs before a close and none that can refuse one, so a pin cannot stop a workspace from closing; the plugin brings it back instead.
+A workspace closed through Herdr (a key, `herdr workspace close`, closing its last pane or tab) fires `workspace.closed`, but one whose last pane's process exits is removed with only a `pane.exited` event (Herdr 0.9.5), so the `pane.exited` hook waits up to 3 s for the workspace to go and handles it the same way; another pane still in the workspace ends the wait at once.
+Both hooks can report one close, so the reopen runs under a lock on a fresh read of the state file, and the second finds the record already gone.
+When the closed workspace's record and pin are still in the state file (the hook reads them before forgetting the id) and no live workspace is open on its checkout, the plugin runs `herdr workspace create --label <label> --no-focus --cwd <dir>` with the label the record held at the close, so the name never changes, and puts the pin token on the new workspace.
+The directory is the checkout; a workspace without one keeps its focused pane's directory in the pin entry (`cwd`, written by the pin action), and its id-keyed pin moves to the new id.
+A checkout that is gone is not reopened (`skip reopening ...`), and a failed create is logged and leaves the workspace closed.
+The reopened workspace is new: its scrollback and processes are gone and it gets a new id and sidebar position.
+This covers every close, the user's own included, so closing a pinned workspace for good means unpinning it first; sweeps never close a pinned workspace.
+
 **Pinning by renaming.**
 Herdr's `workspace.renamed` event does not say who renamed, so the plugin goes by time.
 It records when each workspace appeared (the `workspace.created` event, or the first sweep that saw it; workspaces that were there when the plugin started count as old) and the label it has.

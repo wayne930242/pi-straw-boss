@@ -132,7 +132,7 @@ Herdr 為了把 worktree 歸在底下而替主 checkout 開了一個純 shell �
 它每 10 分鐘掃一次，智慧體結束後約一分鐘也會掃，`reap-now` 動作則立刻掃。
 每一次關閉、移除、略過和釘選，都是 plugin 日誌（`herdr plugin log list --plugin wayne930242.straw-boss-reaper`）裡的一行。
 
-釘選的工作區永遠不會被清理。
+釘選的工作區永遠不會被清理；它被關掉時（最後一個 pane 結束，或你自己關掉），會在同一個目錄用同一個名稱重新開啟，並保持釘選。要真的關掉，先取消釘選。
 `pin` 動作會切換它所在工作區的釘選；工作區出現一分鐘後才被你改名的話，會自動釘選（pi-herdr-agents 在幾秒內替工作區命名，不會觸發釘選），取消釘選時也會改回原名。
 釘選是工作區的 token `$pin`，內容是 Nerd Font 的圖釘字形，要加進 Space 的列設定才看得到。
 需要 Herdr 0.9.3 以上、git 和 node 18 以上。

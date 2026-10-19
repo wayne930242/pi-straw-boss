@@ -1,5 +1,5 @@
 // The reaper's decisions, with no I/O: which panes of a linked-worktree workspace to close, whether a closed workspace's checkout
-// may be removed, which empty parent shell of a worktree group to close, when a rename is the user's, and what pinning does. sweep.mjs gathers Herdr's and git's state, calls these, and
+// may be removed, which empty parent shell of a worktree group to close, when a rename is the user's, what pinning does, and when a closed pinned workspace reopens. sweep.mjs gathers Herdr's and git's state, calls these, and
 // carries the results out.
 //
 // State is one JSON object the plugin keeps between runs; changes to it are returned as ops ({ op: "set" | "del", path, value }) so
@@ -252,6 +252,23 @@ export const forgetWorkspace = (workspaceId) => [
 	del(["parentCandidates", workspaceId]),
 ];
 
+/**
+ * What reopens a pinned workspace that closed: its record and pin, read before the closed hook forgets them. A pinned workspace is
+ * one to keep, so a close (the last pane exiting, or the user closing it) brings it back on the same directory under the same name.
+ * Nothing reopens when the workspace was not pinned, or another live workspace is already open on its checkout.
+ * @returns {{ label: string, cwd: string | null, checkout: string | null, key: string } | null}
+ */
+export function reopenPlan(workspaceId, state, workspaces) {
+	const record = state.workspaces[workspaceId];
+	if (!record) return null;
+	const checkout = record.checkout ?? null;
+	const key = checkout ?? `workspace:${workspaceId}`;
+	const entry = state.pins[key];
+	if (!entry) return null;
+	if (checkout && workspaces.some((workspace) => checkoutOf(workspace) === checkout)) return null;
+	return { label: record.label, cwd: checkout ?? entry.cwd ?? null, checkout, key };
+}
+
 /** The repository a workspace belongs to, the same for a main checkout and its linked worktrees. */
 const groupOf = (workspace) => worktreeOf(workspace).repo_key ?? worktreeOf(workspace).repo_root ?? null;
 
@@ -352,7 +369,7 @@ export function prunePins(workspaces, state, git) {
 }
 
 /** The pin action toggles: unpinning renames the workspace back to the label it had before the pin. */
-export function togglePin(workspace, state, now) {
+export function togglePin(workspace, state, now, cwd = null) {
 	const key = pinKey(workspace);
 	if (isPinned(workspace, state)) {
 		// Without a record the checkout's name is the best guess for a linked worktree; any other workspace keeps its name.
@@ -360,5 +377,8 @@ export function togglePin(workspace, state, now) {
 		const label = state.pins[key]?.preLabel ?? basename;
 		return { action: "unpin", key, restoreLabel: label && label !== workspace.label ? label : null };
 	}
-	return { action: "pin", key, entry: { preLabel: workspace.label, auto: false, at: now } };
+	// A workspace without a checkout keeps its directory in the pin, so a close can reopen it there.
+	const entry = { preLabel: workspace.label, auto: false, at: now };
+	if (!checkoutOf(workspace) && cwd) entry.cwd = cwd;
+	return { action: "pin", key, entry };
 }
