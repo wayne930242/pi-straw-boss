@@ -65,12 +65,29 @@ test("none fires while a modal owns the keyboard", () => {
 	for (const key of [" ", "f", "F"]) assert.equal(hotkeyOf(press(key), true), undefined, key);
 });
 
-test("Space on a focused button or link keeps its own activation; F on one still zooms", () => {
+test("Space on a button or link keeps its own activation (the keyboard focused it); F on one still zooms", () => {
 	const natives = [new El("button"), new El("a", ["go"]), new El("summary"), new El("div", [], { role: "button" }), new El("div", [], { role: "link" }), new El("span", [], {}, new El("button", ["zoom"]))];
 	for (const target of natives) {
 		assert.equal(hotkeyOf(press(" ", target), false), undefined, `Space on ${target.tag}`);
 		assert.equal(hotkeyOf(press("f", target), false), "zoom", `F on ${target.tag}`);
 	}
+});
+
+test("Space on a button or link the mouse left focused (the logo after a click) opens the next alert", () => {
+	const natives = [new El("a", ["brand"], { href: "./" }), new El("button", ["pair-btn"]), new El("summary"), new El("div", [], { role: "button" }), new El("button", ["later"], {}, dialog)];
+	for (const target of natives) {
+		assert.equal(hotkeyOf(press(" ", target), false, true), "next", `Space on ${target.tag}`);
+		assert.equal(hotkeyOf(press("f", target), false, true), "zoom", `F on ${target.tag}`);
+	}
+});
+
+test("Space on an answer-form option stays the option's, however the focus got there; a mouse-focused text box still only types", () => {
+	const form = new El("section", ["ask"]);
+	for (const mouse of [true, false]) {
+		for (const role of ["radio", "checkbox"]) assert.equal(hotkeyOf(press(" ", new El("button", ["ask-opt"], { role }, form)), false, mouse), undefined, `Space on a ${role}, mouse ${mouse}`);
+		assert.equal(hotkeyOf(press(" ", new El("textarea", ["ask-own"], {}, form)), false, mouse), undefined);
+	}
+	assert.equal(hotkeyOf(press(" ", new El("button", ["ask-send"], {}, form)), false, true), "next", "a mouse-focused Send is a plain button");
 });
 
 /** The module's listeners on a fake window, and what `act` was asked and answered. */
@@ -82,7 +99,13 @@ function page({ handled = true, owned = false } = {}) {
 		on.keydown!(e as never);
 		return e;
 	};
-	return { asked, state, down, up: () => on.keyup!({} as never) };
+	/** A pointer press that focuses `target`, as a click on a button does. */
+	const click = (target: unknown) => (on.pointerdown!({} as never), on.focusin!({ target } as never));
+	return { asked, state, down, click, focus: (target: unknown) => on.focusin!({ target } as never), up: (key = " ") => {
+		const e = { key, taken: false, preventDefault() { this.taken = true; } };
+		on.keyup!(e as never);
+		return e;
+	} };
 }
 
 test("a handled key is taken (no page scroll for Space); one that had nothing to do is left to the page", () => {
@@ -119,4 +142,49 @@ test("a held key acts once; its repeats are taken without acting, and the next p
 	idle.down(" ");
 	assert.equal(idle.down(" ", { repeat: true }).taken, false, "a repeat of a key that did nothing scrolls on");
 	assert.deepEqual(idle.asked, ["next"]);
+});
+
+test("the release of a Space the page took is taken too (Firefox clicks on release); any other release is left alone", () => {
+	const p = page();
+	p.down(" ");
+	assert.equal(p.up(" ").taken, true);
+	assert.equal(p.up(" ").taken, false, "once released, a stray release is not taken");
+	p.down("f");
+	assert.equal(p.up("f").taken, false);
+	const idle = page({ handled: false });
+	idle.down(" ");
+	assert.equal(idle.up(" ").taken, false, "Space that did nothing is left to the page");
+});
+
+test("a control the mouse focused does not hold Space; once the keyboard moves the focus it does again", () => {
+	const logo = new El("a", ["brand"]), other = new El("button", ["pair-btn"]), p = page();
+	p.click(logo);
+	assert.equal(p.down(" ", { target: logo }).taken, true, "Space after a click on the logo opens the alert");
+	p.up();
+	assert.deepEqual(p.asked, ["next"]);
+	assert.equal(p.down(" ", { target: logo }).taken, true, "and again: the key press did not hand the logo to the keyboard");
+	p.up();
+	p.focus(other); // Tab landed here: no pointer press came before it
+	assert.equal(p.down(" ", { target: other }).taken, false, "a keyboard-focused button keeps Space");
+	p.focus(logo);
+	assert.equal(p.down(" ", { target: logo }).taken, false, "so does the logo once Tab came back to it");
+	assert.deepEqual(p.asked, ["next", "next"]);
+});
+
+test("a pointer press does not make the next focus the mouse's once a key was pressed in between", () => {
+	const a = new El("button", ["pair-btn"]), b = new El("a", ["go"]), p = page();
+	p.click(a);
+	p.down("Tab", { target: a }); // the key press ends the pointer's turn
+	p.focus(b);
+	assert.equal(p.down(" ", { target: b }).taken, false);
+	assert.deepEqual(p.asked, []);
+});
+
+test("a mouse-focused answer option keeps Space for the form, and a mouse-focused text box for typing", () => {
+	const form = new El("section", ["ask"]), option = new El("button", ["ask-opt"], { role: "checkbox" }, form), box = new El("textarea", ["ask-own"], {}, form), p = page();
+	p.click(option);
+	assert.equal(p.down(" ", { target: option }).taken, false);
+	p.click(box);
+	assert.equal(p.down(" ", { target: box }).taken, false);
+	assert.deepEqual(p.asked, []);
 });
