@@ -1,0 +1,43 @@
+id = "wayne930242.straw-boss-reaper"
+name = "Straw Boss Reaper"
+version = "0.1.0"
+min_herdr_version = "0.9.3"
+description = "Close the panes agents leave behind in linked-worktree workspaces, remove the clean checkouts, and pin the workspaces to keep"
+platforms = ["macos", "linux"]
+
+# Starts the ticker, the process that runs a sweep every ten minutes. The event hooks start it too, so a plugin linked or installed
+# while Herdr runs needs no restart.
+[[startup]]
+command = ["/bin/bash", "run.sh", "reaper.mjs", "startup"]
+
+# Bookkeeping only: a workspace appearing or being renamed, and an agent starting or being released. No event hook sweeps by itself.
+[[events]]
+on = "workspace.created"
+command = ["/bin/bash", "run.sh", "reaper.mjs", "event"]
+
+[[events]]
+on = "workspace.renamed"
+command = ["/bin/bash", "run.sh", "reaper.mjs", "event"]
+
+[[events]]
+on = "pane.agent_detected"
+command = ["/bin/bash", "run.sh", "reaper.mjs", "event"]
+
+# The ticker runs this every ten minutes, and a few seconds after an agent was released.
+[[actions]]
+id = "sweep"
+title = "Reap leftover worktree panes (scheduled sweep)"
+contexts = ["global"]
+command = ["/bin/bash", "run.sh", "reaper.mjs", "sweep"]
+
+[[actions]]
+id = "reap-now"
+title = "Reap leftover worktree panes now"
+contexts = ["global"]
+command = ["/bin/bash", "run.sh", "reaper.mjs", "reap-now"]
+
+[[actions]]
+id = "pin"
+title = "Pin / unpin workspace"
+contexts = ["workspace"]
+command = ["/bin/bash", "run.sh", "reaper.mjs", "pin"]

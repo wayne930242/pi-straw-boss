@@ -1,0 +1,211 @@
+// The reaper's decisions, with no I/O: which panes of a linked-worktree workspace to close, whether a closed workspace's checkout
+// may be removed, when a rename is the user's, and what pinning does. sweep.mjs gathers Herdr's and git's state, calls these, and
+// carries the results out.
+//
+// State is one JSON object the plugin keeps between runs; changes to it are returned as ops ({ op: "set" | "del", path, value }) so
+// concurrent runs merge instead of overwriting each other.
+
+/** A rename this long after a workspace appeared is the user's; pi-herdr-agents names its workspaces within seconds. */
+export const RENAME_GRACE_MS = 60_000;
+/** A pane must qualify for this long before it is closed, so an agent restarting in the same pane is not caught between runs. */
+export const CONFIRM_MS = 60_000;
+export const SWEEP_INTERVAL_MS = 10 * 60_000;
+export const PIN_TOKEN = "pin";
+// Nerd Font nf-md-pin (U+F0403), the same family as the tower icon in the sidebar.
+export const PIN_GLYPH = String.fromCodePoint(0xf0403);
+
+export const emptyState = () => ({
+	initialized: false,
+	seeded: false,
+	nextSweepAt: 0,
+	agentSeen: {},
+	candidates: {},
+	workspaces: {},
+	pins: {},
+	pending: {},
+});
+
+export const set = (path, value) => ({ op: "set", path, value });
+export const del = (path) => ({ op: "del", path });
+
+/** Applies ops to a copy of the state; a set creates the objects on the way. */
+export function applyOps(state, ops) {
+	const next = structuredClone(state);
+	for (const { op, path, value } of ops) {
+		let node = next;
+		for (const key of path.slice(0, -1)) {
+			if (typeof node[key] !== "object" || node[key] === null) node[key] = {};
+			node = node[key];
+		}
+		const last = path.at(-1);
+		if (op === "set") node[last] = value;
+		else delete node[last];
+	}
+	return next;
+}
+
+const worktreeOf = (workspace) => workspace.worktree ?? {};
+export const isLinked = (workspace) => worktreeOf(workspace).is_linked_worktree === true;
+/** The key a pin is stored under: the checkout survives a workspace being reopened, the workspace id does not. */
+export const pinKey = (workspace) => worktreeOf(workspace).checkout_path ?? `workspace:${workspace.workspace_id}`;
+export const isPinned = (workspace, state) => Boolean(workspace.tokens?.[PIN_TOKEN]) || pinKey(workspace) in state.pins;
+
+/** `only_under` limits the plugin to repositories below the listed directories; empty means every repository. */
+export function inScope(workspace, config) {
+	const roots = config.only_under ?? [];
+	if (roots.length === 0) return true;
+	const { repo_root: repoRoot, checkout_path: checkout } = worktreeOf(workspace);
+	return roots.some((root) => [repoRoot, checkout].some((path) => path && (path === root || path.startsWith(`${root.replace(/\/$/, "")}/`))));
+}
+
+/** True when the pane's shell is the only foreground process: nothing is running in it. */
+export function shellIsIdle(info) {
+	if (!info || typeof info.shell_pid !== "number") return false;
+	const processes = info.foreground_processes ?? [];
+	return processes.every((process) => process.pid === info.shell_pid) && (info.foreground_process_group_id === undefined || info.foreground_process_group_id === info.shell_pid);
+}
+
+const describeForeground = (info) =>
+	info ? (info.foreground_processes ?? []).filter((process) => process.pid !== info.shell_pid).map((process) => process.name ?? process.argv0).join(", ") || "unknown process" : "process info unavailable";
+
+/**
+ * Decides which panes to close. `deps.processInfo(paneId)` resolves to Herdr's process info or undefined when it cannot be read.
+ * @returns {Promise<{ closes: object[], skips: string[], ops: object[], nextAt: number | null, expectClosed: object[] }>}
+ */
+export async function planSweep({ workspaces, panes, state, now, confirmMs = CONFIRM_MS, config = {} }, deps) {
+	const closes = [];
+	const skips = [];
+	const ops = [];
+	const firstRun = !state.initialized;
+	let nextAt = null;
+	const later = (at) => {
+		nextAt = nextAt === null ? at : Math.min(nextAt, at);
+	};
+	const byWorkspace = new Map(workspaces.map((workspace) => [workspace.workspace_id, workspace]));
+	for (const pane of panes) {
+		const workspace = byWorkspace.get(pane.workspace_id);
+		if (!workspace || !isLinked(workspace) || !inScope(workspace, config)) continue;
+		const key = pane.terminal_id ?? pane.pane_id;
+		if (pane.agent) {
+			ops.push(set(["agentSeen", key], now));
+			if (key in state.candidates) ops.push(del(["candidates", key]));
+			continue;
+		}
+		// A pane that never ran an agent is the user's shell. On the first run every agentless pane counts as one that did.
+		if (!(key in state.agentSeen)) {
+			if (!firstRun) continue;
+			ops.push(set(["agentSeen", key], now));
+		}
+		const subject = `${workspace.label} (${pane.pane_id})`;
+		if (isPinned(workspace, state)) {
+			skips.push(`skip ${subject}: workspace is pinned`);
+		} else if (pane.focused) {
+			skips.push(`skip ${subject}: focused pane`);
+		} else {
+			const info = await deps.processInfo(pane.pane_id);
+			if (!shellIsIdle(info)) {
+				skips.push(`skip ${subject}: ${describeForeground(info)} is running`);
+				if (key in state.candidates) ops.push(del(["candidates", key]));
+				continue;
+			}
+			const since = state.candidates[key] ?? now;
+			if (!(key in state.candidates)) ops.push(set(["candidates", key], now));
+			if (now - since < confirmMs) {
+				skips.push(`wait ${subject}: no agent and an idle shell, confirming for ${Math.ceil((confirmMs - (now - since)) / 1000)}s more`);
+				later(since + confirmMs);
+			} else {
+				closes.push({ paneId: pane.pane_id, workspaceId: workspace.workspace_id, key, reason: "agent exited and the shell is idle" });
+			}
+		}
+	}
+	if (firstRun) ops.push(set(["initialized"], true));
+	// A workspace whose every pane is being closed ends up closed, and its checkout is then up for removal.
+	const closing = Map.groupBy(closes, (close) => close.workspaceId);
+	const expectClosed = [];
+	for (const [workspaceId, list] of closing) {
+		const workspace = byWorkspace.get(workspaceId);
+		const total = panes.filter((pane) => pane.workspace_id === workspaceId).length;
+		if (list.length === total) expectClosed.push({ workspaceId, label: workspace.label, checkout: workspace.worktree.checkout_path, repoRoot: workspace.worktree.repo_root });
+	}
+	return { closes, skips, ops, nextAt, expectClosed };
+}
+
+/**
+ * Whether a checkout may be removed after its workspace closed. A dirty tree stays on disk; so does a detached HEAD no branch
+ * or tag contains, because removing the checkout would be the last place those commits live.
+ * @param {{ pinned: boolean, exists: boolean, dirty: string, detached: boolean, containedBy: string }} facts
+ */
+export function decideRemoval({ pinned, exists, dirty, detached, containedBy }) {
+	if (pinned) return { remove: false, reason: "workspace is pinned" };
+	if (!exists) return { remove: false, reason: "checkout is already gone", gone: true };
+	if (dirty.trim()) return { remove: false, reason: `uncommitted changes (${dirty.trim().split("\n").length} paths)` };
+	if (detached && !containedBy.trim()) return { remove: false, reason: "detached HEAD with commits no branch or tag contains" };
+	return { remove: true, reason: "clean" };
+}
+
+/**
+ * What a `workspace.renamed` event means. The user's rename pins the workspace, remembering the label it had before; a rename
+ * soon after the workspace appeared is pi-herdr-agents naming it and changes nothing but the remembered label.
+ * @returns {{ ops: object[], pin: { preLabel: string } | null, note: string | null }}
+ */
+export function onRename(workspace, state, now) {
+	const record = state.workspaces[workspace.workspace_id];
+	const remember = (createdAt) => set(["workspaces", workspace.workspace_id], { createdAt, label: workspace.label });
+	if (!record) return { ops: [remember(0)], pin: null, note: null };
+	const unchanged = { ...record, label: workspace.label };
+	if (record.label === workspace.label) return { ops: [], pin: null, note: null };
+	const age = now - record.createdAt;
+	if (record.createdAt !== 0 && age <= RENAME_GRACE_MS) {
+		return { ops: [set(["workspaces", workspace.workspace_id], unchanged)], pin: null, note: null };
+	}
+	const ops = [set(["workspaces", workspace.workspace_id], unchanged)];
+	if (!isLinked(workspace) || isPinned(workspace, state)) return { ops, pin: null, note: null };
+	return { ops, pin: { preLabel: record.label }, note: `auto-pin ${workspace.label}: renamed by the user (was "${record.label}")` };
+}
+
+/** Keeps a created/label record for every workspace; a workspace first seen after the first call is new, one from before is old. */
+export function noteWorkspaces(workspaces, state, now, createdIds = new Set()) {
+	const ops = state.seeded ? [] : [set(["seeded"], true)];
+	for (const workspace of workspaces) {
+		const record = state.workspaces[workspace.workspace_id];
+		if (!record) {
+			const isNew = createdIds.has(workspace.workspace_id) || state.seeded;
+			ops.push(set(["workspaces", workspace.workspace_id], { createdAt: isNew ? now : 0, label: workspace.label }));
+		} else if (record.createdAt === 0 && createdIds.has(workspace.workspace_id)) {
+			// The created event came after a rename event had already made the record.
+			ops.push(set(["workspaces", workspace.workspace_id], { createdAt: now, label: record.label }));
+		} else if (record.label !== workspace.label) {
+			// A label change no rename event reported is not attributed to the user.
+			ops.push(set(["workspaces", workspace.workspace_id, "label"], workspace.label));
+		}
+	}
+	const live = new Set(workspaces.map((workspace) => workspace.workspace_id));
+	for (const id of Object.keys(state.workspaces)) if (!live.has(id)) ops.push(del(["workspaces", id]));
+	return ops;
+}
+
+/** Drops the agent and candidate records of panes that no longer exist. */
+export function prunePanes(panes, state) {
+	const live = new Set(panes.map((pane) => pane.terminal_id ?? pane.pane_id));
+	return ["agentSeen", "candidates"].flatMap((name) => Object.keys(state[name]).filter((key) => !live.has(key)).map((key) => del([name, key])));
+}
+
+/** Forgets the pins of workspaces that can no longer come back: a workspace id that is gone, and a checkout that is no longer on disk. */
+export function prunePins(workspaces, state, git) {
+	const live = new Set(workspaces.map((workspace) => workspace.workspace_id));
+	return Object.keys(state.pins)
+		.filter((key) => (key.startsWith("workspace:") ? !live.has(key.slice("workspace:".length)) : !git.exists(key)))
+		.map((key) => del(["pins", key]));
+}
+
+/** The pin action toggles: unpinning renames the workspace back to the label it had before the pin. */
+export function togglePin(workspace, state, now) {
+	const key = pinKey(workspace);
+	if (isPinned(workspace, state)) {
+		// Without a record the checkout's name is the best guess for a linked worktree; any other workspace keeps its name.
+		const basename = isLinked(workspace) ? worktreeOf(workspace).checkout_path?.split("/").filter(Boolean).at(-1) : undefined;
+		const label = state.pins[key]?.preLabel ?? basename;
+		return { action: "unpin", key, restoreLabel: label && label !== workspace.label ? label : null };
+	}
+	return { action: "pin", key, entry: { preLabel: workspace.label, auto: false, at: now } };
+}
