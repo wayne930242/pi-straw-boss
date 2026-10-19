@@ -203,16 +203,13 @@ test("secret_drop: robot-hand:secret pending and closed reach the bridge; the va
 	assert.equal(b.count(), 1, "only the test's own listener is left");
 });
 
-test("checkAnswer for a secret: a non-blank single value within 8 KB without control characters, never from a remote page, and no message quotes it", () => {
-	const t = { dialog: "s1", digest: secretDigest(SECRET), secret: SECRET };
-	assert.deepEqual(checkAnswer(t, { value: " p@ss w0rd " }, false), { value: " p@ss w0rd " }, "kept as typed");
-	assert.deepEqual(checkAnswer(t, { value: "line1\nline2\tx" }, false), { value: "line1\nline2\tx" });
-	const secret = "s3cr3t-value";
-	for (const json of [{}, { value: "" }, { value: "   " }, { value: 5 }, { value: ["x"] }, { choice: 0, value: secret }, { answers: [], value: secret }, { value: `${secret}\u0007` }, { value: `${secret}\r` }, { value: "x".repeat(8193) }]) {
-		const out = checkAnswer(t, json, false);
-		assert.equal(typeof out, "string", JSON.stringify(json).slice(0, 40));
-		assert.equal(String(out).includes(secret), false);
+test("checkAnswer takes no secret's value from any page (SB-F001), and quotes none", () => {
+	const t = { dialog: "d1", digest: "0".repeat(64), select: { title: "t", choices: [{ label: "a" }] } }, secret = "s3cr3t-value";
+	for (const json of [{ value: secret }, { choice: 0, value: secret }, { answers: [], value: secret }, { value: "" }, { value: 5 }]) {
+		for (const remote of [false, true]) {
+			const out = checkAnswer(t, json, remote);
+			assert.equal(typeof out, "string", JSON.stringify(json).slice(0, 40));
+			assert.equal(String(out).includes(secret), false);
+		}
 	}
-	assert.deepEqual(checkAnswer(t, { value: "x".repeat(8192) }, false), { value: "x".repeat(8192) });
-	assert.match(String(checkAnswer(t, { value: secret }, true)), /remote page/);
 });

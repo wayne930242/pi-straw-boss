@@ -7,7 +7,7 @@ import { after, mock, test } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Ack, type Dialogs, guiNamespace, type LocalHub, REGISTER, startBridge, type ToHub } from "../src/bridge.ts";
 import { secretDigest, selectDigest } from "../src/owners.ts";
-import { type Binding, keyOk, newKeys, seal } from "../src/seal.ts";
+import { newKeys, seal } from "../src/seal.ts";
 
 const dirs: string[] = [];
 after(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
@@ -512,72 +512,37 @@ test("documents: an owner that never answers a form leaves it unanswered here (t
 	}
 });
 
-/** The secret dialog "s1" open in a session whose bridge G owns the channel for, and how a test answers it. */
+/** The secret dialog "s1" open in a session whose bridge G owns the channel for. */
 function secretSession() {
 	const s = session(), SECRET = { label: "Deploy token", instructions: ["Create one."], destination: ".env.local" }, digest = secretDigest(SECRET), seen: unknown[] = [];
 	s.fire("tool_execution_start", { toolCallId: "c1", toolName: "secret_drop", args: {} });
 	s.events.emit("robot-hand:secret:pending", { version: 1, id: "s1", toolCallId: "c1", digest, secret: SECRET });
 	s.own();
-	s.events.on("robot-hand:secret:answer", (raw) => {
-		seen.push(raw);
-		const a = raw as { id: string; answerId: string };
-		s.events.emit("robot-hand:secret:answer-result", { version: 1, id: a.id, answerId: a.answerId, accepted: true });
-		s.events.emit("robot-hand:secret:closed", { version: 1, id: a.id, by: "remote", answerId: a.answerId });
-	});
-	const to = bridgeIdOf(s), key = () => s.lists().at(-1)![0]!.key!;
-	return { s, SECRET, digest, seen, to, key, sealed: (value: string, answerId = "a".repeat(16), over: Partial<Binding> = {}, pub = key()) => seal(value, pub, { id: "s1", digest, answerId, bridgeId: to, ...over }) };
+	s.events.on("robot-hand:secret:answer", (raw) => seen.push(raw));
+	return { s, SECRET, digest, seen, to: bridgeIdOf(s) };
 }
 
-test("secret_drop: its masked dialog is taken for a secret_drop call in flight, relayed with its own public key; a sealed value reaches the owner once and is in no ack, list, or notice", () => {
+test("secret_drop (SB-F001): a secret dialog is never relayed to the GUI, with or without a key; a call of another tool's is not taken for one", () => {
 	const s = session(), SECRET = { label: "Deploy token", instructions: ["Create one."], destination: ".env.local" };
 	s.fire("tool_execution_start", { toolCallId: "c9", toolName: "bash", args: {} });
 	s.events.emit("robot-hand:secret:pending", { version: 1, id: "s0", toolCallId: "c9", digest: secretDigest(SECRET), secret: SECRET });
 	assert.equal(s.lists().length, 0, "a call of another tool is not a secret_drop's");
-	const x = secretSession(), value = "tok-9f8e7d-do-not-log";
-	assert.deepEqual(x.s.lists().at(-1)!.map((d) => [d.id, d.owner, d.secret]), [["s1", "robot-hand-secret", x.SECRET]]);
-	assert.ok(keyOk(x.key()), "the dialog carries a public key");
-	const box = x.sealed(value);
-	x.s.message({ version: 1, type: "answer", to: x.to, id: "s1", answerId: "a".repeat(16), digest: x.digest, sealed: box });
-	assert.deepEqual(x.seen, [{ version: 1, id: "s1", answerId: "a".repeat(16), digest: x.digest, value }], "the owner gets the value once, with the digest");
-	assert.deepEqual(x.s.acks().map((a) => [a.outcome, a.answerId]), [["accepted", "a".repeat(16)]]);
-	x.s.message({ version: 1, type: "answer", to: x.to, id: "s1", answerId: "a".repeat(16), digest: x.digest, sealed: box });
-	assert.equal(x.seen.length, 1, "a resend is a replay, never a second delivery");
-	assert.equal(x.s.acks().length, 2, "answered again with the same outcome");
-	assert.equal(JSON.stringify([x.s.published, x.s.notices]).includes(value), false, "nothing the bridge published or noticed holds the value");
+	const x = secretSession();
+	assert.deepEqual(x.s.lists().at(-1), [], "the secret's label, steps, and destination do not leave the session either");
+	assert.equal(JSON.stringify(x.s.published).includes('"key"'), false, "no public key is made or relayed");
 });
 
-test("secret_drop: a plain value, an unsealed answer, a wrong key, a tampered or another dialog's ciphertext are refused and nothing reaches the owner; the dialog stays answerable", () => {
-	const x = secretSession(), value = "tok-refuse-me", answer = (extra: Record<string, unknown>, answerId = "a".repeat(16)) => x.s.message({ version: 1, type: "answer", to: x.to, id: "s1", answerId, digest: x.digest, ...extra });
-	const other = newKeys(), good = x.sealed(value);
+test("secret_drop (SB-F001): whatever an answer to the secret dialog carries (a plain value, a sealed one, nothing) is refused and nothing reaches the owner", () => {
+	const x = secretSession(), value = "tok-refuse-me", sealed = seal(value, newKeys().pub, { id: "s1", digest: x.digest, answerId: "a".repeat(16), bridgeId: x.to });
+	const answer = (extra: Record<string, unknown>, answerId = "a".repeat(16)) => x.s.message({ version: 1, type: "answer", to: x.to, id: "s1", answerId, digest: x.digest, ...extra });
 	answer({ value });
-	answer({});
-	answer({ sealed: seal(value, other.pub, { id: "s1", digest: x.digest, answerId: "a".repeat(16), bridgeId: x.to }) });
-	answer({ sealed: { ...good, ct: `${good.ct[0] === "A" ? "B" : "A"}${good.ct.slice(1)}` } });
-	answer({ sealed: x.sealed(value, "a".repeat(16), { id: "s2" }) });
-	answer({ sealed: x.sealed(value, "a".repeat(16), { digest: "0".repeat(64) }) });
-	answer({ sealed: x.sealed(value, "a".repeat(16), { bridgeId: "another" }) });
-	answer({ sealed: x.sealed(value, "b".repeat(16)) }); // made for another answerId
+	answer({ sealed });
 	answer({ value, sealed: "garbage" });
+	answer({});
 	assert.deepEqual(x.seen, [], "the owner never heard of any of them");
-	assert.deepEqual([...new Set(x.s.acks().map((a) => `${a.outcome}/${a.reason}`))], ["rejected/malformed"]);
-	assert.equal(x.s.acks().length, 9);
+	assert.deepEqual([...new Set(x.s.acks().map((a) => `${a.outcome}/${a.reason}`))], ["rejected/terminal_only"]);
+	assert.equal(x.s.acks().length, 4);
 	assert.equal(JSON.stringify([x.s.published, x.s.notices]).includes(value), false);
-	answer({ sealed: good });
-	assert.equal(x.seen.length, 1, "still open: the right ciphertext is taken after the refusals");
-});
-
-test("secret_drop: each dialog has its own key, relayed only while it is open, and the private half is gone once it closes", () => {
-	const x = secretSession(), first = x.key();
-	x.s.events.emit("robot-hand:secret:closed", { version: 1, id: "s1", by: "local" });
-	assert.deepEqual(x.s.lists().at(-1), [], "a closed dialog is not relayed, key and all");
-	x.s.message({ version: 1, type: "answer", to: x.to, id: "s1", answerId: "z".repeat(16), digest: x.digest, sealed: x.sealed("late", "z".repeat(16), {}, first) });
-	assert.deepEqual([x.seen, x.s.acks().at(-1)!.outcome], [[], "stale"], "a late answer meets a closed dialog, not a key");
-	x.s.fire("tool_execution_start", { toolCallId: "c2", toolName: "secret_drop", args: {} });
-	x.s.events.emit("robot-hand:secret:pending", { version: 1, id: "s2", toolCallId: "c2", digest: x.digest, secret: x.SECRET });
-	const second = x.s.lists().at(-1)![0]!.key;
-	assert.ok(keyOk(second) && second !== first, "another dialog, another key");
-	x.s.message({ version: 1, type: "answer", to: x.to, id: "s2", answerId: "y".repeat(16), digest: x.digest, sealed: seal("cross", first, { id: "s2", digest: x.digest, answerId: "y".repeat(16), bridgeId: x.to }) });
-	assert.deepEqual([x.seen, x.s.acks().at(-1)!.outcome], [[], "rejected"], "a ciphertext made for the first dialog's key does not open the second");
 });
 
 test("a dialog other than a secret carries no key", () => {
@@ -585,12 +550,4 @@ test("a dialog other than a secret carries no key", () => {
 	s.open();
 	s.own();
 	assert.equal(JSON.stringify(s.lists().at(-1)).includes("\"key\""), false);
-});
-
-test("secret_drop: a list over 15 KiB drops the secret's content along with the other dialogs'", () => {
-	const s = session(), SECRET = { label: "L", instructions: Array(20).fill("x".repeat(2000)), destination: "d" };
-	s.fire("tool_execution_start", { toolCallId: "c1", toolName: "secret_drop", args: {} });
-	s.events.emit("robot-hand:secret:pending", { version: 1, id: "s1", toolCallId: "c1", digest: secretDigest(SECRET), secret: SECRET });
-	s.own();
-	assert.deepEqual(s.lists().at(-1)!.map((d) => [d.big, d.secret]), [[true, undefined]]);
 });

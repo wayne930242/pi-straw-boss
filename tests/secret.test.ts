@@ -4,14 +4,13 @@ import { get, request, type IncomingHttpHeaders } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { forRemote } from "../src/ask.ts";
 import type { Hub, Target } from "../src/dialogs.ts";
 import { startGui, type Gui } from "../src/gui.ts";
 import type { Found, Net } from "../src/net.ts";
 import { secretDigest } from "../src/owners.ts";
 
-// A secret_drop's masked dialog on the server: this computer's page may answer it, a paired remote device never gets it to answer (its stream
-// holds a plain read-only wait) and a request from one that carries a value is refused before anything is looked up or relayed.
+// A secret_drop on the server (SB-F001): no page, this computer's or a paired device's, may answer it. Both streams hold the same plain read-only wait,
+// and a request that carries a value is refused before anything is looked up or relayed.
 
 const scratch = mkdtempSync(join(tmpdir(), "psb-secret-test-"));
 mkdirSync(join(scratch, "bundle"));
@@ -24,12 +23,12 @@ after(async () => {
 
 const FILE = "/s/2026_sess-1.jsonl", HOST = "box.tail1.ts.net:8443", LOGIN = "me@example.com";
 const SECRET = { label: "Deploy token", instructions: ["Open the link.", "Create a token."], url: "https://example.com/tokens", destination: ".env.local" };
-const answer = { dialog: "s1", digest: secretDigest(SECRET), secret: SECRET };
+const digest = secretDigest(SECRET);
 const unit = (key: string, pending?: Net["bases"][number]["outside"][number]["pending"]) => ({ id: key, key, control: true, name: key, role: "main" as const, mark: "waiting" as const, subs: [], pending });
-const net = (): Net => ({ bases: [{ id: "wA", label: "Alpha", mark: "waiting", head: true, tower: null, outposts: [], outside: [], tabs: [{ id: "wA:t1", label: "work", units: [unit("sess-1", { callId: "c1", tool: "secret_drop", answer }), unit("sess-2", { callId: "c2", tool: "robot_hand", answer: { dialog: "d2", digest: "a".repeat(64), select: { title: "T", choices: [{ label: "A" }] } } })] }] }] });
+const net = (): Net => ({ bases: [{ id: "wA", label: "Alpha", mark: "waiting", head: true, tower: null, outposts: [], outside: [], tabs: [{ id: "wA:t1", label: "work", units: [unit("sess-1", { callId: "c1", tool: "secret_drop", why: "It waits for a secret." }), unit("sess-2", { callId: "c2", tool: "robot_hand", answer: { dialog: "d2", digest: "a".repeat(64), select: { title: "T", choices: [{ label: "A" }] } } })] }] }] });
 
 async function server() {
-	const sent: Record<string, unknown>[] = [], targets: Record<string, Target> = { "sess-1": { from: "S", bridgeId: "B", answer } };
+	const sent: Record<string, unknown>[] = [], targets: Record<string, Target> = {};
 	const hub = {
 		running: true, me: "G", start() {}, stop() {}, receive() {}, relayed: () => ({ dialogsOf: () => undefined, merge: () => ({ callId: "", tool: "" }) }),
 		replay: () => undefined, ended: () => undefined, target: (key: string) => targets[key], commands: async () => [], probe: async () => undefined,
@@ -72,53 +71,37 @@ const remoteHeaders = async (gui: Gui) => ({ ...tailnet, cookie: await pair(gui)
 const localHeaders = (gui: Gui) => ({ host: `127.0.0.1:${gui.port}`, origin: `http://127.0.0.1:${gui.port}`, "sec-fetch-site": "same-origin", "content-type": "application/json", "x-sb-csrf": gui.csrf });
 const unitsOf = (json: string) => (JSON.parse(json) as Net).bases.flatMap((b) => b.tabs.flatMap((t) => t.units));
 
-test("forRemote turns every answerable secret into a plain secret_drop wait and leaves other dialogs and a net without one as they are", () => {
-	const plain = net();
-	plain.bases[0]!.tabs[0]!.units.shift();
-	assert.equal(forRemote(plain), plain, "the same net when there is no secret");
-	const original = net(), out = forRemote(original);
-	assert.deepEqual(out.bases[0]!.tabs[0]!.units[0]!.pending, { callId: "c1", tool: "secret_drop", why: "Entering a secret is not supported from a remote page; answer it in the terminal." });
-	assert.deepEqual(out.bases[0]!.tabs[0]!.units[1], original.bases[0]!.tabs[0]!.units[1], "a selector stays answerable");
-	assert.deepEqual(original.bases[0]!.tabs[0]!.units[0]!.pending!.answer!.secret, SECRET, "the input is not changed");
-	const tower = net();
-	tower.bases[0]!.tower = { name: "t", mark: "waiting", key: "t", control: true, pending: { callId: "c", tool: "secret_drop", answer } };
-	tower.bases[0]!.outside = [{ ...unit("o"), subs: [unit("o/s", { callId: "c", tool: "secret_drop", answer })] }];
-	const cut = forRemote(tower);
-	assert.equal(JSON.stringify(cut).includes("Deploy token"), false, "a tower's, an outside unit's, and a subagent's too");
-});
-
-test("the local stream carries the secret dialog; a paired device's stream carries a read-only wait and none of its content", async () => {
+test("the local stream and a paired device's stream both carry the secret_drop as a plain read-only wait, with nothing of what it asks for", async () => {
 	const { gui } = await server();
 	const mine = await snapshot(gui, local(gui)), theirs = await snapshot(gui, { ...tailnet, cookie: await pair(gui) });
-	assert.deepEqual(unitsOf(mine)[0]!.pending, { callId: "c1", tool: "secret_drop", answer });
-	const remote = unitsOf(theirs);
-	assert.deepEqual([remote[0]!.pending!.answer, remote[0]!.pending!.tool, remote[0]!.pending!.why], [undefined, "secret_drop", "Entering a secret is not supported from a remote page; answer it in the terminal."]);
-	assert.equal(remote[1]!.pending!.answer!.dialog, "d2", "its other dialogs stay answerable");
-	for (const word of ["Deploy token", "Create a token", "example.com", ".env.local", SECRET.destination, answer.digest]) assert.equal(theirs.includes(word), false, `the remote stream has no ${word}`);
-});
-
-test("an answer with a value from a paired device is refused before anything is looked up or relayed; so is any answer to a secret dialog from one", async () => {
-	const { gui, sent } = await server(), value = "tok-remote-do-not-accept";
-	const path = `/${gui.token}/api/sessions/sess-1/answer`, headers = await remoteHeaders(gui);
-	const withValue = await fetchRaw(gui, path, headers, "POST", { dialog: "s1", digest: answer.digest, answerId: "r".repeat(20), value });
-	assert.deepEqual([withValue.status, JSON.parse(withValue.text).error], [403, "local_only"]);
-	const without = await fetchRaw(gui, path, headers, "POST", { dialog: "s1", digest: answer.digest, answerId: "q".repeat(20) });
-	assert.deepEqual([without.status, JSON.parse(without.text).error], [403, "local_only"], "a secret dialog takes nothing from a remote page");
-	const sessionTwo = await fetchRaw(gui, `/${gui.token}/api/sessions/sess-2/answer`, headers, "POST", { dialog: "d2", digest: "a".repeat(64), answerId: "p".repeat(20), choice: 0, value });
-	assert.equal(sessionTwo.status, 403, "a value is never taken from a remote page, whichever dialog it names");
-	assert.deepEqual(sent, [], "nothing was relayed");
-	for (const r of [withValue, without, sessionTwo]) assert.equal(r.text.includes(value), false);
-});
-
-test("this computer's page answers a secret dialog: the value goes to the bridge once, and no response quotes it", async () => {
-	const { gui, sent } = await server(), value = "tok-local-ok-9921";
-	const r = await fetchRaw(gui, `/${gui.token}/api/sessions/sess-1/answer`, localHeaders(gui), "POST", { dialog: "s1", digest: answer.digest, answerId: "l".repeat(20), value });
-	assert.deepEqual([r.status, JSON.parse(r.text)], [200, { outcome: "accepted" }]);
-	assert.deepEqual(sent, [{ id: "s1", answerId: "l".repeat(20), digest: answer.digest, value }]);
-	for (const bad of [{}, { value: "" }, { value: "  " }, { value: 5 }, { choice: 0 }, { value: `${value}\u0001` }, { value: "x".repeat(8193) }]) {
-		const refused = await fetchRaw(gui, `/${gui.token}/api/sessions/sess-1/answer`, localHeaders(gui), "POST", { dialog: "s1", digest: answer.digest, answerId: "m".repeat(20), ...bad });
-		assert.deepEqual([refused.status, JSON.parse(refused.text).error], [400, "bad_answer"], JSON.stringify(bad).slice(0, 30));
-		assert.equal(refused.text.includes(value), false);
+	for (const json of [mine, theirs]) {
+		const units = unitsOf(json);
+		assert.deepEqual(units[0]!.pending, { callId: "c1", tool: "secret_drop", why: "It waits for a secret." });
+		assert.equal(units[1]!.pending!.answer!.dialog, "d2", "its other dialogs stay answerable");
+		for (const word of ["Deploy token", "Create a token", "example.com", ".env.local", digest]) assert.equal(json.includes(word), false, `the stream has no ${word}`);
 	}
-	assert.equal(sent.length, 1, "refused values never reach the bridge");
+});
+
+test("a request with a value is refused from a paired device (403) and from this computer's page (400) before anything is looked up or relayed", async () => {
+	const { gui, sent } = await server(), value = "tok-do-not-accept";
+	const path = (n: number) => `/${gui.token}/api/sessions/sess-${n}/answer`, remote = await remoteHeaders(gui), mine = localHeaders(gui);
+	const results = [];
+	for (const [headers, expected] of [[remote, [403, "local_only"]], [mine, [400, "terminal_only"]]] as const) {
+		for (const [n, body] of [[1, { dialog: "s1", digest, answerId: "r".repeat(20), value }], [1, { dialog: "s1", digest, answerId: "q".repeat(20), value: "" }], [2, { dialog: "d2", digest: "a".repeat(64), answerId: "p".repeat(20), choice: 0, value }]] as const) {
+			const r = await fetchRaw(gui, path(n), headers, "POST", body);
+			results.push(r);
+			assert.deepEqual([r.status, JSON.parse(r.text).error], expected, JSON.stringify(body).slice(0, 40));
+		}
+	}
+	assert.deepEqual(sent, [], "nothing reached any bridge");
+	for (const r of results) assert.equal(r.text.includes(value), false);
+});
+
+test("an answer to the secret_drop's dialog without a value finds no dialog to answer, from either page", async () => {
+	const { gui, sent } = await server();
+	for (const headers of [await remoteHeaders(gui), localHeaders(gui)]) {
+		const r = await fetchRaw(gui, `/${gui.token}/api/sessions/sess-1/answer`, headers, "POST", { dialog: "s1", digest, answerId: "u".repeat(20) });
+		assert.deepEqual([r.status, JSON.parse(r.text).error], [409, "changed"]);
+	}
+	assert.deepEqual(sent, []);
 });

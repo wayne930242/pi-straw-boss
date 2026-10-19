@@ -14,7 +14,7 @@ const TAIL = 262_144, LIMIT = 16_777_216, CACHE = new Map<string, { sig: string;
 export interface Option { title: string; description?: string }
 /** `multiple`: it takes several choices; `freeform`: it takes the user's own words; `header`: the short tag ask_user_question gives a question. */
 export interface Ask { question: string; header?: string; context?: string; options: Option[]; multiple: boolean; freeform: boolean }
-/** What a waiting session waits on: `ask` for one question, `asks` for two to four (ask_user_question), else `why` there is nothing to show; `answer` when the page may answer it (a secret's masked field only on this computer's page: see `forRemote`). */
+/** What a waiting session waits on: `ask` for one question, `asks` for two to four (ask_user_question), else `why` there is nothing to show; `answer` when the page may answer it (never a secret: SB-F001). */
 export interface Pending { callId: string; tool: string; ask?: Ask; asks?: Ask[]; why?: string; answer?: Answerable }
 export const SEVERAL = "It waits on more than one dialog.";
 interface Call { id: string; name: string; args: Json }
@@ -113,14 +113,6 @@ export const waitsForSecret = async (file: string) => (await pendingOf(file), CA
 export interface Relayed { dialogsOf(key: string): Dialog[] | undefined; merge(key: string, file: Pending | undefined, dialogs: Dialog[], readable: boolean, calls?: OpenCall[]): Pending; docsOf?(key: string): Pick<Unit, "docs" | "docsCut"> | undefined; queuedOf?(key: string): Queued[] | undefined; monitorsOf?(key: string): Monitor[] | undefined }
 
 const unitsOf = (b: Net["bases"][number]) => [...(b.tower ? [b.tower] : []), ...[...b.tabs.flatMap((t) => t.units), ...b.outside].flatMap((u) => [u, ...u.subs])];
-/** The net as a remote page may see it: a secret's answerable dialog (its label, steps, and destination) becomes a plain `secret_drop` wait read-only in the terminal; the same net when there is none. */
-export function forRemote(net: Net): Net {
-	if (!net.bases.some((b) => unitsOf(b).some((u) => u.pending?.answer?.secret))) return net;
-	const out = structuredClone(net);
-	for (const u of out.bases.flatMap(unitsOf)) if (u.pending?.answer?.secret) u.pending = { callId: u.pending.callId, tool: "secret_drop", why: "Entering a secret is not supported from a remote page; answer it in the terminal." };
-	return out;
-}
-
 /** Adds what each waiting unit waits on, and the documents each unit shows, to a snapshot. A unit with a relayed dialog waits even before Herdr reports its pane blocked. */
 export async function withPending(net: Net, fileOf: (key: string) => string | undefined, relayed?: Relayed): Promise<Net> {
 	const jobs: Promise<unknown>[] = [];
