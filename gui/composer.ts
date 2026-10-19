@@ -69,7 +69,7 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 	};
 	keep(() => (box.value = sessionStorage.getItem(store) ?? ""));
 	const save = () => keep(() => (box.value ? sessionStorage.setItem(store, box.value) : sessionStorage.removeItem(store)));
-	const grow = () => ((box.style.height = "auto"), (box.style.height = `${Math.min(box.scrollHeight, 220)}px`));
+	const grow = CSS.supports("field-sizing", "content") ? () => {} : () => ((box.style.height = "auto"), (box.style.height = `${Math.min(box.scrollHeight, 220)}px`)); // a browser that sizes the box to its text (style.css) needs no measuring per keystroke
 	const say = (text: string, tone = "", ...kids: HTMLElement[]) => ((note.dataset.tone = tone), note.replaceChildren(text, ...kids));
 	/** An inline confirm in the note line: the action runs only on its button. */
 	const ask = (question: string, label: string, run: () => void) => {
