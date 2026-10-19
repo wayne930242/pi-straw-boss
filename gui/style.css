@@ -501,7 +501,8 @@ summary::-webkit-details-marker { display: none; }
 .ask-note { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; font-size: 12px; color: var(--dim); } .ask-note[data-tone="error"] { color: #ff8a9c; } .ask-note[data-tone="ok"] { color: #3ddc97; }
 /* Answering: the select's title as written, choices and options as toggles, own words and a note, Send in amber like the waiting ring. */
 .ask-title { margin: 0; font: 12.5px/1.45 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 12em; overflow: auto; }
-div.ask-opts { max-height: none; } button.ask-opt { text-align: left; color: var(--text); font: 13px var(--sans); cursor: pointer; }
+/* The form's options are unbounded, and a scroll box would clip their focus ring (the outline and its offset reach 4px out). */
+div.ask-opts { max-height: none; overflow: visible; } button.ask-opt { text-align: left; color: var(--text); font: 13px var(--sans); cursor: pointer; }
 .ask-opt[aria-checked="true"] { border-color: #ffb02e; background: #ffb02e1f; }
 .ask-own { min-width: 0; resize: vertical; field-sizing: content; max-height: 10em; padding: 7px 12px; border-radius: 10px; border: 1px solid var(--line); background: #070c18; color: var(--text); font: 13px var(--sans); }
 .ask-memo { font-size: 12px; } .ask input:disabled, .ask textarea:disabled { opacity: 0.45; }
