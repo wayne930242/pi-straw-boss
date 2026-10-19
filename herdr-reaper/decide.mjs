@@ -130,6 +130,27 @@ export async function planSweep({ workspaces, panes, state, now, confirmMs = CON
 	return { closes, skips, ops, nextAt, expectClosed };
 }
 
+const within = (path, root) => typeof path === "string" && root.length > 0 && (path === root || path.startsWith(root.endsWith("/") ? root : `${root}/`));
+
+/**
+ * What still uses a checkout: a live pane whose cwd or foreground cwd is the checkout or below it, or a live workspace on the same
+ * checkout. `roots` lists the spellings of the checkout path (the path itself and its real path). Panes and workspaces in `ignore`
+ * are the ones this run is closing; a dry run needs them left out because they are still alive.
+ * @returns {string | null} the reason to keep the checkout, or null when nothing uses it
+ */
+export function findCheckoutUser(roots, panes, workspaces, ignore = {}) {
+	for (const pane of panes) {
+		if (ignore.panes?.has(pane.pane_id)) continue;
+		const path = [pane.cwd, pane.foreground_cwd].find((cwd) => roots.some((root) => within(cwd, root)));
+		if (path) return `pane ${pane.pane_id} is working in it (${path})`;
+	}
+	for (const workspace of workspaces) {
+		if (ignore.workspaces?.has(workspace.workspace_id)) continue;
+		if (roots.includes(worktreeOf(workspace).checkout_path)) return `workspace ${workspace.label} is open on it`;
+	}
+	return null;
+}
+
 /**
  * Whether a checkout may be removed after its workspace closed. A dirty tree stays on disk; so does a detached HEAD no branch
  * or tag contains, because removing the checkout would be the last place those commits live.

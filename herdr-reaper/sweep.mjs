@@ -2,7 +2,7 @@
 // so tests can run them against fakes; reaper.mjs wires the real ones.
 import {
 	CONFIRM_MS, PIN_GLYPH, PIN_TOKEN, SWEEP_INTERVAL_MS,
-	del, decideRemoval, inScope, noteWorkspaces, onRename, pinKey, planSweep, prunePanes, prunePins, set, togglePin,
+	del, decideRemoval, findCheckoutUser, inScope, noteWorkspaces, onRename, pinKey, planSweep, prunePanes, prunePins, set, togglePin,
 } from "./decide.mjs";
 import { withLock } from "./io.mjs";
 
@@ -34,8 +34,22 @@ async function checkoutFacts(deps, checkout, pinned) {
 	return { pinned, exists: true, dirty, detached: !branch, containedBy, branch };
 }
 
+/**
+ * Looks at Herdr again, right before a removal, for anything still using the checkout: another workspace's pane (the normal
+ * layout of an agent and its workers) or another workspace on it. Fails closed: a list that cannot be read keeps the checkout.
+ */
+async function checkoutUser(checkout, deps, ignore) {
+	try {
+		const [panes, workspaces] = await Promise.all([deps.herdr.listPanes(), deps.herdr.listWorkspaces()]);
+		const roots = [...new Set([checkout, deps.git.realpath?.(checkout) ?? checkout])];
+		return findCheckoutUser(roots, panes, workspaces, ignore);
+	} catch (error) {
+		return `Herdr could not be listed again (${error.message.split("\n")[0]})`;
+	}
+}
+
 /** Removes a closed workspace's checkout when it is clean, and says why when it is not. The branch is never touched. */
-async function reapCheckout(entry, deps, dryRun) {
+async function reapCheckout(entry, deps, dryRun, ignore = {}) {
 	// Read the pins again: the user may have pinned the workspace while this sweep ran.
 	const facts = await checkoutFacts(deps, entry.checkout, entry.checkout in (await deps.store.read()).pins);
 	const decision = decideRemoval(facts);
@@ -43,6 +57,8 @@ async function reapCheckout(entry, deps, dryRun) {
 		deps.log(`${dryRun ? "would keep" : "keep"} checkout ${entry.checkout}: ${decision.reason}${decision.gone ? "" : ", branch kept"}`);
 		return;
 	}
+	const user = await checkoutUser(entry.checkout, deps, ignore);
+	if (user) return deps.log(`${dryRun ? "would keep" : "keep"} checkout ${entry.checkout}: ${user}, branch kept`);
 	if (dryRun) return deps.log(`would remove checkout ${entry.checkout} (clean; branch ${facts.branch ?? "(detached)"} kept)`);
 	try {
 		await deps.git.removeWorktree(entry.repoRoot, entry.checkout);
@@ -97,7 +113,9 @@ async function sweepLocked(deps, confirmMs, dryRun) {
 	}
 	const closing = plan.expectClosed;
 	if (dryRun) {
-		for (const entry of closing) await reapCheckout(entry, deps, true);
+		// The panes and workspaces this sweep would close are still alive here, so they are not what keeps a checkout.
+		const ignore = { panes: new Set(plan.closes.map((close) => close.paneId)), workspaces: new Set(closing.map((entry) => entry.workspaceId)) };
+		for (const entry of closing) await reapCheckout(entry, deps, true, ignore);
 		return;
 	}
 	if (closing.length > 0) {

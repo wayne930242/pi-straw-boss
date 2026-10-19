@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
 	CONFIRM_MS, PIN_GLYPH, PIN_TOKEN, RENAME_GRACE_MS, SWEEP_INTERVAL_MS,
-	applyOps, decideRemoval, emptyState, noteWorkspaces, onRename, planSweep, prunePanes, prunePins, shellIsIdle, togglePin,
+	applyOps, decideRemoval, emptyState, findCheckoutUser, noteWorkspaces, onRename, planSweep, prunePanes, prunePins, shellIsIdle, togglePin,
 } from "../herdr-reaper/decide.mjs";
 import { createStore, withLock } from "../herdr-reaper/io.mjs";
 import { SOURCE, runEvent, runPinToggle, runSweep } from "../herdr-reaper/sweep.mjs";
@@ -57,6 +57,7 @@ function world({ workspaces, panes, infos = {}, checkouts = {} }) {
 		status: async (path) => checkouts[path].dirty ?? "",
 		branch: async (path) => checkouts[path].branch ?? "feat",
 		containedBy: async () => "",
+		realpath: (path) => path,
 		removeWorktree: async (repoRoot, path) => {
 			w.removed.push(path);
 			delete checkouts[path];
@@ -378,4 +379,68 @@ test("Pins of workspaces and checkouts that are gone are forgotten", () => {
 test("The pin token is a Nerd Font glyph, not an emoji", () => {
 	assert.equal(PIN_GLYPH.codePointAt(0), 0xf0403);
 	assert.equal(PIN_TOKEN, "pin");
+});
+
+test("findCheckoutUser: a pane's cwd or foreground cwd at or below the checkout, or a workspace on it", () => {
+	const roots = ["/wt/x"];
+	const other = workspace("o", "other");
+	assert.equal(findCheckoutUser(roots, [pane("o:p1", "o", { cwd: "/repo", foreground_cwd: "/repo" })], [other]), null);
+	assert.match(findCheckoutUser(roots, [pane("o:p1", "o", { cwd: "/wt/x" })], [other]), /pane o:p1/);
+	assert.match(findCheckoutUser(roots, [pane("o:p1", "o", { cwd: "/repo", foreground_cwd: "/wt/x/src" })], [other]), /pane o:p1/, "the foreground process counts too");
+	assert.equal(findCheckoutUser(roots, [pane("o:p1", "o", { cwd: "/wt/xyz" })], [other]), null, "a sibling directory with the same prefix is not inside");
+	assert.match(findCheckoutUser(roots, [], [workspace("n", "same", { worktree: worktree("/wt/x") })]), /workspace same/);
+	assert.equal(findCheckoutUser(roots, [pane("o:p1", "o", { cwd: "/wt/x" })], [workspace("n", "same", { worktree: worktree("/wt/x") })], { panes: new Set(["o:p1"]), workspaces: new Set(["n"]) }), null, "what the run closes is ignored");
+	assert.match(findCheckoutUser(["/private/wt/x", "/wt/x"], [pane("o:p1", "o", { cwd: "/private/wt/x/a" })], []), /pane o:p1/, "every spelling of the path counts");
+});
+
+test("A clean checkout another workspace's pane works in is kept, in normal, pending and dry runs", async () => {
+	const dir = await tempDir();
+	try {
+		// The pi-herdr-agents layout: the worker's pane sits in the parent's workspace, in the linked checkout.
+		const make = () =>
+			world({
+				workspaces: [workspace("a", "linked"), workspace("p", "parent", { worktree: worktree("/repo", false) }), workspace("q", "other-ws", { worktree: worktree("/elsewhere") })],
+				panes: [pane("a:p1", "a"), pane("p:p1", "p", { agent: "pi", cwd: "/repo", foreground_cwd: "/wt/linked/app" }), pane("q:p1", "q", { agent: "pi" })],
+				checkouts: { "/wt/linked": {} },
+			});
+		const w = make();
+		const store = createStore(dir);
+		await runSweep(w.deps(store), { confirmMs: 0, dryRun: true });
+		assert.ok(w.logs.some((line) => line.startsWith("would keep checkout /wt/linked") && line.includes("pane p:p1")), w.logs.join("\n"));
+		await runSweep(w.deps(store), { confirmMs: 0 });
+		assert.deepEqual(w.calls, ["close a:p1"], "the idle leftover pane still closes");
+		assert.deepEqual(w.removed, [], "but the checkout stays while that pane works in it");
+		assert.ok(w.logs.some((line) => line.startsWith("keep checkout /wt/linked") && line.includes("pane p:p1")));
+
+		// The pending path: the workspace closed in an earlier run, and by now a new workspace opened on the same checkout.
+		const later = make();
+		later.workspaces = [workspace("n", "reopened", { worktree: worktree("/wt/linked") })];
+		later.panes = [pane("n:p1", "n", { agent: "pi" })];
+		const pendingStore = createStore(await tempDir());
+		await pendingStore.apply([{ op: "set", path: ["pending", "/wt/linked"], value: { workspaceId: "a", label: "linked", repoRoot: "/repo", since: NOW } }]);
+		await runSweep(later.deps(pendingStore, () => NOW + 1000), { confirmMs: 0 });
+		assert.deepEqual(later.removed, []);
+		assert.ok(later.logs.some((line) => line.startsWith("keep checkout /wt/linked") && line.includes("workspace reopened")), later.logs.join("\n"));
+		assert.equal(Object.keys((await pendingStore.read()).pending).length, 0, "the pending entry is settled either way");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("A checkout is kept when Herdr cannot be listed again", async () => {
+	const dir = await tempDir();
+	try {
+		const w = world({ workspaces: [workspace("a", "left")], panes: [pane("a:p1", "a")], checkouts: { "/wt/left": {} } });
+		let lists = 0;
+		const list = w.herdr.listPanes;
+		w.herdr.listPanes = async () => {
+			if (++lists > 1) throw new Error("herdr pane list failed: server gone");
+			return list();
+		};
+		await runSweep(w.deps(createStore(dir)), { confirmMs: 0 });
+		assert.deepEqual(w.removed, []);
+		assert.ok(w.logs.some((line) => line.startsWith("keep checkout /wt/left") && line.includes("could not be listed")), w.logs.join("\n"));
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
 });

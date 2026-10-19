@@ -1,6 +1,6 @@
 // What the reaper reaches outside itself with: its state file and locks, the herdr CLI, and git.
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { mkdir, readFile, rename, rmdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -106,6 +106,13 @@ export function gitClient() {
 	const git = async (args) => (await run("git", args, { maxBuffer: 16 * 1024 * 1024 })).stdout;
 	return {
 		exists: (path) => existsSync(path),
+		realpath: (path) => {
+			try {
+				return realpathSync(path);
+			} catch {
+				return path;
+			}
+		},
 		status: (checkout) => git(["-C", checkout, "status", "--porcelain"]),
 		branch: (checkout) => git(["-C", checkout, "symbolic-ref", "--quiet", "--short", "HEAD"]).then((out) => out.trim(), () => null),
 		containedBy: (checkout) => git(["-C", checkout, "for-each-ref", "--contains", "HEAD", "refs/heads", "refs/remotes", "refs/tags"]),
