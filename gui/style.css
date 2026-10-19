@@ -350,7 +350,7 @@ a.tower:hover::before { border-color: var(--c); }
 .tx.in + .tx.in, .tx.you + .tx.you { margin-top: -4px; }
 .tx.in + .tx.in > .ava, .tx.you + .tx.you .ava { visibility: hidden; }
 .tx.in + .tx.in .tx-body > header b, .tx.you + .tx.you > header b { display: none; }
-.chat-top { height: 1px; }
+.chat-top { height: 1px; } .chat-end { height: 1px; margin-top: -1px; } /* the sentinel chat.ts reads the log's end from, in the last pixel of the live line */
 .chat-live { display: flex; align-items: center; gap: 10px; margin-top: 14px; padding-left: 44px; color: var(--c); font-size: 12px; }
 .chat-pill { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); border: 0; --c: #38e0ff; }
 /* The entry Open comms lands on, lit for a moment (an entry's containment makes it the containing block). */
