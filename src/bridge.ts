@@ -135,9 +135,9 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 		open(adapter: OwnerAdapter, d: Dialog) {
 			const call = d.toolCallId ? calls.get(d.toolCallId) : undefined;
 			if (d.toolCallId && (!call || (!adapter.gate && call.tool !== adapter.tool))) return; // only a call in flight of the owner's own tool (a gate: of any tool)
-			// A twin (the wrap of ctx.ui, intercept.ts) yields to a contract owner's dialog on the same tool call, whichever opened first: the owner relays it.
+			// A twin (the wrap of ctx.ui, intercept.ts) yields to a contract owner's dialog on the same tool call, whichever opened first: the owner relays it. It is never relayed for a call whose tool has a contract owner, even when the owner's own dialog was refused or never came.
 			const same = open().filter((r) => d.toolCallId && r.d.toolCallId === d.toolCallId && Boolean(r.adapter.twin) !== Boolean(adapter.twin));
-			if (adapter.twin && same.length) return;
+			if (adapter.twin && (same.length || OWNERS.some((o) => !o.twin && o.tool !== undefined && o.tool === call?.tool))) return; // a tool with a contract owner is relayed by it or stays in the terminal: a twin would lose its notes and localOnly
 			same.filter((r) => r.state === "open").forEach((r) => recs.delete(r.d.id));
 			recs.set(d.id, { adapter, d, state: "open", waiting: [] });
 			if (call?.signal?.aborted) adapter.cancel?.(bus, d);

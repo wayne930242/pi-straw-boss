@@ -561,12 +561,12 @@ test("a twin (the wrap of ctx.ui) yields to a contract owner's dialog on the sam
 	a.open("d1", "c1");
 	a.events.emit("straw-boss:ui:pending", twin);
 	assert.deepEqual(owners(a), ["robot-hand"]);
-	// The twin first: the owner's dialog replaces it, and the twin's late close and answer find nothing.
+	// The twin first: it is not relayed, the owner's dialog is, and the twin's late close and answer find nothing.
 	const b = session();
 	b.own();
 	b.fire("tool_execution_start", { toolCallId: "c1", toolName: "robot_hand", args: {} });
 	b.events.emit("straw-boss:ui:pending", twin);
-	assert.deepEqual(owners(b), ["pi-ui"]);
+	assert.deepEqual(owners(b), [], "a tool with a contract owner is never relayed as a twin, so its localOnly choices and notes cannot be lost");
 	b.events.emit("robot-hand:pending", { version: 1, id: "d1", toolCallId: "c1", digest: DIGEST, select: SELECT });
 	assert.deepEqual(owners(b), ["robot-hand"]);
 	b.events.emit("straw-boss:ui:closed", { version: 1, id: "t1", by: "local" });
