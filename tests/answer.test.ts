@@ -4,7 +4,7 @@ import { get, request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, afterEach, test } from "node:test";
-import { readRecord } from "../src/gui.ts";
+import { readRecord } from "../src/handover.ts";
 import type { Net, Unit } from "../src/net.ts";
 import { selectDigest } from "../src/owners.ts";
 import { type Agent, until, World } from "./fakes.ts";

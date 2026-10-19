@@ -4,7 +4,7 @@ import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { readRecord } from "../src/gui.ts";
+import { readRecord } from "../src/handover.ts";
 import { listDirs, pickable } from "../src/spawn.ts";
 import { until, World } from "./fakes.ts";
 

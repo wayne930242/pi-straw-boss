@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { readRecord } from "../src/gui.ts";
+import { readRecord } from "../src/handover.ts";
 import type { Net } from "../src/net.ts";
 import { type Agent, decode, fromLines, settle, until, World } from "./fakes.ts";
 
