@@ -168,12 +168,12 @@ export function noteWorkspaces(workspaces, state, now, createdIds = new Set()) {
 	const ops = state.seeded ? [] : [set(["seeded"], true)];
 	for (const workspace of workspaces) {
 		const record = state.workspaces[workspace.workspace_id];
-		if (!record) {
-			const isNew = createdIds.has(workspace.workspace_id) || state.seeded;
-			ops.push(set(["workspaces", workspace.workspace_id], { createdAt: isNew ? now : 0, label: workspace.label }));
-		} else if (record.createdAt === 0 && createdIds.has(workspace.workspace_id)) {
-			// The created event came after a rename event had already made the record.
-			ops.push(set(["workspaces", workspace.workspace_id], { createdAt: now, label: record.label }));
+		if (createdIds.has(workspace.workspace_id)) {
+			// A created event is the word on a workspace's age, even over an older record: Herdr reuses ids of closed workspaces, and a
+			// rename event may have made the record first.
+			ops.push(set(["workspaces", workspace.workspace_id], { createdAt: now, label: workspace.label }));
+		} else if (!record) {
+			ops.push(set(["workspaces", workspace.workspace_id], { createdAt: state.seeded ? now : 0, label: workspace.label }));
 		} else if (record.label !== workspace.label) {
 			// A label change no rename event reported is not attributed to the user.
 			ops.push(set(["workspaces", workspace.workspace_id, "label"], workspace.label));

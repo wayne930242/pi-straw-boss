@@ -363,6 +363,12 @@ test("A created event that follows the rename event still marks the workspace ne
 	assert.deepEqual(created.workspaces.w2, { createdAt: NOW + 5000, label: "named" });
 });
 
+test("A created event overrides the record of a reused workspace id", () => {
+	const stale = state({ seeded: true, workspaces: { w2: { createdAt: 5, label: "old workspace" } } });
+	const fresh = applyOps(stale, noteWorkspaces([workspace("w2", "new")], stale, NOW, new Set(["w2"])));
+	assert.deepEqual(fresh.workspaces.w2, { createdAt: NOW, label: "new" });
+});
+
 test("Pins of workspaces and checkouts that are gone are forgotten", () => {
 	const pins = { "/wt/here": {}, "/wt/gone": {}, "workspace:w1": {}, "workspace:w9": {} };
 	const ops = prunePins([workspace("w1", "x")], state({ pins }), { exists: (path) => path === "/wt/here" });
