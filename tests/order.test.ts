@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, mock, test } from "node:test";
-import { descendants, INDENT, markKids, netTokens, orderKey } from "../src/order.ts";
+import { descendants, INDENT, markKids, netTokens, orderKey, unplaced } from "../src/order.ts";
 import { ARROW, type HerdrTab, herdrWorld, MARK, type Pane, type Workspace } from "../src/herdr.ts";
 import { settle, until, World } from "./fakes.ts";
 
@@ -139,6 +139,19 @@ test("every live subagent gets a key, past the eight the dashboard lists, so non
 	assert.deepEqual(descendants(parent, "000.0", "Crowd", [parent, kidPane("kid0", "wA:t1", "k00", "k00")], Date.now()).map((k) => k.pane), ["kid0"]);
 });
 
+test("unplaced tells whether a subagent at any depth has no pi pane yet, and ends on a cycle", () => {
+	const file = launch("up-parent", [{ id: "up-a", name: "aaa" }]);
+	const parent = pane("wA:p1", "wA:t1", { agent_session: { value: file } });
+	const kid = kidPane("wS:p1", "wS:t1", "up-a", "aaa");
+	assert.equal(unplaced(undefined, [], Date.now()), false);
+	assert.equal(unplaced(parent, [parent, kid], Date.now()), false, "every launched subagent runs pi");
+	assert.equal(unplaced(parent, [parent, { ...kid, agent: undefined }], Date.now()), true, "a pane at a trust prompt is no pi yet");
+	assert.equal(unplaced(parent, [parent], Date.now()), true, "nor is a pane that has no session file yet");
+	launch("up-a-1a2b3c4d-5e6f7a8b-9c0d", [{ id: "up-grand", name: "ggg" }]);
+	assert.equal(unplaced(parent, [parent, kid], Date.now()), true, "a grandchild counts too");
+	assert.equal(unplaced(parent, [parent, kid, kidPane("wS:p2", "wS:t1", "up-grand", "ggg")], Date.now()), false);
+});
+
 test("netTokens reads Herdr for a session's own tokens (a tower has no mark) and its subagents'; markKids writes them and clears the panes it no longer marks", async () => {
 	world.herdr.workspaces.unshift({ workspace_id: "wS", label: "Alpha feature", tokens: {}, worktree: { is_linked_worktree: true, repo_key: "/r/alpha" } });
 	world.herdr.addTab("wS:t1", "child", "wS:p1");
@@ -151,7 +164,7 @@ test("netTokens reads Herdr for a session's own tokens (a tower has no mark) and
 	assert.equal(ARROW, "[sub]", "a subagent is tagged in words, then its launcher");
 	assert.equal(MARK.member, "\uf007", "a member is marked by the person glyph alone");
 	assert.deepEqual(INDENT, { more: "├─", last: "└─" }, "a subagent hangs on a tree branch, like a worktree in Herdr's Spaces panel");
-	assert.deepEqual(main, { own: { sb_order: "000.1.000.0.000", sb_mark: MARK.main, sb_indent: null, sb_name: null, sb_main_tab: "work", sb_tab: null, sb_member_tab: null }, kids: [{ pane: "wS:p1", order: "000.1.000.0.000.000", mark: `${ARROW} Main`, indent: INDENT.last, name: "aaa" }], joined: new Set() }, "a main agent carries no indent; its only subagent has the last branch");
+	assert.deepEqual(main, { own: { sb_order: "000.1.000.0.000", sb_mark: MARK.main, sb_indent: null, sb_name: null, sb_main_tab: "work", sb_tab: null, sb_member_tab: null }, kids: [{ pane: "wS:p1", order: "000.1.000.0.000.000", mark: `${ARROW} Main`, indent: INDENT.last, name: "aaa" }], joined: new Set(), waiting: true }, "a main agent carries no indent; its only subagent has the last branch, and the launch records of that subagent (left by the first test) name two with no pane");
 	assert.deepEqual((await netTokens(run, place, "tower", "Main")).own, { sb_order: "000.0", sb_mark: null, sb_indent: null, sb_name: null, sb_main_tab: null, sb_member_tab: null, sb_tab: null }, "a tower's tab already carries the glyph, and a tower is not indented");
 	assert.deepEqual((await netTokens(run, { ...place, paneId: "wA:p99" }, "member", "Main")).own, { sb_order: null, sb_mark: MARK.member, sb_indent: null, sb_name: null, sb_main_tab: null, sb_member_tab: null, sb_tab: null }, "a pane Herdr does not list has no key");
 
