@@ -78,6 +78,16 @@ test("a relayed queue goes to its unit, oldest first; one out of shape is left o
 	assert.equal((await read(x, path)).unit.queued, undefined, "an emptied queue clears");
 });
 
+test("a relayed monitor list goes to its unit; one out of shape is left out while the dialogs still go", async () => {
+	const x = hub(), path = file([]);
+	const monitors = [{ id: "2", what: "vite --port 5199", status: "running" as const, lines: 3, at: 2, last: "ready" }, { id: "1", what: "npm test", status: "error" as const, exit: 1, lines: 9, at: 1, ended: 5 }];
+	x.h.receive("S", x.list([], { file: path, monitors }));
+	assert.deepEqual(JSON.parse(JSON.stringify((await read(x, path)).unit.monitors)), monitors);
+	x.h.receive("S", x.list([dialog()], { file: path, monitors: [{ ...monitors[0], status: "odd" }] as never }));
+	const { unit } = await read(x, path);
+	assert.deepEqual([unit.monitors, unit.mark], [undefined, "waiting"]);
+});
+
 test("each rule that keeps a dialog in the terminal says why", async () => {
 	const x = hub(), robot = file([["c1", "robot_hand"]]), two = file([["c1", "robot_hand"], ["c2", "bash"]]), secret = file([["c1", "secret_drop"]]);
 	const why = async (dialogs: Dialog[], path: string | undefined = robot) => {

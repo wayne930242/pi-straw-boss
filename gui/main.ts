@@ -5,7 +5,7 @@ import type { Net, Unit } from "../src/net.ts";
 import type { Data, HistoryEvent } from "./chat.ts";
 import type { Post } from "./composer.ts";
 import { changes } from "./log.ts";
-import { type Alert, alertsOf, arrivals } from "./alerts.ts";
+import { type Alert, alertsOf, arrivals, unitOf } from "./alerts.ts";
 import type { mountPanels, Tile } from "./layer.ts";
 import { mountNotify } from "./notify.ts";
 import { mountPage } from "./render.ts";
@@ -167,7 +167,7 @@ document.addEventListener("click", (event) => {
 	withPanels((p) => p.stack.show(alert));
 }, true);
 const router = createRouter((route) => navigate(route));
-const notify = mountNotify((a) => router.go({ view: "session", ws: a.ws, key: a.key }));
+const notify = mountNotify((a) => router.go({ view: "session", ws: a.ws, key: unitOf(a) }));
 const stream = createStream({
 	open,
 	now: Date.now,

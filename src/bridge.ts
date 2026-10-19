@@ -7,6 +7,7 @@ import { type Answer, type Bus, type Dialog, OWNERS, type OwnerAdapter, type Ver
 import { type Cmd, listCommands, MAX_PREFIX } from "./commands.ts";
 import type { Queued } from "./net.ts";
 import { type Editor, probeEditor } from "./probe.ts";
+import { type Monitor, trackMonitors } from "./monitors.ts";
 
 // The bridge runs in every pi session inside Herdr, subagents included. It turns the owners' dialog events (owners.ts) into one list of open
 // dialogs, relays it to the one running GUI server (gui.json in the state directory names its session G), and hands the server's answers to
@@ -22,7 +23,7 @@ import { type Editor, probeEditor } from "./probe.ts";
 // A close button asks it (`close`) to quit its session the way /boss close does (index.ts), which answers whether it will.
 // It relays the session's queue too: pi tells extensions only whether messages wait (hasPendingMessages), so the bridge keeps what it saw
 // typed while the agent works (`input` with a streaming behavior) and drops one when its user message starts; a queue pi emptied another
-// way (Esc, Alt+Up) clears at the next check.
+// way (Esc, Alt+Up) clears at the next check. And it relays the session's background monitors (monitors.ts).
 
 export const REGISTER = "intercom:extension-register";
 const VERDICT_MS = 2000, POLL_MS = 2000, KEEP_MS = 120_000, KEEP = 16, MAX_GUIS = 8, MAX_MESSAGE = 15 * 1024;
@@ -33,8 +34,8 @@ export const guiNamespace = (g: string) => `straw-boss/gui/${createHash("sha256"
 export type Outcome = "accepted" | "rejected" | "stale" | "busy" | "unknown";
 export interface Ack { version: 1; type: "ack"; bridgeId: string; id: string; answerId: string; outcome: Outcome; reason?: string; by?: string }
 /** `closed`: dialogs closed in the last 2 minutes (at most 16), so an answer that comes late hears who closed it, and a resent one that won, that it won. */
-/** `documents`: what the document owner lists now; `docsCut` when they did not fit the message (they are dropped first). `queued`: the session's queue, oldest first. */
-export interface Dialogs { version: 1; type: "dialogs"; bridgeId: string; pane: string; file: string | null; dialogs: Dialog[]; closed: Closed[]; documents?: Doc[]; docsCut?: true; queued?: Queued[] }
+/** `documents`: what the document owner lists now; `docsCut` when they did not fit the message (they are dropped first). `queued`: the session's queue, oldest first. `monitors`: its background monitors. */
+export interface Dialogs { version: 1; type: "dialogs"; bridgeId: string; pane: string; file: string | null; dialogs: Dialog[]; closed: Closed[]; documents?: Doc[]; docsCut?: true; queued?: Queued[]; monitors?: Monitor[] }
 export interface Closed { id: string; by: string; answerId?: string }
 export interface ProbeResult extends Editor { version: 1; type: "probe-result"; bridgeId: string; probeId: string }
 export interface CommandsResult { version: 1; type: "commands-result"; bridgeId: string; reqId: string; commands: Cmd[] }
@@ -73,7 +74,8 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 		const dialogs = final ? [] : open().map((r) => ({ ...r.d, ...(r.state !== "open" ? { busy: true as const } : {}) }));
 		const closed = final ? [] : [...recs.values()].filter((r) => r.state === "closed").map((r) => ({ id: r.d.id, by: r.by!, ...(r.by === "remote" && r.answerId ? { answerId: r.answerId } : {}) }));
 		const queue = final ? [] : queued.slice(0, MAX_QUEUED).map((q) => ({ ...q, text: clipQueued(q.text) }));
-		let msg: Dialogs = { version: 1, type: "dialogs", bridgeId, pane: env.HERDR_PANE_ID!, file: file() ?? null, dialogs, closed, documents: final ? [] : docs, ...(queue.length ? { queued: queue } : {}) };
+		const mons = final ? [] : (monitors?.list() ?? []);
+		let msg: Dialogs = { version: 1, type: "dialogs", bridgeId, pane: env.HERDR_PANE_ID!, file: file() ?? null, dialogs, closed, documents: final ? [] : docs, ...(queue.length ? { queued: queue } : {}), ...(mons.length ? { monitors: mons } : {}) };
 		const big = () => Buffer.byteLength(JSON.stringify(msg)) > MAX_MESSAGE; // in bytes, as the broker counts
 		if (big()) msg = { ...msg, documents: [], docsCut: true }; // the documents go first: they stay in the terminal, and the unit says so
 		if (big()) msg = { ...msg, dialogs: dialogs.map(({ select, questions, ...d }) => ({ ...d, big: true as const })) }; // shown read-only: too long to show
@@ -181,6 +183,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 		if (docs.some((d) => d.id === m.id && d.kind === "html")) submitForm(bus, m.id, m.answerId, m.fields, out);
 		else out({ accepted: false, reason: "closed" });
 	}
+	let monitors: ReturnType<typeof trackMonitors> | undefined;
 	const requeue = (next: Queued[]) => {
 		if (next.length === queued.length && next.every((q, i) => q === queued[i])) return;
 		queued = next;
@@ -207,7 +210,8 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 		file = () => ctx.sessionManager.getSessionFile();
 		tell = (text) => ctx.hasUI && ctx.ui.notify(text, "warning");
 		editor = () => probeEditor(ctx);
-		offs = [...OWNERS.map((o) => o.listen(bus, report)), listenDocs(bus, (d) => ((docs = d), changed()))];
+		monitors = trackMonitors(bus, () => push());
+		offs = [...OWNERS.map((o) => o.listen(bus, report)), listenDocs(bus, (d) => ((docs = d), changed())), () => monitors?.off()];
 		seen = -1; // a new session file (/new, /resume) is told to the server at once
 		follow();
 		if (!poll) (poll = setInterval(follow, POLL_MS)).unref?.();
@@ -226,6 +230,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 	pi.on("session_shutdown", () => {
 		docs = [];
 		queued = [];
+		monitors?.clear(); // pi-loop-monitor stops a session's monitors with it
 		open().forEach((r) => report.closed(r.d.id, "error"));
 		push(true);
 		[...calls.values()].forEach((c) => c.stop?.());

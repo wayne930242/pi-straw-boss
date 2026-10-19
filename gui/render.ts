@@ -41,7 +41,9 @@ export const mark = (el: HTMLElement, value: Mark) => {
 	if (changed) (el.classList.remove("flash"), void el.offsetWidth, el.classList.add("flash"));
 };
 /** "tool:edit" reads as "using edit". */
-export const doing = (note: string | undefined, mk: Mark) => (note ? (note.startsWith("tool:") ? m.using({ tool: note.slice(5) }) : Object.hasOwn(NOTE, note) ? NOTE[note]!() : note) : LABEL[mk]());
+/** A failed monitor's alert notes `monitor:<status>:<what>` (alerts.ts). */
+const monitorNote = (note: string) => ((i) => (note.slice(8, i) === "stale" ? m.monitor_stale : m.monitor_failed)({ what: note.slice(i + 1) }))(note.indexOf(":", 8));
+export const doing = (note: string | undefined, mk: Mark) => (note ? (note.startsWith("tool:") ? m.using({ tool: note.slice(5) }) : note.startsWith("monitor:") ? monitorNote(note) : Object.hasOwn(NOTE, note) ? NOTE[note]!() : note) : LABEL[mk]());
 /** Points a link at a route: a real href, so middle-click and copy-link work, and data-route for the in-page router. */
 export const aim = (a: Element, route: Route | undefined) => {
 	a.toggleAttribute("hidden", !route);

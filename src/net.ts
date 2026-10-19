@@ -4,6 +4,7 @@ import { type Mark, markOf, type Row, sessionMark, subagents } from "./dashboard
 import { headOf, type HerdrRun, isSub, type Pane, panes, parentOf, type Session, workspaces, type Workspace } from "./herdr.ts";
 import { type Pending, type Relayed, withPending } from "./ask.ts";
 import type { Shelf } from "./documents.ts";
+import type { Monitor } from "./monitors.ts";
 import { canonical } from "./history.ts";
 
 // The whole straw net as one JSON-able snapshot for the browser view: every workspace as a base with its tower, tabs, agents,
@@ -13,10 +14,10 @@ import { canonical } from "./history.ts";
 /** A message typed while the agent works, waiting in pi's queue: `steer` reaches it at its next turn, `followUp` when the run ends. */
 export interface Queued { text: string; as: "steer" | "followUp" }
 /** `ended`: a subagent whose run is over (Row.ended); the page clears its finished alert. */
-export interface Unit extends Shelf { queued?: Queued[]; id: string; key: string; control: boolean; name: string; role: "main" | "member" | "subagent" | "outside"; mark: Mark; note?: string; subs: Unit[]; pending?: Pending; ended?: boolean }
+export interface Unit extends Shelf { queued?: Queued[]; monitors?: Monitor[]; id: string; key: string; control: boolean; name: string; role: "main" | "member" | "subagent" | "outside"; mark: Mark; note?: string; subs: Unit[]; pending?: Pending; ended?: boolean }
 export interface Tab { id: string; label: string; units: Unit[] }
 export interface Outpost { id: string; label: string; mark: Mark }
-export interface Base { id: string; label: string; mark: Mark; head: boolean; tower: ({ name: string; mark: Mark; key: string; control: boolean; pending?: Pending; queued?: Queued[] } & Shelf) | null; tabs: Tab[]; outposts: Outpost[]; outside: Unit[] }
+export interface Base { id: string; label: string; mark: Mark; head: boolean; tower: ({ name: string; mark: Mark; key: string; control: boolean; pending?: Pending; queued?: Queued[]; monitors?: Monitor[] } & Shelf) | null; tabs: Tab[]; outposts: Outpost[]; outside: Unit[] }
 export interface Net { bases: Base[] }
 /** What the server may read for a key: the registry entry is the allow list, and paths never come from the browser. */
 export interface Ref { key: string; base: string; name: string; role: string; file?: string; pane?: string }

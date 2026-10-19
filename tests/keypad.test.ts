@@ -54,21 +54,25 @@ test("the module exposes the pad and nothing that sends a sequence; the pad has 
 	assert.equal(el.attrs.get("aria-label"), "Keys for billing");
 });
 
-test("one key per trusted press of its button; a synthetic click and a press while a key is on its way send nothing", async () => {
+test("one key per trusted press of its button; a synthetic click sends nothing, and presses while a key is on its way wait their turn", async () => {
 	const { press, posts, reply, key } = pad();
 	press("up", false);
 	assert.equal(posts.length, 0, "not the user's own press");
 	press("up");
 	assert.deepEqual(posts, [{ key: "up", stream: "st" }]);
-	assert.ok(key("down").disabled, "every button waits while the key is on its way");
+	assert.ok(!key("down").disabled, "the buttons stay as they are while the key is on its way, so they do not flicker as you type");
 	press("down");
-	press("up");
-	assert.equal(posts.length, 1);
-	await reply(200, { accepted: true });
-	assert.ok(!key("down").disabled);
 	press("3");
-	assert.deepEqual(posts.at(-1), { key: "3", stream: "st" });
+	assert.equal(posts.length, 1, "one write at a time");
+	await reply(200, { accepted: true });
+	await new Promise((r) => setTimeout(r, 160));
+	assert.deepEqual(posts.at(-1), { key: "down", stream: "st" }, "then the next, after the gap");
+	await reply(200, { accepted: true });
+	await new Promise((r) => setTimeout(r, 160));
+	assert.deepEqual(posts.map((p) => p.key), ["up", "down", "3"]);
 });
+
+const gap = () => new Promise((r) => setTimeout(r, 160));
 
 test("the server's confirm shows inline with its reason, and sends the same key with the token it named, once; Cancel sends nothing", async () => {
 	const { press, posts, reply, el } = pad();
@@ -85,11 +89,13 @@ test("the server's confirm shows inline with its reason, and sends the same key 
 	await reply(200, { accepted: true });
 	assert.equal(note.text, "");
 	press("esc");
+	await gap(); // a press goes out after the gap since the last write, as typed keys do
 	await reply(409, { error: "confirm", confirm: "double-esc", reason: "A second Escape on an idle session runs pi's double-Escape action." });
 	note.all().find((x) => x.text === "Cancel")!.onclick!({ isTrusted: true });
 	assert.equal(note.text, "");
 	assert.equal(posts.length, 3);
 	press("tab");
+	await gap(); // a press goes out after the gap since the last write, as typed keys do
 	await reply(409, { error: "no_mirror", reason: "Keys are sent only while this page shows the session's terminal live; open it again." });
 	assert.match(note.text, /terminal live/, "a refusal says why");
 });

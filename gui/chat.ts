@@ -3,6 +3,7 @@ import type { Mark } from "../src/dashboard.ts";
 import type { Shelf } from "../src/documents.ts";
 import type { Item, Todo } from "../src/items.ts";
 import type { Queued } from "../src/net.ts";
+import type { Monitor } from "../src/monitors.ts";
 import { h } from "./dom.ts";
 import { createFollow, reach } from "./follow.ts";
 import { mount, parse } from "./markdown.ts";
@@ -77,7 +78,7 @@ export interface HistoryEvent { key: string; state?: string; successor?: string;
 /** `post` stands in for the server's input API (composer.ts) in the dev fixture. */
 /** `pic` is the URL of an entry's n-th image. */
 export interface Data { older(before: string): Promise<Page>; latest(): Promise<Page>; entry(id: string): Promise<Item | undefined>; pic?(id: string, n: number): string; post?: Post }
-export interface Who extends Shelf { key: string; name: string; role: string; mark: Mark; note?: string; control?: boolean; pending?: Pending; queued?: Queued[] }
+export interface Who extends Shelf { key: string; name: string; role: string; mark: Mark; note?: string; control?: boolean; pending?: Pending; queued?: Queued[]; monitors?: Monitor[] }
 /** `docFor` opens the document a show_doc path names while its session lists it (doc.ts), or is undefined. */
 export interface ChatDeps { who(): Who; link(name: string): HTMLAnchorElement | undefined; docFor?(path: string): (() => void) | undefined }
 /** `reveal` opens the log at an entry (scrolled into view and lit), or with none at the newest entry. `log` is the scrolling log, a focus target. `docs` shows Open beside on the show_doc cards whose document is listed now. */

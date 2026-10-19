@@ -1,5 +1,6 @@
 import type { Mark } from "../src/dashboard.ts";
 import type { Base, Net, Queued, Unit } from "../src/net.ts";
+import type { Monitor } from "../src/monitors.ts";
 import type { Todo } from "../src/items.ts";
 import type { Chat, Data, HistoryEvent, Who } from "./chat.ts";
 import { mountAsk } from "./ask.ts";
@@ -45,7 +46,7 @@ function fillToken(el: HTMLElement, u: { key?: string; name: string; role: strin
 const colEl = () => html(`<div class="col"><a class="token">${PLATE}<span class="name"></span><span class="line"><em class="role"></em><span class="note"></span></span></a><div class="say"><p></p></div><div class="drones"></div></div>`);
 const ZOOM = () => `<div class="zoom-in"><header class="base keep"><a class="tower big"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></a><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>${m.head_tower()}</span><h2></h2><p></p></div><button type="button" class="close-x" data-close="base">×</button><dl class="tally"><div><dt>${m.squads()}</dt><dd></dd></div><div><dt>${m.units()}</dt><dd></dd></div><div data-mark="working"><dt>${m.stat_working()}</dt><dd></dd></div><div data-mark="waiting"><dt>${m.stat_waiting()}</dt><dd></dd></div></dl></header><div class="spawn-btns"><button type="button" class="pair-btn"></button></div><div class="squads"></div><div class="camps"><section class="tab squad camp" data-group="outposts"><h3><svg><use href="#i-outpost"/></svg><b>${m.outposts()}</b><small></small></h3><div class="formation"></div></section><section class="tab squad camp" data-group="outside"><h3><svg><use href="#i-outside"/></svg><b>${m.outside_net()}</b><small>${m.outside_note()}</small></h3><div class="formation"></div></section></div><p class="lost" hidden></p></div>`;
 const DOSSIER = () => `<div class="dossier-in"><span class="tag">${m.unit_dossier()}</span><div class="portrait">${PLATE}</div><h3></h3><p class="d-line"><em class="role"></em> <span class="state"></span></p><p class="d-note" hidden></p><dl class="specs"></dl><button class="cmp-link d-close" type="button" data-close="unit" hidden>${m.close()}</button><div class="d-docs" hidden><h4>${m.documents()}</h4><div class="d-doc-list"></div><p class="d-docs-cut" hidden>${m.docs_cut()}</p></div><div class="d-drones" hidden><h4>${m.dispatched()}</h4><div class="formation"></div></div></div>`;
-const COMMS = () => `<div class="comms-in"><header class="comms-head"><span class="logo"><svg><use href="#i-comms"/></svg></span><div class="head-id"><h2><small>${m.comms()}</small> <span></span></h2><p></p></div><div class="modes" role="group"><button type="button" data-mode="chat" aria-pressed="true">${m.comms()}</button><button type="button" data-mode="term" aria-pressed="false">${m.terminal()}</button></div><span class="chan link" data-state="live"><i></i><b>${m.channel_open()}</b></span><button type="button" class="close-x head-close" data-close="unit" hidden>×</button></header><div class="chat-root"></div><div class="queue-list" hidden></div><details class="todos" hidden><summary><b></b><span></span></summary><ol></ol></details><div class="ask-root"></div><div class="composer-root"></div><div class="term-root" hidden></div></div>`;
+const COMMS = () => `<div class="comms-in"><header class="comms-head"><span class="logo"><svg><use href="#i-comms"/></svg></span><div class="head-id"><h2><small>${m.comms()}</small> <span></span></h2><p></p></div><div class="modes" role="group"><button type="button" data-mode="chat" aria-pressed="true">${m.comms()}</button><button type="button" data-mode="term" aria-pressed="false">${m.terminal()}</button></div><span class="chan link" data-state="live"><i></i><b>${m.channel_open()}</b></span><button type="button" class="close-x head-close" data-close="unit" hidden>×</button></header><div class="chat-root"></div><div class="queue-list" hidden></div><details class="todos" hidden><summary><b></b><span></span></summary><ol></ol></details><details class="monitors" hidden><summary><b></b><span></span></summary><ul></ul></details><div class="ask-root"></div><div class="composer-root"></div><div class="term-root" hidden></div></div>`;
 
 export function mountFocus({ data, restart, openTile, embedTerminal, online }: FocusDeps) {
 	const $ = (id: string) => document.getElementById(id)!;
@@ -198,6 +199,7 @@ export function mountFocus({ data, restart, openTile, embedTerminal, online }: F
 			close.hidden = !u?.control || u.role === "subagent";
 		}
 		drawTodos(info?.todos);
+		drawMonitors(u?.monitors);
 		drawQueued(u?.queued);
 		chat?.setLive(mk === "working" ? `${doing(u!.note, mk)}` : urgent(mk) ? LABEL[mk]() : "", mk);
 		composer?.update({ name: u?.name ?? info?.name ?? route.key, control: Boolean(u?.control), live: state ? state === "live" : Boolean(u), mark: mk, online: online(), answerable: Boolean(u?.pending?.answer) });
@@ -253,6 +255,25 @@ export function mountFocus({ data, restart, openTile, embedTerminal, online }: F
 		text(box, "summary span", now ? (now.activeForm ?? now.subject) : done === list.length ? m.todos_done() : "");
 		box.querySelector("ol")!.replaceChildren(...list.map((t) => Object.assign(document.createElement("li"), { textContent: t.subject, className: t.status })));
 	}
+	/** The session's background monitors under its todos (read-only: pi-loop-monitor lets nothing else stop one): folded to how many run or failed and the newest running one's last line, unfolded to each with its state, exit code, line count, and last line. */
+	function drawMonitors(list: Monitor[] | undefined) {
+		const box = sessionView.querySelector<HTMLDetailsElement>(".monitors");
+		if (!box) return;
+		box.hidden = !list?.length;
+		if (!list?.length) return;
+		const running = list.filter((x) => x.status === "running"), failed = list.filter((x) => x.status === "error" || x.status === "stale").length;
+		box.dataset.failed = String(failed > 0);
+		text(box, "summary b", [m.monitors_title(), running.length && m.monitors_running({ count: running.length }), failed && m.monitors_failed({ count: failed })].filter(Boolean).join(" · "));
+		text(box, "summary span", running[0] ? (running[0].last ?? running[0].what) : "");
+		const state = { running: m.monitor_state_running, done: m.monitor_state_done, error: m.monitor_state_error, stale: m.monitor_state_stale, stopped: m.monitor_state_stopped };
+		box.querySelector("ul")!.replaceChildren(...list.map((x) => {
+			const li = Object.assign(document.createElement("li"), { className: x.status });
+			const meta = [state[x.status](), x.exit !== undefined && m.monitor_exit({ code: x.exit }), m.monitor_lines({ count: x.lines })].filter(Boolean).join(" · ");
+			li.append(Object.assign(document.createElement("b"), { textContent: x.what }), Object.assign(document.createElement("small"), { textContent: meta }));
+			if (x.last) li.append(Object.assign(document.createElement("code"), { textContent: x.last }));
+			return li;
+		}));
+	}
 	/** The session view shows its chat or its terminal, one at a time; the terminal mirrors the pane only while it shows. */
 	let unembed: (() => void) | undefined, pendingMode: "term" | undefined, modeTurn = 0;
 	function setMode(mode: "chat" | "term") {
@@ -268,7 +289,8 @@ export function mountFocus({ data, restart, openTile, embedTerminal, online }: F
 		unembed = undefined;
 		if (mode !== "term") return claim();
 		const turn = ++modeTurn, name = locate(net, key)?.u.name ?? info?.name ?? key;
-		void embedTerminal(key, name, host).then((off) => (turn === modeTurn && route.view === "session" && route.key === key ? (unembed = off) : off()));
+		// Switching to the terminal gives it the keyboard once, on a desktop (only a desktop's mirror has the text box that takes it).
+		void embedTerminal(key, name, host).then((off) => (turn === modeTurn && route.view === "session" && route.key === key ? ((unembed = off), host.querySelector<HTMLElement>(".term-sink")?.focus({ preventScroll: true })) : off()));
 	}
 	const leaveMode = () => (modeTurn++, unembed?.(), (unembed = undefined));
 	const draw = () => (crumbs(), route.view === "workspace" ? drawWorkspace() : drawDossier());

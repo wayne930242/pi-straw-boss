@@ -105,7 +105,18 @@ svg { display: block; }
 .todos ol { display: grid; gap: 3px; max-height: 30vh; overflow-y: auto; margin: 6px 0 2px; padding: 0; list-style: none; }
 .todos li { margin: 0; font: 13px/1.5 var(--sans); } .todos li::before { content: "○"; display: inline-block; width: 1.4em; color: var(--dim); } .todos li.in_progress { color: #38e0ff; } .todos li.in_progress::before { content: "◐"; }
 .todos li.completed { color: var(--dim); text-decoration: line-through; } .todos li.completed::before { content: "✓"; color: #3ddc97; }
-.in-term .todos { display: none; }
+.in-term .todos, .in-term .monitors { display: none; }
+.monitors { margin: 6px 16px 0; padding: 6px 12px; border: 1px solid var(--line); border-radius: 12px; background: rgba(14, 22, 40, 0.85); font-size: 13px; }
+.monitors summary { display: flex; gap: 10px; align-items: baseline; min-width: 0; list-style: none; cursor: pointer; } .monitors summary::-webkit-details-marker { display: none; }
+.monitors summary b { flex: none; color: #38e0ff; font-weight: 600; } .monitors[data-failed="true"] summary b { color: #ff5d73; }
+.monitors summary span { min-width: 0; overflow: hidden; color: var(--dim); font: 12px var(--mono); white-space: nowrap; text-overflow: ellipsis; }
+.monitors summary::after { content: "▸"; margin-left: auto; color: var(--dim); } .monitors[open] summary::after { content: "▾"; }
+.monitors ul { display: grid; gap: 6px; max-height: 30vh; overflow-y: auto; margin: 6px 0 2px; padding: 0; list-style: none; }
+.monitors li { display: grid; gap: 1px; padding-left: 1.4em; text-indent: -1.4em; }
+.monitors li b { font-weight: 500; overflow-wrap: anywhere; } .monitors li b::before { content: "◐"; display: inline-block; width: 1.4em; text-indent: 0; color: #38e0ff; }
+.monitors li.done b::before { content: "✓"; color: #3ddc97; } .monitors li.stopped b::before { content: "■"; color: var(--dim); }
+.monitors li.error b::before, .monitors li.stale b::before { content: "!"; color: #ff5d73; } .monitors li.error small, .monitors li.stale small { color: #ff5d73; }
+.monitors li small { color: var(--dim); text-indent: 0; } .monitors li code { color: var(--dim); font: 12px var(--mono); text-indent: 0; overflow-wrap: anywhere; }
 .new-base { min-height: 140px; border-radius: 18px; border: 1px dashed var(--line); background: none; color: var(--dim); font: 600 14px var(--sans); letter-spacing: 0.08em; cursor: pointer; }
 .spawn .go { --c: #38e0ff; border: 0; }
 .spawn { display: grid; gap: 10px; color: var(--dim); font-size: 13px; }

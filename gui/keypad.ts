@@ -32,7 +32,7 @@ export function keypad({ name, state, post, stream, blip }: { name: string; stat
 	let busy = false;
 	const button = ([key, label, spoken]: [string, string, () => string]) => {
 		const b = h("button", { type: "button", class: "pad-key", "data-key": key, "aria-label": spoken() }, label);
-		b.onclick = (e) => e.isTrusted && !busy && void send({ key });
+		b.onclick = (e) => e.isTrusted && (queue.push({ key }), pump()); // a key pressed while one is on its way waits its turn
 		buttons.push(b);
 		return b;
 	};
@@ -117,7 +117,7 @@ export function keypad({ name, state, post, stream, blip }: { name: string; stat
 	}
 	function update() {
 		const s = state();
-		for (const b of buttons) b.disabled = busy || s === "off" || (s === "hidden" && b.dataset.key !== "esc");
+		for (const b of buttons) b.disabled = s === "off" || (s === "hidden" && b.dataset.key !== "esc"); // not while a write is on its way: the keys would flicker as you type
 	}
 	update();
 	return { el, update, type, text, paste };

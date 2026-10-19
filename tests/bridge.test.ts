@@ -119,6 +119,20 @@ test("the session's queue goes with the dialogs: messages typed while it works, 
 	assert.equal(queued(), undefined, "cleared once pi's queue is empty (Esc, Alt+Up)");
 });
 
+test("the session's monitors go with the dialogs, from pi-loop-monitor's events, and stop going when the session ends", () => {
+	const s = session();
+	s.own();
+	const monitors = () => (s.published.filter((p) => p.payload.type === "dialogs").at(-1)!.payload as Dialogs).monitors;
+	s.events.emit("monitor:started", { monitorId: "1", command: "npm test", description: "unit tests" });
+	assert.deepEqual(monitors()?.map((m) => [m.id, m.what, m.status]), [["1", "unit tests", "running"]]);
+	s.events.emit("monitor:finished", { monitorId: "1", status: "error", exitCode: 1 });
+	assert.deepEqual(monitors()?.map((m) => [m.status, m.exit]), [["error", 1]]);
+	s.fire("session_shutdown");
+	assert.equal(monitors(), undefined, "the last list is empty");
+	s.events.emit("monitor:started", { monitorId: "2", command: "x" });
+	assert.equal(monitors(), undefined, "no longer listening");
+});
+
 test("pendings are taken only for a call of the owner's own tool in flight, in contract v1", () => {
 	const s = session();
 	s.own();

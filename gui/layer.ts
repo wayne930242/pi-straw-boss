@@ -2,7 +2,7 @@ import type { Item } from "../src/items.ts";
 import { mountAsk } from "./ask.ts";
 import { keypad } from "./keypad.ts";
 import { mountTerminals } from "./mirror.ts";
-import { rankOf } from "./alerts.ts";
+import { rankOf, unitOf } from "./alerts.ts";
 import { type Alert, createStack, tally } from "./overlay.ts";
 import { m } from "./paraglide/messages.js";
 import { type Answer, post } from "./post.ts";
@@ -75,11 +75,11 @@ export function mountPanels(deps: PanelDeps) {
 		text(el, ".said", it?.failed ? m.history_unavailable() : (it?.said ?? m.no_messages()));
 		el.querySelector<HTMLElement>(".pending")!.hidden = !it?.pending || gone;
 		text(el, ".pending span", it?.pending ?? "");
-		aim(el.querySelector(".go")!, gone ? undefined : { view: "session", ws: a.ws, key: a.key, ...(it?.at && { at: it.at }) });
+		aim(el.querySelector(".go")!, gone ? undefined : { view: "session", ws: a.ws, key: unitOf(a), ...(it?.at && { at: it.at }) });
 	};
 	const learn = (a: Alert, wait: Intel = { said: "…" }) => {
 		intels.set(a.key, wait);
-		void deps.recent(a.key).then(intel, () => ({ failed: true })).then((it) => {
+		void deps.recent(unitOf(a)).then(intel, () => ({ failed: true })).then((it) => {
 			const el = intels.get(a.key) === wait && (intels.set(a.key, it), dock.querySelector<HTMLElement>(`.dialog[data-key="${CSS.escape(a.key)}"]`));
 			if (el) tell(el, a);
 			if (a.mark === "done") drawDone(stack.queue);
@@ -123,7 +123,7 @@ export function mountPanels(deps: PanelDeps) {
 		if (!intels.has(a.key)) learn(a);
 		tell(el, a);
 		let ask = asks.get(el);
-		if (!ask) asks.set(el, (ask = mountAsk(el.querySelector(".ask-root")!, to(a.key), undefined, () => deps.showTerminal(a.ws, a.key))));
+		if (!ask) asks.set(el, (ask = mountAsk(el.querySelector(".ask-root")!, to(unitOf(a)), undefined, () => deps.showTerminal(a.ws, unitOf(a)))));
 		ask.update(a.pending, a.mark === "waiting" && document.body.dataset.stale !== "true"); // what it waits on, answerable or not; the stream state redraws it (report in main.ts)
 	};
 	// Finished units wait under the HUD's Finished button, apart from what needs the user: a row goes to the unit's comms and clears it, Clear all clears every one.
@@ -139,7 +139,7 @@ export function mountPanels(deps: PanelDeps) {
 			fillPlate(el.querySelector(".plate")!, a.role, a.mark);
 			text(el, ".name", a.name);
 			text(el, "small", `${deps.label(a.ws)} · ${it?.said ?? doing(a.note, a.mark)}`);
-			aim(el.querySelector(".done-go")!, { view: "session", ws: a.ws, key: a.key, ...(it?.at && { at: it.at }) });
+			aim(el.querySelector(".done-go")!, { view: "session", ws: a.ws, key: unitOf(a), ...(it?.at && { at: it.at }) });
 		});
 	};
 	byId("done-clear", HTMLButtonElement).textContent = m.clear_all();

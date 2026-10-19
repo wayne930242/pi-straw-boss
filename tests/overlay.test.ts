@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Mark } from "../src/dashboard.ts";
-import type { Net } from "../src/net.ts";
-import { type Alert, alertsOf, arrivals } from "../gui/alerts.ts";
+import type { Net, Unit } from "../src/net.ts";
+import { type Alert, alertsOf, arrivals, unitOf } from "../gui/alerts.ts";
+import type { Monitor } from "../src/monitors.ts";
 import { createStack, tally } from "../gui/overlay.ts";
 import { createTiles, intel, MAX_TILES, type Tile } from "../gui/layer.ts";
 
@@ -190,6 +191,23 @@ test("alerts come from towers, agents, subagents, and units outside the net; the
 	assert.deepEqual(arrivals(first, second).map((a) => a.key), ["m"]);
 	net.bases[0]!.tabs[0]!.units[0]!.subs[0]!.mark = "done";
 	assert.deepEqual(arrivals(second, alertsOf(net, 3)).map((a) => [a.key, a.mark]), [["s", "done"]], "a unit that finishes later raises a plain alert");
+});
+
+test("a monitor that fails or goes quiet raises an error alert of its own, about its unit, until its session stops listing it", () => {
+	const mon = (id: string, status: Monitor["status"], at = 1): Monitor => ({ id, what: `job ${id}`, status, lines: 0, at });
+	const unit: Unit = { id: "m", key: "m", control: true, name: "m", role: "main", mark: "working", subs: [], monitors: [mon("1", "running")] };
+	const net: Net = { bases: [{ id: "w1", label: "W", mark: "working", head: true, tower: null, outposts: [], tabs: [{ id: "t1", label: "a", units: [unit] }], outside: [] }] };
+	const first = alertsOf(net, 1);
+	assert.deepEqual([...first.keys()], ["m"], "a running monitor raises nothing");
+	unit.monitors = [mon("1", "error"), mon("2", "stale"), mon("3", "done"), mon("4", "stopped")];
+	const second = alertsOf(net, 2), fresh = arrivals(first, second);
+	assert.deepEqual(fresh.map((a) => [unitOf(a), a.mark, a.note]), [["m", "error", "monitor:error:job 1"], ["m", "error", "monitor:stale:job 2"]], "the unit itself still works");
+	assert.ok(fresh.every((a) => a.key !== "m" && a.unit === "m"));
+	assert.deepEqual(arrivals(second, alertsOf(net, 3)), [], "a failed monitor is news once");
+	unit.monitors = [mon("1", "error", 5)];
+	assert.equal(arrivals(second, alertsOf(net, 4)).length, 1, "the same id run again and failed again is new");
+	unit.monitors = undefined;
+	assert.deepEqual([...alertsOf(net, 5).keys()], ["m"], "gone when the session no longer lists it, so the queue drops it");
 });
 
 const tile = (id: string): Tile => ({ id, title: id, body: () => ({}) as HTMLElement });
