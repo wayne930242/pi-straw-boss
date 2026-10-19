@@ -1,5 +1,6 @@
 import type { Item } from "../src/items.ts";
 import { mountAsk } from "./ask.ts";
+import type { Hotkey } from "./hotkeys.ts";
 import { keypad } from "./keypad.ts";
 import { mountTerminals } from "./mirror.ts";
 import { rankOf, unitOf } from "./alerts.ts";
@@ -223,6 +224,18 @@ export function mountPanels(deps: PanelDeps) {
 		tiles,
 		stack,
 		terminal,
+		/** A page key (hotkeys.ts): Space is the HUD alert button's click, F the top dialog's ⤢ (a phone hides it). False when it had nothing to do. */
+		hotkey(key: Hotkey) {
+			if (key === "next") {
+				if (button.disabled) return false;
+				stack.next();
+				return true;
+			}
+			const zoomer = [...dock.querySelectorAll<HTMLButtonElement>(".dialog:not(.leaving) .zoom")].at(-1);
+			if (!zoomer?.getClientRects().length) return false;
+			zoomer.click();
+			return true;
+		},
 		/** A snapshot's alerts: the new ones queue, and the queue drops the ones whose unit moved on. */
 		alerts(fresh: Alert[], now: Map<string, Alert>) {
 			for (const alert of fresh) void (learn(alert), stack.arrive(alert));

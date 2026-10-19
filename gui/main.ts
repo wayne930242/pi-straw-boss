@@ -7,6 +7,7 @@ import type { Post } from "./composer.ts";
 import { changes } from "./log.ts";
 import { type Alert, alertsOf, arrivals, unitOf } from "./alerts.ts";
 import type { mountPanels, Tile } from "./layer.ts";
+import { MODAL, mountHotkeys } from "./hotkeys.ts";
 import { mountNotify } from "./notify.ts";
 import { mountQuit } from "./quit.ts";
 import { mountPage } from "./render.ts";
@@ -188,10 +189,11 @@ document.addEventListener("visibilitychange", () => {
 });
 // Escape closes the top dialog; with none open it goes up one route. A modal (a close confirmation, the lightbox) takes it for itself.
 addEventListener("keydown", (event) => {
-	if (event.key !== "Escape" || event.defaultPrevented || document.querySelector("dialog.sheet[open], dialog.lightbox[open], [popover]:popover-open")) return; // an open popover closes itself
+	if (event.key !== "Escape" || event.defaultPrevented || document.querySelector(MODAL)) return; // an open popover closes itself
 	event.preventDefault();
 	if (!panels?.stack.close() && current.view !== "map") router.go(upOf(current));
 });
+mountHotkeys((hotkey) => panels?.hotkey(hotkey) ?? false); // Space opens the next alert, F enlarges the top dialog; nothing before the overlay layer has loaded
 el("pair").hidden = location.hostname !== "127.0.0.1"; // pairing is this computer's: a paired device comes in by its tailnet name (remote.ts)
 el("pair").addEventListener("click", () => void import("./pair.ts").then(({ pairTile }) => openTile(pairTile(), true)));
 mountQuit({ route: () => current, net: () => latest, go: (route) => router.go(route) });
