@@ -122,7 +122,8 @@ description = "toggle the straw net view"
 
 另一個選用的 Herdr plugin 放在 [`herdr-reaper/`](herdr-reaper)，專門清理 worktree 工作區裡智慧體跑完留下的東西。
 只處理 worktree 是 linked git worktree 的工作區（不管它叫什麼名字）：智慧體結束、pane 的 shell 閒置之後，就關掉這個 pane，但絕不關掉有焦點的 pane。
-Herdr 接著會關掉分頁和工作區，plugin 再在 `git status` 乾淨時移除這個工作區的 checkout。
+Herdr 接著會關掉分頁和工作區，plugin 再在 `git status` 乾淨、而且沒有別的東西還在用它（沒有別的 pane 在裡面工作，也沒有別的工作區開在同一個 checkout）時移除這個工作區的 checkout。
+git 忽略的檔案（`.env`、`node_modules`、快取、本機資料庫）不算變更，所以會跟著 checkout 一起被刪掉。
 分支一律保留；有未提交變更的 checkout 也留著，原因寫在 plugin 日誌裡。
 其他工作區完全不動。
 它每 10 分鐘掃一次，智慧體結束後約一分鐘也會掃，`reap-now` 動作則立刻掃。
@@ -131,7 +132,7 @@ Herdr 接著會關掉分頁和工作區，plugin 再在 `git status` 乾淨時�
 釘選的工作區永遠不會被清理。
 `pin` 動作會切換它所在工作區的釘選；工作區出現一分鐘後才被你改名的話，會自動釘選（pi-herdr-agents 在幾秒內替工作區命名，不會觸發釘選），取消釘選時也會改回原名。
 釘選是工作區的 token `$pin`，內容是 Nerd Font 的圖釘字形，要加進 Space 的列設定才看得到。
-需要 Herdr 0.9.3 以上、git 和 node。
+需要 Herdr 0.9.3 以上、git 和 node 18 以上。
 
 ```bash
 herdr plugin install wayne930242/pi-straw-boss/herdr-reaper
@@ -149,7 +150,8 @@ rows = [["state_icon", "workspace", { token = "$pin" }], ["branch", "git_status"
 ```
 
 也可以用 `herdr plugin link /path/to/pi-straw-boss/herdr-reaper` 連結原始碼，用 `herdr plugin unlink wayne930242.straw-boss-reaper` 移除。
-第一次掃描會把 linked-worktree 工作區裡所有沒有智慧體的 pane 都當成智慧體已結束，所以想保留的工作區要在那之前先釘選。
+plugin 一安裝或連結就開始清理，沒有試跑，也不會先問：第一次掃描會把 linked-worktree 工作區裡所有沒有智慧體、shell 閒置的 pane 都當成智慧體已結束，大約在第一個 hook 執行後一分半鐘。
+請先執行 `bash herdr-reaper/run.sh reaper.mjs dry-run` 看它會做什麼，並釘選想保留的工作區（plugin 連結後 `pin` 動作才能用；也可以在連結之前，先在 plugin 的設定目錄放一個帶 `only_under` 的 `config.json`）。
 [運作方式](docs/how-it-works.md#worktree-reaper)（英文）有規則和限制。
 
 ## 延伸閱讀
