@@ -241,6 +241,7 @@
 	"answer_it": "Answer it in the terminal.",
 	"show_terminal": "Show terminal",
 	"waits_dialog": "It waits on a dialog.",
+	"opened_during": "Opened while {tool} was running; it may not be about that call.",
 	"other_answer": "The other answer was not taken; this one can go.",
 	"retry_terminal": "{why} Open the terminal again to retry.",
 	"paused_hidden": "Paused while this tab is hidden.",

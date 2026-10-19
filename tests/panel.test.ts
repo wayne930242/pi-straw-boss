@@ -574,6 +574,14 @@ test("a confirmation is answerable on this computer's page with Yes and No, and 
 	assert.ok(button("Send answer"));
 });
 
+test("a dialog relayed from ctx.ui says it was opened while the call ran, not that it belongs to it", () => {
+	const local = mountAsk(root as unknown as HTMLElement, () => new Promise(() => {}), false);
+	local.update({ ...confirming(), answer: { ...confirming().answer!, twin: true } }, true);
+	assert.match(root.textContent, /Opened while bash was running; it may not be about that call\./);
+	local.update({ ...confirming(), answer: { ...confirming().answer!, dialog: "u2" } }, true);
+	assert.doesNotMatch(root.textContent, /Opened while/, "an owner's own dialog does not say so");
+});
+
 test("the confirmation notice is said in every locale the page ships", async () => {
 	const { locales } = await import("../gui/paraglide/runtime.js");
 	for (const locale of locales) assert.ok(m.confirm_local_only({}, { locale }).length > 20, locale);

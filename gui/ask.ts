@@ -20,8 +20,8 @@ const how = (a: Ask) => (a.multiple ? m.ask_several() : a.freeform && a.options.
 /** One question, read-only: its header tag, the question, its context, its options, and (in a list of several) how it is answered. */
 const block = (a: Ask, list: boolean) => h("div", { class: "ask-one" }, a.header && h("b", { class: "ask-head" }, a.header), h("p", { class: "ask-q" }, a.question), a.context && h("div", { class: "ask-ctx" }, a.context),
 	a.options.length > 0 && h("ol", { class: "ask-opts", "aria-label": m.options() }, ...a.options.map((o) => h("li", { class: "ask-opt" }, h("b", null, o.title), o.description && h("small", null, o.description)))), list && how(a) && h("small", { class: "ask-how" }, how(a)));
-/** C0 and C1 controls but tab and newline drawn as U+FFFD: the title is shown as text, and the digest covers the raw one. */
-export const visible = (s: string) => s.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "\ufffd");
+/** C0 and C1 controls but tab and newline, and Unicode format characters (bidi overrides, zero-width marks), drawn as U+FFFD: the text is shown as text, and the digest covers the raw one. */
+export const visible = (s: string) => s.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\p{Cf}]/gu, "\ufffd");
 /** The choices a page offers, with their indexes: a local-only one (it acts on the GUI's computer) only on that computer's page. */
 export const offered = (a: Answerable, remote: boolean) => (a.select?.choices ?? []).map((c, i) => ({ ...c, i })).filter((c) => !(remote && c.localOnly));
 /** One question's answer from what is picked, typed, and noted. */
@@ -86,7 +86,7 @@ export function mountAsk(root: HTMLElement, post: AnswerPost, remote = location.
 	/** A select: its title as written, one choice per row with where it acts, Copy command (the browser's clipboard; it answers nothing). */
 	function select(x: Panel, a: Answerable) {
 		let chosen: number | undefined;
-		const opts = offered(a, remote).map((c) => option("radio", c.label, [c.note], () => ((chosen = c.i), opts.forEach((o, k) => o.setAttribute("aria-checked", String(offered(a, remote)[k]!.i === c.i))), draw()), c.i + 1)); // the terminal's numbers, also when a local-only choice is hidden
+		const opts = offered(a, remote).map((c) => option("radio", visible(c.label), [c.note && visible(c.note)], () => ((chosen = c.i), opts.forEach((o, k) => o.setAttribute("aria-checked", String(offered(a, remote)[k]!.i === c.i))), draw()), c.i + 1)); // the terminal's numbers, also when a local-only choice is hidden
 		const copy = a.select?.copy !== undefined && h("button", { type: "button", class: "cmp-link" }, m.copy_command());
 		if (copy) (copy.disabled = !navigator.clipboard), (copy.onclick = () => void navigator.clipboard.writeText(a.select!.copy!).then(() => say(x.note, "ok", m.copied()), () => say(x.note, "error", m.clipboard_refused())));
 		x.pick = () => (chosen === undefined ? undefined : { choice: chosen });
@@ -122,7 +122,8 @@ export function mountAsk(root: HTMLElement, post: AnswerPost, remote = location.
 		const term = h("p", { class: "ask-term" }, p.why && asks.length ? p.why : `${list ? m.answer_them() : m.answer_it()} ${list || !asks[0] ? "" : how(asks[0])}`.trim());
 		const show = terminal && p.tool !== "secret_drop" && h("button", { type: "button", class: "cmp-link" }, m.show_terminal());
 		if (show) show.onclick = terminal;
-		x.el.append(...(a && !noSecret ? (a.select ? select(x, a) : questions(x, a)) : [...(asks.length ? asks.map((y) => block(y, list)) : p.answer?.select ? [h("pre", { class: "ask-title" }, visible(p.answer.select.title)), h("p", { class: "ask-why" }, m.confirm_local_only())] : [h("p", { class: "ask-why" }, noSecret ? (remote ? m.secret_remote() : m.secret_terminal()) : (p.why ?? m.waits_dialog()))]), h("div", { class: "ask-acts" }, noSecret ? h("p", { class: "ask-term" }, m.answer_it()) : term, show)]), x.note);
+		const during = p.answer?.twin && p.tool && p.tool !== "dialog" ? [h("p", { class: "ask-why" }, m.opened_during({ tool: p.tool }))] : []; // a dialog bound to the one call in flight may be unrelated to it
+		x.el.append(...during, ...(a && !noSecret ? (a.select ? select(x, a) : questions(x, a)) : [...(asks.length ? asks.map((y) => block(y, list)) : p.answer?.select ? [h("pre", { class: "ask-title" }, visible(p.answer.select.title)), h("p", { class: "ask-why" }, m.confirm_local_only())] : [h("p", { class: "ask-why" }, noSecret ? (remote ? m.secret_remote() : m.secret_terminal()) : (p.why ?? m.waits_dialog()))]), h("div", { class: "ask-acts" }, noSecret ? h("p", { class: "ask-term" }, m.answer_it()) : term, show)]), x.note);
 		return x;
 	}
 	/** Puts a panel on the page, or none. The one leaving notes what had the focus in it, and on coming back takes it again (scrolled into view) if nothing else has it. */

@@ -199,6 +199,7 @@
 	"answer_it": "請在終端機中回答。",
 	"show_terminal": "顯示終端機",
 	"waits_dialog": "它在等待對話框。",
+	"opened_during": "在 {tool} 執行時開啟，不一定與該呼叫有關。",
 	"other_answer": "另一個答案沒有被採用；這個可以送出。",
 	"retry_terminal": "{why} 重新開啟終端機即可重試。",
 	"paused_hidden": "此分頁隱藏時暫停。",

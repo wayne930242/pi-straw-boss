@@ -126,6 +126,7 @@ test("the answer panel's pure rules: the body it sends, what it says for each ou
 	assert.deepEqual(replyOf(new Set([2, 0]), "  ", "note"), { choices: [0, 2], note: "note" });
 	assert.deepEqual(replyOf(new Set(), "own words", " "), { text: "own words" });
 	assert.equal(visible("a\u001b[31mb\tc\nd\u009be"), "a\ufffd[31mb\tc\nd\ufffde");
+	assert.equal(visible("rm\u202e -rf\u2066\u200b\u061c x"), "rm\ufffd -rf\ufffd\ufffd\ufffd x", "bidi overrides and zero-width marks are drawn, not obeyed");
 	const r = (status: number, body: Record<string, unknown>) => ({ ok: status < 300, status, body });
 	assert.deepEqual(said(r(200, { outcome: "accepted" })), ["ok", "Answered."]);
 	assert.deepEqual(said(r(200, { outcome: "stale", by: "local" })), ["error", "It was already answered in the terminal."]);
