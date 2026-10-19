@@ -75,10 +75,10 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 			view.replaceChildren(html(`<p class="lost">${m.opening_channel()}</p>`));
 			void enter(key);
 		},
-		/** A route that is not a session. */
+		/** A route that is not a session: its comms go, since entries that wait hidden with content-visibility keep a page with moving parts producing frames. */
 		close() {
 			entering++;
-			chat = composer = asker = undefined;
+			(chat = composer = asker = undefined), view.replaceChildren();
 		},
 		reveal(at?: string) {
 			chat?.reveal(at);

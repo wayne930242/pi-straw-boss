@@ -588,6 +588,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 	.tally { flex-wrap: wrap; }
 	.col { width: 100%; }
 	/* Full-screen layers, one above the next: a session's comms with its composer fixed at the bottom over the keyboard, a tile opened over it, and the dossier (Info) over both. */
+	.dossier:not(.full) { content-visibility: hidden; } /* under the full-screen comms: nothing to draw, and its rings need not turn */
 	.comms-in, .dossier.full { position: fixed; left: 0; right: 0; top: var(--vvt, 0px); height: var(--vvh, 100dvh); background: var(--bg); }
 	.tiles:has(.tile) { position: fixed; left: 0; right: 0; top: var(--vvt, 0px); height: var(--vvh, 100dvh); background: var(--bg); } /* apart: a browser without :has() drops only this rule */
 	.comms-in { z-index: 15; min-height: 0; grid-template-columns: minmax(0, 1fr); border: 0; border-radius: 0; }
