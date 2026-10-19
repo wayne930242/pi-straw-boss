@@ -344,6 +344,12 @@ export class Agent {
 	/** Entries of the transcript besides the extension's own (custom messages, for instance), as ctx.sessionManager.getEntries() returns them. */
 	transcript: { type: string; customType?: string; details?: unknown }[] = [];
 	signal?: AbortSignal;
+	/** Each ctx.ui.select and confirm, open until the test settles it or its signal aborts (which resolves undefined or false, as pi's dialogs do). */
+	dialogs: { kind: "select" | "confirm"; title: string; second: unknown; opts?: { signal?: AbortSignal; timeout?: number }; settle(value: unknown): void; settled: boolean }[] = [];
+	/** The session's ctx.ui, the one object every extension reaches. */
+	get ui(): Record<string, (...args: never[]) => unknown> {
+		return (this.ctx as { ui: Record<string, (...args: never[]) => unknown> }).ui;
+	}
 	/** Widgets set through ctx.ui.setWidget, and the live component of each. */
 	widgets = new Map<string, WidgetFactory | undefined>();
 	components = new Map<string, { render(width: number): string[]; dispose?(): void }>();
@@ -368,6 +374,10 @@ export class Agent {
 			shutdown: () => void self.stop("quit"), // pi quits as /quit would
 			ui: {
 				notify: (text: string, level?: string) => this.notices.push({ text, level }),
+				select: (title: string, options: string[], opts?: { signal?: AbortSignal }) => this.dialog("select", title, options, opts),
+				confirm: (title: string, message: string, opts?: { signal?: AbortSignal }) => this.dialog("confirm", title, message, opts),
+				input: async () => "typed",
+				editor: async () => "edited",
 				// An overlay stays open until it calls done; the test drives it through `overlays`.
 				custom: (factory: (tui: FakeTui, theme: unknown, keys: unknown, done: () => void) => Overlay) => new Promise<void>((resolve) => this.overlays.push({ ...factory(this.tui, {}, {}, () => ((this.overlays.at(-1)!.closed = true), resolve())), closed: false })),
 				setWidget: (key: string, factory?: WidgetFactory) => {
@@ -405,6 +415,14 @@ export class Agent {
 		createStrawBoss({ run: world.herdr.runFor(this.pane), api: world.herdr.api, watch: world.watch, env, sleep: (ms) => sleep(Math.min(ms, 2)), promptDir: PROMPT_DIR, stateDir: world.stateDir, autoTower: false, later: (_pid, args) => void world.herdr.runFor(this.pane)(args), events: world.herdr.events, ...options.deps })(pi);
 	}
 
+	private dialog(kind: "select" | "confirm", title: string, second: unknown, opts?: { signal?: AbortSignal; timeout?: number }): Promise<unknown> {
+		return new Promise((resolve) => {
+			const d = { kind, title, second, opts, settled: false, settle: (value: unknown) => ((d.settled = true), resolve(value)) };
+			this.dialogs.push(d);
+			opts?.signal?.addEventListener("abort", () => d.settle(kind === "confirm" ? false : undefined), { once: true });
+			if (opts?.signal?.aborted) d.settle(kind === "confirm" ? false : undefined);
+		});
+	}
 	emit(channel: string, data: unknown): void {
 		[...(this.bus.get(channel) ?? [])].forEach((handler) => handler(data));
 	}

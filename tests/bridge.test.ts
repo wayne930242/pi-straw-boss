@@ -551,3 +551,36 @@ test("a dialog other than a secret carries no key", () => {
 	s.own();
 	assert.equal(JSON.stringify(s.lists().at(-1)).includes("\"key\""), false);
 });
+
+test("a twin (the wrap of ctx.ui) yields to a contract owner's dialog on the same tool call, whichever opens first; on another call it is relayed", () => {
+	const twin = { version: 1, id: "t1", toolCallId: "c1", digest: selectDigest({ title: "T", choices: [{ label: "Yes" }, { label: "No" }], confirm: true }), select: { title: "T", choices: [{ label: "Yes" }, { label: "No" }], confirm: true } };
+	const owners = (s: ReturnType<typeof session>) => s.lists().at(-1)!.map((d) => d.owner);
+	// The owner first (robot_hand announces its dialog, then opens pi's selector): the twin never joins.
+	const a = session();
+	a.own();
+	a.open("d1", "c1");
+	a.events.emit("straw-boss:ui:pending", twin);
+	assert.deepEqual(owners(a), ["robot-hand"]);
+	// The twin first: the owner's dialog replaces it, and the twin's late close and answer find nothing.
+	const b = session();
+	b.own();
+	b.fire("tool_execution_start", { toolCallId: "c1", toolName: "robot_hand", args: {} });
+	b.events.emit("straw-boss:ui:pending", twin);
+	assert.deepEqual(owners(b), ["pi-ui"]);
+	b.events.emit("robot-hand:pending", { version: 1, id: "d1", toolCallId: "c1", digest: DIGEST, select: SELECT });
+	assert.deepEqual(owners(b), ["robot-hand"]);
+	b.events.emit("straw-boss:ui:closed", { version: 1, id: "t1", by: "local" });
+	assert.deepEqual(owners(b), ["robot-hand"], "the withdrawn twin's close changes nothing");
+	// Another tool call's twin is its own dialog.
+	const c = session();
+	c.own();
+	c.open("d1", "c1");
+	c.fire("tool_execution_start", { toolCallId: "c2", toolName: "bash", args: {} });
+	c.events.emit("straw-boss:ui:pending", { ...twin, toolCallId: "c2" });
+	assert.deepEqual(owners(c).sort(), ["pi-ui", "robot-hand"]);
+	// A twin that names no call is not relayed at all (a gate must name one).
+	const d = session();
+	d.own();
+	d.events.emit("straw-boss:ui:pending", { ...twin, toolCallId: undefined });
+	assert.equal(d.lists().at(-1)?.length ?? 0, 1, "the bridge keeps it for the hub, which leaves it in the terminal");
+});

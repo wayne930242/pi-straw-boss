@@ -54,11 +54,11 @@ const post = (url: string, csrf: string, path: string, body: unknown) =>
 	});
 
 /** A (the GUI server) and B in tab wA:t1; B's pane runs pi on a session file whose newest message calls robot_hand. */
-async function setup(sub = false, calls: [string, string][] = [["c1", "robot_hand"]]) {
+async function setup(sub = false, calls: [string, string][] = [["c1", "robot_hand"]], ui = false) {
 	world.herdr.addTab("wA:t1", "work");
 	const herdrCall = async (method: string, params: Record<string, unknown>) => (method === "pane.get" ? { pane: world.herdr.pane(String(params.pane_id)) } : {});
 	const a = world.agent({ id: "A", pane: "wA:p1", tab: "wA:t1", deps: { bundle, openUrl: async () => {}, call: herdrCall } });
-	const b = world.agent({ id: "B", pane: "wA:p2", tab: "wA:t1", env: sub ? { PI_SUBAGENT_ID: "kid" } : undefined });
+	const b = world.agent({ id: "B", pane: "wA:p2", tab: "wA:t1", ui, env: sub ? { PI_SUBAGENT_ID: "kid" } : undefined });
 	// A subagent shows under its launcher: A's session file names the artifacts pi-herdr-agents writes, and B's file is named for the child.
 	const file = join(agentDir, "sessions", sub ? "2026-10-18T00-00-00-000Z_kid-1a2b3c4d-5e6f7a8b-9c0d.jsonl" : "2026_B.jsonl");
 	if (sub) {
@@ -253,4 +253,88 @@ test("an answer to a secret dialog sent straight to its bridge, plain or sealed,
 	assert.deepEqual(seen, []);
 	const acks = world.broker.published.filter((p) => p.from === "B" && (p.payload as { type?: string }).type === "ack").map((p) => p.payload as { outcome: string; reason?: string });
 	assert.deepEqual(acks.map((x) => [x.outcome, x.reason]), Array(2).fill(["rejected", "terminal_only"]), "each reached the bridge and was refused there");
+});
+
+// Any extension's ctx.ui.confirm and select (src/intercept.ts): the wrap relays them through the same bridge, hub, and route as an owner's dialog.
+type Fn = (...args: unknown[]) => Promise<unknown>;
+const confirmIn = (b: Agent, title = "mp-infra command review", message = "ssh box ls -la\n\nReads a directory") => (b.ui.confirm as Fn)(title, message);
+const selectIn = (b: Agent, title: string, options: string[]) => (b.ui.select as Fn)(title, options);
+const answerOf = (n: Net) => unitB(n)?.pending?.answer;
+const sentAnswer = (url: string, csrf: string, a: { dialog: string; digest: string }, choice: number, id: string) => post(url, csrf, "sessions/B/answer", { dialog: a.dialog, digest: a.digest, answerId: id.repeat(20), choice });
+
+test("an mp-infra-like confirm inside a bash tool call is answered from this computer's page, Allow and Deny, and the terminal dialog goes", async () => {
+	const { b, url, csrf } = await setup(false, [["c1", "bash"]], true);
+	await b.fire("tool_execution_start", { toolCallId: "c1", toolName: "bash", args: { command: "ssh box ls -la" } });
+	for (const [choice, verdict] of [[0, true], [1, false]] as const) {
+		const asked = confirmIn(b), dialog = b.dialogs.at(-1)!;
+		let seen: Unit | undefined;
+		await until(async () => (seen = unitB(await snapshot(url)))?.pending?.answer?.select?.confirm, "the confirm in the snapshot");
+		const a = answerOf({ bases: [{ tabs: [{ units: [seen!] }], outside: [] }] } as never)!;
+		assert.equal(seen!.mark, "waiting");
+		assert.deepEqual(a.select, { title: "mp-infra command review\n\nssh box ls -la\n\nReads a directory", choices: [{ label: "Yes" }, { label: "No" }], confirm: true });
+		assert.equal(a.digest, selectDigest(a.select!));
+		assert.deepEqual(await sentAnswer(url, csrf, a, choice, String(choice)), { status: 200, body: { outcome: "accepted" } });
+		assert.equal(await asked, verdict, choice ? "Deny" : "Allow");
+		assert.equal(dialog.opts?.signal?.aborted, true, "pi's own dialog was dismissed");
+		assert.deepEqual(await sentAnswer(url, csrf, a, choice, String(choice)), { status: 200, body: { outcome: "accepted" } }, "the same answer again replays");
+		await until(async () => !answerOf(await snapshot(url)), "the closed dialog out of the snapshot");
+	}
+	assert.equal(b.dialogs.length, 2, "each confirm opened pi's dialog once");
+});
+
+test("a select from any extension is answered from the page and resolves with that option; the terminal answering first makes the page's answer stale", async () => {
+	const { b, url, csrf } = await setup(false, [["c1", "bash"]], true);
+	await b.fire("tool_execution_start", { toolCallId: "c1", toolName: "bash", args: {} });
+	const asked = selectIn(b, "Which target?", ["staging", "production", "cancel"]);
+	await until(async () => answerOf(await snapshot(url)), "the select in the snapshot");
+	let a = answerOf(await snapshot(url))!;
+	assert.deepEqual(a.select, { title: "Which target?", choices: [{ label: "staging" }, { label: "production" }, { label: "cancel" }] });
+	assert.deepEqual(await sentAnswer(url, csrf, a, 1, "a"), { status: 200, body: { outcome: "accepted" } });
+	assert.equal(await asked, "production");
+	await until(async () => !answerOf(await snapshot(url)), "closed");
+	const second = selectIn(b, "Again?", ["x", "y"]);
+	await until(async () => answerOf(await snapshot(url))?.select?.title === "Again?", "the second select");
+	a = answerOf(await snapshot(url))!;
+	b.dialogs.at(-1)!.settle("y");
+	assert.equal(await second, "y", "the terminal's answer reaches the extension as it came");
+	assert.deepEqual(await sentAnswer(url, csrf, a, 0, "b"), { status: 200, body: { outcome: "stale", by: "local" } }, "the page hears the terminal won");
+});
+
+test("input, editor and custom are untouched, and a session whose only open call is secret_drop relays no select or confirm", async () => {
+	const { b, url } = await setup(false, [["c1", "secret_drop"]], true);
+	const { input, editor, custom } = b.ui;
+	await b.fire("tool_execution_start", { toolCallId: "c1", toolName: "secret_drop", args: {} });
+	assert.deepEqual([b.ui.input === input, b.ui.editor === editor, b.ui.custom === custom], [true, true, true]);
+	const asked = confirmIn(b);
+	await new Promise((resolve) => setTimeout(resolve, 150));
+	assert.equal(answerOf(await snapshot(url)), undefined);
+	assert.equal(b.dialogs.length, 1, "the terminal dialog opened as always");
+	b.dialogs[0]!.settle(true);
+	assert.equal(await asked, true);
+});
+
+test("a robot_hand selector is relayed by its owner only: the select the extension opens for it is not relayed a second time", async () => {
+	const { b, url, csrf } = await setup(false, [["c1", "robot_hand"]], true);
+	const hand = selector(b);
+	// robot_hand announces its dialog, then opens pi's own selector for the same call with the same words.
+	const asked = selectIn(b, SELECT.title, SELECT.choices.map((c) => c.label));
+	await until(async () => answerOf(await snapshot(url)), "B's dialog in the snapshot");
+	const a = answerOf(await snapshot(url))!;
+	assert.deepEqual(a, { dialog: "d1", digest: DIGEST, select: SELECT }, "the owner's dialog, with its notes and copy command: one dialog, not two");
+	assert.deepEqual(await post(url, csrf, "sessions/B/answer", { dialog: "d1", digest: DIGEST, answerId: "c".repeat(20), choice: 2 }), { status: 200, body: { outcome: "accepted" } });
+	assert.deepEqual(hand.got, [[2]], "the owner took the answer");
+	b.dialogs[0]!.settle(undefined);
+	await asked;
+	hand.off();
+});
+
+test("two tool calls in flight leave an intercepted dialog in the terminal", async () => {
+	const { b, url } = await setup(false, [["c1", "bash"], ["c2", "edit"]], true);
+	await b.fire("tool_execution_start", { toolCallId: "c1", toolName: "bash", args: {} });
+	await b.fire("tool_execution_start", { toolCallId: "c2", toolName: "edit", args: {} });
+	const asked = confirmIn(b);
+	await new Promise((resolve) => setTimeout(resolve, 150));
+	assert.equal(answerOf(await snapshot(url)), undefined);
+	b.dialogs[0]!.settle(false);
+	assert.equal(await asked, false);
 });

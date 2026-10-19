@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { checkAnswer } from "../src/dialogs.ts";
 import { checkProbe, probeEditor } from "../src/probe.ts";
-import { type Bus, type Dialog, digestOf, mcpAdapter, OWNERS, piCode, questionsDigest, robotHand, rpiv, secretDigest, secretDrop, secretOf, selectDigest, selectOf } from "../src/owners.ts";
+import { type Bus, type Dialog, digestOf, mcpAdapter, OWNERS, piCode, questionsDigest, robotHand, rpiv, secretDigest, secretDrop, secretOf, selectDigest, selectOf, UI_PREFIX, uiPrompt } from "../src/owners.ts";
 
 /** pi's event bus as far as owners use it: listeners run synchronously inside emit. */
 function bus() {
@@ -57,7 +57,7 @@ test("robot_hand: pending and closed reach the bridge; an answer goes out as one
 	stop();
 	off();
 	assert.equal(b.count(), 1, "only the test's own owner listener is left");
-	assert.deepEqual(OWNERS.map((o) => o.name), ["robot-hand", "robot-hand-secret", "rpiv", "pi-mcp-adapter", "pi-code"]);
+	assert.deepEqual(OWNERS.map((o) => o.name), ["robot-hand", "robot-hand-secret", "rpiv", "pi-mcp-adapter", "pi-code", "pi-ui"]);
 	assert.equal(mcpAdapter.tool, undefined, "MCP approvals belong to no tool call");
 });
 
@@ -212,4 +212,28 @@ test("checkAnswer takes no secret's value from any page (SB-F001), and quotes no
 			assert.equal(String(out).includes(secret), false);
 		}
 	}
+});
+
+test("the wrap of ctx.ui is a contract v1 gate under straw-boss:ui that yields to an owner (a twin); a confirm is told apart by its flag and its digest", () => {
+	assert.deepEqual([uiPrompt.name, uiPrompt.tool, uiPrompt.gate, uiPrompt.twin, UI_PREFIX], ["pi-ui", undefined, true, true, "straw-boss:ui"]);
+	assert.deepEqual([robotHand.twin, piCode.twin, rpiv.twin, mcpAdapter.twin], [undefined, undefined, undefined, undefined]);
+	const select = { title: "T", choices: [{ label: "Yes" }, { label: "No" }] }, confirm = { ...select, confirm: true as const };
+	assert.notEqual(selectDigest(confirm), selectDigest(select), "a relay cannot pass a select off as a confirm, or the reverse");
+	assert.equal(selectDigest(select), digestOf(["select", "T", ["Yes", "No"]]), "a select hashes exactly as the owners' vectors do");
+	const raw = (extra: unknown) => ({ version: 1, id: "u1", toolCallId: "c1", digest: selectDigest(confirm), select: { ...confirm, ...(extra as object) } });
+	assert.deepEqual(selectOf("pi-ui", raw({}))?.select, confirm);
+	assert.equal(selectOf("pi-ui", raw({ confirm: "yes" }))?.select?.confirm, undefined, "only true counts");
+	const b = bus(), opened: Dialog[] = [], closed: [string, string | undefined][] = [];
+	const stop = uiPrompt.listen(b, { open: (_a, d) => opened.push(d), closed: (id, by) => closed.push([id, by]) });
+	b.emit(`${UI_PREFIX}:pending`, raw({}));
+	b.emit(`${UI_PREFIX}:closed`, { version: 1, id: "u1", by: "remote" });
+	assert.deepEqual(opened.map((d) => [d.owner, d.id, d.toolCallId, d.select?.confirm]), [["pi-ui", "u1", "c1", true]]);
+	assert.deepEqual(closed, [["u1", "remote"]]);
+	stop();
+	// The page's answer goes out as one selection under the same prefix.
+	const verdicts: unknown[] = [], off = b.on(`${UI_PREFIX}:answer`, (a) => b.emit(`${UI_PREFIX}:answer-result`, { version: 1, id: "u1", answerId: (a as { answerId: string }).answerId, accepted: true }));
+	uiPrompt.answer(b, opened[0]!, { id: "u1", answerId: "a".repeat(16), digest: opened[0]!.digest, choice: 1 }, (v) => verdicts.push(v));
+	assert.deepEqual(b.seen.find(([c]) => c === `${UI_PREFIX}:answer`)?.[1], { version: 1, id: "u1", answerId: "a".repeat(16), digest: opened[0]!.digest, selections: [1] });
+	assert.deepEqual(verdicts, [{ accepted: true }]);
+	off();
 });

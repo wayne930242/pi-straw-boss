@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { startBridge } from "./bridge.ts";
+import { interceptUi } from "./intercept.ts";
 import { registerBoss } from "./boss.ts";
 import { createBriefing } from "./briefing.ts";
 import { afterExit, createClosing } from "./closing.ts";
@@ -38,6 +39,7 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		// Closing is this session's own: the GUI asks its bridge, /boss close asks here, and only a session that runs this extension can (not a subagent).
 		let closeSelf: ((keepPane: boolean) => string | undefined) | undefined;
 		const bridge = startBridge(pi, { env, dir: guiDir, local: () => (s.hub?.running ? s.hub : undefined), close: (keep) => (closeSelf ? closeSelf(keep) : "A subagent is closed by the session that launched it.") });
+		interceptUi(pi); // any extension's select and confirm reach the same bridge, subagents included
 		if (env.PI_SUBAGENT_ID) return;
 		const briefing = createBriefing(kit), reach = createReach(kit), election = createElection(kit), presence = createPresence(kit);
 		const guard = createGuard(kit, { ...election, openTower: reach.openTower });

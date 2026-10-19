@@ -7,7 +7,8 @@ import { createHash, randomUUID } from "node:crypto";
 
 export interface Bus { emit(channel: string, data: unknown): void; on(channel: string, handler: (data: unknown) => void): () => void }
 export interface Choice { label: string; note?: string; localOnly?: true }
-export interface Select { title: string; choices: Choice[]; copy?: string }
+/** `confirm`: a ctx.ui.confirm relayed as Yes and No; it is answerable from this computer's page and never from a paired device. */
+export interface Select { title: string; choices: Choice[]; copy?: string; confirm?: true }
 export interface Option { title: string; description?: string; preview?: true }
 export interface Question { question: string; header?: string; multiple: boolean; options: Option[] }
 /** secret_drop's masked dialog: what it asks for and where the value goes. Never the value itself. */
@@ -29,6 +30,8 @@ export interface OwnerAdapter {
 	tool?: string;
 	/** A gate: its dialog asks about whichever tool's call its `toolCallId` names (pi-code's hook confirmation), so it binds to a call in flight of any tool but must name one. */
 	gate?: true;
+	/** A twin: the same dialog as another owner's, relayed from the wrap of ctx.ui (intercept.ts). It yields to a contract owner's dialog on the same tool call. */
+	twin?: true;
 	listen(bus: Bus, report: Report): () => void;
 	/** Hands one answer to the owner; `done` gets the verdict (synchronously when the owner answers inside its listener). Returns the cleanup. */
 	answer(bus: Bus, d: Dialog, a: Answer, done: (v: Verdict) => void): () => void;
@@ -38,8 +41,8 @@ export interface OwnerAdapter {
 
 const str = (v: unknown): v is string => typeof v === "string";
 export const digestOf = (parts: unknown[]) => createHash("sha256").update(JSON.stringify(["pi-dialog/1", ...parts]), "utf8").digest("hex");
-/** Notes, `localOnly`, and `copy` are hints and not hashed. */
-export const selectDigest = (s: Select) => digestOf(["select", s.title, s.choices.map((c) => c.label)]);
+/** Notes, `localOnly`, and `copy` are hints and not hashed; a confirm is told apart by the digest, so a relay cannot pass one off as a select. */
+export const selectDigest = (s: Select) => digestOf(["select", s.title, s.choices.map((c) => c.label), ...(s.confirm ? ["confirm"] : [])]);
 export const secretDigest = (s: Secret) => digestOf(["secret", s.label, s.instructions, s.url ?? null, s.destination]);
 export const questionsDigest = (qs: Question[]) => digestOf(["questions", qs.map((q) => [q.question, q.header ?? null, q.multiple, q.options.map((o) => [o.title, o.description ?? null])])]);
 
@@ -49,7 +52,7 @@ export function selectOf(owner: string, raw: unknown): Dialog | undefined {
 	const choices = Array.isArray(p?.select?.choices) ? (p.select.choices as Choice[]) : undefined;
 	if (p?.version !== 1 || !str(p.id) || p.id.length > 64 || !str(p.digest) || !str(p.select?.title) || !choices?.length || (p.toolCallId !== undefined && !str(p.toolCallId))) return;
 	if (!choices.every((c) => str(c?.label) && (c.note === undefined || str(c.note)))) return;
-	const select = { title: p.select.title, choices: choices.map((c) => ({ label: c.label, ...(c.note ? { note: c.note } : {}), ...(c.localOnly === true ? { localOnly: true as const } : {}) })), ...(str(p.select.copy) ? { copy: p.select.copy } : {}) };
+	const select = { title: p.select.title, choices: choices.map((c) => ({ label: c.label, ...(c.note ? { note: c.note } : {}), ...(c.localOnly === true ? { localOnly: true as const } : {}) })), ...(str(p.select.copy) ? { copy: p.select.copy } : {}), ...((p.select as { confirm?: unknown }).confirm === true ? { confirm: true as const } : {}) };
 	return { owner, id: p.id, ...(p.toolCallId ? { toolCallId: p.toolCallId as string } : {}), digest: p.digest, select };
 }
 
@@ -68,8 +71,8 @@ const SELECT_SHAPE: Shape = { parse: selectOf, body: (a) => ({ selections: [a.ch
 const SECRET_SHAPE: Shape = { parse: secretOf, body: (a) => ({ value: a.value }) };
 
 /** An owner that speaks contract v1 under `prefix` (pi-robot-hand; pi-mcp-adapter's fork once it emits). */
-const contract = (name: string, prefix: string, tool?: string, gate?: true, shape = SELECT_SHAPE): OwnerAdapter => ({
-	name, tool, ...(gate ? { gate } : {}),
+const contract = (name: string, prefix: string, tool?: string, gate?: true, shape = SELECT_SHAPE, twin?: true): OwnerAdapter => ({
+	name, tool, ...(gate ? { gate } : {}), ...(twin ? { twin } : {}),
 	listen(bus, report) {
 		const self = this, offs = [
 			bus.on(`${prefix}:pending`, (raw) => { const d = shape.parse(name, raw); if (d) report.open(self, d); }),
@@ -136,4 +139,7 @@ export const secretDrop = contract("robot-hand-secret", "robot-hand:secret", "se
 export const mcpAdapter = contract("pi-mcp-adapter", "pi-mcp-adapter:dialog");
 /** pi-code's hooks extension: its confirmation before a gated tool call (Allow or Deny), whichever tool that is. */
 export const piCode = contract("pi-code", "pi-code:dialog", undefined, true);
-export const OWNERS: OwnerAdapter[] = [robotHand, secretDrop, rpiv, mcpAdapter, piCode];
+/** Any extension's ctx.ui.select or ctx.ui.confirm, relayed by the wrap of ctx.ui (intercept.ts) as a gate on the one tool call in flight. */
+export const UI_PREFIX = "straw-boss:ui";
+export const uiPrompt = contract("pi-ui", UI_PREFIX, undefined, true, SELECT_SHAPE, true);
+export const OWNERS: OwnerAdapter[] = [robotHand, secretDrop, rpiv, mcpAdapter, piCode, uiPrompt];
