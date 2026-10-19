@@ -18,9 +18,10 @@ import { createCloser } from "./closer.ts";
 import { createSpawn } from "./spawn.ts";
 import { orphans } from "./orphan.ts";
 import { copyText, pairingKeys, showLines } from "./pairing.ts";
+import { ensureTower } from "./towertab.ts";
 import { type Run, switchRemote, tailscale } from "./remote.ts";
 import { type HerdrEvents, herdrEvents, type HerdrWatch, herdrWatch } from "./server-watch.ts";
-import { ensureTower, headOf, towerModel, herdrApi, type HerdrApi, herdrCall, type HerdrCall, herdrRun, type HerdrRun, isSub, type Pane, panes, parentOf, place, type Place, report, type Session, type Sleep, waitFor, workspaces, type Workspace } from "./herdr.ts";
+import { headOf, towerModel, herdrApi, type HerdrApi, herdrCall, type HerdrCall, herdrRun, type HerdrRun, isSub, type Pane, panes, parentOf, place, type Place, report, type Session, type Sleep, waitFor, workspaces, type Workspace } from "./herdr.ts";
 
 // pi-intercom's extension API as constants and minimal types: intercom is a runtime requirement, not an import.
 const REGISTER = "intercom:extension-register";
