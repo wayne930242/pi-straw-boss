@@ -256,7 +256,7 @@ export const forgetWorkspace = (workspaceId) => [
  * What reopens a pinned workspace that closed: its record and pin, read before the closed hook forgets them. A pinned workspace is
  * one to keep, so a close (the last pane exiting, or the user closing it) brings it back on the same directory under the same name.
  * Nothing reopens when the workspace was not pinned, or another live workspace is already open on its checkout.
- * @returns {{ label: string, cwd: string | null, checkout: string | null, key: string } | null}
+ * @returns {{ label: string, cwd: string | null, checkout: string | null, key: string, entry: object } | null}
  */
 export function reopenPlan(workspaceId, state, workspaces) {
 	const record = state.workspaces[workspaceId];
@@ -266,7 +266,7 @@ export function reopenPlan(workspaceId, state, workspaces) {
 	const entry = state.pins[key];
 	if (!entry) return null;
 	if (checkout && workspaces.some((workspace) => checkoutOf(workspace) === checkout)) return null;
-	return { label: record.label, cwd: checkout ?? entry.cwd ?? null, checkout, key };
+	return { label: record.label, cwd: checkout ?? entry.cwd ?? null, checkout, key, entry };
 }
 
 /** The repository a workspace belongs to, the same for a main checkout and its linked worktrees. */

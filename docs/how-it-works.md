@@ -381,6 +381,10 @@ Both hooks can report one close, so the reopen runs under a lock on a fresh read
 When the closed workspace's record and pin are still in the state file (the hook reads them before forgetting the id) and no live workspace is open on its checkout, the plugin runs `herdr workspace create --label <label> --no-focus --cwd <dir>` with the label the record held at the close, so the name never changes, and puts the pin token on the new workspace.
 The directory is the checkout; a workspace without one keeps its focused pane's directory in the pin entry (`cwd`, written by the pin action), and its id-keyed pin moves to the new id.
 A checkout that is gone is not reopened (`skip reopening ...`), and a failed create is logged and leaves the workspace closed.
+A workspace that closed 3 times within 60 s of being reopened stays closed (`skip reopening ... open it again yourself`), so a shell that dies at once does not reopen forever; the pin entry keeps the recent reopen times (`reopens`).
+A pin without a directory (one made before pins recorded `cwd`) reopens in Herdr's default directory, and the log says so.
+When another run holds the reopen lock for 30 s, the close is logged as not reopened and the workspace stays closed.
+Whether Herdr fires these hooks while its server shuts down is unverified; a create that fails then is only logged.
 The reopened workspace is new: its scrollback and processes are gone and it gets a new id and sidebar position.
 This covers every close, the user's own included, so closing a pinned workspace for good means unpinning it first; sweeps never close a pinned workspace.
 

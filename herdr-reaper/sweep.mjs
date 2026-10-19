@@ -12,6 +12,9 @@ const CLOSE_WAIT_MS = 5000;
 const PENDING_GIVE_UP_MS = 60 * 60_000;
 // After a pane exits, how long to wait for Herdr to remove a workspace that has no other pane.
 const EXIT_WAIT_MS = 3000;
+// A pinned workspace that closed this many times within the window of being reopened stays closed.
+const REOPEN_LIMIT = 3;
+const REOPEN_WINDOW_MS = 60_000;
 // A sweep scheduled for the end of a confirmation wait runs this much later, so the pane has surely qualified for the whole wait.
 const SWEEP_SLACK_MS = 2000;
 
@@ -275,6 +278,10 @@ async function workspaceCwd(deps, workspaceId) {
  */
 async function reopenPinned(deps, closedId, plan, now) {
 	if (plan.checkout && !deps.git.exists(plan.checkout)) return deps.log(`skip reopening ${plan.label}: its checkout ${plan.checkout} is gone`);
+	// A workspace that dies right after each reopen (a broken shell, a directory the shell cannot use) must not reopen forever.
+	const recent = (plan.entry.reopens ?? []).filter((at) => now - at < REOPEN_WINDOW_MS);
+	if (recent.length >= REOPEN_LIMIT) return deps.log(`skip reopening ${plan.label}: it closed ${recent.length} times within ${REOPEN_WINDOW_MS / 1000}s of reopening; open it again yourself`);
+	if (!plan.cwd) deps.log(`reopening ${plan.label} in Herdr's default directory: its pin has no directory`);
 	let created;
 	try {
 		created = await deps.herdr.createWorkspace(plan.label, plan.cwd);
@@ -283,8 +290,11 @@ async function reopenPinned(deps, closedId, plan, now) {
 	}
 	const id = created?.workspace_id;
 	if (!id) return deps.log(`failed to reopen pinned workspace ${plan.label}: Herdr returned no workspace id`);
-	const ops = [set(["workspaces", id], { createdAt: now, label: plan.label, checkout: plan.checkout })];
-	if (!plan.checkout) ops.push(set(["pins", `workspace:${id}`], (await deps.store.read()).pins[plan.key] ?? {}), del(["pins", plan.key]));
+	// The entry comes from the read the plan was made on, so a sweep that pruned the old id's pin meanwhile cannot empty it.
+	const key = plan.checkout ?? `workspace:${id}`;
+	const ops = [set(["workspaces", id], { createdAt: now, label: plan.label, checkout: plan.checkout }), set(["pins", key], { ...plan.entry, reopens: [...recent, now] })];
+	// Herdr may hand the closed id back; the pin then stays where it is.
+	if (key !== plan.key) ops.push(del(["pins", plan.key]));
 	await deps.store.apply(ops);
 	await deps.herdr.setToken(id, SOURCE, PIN_TOKEN, PIN_GLYPH);
 	deps.log(`reopen pinned workspace ${plan.label} (workspace ${closedId} closed; now ${id})`);

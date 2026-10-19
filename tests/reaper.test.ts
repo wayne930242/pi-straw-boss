@@ -1210,7 +1210,7 @@ test("A pinned workspace without a checkout reopens in the directory it was pinn
 test("reopenPlan: nothing when unpinned, unrecorded, or another workspace is open on the checkout; a gone checkout is not reopened", async () => {
 	const record = { createdAt: 0, label: "kept", checkout: "/wt/kept" };
 	const pinned = state({ workspaces: { a: record }, pins: { "/wt/kept": { preLabel: "kept" } } });
-	assert.deepEqual(reopenPlan("a", pinned, []), { label: "kept", cwd: "/wt/kept", checkout: "/wt/kept", key: "/wt/kept" });
+	assert.deepEqual(reopenPlan("a", pinned, []), { label: "kept", cwd: "/wt/kept", checkout: "/wt/kept", key: "/wt/kept", entry: { preLabel: "kept" } });
 	assert.equal(reopenPlan("a", state({ workspaces: { a: record } }), []), null);
 	assert.equal(reopenPlan("z", pinned, []), null);
 	assert.equal(reopenPlan("a", pinned, [workspace("b", "kept")]), null);
@@ -1252,6 +1252,43 @@ test("A pinned workspace whose last pane exits reopens from pane.exited, once ev
 		w.panes = w.panes.filter((candidate) => candidate.workspace_id !== "a");
 		await Promise.all([runEvent(deps, "pane.exited", { pane_id: "a:p1", workspace_id: "a" }), runEvent(deps, "workspace.closed", { workspace_id: "a" })]);
 		assert.deepEqual(w.created, [["kept", "/wt/kept"]], "reopened exactly once");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("Reopening keeps the pin when Herdr hands back the closed id, keeps its entry from a concurrent prune, and stops a workspace that keeps dying", async () => {
+	const dir = await tempDir();
+	try {
+		const w = world({ workspaces: [{ workspace_id: "s", label: "scratch" }], panes: [pane("s:p1", "s", { cwd: "/tmp/notes", focused: true })] });
+		w.herdr.createWorkspace = async (label, cwd) => {
+			w.created.push([label, cwd]);
+			w.workspaces.push({ workspace_id: "s", label });
+			return { workspace_id: "s", label };
+		};
+		const deps = w.deps(createStore(dir));
+		await runEvent(deps, "workspace.created", { workspace_id: "s" });
+		await runPinToggle(deps, "s");
+		const close = async () => {
+			w.workspaces = [];
+			await runEvent(deps, "workspace.closed", { workspace_id: "s" });
+		};
+		await close();
+		assert.equal((await deps.store.read()).pins["workspace:s"].cwd, "/tmp/notes", "the reused id keeps its pin");
+
+		// A sweep pruned the old id's pin between the close and the reopen: the entry read before it still carries the directory.
+		const store = createStore(dir);
+		const plan = reopenPlan("s", await store.read(), []);
+		await store.apply([{ op: "del", path: ["pins", "workspace:s"] }]);
+		assert.equal(plan.entry.cwd, "/tmp/notes");
+
+		await store.apply([{ op: "set", path: ["pins", "workspace:s"], value: plan.entry }]);
+		await close();
+		await close();
+		assert.equal(w.created.length, 3);
+		await close();
+		assert.equal(w.created.length, 3, "a fourth close within the window stays closed");
+		assert.ok(w.logs.some((line) => line.startsWith("skip reopening scratch: it closed 3 times")), w.logs.join("\n"));
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
