@@ -126,6 +126,7 @@ In a workspace whose worktree is a linked git worktree (whatever its name), it c
 Herdr then closes the tab and the workspace, and the plugin removes the workspace's checkout if `git status` is clean and nothing else is using it (no other pane works in it, no other workspace is open on it).
 Git-ignored files (`.env`, `node_modules`, caches, local databases) do not make a checkout dirty, so they are deleted with it.
 The branch always stays, and so does a dirty checkout, with the reason in the plugin log.
+A checkout with a submodule is never removed (git refuses by design) and stays with git's reason in the log; if a removal fails partway and leaves files git no longer tracks, the log says "half-removed" and names the directory for you to delete.
 Every other workspace is left alone.
 It sweeps every 10 minutes and a minute after an agent exits, and the `reap-now` action sweeps at once.
 Every close, removal, skip and pin is a line in the plugin log (`herdr plugin log list --plugin wayne930242.straw-boss-reaper`).

@@ -344,6 +344,8 @@ Right before removing, it lists Herdr's panes and workspaces again and keeps the
 A clean checkout is removed with `git worktree remove`, never forced; any change, tracked or not, keeps it, and so does a detached HEAD that no branch, remote branch or tag contains, because the checkout would be the last place those commits live.
 Git-ignored files do not count as changes, so `.env` files, `node_modules`, caches and local databases in a clean checkout are deleted with it; keep a checkout whose ignored files matter by pinning its workspace.
 The branch is never touched.
+A failed removal logs git's own `fatal:`/`error:` line, not node's "Command failed" header. Git refuses a checkout with a submodule by design ("working trees containing submodules cannot be moved or removed"), so such a checkout stays like a dirty one.
+After a failed or timed-out removal the plugin checks whether the checkout is half-removed (the directory is still there but git no longer registers it as a worktree of the repository, or its `.git` is gone, as when git deleted them and then failed on the files, say through a self-referencing `node_modules`). If so the log says that leftover files remain at the path, git no longer tracks it and the branch is kept, and that the user can delete the directory; the plugin never deletes or moves the leftover itself.
 A workspace that is still open after the wait stays pending in the state file and is retried by the next sweeps for an hour.
 Each decision is a line in the plugin log with its reason (`close`, `remove checkout`, `keep checkout ... uncommitted changes`, `skip ... workspace is pinned`).
 
