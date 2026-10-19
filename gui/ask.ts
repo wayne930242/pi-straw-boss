@@ -9,9 +9,9 @@ import type { Answer } from "./post.ts";
 // (robot_hand's selector, an ask_user_question questionnaire, secret_drop's masked field) is answered here: the page sends which choice or words,
 // never keys, and the owner in that session checks the answer against its own copy of the dialog. Anything else (two dialogs at once, a
 // question the server cannot match) shows read-only, to answer in the terminal (Show terminal opens it here).
-// A secret is typed into a masked field on this computer's page only: the value goes out in one request, the field is cleared the moment
-// it is sent (before the reply), nothing keeps it, and it is never resent (no Check again); a remote page is told that entering it is
-// unsupported there and sees only the terminal path. An answer that was not confirmed
+// A secret is typed into a masked field on this computer's page only (a text input drawn as dots by CSS, never type=password, so no browser offers to
+// save or suggest a password): the value goes out in one request, the field is cleared the moment it is sent (before the reply), nothing keeps it,
+// and it is never resent (no Check again); a remote page is told that entering it is unsupported there and sees only the terminal path. An answer that was not confirmed
 // is never sent again as a new one: Check again resends the same answer, which the server and the bridge recognise by its id. A panel belongs
 // to its dialog (its id and digest): the net's updates leave what the user picked, typed, and noted, even across a spell the server shows the
 // dialog read-only (an answer on its way) or not at all, and only another dialog starts afresh.
@@ -123,11 +123,11 @@ export function mountAsk(root: HTMLElement, post: AnswerPost, remote = location.
 	};
 	/** A secret: what it is for, the steps, where it goes, and a masked field (shown only on request) with Submit and a way back to the terminal. */
 	function secret(x: Panel, a: Answerable) {
-		const s = a.secret!, field = h("input", { type: "password", class: "ask-own ask-secret", maxlength: "8192", autocomplete: "new-password", autocapitalize: "off", autocorrect: "off", spellcheck: "false", "data-1p-ignore": "true", "data-lpignore": "true", "aria-label": m.secret_label() });
+		const s = a.secret!, field = h("input", { type: "text", class: "ask-own ask-secret", "data-masked": "true", maxlength: "8192", autocomplete: "off", autocapitalize: "off", autocorrect: "off", spellcheck: "false", "data-1p-ignore": "true", "data-lpignore": "true", "aria-label": m.secret_label() });
 		const toggle = h("button", { type: "button", class: "cmp-link", "aria-pressed": "false" }, m.secret_show()), cancel = h("button", { type: "button", class: "cmp-link" }, m.secret_cancel());
 		let masked = true;
 		x.first = () => field; // a card opens on the masked field, as a question's opens on its first option
-		const mask = (on: boolean) => ((masked = on), field.setAttribute("type", on ? "password" : "text"), toggle.setAttribute("aria-pressed", String(!on)), toggle.replaceChildren(on ? m.secret_show() : m.secret_hide()));
+		const mask = (on: boolean) => ((masked = on), field.setAttribute("data-masked", String(on)), toggle.setAttribute("aria-pressed", String(!on)), toggle.replaceChildren(on ? m.secret_show() : m.secret_hide()));
 		toggle.onclick = () => mask(!masked);
 		field.oninput = () => draw();
 		field.onkeydown = (e) => e.key === "Enter" && !e.isComposing && !x.send!.disabled && x.send!.click();

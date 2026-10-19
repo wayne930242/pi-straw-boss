@@ -521,7 +521,7 @@ test("a secret: the label, steps, link, and destination show with a masked field
 	panel.update(secretWait(), true);
 	assert.equal(panel.enter(), true);
 	assert.equal(page.activeElement, secretField(), "the card opens on the masked field");
-	assert.deepEqual([secretField().getAttribute("type"), secretField().getAttribute("autocomplete"), secretField().getAttribute("spellcheck"), secretField().getAttribute("autocorrect")], ["password", "new-password", "false", "off"]);
+	assert.deepEqual([secretField().getAttribute("type"), secretField().getAttribute("data-masked"), secretField().getAttribute("autocomplete"), secretField().getAttribute("spellcheck"), secretField().getAttribute("autocorrect")], ["text", "true", "off", "false", "off"], "dots drawn by CSS: never type=password or new-password, which make a browser offer to save or suggest a password");
 	assert.match(root.textContent, /Deploy token/);
 	assert.match(root.textContent, /Create a token with the deploy scope\./);
 	assert.match(root.textContent, /\.env\.local \(DEPLOY_TOKEN\)/);
@@ -578,13 +578,13 @@ test("Show reveals the field and Hide masks it again; Answer in the terminal ins
 	panel.update(secretWait(), true);
 	secretField().type("peek");
 	button("Show")!.click();
-	assert.equal(secretField().getAttribute("type"), "text");
+	assert.deepEqual([secretField().getAttribute("type"), secretField().getAttribute("data-masked")], ["text", "false"]);
 	assert.equal(button("Hide")!.getAttribute("aria-pressed"), "true");
 	button("Hide")!.click();
-	assert.equal(secretField().getAttribute("type"), "password");
+	assert.deepEqual([secretField().getAttribute("type"), secretField().getAttribute("data-masked")], ["text", "true"]);
 	button("Show")!.click();
 	button("Answer in the terminal instead")!.click();
-	assert.deepEqual([secretField().value, secretField().getAttribute("type"), sent.length], ["", "password", 0], "cleared and masked again");
+	assert.deepEqual([secretField().value, secretField().getAttribute("data-masked"), sent.length], ["", "true", 0], "cleared and masked again");
 	assert.match(status() ?? "", /Nothing was sent/);
 	assert.deepEqual([secretField().disabled, button("Submit")!.disabled], [true, true]);
 });
