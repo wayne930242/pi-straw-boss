@@ -62,3 +62,9 @@ test("nesting stops at sixteen levels and the rest stays text, so deep quotes do
 	assert.equal(depthOf(list), MAX_DEPTH);
 	assert.ok(JSON.stringify(list).includes("level 2999"), "the deepest levels are kept as text");
 });
+
+test("line endings are normalised once, at the top: a nested document with CRLF or CR endings parses like the same document with LF", () => {
+	const md = "- one\n  - nested **bold**\n    - [x] deeper\n\n> quote\n> - in a quote\n>   - nested in it\n\n1. first\n   continued\n2) second";
+	for (const ending of ["\r\n", "\r"]) assert.deepEqual(parse(md.replace(/\n/g, ending)), parse(md));
+	assert.deepEqual(["ul", "ol", "blockquote", "strong", "i"].map((tag) => tags(parse(md)).filter((t) => t === tag).length), [5, 1, 1, 1, 1], "five lists (three nested in the first, two in the quote), one ordered, a quote, bold, a task mark");
+});

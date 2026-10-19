@@ -27,6 +27,8 @@ export function inline(src: string): N[] {
 	return out;
 }
 
+/** Where a line's text starts, or -1 for a blank line. */
+const indentOf = (line: string) => line.search(/\S/);
 const LIST = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
 const RULE = /^\s*([-*_])(\s*\1){2,}\s*$/;
 const DIVIDER = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
@@ -35,13 +37,17 @@ const starts = (line: string, next?: string) => /^\s*(`{3,}|~{3,}|#{1,6}\s|>)/.t
 
 /** Block quotes and lists nest at most 16 deep; anything deeper stays plain text, so hostile nesting can neither overflow the stack nor go quadratic. */
 export const MAX_DEPTH = 16;
-export function parse(md: string, depth = 0): N[] {
-	if (depth >= MAX_DEPTH) return [el("p", [md])];
-	const lines = md.replace(/\r\n?/g, "\n").split("\n"), out: N[] = [];
+/**
+ * The blocks of `md`. A nested body is cut from the lines of its parent, with their indents (`widths`, -1 for a blank line) measured once at
+ * the top, instead of being joined, split, and measured again at every level: a staircase of lists is as deep as the cap, and was quadratic in that.
+ */
+export function parse(md: string, depth = 0, lines = md.replace(/\r\n?/g, "\n").split("\n"), widths = lines.map(indentOf)): N[] {
+	if (depth >= MAX_DEPTH) return [el("p", [lines.join("\n")])];
+	const out: N[] = [];
 	for (let i = 0; i < lines.length; ) {
 		const line = lines[i]!, next = lines[i + 1];
 		const fence = line.match(/^\s*(`{3,}|~{3,})\s*([\w+-]*)/), heading = line.match(/^\s*(#{1,6})\s+(.*?)\s*#*\s*$/), item = line.match(LIST);
-		if (!line.trim()) i++;
+		if (widths[i]! < 0) i++;
 		else if (fence) {
 			const body: string[] = [];
 			for (i++; i < lines.length && !lines[i]!.trim().startsWith(fence[1]!); i++) body.push(lines[i]!);
@@ -52,21 +58,29 @@ export function parse(md: string, depth = 0): N[] {
 		else if (/^\s*>/.test(line)) {
 			const body: string[] = [];
 			for (; i < lines.length && /^\s*>/.test(lines[i]!); i++) body.push(lines[i]!.replace(/^\s*> ?/, ""));
-			out.push(el("blockquote", parse(body.join("\n"), depth + 1)));
+			out.push(el("blockquote", parse("", depth + 1, body, body.map(indentOf))));
 		} else if (line.includes("|") && next !== undefined && DIVIDER.test(next) && next.includes("-")) {
 			const rows: string[][] = [];
 			for (i += 2; i < lines.length && lines[i]!.trim() && lines[i]!.includes("|"); i++) rows.push(cells(lines[i]!));
 			out.push(el("table", [el("thead", [el("tr", cells(line).map((c) => el("th", inline(c))))]), el("tbody", rows.map((r) => el("tr", r.map((c) => el("td", inline(c))))))]));
 		} else if (item) {
-			const indent = item[1]!.length, items: N[] = [];
+			const indent = item[1]!.length, items: N[] = [], dedent = indent + 2;
 			while (i < lines.length) {
 				const m = lines[i]!.match(LIST);
 				if (!m || m[1]!.length !== indent || /\d/.test(m[2]!) !== /\d/.test(item[2]!)) break;
 				const body = [m[3]!], task = m[3]!.match(/^\[([ xX])\]\s+(.*)$/);
 				if (task) body[0] = task[2]!;
-				for (i++; i < lines.length && lines[i]!.trim() && lines[i]!.search(/\S/) > indent; i++) body.push(lines[i]!.replace(new RegExp(`^ {0,${indent + 2}}`), ""));
+				const bodyWidths = [indentOf(body[0]!)];
+				// Its continuation lines are the ones indented deeper than the bullet, each with up to `dedent` spaces taken off.
+				for (i++; i < lines.length && widths[i]! > indent; i++) {
+					const more = lines[i]!;
+					let spaces = 0;
+					while (spaces < dedent && more.charCodeAt(spaces) === 32) spaces++;
+					body.push(spaces ? more.slice(spaces) : more);
+					bodyWidths.push(widths[i]! - spaces);
+				}
 				// A task item carries a check mark of its own (drawn by CSS) in front of its text, and no bullet.
-				const kids = parse(body.join("\n"), depth + 1), first = kids[0], done = task?.[1] !== " ";
+				const kids = parse("", depth + 1, body, bodyWidths), first = kids[0], done = task?.[1] !== " ";
 				if (task) (typeof first === "object" && first.tag === "p" ? first.kids : kids).unshift(el("i", done ? ["✓"] : [], { class: "check", "data-done": String(done), "aria-label": done ? msg.task_done() : msg.task_open() }));
 				items.push(el("li", kids, task ? { class: "task" } : undefined));
 				if (!lines[i]?.trim() && lines[i + 1]?.match(LIST)?.[1]?.length === indent) i++;
