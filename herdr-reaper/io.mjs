@@ -113,7 +113,16 @@ export function gitClient() {
 				return path;
 			}
 		},
-		status: (checkout) => git(["-C", checkout, "status", "--porcelain"]),
+		// Spelled out so a repository's or user's config cannot hide files from it: `status.showUntrackedFiles=no` and submodule
+		// ignore settings change what a plain `status` prints, and --no-optional-locks keeps a read from touching the index.
+		status: (checkout) => git(["--no-optional-locks", "-C", checkout, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"]),
+		// Tracked files git is told not to look at: skip-worktree (`S`) and assume-unchanged (lowercase), whose edits status never shows.
+		hidden: async (checkout) =>
+			(await git(["--no-optional-locks", "-C", checkout, "ls-files", "-v", "-z"]))
+				.split("\0")
+				.filter((entry) => /^[a-zS] /.test(entry))
+				.map((entry) => entry.slice(2))
+				.join("\n"),
 		branch: (checkout) => git(["-C", checkout, "symbolic-ref", "--quiet", "--short", "HEAD"]).then((out) => out.trim(), () => null),
 		containedBy: (checkout) => git(["-C", checkout, "for-each-ref", "--contains", "HEAD", "refs/heads", "refs/remotes", "refs/tags"]),
 		removeWorktree: (repoRoot, checkout) => git(["-C", repoRoot, "worktree", "remove", checkout]),

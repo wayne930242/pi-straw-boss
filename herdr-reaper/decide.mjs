@@ -154,12 +154,14 @@ export function findCheckoutUser(roots, panes, workspaces, ignore = {}) {
 /**
  * Whether a checkout may be removed after its workspace closed. A dirty tree stays on disk; so does a detached HEAD no branch
  * or tag contains, because removing the checkout would be the last place those commits live.
- * @param {{ pinned: boolean, exists: boolean, dirty: string, detached: boolean, containedBy: string }} facts
+ * `hidden` lists tracked files git was told not to look at (skip-worktree, assume-unchanged): their edits are invisible to `status`.
+ * @param {{ pinned: boolean, exists: boolean, dirty: string, hidden?: string, detached: boolean, containedBy: string }} facts
  */
-export function decideRemoval({ pinned, exists, dirty, detached, containedBy }) {
+export function decideRemoval({ pinned, exists, dirty, hidden = "", detached, containedBy }) {
 	if (pinned) return { remove: false, reason: "workspace is pinned" };
 	if (!exists) return { remove: false, reason: "checkout is already gone", gone: true };
 	if (dirty.trim()) return { remove: false, reason: `uncommitted changes (${dirty.trim().split("\n").length} paths)` };
+	if (hidden.trim()) return { remove: false, reason: `${hidden.trim().split("\n").length} files marked skip-worktree or assume-unchanged, which git cannot show as changed` };
 	if (detached && !containedBy.trim()) return { remove: false, reason: "detached HEAD with commits no branch or tag contains" };
 	return { remove: true, reason: "clean" };
 }

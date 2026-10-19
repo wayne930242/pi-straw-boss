@@ -1,6 +1,7 @@
 // @ts-nocheck: the plugin scripts are plain JavaScript and the fake Herdr, git and panes are loose test data.
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -8,7 +9,7 @@ import {
 	CONFIRM_MS, PIN_GLYPH, PIN_TOKEN, RENAME_GRACE_MS, SWEEP_INTERVAL_MS,
 	applyOps, decideRemoval, emptyState, findCheckoutUser, noteWorkspaces, onRename, planSweep, prunePanes, prunePins, shellIsIdle, togglePin,
 } from "../herdr-reaper/decide.mjs";
-import { createStore, withLock } from "../herdr-reaper/io.mjs";
+import { createStore, gitClient, withLock } from "../herdr-reaper/io.mjs";
 import { SOURCE, runEvent, runPinToggle, runSweep } from "../herdr-reaper/sweep.mjs";
 
 const NOW = 1_000_000_000;
@@ -442,5 +443,63 @@ test("A checkout is kept when Herdr cannot be listed again", async () => {
 		assert.ok(w.logs.some((line) => line.startsWith("keep checkout /wt/left") && line.includes("could not be listed")), w.logs.join("\n"));
 	} finally {
 		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+// Real git, in scratch repositories: the clean check must see what a plain `git status` can be configured not to show.
+const sh = (cwd, ...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", "-C", cwd, ...args], { encoding: "utf8", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" } });
+
+test("Clean check sees untracked files despite status.showUntrackedFiles=no, and skip-worktree or assume-unchanged edits", async () => {
+	const root = await tempDir();
+	try {
+		const repo = join(root, "repo");
+		execFileSync("mkdir", ["-p", repo]);
+		sh(repo, "init", "-q", "-b", "main");
+		await writeFile(join(repo, "a.txt"), "a\n");
+		await writeFile(join(repo, "b.txt"), "b\n");
+		sh(repo, "add", ".");
+		sh(repo, "commit", "-q", "-m", "init");
+		const checkout = (name) => {
+			const path = join(root, name);
+			sh(repo, "worktree", "add", "-q", "-b", name, path);
+			return path;
+		};
+		const git = gitClient();
+		const clean = checkout("clean");
+		assert.equal(await git.status(clean), "");
+		assert.equal(await git.hidden(clean), "");
+
+		const quiet = checkout("quiet");
+		sh(repo, "config", "status.showUntrackedFiles", "no");
+		await writeFile(join(quiet, "untracked.txt"), "secret\n");
+		assert.equal(sh(quiet, "status", "--porcelain"), "", "a plain status is configured to say nothing");
+		assert.match(await git.status(quiet), /\?\? untracked\.txt/, "the reaper's status says it");
+		sh(repo, "config", "--unset", "status.showUntrackedFiles");
+
+		const skipped = checkout("skipped");
+		sh(skipped, "update-index", "--skip-worktree", "a.txt");
+		await writeFile(join(skipped, "a.txt"), "edited\n");
+		assert.equal(sh(skipped, "status", "--porcelain"), "", "skip-worktree hides the edit from status");
+		assert.equal(await git.hidden(skipped), "a.txt");
+
+		const assumed = checkout("assumed");
+		sh(assumed, "update-index", "--assume-unchanged", "b.txt");
+		await writeFile(join(assumed, "b.txt"), "edited\n");
+		assert.equal(await git.hidden(assumed), "b.txt");
+
+		// A sweep with the real git client keeps all three and removes only the clean one.
+		const w = world({
+			workspaces: ["clean", "quiet", "skipped", "assumed"].map((name) => workspace(`w${name}`, name, { worktree: worktree(join(root, name), true, repo) })),
+			panes: ["clean", "quiet", "skipped", "assumed"].map((name) => pane(`w${name}:p1`, `w${name}`)),
+		});
+		w.git = { ...gitClient() };
+		sh(repo, "config", "status.showUntrackedFiles", "no");
+		await runSweep(w.deps(createStore(join(root, "state"))), { confirmMs: 0 });
+		assert.equal(sh(repo, "worktree", "list", "--porcelain").includes(join(root, "clean")), false, "the clean checkout is removed");
+		for (const name of ["quiet", "skipped", "assumed"]) assert.ok(sh(repo, "worktree", "list", "--porcelain").includes(join(root, name)), `${name} stays`);
+		assert.ok(w.logs.some((line) => line.includes("keep checkout") && line.includes(join(root, "quiet")) && line.includes("uncommitted")), w.logs.join("\n"));
+		assert.ok(w.logs.some((line) => line.includes(join(root, "skipped")) && line.includes("skip-worktree or assume-unchanged")), w.logs.join("\n"));
+	} finally {
+		await rm(root, { recursive: true, force: true });
 	}
 });

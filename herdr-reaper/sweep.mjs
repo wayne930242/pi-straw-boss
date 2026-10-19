@@ -25,13 +25,14 @@ async function restoreTokens(workspaces, state, deps) {
 }
 
 async function checkoutFacts(deps, checkout, pinned) {
-	if (!deps.git.exists(checkout)) return { pinned, exists: false, dirty: "", detached: false, containedBy: "", branch: null };
+	if (!deps.git.exists(checkout)) return { pinned, exists: false, dirty: "", hidden: "", detached: false, containedBy: "", branch: null };
 	const branch = await deps.git.branch(checkout);
-	const [dirty, containedBy] = await Promise.all([
+	const [dirty, hidden, containedBy] = await Promise.all([
 		deps.git.status(checkout).catch((error) => `git status failed: ${error.message}`),
+		(deps.git.hidden?.(checkout) ?? Promise.resolve("")).catch((error) => `git ls-files failed: ${error.message}`),
 		branch ? "" : deps.git.containedBy(checkout).catch(() => ""),
 	]);
-	return { pinned, exists: true, dirty, detached: !branch, containedBy, branch };
+	return { pinned, exists: true, dirty, hidden, detached: !branch, containedBy, branch };
 }
 
 /**
