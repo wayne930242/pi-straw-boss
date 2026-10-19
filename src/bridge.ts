@@ -78,7 +78,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 		let msg: Dialogs = { version: 1, type: "dialogs", bridgeId, pane: env.HERDR_PANE_ID!, file: file() ?? null, dialogs, closed, documents: final ? [] : docs, ...(queue.length ? { queued: queue } : {}), ...(mons.length ? { monitors: mons } : {}) };
 		const big = () => Buffer.byteLength(JSON.stringify(msg)) > MAX_MESSAGE; // in bytes, as the broker counts
 		if (big()) msg = { ...msg, documents: [], docsCut: true }; // the documents go first: they stay in the terminal, and the unit says so
-		if (big()) msg = { ...msg, dialogs: dialogs.map(({ select, questions, ...d }) => ({ ...d, big: true as const })) }; // shown read-only: too long to show
+		if (big()) msg = { ...msg, dialogs: dialogs.map(({ select, questions, secret, ...d }) => ({ ...d, big: true as const })) }; // shown read-only: too long to show
 		send(target(), msg);
 	};
 	// gui.json names the server's session; it is read at the session's start and then on every mtime change, checked every 2 s (unref'd).
@@ -167,7 +167,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 			push();
 		};
 		try {
-			off = r.adapter.answer(bus, r.d, { id: r.d.id, answerId: a.answerId, digest: a.digest, choice: a.choice, answers: Array.isArray(a.answers) ? a.answers : undefined }, finish);
+			off = r.adapter.answer(bus, r.d, { id: r.d.id, answerId: a.answerId, digest: a.digest, choice: a.choice, answers: Array.isArray(a.answers) ? a.answers : undefined, value: typeof a.value === "string" ? a.value : undefined }, finish);
 		} catch {
 			finish({ accepted: false, reason: "malformed" }); // an answer an adapter could not even map; the owner never saw it
 		}

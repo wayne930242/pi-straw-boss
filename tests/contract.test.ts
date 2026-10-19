@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { checkAnswer } from "../src/dialogs.ts";
 import { checkProbe, probeEditor } from "../src/probe.ts";
-import { type Bus, type Dialog, digestOf, mcpAdapter, OWNERS, piCode, questionsDigest, robotHand, rpiv, selectDigest, selectOf } from "../src/owners.ts";
+import { type Bus, type Dialog, digestOf, mcpAdapter, OWNERS, piCode, questionsDigest, robotHand, rpiv, secretDigest, secretDrop, secretOf, selectDigest, selectOf } from "../src/owners.ts";
 
 /** pi's event bus as far as owners use it: listeners run synchronously inside emit. */
 function bus() {
@@ -56,7 +57,7 @@ test("robot_hand: pending and closed reach the bridge; an answer goes out as one
 	stop();
 	off();
 	assert.equal(b.count(), 1, "only the test's own owner listener is left");
-	assert.deepEqual(OWNERS.map((o) => o.name), ["robot-hand", "rpiv", "pi-mcp-adapter", "pi-code"]);
+	assert.deepEqual(OWNERS.map((o) => o.name), ["robot-hand", "robot-hand-secret", "rpiv", "pi-mcp-adapter", "pi-code"]);
 	assert.equal(mcpAdapter.tool, undefined, "MCP approvals belong to no tool call");
 });
 
@@ -161,4 +162,57 @@ test("probe contract: the editor's class, the ending command by name only, and t
 	for (const ok of ["empty", "text", "command", "unknown"]) assert.deepEqual(checkProbe({ editor: ok, extra: "dropped" }), { editor: ok });
 	for (const bad of [undefined, {}, { editor: "draft" }, { editor: "text", ending: "model" }, { editor: "text", ending: "RELOAD" }, { editor: "text", ending: "reload x" }, { editor: "text", ending: 1 }, { editor: "command", ending: "new" }, { editor: "unknown", ending: "quit" }])
 		assert.equal(checkProbe(bad as never), undefined, JSON.stringify(bad));
+});
+
+const SECRET = { label: "Deploy token", instructions: ["Open the link.", "Create a token with the deploy scope."], url: "https://example.com/tokens", destination: ".env.local (DEPLOY_TOKEN)" };
+
+test("secret_drop: the digest is the spec's secret form, and a pending is taken only in its own shape, naming its tool call", () => {
+	assert.equal(secretDigest(SECRET), digestOf(["secret", SECRET.label, SECRET.instructions, SECRET.url, SECRET.destination]));
+	assert.equal(secretDigest(SECRET), createHash("sha256").update(JSON.stringify(["pi-dialog/1", "secret", "Deploy token", ["Open the link.", "Create a token with the deploy scope."], "https://example.com/tokens", ".env.local (DEPLOY_TOKEN)"]), "utf8").digest("hex"));
+	assert.notEqual(secretDigest(SECRET), secretDigest({ ...SECRET, url: undefined }), "a url is part of what was shown");
+	assert.equal(secretDigest({ ...SECRET, url: undefined }), digestOf(["secret", SECRET.label, SECRET.instructions, null, SECRET.destination]), "no url hashes as null");
+	const ok = { version: 1, id: "s1", toolCallId: "c1", digest: secretDigest(SECRET), secret: { ...SECRET, extra: 1 } };
+	assert.deepEqual(secretOf("robot-hand-secret", ok), { owner: "robot-hand-secret", id: "s1", toolCallId: "c1", digest: secretDigest(SECRET), secret: SECRET });
+	assert.deepEqual(secretOf("x", { ...ok, secret: { ...SECRET, url: undefined } })?.secret, { label: SECRET.label, instructions: SECRET.instructions, destination: SECRET.destination });
+	const long = "x".repeat(2001);
+	for (const bad of [{ ...ok, version: 2 }, { ...ok, id: 3 }, { ...ok, id: "x".repeat(65) }, { ...ok, toolCallId: undefined }, { ...ok, secret: undefined }, { ...ok, secret: { ...SECRET, label: 1 } }, { ...ok, secret: { ...SECRET, destination: undefined } }, { ...ok, secret: { ...SECRET, instructions: "do it" } }, { ...ok, secret: { ...SECRET, instructions: [1] } }, { ...ok, secret: { ...SECRET, instructions: [long] } }, { ...ok, secret: { ...SECRET, instructions: Array(21).fill("x") } }, { ...ok, secret: { ...SECRET, url: 5 } }, { ...ok, secret: { ...SECRET, url: long } }, { ...ok, secret: { ...SECRET, label: "x".repeat(501) } }])
+		assert.equal(secretOf("x", bad), undefined, JSON.stringify(bad).slice(0, 80));
+});
+
+test("secret_drop: robot-hand:secret pending and closed reach the bridge; the value goes out in the one answer event, and no verdict or other event carries it", () => {
+	assert.deepEqual([secretDrop.name, secretDrop.tool, secretDrop.gate], ["robot-hand-secret", "secret_drop", undefined]);
+	const b = bus(), opened: Dialog[] = [], closed: [string, string?][] = [];
+	const off = secretDrop.listen(b, { open: (adapter, d) => (assert.equal(adapter, secretDrop), opened.push(d)), closed: (id, by) => closed.push([id, by]) });
+	b.emit("robot-hand:pending", { version: 1, id: "x1", toolCallId: "c0", digest: "f".repeat(64), select: { title: "T", choices: [{ label: "A" }] } });
+	b.emit("robot-hand:secret:pending", { version: 1, id: "s1", toolCallId: "c1", digest: secretDigest(SECRET), secret: SECRET });
+	b.emit("robot-hand:secret:pending", { version: 2, id: "s2", toolCallId: "c1", digest: secretDigest(SECRET), secret: SECRET });
+	b.emit("robot-hand:secret:closed", { version: 1, id: "s1", by: "abort" });
+	assert.deepEqual([opened.map((d) => d.id), closed], [["s1"], [["s1", "abort"]]], "the selector's channel is not this one");
+	const value = "hunter2-not-for-logs", verdicts: unknown[] = [];
+	b.on("robot-hand:secret:answer", (a) => {
+		const { id, answerId } = a as { id: string; answerId: string };
+		b.emit("robot-hand:secret:answer-result", { version: 1, id: "other", answerId, accepted: true });
+		b.emit("robot-hand:secret:answer-result", { version: 1, id, answerId, accepted: false, reason: "digest" });
+	});
+	const stop = secretDrop.answer(b, opened[0]!, { id: "s1", answerId: "a".repeat(16), digest: secretDigest(SECRET), value }, (v) => verdicts.push(v));
+	assert.deepEqual(b.seen.find(([c]) => c === "robot-hand:secret:answer")?.[1], { version: 1, id: "s1", answerId: "a".repeat(16), digest: secretDigest(SECRET), value });
+	assert.deepEqual(verdicts, [{ accepted: false, reason: "digest" }]);
+	assert.equal(JSON.stringify([verdicts, b.seen.filter(([c]) => c !== "robot-hand:secret:answer")]).includes(value), false, "only the answer event holds the value");
+	stop();
+	off();
+	assert.equal(b.count(), 1, "only the test's own listener is left");
+});
+
+test("checkAnswer for a secret: a non-blank single value within 8 KB without control characters, never from a remote page, and no message quotes it", () => {
+	const t = { dialog: "s1", digest: secretDigest(SECRET), secret: SECRET };
+	assert.deepEqual(checkAnswer(t, { value: " p@ss w0rd " }, false), { value: " p@ss w0rd " }, "kept as typed");
+	assert.deepEqual(checkAnswer(t, { value: "line1\nline2\tx" }, false), { value: "line1\nline2\tx" });
+	const secret = "s3cr3t-value";
+	for (const json of [{}, { value: "" }, { value: "   " }, { value: 5 }, { value: ["x"] }, { choice: 0, value: secret }, { answers: [], value: secret }, { value: `${secret}\u0007` }, { value: `${secret}\r` }, { value: "x".repeat(8193) }]) {
+		const out = checkAnswer(t, json, false);
+		assert.equal(typeof out, "string", JSON.stringify(json).slice(0, 40));
+		assert.equal(String(out).includes(secret), false);
+	}
+	assert.deepEqual(checkAnswer(t, { value: "x".repeat(8192) }, false), { value: "x".repeat(8192) });
+	assert.match(String(checkAnswer(t, { value: secret }, true)), /remote page/);
 });

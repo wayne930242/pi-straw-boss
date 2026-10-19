@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { get, request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, afterEach, test } from "node:test";
+import { after, afterEach, mock, test } from "node:test";
 import { readRecord } from "../src/handover.ts";
 import type { Net, Unit } from "../src/net.ts";
-import { selectDigest } from "../src/owners.ts";
+import { secretDigest, selectDigest } from "../src/owners.ts";
 import { type Agent, until, World } from "./fakes.ts";
 import { assistant, call, header, lines, user } from "./sessions.ts";
 
@@ -189,4 +189,54 @@ test("a close from the page reaches the session's own bridge: it answers yes, qu
 	for (let i = 0; i < 60 && /did not answer/.test(String(r.body.reason)); i++) (await new Promise((done) => setTimeout(done, 50)), (r = await post(url, csrf, "close/unit", { key: "B" })));
 	assert.equal(r.status, 200, JSON.stringify(r.body));
 	await until(() => b.stopped && world.herdr.closed.includes("wA:p2"), "B quit and its pane closed");
+});
+
+const SECRET = { label: "Deploy token", instructions: ["Open the link.", "Create a token."], url: "https://example.com/tokens", destination: ".env.local (DEPLOY_TOKEN)" };
+/** Every file under `dir`, read as text. */
+const filesUnder = (dir: string): string[] => readdirSync(dir).flatMap((n) => (statSync(join(dir, n)).isDirectory() ? filesUnder(join(dir, n)) : [readFileSync(join(dir, n), "utf8")]));
+
+test("a secret_drop in another session is answered from this computer's page: the owner gets the value once, and it lands in no snapshot, response, log, notice, or file", async () => {
+	const { a, b, url, csrf } = await setup(false, [["c1", "secret_drop"]]), value = "tok-e2e-7c1d9a-not-for-logs", digest = secretDigest(SECRET);
+	const written: string[] = [];
+	for (const stream of [process.stdout, process.stderr]) mock.method(stream, "write", ((chunk: unknown) => (written.push(String(chunk)), true)) as never);
+	for (const level of ["log", "info", "warn", "error", "debug"] as const) mock.method(console, level, (...args: unknown[]) => void written.push(args.map(String).join(" ")));
+	const got: unknown[] = [], seen: string[] = [];
+	try {
+		void b.fire("tool_execution_start", { toolCallId: "c1", toolName: "secret_drop", args: {} });
+		b.on("robot-hand:secret:answer", (raw) => {
+			const x = raw as { id: string; answerId: string; digest: string; value: string };
+			got.push(x);
+			b.emit("robot-hand:secret:answer-result", { version: 1, id: x.id, answerId: x.answerId, accepted: true });
+			b.emit("robot-hand:secret:closed", { version: 1, id: x.id, by: "remote", answerId: x.answerId });
+		});
+		b.emit("robot-hand:secret:pending", { version: 1, id: "s1", toolCallId: "c1", digest, secret: SECRET });
+		let unit: Unit | undefined;
+		await until(async () => (unit = unitB(await snapshot(url)))?.pending?.answer, "B's secret dialog in the snapshot");
+		seen.push(JSON.stringify(unit));
+		assert.deepEqual(unit!.pending, { callId: "c1", tool: "secret_drop", answer: { dialog: "s1", digest, secret: SECRET } });
+		const bad = await post(url, csrf, "sessions/B/answer", { dialog: "s1", digest, answerId: "t".repeat(20), value: `${value}\u0007` });
+		assert.deepEqual([bad.status, bad.body.error], [400, "bad_answer"], "a value with a control character is refused, and the refusal does not quote it");
+		assert.deepEqual(got, [], "nothing reached the owner");
+		const body = { dialog: "s1", digest, answerId: "s".repeat(20), value };
+		const first = await post(url, csrf, "sessions/B/answer", body), replay = await post(url, csrf, "sessions/B/answer", { dialog: "s1", digest, answerId: "s".repeat(20) });
+		assert.deepEqual(first, { status: 200, body: { outcome: "accepted" } });
+		assert.deepEqual(replay, { status: 200, body: { outcome: "accepted" } }, "the same answerId replays its outcome without a value");
+		assert.deepEqual(got, [{ version: 1, id: "s1", answerId: "s".repeat(20), digest, value }], "the owner got the value once");
+		await until(async () => !unitB(await snapshot(url))?.pending, "the dialog closed");
+		seen.push(JSON.stringify(await snapshot(url)), JSON.stringify([first, replay, bad]));
+	} finally {
+		mock.restoreAll();
+	}
+	const everything = [...seen, ...written, ...a.notices.map((n) => n.text), ...b.notices.map((n) => n.text), ...filesUnder(scratch)];
+	assert.equal(everything.some((t) => t.includes(value)), false, "the value is only in the one answer event");
+});
+
+test("a secret_drop beside no matching dialog, or with another dialog open, is never answerable", async () => {
+	const { b, url, csrf } = await setup(false, [["c1", "secret_drop"]]);
+	void b.fire("tool_execution_start", { toolCallId: "c1", toolName: "secret_drop", args: {} });
+	b.emit("robot-hand:secret:pending", { version: 1, id: "s1", toolCallId: "c1", digest: "0".repeat(64), secret: SECRET });
+	await until(async () => unitB(await snapshot(url))?.pending?.why, "B's secret dialog in the snapshot");
+	const pending = unitB(await snapshot(url))!.pending!;
+	assert.deepEqual([pending.answer, pending.why], [undefined, "The question here differs from the one in the terminal; answer it there."], "a digest that does not match what was shown");
+	assert.equal((await post(url, csrf, "sessions/B/answer", { dialog: "s1", digest: "0".repeat(64), answerId: "u".repeat(20), value: "x" })).status, 409);
 });

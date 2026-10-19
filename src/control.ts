@@ -15,7 +15,7 @@ import { ENDING } from "./probe.ts";
 //   POST /<token>/api/sessions/<key>/keys  {key, stream, confirmed?}                     one key pad key under its mirror (keys.ts), or Stop's {keys: ["esc"]}
 //   POST /<token>/api/sessions/<key>/focus                                               brings the session's pane forward in Herdr
 //   POST /<token>/api/sessions/<key>/commands {prefix}                                   its commands that match a typed `/prefix`, from its bridge (commands.ts); null when it did not say
-//   POST /<token>/api/sessions/<key>/answer {dialog, digest, answerId, choice | answers}  answers its dialog through its bridge (dialogs.ts); no keys
+//   POST /<token>/api/sessions/<key>/answer {dialog, digest, answerId, choice | answers | value}  answers its dialog through its bridge (dialogs.ts); no keys; `value` (a secret) only from this computer's page
 //   POST /<token>/api/sessions/<key>/upload (the file's bytes)                            stores a pasted, dropped, or picked file, answers its path (upload.ts)
 //   POST /<token>/api/sessions/<key>/mirror {stream, on}                                  shows the pane's screen on that page's stream (mirror.ts), or stops
 //   POST /<token>/api/remote/pair                                                        a new one-time pairing URL and its QR, while remote access is on
@@ -145,6 +145,7 @@ export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, s
 			const { dialog, digest, answerId } = json;
 			if (typeof dialog !== "string" || dialog.length > 64 || typeof digest !== "string" || !/^[0-9a-f]{64}$/.test(digest) || typeof answerId !== "string" || !ANSWER_ID.test(answerId)) return no(400, "bad_request", "The answer does not name its dialog.");
 			if (!answers) return no(503, "unavailable", "This server takes no answers.");
+			if (origin.startsWith("https:") && "value" in json) return no(403, "local_only", "A secret cannot be entered from a remote page; answer it in the terminal."); // nothing of it is read, kept, or looked up
 			const known = answers.replay(answerId, key); // the same answer sent again (Check again) gets the outcome it had
 			if (known) return known;
 			job = async () => {
@@ -152,7 +153,7 @@ export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, s
 				const target = await answers.target(key), ended = answers.ended(key, dialog, answerId); // answered in the terminal a moment ago, or by this very answer
 				if (target?.answer.dialog !== dialog || target.answer.digest !== digest) throw ended ?? no(409, "changed", "The question changed or is no longer open here; read it again.");
 				const checked = checkAnswer(target.answer, json, origin.startsWith("https:"));
-				if (typeof checked === "string") throw no(400, "bad_answer", checked);
+				if (typeof checked === "string") throw no(target.answer.secret && origin.startsWith("https:") ? 403 : 400, target.answer.secret && origin.startsWith("https:") ? "local_only" : "bad_answer", checked);
 				return answers.send(key, target, { id: dialog, answerId, digest, ...checked });
 			};
 		} else job = async () => call("agent.focus", { target: (await live(found)).pane_id });

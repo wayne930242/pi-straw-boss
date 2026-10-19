@@ -5,7 +5,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { AddressInfo } from "node:net";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { waitsForSecret } from "./ask.ts";
+import { forRemote, waitsForSecret } from "./ask.ts";
 import { type ControlDeps, createControl, type Reply } from "./control.ts";
 import type { HerdrCall } from "./herdr.ts";
 import type { Hub } from "./dialogs.ts";
@@ -64,15 +64,15 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, t
 	const mirrors = createMirrors({ call, lookup: (key) => net?.lookup(key), secret: waitsForSecret, canonical }), docs = hub && createDocs(hub, (key) => net?.lookup(key)?.name ?? key);
 	const stop = (asked: Asked) => void setTimeout(() => (onStop ? onStop(asked) : void halt()), 10); // after the reply has gone out
 	const control = createControl({ lookup: (key) => net?.lookup(key), call, csrf, canonical, pair, remoteOn: onRemote, spawn, close: close && (async (kind, json) => (await tick(), close(kind, json))), mirrors, stop, secret: waitsForSecret, answers: hub && { replay: hub.replay, ended: hub.ended, send: hub.send, probe: hub.probe, commands: hub.commands, target: async (key) => (await tick(), hub.target(key)) } });
-	let last: string | undefined, problem: string | undefined, inflight: Promise<void> | undefined;
+	let last: string | undefined, lastRemote: string | undefined, problem: string | undefined, inflight: Promise<void> | undefined;
 	let poll: ReturnType<typeof setInterval> | undefined, beat: ReturnType<typeof setInterval> | undefined;
 	const send = (to: ServerResponse, data: string, event?: string) => to.writableEnded || to.write(`${event ? `event: ${event}\n` : ""}data: ${data}\n\n`); // a reading in flight at stop ends after the streams
-	const push = (data: string, event?: string) => clients.forEach((_, c) => send(c, data, event));
+	const push = (data: string, event?: string, remote = data) => clients.forEach((_, c) => send(c, remotes.has(c) ? remote : data, event));
 	// One reading at a time; a caller that arrives meanwhile waits for the one in flight.
 	const tick = () => (inflight ??= (async () => {
 		try {
-			const json = JSON.stringify(await read());
-			if (json !== last || problem) push((last = json));
+			const net = await read(), json = JSON.stringify(net), safe = forRemote(net); // a remote page's copy never holds a secret's dialog
+			if (json !== last || problem) push((last = json), undefined, (lastRemote = safe === net ? json : JSON.stringify(safe)));
 			problem = undefined;
 			await Promise.all([...clients.values()].map((w) => w?.refresh().catch(() => {})));
 		} catch (error) {
@@ -95,7 +95,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, t
 		if (last) hello();
 		const watch = target?.startsWith("w:") ? watchWorkspace(files, target.slice(2), to) : target ? watchSession(files, target, to) : undefined;
 		clients.set(res, watch);
-		if (last) res.write(`data: ${last}\n\n`);
+		if (last) res.write(`data: ${remote ? lastRemote : last}\n\n`);
 		if (clients.size === 1) {
 			poll = setInterval(() => void tick(), pollMs).unref();
 			beat = setInterval(() => push("", "ping"), pingMs).unref();
