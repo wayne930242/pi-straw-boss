@@ -349,3 +349,31 @@ test("the composer clears only what was confirmed, and says why it cannot send",
 	assert.match(blocked({ ...unit, control: false })!, /No live pi pane/);
 	assert.match(blocked({ ...unit, mark: "waiting" })!, /dialog/);
 });
+
+test("answer: a confirmation is refused from a paired device (403 local_only, nothing sent) and taken from this computer's page; a select is taken from both", async () => {
+	const { gui, sent, hub } = await answering();
+	const confirm = { title: "mp-infra command review\n\nssh box ls", choices: [{ label: "Yes" }, { label: "No" }], confirm: true as const };
+	const host = "box.tail1.ts.net:8443", tailnet = { host, "tailscale-user-login": "me@example.com", "x-forwarded-for": "100.87.7.97" };
+	gui.access.enable({ host, login: "me@example.com" });
+	const remote = (path: string, headers: Record<string, string>, method = "POST", payload?: unknown) => new Promise<{ status: number; headers: Record<string, unknown>; body: { error?: string; reason?: string; outcome?: string } }>((resolve, reject) => {
+		const data = payload === undefined ? "{}" : JSON.stringify(payload);
+		const req = request({ host: "127.0.0.1", port: gui.remotePort, path, method, headers: { ...headers, ...(method === "POST" ? { "content-length": String(Buffer.byteLength(data)) } : {}) }, agent: false }, (res) => {
+			let text = "";
+			res.on("data", (c) => (text += c)).on("end", () => resolve({ status: res.statusCode!, headers: res.headers, body: /^application\/json/.test(String(res.headers["content-type"])) ? JSON.parse(text) : {} }));
+		});
+		req.on("error", reject).end(method === "POST" ? data : undefined);
+	});
+	const cookie = String((await remote(`/${gui.token}/pair/${gui.access.pair()}`, tailnet, "GET")).headers["set-cookie"]).split(";")[0]!;
+	const paired = (payload: unknown) => remote(`/${gui.token}/api/sessions/sess-1/answer`, { ...tailnet, cookie, origin: `https://${host}`, "content-type": "application/json", "x-sb-csrf": gui.csrf }, "POST", payload);
+	hub.target = { from: "S", bridgeId: "B", answer: { dialog: "d1", digest: "a".repeat(64), select: confirm } } as Target;
+	const refused = await paired(body());
+	assert.deepEqual([refused.status, refused.body.error], [403, "local_only"]);
+	assert.match(String(refused.body.reason), /computer the GUI runs on/);
+	assert.deepEqual(sent, [], "nothing reached the bridge");
+	assert.deepEqual(await send(gui, "sessions/sess-1/answer", body({ answerId: "b".repeat(16) })), { status: 200, body: { outcome: "accepted" } }, "this computer's page answers it");
+	assert.equal(sent.length, 1);
+	hub.target = { from: "S", bridgeId: "B", answer: { dialog: "d1", digest: "a".repeat(64), select: { title: "Which?", choices: [{ label: "A" }, { label: "B" }] } } } as Target;
+	const taken = await paired(body({ answerId: "c".repeat(16), choice: 1 }));
+	assert.deepEqual([taken.status, taken.body.outcome], [200, "accepted"], "a select is taken from a paired device");
+	assert.equal(sent.length, 2);
+});

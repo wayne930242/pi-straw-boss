@@ -236,6 +236,7 @@
 	"send_answer": "Send answer",
 	"secret_remote": "For security, entering a secret is not supported remotely. Answer it in the terminal on the computer the GUI runs on.",
 	"secret_terminal": "A secret is entered in the terminal only, not here. Answer it in the terminal on the computer the GUI runs on.",
+	"confirm_local_only": "A confirmation can be answered only in the terminal or on the page of the computer the GUI runs on, not from a paired device. This page shows it read-only.",
 	"answer_them": "Answer them in the terminal.",
 	"answer_it": "Answer it in the terminal.",
 	"show_terminal": "Show terminal",

@@ -152,6 +152,7 @@ export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, s
 				await live(found);
 				const target = await answers.target(key), ended = answers.ended(key, dialog, answerId); // answered in the terminal a moment ago, or by this very answer
 				if (target?.answer.dialog !== dialog || target.answer.digest !== digest) throw ended ?? no(409, "changed", "The question changed or is no longer open here; read it again.");
+				if (origin.startsWith("https:") && target.answer.select?.confirm) throw no(403, "local_only", "A confirmation is answered on the computer the GUI runs on, or in its terminal; a paired device can only read it."); // a select may be answered from a paired device, a confirm may not
 				const checked = checkAnswer(target.answer, json, origin.startsWith("https:"));
 				if (typeof checked === "string") throw no(400, "bad_answer", checked);
 				return answers.send(key, target, { id: dialog, answerId, digest, ...checked });

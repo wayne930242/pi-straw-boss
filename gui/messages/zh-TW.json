@@ -194,6 +194,7 @@
 	"send_answer": "送出答案",
 	"secret_remote": "安全考量，遠端不支援輸入機密。請到執行 GUI 的那台電腦的終端機中回答。",
 	"secret_terminal": "機密內容只能在終端機輸入，這裡不接受。請到執行 GUI 的那台電腦的終端機中回答。",
+	"confirm_local_only": "確認對話框只能在終端機，或在執行 GUI 的那台電腦的頁面上回答，已配對的裝置不能回答。這個頁面只能查看。",
 	"answer_them": "請在終端機中回答。",
 	"answer_it": "請在終端機中回答。",
 	"show_terminal": "顯示終端機",

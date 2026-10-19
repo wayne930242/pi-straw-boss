@@ -549,3 +549,33 @@ test("both notices are said in every locale the page ships; Traditional Chinese 
 	assert.match(m.secret_terminal({}, { locale: "zh-TW" }), /終端機輸入/);
 	assert.match(m.secret_terminal({}, { locale: "en" }), /terminal only/);
 });
+
+// A confirm (ctx.ui.confirm relayed as Yes and No) is answerable on this computer's page only: a paired device's page reads it and says where to answer.
+const CONFIRM = { title: "mp-infra command review\n\nssh box ls", choices: [{ label: "Yes" }, { label: "No" }], confirm: true as const };
+const confirming = (): Pending => ({ callId: "c1", tool: "bash", answer: { dialog: "u1", digest: selectDigest(CONFIRM), select: CONFIRM } });
+
+test("a confirmation is answerable on this computer's page with Yes and No, and read-only on a paired device's page, which says where to answer it", () => {
+	const local = mountAsk(root as unknown as HTMLElement, (action, body) => (sent.push({ action, body }), new Promise((resolve) => replies.push(resolve))), false);
+	local.update(confirming(), true);
+	assert.deepEqual(choices().map((el) => el.textContent), ["Yes", "No"]);
+	assert.ok(button("Send answer"), "and Send");
+	assert.match(root.textContent, /mp-infra command review/);
+	const remote = mountAsk((root = new El("div")) as unknown as HTMLElement, (action, body) => (sent.push({ action, body }), new Promise((resolve) => replies.push(resolve))), true);
+	page.body.replaceChildren(root);
+	remote.update(confirming(), true);
+	assert.equal(choices().length, 0, "no choice to pick");
+	assert.equal(button("Send answer"), undefined, "nothing to send");
+	assert.match(root.textContent, /mp-infra command review/, "the question is still shown");
+	assert.match(root.textContent, /A confirmation can be answered only in the terminal or on the page of the computer the GUI runs on, not from a paired device\./);
+	assert.equal(remote.enter(), false);
+	assert.deepEqual(sent, [], "nothing is posted");
+	// A plain select (not a confirm) stays answerable from a paired device.
+	remote.update({ callId: "c2", tool: "bash", answer: { dialog: "s1", digest: selectDigest(SELECT), select: SELECT } }, true);
+	assert.ok(button("Send answer"));
+});
+
+test("the confirmation notice is said in every locale the page ships", async () => {
+	const { locales } = await import("../gui/paraglide/runtime.js");
+	for (const locale of locales) assert.ok(m.confirm_local_only({}, { locale }).length > 20, locale);
+	assert.match(m.confirm_local_only({}, { locale: "zh-TW" }), /終端機.*執行 GUI 的那台電腦.*已配對的裝置不能回答/);
+});
