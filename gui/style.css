@@ -503,8 +503,8 @@ summary::-webkit-details-marker { display: none; }
 .ask-title { margin: 0; font: 12.5px/1.45 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 12em; overflow: auto; }
 div.ask-opts { max-height: none; } button.ask-opt { text-align: left; color: var(--text); font: 13px var(--sans); cursor: pointer; }
 .ask-opt[aria-checked="true"] { border-color: #ffb02e; background: #ffb02e1f; }
-.ask-own { min-width: 0; padding: 7px 12px; border-radius: 10px; border: 1px solid var(--line); background: #070c18; color: var(--text); font: 13px var(--sans); }
-.ask-memo { font-size: 12px; } .ask input:disabled { opacity: 0.45; }
+.ask-own { min-width: 0; resize: vertical; field-sizing: content; max-height: 10em; padding: 7px 12px; border-radius: 10px; border: 1px solid var(--line); background: #070c18; color: var(--text); font: 13px var(--sans); }
+.ask-memo { font-size: 12px; } .ask input:disabled, .ask textarea:disabled { opacity: 0.45; }
 .ask-send { padding: 7px 13px; border: 0; border-radius: 10px; background: #ffb02e; color: #06101e; font: 600 13px var(--sans); cursor: pointer; }
 .go, .later, .chat-pill, .cmp-send, .cmp-alt { padding: 7px 13px; border-radius: 10px; font: 600 13px var(--sans); text-decoration: none; cursor: pointer; }
 .go, .chat-pill { background: var(--c); color: #06101e; } a.go { display: inline-flex; align-items: center; justify-content: center; } /* a link centers its text in a touch-sized box as a button does */
@@ -613,7 +613,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 	.dock, .dock.wide { top: auto; right: 10px; width: calc(100vw - 20px); } .dock { bottom: calc(10px + env(safe-area-inset-bottom)); } .dock.wide { transform: none; } .dialog .zoom { display: none; } /* not .zoom.view, the base map */
 }
 /* Touch: larger targets, and a 16 px box so the phone does not zoom in on focus. */
-@media (pointer: coarse) { .composer textarea, .ask input { font-size: 16px; } .composer button, .go, .later, .x, .chat-pill, .pair-btn, .alerts, .ask button, .term-bar button, .quit-btn, .d-doc { min-height: 40px; } }
+@media (pointer: coarse) { .composer textarea, .ask input, .ask textarea { font-size: 16px; } .composer button, .go, .later, .x, .chat-pill, .pair-btn, .alerts, .ask button, .term-bar button, .quit-btn, .d-doc { min-height: 40px; } }
 /* A phone's keys are as big as a thumb needs, a narrow window with a mouse included. */
 @media (max-width: 640px), (pointer: coarse) { .pad-key, .pad-yes { min-height: 44px; } .pad-digits summary { padding: 14px 0; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }

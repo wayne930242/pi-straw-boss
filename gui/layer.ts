@@ -166,7 +166,11 @@ export function mountPanels(deps: PanelDeps) {
 			sync(button.querySelector(".faces")!, asking.slice(0, 3).map((a) => ({ ...a, id: a.key })), () => html(PLATE), (face, a) => fillPlate(face, a.role, a.mark));
 			drawDone(queue);
 		},
-		enter: (a) => dock.querySelector<HTMLElement>(`[data-key="${CSS.escape(a.key)}"] .go`)?.focus(),
+		// A dialog with a question to answer takes the focus on its first option; the others on Open comms.
+		enter(a) {
+			const el = dock.querySelector<HTMLElement>(`[data-key="${CSS.escape(a.key)}"]`);
+			if (el && !asks.get(el)?.enter()) el.querySelector<HTMLElement>(".go")?.focus();
+		},
 		focused: () => (document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : undefined),
 		restore: (target) => Boolean(target?.isConnected && !target.closest("[inert]") && (target.focus(), document.activeElement === target)), // a disabled HUD alert does not take it
 	});

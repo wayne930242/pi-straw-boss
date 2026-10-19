@@ -17,12 +17,18 @@ class El {
 	oninput: (() => void) | null = null;
 	private off = false;
 	value = "";
+	selectionStart = 0;
+	selectionEnd = 0;
+	handlers: Record<string, ((e: unknown) => void)[]> = {};
 	readonly tagName: string;
 	constructor(tagName: string) {
 		this.tagName = tagName;
 	}
 	setAttribute(name: string, value: string) {
 		this.attrs.set(name, String(value));
+	}
+	addEventListener(type: string, on: (e: unknown) => void) {
+		(this.handlers[type] ??= []).push(on);
 	}
 	getAttribute(name: string) {
 		return this.attrs.get(name) ?? null;
@@ -47,6 +53,11 @@ class El {
 	}
 	focus() {
 		page.focused = this;
+		this.bubble("focusin");
+	}
+	/** An event that rises from this element through its ancestors' listeners. */
+	bubble(type: string) {
+		for (let at: El | undefined = this; at; at = at.parent) for (const on of at.handlers[type] ?? []) on({ target: this });
 	}
 	/** A browser drops the focus from a control that becomes disabled (to the body). */
 	get disabled() {
@@ -62,10 +73,12 @@ class El {
 	}
 	/** A click the way a browser takes it: a disabled control ignores it. */
 	click() {
-		if (!this.disabled) this.onclick?.();
+		if (this.disabled) return;
+		this.onclick?.();
+		this.bubble("click");
 	}
 	type(text: string) {
-		this.value = text;
+		[this.value, this.selectionStart, this.selectionEnd] = [text, text.length, text.length];
 		this.oninput?.();
 	}
 	all(match: (el: El) => boolean): El[] {
@@ -299,4 +312,197 @@ test("a read-only panel offers Show terminal (the session's mirror); a secret an
 	assert.equal(button(), undefined, "a secret's screen stays hidden");
 	ask.update(approval(), true);
 	assert.equal(button(), undefined, "an answerable dialog answers itself");
+});
+
+// The keyboard: which control takes the focus on opening, and where the arrows, Tab, Shift+Tab, Enter, and Space go (gui/askkeys.ts).
+const four = [1, 2, 3, 4].map((n) => ({ question: `Q${n}?`, header: `Q${n}`, multiple: n === 4, options: [{ title: `a${n}` }, { title: `b${n}` }, { title: `c${n}` }] }));
+const asking = (questions: typeof QUESTIONS): Pending => ({ callId: "c9", tool: "ask_user_question", answer: { dialog: "k1", digest: questionsDigest(questions), questions } });
+const focused = () => (page.activeElement as El).getAttribute("aria-label") ?? (page.activeElement as El).textContent;
+/** One keydown the way the page takes it: the panel's listeners, then the browser's own activation (a click) when nobody took Enter or Space on a button. */
+function press(target: El, key: string, over: Record<string, unknown> = {}) {
+	const e = { key, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, isComposing: false, repeat: false, target, taken: false, ...over, preventDefault() { this.taken = true; } };
+	for (const on of (root.kids[0] as El).handlers.keydown ?? []) on(e);
+	if (!e.taken && target.tagName === "button" && [" ", "Enter"].includes(key)) target.click();
+	return e;
+}
+const on = (el: El) => (el.focus(), el);
+const tabs = () => choices().map((el) => el.getAttribute("tabindex"));
+
+test("a panel with a question takes the focus on its first option, or the chosen one; a read-only or finished panel does not", async () => {
+	const panel = mount();
+	panel.update(approval("m1"), true);
+	assert.equal(panel.enter(), true);
+	assert.equal(page.activeElement, choices()[0], "the first choice");
+	choices()[2]!.click();
+	assert.equal(panel.enter(), true);
+	assert.equal(page.activeElement, choices()[2], "the chosen one");
+	panel.update(questionnaire("q1"), true);
+	choices()[1]!.click();
+	choices()[3]!.focus();
+	assert.equal(panel.enter(), true);
+	assert.equal(page.activeElement, choices()[1], "the first question's chosen option, not the second question's");
+	page.focused = undefined;
+	panel.update(onItsWay("c1"), true);
+	assert.equal(panel.enter(), false, "a read-only panel has nothing to answer");
+	assert.equal(page.activeElement, page.body);
+	panel.update(approval("m2"), false);
+	assert.equal(panel.enter(), false, "its controls are disabled while the stream is down");
+	panel.update(approval("m3"), true);
+	choices()[0]!.click();
+	button("Send answer")!.click();
+	await reply({ outcome: "accepted" });
+	assert.equal(panel.enter(), false, "an answered one takes no more");
+	assert.equal(mount().enter(), false, "nothing on show");
+});
+
+test("a select: arrows move and select (a radio group), Enter or Space confirms and goes to Send, Tab is the browser's", () => {
+	const panel = mount();
+	panel.update(approval(), true);
+	const [a, b, c] = choices() as [El, El, El], send = button("Send answer")!;
+	assert.deepEqual(tabs(), ["0", "-1", "-1"], "one tab stop in the group");
+	on(a);
+	assert.equal(press(a, "ArrowDown").taken, true);
+	assert.deepEqual([page.activeElement, checked()], [b, [1]], "moving selects");
+	assert.deepEqual(tabs(), ["-1", "0", "-1"], "the tab stop follows");
+	press(b, "ArrowRight");
+	assert.deepEqual([page.activeElement, checked()], [c, [2]]);
+	assert.equal(press(c, "ArrowDown").taken, true, "the end is taken, so the page does not scroll");
+	assert.deepEqual([page.activeElement, checked()], [c, [2]]);
+	press(c, "ArrowLeft");
+	press(b, "ArrowUp");
+	assert.deepEqual([page.activeElement, checked()], [a, [0]]);
+	assert.equal(press(a, "Tab").taken, false, "Tab goes on in the page's order");
+	assert.equal(press(a, "Tab", { shiftKey: true }).taken, false);
+	press(a, "Enter");
+	assert.deepEqual([page.activeElement, checked()], [send, [0]], "Enter confirms the option and goes to Send");
+	on(b);
+	assert.equal(press(b, " ").taken, true);
+	assert.deepEqual([page.activeElement, checked()], [send, [1]], "so does Space");
+	assert.equal(press(send, "Enter").taken, false, "Enter on Send is the button's own");
+	assert.deepEqual(sent.map((s) => s.body.choice), [1]);
+});
+
+test("two questions: arrows select in a single choice and only move in a multiple one (Space toggles), Tab and Shift+Tab walk the questions, Enter goes on", () => {
+	const panel = mount();
+	panel.update(questionnaire(), true);
+	const [yes, no, ops, billing, support] = choices() as [El, El, El, El, El], send = button("Send answer")!;
+	assert.equal(panel.enter(), true);
+	assert.equal(page.activeElement, yes);
+	press(yes, "ArrowDown");
+	assert.deepEqual([page.activeElement, checked()], [no, [1]]);
+	assert.equal(press(no, "Tab").taken, true);
+	assert.equal(page.activeElement, ops, "Tab goes to the next question's first option");
+	assert.equal(press(ops, "Tab", { shiftKey: true }).taken, true);
+	assert.equal(page.activeElement, no, "and Shift+Tab to the previous one's chosen option");
+	press(no, "Tab");
+	press(ops, "ArrowDown");
+	assert.deepEqual([page.activeElement, checked()], [billing, [1]], "a multiple choice moves the focus without choosing");
+	press(billing, "Enter");
+	assert.deepEqual([page.activeElement, checked()], [billing, [1]], "Enter on it chooses nothing, and with nothing else unanswered Send is still disabled, so the focus stays");
+	assert.equal(press(billing, " ").taken, false, "Space is the button's own: it toggles");
+	assert.deepEqual(checked(), [1, 3]);
+	press(support, "Enter");
+	assert.deepEqual(checked(), [1, 3], "Enter does not toggle");
+	assert.equal(page.activeElement, send, "all answered: Enter goes on to Send");
+	assert.equal(press(on(support), "Tab").taken, false, "from the last question Tab is the browser's: its own words, then Send");
+	assert.equal(press(support, "Tab", { shiftKey: true }).taken, true);
+	assert.equal(page.activeElement, no, "Shift+Tab from the last question goes back to the one before");
+	press(on(yes), "Enter");
+	assert.deepEqual([page.activeElement, checked()], [send, [0, 3]], "Enter on a single choice confirms it, and with nothing left unanswered goes to Send");
+	press(yes, "Tab", { shiftKey: true });
+	assert.equal(press(yes, "Tab", { shiftKey: true }).taken, false, "Shift+Tab leaves the first question the browser's way");
+});
+
+test("four questions: Enter goes to the next unanswered one (round the end too), then Send; Tab and Shift+Tab walk all four", () => {
+	const panel = mount();
+	panel.update(asking(four), true);
+	const opts = (q: number) => choices().slice(q * 3, q * 3 + 3);
+	assert.equal(panel.enter(), true);
+	assert.equal(page.activeElement, opts(0)[0]);
+	for (let q = 0; q < 3; q++) press(opts(q)[0]!, "Tab");
+	assert.equal(page.activeElement, opts(3)[0], "Tab walked 1 to 4");
+	assert.equal(press(opts(3)[0]!, "Tab").taken, false, "the last one lets Tab go on");
+	for (let q = 3; q > 0; q--) press(opts(q)[0]!, "Tab", { shiftKey: true });
+	assert.equal(page.activeElement, opts(0)[0], "Shift+Tab walked back to 1");
+	// Question 3 is answered first: Enter on 1 goes to 2, Enter on 2 skips 3 to 4.
+	opts(2)[1]!.click();
+	press(opts(0)[1]!, "Enter");
+	assert.deepEqual([page.activeElement, checked()], [opts(1)[0], [1, 7]]);
+	press(opts(1)[0]!, "Enter");
+	assert.equal(page.activeElement, opts(3)[0], "question 3 is skipped");
+	opts(3)[2]!.click();
+	press(opts(3)[2]!, "Enter");
+	assert.equal(page.activeElement, button("Send answer"), "after the last, Send");
+	assert.equal(button("Send answer")!.disabled, false);
+});
+
+test("Enter on a later question goes back round to an earlier unanswered one while Send is disabled", () => {
+	const panel = mount();
+	panel.update(asking(four), true);
+	const opts = (q: number) => choices().slice(q * 3, q * 3 + 3);
+	for (const q of [1, 2]) opts(q)[0]!.click();
+	opts(3)[0]!.click();
+	press(on(opts(3)[0]!), "Enter");
+	assert.equal(page.activeElement, opts(0)[0], "question 1 is still open");
+	assert.equal(button("Send answer")!.disabled, true);
+	press(opts(0)[2]!, "Enter");
+	assert.equal(page.activeElement, button("Send answer"));
+});
+
+test("the own-words box: Enter goes on like Enter on an option, Shift+Enter is a new line, the caret keeps its keys, and Down past the last option reaches it", () => {
+	const panel = mount();
+	panel.update(questionnaire(), true);
+	const [, , ops, , support] = choices() as [El, El, El, El, El], [own1, own2] = field("Your own answer") as [El, El];
+	assert.equal(own1.tagName, "textarea", "a box that holds a line break");
+	on(support);
+	assert.equal(press(support, "ArrowDown").taken, true);
+	assert.equal(page.activeElement, own2, "Down from the last option reaches the question's own words");
+	assert.equal(press(own2, "ArrowUp").taken, true);
+	assert.equal(page.activeElement, support, "Up goes back to its last option");
+	on(own2);
+	own2.type("both");
+	assert.equal(press(own2, "ArrowLeft").taken, false);
+	assert.equal(press(own2, "ArrowRight").taken, false);
+	assert.equal(press(own2, "ArrowUp").taken, false, "Up with the caret at the end is the caret's");
+	own2.type("one\ntwo");
+	own2.selectionStart = own2.selectionEnd = 0;
+	assert.equal(press(own2, "ArrowDown").taken, false, "so is Down away from the end");
+	own2.selectionStart = own2.selectionEnd = own2.value.length;
+	assert.equal(press(own2, "ArrowDown").taken, true);
+	assert.equal(page.activeElement, field("Note")[1], "Down at the end goes to the note");
+	assert.equal(press(field("Note")[1]!, "ArrowUp").taken, true);
+	assert.equal(page.activeElement, own2);
+	assert.equal(press(own2, "Enter", { shiftKey: true }).taken, false, "Shift+Enter is the box's own new line");
+	assert.equal(press(own2, "Enter", { isComposing: true }).taken, false, "an input method's Enter is its own");
+	assert.equal(page.activeElement, own2);
+	choices()[1]!.click();
+	press(on(own2), "Enter");
+	assert.equal(page.activeElement, button("Send answer"), "Enter in the box with every question answered goes to Send");
+	assert.deepEqual(own1.value, "");
+	on(own1).type("first");
+	press(own1, "Enter");
+	assert.equal(page.activeElement, button("Send answer"));
+	press(on(own1), "Tab");
+	assert.equal(page.activeElement, ops, "Tab out of an earlier question's box goes to the next question");
+});
+
+test("keys that carry Ctrl, Alt, or ⌘, a held Enter, and keys outside the form are left alone; Space's release is swallowed once it moved the focus", () => {
+	const panel = mount();
+	panel.update(asking(four), true);
+	const a1 = on(choices()[0]!);
+	for (const over of [{ ctrlKey: true }, { altKey: true }, { metaKey: true }]) assert.equal(press(a1, "ArrowDown", over).taken, false);
+	assert.equal(press(a1, "ArrowDown", { shiftKey: true }).taken, false, "Shift with an arrow is not ours");
+	assert.deepEqual([page.activeElement, checked()], [a1, []]);
+	assert.equal(press(button("Send answer")!, "ArrowDown").taken, false, "Send is the browser's");
+	for (const target of [a1, field("Your own answer")[0]!, field("Note")[0]!]) assert.equal(press(target, "Escape").taken, false, "Escape stays the page's: it closes the card");
+	assert.equal(press(a1, "Enter", { repeat: true }).taken, true);
+	assert.deepEqual([page.activeElement, checked()], [a1, []], "a held Enter does not carry on through the questions");
+	assert.equal(press(a1, " ").taken, true);
+	assert.deepEqual([page.activeElement, checked()].map(String), [String(choices()[3]), "0"]);
+	const up = { key: " ", taken: false, preventDefault() { this.taken = true; } };
+	for (const on of (root.kids[0] as El).handlers.keyup ?? []) on(up);
+	assert.equal(up.taken, true, "the release of the Space that moved on does not click anything");
+	const again = { key: " ", taken: false, preventDefault() { this.taken = true; } };
+	for (const on of (root.kids[0] as El).handlers.keyup ?? []) on(again);
+	assert.equal(again.taken, false);
 });

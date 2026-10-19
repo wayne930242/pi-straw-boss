@@ -48,6 +48,13 @@ test("none fires while the user types: inputs, textareas, selects, contenteditab
 	for (const target of typing) for (const key of [" ", "f", "F"]) assert.equal(hotkeyOf(press(key, target), false), undefined, `${key} in ${target.tag}.${target.cls.join(".")}`);
 });
 
+test("in an answer form: Space and F in the own-words or note box only type, and Space on an option stays the option's (its radio or checkbox button)", () => {
+	const form = new El("section", ["ask"]), own = new El("textarea", ["ask-own"], {}, form), note = new El("input", ["ask-own"], { type: "text" }, form);
+	for (const box of [own, note]) for (const key of [" ", "f", "F"]) assert.equal(hotkeyOf(press(key, box), false), undefined, `${key} in ${box.tag}`);
+	for (const role of ["radio", "checkbox"]) assert.equal(hotkeyOf(press(" ", new El("button", ["ask-opt"], { role }, form)), false), undefined, `Space on a ${role}`);
+	for (const key of ["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Tab", "Enter"]) for (const target of [own, note, new El("button", ["ask-opt"], { role: "radio" }, form)]) assert.equal(hotkeyOf(press(key, target), false), undefined, `${key} is the form's`);
+});
+
 test("none fires with Ctrl, Alt, or ⌘ held, while an input method composes, or when another listener took the key", () => {
 	for (const over of [{ ctrlKey: true }, { altKey: true }, { metaKey: true }, { isComposing: true }, { defaultPrevented: true }])
 		for (const key of [" ", "f"]) assert.equal(hotkeyOf(press(key, undefined, over), false), undefined, `${key} ${Object.keys(over)}`);

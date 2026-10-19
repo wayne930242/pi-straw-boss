@@ -1,5 +1,6 @@
 import type { Ask, Pending } from "../src/ask.ts";
 import type { Answerable, Reply } from "../src/owners.ts";
+import { type Group, wire } from "./askkeys.ts";
 import { h } from "./dom.ts";
 import { m } from "./paraglide/messages.js";
 import type { Answer } from "./post.ts";
@@ -41,7 +42,7 @@ const final = (r: Answer) => ["accepted", "stale", "busy", "unknown"].includes(S
 /** A panel drawn for a pending. `done`: it takes no further answer from here; `sending`: its answer is on its way; `focus`: what had the focus in it
  * when it left the page (it takes it back on coming back); `lost`: the control that lost the focus by being disabled here (it takes it back when enabled); `busy`: refused while another answer was on its way, and `spell` once the server showed
  * that answer (read-only): the dialog answerable after it means that answer was refused, so this panel answers again. */
-interface Panel { key: string; el: HTMLElement; note: HTMLElement; send?: HTMLButtonElement; controls: (HTMLButtonElement | HTMLInputElement)[]; pick: () => Pick | undefined; done: boolean; sending: boolean; focus?: HTMLElement; lost?: HTMLButtonElement | HTMLInputElement; busy?: boolean; spell?: boolean }
+interface Panel { first?: () => HTMLButtonElement | undefined; key: string; el: HTMLElement; note: HTMLElement; send?: HTMLButtonElement; controls: (HTMLButtonElement | HTMLInputElement | HTMLTextAreaElement)[]; pick: () => Pick | undefined; done: boolean; sending: boolean; focus?: HTMLElement; lost?: HTMLButtonElement | HTMLInputElement; busy?: boolean; spell?: boolean }
 /** A dialog the page may answer is known by its id and digest, under whichever call the server reads it; anything else by its call and why. */
 const keyOf = (p: Pending) => (p.answer ? `d\n${p.answer.dialog}\n${p.answer.digest}` : `c\n${p.callId}\n${p.why ?? ""}`);
 
@@ -85,13 +86,14 @@ export function mountAsk(root: HTMLElement, post: AnswerPost, remote = location.
 		const copy = a.select?.copy !== undefined && h("button", { type: "button", class: "cmp-link" }, m.copy_command());
 		if (copy) (copy.disabled = !navigator.clipboard), (copy.onclick = () => void navigator.clipboard.writeText(a.select!.copy!).then(() => say(x.note, "ok", m.copied()), () => say(x.note, "error", m.clipboard_refused())));
 		x.pick = () => (chosen === undefined ? undefined : { choice: chosen });
+		x.first = wire(x.el, [{ opts, multiple: false, answered: () => chosen !== undefined }], () => x.send);
 		x.controls = opts;
 		return [h("pre", { class: "ask-title" }, visible(a.select!.title)), h("div", { class: "ask-opts", role: "radiogroup", "aria-label": m.choices() }, ...opts), h("div", { class: "ask-acts" }, x.send!, copy)];
 	}
 	/** A questionnaire: per question its options (one, or several), its own words, and a note; it goes when every question has an answer. */
 	function questions(x: Panel, a: Answerable) {
-		const state = a.questions!.map(() => ({ picks: new Set<number>(), text: h("input", { type: "text", maxlength: "8192", class: "ask-own", placeholder: m.own_answer_placeholder(), "aria-label": m.own_answer() }), note: h("input", { type: "text", maxlength: "2048", class: "ask-own ask-memo", placeholder: m.note_placeholder(), "aria-label": m.note() }) }));
-		const blocks = a.questions!.map((q, i) => {
+		const state = a.questions!.map(() => ({ picks: new Set<number>(), text: h("textarea", { rows: "1", maxlength: "8192", class: "ask-own", placeholder: m.own_answer_placeholder(), "aria-label": m.own_answer() }), note: h("input", { type: "text", maxlength: "2048", class: "ask-own ask-memo", placeholder: m.note_placeholder(), "aria-label": m.note() }) }));
+		const groups: Group[] = [], blocks = a.questions!.map((q, i) => {
 			const s = state[i]!, role = q.multiple ? "checkbox" : "radio";
 			const opts = q.options.map((o, k) => option(role, o.title, [o.description, o.preview && m.has_preview()], () => {
 				if (!q.multiple) (s.picks.clear(), (s.text.value = ""));
@@ -101,9 +103,11 @@ export function mountAsk(root: HTMLElement, post: AnswerPost, remote = location.
 			}));
 			s.text.oninput = () => (q.multiple || (s.picks.clear(), opts.forEach((b) => b.setAttribute("aria-checked", "false"))), draw());
 			x.controls.push(...opts, s.text, s.note);
+			groups.push({ opts, multiple: Boolean(q.multiple), own: s.text, note: s.note, answered: () => s.picks.size > 0 || s.text.value.trim() !== "" });
 			return h("div", { class: "ask-one" }, q.header && h("b", { class: "ask-head" }, q.header), h("p", { class: "ask-q" }, q.question), h("div", { class: "ask-opts", role: q.multiple ? "group" : "radiogroup", "aria-label": m.options() }, ...opts), s.text, s.note);
 		});
 		x.pick = () => (state.every((s) => s.picks.size || s.text.value.trim()) ? { answers: state.map((s) => replyOf(s.picks, s.text.value, s.note.value)) } : undefined);
+		x.first = wire(x.el, groups, () => x.send);
 		return [...blocks, h("div", { class: "ask-acts" }, x.send!)];
 	}
 	function build(p: Pending): Panel {
@@ -126,6 +130,11 @@ export function mountAsk(root: HTMLElement, post: AnswerPost, remote = location.
 		if (x?.focus && (!document.activeElement || document.activeElement === document.body)) x.focus.focus();
 	};
 	return {
+		/** Puts the focus on the form's first question's chosen option (or its first), when the panel on show answers and takes it; false when it has nothing to answer. */
+		enter() {
+			const to = cur && !cur.done ? cur.first?.() : undefined;
+			return Boolean(to && !to.disabled && (to.focus(), true));
+		},
 		/** The unit's pending dialog now, and whether it can be answered or its pane brought forward (it waits and the stream is up). */
 		update(next: Pending | undefined, can: boolean) {
 			ready = can;
