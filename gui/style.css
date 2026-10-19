@@ -66,31 +66,32 @@ svg { display: block; }
 .qr { width: min(100%, 300px); border-radius: 12px; shape-rendering: crispEdges; }
 .spawn-btns { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 4px; }
 .base > .spawn-btns { margin: -4px 0 12px; }
-.tab h3 { display: flex; align-items: center; gap: 8px; }
 /* A squad's name stays on one line beside its buttons, cut short with an ellipsis. */
 .tab h3 > span, .squad h3 > b { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; } .tab h3 > button { flex: none; }
 .tab-add { margin-left: auto; flex: none; white-space: nowrap; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line); background: none; color: var(--dim); font: 600 11px var(--sans); letter-spacing: 0.08em; cursor: pointer; }
 .squad .tab-add { margin-left: 0; }
 .tab-add:hover, .new-base:hover { color: #38e0ff; border-color: #38e0ff; }
 .quit-btn { flex: none; margin-left: 6px; padding: 2px 9px; border: 1px solid var(--line); border-radius: 8px; background: none; color: var(--dim); font: 600 12px var(--sans); cursor: pointer; } .quit-btn:hover { color: #ff8a9c; border-color: #ff8a9c66; }
-.base > header > .quit-btn { margin-left: auto; align-self: flex-start; } .card > .quit-btn, .tower-quit { position: relative; z-index: 2; margin-left: auto; } .tower-quit { margin: 6px 0 0; } /* above the card's link */
+.base > header > .quit-btn { margin-left: auto; align-self: flex-start; } .card > .quit-btn { margin-left: auto; }
+.card > .quit-btn, .tower-quit { position: relative; z-index: 2; } /* above the card's link */
+.tower-quit { margin: 6px 0 0; }
 .sheet { margin: auto; max-width: min(420px, calc(100vw - 32px)); padding: 18px 20px; border: 1px solid var(--line); border-radius: 16px; background: #0e1628; color: var(--text); font: 14px/1.5 var(--sans); }
 .sheet::backdrop { background: #02050c99; } .sheet p { margin: 0 0 14px; } .sheet-row { display: flex; justify-content: flex-end; gap: 10px; } .sheet .later { padding: 6px 14px; border-radius: 10px; cursor: pointer; }
 .sheet-yes { padding: 6px 14px; border: 0; border-radius: 10px; background: #ff8a9c; color: #06101e; font: 600 13px var(--sans); cursor: pointer; }
-.modes { display: flex; gap: 4px; } .modes[hidden] { display: none; }
+.modes { display: flex; flex: none; gap: 4px; }
 .modes button { white-space: nowrap; padding: 4px 14px; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--dim); font: 600 12px var(--sans); cursor: pointer; }
 .modes button[aria-pressed="true"] { border-color: #38e0ff; color: #38e0ff; background: #38e0ff14; }
 .term-root { min-height: 0; padding: 10px 16px 14px; } .term-root .term-tile { height: 100%; }
 /* Images in the chat as thumbnails; the lightbox shows one over the whole page, fitted, or at its own size when tapped. */
 .pics { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px; margin-top: 8px; }
-.pic { padding: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: #0b1220; line-height: 0; cursor: zoom-in; }
-.pic { max-width: 100%; } .pic img { display: block; max-width: 240px; max-height: 180px; } .pic-gone { color: var(--dim); font-size: 12px; }
+.pic { max-width: 100%; padding: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: #0b1220; line-height: 0; cursor: zoom-in; }
+.pic img { display: block; max-width: 240px; max-height: 180px; } .pic-gone { color: var(--dim); font-size: 12px; }
 .lightbox { width: 100vw; max-width: none; height: 100dvh; max-height: none; margin: 0; padding: 0; overflow: auto; border: 0; background: rgba(4, 8, 16, 0.94); }
 .lightbox[open] { display: grid; place-items: center; } .lightbox::backdrop { background: transparent; }
 .lightbox img { max-width: 94vw; max-height: 88dvh; object-fit: contain; cursor: zoom-in; } .lightbox.zoom[open] { place-items: start; }
 .lightbox.zoom img { max-width: none; max-height: none; cursor: zoom-out; }
 .lightbox button { position: fixed; display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid var(--line); border-radius: 50%; background: rgba(14, 22, 40, 0.85); color: var(--text); font-size: 26px; line-height: 1; }
-.lightbox button[hidden] { display: none; } .lb-close { top: 14px; right: 14px; } .lb-prev, .lb-next { top: calc(50% - 22px); } .lb-prev { left: 14px; } .lb-next { right: 14px; }
+.lb-close { top: 14px; right: 14px; } .lb-prev, .lb-next { top: calc(50% - 22px); } .lb-prev { left: 14px; } .lb-next { right: 14px; }
 .lb-count { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); color: var(--dim); font: 13px var(--mono); }
 /* Queued messages under the chat, as the dimmed bubbles they will become: at most three lines each. */
 .queue-list { display: grid; justify-items: end; gap: 4px; margin: 0 16px 6px; }
@@ -132,7 +133,6 @@ svg { display: block; }
 .link[data-state="reconnecting"] i, .link[data-state="connecting"] i { background: #ffb02e; animation: blink 1s ease-in-out infinite; }
 .link[data-state="offline"] i { background: #ff5470; }
 .banner { margin: 14px 0 0; padding: 10px 16px; border-radius: 14px; background: rgba(113, 132, 173, 0.16); color: #c9d6f5; font-size: 13px; }
-.banner[hidden] { display: none; }
 .banner b { font-family: var(--mono); font-weight: 600; }
 
 .stage { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; margin-top: 18px; align-items: start; transition: opacity 0.4s; }
@@ -147,7 +147,7 @@ svg { display: block; }
 .base { position: relative; padding: 16px; border-radius: 18px; border: 1px solid var(--line); background: linear-gradient(180deg, #16213c, #0c1324); box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35); }
 .base.head { background: linear-gradient(180deg, rgba(255, 209, 102, 0.1), transparent 38%), linear-gradient(180deg, #16213c, #0c1324); }
 .base[data-mark="waiting"] { box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35), inset 0 0 0 999px rgba(255, 176, 46, 0.045); }
-.base > header { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+.base > header { position: relative; display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
 .title { min-width: 0; margin-right: auto; display: grid; justify-items: start; }
 .title h2 { max-width: 100%; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .title p { max-width: 100%; color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -169,7 +169,7 @@ svg { display: block; }
 
 .tabs { display: grid; gap: 12px; }
 .tab { padding: 10px; border-radius: 14px; background: rgba(255, 255, 255, 0.025); border: 1px solid rgba(255, 255, 255, 0.05); }
-.tab h3 { margin-bottom: 8px; color: var(--dim); font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }
+.tab h3 { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; color: var(--dim); font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }
 .units, .subs { display: grid; gap: 8px; }
 .outposts { display: grid; gap: 8px; margin-top: 12px; }
 .outposts:empty { display: none; }
@@ -265,7 +265,6 @@ body[data-stale="true"] .work { opacity: 0.45; }
 .hit, .enter-base::after { position: absolute; inset: 0; z-index: 1; border-radius: inherit; }
 .enter-base::after { content: ""; z-index: 0; }
 .hit:hover { box-shadow: inset 0 0 0 1px var(--c); }
-.base > header { position: relative; }
 .enter-base { text-decoration: none; }
 .base > header:hover h2 { color: #38e0ff; }
 
@@ -332,7 +331,7 @@ a.tower:hover::before { border-color: var(--c); }
 .chan { margin-left: auto; flex: none; white-space: nowrap; }
 /* The header's name and its base · squad line keep to one line each. */
 .head-id { flex: 1 1 auto; min-width: 0; } .head-id h2, .head-id p { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.head-back { display: none; } .modes { flex: none; } .modes + .chan { margin-left: 12px; }
+.head-back { display: none; } .modes + .chan { margin-left: 12px; }
 .chat-root { position: relative; display: grid; min-height: 0; }
 .comms-in .ask { max-height: calc((var(--vvh, 100vh) - 190px) * 0.55); overflow-y: auto; overscroll-behavior: contain; } /* the comms stay in view under a long dialog */
 .chat-scroll { overflow-y: auto; padding: 12px 16px; overflow-anchor: none; font-size: 15px; }
@@ -347,7 +346,7 @@ a.tower:hover::before { border-color: var(--c); }
 /* The entry Open comms lands on, lit for a moment (an entry's containment makes it the containing block). */
 .lit::after { content: ""; position: absolute; inset: 0; border-radius: 14px; background: #38e0ff2e; animation: out 1s 1s forwards; }
 /* The composer under the log: the box, Send (and Follow-up and Stop while it works), and one line for what happened or why not. */
-.composer { display: grid; gap: 8px; padding: 12px 18px 14px; border-top: 1px solid var(--line); background: var(--panel); }
+.composer { position: relative; display: grid; gap: 8px; padding: 12px 18px 14px; border-top: 1px solid var(--line); background: var(--panel); }
 .cmp-row, .cmp-acts, .cmp-foot, .cmp-note { display: flex; gap: 8px; align-items: center; }
 .cmp-row { align-items: flex-end; gap: 10px; }
 .composer textarea { flex: 1; min-width: 0; resize: none; padding: 9px 12px; border-radius: 12px; border: 1px solid var(--line); background: #070c18; color: var(--text); font: 14px/1.4 var(--sans); }
@@ -359,7 +358,6 @@ a.tower:hover::before { border-color: var(--c); }
 .cmp-note[data-tone="ask"] { color: var(--gold); }
 .cmp-link { border: 0; padding: 0; background: none; color: #38e0ff; font: 12px var(--sans); cursor: pointer; }
 /* The `/` menu above the box: the session's matching commands, the chosen one lit. */
-.composer { position: relative; }
 .slash { position: absolute; left: 18px; right: 18px; bottom: calc(100% - 6px); z-index: 5; max-height: 260px; overflow-y: auto; margin: 0; padding: 4px; list-style: none; border: 1px solid var(--line); border-radius: 12px; background: #0b1324; box-shadow: 0 8px 24px #0008; }
 .slash li { display: flex; gap: 10px; align-items: baseline; padding: 6px 10px; border-radius: 8px; cursor: pointer; }
 .slash li[aria-selected="true"] { background: #38e0ff1f; }
@@ -398,7 +396,7 @@ summary::-webkit-details-marker { display: none; }
 .rule summary { justify-content: center; }
 .rule summary::before, .rule summary::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 .tx.note { text-align: center; }
-.dossier-in { display: grid; justify-items: center; gap: 6px; text-align: center; }
+.dossier-in { position: relative; display: grid; justify-items: center; gap: 6px; text-align: center; }
 .dossier-in > .tag { justify-self: stretch; text-align: left; }
 .portrait { padding: 8px; border-radius: 50%; background: radial-gradient(var(--c1), transparent 70%); }
 .portrait .plate { --s: 96px; }
@@ -409,7 +407,7 @@ summary::-webkit-details-marker { display: none; }
 .specs div { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 8px; padding: 7px 10px; background: rgba(255, 255, 255, 0.035); }
 .specs dt { font-size: 10px; }
 .specs dd { font-size: 12.5px; overflow-wrap: anywhere; }
-.d-drones, .d-squads { margin-top: 8px; } .d-squads { justify-self: stretch; display: grid; gap: 10px; } .d-squad { display: grid; gap: 6px; } .d-squad small { color: var(--dim); } .d-squad .formation { gap: 6px; } .dossier-in { position: relative; } .d-x, .head-info { display: none; }
+.d-drones, .d-squads { margin-top: 8px; } .d-squads { justify-self: stretch; display: grid; gap: 10px; } .d-squad { display: grid; gap: 6px; } .d-squad small { color: var(--dim); } .d-squad .formation { gap: 6px; } .d-x, .head-info { display: none; }
 .d-drones .formation { gap: 6px; justify-content: center; }
 
 /* Markdown in transmissions and documents. */
@@ -508,7 +506,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 @keyframes term-engage { 0% { box-shadow: 0 0 0 0 #38e0ffcc, 0 0 0 #38e0ff00; } 60% { box-shadow: 0 0 0 7px #38e0ff00, 0 0 34px #38e0ff66; } 100% { box-shadow: 0 0 0 1px #38e0ff66, 0 0 22px #38e0ff2e; } }
 @keyframes term-blip { 0% { box-shadow: 0 0 0 2px #7ff0ffcc, 0 0 32px #38e0ff88; } 100% { box-shadow: 0 0 0 1px #38e0ff66, 0 0 22px #38e0ff2e; } }
 .term-sink { position: fixed; width: 1px; height: 18px; padding: 0; border: 0; opacity: 0; resize: none; overflow: hidden; pointer-events: none; }
-.term-typing { margin-left: auto; color: #38e0ff; font-weight: 600; animation: term-note 1.6s ease-in-out infinite; } .term-typing[hidden] { display: none; }
+.term-typing { margin-left: auto; color: #38e0ff; font-weight: 600; animation: term-note 1.6s ease-in-out infinite; }
 @keyframes term-note { 50% { opacity: 0.55; text-shadow: 0 0 10px #38e0ff99; } }
 .term-state { color: var(--dim); } .term-state[data-tone="ok"] { color: #3ddc97; } .term-state[data-tone="error"] { color: #ff8a9c; }
 .term-scroll { overflow: auto; overscroll-behavior: contain; padding: 8px 10px; border-radius: 14px; border: 1px solid var(--line); background: #090d18; }
@@ -540,7 +538,6 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .pad-note:empty { display: none; }
 .pad-note { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin: 0; font-size: 12px; color: var(--dim); } .pad-note[data-tone="error"] { color: #ff8a9c; }
 .pad-note[data-tone="ask"] { padding: 8px 10px; border-radius: 10px; border: 1px solid #ffb02e66; background: #ffb02e14; color: var(--text); }
-@media (max-width: 640px) { .pad-key, .pad-yes { min-height: 44px; } .pad-digits summary { padding: 14px 0; } }
 .pad-yes { padding: 5px 11px; border: 0; border-radius: 9px; background: #ffb02e; color: #06101e; font: 600 12px var(--sans); cursor: pointer; }
 .c0 { color: #45475a; } .cz { color: #090d18; } .c1 { color: #f38ba8; } .c2 { color: #a6e3a1; } .c3 { color: #f9e2af; } .c4 { color: #89b4fa; } .c5 { color: #f5c2e7; } .c6 { color: #94e2d5; } .c7 { color: #bac2de; }
 .c8 { color: #585b70; } .c9 { color: #f37799; } .c10 { color: #89d88b; } .c11 { color: #ebd391; } .c12 { color: #74a8fc; } .c13 { color: #f2aede; } .c14 { color: #6bd7ca; } .c15 { color: #a6adc8; }
@@ -548,46 +545,53 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .k8 { background: #585b70; } .k9 { background: #f37799; } .k10 { background: #89d88b; } .k11 { background: #ebd391; } .k12 { background: #74a8fc; } .k13 { background: #f2aede; } .k14 { background: #6bd7ca; } .k15 { background: #a6adc8; }
 .tb { font-weight: 700; } .td { opacity: .6; } .ti { font-style: italic; } .tu { text-decoration: underline; } .ts { text-decoration: line-through; } .tu.ts { text-decoration: underline line-through; }
 @media (max-width: 900px) { .work { flex-direction: column; align-items: stretch; } .view, .tiles { flex: none; } .tile { position: static; } .keep { flex-wrap: wrap; } }
-/* A phone: the HUD wraps and scrolls away, every column takes the full width, dialogs dock at the bottom, and the comms panel fits the
-   visual viewport (it shrinks with the on-screen keyboard), clear of the safe-area insets. */
+/* A phone: the HUD wraps and scrolls away, every column takes the full width, and a session, its tiles, and its dossier take the whole screen over the
+   visual viewport (it shrinks with the on-screen keyboard), clear of the safe-area insets; dialogs dock at the bottom. */
 @media (max-width: 640px) {
+	/* The page and the HUD. */
 	.shell { padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); }
 	.hud { position: static; flex-wrap: wrap; gap: 10px; padding: 10px 12px; }
 	.brand p, .link span { display: none; }
 	.alert-row { order: 3; flex: 1 1 100%; min-width: 0; } .alert-row .alerts { flex: 1 1 auto; width: auto; min-width: 0; } .done-btn { min-height: 40px; }
 	/* The brand and the link's dot, then Remind, Sound, Phone, and the language as four even buttons a thumb can hit. */
 	.brand { flex: 1 1 calc(100% - 40px); min-width: 0; } .link { order: 1; } .hud > .pair-btn { order: 2; flex: 1 1 0; min-width: 0; min-height: 40px; justify-content: center; padding: 6px 8px; white-space: nowrap; } .hud > .lang { flex: none; padding-right: 26px; }
+	.log { max-height: none; } .log li:nth-child(n+3) { display: none; }
+	/* The location bar, and the map and the workspace. */
+	.crumbs { gap: 6px; } .crumbs > * + *::before { margin-right: 6px; } .crumbs > * { max-width: 16ch; }
+	.crumbs:not(.open) > .mid { display: none; } .crumbs:not(.open) > .crumb-more { display: block; flex: none; }
+	.crumbs.open { flex-wrap: wrap; row-gap: 4px; }
 	.map, .zoom-in { padding: 14px; }
 	.bases { gap: 18px; }
 	.keep { padding: 6px; gap: 12px; }
 	.tower.big { width: 84px; height: 84px; }
 	.tally { flex-wrap: wrap; }
 	.col { width: 100%; }
-	.comms-in, .tile { height: calc(var(--vvh, 100dvh) - 16px); min-height: 300px; border-radius: 16px; }
-	/* A session takes the whole screen, its composer fixed at the bottom over the keyboard; a tile opens over it the same way. */
-	.comms-in { position: fixed; z-index: 15; left: 0; right: 0; top: var(--vvt, 0px); height: var(--vvh, 100dvh); min-height: 0; grid-template-columns: minmax(0, 1fr); border: 0; border-radius: 0; background: var(--bg); }
-	.tiles:has(.tile) { position: fixed; z-index: 16; left: 0; right: 0; top: var(--vvt, 0px); height: var(--vvh, 100dvh); overflow-y: auto; padding: 8px; background: var(--bg); }
-	.dossier.full { position: fixed; z-index: 17; left: 0; right: 0; top: var(--vvt, 0px); height: var(--vvh, 100dvh); overflow-y: auto; overscroll-behavior: contain; border: 0; border-radius: 0; padding: max(16px, env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom)); background: var(--bg); }
-	.dossier.full .d-x { display: grid; place-items: center; position: absolute; top: 0; right: 0; } .head-info { display: block; padding: 0 12px; }
-	.chat-scroll { overscroll-behavior: contain; } .chat-scroll:focus-visible { outline: none; } /* the log the page focuses on entry, not a ring across the screen */ .comms-head .logo { display: none; } .head-back { display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid var(--line); border-radius: 12px; color: var(--text); font-size: 24px; text-decoration: none; }
-	.chat-scroll { padding: 12px; }
-	/* Two rows: the icon, the name, the channel's dot, and close; then Comms | Terminal as two halves, big enough for a thumb. */
-	.comms-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 8px 10px; padding: max(10px, env(safe-area-inset-top)) 12px 10px; } .comms-head .logo { width: 36px; height: 36px; border-radius: 11px; } .comms-head .logo svg { width: 22px; height: 22px; }
+	/* Full-screen layers, one above the next: a session's comms with its composer fixed at the bottom over the keyboard, a tile opened over it, and the dossier (Info) over both. */
+	.comms-in, .dossier.full { position: fixed; left: 0; right: 0; top: var(--vvt, 0px); height: var(--vvh, 100dvh); background: var(--bg); }
+	.tiles:has(.tile) { position: fixed; left: 0; right: 0; top: var(--vvt, 0px); height: var(--vvh, 100dvh); background: var(--bg); } /* apart: a browser without :has() drops only this rule */
+	.comms-in { z-index: 15; min-height: 0; grid-template-columns: minmax(0, 1fr); border: 0; border-radius: 0; }
+	.tiles:has(.tile) { z-index: 16; overflow-y: auto; padding: 8px; }
+	.tile { height: calc(var(--vvh, 100dvh) - 16px); min-height: 300px; border-radius: 16px; }
+	.dossier.full { z-index: 17; overflow-y: auto; overscroll-behavior: contain; border: 0; border-radius: 0; padding: max(16px, env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom)); }
+	.dossier.full .d-x { display: grid; place-items: center; position: absolute; top: 0; right: 0; }
+	/* The comms header in two rows: back, the name, the channel's dot, and Info; then Comms | Terminal as two halves, big enough for a thumb. */
+	.comms-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 8px 10px; padding: max(10px, env(safe-area-inset-top)) 12px 10px; }
+	.comms-head .logo { display: none; } .head-back { display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid var(--line); border-radius: 12px; color: var(--text); font-size: 24px; text-decoration: none; } .head-info { display: block; padding: 0 12px; }
 	.comms-head h2 small { display: none; } .chan b { display: none; } .modes + .chan { margin-left: 0; }
 	.modes { grid-row: 2; grid-column: 1 / -1; padding: 3px; border: 1px solid var(--line); border-radius: 12px; }
 	.modes button { flex: 1; min-height: 40px; padding: 0; border: 0; border-radius: 9px; font-size: 14px; } .modes button[aria-pressed="true"] { background: #38e0ff1f; }
-	.crumbs { gap: 6px; } .crumbs > * + *::before { margin-right: 6px; } .crumbs > * { max-width: 16ch; }
-	.crumbs:not(.open) > .mid { display: none; } .crumbs:not(.open) > .crumb-more { display: block; flex: none; }
-	.crumbs.open { flex-wrap: wrap; row-gap: 4px; }
+	/* The log, and the composer under it. */
+	.chat-scroll { padding: 12px; overscroll-behavior: contain; } .chat-scroll:focus-visible { outline: none; } /* the log the page focuses on entry, not a ring across the screen */
 	.bubble { max-width: 92%; }
 	.composer { padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); } .cmp-foot:has(> .cmp-note:empty) { display: none; } /* no blank line under Send */
 	.cmp-row { flex-wrap: wrap; }
 	.composer textarea { flex: 1 1 100%; min-height: 64px; order: -1; } /* the box on top, then + on Send's row */
 	.cmp-acts { margin-left: auto; }
-	.log { max-height: none; } .log li:nth-child(n+3) { display: none; }
-	.dock { top: auto; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); width: calc(100vw - 20px); }
-	.dock.wide { top: auto; right: 10px; transform: none; width: calc(100vw - 20px); } .dialog .zoom { display: none; } /* a phone's dialog already takes the width (not .zoom.view, the base map) */
+	/* Dialogs dock at the bottom and take the width, so they have no Enlarge. */
+	.dock, .dock.wide { top: auto; right: 10px; width: calc(100vw - 20px); } .dock { bottom: calc(10px + env(safe-area-inset-bottom)); } .dock.wide { transform: none; } .dialog .zoom { display: none; } /* not .zoom.view, the base map */
 }
 /* Touch: larger targets, and a 16 px box so the phone does not zoom in on focus. */
-@media (pointer: coarse) { .composer textarea, .ask input { font-size: 16px; } .composer button, .go, .later, .x, .chat-pill, .pair-btn, .alerts, .ask button, .term-bar button, .quit-btn, .d-doc { min-height: 40px; } .pad-key, .pad-yes { min-height: 44px; } .pad-digits summary { padding: 14px 0; } }
+@media (pointer: coarse) { .composer textarea, .ask input { font-size: 16px; } .composer button, .go, .later, .x, .chat-pill, .pair-btn, .alerts, .ask button, .term-bar button, .quit-btn, .d-doc { min-height: 40px; } }
+/* A phone's keys are as big as a thumb needs, a narrow window with a mouse included. */
+@media (max-width: 640px), (pointer: coarse) { .pad-key, .pad-yes { min-height: 44px; } .pad-digits summary { padding: 14px 0; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }

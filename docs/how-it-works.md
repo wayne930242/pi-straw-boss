@@ -370,7 +370,7 @@ The dashboard has its own file (`src/dashboard.ts`, budget 200 lines) and its re
 
 The page is vanilla TypeScript in `gui/`, built by Vite (a development dependency only) into `dist/gui`, which ships in the npm package; `dist/` is not committed. The page diffs the DOM by element id, animates with CSS on `transform` and `opacity`, and its reconnect logic (`gui/stream.ts`) is tested with a fake stream and a fake clock.
 The map's chunk holds the map, the header, the router, and the alert spotting (`gui/alerts.ts`).
-The focus views (`gui/views.ts`), the comms log with the markdown renderer (`gui/chat.ts`, `gui/markdown.ts`), and the overlay layer's DOM and tiles (`gui/layer.ts`) load on first use.
+The focus views (`gui/views.ts` coordinates `gui/workspace.ts`, `gui/session.ts`, and `gui/dossier.ts`), the comms log with the markdown renderer (`gui/chat.ts`, `gui/markdown.ts`), and the overlay layer's DOM and tiles (`gui/layer.ts`) load on first use.
 The overlay rules (`gui/overlay.ts` for the dialog stack, `createTiles` in `gui/layer.ts`) are pure and tested without a browser (`tests/overlay.test.ts`); phase 2 and 3 dialogs (ask_user, robot_hand, secret_drop) and show_doc documents (`gui/doc.ts`, its rules tested in `tests/doc-page.test.ts`) plug into the same stack and tiles.
 Size budgets are checked by `tests/imports.test.ts`: the map's chunk ≤ 15 KB (6 KB gzipped), the lazy chunks together ≤ 35 KB (12 KB), the stylesheet ≤ 22.1 KB (6.1 KB).
 
