@@ -366,7 +366,7 @@ a.tower:hover::before { border-color: var(--c); }
 .cmp-row, .cmp-acts, .cmp-foot, .cmp-note { display: flex; gap: 8px; align-items: center; }
 .cmp-row { align-items: flex-end; gap: 10px; }
 .composer textarea { flex: 1; min-width: 0; resize: none; padding: 9px 12px; border-radius: 12px; border: 1px solid var(--line); background: #070c18; color: var(--text); font: 14px/1.4 var(--sans); }
-@supports (field-sizing: content) { .composer textarea { field-sizing: content; max-height: 220px; } }
+@supports (field-sizing: content) { .composer textarea { field-sizing: content; max-height: 220px; } .composer { grid-template-columns: minmax(0, 1fr); } } /* a long URL wraps instead of widening the column */
 .composer textarea:focus { outline: none; border-color: #38e0ff80; box-shadow: 0 0 0 3px #38e0ff1f; }
 .composer button:disabled { opacity: 0.45; cursor: default; }
 .cmp-note { flex: 1; flex-wrap: wrap; min-height: 18px; }

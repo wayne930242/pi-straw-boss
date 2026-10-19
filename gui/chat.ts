@@ -233,7 +233,7 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor }: 
 	});
 	// Whether the log is at its top or its end is read off two sentinels (the end's is in its last pixel, with 80 px of margin below the log), so no geometry is read while it scrolls; a log that is not
 	// rendered says nothing. An observer that watches anything makes every running animation cost a frame per vsync, so they watch only while the log scrolls and for a moment after (`watch`).
-	const sentries = [new IntersectionObserver((seen) => seen.some((s) => s.isIntersecting) && void older(), { root: scroller }), new IntersectionObserver((seen) => scroller.clientHeight && (follow.scrolled(seen.at(-1)!.isIntersecting), button()), { root: scroller, rootMargin: "0px 0px 80px" })];
+	const sentries = [new IntersectionObserver((seen) => seen.some((s) => s.isIntersecting) && void older(), { root: scroller }), new IntersectionObserver((seen) => scroller.clientHeight && (follow.scrolled(seen.at(-1)!.isIntersecting), button()), { root: scroller, rootMargin: "0px 0px 67px" })] /* 80 px from the scroll end: the end line sits above 12 px of padding */;
 	let watching: ReturnType<typeof setTimeout> | undefined;
 	const watch = () => (watching ?? (sentries[0]!.observe(top), sentries[1]!.observe(foot)), clearTimeout(watching), (watching = setTimeout(() => ((watching = undefined), sentries.forEach((s) => s.disconnect())), 600)));
 	scroller.addEventListener("scroll", () => (watch(), !down && coast !== undefined && coasting()), { passive: true });

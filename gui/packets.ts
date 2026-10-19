@@ -11,7 +11,11 @@ export function along({ x1, y1, x2, y2, mid }: Wire, n = 64): (readonly [number,
 		return [u ** 3 * x1 + 3 * u * u * t * mid + 3 * u * t * t * mid + t ** 3 * x2, u ** 3 * y1 + 3 * u * u * t * y1 + 3 * u * t * t * y2 + t ** 3 * y2] as const;
 	});
 	const reach = dense.reduce<number[]>((sum, p, i) => (sum.push(i ? sum[i - 1]! + Math.hypot(p[0] - dense[i - 1]![0], p[1] - dense[i - 1]![1]) : 0), sum), []);
-	return Array.from({ length: n + 1 }, (_, k) => dense[Math.max(0, reach.findIndex((r) => r >= (k / n) * reach.at(-1)!))]!);
+	return Array.from({ length: n + 1 }, (_, k) => {
+		const want = (k / n) * reach.at(-1)!, i = Math.max(1, reach.findIndex((r) => r >= want)), [a, b] = [dense[i - 1]!, dense[i]!];
+		const f = reach[i]! > reach[i - 1]! ? (want - reach[i - 1]!) / (reach[i]! - reach[i - 1]!) : 0; // between the two samples, so the spacing is even
+		return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f] as const;
+	});
 }
 
 /** The keyframes (in a `<style>`) and a dot for each wire; none when `still`. */
