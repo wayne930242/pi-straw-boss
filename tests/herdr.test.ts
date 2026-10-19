@@ -4,7 +4,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { herdrCall, HerdrError, herdrRun, place, report, waitFor } from "../src/herdr.ts";
+import { herdrCall, HerdrError, herdrRun, herdrWorld, panes, place, report, socketReads, tabs, waitFor, workspaces, worldOf } from "../src/herdr.ts";
 
 test("report puts the positional id first, adds a TTL only when it sets a token, and clears with --clear-token", async () => {
 	const calls: string[][] = [];
@@ -78,4 +78,61 @@ test("herdrCall returns Herdr's result, even split mid-character across reads, a
 	} finally {
 		fake.close();
 	}
+});
+
+test("socketReads answers Herdr's listings over the socket in the CLI's reply shape, and leaves every other command to the CLI", async () => {
+	const asked: [string, unknown, number | undefined][] = [], cli: string[][] = [];
+	const call = async (method: string, params: Record<string, unknown>, timeoutMs?: number) => (asked.push([method, params, timeoutMs]), method === "pane.list" ? { type: "pane_list", panes: [{ pane_id: "wA:p1" }] } : method === "workspace.list" ? { type: "workspace_list", workspaces: [{ workspace_id: "wA" }] } : { type: "tab_list", tabs: [{ tab_id: "wA:t1" }] });
+	const run = socketReads(async (args) => (cli.push(args), JSON.stringify({ result: { pane: { pane_id: "wA:p1" } } })), call);
+	assert.deepEqual(await panes(run), [{ pane_id: "wA:p1" }]);
+	await panes(run, "wA");
+	assert.deepEqual(await workspaces(run), [{ workspace_id: "wA" }]);
+	assert.deepEqual(await tabs(run, "wA"), [{ tab_id: "wA:t1" }]);
+	await run(["pane", "list"], 1234);
+	assert.deepEqual(asked, [["pane.list", {}, undefined], ["pane.list", { workspace_id: "wA" }, undefined], ["workspace.list", {}, undefined], ["tab.list", { workspace_id: "wA" }, undefined], ["pane.list", {}, 1234]]);
+	assert.deepEqual(cli, []);
+	// Nothing else is a listing: writes, single reads, and listings the socket form does not cover go to the CLI as they came.
+	const others = [["pane", "current"], ["tab", "list"], ["workspace", "list", "--workspace", "wA"], ["pane", "list", "--workspace"], ["pane", "list", "--cwd", "x"], ["pane", "list", "wA"], ["pane", "report-metadata", "wA:p1", "--source", "straw-boss", "--token", "a=b"], ["tab", "close", "wA:t1"]];
+	for (const args of others) await run(args);
+	assert.deepEqual(cli, others);
+	assert.equal(asked.length, 5);
+});
+
+test("a listing that fails over the socket rejects with Herdr's own error and does not fall back to the CLI", async () => {
+	const cli: string[][] = [];
+	const run = socketReads(async (args) => (cli.push(args), "{}"), async () => { throw new HerdrError("workspace_not_found", "herdr pane.list failed: workspace_not_found workspace wX not found"); });
+	await assert.rejects(panes(run, "wX"), (e: HerdrError) => e instanceof HerdrError && e.code === "workspace_not_found" && /workspace wX not found/.test(e.message));
+	await assert.rejects(workspaces(run), (e: HerdrError) => e.code === "workspace_not_found");
+	assert.deepEqual(cli, []);
+});
+
+test("the listings go over a real socket as one request each, with the workspace id Herdr names it by", async () => {
+	const seen: { method: string; params: unknown }[] = [];
+	const fake = await socket((request, reply) => {
+		seen.push({ method: request.method, params: request.params });
+		const result = request.method === "pane.list" ? { type: "pane_list", panes: [{ pane_id: "wA:p1", tab_id: "wA:t1", tokens: { sb_role: "main" } }] } : request.method === "session.snapshot" ? { type: "session_snapshot", snapshot: { panes: [{ pane_id: "wA:p1" }], workspaces: [{ workspace_id: "wA" }], tabs: [{ tab_id: "wA:t1", workspace_id: "wA" }, { tab_id: "wB:t1", workspace_id: "wB" }] } } : undefined;
+		reply(`${JSON.stringify(result ? { id: request.id, result } : { id: request.id, error: { code: "workspace_not_found", message: "workspace wX not found" } })}\n`);
+	});
+	try {
+		const call = herdrCall(fake.path), run = socketReads(async () => assert.fail("the CLI must not run"), call);
+		assert.deepEqual(await panes(run, "wA"), [{ pane_id: "wA:p1", tab_id: "wA:t1", tokens: { sb_role: "main" } }]);
+		await assert.rejects(workspaces(run), (e: HerdrError) => e.code === "workspace_not_found");
+		assert.deepEqual(await herdrWorld(call)(), { panes: [{ pane_id: "wA:p1" }], workspaces: [{ workspace_id: "wA" }], tabs: [] });
+		assert.deepEqual(seen, [{ method: "pane.list", params: { workspace_id: "wA" } }, { method: "workspace.list", params: {} }, { method: "session.snapshot", params: {} }]);
+	} finally {
+		fake.close();
+	}
+});
+
+test("the world is the panes, workspaces, and the asked workspace's tabs of one session.snapshot, or of listings asked together; a snapshot without them is an error", async () => {
+	const snapshot = { panes: [{ pane_id: "wA:p1" }], workspaces: [{ workspace_id: "wA" }, { workspace_id: "wB" }], tabs: [{ tab_id: "wA:t1", workspace_id: "wA" }, { tab_id: "wB:t1", workspace_id: "wB" }, { tab_id: "wA:t2", workspace_id: "wA" }] };
+	const world = herdrWorld(async (method) => (assert.equal(method, "session.snapshot"), { type: "session_snapshot", snapshot }));
+	assert.deepEqual(await world(), { ...snapshot, tabs: [] }, "no workspace asked: no tabs");
+	assert.deepEqual((await world("wA")).tabs, [snapshot.tabs[0], snapshot.tabs[2]], "the tabs of one workspace, in the snapshot's order");
+	for (const bad of [{}, { snapshot: {} }, { snapshot: { panes: [], workspaces: [] } }, { snapshot: { panes: {}, workspaces: [], tabs: [] } }]) await assert.rejects(herdrWorld(async () => bad)(), /session\.snapshot returned no panes, workspaces, or tabs/);
+	const order: string[] = [];
+	const run = async (args: string[]) => (order.push(`start ${args[0]}`), await Promise.resolve(), order.push(`end ${args[0]}`), JSON.stringify({ result: args[0] === "pane" ? { panes: [] } : args[0] === "tab" ? { tabs: [{ tab_id: "wA:t1" }] } : { workspaces: [] } }));
+	assert.deepEqual(await worldOf(run)(), { panes: [], workspaces: [], tabs: [] });
+	assert.deepEqual(await worldOf(run)("wA"), { panes: [], workspaces: [], tabs: [{ tab_id: "wA:t1" }] });
+	assert.deepEqual(order.slice(0, 6), ["start pane", "start workspace", "end pane", "end workspace", "start pane", "start workspace"], "the listings are in flight together");
 });

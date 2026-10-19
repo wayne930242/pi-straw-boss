@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { ARROW, headOf, type HerdrRun, isSub, MARK, type Pane, panes, parentOf, type Session, TOWER_LABEL, workspaces, type Workspace } from "./herdr.ts";
+import { ARROW, headOf, type HerdrRun, type HerdrWorld, isSub, MARK, type Pane, parentOf, type Session, TOWER_LABEL, type Workspace, worldOf } from "./herdr.ts";
 
 // The tower's monitoring screen: a widget above the editor, never focused, redrawn only while something is working.
 //
@@ -22,7 +22,8 @@ export interface Row { group: "net" | "towers"; depth: number; mark: Mark; text:
 export interface Snapshot { title: string; mark: Mark; head: boolean; rows: Row[]; gui?: string }
 export type Tone = "accent" | "warning" | "muted" | "success" | "dim" | "error" | "border" | "title" | "tower" | "main" | "member";
 export type Paint = (tone: Tone, text: string) => string;
-export interface Sources { run: HerdrRun; sessions(): Promise<Session[]>; workspaceId: string; now?: number; gui?(): Promise<string | undefined> }
+/** `world` reads the panes and workspaces; without it they are listed through `run`. */
+export interface Sources { run: HerdrRun; world?: HerdrWorld; sessions(): Promise<Session[]>; workspaceId: string; now?: number; gui?(): Promise<string | undefined> }
 
 const KEY = "straw-boss-dashboard";
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -180,8 +181,8 @@ export function subagents(parent: Pane | undefined, all: Pane[], now: number, li
  * One reading of the world as rows: this tower's own net in detail (each tab's joined sessions with their subagents, then its
  * sub workspaces), and one summary line for every other tower. Other workspaces' sessions, and sessions that did not join, are not listed.
  */
-export async function collect({ run, sessions, workspaceId, now = Date.now(), gui }: Sources): Promise<Snapshot> {
-	const [live, ps, all] = [await sessions(), await panes(run), await workspaces(run)];
+export async function collect({ run, world = worldOf(run), sessions, workspaceId, now = Date.now(), gui }: Sources): Promise<Snapshot> {
+	const [live, { panes: ps, workspaces: all }] = await Promise.all([sessions(), world()]);
 	const head = headOf(all);
 	const mine = all.find((w) => w.workspace_id === workspaceId);
 	const sessionRow = (s: Session, role: string): Row => {

@@ -1,5 +1,5 @@
 import { subagents } from "./dashboard.ts";
-import { ARROW, type HerdrRun, type HerdrTab, isSub, MARK, type Pane, panes, type Place, report, tabs, workspaces, type Workspace } from "./herdr.ts";
+import { ARROW, type HerdrRun, type HerdrTab, type HerdrWorld, isSub, MARK, type Pane, type Place, report, type Workspace, worldOf } from "./herdr.ts";
 
 // Five display tokens for the sidebar plugin and for Herdr's own Agents rows, written next to `sb_role`:
 //  - `sb_order`: a sort key that lays the net out as the head tower's workspace first, then the other workspaces in Herdr's order, in each the tower
@@ -57,8 +57,8 @@ export interface Kid { pane: string; order: string; mark: string; indent: string
  * What a session publishes besides its role: its own tokens (null clears them when Herdr cannot place the session, a tower has no mark, and none
  * has an indent or a name, which clears the ones a pane keeps from when it ran a subagent) and those of the subagents it launched. Reads Herdr only.
  */
-export async function netTokens(run: HerdrRun, place: Place, role: "tower" | "main" | "member", name: string, now = Date.now()): Promise<{ own: Record<string, string | null>; kids: Kid[]; joined: Set<string> }> {
-	const [ps, all, tabList] = [await panes(run), await workspaces(run), await tabs(run, place.workspaceId)];
+export async function netTokens(run: HerdrRun, place: Place, role: "tower" | "main" | "member", name: string, now = Date.now(), world: HerdrWorld = worldOf(run)): Promise<{ own: Record<string, string | null>; kids: Kid[]; joined: Set<string> }> {
+	const { panes: ps, workspaces: all, tabs: tabList } = await world(place.workspaceId);
 	const pane = ps.find((p) => p.pane_id === place.paneId), key = pane && orderKey(role, pane, ps, all, tabList);
 	const joined = new Set(ps.filter((p) => p.tokens?.sb_role).map((p) => p.pane_id));
 	const tab = tabList.find((t) => t.tab_id === pane?.tab_id)?.label || null;

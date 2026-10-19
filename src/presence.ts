@@ -7,7 +7,7 @@ const REFRESH_MS = 4 * 60_000;
 
 /** The tokens a session publishes with its role: display and discovery only, kept fresh and written again when a new Herdr server takes over. */
 export function createPresence({ cfg, s, me, role }: Kit) {
-	const { run } = cfg;
+	const { run, world } = cfg;
 	let timer: ReturnType<typeof setInterval> | undefined;
 	// Tokens are display and discovery only: a failed write waits for the next refresh, liveness comes from intercom.
 	// One publish at a time, and shutdown waits for the one in flight: a write that lands after the clear would leave tokens behind.
@@ -17,7 +17,7 @@ export function createPresence({ cfg, s, me, role }: Kit) {
 		if (sbRole) {
 			s.ownName = nameOf((known ?? (await s.c.listSessions().catch(() => []))).find((x) => x.id === me())) || s.ownName;
 			// A failed read of Herdr leaves the subagents' tokens as they are; their TTL still runs.
-			const net = await netTokens(run, s.at, sbRole, s.ownName || me().slice(0, 8)).catch(() => undefined);
+			const net = await netTokens(run, s.at, sbRole, s.ownName || me().slice(0, 8), Date.now(), world).catch(() => undefined);
 			await report(run, "pane", s.at.paneId, { sb_role: sbRole, ...net?.own, ...(s.openedBy ? { sb_opened_by: s.openedBy } : {}) }).catch(() => {});
 			if (net) s.kids = await markKids(run, net.kids, s.kids, net.joined);
 		}

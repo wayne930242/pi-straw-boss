@@ -12,7 +12,7 @@ import { type Channel, type Kit, REGISTER } from "./state.ts";
 
 /** This session hosts the straw net GUI: the one server per machine it starts or hands over, its remote entry, and the `/boss gui` commands. */
 export function createHost({ pi, cfg, s, guiDir, me, tell }: Kit, { bridge, connected }: { bridge: Bridge; connected: Membership["connected"] }) {
-	const { run, sleep, call, tailscale: ts, copy, openUrl, version, bundle } = cfg;
+	const { run, world, sleep, call, tailscale: ts, copy, openUrl, version, bundle } = cfg;
 	let opening: Promise<Shared> | undefined;
 	// /boss gui is a read-only viewer: any session may open it, and it joins nothing and writes no token. A session outside the net
 	// reads the sessions through a channel of its own that never takes part in a tab (no owner, no role).
@@ -42,7 +42,7 @@ export function createHost({ pi, cfg, s, guiDir, me, tell }: Kit, { bridge, conn
 	const share = (take = false, remote = false) =>
 		(opening ??= (async () => {
 			if (s.gui) return { url: s.gui.url, owner: label(), mine: s.gui };
-			const start = (prefer: { port?: number; token?: string; csrf?: string }, net = netSource({ run, sessions, hub: (s.hub = s.hub?.me === me() ? s.hub : createHub(pi, me(), bridge)) })) => startGui({ read: net.read, net, call, hub: s.hub, dir: bundle, ...prefer, onStop: (asked) => void stopOwn(asked), onRemote: async () => tell((await switchRemote(s.gui!, true, guiDir, ts)).text), spawn: createSpawn({ run, sleep, call, live: async (id) => (await sessions()).some((x) => x.id === id) }), close: createCloser({ run, sleep, me, sessions, ask: async (key, keepPane) => s.hub?.close(key, keepPane) }) });
+			const start = (prefer: { port?: number; token?: string; csrf?: string }, net = netSource({ run, world, sessions, hub: (s.hub = s.hub?.me === me() ? s.hub : createHub(pi, me(), bridge)) })) => startGui({ read: net.read, net, call, hub: s.hub, dir: bundle, ...prefer, onStop: (asked) => void stopOwn(asked), onRemote: async () => tell((await switchRemote(s.gui!, true, guiDir, ts)).text), spawn: createSpawn({ run, sleep, call, live: async (id) => (await sessions()).some((x) => x.id === id) }), close: createCloser({ run, sleep, me, sessions, ask: async (key, keepPane) => s.hub?.close(key, keepPane) }) });
 			const shared = await sharedGui(guiDir, [label(), me()], start, sleep, { version, take });
 			if ((s.gui = shared.mine) && !remote) await switchRemote(s.gui, false, guiDir, ts).catch(() => {});
 			return shared;

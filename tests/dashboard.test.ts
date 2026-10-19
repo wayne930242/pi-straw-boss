@@ -6,7 +6,7 @@ import { afterEach, test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { collectNet } from "../src/net.ts";
 import { collect, ownFile, type Row, render, type Snapshot, startDashboard, subagents, type Tone } from "../src/dashboard.ts";
-import { ARROW, MARK, TOWER_LABEL } from "../src/herdr.ts";
+import { ARROW, herdrWorld, MARK, TOWER_LABEL } from "../src/herdr.ts";
 import { type FakeTui, settle, until, World } from "./fakes.ts";
 
 let world = new World();
@@ -295,6 +295,23 @@ test("sub workspaces hang under their parent as one line each, without their ses
 	await sub.start();
 	const snap = await collect({ run: world.herdr.runFor("wS:p1"), sessions: () => world.broker.sessionList(), workspaceId: "wA" });
 	assert.deepEqual(norm([snap.head, snap.rows]), norm([true, [net(0, "working", "Alpha feature", "sub workspace")]]));
+});
+
+test("collect and the GUI net read the panes and workspaces from one session.snapshot, with the same result as the two listings, and no listing is run", async () => {
+	const file = launch("parent-w", [{ id: "kid-w", name: "worker" }]);
+	const main = world.agent({ id: "main-1", name: "Main", pane: "wA:p1", tab: "wA:t1" });
+	await main.start();
+	await main.promote();
+	world.herdr.pane("wA:p1").agent_session = { value: file };
+	Object.assign(world.herdr.addPane("wA:p20", "wA:t1"), { agent_status: "working", label: "worker", agent_session: { value: join(scratch, "sessions", "2026-10-17T00-00-01-000Z_kid-w-1a2b3c4d-5e6f7a8b-9c0d.jsonl") } });
+	const requests: string[] = [], sessions = () => world.broker.sessionList();
+	const call = async (method: string) => (requests.push(method), { type: "session_snapshot", snapshot: { version: "x", panes: world.herdr.panes, workspaces: world.herdr.workspaces, tabs: world.herdr.tabs } });
+	const noList = async (args: string[]) => { throw new Error(`unexpected CLI run: ${args.join(" ")}`); };
+	const viaListings = { run: world.herdr.runFor("wA:p1"), sessions, workspaceId: "wA" }, viaSnapshot = { run: noList, world: herdrWorld(call), sessions, workspaceId: "wA" };
+	assert.deepEqual(norm(await collect(viaSnapshot)), norm(await collect(viaListings)));
+	assert.deepEqual(norm(await collectNet({ ...viaSnapshot, sessionDir: join(scratch, "sessions") })), norm(await collectNet({ ...viaListings, sessionDir: join(scratch, "sessions") })));
+	assert.deepEqual(requests, ["session.snapshot", "session.snapshot"], "one request per reading");
+	await assert.rejects(collect({ ...viaSnapshot, world: herdrWorld(async () => { throw new Error("herdr session.snapshot failed: socket_error"); }) }), /socket_error/, "a failed read fails the reading");
 });
 
 function fakeUi(theme = { fg: plain, bold: (text: string) => text }) {

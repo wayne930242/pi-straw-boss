@@ -106,6 +106,45 @@ export const herdrCall = (socketPath = process.env.HERDR_SOCKET_PATH || join(hom
 	});
 export const herdrApi = (socketPath?: string): HerdrApi => async (method, params) => void (await herdrCall(socketPath)(method, params));
 
+/** The read-only listings Herdr answers on its socket as the CLI would: the CLI arguments in, the socket request out. */
+function listing(args: string[]): { method: string; params: Record<string, unknown> } | undefined {
+	const [group, cmd, flag, id, ...more] = args;
+	if (cmd !== "list" || more.length || (flag === undefined) !== (id === undefined) || (flag !== undefined && flag !== "--workspace")) return undefined;
+	if (group === "workspace" && flag === undefined) return { method: "workspace.list", params: {} };
+	if (group === "pane") return { method: "pane.list", params: id === undefined ? {} : { workspace_id: id } };
+	if (group === "tab" && id !== undefined) return { method: "tab.list", params: { workspace_id: id } };
+	return undefined;
+}
+
+/**
+ * `run` with Herdr's listings (`pane list`, `workspace list`, `tab list --workspace`) answered over the socket instead of by a spawned CLI:
+ * the same `{result}` text, so every reader works unchanged. Every other command, the writes included, still goes to `run`.
+ * A listing that fails rejects with Herdr's own error (a HerdrError with its code); nothing falls back to the CLI.
+ */
+export const socketReads = (run: HerdrRun, call: HerdrCall): HerdrRun => async (args, timeoutMs) => {
+	const request = listing(args);
+	return request ? JSON.stringify({ result: await call(request.method, request.params, timeoutMs) }) : run(args, timeoutMs);
+};
+
+/** Every pane and workspace as one reading, with the tabs of one workspace when it is asked for. */
+export interface World { panes: Pane[]; workspaces: Workspace[]; tabs: HerdrTab[] }
+export type HerdrWorld = (tabsOf?: string) => Promise<World>;
+/** The world from the listings, asked together. */
+export const worldOf = (run: HerdrRun): HerdrWorld => async (tabsOf) => {
+	const [ps, all, tabList] = await Promise.all([panes(run), workspaces(run), tabsOf ? tabs(run, tabsOf) : []]);
+	return { panes: ps, workspaces: all, tabs: tabList };
+};
+/**
+ * The world from one `session.snapshot`: its panes, workspaces, and tabs are what the listings answer. Herdr 0.9.5 answers a request about 100 ms late
+ * now and then (one in six when asked alone, and every one that comes straight after another connection, whatever the first asked), so what is
+ * read on a timer takes one request instead of two or three.
+ */
+export const herdrWorld = (call: HerdrCall): HerdrWorld => async (tabsOf) => {
+	const { snapshot } = (await call("session.snapshot", {})) as { snapshot?: { panes?: Pane[]; workspaces?: Workspace[]; tabs?: HerdrTab[] } };
+	if (!Array.isArray(snapshot?.panes) || !Array.isArray(snapshot.workspaces) || !Array.isArray(snapshot.tabs)) throw new Error("herdr session.snapshot returned no panes, workspaces, or tabs");
+	return { panes: snapshot.panes, workspaces: snapshot.workspaces, tabs: tabsOf ? snapshot.tabs.filter((t) => t.workspace_id === tabsOf) : [] };
+};
+
 /** Writes display-and-discovery tokens (null clears one). Herdr takes the positional id before the options. */
 export function report(run: HerdrRun, kind: "pane" | "workspace", id: string, tokens: Record<string, string | null>) {
 	const flags = Object.entries(tokens).flatMap(([name, value]) => (value === null ? ["--clear-token", name] : ["--token", `${name}=${value}`]));

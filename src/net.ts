@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { basename, join, sep } from "node:path";
 import { type Mark, markOf, type Row, sessionMark, subagents } from "./dashboard.ts";
-import { headOf, type HerdrRun, isSub, type Pane, panes, parentOf, type Session, workspaces, type Workspace } from "./herdr.ts";
+import { headOf, type HerdrRun, type HerdrWorld, isSub, type Pane, parentOf, type Session, type Workspace, worldOf } from "./herdr.ts";
 import { type Pending, type Relayed, withPending } from "./ask.ts";
 import type { Shelf } from "./documents.ts";
 import type { Monitor } from "./monitors.ts";
@@ -84,8 +84,8 @@ export function buildNet({ sessions, panes: ps, workspaces: all, children, sessi
 }
 
 /** One reading of Herdr and intercom as a net. */
-export async function collectNet({ run, sessions, now = Date.now(), refs, sessionDir }: { run: HerdrRun; sessions(): Promise<Session[]>; now?: number; refs?: Map<string, Ref>; sessionDir?: string }): Promise<Net> {
-	const [live, ps, all] = [await sessions(), await panes(run), await workspaces(run)];
+export async function collectNet({ run, world = worldOf(run), sessions, now = Date.now(), refs, sessionDir }: { run: HerdrRun; world?: HerdrWorld; sessions(): Promise<Session[]>; now?: number; refs?: Map<string, Ref>; sessionDir?: string }): Promise<Net> {
+	const [live, { panes: ps, workspaces: all }] = await Promise.all([sessions(), world()]);
 	return buildNet({ sessions: live, panes: ps, workspaces: all, children: (pane) => subagents(pane, ps, now), sessionDir }, refs);
 }
 
@@ -93,7 +93,7 @@ export async function collectNet({ run, sessions, now = Date.now(), refs, sessio
  * The net as the server reads it: each read also refreshes the registry. A key that left the net (the pane closed, or moved to
  * another session) stays findable for ten minutes, the window finished subagents already use, with the pane's new session as its successor.
  */
-export function netSource(env: { run: HerdrRun; sessions(): Promise<Session[]>; sessionDir?: string; hub?: { relayed(sessions: Session[], refs: Map<string, Ref>): Relayed } }) {
+export function netSource(env: { run: HerdrRun; world?: HerdrWorld; sessions(): Promise<Session[]>; sessionDir?: string; hub?: { relayed(sessions: Session[], refs: Map<string, Ref>): Relayed } }) {
 	let refs = new Map<string, Ref>(), live: Session[] = [];
 	const gone = new Map<string, { ref: Ref; at: number }>(), sessions = async () => (live = await env.sessions());
 	return {

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, mock, test } from "node:test";
 import { descendants, INDENT, markKids, netTokens, orderKey } from "../src/order.ts";
-import { ARROW, type HerdrTab, MARK, type Pane, type Workspace } from "../src/herdr.ts";
+import { ARROW, type HerdrTab, herdrWorld, MARK, type Pane, type Workspace } from "../src/herdr.ts";
 import { settle, until, World } from "./fakes.ts";
 
 let world = new World();
@@ -154,6 +154,12 @@ test("netTokens reads Herdr for a session's own tokens (a tower has no mark) and
 	assert.deepEqual(main, { own: { sb_order: "000.1.000.0.000", sb_mark: MARK.main, sb_indent: null, sb_name: null, sb_main_tab: "work", sb_tab: null, sb_member_tab: null }, kids: [{ pane: "wS:p1", order: "000.1.000.0.000.000", mark: `${ARROW} Main`, indent: INDENT.last, name: "aaa" }], joined: new Set() }, "a main agent carries no indent; its only subagent has the last branch");
 	assert.deepEqual((await netTokens(run, place, "tower", "Main")).own, { sb_order: "000.0", sb_mark: null, sb_indent: null, sb_name: null, sb_main_tab: null, sb_member_tab: null, sb_tab: null }, "a tower's tab already carries the glyph, and a tower is not indented");
 	assert.deepEqual((await netTokens(run, { ...place, paneId: "wA:p99" }, "member", "Main")).own, { sb_order: null, sb_mark: MARK.member, sb_indent: null, sb_name: null, sb_main_tab: null, sb_member_tab: null, sb_tab: null }, "a pane Herdr does not list has no key");
+
+	// The presence refresh reads the same world from one session.snapshot instead of three listings.
+	const requests: string[] = [], snapshot = herdrWorld(async (method) => (requests.push(method), { snapshot: { panes: world.herdr.panes, workspaces: world.herdr.workspaces, tabs: world.herdr.tabs } }));
+	const none = async (args: string[]): Promise<string> => { throw new Error(`unexpected CLI run: ${args.join(" ")}`); };
+	assert.deepEqual(await netTokens(none, place, "main", "Main", Date.now(), snapshot), main, "the same tokens");
+	assert.deepEqual(requests, ["session.snapshot"], "in one request");
 
 	const marked = await markKids(run, main.kids, new Set(["wS:old"]));
 	assert.deepEqual([...marked], ["wS:p1"]);
