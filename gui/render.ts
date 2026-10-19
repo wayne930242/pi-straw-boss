@@ -49,6 +49,12 @@ export const aim = (a: Element, route: Route | undefined) => {
 	a.setAttribute("href", formatRoute(route) || "./");
 	a.setAttribute("data-route", formatRoute(route));
 };
+/** Hangs a header popover under its button, its right edge on the button's, kept inside the window. Call it on the popover's `toggle`. */
+export const hang = (pop: HTMLElement, button: HTMLElement) => {
+	const at = button.getBoundingClientRect(), width = pop.offsetWidth;
+	pop.style.top = `${at.bottom + 8}px`;
+	pop.style.left = `${Math.max(8, Math.min(at.right - width, innerWidth - width - 8))}px`;
+};
 /** The round unit token: icon, spinning ring, ping, and state badge. */
 export const PLATE = `<div class="plate"><i class="ring"></i><svg><use href="#i-main"/></svg><b class="badge"></b></div>`;
 /** `docs`: the unit's documents; those on screen in its terminal show as a scroll badge with their count. */

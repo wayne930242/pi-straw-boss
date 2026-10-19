@@ -188,7 +188,7 @@ document.addEventListener("visibilitychange", () => {
 });
 // Escape closes the top dialog; with none open it goes up one route. A modal (a close confirmation, the lightbox) takes it for itself.
 addEventListener("keydown", (event) => {
-	if (event.key !== "Escape" || event.defaultPrevented || document.querySelector("dialog.sheet[open], dialog.lightbox[open]")) return;
+	if (event.key !== "Escape" || event.defaultPrevented || document.querySelector("dialog.sheet[open], dialog.lightbox[open], [popover]:popover-open")) return; // an open popover closes itself
 	event.preventDefault();
 	if (!panels?.stack.close() && current.view !== "map") router.go(upOf(current));
 });

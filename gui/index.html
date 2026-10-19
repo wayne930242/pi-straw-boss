@@ -33,9 +33,18 @@
       <div data-mark="working"><dt data-m="stat_working">Working</dt><dd id="s-working">0</dd></div>
       <div data-mark="waiting"><dt data-m="stat_waiting">Waiting</dt><dd id="s-waiting">0</dd></div>
     </dl>
-    <button class="alerts" id="alerts" type="button" data-mark="unknown" aria-label="Alerts" data-m-label="alerts" disabled><span class="faces" id="alert-faces"></span><span class="count"><b id="alert-count">0</b><small id="alert-text" data-m="no_alerts">no alerts</small></span></button>
+    <div class="alert-row">
+      <button class="alerts" id="alerts" type="button" data-mark="unknown" aria-label="Alerts" data-m-label="alerts" disabled><span class="faces" id="alert-faces"></span><span class="count"><b id="alert-count">0</b><small id="alert-text" data-m="no_alerts">no alerts</small></span></button>
+      <button class="pair-btn tog done-btn" id="done" type="button" data-state="done" popovertarget="done-pop" aria-haspopup="dialog" hidden></button>
+    </div>
+    <div class="hud-pop done-pop" id="done-pop" popover><ul id="done-list"></ul><button class="pair-btn" id="done-clear" type="button"></button></div>
     <button class="pair-btn tog" id="remind" type="button" aria-pressed="true"></button>
-    <button class="pair-btn tog" id="sound" type="button" aria-pressed="false"></button>
+    <button class="pair-btn tog" id="sound" type="button" popovertarget="sound-pop" aria-haspopup="dialog"></button>
+    <div class="hud-pop sound-pop" id="sound-pop" popover>
+      <label><span id="sound-on-label"></span><input type="checkbox" role="switch" id="sound-on"></label>
+      <label><span id="sound-vol-label"></span><input type="range" id="sound-vol" min="0" max="100" step="5"><output id="sound-vol-out" for="sound-vol"></output></label>
+      <button class="pair-btn" id="sound-try" type="button"></button>
+    </div>
     <button class="pair-btn" id="pair" type="button" title="Pair a phone over Tailscale (/boss gui remote turns remote access on)" data-m="pair_button" data-m-title="pair_title">Phone</button>
     <select class="pair-btn lang" id="lang" aria-label="Language" data-m-label="language"></select>
     <div class="link" id="link" data-state="connecting"><i></i><span id="link-text">connecting</span></div>

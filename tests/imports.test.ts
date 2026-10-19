@@ -140,13 +140,14 @@ test("the TypeScript source stays within its size budgets", () => {
 	// and views.ts to 326 for the session's queue under the chat (drawQueued).
 	// 0.20.0 raised ask.ts (src) to 127, dialogs.ts to 220, and bridge.ts to 237 for the queue each bridge relays: what it saw typed while its agent works, until a turn takes it.
 	// 0.19.0 raised layer.ts to 183: a finished alert shows no Later.
+	// 0.23.0 to 212 for the finished list: the HUD's Finished button and its popover (a row per finished unit that opens its comms and clears it, and Clear all), apart from the HUD alert.
 	// 0.19.0 raised views.ts to 313 for the session's todo list (drawTodos): the count and the task in progress, unfolded to every task.
 	// 0.18.2 raised views.ts to 300 for the close button in the comms header (a phone has the profile far below) and its channel state as a dot.
 	// 0.18.1 raised views.ts to 295 for the session view's two modes, its chat or its pane's terminal, one at a time (setMode, and a terminal an alert asks for).
 	// 0.17.3 raised chat.ts to 254 for the motion of a message that just arrived or went out, kept across the redraw its result brings.
 	// 0.17.2 raised views.ts to 267 for the location bar: a subagent under its launcher's level, and the middle levels folded into "…" on a phone.
 	// 0.17.0 raised views.ts to 259 for the close buttons of a base, its squads, and a unit (a subagent's is its launcher's to close).
-	for (const [name, max] of [["router.ts", 80], ["chat.ts", 269], ["markdown.ts", 180], ["views.ts", 326], ["lightbox.ts", 34], ["layer.ts", 183], ["composer.ts", 190], ["ask.ts", 156], ["mirror.ts", 154], ["keypad.ts", 60], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
+	for (const [name, max] of [["router.ts", 80], ["chat.ts", 269], ["markdown.ts", 180], ["views.ts", 326], ["lightbox.ts", 34], ["layer.ts", 212], ["composer.ts", 190], ["ask.ts", 156], ["mirror.ts", 154], ["keypad.ts", 60], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
 	// 0.10.0: the page's text comes from Paraglide's messages (gui/messages), which raised chat.ts, views.ts, layer.ts, ask.ts, mirror.ts, and doc.ts by one
 	// line each for the messages import; the strings replaced in place. gui/i18n.ts picks the locale (the menu's choice, the browser's languages with
 	// Chinese by script) and translates index.html's static text: 50 lines, no figure in a spec.
@@ -171,7 +172,9 @@ test("the TypeScript source stays within its size budgets", () => {
 	const overlay = sum("gui", ["alerts.ts", "overlay.ts"]);
 	// 0.5.0 raised it from 110 to 115: dialogs the user did not open go beneath the top one, and alerts carry the question;
 	// 0.5.1 to 125 for the queue count in words, a dialog whose unit left the net, and redraw.
-	assert.ok(overlay <= 125, `the overlay model has ${overlay} lines`);
+	// 0.23.0 to 136 for finished units in a list of their own (the HUD alert opens questions and errors only, resolve clears one or all) and a
+	// finished alert that clears itself once its unit's pane closed.
+	assert.ok(overlay <= 136, `the overlay model has ${overlay} lines`);
 	const demo = sum("gui", ["fixture.ts", "demo-chat.ts"]);
 	// 0.5.0 raised it from 160 to 165 for a demo question and a demo secret; 0.6.0 to 170 for a demo robot_hand selector and questionnaire that answer;
 	// 0.6.1 to 174 for a demo tool call whose arguments show cut (with the whole of them for "show all arguments"), an answerable dialog that stays
@@ -198,7 +201,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.18.2 to 623 for the tab icon's badge (main.ts).
 	// 0.20.0 to 631 for main.ts: a closed base or unit's view goes up to what is left (leave), Escape left to an open modal, and each entry's image URL.
 	// 0.21.0 to 718 for reminders and sounds: notify.ts (87 lines, the header's switches, notifications, one sound a batch) and main.ts handing it each snapshot's arrivals.
-	assert.ok(page <= 718, `the page's TypeScript has ${page} lines`);
+	// 0.23.0 to 748 for the sound panel (notify.ts: on, volume through Web Audio's gain, a try) and the popover placement it shares (render.ts).
+	assert.ok(page <= 748, `the page's TypeScript has ${page} lines`);
 });
 
 test("the built page is small, self-contained (no remote URLs, fonts, or imports), and carries no demo fixture", { skip: !existsSync(join(root, "dist/gui/index.html")) && "run npm run gui:build first" }, () => {
@@ -233,7 +237,9 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// 0.20.0 to 29.55 KB / 11.35 KB for leaving a closed base or unit's view, and Escape left to an open modal.
 	// 0.21.0 to 32.65 KB / 12.5 KB for reminders and sounds (notify.ts): the header's two switches, system notifications, and the sounds' URLs
 	// (the clips themselves stay files), with their messages in both languages.
-	assert.ok(size(entry).length <= 32_650 && gz(entry) <= 12_500, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// 0.23.0 to 33.85 KB / 13 KB for the sound panel (on, a volume played through Web Audio's gain, and a try), the popover placement it shares
+	// with the finished list, and a finished alert that clears itself once its pane closed.
+	assert.ok(size(entry).length <= 33_850 && gz(entry) <= 13_000, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).
@@ -256,7 +262,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// 0.18.2 to 76.9 KB / 31.8 KB for the comms header's close button.
 	// 0.19.0 to 77.7 KB / 32.1 KB for the session's todo list above the composer and the finished alert that needs no Later.
 	// 0.20.0 to 80.45 KB / 33.3 KB for thumbnails and their lightbox (its own chunk), the queue under the chat, and the queued labels.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 80_450 && total(chunks, gz) <= 33_300, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// 0.23.0 to 81.85 KB / 33.8 KB for the finished list in the overlay layer: the HUD's Finished button, its rows, and Clear all.
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 81_850 && total(chunks, gz) <= 33_800, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
@@ -273,5 +280,6 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// 0.18.2 to 37.2 KB / 9.45 KB for the comms header's two rows on a phone and its one-line name; 0.19.0 to 38.25 KB / 9.65 KB for the todo list;
 	// 0.20.0 to 40 KB / 10.05 KB for thumbnails, the lightbox, the queue under the chat, and a squad name kept to one line.
 	// 0.21.0 to 40.6 KB / 10.2 KB for the reminder and sound switches (their dot per state) and a phone's header in three rows.
-	assert.ok(total(css, (n) => size(n).length) <= 40_600 && total(css, gz) <= 10_200, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// 0.23.0 to 42.1 KB / 10.5 KB for the header's popovers (the sound panel and the finished list with its rows) and the Finished button beside the HUD alert, kept on one line on a 320 px phone.
+	assert.ok(total(css, (n) => size(n).length) <= 42_100 && total(css, gz) <= 10_500, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });

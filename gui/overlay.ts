@@ -7,7 +7,7 @@ import { m } from "./paraglide/messages.js";
 //   top dialog, peeking out, and takes no focus, until the user closes the top one or clicks it. A unit that starts to need
 //   attention never opens anything: it joins the alert queue (questions and errors first, then plain state changes; oldest first in
 //   each), shown in the HUD. Closing the top dialog reveals the one beneath; with none beneath, the next queued question or error
-//   (plain state changes wait for the user). A finished unit's alert is resolved once it is opened. "Later" puts a question or an
+//   (plain state changes wait for the user, in a list of their own under the HUD's Finished button, which clears one or all of them). A finished unit's alert is resolved once it is opened. "Later" puts a question or an
 //   error back in the queue and reveals nothing queued; "Open comms" closes
 //   the alert and reveals nothing either, since the user is going to that unit. Escape closes the top dialog only. Focus moves into a dialog when it opens and goes back to where it was when it closes. Dialogs are not modal: the
 //   page stays usable, nothing traps focus, and dialogs beneath the top are inert. A queued alert whose unit no longer needs attention
@@ -56,9 +56,12 @@ export function createStack<F>(io: StackIO<F>) {
 			}
 			draw();
 		},
-		/** Drops queued alerts whose unit no longer shows the state that raised them; open dialogs take the unit's current state, or show `gone` when the unit left the net. */
+		/**
+		 * Drops queued alerts whose unit no longer shows the state that raised them, and finished ones whose pane has closed (Herdr shows
+		 * them gone); open dialogs take the unit's current state, or show `gone` when the unit left the net.
+		 */
 		prune(now: (key: string) => Alert | undefined) {
-			queue = queue.filter((q) => now(q.key)?.mark === q.mark);
+			queue = queue.filter((q) => ((u) => u?.mark === q.mark && !(rankOf(q.mark) !== 0 && u.closed))(now(q.key)));
 			for (const o of open) {
 				const unit = now(o.alert.key);
 				o.alert = unit ? { ...o.alert, ...unit, gone: undefined, at: o.alert.at } : { ...o.alert, mark: "unknown", note: undefined, pending: undefined, gone: true };
@@ -74,8 +77,15 @@ export function createStack<F>(io: StackIO<F>) {
 			const o = open.find((x) => x.alert.key === key);
 			if (o && o !== open.at(-1)) show(o.alert, io.focused());
 		},
+		/** The HUD alert: the first question or error. Finished units wait in their own list (`resolve`). */
 		next() {
-			if (queue[0]) show(queue[0], io.focused());
+			const head = queue.find((q) => rankOf(q.mark) === 0);
+			if (head) show(head, io.focused());
+		},
+		/** The user cleared finished units from their list, one (going to its comms) or all. A question or an error is never cleared: it is answered. */
+		resolve(keys: string[]) {
+			queue = queue.filter((q) => rankOf(q.mark) === 0 || !keys.includes(q.key));
+			draw();
 		},
 		/**
 		 * Closes the top dialog and returns false when none is open. The dialog beneath comes back; with none beneath, the next queued

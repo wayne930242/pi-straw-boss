@@ -56,7 +56,21 @@ test("closing reveals the dialog beneath; with none beneath, the next queued que
 	assert.deepEqual([page.shown, page.queued], [[], ["f"]], "a plain state change does not open by itself");
 	assert.equal(stack.close(), false, "nothing left to close");
 	stack.next();
-	assert.deepEqual([page.shown, page.queued], [["f"], []], "the user opens it from the queue");
+	assert.deepEqual([page.shown, page.queued], [[], ["f"]], "the HUD alert opens questions and errors only: a finished unit waits in the finished list");
+});
+
+test("finished units wait in their own list: the user clears one (opening its comms) or all of them, and questions stay queued", () => {
+	const { page, stack } = harness();
+	stack.arrive(alert("f1", "done", 1));
+	stack.arrive(alert("q", "waiting", 2));
+	stack.arrive(alert("f2", "done", 3));
+	stack.arrive(alert("f3", "done", 4));
+	stack.resolve(["f2"]);
+	assert.deepEqual(page.queued, ["q", "f1", "f3"], "one cleared");
+	stack.resolve(stack.queue.filter((a) => a.mark === "done").map((a) => a.key));
+	assert.deepEqual(page.queued, ["q"], "Clear all takes every finished unit and leaves the question");
+	stack.resolve(["q"]);
+	assert.deepEqual(page.queued, ["q"], "a question is answered, never cleared from the list");
 });
 
 test("Later puts the alert back in the queue and reveals nothing queued", () => {
@@ -87,7 +101,7 @@ test("a finished unit's alert is resolved once opened: Later does not put it bac
 	const { page, stack } = harness();
 	stack.arrive(alert("d", "done", 1));
 	assert.deepEqual(page.queued, ["d"]);
-	stack.next();
+	stack.show(alert("d", "done", 1));
 	stack.close("later");
 	assert.deepEqual([page.shown, page.queued], [[], []]);
 });
@@ -144,6 +158,22 @@ test("a queued alert leaves the queue by itself once its unit no longer needs at
 	const now = new Map([["open", alert("open", "idle", 9)], ["q", alert("q", "working", 9)], ["f", alert("f", "done", 9)]]);
 	stack.prune((key) => now.get(key));
 	assert.deepEqual([page.shown, page.queued, stack.open[0]!.mark], [["open"], ["f"], "idle"]);
+});
+
+test("a finished unit whose pane closed clears itself from the finished list; one still open stays, and so does a question", () => {
+	const { page, stack } = harness();
+	stack.arrive(alert("kept", "done", 1));
+	stack.arrive(alert("closed", "done", 2));
+	stack.arrive(alert("q", "waiting", 3));
+	const now = new Map([["kept", alert("kept", "done", 9)], ["closed", { ...alert("closed", "done", 9), closed: true }], ["q", { ...alert("q", "waiting", 9), closed: true }]]);
+	stack.prune((key) => now.get(key));
+	assert.deepEqual(page.queued, ["q", "kept"]);
+});
+
+test("an alert says when its unit's pane has closed (a subagent that finished and exited)", () => {
+	const net: Net = { bases: [{ id: "w1", label: "W", mark: "working", head: true, tower: null, outposts: [], tabs: [{ id: "t1", label: "a", units: [{ id: "m", key: "m", control: true, name: "m", role: "main", mark: "idle", subs: [{ id: "s", key: "s", control: false, name: "s", role: "subagent", mark: "done", subs: [] }] }] }], outside: [] }] };
+	const now = alertsOf(net, 1);
+	assert.deepEqual([now.get("s")!.closed, now.get("m")!.closed], [true, false]);
 });
 
 test("alerts come from towers, agents, subagents, and units outside the net; the first snapshot raises only questions and errors", () => {

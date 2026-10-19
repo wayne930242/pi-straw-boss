@@ -328,6 +328,12 @@
 	"remind_unsupported": "This browser has no notifications",
 	"sound_on": "Sounds on",
 	"sound_off": "Sounds off",
+	"sound_volume": "Volume",
+	"sound_try": "▶ Try",
+	"sound_title": "Sounds: on or off, volume, and a try",
+	"finished_button": "Done",
+	"finished_title": "Finished units: a row opens its comms and clears it, or clear them all",
+	"clear_all": "Clear all",
 	"notify_waiting": "Waiting on you {note}",
 	"notify_error": "Failed {note}",
 	"notify_done": "Finished {note}"

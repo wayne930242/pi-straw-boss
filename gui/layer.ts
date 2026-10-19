@@ -6,7 +6,7 @@ import { rankOf } from "./alerts.ts";
 import { type Alert, createStack, tally } from "./overlay.ts";
 import { m } from "./paraglide/messages.js";
 import { type Answer, post } from "./post.ts";
-import { aim, byId, doing, fillPlate, html, mark, PLATE, roleName, sync, text } from "./render.ts";
+import { aim, byId, doing, fillPlate, hang, html, mark, PLATE, roleName, sync, text } from "./render.ts";
 
 // The overlay layer's DOM, a chunk fetched on the first alert, dialog, or tile: the HUD alert with its queue, the dialogs in the dock (stacked; the
 // rules are in overlay.ts), and the tiles beside the current view. A tile is a document (a demo document in the dev fixture) or a session's terminal (mirror.ts); tiles share the
@@ -63,6 +63,7 @@ export interface Intel { said?: string; pending?: string; at?: string; failed?: 
 export type SessionPost = (action: string, body: Record<string, unknown>) => Promise<Answer>;
 export interface PanelDeps { label(ws: string): string; recent(key: string): Promise<Item[]>; post?(key: string): SessionPost | undefined; stream(): string; showTerminal(ws: string, key: string): void }
 const dialogEl = () => html(`<section class="dialog" role="dialog" aria-modal="false" tabindex="-1"><header><b class="tag">${m.dialog_alert()}</b><span class="where"></span><button class="x" type="button" aria-label="${m.close()}">×</button></header><div class="who">${PLATE}<div><h3></h3><p><em class="role"></em> <span class="state"></span></p></div></div><div class="intel"><h4>${m.last_transmission()}</h4><p class="said">…</p><p class="pending" hidden><b>${m.waiting_on()}</b> <span></span></p></div><div class="ask-root"></div><footer><a class="go">${m.open_comms()}</a><button class="later" type="button">${m.later()}</button><span class="queued"></span></footer></section>`);
+const doneEl = () => html(`<li><a class="done-go">${PLATE}<span><b class="name"></b><small></small></span></a></li>`);
 const tileEl = () => html(`<section class="tile" tabindex="-1"><header><svg><use href="#i-doc"/></svg><b></b><button class="x" type="button" aria-label="${m.close_document()}">×</button></header><div class="tile-body"></div></section>`);
 
 export function mountPanels(deps: PanelDeps) {
@@ -81,6 +82,7 @@ export function mountPanels(deps: PanelDeps) {
 		void deps.recent(a.key).then(intel, () => ({ failed: true })).then((it) => {
 			const el = intels.get(a.key) === wait && (intels.set(a.key, it), dock.querySelector<HTMLElement>(`.dialog[data-key="${CSS.escape(a.key)}"]`));
 			if (el) tell(el, a);
+			if (a.mark === "done") drawDone(stack.queue);
 		});
 	};
 	const fill = (el: HTMLElement, a: Alert, depth: number, queue: Alert[]) => {
@@ -105,17 +107,44 @@ export function mountPanels(deps: PanelDeps) {
 		if (!ask) asks.set(el, (ask = mountAsk(el.querySelector(".ask-root")!, to(a.key), undefined, () => deps.showTerminal(a.ws, a.key))));
 		ask.update(a.pending, a.mark === "waiting" && document.body.dataset.stale !== "true"); // what it waits on, answerable or not; the stream state redraws it (report in main.ts)
 	};
+	// Finished units wait under the HUD's Finished button, apart from what needs the user: a row goes to the unit's comms and clears it, Clear all clears every one.
+	const [doneBtn, donePop, doneList] = [byId("done", HTMLButtonElement), byId("done-pop", HTMLElement), byId("done-list", HTMLElement)];
+	const drawDone = (queue: Alert[]) => {
+		const done = queue.filter((a) => rankOf(a.mark) !== 0);
+		doneBtn.hidden = !done.length;
+		doneBtn.textContent = `${m.finished_button()} ${done.length}`;
+		doneBtn.title = m.finished_title();
+		if (!done.length && donePop.matches(":popover-open")) donePop.hidePopover();
+		sync(doneList, done.map((a) => ({ ...a, id: a.key })), doneEl, (el, a) => {
+			const it = intels.get(a.key);
+			fillPlate(el.querySelector(".plate")!, a.role, a.mark);
+			text(el, ".name", a.name);
+			text(el, "small", `${deps.label(a.ws)} · ${it?.said ?? doing(a.note, a.mark)}`);
+			aim(el.querySelector(".done-go")!, { view: "session", ws: a.ws, key: a.key, ...(it?.at && { at: it.at }) });
+		});
+	};
+	byId("done-clear", HTMLButtonElement).textContent = m.clear_all();
+	donePop.setAttribute("aria-label", m.finished_title());
+	donePop.addEventListener("toggle", (event) => (event as ToggleEvent).newState === "open" && hang(donePop, doneBtn));
+	// The router takes the row's click and goes to the comms; the row's unit is read.
+	doneList.addEventListener("click", (event) => {
+		const row = (event.target as Element).closest<HTMLElement>("li[data-key]");
+		if (row) queueMicrotask(() => (stack.resolve([row.dataset.key!]), donePop.hidePopover()));
+	});
+	byId("done-clear", HTMLButtonElement).addEventListener("click", () => (stack.resolve(stack.queue.map((a) => a.key)), donePop.hidePopover()));
 	const asks = new WeakMap<HTMLElement, ReturnType<typeof mountAsk>>(), to = (key: string): SessionPost => deps.post?.(key) ?? ((action, body) => post(`sessions/${encodeURIComponent(key)}/${action}`, body));
 	const stack = createStack<HTMLElement>({
 		render(open, queue) {
 			sync(dock, open.map((a) => ({ ...a, id: a.key })), dialogEl, (el, a) => fill(el, a, open.length - 1 - open.findIndex((o) => o.key === a.key), queue));
-			const head = queue[0];
+			// The HUD alert holds what needs the user; finished units are in their own list.
+			const asking = queue.filter((a) => rankOf(a.mark) === 0), head = asking[0];
 			button.disabled = !head;
 			button.dataset.mark = head?.mark ?? "unknown";
-			text(button, "#alert-count", String(queue.length));
-			button.title = queue.length ? m.alerts_title({ tally: tally(queue) }) : "";
+			text(button, "#alert-count", String(asking.length));
+			button.title = asking.length ? m.alerts_title({ tally: tally(asking) }) : "";
 			text(button, "#alert-text", head ? `${head.name} · ${doing(head.note, head.mark)}` : m.no_alerts());
-			sync(button.querySelector(".faces")!, queue.slice(0, 3).map((a) => ({ ...a, id: a.key })), () => html(PLATE), (face, a) => fillPlate(face, a.role, a.mark));
+			sync(button.querySelector(".faces")!, asking.slice(0, 3).map((a) => ({ ...a, id: a.key })), () => html(PLATE), (face, a) => fillPlate(face, a.role, a.mark));
+			drawDone(queue);
 		},
 		enter: (a) => dock.querySelector<HTMLElement>(`[data-key="${CSS.escape(a.key)}"] .go`)?.focus(),
 		focused: () => (document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : undefined),
