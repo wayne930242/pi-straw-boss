@@ -576,9 +576,9 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 	.crumbs:not(.open) > .mid { display: none; } .crumbs:not(.open) > .crumb-more { display: block; flex: none; }
 	.crumbs.open { flex-wrap: wrap; row-gap: 4px; }
 	.bubble { max-width: 92%; }
-	.composer { padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); }
+	.composer { padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); } .cmp-foot:has(> .cmp-note:empty) { display: none; } /* no blank line under Send */
 	.cmp-row { flex-wrap: wrap; }
-	.composer textarea { flex: 1 1 100%; min-height: 64px; }
+	.composer textarea { flex: 1 1 100%; min-height: 64px; order: -1; } /* the box on top, then + on Send's row */
 	.cmp-acts { margin-left: auto; }
 	.log { max-height: none; } .log li:nth-child(n+3) { display: none; }
 	.dock { top: auto; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); width: calc(100vw - 20px); }

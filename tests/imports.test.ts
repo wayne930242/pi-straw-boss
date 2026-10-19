@@ -306,5 +306,6 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// 0.24.0 to 43.6 KB / 10.85 KB for a dialog's Enlarge (the wide dock in the middle of the window), a header that tightens and wraps between a
 	// phone and a wide screen, and a terminal that takes the keyboard: its ring, lit edge, flash per key, pulsing note, and the hidden text box.
 	// 0.25.0 to 45 KB / 11.1 KB for the monitors bar: its summary, and each monitor's mark, state, and last line.
-	assert.ok(total(css, (n) => size(n).length) <= 45_000 && total(css, gz) <= 11_100, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// 0.25.1 to 45.05 KB for a phone's composer: no blank note line under Send, and + on Send's row under the box.
+	assert.ok(total(css, (n) => size(n).length) <= 45_050 && total(css, gz) <= 11_100, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });
