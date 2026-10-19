@@ -142,6 +142,8 @@ export function herdrClient(bin = "herdr") {
 		getPane: async (id) => (await call(["pane", "get", id])).pane,
 		processInfo: async (id) => (await call(["pane", "process-info", "--pane", id])).process_info,
 		closePane: (id) => call(["pane", "close", id]),
+		// Never the group form: Herdr refuses to close a workspace that still has worktree children, and that refusal must stand.
+		closeWorkspace: (id) => call(["workspace", "close", id]),
 		renameWorkspace: (id, label) => call(["workspace", "rename", id, label]),
 		setToken: (id, source, name, value) => call(["workspace", "report-metadata", id, "--source", source, "--token", `${name}=${value}`]),
 		clearToken: (id, source, name) => call(["workspace", "report-metadata", id, "--source", source, "--clear-token", name]),

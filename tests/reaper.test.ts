@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
 	CONFIRM_MS, PIN_GLYPH, PIN_TOKEN, RENAME_GRACE_MS, SWEEP_INTERVAL_MS,
-	applyOps, decideRemoval, emptyState, findCheckoutUser, noteWorkspaces, onRename, planSweep, prunePanes, prunePins, shellIsIdle, togglePin,
+	applyOps, decideRemoval, emptyState, findCheckoutUser, noteParents, noteWorkspaces, onRename, planSweep, prunePanes, prunePins, set, shellIsIdle, togglePin,
 } from "../herdr-reaper/decide.mjs";
 import { createStore, gitClient, gitReason, withLock } from "../herdr-reaper/io.mjs";
 import { SOURCE, runEvent, runPinToggle, runSweep } from "../herdr-reaper/sweep.mjs";
@@ -853,4 +853,198 @@ test("A lock held longer than staleMs stays held while its holder works", async 
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
+});
+
+// The empty shell Herdr opens for a repository's main checkout when a worktree workspace is grouped under it
+const parentShell = (id = "m", extra = {}) => workspace(id, "repo", { worktree: worktree("/repo", false), ...extra });
+function parentWorld({ workspaces, panes, infos = {} }) {
+	const w = world({ workspaces, panes, infos, checkouts: { "/wt/child": {} } });
+	w.closedWorkspaces = [];
+	// Herdr refuses to close a workspace that still has linked worktree children unless asked to close the group.
+	w.herdr.closeWorkspace = async (id, ...rest) => {
+		assert.deepEqual(rest, [], "the reaper never passes a group option");
+		if (w.workspaces.some((candidate) => candidate.worktree?.is_linked_worktree && candidate.worktree.repo_root === "/repo")) throw new Error("workspace_group_close_required");
+		w.closedWorkspaces.push(id);
+		w.workspaces = w.workspaces.filter((candidate) => candidate.workspace_id !== id);
+		w.panes = w.panes.filter((candidate) => candidate.workspace_id !== id);
+	};
+	return w;
+}
+const childOf = (id = "c") => workspace(id, "child", { worktree: worktree("/wt/child") });
+
+test("The empty parent shell closes after its last worktree is reaped, and never the checkout or a branch", async () => {
+	const dir = await tempDir();
+	try {
+		const w = parentWorld({ workspaces: [parentShell(), childOf()], panes: [pane("m:p1", "m"), pane("c:p1", "c")] });
+		const store = createStore(dir);
+		await runSweep(w.deps(store), { confirmMs: 0 });
+		assert.deepEqual(w.calls, ["close c:p1"]);
+		assert.deepEqual(w.removed, ["/wt/child"]);
+		assert.deepEqual(w.closedWorkspaces, ["m"], w.logs.join("\n"));
+		assert.ok(w.logs.some((line) => line.startsWith("close parent workspace repo (workspace m)") && line.includes("idle shells")), w.logs.join("\n"));
+		assert.deepEqual(w.workspaces, []);
+		const kept = await store.read();
+		assert.deepEqual([kept.parents, kept.parentCandidates], [{}, {}], "a closed parent is forgotten");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("The parent shell waits out the confirmation window after the child is gone", async () => {
+	const dir = await tempDir();
+	try {
+		const w = parentWorld({ workspaces: [parentShell(), childOf()], panes: [pane("m:p1", "m"), pane("c:p1", "c", { agent: "pi" })] });
+		const store = createStore(dir);
+		await runSweep(w.deps(store), { confirmMs: CONFIRM_MS });
+		assert.deepEqual(w.closedWorkspaces, []);
+		assert.ok(w.logs.some((line) => line.startsWith("skip parent repo (workspace m): worktree workspace child is still open")), w.logs.join("\n"));
+		assert.deepEqual(Object.keys((await store.read()).parents), ["m"], "seen with a worktree under it");
+		// The child goes (closed by the user, say): the next sweep starts the wait, the one after closes.
+		w.workspaces = w.workspaces.filter((candidate) => candidate.workspace_id !== "c");
+		w.panes = w.panes.filter((candidate) => candidate.workspace_id !== "c");
+		w.logs.length = 0;
+		await runSweep(w.deps(store), { confirmMs: CONFIRM_MS });
+		assert.ok(w.logs.some((line) => line.startsWith("wait parent repo (workspace m)") && line.includes("60s more")), w.logs.join("\n"));
+		assert.deepEqual(w.closedWorkspaces, []);
+		assert.equal((await store.read()).nextSweepAt, NOW + CONFIRM_MS, "the next sweep is due when the wait ends");
+		await runSweep(w.deps(store, () => NOW + CONFIRM_MS + 1), { confirmMs: CONFIRM_MS });
+		assert.deepEqual(w.closedWorkspaces, ["m"], w.logs.join("\n"));
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("The parent shell stays while a worktree remains, has an agent, is pinned, renamed, busy or focused", async () => {
+	const cases = [
+		["a worktree remains", { children: true }, /worktree workspace child is still open/],
+		["it has an agent", { parentPane: { agent: "pi" } }, /pi is running in m:p1/],
+		["it is pinned by token", { parent: { tokens: { [PIN_TOKEN]: PIN_GLYPH } } }, /workspace is pinned/],
+		["it is pinned in the state file", { pins: { "/repo": { preLabel: "repo" } } }, /workspace is pinned/],
+		["its label is not the default", { parent: { label: "my main" } }, /name was changed/],
+		["its rename was the user's", { renamedRecord: true }, /name was changed/],
+		["its shell runs something", { infos: { "m:p1": busy } }, /vite is running in m:p1/],
+		["its pane is focused", { parentPane: { focused: true } }, /focused pane/],
+		["a second pane runs something", { extraPane: true, infos: { "m:p2": busy } }, /vite is running in m:p2/],
+	];
+	for (const [name, setup, expected] of cases) {
+		const dir = await tempDir();
+		try {
+			const parent = parentShell("m", setup.parent);
+			const w = parentWorld({
+				workspaces: [parent, ...(setup.children ? [childOf()] : [])],
+				panes: [pane("m:p1", "m", setup.parentPane), ...(setup.extraPane ? [pane("m:p2", "m")] : [])],
+				infos: setup.infos,
+			});
+			const store = createStore(dir);
+			await store.apply([set(["parents", "m"], { checkout: "/repo", group: "/repo" }), ...Object.entries(setup.pins ?? {}).map(([key, value]) => set(["pins", key], value))]);
+			if (setup.renamedRecord) await store.apply([set(["workspaces", "m"], { createdAt: 0, label: "repo", checkout: "/repo", renamed: true })]);
+			await runSweep(w.deps(store), { confirmMs: 0 });
+			assert.deepEqual(w.closedWorkspaces, [], name);
+			assert.ok(w.logs.some((line) => line.startsWith("skip parent ") && expected.test(line)), `${name}: ${w.logs.join("\n")}`);
+			assert.ok(w.workspaces.some((candidate) => candidate.workspace_id === "m"), name);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	}
+});
+
+test("A main-checkout workspace never seen with a worktree is untouched", async () => {
+	const dir = await tempDir();
+	try {
+		const w = parentWorld({ workspaces: [parentShell(), workspace("o", "other", { worktree: worktree("/other-wt", true, "/other") })], panes: [pane("m:p1", "m"), pane("o:p1", "o", { agent: "pi" })] });
+		const store = createStore(dir);
+		await runSweep(w.deps(store), { confirmMs: 0 });
+		await runSweep(w.deps(store, () => NOW + 2 * CONFIRM_MS), { confirmMs: 0 });
+		assert.deepEqual(w.closedWorkspaces, []);
+		assert.ok(!w.logs.some((line) => line.includes("parent")), "not even mentioned");
+		assert.deepEqual((await store.read()).parents, {}, "a worktree of another repository does not make it a parent");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("A rename the user makes after the grace period keeps the parent shell open", async () => {
+	const dir = await tempDir();
+	try {
+		const w = parentWorld({ workspaces: [parentShell(), childOf()], panes: [pane("m:p1", "m"), pane("c:p1", "c", { agent: "pi" })] });
+		const store = createStore(dir);
+		await runSweep(w.deps(store), { confirmMs: 0 });
+		const late = () => NOW + RENAME_GRACE_MS + 1;
+		w.workspaces.find((candidate) => candidate.workspace_id === "m").label = "mine";
+		await runEvent(w.deps(store, late), "workspace.renamed", { workspace_id: "m" });
+		w.workspaces.find((candidate) => candidate.workspace_id === "m").label = "repo";
+		w.workspaces = w.workspaces.filter((candidate) => candidate.workspace_id !== "c");
+		w.panes = w.panes.filter((candidate) => candidate.workspace_id !== "c");
+		await runSweep(w.deps(store, late), { confirmMs: 0 });
+		assert.deepEqual(w.closedWorkspaces, [], "renaming it back does not undo that the user named it");
+		assert.ok(w.logs.some((line) => /skip parent repo.*name was changed/.test(line)), w.logs.join("\n"));
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("A worktree workspace event remembers the parent even if the worktree is gone before a sweep", async () => {
+	const dir = await tempDir();
+	try {
+		const w = parentWorld({ workspaces: [parentShell(), childOf()], panes: [pane("m:p1", "m"), pane("c:p1", "c")] });
+		const store = createStore(dir);
+		await runEvent(w.deps(store), "workspace.created", { workspace_id: "c" });
+		w.workspaces = w.workspaces.filter((candidate) => candidate.workspace_id !== "c");
+		w.panes = w.panes.filter((candidate) => candidate.workspace_id !== "c");
+		await runSweep(w.deps(store), { confirmMs: 0 });
+		assert.deepEqual(w.closedWorkspaces, ["m"], w.logs.join("\n"));
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("Dry run shows the parent shell it would close and changes nothing", async () => {
+	const dir = await tempDir();
+	try {
+		const w = parentWorld({ workspaces: [parentShell(), childOf()], panes: [pane("m:p1", "m"), pane("c:p1", "c")] });
+		const store = createStore(dir);
+		await store.apply([set(["parents", "m"], { checkout: "/repo", group: "/repo" })]);
+		await runSweep(w.deps(store), { confirmMs: 0, dryRun: true });
+		assert.deepEqual([w.calls, w.closedWorkspaces, w.removed], [[], [], []]);
+		assert.ok(w.logs.some((line) => line.startsWith("would close c:p1")), w.logs.join("\n"));
+		assert.ok(w.logs.some((line) => line.startsWith("would close parent workspace repo (workspace m)")), "the child it would close no longer counts as a child:\n" + w.logs.join("\n"));
+		assert.deepEqual((await store.read()).parentCandidates, {}, "and writes no state");
+		// A child that stays (an agent in it) keeps the parent, dry run included.
+		const busyChild = parentWorld({ workspaces: [parentShell(), childOf()], panes: [pane("m:p1", "m"), pane("c:p1", "c", { agent: "pi" })] });
+		await runSweep(busyChild.deps(store), { confirmMs: 0, dryRun: true });
+		assert.ok(!busyChild.logs.some((line) => line.startsWith("would close parent")), busyChild.logs.join("\n"));
+		assert.ok(busyChild.logs.some((line) => line.startsWith("skip parent repo (workspace m): worktree workspace child is still open")));
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("A refused parent close is logged and the parent kept", async () => {
+	const dir = await tempDir();
+	try {
+		const w = parentWorld({ workspaces: [parentShell()], panes: [pane("m:p1", "m")] });
+		w.herdr.closeWorkspace = async () => {
+			throw new Error("workspace_group_close_required");
+		};
+		const store = createStore(dir);
+		await store.apply([set(["parents", "m"], { checkout: "/repo", group: "/repo" })]);
+		await runSweep(w.deps(store), { confirmMs: 0 });
+		assert.ok(w.logs.some((line) => line.startsWith("failed to close workspace m: workspace_group_close_required")), w.logs.join("\n"));
+		assert.deepEqual(Object.keys((await store.read()).parents), ["m"]);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("noteParents: parents are remembered by repository, in scope, and forgotten when their id changes hands", () => {
+	const noted = (workspaces, current = state(), config = {}) => applyOps(current, noteParents(workspaces, current, config)).parents;
+	assert.deepEqual(noted([parentShell(), childOf()]), { m: { checkout: "/repo", group: "/repo" } });
+	assert.deepEqual(noted([parentShell()]), {}, "no worktree, no parent");
+	assert.deepEqual(noted([parentShell(), childOf()], state(), { only_under: ["/elsewhere"] }), {}, "out of scope");
+	assert.deepEqual(noted([{ workspace_id: "p", label: "plain" }, childOf()]), {}, "a workspace with no repository is never a parent");
+	const remembered = state({ parents: { m: { checkout: "/repo", group: "/repo" } }, parentCandidates: { m: 1 } });
+	assert.deepEqual(noted([parentShell()], remembered), { m: { checkout: "/repo", group: "/repo" } }, "kept after the worktree is gone");
+	assert.deepEqual(noted([parentShell("m", { worktree: worktree("/other", false, "/other") })], remembered), {}, "another checkout on a reused id");
+	assert.deepEqual(noted([], remembered), {}, "a closed workspace");
+	assert.deepEqual(applyOps(remembered, noteParents([], remembered)).parentCandidates, {}, "and its wait");
 });

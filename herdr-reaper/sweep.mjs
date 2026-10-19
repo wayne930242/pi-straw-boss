@@ -2,7 +2,7 @@
 // so tests can run them against fakes; reaper.mjs wires the real ones.
 import {
 	CONFIRM_MS, PIN_GLYPH, PIN_TOKEN, SWEEP_INTERVAL_MS,
-	del, decideRemoval, findCheckoutUser, forgetWorkspace, inScope, isPinned, noteWorkspaces, onRename, pinKey, planSweep, prunePanes, prunePins, set, shellIsIdle, togglePin,
+	applyOps, del, decideRemoval, findCheckoutUser, forgetWorkspace, inScope, isPinned, noteParents, noteWorkspaces, onRename, pinKey, planParents, planSweep, prunePanes, prunePins, set, shellIsIdle, togglePin,
 } from "./decide.mjs";
 import { withLock } from "./io.mjs";
 
@@ -107,6 +107,40 @@ async function changedSince(close, deps) {
 }
 
 /**
+ * Closes the shell Herdr opened for a repository's main checkout once the worktrees grouped under it are gone. Runs after the
+ * sweep's own closes, on a fresh look at Herdr, so a worktree workspace closed this run no longer counts as a child; a dry run
+ * has not closed anything, so `ignore` names the workspaces it would close. Only the workspace is closed (its panes with it):
+ * never with the group form, and never the checkout or a branch.
+ * @returns {Promise<{ ops: object[], nextAt: number | null }>}
+ */
+async function reapParents(deps, state, bookkeeping, { now, confirmMs, dryRun, ignore }) {
+	let workspaces, panes;
+	try {
+		[workspaces, panes] = await Promise.all([deps.herdr.listWorkspaces(), deps.herdr.listPanes()]);
+	} catch (error) {
+		// Fails closed, and the sweep's other results are still saved.
+		deps.log(`skip parent shells: Herdr could not be listed again (${error.message.split("\n")[0]})`);
+		return { ops: [], nextAt: null };
+	}
+	const view = applyOps(state, bookkeeping);
+	const noted = noteParents(workspaces, view, deps.config);
+	const plan = await planParents({ workspaces, panes, state: applyOps(view, noted), now, confirmMs, config: deps.config, ignore }, deps.herdr);
+	for (const line of plan.skips) deps.log(line);
+	const ops = [...noted, ...plan.ops];
+	for (const close of plan.closes) {
+		deps.log(`${dryRun ? "would close" : "close"} parent workspace ${close.label} (workspace ${close.workspaceId}): ${close.reason}`);
+		if (dryRun) continue;
+		try {
+			await deps.herdr.closeWorkspace(close.workspaceId);
+			ops.push(...forgetWorkspace(close.workspaceId));
+		} catch (error) {
+			deps.log(`failed to close workspace ${close.workspaceId}: ${error.message}`);
+		}
+	}
+	return { ops, nextAt: plan.nextAt };
+}
+
+/**
  * One sweep. `confirmMs` is how long a pane must have qualified before it is closed (0 for "reap now"); `dryRun` prints what
  * would happen and changes nothing, not even the state file.
  */
@@ -120,7 +154,7 @@ async function sweepLocked(deps, confirmMs, dryRun) {
 	const now = deps.now();
 	const state = await deps.store.read();
 	const [workspaces, panes] = await Promise.all([deps.herdr.listWorkspaces(), deps.herdr.listPanes()]);
-	const bookkeeping = [...noteWorkspaces(workspaces, state, now), ...prunePanes(panes, state), ...prunePins(workspaces, state, deps.git)];
+	const bookkeeping = [...noteWorkspaces(workspaces, state, now), ...prunePanes(panes, state), ...prunePins(workspaces, state, deps.git), ...noteParents(workspaces, state, deps.config)];
 	const plan = await planSweep({ workspaces, panes, state, now, confirmMs, config: deps.config }, deps.herdr);
 	const ops = [...bookkeeping, ...plan.ops];
 	for (const line of plan.skips) deps.log(line);
@@ -175,6 +209,7 @@ async function sweepLocked(deps, confirmMs, dryRun) {
 		// The panes and workspaces this sweep would close are still alive here, so they are not what keeps a checkout.
 		const ignore = { panes: new Set(plan.closes.map((close) => close.paneId)), workspaces: new Set(closing.map((entry) => entry.workspaceId)) };
 		for (const entry of closing) await reapCheckout(entry, deps, true, ignore);
+		await reapParents(deps, state, bookkeeping, { now, confirmMs, dryRun: true, ignore: ignore.workspaces });
 		return;
 	}
 	if (closing.length > 0) {
@@ -199,8 +234,10 @@ async function sweepLocked(deps, confirmMs, dryRun) {
 			}
 		}
 	}
-	const waiting = plan.nextAt ?? now + SWEEP_INTERVAL_MS;
-	ops.push(set(["nextSweepAt"], Math.min(waiting, now + SWEEP_INTERVAL_MS)));
+	const parents = await reapParents(deps, state, bookkeeping, { now, confirmMs, dryRun: false, ignore: new Set() });
+	ops.push(...parents.ops);
+	const waiting = Math.min(plan.nextAt ?? Infinity, parents.nextAt ?? Infinity, now + SWEEP_INTERVAL_MS);
+	ops.push(set(["nextSweepAt"], waiting));
 	await deps.store.apply(ops);
 }
 
@@ -275,5 +312,6 @@ export async function runEvent(deps, name, payload) {
 	// workspace.created
 	const workspaces = await deps.herdr.listWorkspaces();
 	const created = new Set([idOf(payload)].filter(Boolean));
-	await deps.store.apply(noteWorkspaces(workspaces, state, now, created));
+	// A worktree workspace may be gone again before a sweep sees it, so the parent is remembered when the worktree appears.
+	await deps.store.apply([...noteWorkspaces(workspaces, state, now, created), ...noteParents(workspaces, state, deps.config)]);
 }

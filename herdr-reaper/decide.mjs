@@ -1,5 +1,5 @@
 // The reaper's decisions, with no I/O: which panes of a linked-worktree workspace to close, whether a closed workspace's checkout
-// may be removed, when a rename is the user's, and what pinning does. sweep.mjs gathers Herdr's and git's state, calls these, and
+// may be removed, which empty parent shell of a worktree group to close, when a rename is the user's, and what pinning does. sweep.mjs gathers Herdr's and git's state, calls these, and
 // carries the results out.
 //
 // State is one JSON object the plugin keeps between runs; changes to it are returned as ops ({ op: "set" | "del", path, value }) so
@@ -23,6 +23,9 @@ export const emptyState = () => ({
 	workspaces: {},
 	pins: {},
 	pending: {},
+	// Main-checkout workspaces a linked worktree was once seen under, and when each began to qualify for closing.
+	parents: {},
+	parentCandidates: {},
 });
 
 export const set = (path, value) => ({ op: "set", path, value });
@@ -196,13 +199,13 @@ export function onRename(workspace, state, now) {
 	const record = recordOf(workspace, state);
 	const remember = (createdAt) => set(["workspaces", workspace.workspace_id], { createdAt, label: workspace.label, checkout: checkoutOf(workspace) });
 	if (!record) return { ops: [remember(0)], pin: null, note: null };
-	const unchanged = { ...record, label: workspace.label };
 	if (record.label === workspace.label) return { ops: [], pin: null, note: null };
 	const age = now - record.createdAt;
 	if (record.createdAt !== 0 && age <= RENAME_GRACE_MS) {
-		return { ops: [set(["workspaces", workspace.workspace_id], unchanged)], pin: null, note: null };
+		return { ops: [set(["workspaces", workspace.workspace_id], { ...record, label: workspace.label })], pin: null, note: null };
 	}
-	const ops = [set(["workspaces", workspace.workspace_id], unchanged)];
+	// The record keeps that the user renamed it: a parent shell with a name of the user's is never closed.
+	const ops = [set(["workspaces", workspace.workspace_id], { ...record, label: workspace.label, renamed: true })];
 	if (!isLinked(workspace) || isPinned(workspace, state)) return { ops, pin: null, note: null };
 	return { ops, pin: { preLabel: record.label }, note: `auto-pin ${workspace.label}: renamed by the user (was "${record.label}")` };
 }
@@ -230,7 +233,97 @@ export function noteWorkspaces(workspaces, state, now, createdIds = new Set()) {
 }
 
 /** What a closed workspace leaves behind that its id's next holder must not inherit: its record, and a pin keyed by the id. */
-export const forgetWorkspace = (workspaceId) => [del(["workspaces", workspaceId]), del(["pins", `workspace:${workspaceId}`])];
+export const forgetWorkspace = (workspaceId) => [
+	del(["workspaces", workspaceId]),
+	del(["pins", `workspace:${workspaceId}`]),
+	del(["parents", workspaceId]),
+	del(["parentCandidates", workspaceId]),
+];
+
+/** The repository a workspace belongs to, the same for a main checkout and its linked worktrees. */
+const groupOf = (workspace) => worktreeOf(workspace).repo_key ?? worktreeOf(workspace).repo_root ?? null;
+
+/**
+ * Remembers a main-checkout workspace as a parent once a linked-worktree workspace of the same repository is open: that is when
+ * Herdr groups the worktree under it. A workspace never seen with a worktree is never remembered, so it is never closed. Entries
+ * of workspaces that are gone, or whose id now belongs to another checkout, are dropped.
+ */
+export function noteParents(workspaces, state, config = {}) {
+	const ops = [];
+	const groupsWithWorktree = new Set(workspaces.filter((workspace) => isLinked(workspace) && groupOf(workspace)).map(groupOf));
+	const live = new Map(workspaces.map((workspace) => [workspace.workspace_id, workspace]));
+	const kept = new Set();
+	for (const [id, entry] of Object.entries(state.parents)) {
+		const workspace = live.get(id);
+		if (workspace && !isLinked(workspace) && entry.checkout === checkoutOf(workspace) && entry.group === groupOf(workspace)) kept.add(id);
+		else ops.push(del(["parents", id]));
+	}
+	for (const workspace of workspaces) {
+		const group = groupOf(workspace);
+		if (isLinked(workspace) || !group || !groupsWithWorktree.has(group) || !inScope(workspace, config)) continue;
+		if (!kept.has(workspace.workspace_id)) ops.push(set(["parents", workspace.workspace_id], { checkout: checkoutOf(workspace), group }));
+		kept.add(workspace.workspace_id);
+	}
+	for (const id of Object.keys(state.parentCandidates)) if (!kept.has(id)) ops.push(del(["parentCandidates", id]));
+	return ops;
+}
+
+/** The label Herdr gives a workspace it opens for a repository's main checkout. */
+const hasDefaultLabel = (workspace) => {
+	const { repo_name: repoName, checkout_path: checkout } = worktreeOf(workspace);
+	return workspace.label === repoName || workspace.label === checkout?.split("/").filter(Boolean).at(-1);
+};
+
+/**
+ * Decides which remembered parent shells to close: the workspace of a main checkout that a worktree was grouped under, once none is
+ * left in its repository, when every pane is an idle shell and the user neither pinned nor renamed it. `ignore` lists workspaces
+ * that are about to close and no longer count as children (a dry run). A parent must qualify for `confirmMs` before it is closed.
+ * `state.parents` is the remembered set (apply noteParents first).
+ * @returns {Promise<{ closes: object[], skips: string[], ops: object[], nextAt: number | null }>}
+ */
+export async function planParents({ workspaces, panes, state, now, confirmMs = CONFIRM_MS, config = {}, ignore = new Set() }, deps) {
+	const closes = [];
+	const skips = [];
+	const ops = [];
+	let nextAt = null;
+	for (const [id, entry] of Object.entries(state.parents)) {
+		const parent = workspaces.find((workspace) => workspace.workspace_id === id);
+		if (!parent || isLinked(parent) || entry.checkout !== checkoutOf(parent) || !inScope(parent, config)) continue;
+		const subject = `${parent.label} (workspace ${id})`;
+		const children = workspaces.filter((workspace) => isLinked(workspace) && groupOf(workspace) === entry.group && !ignore.has(workspace.workspace_id));
+		const mine = panes.filter((pane) => pane.workspace_id === id);
+		let reason = null;
+		if (children.length > 0) reason = `worktree workspace ${children.map((child) => child.label).join(", ")} is still open`;
+		else if (isPinned(parent, state)) reason = "workspace is pinned";
+		else if (recordOf(parent, state)?.renamed || !hasDefaultLabel(parent)) reason = "its name was changed";
+		else if (mine.length === 0) reason = "it has no panes";
+		else if (mine.some((pane) => pane.agent)) reason = `${mine.find((pane) => pane.agent).agent} is running in ${mine.find((pane) => pane.agent).pane_id}`;
+		else if (mine.some((pane) => pane.focused)) reason = "focused pane";
+		else {
+			for (const pane of mine) {
+				const info = await readProcessInfo(deps, pane.pane_id);
+				if (!shellIsIdle(info)) {
+					reason = `${describeForeground(info)} is running in ${pane.pane_id}`;
+					break;
+				}
+			}
+		}
+		if (reason) {
+			skips.push(`skip parent ${subject}: ${reason}`);
+			if (id in state.parentCandidates) ops.push(del(["parentCandidates", id]));
+			continue;
+		}
+		const since = state.parentCandidates[id] ?? now;
+		if (!(id in state.parentCandidates)) ops.push(set(["parentCandidates", id], now));
+		if (now - since < confirmMs) {
+			skips.push(`wait parent ${subject}: no worktree workspace left and only idle shells, confirming for ${Math.ceil((confirmMs - (now - since)) / 1000)}s more`);
+			nextAt = nextAt === null ? since + confirmMs : Math.min(nextAt, since + confirmMs);
+		} else {
+			closes.push({ workspaceId: id, label: parent.label, reason: "no worktree workspace left and only idle shells" });
+		}
+	}
+	return { closes, skips, ops, nextAt };
+}
 
 /** Drops the agent and candidate records of panes that no longer exist. */
 export function prunePanes(panes, state) {
