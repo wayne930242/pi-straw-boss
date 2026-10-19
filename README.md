@@ -35,6 +35,7 @@ Run a few agents on the same project and they start stepping on each other: two 
 - **Tidy tabs.** When a pi starts in a tab or quits out of it, the tab's panes are made equal again, so workers split off one by one don't leave a chain of halves.
 - **Stranded subagents are asked to report.** A subagent that stays open after finishing, while the pi that launched it was restarted and no longer receives its result, is asked once over intercom to send its final report there ([how it works](docs/how-it-works.md#orphaned-subagents)).
 - **A net view in Herdr's sidebar.** An optional plugin turns the Agents list into the net, towers first and each subagent under its launcher, on by default and switched by one key.
+- **A reaper for leftover worktree panes.** A second optional plugin closes the panes agents leave behind in worktree workspaces, removes the clean checkouts, and keeps the workspaces you pin.
 
 ## Install
 
@@ -117,6 +118,40 @@ description = "toggle the straw net view"
 Run `herdr server reload-config` to load the key, and `herdr plugin unlink wayne930242.straw-boss` to remove the plugin.
 `herdr plugin install wayne930242/pi-straw-boss/herdr-plugin` installs it from GitHub instead of a checkout.
 [How it works](docs/how-it-works.md#sidebar-net-view) has the tokens and a sidebar rows snippet that shows each member's role in Herdr's own view too.
+
+## Leftover worktree panes
+
+A second optional Herdr plugin, in [`herdr-reaper/`](herdr-reaper), cleans up after agents that ran in worktree workspaces.
+In a workspace whose worktree is a linked git worktree (whatever its name), it closes the pane of an agent that has exited once the pane's shell is idle, and never the focused pane.
+Herdr then closes the tab and the workspace, and the plugin removes the workspace's checkout if `git status` is clean.
+The branch always stays, and so does a dirty checkout, with the reason in the plugin log.
+Every other workspace is left alone.
+It sweeps every 10 minutes and a minute after an agent exits, and the `reap-now` action sweeps at once.
+Every close, removal, skip and pin is a line in the plugin log (`herdr plugin log list --plugin wayne930242.straw-boss-reaper`).
+
+A pinned workspace is never reaped.
+The `pin` action toggles the pin of the workspace it runs in, and a workspace you rename more than a minute after it appeared is pinned for you (pi-herdr-agents names its workspaces within seconds, which pins nothing); unpinning also renames it back.
+The pin is the workspace token `$pin`, a Nerd Font pin glyph, which a Space row shows once you add it.
+It needs Herdr 0.9.3 or newer, git and node.
+
+```bash
+herdr plugin install wayne930242/pi-straw-boss/herdr-reaper
+```
+
+```toml
+[[keys.command]]
+key = "prefix+P"
+type = "plugin_action"
+command = "wayne930242.straw-boss-reaper.pin"
+description = "pin or unpin the workspace"
+
+[ui.sidebar.spaces]
+rows = [["state_icon", "workspace", { token = "$pin" }], ["branch", "git_status"]]
+```
+
+`herdr plugin link /path/to/pi-straw-boss/herdr-reaper` links a checkout instead, and `herdr plugin unlink wayne930242.straw-boss-reaper` removes the plugin.
+The first sweep treats every agent-less pane in a linked-worktree workspace as one whose agent exited, so pin the workspaces you want to keep before it runs.
+[How it works](docs/how-it-works.md#worktree-reaper) has the rules and the limits.
 
 ## Learn more
 

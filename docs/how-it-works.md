@@ -313,6 +313,64 @@ Unlinking or disabling the plugin while the view is on drops the view at once; t
 Herdr starts plugin commands with the PATH of the process that started its server, and a Herdr launched from a macOS app has only `/usr/bin:/bin:/usr/sbin:/sbin`.
 `run.sh` therefore looks for node on PATH, in Homebrew's, `/usr/local`, mise, asdf, and volta directories, and through a login shell, and says so in the plugin log (`herdr plugin log list --plugin wayne930242.straw-boss`) when it finds none.
 
+## Worktree reaper
+
+The second optional Herdr plugin, in `herdr-reaper/` (id `wayne930242.straw-boss-reaper`), closes the panes agents leave behind in worktree workspaces and removes the checkouts that are clean.
+It is plain JavaScript that imports nothing from `src/` and talks to Herdr through the `herdr` CLI (`HERDR_BIN_PATH`) and to git directly.
+
+**Scope.**
+Only a workspace whose worktree is a linked git worktree (`worktree.is_linked_worktree`) is ever touched, whatever its label.
+A workspace of the main checkout, or of no repository, is never touched, and neither is anything a pinned workspace holds.
+An optional `config.json` in the plugin's config directory (`herdr plugin config-dir wayne930242.straw-boss-reaper`) with `{ "only_under": ["/path"] }` narrows the scope further, to repositories and checkouts below the listed directories.
+
+**What closes a pane.**
+The plugin remembers which panes ran an agent: a `pane.agent_detected` event and every sweep that sees `agent` set record the pane's terminal.
+A pane that was recorded, now has no agent, and whose shell is idle (Herdr's `pane process-info` shows the shell as the only foreground process) is a candidate.
+The first sweep after the plugin's state is created counts every agent-less pane in a linked-worktree workspace as recorded, so leftovers from before the plugin was installed go too; panes opened afterwards that never ran an agent are the user's shells and stay.
+A candidate must stay one for `CONFIRM_MS` (60 s) before it is closed, so an agent restarting in the same pane, or a command started at the prompt, is not caught between two looks; the `reap-now` action skips the wait.
+The focused pane is never closed, and a pane whose shell runs something (a dev server, an editor) is skipped with that process named.
+Closing a workspace's last pane lets Herdr close its tab and then the workspace, with no dialog.
+
+**The checkout.**
+When every pane of a workspace was closed by one sweep, the plugin waits up to 5 s for Herdr to close the workspace, then reads `git status --porcelain` in the checkout.
+A clean checkout is removed with `git worktree remove`, never forced; any change, tracked or not, keeps it, and so does a detached HEAD that no branch, remote branch or tag contains, because the checkout would be the last place those commits live.
+The branch is never touched.
+A workspace that is still open after the wait stays pending in the state file and is retried by the next sweeps for an hour.
+Each decision is a line in the plugin log with its reason (`close`, `remove checkout`, `keep checkout ... uncommitted changes`, `skip ... workspace is pinned`).
+
+**Pins.**
+The `pin` action is one toggle, in the `workspace` context: it sets or clears the workspace token `pin`, a Nerd Font pin (nf-md-pin, U+F0403), through `workspace.report_metadata` under the source `wayne930242.straw-boss-reaper`.
+Herdr shows a workspace token only where a row asks for it, so add `{ token = "$pin" }` to `[ui.sidebar.spaces]` rows as the README shows.
+Bind it with `[[keys.command]]` (`prefix+P` in the README's example); a key invokes it in the focused workspace.
+A pin is also written to the plugin's state file, keyed by the checkout path, because Herdr drops workspace tokens when its server restarts: a sweep puts the token back, and the pin survives a workspace being closed and opened again.
+A workspace is pinned when either the token or the state entry says so, and a pinned workspace is skipped by every sweep and its checkout is never removed.
+
+**Pinning by renaming.**
+Herdr's `workspace.renamed` event does not say who renamed, so the plugin goes by time.
+It records when each workspace appeared (the `workspace.created` event, or the first sweep that saw it; workspaces that were there when the plugin started count as old) and the label it has.
+A rename more than `RENAME_GRACE_MS` (60 s) after that pins a linked-worktree workspace and records the label it had just before.
+A rename within the 60 s (pi-herdr-agents naming the workspace it just opened) only updates the recorded label, so the pre-rename label of a later pin is the name pi-herdr-agents chose.
+Unpinning clears the token and renames the workspace back to the recorded label, or to the checkout's directory name when none was recorded; the rename event that causes finds the label already recorded and pins nothing.
+Herdr reuses the ids of closed workspaces, so a `workspace.created` event replaces any earlier record of its id.
+
+**When it runs.**
+A sweep runs every 10 minutes and again when an agent was released, `CONFIRM_MS` later.
+Herdr has no timers for plugins, so the startup hook and the event hooks start a ticker, a small detached node process that checks the state file every 15 s and runs the `sweep` action through `herdr plugin action invoke` when one is due, which makes every sweep a normal, logged plugin command.
+A ticker beats in `ticker.json`; a hook starts a new one only when the beat is older than 45 s, and two started together settle it with a lock.
+The ticker ends after three failed invocations in a row, which happens when the Herdr server is gone or the plugin was unlinked; the next hook of a new server starts another.
+The event hooks do bookkeeping only (`workspace.created`, `workspace.renamed`, `pane.agent_detected`), and none is hooked to `pane.updated`, so no per-output work exists.
+The `pane.agent_detected` event for a release marks the pane a candidate from that moment and schedules the sweep for the end of its wait; the other events cost one `herdr` call and a state write.
+Sweeps never overlap (a lock; a second one logs that it was skipped).
+`bash herdr-reaper/run.sh reaper.mjs dry-run`, run in a terminal inside Herdr, prints what a sweep would do now without changing anything, the state file included; it reads the plugin's state, so its first-sweep rule applies until the plugin has swept once.
+
+**Limits.**
+The state is `state.json` in the plugin's state directory, and a damaged file reads as empty, which brings back the first-sweep rule.
+A user's shell that outlived its agent in a linked-worktree workspace is closed like a leftover: pin the workspace to keep it.
+Ignored files (`node_modules`, build output) do not make a checkout dirty, so they go with it.
+A Herdr launched from a macOS app has a short PATH; `run.sh` finds node the way the net-view plugin's does.
+The plugin needs Herdr 0.9.3 or newer, git, and a Unix shell, so it runs on macOS and Linux only.
+`tests/reaper.test.ts` drives the decisions and the sweeps against a fake Herdr and git.
+
 ## Tools
 
 | Tool | Available to | What it does |
@@ -380,6 +438,7 @@ Size budgets are checked by `tests/imports.test.ts`: the map's chunk ≤ 15 KB (
 
 The sidebar plugin is plain JavaScript in `herdr-plugin/` and imports nothing from `src/`, so the folder works wherever Herdr links or installs it.
 `tests/netview.test.ts` drives it against a fake Herdr that keeps tokens and the one active view, and against a real Unix socket.
+The reaper plugin in `herdr-reaper/` is built the same way: its decisions (`decide.mjs`) are pure functions, its runs (`sweep.mjs`) take Herdr, git, the state store and the clock as arguments, and `tests/reaper.test.ts` runs them against fakes.
 
 `npm run gui:dev` serves the page on a local port with hot reload, fed by a demo net with invented names that changes state every few seconds. The demo includes a session with every kind of chat entry (open any unit), and the fixture's toolbar (bottom left) has **drop stream**, **go silent** (no messages, no error: the 45 s watchdog), **restore**, to review the disconnected page, and **doc arrives**, which has billing-main show one more document: on its comms it opens as a tile, elsewhere its badge counts up. billing-main lists a markdown plan and an HTML review whose form posts nowhere in the demo. To point the dev page at a live stream instead, run `/boss gui` and start the dev server with its URL: `GUI_LIVE=http://127.0.0.1:<port>/<token>/ npm run gui:dev`.
 

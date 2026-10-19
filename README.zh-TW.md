@@ -35,6 +35,7 @@
 - **分頁保持整齊。** pi 在分頁裡啟動或結束時，分頁裡的 pane 會重新平均分配，一個一個切出來的 worker 就不會留下一長串對半切的窄 pane。
 - **斷線的子智慧體會被提醒回報。** 子智慧體做完後還開著，但開出它的 pi 已經重開、收不到它的結果時，它會收到一則 intercom，請它把最終報告送回去，只會送一次（[運作方式](docs/how-it-works.md#orphaned-subagents)）。
 - **Herdr 側邊欄的網路檢視。** 一個選用的 plugin 會把 Agents 清單排成網的樣子：塔台在前，每個子智慧體排在開出它的人底下。預設開啟，按一個鍵就能切換。
+- **清理閒置的 worktree pane。** 另一個選用的 plugin 會關掉智慧體在 worktree 工作區留下的 pane，移除乾淨的 checkout，並保留你釘選的工作區。
 
 ## 安裝
 
@@ -116,6 +117,40 @@ description = "toggle the straw net view"
 執行 `herdr server reload-config` 載入這個鍵；要移除 plugin 就執行 `herdr plugin unlink wayne930242.straw-boss`。
 也可以不用原始碼，改用 `herdr plugin install wayne930242/pi-straw-boss/herdr-plugin` 從 GitHub 安裝。
 [運作方式](docs/how-it-works.md#sidebar-net-view)列出了所有標記，也有一段側邊欄列設定，讓 Herdr 原本的檢視也能顯示每個成員的角色。
+
+## 閒置的 worktree pane
+
+另一個選用的 Herdr plugin 放在 [`herdr-reaper/`](herdr-reaper)，專門清理 worktree 工作區裡智慧體跑完留下的東西。
+只處理 worktree 是 linked git worktree 的工作區（不管它叫什麼名字）：智慧體結束、pane 的 shell 閒置之後，就關掉這個 pane，但絕不關掉有焦點的 pane。
+Herdr 接著會關掉分頁和工作區，plugin 再在 `git status` 乾淨時移除這個工作區的 checkout。
+分支一律保留；有未提交變更的 checkout 也留著，原因寫在 plugin 日誌裡。
+其他工作區完全不動。
+它每 10 分鐘掃一次，智慧體結束後約一分鐘也會掃，`reap-now` 動作則立刻掃。
+每一次關閉、移除、略過和釘選，都是 plugin 日誌（`herdr plugin log list --plugin wayne930242.straw-boss-reaper`）裡的一行。
+
+釘選的工作區永遠不會被清理。
+`pin` 動作會切換它所在工作區的釘選；工作區出現一分鐘後才被你改名的話，會自動釘選（pi-herdr-agents 在幾秒內替工作區命名，不會觸發釘選），取消釘選時也會改回原名。
+釘選是工作區的 token `$pin`，內容是 Nerd Font 的圖釘字形，要加進 Space 的列設定才看得到。
+需要 Herdr 0.9.3 以上、git 和 node。
+
+```bash
+herdr plugin install wayne930242/pi-straw-boss/herdr-reaper
+```
+
+```toml
+[[keys.command]]
+key = "prefix+P"
+type = "plugin_action"
+command = "wayne930242.straw-boss-reaper.pin"
+description = "pin or unpin the workspace"
+
+[ui.sidebar.spaces]
+rows = [["state_icon", "workspace", { token = "$pin" }], ["branch", "git_status"]]
+```
+
+也可以用 `herdr plugin link /path/to/pi-straw-boss/herdr-reaper` 連結原始碼，用 `herdr plugin unlink wayne930242.straw-boss-reaper` 移除。
+第一次掃描會把 linked-worktree 工作區裡所有沒有智慧體的 pane 都當成智慧體已結束，所以想保留的工作區要在那之前先釘選。
+[運作方式](docs/how-it-works.md#worktree-reaper)（英文）有規則和限制。
 
 ## 延伸閱讀
 
