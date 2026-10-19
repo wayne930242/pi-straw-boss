@@ -489,8 +489,16 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .term-tile { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 10px; height: 100%; }
 .tile-body:has(.term-tile) { overflow: hidden; padding: 12px 14px; }
 .term-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; }
-/* The focused terminal takes the keyboard (a desktop): a lit edge and the note above it say so. */
-.term-scroll:focus { outline: none; border-color: #38e0ff; box-shadow: 0 0 0 1px #38e0ff66, 0 0 18px #38e0ff22; } .term-typing { margin-left: auto; color: #38e0ff; font-weight: 600; } .term-typing[hidden] { display: none; }
+/* The terminal that takes the keyboard (a desktop): a ring sweeps out as it takes it, its edge stays lit, each key flashes it, and the note above
+   it says so. The text box that receives the keys is invisible and placed by the mirror's corner, where an input method shows its candidates. */
+.term-scroll { transition: border-color 0.2s, box-shadow 0.2s; }
+.term-scroll.typing { border-color: #38e0ff; box-shadow: 0 0 0 1px #38e0ff66, 0 0 22px #38e0ff2e; }
+.term-scroll.engage { animation: term-engage 0.6s ease-out; } .term-scroll.blip { animation: term-blip 0.22s ease-out; }
+@keyframes term-engage { 0% { box-shadow: 0 0 0 0 #38e0ffcc, 0 0 0 #38e0ff00; } 60% { box-shadow: 0 0 0 7px #38e0ff00, 0 0 34px #38e0ff66; } 100% { box-shadow: 0 0 0 1px #38e0ff66, 0 0 22px #38e0ff2e; } }
+@keyframes term-blip { 0% { box-shadow: 0 0 0 2px #7ff0ffcc, 0 0 32px #38e0ff88; } 100% { box-shadow: 0 0 0 1px #38e0ff66, 0 0 22px #38e0ff2e; } }
+.term-sink { position: fixed; width: 1px; height: 18px; padding: 0; border: 0; opacity: 0; resize: none; overflow: hidden; pointer-events: none; }
+.term-typing { margin-left: auto; color: #38e0ff; font-weight: 600; animation: term-note 1.6s ease-in-out infinite; } .term-typing[hidden] { display: none; }
+@keyframes term-note { 50% { opacity: 0.55; text-shadow: 0 0 10px #38e0ff99; } }
 .term-state { color: var(--dim); } .term-state[data-tone="ok"] { color: #3ddc97; } .term-state[data-tone="error"] { color: #ff8a9c; }
 .term-scroll { overflow: auto; overscroll-behavior: contain; padding: 8px 10px; border-radius: 14px; border: 1px solid var(--line); background: #090d18; }
 /* Nerd Font icons in a pane's screen (private-use code points only): an installed Nerd Font first, else the bundled symbols (Nerd Fonts 3.5.1,

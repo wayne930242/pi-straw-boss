@@ -127,7 +127,8 @@ test("the pad: one key per request, only with this page's mirror attached and cu
 	assert.equal((await p.key("up")).body.error, "no_mirror", "before the mirror is attached");
 	await p.attach();
 	assert.equal((await p.key("up", { stream: "f".repeat(32) })).body.error, "no_mirror", "another stream");
-	for (const k of ["a", "/", "!", "ctrl+c", "ctrl+d", "ctrl+g", "alt+enter"]) assert.equal((await p.key(k)).status, 400, k);
+	// A desktop's chords go (keys.test.ts); a letter alone, Ctrl+Z, and anything Herdr would read otherwise never do.
+	for (const k of ["a", "/", "!", "ctrl+z", "ctrl+shift+a", "meta+v", "alt+up"]) assert.equal((await p.key(k)).status, 400, k);
 	assert.equal((await send(p.gui, "sessions/sess-1/keys", { keys: ["up"], stream: p.stream })).status, 400, "the old form carries only Stop's Escape");
 	assert.equal((await p.key("up", { keys: ["enter"] })).status, 400, "one key per request");
 	for (const k of ["up", "down", "tab", "3"]) assert.deepEqual((await p.key(k)).body, { accepted: true });

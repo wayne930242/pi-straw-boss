@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type Asked, createKeys, PAD, type Reply, SEQUENCES } from "../src/keys.ts";
+import { type Asked, COMBOS, createKeys, PAD, type Reply, SEQUENCES } from "../src/keys.ts";
 import type { Found } from "../src/net.ts";
 import type { Editor } from "../src/probe.ts";
 
@@ -33,19 +33,61 @@ const code = (r: string[] | Reply) => (Array.isArray(r) ? 200 : r.status);
 const token = (r: string[] | Reply) => (Array.isArray(r) ? undefined : (r.body as { confirm?: string }).confirm);
 const pad = (key: string, extra: Record<string, unknown> = {}) => ({ key, stream: "st", ...extra });
 
-test("the pad sends one key of its own, never letters, /, !, Ctrl or Alt, never two at once", async () => {
+test("one key at a time: the pad's, or a desktop keyboard's Ctrl or Alt chord; never a letter alone, two keys, or a name Herdr does not take", async () => {
 	const { send, w } = keys();
-	for (const key of ["a", "q", "/", "!", "ctrl+c", "ctrl+d", "ctrl+g", "alt+enter", "alt+up", "alt+o", "escape", "ENTER", "0", "f1", "esc esc", "", 1, null])
+	for (const key of ["a", "q", "/", "!", "ctrl+", "ctrl+1", "ctrl+ab", "ctrl+shift+a", "alt+up", "meta+a", "cmd+v", "escape", "ENTER", "0", "f1", "esc esc", "", 1, null])
 		assert.equal(code(await send(pad(key as string))), 400, JSON.stringify(key));
 	for (const body of [{ keys: ["up", "enter"] }, { keys: ["enter"] }, { keys: ["esc", "esc"] }, { keys: "esc" }, { key: "esc", keys: ["esc"], stream: "st" }, { key: ["esc"], stream: "st" }])
 		assert.equal(code(await send(body)), 400, JSON.stringify(body));
 	assert.equal(code(await send({ key: "up" })), 400, "no stream named");
-	assert.ok(!PAD.some((k) => /ctrl|alt|^[a-z/!]$/.test(k)), "nothing like that is on the pad");
+	assert.ok(!PAD.some((k) => /ctrl|alt|^[a-z/!]$/.test(k)), "the pad itself has no chords and no letters");
 	w.t += 1000;
 	for (const key of PAD.filter((k) => k !== "esc" && k !== "enter")) {
 		w.t += 200;
 		assert.deepEqual(await send(pad(key)), [key], key);
 	}
+});
+
+test("a desktop keyboard's Ctrl and Alt chords go as Herdr names them, Delete as its sequence; Ctrl+Z never goes, Ctrl+D and a second Ctrl+C within a second ask first", async () => {
+	const { send, w, k } = keys();
+	for (const key of ["ctrl+a", "ctrl+u", "ctrl+r", "alt+b", "alt+f", "alt+enter", "alt+backspace", "ctrl+left", "alt+right"]) {
+		w.t += 200;
+		assert.deepEqual(await send(pad(key)), [key], key);
+	}
+	assert.ok(COMBOS.test("ctrl+w") && !COMBOS.test("ctrl+z") && !COMBOS.test("ctrl+shift+w"));
+	w.t += 1000;
+	const z = await send(pad("ctrl+z"));
+	assert.equal(code(z), 400, "Ctrl+Z would stop pi where nothing here brings it back");
+	assert.match(String((z as Reply).body && (z as { body: { reason: string } }).body.reason), /Ctrl\+Z/);
+	assert.deepEqual([code(await send(pad("ctrl+d"))), token(await send(pad("ctrl+d")))], [409, "ctrl-d"], "Ctrl+D leaves pi on an empty editor");
+	assert.deepEqual(await send(pad("ctrl+d", { confirmed: "ctrl-d" })), ["ctrl+d"]);
+	w.t += 1000;
+	assert.deepEqual(await send(pad("ctrl+c")), ["ctrl+c"], "a first Ctrl+C clears the editor or stops the run");
+	w.t += 300;
+	assert.deepEqual([code(await send(pad("ctrl+c"))), token(await send(pad("ctrl+c", { confirmed: "nope" })))], [409, "double-ctrl-c"], "the second within a second leaves pi");
+	assert.deepEqual(await send(pad("ctrl+c", { confirmed: "double-ctrl-c" })), ["ctrl+c"]);
+	w.t += 300;
+	assert.deepEqual(await send(pad("ctrl+c")), ["ctrl+c"], "after the confirmed second the next starts afresh");
+	w.t += 1500;
+	assert.deepEqual(await send(pad("ctrl+c")), ["ctrl+c"], "more than a second apart, no confirm");
+	const del = await k.send("S", FOUND, { pane_id: "wA:p1", agent_status: "idle" }, k.check("S", pad("delete")) as Asked);
+	assert.deepEqual(del.calls, [["pane.send_text", { pane_id: "wA:p1", text: "\x1b[3~" }]]);
+});
+
+test("a paste goes inside the terminal's bracketed-paste markers, so pi takes it as one paste and a line break in it submits nothing", async () => {
+	const { k, w } = keys();
+	const write = async (body: Record<string, unknown>) => {
+		const a = k.check("S", body);
+		if ("status" in a) return a;
+		return k.send("S", FOUND, { pane_id: "wA:p1", agent_status: "idle" }, a as Asked).then((plan) => plan.calls, (e: Reply) => e);
+	};
+	assert.deepEqual(await write({ paste: "line one\n\tline two\r\n", stream: "st" }), [["pane.send_text", { pane_id: "wA:p1", text: "\x1b[200~line one\n\tline two\r\n\x1b[201~" }]]);
+	for (const paste of ["", "x".repeat(4001), "a\x1b[201~rm -rf", "\x03", "\x7f", "\u0085", 3])
+		assert.equal(((await write({ paste, stream: "st" })) as Reply).status, 400, JSON.stringify(paste));
+	assert.equal(((await write({ paste: "a", text: "b", stream: "st" })) as Reply).status, 400, "a paste alone");
+	w.t += 1000;
+	w.answerable = true;
+	assert.equal(((await write({ paste: "a", stream: "st" })) as Reply).status, 409, "not over a question");
 });
 
 test("typed text goes as one write of printable characters (at most 64, / and ! too), under the same guards and rate as a key", async () => {
@@ -157,7 +199,7 @@ test("a second Escape within 1 s to a session that neither works nor waits asks 
 	for (const status of ["working", "blocked"]) assert.deepEqual(await send(pad("esc"), status), ["esc"], `${status}: Escape stops or closes, nothing more`);
 });
 
-test("Home, End, Page Up, and Page Down, which Herdr cannot name, go as their fixed sequences; every other key by its Herdr name", async () => {
+test("Home, End, Page Up, Page Down, and Delete, which Herdr cannot name, go as their fixed sequences; every other key by its Herdr name", async () => {
 	const { k } = keys();
 	const call = async (key: string) => (await k.send("S", FOUND, { pane_id: "wA:p1", agent_status: "idle" }, { key, stream: "st" })).calls;
 	assert.deepEqual(await call("home"), [["pane.send_text", { pane_id: "wA:p1", text: "\x1b[H" }]]);
@@ -165,8 +207,8 @@ test("Home, End, Page Up, and Page Down, which Herdr cannot name, go as their fi
 	assert.deepEqual(await call("pageup"), [["pane.send_text", { pane_id: "wA:p1", text: "\x1b[5~" }]]);
 	assert.deepEqual(await call("pagedown"), [["pane.send_text", { pane_id: "wA:p1", text: "\x1b[6~" }]]);
 	assert.deepEqual(await call("up"), [["pane.send_input", { pane_id: "wA:p1", keys: ["up"] }]]);
-	assert.deepEqual(Object.keys(SEQUENCES).sort(), ["end", "home", "pagedown", "pageup"]);
-	assert.ok(Object.keys(SEQUENCES).every((key) => PAD.includes(key)), "only pad keys");
+	assert.deepEqual(Object.keys(SEQUENCES).sort(), ["delete", "end", "home", "pagedown", "pageup"]);
+	assert.ok(Object.keys(SEQUENCES).every((key) => PAD.includes(key) || key === "delete"), "only pad keys and Delete");
 	assert.ok(Object.values(SEQUENCES).every((seq) => /^\x1b\[[0-9]*[~HF]$/.test(seq)), "each a single cursor or paging key, nothing that types text");
 });
 

@@ -38,6 +38,7 @@
     "check": "npm run gui:i18n && tsc --noEmit && tsc --noEmit -p gui",
     "gui:build": "npm run gui:i18n && vite build gui",
     "gui:dev": "npm run gui:i18n && vite gui",
+    "gui:demo": "npm run gui:i18n && GUI_DEMO=${GUI_DEMO:-/pi-straw-boss/} vite build gui && cp dist/demo/index.html dist/demo/404.html",
     "prepack": "npm run gui:build",
     "pretest": "npm run gui:build",
     "test": "node --test tests/*.test.ts",
