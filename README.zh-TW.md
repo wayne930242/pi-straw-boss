@@ -61,7 +61,7 @@ pi install npm:pi-straw-boss
 | [pi-herdr-doc-review](https://www.npmjs.com/package/pi-herdr-doc-review) 0.4.0 以上 | session 展示的文件會開在它的通訊畫面旁邊：HTML 放在沙箱框架裡，表單送出的內容會回給 agent；文字檔只能讀。 |
 | [@juicesharp/rpiv-todo](https://www.npmjs.com/package/@juicesharp/rpiv-todo) 2.13 以上 | session 的待辦清單會顯示在 GUI 的輸入框上方，內容從 session 檔讀取。 |
 
-其他對話框（任何 extension 的 `select`、`confirm`、`input`、`editor`，以及 pi-ask-user 的 `ask_user`）在 GUI 裡只能看，可以一鍵切到終端機回答。
+任何 extension 的 `select` 和 `confirm`（例如 `mp-infra` 的指令審查）也可以在 GUI 作答，不必改動那個 extension：Straw Boss 把它們包在 pi 共用的 `ctx.ui` 上，照常打開 pi 自己的對話框，同時轉送同一個對話框，先答的算數。`select` 可以從配對的裝置作答；`confirm` 只能在這台電腦的頁面作答。`input`、`editor`、`custom` 完全不碰，它們和 pi-ask-user 的 `ask_user` 在 GUI 裡只能看，可以一鍵切到終端機回答。
 
 ## 快速開始
 
@@ -84,7 +84,7 @@ pi install npm:pi-straw-boss
 | `boss_rename` | 用一個短語替這個 session 命名，說明它現在在做什麼；net、GUI，以及裝了 pi-auto-tab-name 時的分頁名稱都會跟著顯示。主智慧體換工作時會呼叫它。 |
 | `/boss` | 接手成為這個分頁的主智慧體。 |
 | `/boss status`、`/boss tower` | 顯示狀態；開啟塔台並切換過去。 |
-| `/boss gui`、`/boss gui stop` | 在瀏覽器開啟網（任何 session 都能開，不會加入任何東西）；停止它的伺服器，在哪個 session 都可以。整台機器只跑一個伺服器、一個網址：開它的 session `/reload` 之後，會在原網址重開；版本較新的 session 會接手，開著的頁面也會自動換成新版。可以在通訊畫面直接打字給某個 session，或用終端機畫面下方的按鍵面板操作它的終端機，在桌面上也可以點進終端機直接打字；在等回覆的 `robot_hand` 選單、`ask_user_question` 問卷或 pi-code 的 hook 確認，可以在那裡或它的警示裡作答（其他對話框只能看，要回到終端機回答；`secret_drop` 的機密一律在終端機輸入，任何頁面（本機或 tailnet）都不接受，因為 pi-intercom 的身分是自己申報的，無法驗證）。session 用 [pi-herdr-doc-review](https://www.npmjs.com/package/pi-herdr-doc-review) 0.4.0 以上顯示的文件，會開在它的通訊畫面旁邊：HTML 放在沙箱框架裡，表單送出的答案會傳給智慧體；純文字只能讀。 |
+| `/boss gui`、`/boss gui stop` | 在瀏覽器開啟網（任何 session 都能開，不會加入任何東西）；停止它的伺服器，在哪個 session 都可以。整台機器只跑一個伺服器、一個網址：開它的 session `/reload` 之後，會在原網址重開；版本較新的 session 會接手，開著的頁面也會自動換成新版。可以在通訊畫面直接打字給某個 session，或用終端機畫面下方的按鍵面板操作它的終端機，在桌面上也可以點進終端機直接打字；在等回覆的 `robot_hand` 選單、`ask_user_question` 問卷或 pi-code 的 hook 確認，可以在那裡或它的警示裡作答（任何 extension 的 `select` 和 `confirm` 也可以，`confirm` 只限這台電腦的頁面；其他對話框只能看，要回到終端機回答；`secret_drop` 的機密一律在終端機輸入，任何頁面（本機或 tailnet）都不接受，因為 pi-intercom 的身分是自己申報的，無法驗證）。session 用 [pi-herdr-doc-review](https://www.npmjs.com/package/pi-herdr-doc-review) 0.4.0 以上顯示的文件，會開在它的通訊畫面旁邊：HTML 放在沙箱框架裡，表單送出的答案會傳給智慧體；純文字只能讀。 |
 | `/boss gui remote`、`/boss gui remote off` | 透過你的 tailnet 用手機連 GUI（`tailscale serve`，絕不用 Funnel）：掃 QR code 配對；關閉時只移除它自己的 serve 設定。serve 指向 GUI 伺服器的第二個 loopback 監聽埠，請求算不算遠端取決於它進來的監聽埠，不看它帶什麼標頭。 |
 
 子智慧體，以及在 Herdr worktree 工作區裡的 session，都不會加入網，由開出它們的 session 代表它們。不在 Herdr 裡時，這個擴充套件什麼都不做。

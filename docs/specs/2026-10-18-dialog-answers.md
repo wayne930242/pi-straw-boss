@@ -28,6 +28,7 @@ valid. Straw Boss only relays, and refuses whatever it cannot tie to the right s
 | pi-robot-hand, `secret_drop` | Contract v1, prefix `robot-hand:secret`: `pending {id, toolCallId, digest, secret: {label, instructions[], url?, destination}}`, `answer {id, answerId, digest, value}` (on the session's own event bus only), `answer-result`, `closed`; digest `["secret", label, instructions, url\|null, destination]` | **Nothing, from any page.** The owner's contract could take a value, but this extension never sends one: its bridge keeps the dialog to itself, and the page shows a plain `secret_drop` wait read-only (the call's own arguments still show in its comms history, as for any tool call; the value never does). |
 | pi-mcp-adapter (fork, later) | Contract v1, prefix `pi-mcp-adapter:dialog` | Inert until that package emits. |
 | pi-code hooks extension, hook confirmation ("Allow bash?") | Contract v1, prefix `pi-code:dialog`, choices Allow and Deny, `toolCallId` = the gated call. A *gate*: it binds to an open call of any tool (it must name one), where the other owners bind to their own tool's call. | One choice: Allow or Deny. |
+| Any extension's `ctx.ui.select` and `ctx.ui.confirm` (an `mp-infra` command review, for one) | Contract v1, prefix `straw-boss:ui`, published by the wrap of `ctx.ui` in `src/intercept.ts` (**Any extension's select and confirm**). A gate that binds to the one tool call in flight; a *twin*, which yields to a contract owner's dialog on the same call. | A select: one choice, from this computer's page or a paired device. A confirm: Yes or No, **from this computer's page only**. |
 | pi-ask-user (`ask_user`) and anything else | none | Read-only, as in 0.5.x. |
 
 Each owner has one adapter in `src/owners.ts`; nothing else knows an owner, so swapping the question package means replacing its
@@ -114,6 +115,70 @@ composer's blocked reason reads "It waits on a dialog: answer it above, or in it
 A `secret_drop` wait is read-only on every page: no field, no Submit, no Show terminal (its mirror stays hidden). This computer's page says "A secret is entered in the terminal only, not here. Answer it in the terminal on the computer the GUI runs on." (zh-TW: 機密內容只能在終端機輸入，這裡不接受。…); a remote page keeps "For security, entering a secret is not supported remotely" (zh-TW: 安全考量，遠端不支援…). Both then name the terminal. The masked field, its Show and Hide, and its CSS are gone from `gui/`. `npm run gui:dev`
 demonstrates a robot_hand selector and a questionnaire that answer, and a secret_drop that only waits.
 
+## Any extension's select and confirm (unreleased)
+
+Status: built after 0.28.0. It answers the question "why not intercept `ctx.ui`?" with: do, but only for `select` and `confirm`, and as one more
+owner of the contract, so nothing downstream changes. The motivating case is moldplan-center's `mp-infra-hooks.ts`, which calls
+`ctx.ui.confirm("mp-infra command review", reason + command)` inside a bash `tool_call` handler: no package publishes that dialog, so the GUI
+could only say "It waits on more than one dialog" and could not answer.
+
+**Why this is safe where 0.5.x keys were not.** The page still sends no keys and nothing reads the screen. The wrap is the *owner* of the dialog: it
+takes the one answer through the same completion path as the terminal (it dismisses the terminal dialog with `signal` and resolves the extension's own
+call with the answer), so the extension sees exactly what a terminal answer would give it.
+
+**The wrap (`src/intercept.ts`).** Every extension's `ctx.ui` is a getter returning the runner's one `uiContext` object (a plain object spread of the UI
+plus pi's prompt wrappers), so replacing its `select` and `confirm` reaches all of them without changing any extension. `input`, `editor`, and `custom` are
+never touched: a secret may be typed there (SB-F001), and `custom` dialogs are whole screens. For a wrapped call:
+
+1. It decides whether to relay (below). If not, or if starting the relay throws, the call is the original, once, and nothing is left behind (the relay's
+   answer registration is withdrawn). A throwing listener on the bus after the dialog opened is ignored.
+2. It publishes `straw-boss:ui:pending {version: 1, id, toolCallId, digest, select}`: a select with its options as choices; a confirm as one select whose
+   `title` is the title, a blank line, and the message, with the choices **Yes** and **No** and `confirm: true`. The digest is `selectDigest`, which
+   includes a `"confirm"` marker for a confirm, so a relay cannot pass a select off as a confirm.
+3. It calls pi's own method (the runner's wrapper, so `ui_prompt_start`/`end` and the blocked relay are unchanged) with `signal` = the caller's signal
+   combined (`AbortSignal.any`) with its own.
+4. An answer (`straw-boss:ui:answer`) is checked against the relay (the id, the digest, one index in range, an `answerId`): a refusal is an
+   `answer-result {accepted: false, reason: "digest" | "malformed" | "closed"}` and the dialog stays; an accepted one sets the answer, aborts the terminal
+   dialog, and emits `answer-result {accepted: true}` and `closed {by: "remote", answerId}`. The call then resolves with the chosen option, or `true` for Yes
+   and `false` for No, whatever the aborted dialog returned. The wrap keeps a listener for the last 16 closed ids so a late answer hears `closed`.
+5. If the terminal answers first, it emits `closed` with `by` `local` (Escape in a select: `cancel`; the caller's signal: `abort`; an error: `error`), so the
+   page's answer is `stale`.
+
+**What is relayed.** Only when all hold: exactly one tool call is in flight in the session (tracked from `tool_execution_start`/`end`, which pi emits
+before `tool_call` handlers run), and it is not `secret_drop`; no other dialog is open through the wrap (**depth**); a select has 1 to 100 string options;
+title plus message or options total at most 12,000 characters. Otherwise the dialog is terminal-only and the page keeps saying so. **Depth:** only the
+outermost dialog is relayed (as pi itself counts `ui_prompt_start`); a dialog that opens over a relayed one withdraws it (`closed {by: "error"}`) and is not
+relayed, because the page could not tell which dialog an answer would dismiss. The hub's own rules still apply on top: one open dialog, the digest, no
+answer on its way, the bound call among the session file's open calls, and a `secret_drop` among them keeps everything in the terminal.
+
+**Contract-owned dialogs are not relayed twice.** The adapter is marked `twin`. In the bridge (`report.open`), a twin and a non-twin dialog on the same
+`toolCallId` cannot both be open: a twin that arrives while an owner's dialog is open on that call is dropped, and an owner's dialog that arrives while a
+twin is open evicts the twin (when it is still `open`; one with an answer on its way is left to settle). So `robot_hand` (whose selector is
+announced on the bus before it calls `ctx.ui.select`), pi-code's gate, and `secret_drop` are each relayed only by their owner, with their notes, copy
+command, and rules. `ask_user_question` is a `ctx.ui.custom` screen and is not wrapped.
+
+**Remote policy** (the user's decision, 2026-10-19: "遠端只能答 select，confirm 只能本機"). A paired device may answer a select but not a confirm. The
+server decides by the listener the request arrived on (`src/remote.ts`: the verdict's `remote` flag, which becomes the `https:` origin `control.ts`
+checks): an answer to a dialog with `select.confirm` from the remote listener is refused with **403 `local_only`** before anything is sent to the bridge.
+The page (`gui/ask.ts`, `readOnlyHere`) draws a confirm on a paired device's page read-only: the question as written, "A confirmation can be answered only
+in the terminal or on the page of the computer the GUI runs on, not from a paired device. This page shows it read-only." (zh-TW: 確認對話框只能在終端機，
+或在執行 GUI 的那台電腦的頁面上回答，已配對的裝置不能回答。這個頁面只能查看。), and the composer does not say "answer it above". This computer's page
+answers both.
+
+**Lifetime.** The wrap marks the object it wrapped with a `Symbol.for` key, so several loaded copies of the package (or several entries) wrap it once. Pi
+replaces the object in `setUIContext` (bind or mode change), so the marker is checked at `session_start` and at every `tool_execution_start` and the wrap is
+put back on the new object. A session without a UI has pi's shared `noOpUIContext`, which is never mutated. At `session_shutdown` open relays close
+(`by: "error"`), the answer listener is removed, and the original methods are restored if they are still ours. Subagents run the wrap too (it is installed
+beside the bridge, before the subagent return).
+
+**Tests.** `tests/intercept.test.ts` (over a fake pi and over pi's real `ExtensionRunner` with an `mp-infra`-like `tool_call` handler: Allow and Deny,
+select by index, terminal first, the caller's signal, answer checks, no relay for zero or two calls, secret_drop, oversize, input/editor/custom untouched, no-UI
+object untouched, depth withdrawal, fallback on a throwing bus, a throwing or rejecting original, the swap and shutdown, several copies),
+`tests/answer.test.ts` (end to end over the fake broker: a confirm answered from the page Allow and Deny, a select, terminal first, a `robot_hand` selector not
+duplicated, two calls, secret_drop), `tests/bridge.test.ts` (the twin rule in both orders and on another call), `tests/control.test.ts` (a confirm from a
+paired device is 403 `local_only` and nothing is sent; this computer's page and a remote select are accepted), `tests/panel.test.ts` and `tests/contract.test.ts`
+(the page's read-only confirm in both locales; the adapter, the flag, and the digest).
+
 ## Failure behavior
 
 | Condition | Behavior |
@@ -128,6 +193,8 @@ demonstrates a robot_hand selector and a questionnaire that answer, and a secret
 | GUI server stops mid-answer | The page says "Not confirmed"; the dialog stays as it is; the next server resyncs. |
 | 8 GUI channels in one process | Read-only for that session, one warning in its terminal. |
 | A scratch server with another state directory | Only bridges reading that directory follow it. |
+| A wrapped `select`/`confirm` that cannot be relayed (no call or two in flight, `secret_drop`, nested, oversize), or whose relay fails to start | The original call, untouched: terminal-only. |
+| A confirm answered from a paired device | 403 `local_only`; the page shows it read-only. |
 | `secret_drop` | Read-only on every page: the dialog is not relayed, a crafted answer finds nothing to answer (409), a request with a `value` is refused (400 on this computer's page, 403 remote), and a forged answer sent to the bridge is `rejected` (`terminal_only`). |
 
 ## Why a secret is terminal only
