@@ -586,7 +586,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 	.cmp-acts { margin-left: auto; }
 	.log { max-height: none; } .log li:nth-child(n+3) { display: none; }
 	.dock { top: auto; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); width: calc(100vw - 20px); }
-	.dock.wide { top: auto; right: 10px; transform: none; width: calc(100vw - 20px); } .zoom { display: none; } /* a phone's dialog already takes the width */
+	.dock.wide { top: auto; right: 10px; transform: none; width: calc(100vw - 20px); } .dialog .zoom { display: none; } /* a phone's dialog already takes the width (not .zoom.view, the base map) */
 }
 /* Touch: larger targets, and a 16 px box so the phone does not zoom in on focus. */
 @media (pointer: coarse) { .composer textarea, .ask input { font-size: 16px; } .composer button, .go, .later, .x, .chat-pill, .pair-btn, .alerts, .ask button, .term-bar button, .quit-btn, .d-doc { min-height: 40px; } .pad-key, .pad-yes { min-height: 44px; } .pad-digits summary { padding: 14px 0; } }
