@@ -62,7 +62,7 @@ export interface Intel { said?: string; pending?: string; at?: string; failed?: 
 /** `post` is the demo fixture's stand-in for the server's session endpoints; `stream` the newest `hello` of the page's stream, as it came. */
 export type SessionPost = (action: string, body: Record<string, unknown>) => Promise<Answer>;
 export interface PanelDeps { label(ws: string): string; recent(key: string): Promise<Item[]>; post?(key: string): SessionPost | undefined; stream(): string; showTerminal(ws: string, key: string): void }
-const dialogEl = () => html(`<section class="dialog" role="dialog" aria-modal="false" tabindex="-1"><header><b class="tag">${m.dialog_alert()}</b><span class="where"></span><button class="x" type="button" aria-label="${m.close()}">×</button></header><div class="who">${PLATE}<div><h3></h3><p><em class="role"></em> <span class="state"></span></p></div></div><div class="intel"><h4>${m.last_transmission()}</h4><p class="said">…</p><p class="pending" hidden><b>${m.waiting_on()}</b> <span></span></p></div><div class="ask-root"></div><footer><a class="go">${m.open_comms()}</a><button class="later" type="button">${m.later()}</button><span class="queued"></span></footer></section>`);
+const dialogEl = () => html(`<section class="dialog" role="dialog" aria-modal="false" tabindex="-1"><header><b class="tag">${m.dialog_alert()}</b><span class="where"></span><button class="zoom" type="button"></button><button class="x" type="button" aria-label="${m.close()}">×</button></header><div class="who">${PLATE}<div><h3></h3><p><em class="role"></em> <span class="state"></span></p></div></div><div class="intel"><h4>${m.last_transmission()}</h4><p class="said">…</p><p class="pending" hidden><b>${m.waiting_on()}</b> <span></span></p></div><div class="ask-root"></div><footer><a class="go">${m.open_comms()}</a><button class="later" type="button">${m.later()}</button><span class="queued"></span></footer></section>`);
 const doneEl = () => html(`<li><a class="done-go">${PLATE}<span><b class="name"></b><small></small></span></a></li>`);
 const tileEl = () => html(`<section class="tile" tabindex="-1"><header><svg><use href="#i-doc"/></svg><b></b><button class="x" type="button" aria-label="${m.close_document()}">×</button></header><div class="tile-body"></div></section>`);
 
@@ -85,8 +85,27 @@ export function mountPanels(deps: PanelDeps) {
 			if (a.mark === "done") drawDone(stack.queue);
 		});
 	};
+	// Enlarge turns the dock into a wide panel in the middle of the window, for a long question; kept per browser. A phone has no Enlarge: its dialogs take the width.
+	const wide = () => dock.classList.contains("wide");
+	const zoom = (on: boolean) => {
+		dock.classList.toggle("wide", on);
+		try {
+			localStorage.setItem("sb.dialog-wide", on ? "1" : "0");
+		} catch {} // storage refused: this page keeps the size
+		for (const b of dock.querySelectorAll<HTMLButtonElement>(".zoom")) drawZoom(b);
+	};
+	const drawZoom = (b: HTMLButtonElement) => {
+		b.textContent = wide() ? "⤡" : "⤢";
+		b.setAttribute("aria-pressed", String(wide()));
+		b.setAttribute("aria-label", wide() ? m.dialog_shrink() : m.dialog_enlarge());
+		b.title = b.getAttribute("aria-label")!;
+	};
+	try {
+		dock.classList.toggle("wide", localStorage.getItem("sb.dialog-wide") === "1");
+	} catch {}
 	const fill = (el: HTMLElement, a: Alert, depth: number, queue: Alert[]) => {
 		mark(el, a.mark);
+		drawZoom(el.querySelector(".zoom")!);
 		el.dataset.gone = String(Boolean(a.gone));
 		// The ones beneath peek out above the top dialog, smaller and fainter.
 		el.style.transform = depth ? `translateY(${-12 * depth}px) scale(${1 - 0.06 * depth})` : "";
@@ -161,7 +180,8 @@ export function mountPanels(deps: PanelDeps) {
 	}, true);
 	dock.addEventListener("click", (event) => {
 		const target = event.target as Element;
-		if (target.closest(".x")) stack.close();
+		if (target.closest(".zoom")) zoom(!wide());
+		else if (target.closest(".x")) stack.close();
 		else if (target.closest(".later")) stack.close("later");
 		// The link navigates to the unit's comms (the router takes the click); the dialog it came from is done, and nothing queued opens
 		// over the comms the user is going to.

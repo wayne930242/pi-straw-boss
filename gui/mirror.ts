@@ -6,7 +6,7 @@ import type { Answer } from "./post.ts";
 // The terminal tile: what a session's pane shows, drawn from the server's `mirror` frames (src/mirror.ts) on this tab's one stream. Rows are
 // display only: each becomes spans of text nodes, SGR colours and attributes as classes or checked colour styles, never markup, and the
 // mirror takes no input. A tile attaches the stream when it opens and again on a new stream's `hello`, detaches 5 s after the tab is hidden
-// (attaching again when it shows) and when it closes. Fit width scales the font to the tile; otherwise rows keep their size and scroll sideways.
+// (attaching again when it shows) and when it closes. Fit width scales the font to the tile and goes to the bottom; otherwise rows keep their size and scroll sideways.
 
 export interface Span { text: string; cls: string; fg?: string; bg?: string }
 export interface Frame { key: string; seq?: number; rows?: number; cols?: number; whole?: boolean; set?: [number, string][]; hidden?: boolean; ended?: string }
@@ -82,9 +82,9 @@ export function applyFrame(box: HTMLElement, f: Frame) {
 
 /** `state` is what the pad may do: send keys (`live`), only Escape (`hidden`, a secret), or nothing (`off`: stale, ended, parked, connecting). */
 export type TermState = "live" | "hidden" | "off";
-interface Term { key: string; box: HTMLElement; scroll: HTMLElement; state: HTMLElement; fit: HTMLButtonElement; post: Post; cols: number; seen: number; away?: ReturnType<typeof setTimeout>; parked: boolean; first: boolean; ended: boolean; tile?: Tile; queue: Promise<unknown>; pad?: Pad }
+interface Term { key: string; box: HTMLElement; scroll: HTMLElement; state: HTMLElement; fit: HTMLButtonElement; typing: HTMLElement; post: Post; cols: number; seen: number; away?: ReturnType<typeof setTimeout>; parked: boolean; first: boolean; ended: boolean; tile?: Tile; queue: Promise<unknown>; pad?: Pad }
 /** The key pad under a mirror (keypad.ts): its element, and `update` when what the pad may do changes. */
-export interface Pad { el: HTMLElement; update(): void }
+export interface Pad { el: HTMLElement; update(): void; type?(e: KeyboardEvent): boolean }
 /** The terminal tiles of this page: `stream()` is the newest `hello` as it came (JSON); `pad` puts the key pad under a mirror. */
 export function mountTerminals({ tiles, post, stream, pad }: { tiles: { open(tile: Tile, focus?: boolean): void }; post(key: string): Post; stream(): string; pad?(t: { name: string; state(): TermState; post: Post; stream(): string }): Pad }) {
 	const open = new Map<string, Term>();
@@ -106,16 +106,24 @@ export function mountTerminals({ tiles, post, stream, pad }: { tiles: { open(til
 		else if (t.parked) void ((t.parked = false), attach(t, true));
 	})));
 	const make = (key: string, name: string): Tile => {
-		const t: Term = { key, box: h("div", { class: "term", role: "group", "aria-label": m.terminal_of({ name }) }), scroll: h("div", { class: "term-scroll", tabindex: "0" }), state: h("p", { class: "term-state", role: "status" }, m.connecting()), fit: h("button", { type: "button", class: "cmp-link", "aria-pressed": "false" }, m.fit_width()), post: post(key), cols: 0, seen: 0, parked: false, first: true, ended: false, queue: Promise.resolve() };
-		t.fit.onclick = () => (t.fit.setAttribute("aria-pressed", String(t.fit.getAttribute("aria-pressed") !== "true")), fit(t));
+		const t: Term = { key, box: h("div", { class: "term", role: "group", "aria-label": m.terminal_of({ name }) }), scroll: h("div", { class: "term-scroll", tabindex: "0" }), state: h("p", { class: "term-state", role: "status" }, m.connecting()), fit: h("button", { type: "button", class: "cmp-link", "aria-pressed": "false" }, m.fit_width()), typing: h("span", { class: "term-typing", hidden: "" }, m.typing_direct()), post: post(key), cols: 0, seen: 0, parked: false, first: true, ended: false, queue: Promise.resolve() };
+		// The font changes size, so the rows move: the view goes to the bottom, where pi's editor is, once the new size is laid out.
+		t.fit.onclick = () => (t.fit.setAttribute("aria-pressed", String(t.fit.getAttribute("aria-pressed") !== "true")), fit(t), requestAnimationFrame(() => (t.scroll.scrollTop = t.scroll.scrollHeight)));
 		t.scroll.append(t.box);
+		// A desktop's keyboard goes to the pane while the terminal has focus (a click into it, until a click elsewhere); a phone keeps the pad.
+		if (globalThis.matchMedia?.("(pointer: fine)").matches) {
+			t.scroll.title = m.typing_hint();
+			t.scroll.addEventListener("keydown", (e) => t.pad?.type?.(e) && e.preventDefault());
+			t.scroll.addEventListener("focus", () => (t.typing.hidden = false));
+			t.scroll.addEventListener("blur", () => (t.typing.hidden = true));
+		}
 		new ResizeObserver(() => fit(t)).observe(t.scroll);
 		open.set(key, t);
 		attach(t, true);
 		watch();
 		const state = (): TermState => (t.parked || t.ended || stale(t) ? "off" : t.box.classList.contains("hidden") ? "hidden" : "live");
 		t.pad = pad?.({ name, state, post: t.post, stream: id });
-		return (t.tile = { id: `term:${key}`, title: m.terminal_title({ name }), icon: "i-comms", body: () => h("div", { class: "term-tile" }, h("div", { class: "term-bar" }, t.state, t.fit), t.scroll, t.pad?.el), closed: () => (clearTimeout(t.away), attach(t, false), open.delete(key), watch()) });
+		return (t.tile = { id: `term:${key}`, title: m.terminal_title({ name }), icon: "i-comms", body: () => h("div", { class: "term-tile" }, h("div", { class: "term-bar" }, t.state, t.typing, t.fit), t.scroll, t.pad?.el), closed: () => (clearTimeout(t.away), attach(t, false), open.delete(key), watch()) });
 	};
 	return {
 		/** Opens (or brings forward) the tile of a session's terminal, the user's own act, so it takes focus; a mirror that ended tries again. */

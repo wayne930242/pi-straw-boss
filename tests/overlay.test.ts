@@ -170,10 +170,13 @@ test("a finished unit whose pane closed clears itself from the finished list; on
 	assert.deepEqual(page.queued, ["q", "kept"]);
 });
 
-test("an alert says when its unit's pane has closed (a subagent that finished and exited)", () => {
+test("an alert says when its unit has closed: its pane is gone, or pi-herdr-agents recorded its run done", () => {
 	const net: Net = { bases: [{ id: "w1", label: "W", mark: "working", head: true, tower: null, outposts: [], tabs: [{ id: "t1", label: "a", units: [{ id: "m", key: "m", control: true, name: "m", role: "main", mark: "idle", subs: [{ id: "s", key: "s", control: false, name: "s", role: "subagent", mark: "done", subs: [] }] }] }], outside: [] }] };
 	const now = alertsOf(net, 1);
 	assert.deepEqual([now.get("s")!.closed, now.get("m")!.closed], [true, false]);
+	net.bases[0]!.tabs[0]!.units[0]!.subs[0]!.control = true;
+	net.bases[0]!.tabs[0]!.units[0]!.subs[0]!.ended = true;
+	assert.equal(alertsOf(net, 2).get("s")!.closed, true, "a subagent pi-herdr-agents recorded done counts as closed while its pane still runs pi");
 });
 
 test("alerts come from towers, agents, subagents, and units outside the net; the first snapshot raises only questions and errors", () => {

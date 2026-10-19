@@ -12,7 +12,8 @@ import { canonical } from "./history.ts";
 /** `key` names the unit in routes and the API; `control` says a live pi pane backs it. `outside` units are pi panes the net does not hold (D1). */
 /** A message typed while the agent works, waiting in pi's queue: `steer` reaches it at its next turn, `followUp` when the run ends. */
 export interface Queued { text: string; as: "steer" | "followUp" }
-export interface Unit extends Shelf { queued?: Queued[]; id: string; key: string; control: boolean; name: string; role: "main" | "member" | "subagent" | "outside"; mark: Mark; note?: string; subs: Unit[]; pending?: Pending }
+/** `ended`: a subagent whose run is over (Row.ended); the page clears its finished alert. */
+export interface Unit extends Shelf { queued?: Queued[]; id: string; key: string; control: boolean; name: string; role: "main" | "member" | "subagent" | "outside"; mark: Mark; note?: string; subs: Unit[]; pending?: Pending; ended?: boolean }
 export interface Tab { id: string; label: string; units: Unit[] }
 export interface Outpost { id: string; label: string; mark: Mark }
 export interface Base { id: string; label: string; mark: Mark; head: boolean; tower: ({ name: string; mark: Mark; key: string; control: boolean; pending?: Pending; queued?: Queued[] } & Shelf) | null; tabs: Tab[]; outposts: Outpost[]; outside: Unit[] }
@@ -55,7 +56,7 @@ export function buildNet({ sessions, panes: ps, workspaces: all, children, sessi
 				const mark = sessionMark(s, pane);
 				const subs = (rowsOf.get(s.id) ?? []).map((r): Unit => {
 					const key = keep({ key: r.id ?? `${s.id}/${r.text}`, base: w.workspace_id, name: r.text, role: "subagent", file: readable(r.file), pane: r.pane });
-					return { id: key, key, control: Boolean(r.pane), name: r.text, role: "subagent", mark: r.mark, note: r.note, subs: [] };
+					return { id: key, key, control: Boolean(r.pane), name: r.text, role: "subagent", mark: r.mark, note: r.note, subs: [], ...(r.ended && { ended: true }) };
 				});
 				const key = keep({ key: s.id, base: w.workspace_id, name: s.name ?? s.id, role, file: piFile(pane, s.id), pane: pane?.pane_id });
 				return { id: key, key, control: pane?.agent === "pi", name: s.name ?? s.id, role, mark, note: note(mark, s.status), subs };

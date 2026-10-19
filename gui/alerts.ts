@@ -5,7 +5,10 @@ import type { Net, Unit } from "../src/net.ts";
 // Spots the units that need the user in each snapshot of the net. It is all the alert code the map's chunk carries: the queue, the
 // dialogs, and the HUD alert load with the overlay layer (overlay.ts, layer.ts) once the first alert arrives.
 
-/** `closed`: the unit's pane is gone (a subagent that finished and exited stays on the map ten minutes); its finished alert clears itself. */
+/**
+ * `closed`: the unit's pane is gone, or it is a subagent whose run pi-herdr-agents recorded done (its parent has the result; a finished
+ * subagent stays on the map ten minutes); its finished alert clears itself.
+ */
 export interface Alert { key: string; ws: string; name: string; role: string; mark: Mark; note?: string; at: number; pending?: Pending; gone?: boolean; closed?: boolean }
 /** Questions and errors outrank plain state changes. */
 export const rankOf = (m: Mark) => (m === "waiting" || m === "error" ? 0 : 1);
@@ -15,7 +18,7 @@ export function alertsOf(net: Net, at: number): Map<string, Alert> {
 	const out = new Map<string, Alert>();
 	for (const b of net.bases) {
 		// `pending` is always set, so a refreshed alert drops a question that is gone.
-		for (const x of [...(b.tower ? [{ ...b.tower, role: "tower" }] : []), ...[...b.tabs.flatMap((t) => t.units), ...b.outside].flatMap((u) => [u, ...u.subs])] as Partial<Unit>[]) out.set(x.key!, { key: x.key!, ws: b.id, name: x.name!, role: x.role!, mark: x.mark!, note: x.note, at, pending: x.pending, closed: !x.control });
+		for (const x of [...(b.tower ? [{ ...b.tower, role: "tower" }] : []), ...[...b.tabs.flatMap((t) => t.units), ...b.outside].flatMap((u) => [u, ...u.subs])] as Partial<Unit>[]) out.set(x.key!, { key: x.key!, ws: b.id, name: x.name!, role: x.role!, mark: x.mark!, note: x.note, at, pending: x.pending, closed: !x.control || Boolean(x.ended) });
 	}
 	return out;
 }

@@ -31,11 +31,13 @@ svg { display: block; }
 :focus-visible { outline: 2px solid #38e0ff; outline-offset: 2px; }
 
 .shell { max-width: 1480px; margin: 0 auto; padding: 18px 22px 40px; }
-.hud { display: flex; align-items: center; gap: 24px; padding: 12px 18px; border: 1px solid var(--line); border-radius: 18px; background: var(--panel); backdrop-filter: blur(10px); position: sticky; top: 12px; z-index: 5; }
+.hud { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; padding: 12px 18px; border: 1px solid var(--line); border-radius: 18px; background: var(--panel); backdrop-filter: blur(10px); position: sticky; top: 12px; z-index: 5; }
 .brand { display: flex; align-items: center; gap: 12px; margin-right: auto; }
 .logo { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 14px; color: #38e0ff; background: radial-gradient(circle at 30% 25%, rgba(56, 224, 255, 0.3), rgba(10, 16, 32, 0.9)); border: 1px solid var(--line); }
 .logo svg { width: 28px; height: 28px; filter: drop-shadow(0 0 6px #38e0ff); }
-.brand h1 { font-size: 20px; letter-spacing: 0.14em; text-transform: uppercase; }
+.brand h1 { font-size: 20px; letter-spacing: 0.14em; text-transform: uppercase; white-space: nowrap; }
+/* Between the phone and a wide screen the header tightens, and wraps rather than scroll the page sideways. */
+@media (max-width: 1600px) { .hud { column-gap: 10px; padding: 12px 14px; } .brand { margin-right: auto; } .stats { gap: 6px; } .stats div { min-width: 58px; padding: 6px 8px; } .alerts { width: 190px; } .hud .pair-btn { padding: 6px 10px; } }
 .brand p { color: var(--dim); font-size: 12px; }
 .stats { display: flex; gap: 10px; }
 .stats div, .tally div, .alerts { min-width: 78px; padding: 6px 12px; border-radius: 12px; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.06); }
@@ -440,6 +442,9 @@ summary::-webkit-details-marker { display: none; }
 .dialog > header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; min-width: 0; }
 .where { min-width: 0; }
 .x { margin-left: auto; border: 0; background: none; color: var(--dim); font-size: 20px; cursor: pointer; }
+.zoom { margin-left: auto; padding: 0 6px; border: 0; background: none; color: var(--dim); font-size: 17px; cursor: pointer; } .zoom + .x { margin-left: 0; } .zoom:hover, .x:hover { color: var(--text); }
+/* Enlarged: one wide panel in the middle of the window, for a long question. */
+.dock.wide { top: 72px; right: 50%; transform: translateX(50%); width: min(880px, calc(100vw - 44px)); } .dock.wide .dialog { max-height: calc(100dvh - 96px); }
 .who { display: flex; align-items: center; gap: 14px; }
 .who .plate { --s: 56px; }
 .who h3 { font-size: 17px; }
@@ -484,6 +489,8 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .term-tile { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 10px; height: 100%; }
 .tile-body:has(.term-tile) { overflow: hidden; padding: 12px 14px; }
 .term-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; }
+/* The focused terminal takes the keyboard (a desktop): a lit edge and the note above it say so. */
+.term-scroll:focus { outline: none; border-color: #38e0ff; box-shadow: 0 0 0 1px #38e0ff66, 0 0 18px #38e0ff22; } .term-typing { margin-left: auto; color: #38e0ff; font-weight: 600; } .term-typing[hidden] { display: none; }
 .term-state { color: var(--dim); } .term-state[data-tone="ok"] { color: #3ddc97; } .term-state[data-tone="error"] { color: #ff8a9c; }
 .term-scroll { overflow: auto; overscroll-behavior: contain; padding: 8px 10px; border-radius: 14px; border: 1px solid var(--line); background: #090d18; }
 /* Nerd Font icons in a pane's screen (private-use code points only): an installed Nerd Font first, else the bundled symbols (Nerd Fonts 3.5.1,
@@ -556,6 +563,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 	.cmp-acts { margin-left: auto; }
 	.log { max-height: none; } .log li:nth-child(n+3) { display: none; }
 	.dock { top: auto; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); width: calc(100vw - 20px); }
+	.dock.wide { top: auto; right: 10px; transform: none; width: calc(100vw - 20px); } .zoom { display: none; } /* a phone's dialog already takes the width */
 }
 /* Touch: larger targets, and a 16 px box so the phone does not zoom in on focus. */
 @media (pointer: coarse) { .composer textarea, .ask input { font-size: 16px; } .composer button, .go, .later, .x, .chat-pill, .pair-btn, .alerts, .ask button, .term-bar button, .d-close, .d-doc { min-height: 40px; } .pad-key, .pad-yes { min-height: 44px; } .pad-digits summary { padding: 14px 0; } }

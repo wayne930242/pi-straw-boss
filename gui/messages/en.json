@@ -334,6 +334,10 @@
 	"finished_button": "Done",
 	"finished_title": "Finished units: a row opens its comms and clears it, or clear them all",
 	"clear_all": "Clear all",
+	"dialog_enlarge": "Enlarge",
+	"dialog_shrink": "Shrink",
+	"typing_direct": "⌨ Keyboard goes to the pane · click outside to stop",
+	"typing_hint": "Click here and the keyboard goes straight to the terminal (except Ctrl, Alt, and ⌘ combinations)",
 	"notify_waiting": "Waiting on you {note}",
 	"notify_error": "Failed {note}",
 	"notify_done": "Finished {note}"

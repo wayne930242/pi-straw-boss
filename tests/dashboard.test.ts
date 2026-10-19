@@ -124,6 +124,14 @@ test("a subagent's file comes only from a pane running pi; a reused pane running
 	assert.deepEqual([subagents(parent, [parent, child("claude")], Date.now())[0]!.file, subagents(parent, [parent, child("claude")], Date.now())[0]!.pane], [undefined, undefined]);
 });
 
+test("a subagent has ended once pi-herdr-agents records its run done, or its pane is gone or back at a shell, even while the pane still runs pi", () => {
+	const file = launch("parent-e", [{ id: "kid-run", name: "runner" }, { id: "kid-done", name: "finisher", activity: { phase: "done", latestEvent: "agent_end" } }, { id: "kid-gone", name: "leaver" }]);
+	const parent = { pane_id: "wA:p1", tab_id: "wA:t1", workspace_id: "wA", agent: "pi", agent_session: { value: file } };
+	const pane = (id: string, kid: string, status = "working") => ({ pane_id: id, tab_id: "wA:t1", workspace_id: "wA", agent: "pi", agent_status: status, agent_session: { value: join(scratch, "sessions", `2026-10-17T00-00-00-000Z_${kid}-1a2b3c4d-5e6f7a8b-9c0d.jsonl`) } });
+	const rows = Object.fromEntries(subagents(parent, [parent, pane("wA:p40", "kid-run"), pane("wA:p41", "kid-done", "done")], Date.now()).map((r) => [r.text, Boolean(r.ended)]));
+	assert.deepEqual(rows, { runner: false, finisher: true, leaver: true });
+});
+
 test("a subagent's pane is matched by the file name pi-herdr-agents gives it (<timestamp>_<id>-<hex>-<hex>-<hex>.jsonl), not by a substring of another session's name", () => {
 	const file = launch("parent-y", [{ id: "kid", name: "kid" }]);
 	const parent = { pane_id: "wA:p1", tab_id: "wA:t1", workspace_id: "wA", agent: "pi", agent_session: { value: file } };
@@ -171,7 +179,7 @@ test("collect shows this tower's net in detail (joined sessions by tab, subagent
 		net(1, "working", "Main One", "main", "tool:edit"),
 		net(2, "waiting", "asker", "subagent", "waiting on a question"),
 		net(2, "working", "builder", "subagent", "bash"),
-		net(2, "done", "reviewer", "subagent", "finished"),
+		{ ...net(2, "done", "reviewer", "subagent", "finished"), ended: true }, // its pane is gone
 		net(1, "idle", "Member", "member"),
 		net(1, "idle", "Late member", "member"),
 		net(0, "unknown", "tab docs"),

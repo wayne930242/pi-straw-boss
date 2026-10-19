@@ -292,6 +292,10 @@
 	"finished_button": "完成",
 	"finished_title": "已完成的單位：點一列打開它的通訊並清掉，或全部清除",
 	"clear_all": "全部清除",
+	"dialog_enlarge": "放大",
+	"dialog_shrink": "縮小",
+	"typing_direct": "⌨ 鍵盤直送中 · 點外面結束",
+	"typing_hint": "點這裡後，鍵盤直接送進終端機（Ctrl、Alt、⌘ 組合鍵除外）",
 	"notify_waiting": "等你回答 {note}",
 	"notify_error": "出錯了 {note}",
 	"notify_done": "完成了 {note}"

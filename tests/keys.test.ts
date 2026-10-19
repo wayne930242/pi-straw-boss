@@ -48,6 +48,31 @@ test("the pad sends one key of its own, never letters, /, !, Ctrl or Alt, never 
 	}
 });
 
+test("typed text goes as one write of printable characters (at most 64, / and ! too), under the same guards and rate as a key", async () => {
+	const { k, w } = keys();
+	const write = async (body: Record<string, unknown>) => {
+		const a = k.check("S", body);
+		if ("status" in a) return a;
+		try {
+			return (await k.send("S", FOUND, { pane_id: "wA:p1", agent_status: "idle" }, a as Asked)).calls;
+		} catch (e) {
+			return e as Reply;
+		}
+	};
+	assert.deepEqual(await write({ text: "/model é 你好 !ls", stream: "st" }), [["pane.send_text", { pane_id: "wA:p1", text: "/model é 你好 !ls" }]]);
+	for (const text of ["", "x".repeat(65), "a\nb", "a\rb", "a\tb", "\x1b[A", "\x7f", "\x03", "\u0085", 7, null])
+		assert.equal(((await write({ text, stream: "st" })) as Reply).status, 400, JSON.stringify(text));
+	assert.equal(((await write({ text: "ab" })) as Reply).status, 400, "no stream named");
+	assert.equal(((await write({ text: "ab", key: "up", stream: "st" })) as Reply).status, 400, "text or a key, not both");
+	w.t += 1000;
+	w.secret = true;
+	assert.equal(((await write({ text: "hunter2", stream: "st" })) as Reply).status, 409, "never into a secret");
+	w.secret = false;
+	w.t += 1000;
+	for (let i = 0; i < 8; i++) assert.ok(Array.isArray(await write({ text: "a", stream: "st" })));
+	assert.equal(((await write({ text: "a", stream: "st" })) as Reply).status, 429, "each write counts toward 8 a second");
+});
+
 test("at most 8 keys a second per session", async () => {
 	const { send, w } = keys();
 	for (let i = 0; i < 8; i++) assert.equal(code(await send(pad("down"))), 200);
