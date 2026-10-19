@@ -86,19 +86,78 @@ export function readJson(path: string): Record<string, unknown> {
 }
 
 /** The subagents a pi session launched: live ones, plus those that finished in the last 10 minutes. The dashboard shows the first `limit`. */
+// What a tick re-reads for every child is cached: the pane that runs each child (indexed once per pane list), the names in the two
+// directories pi-herdr-agents keeps per session (until the directory changes), and a launch script's session file (until the script does).
+const RACY_MS = 2000;
+const childPanes = new WeakMap<Pane[], { size: number; index: Map<string, Pane> }>();
+const listings = new Map<string, { mtime: bigint; names: string[] }>();
+const scripts = new Map<string, { mtimeMs: number; session?: string }>();
+const SUFFIX = /^(.*)-[0-9a-f]{1,8}-[0-9a-f]{1,8}-[0-9a-f]{1,4}$/;
+
+/** The child ids a pane's session file can belong to: `ownFile` read from the file's side, so one pass over the panes replaces a match per child and pane. */
+function childIds(file: string | undefined): string[] {
+	if (!file?.endsWith(".jsonl")) return [];
+	const name = file.slice(Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\")) + 1, -".jsonl".length), ids: string[] = [];
+	for (let at = name.indexOf("_"); at >= 0; at = name.indexOf("_", at + 1)) {
+		const tail = name.slice(at + 1), stripped = SUFFIX.exec(tail)?.[1];
+		ids.push(tail, ...(stripped === undefined ? [] : [stripped]));
+	}
+	return ids;
+}
+
+/** The first pane in list order that runs each child. The index belongs to the list it was built from, which is a reading of Herdr and not changed after (one that grew or shrank is indexed again). */
+function paneOfChild(all: Pane[], id: string): Pane | undefined {
+	let cached = childPanes.get(all);
+	if (cached?.size !== all.length) {
+		const index = new Map<string, Pane>();
+		for (const pane of all) for (const child of childIds(pane.agent_session?.value)) if (!index.has(child)) index.set(child, pane);
+		childPanes.set(all, (cached = { size: all.length, index }));
+	}
+	return cached.index.get(id);
+}
+
+/** The file names in `dir`, read again only once the directory has changed (a directory changed in the last two seconds is always read, as its timestamp may not tell two changes apart). */
+function listed(dir: string): string[] {
+	try {
+		const stat = statSync(dir, { bigint: true }), cached = listings.get(dir);
+		if (cached?.mtime === stat.mtimeNs && Date.now() - Number(stat.mtimeNs / 1_000_000n) > RACY_MS) return cached.names;
+		const names = readdirSync(dir);
+		if (listings.size > 200) listings.clear();
+		listings.set(dir, { mtime: stat.mtimeNs, names });
+		return names;
+	} catch {
+		listings.delete(dir);
+		return []; // the directory is not there: nothing was ever launched from this session
+	}
+}
+
+/** The session file a launch script names, read again only when the script changed. */
+function scriptSession(path: string): string | undefined {
+	try {
+		const { mtimeMs } = statSync(path), cached = scripts.get(path);
+		if (cached?.mtimeMs === mtimeMs) return cached.session;
+		const session = readFileSync(path, "utf8").match(/PI_SUBAGENT_SESSION='([^']+)'/)?.[1];
+		if (scripts.size > 500) scripts.clear();
+		scripts.set(path, { mtimeMs, session });
+		return session;
+	} catch {
+		return undefined; // the launch script is only a fallback source for the name and the session file
+	}
+}
+
 export function subagents(parent: Pane | undefined, all: Pane[], now: number, limit = MAX_CHILDREN): Row[] {
 	const file = parent?.agent_session?.value;
 	if (!file) return [];
-	const dir = artifacts(file);
-	let files: string[] = [];
-	try {
-		files = readdirSync(join(dir, "subagent-activity"));
-	} catch {} // no subagents were ever launched from this session
-	return files
-		.map((name) => {
-			const id = name.replace(/\.json$/, "");
-			const path = join(dir, "subagent-activity", name);
-			return { id, path, pane: all.find((p) => ownFile(p.agent_session?.value, id)), age: now - statSync(path).mtimeMs };
+	const dir = artifacts(file), launched = listed(join(dir, "subagent-scripts"));
+	return listed(join(dir, "subagent-activity"))
+		.flatMap((name) => {
+			const id = name.replace(/\.json$/, ""), path = join(dir, "subagent-activity", name);
+			try {
+				const child = { id, path, pane: paneOfChild(all, id), age: now - statSync(path).mtimeMs };
+				return child.pane || child.age < RECENT_MS ? [child] : [];
+			} catch {
+				return []; // the activity file went away since the directory was listed
+			}
 		})
 		.filter((c) => c.pane || c.age < RECENT_MS)
 		.map(({ id, path, pane }) => {
@@ -106,11 +165,8 @@ export function subagents(parent: Pane | undefined, all: Pane[], now: number, li
 			// A child whose pane is gone, or back at a shell prompt, has finished.
 			const mark: Mark = pane?.agent === "pi" ? markOf(pane.agent_status) : "done";
 			// Only a pi pane's session file is the child's transcript; a reused pane running another agent is not read.
-			let script: string | undefined, file = pane?.agent === "pi" ? pane.agent_session?.value : undefined;
-			try {
-				script = readdirSync(join(dir, "subagent-scripts")).find((f) => f.endsWith(`-${id}.sh`));
-				file ??= readFileSync(join(dir, "subagent-scripts", script!), "utf8").match(/PI_SUBAGENT_SESSION='([^']+)'/)?.[1];
-			} catch {} // the launch script is only a fallback source for the name and the session file
+			const script = launched.find((f) => f.endsWith(`-${id}.sh`));
+			const file = (pane?.agent === "pi" ? pane.agent_session?.value : undefined) ?? (script && scriptSession(join(dir, "subagent-scripts", script)));
 			const name = pane?.label || (script?.slice(0, -`-${id}.sh`.length) ?? id.slice(0, 8));
 			const doing = activity.toolActive ? String(activity.toolName) : String(activity.phase ?? "");
 			const ended = pane?.agent !== "pi" || activity.phase === "done";

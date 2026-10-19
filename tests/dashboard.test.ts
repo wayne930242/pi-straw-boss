@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { collectNet } from "../src/net.ts";
-import { collect, type Row, render, type Snapshot, startDashboard, subagents, type Tone } from "../src/dashboard.ts";
+import { collect, ownFile, type Row, render, type Snapshot, startDashboard, subagents, type Tone } from "../src/dashboard.ts";
 import { ARROW, MARK, TOWER_LABEL } from "../src/herdr.ts";
 import { type FakeTui, settle, until, World } from "./fakes.ts";
 
@@ -144,6 +144,58 @@ test("a subagent's pane is matched by the file name pi-herdr-agents gives it (<t
 	const real = launch("parent-z", [{ id: "77fc3d96-7480-42e5-bc0b-4d20b329659e", name: "scout" }]);
 	const live = pane("wA:p34", "2026-10-17T14-05-51-519Z_77fc3d96-7480-42e5-bc0b-4d20b329659e-b6aa547c-3fa1a816-297c.jsonl");
 	assert.equal(subagents({ ...parent, agent_session: { value: real } }, [parent, live], Date.now())[0]!.pane, "wA:p34");
+});
+
+test("the pane of each child is found by one pass over the panes, with exactly the names ownFile accepts", () => {
+	const ids = ["kid", "kid-2", "kidney", "a_b", "x-aa-bb-cc", "77fc3d96-7480-42e5-bc0b-4d20b329659e", "kid-1a2b3c4d-5e6f7a8b-9c0d"];
+	const names = ["2026_kid.jsonl", "2026_kid-2.jsonl", "2026_kidney.jsonl", "2026_kid-1a2b3c4d-5e6f7a8b-9c0d.jsonl", "2026_kid-2-1a2b3c4d-5e6f7a8b-9c0d.jsonl", "2026_a_b.jsonl", "2026_a_b-1a2b3c4d-5e6f7a8b-9c0d.jsonl", "2026_b.jsonl", "2026_x-aa-bb-cc.jsonl", "2026_x-aa-bb-cc-1-2-3.jsonl", "2026_77fc3d96-7480-42e5-bc0b-4d20b329659e-b6aa547c-3fa1a816-297c.jsonl", "2026_77fc3d96-7480-42e5-bc0b-4d20b329659e.jsonl", "2026_kid-1a2b3c4d5-5e6f7a8b-9c0d.jsonl", "2026_kid.json", "2026_KID.jsonl", "2026-kid.jsonl", "kid.jsonl"];
+	for (const [n, id] of ids.entries()) {
+		const parent = { pane_id: "wA:p1", tab_id: "wA:t1", workspace_id: "wA", agent: "pi", agent_session: { value: launch(`parent-m${n}`, [{ id, name: "kid" }]) } };
+		for (const dir of ["", "x_kid"]) {
+			const pane = (name: string, k: number) => ({ pane_id: `wA:p${k}`, tab_id: "wA:t1", workspace_id: "wA", agent: "pi", agent_status: "working", agent_session: { value: join(scratch, "sessions", dir, name) } });
+			const panes = names.map((name, k) => pane(name, 30 + k));
+			for (const [k, name] of names.entries()) assert.equal(subagents(parent, [parent, panes[k]!], Date.now())[0]!.pane !== undefined, ownFile(panes[k]!.agent_session.value, id), `${id} in ${dir}/${name}`);
+			const first = panes.find((p) => ownFile(p.agent_session.value, id));
+			assert.equal(subagents(parent, [parent, ...panes], Date.now())[0]!.pane, first?.pane_id, `${id}: the first pane in list order wins`);
+		}
+	}
+});
+
+test("a directory pi-herdr-agents keeps is listed again only when its timestamp changes (or is recent), and a child that vanished since is skipped", () => {
+	const file = launch("parent-c", [{ id: "kid-1", name: "one" }]);
+	const parent = { pane_id: "wA:p1", tab_id: "wA:t1", workspace_id: "wA", agent: "pi", agent_session: { value: file } };
+	const activity = join(scratch, "sessions", "artifacts", "parent-c", "subagent-activity"), old = new Date(Date.now() - 60_000), later = new Date(Date.now() - 50_000);
+	const stamp = (at: Date) => utimesSync(activity, at, at);
+	const names = () => subagents(parent, [parent], Date.now()).map((r) => r.id).sort();
+	stamp(old);
+	assert.deepEqual(names(), ["kid-1"]);
+	launch("parent-c", [{ id: "kid-2", name: "two" }]);
+	stamp(old);
+	assert.deepEqual(names(), ["kid-1"], "the same timestamp: the listing read before stands");
+	stamp(later);
+	assert.deepEqual(names(), ["kid-1", "kid-2"], "a new timestamp: read again");
+	rmSync(join(activity, "kid-2.json"));
+	stamp(later);
+	assert.deepEqual(names(), ["kid-1"], "a child that went away since the listing is skipped, not an error");
+	launch("parent-c", [{ id: "kid-3", name: "three" }]);
+	assert.deepEqual(names(), ["kid-1", "kid-3"], "a directory changed a moment ago is always read, as its timestamp may not tell two changes apart");
+	assert.deepEqual(subagents(parent, [parent], Date.now()).map((r) => r.text).sort(), ["one", "three"]);
+});
+
+test("a launch script's session file is read again only when the script changes", () => {
+	const file = launch("parent-s", [{ id: "kid-1", name: "one" }]);
+	const parent = { pane_id: "wA:p1", tab_id: "wA:t1", workspace_id: "wA", agent: "pi", agent_session: { value: file } };
+	const script = join(scratch, "sessions", "artifacts", "parent-s", "subagent-scripts", "one-kid-1.sh");
+	const write = (session: string, at: number) => (writeFileSync(script, `PI_SUBAGENT_SESSION='${session}'\n`), utimesSync(script, new Date(at), new Date(at)));
+	const seen = () => subagents(parent, [parent], Date.now())[0]!.file;
+	write("/s/a.jsonl", 1_000_000);
+	assert.equal(seen(), "/s/a.jsonl");
+	write("/s/b.jsonl", 1_000_000);
+	assert.equal(seen(), "/s/a.jsonl", "the same timestamp: the reading stands");
+	write("/s/b.jsonl", 2_000_000);
+	assert.equal(seen(), "/s/b.jsonl");
+	rmSync(script);
+	assert.equal(seen(), undefined, "a script that is gone names no file");
 });
 
 test("collect shows this tower's net in detail (joined sessions by tab, subagents under their launcher) and one line per other tower", async () => {
