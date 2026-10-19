@@ -73,7 +73,8 @@ export class FakeHerdr {
 		queueMicrotask(() => this.listeners.has(l) && on(null));
 		return () => void this.listeners.delete(l);
 	};
-	private emit(type: string, event: string, data: Record<string, unknown>) {
+	/** Delivers an event of `type` to whoever subscribed to it, as Herdr's event stream does. */
+	emit(type: string, event: string, data: Record<string, unknown>) {
 		for (const l of [...this.listeners]) if (l.types.includes(type)) queueMicrotask(() => l.on({ event, data }));
 	}
 	private next = 100;

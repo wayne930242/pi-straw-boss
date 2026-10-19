@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, test } from "node:test";
+import { afterEach, mock, test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { collectNet } from "../src/net.ts";
-import { collect, ownFile, type Row, render, type Snapshot, startDashboard, subagents, type Tone } from "../src/dashboard.ts";
+import { collect, ownFile, type Row, render, SAFETY_MS, type Snapshot, startDashboard, subagents, type Tone } from "../src/dashboard.ts";
 import { ARROW, herdrWorld, MARK, TOWER_LABEL } from "../src/herdr.ts";
 import { type FakeTui, settle, until, World } from "./fakes.ts";
 
@@ -360,7 +360,7 @@ test("the role marks take their colors from theme roles: the tower warning, a ma
 	dashboard.stop();
 });
 
-test("poke re-reads early but not more often than the minimum gap, and a failing read shows an error row instead of throwing", async () => {
+test("poke re-reads early but not more often than the minimum gap: a poke inside the gap waits for its end instead of being dropped, and a failing read shows an error row instead of throwing", async () => {
 	const { state, ui } = fakeUi();
 	let reads = 0, fail = false;
 	const dashboard = startDashboard({ ui: ui as never, collect: async () => (reads++, fail ? Promise.reject(new Error("herdr is gone")) : snapshot([])), frameMs: 5, pollMs: 100_000, minGapMs: 50 });
@@ -368,12 +368,66 @@ test("poke re-reads early but not more often than the minimum gap, and a failing
 	dashboard.poke();
 	dashboard.poke();
 	await settle();
-	assert.equal(reads, 1, "pokes inside the gap are ignored");
-	await sleep(60);
+	assert.equal(reads, 1, "not inside the gap");
+	await until(() => reads === 2, "the read at the end of the gap");
+	await sleep(80);
+	assert.equal(reads, 2, "two pokes are one read");
 	fail = true;
 	dashboard.poke();
 	await until(() => state.component!.render(80).some((line) => /✗ dashboard unavailable: herdr is gone/.test(line)), "error row");
 	dashboard.stop();
+});
+
+test("Herdr's events re-read the screen once per burst, after the debounce; one that arrives during a read is read when it ends; a reconnection re-reads; stop() unsubscribes", async () => {
+	const { ui } = fakeUi();
+	let reads = 0, fire = () => {}, unwatched = 0, gate: Promise<void> | undefined;
+	const dashboard = startDashboard({ ui: ui as never, collect: async () => (reads++, await gate, snapshot([])), pollMs: 100_000, minGapMs: 0, debounceMs: 30, watch: (refresh) => ((fire = refresh), () => void unwatched++) });
+	await until(() => reads === 1, "first read");
+	fire();
+	fire();
+	fire();
+	await settle();
+	assert.equal(reads, 1, "waits for the debounce");
+	await until(() => reads === 2, "the burst's read");
+	await sleep(80);
+	assert.equal(reads, 2, "a burst is one read");
+	let release = () => {};
+	gate = new Promise<void>((resolve) => (release = resolve));
+	fire();
+	await until(() => reads === 3, "a read that waits");
+	fire();
+	await sleep(80);
+	assert.equal(reads, 3, "the event during the read waits for it");
+	release();
+	await until(() => reads === 4, "the read the event asked for");
+	gate = undefined;
+	fire(); // what the subscription says after it reconnects: some events may have been missed
+	await until(() => reads === 5, "the read after a reconnection");
+	dashboard.stop();
+	assert.equal(unwatched, 1);
+	fire();
+	await sleep(80);
+	assert.equal(reads, 5, "nothing is read after stop");
+});
+
+test("with no event, the screen is re-read only by the safety poll every 30 s", async () => {
+	mock.timers.enable({ apis: ["setInterval"] });
+	try {
+		const { ui } = fakeUi();
+		let reads = 0;
+		const dashboard = startDashboard({ ui: ui as never, collect: async () => (reads++, { ...snapshot([]), mark: "idle" }), watch: () => () => {} });
+		await settle();
+		assert.equal(reads, 1);
+		mock.timers.tick(SAFETY_MS - 1);
+		await settle();
+		assert.equal(reads, 1, "no read before the safety poll");
+		mock.timers.tick(1);
+		await settle();
+		assert.equal(reads, 2);
+		dashboard.stop();
+	} finally {
+		mock.timers.reset();
+	}
 });
 
 const KEY = "straw-boss-dashboard";
@@ -409,6 +463,34 @@ test("intercom presence and session events re-read at once instead of waiting fo
 	await sleep(520);
 	tell("presence_update");
 	await until(() => sees(/Main One +main +thinking/), "the new status", 1500);
+});
+
+test("a tower's dashboard re-reads when Herdr reports a pane, tab, or workspace change, and not otherwise", async () => {
+	const tower = world.tower("tower-wA", "wA:t7", "wA:p7", true);
+	const main = world.agent({ id: "main-1", name: "Main One", pane: "wA:p1", tab: "wA:t1" });
+	await Promise.all([tower.start(), main.start()]);
+	await main.promote();
+	const component = tower.components.get(KEY)!;
+	const sees = (pattern: RegExp) => component.render(80).some((line) => pattern.test(line));
+	await until(() => sees(/Main One +main/), "the main agent");
+	await world.quiet();
+	const lists = () => world.herdr.commands("pane", "list").length;
+	let before = lists();
+	world.herdr.pane("wA:p1").agent_status = "blocked";
+	await sleep(300);
+	assert.equal(lists(), before, "a change nobody reported is not read yet");
+	world.herdr.emit("pane.updated", "pane_updated", { pane: world.herdr.pane("wA:p1") });
+	await until(() => sees(/\? .*Main One +main +waiting on a question/), "the blocked main agent", 1500);
+	before = lists();
+	world.herdr.tabs.find((t) => t.tab_id === "wA:t1")!.label = "renamed";
+	world.herdr.emit("tab.renamed", "tab_renamed", { tab_id: "wA:t1" });
+	await until(() => lists() > before, "a read after a tab event", 1500);
+	await tower.stop();
+	await world.quiet();
+	before = lists();
+	world.herdr.emit("pane.updated", "pane_updated", { pane: world.herdr.pane("wA:p1") });
+	await sleep(700);
+	assert.equal(lists(), before, "no reading after shutdown");
 });
 
 test("a yielding tower, a headless tower, and a main agent never show the dashboard", async () => {

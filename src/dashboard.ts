@@ -86,7 +86,6 @@ export function readJson(path: string): Record<string, unknown> {
 	}
 }
 
-/** The subagents a pi session launched: live ones, plus those that finished in the last 10 minutes. The dashboard shows the first `limit`. */
 // What a tick re-reads for every child is cached: the pane that runs each child (indexed once per pane list), the names in the two
 // directories pi-herdr-agents keeps per session (until the directory changes), and a launch script's session file (until the script does).
 const RACY_MS = 2000;
@@ -146,6 +145,7 @@ function scriptSession(path: string): string | undefined {
 	}
 }
 
+/** The subagents a pi session launched: live ones, plus those that finished in the last 10 minutes. The dashboard shows the first `limit`. */
 export function subagents(parent: Pane | undefined, all: Pane[], now: number, limit = MAX_CHILDREN): Row[] {
 	const file = parent?.agent_session?.value;
 	if (!file) return [];
@@ -160,7 +160,6 @@ export function subagents(parent: Pane | undefined, all: Pane[], now: number, li
 				return []; // the activity file went away since the directory was listed
 			}
 		})
-		.filter((c) => c.pane || c.age < RECENT_MS)
 		.map(({ id, path, pane }) => {
 			const activity = readJson(path);
 			// A child whose pane is gone, or back at a shell prompt, has finished.
@@ -210,19 +209,35 @@ export async function collect({ run, world = worldOf(run), sessions, workspaceId
 }
 
 export interface Dashboard { poke(): void; stop(): void }
-export interface Timing { frameMs?: number; pollMs?: number; minGapMs?: number }
+/** `watch` subscribes to what changes the screen and calls `refresh` for each; it returns the unsubscribe. */
+export interface Timing { frameMs?: number; pollMs?: number; minGapMs?: number; debounceMs?: number; watch?(refresh: () => void): () => void }
+
+/** The dashboard re-reads when Herdr reports a change; this poll only catches what no event told (a missed one, a subagent's activity file). */
+export const SAFETY_MS = 30_000;
+const DEBOUNCE_MS = 500;
 
 /**
- * Shows the dashboard in a tower's TUI. The spinner timer (8 fps) runs only while a row is working; the data poll (3 s)
- * runs while the widget exists. stop() clears both timers and the widget, and pi disposing the widget does the same.
+ * Shows the dashboard in a tower's TUI. The spinner timer (8 fps) runs only while a row is working. Data is re-read when `watch` reports
+ * a change (collected for `debounceMs`, so a burst is one read), when poke() says intercom changed (at once), and every `pollMs` as a safety net;
+ * two reads are never closer than `minGapMs`, and a request that comes inside the gap or while a read runs is read when it ends, not dropped.
+ * stop() clears the timers and the subscription and removes the widget, and pi disposing the widget does the same.
  */
-export function startDashboard({ ui, collect: read, frameMs = 125, pollMs = 3000, minGapMs = 500 }: { ui: ExtensionContext["ui"]; collect(): Promise<Snapshot> } & Timing): Dashboard {
+export function startDashboard({ ui, collect: read, watch, frameMs = 125, pollMs = SAFETY_MS, minGapMs = 500, debounceMs = DEBOUNCE_MS }: { ui: ExtensionContext["ui"]; collect(): Promise<Snapshot> } & Timing): Dashboard {
 	let live: Dashboard | undefined;
 	ui.setWidget(KEY, (tui, theme) => {
-		let snap: Snapshot = { title: "", mark: "unknown", head: false, rows: [] }, frame = 0, busy = false, stopped = false, last = 0;
-		let spinner: ReturnType<typeof setInterval> | undefined;
+		let snap: Snapshot = { title: "", mark: "unknown", head: false, rows: [] }, frame = 0, busy = false, again = false, stopped = false, last = 0, due = Infinity;
+		let spinner: ReturnType<typeof setInterval> | undefined, wake: ReturnType<typeof setTimeout> | undefined;
+		// One pending read at a time, at the earliest time anyone asked for (and not inside the gap after the last read).
+		const schedule = (delay: number) => {
+			const at = Math.max(Date.now() + delay, last + minGapMs);
+			if (stopped || at >= due) return;
+			clearTimeout(wake);
+			due = at;
+			wake = setTimeout(() => ((due = Infinity), void refresh()), Math.max(0, at - Date.now())).unref();
+		};
 		const refresh = async () => {
-			if (busy || stopped) return;
+			if (stopped) return;
+			if (busy) return void (again = true);
 			busy = true;
 			try {
 				snap = await read();
@@ -236,15 +251,20 @@ export function startDashboard({ ui, collect: read, frameMs = 125, pollMs = 3000
 			if (working && !spinner) spinner = setInterval(() => (frame++, tui.requestRender()), frameMs).unref();
 			if (!working && spinner) spinner = void clearInterval(spinner);
 			tui.requestRender();
+			if (again) (again = false, schedule(0));
 		};
-		const poll = setInterval(() => void refresh(), pollMs).unref();
+		const poll = setInterval(() => void (busy || refresh()), pollMs).unref();
+		const unwatch = watch?.(() => schedule(debounceMs));
 		const stop = () => {
+			if (stopped) return;
 			stopped = true;
 			clearInterval(poll);
+			clearTimeout(wake);
 			clearInterval(spinner);
 			spinner = undefined;
+			unwatch?.();
 		};
-		live = { poke: () => void (Date.now() - last >= minGapMs && refresh()), stop };
+		live = { poke: () => schedule(0), stop };
 		void refresh();
 		// Every color is a theme role. The title and the role marks are bold: the tower in warning, a main agent in accent, a member in success.
 		const strong: Partial<Record<Tone, "accent" | "warning" | "success">> = { title: "accent", tower: "warning", main: "accent", member: "success" };
