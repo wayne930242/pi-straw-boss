@@ -232,15 +232,22 @@ svg { display: block; }
 .enter { animation: pop 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.15) both; }
 .leaving { animation: out 0.35s ease-in both; pointer-events: none; }
 .flash > .card > .plate, .flash.tower { animation: flash 0.6s ease-out; }
+/* A one-shot animation plays again when `.flip` swaps it to its `-b` keyframes (replay in dom.ts): no layout read restarts it. */
+.flash.flip > .card > .plate, .flash.flip.tower, .flash.flip.token > .plate { animation-name: flash-b; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes ping { 0% { transform: scale(1); opacity: 0.6; } 100% { transform: scale(1.7); opacity: 0; } }
 @keyframes hop { 50% { transform: translateY(-3px); } }
 @keyframes blink { 50% { opacity: 0.35; } }
 @keyframes pop { from { opacity: 0; transform: scale(0.92) translateY(8px); } }
+@keyframes pop-b { from { opacity: 0; transform: scale(0.92) translateY(8px); } }
 @keyframes out { to { opacity: 0; transform: scale(0.94); } }
+@keyframes out-b { to { opacity: 0; transform: scale(0.94); } }
 @keyframes flash { 40% { transform: scale(1.12); } }
+@keyframes flash-b { 40% { transform: scale(1.12); } }
 @keyframes slide { from { opacity: 0; transform: translateX(10px); } }
+@keyframes slide-b { from { opacity: 0; transform: translateX(10px); } }
 @keyframes zoom { from { opacity: 0; transform: scale(0.45); } }
+@keyframes zoom-b { from { opacity: 0; transform: scale(0.45); } }
 @keyframes come-in { from { opacity: 0; transform: translateX(-14px) scale(0.98); } }
 @keyframes go-out { from { opacity: 0; transform: translateX(14px) scale(0.98); } }
 .tx.fresh { animation: come-in 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both; } .tx.you.fresh { animation-name: go-out; }
@@ -264,6 +271,7 @@ body[data-stale="true"] .work { opacity: 0.45; }
 .enter-zoom { animation: zoom 0.5s ease-out both; transform-origin: var(--ox, 50%) var(--oy, 0); }
 .enter-slide, .dossier { animation: slide 0.4s ease-out both; }
 .enter-back { animation: pop 0.4s ease-out both; }
+.enter-zoom.flip { animation-name: zoom-b; } .enter-slide.flip { animation-name: slide-b; } .enter-back.flip { animation-name: pop-b; }
 .hit, .enter-base::after { position: absolute; inset: 0; z-index: 1; border-radius: inherit; }
 .enter-base::after { content: ""; z-index: 0; }
 .hit:hover { box-shadow: inset 0 0 0 1px var(--c); }
@@ -347,6 +355,7 @@ a.tower:hover::before { border-color: var(--c); }
 .chat-pill { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); border: 0; --c: #38e0ff; }
 /* The entry Open comms lands on, lit for a moment (an entry's containment makes it the containing block). */
 .lit::after { content: ""; position: absolute; inset: 0; border-radius: 14px; background: #38e0ff2e; animation: out 1s 1s forwards; }
+.lit.flip::after { animation-name: out-b; }
 /* The composer under the log: the box, Send (and Follow-up and Stop while it works), and one line for what happened or why not. */
 .composer { position: relative; display: grid; gap: 8px; padding: 12px 18px 14px; border-top: 1px solid var(--line); background: var(--panel); }
 .cmp-row, .cmp-acts, .cmp-foot, .cmp-note { display: flex; gap: 8px; align-items: center; }
@@ -504,9 +513,10 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
    it says so. The text box that receives the keys is invisible and placed by the mirror's corner, where an input method shows its candidates. */
 .term-scroll { transition: border-color 0.2s, box-shadow 0.2s; }
 .term-scroll.typing { border-color: #38e0ff; box-shadow: 0 0 0 1px #38e0ff66, 0 0 22px #38e0ff2e; }
-.term-scroll.engage { animation: term-engage 0.6s ease-out; } .term-scroll.blip { animation: term-blip 0.22s ease-out; }
+.term-scroll.engage { animation: term-engage 0.6s ease-out; } .term-scroll.blip { animation: term-blip 0.22s ease-out; } .term-scroll.blip.flip { animation-name: term-blip-b; }
 @keyframes term-engage { 0% { box-shadow: 0 0 0 0 #38e0ffcc, 0 0 0 #38e0ff00; } 60% { box-shadow: 0 0 0 7px #38e0ff00, 0 0 34px #38e0ff66; } 100% { box-shadow: 0 0 0 1px #38e0ff66, 0 0 22px #38e0ff2e; } }
 @keyframes term-blip { 0% { box-shadow: 0 0 0 2px #7ff0ffcc, 0 0 32px #38e0ff88; } 100% { box-shadow: 0 0 0 1px #38e0ff66, 0 0 22px #38e0ff2e; } }
+@keyframes term-blip-b { 0% { box-shadow: 0 0 0 2px #7ff0ffcc, 0 0 32px #38e0ff88; } 100% { box-shadow: 0 0 0 1px #38e0ff66, 0 0 22px #38e0ff2e; } }
 .term-sink { position: fixed; width: 1px; height: 18px; padding: 0; border: 0; opacity: 0; resize: none; overflow: hidden; pointer-events: none; }
 .term-typing { margin-left: auto; color: #38e0ff; font-weight: 600; animation: term-note 1.6s ease-in-out infinite; }
 @keyframes term-note { 50% { opacity: 0.55; text-shadow: 0 0 10px #38e0ff99; } }

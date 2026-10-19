@@ -1,3 +1,4 @@
+import { replay } from "./dom.ts";
 import { m } from "./paraglide/messages.js";
 import { aim } from "./render.ts";
 import type { Route } from "./router.ts";
@@ -37,7 +38,6 @@ export function entrance(next: Route, before: Route, from?: DOMRect) {
 		view.style.setProperty("--oy", `${Math.round(from.y + from.height / 2 - box.y)}px`);
 	}
 	view.classList.remove("enter-zoom", "enter-slide", "enter-back");
-	void view.offsetWidth;
-	view.classList.add(kind);
+	replay(view, kind);
 	setTimeout(() => view.classList.remove(kind), 700);
 }

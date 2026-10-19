@@ -1,5 +1,6 @@
 import type { Mark } from "../src/dashboard.ts";
 import type { Base, Net, Unit } from "../src/net.ts";
+import { replay } from "./dom.ts";
 import type { Entry } from "./log.ts";
 import { m } from "./paraglide/messages.js";
 import { packets } from "./packets.ts";
@@ -40,7 +41,7 @@ export const mark = (el: HTMLElement, value: Mark) => {
 	if (el.dataset.mark === value) return;
 	const changed = el.dataset.mark !== undefined;
 	el.dataset.mark = value;
-	if (changed) (el.classList.remove("flash"), void el.offsetWidth, el.classList.add("flash"));
+	if (changed) replay(el, "flash");
 };
 /** "tool:edit" reads as "using edit". */
 /** A failed monitor's alert notes `monitor:<status>:<what>` (alerts.ts). */

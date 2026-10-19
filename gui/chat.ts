@@ -4,7 +4,7 @@ import type { Shelf } from "../src/documents.ts";
 import type { Item, Todo } from "../src/items.ts";
 import type { Queued } from "../src/net.ts";
 import type { Monitor } from "../src/monitors.ts";
-import { h } from "./dom.ts";
+import { h, replay } from "./dom.ts";
 import { createFollow, reach } from "./follow.ts";
 import { mount, parse } from "./markdown.ts";
 import type { Post } from "./composer.ts";
@@ -127,9 +127,7 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor }: 
 		follow.hold();
 		held = el;
 		el.scrollIntoView({ block: "center" });
-		el.classList.remove("lit");
-		void el.offsetWidth;
-		el.classList.add("lit");
+		replay(el, "lit");
 		// Entries near it take their real height as they render (content-visibility), so it is kept in view until the user scrolls.
 		clearTimeout(release);
 		release = window.setTimeout(() => ((held = undefined), el.classList.remove("lit")), 2000);
