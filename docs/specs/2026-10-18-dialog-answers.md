@@ -25,6 +25,7 @@ valid. Straw Boss only relays, and refuses whatever it cannot tie to the right s
 | pi-robot-hand ≥ 0.3.0, `robot_hand` | Dialog contract v1, prefix `robot-hand` (`pending`, `answer`, `answer-result`, `closed`; its README and `tests/dialog.test.ts` are the reference, including the digest vectors) | Its selector: one choice. The clipboard choice is `localOnly` and refused from a remote page. |
 | @juicesharp/rpiv-ask-user-question 2.13.9, `ask_user_question` | Its own `rpiv:ask-user:*` channel: `prompt {toolCallId, questions}`, `answer {toolCallId, requestId, answers[] \| cancel}`, `answer-result {ok, code, requestId, toolCallId}`, `blocked {active, toolCallId}`; first answer wins, all-or-nothing validation | One to four questions: single or several choices, own words ("Type something."), a note per question. |
 | pi-mcp-adapter (fork, later) | Contract v1, prefix `pi-mcp-adapter:dialog` | Inert until that package emits. |
+| pi-code hooks extension, hook confirmation ("Allow bash?") | Contract v1, prefix `pi-code:dialog`, choices Allow and Deny, `toolCallId` = the gated call. A *gate*: it binds to an open call of any tool (it must name one), where the other owners bind to their own tool's call. | One choice: Allow or Deny. |
 | pi-ask-user (`ask_user`) and anything else | none | Read-only, as in 0.5.x. |
 
 Each owner has one adapter in `src/owners.ts`; nothing else knows an owner, so swapping the question package means replacing its
@@ -71,8 +72,8 @@ Started by `createStrawBoss` before the `PI_SUBAGENT_ID` return and only when `H
   unit on that pane, and the unit's session file is the one the list names (canonical paths). Each net reading binds afresh.
 - **What the page may answer** (merged into the unit's `pending` as `answer: {dialog, digest, select? | questions?}`; otherwise `why`
   says why the terminal must answer): exactly one open dialog for the session; no answer on its way; not too long; its adapter known;
-  a dialog naming a `toolCallId` must be the session file's one open call, with the adapter's tool; the digest recomputed from the
-  relayed content equals the dialog's. A session whose file's open call is `secret_drop` is never answerable. A unit with an open
+  a dialog naming a `toolCallId` must be one of the session file's open calls (the newest assistant message may leave several unanswered), with the adapter's tool, or of any tool for a gate; the digest recomputed from the
+  relayed content equals the dialog's. A session with a `secret_drop` among its open calls is never answerable. A unit with an open
   dialog shows as waiting even before Herdr reports `blocked`.
 
 ## Answer route (`src/control.ts`)
@@ -112,7 +113,7 @@ demonstrates a robot_hand selector and a questionnaire that answer.
 |---|---|
 | pi-intercom missing in the asking session, an owner without a channel, a payload of another version | No dialog: 0.5.x's read-only panel. |
 | The GUI session's intercom down, or `gui.json` names no live owner | Bridges keep their dialogs and resend on the `owner`/`connection` event; meanwhile read-only. |
-| Two open dialogs, a `toolCallId` that is not the file's open call, a digest mismatch | Read-only with the reason. |
+| Two open dialogs, a `toolCallId` that is not one of the file's open calls, a digest mismatch | Read-only with the reason. |
 | A dialog over 15 KiB | Read-only: "too long to show here". |
 | The owner refuses the answer | `rejected` with the reason; the dialog stays open and answerable. |
 | Terminal answered first | `stale`: "It was already answered in the terminal." |
