@@ -148,6 +148,17 @@ export function herdrClient(bin = "herdr") {
 	};
 }
 
+/**
+ * What git itself said when a command failed: its first `fatal:` or `error:` line, else its first stderr line. node's own message
+ * starts with a "Command failed: git ..." header that says nothing about why.
+ */
+export function gitReason(error) {
+	const lines = String(error.stderr ?? "").split("\n").map((line) => line.trim()).filter(Boolean);
+	const reason = lines.find((line) => /^(fatal|error):/.test(line)) ?? lines[0];
+	if (reason) return reason.slice(0, 300);
+	return String(error.message ?? error).split("\n").find((line) => line.trim() && !line.startsWith("Command failed:"))?.trim() ?? "git failed without a message";
+}
+
 /** git, read-only except `removeWorktree`, which never forces. */
 export function gitClient() {
 	const git = async (args, timeout = GIT_TIMEOUT_MS) => {
@@ -180,6 +191,30 @@ export function gitClient() {
 				.join("\n"),
 		branch: (checkout) => git(["-C", checkout, "symbolic-ref", "--quiet", "--short", "HEAD"]).then((out) => out.trim(), () => null),
 		containedBy: (checkout) => git(["-C", checkout, "for-each-ref", "--contains", "HEAD", "refs/heads", "refs/remotes", "refs/tags"]),
-		removeWorktree: (repoRoot, checkout) => git(["-C", repoRoot, "worktree", "remove", checkout], GIT_REMOVE_TIMEOUT_MS),
+		removeWorktree: (repoRoot, checkout) =>
+			git(["-C", repoRoot, "worktree", "remove", checkout], GIT_REMOVE_TIMEOUT_MS).catch((error) => {
+				throw Object.assign(new Error(error.timedOut ? error.message : gitReason(error)), { timedOut: error.timedOut === true });
+			}),
+		// What a failed removal left behind. `git worktree remove` deletes the checkout's `.git` file and its admin entry before the
+		// files, so a failure partway can leave a directory git no longer knows about. "unknown" when git cannot be asked.
+		leftover: async (repoRoot, checkout) => {
+			if (!existsSync(checkout)) return "gone";
+			if (!existsSync(join(checkout, ".git"))) return "half-removed";
+			try {
+				const here = realpathSync.native(checkout);
+				const registered = (await git(["-C", repoRoot, "worktree", "list", "--porcelain", "-z"])).split("\0").filter((field) => field.startsWith("worktree "));
+				const known = registered.some((field) => {
+					const path = field.slice("worktree ".length);
+					try {
+						return realpathSync.native(path) === here;
+					} catch {
+						return path === checkout;
+					}
+				});
+				return known ? "intact" : "half-removed";
+			} catch {
+				return "unknown";
+			}
+		},
 	};
 }

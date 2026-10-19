@@ -1,7 +1,7 @@
 // @ts-nocheck: the plugin scripts are plain JavaScript and the fake Herdr, git and panes are loose test data.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -9,7 +9,7 @@ import {
 	CONFIRM_MS, PIN_GLYPH, PIN_TOKEN, RENAME_GRACE_MS, SWEEP_INTERVAL_MS,
 	applyOps, decideRemoval, emptyState, findCheckoutUser, noteWorkspaces, onRename, planSweep, prunePanes, prunePins, shellIsIdle, togglePin,
 } from "../herdr-reaper/decide.mjs";
-import { createStore, gitClient, withLock } from "../herdr-reaper/io.mjs";
+import { createStore, gitClient, gitReason, withLock } from "../herdr-reaper/io.mjs";
 import { SOURCE, runEvent, runPinToggle, runSweep } from "../herdr-reaper/sweep.mjs";
 
 const NOW = 1_000_000_000;
@@ -547,6 +547,88 @@ test("A removal killed by its timeout is logged as possibly half-removed", async
 		assert.ok(w.logs.some((line) => line.includes("/wt/slow") && line.includes("half-removed") && !line.includes("refused")), w.logs.join("\n"));
 	} finally {
 		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("A failed removal logs git's own reason, and says plainly when it left a half-removed checkout", async () => {
+	const cases = {
+		"refused, checkout intact": ["intact", /^keep checkout \/wt\/x: git refused to remove it: fatal: working trees containing submodules cannot be moved or removed, branch feat kept$/],
+		"failed partway, no longer tracked": ["half-removed", /^keep checkout \/wt\/x: git refused to remove it: error: failed to delete '\/wt\/x': Directory not empty; it is half-removed: leftover files remain at \/wt\/x, git no longer tracks it, branch feat kept; delete the directory/],
+		"timed out, no longer tracked": ["half-removed", /^keep checkout \/wt\/x: removal timed out \(git worktree remove did not finish within 300s\); it is half-removed: leftover files remain at \/wt\/x, git no longer tracks it, branch feat kept; delete the directory/],
+		"timed out, checkout intact": ["intact", /^keep checkout \/wt\/x: removal timed out \(git worktree remove did not finish within 300s\), branch feat kept$/],
+	};
+	for (const [name, [left, expected]] of Object.entries(cases)) {
+		const dir = await tempDir();
+		try {
+			const w = world({ workspaces: [workspace("a", "x")], panes: [pane("a:p1", "a")], checkouts: { "/wt/x": {} } });
+			w.git.leftover = async () => left;
+			w.git.removeWorktree = async () => {
+				if (name.startsWith("timed out")) throw Object.assign(new Error("git worktree remove did not finish within 300s"), { timedOut: true });
+				throw new Error(name.includes("intact") ? "fatal: working trees containing submodules cannot be moved or removed" : "error: failed to delete '/wt/x': Directory not empty");
+			};
+			await runSweep(w.deps(createStore(dir)), { confirmMs: 0 });
+			assert.ok(w.logs.some((line) => expected.test(line)), `${name}: ${w.logs.join("\n")}`);
+			assert.ok(w.logs.every((line) => !line.includes("Command failed")), name);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	}
+});
+
+test("gitReason takes git's own fatal or error line and drops node's Command failed header", () => {
+	const failed = (stderr, message = "Command failed: git -C /repo worktree remove /wt\n" + stderr) => Object.assign(new Error(message), { stderr });
+	assert.equal(gitReason(failed("fatal: working trees containing submodules cannot be moved or removed\n")), "fatal: working trees containing submodules cannot be moved or removed");
+	assert.equal(gitReason(failed("hint: something\nerror: failed to delete '/wt': Directory not empty\nerror: second\n")), "error: failed to delete '/wt': Directory not empty");
+	assert.equal(gitReason(failed("just a line\nanother\n")), "just a line", "no fatal or error prefix: the first stderr line");
+	assert.equal(gitReason(failed("", "Command failed: git -C /repo worktree remove /wt\n")), "git failed without a message");
+	assert.equal(gitReason(Object.assign(new Error("spawn git ENOENT"), { code: "ENOENT" })), "spawn git ENOENT");
+});
+
+// A real removal git refuses (a submodule) and one it abandons partway (an unreadable directory): git's reason and what is left.
+test("Real git: a submodule checkout is refused and stays; a removal that fails partway is reported half-removed and nothing is deleted", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pane-reaper-git-"));
+	try {
+		const sub = join(root, "sub");
+		const repo = join(root, "repo");
+		for (const path of [sub, repo]) {
+			await mkdir(path);
+			sh(path, "init", "-q", "-b", "main");
+			await writeFile(join(path, "f.txt"), "x");
+			sh(path, "add", "f.txt");
+			sh(path, "commit", "-q", "-m", "init");
+		}
+		execFileSync("git", ["-c", "protocol.file.allow=always", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.com", "submodule", "add", "-q", sub, "vendor"], { env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" } });
+		sh(repo, "commit", "-q", "-m", "submodule");
+		const withSub = join(root, "with-sub");
+		const partial = join(root, "partial");
+		sh(repo, "worktree", "add", "-q", withSub, "-b", "has-sub");
+		execFileSync("git", ["-c", "protocol.file.allow=always", "-C", withSub, "submodule", "update", "--init"], { env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" } });
+		sh(repo, "worktree", "add", "-q", partial, "-b", "partial");
+		await mkdir(join(partial, "cache", "inner"), { recursive: true });
+		await writeFile(join(partial, "cache", "inner", "f"), "x");
+		await writeFile(join(repo, ".git", "info", "exclude"), "cache\n");
+		await chmod(join(partial, "cache", "inner"), 0o555);
+
+		const git = gitClient();
+		const submodule = await git.removeWorktree(repo, withSub).then(() => null, (error) => error);
+		assert.match(submodule.message, /^fatal: .*submodules cannot be moved or removed$/, submodule.message);
+		assert.equal(await git.leftover(repo, withSub), "intact");
+
+		const half = await git.removeWorktree(repo, partial).then(() => null, (error) => error);
+		assert.match(half.message, /^error: failed to delete /, half?.message);
+		assert.equal(await git.leftover(repo, partial), "half-removed", "the directory is there, git no longer registers it");
+
+		const w = world({ workspaces: [workspace("a", "x", { worktree: worktree(withSub, true, repo) }), workspace("b", "y", { worktree: worktree(partial, true, repo) })], panes: [pane("a:p1", "a"), pane("b:p1", "b")] });
+		w.git = { ...git, status: async () => "", hidden: async () => "", branch: async (path) => (path === withSub ? "has-sub" : "partial"), containedBy: async () => "" };
+		await runSweep(w.deps(createStore(join(root, "state"))), { confirmMs: 0 });
+		assert.ok(w.logs.some((line) => line.startsWith(`keep checkout ${withSub}: git refused to remove it: fatal: `) && line.endsWith(", branch has-sub kept")), w.logs.join("\n"));
+		assert.ok(w.logs.some((line) => line.startsWith(`keep checkout ${partial}:`) && line.includes(`leftover files remain at ${partial}, git no longer tracks it, branch partial kept`)), w.logs.join("\n"));
+		assert.ok(w.logs.every((line) => !line.includes("Command failed")), w.logs.join("\n"));
+		assert.ok(sh(repo, "branch", "--list", "partial").includes("partial"), "the branch is kept");
+		assert.ok(sh(repo, "worktree", "list", "--porcelain").includes(withSub), "the refused checkout is still registered");
+	} finally {
+		await chmod(join(root, "partial", "cache", "inner"), 0o755).catch(() => {});
+		await rm(root, { recursive: true, force: true });
 	}
 });
 

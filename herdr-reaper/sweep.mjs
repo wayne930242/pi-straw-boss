@@ -75,8 +75,13 @@ async function reapCheckout(entry, deps, dryRun, ignore = {}) {
 		deps.log(`remove checkout ${entry.checkout} (clean; branch ${facts.branch ?? "(detached)"} kept)`);
 		return "removed";
 	} catch (error) {
-		if (error.timedOut) deps.log(`keep checkout ${entry.checkout}: removal timed out; the checkout may be half-removed, run \`git worktree prune\` or \`git worktree remove --force ${entry.checkout}\``);
-		else deps.log(`keep checkout ${entry.checkout}: git refused to remove it: ${error.message.split("\n")[0]}`);
+		const failure = error.timedOut ? `removal timed out (${error.message})` : `git refused to remove it: ${error.message.split("\n")[0]}`;
+		const branch = facts.branch ? `branch ${facts.branch} kept` : "branch kept";
+		const left = (await deps.git.leftover?.(entry.repoRoot, entry.checkout).catch(() => "unknown")) ?? "unknown";
+		if (left === "half-removed") deps.log(`keep checkout ${entry.checkout}: ${failure}; it is half-removed: leftover files remain at ${entry.checkout}, git no longer tracks it, ${branch}; delete the directory yourself when you do not need it`);
+		else if (left === "gone") deps.log(`keep checkout ${entry.checkout}: ${failure}, but the directory is gone now; ${branch}`);
+		else if (left === "unknown" && error.timedOut) deps.log(`keep checkout ${entry.checkout}: ${failure}; the checkout may be half-removed, run \`git worktree prune\` or check ${entry.checkout}; ${branch}`);
+		else deps.log(`keep checkout ${entry.checkout}: ${failure}${left === "intact" ? "" : " (could not check what is left)"}, ${branch}`);
 		return "kept";
 	}
 }
