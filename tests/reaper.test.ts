@@ -1,7 +1,7 @@
 // @ts-nocheck: the plugin scripts are plain JavaScript and the fake Herdr, git and panes are loose test data.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -676,6 +676,52 @@ test("A damaged or unreadable state file fails instead of reading as empty", asy
 		await assert.rejects(runSweep(w.deps(store), { confirmMs: 0 }), /damaged/);
 		assert.deepEqual(w.calls, []);
 		await assert.rejects(runEvent(w.deps(store), "workspace.created", { workspace_id: "a" }), /damaged/);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("A stale lock is taken over by one waiter only; a fresh lock is never removed by a late judge", async () => {
+	const dir = await tempDir();
+	try {
+		const lock = join(dir, "race.lock");
+		await mkdir(lock);
+		await writeFile(join(lock, "owner"), "dead");
+		const long = new Date(Date.now() - 3_600_000);
+		await utimes(lock, long, long);
+		let active = 0;
+		let overlaps = 0;
+		let done = 0;
+		await Promise.all(
+			Array.from({ length: 12 }, async () => {
+				const outcome = await withLock(dir, "race", async () => {
+					if (++active > 1) overlaps++;
+					await new Promise((resolve) => setTimeout(resolve, 15));
+					active--;
+					done++;
+				}, { waitMs: 10_000, staleMs: 1000 });
+				assert.equal(outcome.held, false);
+			}),
+		);
+		assert.equal(done, 12);
+		assert.equal(overlaps, 0, "no two holders at once");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("A lock held longer than staleMs stays held while its holder works", async () => {
+	const dir = await tempDir();
+	try {
+		let second;
+		const first = await withLock(dir, "slow", async () => {
+			await new Promise((resolve) => setTimeout(resolve, 500));
+			second = await withLock(dir, "slow", async () => 1, { waitMs: 0, staleMs: 200 });
+			return "done";
+		}, { staleMs: 200 });
+		assert.equal(first.value, "done");
+		assert.equal(second.held, true, "the holder's heartbeat keeps the lock fresh");
+		assert.equal((await withLock(dir, "slow", async () => 1)).value, 1, "and it is released at the end");
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}

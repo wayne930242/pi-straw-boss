@@ -1,41 +1,75 @@
 // What the reaper reaches outside itself with: its state file and locks, the herdr CLI, and git.
 import { execFile } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { mkdir, readFile, rename, rmdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { applyOps, emptyState } from "./decide.mjs";
 
 const run = promisify(execFile);
+// A hung herdr or git call must not hold the sweep lock for good; a call that outlasts its timeout is killed and fails.
+const HERDR_TIMEOUT_MS = 30_000;
+const GIT_TIMEOUT_MS = 60_000;
+// Removing a checkout deletes every ignored file in it, `node_modules` among them.
+const GIT_REMOVE_TIMEOUT_MS = 5 * 60_000;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * Runs `work` while holding a directory lock, which `mkdir` makes atomic. A lock older than staleMs belongs to a run that died.
+ * Runs `work` while holding a directory lock, which `mkdir` makes atomic. The holder writes an owner token into it and touches it
+ * while it works, so a lock older than staleMs belongs to a run that died. Only one waiter at a time judges and removes a stale
+ * lock (a second directory lock guards that), so a waiter cannot remove the fresh lock another one has just made. The holder
+ * releases the lock only if the token is still its own.
  * With waitMs of 0 a held lock returns `held` at once instead of waiting.
  */
 export async function withLock(dir, name, work, { waitMs = 5000, staleMs = 120_000 } = {}) {
 	const lock = join(dir, `${name}.lock`);
+	const owner = randomUUID();
 	await mkdir(dir, { recursive: true });
+	const ageOf = (path) => stat(path).then((info) => Date.now() - info.mtimeMs, () => 0);
+	const remove = (path) => rm(path, { recursive: true, force: true });
 	const deadline = Date.now() + waitMs;
 	for (;;) {
 		try {
 			await mkdir(lock);
+			await writeFile(join(lock, "owner"), owner);
 			break;
 		} catch (error) {
 			if (error.code !== "EEXIST") throw error;
-			const age = await stat(lock).then((info) => Date.now() - info.mtimeMs, () => 0);
-			if (age > staleMs) {
-				await rmdir(lock).catch(() => {});
+			if ((await ageOf(lock)) > staleMs) {
+				await takeOverStale(lock, staleMs, ageOf, remove);
 				continue;
 			}
 			if (Date.now() >= deadline) return { held: true };
 			await sleep(50);
 		}
 	}
+	const heartbeat = setInterval(() => utimes(lock, new Date(), new Date()).catch(() => {}), Math.max(10, staleMs / 4));
+	heartbeat.unref();
 	try {
 		return { held: false, value: await work() };
 	} finally {
-		await rmdir(lock).catch(() => {});
+		clearInterval(heartbeat);
+		if ((await readFile(join(lock, "owner"), "utf8").catch(() => null)) === owner) await remove(lock);
+	}
+}
+
+/** Removes a lock that looked stale, once the stale check has been repeated under the takeover lock. */
+async function takeOverStale(lock, staleMs, ageOf, remove) {
+	const takeover = `${lock}.takeover`;
+	try {
+		await mkdir(takeover);
+	} catch (error) {
+		if (error.code !== "EEXIST") throw error;
+		// Another waiter is judging; a takeover lock that old belongs to a waiter that died.
+		if ((await ageOf(takeover)) > staleMs) await remove(takeover);
+		await sleep(50);
+		return;
+	}
+	try {
+		if ((await ageOf(lock)) > staleMs) await remove(lock);
+	} finally {
+		await remove(takeover);
 	}
 }
 
@@ -91,8 +125,9 @@ export function herdrClient(bin = "herdr") {
 	const call = async (args) => {
 		let stdout;
 		try {
-			({ stdout } = await run(bin, args, { maxBuffer: 16 * 1024 * 1024 }));
+			({ stdout } = await run(bin, args, { maxBuffer: 16 * 1024 * 1024, timeout: HERDR_TIMEOUT_MS }));
 		} catch (error) {
+			if (error.killed) throw new Error(`herdr ${args.join(" ")} failed: no answer within ${HERDR_TIMEOUT_MS / 1000}s`);
 			throw new Error(`herdr ${args.join(" ")} failed: ${(error.stderr || error.stdout || error.message).toString().trim().slice(0, 300)}`);
 		}
 		const reply = stdout.trim() ? JSON.parse(stdout) : {};
@@ -115,7 +150,14 @@ export function herdrClient(bin = "herdr") {
 
 /** git, read-only except `removeWorktree`, which never forces. */
 export function gitClient() {
-	const git = async (args) => (await run("git", args, { maxBuffer: 16 * 1024 * 1024 })).stdout;
+	const git = async (args, timeout = GIT_TIMEOUT_MS) => {
+		try {
+			return (await run("git", args, { maxBuffer: 16 * 1024 * 1024, timeout })).stdout;
+		} catch (error) {
+			if (error.killed) throw new Error(`git ${args.join(" ")} did not finish within ${timeout / 1000}s`);
+			throw error;
+		}
+	};
 	return {
 		exists: (path) => existsSync(path),
 		realpath: (path) => {
@@ -137,6 +179,6 @@ export function gitClient() {
 				.join("\n"),
 		branch: (checkout) => git(["-C", checkout, "symbolic-ref", "--quiet", "--short", "HEAD"]).then((out) => out.trim(), () => null),
 		containedBy: (checkout) => git(["-C", checkout, "for-each-ref", "--contains", "HEAD", "refs/heads", "refs/remotes", "refs/tags"]),
-		removeWorktree: (repoRoot, checkout) => git(["-C", repoRoot, "worktree", "remove", checkout]),
+		removeWorktree: (repoRoot, checkout) => git(["-C", repoRoot, "worktree", "remove", checkout], GIT_REMOVE_TIMEOUT_MS),
 	};
 }

@@ -140,7 +140,8 @@ export async function planSweep({ workspaces, panes, state, now, confirmMs = CON
 	}
 	if (firstRun) ops.push(set(["initialized"], true));
 	// A workspace whose every pane is being closed ends up closed, and its checkout is then up for removal.
-	const closing = Map.groupBy(closes, (close) => close.workspaceId);
+	const closing = new Map();
+	for (const close of closes) closing.set(close.workspaceId, [...(closing.get(close.workspaceId) ?? []), close]);
 	const expectClosed = [];
 	for (const [workspaceId, list] of closing) {
 		const workspace = byWorkspace.get(workspaceId);
