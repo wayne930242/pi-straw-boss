@@ -455,11 +455,13 @@ const NOKEY = "It waits for a secret; its session cannot protect one on the way 
 
 test("secret_drop: a dialog without a valid public key stays in the terminal, whatever else matches", async () => {
 	const x = hub(), one = file([["c1", "secret_drop"]]);
-	for (const [what, key] of [["none (an older bridge)", undefined], ["an empty one", ""], ["a short one", "AAAA"], ["one with other characters", `${KEYS.pub.slice(1)}=`], ["a number", 5 as never]] as const) {
-		x.h.receive("S", x.list([secretDialog({ key })], { file: one }));
+	for (const [i, [what, key]] of ([["none (an older bridge)", undefined], ["an empty one", ""], ["a short one", "AAAA"], ["one with other characters", `${KEYS.pub.slice(1)}=`], ["a number", 5 as never], ["an object", {} as never]] as const).entries()) {
+		x.h.receive("S", x.list([secretDialog({ id: `k${i}`, key })], { file: one })); // each is a new dialog: a first key is what is judged
 		const { unit } = await read(x, one);
 		assert.deepEqual([unit.pending?.answer, unit.pending?.why, x.h.target("S")], [undefined, NOKEY, undefined], what);
 	}
+	x.h.receive("S", x.list([secretDialog({ id: "ok" })], { file: one }));
+	assert.equal((await read(x, one)).unit.pending?.answer?.dialog, "ok", "the same file with a good key is answerable");
 });
 
 test("secret_drop: a key that changes for the same dialog is never trusted again; a later key for a dialog first seen without one is not either; a new dialog starts afresh", async () => {
