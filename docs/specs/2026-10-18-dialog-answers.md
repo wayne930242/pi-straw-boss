@@ -13,9 +13,9 @@ for it through its own completion path, exactly as if the user had answered in t
 valid. Straw Boss only relays, and refuses whatever it cannot tie to the right session and the right dialog.
 
 - No key reaches a terminal from this feature. The keys endpoint stays Escape-only; nothing reads the screen.
-- `secret_drop` was terminal-only in 0.6.0. From 0.28.0 its masked dialog (pi-robot-hand's `robot-hand:secret` events) is answerable from
-  this computer's page only (below); any other dialog beside an open `secret_drop` call, and a session whose `secret_drop` has no such
-  dialog, stays terminal-only whatever a bridge reports.
+- `secret_drop` is terminal-only, from every page, this computer's and a paired device's. An earlier draft of 0.28.0 made its masked dialog answerable
+  from this computer's page with the value sealed to the asking session's key; that was taken out before release (**Why a secret is terminal only**).
+  The server never takes a secret's value from a request and never sends one; the bridge never relays a secret dialog and refuses any answer to one.
 - Every answer carries the dialog id and the digest of what the page showed, and an `answerId` minted by the page; one `answerId`
   takes effect at most once.
 
@@ -25,7 +25,7 @@ valid. Straw Boss only relays, and refuses whatever it cannot tie to the right s
 |---|---|---|
 | pi-robot-hand ≥ 0.3.0, `robot_hand` | Dialog contract v1, prefix `robot-hand` (`pending`, `answer`, `answer-result`, `closed`; its README and `tests/dialog.test.ts` are the reference, including the digest vectors) | Its selector: one choice. The clipboard choice is `localOnly` and refused from a remote page. |
 | @juicesharp/rpiv-ask-user-question 2.13.9, `ask_user_question` | Its own `rpiv:ask-user:*` channel: `prompt {toolCallId, questions}`, `answer {toolCallId, requestId, answers[] \| cancel}`, `answer-result {ok, code, requestId, toolCallId}`, `blocked {active, toolCallId}`; first answer wins, all-or-nothing validation | One to four questions: single or several choices, own words ("Type something."), a note per question. |
-| pi-robot-hand, `secret_drop` | Contract v1, prefix `robot-hand:secret`: `pending {id, toolCallId, digest, secret: {label, instructions[], url?, destination}}`, `answer {id, answerId, digest, value}` (on the session's own event bus only), `answer-result`, `closed`; digest `["secret", label, instructions, url\|null, destination]` | A masked field, **this computer's page only**; the owner applies the value itself. A remote request is refused (403 `local_only`) and a remote page's stream holds a plain `secret_drop` wait (the call's own arguments still show in its comms history, as for any tool call; the value never does). The value crosses intercom only sealed (below). |
+| pi-robot-hand, `secret_drop` | Contract v1, prefix `robot-hand:secret`: `pending {id, toolCallId, digest, secret: {label, instructions[], url?, destination}}`, `answer {id, answerId, digest, value}` (on the session's own event bus only), `answer-result`, `closed`; digest `["secret", label, instructions, url\|null, destination]` | **Nothing, from any page.** The owner's contract could take a value, but this extension never sends one: its bridge keeps the dialog to itself, and the page shows a plain `secret_drop` wait read-only (the call's own arguments still show in its comms history, as for any tool call; the value never does). |
 | pi-mcp-adapter (fork, later) | Contract v1, prefix `pi-mcp-adapter:dialog` | Inert until that package emits. |
 | pi-code hooks extension, hook confirmation ("Allow bash?") | Contract v1, prefix `pi-code:dialog`, choices Allow and Deny, `toolCallId` = the gated call. A *gate*: it binds to an open call of any tool (it must name one), where the other owners bind to their own tool's call. | One choice: Allow or Deny. |
 | pi-ask-user (`ask_user`) and anything else | none | Read-only, as in 0.5.x. |
@@ -61,13 +61,10 @@ Started by `createStrawBoss` before the `PI_SUBAGENT_ID` return and only when `H
   `owner` and `connection` events, on a `sync`, and empty at shutdown; a list over 15 KiB drops the dialogs' content and they show
   "too long to show here") and `{version: 1, type: "ack", bridgeId, id, answerId, outcome, reason?, by?}`. `bridgeId` is a random UUID
   per bridge process.
-- **A secret's key pair.** For each secret dialog it relays the bridge makes an X25519 key pair (`node:crypto`, `src/seal.ts`), sends the public half as the dialog's `key`
-  (base64url, 32 bytes) and keeps the private half in memory only, until the dialog closes (the owner's close, the end of its tool call, or the session's end). It is never
-  logged or written. A list too long to relay drops `key` with the rest of the content.
+- **A secret dialog is not relayed.** The bridge keeps it (so its owner's close and cancel still work) but leaves it out of the list: its label, steps, and destination do not leave the session, and no key pair is made or sent. A list too long to relay drops the other dialogs' content as before.
 - **Answers it acts on:** `{version: 1, type: "answer", to, id, answerId, digest, choice | answers | sealed}` only when `to` is its `bridgeId`,
   the event comes from G as `gui.json` names it now (a server it followed before is ignored), G is the broker's current owner of the channel, and the event's owner epoch is the current one. It never judges
-  an answer's meaning; the adapter hands it to the owner. For a secret dialog the answer is accepted only as `sealed`, opened with that dialog's private key; a plain `value`, a
-  missing `sealed`, a wrong key, a changed ciphertext, or one made for another dialog, digest, answerId, or bridge is refused as `rejected` (`malformed`), the dialog stays open, and the
+  an answer's meaning; the adapter hands it to the owner. An answer to a secret dialog, whatever it carries (a plain `value`, a `sealed` one, nothing), is refused as `rejected` (`terminal_only`), the dialog stays open, and the
   owner hears nothing. A resend of an answerId already taken replays its outcome and is never opened again.
 
 ## Hub (`src/dialogs.ts`, in the session running the GUI server)
@@ -77,10 +74,10 @@ Started by `createStrawBoss` before the `PI_SUBAGENT_ID` return and only when `H
   stops. A change pushes the snapshot at once.
 - **Binding.** A bridge's list counts for a unit only when intercom reports the sender on that bridge's pane, the registry has a live
   unit on that pane, and the unit's session file is the one the list names (canonical paths). Each net reading binds afresh.
-- **What the page may answer** (merged into the unit's `pending` as `answer: {dialog, digest, select? | questions? | secret?}`; otherwise `why`
+- **What the page may answer** (merged into the unit's `pending` as `answer: {dialog, digest, select? | questions?}`; otherwise `why`
   says why the terminal must answer): exactly one open dialog for the session; no answer on its way; not too long; its adapter known;
   a dialog naming a `toolCallId` must be one of the session file's open calls (the newest assistant message may leave several unanswered), with the adapter's tool, or of any tool for a gate; the digest recomputed from the
-  relayed content equals the dialog's. A `secret_drop` among the open calls keeps every dialog but its own masked one in the terminal, and that one is answerable only when it is the one open `secret_drop` call, names it, and comes with a valid public key. The hub takes the first key it sees for a dialog (per sender, bridge, and dialog id); a different or missing key later, or none at first, leaves that dialog in the terminal for good ("It waits for a secret; its session cannot protect one on the way here, so enter it in the terminal."), so a bridge without this feature never gets a plaintext fallback. A unit with an open
+  relayed content equals the dialog's. A `secret_drop` among the open calls, or a secret dialog from an older bridge (with or without the `key` it once relayed, which is ignored), keeps everything in the terminal ("It waits for a secret."). A unit with an open
   dialog shows as waiting even before Herdr reports `blocked`.
 
 ## Answer route (`src/control.ts`)
@@ -98,11 +95,9 @@ Started by `createStrawBoss` before the `PI_SUBAGENT_ID` return and only when `H
    page; for questions, one entry per question with distinct option indexes in range (one at most unless it takes several), own words
    (≤ 8 KB) or a note (≤ 2 KB) without control characters but tab and newline, an option or own words for each, both only when it
    takes several; at most 12 KB together. 400 `bad_answer` with the reason otherwise. One write per session in flight (429).
-   A secret's `value` (one non-blank string of at most 8 KB without control characters) is refused from a remote request before anything is looked up (403
-   `local_only`), and no refusal quotes it; it lives only in that request, the hub's memory while it seals it, the target bridge's memory, and the owner's event on that
-   session's own bus, never in a snapshot, ack, stored outcome, log, intercom message, or the page (its field is cleared as the request leaves, and a secret is never resent).
-5. The hub sends the answer to the bridge (or calls this session's) and waits ≤ 5 s for its ack. A secret's value is sealed first (see **Secret wire format**); with no key
-   for the target nothing is sent (409 `unsent`). The ack: 200 `{outcome, reason?, by?}`, 503
+   A request that carries a `value` at all (a secret) is refused before anything is looked up: 403 `local_only` from a remote request, 400 `terminal_only` from this
+   computer's page, and no refusal quotes it. `checkAnswer` and the hub's `send` refuse one too, so nothing of it is read, kept, sealed, or relayed.
+5. The hub sends the answer to the bridge (or calls this session's) and waits ≤ 5 s for its ack. A value is never sent (409 `unsent`). The ack: 200 `{outcome, reason?, by?}`, 503
    `unsent` when the session cannot be reached (nothing was sent), 504 `unknown` without an ack. Answers are never logged.
 
 ## Page (`gui/ask.ts`)
@@ -116,11 +111,8 @@ in the terminal." (or that it closed); `rejected` the reason, still answerable; 
 `unknown` or a network error "Not confirmed. Check the terminal" with **Check again**, which resends the same body and `answerId`. A long
 panel scrolls within the comms view and brings its outcome into view. Read-only panels keep 0.5.x's text and **Focus terminal**; the
 composer's blocked reason reads "It waits on a dialog: answer it above, or in its terminal" when the panel can answer.
-A secret shows its label, steps (a url as a link), and destination with a masked field (a text input drawn as dots with `-webkit-text-security`, never `type="password"` or
-`autocomplete="new-password"`, so no browser offers to save or suggest a password; no autocomplete or spellcheck; **Show** and **Hide** switch the dots), **Submit**, and **Answer in the terminal instead**, which clears the field and sends nothing. The field is cleared as the request leaves,
-the outcome is shown without the value, and there is no **Check again**: an unconfirmed secret is typed again or entered in the terminal. A remote
-page draws no field, only "For security, entering a secret is not supported remotely" (zh-TW: 安全考量，遠端不支援) and the terminal path. `npm run gui:dev`
-demonstrates a robot_hand selector and a questionnaire that answer.
+A `secret_drop` wait is read-only on every page: no field, no Submit, no Show terminal (its mirror stays hidden). This computer's page says "A secret is entered in the terminal only, not here. Answer it in the terminal on the computer the GUI runs on." (zh-TW: 機密內容只能在終端機輸入，這裡不接受。…); a remote page keeps "For security, entering a secret is not supported remotely" (zh-TW: 安全考量，遠端不支援…). Both then name the terminal. The masked field, its Show and Hide, and its CSS are gone from `gui/`. `npm run gui:dev`
+demonstrates a robot_hand selector and a questionnaire that answer, and a secret_drop that only waits.
 
 ## Failure behavior
 
@@ -136,22 +128,34 @@ demonstrates a robot_hand selector and a questionnaire that answer.
 | GUI server stops mid-answer | The page says "Not confirmed"; the dialog stays as it is; the next server resyncs. |
 | 8 GUI channels in one process | Read-only for that session, one warning in its terminal. |
 | A scratch server with another state directory | Only bridges reading that directory follow it. |
-| `secret_drop` | Answerable on this computer's page when its masked dialog is the one open dialog on the one `secret_drop` call with a matching digest and a valid, unchanged public key; otherwise read-only, 409 for a crafted answer. A remote page never gets it to answer: its stream is cut down to a read-only wait and says remote entry is unsupported for security (its comms history still shows the call's arguments). |
-| A secret's sealed answer that does not open | `rejected` (`malformed`); the dialog stays open and the owner hears nothing. |
+| `secret_drop` | Read-only on every page: the dialog is not relayed, a crafted answer finds nothing to answer (409), a request with a `value` is refused (400 on this computer's page, 403 remote), and a forged answer sent to the bridge is `rejected` (`terminal_only`). |
 
-## Secret wire format
+## Why a secret is terminal only
+
+A review (SB-F001) showed that pi-intercom identities are self-reported. A process of the same user can register under the asking session's identity, relay an identical
+secret dialog carrying its own public key, and receive the value the page seals to it; sealing protects the value on the channel from a bystander, not from whoever the hub
+believes is the asking bridge. The pane and file binding does not close it: it checks what intercom says about a sender, and that is the part a same-user process can say too.
+The decision (2026-10-19): this release takes secret entry out of the GUI. A secret is entered in the terminal only, and the encryption and the other fixes stay.
+
+**Residual risk that blocked it.** Until pi-intercom can verify who a bridge is (an identity the broker vouches for, or a key the asking session proves it holds out of band),
+the hub cannot tell the real bridge from an impostor, so any scheme that hands a secret to "the bridge" is open to one. Re-enabling needs that, then: the bridge relays a key
+again, the hub pins and seals to it, the page draws its field behind one gate, and the tests removed here come back from the history (`c9780ae` is the last commit with the full path).
+
+## Secret wire format (not in use: SB-F001)
+
+`src/seal.ts` and `tests/seal.test.ts` keep the envelope below for that day; nothing in the bridge, the hub, or the page calls it.
 
 pi-intercom's broker hands every message on the server's channel to every capable session (every pi bridge in Herdr, subagents included), and any process of the same user may
 join that channel, so a plaintext value would reach sessions it was not meant for. A secret therefore never travels in the clear:
 
-- **Dialog** (bridge → hub): the dialog carries `key`, base64url of the dialog's 32-byte X25519 public key.
+- **Dialog** (bridge → hub): the dialog would carry `key`, base64url of the dialog's 32-byte X25519 public key.
 - **Answer** (hub → bridge): `{version: 1, type: "answer", to: <bridgeId>, id, answerId, digest, sealed: {v: 1, epk, iv, ct}}`, with no `value`. `epk` is the base64url public key
   of a fresh X25519 pair the server makes for this answer, `iv` 12 random bytes, `ct` the AES-256-GCM ciphertext followed by its 16-byte tag, all base64url.
 - **Key:** ECDH(server's ephemeral private, bridge's public) → HKDF-SHA256 with salt `epk ‖ bridgePublic` (raw bytes), info `pi-straw-boss/secret/1`, 32 bytes.
 - **Binding:** the GCM's associated data is the JSON `["pi-straw-boss/secret/1", dialogId, digest, answerId, bridgeId]`. The bridge uses its own copy of the dialog id and digest,
   so a ciphertext made for another dialog, digest, answerId, or bridge does not open.
-- **Fail closed:** the hub seals only to the key pinned for that dialog (above) and sends nothing without one; the bridge opens only with that dialog's private key and refuses a plain `value`.
-- **In process:** when the server runs in the session that asked, the same sealed message is handed over in-process, so there is one path.
+- **Fail closed:** the hub would seal only to a key pinned for that dialog and send nothing without one; the bridge would open only with that dialog's private key and refuse a plain `value`.
+- **In process:** when the server runs in the session that asked, the same sealed message would be handed over in-process, so there is one path.
 
 ## Threat model
 
@@ -160,9 +164,8 @@ extension channels or `pi.events`); a stale or replaced dialog receiving an answ
 machine, `answerId`); any GUI but the running one answering (the channel's owner is G from `gui.json`, checked with the broker's owner
 epoch); an answer for one session reaching another (`to`, the pane and file binding, rechecked at each answer); a remote page acting on
 this computer (`localOnly`, the remote write guards). In-process listeners on `pi.events` see dialog ids and answers; that is the
-shared bus every owner documents. The one exception to "same-user processes are trusted" is a secret on the intercom channel, which a prompt-injected agent's shell
-could otherwise join and read as it passes to every capable session; there the value is sealed to the asking session's own key (**Secret wire format**), so only that session's bridge reads it. A session that
-can read the plain value on its own `pi.events` is the owner's own process, as in the terminal.
+shared bus every owner documents. The one exception to "same-user processes are trusted" is a secret: intercom identities are self-reported, so a same-user process can pose as the asking session's bridge (**Why a secret is terminal only**).
+The GUI therefore never takes, seals, or sends a secret, and a secret dialog never leaves its session. A session that can read the plain value on its own `pi.events` is the owner's own process, as in the terminal.
 
 ## Tests
 
@@ -174,13 +177,13 @@ wrong sender, epoch, or `to`, a server `gui.json` no longer names, every outcome
 closed them, 503 when not the channel's owner, 5 s unknown), `tests/control.test.ts` (the route's guards and body checks, 409, 400,
 429, 504, replay, nothing reaches Herdr input), `tests/answer.test.ts` (end to end over the fake broker: answered once through the
 owner, terminal first, a silent owner with Check again, busy, and the late close, a subagent under its launcher, nothing outside Herdr), `tests/net.test.ts` (a pi-herdr-agents worker runs only
-the bridge), `tests/seal.test.ts` (the envelope: a round trip, another key, a changed ciphertext, IV, or server key, another dialog's binding, malformed input), `tests/secret.test.ts` (a paired device's stream and refused requests, this computer's page answering), `tests/ask.test.ts` (the panel's body builder and outcome texts, `localOnly` hidden remotely), `tests/imports.test.ts`
+the bridge), `tests/seal.test.ts` (the envelope: a round trip, another key, a changed ciphertext, IV, or server key, another dialog's binding, malformed input), `tests/secret.test.ts` (the secret_drop wait on both streams, requests with a value refused from a paired device and from this computer's page), `tests/ask.test.ts` (the panel's body builder and outcome texts, `localOnly` hidden remotely), `tests/imports.test.ts`
 (budgets).
 
-A secret answer is the one thing that must not leave a trace: `tests/answer.test.ts` runs it end to end with a third session on the channel, which the fake broker hands every
-message, and looks for the value in everything that session was handed, every message the broker was given, and every snapshot, response, console and stream write, notice, and file
-under the run; the owner's own event is the only place it appears. `tests/bridge.test.ts` and `tests/dialogs.test.ts` cover the refusals (plain value, wrong key, tampered or other
-dialog's ciphertext) and the pinned key.
+A secret must not leave a trace, and now must not even be asked for: `tests/answer.test.ts` runs a secret_drop end to end with a third session on the channel, which the fake broker hands every
+message, and looks for the value and for what the secret asks for in everything that session was handed, every message the broker was given, and every snapshot, response, console and stream write, notice, and file
+under the run (a value POSTed from this computer's page is refused, no answer is ever published, nothing reaches the owner). `tests/bridge.test.ts` covers the bridge's refusals (a plain value, a sealed one, nothing) and that the dialog is not relayed,
+`tests/dialogs.test.ts` that no hub path leaves a secret answerable and that `send` refuses a value, and `tests/panel.test.ts` that no field is drawn.
 
 ## Live check (2026-10-18)
 
