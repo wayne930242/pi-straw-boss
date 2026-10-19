@@ -18,7 +18,7 @@ import { ARROW, headOf, type HerdrRun, type HerdrWorld, isSub, MARK, type Pane, 
 export type Mark = "working" | "waiting" | "idle" | "done" | "error" | "unknown";
 /** One line of the tree. `net` rows are tab (0) > session (1) > subagent (2); `towers` rows are flat. */
 /** `ended`: a subagent whose run is over (pi-herdr-agents recorded it done, or its pane is gone or back at a shell); its parent has the result. */
-export interface Row { group: "net" | "towers"; depth: number; mark: Mark; text: string; kind?: string; note?: string; workspace?: string; id?: string; file?: string; pane?: string; ended?: boolean }
+export interface Row { group: "net" | "towers"; depth: number; mark: Mark; text: string; kind?: string; note?: string; workspace?: string; id?: string; file?: string; pane?: string; ended?: boolean; finished?: boolean }
 export interface Snapshot { title: string; mark: Mark; head: boolean; rows: Row[]; gui?: string }
 export type Tone = "accent" | "warning" | "muted" | "success" | "dim" | "error" | "border" | "title" | "tower" | "main" | "member";
 export type Paint = (tone: Tone, text: string) => string;
@@ -171,7 +171,7 @@ export function subagents(parent: Pane | undefined, all: Pane[], now: number, li
 			const name = pane?.label || (script?.slice(0, -`-${id}.sh`.length) ?? id.slice(0, 8));
 			const doing = activity.toolActive ? String(activity.toolName) : String(activity.phase ?? "");
 			const ended = pane?.agent !== "pi" || activity.phase === "done";
-			return { group: "net" as const, depth: 2, mark, text: name, kind: "subagent", workspace: pane?.workspace_id, id, file, pane: pane?.agent === "pi" ? pane.pane_id : undefined, ...(ended && { ended }), note: { working: doing, waiting: "waiting on a question", done: "finished" }[mark as "working"] };
+			return { group: "net" as const, depth: 2, mark, text: name, kind: "subagent", workspace: pane?.workspace_id, id, file, pane: pane?.agent === "pi" ? pane.pane_id : undefined, ...(ended && { ended }), ...(activity.phase === "done" && { finished: true }), note: { working: doing, waiting: "waiting on a question", done: "finished" }[mark as "working"] };
 		})
 		.sort((a, b) => Number(a.mark === "done") - Number(b.mark === "done") || a.text.localeCompare(b.text))
 		.slice(0, limit);

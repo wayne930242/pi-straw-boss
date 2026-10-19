@@ -52,13 +52,13 @@ export function descendants(parent: Pane | undefined, key: string, name: string,
 }
 
 /**
- * Whether a subagent below a session has no pi pane to mark yet: it launched (its activity file is there) but Herdr shows no pi on its session file,
- * either because the pi has not started (a trust prompt) or because the subagent finished in the last 10 minutes. Reads the same launch records as `descendants`.
+ * Whether a subagent below a session has no pi pane to mark yet: it launched (its activity file is there) but Herdr shows no pi on its session file, as at
+ * pi's trust prompt. One whose activity says it is done is not waited for, so the wait ends with it, not 10 minutes later. Reads the records `descendants` reads.
  */
 export function unplaced(parent: Pane | undefined, ps: Pane[], now: number, seen = new Set<string>(parent ? [parent.pane_id] : [])): boolean {
 	if (!parent) return false;
 	return subagents(parent, ps, now, MAX_KIDS).some((row) => {
-		if (!row.pane) return true;
+		if (!row.pane) return !row.finished;
 		if (seen.has(row.pane)) return false;
 		seen.add(row.pane);
 		return unplaced(ps.find((p) => p.pane_id === row.pane), ps, now, seen);

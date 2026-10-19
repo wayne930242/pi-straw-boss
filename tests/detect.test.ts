@@ -102,3 +102,17 @@ test("a session that launched no subagent holds no event subscription for them, 
 		rmSync(dir, { recursive: true, force: true });
 	}
 });
+
+test("a subagent whose activity says it is done is not waited for: the subscription goes as soon as it ends, not 10 minutes later", async () => {
+	const { dir } = await launcher();
+	try {
+		assert.equal(world.herdr.listening("pane.updated"), 1, "it waits while the subagent sits at the trust prompt");
+		writeFileSync(join(dir, "sessions", "artifacts", "a", "subagent-activity", "kid-a.json"), JSON.stringify({ phase: "done" }));
+		world.herdr.emit("pane.updated", "pane_updated", { pane: { pane_id: "wS:p1", workspace_id: "wS" } });
+		await world.quiet();
+		assert.equal(world.herdr.listening("pane.updated"), 0, "a finished subagent has nothing left to mark");
+		assert.equal(writes("wS:p1"), 0);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
