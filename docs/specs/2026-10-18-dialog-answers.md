@@ -13,8 +13,9 @@ for it through its own completion path, exactly as if the user had answered in t
 valid. Straw Boss only relays, and refuses whatever it cannot tie to the right session and the right dialog.
 
 - No key reaches a terminal from this feature. The keys endpoint stays Escape-only; nothing reads the screen.
-- `secret_drop` stays terminal-only: it never becomes a dialog here, and a session whose open call is `secret_drop` is never
-  answerable whatever a bridge reports.
+- `secret_drop` was terminal-only in 0.6.0. From 0.28.0 its masked dialog (pi-robot-hand's `robot-hand:secret` events) is answerable from
+  this computer's page only (below); any other dialog beside an open `secret_drop` call, and a session whose `secret_drop` has no such
+  dialog, stays terminal-only whatever a bridge reports.
 - Every answer carries the dialog id and the digest of what the page showed, and an `answerId` minted by the page; one `answerId`
   takes effect at most once.
 
@@ -24,6 +25,7 @@ valid. Straw Boss only relays, and refuses whatever it cannot tie to the right s
 |---|---|---|
 | pi-robot-hand ≥ 0.3.0, `robot_hand` | Dialog contract v1, prefix `robot-hand` (`pending`, `answer`, `answer-result`, `closed`; its README and `tests/dialog.test.ts` are the reference, including the digest vectors) | Its selector: one choice. The clipboard choice is `localOnly` and refused from a remote page. |
 | @juicesharp/rpiv-ask-user-question 2.13.9, `ask_user_question` | Its own `rpiv:ask-user:*` channel: `prompt {toolCallId, questions}`, `answer {toolCallId, requestId, answers[] \| cancel}`, `answer-result {ok, code, requestId, toolCallId}`, `blocked {active, toolCallId}`; first answer wins, all-or-nothing validation | One to four questions: single or several choices, own words ("Type something."), a note per question. |
+| pi-robot-hand, `secret_drop` | Contract v1, prefix `robot-hand:secret`: `pending {id, toolCallId, digest, secret: {label, instructions[], url?, destination}}`, `answer {id, answerId, digest, value}`, `answer-result`, `closed`; digest `["secret", label, instructions, url\|null, destination]` | A masked field, **this computer's page only**; the owner applies the value itself. A remote request is refused (403 `local_only`) and a remote page's stream holds a plain `secret_drop` wait. |
 | pi-mcp-adapter (fork, later) | Contract v1, prefix `pi-mcp-adapter:dialog` | Inert until that package emits. |
 | pi-code hooks extension, hook confirmation ("Allow bash?") | Contract v1, prefix `pi-code:dialog`, choices Allow and Deny, `toolCallId` = the gated call. A *gate*: it binds to an open call of any tool (it must name one), where the other owners bind to their own tool's call. | One choice: Allow or Deny. |
 | pi-ask-user (`ask_user`) and anything else | none | Read-only, as in 0.5.x. |
@@ -73,7 +75,7 @@ Started by `createStrawBoss` before the `PI_SUBAGENT_ID` return and only when `H
 - **What the page may answer** (merged into the unit's `pending` as `answer: {dialog, digest, select? | questions?}`; otherwise `why`
   says why the terminal must answer): exactly one open dialog for the session; no answer on its way; not too long; its adapter known;
   a dialog naming a `toolCallId` must be one of the session file's open calls (the newest assistant message may leave several unanswered), with the adapter's tool, or of any tool for a gate; the digest recomputed from the
-  relayed content equals the dialog's. A session with a `secret_drop` among its open calls is never answerable. A unit with an open
+  relayed content equals the dialog's. A `secret_drop` among the open calls keeps every dialog but its own masked one in the terminal, and that one is answerable only when it is the one open `secret_drop` call and names it. A unit with an open
   dialog shows as waiting even before Herdr reports `blocked`.
 
 ## Answer route (`src/control.ts`)
@@ -91,6 +93,9 @@ Started by `createStrawBoss` before the `PI_SUBAGENT_ID` return and only when `H
    page; for questions, one entry per question with distinct option indexes in range (one at most unless it takes several), own words
    (≤ 8 KB) or a note (≤ 2 KB) without control characters but tab and newline, an option or own words for each, both only when it
    takes several; at most 12 KB together. 400 `bad_answer` with the reason otherwise. One write per session in flight (429).
+   A secret's `value` (one non-blank string of at most 8 KB without control characters) is refused from a remote request before anything is looked up (403
+   `local_only`), and no refusal quotes it; it lives only in that request and in the one relay message and owner event, never in a snapshot, ack,
+   stored outcome, log, or the page (its field is cleared as the request leaves, and a secret is never resent).
 5. The hub sends the answer to the bridge (or calls this session's) and waits ≤ 5 s for its ack: 200 `{outcome, reason?, by?}`, 503
    `unsent` when the session cannot be reached (nothing was sent), 504 `unknown` without an ack. Answers are never logged.
 
@@ -104,7 +109,11 @@ number (also when a `localOnly` choice is hidden on a remote page), **Copy comma
 in the terminal." (or that it closed); `rejected` the reason, still answerable; `busy` "Another answer is on its way; check the terminal";
 `unknown` or a network error "Not confirmed. Check the terminal" with **Check again**, which resends the same body and `answerId`. A long
 panel scrolls within the comms view and brings its outcome into view. Read-only panels keep 0.5.x's text and **Focus terminal**; the
-composer's blocked reason reads "It waits on a dialog: answer it above, or in its terminal" when the panel can answer. `npm run gui:dev`
+composer's blocked reason reads "It waits on a dialog: answer it above, or in its terminal" when the panel can answer.
+A secret shows its label, steps (a url as a link), and destination with a masked password field (no autocomplete or spellcheck; **Show** and
+**Hide**), **Submit**, and **Answer in the terminal instead**, which clears the field and sends nothing. The field is cleared as the request leaves,
+the outcome is shown without the value, and there is no **Check again**: an unconfirmed secret is typed again or entered in the terminal. A remote
+page draws no field, only "For security, entering a secret is not supported remotely" (zh-TW: 安全考量，遠端不支援) and the terminal path. `npm run gui:dev`
 demonstrates a robot_hand selector and a questionnaire that answer.
 
 ## Failure behavior
@@ -121,7 +130,7 @@ demonstrates a robot_hand selector and a questionnaire that answer.
 | GUI server stops mid-answer | The page says "Not confirmed"; the dialog stays as it is; the next server resyncs. |
 | 8 GUI channels in one process | Read-only for that session, one warning in its terminal. |
 | A scratch server with another state directory | Only bridges reading that directory follow it. |
-| `secret_drop` | Never a dialog, never answerable, 409 for a crafted answer. |
+| `secret_drop` | Answerable on this computer's page when its masked dialog is the one open dialog on the one `secret_drop` call with a matching digest; otherwise read-only, 409 for a crafted answer. A remote page never gets it to answer: its stream is cut down to a read-only wait and says remote entry is unsupported for security. |
 
 ## Threat model
 
@@ -142,8 +151,11 @@ wrong sender, epoch, or `to`, a server `gui.json` no longer names, every outcome
 closed them, 503 when not the channel's owner, 5 s unknown), `tests/control.test.ts` (the route's guards and body checks, 409, 400,
 429, 504, replay, nothing reaches Herdr input), `tests/answer.test.ts` (end to end over the fake broker: answered once through the
 owner, terminal first, a silent owner with Check again, busy, and the late close, a subagent under its launcher, nothing outside Herdr), `tests/net.test.ts` (a pi-herdr-agents worker runs only
-the bridge), `tests/ask.test.ts` (the panel's body builder and outcome texts, `localOnly` hidden remotely), `tests/imports.test.ts`
+the bridge), `tests/secret.test.ts` (a paired device's stream and refused requests, this computer's page answering), `tests/ask.test.ts` (the panel's body builder and outcome texts, `localOnly` hidden remotely), `tests/imports.test.ts`
 (budgets).
+
+A secret answer is the one thing that must not leave a trace: `tests/answer.test.ts` runs it end to end and looks for the value in every
+snapshot, response, console and stream write, notice, and file under the run.
 
 ## Live check (2026-10-18)
 
