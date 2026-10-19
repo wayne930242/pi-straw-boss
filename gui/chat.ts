@@ -111,7 +111,9 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor }: 
 	const scroller = h("div", { class: "chat-scroll", tabindex: "-1", "aria-label": m.comms_log() }, top, list, live);
 	root.replaceChildren(scroller, pill);
 	const follow = createFollow();
-	let loading = false, loaded = false, target: string | undefined, held: HTMLElement | undefined, release = 0;
+	let loading = false, loaded = false, target: string | undefined, held: HTMLElement | undefined, release = 0, down = false, coast: ReturnType<typeof setTimeout> | undefined;
+	// A finger on the log, or its fling still coasting (no scroll for 250 ms ends it), holds the log where the finger put it: nothing pulls it to the bottom.
+	const touching = () => down || coast !== undefined, coasting = () => (clearTimeout(coast), (coast = setTimeout(() => ((coast = undefined), follow.pinned && !model.detached && toBottom()), 250)));
 	const atBottom = () => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
 	const button = (label = follow.button(model.detached)) => ((pill.hidden = !label), (pill.textContent = label ?? ""));
 	const toBottom = () => (follow.jump(), (held = undefined), (scroller.scrollTop = scroller.scrollHeight), button());
@@ -233,11 +235,13 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor }: 
 		if (model.detached) void data.latest().then((page) => (paint(model.reset(page)), toBottom()));
 		else toBottom();
 	});
-	scroller.addEventListener("scroll", () => (follow.scrolled(atBottom()), button()), { passive: true });
+	scroller.addEventListener("scroll", () => (follow.scrolled(atBottom()), button(), !down && coast !== undefined && coasting()), { passive: true });
+	scroller.addEventListener("touchstart", () => ((down = true), clearTimeout(coast), (coast = undefined)), { passive: true });
+	for (const end of ["touchend", "touchcancel"]) scroller.addEventListener(end, () => ((down = false), coasting()), { passive: true });
 	// The user's own scroll ends the hold, and a later reconnect then opens at the end instead of at the anchor again.
 	for (const input of ["wheel", "touchstart", "pointerdown", "keydown"]) scroller.addEventListener(input, () => (held = target = undefined), { passive: true });
 	// Entries change height as they render (content-visibility estimates the rest), so a pinned log is kept at the bottom, and a held anchor in view.
-	const keep = new ResizeObserver(() => (follow.pinned && !model.detached ? (scroller.scrollTop = scroller.scrollHeight) : held?.scrollIntoView({ block: "center" })));
+	const keep = new ResizeObserver(() => (touching() ? undefined : follow.pinned && !model.detached ? (scroller.scrollTop = scroller.scrollHeight) : held?.scrollIntoView({ block: "center" })));
 	keep.observe(list);
 	keep.observe(scroller);
 
@@ -253,7 +257,7 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor }: 
 				const d = model.append(e.items);
 				paint(d);
 				touch(d);
-				if (follow.arrived(d.added.length) && !model.detached) toBottom();
+				if (follow.arrived(d.added.length) && !model.detached && !touching()) toBottom();
 				else button();
 			}
 		},

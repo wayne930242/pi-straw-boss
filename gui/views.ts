@@ -45,8 +45,8 @@ function fillToken(el: HTMLElement, u: { key?: string; name: string; role: strin
 }
 const colEl = () => html(`<div class="col"><a class="token">${PLATE}<span class="name"></span><span class="line"><em class="role"></em><span class="note"></span></span></a><div class="say"><p></p></div><div class="drones"></div></div>`);
 const ZOOM = () => `<div class="zoom-in"><header class="base keep"><a class="tower big"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></a><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>${m.head_tower()}</span><h2></h2><p></p></div><dl class="tally"><div><dt>${m.squads()}</dt><dd></dd></div><div><dt>${m.units()}</dt><dd></dd></div><div data-mark="working"><dt>${m.stat_working()}</dt><dd></dd></div><div data-mark="waiting"><dt>${m.stat_waiting()}</dt><dd></dd></div></dl></header><div class="spawn-btns"><button type="button" class="pair-btn"></button></div><div class="squads"></div><div class="camps"><section class="tab squad camp" data-group="outposts"><h3><svg><use href="#i-outpost"/></svg><b>${m.outposts()}</b><small></small></h3><div class="formation"></div></section><section class="tab squad camp" data-group="outside"><h3><svg><use href="#i-outside"/></svg><b>${m.outside_net()}</b><small>${m.outside_note()}</small></h3><div class="formation"></div></section></div><p class="lost" hidden></p></div>`;
-const DOSSIER = () => `<div class="dossier-in"><span class="tag">${m.unit_dossier()}</span><div class="portrait">${PLATE}</div><h3></h3><p class="d-line"><em class="role"></em> <span class="state"></span></p><p class="d-note" hidden></p><dl class="specs"></dl><div class="d-docs" hidden><h4>${m.documents()}</h4><div class="d-doc-list"></div><p class="d-docs-cut" hidden>${m.docs_cut()}</p></div><div class="d-drones" hidden><h4>${m.dispatched()}</h4><div class="formation"></div></div></div>`;
-const COMMS = () => `<div class="comms-in"><header class="comms-head"><a class="head-back" aria-label="${m.back()}">‹</a><span class="logo"><svg><use href="#i-comms"/></svg></span><div class="head-id"><h2><small>${m.comms()}</small> <span></span></h2><p></p></div><div class="modes" role="group"><button type="button" data-mode="chat" aria-pressed="true">${m.comms()}</button><button type="button" data-mode="term" aria-pressed="false">${m.terminal()}</button></div><span class="chan link" data-state="live"><i></i><b>${m.channel_open()}</b></span></header><div class="chat-root"></div><div class="queue-list" hidden></div><details class="todos" hidden><summary><b></b><span></span></summary><ol></ol></details><details class="monitors" hidden><summary><b></b><span></span></summary><ul></ul></details><div class="ask-root"></div><div class="composer-root"></div><div class="term-root" hidden></div></div>`;
+const DOSSIER = () => `<div class="dossier-in"><span class="tag">${m.unit_dossier()}</span><button class="x d-x" type="button" aria-label="${m.close()}">×</button><div class="portrait">${PLATE}</div><h3></h3><p class="d-line"><em class="role"></em> <span class="state"></span></p><p class="d-note" hidden></p><dl class="specs"></dl><div class="d-docs" hidden><h4>${m.documents()}</h4><div class="d-doc-list"></div><p class="d-docs-cut" hidden>${m.docs_cut()}</p></div><div class="d-drones" hidden><h4>${m.dispatched()}</h4><div class="formation"></div></div><div class="d-squads" hidden><h4>${m.under_tower()}</h4><div class="d-squad-list"></div></div></div>`;
+const COMMS = () => `<div class="comms-in"><header class="comms-head"><a class="head-back" aria-label="${m.back()}">‹</a><span class="logo"><svg><use href="#i-comms"/></svg></span><div class="head-id"><h2><small>${m.comms()}</small> <span></span></h2><p></p></div><div class="modes" role="group"><button type="button" data-mode="chat" aria-pressed="true">${m.comms()}</button><button type="button" data-mode="term" aria-pressed="false">${m.terminal()}</button></div><span class="chan link" data-state="live"><i></i><b>${m.channel_open()}</b></span><button type="button" class="pair-btn head-info">${m.info()}</button></header><div class="chat-root"></div><div class="queue-list" hidden></div><details class="todos" hidden><summary><b></b><span></span></summary><ol></ol></details><details class="monitors" hidden><summary><b></b><span></span></summary><ul></ul></details><div class="ask-root"></div><div class="composer-root"></div><div class="term-root" hidden></div></div>`;
 
 export function mountFocus({ data, restart, openTile, embedTerminal, online }: FocusDeps) {
 	const $ = (id: string) => document.getElementById(id)!;
@@ -149,7 +149,7 @@ export function mountFocus({ data, restart, openTile, embedTerminal, online }: F
 
 	function drawDossier() {
 		if (route.view !== "session") return;
-		if (!dossier.firstElementChild) dossier.append(html(DOSSIER()));
+		if (!dossier.firstElementChild) (dossier.append(html(DOSSIER())), (dossier.querySelector<HTMLElement>(".d-x")!.onclick = () => dossier.classList.remove("full")));
 		const root = dossier.firstElementChild as HTMLElement, hit = locate(net, route.key), u = hit?.u, mk = u?.mark ?? "unknown";
 		mark(root, mk);
 		fillPlate(root.querySelector(".plate")!, u?.role ?? info?.role ?? "member", mk);
@@ -179,6 +179,9 @@ export function mountFocus({ data, restart, openTile, embedTerminal, online }: F
 		const drones = root.querySelector<HTMLElement>(".d-drones")!;
 		drones.hidden = !u?.subs.length;
 		sync(drones.querySelector(".formation")!, (u?.subs ?? []).map((s) => ({ ...s, id: s.key })), tokenEl, (el, s) => (el.classList.add("drone"), fillToken(el, s, ws())));
+		const squads = root.querySelector<HTMLElement>(".d-squads")!, under = u?.role === "tower" ? hit?.base : undefined; // a tower's base: each squad and its units, as the map shows them
+		squads.hidden = !under?.tabs.length;
+		sync(squads.querySelector(".d-squad-list")!, under?.tabs ?? [], () => html(`<div class="d-squad"><small></small><div class="formation"></div></div>`), (el, t) => (text(el, "small", m.squad_label({ label: t.label })), sync(el.querySelector(".formation")!, t.units.flatMap((x) => [x, ...x.subs]).map((x) => ({ ...x, id: x.key })), tokenEl, (e, x) => (e.classList.add("drone"), fillToken(e, x, under!.id)))));
 		// The comms header and the live line follow the same unit.
 		const head = sessionView.querySelector<HTMLElement>(".comms-head");
 		if (head) {
@@ -214,6 +217,7 @@ export function mountFocus({ data, restart, openTile, embedTerminal, online }: F
 		const send = data(key).post ?? postTo(key);
 		[composer, asker] = [mountComposer(sessionView.querySelector(".composer-root")!, key, send), mountAsk(sessionView.querySelector(".ask-root")!, send, undefined, () => setMode("term"))];
 		sessionView.querySelectorAll<HTMLButtonElement>(".modes button").forEach((b) => (b.onclick = () => setMode(b.dataset.mode as "chat" | "term")));
+		sessionView.querySelector<HTMLElement>(".head-info")!.onclick = () => dossier.classList.add("full"); // a phone's dossier, over the full-screen comms
 		if (pendingMode === "term") setMode("term");
 		pendingMode = undefined;
 		chat.reveal(route.at);
@@ -299,6 +303,7 @@ export function mountFocus({ data, restart, openTile, embedTerminal, online }: F
 			route = next;
 			wsView.hidden = next.view !== "workspace";
 			sessionView.hidden = dossier.hidden = next.view !== "session";
+			dossier.classList.remove("full");
 			if (next.view !== "session" || next.key !== key) leaveMode();
 			if (next.view === "session" && next.key !== key) {
 				[chat, composer, asker, info, model, ctx, queue, stale] = [undefined, undefined, undefined, undefined, undefined, undefined, [], false];

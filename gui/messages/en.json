@@ -153,6 +153,8 @@
 	"dialog_alert": "alert",
 	"back": "Back",
 	"quit_tower": "Quit tower",
+	"info": "Info",
+	"under_tower": "Under this tower",
 	"quit": "Quit",
 	"close": "Close",
 	"close_tile": "Close {title}",
