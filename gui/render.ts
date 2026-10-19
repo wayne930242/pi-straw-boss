@@ -93,8 +93,8 @@ export function sync<T extends { id: string }>(parent: Element, items: T[], make
 	}
 }
 
-const unitEl = () => html(`<div class="unit"><div class="card"><a class="hit"></a>${PLATE}<div class="meta"><span class="name"></span><span class="line"><em class="role"></em><span class="note"></span></span></div></div><div class="subs"></div></div>`);
-function fillUnit(el: HTMLElement, u: Omit<Unit, "id" | "key" | "control" | "role" | "subs"> & { key?: string; role: Unit["role"] | "outpost"; subs?: Unit[] }) {
+const unitEl = () => html(`<div class="unit"><div class="card"><a class="hit"></a>${PLATE}<div class="meta"><span class="name"></span><span class="line"><em class="role"></em><span class="note"></span></span></div><button type="button" class="quit-btn" data-close="unit" hidden></button></div><div class="subs"></div></div>`);
+function fillUnit(el: HTMLElement, u: Omit<Unit, "id" | "key" | "control" | "role" | "subs"> & { key?: string; control?: boolean; role: Unit["role"] | "outpost"; subs?: Unit[] }) {
 	const ws = el.closest<HTMLElement>(".base")?.dataset.key, hit = el.querySelector(".hit")!;
 	aim(hit, u.key && ws ? { view: "session", ws, key: u.key } : undefined);
 	hit.setAttribute("aria-label", `${u.name}: ${doing(u.note, u.mark)}`);
@@ -104,6 +104,10 @@ function fillUnit(el: HTMLElement, u: Omit<Unit, "id" | "key" | "control" | "rol
 	text(el, ".name", u.name);
 	text(el, ".role", roleName(u.role));
 	text(el, ".note", doing(u.note, u.mark));
+	const quit = el.querySelector<HTMLButtonElement>(":scope > .card > .quit-btn")!; // quitting is the map's alone; a subagent is its launcher's to quit
+	Object.assign(quit.dataset, { key: u.key ?? "", name: u.name, role: u.role });
+	[quit.hidden, quit.textContent] = [!(u.control && u.key) || u.role === "subagent", m.quit()];
+	quit.setAttribute("aria-label", m.close_unit({ name: u.name }));
 	sync(el.querySelector(".subs")!, u.subs ?? [], unitEl, fillUnit);
 }
 
@@ -122,10 +126,11 @@ export function aimClose(button: HTMLElement, b: Base, tab?: { id: string; label
 	button.dataset.ws = b.id;
 	button.dataset.name = tab ? tab.label : b.label;
 	if (tab) button.dataset.tab = tab.id;
+	button.textContent = m.quit();
 	button.setAttribute("aria-label", tab ? m.close_squad({ name: tab.label }) : m.close_base({ name: b.label }));
 }
 
-const baseEl = () => html(`<section class="base"><header><div class="tower"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></div><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>${m.head_tower()}</span><h2><a class="enter-base"></a></h2><p></p></div><button type="button" class="close-x" data-close="base">×</button></header><div class="spawn-btns"><button type="button" class="pair-btn"></button></div><div class="tabs"></div><div class="outposts" data-label="${m.outposts()}"></div></section>`);
+const baseEl = () => html(`<section class="base"><header><div class="tower"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></div><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>${m.head_tower()}</span><h2><a class="enter-base"></a></h2><p></p></div><button type="button" class="quit-btn" data-close="base"></button></header><div class="spawn-btns"><button type="button" class="pair-btn"></button></div><div class="tabs"></div><div class="outposts" data-label="${m.outposts()}"></div></section>`);
 function fillBase(el: HTMLElement, b: Base) {
 	mark(el, b.mark);
 	el.classList.toggle("head", b.head);
@@ -136,10 +141,10 @@ function fillBase(el: HTMLElement, b: Base) {
 	aim(el.querySelector("h2 a")!, { view: "workspace", ws: b.id });
 	text(el, ".title p", b.tower ? m.control_tower({ state: LABEL[b.tower.mark]() }) : m.no_tower());
 	aimOpening(el.querySelector(".spawn-btns button")!, b);
-	aimClose(el.querySelector("header .close-x")!, b);
-	sync(el.querySelector(".tabs")!, b.tabs, () => html(`<div class="tab"><h3><span></span><button type="button" class="tab-add"></button><button type="button" class="close-x" data-close="tab">×</button></h3><div class="units"></div></div>`), (tab, t) => {
+	aimClose(el.querySelector("header .quit-btn")!, b);
+	sync(el.querySelector(".tabs")!, b.tabs, () => html(`<div class="tab"><h3><span></span><button type="button" class="tab-add"></button><button type="button" class="quit-btn" data-close="tab"></button></h3><div class="units"></div></div>`), (tab, t) => {
 		text(tab, "h3 span", m.tab_label({ label: t.label }));
-		aimClose(tab.querySelector(".close-x")!, b, t);
+		aimClose(tab.querySelector(".quit-btn")!, b, t);
 		aimOpening(tab.querySelector(".tab-add")!, b, t.id);
 		sync(tab.querySelector(".units")!, t.units, unitEl, fillUnit);
 	});

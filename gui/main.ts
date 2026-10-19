@@ -219,7 +219,7 @@ document.addEventListener("click", (event) => {
 	if (!b || !d) return;
 	event.preventDefault();
 	const ask = d.close === "base" ? m.close_base_ask : d.close === "tab" ? m.close_squad_ask : d.role === "tower" ? m.close_tower_ask : m.close_unit_ask;
-	void sheet(ask({ name: d.name ?? "" }), m.close()).then((yes) => {
+	void sheet(ask({ name: d.name ?? "" }), m.quit()).then((yes) => {
 		if (!yes) return;
 		b.toggleAttribute("disabled", true);
 		void import("./post.ts").then(({ post }) => post(`close/${d.close}`, d.close === "unit" ? { key: d.key } : { workspace: d.ws, ...(d.tab && { tab: d.tab }) }))

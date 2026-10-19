@@ -8,7 +8,7 @@ import { mountComposer, postTo } from "./composer.ts";
 import { docFor, docList, docTile, shelve } from "./doc.ts";
 import type { Tile } from "./layer.ts";
 import { m } from "./paraglide/messages.js";
-import { aim, aimClose, aimOpening, doing, fillPlate, html, LABEL, mark, PLATE, roleName, sync, text, urgent } from "./render.ts";
+import { aim, aimOpening, doing, fillPlate, html, LABEL, mark, PLATE, roleName, sync, text, urgent } from "./render.ts";
 import type { Route } from "./router.ts";
 
 // The focus views, a separate chunk loaded on the first route that is not the map. The workspace route is its base zoomed in: the
@@ -44,9 +44,9 @@ function fillToken(el: HTMLElement, u: { key?: string; name: string; role: strin
 	text(el, ".note", doing(u.note, u.mark));
 }
 const colEl = () => html(`<div class="col"><a class="token">${PLATE}<span class="name"></span><span class="line"><em class="role"></em><span class="note"></span></span></a><div class="say"><p></p></div><div class="drones"></div></div>`);
-const ZOOM = () => `<div class="zoom-in"><header class="base keep"><a class="tower big"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></a><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>${m.head_tower()}</span><h2></h2><p></p></div><button type="button" class="close-x" data-close="base">×</button><dl class="tally"><div><dt>${m.squads()}</dt><dd></dd></div><div><dt>${m.units()}</dt><dd></dd></div><div data-mark="working"><dt>${m.stat_working()}</dt><dd></dd></div><div data-mark="waiting"><dt>${m.stat_waiting()}</dt><dd></dd></div></dl></header><div class="spawn-btns"><button type="button" class="pair-btn"></button></div><div class="squads"></div><div class="camps"><section class="tab squad camp" data-group="outposts"><h3><svg><use href="#i-outpost"/></svg><b>${m.outposts()}</b><small></small></h3><div class="formation"></div></section><section class="tab squad camp" data-group="outside"><h3><svg><use href="#i-outside"/></svg><b>${m.outside_net()}</b><small>${m.outside_note()}</small></h3><div class="formation"></div></section></div><p class="lost" hidden></p></div>`;
-const DOSSIER = () => `<div class="dossier-in"><span class="tag">${m.unit_dossier()}</span><div class="portrait">${PLATE}</div><h3></h3><p class="d-line"><em class="role"></em> <span class="state"></span></p><p class="d-note" hidden></p><dl class="specs"></dl><button class="cmp-link d-close" type="button" data-close="unit" hidden>${m.close()}</button><div class="d-docs" hidden><h4>${m.documents()}</h4><div class="d-doc-list"></div><p class="d-docs-cut" hidden>${m.docs_cut()}</p></div><div class="d-drones" hidden><h4>${m.dispatched()}</h4><div class="formation"></div></div></div>`;
-const COMMS = () => `<div class="comms-in"><header class="comms-head"><span class="logo"><svg><use href="#i-comms"/></svg></span><div class="head-id"><h2><small>${m.comms()}</small> <span></span></h2><p></p></div><div class="modes" role="group"><button type="button" data-mode="chat" aria-pressed="true">${m.comms()}</button><button type="button" data-mode="term" aria-pressed="false">${m.terminal()}</button></div><span class="chan link" data-state="live"><i></i><b>${m.channel_open()}</b></span><button type="button" class="close-x head-close" data-close="unit" hidden>×</button></header><div class="chat-root"></div><div class="queue-list" hidden></div><details class="todos" hidden><summary><b></b><span></span></summary><ol></ol></details><details class="monitors" hidden><summary><b></b><span></span></summary><ul></ul></details><div class="ask-root"></div><div class="composer-root"></div><div class="term-root" hidden></div></div>`;
+const ZOOM = () => `<div class="zoom-in"><header class="base keep"><a class="tower big"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></a><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>${m.head_tower()}</span><h2></h2><p></p></div><dl class="tally"><div><dt>${m.squads()}</dt><dd></dd></div><div><dt>${m.units()}</dt><dd></dd></div><div data-mark="working"><dt>${m.stat_working()}</dt><dd></dd></div><div data-mark="waiting"><dt>${m.stat_waiting()}</dt><dd></dd></div></dl></header><div class="spawn-btns"><button type="button" class="pair-btn"></button></div><div class="squads"></div><div class="camps"><section class="tab squad camp" data-group="outposts"><h3><svg><use href="#i-outpost"/></svg><b>${m.outposts()}</b><small></small></h3><div class="formation"></div></section><section class="tab squad camp" data-group="outside"><h3><svg><use href="#i-outside"/></svg><b>${m.outside_net()}</b><small>${m.outside_note()}</small></h3><div class="formation"></div></section></div><p class="lost" hidden></p></div>`;
+const DOSSIER = () => `<div class="dossier-in"><span class="tag">${m.unit_dossier()}</span><div class="portrait">${PLATE}</div><h3></h3><p class="d-line"><em class="role"></em> <span class="state"></span></p><p class="d-note" hidden></p><dl class="specs"></dl><div class="d-docs" hidden><h4>${m.documents()}</h4><div class="d-doc-list"></div><p class="d-docs-cut" hidden>${m.docs_cut()}</p></div><div class="d-drones" hidden><h4>${m.dispatched()}</h4><div class="formation"></div></div></div>`;
+const COMMS = () => `<div class="comms-in"><header class="comms-head"><span class="logo"><svg><use href="#i-comms"/></svg></span><div class="head-id"><h2><small>${m.comms()}</small> <span></span></h2><p></p></div><div class="modes" role="group"><button type="button" data-mode="chat" aria-pressed="true">${m.comms()}</button><button type="button" data-mode="term" aria-pressed="false">${m.terminal()}</button></div><span class="chan link" data-state="live"><i></i><b>${m.channel_open()}</b></span></header><div class="chat-root"></div><div class="queue-list" hidden></div><details class="todos" hidden><summary><b></b><span></span></summary><ol></ol></details><details class="monitors" hidden><summary><b></b><span></span></summary><ul></ul></details><div class="ask-root"></div><div class="composer-root"></div><div class="term-root" hidden></div></div>`;
 
 export function mountFocus({ data, restart, openTile, embedTerminal, online }: FocusDeps) {
 	const $ = (id: string) => document.getElementById(id)!;
@@ -119,7 +119,6 @@ export function mountFocus({ data, restart, openTile, embedTerminal, online }: F
 		tower.toggleAttribute("data-alert", Boolean(base.tower && urgent(base.tower.mark)));
 		text(root, "h2", base.label);
 		aimOpening(root.querySelector(".spawn-btns button")!, base);
-		aimClose(root.querySelector("header .close-x")!, base);
 		text(root, ".title p", base.tower ? m.control_tower({ state: LABEL[base.tower.mark]() }) : m.no_tower());
 		const all = base.tabs.flatMap((t) => t.units.flatMap((u) => [u, ...u.subs]));
 		[base.tabs.length, all.length, all.filter((u) => u.mark === "working").length, all.filter((u) => u.mark === "waiting").length].forEach((n, i) => (root.querySelectorAll("dd")[i]!.textContent = String(n)));
@@ -131,8 +130,7 @@ export function mountFocus({ data, restart, openTile, embedTerminal, online }: F
 			text(say, "p", line);
 			sync(col.querySelector(".drones")!, u.subs, tokenEl, (el, s) => (el.classList.add("drone"), fillToken(el, s, base.id)));
 		};
-		sync(root.querySelector(".squads")!, base.tabs, () => html(`<section class="tab squad"><h3><i class="flag"></i><b></b><small></small><button type="button" class="tab-add"></button><button type="button" class="close-x" data-close="tab">×</button></h3><div class="formation"></div></section>`), (el, t) => {
-			aimClose(el.querySelector("h3 .close-x")!, base, t);
+		sync(root.querySelector(".squads")!, base.tabs, () => html(`<section class="tab squad"><h3><i class="flag"></i><b></b><small></small><button type="button" class="tab-add"></button></h3><div class="formation"></div></section>`), (el, t) => {
 			text(el, "h3 b", m.squad_label({ label: t.label }));
 			aimOpening(el.querySelector(".tab-add")!, base, t.id);
 			const busy = t.units.flatMap((u) => [u, ...u.subs]);
@@ -176,9 +174,6 @@ export function mountFocus({ data, restart, openTile, embedTerminal, online }: F
 		}));
 		const key = route.key, name = u?.name ?? info?.name ?? key; // the header's Comms | Terminal switch shows the pane's screen
 		sessionView.querySelector<HTMLElement>(".modes")?.toggleAttribute("hidden", !u?.control);
-		const shut = root.querySelector<HTMLButtonElement>(".d-close")!; // a subagent is its launcher's to close
-		Object.assign(shut.dataset, { key, name, role: u?.role ?? "" });
-		shut.hidden = !u?.control || u.role === "subagent";
 		docList(root.querySelector(".d-docs")!, u?.docs, u?.docsCut, (card) => openTile(docTile(name, card)));
 		chat?.docs();
 		const drones = root.querySelector<HTMLElement>(".d-drones")!;
@@ -193,10 +188,6 @@ export function mountFocus({ data, restart, openTile, embedTerminal, online }: F
 			chan.dataset.state = open ? "live" : "closed";
 			text(chan, "b", open ? m.channel_open() : state === "recent" ? m.channel_closed() : m.no_channel());
 			chan.title = chan.querySelector("b")!.textContent ?? ""; // a phone shows the dot alone
-			const close = head.querySelector<HTMLButtonElement>(".head-close")!, name = u?.name ?? info?.name ?? route.key; // a subagent is its launcher's to close
-			Object.assign(close.dataset, { key: route.key, name, role: u?.role ?? "" });
-			close.setAttribute("aria-label", m.close_unit({ name }));
-			close.hidden = !u?.control || u.role === "subagent";
 		}
 		drawTodos(info?.todos);
 		drawMonitors(u?.monitors);
