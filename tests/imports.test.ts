@@ -117,7 +117,9 @@ test("the TypeScript source stays within its size budgets", () => {
 	// the hub and set on its unit; monitors.ts (75 at most) follows them from pi-loop-monitor's events.
 	// 0.27.0 raised tower.ts from 42 to 44 (the dashboard subscribes to Herdr's events) and state.ts from 105 to 106 (the `world` dependency).
 	// 0.28.0 raised ask.ts from 130 to 135: a file's open calls (OpenCall) go to merge with its pending, so a dialog can bind to one of several; dialogs.ts from 223 to 228 for the binding itself and the secret_drop check among several calls.
-	for (const [name, max] of [["commands.ts", 32], ["control.ts", 178], ["closer.ts", 70], ["upload.ts", 50], ["spawn.ts", 168], ["remote.ts", 185], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 135], ["bridge.ts", 242], ["owners.ts", 120], ["dialogs.ts", 228], ["monitors.ts", 75], ["order.ts", 81], ["mirror.ts", 135], ["probe.ts", 40], ["keys.ts", 103], ["documents.ts", 80], ["docs.ts", 150], ["orphan.ts", 115], ["opener.ts", 90], ["server-watch.ts", 110], ["handover.ts", 93], ["towertab.ts", 65], ["state.ts", 106], ["briefing.ts", 33], ["reach.ts", 96], ["election.ts", 24], ["guard.ts", 83], ["presence.ts", 57], ["membership.ts", 115], ["tools.ts", 77], ["tower.ts", 44], ["closing.ts", 23], ["host.ts", 82], ["boss.ts", 36], ["session.ts", 133]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
+	// 0.29.0 raised owners.ts from 120 to 139 (the secret_drop owner: its pending shape and digest, one contract adapter parameterised by shape), dialogs.ts from 228 to 237 (the secret binding, its answer check, and its remote refusal),
+	// ask.ts from 135 to 144 (forRemote: the net a paired device sees), and control.ts from 178 to 179 (a value never comes from a remote page).
+	for (const [name, max] of [["commands.ts", 32], ["control.ts", 179], ["closer.ts", 70], ["upload.ts", 50], ["spawn.ts", 168], ["remote.ts", 185], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 144], ["bridge.ts", 242], ["owners.ts", 139], ["dialogs.ts", 237], ["monitors.ts", 75], ["order.ts", 81], ["mirror.ts", 135], ["probe.ts", 40], ["keys.ts", 103], ["documents.ts", 80], ["docs.ts", 150], ["orphan.ts", 115], ["opener.ts", 90], ["server-watch.ts", 110], ["handover.ts", 93], ["towertab.ts", 65], ["state.ts", 106], ["briefing.ts", 33], ["reach.ts", 96], ["election.ts", 24], ["guard.ts", 83], ["presence.ts", 57], ["membership.ts", 115], ["tools.ts", 77], ["tower.ts", 44], ["closing.ts", 23], ["host.ts", 82], ["boss.ts", 36], ["session.ts", 133]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
 	// 0.19.0 to 258 for the todo list: rpiv-todo's snapshots marked as the index reads them, and the newest one read for a reset or a change that adds one.
 	assert.ok(count("src/history.ts") <= 258, `src/history.ts has ${count("src/history.ts")} lines`);
 	// The item mapping and the stream glue came out of the reader to keep it within its budget; the spec sets no figure for them.
@@ -179,7 +181,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.25.1 raised views.ts to 348 for a phone's comms scrolled into view as the session opens, so its composer is on screen.
 	// 0.27.0 split views.ts (348) into its coordinator (90) and the modules it calls: the Scene they read (scene.ts), the unit token (tokens.ts), the location bar and
 	// the entrance (nav.ts), the workspace route (workspace.ts), the dossier (dossier.ts), the session's comms (session.ts), and the bars above its composer (bars.ts).
-	for (const [name, max] of [["router.ts", 80], ["chat.ts", 275], ["markdown.ts", 180], ["views.ts", 90], ["scene.ts", 32], ["tokens.ts", 23], ["nav.ts", 43], ["workspace.ts", 59], ["dossier.ts", 49], ["session.ts", 115], ["bars.ts", 50], ["lightbox.ts", 34], ["layer.ts", 232], ["composer.ts", 190], ["ask.ts", 156], ["mirror.ts", 175], ["keypad.ts", 124], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
+	for (const [name, max] of [["router.ts", 80], ["chat.ts", 275], ["markdown.ts", 180], ["views.ts", 90], ["scene.ts", 32], ["tokens.ts", 23], ["nav.ts", 43], ["workspace.ts", 59], ["dossier.ts", 49], ["session.ts", 115], ["bars.ts", 50], ["lightbox.ts", 34], ["layer.ts", 232], ["composer.ts", 190], ["ask.ts", 175], ["mirror.ts", 175], ["keypad.ts", 124], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
+	// 0.29.0 raised gui/ask.ts from 156 to 175 for the secret panel: the masked field with Show and Hide, Submit, the way back to the terminal, the unsupported-remote notice, and a value that leaves with its one request.
 	// 0.10.0: the page's text comes from Paraglide's messages (gui/messages), which raised chat.ts, views.ts, layer.ts, ask.ts, mirror.ts, and doc.ts by one
 	// line each for the messages import; the strings replaced in place. gui/i18n.ts picks the locale (the menu's choice, the browser's languages with
 	// Chinese by script) and translates index.html's static text: 50 lines, no figure in a spec.
@@ -213,7 +216,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.6.1 to 174 for a demo tool call whose arguments show cut (with the whole of them for "show all arguments"), an answerable dialog that stays
 	// until it is answered, and a toolbar that folds to a tab in the margin on a phone.
 	// 0.7.0 to 190 for a demo terminal: a pane whose screen changes every second while a terminal tile shows it, and the stream's hello.
-	assert.ok(demo <= 190, `the demo fixture has ${demo} lines`);
+	// 0.29.0 to 191 for a demo secret that answers (n % 4 == 1) beside the one that only waits in the terminal.
+	assert.ok(demo <= 191, `the demo fixture has ${demo} lines`);
 	// 0.13.0 raised views.ts to 253 for the base view's two opening buttons; the opening tile (gui/spawn.ts) has its own figure below.
 	// 0.15.0 raised composer.ts to 190 for files: pasted, dropped, or picked, each uploaded and its path put in the message.
 	// 0.15.0 to 254 for the squads' + Member buttons, and gui/spawn.ts to 68 for the new base, member, and squad member tiles and the button reader.
@@ -320,7 +324,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// 0.27.0 to 89.55 KB / 36.425 KB: views.ts split into eight modules costs about 0.9 KB raw (0.4 KB gzipped) in the same chunk, for the parameters that carry the
 	// Scene and the `scene.` property reads that do not minify.
 	// 0.27.0 to 89.6 KB / 36.5 KB (+0.08 KB / +0.08 KB gzipped) for markdown.ts handing a nested body down as lines with the indents measured once, which is what takes the 3,000-line staircase from 210 ms to 15 ms.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 89_600 && total(chunks, gz) <= 36_500, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// 0.29.0 to 92 KB / 37.3 KB (+2.3 KB / +0.8 KB gzipped) for the secret panel (gui/ask.ts) and its nine messages in both languages.
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 92_000 && total(chunks, gz) <= 37_300, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
@@ -347,5 +352,6 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// 0.26.2 to 11.35 KB gzipped: a phone hides only a dialog's Enlarge, not the base map that shares its .zoom class.
 	// 0.27.0 to 47.5 KB / 11.56 KB for the page's idle motion: the packets' dots, the still signs a calm page shows in place of each endless animation, the second name of each restartable keyframe set (`-b`, so a one-shot animation replays without a layout read), and per-kind stand-in heights for the log's entries.
 	// 0.27.0 to 47.6 KB / 11.6 KB gzipped: the desktop composer keeps its column when a long URL is typed.
-	assert.ok(total(css, (n) => size(n).length) <= 47_600 && total(css, gz) <= 11_600, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// 0.29.0 to 48 KB / 11.65 KB for the secret panel's steps, destination, and masked field.
+	assert.ok(total(css, (n) => size(n).length) <= 48_000 && total(css, gz) <= 11_650, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });

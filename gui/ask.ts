@@ -1,19 +1,22 @@
 import type { Ask, Pending } from "../src/ask.ts";
 import type { Answerable, Reply } from "../src/owners.ts";
-import { h } from "./dom.ts";
+import { h, nodes } from "./dom.ts";
 import { m } from "./paraglide/messages.js";
 import type { Answer } from "./post.ts";
 
 // The dialog a waiting unit has open, in the alert dialog and above the composer in the session view. A dialog its session's bridge relays
-// (robot_hand's selector, an ask_user_question questionnaire) is answered here: the page sends which choice or words, never keys, and the
-// owner in that session checks the answer against its own copy of the dialog. Anything else (a secret, two dialogs at once, a question the
-// server cannot match) shows read-only, to answer in the terminal (Show terminal opens it here). An answer that was not confirmed
+// (robot_hand's selector, an ask_user_question questionnaire, secret_drop's masked field) is answered here: the page sends which choice or words,
+// never keys, and the owner in that session checks the answer against its own copy of the dialog. Anything else (two dialogs at once, a
+// question the server cannot match) shows read-only, to answer in the terminal (Show terminal opens it here).
+// A secret is typed into a masked field on this computer's page only: the value goes out in one request, the field is cleared the moment
+// it is sent (before the reply), nothing keeps it, and it is never resent (no Check again); a remote page is told that entering it is
+// unsupported there and sees only the terminal path. An answer that was not confirmed
 // is never sent again as a new one: Check again resends the same answer, which the server and the bridge recognise by its id. A panel belongs
 // to its dialog (its id and digest): the net's updates leave what the user picked, typed, and noted, even across a spell the server shows the
 // dialog read-only (an answer on its way) or not at all, and only another dialog starts afresh.
 
 export type AnswerPost = (action: "answer", body: Record<string, unknown>) => Promise<Answer>;
-type Pick = { choice?: number; answers?: Reply[] };
+type Pick = { choice?: number; answers?: Reply[]; value?: string };
 const how = (a: Ask) => (a.multiple ? m.ask_several() : a.freeform && a.options.length ? m.ask_own_words() : "");
 /** One question, read-only: its header tag, the question, its context, its options, and (in a list of several) how it is answered. */
 const block = (a: Ask, list: boolean) => h("div", { class: "ask-one" }, a.header && h("b", { class: "ask-head" }, a.header), h("p", { class: "ask-q" }, a.question), a.context && h("div", { class: "ask-ctx" }, a.context),
@@ -41,7 +44,7 @@ const final = (r: Answer) => ["accepted", "stale", "busy", "unknown"].includes(S
 /** A panel drawn for a pending. `done`: it takes no further answer from here; `sending`: its answer is on its way; `focus`: what had the focus in it
  * when it left the page (it takes it back on coming back); `lost`: the control that lost the focus by being disabled here (it takes it back when enabled); `busy`: refused while another answer was on its way, and `spell` once the server showed
  * that answer (read-only): the dialog answerable after it means that answer was refused, so this panel answers again. */
-interface Panel { key: string; el: HTMLElement; note: HTMLElement; send?: HTMLButtonElement; controls: (HTMLButtonElement | HTMLInputElement)[]; pick: () => Pick | undefined; done: boolean; sending: boolean; focus?: HTMLElement; lost?: HTMLButtonElement | HTMLInputElement; busy?: boolean; spell?: boolean }
+interface Panel { key: string; el: HTMLElement; note: HTMLElement; send?: HTMLButtonElement; controls: (HTMLButtonElement | HTMLInputElement)[]; pick: () => Pick | undefined; clear?: () => void; done: boolean; sending: boolean; focus?: HTMLElement; lost?: HTMLButtonElement | HTMLInputElement; busy?: boolean; spell?: boolean }
 /** A dialog the page may answer is known by its id and digest, under whichever call the server reads it; anything else by its call and why. */
 const keyOf = (p: Pending) => (p.answer ? `d\n${p.answer.dialog}\n${p.answer.digest}` : `c\n${p.callId}\n${p.why ?? ""}`);
 
@@ -61,15 +64,18 @@ export function mountAsk(root: HTMLElement, post: AnswerPost, remote = location.
 		const back = cur.lost;
 		if (back && !back.disabled && cur.el.contains(back) && (!document.activeElement || document.activeElement === document.body)) (back.focus(), (cur.lost = undefined));
 	};
-	async function answer(x: Panel, body: Record<string, unknown>) {
+	/** `once`: the body holds a secret, which leaves with the request (the post has built its JSON) and is dropped from here and from the field before the reply; so it cannot be sent again. */
+	async function answer(x: Panel, body: Record<string, unknown>, once = false) {
 		[x.sending, busy, x.spell] = [true, true, false];
 		draw();
 		say(x.note, "", m.sending());
-		const r = await post("answer", body).catch(() => undefined), again = h("button", { type: "button", class: "cmp-link" }, m.check_again());
+		const sent = post("answer", body).catch(() => undefined);
+		if (once) (delete body.value, x.clear?.());
+		const r = await sent, again = h("button", { type: "button", class: "cmp-link" }, m.check_again());
 		again.onclick = () => void answer(x, body); // the same answer, by the same id: never a second one
 		const [tone, text, retry] = r ? said(r) : (["error", m.not_confirmed(), true] as const);
 		[x.done, x.sending, busy, x.busy] = [!r || final(r), false, false, r?.body.outcome === "busy"];
-		say(x.note, tone, text, ...(retry ? [again] : []));
+		say(x.note, tone, text, ...(retry && !once ? [again] : []));
 		draw();
 		x.note.scrollIntoView?.({ block: "nearest" }); // a long panel scrolls: its outcome must be read
 	}
@@ -106,14 +112,36 @@ export function mountAsk(root: HTMLElement, post: AnswerPost, remote = location.
 		x.pick = () => (state.every((s) => s.picks.size || s.text.value.trim()) ? { answers: state.map((s) => replyOf(s.picks, s.text.value, s.note.value)) } : undefined);
 		return [...blocks, h("div", { class: "ask-acts" }, x.send!)];
 	}
+	/** An http(s) address as an external link, anything else as plain text. */
+	const link = (url: string) => {
+		const ok = (() => { try { return /^https?:$/.test(new URL(url).protocol); } catch { return false; } })();
+		return ok ? h("a", { href: url, target: "_blank", rel: "noopener noreferrer", class: "cmp-link ask-url" }, visible(url)) : h("small", { class: "ask-url" }, visible(url));
+	};
+	/** A secret: what it is for, the steps, where it goes, and a masked field (shown only on request) with Submit and a way back to the terminal. */
+	function secret(x: Panel, a: Answerable) {
+		const s = a.secret!, field = h("input", { type: "password", class: "ask-own ask-secret", maxlength: "8192", autocomplete: "new-password", autocapitalize: "off", autocorrect: "off", spellcheck: "false", "data-1p-ignore": "true", "data-lpignore": "true", "aria-label": m.secret_label() });
+		const toggle = h("button", { type: "button", class: "cmp-link", "aria-pressed": "false" }, m.secret_show()), cancel = h("button", { type: "button", class: "cmp-link" }, m.secret_cancel());
+		let masked = true;
+		const mask = (on: boolean) => ((masked = on), field.setAttribute("type", on ? "password" : "text"), toggle.setAttribute("aria-pressed", String(!on)), toggle.replaceChildren(on ? m.secret_show() : m.secret_hide()));
+		toggle.onclick = () => mask(!masked);
+		field.oninput = () => draw();
+		field.onkeydown = (e) => e.key === "Enter" && !e.isComposing && !x.send!.disabled && x.send!.click();
+		x.clear = () => ((field.value = ""), mask(true));
+		cancel.onclick = () => (x.clear!(), (x.done = true), say(x.note, "", m.secret_cancelled()), draw());
+		x.pick = () => (field.value.trim() ? { value: field.value } : undefined);
+		x.controls = [field, toggle, cancel];
+		return nodes(h("p", { class: "ask-q" }, visible(s.label)), s.instructions.length > 0 && h("ol", { class: "ask-steps" }, ...s.instructions.map((i) => h("li", null, visible(i)))), s.url ? link(s.url) : null,
+			h("p", { class: "ask-dest" }, h("small", null, m.secret_goes_to()), h("code", null, visible(s.destination))), h("div", { class: "ask-secret-row" }, field, toggle), h("small", { class: "ask-how" }, m.secret_private()), h("div", { class: "ask-acts" }, x.send!, cancel));
+	}
 	function build(p: Pending): Panel {
 		const asks = p.asks ?? (p.ask ? [p.ask] : []), list = asks.length > 1, a = p.answer;
 		const x: Panel = { key: keyOf(p), el: h("section", { class: "ask" }), note: h("p", { class: "ask-note", role: "status", "aria-live": "polite" }), controls: [], pick: () => undefined, done: false, sending: false };
-		if (a) (x.send = h("button", { type: "button", class: "ask-send" }, m.send_answer())).onclick = () => void (x.pick() && answer(x, bodyOf(a, x.pick()!, crypto.randomUUID())));
+		if (a) (x.send = h("button", { type: "button", class: "ask-send" }, a.secret ? m.secret_submit() : m.send_answer())).onclick = () => void (x.pick() && answer(x, bodyOf(a, x.pick()!, crypto.randomUUID()), Boolean(a.secret)));
+		const noSecret = remote && p.tool === "secret_drop"; // never an answerable secret on a remote page, whatever it was sent
 		const term = h("p", { class: "ask-term" }, p.why && asks.length ? p.why : `${list ? m.answer_them() : m.answer_it()} ${list || !asks[0] ? "" : how(asks[0])}`.trim());
 		const show = terminal && p.tool !== "secret_drop" && h("button", { type: "button", class: "cmp-link" }, m.show_terminal());
 		if (show) show.onclick = terminal;
-		x.el.append(...(a ? (a.select ? select(x, a) : questions(x, a)) : [...(asks.length ? asks.map((y) => block(y, list)) : [h("p", { class: "ask-why" }, p.why ?? m.waits_dialog())]), h("div", { class: "ask-acts" }, term, show)]), x.note);
+		x.el.append(...(a && !noSecret ? (a.select ? select(x, a) : a.secret ? secret(x, a) : questions(x, a)) : [...(asks.length ? asks.map((y) => block(y, list)) : [h("p", { class: "ask-why" }, noSecret ? m.secret_remote() : (p.why ?? m.waits_dialog()))]), h("div", { class: "ask-acts" }, noSecret ? h("p", { class: "ask-term" }, m.answer_it()) : term, show)]), x.note);
 		return x;
 	}
 	/** Puts a panel on the page, or none. The one leaving notes what had the focus in it, and on coming back takes it again (scrolled into view) if nothing else has it. */
