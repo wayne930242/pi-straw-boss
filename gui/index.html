@@ -34,6 +34,8 @@
       <div data-mark="waiting"><dt data-m="stat_waiting">Waiting</dt><dd id="s-waiting">0</dd></div>
     </dl>
     <button class="alerts" id="alerts" type="button" data-mark="unknown" aria-label="Alerts" data-m-label="alerts" disabled><span class="faces" id="alert-faces"></span><span class="count"><b id="alert-count">0</b><small id="alert-text" data-m="no_alerts">no alerts</small></span></button>
+    <button class="pair-btn tog" id="remind" type="button" aria-pressed="true"></button>
+    <button class="pair-btn tog" id="sound" type="button" aria-pressed="false"></button>
     <button class="pair-btn" id="pair" type="button" title="Pair a phone over Tailscale (/boss gui remote turns remote access on)" data-m="pair_button" data-m-title="pair_title">Phone</button>
     <select class="pair-btn lang" id="lang" aria-label="Language" data-m-label="language"></select>
     <div class="link" id="link" data-state="connecting"><i></i><span id="link-text">connecting</span></div>

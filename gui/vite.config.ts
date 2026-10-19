@@ -15,7 +15,8 @@ export default defineConfig(({ command }) => {
 		// The live server writes <base href> into the page it serves; the dev server does the same so routes like /w/<id>/s/<key> load.
 		plugins: [{ name: "dev-base", apply: "serve", transformIndexHtml: (html: string) => html.replace("<head>", '<head>\n<base href="/">') }],
 		define: { __LIVE__: JSON.stringify(command === "build" || Boolean(live)) },
-		build: { outDir: "../dist/gui", emptyOutDir: true, sourcemap: false, modulePreload: false },
+		// Sounds stay files, fetched when one first plays, instead of inlined into the map's chunk.
+		build: { outDir: "../dist/gui", emptyOutDir: true, sourcemap: false, modulePreload: false, assetsInlineLimit: (file: string) => (file.endsWith(".mp3") ? false : undefined) },
 		server: {
 			host: "127.0.0.1",
 			// The live server answers only under its token path and its own Host header, so the proxy rewrites both, for the stream and the history API.

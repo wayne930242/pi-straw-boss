@@ -7,6 +7,7 @@ import type { Post } from "./composer.ts";
 import { changes } from "./log.ts";
 import { type Alert, alertsOf, arrivals } from "./alerts.ts";
 import type { mountPanels, Tile } from "./layer.ts";
+import { mountNotify } from "./notify.ts";
 import { mountPage } from "./render.ts";
 import { createRouter, parseRoute, type Route, upOf, watchOf } from "./router.ts";
 import { createStream, type Source, type Status } from "./stream.ts";
@@ -62,12 +63,18 @@ function badge(net: Net) {
 	const dot = `<circle cx='23' cy='9' r='9' fill='#ffd166' stroke='#0b1220' stroke-width='2'/><text x='23' y='13' text-anchor='middle' font-family='sans-serif' font-size='${n > 9 ? 9 : 12}' font-weight='700' fill='#06101e'>${n > 9 ? "9+" : n}</text>`;
 	tabIcon.href = `data:image/svg+xml,${encodeURIComponent(n ? plainIcon.replace("</svg>", `${dot}</svg>`) : plainIcon)}`;
 }
+// Reminders and sounds follow every snapshot, a hidden page's above all: `heard` is apart from `known`, which the alert queue
+// advances only while the page is shown, so a page that comes back still queues what arrived while it was hidden.
+let heard: Map<string, Alert> | undefined;
 function show(net: Net) {
 	latest = pending = net;
 	badge(net);
+	const now = alertsOf(net, Date.now());
+	if (heard) notify.signal(arrivals(heard, now)); // what was already waiting when the page opened is no news
+	heard = now;
 	if (document.hidden) return;
 	page.stats(net);
-	const now = alertsOf(net, Date.now()), fresh = arrivals(known, now);
+	const fresh = arrivals(known, now);
 	if (fresh.length || panels) withPanels((p) => p.alerts(fresh, now));
 	known = now;
 	page.log(changes(logged, net));
@@ -160,6 +167,7 @@ document.addEventListener("click", (event) => {
 	withPanels((p) => p.stack.show(alert));
 }, true);
 const router = createRouter((route) => navigate(route));
+const notify = mountNotify((a) => router.go({ view: "session", ws: a.ws, key: a.key }));
 const stream = createStream({
 	open,
 	now: Date.now,

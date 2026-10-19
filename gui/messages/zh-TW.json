@@ -276,5 +276,17 @@
 	"image_unavailable": "圖片無法讀取",
 	"image_previous": "上一張",
 	"image_next": "下一張",
-	"image_viewer": "圖片檢視"
+	"image_viewer": "圖片檢視",
+	"remind": "提醒",
+	"sound": "音效",
+	"remind_on": "提醒已開：分頁不在前景時，單位等你回答、完成或出錯會跳系統通知",
+	"remind_off": "提醒已關",
+	"remind_ask": "點一下允許瀏覽器通知",
+	"remind_blocked": "瀏覽器已封鎖通知，要到網站設定裡允許",
+	"remind_unsupported": "這個瀏覽器不支援通知",
+	"sound_on": "音效已開",
+	"sound_off": "音效已關",
+	"notify_waiting": "等你回答 {note}",
+	"notify_error": "出錯了 {note}",
+	"notify_done": "完成了 {note}"
 }

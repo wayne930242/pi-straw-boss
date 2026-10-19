@@ -43,6 +43,10 @@ svg { display: block; }
 .stats dd, .tally dd { font: 600 20px/1.1 var(--mono); }
 .stats [data-mark] dd, .tally [data-mark] dd, .count b { color: var(--c); }
 .pair-btn { padding: 6px 12px; border-radius: 12px; border: 1px solid var(--line); background: none; color: var(--dim); font: 600 12px var(--sans); letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; }
+/* Reminder and sound switches: a lit dot when on, amber while notifications still wait to be allowed, red when the browser blocks them. */
+.tog { display: inline-flex; align-items: center; gap: 6px; } .tog::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
+.tog[data-state="on"] { color: #cfe6ff; border-color: #2c5b74; } .tog[data-state="on"]::before { background: #38e0ff; box-shadow: 0 0 6px #38e0ff; }
+.tog[data-state="ask"]::before { background: #ffd166; } .tog[data-state="blocked"]::before { background: #ff6b81; }
 .lang { text-transform: none; } .lang option { background: var(--bg); color: var(--text); }
 .pair { display: grid; justify-items: center; gap: 12px; text-align: center; color: var(--dim); font-size: 13px; }
 .qr { width: min(100%, 300px); border-radius: 12px; shape-rendering: crispEdges; }
@@ -514,6 +518,8 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 	.hud { position: static; flex-wrap: wrap; gap: 10px; padding: 10px 12px; }
 	.brand p, .link span { display: none; }
 	.alerts { order: 3; flex: 1 1 100%; width: auto; }
+	/* The brand and the link's dot, then Remind, Sound, Phone, and the language as four even buttons a thumb can hit. */
+	.brand { flex: 1 1 calc(100% - 40px); min-width: 0; } .link { order: 1; } .hud > .pair-btn { order: 2; flex: 1 1 0; min-width: 0; min-height: 40px; justify-content: center; padding: 6px 8px; white-space: nowrap; } .hud > .lang { flex: none; padding-right: 26px; }
 	.map, .zoom-in { padding: 14px; }
 	.bases { gap: 18px; }
 	.keep { padding: 6px; gap: 12px; }

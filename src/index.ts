@@ -105,6 +105,16 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 			return isMain ? "main" : "member";
 		};
 		const tell = (text: string, level: "info" | "warning" | "error" = "info") => ui?.notify(text, level);
+		const promptOf = (current = role()) => (current === "member" && !mainId ? "member-no-main" : current);
+		// The role's prompt is a system prompt section, set when a run starts. A role that changes during a run (a member promoted as it
+		// dispatches a subagent, mains demoted as their tower quits) reaches the agent at its next step as a steer; an idle session gets it with its next run.
+		let briefed: Role | undefined, running = false;
+		const rebrief = () => {
+			const current = role(), name = promptOf(current);
+			if (!running || current === briefed || !name) return;
+			briefed = current;
+			pi.sendMessage({ customType: ENTRY, content: `<straw-boss>\nYour Straw Boss role changed during this run. This replaces the role instructions in your system prompt:\n\n${render(prompts[name])}\n</straw-boss>`, display: true }, { deliverAs: "steer" });
+		};
 		const render = (text = "") => text.replace(/\{\{(\w+)\}\}/g, (_, key: string) => ({ dir: promptDir, ...info })[key] || "none yet");
 		const tool = <P extends TSchema>(name: string, description: string, parameters: P, body: (params: Static<P>) => Promise<{ text: string; details?: unknown }>) =>
 			pi.registerTool({
@@ -266,7 +276,7 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 				info = { tab, workspace: ws?.label ?? at.workspaceId, main: nameOf(sessions.find((s) => s.id === mainId)), tower: nameOf(sessions.find((s) => s.id === ws?.tokens?.tower)) };
 				const wasMain = isMain;
 				isMain = mainId === me();
-				if (isMain !== wasMain) tell(`This session is ${isMain ? "now" : "no longer"} the main agent of ${info.tab}`);
+				if (isMain !== wasMain) (tell(`This session is ${isMain ? "now" : "no longer"} the main agent of ${info.tab}`), rebrief());
 				await publish(sessions);
 				// The workspace's first main opens the tower at once; later mains find it open.
 				if (isMain && !wasMain && autoTower) void openTower(undefined, true).catch((error: Error) => tell(`Straw Boss: could not open the tower: ${error.message}`, "warning"));
@@ -408,6 +418,16 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 					scope: Type.Optional(Type.Union([Type.Literal("tab"), Type.Literal("workspace"), Type.Literal("towers"), Type.Literal("all")], { description: "Default workspace." })),
 				}),
 				({ message, scope }) => broadcast(message, scope ?? "workspace"));
+			// The session's name is what the net, the GUI, and (through pi-auto-tab-name) the Herdr tab show for it. A tower keeps its own.
+			if (!isTower) tool("boss_rename", "Name this session with a short phrase for the work it is doing now, at most 16 characters (e.g. \"MP-3584 cost mask\", \"重構通知模組\"). The net and the GUI show it, and pi-auto-tab-name renames the Herdr tab after it.",
+				Type.Object({ name: Type.String({ description: "The phrase: what this session works on now, at most 16 characters so the tab label shows it whole." }) }),
+				async ({ name }) => {
+					const phrase = name.replace(/\s+/g, " ").trim();
+					if (!phrase) throw new Error("The name is empty");
+					if (Array.from(phrase).length > 40) throw new Error(`The name has ${Array.from(phrase).length} characters; keep it a short phrase (at most 16 fit the tab)`);
+					pi.setSessionName(phrase);
+					return { text: `This session is now named "${phrase}".`, details: { name: phrase } };
+				});
 		}
 		function addPromote() {
 			tool("boss_promote", "Become the main agent of this Herdr tab when your work grows: several steps, dispatching workers, or touching more than one app. Refused when the tab already has a main agent.", Type.Object({}), async () => {
@@ -528,11 +548,12 @@ export function createStrawBoss({ run = herdrRun, api = herdrApi(), call = herdr
 		});
 
 		pi.on("before_agent_start", (event) => {
-			const current = role();
-			const name = current === "member" && !mainId ? "member-no-main" : current;
+			const current = role(), name = promptOf(current);
 			if (name) event.systemPromptOptions.sections[ENTRY] = render(prompts[name]);
 			else delete event.systemPromptOptions.sections[ENTRY];
+			[briefed, running] = [current, true];
 		});
+		pi.on("agent_settled", () => void (running = false));
 
 		// A member that dispatches or resumes a subagent without promoting is promoted here, before the subagent starts, unless the tab already has a main.
 		// A tower only coordinates: it dispatches no subagent (one would outlive it with no one to take its result), and opens a main for the work instead.

@@ -67,6 +67,7 @@ pi install npm:pi-straw-boss
 | `call_tower` | 傳訊息給這個工作區的塔台，或別的工作區的塔台。 |
 | `boss_open_main` | 只有塔台能用：替沒有 session 負責的請求開一個分頁，啟動新的主智慧體。 |
 | `boss_broadcast` | 傳訊息給一個分頁、一個工作區、所有塔台，或所有 session。 |
+| `boss_rename` | 用一個短語替這個 session 命名，說明它現在在做什麼；net、GUI，以及裝了 pi-auto-tab-name 時的分頁名稱都會跟著顯示。主智慧體換工作時會呼叫它。 |
 | `/boss` | 接手成為這個分頁的主智慧體。 |
 | `/boss status`、`/boss tower` | 顯示狀態；開啟塔台並切換過去。 |
 | `/boss gui`、`/boss gui stop` | 在瀏覽器開啟網（任何 session 都能開，不會加入任何東西）；停止它的伺服器，在哪個 session 都可以。整台機器只跑一個伺服器、一個網址：開它的 session `/reload` 之後，會在原網址重開；版本較新的 session 會接手，開著的頁面也會自動換成新版。可以在通訊畫面直接打字給某個 session，或用終端機畫面下方的按鍵面板操作它的終端機；在等回覆的 `robot_hand` 選單或 `ask_user_question` 問卷，可以在那裡或它的警示裡作答（其他對話框只能看，要回到終端機回答；`secret_drop` 一律只能在終端機輸入）。session 用 [pi-herdr-doc-review](https://www.npmjs.com/package/pi-herdr-doc-review) 0.4.0 以上顯示的文件，會開在它的通訊畫面旁邊：HTML 放在沙箱框架裡，表單送出的答案會傳給智慧體；純文字只能讀。 |

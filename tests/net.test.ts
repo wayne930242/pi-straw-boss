@@ -30,7 +30,7 @@ const state = (tab = "wA:t1") => world.broker.states.get(hex(tab))?.payload as {
 test("a session joins the net as a member at start: channel, tokens, net tools and boss_promote, no entry, no reminder", async () => {
 	const a = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1" });
 	await a.start();
-	assert.deepEqual([...a.tools.keys()].sort(), ["boss_broadcast", "boss_promote", "boss_status", "call_tower"]);
+	assert.deepEqual([...a.tools.keys()].sort(), ["boss_broadcast", "boss_promote", "boss_rename", "boss_status", "call_tower"]);
 	assert.deepEqual(world.broker.registrations.map((r) => [r.id, r.namespace, r.ownerEligible]), [["a", hex("wA:t1"), true]]);
 	assert.deepEqual(a.tokens, { sb_role: "member" });
 	assert.deepEqual(a.entries, [], "joining writes no session entry");

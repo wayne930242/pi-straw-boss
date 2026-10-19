@@ -29,13 +29,13 @@ import { api, type Hub as Files, image, watchSession, type Watch, watchWorkspace
 
 export const BUNDLE = fileURLToPath(new URL("../dist/gui", import.meta.url));
 export const VERSION: string = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
-const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".json": "application/json", ".woff2": "font/woff2" };
+const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".json": "application/json", ".woff2": "font/woff2", ".mp3": "audio/mpeg" };
 const HEADERS = {
 	"cache-control": "no-store",
 	"referrer-policy": "no-referrer",
 	"x-content-type-options": "nosniff",
 	"cross-origin-opener-policy": "same-origin", // a page a document's link opens cannot steer this tab
-	"content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'self'; base-uri 'self'; frame-ancestors 'none'",
+	"content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; media-src 'self'; connect-src 'self'; frame-src 'self'; base-uri 'self'; frame-ancestors 'none'",
 };
 
 export interface Gui { url: string; port: number; token: string; csrf: string; access: Access; stop(): Promise<void> }
@@ -148,8 +148,8 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, t
 		if (file === "index.html") return void res.writeHead(200, { ...HEADERS, "content-type": TYPES[".html"] }).end(page);
 		const body = bundle.get(file);
 		if (!body) return void fail(404);
-		// A font's name carries its content hash, so a phone keeps it instead of fetching 1 MB on every page load.
-		const keep = file.endsWith(".woff2") ? { "cache-control": "private, max-age=31536000, immutable" } : {};
+		// A font's or sound's name carries its content hash, so a phone keeps it instead of fetching it on every page load.
+		const keep = /\.(woff2|mp3)$/.test(file) ? { "cache-control": "private, max-age=31536000, immutable" } : {};
 		res.writeHead(200, { ...HEADERS, ...keep, "content-type": TYPES[extname(file)] ?? "application/octet-stream" }).end(body);
 	});
 	try {

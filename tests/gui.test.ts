@@ -18,6 +18,7 @@ mkdirSync(join(dir, "assets"), { recursive: true });
 writeFileSync(join(dir, "index.html"), "<!doctype html><html><head><title>Straw Net</title></head><body></body></html>");
 writeFileSync(join(dir, "assets", "app.js"), "console.log(1)");
 writeFileSync(join(dir, "assets", "Symbols-ab12.woff2"), Buffer.from([0x77, 0x4f, 0x46, 0x32, 0xff]));
+writeFileSync(join(dir, "assets", "done-cd34.mp3"), Buffer.from([0x49, 0x44, 0x33, 0x04]));
 writeFileSync(join(scratch, "secret.txt"), "outside the bundle");
 const running: Gui[] = [];
 after(async () => {
@@ -75,6 +76,9 @@ test("the page and its assets are served under the token, with no caching and a 
 	assert.match(String(page.headers["content-security-policy"]), /font-src 'self'/, "the page may load its own font");
 	const font = await raw(gui, `/${gui.token}/assets/Symbols-ab12.woff2`);
 	assert.deepEqual([font.status, font.headers["content-type"], font.headers["cache-control"]], [200, "font/woff2", "private, max-age=31536000, immutable"], "a font, named for its hash, is kept");
+	assert.match(String(page.headers["content-security-policy"]), /media-src 'self'/, "the page may play its own sounds");
+	const sound = await raw(gui, `/${gui.token}/assets/done-cd34.mp3`);
+	assert.deepEqual([sound.status, sound.headers["content-type"], sound.headers["cache-control"]], [200, "audio/mpeg", "private, max-age=31536000, immutable"], "a sound, named for its hash, is kept");
 	const bare = await raw(gui, `/${gui.token}`);
 	assert.deepEqual([bare.status, bare.headers.location], [308, `/${gui.token}/`], "the token path without its slash redirects to the page");
 	assert.equal((await raw(gui, `/${gui.token}/assets/missing.js`)).status, 404);

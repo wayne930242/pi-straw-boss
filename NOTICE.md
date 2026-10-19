@@ -52,3 +52,7 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Sounds (`gui/sounds/`)
+
+The GUI's sounds come from [Kenney](https://kenney.nl) (www.kenney.nl), released under Creative Commons Zero (CC0 1.0), converted to mono MP3: `waiting.mp3` is `question_002` from Interface Sounds 1.0, `done.mp3` is `confirmation_001` from Interface Sounds 1.0, and `error.mp3` is `lowDown` from Digital Audio.

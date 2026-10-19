@@ -67,6 +67,7 @@ The tower only routes and coordinates, so it can run a lighter model: set `tower
 | `call_tower` | Message this workspace's tower, or another workspace's. |
 | `boss_open_main` | Tower only: open a tab with a new main agent for a request no session owns. |
 | `boss_broadcast` | Message a tab, a workspace, all towers, or every session. |
+| `boss_rename` | Name this session with a short phrase for its current work; the net, the GUI, and (with pi-auto-tab-name) the tab show it. Main agents call it when their work changes. |
 | `/boss` | Take over as this tab's main agent. |
 | `/boss status`, `/boss tower` | Show the status; open and focus the tower. |
 | `/boss close` | Quit this session and close its pane. |

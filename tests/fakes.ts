@@ -330,6 +330,8 @@ export class Agent {
 	commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void>; getArgumentCompletions?(prefix: string): { value: string }[] | null }>();
 	entries: { customType: string; data: unknown }[];
 	notices: { text: string; level?: string }[] = [];
+	/** Messages the extension handed pi with pi.sendMessage. */
+	sent: { customType: string; content: string; deliverAs?: string }[] = [];
 	/** Each ctx.ui.custom overlay, open until it closes itself. */
 	overlays: (Overlay & { closed: boolean })[] = [];
 	/** What pi-intercom reports as this session's status. */
@@ -389,6 +391,8 @@ export class Agent {
 			registerTool: (tool: ToolDefinition) => this.tools.set(tool.name, tool),
 			registerCommand: (name: string, command: { handler(args: string, ctx: unknown): Promise<void>; getArgumentCompletions?(prefix: string): { value: string }[] | null }) => this.commands.set(name, command),
 			appendEntry: (customType: string, data: unknown) => this.entries.push({ customType, data }),
+			setSessionName: (name: string) => void (this.name = name), // pi-intercom reports the new name to the broker
+			sendMessage: (message: { customType: string; content: string }, options?: { deliverAs?: string }) => void this.sent.push({ ...message, deliverAs: options?.deliverAs }),
 		} as unknown as ExtensionAPI;
 		// pi-intercom's side of the extension API.
 		if (!options.noIntercom) events.on("intercom:extension-register", (registration) => world.broker.register(this, registration as Registration));

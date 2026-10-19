@@ -318,5 +318,17 @@
 	"image_unavailable": "Image unavailable",
 	"image_previous": "Previous image",
 	"image_next": "Next image",
-	"image_viewer": "Image viewer"
+	"image_viewer": "Image viewer",
+	"remind": "Remind",
+	"sound": "Sound",
+	"remind_on": "Reminders on: while the page is in the background, a unit waiting on you, finishing, or failing raises a system notification",
+	"remind_off": "Reminders off",
+	"remind_ask": "Press to allow browser notifications",
+	"remind_blocked": "The browser blocks notifications; allow them in the site settings",
+	"remind_unsupported": "This browser has no notifications",
+	"sound_on": "Sounds on",
+	"sound_off": "Sounds off",
+	"notify_waiting": "Waiting on you {note}",
+	"notify_error": "Failed {note}",
+	"notify_done": "Finished {note}"
 }
