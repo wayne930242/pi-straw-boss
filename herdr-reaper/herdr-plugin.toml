@@ -1,6 +1,6 @@
 id = "wayne930242.straw-boss-reaper"
 name = "Straw Boss Reaper"
-version = "0.1.3"
+version = "0.1.4"
 min_herdr_version = "0.9.3"
 description = "Close the panes agents leave behind in linked-worktree workspaces, remove the clean checkouts, and pin the workspaces to keep"
 platforms = ["macos", "linux"]
