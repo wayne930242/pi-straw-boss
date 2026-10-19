@@ -2,6 +2,7 @@ import type { Mark } from "../src/dashboard.ts";
 import type { Base, Net, Unit } from "../src/net.ts";
 import type { Entry } from "./log.ts";
 import { m } from "./paraglide/messages.js";
+import { aimBase, aimSquad, aimTower, aimUnit } from "./quit.ts";
 import { formatRoute, type Route } from "./router.ts";
 
 // Draws a net into the page by diffing: elements are keyed by id, created once, updated in place, and reordered, so only what changed
@@ -104,10 +105,7 @@ function fillUnit(el: HTMLElement, u: Omit<Unit, "id" | "key" | "control" | "rol
 	text(el, ".name", u.name);
 	text(el, ".role", roleName(u.role));
 	text(el, ".note", doing(u.note, u.mark));
-	const quit = el.querySelector<HTMLButtonElement>(":scope > .card > .quit-btn")!; // quitting is the map's alone; a subagent is its launcher's to quit
-	Object.assign(quit.dataset, { key: u.key ?? "", name: u.name, role: u.role });
-	[quit.hidden, quit.textContent] = [!(u.control && u.key) || u.role === "subagent", m.quit()];
-	quit.setAttribute("aria-label", m.close_unit({ name: u.name }));
+	aimUnit(el.querySelector(":scope > .card > .quit-btn")!, u);
 	sync(el.querySelector(".subs")!, u.subs ?? [], unitEl, fillUnit);
 }
 
@@ -121,15 +119,6 @@ export function aimOpening(button: HTMLElement, b: Base, tab?: string) {
 	if (button.textContent !== (kind === "main" ? m.open_main() : m.open_member())) button.textContent = kind === "main" ? m.open_main() : m.open_member();
 }
 
-/** Points a close button at its base or squad (main.ts asks first, then posts close/base or close/tab). */
-export function aimClose(button: HTMLElement, b: Base, tab?: { id: string; label: string }) {
-	button.dataset.ws = b.id;
-	button.dataset.name = tab ? tab.label : b.label;
-	if (tab) button.dataset.tab = tab.id;
-	button.textContent = m.quit();
-	button.setAttribute("aria-label", tab ? m.close_squad({ name: tab.label }) : m.close_base({ name: b.label }));
-}
-
 const baseEl = () => html(`<section class="base"><header><div class="tower"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></div><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>${m.head_tower()}</span><h2><a class="enter-base"></a></h2><p></p><button type="button" class="quit-btn tower-quit" data-close="unit" hidden></button></div><button type="button" class="quit-btn" data-close="base"></button></header><div class="spawn-btns"><button type="button" class="pair-btn"></button></div><div class="tabs"></div><div class="outposts" data-label="${m.outposts()}"></div></section>`);
 function fillBase(el: HTMLElement, b: Base) {
 	mark(el, b.mark);
@@ -141,13 +130,11 @@ function fillBase(el: HTMLElement, b: Base) {
 	aim(el.querySelector("h2 a")!, { view: "workspace", ws: b.id });
 	text(el, ".title p", b.tower ? m.control_tower({ state: LABEL[b.tower.mark]() }) : m.no_tower());
 	aimOpening(el.querySelector(".spawn-btns button")!, b);
-	aimClose(el.querySelector("header > .quit-btn")!, b);
-	const tq = el.querySelector<HTMLButtonElement>(".tower-quit")!; // the tower alone, its mains back to members
-	Object.assign(tq.dataset, { key: b.tower?.key ?? "", name: b.tower?.name ?? "", role: "tower" });
-	[tq.hidden, tq.textContent] = [!b.tower?.control, m.quit_tower()];
+	aimBase(el.querySelector("header > .quit-btn")!, b);
+	aimTower(el.querySelector(".tower-quit")!, b.tower);
 	sync(el.querySelector(".tabs")!, b.tabs, () => html(`<div class="tab"><h3><span></span><button type="button" class="tab-add"></button><button type="button" class="quit-btn" data-close="tab"></button></h3><div class="units"></div></div>`), (tab, t) => {
 		text(tab, "h3 span", m.tab_label({ label: t.label }));
-		aimClose(tab.querySelector(".quit-btn")!, b, t);
+		aimSquad(tab.querySelector(".quit-btn")!, b, t);
 		aimOpening(tab.querySelector(".tab-add")!, b, t.id);
 		sync(tab.querySelector(".units")!, t.units, unitEl, fillUnit);
 	});

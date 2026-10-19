@@ -1,13 +1,14 @@
 import "./style.css";
 import { startI18n } from "./i18n.ts";
 import { m } from "./paraglide/messages.js";
-import type { Net, Unit } from "../src/net.ts";
+import type { Net } from "../src/net.ts";
 import type { Data, HistoryEvent } from "./chat.ts";
 import type { Post } from "./composer.ts";
 import { changes } from "./log.ts";
 import { type Alert, alertsOf, arrivals, unitOf } from "./alerts.ts";
 import type { mountPanels, Tile } from "./layer.ts";
 import { mountNotify } from "./notify.ts";
+import { mountQuit } from "./quit.ts";
 import { mountPage } from "./render.ts";
 import { createRouter, parseRoute, type Route, upOf, watchOf } from "./router.ts";
 import { createStream, type Source, type Status } from "./stream.ts";
@@ -194,38 +195,7 @@ addEventListener("keydown", (event) => {
 });
 el("pair").hidden = location.hostname !== "127.0.0.1"; // pairing is this computer's: a paired device comes in by its tailnet name (remote.ts)
 el("pair").addEventListener("click", () => void import("./pair.ts").then(({ pairTile }) => openTile(pairTile(), true)));
-// A close button asks first in the page's own dialog (a browser confirm can be dismissed by an attached tool before it is seen), then posts
-// close/unit, close/tab, or close/base; the net shows what went, and a refusal says why in the same dialog.
-const sheet = (text: string, yes?: string): Promise<boolean> => new Promise((done) => {
-	const d = document.createElement("dialog"), p = document.createElement("p"), row = document.createElement("div");
-	const button = (label: string, cls: string, answer: boolean) => Object.assign(document.createElement("button"), { type: "button", className: cls, textContent: label, onclick: () => (d.close(), done(answer)) });
-	[d.className, p.textContent, row.className] = ["sheet", text, "sheet-row"];
-	row.append(...(yes ? [button(m.cancel(), "later", false), button(yes, "sheet-yes", true)] : [button(m.close(), "later", false)]));
-	d.append(p, row);
-	d.addEventListener("close", () => (d.remove(), done(false)));
-	document.body.append(d);
-	d.showModal();
-});
-/** A view of what was just closed goes up to what is left: a closed base to the map, a closed squad or unit to its base. */
-const leave = (d: DOMStringMap) => {
-	if (current.view === "map") return;
-	if (d.close === "base") return void (current.ws === d.ws && router.go({ view: "map" }));
-	const keys = (units: Unit[]): string[] => units.flatMap((u) => [u.key, ...keys(u.subs)]);
-	const tab = d.close === "tab" && current.ws === d.ws ? latest?.bases.find((x) => x.id === d.ws)?.tabs.find((t) => t.id === d.tab) : undefined;
-	if (current.view === "session" && (d.close === "unit" ? current.key === d.key : tab && keys(tab.units).includes(current.key))) router.go({ view: "workspace", ws: current.ws });
-};
-document.addEventListener("click", (event) => {
-	const b = (event.target as Element | null)?.closest?.<HTMLElement>("button[data-close]"), d = b?.dataset;
-	if (!b || !d) return;
-	event.preventDefault();
-	const ask = d.close === "base" ? m.close_base_ask : d.close === "tab" ? m.close_squad_ask : d.role === "tower" ? m.close_tower_ask : m.close_unit_ask;
-	void sheet(ask({ name: d.name ?? "" }), m.quit()).then((yes) => {
-		if (!yes) return;
-		b.toggleAttribute("disabled", true);
-		void import("./post.ts").then(({ post }) => post(`close/${d.close}`, d.close === "unit" ? { key: d.key } : { workspace: d.ws, ...(d.tab && { tab: d.tab }) }))
-			.then((r) => (r.ok ? leave(d) : sheet(r.body.reason ?? m.refused({ status: r.status }))), () => sheet(m.no_answer())).finally(() => b.toggleAttribute("disabled", false));
-	});
-});
+mountQuit({ route: () => current, net: () => latest, go: (route) => router.go(route) });
 // The opening buttons on the map and in a base (data-open with data-ws and data-tab) open their tile, read against the newest net.
 document.addEventListener("click", (event) => {
 	const button = (event.target as Element | null)?.closest?.<HTMLElement>("button[data-open]");

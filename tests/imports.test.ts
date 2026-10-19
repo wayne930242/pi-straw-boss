@@ -223,7 +223,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.25.1 to 755 for main.ts hiding Phone on a paired device's page (pairing is this computer's to start).
 	// 0.26.0 to 760 for Quit on each unit of the map (render.ts: its key, name, role, and whether this unit may quit).
 	// 0.26.1 to 763 for Quit tower on the map (render.ts: the tower's key and name, shown when it may quit).
-	assert.ok(page <= 763, `the page's TypeScript has ${page} lines`);
+	// 0.27.0 to 779 for Quit in one module (quit.ts: the four buttons' labels and data, the confirmation, and the close's aftermath, out of render.ts and main.ts): its header, imports, and exports.
+	assert.ok(page <= 779, `the page's TypeScript has ${page} lines`);
 });
 
 test("the built page is small, self-contained (no remote URLs, fonts, or imports), and carries no demo fixture", { skip: !existsSync(join(root, "dist/gui/index.html")) && "run npm run gui:build first" }, () => {
@@ -264,7 +265,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// monitors bar's messages in both languages.
 	// 0.26.0 to 35.05 KB / 13.4 KB for Quit on the map: each unit's, and the base's and squad's as words instead of ×, in both languages.
 	// 0.26.1 to 35.4 KB / 13.45 KB for Quit tower on the map, in both languages.
-	assert.ok(size(entry).length <= 35_400 && gz(entry) <= 13_450, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// 0.27.0 to 35.4 KB / 13.5 KB for the one Quit module: the four named aim functions and the confirmation moved out of the other files cost a few dozen bytes more than the inline code.
+	assert.ok(size(entry).length <= 35_400 && gz(entry) <= 13_500, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).
@@ -293,9 +295,9 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// 0.25.0 to 88 KB / 35.9 KB for the monitors bar in the comms view, and the terminal taking the keyboard as the view switches to it.
 	// 0.25.1 to 88.1 KB for a phone's comms scrolled into view as the session opens.
 	// 0.26.1 to 88.6 KB / 36.05 KB for a phone's Info and its full-screen dossier with a tower's squads, and a log held while a finger drags it.
-	// 0.27.0 to 89.55 KB / 36.41 KB: views.ts split into eight modules costs about 0.9 KB raw (0.4 KB gzipped) in the same chunk, for the parameters that carry the
+	// 0.27.0 to 89.55 KB / 36.425 KB: views.ts split into eight modules costs about 0.9 KB raw (0.4 KB gzipped) in the same chunk, for the parameters that carry the
 	// Scene and the `scene.` property reads that do not minify.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 89_550 && total(chunks, gz) <= 36_410, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 89_550 && total(chunks, gz) <= 36_425, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
