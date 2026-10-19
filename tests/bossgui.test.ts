@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, get, request } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -151,6 +151,7 @@ test("one server per machine: two calls at once in one session, and a call from 
 	assert.equal(new Set(urls).size, 1, "every call got the same URL");
 	const record = readRecord(world.stateDir)!;
 	assert.equal(`http://127.0.0.1:${record.port}/${record.token}/`, urls[0], "gui.json records the running server");
+	assert.ok(record.remotePort && record.remotePort !== record.port, "and its second, remote listener's port");
 	const [owner, other] = record.owner.startsWith("viewer-a") ? [a, b] : [b, a];
 	await other.command("gui stop");
 	assert.match(other.notices.at(-1)!.text, /^Straw net GUI stopped \(it ran in session viewer-[ab] \(pane w[AB]:p1\)\)$/);
@@ -270,7 +271,7 @@ test("/boss gui remote serves this session's GUI on the tailnet with a pairing Q
 	await command;
 	assert.deepEqual(blocked, [true, false]);
 	assert.equal(opened.length, before, "no browser opens for remote access by itself");
-	assert.deepEqual(ts.config(), { TCP: { "8443": { HTTPS: true } }, Web: { "box.tail1.ts.net:8443": { Handlers: { "/": { Proxy: `http://127.0.0.1:${record.port}` } } } } });
+	assert.deepEqual(ts.config(), { TCP: { "8443": { HTTPS: true } }, Web: { "box.tail1.ts.net:8443": { Handlers: { "/": { Proxy: `http://127.0.0.1:${record.remotePort}` } } } } });
 	assert.match(a.notices.at(-1)!.text, /Remote access is on for me@example.com, tailnet only: https:\/\/box\.tail1\.ts\.net:8443\//);
 	assert.ok(!a.notices.some((n) => n.text.includes("/pair/")), "the one-time code stays out of the notices");
 	// Another session's remote takes the server over on the same URL, and its remote off takes it back with the entry gone.
@@ -279,8 +280,8 @@ test("/boss gui remote serves this session's GUI on the tailnet with a pairing Q
 	b.overlays[0]!.handleInput!("q");
 	await moved;
 	const taken = readRecord(world.stateDir)!;
-	assert.deepEqual([taken.owner, taken.port, taken.token], ["viewer-b (pane wB:p1)", record.port, record.token]);
-	assert.equal((ts.config() as { Web: Record<string, { Handlers: { "/": { Proxy: string } } }> }).Web["box.tail1.ts.net:8443"]!.Handlers["/"].Proxy, `http://127.0.0.1:${record.port}`);
+	assert.deepEqual([taken.owner, taken.port, taken.remotePort, taken.token], ["viewer-b (pane wB:p1)", record.port, record.remotePort, record.token]);
+	assert.equal((ts.config() as { Web: Record<string, { Handlers: { "/": { Proxy: string } } }> }).Web["box.tail1.ts.net:8443"]!.Handlers["/"].Proxy, `http://127.0.0.1:${record.remotePort}`);
 	assert.ok(a.notices.some((n) => n.text === "The straw net GUI moved to session viewer-b (pane wB:p1)"));
 	await a.command("gui remote off");
 	assert.deepEqual(ts.config(), {});
@@ -315,10 +316,30 @@ test("the page's Turn on remote access serves the GUI on the tailnet from the se
 	});
 	assert.equal(answer.status, 200);
 	assert.match(String(answer.body.url), new RegExp(`^https://box\\.tail1\\.ts\\.net:8443/${r.token}/pair/`));
-	assert.deepEqual(ts.config(), { TCP: { "8443": { HTTPS: true } }, Web: { "box.tail1.ts.net:8443": { Handlers: { "/": { Proxy: `http://127.0.0.1:${r.port}` } } } } });
+	assert.deepEqual(ts.config(), { TCP: { "8443": { HTTPS: true } }, Web: { "box.tail1.ts.net:8443": { Handlers: { "/": { Proxy: `http://127.0.0.1:${r.remotePort}` } } } } });
 	assert.match(a.notices.at(-1)!.text, /^Remote access is on for me@example.com/);
 	await a.command("gui stop");
 	assert.deepEqual(ts.config(), {});
+});
+
+test("an upgrade: a serve entry that still points at the old local port is repointed at the remote listener when remote goes on, and removed when it goes off", async () => {
+	const ts = fakeTailscale(), a = world.agent({ id: "viewer-m", pane: "wA:p1", tab: "wA:t1", deps: { ...deps, tailscale: ts.run } });
+	await a.start();
+	await a.command("gui");
+	const r = readRecord(world.stateDir)!;
+	// What the version before the remote listener left: serve points at the server's local port, and remote.json records it.
+	await ts.run(["serve", "--bg", "--https=8443", `http://127.0.0.1:${r.port}`]);
+	writeFileSync(join(world.stateDir, "remote.json"), JSON.stringify({ target: `http://127.0.0.1:${r.port}`, pid: process.pid }));
+	const command = a.command("gui remote");
+	await until(() => a.overlays.length === 1, "the QR overlay");
+	a.overlays[0]!.handleInput!("q");
+	await command;
+	assert.deepEqual(ts.config(), { TCP: { "8443": { HTTPS: true } }, Web: { "box.tail1.ts.net:8443": { Handlers: { "/": { Proxy: `http://127.0.0.1:${r.remotePort}` } } } } }, "serve now targets the remote listener");
+	assert.equal(JSON.parse(readFileSync(join(world.stateDir, "remote.json"), "utf8")).target, `http://127.0.0.1:${r.remotePort}`);
+	await a.command("gui remote off");
+	assert.deepEqual(ts.config(), {});
+	await a.command("gui stop");
+	await a.stop();
 });
 
 test("a serve entry a crashed server left is removed when the next server starts, and a moved one is left alone", async () => {

@@ -5,11 +5,13 @@ import type { IncomingMessage } from "node:http";
 import { join } from "node:path";
 import { qr, qrLines } from "./qr.ts";
 
-// Remote access over Tailscale, tailnet only (never Funnel). `/boss gui remote` adds one `tailscale serve` entry, HTTPS on 8443 to the local
-// server, only when 8443 is free or already ours (remote.json in the state directory remembers our target, the server's PID, and when that
+// Remote access over Tailscale, tailnet only (never Funnel). `/boss gui remote` adds one `tailscale serve` entry, HTTPS on 8443 to the server's
+// remote listener (a second loopback port, see gui.ts), only when 8443 is free or already ours (remote.json in the state directory remembers our target, the server's PID, and when that
 // process started, so an entry a crashed session left is recognised even after its PID went to another process); turning it off, `/boss gui stop`, and the end of the server's session remove that one entry and nothing else.
-// Which request is which: serve passes the client's Host through but always adds X-Forwarded-* and Tailscale-* headers (and replaces any a
-// client sent), so a local request is Host 127.0.0.1:<port> with none of them. A remote one needs Host exactly <MagicDNS name>:8443,
+// Which request is which is decided by the listener it arrived on, not by what it says about itself: everything on the remote listener is
+// remote whatever its Host or headers, and the local listener lets in only a request with Host 127.0.0.1:<port> and none of the forwarding
+// headers serve always adds (X-Forwarded-*, Tailscale-*), a second guard, and refuses anything else, so an entry that still points at the
+// local port cannot reach the server at all. A remote request needs Host exactly <MagicDNS name>:8443,
 // no Funnel marker, Tailscale-User-Login equal to this machine's user, and a session cookie (HttpOnly, Secure, SameSite=Strict, scoped to
 // the token path) that only a one-time pairing code from the QR gets: a code works once, within ten minutes. Turning remote off ends
 // every remote session.
@@ -55,11 +57,11 @@ async function served(run: Run, host: string) {
 	return { target, foreign: elsewhere || (held && !target), funnel: Boolean(s.AllowFunnel?.[host]) };
 }
 
-/** Points 8443 at `target`, when 8443 is free or ours (`target` itself or `stale`); otherwise, or when Funnel is on there, it refuses and touches nothing. */
-export async function serveOn(run: Run, host: string, target: string, stale?: string) {
+/** Points 8443 at `target`, when 8443 is free or ours (`target` itself or one of `stale`); otherwise, or when Funnel is on there, it refuses and touches nothing. */
+export async function serveOn(run: Run, host: string, target: string, stale: (string | undefined)[] = []) {
 	const now = await served(run, host);
 	if (now.funnel) throw new Error(`Funnel is on for ${host}; Straw Boss serves the tailnet only and leaves that entry alone`);
-	if (now.foreign || (now.target && ![target, stale].includes(now.target))) throw new Error(`Port ${PORT} already serves something else${now.target ? ` (${now.target})` : ""}; Straw Boss does not touch other serve entries`);
+	if (now.foreign || (now.target && ![target, ...stale].includes(now.target))) throw new Error(`Port ${PORT} already serves something else${now.target ? ` (${now.target})` : ""}; Straw Boss does not touch other serve entries`);
 	if (now.target !== target) await run(["serve", "--bg", `--https=${PORT}`, target]);
 	const after = await served(run, host);
 	if (after.target !== target || after.funnel) {
@@ -103,11 +105,15 @@ export function createAccess(token: string, ended: () => void = () => {}) {
 			for (const old of codes.keys()) if (codes.size > MAX_CODES) codes.delete(old);
 			return code;
 		},
-		/** `path` is the URL path after the token. A pairing code is used up by its first presentation that passes the identity checks. */
-		check(req: IncomingMessage, port: number, given: string | undefined, path: string[]): Verdict {
+		/**
+		 * `path` is the URL path after the token; `listener` is the one the request arrived on, `port` that listener's port. Only the local listener
+		 * lets a request in as local, and only without a forwarding header; a request on the remote listener is remote whatever it claims, and
+		 * the local listener refuses everything else. A pairing code is used up by its first presentation that passes the identity checks.
+		 */
+		check(req: IncomingMessage, listener: "local" | "remote", port: number, given: string | undefined, path: string[]): Verdict {
 			const h = req.headers;
 			if (!same(given ?? "", token)) return { status: 403 };
-			if (h.host === `127.0.0.1:${port}` && !FORWARDED.some((name) => name in h)) return { origin: `http://127.0.0.1:${port}`, remote: false };
+			if (listener === "local") return h.host === `127.0.0.1:${port}` && !FORWARDED.some((name) => name in h) ? { origin: `http://127.0.0.1:${port}`, remote: false } : { status: 403 };
 			if (!remote || h.host !== remote.host || "tailscale-funnel-request" in h || h["tailscale-user-login"] !== remote.login) return { status: 403 };
 			const now = Date.now();
 			if (path[0] === "pair" && path.length === 2 && req.method === "GET") {
@@ -153,11 +159,13 @@ export function runs({ pid, started }: { pid?: unknown; started?: string }, wrot
 export const cookieFor = (token: string, value: string) => `sb_remote=${value}; Path=/${token}/; Max-Age=${SESSION_MS / 1000}; HttpOnly; Secure; SameSite=Strict`;
 
 /**
- * `/boss gui remote` and `/boss gui remote off` in the session that runs the server. On: Tailscale's identity, the serve entry, then a
- * pairing QR. Off: the entry goes and every remote session ends. `dir` holds remote.json, the entry's target while it is on.
+ * `/boss gui remote` and `/boss gui remote off` in the session that runs the server. On: Tailscale's identity, the serve entry (pointed at
+ * the remote listener, also over an entry that still points at this server's local port), then a pairing QR. Off: the entry goes and every
+ * remote session ends. `dir` holds remote.json, the entry's target while it is on.
  */
-export async function switchRemote(gui: { port: number; token: string; access: Access }, on: boolean, dir: string, run: Run = tailscale): Promise<{ text: string; lines?: string[]; link?: () => string; changed: boolean }> {
-	const target = `http://127.0.0.1:${gui.port}`, file = join(dir, "remote.json");
+export async function switchRemote(gui: { port: number; remotePort: number; token: string; access: Access }, on: boolean, dir: string, run: Run = tailscale): Promise<{ text: string; lines?: string[]; link?: () => string; changed: boolean }> {
+	// An entry from before the remote listener points at the local port; it is this server's own, so it is repointed or removed like a recorded one.
+	const target = `http://127.0.0.1:${gui.remotePort}`, old = `http://127.0.0.1:${gui.port}`, file = join(dir, "remote.json");
 	let stale: string | undefined;
 	try {
 		const record = JSON.parse(readFileSync(file, "utf8"));
@@ -169,12 +177,12 @@ export async function switchRemote(gui: { port: number; token: string; access: A
 		gui.access.disable();
 		const id = was ?? (stale ? await identity(run).catch(() => undefined) : undefined);
 		if (!id) return { text: "Remote access is off", changed: false };
-		const removed = await serveOff(run, id.host, [was && target, stale]);
+		const removed = await serveOff(run, id.host, [was && target, stale, old]);
 		rmSync(file, { force: true });
 		return { text: removed ? `Remote access is off; the Tailscale serve entry on ${PORT} is removed` : `Remote access is off; the ${PORT} entry no longer pointed here, so it was left alone`, changed: true };
 	}
 	const id = await identity(run);
-	await serveOn(run, id.host, target, stale);
+	await serveOn(run, id.host, target, [stale, old]);
 	writeFileSync(file, JSON.stringify({ target, pid: process.pid, started: startOf(process.pid) }), { mode: 0o600 });
 	gui.access.enable(id);
 	// Every link is a new one-time pairing URL: the QR's own, and one per press of c or o in the overlay.

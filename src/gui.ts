@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,6 +18,8 @@ import { type Access, cookieFor, createAccess } from "./remote.ts";
 import { api, type Hub as Files, image, watchSession, type Watch, watchWorkspace } from "./watch.ts";
 
 // The browser view's server: serves the built page and one live stream of the net, read-only, on 127.0.0.1 only.
+// Two loopback listeners share one handler. The local one is for this computer's browser; the remote one is the only target `tailscale serve`
+// points at, and every request on it is remote whatever its Host or headers say (remote.ts), so the split never rests on a proxy's headers.
 // Every URL starts with a random token (/<token>/index.html, /<token>/events) and a request without it, or with another Host
 // header, is refused, so other local pages cannot read the net. The only writes are POSTs under /api/sessions and /api/remote (control.ts),
 // which also need the page's origin and a second secret the page carries in <meta name="sb-csrf">; every other request must be a GET.
@@ -38,15 +40,15 @@ const HEADERS = {
 	"content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; media-src 'self'; connect-src 'self'; frame-src 'self'; base-uri 'self'; frame-ancestors 'none'",
 };
 
-export interface Gui { url: string; port: number; token: string; csrf: string; access: Access; stop(): Promise<void> }
+export interface Gui { url: string; port: number; remotePort: number; token: string; csrf: string; access: Access; stop(): Promise<void> }
 /** `net` is the registry behind the net reading (the allow list of session keys); without it no session can be watched. `call` reaches Herdr for input. */
 /** `hub` carries answers to the dialogs bridges relay (dialogs.ts); it runs exactly as long as the server. */
 /** `onRemote` turns remote access on from the page, in the session that runs the server. `onStop` takes another session's stop request (requestStop), so the owner also takes its remote entry down; without it the server stops itself. */
-export interface GuiOptions { read(): Promise<Net>; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] }; call?: HerdrCall; hub?: Hub; dir?: string; port?: number; token?: string; csrf?: string; pollMs?: number; pingMs?: number; onStop?(asked: Asked): void; onRemote?(): Promise<void>; spawn?: ControlDeps["spawn"]; close?: ControlDeps["close"] }
+export interface GuiOptions { read(): Promise<Net>; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] }; call?: HerdrCall; hub?: Hub; dir?: string; port?: number; remotePort?: number; token?: string; csrf?: string; pollMs?: number; pingMs?: number; onStop?(asked: Asked): void; onRemote?(): Promise<void>; spawn?: ControlDeps["spawn"]; close?: ControlDeps["close"] }
 export interface Asked { by: string; take: boolean }
 
-/** Starts the server. A preferred `port` (with its `token` and `csrf`) is reused when free, so a restarted server keeps the URL and the page an open tab already has. */
-export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, token = randomBytes(16).toString("hex"), csrf = randomBytes(16).toString("hex"), pollMs = 2000, pingMs = 15_000, onStop, onRemote, spawn, close }: GuiOptions): Promise<Gui> {
+/** Starts the server. A preferred `port` and `remotePort` (with the `token` and `csrf`) are reused when free, so a restarted server keeps the URL and the page an open tab already has. */
+export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, remotePort = 0, token = randomBytes(16).toString("hex"), csrf = randomBytes(16).toString("hex"), pollMs = 2000, pingMs = 15_000, onStop, onRemote, spawn, close }: GuiOptions): Promise<Gui> {
 	try {
 		if (!statSync(join(dir, "index.html")).isFile()) throw new Error();
 	} catch {
@@ -82,9 +84,9 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, t
 			problem = message;
 		}
 	})().finally(() => (inflight = undefined)));
-	const listen = (at: number) => new Promise<void>((done, fail) => {
-		server.once("error", fail);
-		server.listen(at, "127.0.0.1", () => (server.off("error", fail), done()));
+	const listen = (srv: Server, at: number) => new Promise<void>((done, fail) => {
+		srv.once("error", fail);
+		srv.listen(at, "127.0.0.1", () => (srv.off("error", fail), done()));
 	});
 	const events = (req: IncomingMessage, res: ServerResponse, target: string | null, remote: boolean) => {
 		res.writeHead(200, { ...HEADERS, "content-type": "text/event-stream", connection: "keep-alive" });
@@ -111,12 +113,13 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, t
 			if (!clients.size) (clearInterval(poll), clearInterval(beat));
 		});
 	};
-	const server = createServer((req, res) => {
+	// One handler per listener: `kind` is the listener a request arrived on, which alone decides whether it may count as local.
+	const handler = (kind: "local" | "remote", own: () => Server) => (req: IncomingMessage, res: ServerResponse) => {
 		const url = new URL(req.url ?? "/", "http://local"), pathname = url.pathname;
 		const [, given, ...path] = pathname.split("/");
 		const fail = (code: number) => res.writeHead(code, { ...HEADERS, "content-type": "text/plain" }).end(code === 403 ? "forbidden" : "not found");
 		const answer = ({ status, body }: Reply) => res.writeHead(status, { ...HEADERS, "content-type": TYPES[".json"] }).end(JSON.stringify(body));
-		const who = access.check(req, (server.address() as AddressInfo).port, given, path);
+		const who = access.check(req, kind, (own().address() as AddressInfo).port, given, path);
 		if ("status" in who) return void (who.status === 403 ? fail(403) : res.writeHead(401, { ...HEADERS, "content-type": "text/plain" }).end("This device is not paired: scan a new QR code from /boss gui remote."));
 		// A pairing code was just exchanged: the cookie is set, and the page reloads itself, so the cookie also rides on a same-site navigation.
 		if ("cookie" in who) return void res.writeHead(200, { ...HEADERS, "content-type": TYPES[".html"], "set-cookie": cookieFor(token, who.cookie) }).end(`<!doctype html><meta http-equiv="refresh" content="0;url=/${token}/"><p>Paired. Opening the straw net…</p>`);
@@ -151,14 +154,26 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, t
 		// A font's or sound's name carries its content hash, so a phone keeps it instead of fetching it on every page load.
 		const keep = /\.(woff2|mp3)$/.test(file) ? { "cache-control": "private, max-age=31536000, immutable" } : {};
 		res.writeHead(200, { ...HEADERS, ...keep, "content-type": TYPES[extname(file)] ?? "application/octet-stream" }).end(body);
-	});
+	};
+	const server: Server = createServer(handler("local", () => server)), remoteServer: Server = createServer(handler("remote", () => remoteServer));
+	// A preferred port is kept when free; otherwise any free one. The remote listener is bound second, so it can never share the local port.
+	const bind = async (srv: Server, preferred: number) => {
+		try {
+			await listen(srv, preferred);
+		} catch (error) {
+			if (!preferred || (error as NodeJS.ErrnoException).code !== "EADDRINUSE") throw error;
+			await listen(srv, 0);
+		}
+		return (srv.address() as AddressInfo).port;
+	};
+	let bound: number, boundRemote: number;
 	try {
-		await listen(port);
+		bound = await bind(server, port);
+		boundRemote = await bind(remoteServer, remotePort);
 	} catch (error) {
-		if (!port || (error as NodeJS.ErrnoException).code !== "EADDRINUSE") throw error;
-		await listen(0);
+		server.close();
+		throw error;
 	}
-	const bound = (server.address() as AddressInfo).port;
 	hub?.start(() => void (clients.size && tick())); // a relayed dialog shows at once, not at the next poll; the net is read only while a page listens
 	function halt() {
 		return new Promise<void>((done) => {
@@ -167,12 +182,15 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, port = 0, t
 			clearInterval(poll);
 			clearInterval(beat);
 			clients.forEach((_, c) => c.end());
-			server.close(() => done());
-			server.closeAllConnections();
+			let open = 2;
+			for (const srv of [server, remoteServer]) {
+				srv.close(() => --open || done());
+				srv.closeAllConnections();
+			}
 		});
 	}
 	return {
-		url: `http://127.0.0.1:${bound}/${token}/`, port: bound, token, csrf, access, stop: halt,
+		url: `http://127.0.0.1:${bound}/${token}/`, port: bound, remotePort: boundRemote, token, csrf, access, stop: halt,
 	};
 }
 

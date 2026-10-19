@@ -3,13 +3,13 @@ import { request } from "node:http";
 import { join } from "node:path";
 import { type Asked, type Gui, VERSION } from "./gui.ts";
 
-// One server per machine. gui.json in the state directory records the running server (pid, port, token, owner session), and
+// One server per machine. gui.json in the state directory records the running server (pid, local and remote port, token, owner session), and
 // gui.lock makes the check-and-start atomic, so a second /boss gui, from this session or another, opens the running server
 // instead of starting one. A dead server's port and token are reused, so a page left open reconnects to its successor. Any session reaches
 // the running one: it asks it to stop (requestStop), or takes it over, stopping it and starting its own on the same URL. A session whose
 // pi-straw-boss is newer takes it over unasked, so an update reaches every open page once one session has reloaded.
 /** `ownerSession` is the owner's intercom session id: bridges follow it to the server's dialog channel. `reload` marks a server its owner's /reload stopped. */
-export interface GuiRecord { pid: number; port: number; token: string; csrf?: string; owner: string; ownerSession?: string; version?: string; reload?: boolean }
+export interface GuiRecord { pid: number; port: number; remotePort?: number; token: string; csrf?: string; owner: string; ownerSession?: string; version?: string; reload?: boolean }
 /** `stale`: the running server is older and could not be taken over. */
 export interface Shared { url: string; owner: string; mine?: Gui; stale?: boolean }
 
@@ -63,7 +63,7 @@ export const answers = (r: GuiRecord) =>
 	});
 
 /** `take` takes the running server over whatever its version; a newer `version` takes it over anyway. */
-export async function sharedGui(dir: string, [owner, ownerSession]: [string, string], start: (prefer: { port?: number; token?: string; csrf?: string }) => Promise<Gui>, sleep: (ms: number) => Promise<void>, { version = VERSION, take = false } = {}): Promise<Shared> {
+export async function sharedGui(dir: string, [owner, ownerSession]: [string, string], start: (prefer: { port?: number; remotePort?: number; token?: string; csrf?: string }) => Promise<Gui>, sleep: (ms: number) => Promise<void>, { version = VERSION, take = false } = {}): Promise<Shared> {
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	const lock = join(dir, "gui.lock");
 	for (let tries = 0; ; tries++) {
@@ -84,8 +84,8 @@ export async function sharedGui(dir: string, [owner, ownerSession]: [string, str
 		const theirs = record && (await answers(record)) && { url: urlOf(record), owner: record.owner };
 		if (theirs && !(take || newer(version, record.version))) return theirs;
 		if (theirs && !(await requestStop(record, { by: owner, take: true }, sleep))) return { ...theirs, stale: true };
-		const gui = await start(record ? { port: record.port, token: record.token, csrf: record.csrf } : {});
-		writeFileSync(join(dir, "gui.json"), JSON.stringify({ pid: process.pid, port: gui.port, token: gui.token, csrf: gui.csrf, owner, ownerSession, version }), { mode: 0o600 });
+		const gui = await start(record ? { port: record.port, remotePort: record.remotePort, token: record.token, csrf: record.csrf } : {});
+		writeFileSync(join(dir, "gui.json"), JSON.stringify({ pid: process.pid, port: gui.port, remotePort: gui.remotePort, token: gui.token, csrf: gui.csrf, owner, ownerSession, version }), { mode: 0o600 });
 		return { url: gui.url, owner, mine: gui };
 	} finally {
 		rmSync(lock, { force: true });
