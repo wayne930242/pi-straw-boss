@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { beforeEach, mock, test } from "node:test";
 import type { Pending } from "../src/ask.ts";
-import { questionsDigest, selectDigest } from "../src/owners.ts";
+import { questionsDigest, secretDigest, selectDigest } from "../src/owners.ts";
+import { m } from "../gui/paraglide/messages.js";
 
 // The answer panel (gui/ask.ts) as the page drives it: the server's updates arrive while the user picks, types, and notes, and the panel
 // keeps all of that for the dialog the user is filling. The updates are the ones the server really sends (dialogs.ts merge): the same
@@ -505,4 +506,116 @@ test("keys that carry Ctrl, Alt, or ⌘, a held Enter, and keys outside the form
 	const again = { key: " ", taken: false, preventDefault() { this.taken = true; } };
 	for (const on of (root.kids[0] as El).handlers.keyup ?? []) on(again);
 	assert.equal(again.taken, false);
+});
+
+const SECRET = { label: "Deploy token", instructions: ["Open the link.", "Create a token with the deploy scope."], url: "https://example.com/tokens", destination: ".env.local (DEPLOY_TOKEN)" };
+const secretWait = (dialog = "s1", secret = SECRET): Pending => ({ callId: "c1", tool: "secret_drop", answer: { dialog, digest: secretDigest(secret), secret } });
+/** A page whose post copies the body the way a real post turns it into JSON, before the panel can touch it again. */
+const mountOn = (remote: boolean) => mountAsk(root as unknown as HTMLElement, (action, body) => (sent.push({ action, body: JSON.parse(JSON.stringify(body)) }), new Promise((resolve) => replies.push(resolve))), remote);
+const secretField = () => field("Secret")[0]!;
+/** The page's whole text and attributes, to look for a value anywhere in it. */
+const dump = (el: El): string => `${[...el.attrs.values()].join("|")}|${el.value}|${el.kids.map((k) => (typeof k === "string" ? k : dump(k))).join("|")}`;
+
+test("a secret: the label, steps, link, and destination show with a masked field; Submit sends the value once, the field is cleared before the reply, and it is never shown back", async () => {
+	const panel = mountOn(false), value = "tok-panel-5521-not-shown";
+	panel.update(secretWait(), true);
+	assert.equal(panel.enter(), true);
+	assert.equal(page.activeElement, secretField(), "the card opens on the masked field");
+	assert.deepEqual([secretField().getAttribute("type"), secretField().getAttribute("autocomplete"), secretField().getAttribute("spellcheck"), secretField().getAttribute("autocorrect")], ["password", "new-password", "false", "off"]);
+	assert.match(root.textContent, /Deploy token/);
+	assert.match(root.textContent, /Create a token with the deploy scope\./);
+	assert.match(root.textContent, /\.env\.local \(DEPLOY_TOKEN\)/);
+	const link = root.all((el) => el.tagName === "a")[0]!;
+	assert.deepEqual([link.getAttribute("href"), link.getAttribute("rel"), link.getAttribute("target")], ["https://example.com/tokens", "noopener noreferrer", "_blank"]);
+	assert.equal(button("Submit")!.disabled, true, "nothing typed yet");
+	secretField().type("   ");
+	assert.equal(button("Submit")!.disabled, true, "blank is nothing");
+	secretField().type(value);
+	assert.equal(button("Submit")!.disabled, false);
+	button("Submit")!.click();
+	assert.deepEqual(sent.map((s) => s.body), [{ dialog: "s1", digest: secretDigest(SECRET), answerId: sent[0]!.body.answerId, value }]);
+	assert.equal(secretField().value, "", "cleared as soon as it is sent, before the reply");
+	assert.equal(secretField().disabled, true, "and locked while the answer is on its way");
+	assert.equal(dump(root).includes(value), false);
+	await reply({ outcome: "accepted" });
+	assert.equal(status(), "Answered.");
+	assert.equal(dump(root).includes(value), false, "nothing on the page holds it after the reply");
+	assert.equal(button("Submit")!.disabled, true, "answered: nothing more from here");
+});
+
+test("a secret refused stays answerable with an empty field; one not confirmed offers no Check again, since the value is gone", async () => {
+	const panel = mountOn(false);
+	panel.update(secretWait(), true);
+	secretField().type("first-try");
+	button("Submit")!.click();
+	await reply({ outcome: "rejected", reason: "digest" });
+	assert.equal(status(), "The question changed; read it again.");
+	assert.equal(secretField().value, "");
+	assert.equal(secretField().disabled, false, "it can be typed again");
+	secretField().type("second-try");
+	button("Submit")!.click();
+	assert.deepEqual(sent.map((s) => s.body.value), ["first-try", "second-try"]);
+	assert.notEqual(sent[0]!.body.answerId, sent[1]!.body.answerId, "each Submit is its own answer");
+	await reply({ outcome: "unknown" });
+	assert.equal(status(), "Not confirmed. Check the terminal.", "no Check again");
+	assert.equal(button("Check again"), undefined);
+	assert.equal(button("Submit")!.disabled, true);
+	assert.equal(sent.length, 2, "nothing is ever resent");
+});
+
+test("a secret that failed to send (a network error) says it is not confirmed and holds no value", async () => {
+	const panel = mountAsk(root as unknown as HTMLElement, async () => { throw new Error("offline"); }, false);
+	panel.update(secretWait(), true);
+	secretField().type("lost-in-transit");
+	button("Submit")!.click();
+	await new Promise((done) => setImmediate(done));
+	assert.equal(status(), "Not confirmed. Check the terminal.");
+	assert.equal(dump(root).includes("lost-in-transit"), false);
+});
+
+test("Show reveals the field and Hide masks it again; Answer in the terminal instead clears it, sends nothing, and locks the panel", () => {
+	const panel = mountOn(false);
+	panel.update(secretWait(), true);
+	secretField().type("peek");
+	button("Show")!.click();
+	assert.equal(secretField().getAttribute("type"), "text");
+	assert.equal(button("Hide")!.getAttribute("aria-pressed"), "true");
+	button("Hide")!.click();
+	assert.equal(secretField().getAttribute("type"), "password");
+	button("Show")!.click();
+	button("Answer in the terminal instead")!.click();
+	assert.deepEqual([secretField().value, secretField().getAttribute("type"), sent.length], ["", "password", 0], "cleared and masked again");
+	assert.match(status() ?? "", /Nothing was sent/);
+	assert.deepEqual([secretField().disabled, button("Submit")!.disabled], [true, true]);
+});
+
+test("the Enter key in the field submits, an input method's composing Enter does not", () => {
+	const panel = mountOn(false);
+	panel.update(secretWait(), true);
+	const keys = secretField() as unknown as { onkeydown: (e: { key: string; isComposing?: boolean }) => void };
+	secretField().type("by-keyboard");
+	keys.onkeydown({ key: "Enter", isComposing: true });
+	keys.onkeydown({ key: "a" });
+	assert.equal(sent.length, 0);
+	keys.onkeydown({ key: "Enter" });
+	assert.deepEqual(sent.map((s) => s.body.value), ["by-keyboard"]);
+});
+
+test("a remote page shows no field: for security, remote entry is unsupported; it names the terminal, even if an answerable secret reached it", () => {
+	const panel = mountOn(true), unsupported = "For security, entering a secret is not supported remotely. Answer it in the terminal on the computer the GUI runs on.";
+	panel.update({ callId: "c1", tool: "secret_drop", why: "Entering a secret is not supported from a remote page; answer it in the terminal." }, true);
+	assert.equal(field("Secret").length, 0);
+	assert.match(root.textContent, new RegExp(unsupported.replace(/[.]/g, "\\.")));
+	assert.match(root.textContent, /Answer it in the terminal\./);
+	assert.equal(button("Submit"), undefined);
+	panel.update(secretWait("s2"), true);
+	assert.equal(field("Secret").length, 0, "whatever it was sent, a remote page does not draw the field");
+	assert.equal(panel.enter(), false, "and has nothing to put the focus on");
+	assert.equal(button("Show terminal"), undefined, "a secret's mirror stays hidden");
+});
+
+test("the remote notice is said in every locale the page ships, and Traditional Chinese says 安全考量，遠端不支援", async () => {
+	const { locales } = await import("../gui/paraglide/runtime.js");
+	for (const locale of locales) assert.ok(m.secret_remote({}, { locale }).length > 10, locale);
+	assert.match(m.secret_remote({}, { locale: "zh-TW" }), /^安全考量，遠端不支援/);
 });

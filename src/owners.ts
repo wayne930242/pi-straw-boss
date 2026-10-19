@@ -10,14 +10,16 @@ export interface Choice { label: string; note?: string; localOnly?: true }
 export interface Select { title: string; choices: Choice[]; copy?: string }
 export interface Option { title: string; description?: string; preview?: true }
 export interface Question { question: string; header?: string; multiple: boolean; options: Option[] }
-/** An open dialog as the bridge relays it: a `select` (labelled choices) or `questions` (a questionnaire), `big` when too long to relay, `busy` while an answer is on its way. */
-export interface Dialog { owner: string; id: string; toolCallId?: string; digest: string; select?: Select; questions?: Question[]; big?: true; busy?: true }
+/** secret_drop's masked dialog: what it asks for and where the value goes. Never the value itself. */
+export interface Secret { label: string; instructions: string[]; url?: string; destination: string }
+/** An open dialog as the bridge relays it: a `select` (labelled choices), `questions` (a questionnaire), or a `secret`; `big` when too long to relay, `busy` while an answer is on its way. */
+export interface Dialog { owner: string; id: string; toolCallId?: string; digest: string; select?: Select; questions?: Question[]; secret?: Secret; big?: true; busy?: true }
 /** What the page may answer, carried on a waiting unit's `pending`. */
-export interface Answerable { dialog: string; digest: string; select?: Select; questions?: Question[] }
+export interface Answerable { dialog: string; digest: string; select?: Select; questions?: Question[]; secret?: Secret }
 /** One question's answer: chosen option indexes, own words, a note. */
 export interface Reply { choices?: number[]; text?: string; note?: string }
-/** An answer for one dialog: `choice` for a select, one `answers` entry per question. `answerId` is the page's idempotency key. */
-export interface Answer { id: string; answerId: string; digest: string; choice?: number; answers?: Reply[] }
+/** An answer for one dialog: `choice` for a select, one `answers` entry per question, `value` for a secret (it lives only in this message and the owner's event, never in an ack or a record). `answerId` is the page's idempotency key. */
+export interface Answer { id: string; answerId: string; digest: string; choice?: number; answers?: Reply[]; value?: string }
 export interface Verdict { accepted: boolean; reason?: string }
 /** `closed` without `by` leaves it to the bridge (remote when its answer was taken, else local). */
 export interface Report { open(adapter: OwnerAdapter, d: Dialog): void; closed(id: string, by?: string): void }
@@ -38,6 +40,7 @@ const str = (v: unknown): v is string => typeof v === "string";
 export const digestOf = (parts: unknown[]) => createHash("sha256").update(JSON.stringify(["pi-dialog/1", ...parts]), "utf8").digest("hex");
 /** Notes, `localOnly`, and `copy` are hints and not hashed. */
 export const selectDigest = (s: Select) => digestOf(["select", s.title, s.choices.map((c) => c.label)]);
+export const secretDigest = (s: Secret) => digestOf(["secret", s.label, s.instructions, s.url ?? null, s.destination]);
 export const questionsDigest = (qs: Question[]) => digestOf(["questions", qs.map((q) => [q.question, q.header ?? null, q.multiple, q.options.map((o) => [o.title, o.description ?? null])])]);
 
 /** A contract-v1 select dialog, or undefined (another version or shape: a relay never guesses at one). */
@@ -50,12 +53,26 @@ export function selectOf(owner: string, raw: unknown): Dialog | undefined {
 	return { owner, id: p.id, ...(p.toolCallId ? { toolCallId: p.toolCallId as string } : {}), digest: p.digest, select };
 }
 
+/** A contract-v1 secret dialog (at most 20 instructions of 2000 characters, a label and destination of 500, a url of 2000), or undefined; one over those limits is left to the terminal, since cutting it would break its digest. It must name its tool call. */
+export function secretOf(owner: string, raw: unknown): Dialog | undefined {
+	const p = raw as { version?: unknown; id?: unknown; toolCallId?: unknown; digest?: unknown; secret?: { label?: unknown; instructions?: unknown; url?: unknown; destination?: unknown } };
+	const s = p?.secret, steps = Array.isArray(s?.instructions) ? (s.instructions as unknown[]) : undefined;
+	if (p?.version !== 1 || !str(p.id) || p.id.length > 64 || !str(p.digest) || !str(p.toolCallId) || !str(s?.label) || s.label.length > 500 || !str(s.destination) || s.destination.length > 500) return;
+	if (!steps || steps.length > 20 || !steps.every((i) => str(i) && i.length <= 2000) || (s.url !== undefined && (!str(s.url) || s.url.length > 2000))) return;
+	return { owner, id: p.id, toolCallId: p.toolCallId, digest: p.digest, secret: { label: s.label, instructions: steps as string[], ...(s.url ? { url: s.url } : {}), destination: s.destination } };
+}
+
+/** How a contract-v1 owner's dialog is read from its `pending` payload, and what an answer for it carries. */
+interface Shape { parse(owner: string, raw: unknown): Dialog | undefined; body(a: Answer): Record<string, unknown> }
+const SELECT_SHAPE: Shape = { parse: selectOf, body: (a) => ({ selections: [a.choice] }) };
+const SECRET_SHAPE: Shape = { parse: secretOf, body: (a) => ({ value: a.value }) };
+
 /** An owner that speaks contract v1 under `prefix` (pi-robot-hand; pi-mcp-adapter's fork once it emits). */
-const contract = (name: string, prefix: string, tool?: string, gate?: true): OwnerAdapter => ({
+const contract = (name: string, prefix: string, tool?: string, gate?: true, shape = SELECT_SHAPE): OwnerAdapter => ({
 	name, tool, ...(gate ? { gate } : {}),
 	listen(bus, report) {
 		const self = this, offs = [
-			bus.on(`${prefix}:pending`, (raw) => { const d = selectOf(name, raw); if (d) report.open(self, d); }),
+			bus.on(`${prefix}:pending`, (raw) => { const d = shape.parse(name, raw); if (d) report.open(self, d); }),
 			bus.on(`${prefix}:closed`, (raw) => { const c = raw as { version?: unknown; id?: unknown; by?: unknown }; if (c?.version === 1 && str(c.id)) report.closed(c.id, str(c.by) ? c.by : "error"); }),
 		];
 		return () => offs.forEach((off) => off());
@@ -65,7 +82,7 @@ const contract = (name: string, prefix: string, tool?: string, gate?: true): Own
 			const r = raw as { version?: unknown; id?: unknown; answerId?: unknown; accepted?: unknown; reason?: unknown };
 			if (r?.version === 1 && r.id === d.id && r.answerId === a.answerId && typeof r.accepted === "boolean") done({ accepted: r.accepted, ...(str(r.reason) ? { reason: r.reason } : {}) });
 		});
-		bus.emit(`${prefix}:answer`, { version: 1, id: d.id, answerId: a.answerId, digest: a.digest, selections: [a.choice] });
+		bus.emit(`${prefix}:answer`, { version: 1, id: d.id, answerId: a.answerId, digest: a.digest, ...shape.body(a) });
 		return off;
 	},
 });
@@ -113,8 +130,10 @@ export const rpiv: OwnerAdapter = {
 };
 
 export const robotHand = contract("robot-hand", "robot-hand", "robot_hand");
+/** pi-robot-hand's secret_drop masked dialog (prefix `robot-hand:secret`): the one owner whose answer carries a secret, which this adapter hands to the owner and nothing else. */
+export const secretDrop = contract("robot-hand-secret", "robot-hand:secret", "secret_drop", undefined, SECRET_SHAPE);
 /** pi-mcp-adapter's tool approval and project trust (its fork, spec task 4): inert until that package emits. */
 export const mcpAdapter = contract("pi-mcp-adapter", "pi-mcp-adapter:dialog");
 /** pi-code's hooks extension: its confirmation before a gated tool call (Allow or Deny), whichever tool that is. */
 export const piCode = contract("pi-code", "pi-code:dialog", undefined, true);
-export const OWNERS: OwnerAdapter[] = [robotHand, rpiv, mcpAdapter, piCode];
+export const OWNERS: OwnerAdapter[] = [robotHand, secretDrop, rpiv, mcpAdapter, piCode];

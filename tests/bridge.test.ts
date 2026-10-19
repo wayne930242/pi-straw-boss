@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { after, mock, test } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Ack, type Dialogs, guiNamespace, type LocalHub, REGISTER, startBridge, type ToHub } from "../src/bridge.ts";
-import { selectDigest } from "../src/owners.ts";
+import { secretDigest, selectDigest } from "../src/owners.ts";
 
 const dirs: string[] = [];
 after(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
@@ -509,4 +509,36 @@ test("documents: an owner that never answers a form leaves it unanswered here (t
 	} finally {
 		mock.timers.reset();
 	}
+});
+
+test("secret_drop: its masked dialog is taken for a secret_drop call in flight; the value reaches the owner once and is in no ack, list, or notice", () => {
+	const s = session(), SECRET = { label: "Deploy token", instructions: ["Create one."], destination: ".env.local" }, value = "tok-9f8e7d-do-not-log", seen: unknown[] = [];
+	s.fire("tool_execution_start", { toolCallId: "c9", toolName: "bash", args: {} });
+	s.events.emit("robot-hand:secret:pending", { version: 1, id: "s0", toolCallId: "c9", digest: secretDigest(SECRET), secret: SECRET });
+	assert.equal(s.lists().length, 0, "a call of another tool is not a secret_drop's");
+	s.fire("tool_execution_start", { toolCallId: "c1", toolName: "secret_drop", args: {} });
+	s.events.emit("robot-hand:secret:pending", { version: 1, id: "s1", toolCallId: "c1", digest: secretDigest(SECRET), secret: SECRET });
+	s.own();
+	assert.deepEqual(s.lists().at(-1)!.map((d) => [d.id, d.owner, d.secret]), [["s1", "robot-hand-secret", SECRET]]);
+	s.events.on("robot-hand:secret:answer", (raw) => {
+		seen.push(raw);
+		const a = raw as { id: string; answerId: string };
+		s.events.emit("robot-hand:secret:answer-result", { version: 1, id: a.id, answerId: a.answerId, accepted: true });
+		s.events.emit("robot-hand:secret:closed", { version: 1, id: a.id, by: "remote", answerId: a.answerId });
+	});
+	const to = bridgeIdOf(s);
+	s.message({ version: 1, type: "answer", to, id: "s1", answerId: "a".repeat(16), digest: secretDigest(SECRET), value });
+	assert.deepEqual(seen, [{ version: 1, id: "s1", answerId: "a".repeat(16), digest: secretDigest(SECRET), value }], "the owner gets the value once, with the digest");
+	assert.deepEqual(s.acks().map((a) => [a.outcome, a.answerId]), [["accepted", "a".repeat(16)]]);
+	s.message({ version: 1, type: "answer", to, id: "s1", answerId: "a".repeat(16), digest: secretDigest(SECRET), value });
+	assert.equal(seen.length, 1, "a resend is a replay, never a second delivery");
+	assert.equal(JSON.stringify([s.published, s.notices]).includes(value), false, "nothing the bridge published or noticed holds the value");
+});
+
+test("secret_drop: a list over 15 KiB drops the secret's content along with the other dialogs'", () => {
+	const s = session(), SECRET = { label: "L", instructions: Array(20).fill("x".repeat(2000)), destination: "d" };
+	s.fire("tool_execution_start", { toolCallId: "c1", toolName: "secret_drop", args: {} });
+	s.events.emit("robot-hand:secret:pending", { version: 1, id: "s1", toolCallId: "c1", digest: secretDigest(SECRET), secret: SECRET });
+	s.own();
+	assert.deepEqual(s.lists().at(-1)!.map((d) => [d.big, d.secret]), [[true, undefined]]);
 });
