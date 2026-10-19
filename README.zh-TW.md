@@ -125,7 +125,7 @@ description = "toggle the straw net view"
 Herdr 接著會關掉分頁和工作區，plugin 再在 `git status` 乾淨、而且沒有別的東西還在用它（沒有別的 pane 在裡面工作，也沒有別的工作區開在同一個 checkout）時移除這個工作區的 checkout。
 git 忽略的檔案（`.env`、`node_modules`、快取、本機資料庫）不算變更，所以會跟著 checkout 一起被刪掉。
 分支一律保留；有未提交變更的 checkout 也留著，原因寫在 plugin 日誌裡。
-含 submodule 的 checkout 不會被移除（git 設計上就拒絕），會連同 git 給的原因留在日誌裡；若移除做到一半失敗、留下 git 已不再追蹤的檔案，日誌會寫「half-removed」並指出該目錄，由你自己刪除。
+含已初始化 submodule 的 checkout，只有在每個 submodule（含巢狀的）都沒有未提交或未追蹤的檔案，且 HEAD 已被某個 remote-tracking ref（或主儲存庫自己那份 module 的 ref）包含、不會遺失任何 commit 時才會移除：reaper 先跑 `git submodule deinit --all`，刪掉 worktree 的 `.git/worktrees/<id>/modules`（有它在，git 不肯移除 worktree），再跑不帶 `--force` 的 `git worktree remove`。不符合就保留，日誌會寫出是哪個 submodule、為什麼；若移除做到一半失敗、留下 git 已不再追蹤的檔案，日誌會寫「half-removed」並指出該目錄，由你自己刪除。
 Herdr 為了把 worktree 歸在底下而替主 checkout 開了一個純 shell 工作區時，plugin 會記住它；該 repo 的 worktree 工作區全部收掉後，若它只剩閒置的 shell（沒有智慧體、沒釘選、名稱沒改過、沒有焦點），就把這個工作區關掉，checkout 和分支都不動。
 其他工作區（包括從沒掛過 worktree 的主 checkout 工作區）完全不動。
 它每 10 分鐘掃一次，智慧體結束後約一分鐘也會掃，`reap-now` 動作則立刻掃。
