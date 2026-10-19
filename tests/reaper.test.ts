@@ -423,7 +423,7 @@ test("A clean checkout another workspace's pane works in is kept, in normal, pen
 		await runSweep(later.deps(pendingStore, () => NOW + 1000), { confirmMs: 0 });
 		assert.deepEqual(later.removed, []);
 		assert.ok(later.logs.some((line) => line.startsWith("keep checkout /wt/linked") && line.includes("workspace reopened")), later.logs.join("\n"));
-		assert.equal(Object.keys((await pendingStore.read()).pending).length, 0, "the pending entry is settled either way");
+		assert.equal((await pendingStore.read()).pending["/wt/linked"]?.inUse, true, "the entry stays, marked in use, until the workspace is gone");
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -483,6 +483,12 @@ test("Clean check sees untracked files despite status.showUntrackedFiles=no, and
 		assert.equal(sh(skipped, "status", "--porcelain"), "", "skip-worktree hides the edit from status");
 		assert.equal(await git.hidden(skipped), "a.txt");
 
+		const sparse = checkout("sparse");
+		sh(sparse, "update-index", "--skip-worktree", "b.txt");
+		await rm(join(sparse, "b.txt"));
+		assert.equal(await git.hidden(sparse), "", "a skip-worktree file left out of a sparse checkout hides nothing");
+		assert.equal(await git.status(sparse), "");
+
 		const assumed = checkout("assumed");
 		sh(assumed, "update-index", "--assume-unchanged", "b.txt");
 		await writeFile(join(assumed, "b.txt"), "edited\n");
@@ -502,6 +508,45 @@ test("Clean check sees untracked files despite status.showUntrackedFiles=no, and
 		assert.ok(w.logs.some((line) => line.includes(join(root, "skipped")) && line.includes("skip-worktree or assume-unchanged")), w.logs.join("\n"));
 	} finally {
 		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("A checkout kept for a worker pane in another workspace is removed once that pane is gone", async () => {
+	const dir = await tempDir();
+	try {
+		const w = world({
+			workspaces: [workspace("a", "linked"), workspace("p", "parent", { worktree: worktree("/repo", false) })],
+			panes: [pane("a:p1", "a"), pane("p:p1", "p", { agent: "pi", cwd: "/repo", foreground_cwd: "/wt/linked/app" })],
+			checkouts: { "/wt/linked": {} },
+		});
+		const store = createStore(dir);
+		await runSweep(w.deps(store), { confirmMs: 0 });
+		assert.deepEqual(w.removed, []);
+		assert.equal((await store.read()).pending["/wt/linked"]?.inUse, true, "kept for a pane that works in it");
+		// Hours later: the entry has not expired, and the worker is still there.
+		await runSweep(w.deps(store, () => NOW + 5 * 60 * 60_000), { confirmMs: 0 });
+		assert.deepEqual(w.removed, []);
+		assert.equal((await store.read()).pending["/wt/linked"]?.inUse, true, "still pending, not deleted");
+		w.panes = w.panes.filter((candidate) => candidate.pane_id !== "p:p1");
+		await runSweep(w.deps(store, () => NOW + 6 * 60 * 60_000), { confirmMs: 0 });
+		assert.deepEqual(w.removed, ["/wt/linked"]);
+		assert.deepEqual((await store.read()).pending, {});
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("A removal killed by its timeout is logged as possibly half-removed", async () => {
+	const dir = await tempDir();
+	try {
+		const w = world({ workspaces: [workspace("a", "slow")], panes: [pane("a:p1", "a")], checkouts: { "/wt/slow": {} } });
+		w.git.removeWorktree = async () => {
+			throw Object.assign(new Error("git worktree remove did not finish within 300s"), { timedOut: true });
+		};
+		await runSweep(w.deps(createStore(dir)), { confirmMs: 0 });
+		assert.ok(w.logs.some((line) => line.includes("/wt/slow") && line.includes("half-removed") && !line.includes("refused")), w.logs.join("\n"));
+	} finally {
+		await rm(dir, { recursive: true, force: true });
 	}
 });
 
@@ -541,7 +586,8 @@ test("Each pane is looked at again right before it is closed", async () => {
 			assert.deepEqual(w.calls, [], `${name}: nothing is closed`);
 			assert.deepEqual(w.removed, [], `${name}: the checkout stays`);
 			assert.ok(w.logs.some((line) => line.startsWith("skip left (a:p1)") && expected.test(line)), `${name}: ${w.logs.join(" | ")}`);
-			assert.deepEqual((await store.read()).pending, {}, `${name}: a workspace that was never emptied is not pending`);
+			assert.ok((await store.read()).pending["/wt/left"], `${name}: the checkout waits for a later sweep`);
+			assert.equal((await store.read()).pending["/wt/left"].inUse, undefined, `${name}: and expires like any pending entry`);
 		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}

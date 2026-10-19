@@ -49,23 +49,35 @@ async function checkoutUser(checkout, deps, ignore) {
 	}
 }
 
-/** Removes a closed workspace's checkout when it is clean, and says why when it is not. The branch is never touched. */
+/**
+ * Removes a closed workspace's checkout when it is clean, and says why when it is not. The branch is never touched.
+ * @returns {Promise<"removed" | "in-use" | "kept">} "in-use" means a pane or workspace still uses a clean checkout: worth retrying later
+ */
 async function reapCheckout(entry, deps, dryRun, ignore = {}) {
 	// Read the pins again: the user may have pinned the workspace while this sweep ran.
 	const facts = await checkoutFacts(deps, entry.checkout, entry.checkout in (await deps.store.read()).pins);
 	const decision = decideRemoval(facts);
 	if (!decision.remove) {
 		deps.log(`${dryRun ? "would keep" : "keep"} checkout ${entry.checkout}: ${decision.reason}${decision.gone ? "" : ", branch kept"}`);
-		return;
+		return "kept";
 	}
 	const user = await checkoutUser(entry.checkout, deps, ignore);
-	if (user) return deps.log(`${dryRun ? "would keep" : "keep"} checkout ${entry.checkout}: ${user}, branch kept`);
-	if (dryRun) return deps.log(`would remove checkout ${entry.checkout} (clean; branch ${facts.branch ?? "(detached)"} kept)`);
+	if (user) {
+		deps.log(`${dryRun ? "would keep" : "keep"} checkout ${entry.checkout}: ${user}, branch kept`);
+		return "in-use";
+	}
+	if (dryRun) {
+		deps.log(`would remove checkout ${entry.checkout} (clean; branch ${facts.branch ?? "(detached)"} kept)`);
+		return "removed";
+	}
 	try {
 		await deps.git.removeWorktree(entry.repoRoot, entry.checkout);
 		deps.log(`remove checkout ${entry.checkout} (clean; branch ${facts.branch ?? "(detached)"} kept)`);
+		return "removed";
 	} catch (error) {
-		deps.log(`keep checkout ${entry.checkout}: git refused to remove it: ${error.message.split("\n")[0]}`);
+		if (error.timedOut) deps.log(`keep checkout ${entry.checkout}: removal timed out; the checkout may be half-removed, run \`git worktree prune\` or \`git worktree remove --force ${entry.checkout}\``);
+		else deps.log(`keep checkout ${entry.checkout}: git refused to remove it: ${error.message.split("\n")[0]}`);
+		return "kept";
 	}
 }
 
@@ -113,14 +125,17 @@ async function sweepLocked(deps, confirmMs, dryRun) {
 	const live = new Set(workspaces.map((workspace) => workspace.workspace_id));
 	for (const [checkout, entry] of Object.entries(state.pending)) {
 		if (live.has(entry.workspaceId)) {
-			if (now - entry.since > PENDING_GIVE_UP_MS) {
+			// A checkout kept for a pane that works in it waits as long as that pane does: workers run for hours.
+			if (!entry.inUse && now - entry.since > PENDING_GIVE_UP_MS) {
 				deps.log(`give up on ${checkout}: workspace ${entry.label} never closed`);
 				ops.push(del(["pending", checkout]));
 			}
 			continue;
 		}
-		await reapCheckout({ ...entry, checkout }, deps, dryRun);
-		if (!dryRun) ops.push(del(["pending", checkout]));
+		const result = await reapCheckout({ ...entry, checkout }, deps, dryRun);
+		if (dryRun) continue;
+		if (result === "in-use") ops.push(set(["pending", checkout], { ...entry, inUse: true }));
+		else ops.push(del(["pending", checkout]));
 	}
 	// A workspace keeps its checkout for this run when any of its panes stayed open.
 	const stayed = new Set();
@@ -144,6 +159,13 @@ async function sweepLocked(deps, confirmMs, dryRun) {
 		}
 	}
 	const closing = plan.expectClosed.filter((entry) => !stayed.has(entry.workspaceId));
+	// A workspace whose pane stayed open keeps its checkout for now; once it closes, a later sweep takes it.
+	if (!dryRun) {
+		for (const entry of plan.expectClosed.filter((candidate) => stayed.has(candidate.workspaceId))) {
+			if (entry.checkout in state.pending) continue;
+			ops.push(set(["pending", entry.checkout], { workspaceId: entry.workspaceId, label: entry.label, repoRoot: entry.repoRoot, since: now }));
+		}
+	}
 	if (dryRun) {
 		// The panes and workspaces this sweep would close are still alive here, so they are not what keeps a checkout.
 		const ignore = { panes: new Set(plan.closes.map((close) => close.paneId)), workspaces: new Set(closing.map((entry) => entry.workspaceId)) };
@@ -167,7 +189,8 @@ async function sweepLocked(deps, confirmMs, dryRun) {
 				ops.push(set(["pending", entry.checkout], { workspaceId: entry.workspaceId, label: entry.label, repoRoot: entry.repoRoot, since: now }));
 				deps.log(`workspace ${entry.label} is still open; its checkout ${entry.checkout} is retried next run`);
 			} else {
-				await reapCheckout(entry, deps, false);
+				const result = await reapCheckout(entry, deps, false);
+				if (result === "in-use") ops.push(set(["pending", entry.checkout], { workspaceId: entry.workspaceId, label: entry.label, repoRoot: entry.repoRoot, since: now, inUse: true }));
 			}
 		}
 	}

@@ -154,7 +154,7 @@ export function gitClient() {
 		try {
 			return (await run("git", args, { maxBuffer: 16 * 1024 * 1024, timeout })).stdout;
 		} catch (error) {
-			if (error.killed) throw new Error(`git ${args.join(" ")} did not finish within ${timeout / 1000}s`);
+			if (error.killed) throw Object.assign(new Error(`git ${args.join(" ")} did not finish within ${timeout / 1000}s`), { timedOut: true });
 			throw error;
 		}
 	};
@@ -162,7 +162,7 @@ export function gitClient() {
 		exists: (path) => existsSync(path),
 		realpath: (path) => {
 			try {
-				return realpathSync(path);
+				return realpathSync.native(path);
 			} catch {
 				return path;
 			}
@@ -171,10 +171,11 @@ export function gitClient() {
 		// ignore settings change what a plain `status` prints, and --no-optional-locks keeps a read from touching the index.
 		status: (checkout) => git(["--no-optional-locks", "-C", checkout, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"]),
 		// Tracked files git is told not to look at: skip-worktree (`S`) and assume-unchanged (lowercase), whose edits status never shows.
+		// Skip-worktree files missing on disk are what a sparse checkout leaves out; they hide no edit, so they do not count.
 		hidden: async (checkout) =>
 			(await git(["--no-optional-locks", "-C", checkout, "ls-files", "-v", "-z"]))
 				.split("\0")
-				.filter((entry) => /^[a-zS] /.test(entry))
+				.filter((entry) => /^[a-z] /.test(entry) || (entry.startsWith("S ") && existsSync(join(checkout, entry.slice(2)))))
 				.map((entry) => entry.slice(2))
 				.join("\n"),
 		branch: (checkout) => git(["-C", checkout, "symbolic-ref", "--quiet", "--short", "HEAD"]).then((out) => out.trim(), () => null),

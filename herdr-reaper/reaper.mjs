@@ -85,7 +85,10 @@ async function ticker() {
 		try {
 			state = await store.read();
 		} catch (error) {
-			return console.log(`${error.message}; ticker stops`);
+			// The sweep action reads the state file too and logs the failure where the plugin's other errors are.
+			console.log(`${error.message}; ticker invokes a sweep to surface it, then stops`);
+			spawn(bin, ["plugin", "action", "invoke", `${pluginId}.sweep`], { stdio: "ignore", env }).on("error", () => {});
+			return;
 		}
 		if (Date.now() >= state.nextSweepAt) {
 			await store.apply([{ op: "set", path: ["nextSweepAt"], value: Date.now() + 10 * 60_000 }]);
