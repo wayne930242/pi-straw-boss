@@ -227,6 +227,11 @@ A session that ends clears its own and its subagents'.
 
 The tokens rest on Herdr's order as of the session's last refresh, so moving a tab or workspace shows in the net view within 4 minutes, and a subagent that has a new sibling gets its `├─` at the next refresh.
 A subagent is marked while its pane runs pi: its launcher publishes again 3 and 15 seconds after a `subagent` or `subagent_resume` call returns, so a new subagent hangs under it within seconds, and its tokens go at the next refresh once it has finished.
+A subagent whose pi Herdr has not detected by then (it waits at pi's trust prompt, say) is marked when Herdr reports it, not at the next refresh.
+While a launched subagent has no pi pane, its launcher keeps one `events.subscribe` connection open for `pane.agent_detected` and `pane.updated` (the two events that can turn a pane into a pi on the subagent's session file), and a burst of them, from a pane the launcher has not marked, sets one timer of 1 s that reads Herdr once.
+The reading writes only the subagents' tokens, and only when they differ from the last ones written, so events that change nothing cost one reading and no write.
+The connection closes as soon as every launched subagent has a pi pane, and with it a session that launched none holds none; a subagent that finished in the last 10 minutes has no pane either, so the connection stays that long after it.
+The 4 minute refresh stays as the safety net, and a subagent's tokens still go at the next refresh once it has finished.
 
 **A new Herdr server.**
 Herdr keeps pane and workspace tokens in the server's memory, so a server that takes over (a live handoff during an update, or a stop and a start) begins with none of them, and the net view would stay unsorted, and a tower would look absent, until each session's next 4 minute refresh.

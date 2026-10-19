@@ -14,6 +14,7 @@ import { ARROW, type HerdrRun, type HerdrTab, type HerdrWorld, isSub, MARK, type
 //    indent under the launcher. A tower, a main agent and a member carry none.
 //  - `sb_name`: a subagent's own name, as pi-herdr-agents shows it. Herdr's pane label held it until a new server dropped the label; a row can show the token instead. A subagent alone carries one.
 // A session writes them for itself and for the subagents it launched, which never join and write nothing, on the same 4 minute refresh as `sb_role`.
+// A launched subagent whose pi Herdr has not detected yet is marked as soon as Herdr reports it (presence.ts), not at the next refresh.
 
 /** What `sb_indent` holds on a subagent: the branch to it from its launcher, and `last` for the youngest marked sibling. */
 export const INDENT = { more: "\u251c\u2500", last: "\u2514\u2500" } as const;
@@ -50,20 +51,35 @@ export function descendants(parent: Pane | undefined, key: string, name: string,
 	});
 }
 
+/**
+ * Whether a subagent below a session has no pi pane to mark yet: it launched (its activity file is there) but Herdr shows no pi on its session file, as at
+ * pi's trust prompt. One whose activity says it is done is not waited for, so the wait ends with it, not 10 minutes later. Reads the records `descendants` reads.
+ */
+export function unplaced(parent: Pane | undefined, ps: Pane[], now: number, seen = new Set<string>(parent ? [parent.pane_id] : [])): boolean {
+	if (!parent) return false;
+	return subagents(parent, ps, now, MAX_KIDS).some((row) => {
+		if (!row.pane) return !row.finished;
+		if (seen.has(row.pane)) return false;
+		seen.add(row.pane);
+		return unplaced(ps.find((p) => p.pane_id === row.pane), ps, now, seen);
+	});
+}
+
 /** The subagent panes a session marks: each gets `sb_order`, `sb_mark`, `sb_indent` and `sb_name`. */
 export interface Kid { pane: string; order: string; mark: string; indent: string; name: string }
 
 /**
  * What a session publishes besides its role: its own tokens (null clears them when Herdr cannot place the session, a tower has no mark, and none
- * has an indent or a name, which clears the ones a pane keeps from when it ran a subagent) and those of the subagents it launched. Reads Herdr only.
+ * has an indent or a name, which clears the ones a pane keeps from when it ran a subagent) and those of the subagents it launched, and whether one of those
+ * has no pi pane yet (`waiting`). Reads Herdr only.
  */
-export async function netTokens(run: HerdrRun, place: Place, role: "tower" | "main" | "member", name: string, now = Date.now(), world: HerdrWorld = worldOf(run)): Promise<{ own: Record<string, string | null>; kids: Kid[]; joined: Set<string> }> {
+export async function netTokens(run: HerdrRun, place: Place, role: "tower" | "main" | "member", name: string, now = Date.now(), world: HerdrWorld = worldOf(run)): Promise<{ own: Record<string, string | null>; kids: Kid[]; joined: Set<string>; waiting: boolean }> {
 	const { panes: ps, workspaces: all, tabs: tabList } = await world(place.workspaceId);
 	const pane = ps.find((p) => p.pane_id === place.paneId), key = pane && orderKey(role, pane, ps, all, tabList);
 	const joined = new Set(ps.filter((p) => p.tokens?.sb_role).map((p) => p.pane_id));
 	const tab = tabList.find((t) => t.tab_id === pane?.tab_id)?.label || null;
 	const labels = { sb_main_tab: role === "main" ? tab : null, sb_tab: role === "member" ? tab : null, sb_member_tab: null };
-	return { own: { sb_order: key ?? null, sb_mark: role === "tower" ? null : MARK[role], sb_indent: null, sb_name: null, ...labels }, kids: key ? descendants(pane, key, name, ps, now) : [], joined };
+	return { own: { sb_order: key ?? null, sb_mark: role === "tower" ? null : MARK[role], sb_indent: null, sb_name: null, ...labels }, kids: key ? descendants(pane, key, name, ps, now) : [], joined, waiting: Boolean(key) && unplaced(pane, ps, now) };
 }
 
 /**
