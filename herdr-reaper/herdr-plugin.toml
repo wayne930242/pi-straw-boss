@@ -10,13 +10,17 @@ platforms = ["macos", "linux"]
 [[startup]]
 command = ["/bin/bash", "run.sh", "reaper.mjs", "startup"]
 
-# Bookkeeping only: a workspace appearing or being renamed, and an agent starting or being released. No event hook sweeps by itself.
+# Bookkeeping only: a workspace appearing, being renamed or closing, and an agent starting or being released. No event hook sweeps by itself.
 [[events]]
 on = "workspace.created"
 command = ["/bin/bash", "run.sh", "reaper.mjs", "event"]
 
 [[events]]
 on = "workspace.renamed"
+command = ["/bin/bash", "run.sh", "reaper.mjs", "event"]
+
+[[events]]
+on = "workspace.closed"
 command = ["/bin/bash", "run.sh", "reaper.mjs", "event"]
 
 [[events]]

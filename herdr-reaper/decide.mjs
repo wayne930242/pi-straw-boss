@@ -45,6 +45,15 @@ export function applyOps(state, ops) {
 }
 
 const worktreeOf = (workspace) => workspace.worktree ?? {};
+const checkoutOf = (workspace) => worktreeOf(workspace).checkout_path ?? null;
+/**
+ * The record kept for a workspace id, unless it belongs to another workspace: Herdr reuses the ids of closed workspaces, and a
+ * record whose checkout differs from the live workspace's is the earlier one's.
+ */
+const recordOf = (workspace, state) => {
+	const record = state.workspaces[workspace.workspace_id];
+	return record && (record.checkout ?? null) === checkoutOf(workspace) ? record : undefined;
+};
 export const isLinked = (workspace) => worktreeOf(workspace).is_linked_worktree === true;
 /** The key a pin is stored under: the checkout survives a workspace being reopened, the workspace id does not. */
 export const pinKey = (workspace) => worktreeOf(workspace).checkout_path ?? `workspace:${workspace.workspace_id}`;
@@ -172,8 +181,8 @@ export function decideRemoval({ pinned, exists, dirty, hidden = "", detached, co
  * @returns {{ ops: object[], pin: { preLabel: string } | null, note: string | null }}
  */
 export function onRename(workspace, state, now) {
-	const record = state.workspaces[workspace.workspace_id];
-	const remember = (createdAt) => set(["workspaces", workspace.workspace_id], { createdAt, label: workspace.label });
+	const record = recordOf(workspace, state);
+	const remember = (createdAt) => set(["workspaces", workspace.workspace_id], { createdAt, label: workspace.label, checkout: checkoutOf(workspace) });
 	if (!record) return { ops: [remember(0)], pin: null, note: null };
 	const unchanged = { ...record, label: workspace.label };
 	if (record.label === workspace.label) return { ops: [], pin: null, note: null };
@@ -190,13 +199,14 @@ export function onRename(workspace, state, now) {
 export function noteWorkspaces(workspaces, state, now, createdIds = new Set()) {
 	const ops = state.seeded ? [] : [set(["seeded"], true)];
 	for (const workspace of workspaces) {
-		const record = state.workspaces[workspace.workspace_id];
+		const record = recordOf(workspace, state);
+		const checkout = checkoutOf(workspace);
 		if (createdIds.has(workspace.workspace_id)) {
 			// A created event is the word on a workspace's age, even over an older record: Herdr reuses ids of closed workspaces, and a
 			// rename event may have made the record first.
-			ops.push(set(["workspaces", workspace.workspace_id], { createdAt: now, label: workspace.label }));
+			ops.push(set(["workspaces", workspace.workspace_id], { createdAt: now, label: workspace.label, checkout }));
 		} else if (!record) {
-			ops.push(set(["workspaces", workspace.workspace_id], { createdAt: state.seeded ? now : 0, label: workspace.label }));
+			ops.push(set(["workspaces", workspace.workspace_id], { createdAt: state.seeded ? now : 0, label: workspace.label, checkout }));
 		} else if (record.label !== workspace.label) {
 			// A label change no rename event reported is not attributed to the user.
 			ops.push(set(["workspaces", workspace.workspace_id, "label"], workspace.label));
@@ -206,6 +216,9 @@ export function noteWorkspaces(workspaces, state, now, createdIds = new Set()) {
 	for (const id of Object.keys(state.workspaces)) if (!live.has(id)) ops.push(del(["workspaces", id]));
 	return ops;
 }
+
+/** What a closed workspace leaves behind that its id's next holder must not inherit: its record, and a pin keyed by the id. */
+export const forgetWorkspace = (workspaceId) => [del(["workspaces", workspaceId]), del(["pins", `workspace:${workspaceId}`])];
 
 /** Drops the agent and candidate records of panes that no longer exist. */
 export function prunePanes(panes, state) {

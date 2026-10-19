@@ -2,7 +2,7 @@
 // so tests can run them against fakes; reaper.mjs wires the real ones.
 import {
 	CONFIRM_MS, PIN_GLYPH, PIN_TOKEN, SWEEP_INTERVAL_MS,
-	del, decideRemoval, findCheckoutUser, inScope, isPinned, noteWorkspaces, onRename, pinKey, planSweep, prunePanes, prunePins, set, shellIsIdle, togglePin,
+	del, decideRemoval, findCheckoutUser, forgetWorkspace, inScope, isPinned, noteWorkspaces, onRename, pinKey, planSweep, prunePanes, prunePins, set, shellIsIdle, togglePin,
 } from "./decide.mjs";
 import { withLock } from "./io.mjs";
 
@@ -158,7 +158,11 @@ async function sweepLocked(deps, confirmMs, dryRun) {
 			const open = new Set((await deps.herdr.listWorkspaces()).map((workspace) => workspace.workspace_id));
 			remaining = new Set([...remaining].filter((id) => open.has(id)));
 		}
+		const records = (await deps.store.read()).workspaces;
 		for (const entry of closing) {
+			// A record already there for another checkout is a new workspace's on a reused id, and stays.
+			const record = records[entry.workspaceId];
+			if (!remaining.has(entry.workspaceId) && (!record || record.checkout === entry.checkout)) ops.push(...forgetWorkspace(entry.workspaceId));
 			if (remaining.has(entry.workspaceId)) {
 				ops.push(set(["pending", entry.checkout], { workspaceId: entry.workspaceId, label: entry.label, repoRoot: entry.repoRoot, since: now }));
 				deps.log(`workspace ${entry.label} is still open; its checkout ${entry.checkout} is retried next run`);
@@ -216,10 +220,22 @@ export async function runEvent(deps, name, payload) {
 		}
 		return;
 	}
+	if (name === "workspace.closed") {
+		const id = idOf(payload);
+		if (!id) return;
+		// Its id may already belong to a new workspace; that one's record is kept, and a stale one (another checkout) is replaced.
+		const live = (await deps.herdr.listWorkspaces()).find((candidate) => candidate.workspace_id === id);
+		if (!live) return deps.store.apply(forgetWorkspace(id));
+		const record = state.workspaces[id];
+		if (record && (record.checkout ?? null) !== (live.worktree?.checkout_path ?? null)) await deps.store.apply(forgetWorkspace(id));
+		return;
+	}
 	if (name === "pane.agent_detected") {
 		const released = payload.released === true;
 		const pane = payload.pane_id ? await deps.herdr.getPane(payload.pane_id).catch(() => null) : null;
 		if (!pane) return;
+		// A pane id can be reused within the hook's latency; when the event names its terminal, it must still be this pane's.
+		if (payload.terminal_id && pane.terminal_id && payload.terminal_id !== pane.terminal_id) return;
 		const key = pane.terminal_id ?? pane.pane_id;
 		if (!released) return deps.store.apply([set(["agentSeen", key], now)]);
 		// The agent is gone: the pane has qualified from now on, and a sweep is due when the confirmation wait ends.
@@ -228,7 +244,7 @@ export async function runEvent(deps, name, payload) {
 		if (!(state.nextSweepAt > now && state.nextSweepAt < due)) ops.push(set(["nextSweepAt"], due));
 		return deps.store.apply(ops);
 	}
-	// workspace.created, worktree.created, worktree.opened
+	// workspace.created
 	const workspaces = await deps.herdr.listWorkspaces();
 	const created = new Set([idOf(payload)].filter(Boolean));
 	await deps.store.apply(noteWorkspaces(workspaces, state, now, created));
