@@ -27,12 +27,13 @@ async function restoreTokens(workspaces, state, deps) {
 async function checkoutFacts(deps, checkout, pinned) {
 	if (!deps.git.exists(checkout)) return { pinned, exists: false, dirty: "", hidden: "", detached: false, containedBy: "", branch: null };
 	const branch = await deps.git.branch(checkout);
-	const [dirty, hidden, containedBy] = await Promise.all([
+	const [dirty, hidden, containedBy, found] = await Promise.all([
 		deps.git.status(checkout).catch((error) => `git status failed: ${error.message}`),
 		(deps.git.hidden?.(checkout) ?? Promise.resolve("")).catch((error) => `git ls-files failed: ${error.message}`),
 		branch ? "" : deps.git.containedBy(checkout).catch(() => ""),
+		(deps.git.submodules?.(checkout) ?? Promise.resolve([])).then((submodules) => ({ submodules }), (error) => ({ submodules: [], submodulesError: error.message.split("\n")[0] })),
 	]);
-	return { pinned, exists: true, dirty, hidden, detached: !branch, containedBy, branch };
+	return { pinned, exists: true, dirty, hidden, detached: !branch, containedBy, branch, ...found };
 }
 
 /**
@@ -66,13 +67,22 @@ async function reapCheckout(entry, deps, dryRun, ignore = {}) {
 		deps.log(`${dryRun ? "would keep" : "keep"} checkout ${entry.checkout}: ${user}, branch kept`);
 		return "in-use";
 	}
+	const clean = facts.submodules.length ? `clean; ${facts.submodules.length} submodule${facts.submodules.length === 1 ? "" : "s"} deinitialized first` : "clean";
 	if (dryRun) {
-		deps.log(`would remove checkout ${entry.checkout} (clean; branch ${facts.branch ?? "(detached)"} kept)`);
+		deps.log(`would remove checkout ${entry.checkout} (${clean}; branch ${facts.branch ?? "(detached)"} kept)`);
 		return "removed";
 	}
 	try {
+		if (facts.submodules.length) {
+			try {
+				await deps.git.deinitSubmodules(entry.checkout);
+			} catch (error) {
+				deps.log(`keep checkout ${entry.checkout}: submodules could not be deinitialized: ${error.message.split("\n")[0]}, branch kept`);
+				return "kept";
+			}
+		}
 		await deps.git.removeWorktree(entry.repoRoot, entry.checkout);
-		deps.log(`remove checkout ${entry.checkout} (clean; branch ${facts.branch ?? "(detached)"} kept)`);
+		deps.log(`remove checkout ${entry.checkout} (${clean}; branch ${facts.branch ?? "(detached)"} kept)`);
 		return "removed";
 	} catch (error) {
 		const failure = error.timedOut ? `removal timed out (${error.message})` : `git refused to remove it: ${error.message.split("\n")[0]}`;

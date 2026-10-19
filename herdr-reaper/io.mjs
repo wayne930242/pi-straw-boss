@@ -161,7 +161,18 @@ export function gitReason(error) {
 	return String(error.message ?? error).split("\n").find((line) => line.trim() && !line.startsWith("Command failed:"))?.trim() ?? "git failed without a message";
 }
 
-/** git, read-only except `removeWorktree`, which never forces. */
+const STATUS_ARGS = (checkout) => ["--no-optional-locks", "-C", checkout, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"];
+
+/** Tracked files git is told not to look at: skip-worktree (`S`) and assume-unchanged (lowercase), whose edits status never shows. */
+async function hiddenFiles(git, checkout) {
+	return (await git(["--no-optional-locks", "-C", checkout, "ls-files", "-v", "-z"]))
+		.split("\0")
+		.filter((entry) => /^[a-z] /.test(entry) || (entry.startsWith("S ") && existsSync(join(checkout, entry.slice(2)))))
+		.map((entry) => entry.slice(2))
+		.join("\n");
+}
+
+/** git, read-only except `deinitSubmodules` and `removeWorktree`, which never forces. */
 export function gitClient() {
 	const git = async (args, timeout = GIT_TIMEOUT_MS) => {
 		try {
@@ -182,17 +193,52 @@ export function gitClient() {
 		},
 		// Spelled out so a repository's or user's config cannot hide files from it: `status.showUntrackedFiles=no` and submodule
 		// ignore settings change what a plain `status` prints, and --no-optional-locks keeps a read from touching the index.
-		status: (checkout) => git(["--no-optional-locks", "-C", checkout, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"]),
+		status: (checkout) => git(STATUS_ARGS(checkout)),
 		// Tracked files git is told not to look at: skip-worktree (`S`) and assume-unchanged (lowercase), whose edits status never shows.
 		// Skip-worktree files missing on disk are what a sparse checkout leaves out; they hide no edit, so they do not count.
-		hidden: async (checkout) =>
-			(await git(["--no-optional-locks", "-C", checkout, "ls-files", "-v", "-z"]))
-				.split("\0")
-				.filter((entry) => /^[a-z] /.test(entry) || (entry.startsWith("S ") && existsSync(join(checkout, entry.slice(2)))))
-				.map((entry) => entry.slice(2))
-				.join("\n"),
+		hidden: (checkout) => hiddenFiles(git, checkout),
 		branch: (checkout) => git(["-C", checkout, "symbolic-ref", "--quiet", "--short", "HEAD"]).then((out) => out.trim(), () => null),
 		containedBy: (checkout) => git(["-C", checkout, "for-each-ref", "--contains", "HEAD", "refs/heads", "refs/remotes", "refs/tags"]),
+		// Every initialized submodule below the checkout (recursively) with what deleting its repository would lose. In a linked worktree
+		// that repository lives in the main repository's `.git/worktrees/<id>/modules/...` and goes with the worktree's admin directory,
+		// so only a remote-tracking ref, or a ref of the main repository's own copy of the module, keeps a commit.
+		submodules: async (checkout) => {
+			const listed = await git(["-C", checkout, "submodule", "foreach", "--quiet", "--recursive", 'printf "%s\\0" "$displaypath"']).catch((error) => {
+				throw new Error(gitReason(error));
+			});
+			const found = [];
+			for (const path of listed.split("\0").filter(Boolean)) {
+				const dir = join(checkout, path);
+				const [dirty, hidden, head, gitDir] = await Promise.all([
+					git(STATUS_ARGS(dir)),
+					hiddenFiles(git, dir),
+					git(["-C", dir, "rev-parse", "HEAD"]).then((out) => out.trim()),
+					git(["-C", dir, "rev-parse", "--absolute-git-dir"]).then((out) => out.trim()),
+				]);
+				const refsContaining = (gitArgs, refs) => git([...gitArgs, "for-each-ref", "--contains", head, ...refs]).then((out) => out.trim(), () => "");
+				const own = await refsContaining(["-C", dir], ["refs/remotes"]);
+				const shared = /^(.*)\/worktrees\/[^/]+\/modules\/(.+)$/.exec(gitDir);
+				const main = shared && existsSync(join(shared[1], "modules", shared[2])) ? await refsContaining(["--git-dir", join(shared[1], "modules", shared[2])], ["refs/heads", "refs/remotes", "refs/tags"]) : "";
+				// A local branch ahead of every remote-tracking ref is lost with the repository even when HEAD is safe.
+				const ahead = (await git(["-C", dir, "rev-list", "--branches", "--not", "--remotes", "--max-count=1"]).catch(() => "")).trim() !== "";
+				found.push({ path, dirty, hidden, head, kept: Boolean(own || main), ahead });
+			}
+			return found;
+		},
+		// Plain `deinit` (never --force: it refuses a submodule with local modifications, which the checks already ruled out) empties the
+		// submodules' directories, but `git worktree remove` still refuses while the worktree's admin directory holds their repositories.
+		// Those are what the checks proved safe to lose, so exactly that directory (`.git/worktrees/<id>/modules`) is deleted too.
+		deinitSubmodules: async (checkout) => {
+			try {
+				await git(["-C", checkout, "submodule", "deinit", "--all"], GIT_REMOVE_TIMEOUT_MS);
+				const adminDir = (await git(["-C", checkout, "rev-parse", "--absolute-git-dir"])).trim();
+				if (!/\/worktrees\/[^/]+$/.test(adminDir)) throw new Error(`${adminDir} is not a linked worktree's admin directory`);
+				await rm(join(adminDir, "modules"), { recursive: true, force: true });
+			} catch (error) {
+				if (error.timedOut) throw error;
+				throw Object.assign(new Error(error.stderr === undefined ? error.message : gitReason(error)), { timedOut: false });
+			}
+		},
 		removeWorktree: (repoRoot, checkout) =>
 			git(["-C", repoRoot, "worktree", "remove", checkout], GIT_REMOVE_TIMEOUT_MS).catch((error) => {
 				throw Object.assign(new Error(error.timedOut ? error.message : gitReason(error)), { timedOut: error.timedOut === true });

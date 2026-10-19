@@ -1,6 +1,7 @@
 // @ts-nocheck: the plugin scripts are plain JavaScript and the fake Herdr, git and panes are loose test data.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -149,6 +150,19 @@ test("Checkout removal", async () => {
 	assert.equal(decideRemoval({ ...clean, exists: false }).remove, false);
 	assert.equal(decideRemoval({ ...clean, detached: true }).remove, false, "a detached HEAD no ref contains would be lost");
 	assert.equal(decideRemoval({ ...clean, detached: true, containedBy: "abc refs/heads/main" }).remove, true);
+});
+
+test("Checkout removal with submodules", async () => {
+	const clean = { pinned: false, exists: true, dirty: "", detached: false, containedBy: "" };
+	const sub = { path: "community", dirty: "", hidden: "", head: "abc1234def", kept: true, ahead: false };
+	assert.equal(decideRemoval({ ...clean, submodules: [sub] }).remove, true);
+	assert.equal(decideRemoval({ ...clean, submodules: [sub, { ...sub, path: "a/b" }] }).remove, true);
+	assert.equal(decideRemoval({ ...clean, dirty: " M community\n", submodules: [{ ...sub, dirty: " M x\n?? y\n" }] }).reason, "submodule community has 2 uncommitted paths");
+	assert.match(decideRemoval({ ...clean, submodules: [{ ...sub, hidden: "x" }] }).reason, /submodule community has 1 uncommitted paths/);
+	assert.equal(decideRemoval({ ...clean, submodules: [{ ...sub, kept: false }] }).reason, "submodule community HEAD abc1234 is in no ref outside this worktree (no remote-tracking ref contains it)");
+	assert.match(decideRemoval({ ...clean, submodules: [{ ...sub, ahead: true }] }).reason, /local branch with commits/);
+	assert.match(decideRemoval({ ...clean, submodulesError: "boom" }).reason, /submodules could not be checked \(boom\)/);
+	assert.equal(decideRemoval({ ...clean, dirty: " M a\n", submodules: [sub] }).remove, false, "the checkout's own checks still apply");
 });
 
 test("Renames", async () => {
@@ -619,7 +633,7 @@ test("Real git: a submodule checkout is refused and stays; a removal that fails 
 		assert.equal(await git.leftover(repo, partial), "half-removed", "the directory is there, git no longer registers it");
 
 		const w = world({ workspaces: [workspace("a", "x", { worktree: worktree(withSub, true, repo) }), workspace("b", "y", { worktree: worktree(partial, true, repo) })], panes: [pane("a:p1", "a"), pane("b:p1", "b")] });
-		w.git = { ...git, status: async () => "", hidden: async () => "", branch: async (path) => (path === withSub ? "has-sub" : "partial"), containedBy: async () => "" };
+		w.git = { ...git, status: async () => "", hidden: async () => "", branch: async (path) => (path === withSub ? "has-sub" : "partial"), containedBy: async () => "", submodules: async () => [] };
 		await runSweep(w.deps(createStore(join(root, "state"))), { confirmMs: 0 });
 		assert.ok(w.logs.some((line) => line.startsWith(`keep checkout ${withSub}: git refused to remove it: fatal: `) && line.endsWith(", branch has-sub kept")), w.logs.join("\n"));
 		assert.ok(w.logs.some((line) => line.startsWith(`keep checkout ${partial}:`) && line.includes(`leftover files remain at ${partial}, git no longer tracks it, branch partial kept`)), w.logs.join("\n"));
@@ -1047,4 +1061,92 @@ test("noteParents: parents are remembered by repository, in scope, and forgotten
 	assert.deepEqual(noted([parentShell("m", { worktree: worktree("/other", false, "/other") })], remembered), {}, "another checkout on a reused id");
 	assert.deepEqual(noted([], remembered), {}, "a closed workspace");
 	assert.deepEqual(applyOps(remembered, noteParents([], remembered)).parentCandidates, {}, "and its wait");
+});
+
+// Real git: a worktree with submodules, one nested, through runSweep with the real git client.
+const subGit = (cwd, ...args) => execFileSync("git", ["-c", "protocol.file.allow=always", "-c", "user.name=t", "-c", "user.email=t@example.com", "-C", cwd, ...args], { encoding: "utf8", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" } });
+
+async function submoduleWorld(root) {
+	const make = async (name) => {
+		const path = join(root, name);
+		await mkdir(path);
+		subGit(path, "init", "-q", "-b", "main");
+		await writeFile(join(path, "f.txt"), "x");
+		subGit(path, "add", "f.txt");
+		subGit(path, "commit", "-q", "-m", "init");
+		return path;
+	};
+	const inner = await make("inner-origin");
+	const sub = await make("community-origin");
+	subGit(sub, "submodule", "add", "-q", inner, "deep");
+	subGit(sub, "commit", "-q", "-m", "nested");
+	const repo = await make("repo");
+	subGit(repo, "submodule", "add", "-q", sub, "community");
+	subGit(repo, "commit", "-q", "-m", "submodule");
+	const checkout = async (name) => {
+		const path = join(root, name);
+		subGit(repo, "worktree", "add", "-q", path, "-b", name);
+		subGit(path, "submodule", "update", "--init", "--recursive", "-q");
+		return path;
+	};
+	const sweep = async (paths) => {
+		const w = world({ workspaces: paths.map((path, i) => workspace(`w${i}`, `x${i}`, { worktree: worktree(path, true, repo) })), panes: paths.map((_, i) => pane(`w${i}:p1`, `w${i}`)) });
+		w.git = gitClient();
+		await runSweep(w.deps(createStore(join(root, "state"))), { confirmMs: 0 });
+		return w;
+	};
+	return { repo, checkout, sweep };
+}
+
+test("Real git: a worktree whose submodules are clean and pushed is removed without --force; main repo and branch stay", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pane-reaper-sub-"));
+	try {
+		const { repo, checkout, sweep } = await submoduleWorld(root);
+		const path = await checkout("clean");
+		assert.ok(existsSync(join(path, "community", "deep", "f.txt")), "the nested submodule is checked out");
+		const dry = await (async () => {
+			const w = world({ workspaces: [workspace("w0", "x0", { worktree: worktree(path, true, repo) })], panes: [pane("w0:p1", "w0")] });
+			w.git = gitClient();
+			await runSweep(w.deps(createStore(join(root, "dry"))), { confirmMs: 0, dryRun: true });
+			return w;
+		})();
+		assert.ok(dry.logs.includes(`would remove checkout ${path} (clean; 2 submodules deinitialized first; branch clean kept)`), dry.logs.join("\n"));
+		assert.ok(existsSync(path), "a dry run removes nothing");
+		const w = await sweep([path]);
+		assert.ok(w.logs.includes(`remove checkout ${path} (clean; 2 submodules deinitialized first; branch clean kept)`), w.logs.join("\n"));
+		assert.equal(existsSync(path), false);
+		assert.ok(subGit(repo, "branch", "--list", "clean").includes("clean"), "the branch is kept");
+		assert.equal(subGit(repo, "worktree", "list", "--porcelain").includes(path), false);
+		assert.ok(existsSync(join(repo, "community")), "the main checkout is untouched");
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("Real git: a worktree with a changed, unpushed or nested-changed submodule is kept with the reason", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pane-reaper-sub-"));
+	try {
+		const { repo, checkout, sweep } = await submoduleWorld(root);
+		const changed = await checkout("changed");
+		await writeFile(join(changed, "community", "untracked.txt"), "u");
+		await writeFile(join(changed, "community", "f.txt"), "edited");
+		const local = await checkout("local");
+		await writeFile(join(local, "community", "g.txt"), "g");
+		subGit(join(local, "community"), "add", "g.txt");
+		subGit(join(local, "community"), "commit", "-q", "-m", "local only");
+		subGit(local, "add", "community");
+		subGit(local, "commit", "-q", "-m", "bump community");
+		const head = subGit(join(local, "community"), "rev-parse", "HEAD").trim().slice(0, 7);
+		// An untracked file in the nested submodule only: the middle repository shows it too, and the reason names the submodule.
+		const nested = await checkout("nested");
+		await writeFile(join(nested, "community", "deep", "h.txt"), "h");
+		const w = await sweep([changed, local, nested]);
+		for (const path of [changed, local, nested]) assert.ok(existsSync(path), `${path} stays`);
+		assert.ok(w.logs.includes(`keep checkout ${changed}: submodule community has 2 uncommitted paths, branch kept`), w.logs.join("\n"));
+		assert.ok(w.logs.includes(`keep checkout ${local}: submodule community HEAD ${head} is in no ref outside this worktree (no remote-tracking ref contains it), branch kept`), w.logs.join("\n"));
+		assert.ok(w.logs.includes(`keep checkout ${nested}: submodule community has 1 uncommitted paths, branch kept`), w.logs.join("\n"));
+		for (const name of ["changed", "local", "nested"]) assert.ok(subGit(repo, "branch", "--list", name).includes(name));
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
 });

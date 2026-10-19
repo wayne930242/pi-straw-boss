@@ -178,15 +178,27 @@ export function findCheckoutUser(roots, panes, workspaces, ignore = {}) {
 /**
  * Whether a checkout may be removed after its workspace closed. A dirty tree stays on disk; so does a detached HEAD no branch
  * or tag contains, because removing the checkout would be the last place those commits live.
+ * `submodules` are the initialized ones (recursively) with `dirty`, `hidden`, `head`, `kept` (a ref outside the worktree contains HEAD) and `ahead`.
  * `hidden` lists tracked files git was told not to look at (skip-worktree, assume-unchanged): their edits are invisible to `status`.
  * @param {{ pinned: boolean, exists: boolean, dirty: string, hidden?: string, detached: boolean, containedBy: string }} facts
  */
-export function decideRemoval({ pinned, exists, dirty, hidden = "", detached, containedBy }) {
+export function decideRemoval({ pinned, exists, dirty, hidden = "", detached, containedBy, submodules = [], submodulesError = "" }) {
 	if (pinned) return { remove: false, reason: "workspace is pinned" };
 	if (!exists) return { remove: false, reason: "checkout is already gone", gone: true };
+	// Named before the checkout's own status, which shows a dirty submodule only as one path of its own.
+	for (const sub of submodules) {
+		const changed = [sub.dirty, sub.hidden].map((text) => (text ?? "").trim()).filter(Boolean).flatMap((text) => text.split("\n")).length;
+		if (changed) return { remove: false, reason: `submodule ${sub.path} has ${changed} uncommitted paths` };
+	}
 	if (dirty.trim()) return { remove: false, reason: `uncommitted changes (${dirty.trim().split("\n").length} paths)` };
 	if (hidden.trim()) return { remove: false, reason: `${hidden.trim().split("\n").length} files marked skip-worktree or assume-unchanged, which git cannot show as changed` };
 	if (detached && !containedBy.trim()) return { remove: false, reason: "detached HEAD with commits no branch or tag contains" };
+	if (submodulesError) return { remove: false, reason: `submodules could not be checked (${submodulesError})` };
+	for (const sub of submodules) {
+		const head = String(sub.head).slice(0, 7);
+		if (!sub.kept) return { remove: false, reason: `submodule ${sub.path} HEAD ${head} is in no ref outside this worktree (no remote-tracking ref contains it)` };
+		if (sub.ahead) return { remove: false, reason: `submodule ${sub.path} has a local branch with commits no remote-tracking ref contains` };
+	}
 	return { remove: true, reason: "clean" };
 }
 
