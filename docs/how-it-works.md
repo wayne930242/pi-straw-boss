@@ -370,7 +370,7 @@ A child closed by the user rather than the plugin is handled the same way, by th
 **Pins.**
 The `pin` action is one toggle, in the `workspace` context: it sets or clears the workspace token `pin`, a Nerd Font pin (nf-md-pin, U+F0403), through `workspace.report_metadata` under the source `wayne930242.straw-boss-reaper`.
 Herdr shows a workspace token only where a row asks for it, so add `{ token = "$pin" }` to `[ui.sidebar.spaces]` rows as the README shows.
-Bind it with `[[keys.command]]` (`prefix+P` in the README's example); a key invokes it in the focused workspace.
+Bind it with `[[keys.command]]` (`prefix+i` in the README's example: `prefix+P` is Herdr's default `rename_pane`, and `alt` combinations are often taken by window managers such as AeroSpace); a key invokes it in the focused workspace.
 A pin is also written to the plugin's state file, keyed by the checkout path, because Herdr drops workspace tokens when its server restarts: a sweep puts the token back, and the pin survives a workspace being closed and opened again.
 A workspace is pinned when either the token or the state entry says so, and a pinned workspace is skipped by every sweep and its checkout is never removed.
 

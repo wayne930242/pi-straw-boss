@@ -144,7 +144,7 @@ herdr plugin install wayne930242/pi-straw-boss/herdr-reaper
 
 ```toml
 [[keys.command]]
-key = "prefix+P"
+key = "prefix+i"
 type = "plugin_action"
 command = "wayne930242.straw-boss-reaper.pin"
 description = "pin or unpin the workspace"
