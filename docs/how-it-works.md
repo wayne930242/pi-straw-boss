@@ -320,7 +320,7 @@ It is plain JavaScript that imports nothing from `src/` and talks to Herdr throu
 
 **Scope.**
 Only a workspace whose worktree is a linked git worktree (`worktree.is_linked_worktree`) is ever touched, whatever its label.
-A workspace of the main checkout, or of no repository, is never touched, and neither is anything a pinned workspace holds.
+A workspace of the main checkout, or of no repository, is never touched, and neither is anything a pinned workspace holds; the one exception is a main-checkout shell workspace a worktree was grouped under (see the parent shell below).
 An optional `config.json` in the plugin's config directory (`herdr plugin config-dir wayne930242.straw-boss-reaper`) with `{ "only_under": ["/path"] }` narrows the scope further, to repositories and checkouts below the listed directories.
 
 **What closes a pane.**
@@ -348,6 +348,14 @@ A failed removal logs git's own `fatal:`/`error:` line, not node's "Command fail
 After a failed or timed-out removal the plugin checks whether the checkout is half-removed (the directory is still there but git no longer registers it as a worktree of the repository, or its `.git` is gone, as when git deleted them and then failed on the files, say through a self-referencing `node_modules`). If so the log says that leftover files remain at the path, git no longer tracks it and the branch is kept, and that the user can delete the directory; the plugin never deletes or moves the leftover itself.
 A workspace that is still open after the wait stays pending in the state file and is retried by the next sweeps for an hour.
 Each decision is a line in the plugin log with its reason (`close`, `remove checkout`, `keep checkout ... uncommitted changes`, `skip ... workspace is pinned`).
+
+**The parent shell.**
+When a linked-worktree workspace is open, Herdr groups it under the workspace of the repository's main checkout and opens a plain shell workspace for that checkout if none exists.
+The plugin remembers a non-linked workspace as a parent once a linked worktree workspace with the same `worktree.repo_key` (else `repo_root`) was seen open, in a sweep or by the `workspace.created` hook, within `only_under`; a workspace never seen with a worktree under it is never remembered, so it is never closed.
+After the checkout step of a sweep, on a fresh look at Herdr, a remembered parent is closed (`herdr workspace close`, never the group form, so Herdr refuses if a worktree workspace appeared meanwhile) when no linked workspace of its repository is left and every pane has no agent and an idle shell, none is focused, the workspace is not pinned, and its name is the one Herdr gave it (the repository or checkout directory name) and was never renamed by the user (a rename after the 60 s grace, recorded in the workspace record).
+It must qualify for `CONFIRM_MS` (60 s) first, tracked in `parentCandidates`; closing the workspace closes only its panes, and the main checkout and every branch stay.
+The log lines are `wait parent <label> (workspace <id>): ...`, `skip parent ...: <reason>` (worktree workspace still open, pinned, name changed, agent or running process in a pane, focused pane), and `close parent workspace ...`; a dry run prints `would close parent workspace ...`, counting the worktree workspaces it would close as gone.
+A child closed by the user rather than the plugin is handled the same way, by the next sweep (up to 10 minutes later) and the confirmation wait.
 
 **Pins.**
 The `pin` action is one toggle, in the `workspace` context: it sets or clears the workspace token `pin`, a Nerd Font pin (nf-md-pin, U+F0403), through `workspace.report_metadata` under the source `wayne930242.straw-boss-reaper`.

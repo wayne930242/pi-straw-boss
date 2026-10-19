@@ -127,7 +127,8 @@ Herdr then closes the tab and the workspace, and the plugin removes the workspac
 Git-ignored files (`.env`, `node_modules`, caches, local databases) do not make a checkout dirty, so they are deleted with it.
 The branch always stays, and so does a dirty checkout, with the reason in the plugin log.
 A checkout with a submodule is never removed (git refuses by design) and stays with git's reason in the log; if a removal fails partway and leaves files git no longer tracks, the log says "half-removed" and names the directory for you to delete.
-Every other workspace is left alone.
+When Herdr opened a plain shell workspace for the main checkout to group the worktrees under, the plugin remembers it, and closes it once no worktree workspace of that repository is left and it holds only idle shells (no agent, not pinned, not renamed, not focused); the checkout and branches are untouched.
+Every other workspace, including a main-checkout workspace that never had a worktree under it, is left alone.
 It sweeps every 10 minutes and a minute after an agent exits, and the `reap-now` action sweeps at once.
 Every close, removal, skip and pin is a line in the plugin log (`herdr plugin log list --plugin wayne930242.straw-boss-reaper`).
 
