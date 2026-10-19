@@ -1,7 +1,10 @@
 import type { Mark } from "../src/dashboard.ts";
 import type { Base, Net, Unit } from "../src/net.ts";
+import { mountCalm } from "./calm.ts";
+import { replay } from "./dom.ts";
 import type { Entry } from "./log.ts";
 import { m } from "./paraglide/messages.js";
+import { packets } from "./packets.ts";
 import { aimBase, aimSquad, aimTower, aimUnit } from "./quit.ts";
 import { formatRoute, type Route } from "./router.ts";
 
@@ -39,7 +42,7 @@ export const mark = (el: HTMLElement, value: Mark) => {
 	if (el.dataset.mark === value) return;
 	const changed = el.dataset.mark !== undefined;
 	el.dataset.mark = value;
-	if (changed) (el.classList.remove("flash"), void el.offsetWidth, el.classList.add("flash"));
+	if (changed) replay(el, "flash");
 };
 /** "tool:edit" reads as "using edit". */
 /** A failed monitor's alert notes `monitor:<status>:<what>` (alerts.ts). */
@@ -141,8 +144,8 @@ function fillBase(el: HTMLElement, b: Base) {
 	sync(el.querySelector(".outposts")!, b.outposts.map((o) => ({ id: o.id, name: o.label, role: "outpost" as const, mark: o.mark, note: o.mark === "unknown" ? m.no_agent() : undefined })), unitEl, fillUnit);
 }
 
-/** Draws the head tower's wires to every other tower, with a packet travelling along each, in the map's own coordinates. */
-function wire(map: HTMLElement, svg: SVGSVGElement, still: boolean) {
+/** Draws the head tower's wires to every other tower, with a packet travelling along each while one end of it works, in the map's own coordinates. */
+function wire(map: HTMLElement, svg: SVGSVGElement, dots: HTMLElement, still: boolean) {
 	const towers = [...map.querySelectorAll<HTMLElement>(".base:not(.leaving) .tower")];
 	const head = map.querySelector<HTMLElement>(".base.head:not(.leaving) .tower");
 	const box = map.getBoundingClientRect();
@@ -150,30 +153,29 @@ function wire(map: HTMLElement, svg: SVGSVGElement, still: boolean) {
 		const r = el.getBoundingClientRect();
 		return [Math.round(r.x + r.width / 2 - box.x), Math.round(r.y + r.height / 2 - box.y)] as const;
 	};
-	const paths = !head ? [] : towers.filter((t) => t !== head).map((t) => {
-		const [[x1, y1], [x2, y2]] = [centre(head), centre(t)], mid = Math.round((x1 + x2) / 2);
-		return `M${x1} ${y1}C${mid} ${y1} ${mid} ${y2} ${x2} ${y2}`;
+	const ends = !head ? [] : towers.filter((t) => t !== head);
+	const wires = ends.map((t) => {
+		const [[x1, y1], [x2, y2]] = [centre(head!), centre(t)];
+		return { x1, y1, x2, y2, mid: Math.round((x1 + x2) / 2) };
 	});
+	const paths = wires.map(({ x1, y1, x2, y2, mid }) => `M${x1} ${y1}C${mid} ${y1} ${mid} ${y2} ${x2} ${y2}`);
 	const sig = paths.join("|");
-	if (svg.dataset.sig === sig) return;
-	svg.dataset.sig = sig;
-	const ns = "http://www.w3.org/2000/svg";
-	const make = (tag: string, attrs: Record<string, string>, ...kids: Element[]) => {
-		const node = document.createElementNS(ns, tag);
-		for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
-		node.append(...kids);
-		return node;
-	};
-	svg.replaceChildren(...paths.flatMap((d) => [make("path", { class: "wire", d }), ...(still ? [] : [make("circle", { class: "packet", r: "3" }, make("animateMotion", { dur: "5s", repeatCount: "indefinite", path: d }))])]));
+	if (svg.dataset.sig !== sig) {
+		svg.dataset.sig = sig;
+		svg.replaceChildren(...paths.map((d) => ((line) => (line.setAttribute("class", "wire"), line.setAttribute("d", d), line))(document.createElementNS("http://www.w3.org/2000/svg", "path"))));
+		dots.replaceChildren(...packets(wires, still));
+	}
+	dots.querySelectorAll<HTMLElement>(".packet").forEach((dot, i) => dot.toggleAttribute("data-live", head!.dataset.mark === "working" || ends[i]!.dataset.mark === "working"));
 }
 
-export interface Page { show(net: Net): void; stats(net: Net): void; log(entries: Entry[]): void; layout(): void; pause(paused: boolean): void; still(map: boolean): void }
+export interface Page { show(net: Net): void; stats(net: Net): void; log(entries: Entry[]): void; layout(): void; pause(paused: boolean): void }
 
 export function mountPage(): Page {
-	const [map, bases, links, log] = [byId("map", HTMLElement), byId("bases", HTMLElement), byId("links", SVGSVGElement), byId("log", HTMLElement)];
+	const [map, bases, links, dots, log] = [byId("map", HTMLElement), byId("bases", HTMLElement), byId("links", SVGSVGElement), byId("packets", HTMLElement), byId("log", HTMLElement)];
 	const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
-	const layout = () => !map.hidden && wire(map, links, still);
+	const layout = () => !map.hidden && wire(map, links, dots, still);
 	new ResizeObserver(layout).observe(map);
+	mountCalm();
 	return {
 		layout,
 		/** The totals in the header: drawn for every route, since the header is always in view. */
@@ -199,11 +201,6 @@ export function mountPage(): Page {
 		},
 		pause(paused) {
 			document.documentElement.classList.toggle("paused", paused);
-		},
-		/** The wires' SVG animation runs only while the map is in view. */
-		still(hidden) {
-			if (hidden) links.pauseAnimations();
-			else links.unpauseAnimations();
 		},
 	};
 }

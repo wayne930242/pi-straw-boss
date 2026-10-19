@@ -141,7 +141,9 @@ svg { display: block; }
 .map { position: relative; padding: 26px; border-radius: 22px; border: 1px solid var(--line); min-height: 420px; transition: opacity 0.4s; background: var(--grid), rgba(8, 13, 26, 0.55); }
 .links { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .wire { fill: none; stroke: rgba(56, 224, 255, 0.3); stroke-width: 1.5; stroke-dasharray: 3 7; stroke-linecap: round; }
-.packet { fill: #38e0ff; opacity: 0.9; }
+.packets { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.packet { position: absolute; left: -3px; top: -3px; width: 6px; height: 6px; border-radius: 50%; background: #38e0ff; opacity: 0; transition: opacity 0.4s; animation: 5s linear infinite paused; will-change: transform; }
+.packet[data-live] { opacity: 0.9; animation-play-state: running; }
 .bases { position: relative; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 30px; align-items: start; }
 
 .base { position: relative; padding: 16px; border-radius: 18px; border: 1px solid var(--line); background: linear-gradient(180deg, #16213c, #0c1324); box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35); }
@@ -230,18 +232,30 @@ svg { display: block; }
 .enter { animation: pop 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.15) both; }
 .leaving { animation: out 0.35s ease-in both; pointer-events: none; }
 .flash > .card > .plate, .flash.tower { animation: flash 0.6s ease-out; }
+/* A one-shot animation plays again when `.flip` swaps it to its `-b` keyframes (replay in dom.ts): no layout read restarts it. */
+.flash.flip > .card > .plate, .flash.flip.tower, .flash.flip.token > .plate { animation-name: flash-b; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes ping { 0% { transform: scale(1); opacity: 0.6; } 100% { transform: scale(1.7); opacity: 0; } }
 @keyframes hop { 50% { transform: translateY(-3px); } }
 @keyframes blink { 50% { opacity: 0.35; } }
 @keyframes pop { from { opacity: 0; transform: scale(0.92) translateY(8px); } }
+@keyframes pop-b { from { opacity: 0; transform: scale(0.92) translateY(8px); } }
 @keyframes out { to { opacity: 0; transform: scale(0.94); } }
+@keyframes out-b { to { opacity: 0; transform: scale(0.94); } }
 @keyframes flash { 40% { transform: scale(1.12); } }
+@keyframes flash-b { 40% { transform: scale(1.12); } }
 @keyframes slide { from { opacity: 0; transform: translateX(10px); } }
+@keyframes slide-b { from { opacity: 0; transform: translateX(10px); } }
 @keyframes zoom { from { opacity: 0; transform: scale(0.45); } }
+@keyframes zoom-b { from { opacity: 0; transform: scale(0.45); } }
 @keyframes come-in { from { opacity: 0; transform: translateX(-14px) scale(0.98); } }
 @keyframes go-out { from { opacity: 0; transform: translateX(14px) scale(0.98); } }
 .tx.fresh { animation: come-in 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both; } .tx.you.fresh { animation-name: go-out; }
+/* Calm (calm.ts): after a while without input, each infinite animation gives way to a still sign of the same state. */
+[data-calm] :is(.link i, .sweep, .pulse, .ring, .badge, .term-typing), [data-calm] :is(.plate, .badge)::after { animation: none !important; }
+[data-calm] .tower[data-mark="waiting"] .pulse { opacity: 0.55; }
+[data-calm] .plate[data-mark="waiting"]::after { opacity: 0.55; transform: scale(1.25); }
+[data-calm] .packet { animation-play-state: paused !important; opacity: 0; }
 [hidden] { display: none !important; }
 a { color: inherit; }
 /* Small capitals labels and one-line ellipses, shared by every route. */
@@ -262,6 +276,7 @@ body[data-stale="true"] .work { opacity: 0.45; }
 .enter-zoom { animation: zoom 0.5s ease-out both; transform-origin: var(--ox, 50%) var(--oy, 0); }
 .enter-slide, .dossier { animation: slide 0.4s ease-out both; }
 .enter-back { animation: pop 0.4s ease-out both; }
+.enter-zoom.flip { animation-name: zoom-b; } .enter-slide.flip { animation-name: slide-b; } .enter-back.flip { animation-name: pop-b; }
 .hit, .enter-base::after { position: absolute; inset: 0; z-index: 1; border-radius: inherit; }
 .enter-base::after { content: ""; z-index: 0; }
 .hit:hover { box-shadow: inset 0 0 0 1px var(--c); }
@@ -340,16 +355,18 @@ a.tower:hover::before { border-color: var(--c); }
 .tx.in + .tx.in, .tx.you + .tx.you { margin-top: -4px; }
 .tx.in + .tx.in > .ava, .tx.you + .tx.you .ava { visibility: hidden; }
 .tx.in + .tx.in .tx-body > header b, .tx.you + .tx.you > header b { display: none; }
-.chat-top { height: 1px; }
+.chat-top { height: 1px; } .chat-end { height: 1px; margin-top: -1px; } /* the sentinel chat.ts reads the log's end from, in the last pixel of the live line */
 .chat-live { display: flex; align-items: center; gap: 10px; margin-top: 14px; padding-left: 44px; color: var(--c); font-size: 12px; }
 .chat-pill { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); border: 0; --c: #38e0ff; }
 /* The entry Open comms lands on, lit for a moment (an entry's containment makes it the containing block). */
 .lit::after { content: ""; position: absolute; inset: 0; border-radius: 14px; background: #38e0ff2e; animation: out 1s 1s forwards; }
+.lit.flip::after { animation-name: out-b; }
 /* The composer under the log: the box, Send (and Follow-up and Stop while it works), and one line for what happened or why not. */
 .composer { position: relative; display: grid; gap: 8px; padding: 12px 18px 14px; border-top: 1px solid var(--line); background: var(--panel); }
 .cmp-row, .cmp-acts, .cmp-foot, .cmp-note { display: flex; gap: 8px; align-items: center; }
 .cmp-row { align-items: flex-end; gap: 10px; }
 .composer textarea { flex: 1; min-width: 0; resize: none; padding: 9px 12px; border-radius: 12px; border: 1px solid var(--line); background: #070c18; color: var(--text); font: 14px/1.4 var(--sans); }
+@supports (field-sizing: content) { .composer textarea { field-sizing: content; max-height: 220px; } .composer { grid-template-columns: minmax(0, 1fr); } } /* a long URL wraps instead of widening the column */
 .composer textarea:focus { outline: none; border-color: #38e0ff80; box-shadow: 0 0 0 3px #38e0ff1f; }
 .composer button:disabled { opacity: 0.45; cursor: default; }
 .cmp-note { flex: 1; flex-wrap: wrap; min-height: 18px; }
@@ -364,7 +381,10 @@ a.tower:hover::before { border-color: var(--c); }
 .slash b { color: #38e0ff; font: 600 13px var(--mono); white-space: nowrap; }
 .slash span { min-width: 0; overflow: hidden; color: var(--dim); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .cmp-yes { padding: 3px 10px; border: 0; border-radius: 8px; background: var(--gold); color: #06101e; font: 600 12px var(--sans); cursor: pointer; }
-.tx { content-visibility: auto; contain-intrinsic-size: auto 90px; min-width: 0; }
+/* Entries off the screen are not rendered (content-visibility) and stand in with a height until they are, then keep the one they had (`auto`). The stand-ins are about what each kind measures, so a fast fling
+   past unrendered entries moves the log less: an assistant's entry holds its tool cards and text, a user's one bubble, the rest a line. */
+.tx { content-visibility: auto; contain-intrinsic-size: auto 220px; min-width: 0; }
+.tx.you { contain-intrinsic-size: auto 76px; } .tx.sys, .tx.rule { contain-intrinsic-size: auto 40px; } .tx.note { contain-intrinsic-size: auto 24px; }
 .tx time, .tx.note { color: var(--dim); font: 11px var(--mono); }
 .tx.you { display: grid; justify-items: end; gap: 5px; }
 .tx.you > header { display: flex; align-items: center; gap: 8px; color: var(--gold); }
@@ -502,9 +522,10 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
    it says so. The text box that receives the keys is invisible and placed by the mirror's corner, where an input method shows its candidates. */
 .term-scroll { transition: border-color 0.2s, box-shadow 0.2s; }
 .term-scroll.typing { border-color: #38e0ff; box-shadow: 0 0 0 1px #38e0ff66, 0 0 22px #38e0ff2e; }
-.term-scroll.engage { animation: term-engage 0.6s ease-out; } .term-scroll.blip { animation: term-blip 0.22s ease-out; }
+.term-scroll.engage { animation: term-engage 0.6s ease-out; } .term-scroll.blip { animation: term-blip 0.22s ease-out; } .term-scroll.blip.flip { animation-name: term-blip-b; }
 @keyframes term-engage { 0% { box-shadow: 0 0 0 0 #38e0ffcc, 0 0 0 #38e0ff00; } 60% { box-shadow: 0 0 0 7px #38e0ff00, 0 0 34px #38e0ff66; } 100% { box-shadow: 0 0 0 1px #38e0ff66, 0 0 22px #38e0ff2e; } }
 @keyframes term-blip { 0% { box-shadow: 0 0 0 2px #7ff0ffcc, 0 0 32px #38e0ff88; } 100% { box-shadow: 0 0 0 1px #38e0ff66, 0 0 22px #38e0ff2e; } }
+@keyframes term-blip-b { 0% { box-shadow: 0 0 0 2px #7ff0ffcc, 0 0 32px #38e0ff88; } 100% { box-shadow: 0 0 0 1px #38e0ff66, 0 0 22px #38e0ff2e; } }
 .term-sink { position: fixed; width: 1px; height: 18px; padding: 0; border: 0; opacity: 0; resize: none; overflow: hidden; pointer-events: none; }
 .term-typing { margin-left: auto; color: #38e0ff; font-weight: 600; animation: term-note 1.6s ease-in-out infinite; }
 @keyframes term-note { 50% { opacity: 0.55; text-shadow: 0 0 10px #38e0ff99; } }
@@ -567,6 +588,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 	.tally { flex-wrap: wrap; }
 	.col { width: 100%; }
 	/* Full-screen layers, one above the next: a session's comms with its composer fixed at the bottom over the keyboard, a tile opened over it, and the dossier (Info) over both. */
+	.dossier:not(.full) { content-visibility: hidden; } /* under the full-screen comms: nothing to draw, and its rings need not turn */
 	.comms-in, .dossier.full { position: fixed; left: 0; right: 0; top: var(--vvt, 0px); height: var(--vvh, 100dvh); background: var(--bg); }
 	.tiles:has(.tile) { position: fixed; left: 0; right: 0; top: var(--vvt, 0px); height: var(--vvh, 100dvh); background: var(--bg); } /* apart: a browser without :has() drops only this rule */
 	.comms-in { z-index: 15; min-height: 0; grid-template-columns: minmax(0, 1fr); border: 0; border-radius: 0; }

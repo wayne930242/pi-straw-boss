@@ -1,4 +1,4 @@
-import { h } from "./dom.ts";
+import { h, replay } from "./dom.ts";
 import type { Tile } from "./layer.ts";
 import { m } from "./paraglide/messages.js";
 import type { Answer } from "./post.ts";
@@ -135,7 +135,7 @@ export function mountTerminals({ tiles, post, stream, pad }: { tiles: { open(til
 		attach(t, true);
 		watch();
 		const state = (): TermState => (t.parked || t.ended || stale(t) ? "off" : t.box.classList.contains("hidden") ? "hidden" : "live");
-		t.pad = pad?.({ name, state, post: t.post, stream: id, blip: () => (t.scroll.classList.remove("blip"), void t.scroll.offsetWidth, t.scroll.classList.add("blip")) });
+		t.pad = pad?.({ name, state, post: t.post, stream: id, blip: () => replay(t.scroll, "blip") });
 		return (t.tile = { id: `term:${key}`, title: m.terminal_title({ name }), icon: "i-comms", body: () => h("div", { class: "term-tile" }, h("div", { class: "term-bar" }, t.state, t.typing, t.fit), t.scroll, t.sink, t.pad?.el), closed: () => (clearTimeout(t.away), attach(t, false), open.delete(key), watch()) });
 	};
 	return {

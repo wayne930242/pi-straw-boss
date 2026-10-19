@@ -4,7 +4,7 @@ import type { Shelf } from "../src/documents.ts";
 import type { Item, Todo } from "../src/items.ts";
 import type { Queued } from "../src/net.ts";
 import type { Monitor } from "../src/monitors.ts";
-import { h } from "./dom.ts";
+import { h, replay } from "./dom.ts";
 import { createFollow, reach } from "./follow.ts";
 import { mount, parse } from "./markdown.ts";
 import type { Post } from "./composer.ts";
@@ -107,14 +107,13 @@ function plain(text: string) {
 export function mountChat(root: HTMLElement, data: Data, { who, link, docFor }: ChatDeps): Chat {
 	const model = createChat(), els = new Map<string, HTMLElement>(), opens = new Set<{ paths: string[]; button: HTMLButtonElement; shown?: boolean }>(); // a card the log dropped leaves it
 	const docs = () => opens.forEach((o) => (o.button.isConnected ? ((o.shown = true), (o.button.hidden = !o.paths.some((p) => docFor?.(p)))) : o.shown && opens.delete(o)));
-	const list = h("div", { class: "chat-list" }), top = h("div", { class: "chat-top" }), live = h("div", { class: "chat-live" }), pill = h("button", { class: "chat-pill", type: "button", hidden: "" }), empty = h("p", { class: "chat-empty" }, m.no_transmissions());
-	const scroller = h("div", { class: "chat-scroll", tabindex: "-1", "aria-label": m.comms_log() }, top, list, live);
+	const list = h("div", { class: "chat-list" }), top = h("div", { class: "chat-top" }), live = h("div", { class: "chat-live" }), foot = h("div", { class: "chat-end" }), pill = h("button", { class: "chat-pill", type: "button", hidden: "" }), empty = h("p", { class: "chat-empty" }, m.no_transmissions());
+	const scroller = h("div", { class: "chat-scroll", tabindex: "-1", "aria-label": m.comms_log() }, top, list, live, foot);
 	root.replaceChildren(scroller, pill);
 	const follow = createFollow();
 	let loading = false, loaded = false, target: string | undefined, held: HTMLElement | undefined, release = 0, down = false, coast: ReturnType<typeof setTimeout> | undefined;
 	// A finger on the log, or its fling still coasting (no scroll for 250 ms ends it), holds the log where the finger put it: nothing pulls it to the bottom.
 	const touching = () => down || coast !== undefined, coasting = () => (clearTimeout(coast), (coast = setTimeout(() => ((coast = undefined), follow.pinned && !model.detached && toBottom()), 250)));
-	const atBottom = () => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
 	const button = (label = follow.button(model.detached)) => ((pill.hidden = !label), (pill.textContent = label ?? ""));
 	const toBottom = () => (follow.jump(), (held = undefined), (scroller.scrollTop = scroller.scrollHeight), button());
 	/** Scrolls the anchor into view and lights it; older pages load first when it is not mounted. Gone from the history, the log opens at the end. */
@@ -127,9 +126,7 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor }: 
 		follow.hold();
 		held = el;
 		el.scrollIntoView({ block: "center" });
-		el.classList.remove("lit");
-		void el.offsetWidth;
-		el.classList.add("lit");
+		replay(el, "lit");
 		// Entries near it take their real height as they render (content-visibility), so it is kept in view until the user scrolls.
 		clearTimeout(release);
 		release = window.setTimeout(() => ((held = undefined), el.classList.remove("lit")), 2000);
@@ -229,13 +226,17 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor }: 
 		// A page too short to scroll leaves the top in view: keep going.
 		if (model.before && scroller.clientHeight && top.getBoundingClientRect().bottom >= scroller.getBoundingClientRect().top) void older();
 	};
-	new IntersectionObserver((seen) => seen.some((s) => s.isIntersecting) && void older(), { root: scroller }).observe(top);
 	pill.addEventListener("click", () => {
 		target = undefined;
 		if (model.detached) void data.latest().then((page) => (paint(model.reset(page)), toBottom()));
 		else toBottom();
 	});
-	scroller.addEventListener("scroll", () => (follow.scrolled(atBottom()), button(), !down && coast !== undefined && coasting()), { passive: true });
+	// Whether the log is at its top or its end is read off two sentinels (the end's is in its last pixel, with 80 px of margin below the log), so no geometry is read while it scrolls; a log that is not
+	// rendered says nothing. An observer that watches anything makes every running animation cost a frame per vsync, so they watch only while the log scrolls and for a moment after (`watch`).
+	const sentries = [new IntersectionObserver((seen) => seen.some((s) => s.isIntersecting) && void older(), { root: scroller }), new IntersectionObserver((seen) => scroller.clientHeight && (follow.scrolled(seen.at(-1)!.isIntersecting), button()), { root: scroller, rootMargin: "0px 0px 67px" })] /* 80 px from the scroll end: the end line sits above 12 px of padding */;
+	let watching: ReturnType<typeof setTimeout> | undefined;
+	const watch = () => (watching ?? (sentries[0]!.observe(top), sentries[1]!.observe(foot)), clearTimeout(watching), (watching = setTimeout(() => ((watching = undefined), sentries.forEach((s) => s.disconnect())), 600)));
+	scroller.addEventListener("scroll", () => (watch(), !down && coast !== undefined && coasting()), { passive: true });
 	scroller.addEventListener("touchstart", () => ((down = true), clearTimeout(coast), (coast = undefined)), { passive: true });
 	for (const end of ["touchend", "touchcancel"]) scroller.addEventListener(end, () => ((down = false), coasting()), { passive: true });
 	// The user's own scroll ends the hold, and a later reconnect then opens at the end instead of at the anchor again.
