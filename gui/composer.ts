@@ -176,9 +176,9 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 		event.preventDefault();
 		submit(event.altKey ? "followUp" : "send");
 	});
-	// On a phone the on-screen keyboard shrinks the visual viewport: the comms panel follows it, so the composer stays above the keyboard.
-	const vv = window.visualViewport, fit = () => document.documentElement.style.setProperty("--vvh", `${vv!.height}px`);
-	if (vv) (vv.addEventListener("resize", fit), fit());
+	// On a phone the on-screen keyboard shrinks and shifts the visual viewport: the full-screen comms follow it, so the composer stays above the keyboard.
+	const vv = window.visualViewport, fit = () => [["--vvh", vv!.height], ["--vvt", vv!.offsetTop]].forEach(([k, v]) => document.documentElement.style.setProperty(k as string, `${v}px`));
+	if (vv) (vv.addEventListener("resize", fit), vv.addEventListener("scroll", fit), fit());
 	grow();
 	if (flights.has(key)) void land(flights.get(key)!);
 	else keep(() => {

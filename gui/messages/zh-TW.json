@@ -123,6 +123,7 @@
 	"task_done": "已完成",
 	"task_open": "未完成",
 	"dialog_alert": "警示",
+	"back": "返回",
 	"quit": "關掉",
 	"close": "關閉",
 	"close_tile": "關閉 {title}",

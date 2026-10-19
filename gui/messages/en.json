@@ -151,6 +151,7 @@
 	"task_done": "done",
 	"task_open": "not done",
 	"dialog_alert": "alert",
+	"back": "Back",
 	"quit": "Quit",
 	"close": "Close",
 	"close_tile": "Close {title}",
