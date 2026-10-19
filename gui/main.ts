@@ -94,7 +94,6 @@ function navigate(next: Route) {
 	if (next.view !== "map") loadFocus();
 	el("map").hidden = next.view !== "map";
 	el("legend").hidden = next.view === "session";
-	page.still(next.view !== "map");
 	withFocus((f) => f.show(next, before, from));
 	if (next.view === "map" && latest && latest !== shown) {
 		show(latest);
