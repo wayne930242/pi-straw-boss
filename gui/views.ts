@@ -225,6 +225,7 @@ export function mountFocus({ data, restart, openTile, embedTerminal, online }: F
 		if (pendingMode === "term") setMode("term");
 		pendingMode = undefined;
 		chat.reveal(route.at);
+		if (matchMedia("(max-width: 640px)").matches) sessionView.querySelector(".comms-in")!.scrollIntoView({ block: "start" }); // a phone's screen-tall comms under the HUD: the page scrolls to it, so the composer is in view (a swipe in the log never reaches it)
 		queue.splice(0).forEach(apply);
 		(drawDossier(), claim());
 	}

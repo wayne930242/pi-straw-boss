@@ -192,6 +192,7 @@ addEventListener("keydown", (event) => {
 	event.preventDefault();
 	if (!panels?.stack.close() && current.view !== "map") router.go(upOf(current));
 });
+el("pair").hidden = location.hostname !== "127.0.0.1"; // pairing is this computer's: a paired device comes in by its tailnet name (remote.ts)
 el("pair").addEventListener("click", () => void import("./pair.ts").then(({ pairTile }) => openTile(pairTile(), true)));
 // A close button asks first in the page's own dialog (a browser confirm can be dismissed by an attached tool before it is seen), then posts
 // close/unit, close/tab, or close/base; the net shows what went, and a refusal says why in the same dialog.

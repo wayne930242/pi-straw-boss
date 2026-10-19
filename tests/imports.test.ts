@@ -158,7 +158,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.17.2 raised views.ts to 267 for the location bar: a subagent under its launcher's level, and the middle levels folded into "…" on a phone.
 	// 0.17.0 raised views.ts to 259 for the close buttons of a base, its squads, and a unit (a subagent's is its launcher's to close).
 	// 0.25.0 raised views.ts to 347 for the monitors bar under the todos (each monitor's state, exit code, line count, and last line), chat.ts to 270 for its type on a unit.
-	for (const [name, max] of [["router.ts", 80], ["chat.ts", 270], ["markdown.ts", 180], ["views.ts", 347], ["lightbox.ts", 34], ["layer.ts", 232], ["composer.ts", 190], ["ask.ts", 156], ["mirror.ts", 175], ["keypad.ts", 124], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
+	// 0.25.1 raised views.ts to 348 for a phone's comms scrolled into view as the session opens, so its composer is on screen.
+	for (const [name, max] of [["router.ts", 80], ["chat.ts", 270], ["markdown.ts", 180], ["views.ts", 348], ["lightbox.ts", 34], ["layer.ts", 232], ["composer.ts", 190], ["ask.ts", 156], ["mirror.ts", 175], ["keypad.ts", 124], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
 	// 0.10.0: the page's text comes from Paraglide's messages (gui/messages), which raised chat.ts, views.ts, layer.ts, ask.ts, mirror.ts, and doc.ts by one
 	// line each for the messages import; the strings replaced in place. gui/i18n.ts picks the locale (the menu's choice, the browser's languages with
 	// Chinese by script) and translates index.html's static text: 50 lines, no figure in a spec.
@@ -216,7 +217,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.23.0 to 748 for the sound panel (notify.ts: on, volume through Web Audio's gain, a try) and the popover placement it shares (render.ts).
 	// 0.24.0 to 752 for the demo build (vite.config.ts: GUI_DEMO, the base it is served under, and its own output folder).
 	// 0.25.0 to 754 for a failed monitor's note in words (render.ts).
-	assert.ok(page <= 754, `the page's TypeScript has ${page} lines`);
+	// 0.25.1 to 755 for main.ts hiding Phone on a paired device's page (pairing is this computer's to start).
+	assert.ok(page <= 755, `the page's TypeScript has ${page} lines`);
 });
 
 test("the built page is small, self-contained (no remote URLs, fonts, or imports), and carries no demo fixture", { skip: !existsSync(join(root, "dist/gui/index.html")) && "run npm run gui:build first" }, () => {
@@ -282,7 +284,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// 0.24.0 to 86.05 KB / 35.4 KB for a dialog's Enlarge, and a desktop's keyboard straight into a focused terminal (keypad.ts and mirror.ts in the
 	// overlay layer: the key and chord map, the hidden text box for characters, input methods, and pastes, the paced write queue, and the note and glow).
 	// 0.25.0 to 88 KB / 35.9 KB for the monitors bar in the comms view, and the terminal taking the keyboard as the view switches to it.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 88_000 && total(chunks, gz) <= 35_900, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// 0.25.1 to 88.1 KB for a phone's comms scrolled into view as the session opens.
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 88_100 && total(chunks, gz) <= 35_900, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
