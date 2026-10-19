@@ -6,7 +6,7 @@ import { createCaps, type Doc, docsOf, type Fields, fieldsOk, type FormResult, t
 import type { Session } from "./herdr.ts";
 import { canonical } from "./history.ts";
 import type { Queued, Ref } from "./net.ts";
-import { type Answerable, type Dialog, OWNERS, questionsDigest, type Reply, secretDigest, selectDigest } from "./owners.ts";
+import { type Answer, type Answerable, type Dialog, OWNERS, questionsDigest, type Reply, selectDigest } from "./owners.ts";
 import { checkCommands, type Cmd } from "./commands.ts";
 import { checkProbe, type Editor } from "./probe.ts";
 import { type Monitor, monitorsOk } from "./monitors.ts";
@@ -14,13 +14,15 @@ import { type Monitor, monitorsOk } from "./monitors.ts";
 // The hub, in the session that runs the GUI server: it takes the dialog lists bridges relay (bridge.ts), binds each to the unit on the
 // bridge's pane, decides whether the page may answer it, and carries an answer to that bridge. A list counts only from the session intercom
 // places on that pane, for the unit whose session file it names. The page may answer a dialog only when it is the session's one open dialog,
-// with no answer on its way, belonging to one of the file's open calls, with a digest that matches its content. A secret_drop's masked dialog
-// is answerable only when it is the one secret_drop call open; any other dialog beside a secret_drop stays in the terminal.
+// with no answer on its way, belonging to one of the file's open calls, with a digest that matches its content. A secret_drop is never answerable
+// from a page (SB-F001): pi-intercom identities are self-reported, so a same-user process could pose as the asking session's bridge, relay a secret
+// dialog under its own key, and receive the value sealed to it. A secret dialog, or any other dialog beside a secret_drop, stays in the terminal until
+// intercom can verify who a bridge is; seal.ts keeps the envelope for then, and nothing here takes, seals, or sends a secret's value.
 // The same binding, for every bridge whether it holds a dialog or not, tells where to ask what a session's editor would submit (`probe`) and
 // which of its commands match a `/` typed in the composer (`commands`), and
 // gives the unit the documents its bridge lists, each by a capability (documents.ts), and carries a form answer for one to that bridge.
 
-const ACK_MS = 5000, PROBE_MS = 1000, FORM_MS = 5000, KEEP_MS = 600_000, KEEP = 256, MAX_TEXT = 8192, MAX_NOTE = 2048, MAX_ALL = 12_288, MAX_SECRET = 8192;
+const ACK_MS = 5000, PROBE_MS = 1000, FORM_MS = 5000, KEEP_MS = 600_000, KEEP = 256, MAX_TEXT = 8192, MAX_NOTE = 2048, MAX_ALL = 12_288;
 export const ANSWER_ID = /^[A-Za-z0-9_-]{16,64}$/, CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
 interface Channel { snapshot(): { connected: boolean; owner?: { sessionId: string; epoch: string } }; publish(payload: unknown, options?: { audience?: "owner" | "capable"; ownerOnly?: boolean }): void }
 type Event = { type: string; fromSessionId?: string; sessionId?: string; owner?: { sessionId: string; epoch: string }; payload?: unknown };
@@ -44,14 +46,10 @@ const valid = (d: Dialog) => str(d?.owner) && str(d.id) && d.id.length <= 64 && 
 /** Own words or a note as they would be typed: CRLF to LF, never blank, within `max` bytes, no control characters but tab and newline. */
 const words = (v: unknown, max: number) => (str(v) && v.trim() && Buffer.byteLength(v) <= max && !CONTROL.test(v.replace(/\r\n?/g, "\n")) ? v.replace(/\r\n?/g, "\n") : null);
 
-/** The page's answer checked against what it may answer: one choice of a select (not a local-only one from a remote page), one entry per question, or a secret's value (never from a remote page). Its messages never quote the value. */
-export function checkAnswer(t: Answerable, json: Record<string, unknown>, remote: boolean): { choice: number } | { answers: Reply[] } | { value: string } | string {
+/** The page's answer checked against what it may answer: one choice of a select (not a local-only one from a remote page), or one entry per question. A secret's value is never taken from any page (SB-F001; see the header). */
+export function checkAnswer(t: Answerable, json: Record<string, unknown>, remote: boolean): { choice: number } | { answers: Reply[] } | string {
 	const { choice, answers, value } = json;
-	if (t.secret) {
-		if (remote) return "A secret cannot be entered from a remote page; answer it in the terminal.";
-		if (choice !== undefined || answers !== undefined || !str(value) || !value.trim()) return "Type the secret.";
-		return Buffer.byteLength(value) > MAX_SECRET || CONTROL.test(value) ? "The secret is too long or has control characters." : { value };
-	}
+	if (value !== undefined) return "A secret cannot be entered here; answer it in the terminal.";
 	if (t.select) {
 		if (answers !== undefined || !Number.isInteger(choice) || (choice as number) < 0 || (choice as number) >= t.select.choices.length) return "Pick one of its choices.";
 		return remote && t.select.choices[choice as number]!.localOnly ? "That choice acts on the computer the GUI runs on; pick it there." : { choice: choice as number };
@@ -99,7 +97,9 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 	const onEvent = (e: Event) => {
 		if (e.type === "owner" && e.owner?.sessionId === me && e.owner.epoch !== epoch && (epoch = e.owner.epoch) && active) sync();
 		if (e.type === "message" && e.fromSessionId) receive(e.fromSessionId, e.payload as ToHub);
-		if (e.type === "session_left" && e.sessionId && bridges.delete(e.sessionId)) change();
+		if (e.type === "session_left" && e.sessionId) {
+			if (bridges.delete(e.sessionId)) change();
+		}
 	};
 	/** One question to the bridge bound to `key`'s pane and file (this session's answers in-process): undefined with no such bridge or no answer within 1 s. */
 	const request = async <T>(key: string, map: Map<string, (x?: T) => void>, mine: () => T | undefined, msg: (id: string) => Record<string, unknown>): Promise<T | undefined> => {
@@ -119,17 +119,15 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 	const merge = (key: string, file: Pending | undefined, ds: Dialog[], readable: boolean, calls: OpenCall[] = file && file.why !== SEVERAL ? [{ id: file.callId, name: file.tool }] : []): Pending => {
 		const d = ds[0]!, adapter = OWNERS.find((o) => o.name === d.owner), base = file ?? { callId: d.toolCallId ?? d.id, tool: adapter?.tool ?? "dialog" }, at = bound.get(key)!;
 		const terminal = (why: string): Pending => ({ ...base, why });
-		// A secret_drop open anywhere keeps everything in the terminal but its own masked dialog: the one secret_drop call, named by the one dialog.
-		const secrets = calls.filter((c) => c.name === "secret_drop"), mine = secrets.length === 1 && ds.length === 1 && Boolean(d.secret) && adapter?.tool === "secret_drop" && d.toolCallId === secrets[0]!.id;
-		if (!mine && file?.tool === "secret_drop") return file; // terminal only, whatever a bridge says
-		if (!mine && secrets.length) return terminal("It waits for a secret."); // also when it is one of several open calls
+		// A secret_drop open anywhere, or a secret dialog, keeps everything in the terminal (SB-F001).
+		if (d.secret || file?.tool === "secret_drop" || calls.some((c) => c.name === "secret_drop")) return file?.tool === "secret_drop" ? file : terminal("It waits for a secret.");
 		if (ds.length !== 1) return terminal(SEVERAL);
 		if (d.big) return terminal("It is too long to show here; answer it in the terminal.");
 		// A dialog naming a tool call answers only for one of the open calls: of its owner's own tool, or of any tool when the owner is a gate (which must name one).
 		const call = d.toolCallId ? calls.find((c) => c.id === d.toolCallId) : undefined;
 		if (!adapter || !readable || (d.toolCallId ? !call || !(adapter.gate || call.name === adapter.tool) : adapter.gate)) return terminal(base.why ?? "Answer it in the terminal.");
-		if ((d.select ? selectDigest(d.select) : d.questions ? questionsDigest(d.questions) : d.secret ? secretDigest(d.secret) : undefined) !== d.digest) return terminal("The question here differs from the one in the terminal; answer it there.");
-		const answer: Answerable = { dialog: d.id, digest: d.digest, ...(d.select ? { select: d.select } : d.secret ? { secret: d.secret } : { questions: d.questions }) }, { why: _, ...kept } = base;
+		if ((d.select ? selectDigest(d.select) : d.questions ? questionsDigest(d.questions) : undefined) !== d.digest) return terminal("The question here differs from the one in the terminal; answer it there.");
+		const answer: Answerable = { dialog: d.id, digest: d.digest, ...(d.select ? { select: d.select } : { questions: d.questions }) }, { why: _, ...kept } = base;
 		const rest = call && call.id !== base.callId ? { callId: call.id, tool: call.name } : kept; // the file's question belongs to its first call, not to another one the dialog is bound to
 		// While an answer is on its way the page shows it read-only, but the bridge still hears that answer resent (Check again: it replays) and any other (busy).
 		targets.set(key, { from: at.from, bridgeId: at.b.bridgeId, answer });
@@ -137,7 +135,7 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 	};
 	const hub: LocalHub & {
 		readonly running: boolean; readonly me: string; start(onChange: () => void): void; stop(): void; relayed(sessions: Session[], refs: Map<string, Ref>): Relayed; target(key: string): Target | undefined;
-		replay(answerId: string, key: string): Sent | undefined; ended(key: string, dialog: string, answerId: string): Sent | undefined; send(key: string, t: Target, a: Omit<AnswerMessage, "version" | "type" | "to">): Promise<Sent>;
+		replay(answerId: string, key: string): Sent | undefined; ended(key: string, dialog: string, answerId: string): Sent | undefined; send(key: string, t: Target, a: Answer): Promise<Sent>;
 		probe(key: string): Promise<Editor | undefined>; commands(key: string, prefix: string): Promise<Cmd[] | undefined>; close(key: string, keepPane: boolean): Promise<{ accepted: boolean; reason?: string } | undefined>; doc(cap: string): { key: string; doc: Doc } | undefined; form(cap: string, answerId: string, fields: Fields): Promise<FormResult | undefined>;
 	} = {
 		receive,
@@ -186,9 +184,11 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 			const hit = done.get(answerId);
 			return hit?.key === key && Date.now() - hit.at < KEEP_MS ? hit.sent : undefined;
 		},
-		/** Publishes the answer to its bridge (or calls this session's) and waits up to 5 s for the bridge's ack. */
-		async send(key, t, a) {
-			const msg: AnswerMessage = { version: 1, type: "answer", to: t.bridgeId, ...a }, k = [t.from, t.bridgeId, a.id, a.answerId].join("\n");
+		/** Publishes the answer to its bridge (or calls this session's) and waits up to 5 s for the bridge's ack. A secret's value is never sent (SB-F001). */
+		async send(key, t, { value, ...a }) {
+			if (value !== undefined) return { status: 409, body: { outcome: "unsent", reason: "A secret cannot be entered here; nothing was sent. Enter it in the terminal." } };
+			const k = [t.from, t.bridgeId, a.id, a.answerId].join("\n");
+			const msg: AnswerMessage = { version: 1, type: "answer", to: t.bridgeId, ...a };
 			const ack = wait(waiting, k, ACK_MS);
 			try {
 				if (t.from === me) local.deliver(msg, (x) => receive(me, x));

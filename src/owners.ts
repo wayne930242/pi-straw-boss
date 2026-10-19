@@ -15,10 +15,10 @@ export interface Secret { label: string; instructions: string[]; url?: string; d
 /** An open dialog as the bridge relays it: a `select` (labelled choices), `questions` (a questionnaire), or a `secret`; `big` when too long to relay, `busy` while an answer is on its way. */
 export interface Dialog { owner: string; id: string; toolCallId?: string; digest: string; select?: Select; questions?: Question[]; secret?: Secret; big?: true; busy?: true }
 /** What the page may answer, carried on a waiting unit's `pending`. */
-export interface Answerable { dialog: string; digest: string; select?: Select; questions?: Question[]; secret?: Secret }
+export interface Answerable { dialog: string; digest: string; select?: Select; questions?: Question[] }
 /** One question's answer: chosen option indexes, own words, a note. */
 export interface Reply { choices?: number[]; text?: string; note?: string }
-/** An answer for one dialog: `choice` for a select, one `answers` entry per question, `value` for a secret (it lives only in this message and the owner's event, never in an ack or a record). `answerId` is the page's idempotency key. */
+/** An answer for one dialog: `choice` for a select, one `answers` entry per question, `value` for a secret (the owner's contract takes one, but nothing in this extension sends it: SB-F001). `answerId` is the page's idempotency key. */
 export interface Answer { id: string; answerId: string; digest: string; choice?: number; answers?: Reply[]; value?: string }
 export interface Verdict { accepted: boolean; reason?: string }
 /** `closed` without `by` leaves it to the bridge (remote when its answer was taken, else local). */

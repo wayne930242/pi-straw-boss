@@ -6,7 +6,9 @@ import { join } from "node:path";
 import { after, afterEach, mock, test } from "node:test";
 import { readRecord } from "../src/handover.ts";
 import type { Net, Unit } from "../src/net.ts";
+import { guiNamespace } from "../src/bridge.ts";
 import { secretDigest, selectDigest } from "../src/owners.ts";
+import { newKeys, seal } from "../src/seal.ts";
 import { type Agent, until, World } from "./fakes.ts";
 import { assistant, call, header, lines, user } from "./sessions.ts";
 
@@ -195,48 +197,60 @@ const SECRET = { label: "Deploy token", instructions: ["Open the link.", "Create
 /** Every file under `dir`, read as text. */
 const filesUnder = (dir: string): string[] => readdirSync(dir).flatMap((n) => (statSync(join(dir, n)).isDirectory() ? filesUnder(join(dir, n)) : [readFileSync(join(dir, n), "utf8")]));
 
-test("a secret_drop in another session is answered from this computer's page: the owner gets the value once, and it lands in no snapshot, response, log, notice, or file", async () => {
+test("a secret_drop in another session is answered from no page (SB-F001): a value POSTed from this computer's page is refused, nothing reaches the owner or the channel, and the value lands nowhere", async () => {
 	const { a, b, url, csrf } = await setup(false, [["c1", "secret_drop"]]), value = "tok-e2e-7c1d9a-not-for-logs", digest = secretDigest(SECRET);
+	const c = world.agent({ id: "C", pane: "wA:p3", tab: "wA:t1" });
+	await c.start();
+	const ns = guiNamespace("A"), heard: Record<string, unknown>[] = [];
+	await until(() => c.regs.get(ns), "C on the server's channel");
+	const reg = c.regs.get(ns)!, onEvent = reg.onEvent;
+	reg.onEvent = (e: Record<string, unknown>) => (heard.push(e), onEvent(e));
 	const written: string[] = [];
 	for (const stream of [process.stdout, process.stderr]) mock.method(stream, "write", ((chunk: unknown) => (written.push(String(chunk)), true)) as never);
 	for (const level of ["log", "info", "warn", "error", "debug"] as const) mock.method(console, level, (...args: unknown[]) => void written.push(args.map(String).join(" ")));
-	const got: unknown[] = [], seen: string[] = [];
+	const got: unknown[] = [], seen: string[] = [], replies: unknown[] = [];
 	try {
+		Object.assign(world.herdr.pane("wA:p2"), { agent_status: "blocked" }); // Herdr sees pi stopped on the secret_drop's terminal dialog
 		void b.fire("tool_execution_start", { toolCallId: "c1", toolName: "secret_drop", args: {} });
-		b.on("robot-hand:secret:answer", (raw) => {
-			const x = raw as { id: string; answerId: string; digest: string; value: string };
-			got.push(x);
-			b.emit("robot-hand:secret:answer-result", { version: 1, id: x.id, answerId: x.answerId, accepted: true });
-			b.emit("robot-hand:secret:closed", { version: 1, id: x.id, by: "remote", answerId: x.answerId });
-		});
+		b.on("robot-hand:secret:answer", (raw) => got.push(raw));
 		b.emit("robot-hand:secret:pending", { version: 1, id: "s1", toolCallId: "c1", digest, secret: SECRET });
 		let unit: Unit | undefined;
-		await until(async () => (unit = unitB(await snapshot(url)))?.pending?.answer, "B's secret dialog in the snapshot");
+		await until(async () => (unit = unitB(await snapshot(url)))?.pending?.why, "B's secret_drop wait in the snapshot");
 		seen.push(JSON.stringify(unit));
-		assert.deepEqual(unit!.pending, { callId: "c1", tool: "secret_drop", answer: { dialog: "s1", digest, secret: SECRET } });
-		const bad = await post(url, csrf, "sessions/B/answer", { dialog: "s1", digest, answerId: "t".repeat(20), value: `${value}\u0007` });
-		assert.deepEqual([bad.status, bad.body.error], [400, "bad_answer"], "a value with a control character is refused, and the refusal does not quote it");
-		assert.deepEqual(got, [], "nothing reached the owner");
-		const body = { dialog: "s1", digest, answerId: "s".repeat(20), value };
-		const first = await post(url, csrf, "sessions/B/answer", body), replay = await post(url, csrf, "sessions/B/answer", { dialog: "s1", digest, answerId: "s".repeat(20) });
-		assert.deepEqual(first, { status: 200, body: { outcome: "accepted" } });
-		assert.deepEqual(replay, { status: 200, body: { outcome: "accepted" } }, "the same answerId replays its outcome without a value");
-		assert.deepEqual(got, [{ version: 1, id: "s1", answerId: "s".repeat(20), digest, value }], "the owner got the value once");
-		await until(async () => !unitB(await snapshot(url))?.pending, "the dialog closed");
-		seen.push(JSON.stringify(await snapshot(url)), JSON.stringify([first, replay, bad]));
+		assert.deepEqual(unit!.pending, { callId: "c1", tool: "secret_drop", why: "It waits for a secret." }, "read-only: no dialog, no field, nothing of what it asks for");
+		for (const body of [{ value }, { value: `${value}\u0007` }, { choice: 0, value }, {}]) {
+			const r = await post(url, csrf, "sessions/B/answer", { dialog: "s1", digest, answerId: "s".repeat(20), ...body });
+			replies.push(r);
+			assert.deepEqual([r.status, r.body.error], "value" in body || "choice" in body ? [400, "terminal_only"] : [409, "changed"], JSON.stringify(Object.keys(body)));
+		}
+		seen.push(JSON.stringify(await snapshot(url)), JSON.stringify(replies));
 	} finally {
 		mock.restoreAll();
 	}
-	const everything = [...seen, ...written, ...a.notices.map((n) => n.text), ...b.notices.map((n) => n.text), ...filesUnder(scratch)];
-	assert.equal(everything.some((t) => t.includes(value)), false, "the value is only in the one answer event");
+	assert.deepEqual(got, [], "nothing reached the owner");
+	assert.equal(heard.some((e) => (e.payload as { type?: string } | undefined)?.type === "answer"), false, "no answer was ever published on the channel");
+	assert.equal(world.broker.published.some((p) => (p.payload as { type?: string }).type === "answer"), false);
+	const everything = [...seen, ...written, ...a.notices.map((n) => n.text), ...b.notices.map((n) => n.text), ...c.notices.map((n) => n.text), ...filesUnder(scratch), JSON.stringify(heard), JSON.stringify(world.broker.published)];
+	assert.equal(everything.some((t) => t.includes(value)), false, "the value is nowhere");
+	assert.equal(everything.some((t) => t.includes("Deploy token")), false, "nor is what the secret asks for: its dialog is not relayed");
 });
 
-test("a secret_drop beside no matching dialog, or with another dialog open, is never answerable", async () => {
-	const { b, url, csrf } = await setup(false, [["c1", "secret_drop"]]);
+test("an answer to a secret dialog sent straight to its bridge, plain or sealed, never reaches the owner: B's bridge refuses it", async () => {
+	const { b, url } = await setup(false, [["c1", "secret_drop"]]), digest = secretDigest(SECRET), value = "tok-forged";
+	const seen: unknown[] = [];
+	Object.assign(world.herdr.pane("wA:p2"), { agent_status: "blocked" });
 	void b.fire("tool_execution_start", { toolCallId: "c1", toolName: "secret_drop", args: {} });
-	b.emit("robot-hand:secret:pending", { version: 1, id: "s1", toolCallId: "c1", digest: "0".repeat(64), secret: SECRET });
-	await until(async () => unitB(await snapshot(url))?.pending?.why, "B's secret dialog in the snapshot");
-	const pending = unitB(await snapshot(url))!.pending!;
-	assert.deepEqual([pending.answer, pending.why], [undefined, "The question here differs from the one in the terminal; answer it there."], "a digest that does not match what was shown");
-	assert.equal((await post(url, csrf, "sessions/B/answer", { dialog: "s1", digest: "0".repeat(64), answerId: "u".repeat(20), value: "x" })).status, 409);
+	b.on("robot-hand:secret:answer", (raw) => seen.push(raw));
+	b.emit("robot-hand:secret:pending", { version: 1, id: "s1", toolCallId: "c1", digest, secret: SECRET });
+	await until(async () => unitB(await snapshot(url))?.pending?.why, "B's secret_drop wait in the snapshot");
+	// The server's session is the only sender B accepts; the same checks run on the owner path, so drive the bridge as the server does.
+	const target = [...world.broker.published].reverse().find((p) => (p.payload as { type?: string }).type === "dialogs" && p.from === "B")!.payload as { bridgeId: string; dialogs: unknown[] };
+	assert.deepEqual(target.dialogs, [], "the secret dialog is not relayed");
+	const forged = { version: 1, type: "answer", to: target.bridgeId, id: "s1", answerId: "f".repeat(20), digest };
+	const reg = b.regs.get(guiNamespace("A"))!, owner = world.broker.ownerOf(guiNamespace("A"));
+	for (const payload of [{ ...forged, value }, { ...forged, sealed: seal(value, newKeys().pub, { id: "s1", digest, answerId: "f".repeat(20), bridgeId: target.bridgeId }) }])
+		reg.onEvent({ type: "message", fromSessionId: "A", owner, payload });
+	assert.deepEqual(seen, []);
+	const acks = world.broker.published.filter((p) => p.from === "B" && (p.payload as { type?: string }).type === "ack").map((p) => p.payload as { outcome: string; reason?: string });
+	assert.deepEqual(acks.map((x) => [x.outcome, x.reason]), Array(2).fill(["rejected", "terminal_only"]), "each reached the bridge and was refused there");
 });
