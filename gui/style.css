@@ -73,7 +73,7 @@ svg { display: block; }
 .squad .tab-add { margin-left: 0; }
 .tab-add:hover, .new-base:hover { color: #38e0ff; border-color: #38e0ff; }
 .quit-btn { flex: none; margin-left: 6px; padding: 2px 9px; border: 1px solid var(--line); border-radius: 8px; background: none; color: var(--dim); font: 600 12px var(--sans); cursor: pointer; } .quit-btn:hover { color: #ff8a9c; border-color: #ff8a9c66; }
-.base > header .quit-btn { margin-left: auto; align-self: flex-start; } .card > .quit-btn { position: relative; z-index: 2; margin-left: auto; } /* above the card's link */
+.base > header > .quit-btn { margin-left: auto; align-self: flex-start; } .card > .quit-btn, .tower-quit { position: relative; z-index: 2; margin-left: auto; } .tower-quit { margin: 6px 0 0; } /* above the card's link */
 .sheet { margin: auto; max-width: min(420px, calc(100vw - 32px)); padding: 18px 20px; border: 1px solid var(--line); border-radius: 16px; background: #0e1628; color: var(--text); font: 14px/1.5 var(--sans); }
 .sheet::backdrop { background: #02050c99; } .sheet p { margin: 0 0 14px; } .sheet-row { display: flex; justify-content: flex-end; gap: 10px; } .sheet .later { padding: 6px 14px; border-radius: 10px; cursor: pointer; }
 .sheet-yes { padding: 6px 14px; border: 0; border-radius: 10px; background: #ff8a9c; color: #06101e; font: 600 13px var(--sans); cursor: pointer; }

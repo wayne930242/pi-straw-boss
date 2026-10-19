@@ -152,6 +152,7 @@
 	"task_open": "not done",
 	"dialog_alert": "alert",
 	"back": "Back",
+	"quit_tower": "Quit tower",
 	"quit": "Quit",
 	"close": "Close",
 	"close_tile": "Close {title}",

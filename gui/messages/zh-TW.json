@@ -124,6 +124,7 @@
 	"task_open": "未完成",
 	"dialog_alert": "警示",
 	"back": "返回",
+	"quit_tower": "關掉塔台",
 	"quit": "關掉",
 	"close": "關閉",
 	"close_tile": "關閉 {title}",

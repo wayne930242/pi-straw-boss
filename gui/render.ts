@@ -130,7 +130,7 @@ export function aimClose(button: HTMLElement, b: Base, tab?: { id: string; label
 	button.setAttribute("aria-label", tab ? m.close_squad({ name: tab.label }) : m.close_base({ name: b.label }));
 }
 
-const baseEl = () => html(`<section class="base"><header><div class="tower"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></div><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>${m.head_tower()}</span><h2><a class="enter-base"></a></h2><p></p></div><button type="button" class="quit-btn" data-close="base"></button></header><div class="spawn-btns"><button type="button" class="pair-btn"></button></div><div class="tabs"></div><div class="outposts" data-label="${m.outposts()}"></div></section>`);
+const baseEl = () => html(`<section class="base"><header><div class="tower"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></div><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>${m.head_tower()}</span><h2><a class="enter-base"></a></h2><p></p><button type="button" class="quit-btn tower-quit" data-close="unit" hidden></button></div><button type="button" class="quit-btn" data-close="base"></button></header><div class="spawn-btns"><button type="button" class="pair-btn"></button></div><div class="tabs"></div><div class="outposts" data-label="${m.outposts()}"></div></section>`);
 function fillBase(el: HTMLElement, b: Base) {
 	mark(el, b.mark);
 	el.classList.toggle("head", b.head);
@@ -141,7 +141,10 @@ function fillBase(el: HTMLElement, b: Base) {
 	aim(el.querySelector("h2 a")!, { view: "workspace", ws: b.id });
 	text(el, ".title p", b.tower ? m.control_tower({ state: LABEL[b.tower.mark]() }) : m.no_tower());
 	aimOpening(el.querySelector(".spawn-btns button")!, b);
-	aimClose(el.querySelector("header .quit-btn")!, b);
+	aimClose(el.querySelector("header > .quit-btn")!, b);
+	const tq = el.querySelector<HTMLButtonElement>(".tower-quit")!; // the tower alone, its mains back to members
+	Object.assign(tq.dataset, { key: b.tower?.key ?? "", name: b.tower?.name ?? "", role: "tower" });
+	[tq.hidden, tq.textContent] = [!b.tower?.control, m.quit_tower()];
 	sync(el.querySelector(".tabs")!, b.tabs, () => html(`<div class="tab"><h3><span></span><button type="button" class="tab-add"></button><button type="button" class="quit-btn" data-close="tab"></button></h3><div class="units"></div></div>`), (tab, t) => {
 		text(tab, "h3 span", m.tab_label({ label: t.label }));
 		aimClose(tab.querySelector(".quit-btn")!, b, t);
