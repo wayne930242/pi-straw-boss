@@ -123,7 +123,8 @@ Run `herdr server reload-config` to load the key, and `herdr plugin unlink wayne
 
 A second optional Herdr plugin, in [`herdr-reaper/`](herdr-reaper), cleans up after agents that ran in worktree workspaces.
 In a workspace whose worktree is a linked git worktree (whatever its name), it closes the pane of an agent that has exited once the pane's shell is idle, and never the focused pane.
-Herdr then closes the tab and the workspace, and the plugin removes the workspace's checkout if `git status` is clean.
+Herdr then closes the tab and the workspace, and the plugin removes the workspace's checkout if `git status` is clean and nothing else is using it (no other pane works in it, no other workspace is open on it).
+Git-ignored files (`.env`, `node_modules`, caches, local databases) do not make a checkout dirty, so they are deleted with it.
 The branch always stays, and so does a dirty checkout, with the reason in the plugin log.
 Every other workspace is left alone.
 It sweeps every 10 minutes and a minute after an agent exits, and the `reap-now` action sweeps at once.
@@ -132,7 +133,7 @@ Every close, removal, skip and pin is a line in the plugin log (`herdr plugin lo
 A pinned workspace is never reaped.
 The `pin` action toggles the pin of the workspace it runs in, and a workspace you rename more than a minute after it appeared is pinned for you (pi-herdr-agents names its workspaces within seconds, which pins nothing); unpinning also renames it back.
 The pin is the workspace token `$pin`, a Nerd Font pin glyph, which a Space row shows once you add it.
-It needs Herdr 0.9.3 or newer, git and node.
+It needs Herdr 0.9.3 or newer, git and node 18 or newer.
 
 ```bash
 herdr plugin install wayne930242/pi-straw-boss/herdr-reaper
@@ -150,7 +151,8 @@ rows = [["state_icon", "workspace", { token = "$pin" }], ["branch", "git_status"
 ```
 
 `herdr plugin link /path/to/pi-straw-boss/herdr-reaper` links a checkout instead, and `herdr plugin unlink wayne930242.straw-boss-reaper` removes the plugin.
-The first sweep treats every agent-less pane in a linked-worktree workspace as one whose agent exited, so pin the workspaces you want to keep before it runs.
+The plugin starts reaping as soon as it is installed or linked, with no trial run and no confirmation: its first sweep treats every idle, agent-less pane in a linked-worktree workspace as one whose agent exited, about a minute and a half after the first hook runs.
+Run `bash herdr-reaper/run.sh reaper.mjs dry-run` first to see what it would do, and pin the workspaces you want to keep (the pin action works once the plugin is linked, and a `config.json` with `only_under` can be put in the plugin's config directory before that).
 [How it works](docs/how-it-works.md#worktree-reaper) has the rules and the limits.
 
 ## Learn more
