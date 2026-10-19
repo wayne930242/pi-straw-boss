@@ -12,13 +12,13 @@ export interface Option { title: string; description?: string; preview?: true }
 export interface Question { question: string; header?: string; multiple: boolean; options: Option[] }
 /** secret_drop's masked dialog: what it asks for and where the value goes. Never the value itself. */
 export interface Secret { label: string; instructions: string[]; url?: string; destination: string }
-/** An open dialog as the bridge relays it: a `select` (labelled choices), `questions` (a questionnaire), or a `secret`; `big` when too long to relay, `busy` while an answer is on its way. */
-export interface Dialog { owner: string; id: string; toolCallId?: string; digest: string; select?: Select; questions?: Question[]; secret?: Secret; big?: true; busy?: true }
+/** An open dialog as the bridge relays it: a `select` (labelled choices), `questions` (a questionnaire), or a `secret`; `big` when too long to relay, `busy` while an answer is on its way. `key`: a secret's public key, made by its bridge for this dialog only (seal.ts); the value is sealed to it before it leaves the server. */
+export interface Dialog { owner: string; id: string; toolCallId?: string; digest: string; select?: Select; questions?: Question[]; secret?: Secret; key?: string; big?: true; busy?: true }
 /** What the page may answer, carried on a waiting unit's `pending`. */
 export interface Answerable { dialog: string; digest: string; select?: Select; questions?: Question[]; secret?: Secret }
 /** One question's answer: chosen option indexes, own words, a note. */
 export interface Reply { choices?: number[]; text?: string; note?: string }
-/** An answer for one dialog: `choice` for a select, one `answers` entry per question, `value` for a secret (it lives only in this message and the owner's event, never in an ack or a record). `answerId` is the page's idempotency key. */
+/** An answer for one dialog: `choice` for a select, one `answers` entry per question, `value` for a secret (it lives only in the server's request, the bridge's memory, and the owner's event, never in an intercom message, an ack, or a record). `answerId` is the page's idempotency key. */
 export interface Answer { id: string; answerId: string; digest: string; choice?: number; answers?: Reply[]; value?: string }
 export interface Verdict { accepted: boolean; reason?: string }
 /** `closed` without `by` leaves it to the bridge (remote when its answer was taken, else local). */

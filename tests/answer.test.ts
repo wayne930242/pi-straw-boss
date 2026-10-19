@@ -6,7 +6,9 @@ import { join } from "node:path";
 import { after, afterEach, mock, test } from "node:test";
 import { readRecord } from "../src/handover.ts";
 import type { Net, Unit } from "../src/net.ts";
+import { guiNamespace } from "../src/bridge.ts";
 import { secretDigest, selectDigest } from "../src/owners.ts";
+import { keyOk, newKeys, seal } from "../src/seal.ts";
 import { type Agent, until, World } from "./fakes.ts";
 import { assistant, call, header, lines, user } from "./sessions.ts";
 
@@ -195,8 +197,15 @@ const SECRET = { label: "Deploy token", instructions: ["Open the link.", "Create
 /** Every file under `dir`, read as text. */
 const filesUnder = (dir: string): string[] => readdirSync(dir).flatMap((n) => (statSync(join(dir, n)).isDirectory() ? filesUnder(join(dir, n)) : [readFileSync(join(dir, n), "utf8")]));
 
-test("a secret_drop in another session is answered from this computer's page: the owner gets the value once, and it lands in no snapshot, response, log, notice, or file", async () => {
+test("a secret_drop in another session is answered from this computer's page: the owner gets the value once, a third session on the channel never receives it, and it lands in no snapshot, response, log, notice, or file", async () => {
 	const { a, b, url, csrf } = await setup(false, [["c1", "secret_drop"]]), value = "tok-e2e-7c1d9a-not-for-logs", digest = secretDigest(SECRET);
+	// C: any other pi in Herdr. Its bridge joins the server's channel as every bridge does, and the broker hands it every message published there.
+	const c = world.agent({ id: "C", pane: "wA:p3", tab: "wA:t1" });
+	await c.start();
+	const ns = guiNamespace("A"), heard: Record<string, unknown>[] = [];
+	await until(() => c.regs.get(ns), "C on the server's channel");
+	const reg = c.regs.get(ns)!, onEvent = reg.onEvent;
+	reg.onEvent = (e: Record<string, unknown>) => (heard.push(e), onEvent(e));
 	const written: string[] = [];
 	for (const stream of [process.stdout, process.stderr]) mock.method(stream, "write", ((chunk: unknown) => (written.push(String(chunk)), true)) as never);
 	for (const level of ["log", "info", "warn", "error", "debug"] as const) mock.method(console, level, (...args: unknown[]) => void written.push(args.map(String).join(" ")));
@@ -227,8 +236,34 @@ test("a secret_drop in another session is answered from this computer's page: th
 	} finally {
 		mock.restoreAll();
 	}
-	const everything = [...seen, ...written, ...a.notices.map((n) => n.text), ...b.notices.map((n) => n.text), ...filesUnder(scratch)];
-	assert.equal(everything.some((t) => t.includes(value)), false, "the value is only in the one answer event");
+	// What C was handed: the dialog list carries B's public key, and the answer is a ciphertext; C holds no key that opens it, and no message of any kind carries the value.
+	const payloads = heard.map((e) => e.payload as { type?: string; to?: string; sealed?: unknown } | undefined);
+	const answers = payloads.filter((p) => p?.type === "answer");
+	assert.equal(answers.length, 1, "the answer did reach C's registration: the broker fans it out");
+	assert.deepEqual([Object.keys(answers[0]!.sealed as object).sort(), "value" in answers[0]!], [["ct", "epk", "iv", "v"], false]);
+	assert.equal(heard.some((e) => JSON.stringify(e).includes(value)), false, "C never receives the value, in any message");
+	assert.equal(JSON.stringify(world.broker.published).includes(value), false, "the broker was never handed it either");
+	const everything = [...seen, ...written, ...a.notices.map((n) => n.text), ...b.notices.map((n) => n.text), ...c.notices.map((n) => n.text), ...filesUnder(scratch), JSON.stringify(heard), JSON.stringify(world.broker.published)];
+	assert.equal(everything.some((t) => t.includes(value)), false, "the value is only in the one answer event on B's own bus");
+});
+
+test("an answer sealed for another session's key, or a plain value, never reaches the owner: B's bridge refuses both", async () => {
+	const { b, url } = await setup(false, [["c1", "secret_drop"]]), digest = secretDigest(SECRET), value = "tok-forged";
+	const seen: unknown[] = [];
+	void b.fire("tool_execution_start", { toolCallId: "c1", toolName: "secret_drop", args: {} });
+	b.on("robot-hand:secret:answer", (raw) => seen.push(raw));
+	b.emit("robot-hand:secret:pending", { version: 1, id: "s1", toolCallId: "c1", digest, secret: SECRET });
+	await until(async () => unitB(await snapshot(url))?.pending?.answer, "B's secret dialog in the snapshot");
+	// The server's session would be the only sender B accepts; the same checks run on the owner path, so drive the bridge as the server does.
+	const target = [...world.broker.published].reverse().find((p) => (p.payload as { type?: string }).type === "dialogs" && p.from === "B")!.payload as { bridgeId: string; dialogs: { key: string }[] };
+	const forged = { version: 1, type: "answer", to: target.bridgeId, id: "s1", answerId: "f".repeat(20), digest };
+	const reg = b.regs.get(guiNamespace("A"))!, owner = world.broker.ownerOf(guiNamespace("A"));
+	for (const payload of [{ ...forged, value }, { ...forged, sealed: seal(value, newKeys().pub, { id: "s1", digest, answerId: "f".repeat(20), bridgeId: target.bridgeId }) }, { ...forged, sealed: seal(value, target.dialogs[0]!.key, { id: "s1", digest, answerId: "g".repeat(20), bridgeId: target.bridgeId }) }])
+		reg.onEvent({ type: "message", fromSessionId: "A", owner, payload });
+	assert.deepEqual(seen, []);
+	const acks = world.broker.published.filter((p) => p.from === "B" && (p.payload as { type?: string }).type === "ack").map((p) => p.payload as { outcome: string; reason?: string });
+	assert.deepEqual(acks.map((x) => [x.outcome, x.reason]), Array(3).fill(["rejected", "malformed"]), "each reached the bridge and was refused there");
+	assert.equal(keyOk(target.dialogs[0]!.key), true);
 });
 
 test("a secret_drop beside no matching dialog, or with another dialog open, is never answerable", async () => {

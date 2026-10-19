@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, type KeyObject, randomUUID } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -7,6 +7,7 @@ import { type Answer, type Bus, type Dialog, OWNERS, type OwnerAdapter, type Ver
 import { type Cmd, listCommands, MAX_PREFIX } from "./commands.ts";
 import type { Queued } from "./net.ts";
 import { type Editor, probeEditor } from "./probe.ts";
+import { newKeys, open as unseal, type Sealed } from "./seal.ts";
 import { type Monitor, trackMonitors } from "./monitors.ts";
 
 // The bridge runs in every pi session inside Herdr, subagents included. It turns the owners' dialog events (owners.ts) into one list of open
@@ -24,6 +25,9 @@ import { type Monitor, trackMonitors } from "./monitors.ts";
 // It relays the session's queue too: pi tells extensions only whether messages wait (hasPendingMessages), so the bridge keeps what it saw
 // typed while the agent works (`input` with a streaming behavior) and drops one when its user message starts; a queue pi emptied another
 // way (Esc, Alt+Up) clears at the next check. And it relays the session's background monitors (monitors.ts).
+// A secret_drop's value never travels in the clear: the bridge makes a key pair for each secret dialog it relays, sends the public half with the
+// dialog (`key`), keeps the private half in memory until the dialog closes, and accepts a secret answer only as a `sealed` value that opens
+// with that key for that dialog and answerId (seal.ts); a plaintext `value` is refused.
 
 export const REGISTER = "intercom:extension-register";
 const VERDICT_MS = 2000, POLL_MS = 2000, KEEP_MS = 120_000, KEEP = 16, MAX_GUIS = 8, MAX_MESSAGE = 15 * 1024;
@@ -43,13 +47,14 @@ export interface FormReply { version: 1; type: "form-result"; bridgeId: string; 
 export interface CloseResult { version: 1; type: "close-result"; bridgeId: string; reqId: string; accepted: boolean; reason?: string }
 export type ToHub = Dialogs | Ack | ProbeResult | FormReply | CommandsResult | CloseResult;
 export interface FormMessage { version: 1; type: "form"; to: string; id: string; answerId: string; fields: Fields }
-export interface AnswerMessage extends Answer { version: 1; type: "answer"; to: string }
+/** An answer on the wire: a secret's value is `sealed` to the dialog's key (seal.ts) and is never a plain `value`. */
+export interface AnswerMessage extends Omit<Answer, "value"> { version: 1; type: "answer"; to: string; sealed?: Sealed }
 /** The hub when it runs in this session: it takes what a remote bridge would publish, from this session's id. */
 export interface LocalHub { receive(from: string, msg: ToHub): void }
 /** What the hub calls on the bridge of its own session. */
 export interface Bridge { deliver(msg: AnswerMessage, reply: (ack: Ack) => void): void; sync(): void; probe(): Editor; commands(prefix: string): Cmd[]; form(msg: FormMessage, reply: (r: FormReply) => void): void; close(keepPane: boolean): { accepted: boolean; reason?: string } }
 interface Channel { snapshot(): { connected: boolean; owner?: { sessionId: string; epoch: string } }; publish(payload: unknown, options?: { audience?: "owner" | "capable" }): void }
-interface Rec { adapter: OwnerAdapter; d: Dialog; state: "open" | "settling" | "unknown" | "closed"; answerId?: string; accepted?: boolean; by?: string; at?: number; last?: Ack; waiting: ((ack: Ack) => void)[] }
+interface Rec { adapter: OwnerAdapter; d: Dialog; keys?: { pub: string; priv: KeyObject }; state: "open" | "settling" | "unknown" | "closed"; answerId?: string; accepted?: boolean; by?: string; at?: number; last?: Ack; waiting: ((ack: Ack) => void)[] }
 type Event = { type: string; fromSessionId?: string; owner?: { sessionId: string; epoch: string }; payload?: Record<string, unknown> };
 
 /** `close` quits the session (keeping its pane when `keepPane`), or says why it cannot. */
@@ -71,14 +76,14 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 	};
 	const push = (final = false) => {
 		if (!target()) return;
-		const dialogs = final ? [] : open().map((r) => ({ ...r.d, ...(r.state !== "open" ? { busy: true as const } : {}) }));
+		const dialogs = final ? [] : open().map((r) => ({ ...r.d, ...(r.keys ? { key: r.keys.pub } : {}), ...(r.state !== "open" ? { busy: true as const } : {}) }));
 		const closed = final ? [] : [...recs.values()].filter((r) => r.state === "closed").map((r) => ({ id: r.d.id, by: r.by!, ...(r.by === "remote" && r.answerId ? { answerId: r.answerId } : {}) }));
 		const queue = final ? [] : queued.slice(0, MAX_QUEUED).map((q) => ({ ...q, text: clipQueued(q.text) }));
 		const mons = final ? [] : (monitors?.list() ?? []);
 		let msg: Dialogs = { version: 1, type: "dialogs", bridgeId, pane: env.HERDR_PANE_ID!, file: file() ?? null, dialogs, closed, documents: final ? [] : docs, ...(queue.length ? { queued: queue } : {}), ...(mons.length ? { monitors: mons } : {}) };
 		const big = () => Buffer.byteLength(JSON.stringify(msg)) > MAX_MESSAGE; // in bytes, as the broker counts
 		if (big()) msg = { ...msg, documents: [], docsCut: true }; // the documents go first: they stay in the terminal, and the unit says so
-		if (big()) msg = { ...msg, dialogs: dialogs.map(({ select, questions, secret, ...d }) => ({ ...d, big: true as const })) }; // shown read-only: too long to show
+		if (big()) msg = { ...msg, dialogs: dialogs.map(({ select, questions, secret, key, ...d }) => ({ ...d, big: true as const })) }; // shown read-only: too long to show
 		send(target(), msg);
 	};
 	// gui.json names the server's session; it is read at the session's start and then on every mtime change, checked every 2 s (unref'd).
@@ -132,14 +137,14 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 		open(adapter: OwnerAdapter, d: Dialog) {
 			const call = d.toolCallId ? calls.get(d.toolCallId) : undefined;
 			if (d.toolCallId && (!call || (!adapter.gate && call.tool !== adapter.tool))) return; // only a call in flight of the owner's own tool (a gate: of any tool)
-			recs.set(d.id, { adapter, d, state: "open", waiting: [] });
+			recs.set(d.id, { adapter, d, ...(d.secret ? { keys: newKeys() } : {}), state: "open", waiting: [] });
 			if (call?.signal?.aborted) adapter.cancel?.(bus, d);
 			changed();
 		},
 		closed(id: string, by?: string) {
 			const r = recs.get(id);
 			if (!r || r.state === "closed") return;
-			[r.state, r.at, r.by] = ["closed", Date.now(), by ?? (r.accepted ? "remote" : "local")];
+			[r.state, r.at, r.by, r.keys] = ["closed", Date.now(), by ?? (r.accepted ? "remote" : "local"), undefined]; // the private key goes with the dialog
 			changed();
 		},
 	};
@@ -150,6 +155,9 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 		if (!r) return reply({ version: 1, type: "ack", bridgeId, id: String(a.id), answerId: String(a.answerId), outcome: "stale", by: "gone" });
 		if (r.state === "closed") return reply(ack(r, a, r.by === "remote" && r.answerId === a.answerId ? "accepted" : "stale", { by: r.by }));
 		if (r.state !== "open") return r.answerId !== a.answerId ? reply(ack(r, a, "busy")) : r.last ? reply(r.last) : void r.waiting.push(reply);
+		// A secret opens only for this dialog and answerId, under this dialog's key; whatever else it carries (a plain `value`) is never looked at.
+		const value = r.d.secret && r.keys ? unseal(a.sealed, r.keys.priv, r.keys.pub, { id: r.d.id, digest: r.d.digest, answerId: a.answerId, bridgeId }) : undefined;
+		if (r.d.secret && value === undefined) return reply(ack(r, a, "rejected", { reason: "malformed" }));
 		[r.state, r.answerId] = ["settling", a.answerId];
 		let off: (() => void) | undefined, timer: ReturnType<typeof setTimeout> | undefined, done = false;
 		const finish = (v?: Verdict) => {
@@ -167,7 +175,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 			push();
 		};
 		try {
-			off = r.adapter.answer(bus, r.d, { id: r.d.id, answerId: a.answerId, digest: a.digest, choice: a.choice, answers: Array.isArray(a.answers) ? a.answers : undefined, value: typeof a.value === "string" ? a.value : undefined }, finish);
+			off = r.adapter.answer(bus, r.d, { id: r.d.id, answerId: a.answerId, digest: a.digest, choice: a.choice, answers: Array.isArray(a.answers) ? a.answers : undefined, value }, finish);
 		} catch {
 			finish({ accepted: false, reason: "malformed" }); // an answer an adapter could not even map; the owner never saw it
 		}

@@ -11,6 +11,7 @@ import { createHub } from "../src/dialogs.ts";
 import { canonical } from "../src/history.ts";
 import type { Net, Ref } from "../src/net.ts";
 import { type Dialog, secretDigest, selectDigest } from "../src/owners.ts";
+import { keyOk, newKeys, open } from "../src/seal.ts";
 import type { Editor } from "../src/probe.ts";
 import { assistant, call, header, lines, user } from "./sessions.ts";
 
@@ -408,15 +409,17 @@ test("documents: a tower carries its documents too, in the snapshot's JSON", asy
 });
 
 const SECRET = { label: "Deploy token", instructions: ["Open the link.", "Create a token."], url: "https://example.com/tokens", destination: ".env.local" };
-const secretDialog = (extra: Partial<Dialog> = {}): Dialog => ({ owner: "robot-hand-secret", id: "s1", toolCallId: "c1", digest: secretDigest(SECRET), secret: SECRET, ...extra });
+const KEYS = newKeys();
+const secretDialog = (extra: Partial<Dialog> = {}): Dialog => ({ owner: "robot-hand-secret", id: "s1", toolCallId: "c1", digest: secretDigest(SECRET), secret: SECRET, key: KEYS.pub, ...extra });
 
 test("secret_drop: its masked dialog is answerable when it is the one dialog, bound to the one open secret_drop call, with a matching digest", async () => {
 	const x = hub(), one = file([["c1", "secret_drop"]]), mixed = file([["c1", "bash"], ["c2", "secret_drop"]]);
 	x.h.receive("S", x.list([secretDialog()], { file: one }));
 	const { unit } = await read(x, one);
 	assert.deepEqual(unit.pending, { callId: "c1", tool: "secret_drop", answer: { dialog: "s1", digest: secretDigest(SECRET), secret: SECRET } });
-	assert.deepEqual(x.h.target("S"), { from: "S", bridgeId: "B", answer: unit.pending!.answer });
+	assert.deepEqual(x.h.target("S"), { from: "S", bridgeId: "B", answer: unit.pending!.answer, key: KEYS.pub });
 	assert.deepEqual(JSON.parse(JSON.stringify(unit.pending)).answer.secret, SECRET, "the snapshot carries what it asks for, never a value");
+	assert.equal(JSON.stringify(unit.pending).includes(KEYS.pub), false, "nor the key: it stays with the target the server sends to");
 	x.h.receive("S", x.list([secretDialog({ toolCallId: "c2" })], { file: mixed }));
 	assert.deepEqual((await read(x, mixed)).unit.pending, { callId: "c2", tool: "secret_drop", answer: { dialog: "s1", digest: secretDigest(SECRET), secret: SECRET } }, "among several open calls, the one it names");
 });
@@ -448,7 +451,32 @@ test("secret_drop: every other case stays in the terminal with its reason, and t
 	assert.equal(x.h.target("S")?.answer.dialog, "s1", "still reachable, so an answer sent twice hears busy or its replay from the bridge");
 });
 
-test("a secret's answer goes to its bridge with the value in the one message, and the hub keeps and returns no value", async () => {
+const NOKEY = "It waits for a secret; its session cannot protect one on the way here, so enter it in the terminal.";
+
+test("secret_drop: a dialog without a valid public key stays in the terminal, whatever else matches", async () => {
+	const x = hub(), one = file([["c1", "secret_drop"]]);
+	for (const [what, key] of [["none (an older bridge)", undefined], ["an empty one", ""], ["a short one", "AAAA"], ["one with other characters", `${KEYS.pub.slice(1)}=`], ["a number", 5 as never]] as const) {
+		x.h.receive("S", x.list([secretDialog({ key })], { file: one }));
+		const { unit } = await read(x, one);
+		assert.deepEqual([unit.pending?.answer, unit.pending?.why, x.h.target("S")], [undefined, NOKEY, undefined], what);
+	}
+});
+
+test("secret_drop: a key that changes for the same dialog is never trusted again; a later key for a dialog first seen without one is not either; a new dialog starts afresh", async () => {
+	const x = hub(), one = file([["c1", "secret_drop"]]), other = newKeys().pub;
+	const why = async (d: Dialog) => (x.h.receive("S", x.list([d], { file: one })), (await read(x, one)).unit.pending?.why);
+	assert.equal(await why(secretDialog()), undefined, "the first key is taken");
+	assert.equal(await why(secretDialog({ key: other })), NOKEY, "another key for the same dialog: terminal only");
+	assert.equal(await why(secretDialog()), NOKEY, "and the first key coming back does not undo it");
+	assert.equal(await why(secretDialog({ id: "s2" })), undefined, "another dialog of the same bridge is its own");
+	assert.equal(await why(secretDialog({ id: "s2", key: undefined })), NOKEY, "a key that disappears");
+	x.h.receive("S", x.list([], { file: one }));
+	assert.equal(await why(secretDialog({ key: other })), undefined, "a dialog that left the list and came again is a new one");
+	x.h.receive("S", x.list([secretDialog({ id: "s3", key: undefined })], { file: one }));
+	assert.equal(await why(secretDialog({ id: "s3" })), NOKEY, "no key first, a key later");
+});
+
+test("a secret's answer goes to its bridge sealed to its dialog's key; no plain value is delivered, published, kept, or returned, and only that dialog's private key opens it", async () => {
 	const x = hub({ me: "S" }), path = file([["c1", "secret_drop"]]), value = "tok-hub-secret-value";
 	x.h.receive("S", x.list([secretDialog()], { file: path }));
 	await read(x, path);
@@ -456,6 +484,37 @@ test("a secret's answer goes to its bridge with the value in the one message, an
 	x.answerWith((m) => ({ version: 1, type: "ack", bridgeId: m.to, id: m.id, answerId: m.answerId, outcome: "accepted" }));
 	const sent = await x.h.send("S", t, { id: "s1", answerId: "a".repeat(16), digest: t.answer.digest, value });
 	assert.deepEqual(sent, { status: 200, body: { outcome: "accepted" } });
-	assert.deepEqual(x.delivered.map((m) => [m.id, m.value]), [["s1", value]]);
-	assert.equal(JSON.stringify([sent, x.h.replay("a".repeat(16), "S"), x.h.ended("S", "s1", "a".repeat(16)), x.published, x.changes]).includes(value), false, "no outcome, replay, or published message holds the value");
+	assert.deepEqual(x.delivered.map((m) => [m.id, "value" in m, keyOk(m.sealed?.epk)]), [["s1", false, true]], "the owner's bridge is handed a sealed value, never a plain one");
+	assert.equal(open(x.delivered[0]!.sealed, KEYS.priv, KEYS.pub, { id: "s1", digest: t.answer.digest, answerId: "a".repeat(16), bridgeId: "B" }), value, "its dialog's key opens it");
+	assert.equal(open(x.delivered[0]!.sealed, newKeys().priv, KEYS.pub, { id: "s1", digest: t.answer.digest, answerId: "a".repeat(16), bridgeId: "B" }), undefined, "no other key does");
+	assert.equal(JSON.stringify([sent, x.h.replay("a".repeat(16), "S"), x.h.ended("S", "s1", "a".repeat(16)), x.published, x.changes, x.delivered]).includes(value), false, "no outcome, replay, published or delivered message holds the value");
+});
+
+test("a secret answered through the channel publishes only the sealed value", async () => {
+	const x = hub(), path = file([["c1", "secret_drop"]]), value = "tok-on-the-wire";
+	x.h.receive("S", x.list([secretDialog()], { file: path }));
+	await read(x, path);
+	const t = x.h.target("S")!, pending = x.h.send("S", t, { id: "s1", answerId: "a".repeat(16), digest: t.answer.digest, value });
+	x.h.receive("S", { version: 1, type: "ack", bridgeId: "B", id: "s1", answerId: "a".repeat(16), outcome: "accepted" });
+	assert.deepEqual(await pending, { status: 200, body: { outcome: "accepted" } });
+	const msg = x.published.map((p) => p.payload as { type: string; to: string; value?: string; sealed?: { epk: string } }).find((m) => m.type === "answer")!;
+	assert.deepEqual([msg.to, "value" in msg, keyOk(msg.sealed?.epk)], ["B", false, true]);
+	assert.equal(JSON.stringify(x.published).includes(value), false);
+	assert.equal(x.delivered.length, 0, "not the in-process path");
+});
+
+test("a secret with no key at send time is not sent at all, and the value is not echoed", async () => {
+	const x = hub({ me: "S" }), path = file([["c1", "secret_drop"]]), value = "tok-never-leaves";
+	x.h.receive("S", x.list([secretDialog()], { file: path }));
+	await read(x, path);
+	x.answerWith((m) => ({ version: 1, type: "ack", bridgeId: m.to, id: m.id, answerId: m.answerId, outcome: "accepted" }));
+	const t = x.h.target("S")!, sent = await x.h.send("S", t, { id: "s1", answerId: "a".repeat(16), digest: t.answer.digest, value });
+	for (const bad of [{ ...t, key: undefined }, { ...t, key: "AAAA" }]) {
+		const r = await x.h.send("S", bad, { id: "s1", answerId: "b".repeat(16), digest: t.answer.digest, value });
+		assert.deepEqual([r.status, r.body.outcome], [409, "unsent"]);
+		assert.equal(JSON.stringify(r).includes(value), false);
+	}
+	assert.equal(x.delivered.length, 1, "only the first, sealed send reached a bridge");
+	assert.equal(sent.status, 200);
+	assert.equal(JSON.stringify([x.delivered, x.published]).includes(value), false);
 });
