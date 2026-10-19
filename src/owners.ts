@@ -25,6 +25,8 @@ export interface OwnerAdapter {
 	name: string;
 	/** The tool whose call opens the dialog; a dialog naming a toolCallId must belong to a call of this tool in flight. */
 	tool?: string;
+	/** A gate: its dialog asks about whichever tool's call its `toolCallId` names (pi-code's hook confirmation), so it binds to a call in flight of any tool but must name one. */
+	gate?: true;
 	listen(bus: Bus, report: Report): () => void;
 	/** Hands one answer to the owner; `done` gets the verdict (synchronously when the owner answers inside its listener). Returns the cleanup. */
 	answer(bus: Bus, d: Dialog, a: Answer, done: (v: Verdict) => void): () => void;
@@ -49,8 +51,8 @@ export function selectOf(owner: string, raw: unknown): Dialog | undefined {
 }
 
 /** An owner that speaks contract v1 under `prefix` (pi-robot-hand; pi-mcp-adapter's fork once it emits). */
-const contract = (name: string, prefix: string, tool?: string): OwnerAdapter => ({
-	name, tool,
+const contract = (name: string, prefix: string, tool?: string, gate?: true): OwnerAdapter => ({
+	name, tool, ...(gate ? { gate } : {}),
 	listen(bus, report) {
 		const self = this, offs = [
 			bus.on(`${prefix}:pending`, (raw) => { const d = selectOf(name, raw); if (d) report.open(self, d); }),
@@ -113,4 +115,6 @@ export const rpiv: OwnerAdapter = {
 export const robotHand = contract("robot-hand", "robot-hand", "robot_hand");
 /** pi-mcp-adapter's tool approval and project trust (its fork, spec task 4): inert until that package emits. */
 export const mcpAdapter = contract("pi-mcp-adapter", "pi-mcp-adapter:dialog");
-export const OWNERS: OwnerAdapter[] = [robotHand, rpiv, mcpAdapter];
+/** pi-code's hooks extension: its confirmation before a gated tool call (Allow or Deny), whichever tool that is. */
+export const piCode = contract("pi-code", "pi-code:dialog", undefined, true);
+export const OWNERS: OwnerAdapter[] = [robotHand, rpiv, mcpAdapter, piCode];

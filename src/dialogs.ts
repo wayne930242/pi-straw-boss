@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { type Pending, type Relayed, SEVERAL } from "./ask.ts";
+import { type OpenCall, type Pending, type Relayed, SEVERAL } from "./ask.ts";
 import { type Ack, type AnswerMessage, type Bridge, type CloseResult, type Dialogs, type FormMessage, type FormReply, guiNamespace, type LocalHub, MAX_QUEUED, QUEUED_TEXT, REGISTER, type ToHub } from "./bridge.ts";
 import { createCaps, type Doc, docsOf, type Fields, fieldsOk, type FormResult, type Shelf } from "./documents.ts";
 import type { Session } from "./herdr.ts";
@@ -108,15 +108,20 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 		}
 		return got;
 	};
-	const merge = (key: string, file: Pending | undefined, ds: Dialog[], readable: boolean): Pending => {
+	// `calls`: the file's open calls (several when its newest assistant message left more than one unanswered); without them, the file's one call.
+	const merge = (key: string, file: Pending | undefined, ds: Dialog[], readable: boolean, calls: OpenCall[] = file && file.why !== SEVERAL ? [{ id: file.callId, name: file.tool }] : []): Pending => {
 		const d = ds[0]!, adapter = OWNERS.find((o) => o.name === d.owner), base = file ?? { callId: d.toolCallId ?? d.id, tool: adapter?.tool ?? "dialog" }, at = bound.get(key)!;
 		const terminal = (why: string): Pending => ({ ...base, why });
 		if (file?.tool === "secret_drop") return file; // terminal only, whatever a bridge says
+		if (calls.some((c) => c.name === "secret_drop")) return terminal("It waits for a secret."); // also when it is one of several open calls
 		if (ds.length !== 1) return terminal(SEVERAL);
 		if (d.big) return terminal("It is too long to show here; answer it in the terminal.");
-		if (!adapter || !readable || (d.toolCallId && (file?.callId !== d.toolCallId || file.tool !== adapter.tool || file.why === SEVERAL))) return terminal(base.why ?? "Answer it in the terminal.");
+		// A dialog naming a tool call answers only for one of the open calls: of its owner's own tool, or of any tool when the owner is a gate (which must name one).
+		const call = d.toolCallId ? calls.find((c) => c.id === d.toolCallId) : undefined;
+		if (!adapter || !readable || (d.toolCallId ? !call || !(adapter.gate || call.name === adapter.tool) : adapter.gate)) return terminal(base.why ?? "Answer it in the terminal.");
 		if ((d.select ? selectDigest(d.select) : d.questions ? questionsDigest(d.questions) : undefined) !== d.digest) return terminal("The question here differs from the one in the terminal; answer it there.");
-		const answer: Answerable = { dialog: d.id, digest: d.digest, ...(d.select ? { select: d.select } : { questions: d.questions }) }, { why: _, ...rest } = base;
+		const answer: Answerable = { dialog: d.id, digest: d.digest, ...(d.select ? { select: d.select } : { questions: d.questions }) }, { why: _, ...kept } = base;
+		const rest = call && call.id !== base.callId ? { callId: call.id, tool: call.name } : kept; // the file's question belongs to its first call, not to another one the dialog is bound to
 		// While an answer is on its way the page shows it read-only, but the bridge still hears that answer resent (Check again: it replays) and any other (busy).
 		targets.set(key, { from: at.from, bridgeId: at.b.bridgeId, answer });
 		return d.busy ? terminal("An answer is on its way; check the terminal.") : { ...rest, answer };

@@ -148,6 +148,19 @@ test("pendings are taken only for a call of the owner's own tool in flight, in c
 	assert.deepEqual(s.lists().at(-1), [], "the end of its call closes a dialog its owner never closed");
 });
 
+test("a gate's dialog (pi-code's hook confirmation) is taken for any tool's call in flight, and only for one", () => {
+	const s = session(), select = { title: "Allow edit?", choices: [{ label: "Allow" }, { label: "Deny" }] };
+	s.own();
+	const gate = (id: string, call: string) => s.events.emit("pi-code:dialog:pending", { version: 1, id, toolCallId: call, digest: selectDigest(select), select });
+	gate("g0", "never-started");
+	s.fire("tool_execution_start", { toolCallId: "c1", toolName: "bash", args: {} });
+	s.fire("tool_execution_start", { toolCallId: "c2", toolName: "edit", args: {} });
+	gate("g1", "c2");
+	assert.deepEqual(s.lists().at(-1)!.map((d) => [d.owner, d.id, d.toolCallId]), [["pi-code", "g1", "c2"]]);
+	s.fire("tool_execution_end", { toolCallId: "c2", toolName: "edit" });
+	assert.deepEqual(s.lists().at(-1), [], "the end of the gated call closes it");
+});
+
 test("an answer counts only from G as the channel's current owner, at the owner's epoch, for this bridge", () => {
 	const s = session(), seen: string[] = [];
 	s.open();

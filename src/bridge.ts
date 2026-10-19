@@ -131,7 +131,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 	const report = {
 		open(adapter: OwnerAdapter, d: Dialog) {
 			const call = d.toolCallId ? calls.get(d.toolCallId) : undefined;
-			if (d.toolCallId && call?.tool !== adapter.tool) return; // only a call in flight of the owner's own tool
+			if (d.toolCallId && (!call || (!adapter.gate && call.tool !== adapter.tool))) return; // only a call in flight of the owner's own tool (a gate: of any tool)
 			recs.set(d.id, { adapter, d, state: "open", waiting: [] });
 			if (call?.signal?.aborted) adapter.cancel?.(bus, d);
 			changed();

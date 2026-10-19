@@ -52,7 +52,7 @@ const post = (url: string, csrf: string, path: string, body: unknown) =>
 	});
 
 /** A (the GUI server) and B in tab wA:t1; B's pane runs pi on a session file whose newest message calls robot_hand. */
-async function setup(sub = false) {
+async function setup(sub = false, calls: [string, string][] = [["c1", "robot_hand"]]) {
 	world.herdr.addTab("wA:t1", "work");
 	const herdrCall = async (method: string, params: Record<string, unknown>) => (method === "pane.get" ? { pane: world.herdr.pane(String(params.pane_id)) } : {});
 	const a = world.agent({ id: "A", pane: "wA:p1", tab: "wA:t1", deps: { bundle, openUrl: async () => {}, call: herdrCall } });
@@ -67,7 +67,7 @@ async function setup(sub = false) {
 		Object.assign(world.herdr.pane("wA:p1"), { agent_session: { value: parent } });
 		a.file = parent;
 	}
-	writeFileSync(file, lines([header("B"), user("u1", null, "go"), assistant("a1", "u1", [call("c1", "robot_hand", { command: "ls", reason: "List it" })])]));
+	writeFileSync(file, lines([header("B"), user("u1", null, "go"), assistant("a1", "u1", calls.map(([id, name]) => call(id, name, { command: "ls", reason: "List it" })))]));
 	Object.assign(world.herdr.pane("wA:p2"), { agent_session: { value: file } });
 	b.file = file;
 	await Promise.all([a.start(), b.start()]);
@@ -106,6 +106,41 @@ test("a robot_hand selector in another session is answered from the page, once, 
 	assert.deepEqual(hand.got, [[0]], "applied once");
 	assert.deepEqual(await post(url, csrf, "sessions/B/answer", { ...body, answerId: "b".repeat(20) }), { status: 200, body: { outcome: "stale", by: "remote" } }, "another answer later hears it is closed");
 	hand.off();
+});
+
+const GATE = { title: "Allow edit?\n\n  src/a.ts", choices: [{ label: "Allow" }, { label: "Deny" }] }, GATE_DIGEST = selectDigest(GATE);
+
+test("a pi-code hook gate on one of two open calls is answered from the page with Allow and Deny, through its own owner", async () => {
+	const { b, url, csrf } = await setup(false, [["c1", "bash"], ["c2", "edit"]]);
+	const got: [string, number[]][] = [];
+	let open = "";
+	const off = b.on("pi-code:dialog:answer", (raw) => {
+		const x = raw as { id: string; answerId: string; selections: number[] };
+		b.emit("pi-code:dialog:answer-result", { version: 1, id: x.id, answerId: x.answerId, accepted: x.id === open });
+		if (x.id === open) (got.push([x.id, x.selections]), b.emit("pi-code:dialog:closed", { version: 1, id: x.id, by: "remote", answerId: x.answerId }));
+	});
+	void b.fire("tool_execution_start", { toolCallId: "c1", toolName: "bash", args: {} });
+	void b.fire("tool_execution_start", { toolCallId: "c2", toolName: "edit", args: {} });
+	for (const [id, callId, choice] of [["g1", "c2", 0], ["g2", "c1", 1]] as const) {
+		open = id;
+		b.emit("pi-code:dialog:pending", { version: 1, id, toolCallId: callId, digest: GATE_DIGEST, select: GATE });
+		let seen: Unit | undefined;
+		await until(async () => (seen = unitB(await snapshot(url)))?.pending?.answer?.dialog === id, `${id} in the snapshot`);
+		assert.deepEqual(seen!.pending, { callId, tool: callId === "c2" ? "edit" : "bash", answer: { dialog: id, digest: GATE_DIGEST, select: GATE } });
+		assert.deepEqual(await post(url, csrf, "sessions/B/answer", { dialog: id, digest: GATE_DIGEST, answerId: String(choice).repeat(20), choice }), { status: 200, body: { outcome: "accepted" } });
+	}
+	assert.deepEqual(got, [["g1", [0]], ["g2", [1]]], "Allow, then Deny");
+	off();
+});
+
+test("two open calls with two relayed gate dialogs stay terminal-only", async () => {
+	const { b, url } = await setup(false, [["c1", "bash"], ["c2", "edit"]]);
+	void b.fire("tool_execution_start", { toolCallId: "c1", toolName: "bash", args: {} });
+	void b.fire("tool_execution_start", { toolCallId: "c2", toolName: "edit", args: {} });
+	for (const [id, callId] of [["g1", "c1"], ["g2", "c2"]]) b.emit("pi-code:dialog:pending", { version: 1, id, toolCallId: callId, digest: GATE_DIGEST, select: GATE });
+	await until(async () => unitB(await snapshot(url))?.pending?.why, "B's dialogs in the snapshot");
+	const pending = unitB(await snapshot(url))!.pending!;
+	assert.deepEqual([pending.answer, pending.why], [undefined, "It waits on more than one dialog."]);
 });
 
 test("the terminal answering first makes a page's answer stale, and the owner never sees a second choice", async () => {

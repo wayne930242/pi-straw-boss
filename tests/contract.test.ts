@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { checkAnswer } from "../src/dialogs.ts";
 import { checkProbe, probeEditor } from "../src/probe.ts";
-import { type Bus, type Dialog, digestOf, mcpAdapter, OWNERS, questionsDigest, robotHand, rpiv, selectDigest, selectOf } from "../src/owners.ts";
+import { type Bus, type Dialog, digestOf, mcpAdapter, OWNERS, piCode, questionsDigest, robotHand, rpiv, selectDigest, selectOf } from "../src/owners.ts";
 
 /** pi's event bus as far as owners use it: listeners run synchronously inside emit. */
 function bus() {
@@ -56,8 +56,34 @@ test("robot_hand: pending and closed reach the bridge; an answer goes out as one
 	stop();
 	off();
 	assert.equal(b.count(), 1, "only the test's own owner listener is left");
-	assert.deepEqual(OWNERS.map((o) => o.name), ["robot-hand", "rpiv", "pi-mcp-adapter"]);
+	assert.deepEqual(OWNERS.map((o) => o.name), ["robot-hand", "rpiv", "pi-mcp-adapter", "pi-code"]);
 	assert.equal(mcpAdapter.tool, undefined, "MCP approvals belong to no tool call");
+});
+
+test("pi-code's hook gate: contract v1 under pi-code:dialog, a gate of any tool; Allow and Deny go out as selections 0 and 1", () => {
+	assert.deepEqual([piCode.name, piCode.tool, piCode.gate], ["pi-code", undefined, true]);
+	assert.deepEqual([robotHand.gate, rpiv.gate, mcpAdapter.gate], [undefined, undefined, undefined]);
+	const b = bus(), opened: Dialog[] = [], closed: [string, string?][] = [], verdicts: unknown[] = [];
+	const off = piCode.listen(b, { open: (adapter, d) => (assert.equal(adapter, piCode), opened.push(d)), closed: (id, by) => closed.push([id, by]) });
+	const select = { title: "Allow bash?\n\n  npm run deploy", choices: [{ label: "Allow" }, { label: "Deny" }] };
+	b.emit("pi-code:dialog:pending", { version: 1, id: "g1", toolCallId: "t1", digest: selectDigest(select), select });
+	b.emit("pi-code:dialog:pending", { version: 2, id: "g2", toolCallId: "t1", digest: selectDigest(select), select });
+	b.emit("robot-hand:pending", { version: 1, id: "g3", digest: selectDigest(select), select });
+	assert.deepEqual(opened, [{ owner: "pi-code", id: "g1", toolCallId: "t1", digest: selectDigest(select), select }]);
+	b.on("pi-code:dialog:answer", (raw) => {
+		const a = raw as { id: string; answerId: string; selections: number[] };
+		b.emit("pi-code:dialog:answer-result", { version: 1, id: a.id, answerId: a.answerId, accepted: a.selections[0] !== 1, ...(a.selections[0] === 1 ? { reason: "closed" } : {}) });
+	});
+	piCode.answer(b, opened[0]!, { id: "g1", answerId: "a".repeat(16), digest: opened[0]!.digest, choice: 0 }, (v) => verdicts.push(v))();
+	piCode.answer(b, opened[0]!, { id: "g1", answerId: "b".repeat(16), digest: opened[0]!.digest, choice: 1 }, (v) => verdicts.push(v))();
+	assert.deepEqual(b.seen.filter(([c]) => c === "pi-code:dialog:answer").map(([, d]) => d), [
+		{ version: 1, id: "g1", answerId: "a".repeat(16), digest: opened[0]!.digest, selections: [0] },
+		{ version: 1, id: "g1", answerId: "b".repeat(16), digest: opened[0]!.digest, selections: [1] },
+	]);
+	assert.deepEqual(verdicts, [{ accepted: true }, { accepted: false, reason: "closed" }]);
+	b.emit("pi-code:dialog:closed", { version: 1, id: "g1", by: "local" });
+	assert.deepEqual(closed, [["g1", "local"]]);
+	off();
 });
 
 const PROMPT = { toolCallId: "q1", questions: [{ question: "When?", header: "Window", multiSelect: false, options: [{ label: "Tonight", description: "Low traffic", hasPreview: true }, { label: "Tomorrow", description: "" }] }, { question: "Who?", header: "Notify", multiSelect: true, options: [{ label: "ops", description: "d" }, { label: "billing", description: "d" }] }] };

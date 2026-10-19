@@ -10,7 +10,7 @@ import type { Monitor } from "./monitors.ts";
 // Two tools are read: pi-ask-user's `ask_user` (one question with a context) and @juicesharp/rpiv-ask-user-question's `ask_user_question` (one to four questions
 // with a header, options with descriptions, and a multi-select flag; no context). Older session files hold the first, new ones the second.
 
-const TAIL = 262_144, LIMIT = 16_777_216, CACHE = new Map<string, { sig: string; pending?: Pending; secret: boolean }>();
+const TAIL = 262_144, LIMIT = 16_777_216, CACHE = new Map<string, { sig: string; pending?: Pending; calls: OpenCall[]; secret: boolean }>();
 export interface Option { title: string; description?: string }
 /** `multiple`: it takes several choices; `freeform`: it takes the user's own words; `header`: the short tag ask_user_question gives a question. */
 export interface Ask { question: string; header?: string; context?: string; options: Option[]; multiple: boolean; freeform: boolean }
@@ -18,6 +18,8 @@ export interface Ask { question: string; header?: string; context?: string; opti
 export interface Pending { callId: string; tool: string; ask?: Ask; asks?: Ask[]; why?: string; answer?: Answerable }
 export const SEVERAL = "It waits on more than one dialog.";
 interface Call { id: string; name: string; args: Json }
+/** An open tool call of the newest assistant message: what a dialog that names its `toolCallId` is bound to. */
+export interface OpenCall { id: string; name: string }
 
 const clip = (v: unknown, n: number) => String(v ?? "").slice(0, n);
 const TITLES = ["title", "label", "text", "value", "name", "option"];
@@ -91,21 +93,24 @@ export function questionsOf(a: Json): { ask: Ask } | { asks: Ask[] } | { why: st
 }
 
 /** What a waiting session waits on, for the snapshot; cached while the file is unchanged. */
-export async function pendingOf(file: string): Promise<Pending | undefined> {
+export const pendingOf = async (file: string) => (await pendingWith(file)).pending;
+/** `pendingOf`, with every open call of the file (several when the newest assistant message made more than one call that is still unanswered). */
+async function pendingWith(file: string): Promise<{ pending?: Pending; calls: OpenCall[] }> {
 	const s = await stat(file).catch(() => undefined), sig = s ? `${s.size}:${s.mtimeMs}` : "", hit = CACHE.get(file);
-	if (hit?.sig === sig) return hit.pending;
+	if (hit?.sig === sig) return hit;
 	const found = s ? await openCalls(file).catch(() => null) : [], calls = !found || found === "cut" ? [] : found, [c] = calls;
 	const shape = c?.name === "ask_user" ? askOf(c.args) : c?.name === "ask_user_question" ? questionsOf(c.args) : { why: c?.name === "secret_drop" ? "It waits for a secret." : "It waits on a dialog." };
 	const pending = found === "cut" ? { callId: `cut:${sig}`, tool: "dialog", why: "Its call is too long to read here." } : c && { callId: c.id, tool: c.name, ...(calls.length > 1 ? { why: SEVERAL } : shape) };
-	CACHE.set(file, { sig, pending, secret: !found || found === "cut" || calls.some((x) => x.name === "secret_drop") }); // a file it could not read through counts as a secret
+	const entry = { sig, pending, calls: calls.map((x) => ({ id: x.id, name: x.name })), secret: !found || found === "cut" || calls.some((x) => x.name === "secret_drop") }; // a file it could not read through counts as a secret
+	CACHE.set(file, entry);
 	if (CACHE.size > 64) CACHE.delete(CACHE.keys().next().value!);
-	return pending;
+	return entry;
 }
 /** Whether one of the file's open calls is secret_drop (or the file could not be read through; a missing one, a new session, is not): the terminal mirror hides, and the key pad sends only Escape, while it is. */
 export const waitsForSecret = async (file: string) => (await pendingOf(file), CACHE.get(file)?.secret !== false); // dropped from the cache meanwhile: hidden until the next look
 
 /** The dialogs bridges relay, by unit key, and how they join what the file says (dialogs.ts); `docsOf`, the documents they list. */
-export interface Relayed { dialogsOf(key: string): Dialog[] | undefined; merge(key: string, file: Pending | undefined, dialogs: Dialog[], readable: boolean): Pending; docsOf?(key: string): Pick<Unit, "docs" | "docsCut"> | undefined; queuedOf?(key: string): Queued[] | undefined; monitorsOf?(key: string): Monitor[] | undefined }
+export interface Relayed { dialogsOf(key: string): Dialog[] | undefined; merge(key: string, file: Pending | undefined, dialogs: Dialog[], readable: boolean, calls?: OpenCall[]): Pending; docsOf?(key: string): Pick<Unit, "docs" | "docsCut"> | undefined; queuedOf?(key: string): Queued[] | undefined; monitorsOf?(key: string): Monitor[] | undefined }
 
 /** Adds what each waiting unit waits on, and the documents each unit shows, to a snapshot. A unit with a relayed dialog waits even before Herdr reports its pane blocked. */
 export async function withPending(net: Net, fileOf: (key: string) => string | undefined, relayed?: Relayed): Promise<Net> {
@@ -121,8 +126,8 @@ export async function withPending(net: Net, fileOf: (key: string) => string | un
 			if (dialogs?.length) [u.mark, b.mark] = ["waiting", "waiting"];
 			if (dialogs?.length && u !== b.tower) (u as Unit).note = "waiting on a question";
 			const file = u.mark === "waiting" ? fileOf(u.key) : undefined;
-			const join = (p?: Pending) => (dialogs?.length ? relayed!.merge(u.key, p, dialogs, Boolean(file)) : p);
-			if (file) jobs.push(pendingOf(file).then((p) => (u.pending = join(p))));
+			const join = (p?: Pending, calls?: OpenCall[]) => (dialogs?.length ? relayed!.merge(u.key, p, dialogs, Boolean(file), calls) : p);
+			if (file) jobs.push(pendingWith(file).then(({ pending, calls }) => (u.pending = join(pending, calls))));
 			else if (dialogs?.length) u.pending = join();
 		}
 	await Promise.all(jobs);

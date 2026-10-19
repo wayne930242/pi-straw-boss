@@ -105,11 +105,48 @@ test("each rule that keeps a dialog in the terminal says why", async () => {
 	assert.match(String(await why([{ ...dialog({ big: true }), select: undefined }])), /too long to show here/);
 	assert.equal(await why([dialog({ owner: "someone-else" })]), "It waits on a dialog.", "an owner no adapter knows");
 	assert.equal(await why([dialog({ toolCallId: "c9" })]), "It waits on a dialog.", "not the file's open call: the file's own reading, read-only");
-	assert.match(String(await why([dialog()], two)), /more than one dialog/, "the file holds two open calls");
+	assert.match(String(await why([dialog({ toolCallId: "c2" })], two)), /more than one dialog/, "the dialog names a call that is not its owner's tool");
+	assert.match(String(await why([dialog({ toolCallId: "c9" })], two)), /more than one dialog/, "the dialog names a call that is not open");
 	assert.match(String(await why([dialog({ digest: "0".repeat(64) })])), /differs from the one in the terminal/);
 	assert.equal(await why([dialog()], secret), "It waits for a secret.", "a secret_drop is never answerable, whatever a bridge says");
 	x.h.receive("S", x.list([dialog()], { file: robot }));
 	assert.equal((await read(x, undefined)).unit.pending, undefined, "a unit without a readable session file binds no list (it cannot be answered or typed into)");
+});
+
+const GATE = { title: "Allow edit?\n\n  src/a.ts", choices: [{ label: "Allow" }, { label: "Deny" }] };
+const gate = (extra: Partial<Dialog> = {}): Dialog => ({ owner: "pi-code", id: "g1", toolCallId: "c2", digest: selectDigest(GATE), select: GATE, ...extra });
+
+test("a pi-code gate dialog binds to the call it names, whatever the tool, also when the file holds several open calls", async () => {
+	const x = hub(), one = file([["c2", "edit"]]), two = file([["c1", "bash"], ["c2", "edit"]]);
+	x.h.receive("S", x.list([gate()], { file: one }));
+	assert.deepEqual((await read(x, one)).unit.pending, { callId: "c2", tool: "edit", answer: { dialog: "g1", digest: selectDigest(GATE), select: GATE } });
+	x.h.receive("S", x.list([gate()], { file: two }));
+	const { unit } = await read(x, two);
+	assert.deepEqual(unit.pending, { callId: "c2", tool: "edit", answer: { dialog: "g1", digest: selectDigest(GATE), select: GATE } }, "the call it gates, not the file's first");
+	assert.deepEqual(x.h.target("S"), { from: "S", bridgeId: "B", answer: unit.pending!.answer });
+	x.h.receive("S", x.list([gate({ toolCallId: "c1" })], { file: two }));
+	assert.equal((await read(x, two)).unit.pending?.callId, "c1", "the first call too");
+	const mixed = file([["c1", "robot_hand"], ["c2", "bash"]]);
+	x.h.receive("S", x.list([dialog()], { file: mixed }));
+	assert.equal((await read(x, mixed)).unit.pending?.answer?.dialog, "d1", "an owner of one tool binds to its own call among several");
+});
+
+test("a gate dialog stays in the terminal with two relayed dialogs, a call that is not open, a digest mismatch, no call, or a secret_drop open", async () => {
+	const x = hub(), two = file([["c1", "bash"], ["c2", "edit"]]), secret = file([["c1", "bash"], ["c2", "secret_drop"]]);
+	const why = async (dialogs: Dialog[], path = two) => {
+		x.h.receive("S", x.list(dialogs, { file: path }));
+		const { unit } = await read(x, path);
+		assert.equal(unit.pending?.answer, undefined);
+		assert.equal(x.h.target("S"), undefined);
+		return unit.pending?.why;
+	};
+	assert.equal(await why([gate(), gate({ id: "g2", toolCallId: "c1" })]), "It waits on more than one dialog.");
+	assert.equal(await why([gate({ toolCallId: "c9" })]), "It waits on more than one dialog.", "bound to no open call");
+	assert.match(String(await why([gate({ digest: "0".repeat(64) })])), /differs from the one in the terminal/);
+	assert.equal(await why([{ ...gate(), toolCallId: undefined }]), "It waits on more than one dialog.", "a gate must name its call");
+	assert.equal(await why([gate({ toolCallId: "c1" })], secret), "It waits for a secret.", "secret_drop open: never answerable");
+	assert.equal(await why([gate({ toolCallId: "c2" })], file([["c2", "secret_drop"]])), "It waits for a secret.");
+	assert.equal(await why([gate({ toolCallId: "c9" })], file([["c1", "edit"]])), "It waits on a dialog.", "one open call, not the one named");
 });
 
 test("a dialog of no tool call (an MCP approval) answers on a unit with no open call; malformed lists are dropped; a session that leaves takes its dialogs along", async () => {
