@@ -133,7 +133,7 @@ export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, s
 			};
 		} else if (action === "keys") {
 			if (busy.has(key)) return no(429, "busy", "Another input to this session is still on its way.");
-			const asked = pad.check(key, json);
+			const asked = pad.check(key, json, origin.startsWith("https:"));
 			if ("status" in asked) return asked;
 			job = async () => {
 				const plan = await pad.send(key, found, await live(found), asked);
