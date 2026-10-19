@@ -116,6 +116,19 @@ function launch(parent: string, children: { id: string; name: string; ageMs?: nu
 	return file;
 }
 
+test("a directory listed within two seconds of its timestamp is listed again later, so a second change in the same timestamp tick is not missed", async () => {
+	const file = launch("parent-racy", [{ id: "kid-1", name: "kid" }]);
+	const dir = join(scratch, "sessions", "artifacts", "parent-racy", "subagent-activity");
+	const parent = { pane_id: "wA:p1", tab_id: "wA:t1", workspace_id: "wA", agent: "pi", agent_session: { value: file } };
+	const tick = new Date(Math.floor(Date.now() / 1000) * 1000); // a filesystem with whole-second timestamps
+	utimesSync(dir, tick, tick);
+	assert.equal(subagents(parent, [parent], Date.now()).length, 1);
+	writeFileSync(join(dir, "kid-2.json"), JSON.stringify({ phase: "active" }));
+	utimesSync(dir, tick, tick);
+	await sleep(2100);
+	assert.equal(subagents(parent, [parent], Date.now()).length, 2, "kid-2 is seen");
+});
+
 test("a subagent's file comes only from a pane running pi; a reused pane running another agent is not read", () => {
 	const file = launch("parent-x", [{ id: "kid-1", name: "kid" }]);
 	const parent = { pane_id: "wA:p1", tab_id: "wA:t1", workspace_id: "wA", agent: "pi", agent_session: { value: file } };
@@ -365,11 +378,11 @@ test("poke re-reads early but not more often than the minimum gap: a poke inside
 	let reads = 0, fail = false;
 	const dashboard = startDashboard({ ui: ui as never, collect: async () => (reads++, fail ? Promise.reject(new Error("herdr is gone")) : snapshot([])), frameMs: 5, pollMs: 100_000, minGapMs: 50 });
 	await until(() => reads === 1, "first read");
+	const first = Date.now();
 	dashboard.poke();
 	dashboard.poke();
-	await settle();
-	assert.equal(reads, 1, "not inside the gap");
 	await until(() => reads === 2, "the read at the end of the gap");
+	assert.ok(Date.now() - first >= 45, `read again after ${Date.now() - first} ms, inside the 50 ms gap`);
 	await sleep(80);
 	assert.equal(reads, 2, "two pokes are one read");
 	fail = true;
@@ -422,8 +435,7 @@ test("with no event, the screen is re-read only by the safety poll every 30 s", 
 		await settle();
 		assert.equal(reads, 1, "no read before the safety poll");
 		mock.timers.tick(1);
-		await settle();
-		assert.equal(reads, 2);
+		await until(() => reads === 2, "the safety poll's read (it too keeps the gap)");
 		dashboard.stop();
 	} finally {
 		mock.timers.reset();

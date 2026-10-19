@@ -90,7 +90,7 @@ export function readJson(path: string): Record<string, unknown> {
 // directories pi-herdr-agents keeps per session (until the directory changes), and a launch script's session file (until the script does).
 const RACY_MS = 2000;
 const childPanes = new WeakMap<Pane[], { size: number; index: Map<string, Pane> }>();
-const listings = new Map<string, { mtime: bigint; names: string[] }>();
+const listings = new Map<string, { mtime: bigint; readAt: number; names: string[] }>();
 const scripts = new Map<string, { mtimeMs: number; session?: string }>();
 const SUFFIX = /^(.*)-[0-9a-f]{1,8}-[0-9a-f]{1,8}-[0-9a-f]{1,4}$/;
 
@@ -120,10 +120,11 @@ function paneOfChild(all: Pane[], id: string): Pane | undefined {
 function listed(dir: string): string[] {
 	try {
 		const stat = statSync(dir, { bigint: true }), cached = listings.get(dir);
-		if (cached?.mtime === stat.mtimeNs && Date.now() - Number(stat.mtimeNs / 1_000_000n) > RACY_MS) return cached.names;
-		const names = readdirSync(dir);
+		// A listing read within RACY_MS of the directory's timestamp may have missed a change in the same tick (git's racy-index rule).
+		if (cached?.mtime === stat.mtimeNs && cached.readAt - Number(stat.mtimeNs / 1_000_000n) > RACY_MS) return cached.names;
+		const readAt = Date.now(), names = readdirSync(dir);
 		if (listings.size > 200) listings.clear();
-		listings.set(dir, { mtime: stat.mtimeNs, names });
+		listings.set(dir, { mtime: stat.mtimeNs, readAt, names });
 		return names;
 	} catch {
 		listings.delete(dir);
@@ -233,7 +234,8 @@ export function startDashboard({ ui, collect: read, watch, frameMs = 125, pollMs
 			if (stopped || at >= due) return;
 			clearTimeout(wake);
 			due = at;
-			wake = setTimeout(() => ((due = Infinity), void refresh()), Math.max(0, at - Date.now())).unref();
+			// A read that ran meanwhile moved `last`, so the gap is checked again when the timer fires.
+			wake = setTimeout(() => ((due = Infinity), Date.now() < last + minGapMs ? schedule(0) : void refresh()), Math.max(0, at - Date.now())).unref();
 		};
 		const refresh = async () => {
 			if (stopped) return;
@@ -253,7 +255,7 @@ export function startDashboard({ ui, collect: read, watch, frameMs = 125, pollMs
 			tui.requestRender();
 			if (again) (again = false, schedule(0));
 		};
-		const poll = setInterval(() => void (busy || refresh()), pollMs).unref();
+		const poll = setInterval(() => schedule(0), pollMs).unref();
 		const unwatch = watch?.(() => schedule(debounceMs));
 		const stop = () => {
 			if (stopped) return;

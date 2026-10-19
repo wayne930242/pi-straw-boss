@@ -46,7 +46,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// The dashboard, the browser view's server and data code, and the session reader each have a budget of their own so the coordination code stays readable on its own.
 	// 0.27.0 to 275: what a tick re-reads for every child is cached (the pane that runs each child, indexed once per pane list; the two directories pi-herdr-agents keeps; a launch script's session file),
 	// and the screen reads on Herdr's events (watch, debounced) with a 30 s safety poll, and reads again what was requested inside the minimum gap or while a read ran, instead of dropping it.
-	assert.ok(count("src/dashboard.ts") <= 275, `src/dashboard.ts has ${count("src/dashboard.ts")} lines`);
+	// 0.27.0 to 277: the gap is checked again when a pending read fires, and a listing remembers when it was read.
+	assert.ok(count("src/dashboard.ts") <= 277, `src/dashboard.ts has ${count("src/dashboard.ts")} lines`);
 	// 0.5.0 raised the server's figure from 300 to 320 for the CSRF meta, the POST routing into control.ts, and the remote access check (pairing, remote streams);
 	// 0.6.0 to 325 for the hub's start and stop with the server, the answer route's fresh reading, gui.json's ownerSession, and the sessions a reading binds dialogs with;
 	// 0.7.0 to 330 for the terminal mirror (Phase 3 task 1): each stream's `hello` with its id, and the mirrors it holds created, closed with it, and stopped with the server.

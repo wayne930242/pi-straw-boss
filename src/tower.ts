@@ -8,7 +8,7 @@ import type { Tools } from "./tools.ts";
 
 const SETTLE_MS = 2000;
 // What Herdr reports that changes the dashboard: panes (their agent status and tokens), tabs, and workspaces (their tokens and labels), coming, going, and moving.
-const SCREEN_EVENTS = ["pane.created", "pane.closed", "pane.updated", "pane.moved", "pane.exited", "pane.agent_detected", "tab.created", "tab.closed", "tab.renamed", "tab.moved", "workspace.created", "workspace.updated", "workspace.metadata_updated", "workspace.renamed", "workspace.moved", "workspace.closed"];
+const SCREEN_EVENTS = ["pane.created", "pane.closed", "pane.updated", "pane.moved", "pane.exited", "pane.agent_detected", "tab.created", "tab.closed", "tab.renamed", "tab.moved", "workspace.created", "workspace.updated", "workspace.metadata_updated", "workspace.renamed", "workspace.moved", "workspace.reordered", "workspace.closed"];
 
 /** A session that is a tower (`STRAW_BOSS_ROLE=tower`, or marked so in its session) takes the role: its marks, its tools, its dashboard. */
 export function createTower({ pi, cfg, s, guiDir, me }: Kit, { membership, presence, tools }: { membership: Membership; presence: Presence; tools: Tools }) {
