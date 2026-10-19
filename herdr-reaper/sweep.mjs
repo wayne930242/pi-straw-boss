@@ -2,7 +2,7 @@
 // so tests can run them against fakes; reaper.mjs wires the real ones.
 import {
 	CONFIRM_MS, PIN_GLYPH, PIN_TOKEN, SWEEP_INTERVAL_MS,
-	del, decideRemoval, findCheckoutUser, inScope, noteWorkspaces, onRename, pinKey, planSweep, prunePanes, prunePins, set, togglePin,
+	del, decideRemoval, findCheckoutUser, inScope, isPinned, noteWorkspaces, onRename, pinKey, planSweep, prunePanes, prunePins, set, shellIsIdle, togglePin,
 } from "./decide.mjs";
 import { withLock } from "./io.mjs";
 
@@ -70,6 +70,26 @@ async function reapCheckout(entry, deps, dryRun, ignore = {}) {
 }
 
 /**
+ * Looks at a pane again right before it is closed. The plan is older than that by a git status or two, and in the meantime a
+ * person may have focused the pane, an agent may have resumed in it, or the workspace may have been pinned.
+ * @returns {Promise<string | null>} why the pane must stay, or null when it is still a leftover
+ */
+async function changedSince(close, deps) {
+	try {
+		const pane = await deps.herdr.getPane(close.paneId);
+		if ((pane.terminal_id ?? pane.pane_id) !== close.key) return "the pane id now belongs to another terminal";
+		if (pane.agent) return `${pane.agent} started in it again`;
+		if (pane.focused) return "it is focused now";
+		const [workspace, state] = [await deps.herdr.getWorkspace(close.workspaceId), await deps.store.read()];
+		if (isPinned(workspace, state)) return "its workspace is pinned now";
+		if (!shellIsIdle(await deps.herdr.processInfo(close.paneId))) return "its shell is running something now";
+		return null;
+	} catch (error) {
+		return `it could not be looked at again (${error.message.split("\n")[0]})`;
+	}
+}
+
+/**
  * One sweep. `confirmMs` is how long a pane must have qualified before it is closed (0 for "reap now"); `dryRun` prints what
  * would happen and changes nothing, not even the state file.
  */
@@ -102,7 +122,17 @@ async function sweepLocked(deps, confirmMs, dryRun) {
 		await reapCheckout({ ...entry, checkout }, deps, dryRun);
 		if (!dryRun) ops.push(del(["pending", checkout]));
 	}
+	// A workspace keeps its checkout for this run when any of its panes stayed open.
+	const stayed = new Set();
 	for (const close of plan.closes) {
+		if (!dryRun) {
+			const changed = await changedSince(close, deps);
+			if (changed) {
+				deps.log(`skip ${label.get(close.workspaceId)} (${close.paneId}): ${changed}`);
+				stayed.add(close.workspaceId);
+				continue;
+			}
+		}
 		deps.log(`${dryRun ? "would close" : "close"} ${close.paneId} in ${label.get(close.workspaceId)}: ${close.reason}`);
 		if (dryRun) continue;
 		try {
@@ -110,9 +140,10 @@ async function sweepLocked(deps, confirmMs, dryRun) {
 			ops.push(del(["agentSeen", close.key]), del(["candidates", close.key]));
 		} catch (error) {
 			deps.log(`failed to close ${close.paneId}: ${error.message}`);
+			stayed.add(close.workspaceId);
 		}
 	}
-	const closing = plan.expectClosed;
+	const closing = plan.expectClosed.filter((entry) => !stayed.has(entry.workspaceId));
 	if (dryRun) {
 		// The panes and workspaces this sweep would close are still alive here, so they are not what keeps a checkout.
 		const ignore = { panes: new Set(plan.closes.map((close) => close.paneId)), workspaces: new Set(closing.map((entry) => entry.workspaceId)) };

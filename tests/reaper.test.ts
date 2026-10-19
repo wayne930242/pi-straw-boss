@@ -503,3 +503,46 @@ test("Clean check sees untracked files despite status.showUntrackedFiles=no, and
 		await rm(root, { recursive: true, force: true });
 	}
 });
+
+test("Each pane is looked at again right before it is closed", async () => {
+	// Every case changes the world after the plan took its snapshot (the first pane list) and before the close.
+	const cases = {
+		"focused in the meantime": [(w) => (w.panes[0].focused = true), /it is focused now/],
+		"an agent resumed": [(w) => (w.panes[0].agent = "pi"), /pi started in it again/],
+		"the workspace got the pin token": [(w) => (w.workspaces[0].tokens = { [PIN_TOKEN]: PIN_GLYPH }), /workspace is pinned now/],
+		"the pin was written to the state file": [(w, store) => store.apply([{ op: "set", path: ["pins", "/wt/left"], value: { preLabel: "left" } }]), /workspace is pinned now/],
+		"a command started in the shell": [(w) => (w.busyNow = true), /shell is running something now/],
+		"the pane id was reused by another terminal": [(w) => (w.panes[0].terminal_id = "term_other"), /another terminal/],
+		"the pane vanished": [(w) => (w.panes = []), /could not be looked at again/],
+	};
+	for (const [name, [change, expected]] of Object.entries(cases)) {
+		const dir = await tempDir();
+		try {
+			const w = world({ workspaces: [workspace("a", "left")], panes: [pane("a:p1", "a")], checkouts: { "/wt/left": {} } });
+			const store = createStore(dir);
+			let lists = 0;
+			const list = w.herdr.listPanes;
+			w.herdr.listPanes = async () => {
+				const snapshot = await list();
+				if (++lists === 1) await change(w, store);
+				return snapshot;
+			};
+			// The plan's look finds the shell idle; any later look finds the command.
+			let looks = 0;
+			w.herdr.processInfo = async () => (w.busyNow && ++looks > 1 ? busy : idle);
+			const getPane = w.herdr.getPane;
+			w.herdr.getPane = async (id) => {
+				const found = await getPane(id);
+				if (!found) throw new Error(`herdr pane get failed: pane_not_found ${id}`);
+				return found;
+			};
+			await runSweep(w.deps(store), { confirmMs: 0 });
+			assert.deepEqual(w.calls, [], `${name}: nothing is closed`);
+			assert.deepEqual(w.removed, [], `${name}: the checkout stays`);
+			assert.ok(w.logs.some((line) => line.startsWith("skip left (a:p1)") && expected.test(line)), `${name}: ${w.logs.join(" | ")}`);
+			assert.deepEqual((await store.read()).pending, {}, `${name}: a workspace that was never emptied is not pending`);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	}
+});
