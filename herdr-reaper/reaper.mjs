@@ -81,7 +81,12 @@ async function ticker() {
 	let failures = 0;
 	for (;;) {
 		if (!(await claim())) return;
-		const state = await store.read();
+		let state;
+		try {
+			state = await store.read();
+		} catch (error) {
+			return console.log(`${error.message}; ticker stops`);
+		}
 		if (Date.now() >= state.nextSweepAt) {
 			await store.apply([{ op: "set", path: ["nextSweepAt"], value: Date.now() + 10 * 60_000 }]);
 			const invoke = spawn(bin, ["plugin", "action", "invoke", `${pluginId}.sweep`], { stdio: "ignore", env });

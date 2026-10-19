@@ -42,12 +42,24 @@ export async function withLock(dir, name, work, { waitMs = 5000, staleMs = 120_0
 /** The plugin's state file: read whole, changed only through ops under a short lock so concurrent runs merge. */
 export function createStore(dir) {
 	const file = join(dir, "state.json");
+	// Only a missing file is an empty state. Any other failure throws: an empty state would bring back the first-run rule (every
+	// agent-less pane is a leftover) and forget every pin that lives only in this file.
 	const read = async () => {
+		let text;
 		try {
-			return { ...emptyState(), ...JSON.parse(await readFile(file, "utf8")) };
-		} catch {
-			return emptyState();
+			text = await readFile(file, "utf8");
+		} catch (error) {
+			if (error.code === "ENOENT") return emptyState();
+			throw new Error(`cannot read the state file ${file}: ${error.message}`);
 		}
+		let parsed;
+		try {
+			parsed = JSON.parse(text);
+		} catch (error) {
+			throw new Error(`the state file ${file} is damaged (${error.message}); repair or remove it`);
+		}
+		if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(`the state file ${file} is damaged (not an object); repair or remove it`);
+		return { ...emptyState(), ...parsed };
 	};
 	return {
 		dir,

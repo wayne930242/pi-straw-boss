@@ -234,6 +234,8 @@ test("Sweeps close clean checkouts' workspaces, keep dirty ones, and skip pinned
 		assert.deepEqual(w.calls, [], "the first sweep only starts the confirmation wait");
 		assert.ok(w.logs.some((line) => line.startsWith("wait clean (a:p1)")));
 		assert.ok(w.tokens.some((call) => call[0] === "set" && call[1] === "c" && call[3] === PIN_TOKEN), "a pinned workspace gets its token back");
+		assert.ok(w.logs.some((line) => line.startsWith("skip pinned (c:p1): workspace is pinned")));
+		assert.deepEqual(Object.keys((await store.read()).agentSeen).sort(), ["term_a:p1", "term_b:p1", "term_d:p1"], "the first run marks the leftovers and the running agent, not the pinned pane");
 		assert.equal((await store.read()).nextSweepAt, NOW + CONFIRM_MS, "and the next sweep waits only that long");
 
 		w.logs.length = 0;
@@ -242,7 +244,6 @@ test("Sweeps close clean checkouts' workspaces, keep dirty ones, and skip pinned
 		assert.deepEqual(w.calls.sort(), ["close a:p1", "close b:p1"], w.logs.join("\n"));
 		assert.deepEqual(w.removed, ["/wt/clean"], "only the clean checkout goes");
 		assert.ok(w.logs.some((line) => line.startsWith("keep checkout /wt/dirty") && line.includes("branch kept")));
-		assert.ok(w.logs.some((line) => line.startsWith("skip pinned (c:p1): workspace is pinned")));
 		assert.deepEqual(w.workspaces.map((candidate) => candidate.workspace_id).sort(), ["c", "d", "m"]);
 		assert.equal((await store.read()).nextSweepAt, later + SWEEP_INTERVAL_MS, "an idle sweep waits the full interval");
 	} finally {
@@ -619,6 +620,62 @@ test("An agent event whose terminal is not the pane's current one is ignored", a
 		assert.deepEqual((await deps.store.read()).agentSeen, {}, "the pane id now names another terminal");
 		await runEvent(deps, "pane.agent_detected", { pane_id: "a:p1", terminal_id: "term_a:p1", agent: "pi" });
 		assert.ok("term_a:p1" in (await deps.store.read()).agentSeen);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("First run: a pinned, focused or busy pane is not marked as one that ran an agent", async () => {
+	const result = await plan(
+		{
+			workspaces: [workspace("a", "left"), workspace("b", "pinned", { tokens: { [PIN_TOKEN]: PIN_GLYPH } }), workspace("c", "busy")],
+			panes: [pane("a:p1", "a"), pane("a:p2", "a", { focused: true }), pane("b:p1", "b"), pane("c:p1", "c")],
+			state: state(),
+		},
+		{ "c:p1": busy },
+	);
+	assert.deepEqual(result.closes.map((close) => close.paneId), ["a:p1"]);
+	assert.deepEqual(result.ops.filter((op) => op.path[0] === "agentSeen").map((op) => op.path[1]), ["term_a:p1"]);
+	// Later runs: those panes are the user's shells, so unpinning or leaving the focus does not make them leftovers.
+	const later = await plan({
+		workspaces: [workspace("a", "left"), workspace("b", "pinned"), workspace("c", "busy")],
+		panes: [pane("a:p2", "a"), pane("b:p1", "b"), pane("c:p1", "c")],
+		state: applyOps(state(), result.ops),
+	});
+	assert.deepEqual(later.closes, []);
+});
+
+test("A pane whose process info cannot be read is skipped, and the sweep goes on", async () => {
+	const seen = state({ initialized: true, agentSeen: { "term_a:p1": 1, "term_b:p1": 1 } });
+	const result = await planSweep(
+		{ now: NOW, confirmMs: 0, config: {}, state: seen, workspaces: [workspace("a", "x"), workspace("b", "y")], panes: [pane("a:p1", "a"), pane("b:p1", "b")] },
+		{ processInfo: async (id) => (id === "a:p1" ? Promise.reject(new Error("pane_not_found")) : idle) },
+	);
+	assert.deepEqual(result.closes.map((close) => close.paneId), ["b:p1"]);
+	assert.ok(result.skips.some((line) => line.includes("a:p1") && line.includes("process info unavailable")));
+});
+
+test("A damaged or unreadable state file fails instead of reading as empty", async () => {
+	const dir = await tempDir();
+	try {
+		const store = createStore(dir);
+		assert.equal((await store.read()).initialized, false, "no file is an empty state");
+		await store.apply([{ op: "set", path: ["pins", "/wt/keep"], value: { preLabel: "keep" } }, { op: "set", path: ["initialized"], value: true }]);
+		await writeFile(join(dir, "state.json"), '{"pins": {"/wt/ke');
+		await assert.rejects(store.read(), /damaged/);
+		await writeFile(join(dir, "state.json"), "[]");
+		await assert.rejects(store.read(), /damaged/);
+		await rm(join(dir, "state.json"));
+		execFileSync("mkdir", [join(dir, "state.json")]);
+		await assert.rejects(store.read(), /cannot read the state file/, "an error other than a missing file is not an empty state");
+		await rm(join(dir, "state.json"), { recursive: true });
+
+		// A sweep over a damaged file closes nothing and says why.
+		await writeFile(join(dir, "state.json"), "not json");
+		const w = world({ workspaces: [workspace("a", "left")], panes: [pane("a:p1", "a")], checkouts: { "/wt/left": {} } });
+		await assert.rejects(runSweep(w.deps(store), { confirmMs: 0 }), /damaged/);
+		assert.deepEqual(w.calls, []);
+		await assert.rejects(runEvent(w.deps(store), "workspace.created", { workspace_id: "a" }), /damaged/);
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}

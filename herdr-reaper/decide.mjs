@@ -77,6 +77,15 @@ export function shellIsIdle(info) {
 const describeForeground = (info) =>
 	info ? (info.foreground_processes ?? []).filter((process) => process.pid !== info.shell_pid).map((process) => process.name ?? process.argv0).join(", ") || "unknown process" : "process info unavailable";
 
+/** Process info, or undefined when it cannot be read (a pane that vanished mid-sweep must not abort the sweep). */
+async function readProcessInfo(deps, paneId) {
+	try {
+		return await deps.processInfo(paneId);
+	} catch {
+		return undefined;
+	}
+}
+
 /**
  * Decides which panes to close. `deps.processInfo(paneId)` resolves to Herdr's process info or undefined when it cannot be read.
  * @returns {Promise<{ closes: object[], skips: string[], ops: object[], nextAt: number | null, expectClosed: object[] }>}
@@ -100,31 +109,33 @@ export async function planSweep({ workspaces, panes, state, now, confirmMs = CON
 			if (key in state.candidates) ops.push(del(["candidates", key]));
 			continue;
 		}
-		// A pane that never ran an agent is the user's shell. On the first run every agentless pane counts as one that did.
-		if (!(key in state.agentSeen)) {
-			if (!firstRun) continue;
-			ops.push(set(["agentSeen", key], now));
-		}
+		// A pane that never ran an agent is the user's shell. On the first run every agentless pane counts as one that did, but only
+		// a pane the run treats as a leftover is marked: a pinned, focused or busy one stays the user's, for later runs too.
+		const unseen = !(key in state.agentSeen);
+		if (unseen && !firstRun) continue;
 		const subject = `${workspace.label} (${pane.pane_id})`;
 		if (isPinned(workspace, state)) {
 			skips.push(`skip ${subject}: workspace is pinned`);
-		} else if (pane.focused) {
+			continue;
+		}
+		if (pane.focused) {
 			skips.push(`skip ${subject}: focused pane`);
+			continue;
+		}
+		const info = await readProcessInfo(deps, pane.pane_id);
+		if (!shellIsIdle(info)) {
+			skips.push(`skip ${subject}: ${describeForeground(info)} is running`);
+			if (key in state.candidates) ops.push(del(["candidates", key]));
+			continue;
+		}
+		if (unseen) ops.push(set(["agentSeen", key], now));
+		const since = state.candidates[key] ?? now;
+		if (!(key in state.candidates)) ops.push(set(["candidates", key], now));
+		if (now - since < confirmMs) {
+			skips.push(`wait ${subject}: no agent and an idle shell, confirming for ${Math.ceil((confirmMs - (now - since)) / 1000)}s more`);
+			later(since + confirmMs);
 		} else {
-			const info = await deps.processInfo(pane.pane_id);
-			if (!shellIsIdle(info)) {
-				skips.push(`skip ${subject}: ${describeForeground(info)} is running`);
-				if (key in state.candidates) ops.push(del(["candidates", key]));
-				continue;
-			}
-			const since = state.candidates[key] ?? now;
-			if (!(key in state.candidates)) ops.push(set(["candidates", key], now));
-			if (now - since < confirmMs) {
-				skips.push(`wait ${subject}: no agent and an idle shell, confirming for ${Math.ceil((confirmMs - (now - since)) / 1000)}s more`);
-				later(since + confirmMs);
-			} else {
-				closes.push({ paneId: pane.pane_id, workspaceId: workspace.workspace_id, key, reason: "agent exited and the shell is idle" });
-			}
+			closes.push({ paneId: pane.pane_id, workspaceId: workspace.workspace_id, key, reason: "agent exited and the shell is idle" });
 		}
 	}
 	if (firstRun) ops.push(set(["initialized"], true));
