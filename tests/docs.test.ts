@@ -53,7 +53,8 @@ async function serve({ me = "S", owner, reply = accept }: { me?: string; owner?:
 type Res = { status: number; headers: IncomingMessage["headers"]; body: string };
 const get = (gui: Gui, path: string, headers: Record<string, string | undefined> = {}, method = "GET") =>
 	new Promise<Res>((resolve, reject) => {
-		const req = request({ host: "127.0.0.1", port: gui.port, path, method, headers: Object.fromEntries(Object.entries({ host: `127.0.0.1:${gui.port}`, ...headers }).filter(([, v]) => v !== undefined)) as Record<string, string>, agent: false }, (res) => {
+		// A request that names a Host of its own is a tailnet one (`tailscale serve` forwards it to the remote listener); the rest are this computer's.
+		const req = request({ host: "127.0.0.1", port: headers.host ? gui.remotePort : gui.port, path, method, headers: Object.fromEntries(Object.entries({ host: `127.0.0.1:${gui.port}`, ...headers }).filter(([, v]) => v !== undefined)) as Record<string, string>, agent: false }, (res) => {
 			let body = "";
 			res.setEncoding("latin1");
 			res.on("data", (chunk) => (body += chunk)).on("end", () => resolve({ status: res.statusCode!, headers: res.headers, body }));

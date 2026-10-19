@@ -43,10 +43,17 @@ async function server() {
 	return { gui, sent };
 }
 const tailnet = { host: HOST, "tailscale-user-login": LOGIN, "x-forwarded-for": "100.87.7.97" };
+/** A paired device's requests reach the remote listener, this computer's the local one: the Host header says which, as it would behind `tailscale serve`. */
+const portOf = (gui: Gui, headers: Record<string, string>) => (headers.host === `127.0.0.1:${gui.port}` ? gui.port : gui.remotePort);
+const fetchRawOn = (port: number, path: string, headers: Record<string, string>, body: unknown) =>
+	new Promise<number>((resolve, reject) => {
+		const data = JSON.stringify(body), req = request({ host: "127.0.0.1", port, path, method: "POST", headers: { ...headers, "content-length": String(Buffer.byteLength(data)) }, agent: false }, (res) => (res.resume(), resolve(res.statusCode!)));
+		req.on("error", reject).end(data);
+	});
 const fetchRaw = (gui: Gui, path: string, headers: Record<string, string>, method = "GET", body?: unknown) =>
 	new Promise<{ status: number; headers: IncomingHttpHeaders; text: string }>((resolve, reject) => {
 		const data = body === undefined ? undefined : JSON.stringify(body);
-		const req = request({ host: "127.0.0.1", port: gui.port, path, method, headers: { ...headers, ...(data ? { "content-length": String(Buffer.byteLength(data)) } : {}) }, agent: false }, (res) => {
+		const req = request({ host: "127.0.0.1", port: portOf(gui, headers), path, method, headers: { ...headers, ...(data ? { "content-length": String(Buffer.byteLength(data)) } : {}) }, agent: false }, (res) => {
 			let text = "";
 			res.on("data", (c) => (text += c)).on("end", () => resolve({ status: res.statusCode!, headers: res.headers, text }));
 		});
@@ -57,7 +64,7 @@ const pair = async (gui: Gui) => String((await fetchRaw(gui, `/${gui.token}/pair
 /** The first snapshot of a stream, as the page would read it. */
 const snapshot = (gui: Gui, headers: Record<string, string>) =>
 	new Promise<string>((resolve, reject) => {
-		const req = get({ host: "127.0.0.1", port: gui.port, path: `/${gui.token}/events`, headers, agent: false }, (res) => {
+		const req = get({ host: "127.0.0.1", port: portOf(gui, headers), path: `/${gui.token}/events`, headers, agent: false }, (res) => {
 			let buffer = "";
 			res.setEncoding("utf8").on("data", (chunk: string) => {
 				buffer += chunk;
@@ -108,6 +115,26 @@ test("an answer with a value from a paired device is refused before anything is 
 	assert.equal(sessionTwo.status, 403, "a value is never taken from a remote page, whichever dialog it names");
 	assert.deepEqual(sent, [], "nothing was relayed");
 	for (const r of [withValue, without, sessionTwo]) assert.equal(r.text.includes(value), false);
+});
+
+test("a request that looks local but arrives on the remote listener, or that a serve entry still pointed at the local port forwards, enters no secret", async () => {
+	const { gui, sent } = await server(), value = "tok-spoofed-local";
+	const path = `/${gui.token}/api/sessions/sess-1/answer`, body = { dialog: "s1", digest: answer.digest, answerId: "z".repeat(20), value };
+	// Everything this computer's page sends, only to the remote listener: a remote request, so never allowed in.
+	const spoof = await fetchRaw(gui, path, localHeaders(gui), "POST", body);
+	assert.equal(spoof.status, 200, "(sanity) the same request on the local listener is this computer's page");
+	sent.length = 0;
+	const onRemote = (headers: Record<string, string>) => new Promise<number>((resolve, reject) => {
+		const data = JSON.stringify({ ...body, answerId: "y".repeat(20) });
+		const req = request({ host: "127.0.0.1", port: gui.remotePort, path, method: "POST", headers: { ...headers, "content-length": String(Buffer.byteLength(data)) }, agent: false }, (res) => (res.resume(), resolve(res.statusCode!)));
+		req.on("error", reject).end(data);
+	});
+	assert.equal(await onRemote({ ...localHeaders(gui), host: `127.0.0.1:${gui.remotePort}`, origin: `http://127.0.0.1:${gui.remotePort}` }), 403, "a local-looking request on the remote listener");
+	assert.equal(await onRemote(localHeaders(gui)), 403, "even with the local listener's own Host and origin");
+	// A paired device whose serve entry still points at the local port: its forwarded requests are refused by the local listener.
+	const old = { ...(await remoteHeaders(gui)), host: HOST }, onLocal = await fetchRawOn(gui.port, path, old, { ...body, answerId: "x".repeat(20) });
+	assert.equal(onLocal, 403);
+	assert.deepEqual(sent, [], "no value was relayed");
 });
 
 test("this computer's page answers a secret dialog: the value goes to the bridge once, and no response quotes it", async () => {

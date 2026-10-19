@@ -119,7 +119,7 @@ test("another session's stop request ends the server through onStop; one without
 	const host = "box.tail1.ts.net:8443", tailnet = { host, "tailscale-user-login": "me@example.com", "x-forwarded-for": "100.87.7.97" };
 	gui.access.enable({ host, login: "me@example.com" });
 	const post = (path: string, headers: Record<string, string>, method = "POST") =>
-		new Promise<IncomingMessage>((done, fail) => request({ host: "127.0.0.1", port: gui.port, path, method, headers, agent: false }, (res) => (res.resume(), done(res))).on("error", fail).end(method === "POST" ? "{}" : undefined));
+		new Promise<IncomingMessage>((done, fail) => request({ host: "127.0.0.1", port: gui.remotePort, path, method, headers, agent: false }, (res) => (res.resume(), done(res))).on("error", fail).end(method === "POST" ? "{}" : undefined));
 	const cookie = String((await post(`/${gui.token}/pair/${gui.access.pair()}`, tailnet, "GET")).headers["set-cookie"]).split(";")[0]!;
 	const remote = await post(`/${gui.token}/api/server/stop`, { ...tailnet, cookie, origin: `https://${host}`, "content-type": "application/json", "x-sb-csrf": gui.csrf });
 	assert.equal(remote.statusCode, 403, "a paired device cannot stop the server");
@@ -133,9 +133,9 @@ test("the page turns remote access on through onRemote and gets a pairing code a
 	const host = "box.tail1.ts.net:8443";
 	let fail: string | undefined, calls = 0;
 	const gui: Gui = await serve(async () => net("a"), { onRemote: async () => (calls++, fail ? Promise.reject(new Error(fail)) : gui.access.enable({ host, login: "me@example.com" })) });
-	const post = (path: string, headers: Record<string, string> = {}) =>
+	const post = (path: string, headers: Record<string, string> = {}, port = gui.port) =>
 		new Promise<{ status: number; body: { error?: string; reason?: string; url?: string; rows?: string[] } }>((done, reject) => {
-			const req = request({ host: "127.0.0.1", port: gui.port, path: `/${gui.token}/api/${path}`, method: "POST", agent: false, headers: { host: `127.0.0.1:${gui.port}`, origin: `http://127.0.0.1:${gui.port}`, "content-type": "application/json", "x-sb-csrf": gui.csrf, ...headers } }, (res) => {
+			const req = request({ host: "127.0.0.1", port, path: `/${gui.token}/api/${path}`, method: "POST", agent: false, headers: { host: `127.0.0.1:${gui.port}`, origin: `http://127.0.0.1:${gui.port}`, "content-type": "application/json", "x-sb-csrf": gui.csrf, ...headers } }, (res) => {
 				let body = "";
 				res.on("data", (c) => (body += c)).on("end", () => done({ status: res.statusCode!, body: body.startsWith("{") ? JSON.parse(body) : {} }));
 			});
@@ -151,8 +151,8 @@ test("the page turns remote access on through onRemote and gets a pairing code a
 	assert.match(String(on.body.url), new RegExp(`^https://${host.replace(/\./g, "\\.")}/${gui.token}/pair/`));
 	assert.ok(Array.isArray(on.body.rows) && on.body.rows.length > 20, "with the QR's rows");
 	const tailnet = { host, "tailscale-user-login": "me@example.com", "x-forwarded-for": "100.87.7.97" };
-	const cookie = await new Promise<string>((done) => request({ host: "127.0.0.1", port: gui.port, path: `/${gui.token}/pair/${gui.access.pair()}`, headers: tailnet, agent: false }, (res) => (res.resume(), done(String(res.headers["set-cookie"]).split(";")[0]!))).end());
-	assert.equal((await post("remote/on", { ...tailnet, cookie, origin: `https://${host}` })).status, 403, "a paired device cannot ask");
+	const cookie = await new Promise<string>((done) => request({ host: "127.0.0.1", port: gui.remotePort, path: `/${gui.token}/pair/${gui.access.pair()}`, headers: tailnet, agent: false }, (res) => (res.resume(), done(String(res.headers["set-cookie"]).split(";")[0]!))).end());
+	assert.equal((await post("remote/on", { ...tailnet, cookie, origin: `https://${host}` }, gui.remotePort)).status, 403, "a paired device cannot ask");
 	assert.equal(calls, 2);
 });
 

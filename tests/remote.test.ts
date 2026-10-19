@@ -59,7 +59,7 @@ test("the serve entry is added only on a free or own 8443, is checked after, and
 	assert.deepEqual(free.config(), theirs, "back to what it was");
 
 	const stale = fakeTailscale({ ...theirs, ...entry("http://127.0.0.1:4000") });
-	await serveOn(stale.run, HOST, "http://127.0.0.1:5000", "http://127.0.0.1:4000");
+	await serveOn(stale.run, HOST, "http://127.0.0.1:5000", ["http://127.0.0.1:4000"]);
 	assert.equal(stale.changes().length, 1, "an entry a crashed session left is taken over");
 	for (const [config, why] of [
 		[{ ...theirs, ...entry("http://127.0.0.1:4000") }, /already serves something else/],
@@ -87,7 +87,7 @@ test("a pairing code works once and only within ten minutes; turning remote off 
 	const access = createAccess("t".repeat(32));
 	assert.equal(access.pair(), undefined, "no codes while remote is off");
 	access.enable({ host: HOST, login: LOGIN });
-	const req = (path: string, headers: Record<string, string> = {}) => access.check({ method: "GET", headers: { host: HOST, "tailscale-user-login": LOGIN, "x-forwarded-for": "100.1.2.3", ...headers } } as unknown as IncomingMessage, 1234, "t".repeat(32), path.split("/"));
+	const req = (path: string, headers: Record<string, string> = {}) => access.check({ method: "GET", headers: { host: HOST, "tailscale-user-login": LOGIN, "x-forwarded-for": "100.1.2.3", ...headers } } as unknown as IncomingMessage, "remote", 1234, "t".repeat(32), path.split("/"));
 	const code = access.pair()!;
 	assert.deepEqual(req(`pair/${code}`, { "tailscale-user-login": "other@example.com" }), { status: 403 }, "another user's device is refused and does not use the code up");
 	const first = req(`pair/${code}`);
@@ -123,14 +123,14 @@ test("turning remote on as another Tailscale identity voids what the old one pai
 	assert.equal(ended, 0, "the same identity again keeps paired devices");
 	access.enable({ host: HOST, login: "other@example.com" });
 	assert.equal(ended, 1);
-	assert.deepEqual(access.check({ method: "GET", headers: { host: HOST, "tailscale-user-login": "other@example.com", "x-forwarded-for": "100.1.2.3" } } as unknown as IncomingMessage, 1234, "t".repeat(32), ["pair", code]), { status: 403 }, "the old identity's code is void");
+	assert.deepEqual(access.check({ method: "GET", headers: { host: HOST, "tailscale-user-login": "other@example.com", "x-forwarded-for": "100.1.2.3" } } as unknown as IncomingMessage, "remote", 1234, "t".repeat(32), ["pair", code]), { status: 403 }, "the old identity's code is void");
 });
 
 /** A raw request through the server, as tailscale serve would forward it unless told otherwise. */
-function remoteGet(gui: Gui, path: string, headers: Record<string, string | undefined> = {}, method = "GET", body?: string) {
+function remoteGet(gui: Gui, path: string, headers: Record<string, string | undefined> = {}, method = "GET", body?: string, port = gui.remotePort) {
 	const all = Object.fromEntries(Object.entries({ host: HOST, "tailscale-user-login": LOGIN, "x-forwarded-for": "100.87.7.97", "x-forwarded-proto": "https", "tailscale-headers-info": "https://tailscale.com/s/serve-headers", ...headers }).filter((e): e is [string, string] => e[1] !== undefined));
 	return new Promise<{ status: number; headers: IncomingMessage["headers"]; body: string }>((resolve, reject) => {
-		const req = request({ host: "127.0.0.1", port: gui.port, path, method, headers: all, agent: false }, (res) => {
+		const req = request({ host: "127.0.0.1", port, path, method, headers: all, agent: false }, (res) => {
 			let text = "";
 			res.on("data", (c) => (text += c)).on("end", () => resolve({ status: res.statusCode!, headers: res.headers, body: text }));
 		});
@@ -147,6 +147,8 @@ test("over the tailnet: only this user's paired devices get in, a code pairs onc
 	const page = `/${gui.token}/`;
 	assert.equal((await remoteGet(gui, page)).status, 403, "remote is off: a forwarded request is refused");
 	assert.equal((await remoteGet(gui, page, { host: `127.0.0.1:${gui.port}` })).status, 403, "a forwarded request with a local Host is not local");
+	const bare = { host: `127.0.0.1:${gui.remotePort}`, "tailscale-user-login": undefined, "x-forwarded-for": undefined, "x-forwarded-proto": undefined, "tailscale-headers-info": undefined };
+	assert.equal((await remoteGet(gui, page, bare)).status, 403, "remote is off: nothing on the remote listener gets in, bare or not");
 	gui.access.enable({ host: HOST, login: LOGIN });
 	assert.equal((await remoteGet(gui, page)).status, 401, "not paired yet");
 	for (const headers of [{ "tailscale-user-login": undefined }, { "tailscale-user-login": "other@example.com" }, { "tailscale-funnel-request": "?1" }, { host: "box.tail1.ts.net" }, { host: "evil.example:8443" }]) assert.equal((await remoteGet(gui, page, headers)).status, 403, JSON.stringify(headers));
@@ -170,25 +172,25 @@ test("over the tailnet: only this user's paired devices get in, a code pairs onc
 	assert.equal(pair.status, 200);
 	assert.match(JSON.parse(pair.body).url, new RegExp(`^https://${HOST}/${gui.token}/pair/[\\w-]{22}$`));
 	let ended = false;
-	const stream = get({ host: "127.0.0.1", port: gui.port, path: `${page}events`, headers: { host: HOST, "tailscale-user-login": LOGIN, "x-forwarded-for": "100.87.7.97", cookie: jar }, agent: false }, (res) => (res.resume(), res.on("close", () => (ended = true))));
+	const stream = get({ host: "127.0.0.1", port: gui.remotePort, path: `${page}events`, headers: { host: HOST, "tailscale-user-login": LOGIN, "x-forwarded-for": "100.87.7.97", cookie: jar }, agent: false }, (res) => (res.resume(), res.on("close", () => (ended = true))));
 	stream.on("error", () => (ended = true));
 	await new Promise((resolve) => setTimeout(resolve, 50));
 	assert.equal(ended, false);
 	gui.access.disable();
 	await until(() => ended, "the remote stream to end");
 	assert.equal((await remoteGet(gui, page, { cookie: jar })).status, 403);
-	assert.equal((await remoteGet(gui, page, { host: `127.0.0.1:${gui.port}`, "tailscale-user-login": undefined, "x-forwarded-for": undefined, "x-forwarded-proto": undefined, "tailscale-headers-info": undefined })).status, 200, "the local page is unaffected");
+	assert.equal((await remoteGet(gui, page, { host: `127.0.0.1:${gui.port}`, "tailscale-user-login": undefined, "x-forwarded-for": undefined, "x-forwarded-proto": undefined, "tailscale-headers-info": undefined }, "GET", undefined, gui.port)).status, 200, "the local page is unaffected");
 });
 
 test("switchRemote turns the entry on with a QR and records it, and off removes it, also one a crashed session left", async () => {
 	const dir = join(scratch, "state");
 	mkdirSync(dir, { recursive: true });
 	const ts = fakeTailscale();
-	const gui = { port: 5000, token: "t".repeat(32), access: createAccess("t".repeat(32)) };
+	const gui = { port: 5000, remotePort: 6000, token: "t".repeat(32), access: createAccess("t".repeat(32)) };
 	const on = await switchRemote(gui, true, dir, ts.run);
 	assert.match(on.text, /Remote access is on for me@example.com, tailnet only/);
 	assert.ok(on.lines!.length > 20 && on.lines!.some((l) => l.includes("█")), "a QR to scan");
-	assert.deepEqual(JSON.parse(readFileSync(join(dir, "remote.json"), "utf8")), { target: "http://127.0.0.1:5000", pid: process.pid, started: startOf(process.pid) });
+	assert.deepEqual(JSON.parse(readFileSync(join(dir, "remote.json"), "utf8")), { target: "http://127.0.0.1:6000", pid: process.pid, started: startOf(process.pid) });
 	assert.deepEqual(gui.access.remote, { host: HOST, login: LOGIN });
 	const off = await switchRemote(gui, false, dir, ts.run);
 	assert.deepEqual([off.changed, gui.access.remote, existsSync(join(dir, "remote.json"))], [true, undefined, false]);
@@ -201,6 +203,34 @@ test("switchRemote turns the entry on with a QR and records it, and off removes 
 	const missing: Run = async () => Promise.reject(new Error("Tailscale is not installed (no tailscale command on PATH)"));
 	await assert.rejects(switchRemote(gui, true, dir, missing), /not installed/);
 	assert.equal(gui.access.remote, undefined);
+});
+
+test("an entry that points at the local port is repointed at the remote listener, and when it cannot be, remote stays off", async () => {
+	const dir = join(scratch, "migrate");
+	mkdirSync(dir, { recursive: true });
+	const gui = { port: 5000, remotePort: 6000, token: "t".repeat(32), access: createAccess("t".repeat(32)) };
+	// An entry the previous version wrote: it points at the local port and nothing recorded it (no remote.json).
+	const old = fakeTailscale({ ...theirs, ...entry("http://127.0.0.1:5000") });
+	const on = await switchRemote(gui, true, dir, old.run);
+	assert.match(on.text, /Remote access is on/);
+	assert.deepEqual(old.changes(), [["serve", "--bg", `--https=${PORT}`, "http://127.0.0.1:6000"]], "serve was told the remote listener's target");
+	assert.deepEqual(old.config(), { ...theirs, ...entry("http://127.0.0.1:6000") });
+	assert.equal(JSON.parse(readFileSync(join(dir, "remote.json"), "utf8")).target, "http://127.0.0.1:6000");
+	assert.equal((await switchRemote(gui, false, dir, old.run)).changed, true);
+	assert.deepEqual(old.config(), theirs, "off removes the entry");
+	// The same through a leftover entry that still points at the local port while remote is on: off removes that one too.
+	const leftover = fakeTailscale({ ...theirs, ...entry("http://127.0.0.1:5000") });
+	gui.access.enable({ host: HOST, login: LOGIN });
+	assert.equal((await switchRemote(gui, false, dir, leftover.run)).changed, true);
+	assert.deepEqual(leftover.config(), theirs);
+	// Tailscale keeps the old target: remote stays off (fail closed), nothing is recorded, and the user is told why.
+	const stuck: Run = async (args) => (args[0] === "status" ? status() : args.join(" ") === "serve status --json" ? JSON.stringify({ ...theirs, ...entry("http://127.0.0.1:5000") }) : "");
+	await assert.rejects(switchRemote(gui, true, dir, stuck), /did not take the entry as asked \(http:\/\/127\.0\.0\.1:5000\); remote access stays off/);
+	assert.equal(existsSync(join(dir, "remote.json")), false);
+	// Another server's entry (a different port nobody recorded) is still not touched.
+	const foreign = fakeTailscale({ ...theirs, ...entry("http://127.0.0.1:7777") });
+	await assert.rejects(switchRemote(gui, true, dir, foreign.run), /already serves something else \(http:\/\/127\.0\.0\.1:7777\)/);
+	assert.deepEqual(foreign.changes(), []);
 });
 
 test("a recorded server counts as running only when its PID is alive and that process is the one that wrote the entry", () => {
@@ -229,13 +259,13 @@ test("a recorded server counts as running only when its PID is alive and that pr
 test("an entry whose server crashed and whose PID another process now holds is taken over, while the entry of a server that really runs stays", async () => {
 	const dir = join(scratch, "reused");
 	mkdirSync(dir, { recursive: true });
-	const gui = { port: 5000, token: "t".repeat(32), access: createAccess("t".repeat(32)) }, old = "http://127.0.0.1:4000";
+	const gui = { port: 5000, remotePort: 6000, token: "t".repeat(32), access: createAccess("t".repeat(32)) }, old = "http://127.0.0.1:4000";
 	const record = (started?: string) => writeFileSync(join(dir, "remote.json"), JSON.stringify({ target: old, pid: process.ppid, started }));
 	// The recorded PID is alive (the test runner's parent) but it is another process than the crashed server was.
 	record("Mon Jan  1 00:00:00 2001");
 	const crashed = fakeTailscale({ ...theirs, ...entry(old) });
 	await switchRemote(gui, true, dir, crashed.run);
-	assert.equal(JSON.stringify(crashed.config()).includes("127.0.0.1:5000"), true, "remote came on over the leftover entry");
+	assert.equal(JSON.stringify(crashed.config()).includes("127.0.0.1:6000"), true, "remote came on over the leftover entry");
 	assert.equal(JSON.stringify(crashed.config()).includes("127.0.0.1:4000"), false);
 	gui.access.disable();
 	record("Mon Jan  1 00:00:00 2001");
@@ -255,4 +285,50 @@ test("an entry whose server crashed and whose PID another process now holds is t
 test("copying with a clipboard command that is missing rejects with the reason and leaves the process running", async () => {
 	await assert.rejects(copyText("https://example/pair/x", ["psb-no-such-clipboard-command"]), /Could not copy with psb-no-such-clipboard-command/);
 	await new Promise((resolve) => setTimeout(resolve, 50)); // a late EPIPE from the child's stdin would surface here as an uncaught error
+});
+
+test("a request on the remote listener is remote whatever its Host or headers say, and the local listener lets in only a local-looking one", async () => {
+	const gui = await startGui({ read: async () => ({ bases: [] }), dir: join(scratch, "bundle"), pollMs: 50, pingMs: 1000 });
+	running.push(gui);
+	assert.notEqual(gui.remotePort, gui.port, "two listeners");
+	const page = `/${gui.token}/`, none = { "tailscale-user-login": undefined, "x-forwarded-for": undefined, "x-forwarded-proto": undefined, "tailscale-headers-info": undefined };
+	const local = (path: string, headers: Record<string, string | undefined> = {}, method = "GET", body?: string) => remoteGet(gui, path, { host: `127.0.0.1:${gui.port}`, ...none, ...headers }, method, body, gui.port);
+	const remote = (path: string, headers: Record<string, string | undefined> = {}, method = "GET", body?: string) => remoteGet(gui, path, headers, method, body);
+	// The local page answers on the local listener, as it did.
+	assert.equal((await local(page)).status, 200);
+	// A request that looks as local as can be, sent to the remote listener, is remote: refused while remote is off, and never served as the local page.
+	for (const host of [`127.0.0.1:${gui.remotePort}`, `127.0.0.1:${gui.port}`, `localhost:${gui.remotePort}`]) assert.equal((await remote(page, { host, ...none })).status, 403, `remote off, Host ${host}`);
+	gui.access.enable({ host: HOST, login: LOGIN });
+	for (const host of [`127.0.0.1:${gui.remotePort}`, `127.0.0.1:${gui.port}`]) assert.equal((await remote(page, { host, ...none })).status, 403, `remote on, bare request with Host ${host}`);
+	assert.equal((await remote(page, { ...none, host: HOST, "tailscale-user-login": LOGIN })).status, 401, "a request with the right identity is remote: it needs pairing");
+	// Pair, then try the actions only this computer's page may do: the remote listener refuses them even with the local Host and no forwarding header besides the identity.
+	const cookie = String((await remote(`${page}pair/${gui.access.pair()}`)).headers["set-cookie"]).split(";")[0]!;
+	const json = (origin: string) => ({ cookie, origin, "sec-fetch-site": "same-origin", "content-type": "application/json", "x-sb-csrf": gui.csrf });
+	assert.equal((await remote(`${page}api/remote/on`, json(`https://${HOST}`), "POST", "{}")).status, 403, "remote cannot turn remote on");
+	assert.equal((await remote(`${page}api/server/stop`, json(`https://${HOST}`), "POST", JSON.stringify({ by: "x", take: false }))).status, 403, "remote cannot stop the server");
+	assert.equal((await local(`${page}api/remote/on`, { origin: `http://127.0.0.1:${gui.port}`, "sec-fetch-site": "same-origin", "content-type": "application/json", "x-sb-csrf": gui.csrf }, "POST", "{}")).status, 503, "the local page reaches the action (this test server has no onRemote)");
+	// A serve entry that still points at the local port: its requests are forwarded and carry the tailnet Host, so the local listener refuses them, paired or not.
+	for (const headers of [{ host: HOST, "tailscale-user-login": LOGIN, "x-forwarded-for": "100.87.7.97" }, { host: HOST, "tailscale-user-login": LOGIN, "x-forwarded-for": "100.87.7.97", cookie }, { "x-forwarded-for": "100.87.7.97" }, { "tailscale-user-login": LOGIN }]) assert.equal((await local(page, headers)).status, 403, JSON.stringify(headers));
+	assert.equal((await local(`${page}pair/${gui.access.pair()}`, { host: HOST, "tailscale-user-login": LOGIN, "x-forwarded-for": "100.87.7.97" })).status, 403, "the old entry cannot pair either");
+});
+
+test("the remote listener's port is kept across a restart when free, and two servers never share a port", async () => {
+	const read = async () => ({ bases: [] }), dir = join(scratch, "bundle");
+	const first = await startGui({ read, dir });
+	running.push(first);
+	// A second server asking for the first one's ports gets other ones, all four distinct.
+	const second = await startGui({ read, dir, port: first.port, remotePort: first.remotePort });
+	running.push(second);
+	assert.equal(new Set([first.port, first.remotePort, second.port, second.remotePort]).size, 4);
+	// A restart on the recorded ports keeps both.
+	const [port, remotePort] = [first.port, first.remotePort];
+	await first.stop();
+	const again = await startGui({ read, dir, port, remotePort });
+	running.push(again);
+	assert.deepEqual([again.port, again.remotePort], [port, remotePort]);
+	// A record that names one port for both (damaged gui.json) still gives two listeners.
+	await again.stop();
+	const same = await startGui({ read, dir, port, remotePort: port });
+	running.push(same);
+	assert.deepEqual([same.port, same.remotePort === port], [port, false]);
 });
