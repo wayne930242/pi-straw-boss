@@ -12,9 +12,10 @@ function aim(button: HTMLElement, data: Record<string, string>, label: string, a
 	[button.hidden, button.textContent] = [hidden, label];
 	if (aria) button.setAttribute("aria-label", aria);
 }
-/** A unit's own; quitting is the map's alone, and a subagent is its launcher's to quit. */
-export const aimUnit = (button: HTMLElement, u: { key?: string; name: string; role: string; control?: boolean }) =>
-	aim(button, { key: u.key ?? "", name: u.name, role: u.role }, m.quit(), m.close_unit({ name: u.name }), !(u.control && u.key) || u.role === "subagent");
+/** A unit's own; quitting is the map's alone, and a subagent is its launcher's to quit. A finished subagent is dismissed instead, on every page. */
+export const aimUnit = (button: HTMLElement, u: { key?: string; name: string; role: string; control?: boolean; ended?: boolean }) =>
+	u.role === "subagent" && u.ended && u.key ? aim(button, { close: "dismiss", key: u.key, name: u.name, role: u.role }, m.dismiss(), m.dismiss_unit({ name: u.name }))
+		: aim(button, { close: "unit", key: u.key ?? "", name: u.name, role: u.role }, m.quit(), m.close_unit({ name: u.name }), !(u.control && u.key) || u.role === "subagent");
 /** The base's tower alone, its mains back to members. */
 export const aimTower = (button: HTMLElement, tower: Base["tower"]) => aim(button, { key: tower?.key ?? "", name: tower?.name ?? "", role: "tower" }, m.quit_tower(), undefined, !tower?.control);
 export const aimBase = (button: HTMLElement, b: Base) => aim(button, { ws: b.id, name: b.label }, m.quit(), m.close_base({ name: b.label }));
@@ -48,6 +49,7 @@ export function mountQuit(deps: QuitDeps) {
 		const b = (event.target as Element | null)?.closest?.<HTMLElement>("button[data-close]"), d = b?.dataset;
 		if (!b || !d) return;
 		event.preventDefault();
+		if (d.close === "dismiss") return void import("./post.ts").then(({ post }) => post("dismiss", { key: d.key })).then((r) => r.ok || sheet(r.body.reason ?? m.refused({ status: r.status })), () => sheet(m.no_answer()));
 		const ask = d.close === "base" ? m.close_base_ask : d.close === "tab" ? m.close_squad_ask : d.role === "tower" ? m.close_tower_ask : m.close_unit_ask;
 		void sheet(ask({ name: d.name ?? "" }), m.quit()).then((yes) => {
 			if (!yes) return;

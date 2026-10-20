@@ -61,7 +61,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.25.0 to 388 for a unit's background monitors (the Monitor type on Unit and on the tower).
 	// 0.27.0 to 299: the one-server-per-machine record and handover (gui.json, requestStop, sharedGui) came out into handover.ts, which has its own figure.
 	// Remote listener: a second loopback server with its own handler, port, and close, so a request is remote by the listener it arrived on: 299 to 320.
-	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 320, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
+	// Unreleased to 323: finished subagents a page dismissed stay hidden until they leave the net (net.ts), and gui.ts hands the dismissal to control.
+	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 323, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
 	// Input (the spec's figure), remote access over Tailscale, its terminal pairing panel (QR, c copies, o opens), and the QR encoder each have their own.
 	// What a waiting session waits on (0.5.0, read for display only; answering is deferred) has its own as well.
 	// 0.5.1 raised remote.ts from 165 to 185 (a recorded server counts as running only if its process started when the entry says: a reused PID
@@ -110,6 +111,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.15.0 raised spawn.ts from 123 to 168: a base opens with a member and no tower, a base without a tower takes members (split into a squad or in
 	// a new tab), only one with a tower takes mains, and every opening shares the start, join wait, first message, and close-on-failure.
 	// Unreleased raised remote.ts to 203: paired devices saved (hashed) for the server a /reload starts again, and the disable that keeps them; host.ts to 88 for `restore`, which turns remote back on after a /reload.
+	// Unreleased raised control.ts to 181 for dismiss: a finished subagent hidden from every page.
 	// Unreleased raised spawn.ts to 169: an opening answers with the session in its pane (sessionAt), so the page goes to it.
 	// 0.17.2 raised server-watch.ts to 110 for herdrEvents, the event stream the tower guard listens to.
 	// 0.17.0 raised bridge.ts to 206 for `close`, the session asked to quit as /boss close does, and its answer.
@@ -131,7 +133,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased: intercept.ts (143, new: the wrap of ctx.ui.select and confirm, a dialog contract owner under straw-boss:ui) has its own figure. owners.ts 139 to 145 for that owner
 	// (`twin`, a confirm's flag in the select and its digest), bridge.ts 246 to 250 for the rule that a twin yields to a contract owner's dialog on the same tool call,
 	// and control.ts 179 to 180 for the refusal of a confirm from a paired device.
-	for (const [name, max] of [["commands.ts", 32], ["control.ts", 180], ["closer.ts", 70], ["upload.ts", 50], ["spawn.ts", 169], ["remote.ts", 203], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 136], ["bridge.ts", 250], ["owners.ts", 145], ["dialogs.ts", 237], ["seal.ts", 56], ["monitors.ts", 75], ["order.ts", 97], ["mirror.ts", 135], ["probe.ts", 40], ["keys.ts", 103], ["documents.ts", 80], ["docs.ts", 150], ["orphan.ts", 115], ["opener.ts", 90], ["server-watch.ts", 110], ["handover.ts", 93], ["towertab.ts", 65], ["state.ts", 106], ["briefing.ts", 33], ["reach.ts", 96], ["election.ts", 24], ["guard.ts", 83], ["presence.ts", 93], ["membership.ts", 115], ["tools.ts", 77], ["tower.ts", 44], ["closing.ts", 23], ["host.ts", 88], ["boss.ts", 36], ["session.ts", 133], ["intercept.ts", 175]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
+	for (const [name, max] of [["commands.ts", 32], ["control.ts", 181], ["closer.ts", 70], ["upload.ts", 50], ["spawn.ts", 169], ["remote.ts", 203], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 136], ["bridge.ts", 250], ["owners.ts", 145], ["dialogs.ts", 237], ["seal.ts", 56], ["monitors.ts", 75], ["order.ts", 97], ["mirror.ts", 135], ["probe.ts", 40], ["keys.ts", 103], ["documents.ts", 80], ["docs.ts", 150], ["orphan.ts", 115], ["opener.ts", 90], ["server-watch.ts", 110], ["handover.ts", 93], ["towertab.ts", 65], ["state.ts", 106], ["briefing.ts", 33], ["reach.ts", 96], ["election.ts", 24], ["guard.ts", 83], ["presence.ts", 93], ["membership.ts", 115], ["tools.ts", 77], ["tower.ts", 44], ["closing.ts", 23], ["host.ts", 88], ["boss.ts", 36], ["session.ts", 133], ["intercept.ts", 175]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
 	// 0.19.0 to 258 for the todo list: rpiv-todo's snapshots marked as the index reads them, and the newest one read for a reset or a change that adds one.
 	assert.ok(count("src/history.ts") <= 258, `src/history.ts has ${count("src/history.ts")} lines`);
 	// The item mapping and the stream glue came out of the reader to keep it within its budget; the spec sets no figure for them.
@@ -268,7 +270,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// instead of SVG animateMotion), and `replay` in dom.ts (3: a one-shot animation restarted without a layout read), less what they replaced in render.ts, main.ts, nav.ts, chat.ts, and mirror.ts.
 	// 0.27.0 to 831: packets.ts interpolates between curve samples so a packet's pace is even.
 		// Unreleased to 833: main.ts mounts the dialogs' keys (hotkeys.ts) and takes the modal selector from it.
-	assert.ok(page <= 833, `the page's TypeScript has ${page} lines`);
+	// Unreleased to 835: quit.ts aims a finished subagent's button at Dismiss and posts it without asking.
+	assert.ok(page <= 835, `the page's TypeScript has ${page} lines`);
 });
 
 test("the built page is small, self-contained (no remote URLs, fonts, or imports), and carries no demo fixture", { skip: !existsSync(join(root, "dist/gui/index.html")) && "run npm run gui:build first" }, () => {
@@ -316,7 +319,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 38 KB / 14.5 KB gzipped for Space on a control the mouse left focused (hotkeys.ts: its pointer and focus listeners and the answer-option exception).
 	// Unreleased to 38.1 KB for an opening tile that closes and goes to the session it opened (main.ts).
 	// Unreleased to 38.2 KB / 14.55 KB gzipped for the note of a unit kept working by a running monitor, in both languages.
-	assert.ok(size(entry).length <= 38_200 && gz(entry) <= 14_550, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// Unreleased to 38.75 KB / 14.7 KB gzipped for Dismiss on a finished subagent (quit.ts), in both languages.
+	assert.ok(size(entry).length <= 38_750 && gz(entry) <= 14_700, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).

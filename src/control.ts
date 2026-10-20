@@ -33,7 +33,7 @@ export { ENDING };
 
 export interface Reply { status: number; body: unknown }
 /** `answers.target` reads the net afresh, so the binding and the dialog are checked again for every answer. */
-export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; remoteOn?(): Promise<void>; spawn?(parts: string[], json: Record<string, unknown>): Promise<Reply>; close?(kind: string, json: Record<string, unknown>): Promise<Reply>; stop?(asked: Asked): void; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; answers?: Pick<Hub, "replay" | "ended" | "send" | "probe" | "commands"> & { target(key: string): Promise<Target | undefined> } }
+export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; remoteOn?(): Promise<void>; spawn?(parts: string[], json: Record<string, unknown>): Promise<Reply>; close?(kind: string, json: Record<string, unknown>): Promise<Reply>; dismiss?(key: unknown): Promise<boolean>; stop?(asked: Asked): void; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; answers?: Pick<Hub, "replay" | "ended" | "send" | "probe" | "commands"> & { target(key: string): Promise<Target | undefined> } }
 
 const no = (status: number, error: string, reason: string): Reply => ({ status, body: { error, reason } });
 const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -74,7 +74,7 @@ export function checkText(text: unknown): string | Reply {
 	return typed;
 }
 
-export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, spawn, close, stop, mirrors, secret = async () => true, answers }: ControlDeps) {
+export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, spawn, close, dismiss, stop, mirrors, secret = async () => true, answers }: ControlDeps) {
 	const busy = new Set<string>();
 	const pad = createKeys({ fresh: (id, key, pane) => mirrors?.fresh(id, key, pane) ?? false, secret, answerable: async (key) => Boolean(await answers?.target(key)), probe: async (key) => answers?.probe(key) });
 	/** The origin checks, then the session checks, then one Herdr call. `parts` is the path after api/: sessions/<key>/<action>, remote/pair, or server/stop. */
@@ -93,6 +93,7 @@ export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, s
 			if (key !== "stop" || action || !stop) return no(404, "not_found", "No such action.");
 			return typeof by === "string" && by.length <= 200 && typeof take === "boolean" ? (stop({ by, take }), { status: 202, body: { stopping: true } }) : no(400, "bad_request", "A stop names who asks.");
 		}
+		if (scope === "dismiss" && !key) return (await dismiss?.(read.json.key)) ? { status: 200, body: {} } : no(404, "not_found", "Only a finished subagent on the net can be dismissed.");
 		if (scope === "close") return close && !action ? close(key, read.json) : no(close ? 404 : 503, close ? "not_found" : "unavailable", close ? "No such action." : "This server closes nothing.");
 		if (scope === "dirs" || scope === "open") return spawn && !action ? spawn([scope, key], read.json) : no(spawn ? 404 : 503, spawn ? "not_found" : "unavailable", spawn ? "No such action." : "This server opens nothing.");
 		if (scope === "remote" && key === "on" && !action) {

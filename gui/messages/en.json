@@ -34,6 +34,8 @@
 	"problem_snapshot": "the server sent a snapshot the page cannot read",
 	"problem_unknown": "the server reported a problem the page cannot read",
 	"note_monitoring": "Watching a monitor",
+	"dismiss": "Dismiss",
+	"dismiss_unit": "Dismiss {name}",
 	"note_thinking": "thinking",
 	"waiting_changes": "Waiting for changes…",
 	"mark_working": "working",

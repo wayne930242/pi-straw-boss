@@ -95,10 +95,14 @@ export async function collectNet({ run, world = worldOf(run), sessions, now = Da
  */
 export function netSource(env: { run: HerdrRun; world?: HerdrWorld; sessions(): Promise<Session[]>; sessionDir?: string; hub?: { relayed(sessions: Session[], refs: Map<string, Ref>): Relayed } }) {
 	let refs = new Map<string, Ref>(), live: Session[] = [];
-	const gone = new Map<string, { ref: Ref; at: number }>(), sessions = async () => (live = await env.sessions());
+	const gone = new Map<string, { ref: Ref; at: number }>(), sessions = async () => (live = await env.sessions()), dismissed = new Set<string>(), ended = new Set<string>();
+	const drop = (u: Unit) => (u.subs.forEach((c) => c.ended && ended.add(c.key)), (u.subs = u.subs.filter((c) => !(c.ended && dismissed.has(c.key))))); // finished subagents the page dismissed
 	return {
 		async read(): Promise<Net> {
 			const next = new Map<string, Ref>(), at = Date.now(), net = await collectNet({ ...env, sessions, refs: next });
+			ended.clear();
+			net.bases.forEach((b) => [...b.tabs.flatMap((t) => t.units), ...b.outside].forEach(drop));
+			for (const key of dismissed) if (!next.has(key)) dismissed.delete(key); // gone from the net: nothing left to hide
 			await withPending(net, (key) => next.get(key)?.file, env.hub?.relayed(live, next)); // what waiting units wait on, and the dialogs bridges relay
 			for (const [key, ref] of refs) if (!next.has(key)) gone.set(key, { ref, at });
 			for (const [key, old] of gone) if (next.has(key) || at - old.at > RECENT_MS) gone.delete(key);
@@ -111,5 +115,7 @@ export function netSource(env: { run: HerdrRun; world?: HerdrWorld; sessions(): 
 			return old && { ...old, live: false, successor: old.pane ? [...refs.values()].find((r) => r.pane === old.pane)?.key : undefined };
 		},
 		workspace: (id: string): Ref[] => [...refs.values()].filter((r) => r.base === id),
+		/** Hides a finished subagent from every page until it leaves the net; false for anything else. */
+		dismiss: (key: string) => ended.has(key) && Boolean(dismissed.add(key)),
 	};
 }
