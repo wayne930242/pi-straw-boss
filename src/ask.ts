@@ -122,8 +122,8 @@ export async function withPending(net: Net, fileOf: (key: string) => string | un
 			Object.assign(u, relayed?.docsOf?.(u.key));
 			const queued = relayed?.queuedOf?.(u.key);
 			if (queued?.length) u.queued = queued;
-			const monitors = relayed?.monitorsOf?.(u.key);
-			if (monitors?.length) u.monitors = monitors;
+			const monitors = relayed?.monitorsOf?.(u.key); if (monitors?.length) u.monitors = monitors;
+			if (u.mark === "idle" && monitors?.some((x) => x.status === "running")) [u.mark, b.mark, (u as Unit).note] = ["working", b.mark === "waiting" ? b.mark : "working", "watching a monitor"]; // idle with a running monitor: it will wake
 			if (dialogs?.length) [u.mark, b.mark] = ["waiting", "waiting"];
 			if (dialogs?.length && u !== b.tower) (u as Unit).note = "waiting on a question";
 			const file = u.mark === "waiting" ? fileOf(u.key) : undefined;

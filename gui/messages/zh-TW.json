@@ -33,6 +33,7 @@
 	"never": "從未",
 	"problem_snapshot": "伺服器送來的快照，頁面無法讀取",
 	"problem_unknown": "伺服器回報了頁面無法讀取的問題",
+	"note_monitoring": "監看中",
 	"note_thinking": "思考中",
 	"waiting_changes": "等待變化…",
 	"mark_working": "工作中",

@@ -65,6 +65,15 @@ test("a snapshot carries what each waiting unit waits on; others carry nothing",
 	assert.deepEqual([a!.pending?.callId, a!.pending?.ask?.question, b!.pending], ["c9", "Pick a color", undefined]);
 });
 
+test("an idle unit with a running monitor shows as working, its base too; a finished monitor leaves it idle", async () => {
+	const unit = (key: string) => ({ id: key, key, control: true, name: key, role: "main" as const, mark: "idle" as const, subs: [] });
+	const net: Net = { bases: [{ id: "w", label: "w", mark: "idle", head: true, tower: null, outposts: [], outside: [], tabs: [{ id: "t", label: "t", units: [unit("a"), unit("b")] }] }] };
+	const mon = (status: "running" | "done") => [{ id: "m", what: "npm run dev", status, lines: 0, at: 0 }];
+	await withPending(net, () => undefined, { dialogsOf: () => undefined, merge: () => ({}) as never, monitorsOf: (key) => mon(key === "a" ? "running" : "done") });
+	const [a, b] = net.bases[0]!.tabs[0]!.units;
+	assert.deepEqual([a!.mark, a!.note, b!.mark, net.bases[0]!.mark], ["working", "watching a monitor", "idle", "working"]);
+});
+
 test("only the current branch counts: a call left on a branch the user moved away from shows nothing, and the new branch's call shows", async () => {
 	const moved = JSON.stringify({ type: "model_change", id: "m1", provider: "p", modelId: "m" });
 	assert.deepEqual(await calls(file(user("hi"), asked("c1"), under("u-hi", moved))), [], "the leaf's path ends at the user message, not at the old branch's call");

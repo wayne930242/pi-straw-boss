@@ -16,7 +16,7 @@ export const ICON: Record<string, string> = { main: "main", member: "member", su
 export const LABEL: Record<Mark, () => string> = { working: m.mark_working, waiting: m.mark_waiting, idle: m.mark_idle, done: m.mark_done, error: m.mark_error, unknown: m.mark_unknown };
 const ROLE: Record<string, () => string> = { main: m.role_main, member: m.role_member, subagent: m.role_subagent, tower: m.role_tower, outpost: m.role_outpost, outside: m.role_outside, session: m.role_session };
 /** The server's fixed status words; any other note (a subagent's tool or phase) shows as it is. */
-const NOTE: Record<string, () => string> = { thinking: m.note_thinking, idle: m.mark_idle, "waiting on a question": m.mark_waiting, finished: m.mark_done };
+const NOTE: Record<string, () => string> = { thinking: m.note_thinking, "watching a monitor": m.note_monitoring, idle: m.mark_idle, "waiting on a question": m.mark_waiting, finished: m.mark_done };
 /** A role as the page names it; one it does not know shows as it is. */
 export const roleName = (role: string) => (Object.hasOwn(ROLE, role) ? ROLE[role]!() : role);
 /** Marks that ask for the user: a click on such a unit opens its alert instead of its route. */
