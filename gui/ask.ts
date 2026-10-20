@@ -50,7 +50,7 @@ interface Panel { first?: () => HTMLButtonElement | HTMLInputElement | undefined
 const keyOf = (p: Pending) => (p.answer ? `d\n${p.answer.dialog}\n${p.answer.digest}` : `c\n${p.callId}\n${p.why ?? ""}`);
 
 /** `terminal` opens the session's terminal tile: a read-only panel offers it (Show terminal), except for a secret_drop, whose mirror stays hidden. */
-export function mountAsk(root: HTMLElement, post: AnswerPost, remote = location.hostname !== "127.0.0.1", terminal?: () => void) {
+export function mountAsk(root: HTMLElement, post: AnswerPost, remote = location.hostname !== "127.0.0.1", terminal?: () => void, accepted?: () => void) {
 	// `cur` is the panel on show, drawn for `shown`; `kept` is the newest one that answers, which comes back as it was when its dialog does.
 	let shown: Pending | undefined, cur: Panel | undefined, kept: Panel | undefined, ready = false, busy = false, leave: ReturnType<typeof setTimeout> | undefined;
 	for (const type of ["focusin", "pointerdown"]) document.addEventListener(type, (e) => cur && !cur.el.contains(e.target as Node) && (cur.lost = undefined)); // the user went elsewhere
@@ -77,6 +77,7 @@ export function mountAsk(root: HTMLElement, post: AnswerPost, remote = location.
 		say(x.note, tone, text, ...(retry ? [again] : []));
 		draw();
 		x.note.scrollIntoView?.({ block: "nearest" }); // a long panel scrolls: its outcome must be read
+		if (accepted && r?.body.outcome === "accepted") setTimeout(accepted, 1200); // an alert's dialog closes once its answer landed, after its outcome shows
 	}
 	const option = (role: string, title: string, small: (string | undefined)[], on: () => void, n?: number) => {
 		const b = h("button", { type: "button", class: "ask-opt", role, "aria-checked": "false" }, h("b", n ? { "data-n": String(n) } : null, title), ...small.filter(Boolean).map((s) => h("small", null, s!)));

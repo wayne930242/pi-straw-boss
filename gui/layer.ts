@@ -124,7 +124,7 @@ export function mountPanels(deps: PanelDeps) {
 		if (!intels.has(a.key)) learn(a);
 		tell(el, a);
 		let ask = asks.get(el);
-		if (!ask) asks.set(el, (ask = mountAsk(el.querySelector(".ask-root")!, to(unitOf(a)), undefined, () => deps.showTerminal(a.ws, unitOf(a)))));
+		if (!ask) asks.set(el, (ask = mountAsk(el.querySelector(".ask-root")!, to(unitOf(a)), undefined, () => deps.showTerminal(a.ws, unitOf(a)), () => el.isConnected && !el.classList.contains("leaving") && (stack.raise(el.dataset.key!), stack.close()))));
 		ask.update(a.pending, a.mark === "waiting" && document.body.dataset.stale !== "true"); // what it waits on, answerable or not; the stream state redraws it (report in main.ts)
 	};
 	// Finished units wait under the HUD's Finished button, apart from what needs the user: a row goes to the unit's comms and clears it, Clear all clears every one.
