@@ -38,7 +38,7 @@ export function mountDossier(host: HTMLElement, scene: Readonly<Scene>, { openTi
 			row.lastElementChild!.append(v!);
 			return row;
 		}));
-		docList(root.querySelector(".d-docs")!, u?.docs, u?.docsCut, (card) => openTile(docTile(name, card)));
+		docList(root.querySelector(".d-docs")!, u?.docs, u?.docsCut, (card) => (fullScreen(false), openTile(docTile(name, card)))); // a phone's full-screen dossier steps aside for the document
 		const drones = root.querySelector<HTMLElement>(".d-drones")!;
 		drones.hidden = !u?.subs.length;
 		sync(drones.querySelector(".formation")!, (u?.subs ?? []).map((s) => ({ ...s, id: s.key })), tokenEl, (el, s) => (droneOf(el), fillToken(el, s, ws)));

@@ -17,8 +17,8 @@ import { createTab, type HerdrCall, type HerdrRun, isSub, type Pane, panes, repo
 
 const MAX_DIRS = 500, JOIN_WAIT_MS = 60_000, MAX_LABEL = 64;
 
-/** `live` says whether a session is still on the net, so a tower token its tower left behind does not count. */
-export interface SpawnDeps { run: HerdrRun; sleep: Sleep; call?: HerdrCall; live(sessionId: string): Promise<boolean>; home?: string }
+/** `live` says whether a session is still on the net, so a tower token its tower left behind does not count; `sessionAt` names the session in a pane, so the page can go to it. */
+export interface SpawnDeps { run: HerdrRun; sleep: Sleep; call?: HerdrCall; live(sessionId: string): Promise<boolean>; sessionAt?(paneId: string): Promise<string | undefined>; home?: string }
 
 const no = (status: number, error: string, reason: string): Reply => ({ status, body: { error, reason } });
 const OUTSIDE = no(400, "not_allowed", "Only folders in your home folder, outside hidden folders, can be picked.");
@@ -44,8 +44,9 @@ export async function listDirs(dir: string, home = homedir()) {
 	return { path: dir, home: root, parent: dir === root ? null : dirname(dir), dirs: names.slice(0, MAX_DIRS), truncated: names.length > MAX_DIRS };
 }
 
-export function createSpawn({ run, sleep, call, live, home = homedir() }: SpawnDeps) {
+export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir() }: SpawnDeps) {
 	let busy = false;
+	const opened = async (workspace: string, tab: string, pane: string): Promise<Reply> => ({ status: 200, body: { workspace, tab, pane, ...(sessionAt && { session: await sessionAt(pane) }) } });
 	/** The base's own folder: its checkout, else where its tower runs, else where its first pane runs; home when that is not pickable. */
 	const baseDir = async (workspaceId: unknown) => {
 		const ws = typeof workspaceId === "string" ? (await workspaces(run)).find((w) => w.workspace_id === workspaceId) : undefined;
@@ -99,7 +100,7 @@ export function createSpawn({ run, sleep, call, live, home = homedir() }: SpawnD
 			await report(run, "pane", paneId, { sb_open_main: "1" });
 			return boot(paneId, `main · ${name}`, prompt, "main");
 		});
-		return failed ?? { status: 200, body: { workspace: ws.workspace_id, tab: tabId, pane: paneId } };
+		return failed ?? opened(ws.workspace_id, tabId, paneId);
 	}
 
 	async function openMember(workspaceId: unknown, tabId: unknown, dir: string | undefined, prompt?: string): Promise<Reply> {
@@ -122,7 +123,7 @@ export function createSpawn({ run, sleep, call, live, home = homedir() }: SpawnD
 			dir = cwd;
 		}
 		const failed = await orClose(created.close, () => boot(created.paneId, `member · ${basename(dir!) || dir}`, prompt));
-		return failed ?? { status: 200, body: { workspace: ws.workspace_id, tab: created.tabId, pane: created.paneId } };
+		return failed ?? opened(ws.workspace_id, created.tabId, created.paneId);
 	}
 
 	async function openBase(dir: string, label: string, prompt?: string): Promise<Reply> {
@@ -130,7 +131,7 @@ export function createSpawn({ run, sleep, call, live, home = homedir() }: SpawnD
 		const workspaceId: string = created.workspace.workspace_id, paneId: string = created.root_pane.pane_id;
 		// Created by this request a moment ago, with nothing in it but the member attempt: a base is never left empty.
 		const failed = await orClose(["workspace", "close", workspaceId], () => boot(paneId, `member · ${basename(dir) || dir}`, prompt));
-		return failed ?? { status: 200, body: { workspace: workspaceId, tab: created.tab.tab_id, pane: paneId } };
+		return failed ?? opened(workspaceId, created.tab.tab_id, paneId);
 	}
 
 	return async function handle([scope, kind = ""]: string[], json: Record<string, unknown>): Promise<Reply> {

@@ -109,6 +109,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.15.0 raised control.ts to 176 for sessions/<key>/upload, a file's bytes under the same origin and CSRF checks, handed to upload.ts (50 at most).
 	// 0.15.0 raised spawn.ts from 123 to 168: a base opens with a member and no tower, a base without a tower takes members (split into a squad or in
 	// a new tab), only one with a tower takes mains, and every opening shares the start, join wait, first message, and close-on-failure.
+	// Unreleased raised spawn.ts to 169: an opening answers with the session in its pane (sessionAt), so the page goes to it.
 	// 0.17.2 raised server-watch.ts to 110 for herdrEvents, the event stream the tower guard listens to.
 	// 0.17.0 raised bridge.ts to 206 for `close`, the session asked to quit as /boss close does, and its answer.
 	// 0.17.0 raised dialogs.ts to 217 for the hub's side of `close`: the request, its answer, and its drop when the server stops.
@@ -129,7 +130,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased: intercept.ts (143, new: the wrap of ctx.ui.select and confirm, a dialog contract owner under straw-boss:ui) has its own figure. owners.ts 139 to 145 for that owner
 	// (`twin`, a confirm's flag in the select and its digest), bridge.ts 246 to 250 for the rule that a twin yields to a contract owner's dialog on the same tool call,
 	// and control.ts 179 to 180 for the refusal of a confirm from a paired device.
-	for (const [name, max] of [["commands.ts", 32], ["control.ts", 180], ["closer.ts", 70], ["upload.ts", 50], ["spawn.ts", 168], ["remote.ts", 192], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 136], ["bridge.ts", 250], ["owners.ts", 145], ["dialogs.ts", 237], ["seal.ts", 56], ["monitors.ts", 75], ["order.ts", 97], ["mirror.ts", 135], ["probe.ts", 40], ["keys.ts", 103], ["documents.ts", 80], ["docs.ts", 150], ["orphan.ts", 115], ["opener.ts", 90], ["server-watch.ts", 110], ["handover.ts", 93], ["towertab.ts", 65], ["state.ts", 106], ["briefing.ts", 33], ["reach.ts", 96], ["election.ts", 24], ["guard.ts", 83], ["presence.ts", 93], ["membership.ts", 115], ["tools.ts", 77], ["tower.ts", 44], ["closing.ts", 23], ["host.ts", 82], ["boss.ts", 36], ["session.ts", 133], ["intercept.ts", 175]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
+	for (const [name, max] of [["commands.ts", 32], ["control.ts", 180], ["closer.ts", 70], ["upload.ts", 50], ["spawn.ts", 169], ["remote.ts", 192], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 136], ["bridge.ts", 250], ["owners.ts", 145], ["dialogs.ts", 237], ["seal.ts", 56], ["monitors.ts", 75], ["order.ts", 97], ["mirror.ts", 135], ["probe.ts", 40], ["keys.ts", 103], ["documents.ts", 80], ["docs.ts", 150], ["orphan.ts", 115], ["opener.ts", 90], ["server-watch.ts", 110], ["handover.ts", 93], ["towertab.ts", 65], ["state.ts", 106], ["briefing.ts", 33], ["reach.ts", 96], ["election.ts", 24], ["guard.ts", 83], ["presence.ts", 93], ["membership.ts", 115], ["tools.ts", 77], ["tower.ts", 44], ["closing.ts", 23], ["host.ts", 82], ["boss.ts", 36], ["session.ts", 133], ["intercept.ts", 175]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
 	// 0.19.0 to 258 for the todo list: rpiv-todo's snapshots marked as the index reads them, and the newest one read for a reset or a change that adds one.
 	assert.ok(count("src/history.ts") <= 258, `src/history.ts has ${count("src/history.ts")} lines`);
 	// The item mapping and the stream glue came out of the reader to keep it within its budget; the spec sets no figure for them.
@@ -312,7 +313,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// 0.27.0 to 37 KB / 14.15 KB gzipped: the packets' even spacing (interpolated keyframe points).
 	// Unreleased to 37.8 KB / 14.4 KB gzipped for the dialogs' keys (hotkeys.ts: the routing, its listeners, and the hint in each tooltip in both languages).
 	// Unreleased to 38 KB / 14.5 KB gzipped for Space on a control the mouse left focused (hotkeys.ts: its pointer and focus listeners and the answer-option exception).
-	assert.ok(size(entry).length <= 38_000 && gz(entry) <= 14_500, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// Unreleased to 38.1 KB for an opening tile that closes and goes to the session it opened (main.ts).
+	assert.ok(size(entry).length <= 38_100 && gz(entry) <= 14_500, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).

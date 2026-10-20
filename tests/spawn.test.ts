@@ -108,7 +108,7 @@ test("a base without a tower takes a member beside a tab's main in its folder, o
 	assert.equal((await post("open/member", { workspace: "wA", tab: "wA:t99" })).status, 404);
 });
 
-test("a base with a tower takes a new main in an unfocused tab of the picked folder, which promotes itself, and no member", async () => {
+test("a base with a tower takes a new main in an unfocused tab of the picked folder, which promotes itself and is named in the answer, and no member", async () => {
 	world.autoMains();
 	const { post, calls } = await gui();
 	tower();
@@ -118,6 +118,7 @@ test("a base with a tower takes a new main in an unfocused tab of the picked fol
 	assert.deepEqual(world.herdr.commands("tab", "create"), [["tab", "create", "--workspace", "wA", "--label", "alpha", "--cwd", dir, "--no-focus", "--env", "STRAW_BOSS_ROLE=main"]]);
 	const pane = answer.body.pane as string;
 	assert.equal(world.herdr.pane(pane).tokens.sb_role, "main");
+	assert.equal(answer.body.session, `opened-${pane}`, "the answer names the new session, so the page goes to it");
 	assert.deepEqual(world.herdr.commands("agent", "start")[0]?.slice(-2), ["--name", "main · alpha"]);
 	assert.deepEqual(calls.filter((c) => c.method === "agent.prompt"), [{ method: "agent.prompt", params: { target: pane, text: "Read the README" } }]);
 	const empty = await post("open/main", { workspace: "wA", dir: join(home, "beta"), prompt: "  " });

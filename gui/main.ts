@@ -202,7 +202,7 @@ document.addEventListener("click", (event) => {
 	const button = (event.target as Element | null)?.closest?.<HTMLElement>("button[data-open]");
 	if (button) void import("./spawn.ts").then(({ openingOf, spawnTile }) => {
 		const opening = openingOf(button, latest?.bases ?? []);
-		if (opening) openTile(spawnTile(opening), true);
+		if (opening) openTile(spawnTile(opening, (ws, key, tile) => (panels?.tiles.close(tile), router.go({ view: "session", ws, key }))), true);
 	});
 });
 for (const event of ["focus", "pageshow", "online"]) window.addEventListener(event, () => !document.hidden && resume());

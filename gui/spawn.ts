@@ -5,16 +5,16 @@ import { post } from "./post.ts";
 
 // The opening tiles, their own small chunk. A new base (a folder picker from home, a name, a first message) opens with one member and no tower; a
 // base without a tower takes members, one with a tower takes mains (spawn.ts on the server holds the same rules). A member added to a squad opens
-// beside its main in that folder, so its tile has no picker; the others pick a folder that starts in the base's own and stays inside home.
+// beside its main in that folder, so its tile has no picker; the others pick a folder that starts in the base's own and stays inside home; `enter` closes the tile and goes to the session that opened.
 
 interface Listing { path: string; home: string; parent: string | null; dirs: string[]; truncated: boolean }
 interface Base { id: string; label: string }
 export type Opening = { kind: "base" } | { kind: "main" | "member"; base: Base; tab?: { id: string; label: string } };
 
-export function spawnTile(o: Opening): Tile {
+export function spawnTile(o: Opening, enter?: (ws: string, key: string, tile: string) => void): Tile {
 	const base = o.kind === "base" ? undefined : o.base, tab = o.kind === "base" ? undefined : o.tab;
-	const title = o.kind === "base" ? m.open_base_title() : o.kind === "main" ? m.open_main_title({ base: base!.label }) : tab ? m.open_member_tab_title({ tab: tab.label }) : m.open_member_title({ base: base!.label });
-	return { id: `open-${o.kind}-${base?.id ?? ""}-${tab?.id ?? ""}`, title, body: () => {
+	const title = o.kind === "base" ? m.open_base_title() : o.kind === "main" ? m.open_main_title({ base: base!.label }) : tab ? m.open_member_tab_title({ tab: tab.label }) : m.open_member_title({ base: base!.label }), id = `open-${o.kind}-${base?.id ?? ""}-${tab?.id ?? ""}`;
+	return { id, title, body: () => {
 		const where = h("code", { class: "spawn-path" }), up = h("button", { type: "button", class: "later" }, m.folder_up());
 		const list = h("div", { class: "spawn-dirs" }), note = h("p", { class: "chat-empty" });
 		const go = h("button", { type: "button", class: "go" }, o.kind === "base" ? m.open_base_go() : o.kind === "main" ? m.open_main_go() : m.open_member_go());
@@ -49,6 +49,7 @@ export function spawnTile(o: Opening): Tile {
 				if (!r.ok) return say(r.body.reason ?? m.refused({ status: r.status }));
 				prompt.value = name.value = "";
 				named = false;
+				if (enter && typeof r.body.session === "string") return enter(r.body.workspace as string, r.body.session, id);
 				say(o.kind === "base" ? m.opened_base() : o.kind === "main" ? m.opened_main({ base: base!.label }) : m.opened_member({ base: base!.label }));
 			}, () => say(m.no_answer())).finally(() => (go.disabled = false));
 		};
