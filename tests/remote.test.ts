@@ -114,6 +114,29 @@ test("a pairing code works once and only within ten minutes; turning remote off 
 	assert.deepEqual(req("", { cookie: `sb_remote=${first.cookie}` }), { status: 403 }, "remote off: refused outright");
 });
 
+test("a /reload keeps paired devices for the next server, saved as hashes; remote off forgets them, and another identity voids them", () => {
+	const file = join(scratch, "paired.json"), T = "t".repeat(32), id = { host: HOST, login: LOGIN };
+	const req = (a: ReturnType<typeof createAccess>, path: string, headers: Record<string, string> = {}) => a.check({ method: "GET", headers: { host: HOST, "tailscale-user-login": LOGIN, ...headers } } as unknown as IncomingMessage, "remote", 1234, T, path.split("/"));
+	const first = createAccess(T, () => {}, file);
+	first.enable(id);
+	const paired = req(first, `pair/${first.pair()}`) as { cookie: string };
+	assert.ok(!readFileSync(file, "utf8").includes(paired.cookie), "only the cookie's hash is saved");
+	first.disable(true);
+	const next = createAccess(T, () => {}, file);
+	assert.deepEqual(req(next, "", { cookie: `sb_remote=${paired.cookie}` }), { status: 403 }, "nothing gets in before remote is on again");
+	next.enable(id);
+	assert.deepEqual(req(next, "", { cookie: `sb_remote=${paired.cookie}` }), { origin: `https://${HOST}`, remote: true }, "the paired phone is still in");
+	next.disable();
+	assert.equal(existsSync(file), false, "remote off forgets them");
+	const again = createAccess(T, () => {}, file);
+	again.enable(id);
+	const c = (req(again, `pair/${again.pair()}`) as { cookie: string }).cookie;
+	again.disable(true);
+	const other = createAccess(T, () => {}, file);
+	other.enable({ host: HOST, login: "other@example.com" });
+	assert.deepEqual(req(other, "", { cookie: `sb_remote=${c}`, "tailscale-user-login": "other@example.com" }), { status: 401 }, "another identity voids them");
+});
+
 test("turning remote on as another Tailscale identity voids what the old one paired and ends its streams", () => {
 	let ended = 0;
 	const access = createAccess("t".repeat(32), () => ended++);

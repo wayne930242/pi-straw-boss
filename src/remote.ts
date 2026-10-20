@@ -1,5 +1,5 @@
 import { execFile, execFileSync } from "node:child_process";
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { join } from "node:path";
@@ -78,22 +78,32 @@ export async function serveOff(run: Run, host: string, targets: (string | undefi
 	return true;
 }
 
-/** Who may in: the local page as today, and while remote is on, paired devices of this machine's Tailscale user. */
-export function createAccess(token: string, ended: () => void = () => {}) {
-	let remote: Identity | undefined;
-	const codes = new Map<string, number>(), sessions = new Map<string, number>();
+/** Who may in: the local page as today, and while remote is on, paired devices of this machine's Tailscale user. `file` keeps the paired
+ *  devices (each cookie's SHA-256 and expiry, with the identity that paired them) across a restart in this process, so a /reload keeps them. */
+export function createAccess(token: string, ended: () => void = () => {}, file?: string) {
+	let remote: Identity | undefined, kept: Identity | undefined;
+	const codes = new Map<string, number>(), sessions = new Map<string, number>(), hash = (c: string) => createHash("sha256").update(c).digest("hex");
+	try {
+		const saved = file && JSON.parse(readFileSync(file, "utf8"));
+		if (saved?.host && saved.login) [kept] = [{ host: String(saved.host), login: String(saved.login) }];
+		for (const [h, until] of Object.entries(saved?.sessions ?? {})) if (typeof until === "number" && until > Date.now()) sessions.set(h, until);
+	} catch {} // none saved
+	const save = () => file && (remote && sessions.size ? writeFileSync(file, JSON.stringify({ ...remote, sessions: Object.fromEntries(sessions) }), { mode: 0o600 }) : rmSync(file, { force: true }));
 	const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 	return {
 		get remote() { return remote; },
 		enable(id: Identity) {
 			// Another identity voids what the old one paired, and ends its streams.
-			if (remote?.host !== id.host || remote.login !== id.login) (remote && ended(), codes.clear(), sessions.clear());
-			remote = id;
+			const was = remote ?? kept;
+			if (was?.host !== id.host || was.login !== id.login) (remote && ended(), codes.clear(), sessions.clear());
+			[remote, kept] = [id, undefined];
+			save();
 		},
-		disable() {
+		/** `keep` (a /reload) leaves the paired devices saved for the server that starts next; otherwise they are forgotten. */
+		disable(keep = false) {
 			remote = undefined;
 			codes.clear();
-			sessions.clear();
+			if (!keep) (sessions.clear(), save()); // with remote gone, save removes the file
 			ended();
 		},
 		/** A one-time pairing code (128 bits, ten minutes); expired codes go first, and past sixteen waiting the oldest goes. */
@@ -121,11 +131,12 @@ export function createAccess(token: string, ended: () => void = () => {}) {
 				codes.delete(path[1]!);
 				if (until < now) return { status: 403 };
 				const cookie = randomBytes(32).toString("hex");
-				sessions.set(cookie, now + SESSION_MS);
+				sessions.set(hash(cookie), now + SESSION_MS);
+				save();
 				return { cookie };
 			}
 			const cookie = /(?:^|;\s*)sb_remote=([0-9a-f]{64})(?:;|$)/.exec(h.cookie ?? "")?.[1]; // a document's own requests (/doc/) come without it from Chrome's sandboxed frame: docs.ts takes the capability instead
-			return (cookie && (sessions.get(cookie) ?? 0) > now) || path[0] === "doc" ? { origin: `https://${remote.host}`, remote: true } : { status: 401 };
+			return (cookie && (sessions.get(hash(cookie)) ?? 0) > now) || path[0] === "doc" ? { origin: `https://${remote.host}`, remote: true } : { status: 401 };
 		},
 	};
 }
@@ -163,7 +174,7 @@ export const cookieFor = (token: string, value: string) => `sb_remote=${value}; 
  * the remote listener, also over an entry that still points at this server's local port), then a pairing QR. Off: the entry goes and every
  * remote session ends. `dir` holds remote.json, the entry's target while it is on.
  */
-export async function switchRemote(gui: { port: number; remotePort: number; token: string; access: Access }, on: boolean, dir: string, run: Run = tailscale): Promise<{ text: string; lines?: string[]; link?: () => string; changed: boolean }> {
+export async function switchRemote(gui: { port: number; remotePort: number; token: string; access: Access }, on: boolean, dir: string, run: Run = tailscale, keep = false): Promise<{ text: string; lines?: string[]; link?: () => string; changed: boolean }> {
 	// An entry from before the remote listener points at the local port; it is this server's own, so it is repointed or removed like a recorded one.
 	const target = `http://127.0.0.1:${gui.remotePort}`, old = `http://127.0.0.1:${gui.port}`, file = join(dir, "remote.json");
 	let stale: string | undefined;
@@ -174,7 +185,7 @@ export async function switchRemote(gui: { port: number; remotePort: number; toke
 	if (!on) {
 		// An entry a crashed session left (recorded in remote.json) is cleaned up too, while it still points where it was recorded.
 		const was = gui.access.remote;
-		gui.access.disable();
+		gui.access.disable(keep);
 		const id = was ?? (stale ? await identity(run).catch(() => undefined) : undefined);
 		if (!id) return { text: "Remote access is off", changed: false };
 		const removed = await serveOff(run, id.host, [was && target, stale, old]);

@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import type { Bridge } from "./bridge.ts";
 import { createCloser } from "./closer.ts";
 import { createHub } from "./dialogs.ts";
@@ -42,7 +43,7 @@ export function createHost({ pi, cfg, s, guiDir, me, tell }: Kit, { bridge, conn
 	const share = (take = false, remote = false) =>
 		(opening ??= (async () => {
 			if (s.gui) return { url: s.gui.url, owner: label(), mine: s.gui };
-			const start = (prefer: { port?: number; remotePort?: number; token?: string; csrf?: string }, net = netSource({ run, world, sessions, hub: (s.hub = s.hub?.me === me() ? s.hub : createHub(pi, me(), bridge)) })) => startGui({ read: net.read, net, call, hub: s.hub, dir: bundle, ...prefer, onStop: (asked) => void stopOwn(asked), onRemote: async () => tell((await switchRemote(s.gui!, true, guiDir, ts)).text), spawn: createSpawn({ run, sleep, call, live: async (id) => (await sessions()).some((x) => x.id === id), sessionAt: async (pane) => (await sessions()).find((x) => x.herdrLocation?.paneId === pane)?.id }), close: createCloser({ run, sleep, me, sessions, ask: async (key, keepPane) => s.hub?.close(key, keepPane) }) });
+			const start = (prefer: { port?: number; remotePort?: number; token?: string; csrf?: string }, net = netSource({ run, world, sessions, hub: (s.hub = s.hub?.me === me() ? s.hub : createHub(pi, me(), bridge)) })) => startGui({ read: net.read, net, call, hub: s.hub, dir: bundle, paired: join(guiDir, "paired.json"), ...prefer, onStop: (asked) => void stopOwn(asked), onRemote: async () => tell((await switchRemote(s.gui!, true, guiDir, ts)).text), spawn: createSpawn({ run, sleep, call, live: async (id) => (await sessions()).some((x) => x.id === id), sessionAt: async (pane) => (await sessions()).find((x) => x.herdrLocation?.paneId === pane)?.id }), close: createCloser({ run, sleep, me, sessions, ask: async (key, keepPane) => s.hub?.close(key, keepPane) }) });
 			const shared = await sharedGui(guiDir, [label(), me()], start, sleep, { version, take });
 			if ((s.gui = shared.mine) && !remote) await switchRemote(s.gui, false, guiDir, ts).catch(() => {});
 			return shared;
@@ -51,6 +52,11 @@ export function createHost({ pi, cfg, s, guiDir, me, tell }: Kit, { bridge, conn
 	return {
 		sessions,
 		share,
+		/** The server again after a /reload, with remote access back on when it was on (its paired devices kept their cookies). */
+		async restore(remote: boolean) {
+			await share(false, remote);
+			if (remote && s.gui) tell((await switchRemote(s.gui, true, guiDir, ts)).text);
+		},
 		/** `mode` is "", "stop", "remote", or "remote off", and works from any session: remote access (remote.ts) goes with the server, so a session takes it over first. */
 		async command(mode: string) {
 			if (mode === "stop") {
@@ -73,8 +79,8 @@ export function createHost({ pi, cfg, s, guiDir, me, tell }: Kit, { bridge, conn
 		},
 		/** The session ends: a /reload, /new, or /resume (`reload`) marks the server to start again in this process, and the server stops with its remote entry. */
 		async release(reload: boolean) {
-			if (s.gui && reload) markReload(guiDir); // a /reload, /new, or /resume starts it again in this process
-			if (s.gui) await switchRemote(s.gui, false, guiDir, ts).catch(() => {});
+			if (s.gui && reload) markReload(guiDir, Boolean(s.gui.access.remote)); // a /reload, /new, or /resume starts it again in this process, remote and paired devices too
+			if (s.gui) await switchRemote(s.gui, false, guiDir, ts, reload).catch(() => {});
 			await s.gui?.stop();
 			s.gui = undefined;
 		},
