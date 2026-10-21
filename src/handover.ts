@@ -9,7 +9,7 @@ import { type Asked, type Gui, VERSION } from "./gui.ts";
 // the running one: it asks it to stop (requestStop), or takes it over, stopping it and starting its own on the same URL. A session whose
 // pi-straw-boss is newer takes it over unasked, so an update reaches every open page once one session has reloaded.
 /** `ownerSession` is the owner's intercom session id: bridges follow it to the server's dialog channel. `reload` marks a server its owner's /reload stopped. */
-export interface GuiRecord { pid: number; port: number; remotePort?: number; token: string; csrf?: string; owner: string; ownerSession?: string; version?: string; reload?: boolean; remote?: boolean }
+export interface GuiRecord { pid: number; port: number; remotePort?: number; token: string; csrf?: string; owner: string; ownerSession?: string; version?: string; reload?: boolean }
 /** `stale`: the running server is older and could not be taken over. */
 export interface Shared { url: string; owner: string; mine?: Gui; stale?: boolean }
 
@@ -33,9 +33,9 @@ export function readRecord(dir: string): GuiRecord | undefined {
  * Marks the record of the server this process runs, so the extension that loads after its /reload starts it again on the same URL.
  * Matched by pid, not by session id: pi-intercom, loaded first, has already cleared PI_INTERCOM_SESSION_ID when this runs at shutdown.
  */
-export function markReload(dir: string, remote = false, pid = process.pid) {
+export function markReload(dir: string, pid = process.pid) {
 	const record = readRecord(dir);
-	if (record?.pid === pid) writeFileSync(join(dir, "gui.json"), JSON.stringify({ ...record, reload: true, remote }), { mode: 0o600 });
+	if (record?.pid === pid) writeFileSync(join(dir, "gui.json"), JSON.stringify({ ...record, reload: true }), { mode: 0o600 });
 }
 
 /** Asks a recorded server to stop, as its own page would, and waits until it is gone; false when it refused (a server from before 0.11.0) or stayed up. */

@@ -58,6 +58,23 @@ function send(gui: Gui, path: string, body: unknown, headers: Record<string, str
 }
 const input = (gui: Gui, text: string, as = "send", extra: Record<string, unknown> = {}) => send(gui, "sessions/sess-1/input", { text, as, ...extra });
 
+const HOST = "box.tail1.ts.net:8443", LOGIN = "me@example.com";
+/** A device paired to `gui` through its remote listener, as tailscale serve forwards it: `post` is a write from its page. */
+async function paired(gui: Gui) {
+	const tailnet = { host: HOST, "tailscale-user-login": LOGIN, "x-forwarded-for": "100.87.7.97" };
+	gui.access.enable({ host: HOST, login: LOGIN });
+	const ask = (path: string, headers: Record<string, string>, method: string, payload?: unknown) => new Promise<{ status: number; headers: Record<string, unknown>; body: { error?: string; reason?: string; outcome?: string; accepted?: boolean } }>((resolve, reject) => {
+		const data = payload === undefined ? "{}" : JSON.stringify(payload);
+		const req = request({ host: "127.0.0.1", port: gui.remotePort, path, method, headers: { ...headers, ...(method === "POST" ? { "content-length": String(Buffer.byteLength(data)) } : {}) }, agent: false }, (res) => {
+			let text = "";
+			res.on("data", (c) => (text += c)).on("end", () => resolve({ status: res.statusCode!, headers: res.headers, body: /^application\/json/.test(String(res.headers["content-type"])) ? JSON.parse(text) : {} }));
+		});
+		req.on("error", reject).end(method === "POST" ? data : undefined);
+	});
+	const cookie = String((await ask(`/${gui.token}/pair/${gui.access.pair()}`, tailnet, "GET")).headers["set-cookie"]).split(";")[0]!;
+	return { cookie, post: (path: string, payload?: unknown) => ask(`/${gui.token}/api/${path}`, { ...tailnet, cookie, origin: `https://${HOST}`, "content-type": "application/json", "x-sb-csrf": gui.csrf }, "POST", payload) };
+}
+
 test("send types the text with agent.prompt on the session's pane; a follow-up while it works uses Alt+Enter, while idle a prompt", async () => {
 	const { gui, typed, state } = await setup();
 	assert.deepEqual((await input(gui, "hello\r\nthere")).body, { accepted: true });
@@ -350,30 +367,51 @@ test("the composer clears only what was confirmed, and says why it cannot send",
 	assert.match(blocked({ ...unit, mark: "waiting" })!, /dialog/);
 });
 
-test("answer: a confirmation is refused from a paired device (403 local_only, nothing sent) and taken from this computer's page; a select is taken from both", async () => {
+test("answer: a paired device answers a confirmation and a local-only choice as this computer's page does; a secret's value is still refused", async () => {
 	const { gui, sent, hub } = await answering();
 	const confirm = { title: "mp-infra command review\n\nssh box ls", choices: [{ label: "Yes" }, { label: "No" }], confirm: true as const };
-	const host = "box.tail1.ts.net:8443", tailnet = { host, "tailscale-user-login": "me@example.com", "x-forwarded-for": "100.87.7.97" };
-	gui.access.enable({ host, login: "me@example.com" });
-	const remote = (path: string, headers: Record<string, string>, method = "POST", payload?: unknown) => new Promise<{ status: number; headers: Record<string, unknown>; body: { error?: string; reason?: string; outcome?: string } }>((resolve, reject) => {
-		const data = payload === undefined ? "{}" : JSON.stringify(payload);
-		const req = request({ host: "127.0.0.1", port: gui.remotePort, path, method, headers: { ...headers, ...(method === "POST" ? { "content-length": String(Buffer.byteLength(data)) } : {}) }, agent: false }, (res) => {
-			let text = "";
-			res.on("data", (c) => (text += c)).on("end", () => resolve({ status: res.statusCode!, headers: res.headers, body: /^application\/json/.test(String(res.headers["content-type"])) ? JSON.parse(text) : {} }));
-		});
-		req.on("error", reject).end(method === "POST" ? data : undefined);
-	});
-	const cookie = String((await remote(`/${gui.token}/pair/${gui.access.pair()}`, tailnet, "GET")).headers["set-cookie"]).split(";")[0]!;
-	const paired = (payload: unknown) => remote(`/${gui.token}/api/sessions/sess-1/answer`, { ...tailnet, cookie, origin: `https://${host}`, "content-type": "application/json", "x-sb-csrf": gui.csrf }, "POST", payload);
+	const phone = await paired(gui);
 	hub.target = { from: "S", bridgeId: "B", answer: { dialog: "d1", digest: "a".repeat(64), select: confirm } } as Target;
-	const refused = await paired(body());
-	assert.deepEqual([refused.status, refused.body.error], [403, "local_only"]);
-	assert.match(String(refused.body.reason), /computer the GUI runs on/);
-	assert.deepEqual(sent, [], "nothing reached the bridge");
-	assert.deepEqual(await send(gui, "sessions/sess-1/answer", body({ answerId: "b".repeat(16) })), { status: 200, body: { outcome: "accepted" } }, "this computer's page answers it");
+	const taken = await phone.post("sessions/sess-1/answer", body());
+	assert.deepEqual([taken.status, taken.body.outcome], [200, "accepted"], "a confirm is answered from a paired device");
 	assert.equal(sent.length, 1);
-	hub.target = { from: "S", bridgeId: "B", answer: { dialog: "d1", digest: "a".repeat(64), select: { title: "Which?", choices: [{ label: "A" }, { label: "B" }] } } } as Target;
-	const taken = await paired(body({ answerId: "c".repeat(16), choice: 1 }));
-	assert.deepEqual([taken.status, taken.body.outcome], [200, "accepted"], "a select is taken from a paired device");
-	assert.equal(sent.length, 2);
+	assert.deepEqual(await send(gui, "sessions/sess-1/answer", body({ answerId: "b".repeat(16) })), { status: 200, body: { outcome: "accepted" } }, "and from this computer's page");
+	hub.target = { from: "S", bridgeId: "B", answer: { dialog: "d1", digest: "a".repeat(64), select: { title: "Which?", choices: [{ label: "Run it" }, { label: "Copy", localOnly: true as const }] } } } as Target;
+	const copy = await phone.post("sessions/sess-1/answer", body({ answerId: "c".repeat(16), choice: 1 }));
+	assert.deepEqual([copy.status, copy.body.outcome], [200, "accepted"], "a choice that acts on the computer is taken from a paired device too");
+	assert.equal(sent.length, 3);
+	const secret = await phone.post("sessions/sess-1/answer", body({ answerId: "d".repeat(16), value: "s3cr3t" }));
+	assert.deepEqual([secret.status, secret.body.error], [403, "local_only"], "a secret is entered in the terminal only");
+	assert.equal(sent.length, 3);
+});
+
+test("the pad from a paired device follows the local page's rule: any pad key goes while a dialog the page cannot answer is open, and only Escape while one it can answer is", async () => {
+	const p = await padded();
+	await p.attach();
+	const phone = await paired(p.gui);
+	p.w.status = "blocked";
+	for (const k of ["1", "up", "enter"]) assert.deepEqual((await phone.post("sessions/sess-1/keys", { key: k, stream: p.stream })).body, { accepted: true }, `remote ${k}`);
+	assert.deepEqual(p.sentKeys(), [["1"], ["up"], ["enter"]]);
+	p.w.answerable = true;
+	assert.equal((await phone.post("sessions/sess-1/keys", { key: "1", stream: p.stream })).body.error, "blocked", "a dialog the page answers takes only Escape, here too");
+	assert.deepEqual((await phone.post("sessions/sess-1/keys", { key: "esc", stream: p.stream })).body, { accepted: true });
+	p.close();
+});
+
+test("dismiss: one key hides that subagent, all:true hides every finished one through the net, from this computer's page and a paired device alike; anything else is refused", async () => {
+	const dismissed: string[] = [];
+	let finished = 2;
+	const lookup = (key: string): Found | undefined => (key === "sess-1" ? { key, base: "wA", name: "billing", role: "main", file: FILE, pane: "wA:p1", live: true } : undefined);
+	const gui = await startGui({ read: async () => ({ bases: [] }), net: { lookup, workspace: () => [], dismiss: (key) => (dismissed.push(key), key === "kid-done"), dismissAll: () => finished }, dir: join(scratch, "bundle"), pollMs: 50 });
+	running.push(gui);
+	assert.equal((await send(gui, "dismiss", { key: "kid-done" })).status, 200);
+	assert.equal((await send(gui, "dismiss", { key: "kid-live" })).status, 404, "a running subagent cannot be dismissed");
+	assert.deepEqual(await send(gui, "dismiss", { all: true }), { status: 200, body: { dismissed: 2 } });
+	finished = 0;
+	assert.deepEqual(await send(gui, "dismiss", { all: true }), { status: 200, body: { dismissed: 0 } }, "another page got there first: nothing is an error");
+	for (const bad of [{}, { all: "yes" }, { all: false }, { key: 3 }]) assert.equal((await send(gui, "dismiss", bad)).status, 404, JSON.stringify(bad));
+	const phone = await paired(gui);
+	finished = 3;
+	assert.deepEqual([(await phone.post("dismiss", { all: true })).status, (await phone.post("dismiss", { key: "kid-done" })).status], [200, 200], "a paired device dismisses as the page does");
+	assert.deepEqual(dismissed, ["kid-done", "kid-live", "kid-done"]);
 });

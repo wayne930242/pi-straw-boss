@@ -3,7 +3,7 @@ import type { Editor } from "./probe.ts";
 
 // The key pad's keys (POST …/sessions/<key>/keys {key, stream, confirmed?}), checked in order after the write guards and the registry:
 // the key is on the pad and alone, at most 8 a second per session; the page's stream holds this session's mirror, on its pane, and got a
-// frame in the last 3 s; while the session file's open call is `secret_drop` or the unit has an answerable dialog, only Escape (a request from a paired device: whenever Herdr shows the pane blocked, relayed or not); Enter asks
+// frame in the last 3 s; while the session file's open call is `secret_drop` or the unit has an answerable dialog, only Escape (the same on every page, a paired device's too); Enter asks
 // the session's bridge what it would submit (probe.ts), checks the mirror, the secret, and the dialog again after the answer, and needs the
 // confirm the server names for an ending command, another `/` or `!` command, or an editor it could not read. A second Escape within 1 s
 // (from when Herdr took the first) to a session that neither works nor waits runs pi's double-Escape action, so it needs a confirm; once
@@ -29,7 +29,7 @@ const CONTROL = /[\u0000-\u001f\u007f-\u009f]/, PASTE_CONTROL = /[\u0000-\u0008\
 export interface Reply { status: number; body: unknown }
 export interface KeyDeps { fresh(stream: string, key: string, pane: string): boolean; secret(file: string): Promise<boolean>; answerable(key: string): Promise<boolean>; probe(key: string): Promise<Editor | undefined>; now?(): number }
 /** `text`: typed characters, sent as they are, or a paste already inside its markers (key is then "text" or "paste"). */
-export interface Asked { key: string; stream?: string; confirmed?: unknown; text?: string; remote?: boolean }
+export interface Asked { key: string; stream?: string; confirmed?: unknown; text?: string }
 type Pane = { pane_id: string; agent_status?: string };
 /** The keys to send, the Herdr calls that send them, and whether they are the confirmed double-Escape. */
 export interface Plan { keys: string[]; calls: [string, Record<string, unknown>][]; double: boolean }
@@ -49,11 +49,11 @@ export function createKeys({ fresh, secret, answerable, probe, now = Date.now }:
 	const sent = new Map<string, number[]>(), escaped = new Map<string, number>(), interrupted = new Map<string, number>();
 	const guard = async (session: string, found: Found, pane: Pane, a: Asked) => {
 		if (a.stream !== undefined && !fresh(a.stream, session, pane.pane_id)) throw no(409, "no_mirror", "Keys are sent only while this page shows the session's terminal live; open it again.");
-		if (a.key !== "esc" && ((await secret(found.file!)) || (await answerable(session)) || (a.remote && pane.agent_status === "blocked"))) throw no(409, "blocked", "While it waits on a secret or a question only Escape is sent from here (from a paired device, whenever any dialog is open); answer the question in its panel or the terminal.");
+		if (a.key !== "esc" && ((await secret(found.file!)) || (await answerable(session)))) throw no(409, "blocked", "While it waits on a secret or a question only Escape is sent from here; answer the question in its panel or the terminal.");
 	};
 	return {
 		/** The body as one pad key (or Stop's Escape), or why not, before Herdr is asked; a request that passes counts toward the rate. */
-		check(session: string, json: Record<string, unknown>, remote = false): Asked | Reply {
+		check(session: string, json: Record<string, unknown>): Asked | Reply {
 			const stop = json.key === undefined && Array.isArray(json.keys) && json.keys.length === 1 && json.keys[0] === "esc";
 			const alone = json.key === undefined && json.keys === undefined, typed = alone && json.text !== undefined && json.paste === undefined, pasted = alone && json.paste !== undefined && json.text === undefined;
 			if (typed && (typeof json.text !== "string" || !json.text || [...json.text].length > MAX_TYPED || CONTROL.test(json.text))) return no(400, "text", `Typed text is 1 to ${MAX_TYPED} printable characters, without line breaks, tabs, or control keys.`);
@@ -66,8 +66,8 @@ export function createKeys({ fresh, secret, answerable, probe, now = Date.now }:
 			for (const [s, ats] of sent) if (t - ats.at(-1)! >= RATE_MS) sent.delete(s); // sessions gone quiet leave nothing behind
 			for (const [s, at] of escaped) if (t - at >= 60_000) escaped.delete(s);
 			sent.set(session, [...recent, t]);
-			if (pasted) return { key: "paste", text: `\x1b[200~${json.paste as string}\x1b[201~`, stream: json.stream as string, remote };
-			return stop ? { key: "esc", remote } : typed ? { key: "text", text: json.text as string, stream: json.stream as string, remote } : { key: json.key as string, stream: json.stream as string, confirmed: json.confirmed, remote };
+			if (pasted) return { key: "paste", text: `\x1b[200~${json.paste as string}\x1b[201~`, stream: json.stream as string };
+			return stop ? { key: "esc" } : typed ? { key: "text", text: json.text as string, stream: json.stream as string } : { key: json.key as string, stream: json.stream as string, confirmed: json.confirmed };
 		},
 		/** The guards that need the pane as Herdr has it now, then the Herdr calls that send the key, in order, 60 ms apart. */
 		async send(session: string, found: Found, pane: Pane, a: Asked): Promise<Plan> {

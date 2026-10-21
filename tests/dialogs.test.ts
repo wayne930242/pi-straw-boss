@@ -450,7 +450,7 @@ test("a secret's value is never sent: send refuses it with nothing published or 
 		assert.deepEqual([x.delivered, x.published.filter((p) => (p.payload as { type?: string }).type === "answer")], [[], []], "nothing reached any bridge");
 	}
 	const t = { dialog: "d", digest: "0".repeat(64), select: { title: "t", choices: [{ label: "a" }] } };
-	assert.match(String(checkAnswer(t, { choice: 0, value }, false)), /terminal/);
-	assert.equal(String(checkAnswer(t, { choice: 0, value }, false)).includes(value), false);
-	assert.deepEqual(checkAnswer(t, { choice: 0 }, false), { choice: 0 }, "other answers are unchanged");
+	assert.match(String(checkAnswer(t, { choice: 0, value })), /terminal/);
+	assert.equal(String(checkAnswer(t, { choice: 0, value })).includes(value), false);
+	assert.deepEqual(checkAnswer(t, { choice: 0 }), { choice: 0 }, "other answers are unchanged");
 });

@@ -197,7 +197,6 @@
 	"send_answer": "送出答案",
 	"secret_remote": "安全考量，遠端不支援輸入機密。請到執行 GUI 的那台電腦的終端機中回答。",
 	"secret_terminal": "機密內容只能在終端機輸入，這裡不接受。請到執行 GUI 的那台電腦的終端機中回答。",
-	"confirm_local_only": "確認對話框只能在終端機，或在執行 GUI 的那台電腦的頁面上回答，已配對的裝置不能回答。這個頁面只能查看。",
 	"answer_them": "請在終端機中回答。",
 	"answer_it": "請在終端機中回答。",
 	"show_terminal": "顯示終端機",
@@ -323,5 +322,15 @@
 	"typing_hint": "點這裡後，鍵盤直接送進終端機（Ctrl、Alt、⌘ 組合鍵除外）",
 	"notify_waiting": "等你回答 {note}",
 	"notify_error": "出錯了 {note}",
-	"notify_done": "完成了 {note}"
+	"notify_done": "完成了 {note}",
+	"dismiss_all": "移除已完成（{count}）",
+	"devices_title": "已配對的裝置",
+	"devices_none": "沒有已配對的裝置。",
+	"device_unknown": "未知的裝置",
+	"device_when": "配對於 {paired}・最後使用 {seen}",
+	"unpair": "解除配對",
+	"unpair_device": "解除 {name} 的配對",
+	"unpair_all": "全部解除配對",
+	"remote_turn_off": "關閉遠端存取",
+	"remote_stays": "關閉遠端存取不會刪除已配對的裝置；要結束某個裝置的配對，請按它的「解除配對」。"
 }

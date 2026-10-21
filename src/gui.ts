@@ -43,12 +43,12 @@ const HEADERS = {
 export interface Gui { url: string; port: number; remotePort: number; token: string; csrf: string; access: Access; stop(): Promise<void> }
 /** `net` is the registry behind the net reading (the allow list of session keys); without it no session can be watched. `call` reaches Herdr for input. */
 /** `hub` carries answers to the dialogs bridges relay (dialogs.ts); it runs exactly as long as the server. */
-/** `onRemote` turns remote access on from the page, in the session that runs the server. `onStop` takes another session's stop request (requestStop), so the owner also takes its remote entry down; without it the server stops itself. */
-export interface GuiOptions { read(): Promise<Net>; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[]; dismiss?(key: string): boolean }; call?: HerdrCall; hub?: Hub; dir?: string; paired?: string; port?: number; remotePort?: number; token?: string; csrf?: string; pollMs?: number; pingMs?: number; onStop?(asked: Asked): void; onRemote?(): Promise<void>; spawn?: ControlDeps["spawn"]; close?: ControlDeps["close"] }
+/** `onRemote` and `onRemoteOff` turn remote access on and off from the page, in the session that runs the server. `onStop` takes another session's stop request (requestStop), so the owner also takes its remote entry down; without it the server stops itself. */
+export interface GuiOptions { read(): Promise<Net>; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[]; dismiss?(key: string): boolean; dismissAll?(): number }; call?: HerdrCall; hub?: Hub; dir?: string; paired?: string; port?: number; remotePort?: number; token?: string; csrf?: string; pollMs?: number; pingMs?: number; onStop?(asked: Asked): void; onRemote?(): Promise<void>; onRemoteOff?(): Promise<void>; spawn?: ControlDeps["spawn"]; close?: ControlDeps["close"] }
 export interface Asked { by: string; take: boolean }
 
 /** Starts the server. A preferred `port` and `remotePort` (with the `token` and `csrf`) are reused when free, so a restarted server keeps the URL and the page an open tab already has. */
-export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, port = 0, remotePort = 0, token = randomBytes(16).toString("hex"), csrf = randomBytes(16).toString("hex"), pollMs = 2000, pingMs = 15_000, onStop, onRemote, spawn, close }: GuiOptions): Promise<Gui> {
+export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, port = 0, remotePort = 0, token = randomBytes(16).toString("hex"), csrf = randomBytes(16).toString("hex"), pollMs = 2000, pingMs = 15_000, onStop, onRemote, onRemoteOff, spawn, close }: GuiOptions): Promise<Gui> {
 	try {
 		if (!statSync(join(dir, "index.html")).isFile()) throw new Error();
 	} catch {
@@ -60,12 +60,17 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 	const html = bundle.get("index.html")!, build = createHash("sha256").update(html).digest("hex").slice(0, 16);
 	const page = html.toString("utf8").replace("<head>", `<head>\n<base href="/${token}/">\n<meta name="sb-csrf" content="${csrf}">\n<meta name="sb-build" content="${build}">`);
 	const files: Files = { lookup: (key) => net?.lookup(key), workspace: (id) => net?.workspace(id) ?? [], readers: readers() };
-	// Turning remote access off ends the streams of remote pages; their next request finds the cookie void.
-	const clients = new Map<ServerResponse, Watch | undefined>(), remotes = new Set<ServerResponse>(), access = createAccess(token, () => remotes.forEach((c) => c.end()), paired);
+	// Turning remote access off ends the streams of remote pages, and unpairing a device ends that device's (`remotes` names each stream's device); their next request finds the cookie void.
+	const clients = new Map<ServerResponse, Watch | undefined>(), remotes = new Map<ServerResponse, string>(), access = createAccess(token, (device) => remotes.forEach((d, c) => (!device || d === device) && c.end()), paired);
 	const pair = (code = access.pair(), host = access.remote?.host, url = `https://${host}/${token}/pair/${code}`) => (code && host ? { url, rows: qr(url).map((row) => row.map(Number).join("")) } : undefined);
 	const mirrors = createMirrors({ call, lookup: (key) => net?.lookup(key), secret: waitsForSecret, canonical }), docs = hub && createDocs(hub, (key) => net?.lookup(key)?.name ?? key);
 	const stop = (asked: Asked) => void setTimeout(() => (onStop ? onStop(asked) : void halt()), 10); // after the reply has gone out
-	const control = createControl({ lookup: (key) => net?.lookup(key), call, csrf, canonical, pair, remoteOn: onRemote, spawn, close: close && (async (kind, json) => (await tick(), close(kind, json))), dismiss: async (key) => typeof key === "string" && Boolean(net?.dismiss?.(key)) && (await tick(), true), mirrors, stop, secret: waitsForSecret, answers: hub && { replay: hub.replay, ended: hub.ended, send: hub.send, probe: hub.probe, commands: hub.commands, target: async (key) => (await tick(), hub.target(key)) } });
+	const dismissAll = async () => {
+		const n = net?.dismissAll?.() ?? 0;
+		if (n) await tick();
+		return n;
+	};
+	const control = createControl({ lookup: (key) => net?.lookup(key), call, csrf, canonical, pair, remoteOn: onRemote, remoteOff: onRemoteOff, paired: { on: () => Boolean(access.remote), ...access.devices }, spawn, close: close && (async (kind, json) => (await tick(), close(kind, json))), dismiss: async (key) => typeof key === "string" && Boolean(net?.dismiss?.(key)) && (await tick(), true), dismissAll, mirrors, stop, secret: waitsForSecret, answers: hub && { replay: hub.replay, ended: hub.ended, send: hub.send, probe: hub.probe, commands: hub.commands, target: async (key) => (await tick(), hub.target(key)) } });
 	let last: string | undefined, problem: string | undefined, inflight: Promise<void> | undefined;
 	let poll: ReturnType<typeof setInterval> | undefined, beat: ReturnType<typeof setInterval> | undefined;
 	const send = (to: ServerResponse, data: string, event?: string) => to.writableEnded || to.write(`${event ? `event: ${event}\n` : ""}data: ${data}\n\n`); // a reading in flight at stop ends after the streams
@@ -88,9 +93,9 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 		srv.once("error", fail);
 		srv.listen(at, "127.0.0.1", () => (srv.off("error", fail), done()));
 	});
-	const events = (req: IncomingMessage, res: ServerResponse, target: string | null, remote: boolean) => {
+	const events = (req: IncomingMessage, res: ServerResponse, target: string | null, device?: string) => {
 		res.writeHead(200, { ...HEADERS, "content-type": "text/event-stream", connection: "keep-alive" });
-		if (remote) remotes.add(res);
+		if (device !== undefined) remotes.set(res, device);
 		// `hello` names this stream for the terminal mirrors it attaches (mirror.ts), which end with it; before the net's first reading, after it.
 		const to = (event: string, data: unknown) => send(res, JSON.stringify(data), event), stream = randomBytes(16).toString("hex"), hello = () => to("hello", { stream, build });
 		mirrors.open(stream, to);
@@ -121,6 +126,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 		const answer = ({ status, body }: Reply) => res.writeHead(status, { ...HEADERS, "content-type": TYPES[".json"] }).end(JSON.stringify(body));
 		const who = access.check(req, kind, (own().address() as AddressInfo).port, given, path);
 		if ("status" in who) return void (who.status === 403 ? fail(403) : res.writeHead(401, { ...HEADERS, "content-type": "text/plain" }).end("This device is not paired: scan a new QR code from /boss gui remote."));
+		if ("reissue" in who && who.reissue) res.setHeader("set-cookie", cookieFor(token, who.reissue)); // a use renewed the pairing: the browser's cookie lasts 90 days from now
 		// A pairing code was just exchanged: the cookie is set, and the page reloads itself, so the cookie also rides on a same-site navigation.
 		if ("cookie" in who) return void res.writeHead(200, { ...HEADERS, "content-type": TYPES[".html"], "set-cookie": cookieFor(token, who.cookie) }).end(`<!doctype html><meta http-equiv="refresh" content="0;url=/${token}/"><p>Paired. Opening the straw net…</p>`);
 		if (path[0] === "doc") return void (docs ? docs.serve(req, res, path.slice(1), who.origin).catch(() => res.destroy()) : fail(404)); // the documents sessions show (docs.ts)
@@ -131,7 +137,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 			} catch {
 				return void fail(404);
 			}
-			if ((parts[0] === "server" || parts.join("/") === "remote/on") && who.remote) return void fail(403); // only this machine stops the server or opens it to the tailnet
+			if ((parts[0] === "server" || (parts[0] === "remote" && parts[1] !== "pair")) && who.remote) return void fail(403); // only this machine stops the server, opens it to the tailnet or closes it, and lists or unpairs devices
 			if (["sessions", "remote", "server", "dirs", "open", "close", "dismiss"].includes(parts[0]!)) return void control(req, who.origin, parts).then(answer, () => answer({ status: 500, body: { error: "internal", reason: "The request could not be handled." } }));
 			// An entry never changes once written, so its image is cached for a day; the token in the URL keeps it to this page.
 			if (req.method === "GET" && parts[0] === "image") return void image(files, parts.slice(1)).then((p) => (p ? res.writeHead(200, { ...HEADERS, "content-type": p.type, "cache-control": "private, max-age=86400" }).end(p.bytes) : fail(404)), () => fail(404));
@@ -140,7 +146,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 		if (req.method !== "GET") return void fail(403);
 		// The page loads its assets and the stream relative to its own URL, so that URL must end with a slash.
 		if (path.length === 0) return void res.writeHead(308, { ...HEADERS, location: `${pathname}/` }).end();
-		if (path.join("/") === "events") return events(req, res, url.searchParams.get("watch"), who.remote);
+		if (path.join("/") === "events") return events(req, res, url.searchParams.get("watch"), who.remote ? (who.device ?? "") : undefined);
 		if (path[0] === "w") return void res.writeHead(200, { ...HEADERS, "content-type": TYPES[".html"] }).end(page);
 		let file: string;
 		try {

@@ -1,6 +1,6 @@
 import type { Mark } from "../src/dashboard.ts";
 import type { Chat, Data, Who } from "./chat.ts";
-import { mountAsk, readOnlyHere } from "./ask.ts";
+import { mountAsk } from "./ask.ts";
 import { drawMonitors, drawQueued, drawTodos } from "./bars.ts";
 import { mountComposer, postTo } from "./composer.ts";
 import { docFor, docTile } from "./doc.ts";
@@ -108,7 +108,7 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 			drawMonitors(view, u?.monitors);
 			drawQueued(view, u?.queued);
 			chat?.setLive(mk === "working" ? `${doing(u!.note, mk)}` : urgent(mk) ? LABEL[mk]() : "", mk);
-			composer?.update({ name, control: Boolean(u?.control), live: state ? state === "live" : Boolean(u), mark: mk, online: online(), answerable: Boolean(u?.pending?.answer) && !readOnlyHere(u?.pending?.answer, location.hostname !== "127.0.0.1") });
+			composer?.update({ name, control: Boolean(u?.control), live: state ? state === "live" : Boolean(u), mark: mk, online: online(), answerable: Boolean(u?.pending?.answer) });
 			asker?.update(u?.pending, mk === "waiting" && Boolean(u?.control) && online()); // its dialog above the composer, answerable or not
 		},
 	};

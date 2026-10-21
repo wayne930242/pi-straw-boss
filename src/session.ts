@@ -90,7 +90,7 @@ export function registerSession(kit: Kit, { briefing, presence, membership, guar
 		const record = readRecord(guiDir), back = record?.reload && record.pid === process.pid && event.reason !== "startup";
 		const ready = () => Boolean(me()) && (!back || event.reason === "reload" || me() !== record!.ownerSession);
 		if (back || (record && newer(version, record.version))) void (async () => {
-			if ((await waitFor(cfg.sleep, ready, CONNECT_MS)) && (back || (await answers(record!)))) await host.restore(Boolean(back && record!.remote));
+			if ((await waitFor(cfg.sleep, ready, CONNECT_MS)) && (back || (await answers(record!)))) await host.restore();
 		})().catch(() => {});
 	});
 

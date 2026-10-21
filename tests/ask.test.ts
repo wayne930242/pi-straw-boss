@@ -126,12 +126,11 @@ test("an ask_user_question call shows its questions: one reads like an ask_user 
 });
 
 
-test("the answer panel's pure rules: the body it sends, what it says for each outcome, local-only choices hidden from a remote page, controls drawn as U+FFFD", async () => {
+test("the answer panel's pure rules: the body it sends, what it says for each outcome, every choice offered on every page, controls drawn as U+FFFD", async () => {
 	const { bodyOf, offered, replyOf, said, visible } = await import("../gui/ask.ts");
 	const a = { dialog: "d1", digest: "f".repeat(64), select: { title: "T", choices: [{ label: "Run" }, { label: "Copy", localOnly: true as const }, { label: "No" }] } };
 	assert.deepEqual(bodyOf(a, { choice: 2 }, "id-1234567890abcdef"), { dialog: "d1", digest: "f".repeat(64), answerId: "id-1234567890abcdef", choice: 2 });
-	assert.deepEqual(offered(a, false).map((c) => [c.label, c.i]), [["Run", 0], ["Copy", 1], ["No", 2]]);
-	assert.deepEqual(offered(a, true).map((c) => [c.label, c.i]), [["Run", 0], ["No", 2]], "the index stays the owner's");
+	assert.deepEqual(offered(a).map((c) => [c.label, c.i]), [["Run", 0], ["Copy", 1], ["No", 2]], "a choice that acts on the computer is offered on a paired device's page too");
 	assert.deepEqual(replyOf(new Set([2, 0]), "  ", "note"), { choices: [0, 2], note: "note" });
 	assert.deepEqual(replyOf(new Set(), "own words", " "), { text: "own words" });
 	assert.equal(visible("a\u001b[31mb\tc\nd\u009be"), "a\ufffd[31mb\tc\nd\ufffde");

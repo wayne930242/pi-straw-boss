@@ -2,7 +2,7 @@ import type { Base, Net, Unit } from "../src/net.ts";
 import { m } from "./paraglide/messages.js";
 import type { Route } from "./router.ts";
 
-// Quit: the buttons on the map that close a unit, a tower, a squad, or a base, and what a click on one does. A button's data-close names what it closes and its data
+// Quit: the buttons on the map that close a unit, a tower, a squad, or a base, and what a click on one does; a finished subagent's Dismiss, and the HUD's Dismiss finished (every one at once). A button's data-close names what it closes and its data
 // the rest (key, name, role, ws, tab); the click asks first in the page's own dialog (a browser confirm can be dismissed by an attached tool before it is seen), then
 // posts close/unit, close/tab, or close/base; the net shows what went, and a refusal says why in the same dialog.
 
@@ -32,6 +32,16 @@ const sheet = (text: string, yes?: string): Promise<boolean> => new Promise((don
 	d.showModal();
 });
 
+/** The keys of the finished subagents on the net, as the server counts them (net.ts: the subagents of the tower, of each tab's units, and of the outside units). */
+export const endedSubs = (net: Net): string[] => net.bases.flatMap((b) => [...(b.tower ? [b.tower] : []), ...b.tabs.flatMap((t) => t.units), ...b.outside]).flatMap((u) => u.subs).filter((c) => c.ended).map((c) => c.key);
+
+/** The HUD's Dismiss finished button: shown only while a finished subagent is on the net, and says how many. */
+export function showDismissAll(button: HTMLElement, net: Net) {
+	const n = endedSubs(net).length;
+	button.hidden = !n;
+	if (n) button.textContent = m.dismiss_all({ count: n });
+}
+
 export interface QuitDeps { route(): Route; net(): Net | undefined; go(route: Route): void }
 
 /** A view of what was just closed goes up to what is left: a closed base to the map, a closed squad or unit to its base. */
@@ -49,7 +59,7 @@ export function mountQuit(deps: QuitDeps) {
 		const b = (event.target as Element | null)?.closest?.<HTMLElement>("button[data-close]"), d = b?.dataset;
 		if (!b || !d) return;
 		event.preventDefault();
-		if (d.close === "dismiss") return void import("./post.ts").then(({ post }) => post("dismiss", { key: d.key })).then((r) => r.ok || sheet(r.body.reason ?? m.refused({ status: r.status })), () => sheet(m.no_answer()));
+		if (d.close === "dismiss" || d.close === "dismiss-all") return void import("./post.ts").then(({ post }) => post("dismiss", d.close === "dismiss" ? { key: d.key } : { all: true })).then((r) => r.ok || sheet(r.body.reason ?? m.refused({ status: r.status })), () => sheet(m.no_answer()));
 		const ask = d.close === "base" ? m.close_base_ask : d.close === "tab" ? m.close_squad_ask : d.role === "tower" ? m.close_tower_ask : m.close_unit_ask;
 		void sheet(ask({ name: d.name ?? "" }), m.quit()).then((yes) => {
 			if (!yes) return;

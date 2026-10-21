@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { beforeEach, mock, test } from "node:test";
 import type { Pending } from "../src/ask.ts";
+import type { Net } from "../src/net.ts";
 import { questionsDigest, selectDigest } from "../src/owners.ts";
 import { m } from "../gui/paraglide/messages.js";
 
@@ -554,24 +555,16 @@ test("both notices are said in every locale the page ships; Traditional Chinese 
 const CONFIRM = { title: "mp-infra command review\n\nssh box ls", choices: [{ label: "Yes" }, { label: "No" }], confirm: true as const };
 const confirming = (): Pending => ({ callId: "c1", tool: "bash", answer: { dialog: "u1", digest: selectDigest(CONFIRM), select: CONFIRM } });
 
-test("a confirmation is answerable on this computer's page with Yes and No, and read-only on a paired device's page, which says where to answer it", () => {
-	const local = mountAsk(root as unknown as HTMLElement, (action, body) => (sent.push({ action, body }), new Promise((resolve) => replies.push(resolve))), false);
-	local.update(confirming(), true);
-	assert.deepEqual(choices().map((el) => el.textContent), ["Yes", "No"]);
-	assert.ok(button("Send answer"), "and Send");
-	assert.match(root.textContent, /mp-infra command review/);
-	const remote = mountAsk((root = new El("div")) as unknown as HTMLElement, (action, body) => (sent.push({ action, body }), new Promise((resolve) => replies.push(resolve))), true);
-	page.body.replaceChildren(root);
-	remote.update(confirming(), true);
-	assert.equal(choices().length, 0, "no choice to pick");
-	assert.equal(button("Send answer"), undefined, "nothing to send");
-	assert.match(root.textContent, /mp-infra command review/, "the question is still shown");
-	assert.match(root.textContent, /A confirmation can be answered only in the terminal or on the page of the computer the GUI runs on, not from a paired device\./);
-	assert.equal(remote.enter(), false);
-	assert.deepEqual(sent, [], "nothing is posted");
-	// A plain select (not a confirm) stays answerable from a paired device.
-	remote.update({ callId: "c2", tool: "bash", answer: { dialog: "s1", digest: selectDigest(SELECT), select: SELECT } }, true);
-	assert.ok(button("Send answer"));
+test("a confirmation is answerable with Yes and No on this computer's page and on a paired device's page alike", () => {
+	for (const remote of [false, true]) {
+		const answering = mountAsk((root = new El("div")) as unknown as HTMLElement, (action, body) => (sent.push({ action, body }), new Promise((resolve) => replies.push(resolve))), remote);
+		page.body.replaceChildren(root);
+		answering.update(confirming(), true);
+		assert.deepEqual(choices().map((el) => el.textContent), ["Yes", "No"], `remote ${remote}`);
+		assert.ok(button("Send answer"), "and Send");
+		assert.match(root.textContent, /mp-infra command review/);
+		assert.equal(answering.enter(), true);
+	}
 });
 
 test("a dialog relayed from ctx.ui says it was opened while the call ran, not that it belongs to it", () => {
@@ -582,8 +575,15 @@ test("a dialog relayed from ctx.ui says it was opened while the call ran, not th
 	assert.doesNotMatch(root.textContent, /Opened while/, "an owner's own dialog does not say so");
 });
 
-test("the confirmation notice is said in every locale the page ships", async () => {
+test("the dismiss-all button counts the finished subagents the server would dismiss, and says so in every locale", async () => {
+	const { endedSubs } = await import("../gui/quit.ts");
 	const { locales } = await import("../gui/paraglide/runtime.js");
-	for (const locale of locales) assert.ok(m.confirm_local_only({}, { locale }).length > 20, locale);
-	assert.match(m.confirm_local_only({}, { locale: "zh-TW" }), /終端機.*執行 GUI 的那台電腦.*已配對的裝置不能回答/);
+	const sub = (key: string, ended?: boolean) => ({ id: key, key, control: true, name: key, role: "subagent" as const, mark: "done" as const, subs: [], ...(ended && { ended: true }) });
+	const unit = (key: string, subs: ReturnType<typeof sub>[]) => ({ id: key, key, control: true, name: key, role: "main" as const, mark: "idle" as const, subs });
+	const net = { bases: [
+		{ id: "w1", label: "one", tower: unit("t", [sub("t-done", true)]), tabs: [{ id: "t1", label: "a", units: [unit("u1", [sub("a", true), sub("b"), sub("c", true)]), unit("u2", [])] }], outside: [unit("o", [sub("o-done", true)])] },
+		{ id: "w2", label: "two", tabs: [], outside: [] },
+	] } as unknown as Net;
+	assert.deepEqual(endedSubs(net), ["t-done", "a", "c", "o-done"], "finished subagents only, a running one stays");
+	for (const locale of locales) assert.match(m.dismiss_all({ count: 3 }, { locale }), /3/, locale);
 });

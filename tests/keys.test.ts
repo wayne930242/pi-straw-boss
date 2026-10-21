@@ -16,8 +16,8 @@ function keys({ fresh = true, secret = false, answerable = false, editor = { edi
 		now: () => w.t,
 	});
 	/** One request through both steps, as control.ts runs them: the keys that go out, or the refusal. */
-	const send = async (body: Record<string, unknown>, status = "idle", remote = false): Promise<string[] | Reply> => {
-		const a = k.check("S", body, remote);
+	const send = async (body: Record<string, unknown>, status = "idle"): Promise<string[] | Reply> => {
+		const a = k.check("S", body);
 		if ("status" in a) return a;
 		try {
 			const plan = await k.send("S", FOUND, { pane_id: "wA:p1", agent_status: status }, a as Asked);
@@ -142,13 +142,13 @@ test("while it waits for a secret or on an answerable dialog only Escape goes; a
 	assert.deepEqual(await send(pad("2"), "blocked"), ["2"], "pi-ask-user or a pi selector: a digit picks an option (U7)");
 });
 
-test("a paired device sends only Escape to a blocked pane, whether or not the dialog is relayed; this computer's page is unchanged", async () => {
+test("a dialog the page cannot answer takes the whole pad on every page, paired devices included; only one it can answer narrows it to Escape", async () => {
 	const { send, w } = keys({ answerable: false });
-	for (const key of ["enter", "1", "up", "space"]) assert.equal(code(await send(pad(key), "blocked", true)), 409, `remote ${key}`);
-	assert.equal(w.probes, 0, "Enter refused before the editor is asked");
-	assert.deepEqual(await send(pad("esc"), "blocked", true), ["esc"]);
-	assert.deepEqual(await send(pad("enter"), "idle", true), ["enter"], "an idle pane takes the pad");
-	assert.deepEqual(await send(pad("enter"), "blocked", false), ["enter"], "local: a dialog the page cannot answer takes the pad");
+	assert.deepEqual(await send(pad("enter"), "blocked"), ["enter"]);
+	for (const key of ["1", "up"]) assert.deepEqual(await send(pad(key), "blocked"), [key], key);
+	w.answerable = true;
+	for (const key of ["enter", "1", "up"]) assert.equal(code(await send(pad(key), "blocked")), 409, `answerable ${key}`);
+	assert.deepEqual(await send(pad("esc"), "blocked"), ["esc"]);
 });
 
 test("Enter asks the bridge every time: an ending command needs its own name, a slash command or an unread editor its confirm", async () => {

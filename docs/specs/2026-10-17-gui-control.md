@@ -404,13 +404,13 @@ Added to 0.5.0 by the user (2026-10-17). Decisions:
    something else. The local-only `/boss gui` is unchanged.
 3. **Auth**: a pairing code is 128 random bits, works once, within ten minutes (expired codes are dropped first, and past sixteen waiting the oldest), and is used up by
    its first presentation that passes the identity checks. It is exchanged for a session cookie (`sb_remote`, 256 bits,
-   HttpOnly, Secure, SameSite=Strict, `Path=/<t>/`, seven days) and the page reloads itself into the map. Every remote request
+   HttpOnly, Secure, SameSite=Strict, `Path=/<t>/`, seven days; since 2026-10-21: 90 days, renewed by each use, kept across restarts until unpaired, see how-it-works.md, Remote access) and the page reloads itself into the map. Every remote request
    must carry `Host` exactly `<MagicDNS name>:8443`, no `Tailscale-Funnel-Request`, `Tailscale-User-Login` equal to this
    machine's Tailscale user (from `tailscale status --json`), and the cookie; otherwise 403 (identity) or 401 (not paired).
    A local request is `Host 127.0.0.1:<port>` with none of the `X-Forwarded-*`, `Forwarded`, `Via`, or `Tailscale-*`
    headers serve always adds; anything else is treated as remote. Origin for writes is `https://<MagicDNS name>:8443`
    remotely and `http://127.0.0.1:<port>` locally, and the CSRF secret applies to both. Turning remote off voids every code
-   and cookie and ends remote streams at once, and so does turning it on again as another Tailscale identity.
+   and ends remote streams at once (since 2026-10-21 the paired cookies stay valid), and turning it on again as another Tailscale identity voids the cookies too.
 4. **Pairing panel keys** (user, 2026-10-17): while the QR shows in the pi overlay, **c** copies a link to the clipboard
    and **o** opens one in this computer's default browser; **Esc** or **q** (or Enter) closes it. The key hints show under
    the QR. **Each press mints a fresh one-time pairing link**, so a copied or opened link never spends the QR's own code,

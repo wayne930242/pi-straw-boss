@@ -362,3 +362,73 @@ test("a serve entry a crashed server left is removed when the next server starts
 	assert.equal(JSON.stringify(ts.config()).includes("127.0.0.1:2"), true, "another live server's entry stays");
 	await a.stop();
 });
+
+const proxyOf = (config: unknown) => (config as { Web?: Record<string, { Handlers: { "/": { Proxy: string } } }> }).Web?.["box.tail1.ts.net:8443"]?.Handlers["/"].Proxy;
+
+test("remote access that was on comes back by itself when a new server starts (a stop, a /reload, a takeover), with no QR, and stays off once it was turned off", async () => {
+	const ts = fakeTailscale();
+	const a = world.agent({ id: "viewer-a", pane: "wA:p1", tab: "wA:t1", deps: { ...deps, tailscale: ts.run } });
+	await a.start();
+	await a.command("gui");
+	assert.deepEqual(ts.config(), {}, "a first server with no wish for remote leaves it off");
+	const command = a.command("gui remote");
+	await until(() => a.overlays.length === 1, "the QR overlay");
+	a.overlays[0]!.handleInput!("q");
+	await command;
+	const first = readRecord(world.stateDir)!;
+	assert.equal(proxyOf(ts.config()), `http://127.0.0.1:${first.remotePort}`);
+	// /boss gui stop takes the serve entry down for as long as the server is gone, and keeps the wish.
+	await a.command("gui stop");
+	assert.deepEqual(ts.config(), {});
+	const overlays = a.overlays.length;
+	await a.command("gui");
+	const second = readRecord(world.stateDir)!;
+	assert.equal(proxyOf(ts.config()), `http://127.0.0.1:${second.remotePort}`, "the next server turned remote on again by itself");
+	assert.equal(a.overlays.length, overlays, "without the pairing QR");
+	assert.match(a.notices.at(-2)!.text, /^Remote access is on for me@example.com/);
+	// A /reload of the session that runs it.
+	await a.stop("reload");
+	assert.deepEqual(ts.config(), {}, "the session's end takes the entry down");
+	const reloaded = world.agent({ id: "viewer-a", pane: "wA:p1", tab: "wA:t1", deps: { ...deps, tailscale: ts.run } });
+	await reloaded.fire("session_start", { reason: "reload" });
+	await until(() => proxyOf(ts.config()) !== undefined, "remote on again after the reload");
+	// A takeover by a session with a newer version: its server starts where the first stopped, and remote is on there as well.
+	const newer = world.agent({ id: "viewer-n", pane: "wN:p1", tab: "wN:t1", deps: { ...deps, tailscale: ts.run, version: "99.0.0" } });
+	await newer.start();
+	await until(() => readRecord(world.stateDir)?.version === "99.0.0", "the takeover");
+	const taken = readRecord(world.stateDir)!;
+	await until(() => proxyOf(ts.config()) === `http://127.0.0.1:${taken.remotePort}`, "remote on at the new server");
+	assert.equal(newer.overlays.length, 0, "a takeover shows no QR");
+	await newer.stop();
+	assert.deepEqual(ts.config(), {});
+	// Explicitly off: it stays off through the next server.
+	await reloaded.command("gui remote off");
+	assert.deepEqual(ts.config(), {});
+	await reloaded.command("gui stop");
+	await reloaded.command("gui");
+	assert.deepEqual(ts.config(), {}, "remote off is remembered too");
+	assert.equal(existsSync(join(world.stateDir, "paired.json")), false, "with no device and no wish, nothing is kept");
+});
+
+test("when Tailscale cannot be reached at a server's start, the user is told why and the wish stays for the next start; a stop never clears it", async () => {
+	const ts = fakeTailscale();
+	let down = false;
+	const run = async (args: string[]) => (down ? Promise.reject(new Error("Tailscale is not connected here (Stopped); sign in with tailscale up")) : ts.run(args));
+	const a = world.agent({ id: "viewer-a", pane: "wA:p1", tab: "wA:t1", deps: { ...deps, tailscale: run } });
+	await a.start();
+	const command = a.command("gui remote");
+	await until(() => a.overlays.length === 1, "the QR overlay");
+	a.overlays[0]!.handleInput!("q");
+	await command;
+	await a.command("gui stop");
+	down = true;
+	await a.command("gui");
+	assert.deepEqual(ts.config(), {});
+	assert.deepEqual(a.notices.filter((n) => /Tailscale is not connected/.test(n.text)).map((n) => n.level), ["warning"], "told why");
+	assert.equal(JSON.parse(readFileSync(join(world.stateDir, "paired.json"), "utf8")).wanted, true, "and the wish is still remembered");
+	await a.command("gui stop");
+	down = false;
+	await a.command("gui");
+	assert.ok(proxyOf(ts.config()), "the next start retries and succeeds");
+	await a.stop();
+});

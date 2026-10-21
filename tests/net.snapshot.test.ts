@@ -194,6 +194,30 @@ test("a dismissed finished subagent is hidden on the next read until it leaves t
 	}
 });
 
+test("dismiss all hides every finished subagent at once and only those; a running one stays, and a second call finds nothing", async () => {
+	const root = realpathSync(mkdtempSync(join(tmpdir(), "psb-net-dismiss-all-")));
+	try {
+		const dir = join(root, "sessions"), file = join(dir, "2026_s1.jsonl"), activity = join(dir, "artifacts", "s1", "subagent-activity");
+		mkdirSync(activity, { recursive: true });
+		writeFileSync(file, "");
+		for (const [name, phase] of [["kid-done", "done"], ["kid-done-too", "done"], ["kid-live", "active"]]) writeFileSync(join(activity, `${name}.json`), JSON.stringify({ phase }));
+		const ps = [...panes.map((p) => (p.pane_id === "wA:p1" ? { ...p, agent: "pi", agent_session: { value: file } } : p)), { pane_id: "wA:p9", workspace_id: "wA", tab_id: "wA:t1", agent: "pi", agent_status: "working", label: "kid-live" } as Pane];
+		ps.find((p) => p.pane_id === "wA:p9")!.agent_session = { value: join(dir, "2026_kid-live.jsonl") };
+		const herdr = async (args: string[]) => JSON.stringify({ result: args[0] === "pane" ? { panes: ps } : { workspaces } });
+		const source = netSource({ run: herdr, sessions: async () => [session("s1", "one", { ws: "wA", tab: "wA:t1", pane: "wA:p1" })], sessionDir: dir });
+		const kids = async () => (await source.read()).bases[0]!.tabs[0]!.units[0]!.subs.map((c) => [c.key, Boolean(c.ended)]);
+		const before = await kids();
+		assert.deepEqual(before.filter(([, e]) => e).map(([k]) => k).sort(), ["kid-done", "kid-done-too"], JSON.stringify(before));
+		assert.equal(source.dismissAll(), 2);
+		const after = await kids();
+		assert.deepEqual(after.map(([k]) => k), before.map(([k]) => k).filter((k) => k !== "kid-done" && k !== "kid-done-too"), "only the finished ones are hidden");
+		assert.ok(after.some(([k]) => k === "kid-live"), "a running subagent stays");
+		assert.equal(source.dismissAll(), 0, "nothing finished is left");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
 test("the sessions-directory check resolves symlinks: a linked sessions directory works, a link that leads out does not", () => {
 	const root = realpathSync(mkdtempSync(join(tmpdir(), "psb-net-links-")));
 	try {

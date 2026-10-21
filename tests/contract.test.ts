@@ -135,21 +135,20 @@ test("rpiv-ask-user-question: an answer is checked against the shown digest, map
 
 test("the server checks an answer against what the page may answer: a select's one choice, or each question in full", () => {
 	const select = { dialog: "d", digest: "0".repeat(64), select: { title: "T", choices: [{ label: "A" }, { label: "Copy", localOnly: true as const }] } };
-	assert.deepEqual(checkAnswer(select, { choice: 0 }, false), { choice: 0 });
-	assert.deepEqual(checkAnswer(select, { choice: 1 }, false), { choice: 1 });
-	assert.match(String(checkAnswer(select, { choice: 1 }, true)), /computer the GUI runs on/, "a local-only choice is refused from a remote page");
-	for (const bad of [{}, { choice: 2 }, { choice: -1 }, { choice: 0.5 }, { choice: "0" }, { choice: 0, answers: [] }]) assert.equal(typeof checkAnswer(select, bad, false), "string", JSON.stringify(bad));
+	assert.deepEqual(checkAnswer(select, { choice: 0 }), { choice: 0 });
+	assert.deepEqual(checkAnswer(select, { choice: 1 }), { choice: 1 }, "a local-only choice is taken from any page");
+	for (const bad of [{}, { choice: 2 }, { choice: -1 }, { choice: 0.5 }, { choice: "0" }, { choice: 0, answers: [] }]) assert.equal(typeof checkAnswer(select, bad), "string", JSON.stringify(bad));
 	const qs = { dialog: "d", digest: "0".repeat(64), questions: [{ question: "Q1", multiple: false, options: [{ title: "a" }, { title: "b" }] }, { question: "Q2", multiple: true, options: [{ title: "x" }, { title: "y" }] }] };
-	assert.deepEqual(checkAnswer(qs, { answers: [{ choices: [1], note: "" }, { choices: [0, 1], text: "also z\r\nand w", note: "fyi" }] }, false), { answers: [{ choices: [1] }, { choices: [0, 1], text: "also z\nand w", note: "fyi" }] });
-	assert.deepEqual(checkAnswer(qs, { answers: [{ text: "own" }, { text: "words" }] }, true), { answers: [{ text: "own" }, { text: "words" }] });
+	assert.deepEqual(checkAnswer(qs, { answers: [{ choices: [1], note: "" }, { choices: [0, 1], text: "also z\r\nand w", note: "fyi" }] }), { answers: [{ choices: [1] }, { choices: [0, 1], text: "also z\nand w", note: "fyi" }] });
+	assert.deepEqual(checkAnswer(qs, { answers: [{ text: "own" }, { text: "words" }] }), { answers: [{ text: "own" }, { text: "words" }] });
 	const cases: [unknown, RegExp][] = [
 		[[{ choices: [0] }], /every question/], [[{ choices: [0] }, { choices: [0] }, {}], /every question/], [[{ choices: [0, 1] }, { choices: [0] }], /Question 1: pick/],
 		[[{ choices: [0] }, { choices: [1, 1] }], /Question 2: pick/], [[{ choices: [2] }, { choices: [0] }], /Question 1: pick/], [[{ choices: [0] }, {}], /Question 2: pick an option or write/],
 		[[{ choices: [0], text: "x" }, { choices: [0] }], /not both/], [[{ text: "  " }, { choices: [0] }], /blank/], [[{ text: "a\u001b[2Jb" }, { choices: [0] }], /control/],
 		[[{ text: "x".repeat(8193) }, { choices: [0] }], /too long/], [[{ choices: [0], note: "n".repeat(2049) }, { choices: [0] }], /too long/], [[{ text: "x".repeat(8000) }, { text: "y".repeat(8000) }], /too long together/],
 	];
-	for (const [answers, why] of cases) assert.match(String(checkAnswer(qs, { answers }, false)), why, JSON.stringify(answers).slice(0, 80));
-	assert.equal(typeof checkAnswer(qs, { choice: 0, answers: [{ choices: [0] }, { choices: [0] }] }, false), "string");
+	for (const [answers, why] of cases) assert.match(String(checkAnswer(qs, { answers })), why, JSON.stringify(answers).slice(0, 80));
+	assert.equal(typeof checkAnswer(qs, { choice: 0, answers: [{ choices: [0] }, { choices: [0] }] }), "string");
 });
 
 test("probe contract: the editor's class, the ending command by name only, and the server takes nothing else", () => {
@@ -206,11 +205,9 @@ test("secret_drop: robot-hand:secret pending and closed reach the bridge; the va
 test("checkAnswer takes no secret's value from any page (SB-F001), and quotes none", () => {
 	const t = { dialog: "d1", digest: "0".repeat(64), select: { title: "t", choices: [{ label: "a" }] } }, secret = "s3cr3t-value";
 	for (const json of [{ value: secret }, { choice: 0, value: secret }, { answers: [], value: secret }, { value: "" }, { value: 5 }]) {
-		for (const remote of [false, true]) {
-			const out = checkAnswer(t, json, remote);
-			assert.equal(typeof out, "string", JSON.stringify(json).slice(0, 40));
-			assert.equal(String(out).includes(secret), false);
-		}
+		const out = checkAnswer(t, json);
+		assert.equal(typeof out, "string", JSON.stringify(json).slice(0, 40));
+		assert.equal(String(out).includes(secret), false);
 	}
 });
 

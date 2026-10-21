@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { get, type IncomingMessage, request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, mock, test } from "node:test";
 import { startGui, type Gui } from "../src/gui.ts";
 import type { Found } from "../src/net.ts";
+import { labelOf } from "../src/devices.ts";
 import { createAccess, identity, PORT, type Run, runs, serveOff, serveOn, startOf, switchRemote } from "../src/remote.ts";
 import { copyText } from "../src/pairing.ts";
 import { until } from "./fakes.ts";
@@ -93,7 +95,7 @@ test("a pairing code works once and only within ten minutes; turning remote off 
 	const first = req(`pair/${code}`);
 	assert.ok("cookie" in first);
 	assert.deepEqual(req(`pair/${code}`), { status: 403 }, "used up");
-	assert.deepEqual(req("", { cookie: `sb_remote=${first.cookie}` }), { origin: `https://${HOST}`, remote: true });
+	assert.deepEqual(req("", { cookie: `sb_remote=${first.cookie}` }), IN(first.cookie));
 	const late = access.pair()!, now = Date.now();
 	mock.method(Date, "now", () => now + 10 * 60_000 + 1);
 	try {
@@ -114,27 +116,114 @@ test("a pairing code works once and only within ten minutes; turning remote off 
 	assert.deepEqual(req("", { cookie: `sb_remote=${first.cookie}` }), { status: 403 }, "remote off: refused outright");
 });
 
-test("a /reload keeps paired devices for the next server, saved as hashes; remote off forgets them, and another identity voids them", () => {
-	const file = join(scratch, "paired.json"), T = "t".repeat(32), id = { host: HOST, login: LOGIN };
-	const req = (a: ReturnType<typeof createAccess>, path: string, headers: Record<string, string> = {}) => a.check({ method: "GET", headers: { host: HOST, "tailscale-user-login": LOGIN, ...headers } } as unknown as IncomingMessage, "remote", 1234, T, path.split("/"));
+const T = "t".repeat(32), ID = { host: HOST, login: LOGIN };
+/** One request on the remote listener as `tailscale serve` forwards it. */
+const via = (a: ReturnType<typeof createAccess>, path: string, headers: Record<string, string> = {}, method = "GET") => a.check({ method, headers: { host: HOST, "tailscale-user-login": LOGIN, "x-forwarded-for": "100.1.2.3", ...headers } } as unknown as IncomingMessage, "remote", 1234, T, path.split("/"));
+const pairWith = (a: ReturnType<typeof createAccess>, ua?: string) => (via(a, `pair/${a.pair()}`, ua ? { "user-agent": ua } : {}) as { cookie: string }).cookie;
+const IN = (cookie: string) => ({ origin: `https://${HOST}`, remote: true, device: createHash("sha256").update(cookie).digest("hex") });
+
+test("a paired device survives remote off and on, a new server, and a takeover, kept as a hash only; another identity voids it", () => {
+	const file = join(scratch, "paired.json");
 	const first = createAccess(T, () => {}, file);
-	first.enable(id);
-	const paired = req(first, `pair/${first.pair()}`) as { cookie: string };
-	assert.ok(!readFileSync(file, "utf8").includes(paired.cookie), "only the cookie's hash is saved");
-	first.disable(true);
-	const next = createAccess(T, () => {}, file);
-	assert.deepEqual(req(next, "", { cookie: `sb_remote=${paired.cookie}` }), { status: 403 }, "nothing gets in before remote is on again");
-	next.enable(id);
-	assert.deepEqual(req(next, "", { cookie: `sb_remote=${paired.cookie}` }), { origin: `https://${HOST}`, remote: true }, "the paired phone is still in");
-	next.disable();
-	assert.equal(existsSync(file), false, "remote off forgets them");
-	const again = createAccess(T, () => {}, file);
-	again.enable(id);
-	const c = (req(again, `pair/${again.pair()}`) as { cookie: string }).cookie;
-	again.disable(true);
+	first.enable(ID);
+	const cookie = pairWith(first);
+	assert.ok(!readFileSync(file, "utf8").includes(cookie), "only the cookie's hash is saved");
+	assert.equal(statSync(file).mode & 0o777, 0o600);
+	first.disable(); // remote off, as /boss gui remote off or the page does
+	assert.deepEqual(via(first, "", { cookie: `sb_remote=${cookie}` }), { status: 403 }, "nothing gets in while remote is off");
+	const next = createAccess(T, () => {}, file); // a new server on the same file
+	assert.deepEqual(via(next, "", { cookie: `sb_remote=${cookie}` }), { status: 403 }, "nothing gets in before remote is on again");
+	next.enable(ID);
+	assert.deepEqual(via(next, "", { cookie: `sb_remote=${cookie}` }), IN(cookie), "the paired phone is still in");
+	next.disable(true); // the server stops (stop, takeover, the session's end)
+	const third = createAccess(T, () => {}, file);
+	third.enable(ID);
+	assert.deepEqual(via(third, "", { cookie: `sb_remote=${cookie}` }), IN(cookie), "and after the next server too");
+	third.disable();
 	const other = createAccess(T, () => {}, file);
 	other.enable({ host: HOST, login: "other@example.com" });
-	assert.deepEqual(req(other, "", { cookie: `sb_remote=${c}`, "tailscale-user-login": "other@example.com" }), { status: 401 }, "another identity voids them");
+	assert.deepEqual(via(other, "", { cookie: `sb_remote=${cookie}`, "tailscale-user-login": "other@example.com" }), { status: 401 }, "another Tailscale identity voids it");
+	other.disable();
+	const back = createAccess(T, () => {}, file);
+	back.enable(ID);
+	assert.deepEqual(via(back, "", { cookie: `sb_remote=${cookie}` }), { status: 401 }, "and it does not come back with the first identity");
+	back.disable();
+});
+
+test("every use renews a pairing: the expiry slides and the cookie is issued again, at most once an hour; 90 days without use ends it", () => {
+	const file = join(scratch, "sliding.json"), DAY = 24 * 3600_000, t0 = Date.now();
+	const a = createAccess(T, () => {}, file);
+	a.enable(ID);
+	const cookie = pairWith(a), jar = { cookie: `sb_remote=${cookie}` };
+	const at = (ms: number) => mock.method(Date, "now", () => t0 + ms);
+	try {
+		at(30 * 60_000);
+		assert.deepEqual(via(a, "", jar), IN(cookie), "within the hour: no new cookie");
+		at(60 * DAY);
+		assert.deepEqual(via(a, "", jar), { ...IN(cookie), reissue: cookie }, "a use after an hour renews it and asks for the cookie again");
+		assert.deepEqual(via(a, "", jar), IN(cookie), "once");
+		const kept = createAccess(T, () => {}, file); // the renewal is saved
+		kept.enable(ID);
+		at(149 * DAY);
+		assert.deepEqual(via(kept, "", jar), { ...IN(cookie), reissue: cookie }, "149 days after pairing, 89 after its last use: still paired, and renewed again");
+		at(149 * DAY + 90 * DAY - 1);
+		assert.deepEqual(via(kept, "", jar), { ...IN(cookie), reissue: cookie }, "just inside 90 days of the last use");
+		at(149 * DAY + 90 * DAY - 1 + 90 * DAY + 1);
+		assert.deepEqual(via(kept, "", jar), { status: 401 }, "90 days unused ends it");
+		assert.deepEqual(kept.devices.list(), [], "and it is forgotten");
+	} finally {
+		mock.restoreAll();
+	}
+	a.disable();
+});
+
+test("the desktop lists paired devices by the name their User-Agent gave and unpairs one or all; an unpaired cookie is refused and its streams end", () => {
+	const file = join(scratch, "unpair.json"), ended: (string | undefined)[] = [];
+	const a = createAccess(T, (device) => ended.push(device), file);
+	a.enable(ID);
+	const phone = pairWith(a, "Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.0 Mobile/15E148 Safari/604.1");
+	const laptop = pairWith(a, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36");
+	const unknown = pairWith(a);
+	assert.deepEqual(a.devices.list().map((d) => d.label).sort(), ["", "Mac · Chrome", "iPhone · Safari"]);
+	assert.ok(a.devices.list().every((d) => /^[0-9a-f]{16}$/.test(d.id) && d.paired > 0 && d.seen >= d.paired));
+	assert.ok(!readFileSync(file, "utf8").includes("Mozilla"), "the raw User-Agent is not kept");
+	const id = a.devices.list().find((d) => d.label === "iPhone · Safari")!.id;
+	const before = ended.length;
+	assert.equal(a.devices.unpair("0".repeat(16)), false, "no such device");
+	assert.equal(a.devices.unpair(id.slice(0, 3)), false, "too short a prefix names nothing");
+	assert.equal(a.devices.unpair(id), true);
+	assert.equal(ended.length, before + 1);
+	assert.ok(ended.at(-1), "that device's streams end, not everyone's");
+	assert.deepEqual(via(a, "", { cookie: `sb_remote=${phone}` }), { status: 401 });
+	assert.deepEqual(via(a, "", { cookie: `sb_remote=${laptop}` }), IN(laptop), "the others stay");
+	assert.equal(a.devices.unpairAll(), 2);
+	assert.equal(ended.at(-1), undefined, "all streams end");
+	for (const c of [laptop, unknown]) assert.deepEqual(via(a, "", { cookie: `sb_remote=${c}` }), { status: 401 });
+	const reread = createAccess(T, () => {}, file);
+	assert.deepEqual(reread.devices.list(), [], "and the file forgot them");
+	a.disable();
+});
+
+test("remote access stays wanted across a stopped server and a new one until it is turned off explicitly", () => {
+	const file = join(scratch, "wanted.json");
+	const a = createAccess(T, () => {}, file);
+	assert.equal(a.wanted, false);
+	a.enable(ID);
+	assert.equal(a.wanted, true);
+	a.disable(true); // the server stops: /boss gui stop, a takeover, the end of the session
+	const b = createAccess(T, () => {}, file);
+	assert.deepEqual([b.wanted, b.remote], [true, undefined], "a new server remembers, and is not on until it turns itself on");
+	b.disable(); // remote off
+	assert.equal(createAccess(T, () => {}, file).wanted, false);
+	assert.equal(existsSync(file), false, "with no device and no wish, nothing is kept");
+});
+
+test("a device is named from its User-Agent by platform and browser only", () => {
+	assert.equal(labelOf("Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/140.0 Mobile/15E148 Safari/604.1"), "iPhone · Chrome");
+	assert.equal(labelOf("Mozilla/5.0 (Linux; Android 16; Pixel 10) AppleWebKit/537.36 Chrome/140.0.0.0 Mobile Safari/537.36 EdgA/140"), "Android · Chrome");
+	assert.equal(labelOf("Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"), "Linux · Firefox");
+	assert.equal(labelOf("curl/8.0"), "");
+	assert.equal(labelOf(undefined), "");
 });
 
 test("turning remote on as another Tailscale identity voids what the old one paired and ends its streams", () => {
@@ -354,4 +443,37 @@ test("the remote listener's port is kept across a restart when free, and two ser
 	const same = await startGui({ read, dir, port, remotePort: port });
 	running.push(same);
 	assert.deepEqual([same.port, same.remotePort === port], [port, false]);
+});
+
+test("the desktop page lists, unpairs one, and unpairs all; a paired device is refused 403 on each, and unpairing ends that device's own streams at once", async () => {
+	const gui = await startGui({ read: async () => ({ bases: [] }), dir: join(scratch, "bundle"), pollMs: 50, pingMs: 1000, paired: join(scratch, "gui-paired.json") });
+	running.push(gui);
+	gui.access.enable({ host: HOST, login: LOGIN });
+	const page = `/${gui.token}/`;
+	const pairOne = async (ua: string) => String((await remoteGet(gui, `${page}pair/${gui.access.pair()}`, { "user-agent": ua })).headers["set-cookie"]).split(";")[0]!;
+	const phone = await pairOne("Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1"), tablet = await pairOne("Mozilla/5.0 (iPad; CPU OS 19_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1");
+	const ends = { phone: false, tablet: false };
+	for (const [name, jar] of [["phone", phone], ["tablet", tablet]] as const) {
+		get({ host: "127.0.0.1", port: gui.remotePort, path: `${page}events`, headers: { host: HOST, "tailscale-user-login": LOGIN, "x-forwarded-for": "100.87.7.97", cookie: jar }, agent: false }, (res) => (res.resume(), res.on("close", () => (ends[name] = true)))).on("error", () => (ends[name] = true));
+	}
+	await new Promise((resolve) => setTimeout(resolve, 80));
+	const mine = (path: string, payload: unknown = {}) => remoteGet(gui, `${page}api/${path}`, { host: `127.0.0.1:${gui.port}`, "tailscale-user-login": undefined, "x-forwarded-for": undefined, "x-forwarded-proto": undefined, "tailscale-headers-info": undefined, origin: `http://127.0.0.1:${gui.port}`, "content-type": "application/json", "x-sb-csrf": gui.csrf }, "POST", JSON.stringify(payload), gui.port);
+	const theirs = (jar: string, path: string, payload: unknown = {}) => remoteGet(gui, `${page}api/${path}`, { cookie: jar, origin: `https://${HOST}`, "content-type": "application/json", "x-sb-csrf": gui.csrf }, "POST", JSON.stringify(payload));
+	const listed = JSON.parse((await mine("remote/devices")).body) as { on: boolean; devices: { id: string; label: string; paired: number; seen: number }[] };
+	assert.equal(listed.on, true);
+	assert.deepEqual(listed.devices.map((d) => d.label).sort(), ["iPad · Safari", "iPhone · Safari"]);
+	for (const path of ["remote/devices", "remote/unpair", "remote/unpair-all", "remote/off"]) assert.equal((await theirs(phone, path, { id: listed.devices[0]!.id })).status, 403, `a paired device cannot ${path}`);
+	assert.deepEqual(ends, { phone: false, tablet: false });
+	assert.equal((await mine("remote/unpair", { id: "f".repeat(16) })).status, 404);
+	assert.equal((await mine("remote/unpair", {})).status, 400);
+	const phoneId = listed.devices.find((d) => d.label === "iPhone · Safari")!.id;
+	assert.equal((await mine("remote/unpair", { id: phoneId })).status, 200);
+	await until(() => ends.phone, "the unpaired device's stream to end");
+	assert.equal(ends.tablet, false, "the other device's stream stays");
+	assert.equal((await remoteGet(gui, page, { cookie: phone })).status, 401, "the unpaired cookie is refused");
+	assert.equal((await remoteGet(gui, page, { cookie: tablet })).status, 200);
+	assert.deepEqual(JSON.parse((await mine("remote/unpair-all")).body), { unpaired: 1 });
+	await until(() => ends.tablet, "the last stream to end");
+	assert.equal((await remoteGet(gui, page, { cookie: tablet })).status, 401);
+	assert.deepEqual(JSON.parse((await mine("remote/devices")).body).devices, []);
 });

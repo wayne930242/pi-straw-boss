@@ -46,13 +46,13 @@ const valid = (d: Dialog) => str(d?.owner) && str(d.id) && d.id.length <= 64 && 
 /** Own words or a note as they would be typed: CRLF to LF, never blank, within `max` bytes, no control characters but tab and newline. */
 const words = (v: unknown, max: number) => (str(v) && v.trim() && Buffer.byteLength(v) <= max && !CONTROL.test(v.replace(/\r\n?/g, "\n")) ? v.replace(/\r\n?/g, "\n") : null);
 
-/** The page's answer checked against what it may answer: one choice of a select (not a local-only one from a remote page), or one entry per question. A secret's value is never taken from any page (SB-F001; see the header). */
-export function checkAnswer(t: Answerable, json: Record<string, unknown>, remote: boolean): { choice: number } | { answers: Reply[] } | string {
+/** The page's answer checked against what it may answer: one choice of a select (a local-only one too, from any page), or one entry per question. A secret's value is never taken from any page (SB-F001; see the header). */
+export function checkAnswer(t: Answerable, json: Record<string, unknown>): { choice: number } | { answers: Reply[] } | string {
 	const { choice, answers, value } = json;
 	if (value !== undefined) return "A secret cannot be entered here; answer it in the terminal.";
 	if (t.select) {
 		if (answers !== undefined || !Number.isInteger(choice) || (choice as number) < 0 || (choice as number) >= t.select.choices.length) return "Pick one of its choices.";
-		return remote && t.select.choices[choice as number]!.localOnly ? "That choice acts on the computer the GUI runs on; pick it there." : { choice: choice as number };
+		return { choice: choice as number };
 	}
 	const qs = t.questions ?? [], out: Reply[] = [];
 	if (choice !== undefined || !Array.isArray(answers) || answers.length !== qs.length) return "Answer every question.";

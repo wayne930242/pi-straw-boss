@@ -121,5 +121,7 @@ export function netSource(env: { run: HerdrRun; world?: HerdrWorld; sessions(): 
 		workspace: (id: string): Ref[] => [...refs.values()].filter((r) => r.base === id),
 		/** Hides a finished subagent from every page until it leaves the net; false for anything else. */
 		dismiss: (key: string) => ended.has(key) && Boolean(dismissed.add(key)),
+		/** Hides every finished subagent now on the net at once; how many were newly hidden. */
+		dismissAll: () => [...ended].filter((key) => !dismissed.has(key) && dismissed.add(key)).length,
 	};
 }

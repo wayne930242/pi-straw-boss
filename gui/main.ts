@@ -9,7 +9,7 @@ import { type Alert, alertsOf, arrivals, unitOf } from "./alerts.ts";
 import type { mountPanels, Tile } from "./layer.ts";
 import { MODAL, mountHotkeys } from "./hotkeys.ts";
 import { mountNotify } from "./notify.ts";
-import { mountQuit } from "./quit.ts";
+import { mountQuit, showDismissAll } from "./quit.ts";
 import { mountPage } from "./render.ts";
 import { createRouter, parseRoute, type Route, upOf, watchOf } from "./router.ts";
 import { createStream, type Source, type Status } from "./stream.ts";
@@ -76,6 +76,7 @@ function show(net: Net) {
 	heard = now;
 	if (document.hidden) return;
 	page.stats(net);
+	showDismissAll(el("dismiss-all"), net);
 	const fresh = arrivals(known, now);
 	if (fresh.length || panels) withPanels((p) => p.alerts(fresh, now));
 	known = now;

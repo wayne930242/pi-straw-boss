@@ -162,6 +162,8 @@ command, and rules. `ask_user_question` is a `ctx.ui.custom` screen and is only 
 `ask_user_question`), even when the owner's dialog was refused or never came: it stays terminal-only, so a `localOnly` choice or a note cannot be lost to a raw relay.
 A twin the page shows says it "was opened while {tool} was running; it may not be about that call", since the wrap only knows which call was in flight.
 
+**Remote policy — superseded 2026-10-21.** The boss relaxed it: a paired device answers a confirm and a `localOnly` choice as this computer's page does ("ctx.ui.confirm 可從手機回答", "作用在電腦上的選項也顯示"). `control.ts` no longer refuses a confirm with 403 `local_only`, `checkAnswer` takes every choice, and `gui/ask.ts` has no read-only confirm panel (`readOnlyHere` and the `confirm_local_only` message are gone). A secret is still answerable from no page. The paragraph below is the original decision, kept as the record.
+
 **Remote policy** (the user's decision, 2026-10-19: "遠端只能答 select，confirm 只能本機"). A paired device may answer a select but not a confirm. The
 server decides by the listener the request arrived on (`src/remote.ts`: the verdict's `remote` flag, which becomes the `https:` origin `control.ts`
 checks): an answer to a dialog with `select.confirm` from the remote listener is refused with **403 `local_only`** before anything is sent to the bridge.

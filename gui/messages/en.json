@@ -239,7 +239,6 @@
 	"send_answer": "Send answer",
 	"secret_remote": "For security, entering a secret is not supported remotely. Answer it in the terminal on the computer the GUI runs on.",
 	"secret_terminal": "A secret is entered in the terminal only, not here. Answer it in the terminal on the computer the GUI runs on.",
-	"confirm_local_only": "A confirmation can be answered only in the terminal or on the page of the computer the GUI runs on, not from a paired device. This page shows it read-only.",
 	"answer_them": "Answer them in the terminal.",
 	"answer_it": "Answer it in the terminal.",
 	"show_terminal": "Show terminal",
@@ -365,5 +364,15 @@
 	"typing_hint": "Click here and the keyboard goes straight to the terminal (except Ctrl, Alt, and ⌘ combinations)",
 	"notify_waiting": "Waiting on you {note}",
 	"notify_error": "Failed {note}",
-	"notify_done": "Finished {note}"
+	"notify_done": "Finished {note}",
+	"dismiss_all": "Dismiss finished ({count})",
+	"devices_title": "Paired devices",
+	"devices_none": "No device is paired.",
+	"device_unknown": "Unknown device",
+	"device_when": "Paired {paired} · last used {seen}",
+	"unpair": "Unpair",
+	"unpair_device": "Unpair {name}",
+	"unpair_all": "Unpair all",
+	"remote_turn_off": "Turn off remote access",
+	"remote_stays": "Turning remote access off keeps the paired devices. Unpair a device to end its pairing."
 }

@@ -19,7 +19,9 @@ import { ENDING } from "./probe.ts";
 //   POST /<token>/api/sessions/<key>/upload (the file's bytes)                            stores a pasted, dropped, or picked file, answers its path (upload.ts)
 //   POST /<token>/api/sessions/<key>/mirror {stream, on}                                  shows the pane's screen on that page's stream (mirror.ts), or stops
 //   POST /<token>/api/remote/pair                                                        a new one-time pairing URL and its QR, while remote access is on
-//   POST /<token>/api/remote/on                                                          turns remote access on in the server's session, then a pairing URL and its QR (never remote)
+//   POST /<token>/api/remote/on, remote/off                                              turns remote access on in the server's session, then a pairing URL and its QR, or off (never remote)
+//   POST /<token>/api/remote/devices, remote/unpair {id}, remote/unpair-all             the paired devices, and unpairing one or all (never remote)
+//   POST /<token>/api/dismiss {key} or {all: true}                                       hides one finished subagent, or every finished one, from every page
 //   POST /<token>/api/close/unit, close/tab, close/base                                   quits a session, or every agent of a squad or base, then closes it (closer.ts)
 //   POST /<token>/api/dirs, open/base, open/member, open/main                            a folder picker, a new base with a member, a new member, a new main (spawn.ts)
 //   POST /<token>/api/server/stop {by, take}                                             stops the server: another session's /boss gui stop or takeover (never remote)
@@ -33,7 +35,7 @@ export { ENDING };
 
 export interface Reply { status: number; body: unknown }
 /** `answers.target` reads the net afresh, so the binding and the dialog are checked again for every answer. */
-export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; remoteOn?(): Promise<void>; spawn?(parts: string[], json: Record<string, unknown>): Promise<Reply>; close?(kind: string, json: Record<string, unknown>): Promise<Reply>; dismiss?(key: unknown): Promise<boolean>; stop?(asked: Asked): void; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; answers?: Pick<Hub, "replay" | "ended" | "send" | "probe" | "commands"> & { target(key: string): Promise<Target | undefined> } }
+export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; remoteOn?(): Promise<void>; remoteOff?(): Promise<void>; paired?: { on(): boolean; list(): unknown; unpair(id: string): boolean; unpairAll(): number }; spawn?(parts: string[], json: Record<string, unknown>): Promise<Reply>; close?(kind: string, json: Record<string, unknown>): Promise<Reply>; dismiss?(key: unknown): Promise<boolean>; dismissAll?(): Promise<number>; stop?(asked: Asked): void; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; answers?: Pick<Hub, "replay" | "ended" | "send" | "probe" | "commands"> & { target(key: string): Promise<Target | undefined> } }
 
 const no = (status: number, error: string, reason: string): Reply => ({ status, body: { error, reason } });
 const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -74,7 +76,7 @@ export function checkText(text: unknown): string | Reply {
 	return typed;
 }
 
-export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, spawn, close, dismiss, stop, mirrors, secret = async () => true, answers }: ControlDeps) {
+export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, remoteOff, paired, spawn, close, dismiss, dismissAll, stop, mirrors, secret = async () => true, answers }: ControlDeps) {
 	const busy = new Set<string>();
 	const pad = createKeys({ fresh: (id, key, pane) => mirrors?.fresh(id, key, pane) ?? false, secret, answerable: async (key) => Boolean(await answers?.target(key)), probe: async (key) => answers?.probe(key) });
 	/** The origin checks, then the session checks, then one Herdr call. `parts` is the path after api/: sessions/<key>/<action>, remote/pair, or server/stop. */
@@ -93,6 +95,7 @@ export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, s
 			if (key !== "stop" || action || !stop) return no(404, "not_found", "No such action.");
 			return typeof by === "string" && by.length <= 200 && typeof take === "boolean" ? (stop({ by, take }), { status: 202, body: { stopping: true } }) : no(400, "bad_request", "A stop names who asks.");
 		}
+		if (scope === "dismiss" && !key && read.json.all === true) return dismissAll ? { status: 200, body: { dismissed: await dismissAll() } } : no(503, "unavailable", "This server dismisses nothing.");
 		if (scope === "dismiss" && !key) return (await dismiss?.(read.json.key)) ? { status: 200, body: {} } : no(404, "not_found", "Only a finished subagent on the net can be dismissed.");
 		if (scope === "close") return close && !action ? close(key, read.json) : no(close ? 404 : 503, close ? "not_found" : "unavailable", close ? "No such action." : "This server closes nothing.");
 		if (scope === "dirs" || scope === "open") return spawn && !action ? spawn([scope, key], read.json) : no(spawn ? 404 : 503, spawn ? "not_found" : "unavailable", spawn ? "No such action." : "This server opens nothing.");
@@ -102,9 +105,17 @@ export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, s
 			const paired = !failed && pair?.();
 			return paired ? { status: 200, body: paired } : no(502, "remote_failed", failed ?? "Remote access did not turn on.");
 		}
+		if (scope === "remote" && !action && ["devices", "unpair", "unpair-all", "off"].includes(key)) {
+			if (!paired) return no(503, "unavailable", "This server keeps no paired devices.");
+			if (key === "devices") return { status: 200, body: { on: paired.on(), devices: paired.list() } };
+			if (key === "off") return remoteOff ? remoteOff().then(() => ({ status: 200, body: {} }), (error: Error) => no(502, "remote_failed", error.message)) : no(503, "unavailable", "This server cannot turn remote access off.");
+			if (key === "unpair-all") return { status: 200, body: { unpaired: paired.unpairAll() } };
+			const { id } = read.json;
+			return typeof id !== "string" || !id || id.length > 64 ? no(400, "bad_request", "Name the device to unpair.") : paired.unpair(id) ? { status: 200, body: {} } : no(404, "not_found", "No such paired device.");
+		}
 		if (scope === "remote") {
-			const paired = key === "pair" && !action ? pair?.() : undefined;
-			return paired ? { status: 200, body: paired } : key === "pair" && !action ? no(409, "remote_off", "Remote access is off.") : no(404, "not_found", "No such action.");
+			const pairing = key === "pair" && !action ? pair?.() : undefined;
+			return pairing ? { status: 200, body: pairing } : key === "pair" && !action ? no(409, "remote_off", "Remote access is off.") : no(404, "not_found", "No such action.");
 		}
 		if (action === "mirror") return mirrors ? mirrors.toggle(key, read.json) : no(503, "unavailable", "This server shows no terminals.");
 		if (!["input", "keys", "focus", "answer", "commands"].includes(action)) return no(404, "not_found", "No such action.");
@@ -134,7 +145,7 @@ export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, s
 			};
 		} else if (action === "keys") {
 			if (busy.has(key)) return no(429, "busy", "Another input to this session is still on its way.");
-			const asked = pad.check(key, json, origin.startsWith("https:"));
+			const asked = pad.check(key, json);
 			if ("status" in asked) return asked;
 			job = async () => {
 				const plan = await pad.send(key, found, await live(found), asked);
@@ -153,8 +164,7 @@ export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, s
 				await live(found);
 				const target = await answers.target(key), ended = answers.ended(key, dialog, answerId); // answered in the terminal a moment ago, or by this very answer
 				if (target?.answer.dialog !== dialog || target.answer.digest !== digest) throw ended ?? no(409, "changed", "The question changed or is no longer open here; read it again.");
-				if (origin.startsWith("https:") && target.answer.select?.confirm) throw no(403, "local_only", "A confirmation is answered on the computer the GUI runs on, or in its terminal; a paired device can only read it."); // a select may be answered from a paired device, a confirm may not
-				const checked = checkAnswer(target.answer, json, origin.startsWith("https:"));
+				const checked = checkAnswer(target.answer, json);
 				if (typeof checked === "string") throw no(400, "bad_answer", checked);
 				return answers.send(key, target, { id: dialog, answerId, digest, ...checked });
 			};
