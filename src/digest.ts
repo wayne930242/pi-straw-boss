@@ -32,7 +32,8 @@ export function createDigest(run: HerdrRun, now: () => number) {
 		/** Returns the lines, oldest first, and clears them: the tower reads each one once. */
 		async take(workspaceId: string) {
 			const found = await entries(run, workspaceId);
-			for (let i = 0; i < found.length; i += BATCH) await report(run, workspaceId, found.slice(i, i + BATCH).flatMap(([k]) => ["--clear-token", k]));
+			// A batch that fails to clear is read again next time, never lost: the lines already read are returned all the same.
+			for (let i = 0; i < found.length; i += BATCH) await report(run, workspaceId, found.slice(i, i + BATCH).flatMap(([k]) => ["--clear-token", k])).catch(() => {});
 			return found.map(([, line]) => line);
 		},
 	};
