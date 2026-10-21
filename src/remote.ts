@@ -57,7 +57,9 @@ async function served(run: Run, host: string) {
 	const s = parse<Serve>(await run(["serve", "status", "--json"]), "serve status"), held = s.TCP?.[PORT] !== undefined;
 	const handlers = Object.entries(s.Web?.[host]?.Handlers ?? {}), target = held && s.TCP?.[PORT]?.HTTPS && handlers.length === 1 && handlers[0]![0] === "/" ? handlers[0]![1].Proxy : undefined;
 	const elsewhere = Object.keys(s.Web ?? {}).some((h) => h !== host && h.endsWith(`:${PORT}`)) || Object.values(s.Foreground ?? {}).some((f) => f.TCP?.[PORT] !== undefined);
-	return { target, foreign: elsewhere || (held && !target), funnel: Boolean(s.AllowFunnel?.[host]) };
+	// Any host's "/" handler on 8443, to tell an entry that is gone from one under another host (an identity change).
+	const anywhere = Object.entries(s.Web ?? {}).filter(([h]) => h.endsWith(`:${PORT}`)).flatMap(([, w]) => Object.entries(w.Handlers ?? {}).filter(([p]) => p === "/").map(([, x]) => x.Proxy));
+	return { target, anywhere, foreign: elsewhere || (held && !target), funnel: Boolean(s.AllowFunnel?.[host]) };
 }
 
 /** Points 8443 at `target`, when 8443 is free or ours (`target` itself or one of `stale`); otherwise, or when Funnel is on there, it refuses and touches nothing. */
@@ -74,8 +76,9 @@ export async function serveOn(run: Run, host: string, target: string, stale: (st
 }
 
 /** Removes the 8443 entry only while it is still ours (only "/", proxying to one of `targets`). */
-export async function serveOff(run: Run, host: string, targets: (string | undefined)[]) {
+export async function serveOff(run: Run, host: string, targets: (string | undefined)[], elsewhere?: { remains: boolean }) {
 	const now = await served(run, host);
+	if (elsewhere) elsewhere.remains = now.anywhere.some((t) => t !== undefined && targets.includes(t));
 	if (now.foreign || !now.target || !targets.includes(now.target)) return false;
 	await run(["serve", `--https=${PORT}`, "off"]);
 	return true;
@@ -96,6 +99,8 @@ export function createAccess(token: string, ended: (device?: string) => void = (
 		get remembered() { return remote ?? devices.identity; },
 		/** Why paired.json could not be written last time, or undefined; the devices are then kept in memory only. */
 		get saveError() { return devices.error; },
+		/** What a failed save of paired.json means (the change holds until the server stops), or undefined while the file is current. */
+		unsaved(): string | undefined { return devices.error && `paired.json could not be saved (${devices.error}); the change holds until the server stops, and a restart loses it`; },
 		devices: {
 			list: devices.list,
 			unpair(id: string) {
@@ -205,8 +210,8 @@ export async function switchRemote(gui: { port: number; remotePort: number; toke
 		gui.access.disable(stop);
 		const id = was ?? (stale ? await identity(run).catch(() => undefined) : undefined);
 		if (!id) return { text: "Remote access is off", changed: false };
-		const removed = await serveOff(run, id.host, [was && target, stale, old]);
-		rmSync(file, { force: true });
+		const left = { remains: false }, removed = await serveOff(run, id.host, [was && target, stale, old], left);
+		if (removed || !left.remains) rmSync(file, { force: true }); // an entry of ours under another host (the identity changed) is still to remove: its record stays
 		return { text: removed ? `Remote access is off; the Tailscale serve entry on ${PORT} is removed` : `Remote access is off; the ${PORT} entry no longer pointed here, so it was left alone`, changed: true };
 	}
 	const id = await identity(run);

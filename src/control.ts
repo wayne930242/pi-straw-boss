@@ -35,7 +35,7 @@ export { ENDING };
 
 export interface Reply { status: number; body: unknown }
 /** `answers.target` reads the net afresh, so the binding and the dialog are checked again for every answer. */
-export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; remoteOn?(): Promise<void>; remoteOff?(): Promise<void>; paired?: { on(): boolean; list(): unknown; unpair(id: string): boolean; unpairAll(): number }; spawn?(parts: string[], json: Record<string, unknown>): Promise<Reply>; close?(kind: string, json: Record<string, unknown>): Promise<Reply>; dismiss?(key: unknown): Promise<boolean>; dismissAll?(): Promise<number>; stop?(asked: Asked): void; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; answers?: Pick<Hub, "replay" | "ended" | "send" | "probe" | "commands"> & { target(key: string): Promise<Target | undefined> } }
+export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; remoteOn?(): Promise<void>; remoteOff?(): Promise<void>; paired?: { on(): boolean; list(): unknown; unpair(id: string): boolean; unpairAll(): number; unsaved(): string | undefined }; saveFailed?(reason: string): void; spawn?(parts: string[], json: Record<string, unknown>): Promise<Reply>; close?(kind: string, json: Record<string, unknown>): Promise<Reply>; dismiss?(key: unknown): Promise<boolean>; dismissAll?(): Promise<number>; stop?(asked: Asked): void; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; answers?: Pick<Hub, "replay" | "ended" | "send" | "probe" | "commands"> & { target(key: string): Promise<Target | undefined> } }
 
 const no = (status: number, error: string, reason: string): Reply => ({ status, body: { error, reason } });
 const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -76,8 +76,13 @@ export function checkText(text: unknown): string | Reply {
 	return typed;
 }
 
-export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, remoteOff, paired, spawn, close, dismiss, dismissAll, stop, mirrors, secret = async () => true, answers }: ControlDeps) {
+export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, remoteOff, paired, saveFailed, spawn, close, dismiss, dismissAll, stop, mirrors, secret = async () => true, answers }: ControlDeps) {
 	const busy = new Set<string>();
+	// A change to the paired devices or the remote wish that could not be written to paired.json took effect in memory only: say so (500), to the page and the session.
+	const lost = (): Reply | undefined => {
+		const reason = paired?.unsaved();
+		return reason ? (saveFailed?.(reason), no(500, "save_failed", reason)) : undefined;
+	};
 	const pad = createKeys({ fresh: (id, key, pane) => mirrors?.fresh(id, key, pane) ?? false, secret, answerable: async (key) => Boolean(await answers?.target(key)), probe: async (key) => answers?.probe(key) });
 	/** The origin checks, then the session checks, then one Herdr call. `parts` is the path after api/: sessions/<key>/<action>, remote/pair, or server/stop. */
 	return async function handle(req: IncomingMessage, origin: string, [scope, key = "", action = ""]: string[]): Promise<Reply> {
@@ -102,16 +107,18 @@ export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, r
 		if (scope === "remote" && key === "on" && !action) {
 			if (!remoteOn) return no(503, "unavailable", "This server cannot turn remote access on.");
 			const failed = await remoteOn().then(() => undefined, (error: Error) => error.message);
+			const unsaved = !failed && lost();
+			if (unsaved) return unsaved;
 			const paired = !failed && pair?.();
 			return paired ? { status: 200, body: paired } : no(502, "remote_failed", failed ?? "Remote access did not turn on.");
 		}
 		if (scope === "remote" && !action && ["devices", "unpair", "unpair-all", "off"].includes(key)) {
 			if (!paired) return no(503, "unavailable", "This server keeps no paired devices.");
 			if (key === "devices") return { status: 200, body: { on: paired.on(), devices: paired.list() } };
-			if (key === "off") return remoteOff ? remoteOff().then(() => ({ status: 200, body: {} }), (error: Error) => no(502, "remote_failed", error.message)) : no(503, "unavailable", "This server cannot turn remote access off.");
-			if (key === "unpair-all") return { status: 200, body: { unpaired: paired.unpairAll() } };
+			if (key === "off") return remoteOff ? remoteOff().then(() => lost() ?? { status: 200, body: {} }, (error: Error) => no(502, "remote_failed", error.message)) : no(503, "unavailable", "This server cannot turn remote access off.");
+			if (key === "unpair-all") return ((n) => lost() ?? { status: 200, body: { unpaired: n } })(paired.unpairAll());
 			const { id } = read.json;
-			return typeof id !== "string" || !id || id.length > 64 ? no(400, "bad_request", "Name the device to unpair.") : paired.unpair(id) ? { status: 200, body: {} } : no(404, "not_found", "No such paired device.");
+			return typeof id !== "string" || !id || id.length > 64 ? no(400, "bad_request", "Name the device to unpair.") : paired.unpair(id) ? (lost() ?? { status: 200, body: {} }) : no(404, "not_found", "No such paired device.");
 		}
 		if (scope === "remote") {
 			const pairing = key === "pair" && !action ? pair?.() : undefined;

@@ -27,11 +27,12 @@ export function createDevices(file?: string) {
 		if (saved?.host && saved.login) identity = { host: String(saved.host), login: String(saved.login) };
 		// An older file (0.32.1 and earlier) kept only `sessions` (hash to expiry) and was written only while remote was on, so one with devices and no wish says remote was on.
 		const old = Object.entries(saved?.sessions ?? {}).map(([h, until]): [string, Record<string, unknown>] => [h, { until }]);
-		wanted = typeof saved?.wanted === "boolean" ? saved.wanted : old.length > 0;
+		wanted = saved?.wanted === true;
 		for (const [h, d] of [...old, ...Object.entries<Record<string, unknown>>(saved?.devices ?? {})]) {
 			const until = num(d?.until, 0);
 			if (/^[0-9a-f]{64}$/.test(h) && until > now) devices.set(h, { until, label: typeof d.label === "string" ? d.label.slice(0, 80) : "", paired: num(d.paired, 0), seen: num(d.seen, 0) });
 		}
+		if (typeof saved?.wanted !== "boolean") wanted = devices.size > 0; // the older file: only a session still valid says remote was on
 	} catch {} // none saved
 	// A file that cannot be written (a full disk, a directory that went away) must not throw out of the request that changed the state: the
 	// state stays in memory for this server's life, and `error` says what failed until a save works again.

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { get, type IncomingMessage, request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -499,4 +499,55 @@ test("a paired.json that cannot be written does not throw out of a request: the 
 	assert.match(access.saveError ?? "", /no-such-dir|ENOENT/, "and the failure can be read");
 	assert.doesNotThrow(() => access.devices.unpairAll());
 	assert.equal(existsSync(file), false);
+});
+
+test("a failed paired.json save is reported: unpair, unpair all, and remote on/off answer 500 save_failed with the reason, the page and the session hear it, and the revocation stays in memory", async () => {
+	const dir = join(scratch, "unwritable"), told: string[] = [];
+	mkdirSync(dir);
+	const file = join(dir, "paired.json"), ts = fakeTailscale({}), gui = await startGui({ read: async () => ({ bases: [] }), dir: join(scratch, "bundle"), paired: file, onRemote: async () => void (await switchRemote(gui, true, scratch, ts.run)), onRemoteOff: async () => void (await switchRemote(gui, false, scratch, ts.run)), onSaveFailed: (reason) => told.push(reason) });
+	running.push(gui);
+	const page = `/${gui.token}/`, local = { host: `127.0.0.1:${gui.port}`, "tailscale-user-login": undefined, "x-forwarded-for": undefined, "x-forwarded-proto": undefined, "tailscale-headers-info": undefined, origin: `http://127.0.0.1:${gui.port}`, "sec-fetch-site": "same-origin", "content-type": "application/json", "x-sb-csrf": gui.csrf };
+	const mine = (path: string, body = "{}") => remoteGet(gui, `${page}api/${path}`, local, "POST", body, gui.port);
+	await switchRemote(gui, true, scratch, ts.run);
+	const hashes = [1, 2].map(() => {
+		const code = gui.access.pair()!;
+		return gui.access.check({ method: "GET", headers: { host: HOST, "tailscale-user-login": LOGIN, "x-forwarded-for": "100.1.2.3", "user-agent": "iPhone Safari" } } as unknown as IncomingMessage, "remote", gui.remotePort, gui.token, ["pair", code]);
+	});
+	assert.ok(hashes.every((v) => "cookie" in v));
+	chmodSync(dir, 0o500); // nothing can be created in it now
+	try {
+		const id = gui.access.devices.list()[0]!.id;
+		const one = await mine("remote/unpair", JSON.stringify({ id }));
+		assert.equal(one.status, 500);
+		assert.equal(JSON.parse(one.body).error, "save_failed");
+		assert.match(JSON.parse(one.body).reason, /EACCES|permission|not saved/i);
+		assert.equal(gui.access.devices.list().length, 1, "the device is unpaired in memory all the same");
+		const all = await mine("remote/unpair-all");
+		assert.equal(all.status, 500);
+		assert.equal(gui.access.devices.list().length, 0);
+		const off = await mine("remote/off");
+		assert.equal(off.status, 500, "remote off that cannot persist the wish says so");
+		assert.equal(gui.access.remote, undefined, "and is off all the same");
+		assert.ok(told.length >= 3 && told.every((t) => /paired\.json|EACCES|permission/i.test(t)), "the session is told too");
+	} finally {
+		chmodSync(dir, 0o700);
+	}
+});
+
+test("a legacy paired.json counts as wanted only while one of its sessions is still valid", () => {
+	const file = join(scratch, "legacy-expired.json");
+	writeFileSync(file, JSON.stringify({ host: HOST, login: LOGIN, sessions: { ["b".repeat(64)]: Date.now() - 1000 } }));
+	assert.equal(createAccess("t".repeat(32), () => {}, file).wanted, false);
+});
+
+test("remote off keeps remote.json when the entry it records still exists under another host (an identity change), and removes it once nothing of ours is served", async () => {
+	const dir = mkdtempSync(join(scratch, "rec-")), file = join(dir, "remote.json");
+	const old = { TCP: { [PORT]: { HTTPS: true } }, Web: { "old.tail9.ts.net:8443": { Handlers: { "/": { Proxy: "http://127.0.0.1:1" } } } } };
+	const ts = fakeTailscale(old), gui = { port: 5, remotePort: 6, token: "t".repeat(32), access: createAccess("t".repeat(32)) };
+	writeFileSync(file, JSON.stringify({ target: "http://127.0.0.1:1", pid: 1 << 22 }));
+	await switchRemote(gui, false, dir, ts.run, true);
+	assert.equal(existsSync(file), true, "the old host's entry is still ours to remove later: the record stays");
+	const clean = fakeTailscale({});
+	await switchRemote(gui, false, dir, clean.run, true);
+	assert.equal(existsSync(file), false, "nothing of ours is served any more: the record goes");
 });

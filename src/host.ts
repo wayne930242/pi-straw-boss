@@ -26,6 +26,7 @@ export function createHost({ pi, cfg, s, guiDir, me, tell }: Kit, { bridge, conn
 		}
 		return (s.c ?? s.viewer!).listSessions();
 	};
+	const unsaved = (gui: Gui) => ((reason) => reason && tell(reason, "warning"))(gui.access.unsaved()); // a paired.json that could not be saved: what was just changed is lost at a restart
 	const label = () => `${me() || "unknown"} (pane ${cfg.env.HERDR_PANE_ID})`;
 	// This session's server stops, its remote entry first: /boss gui stop here, another session's stop or takeover (`asked`), or the session's end.
 	const stopOwn = async (asked?: { by: string; take: boolean }) => {
@@ -61,7 +62,7 @@ export function createHost({ pi, cfg, s, guiDir, me, tell }: Kit, { bridge, conn
 	const share = (take = false, manual = false, was = false) =>
 		(opening ??= (async () => {
 			if (s.gui) return { url: s.gui.url, owner: label(), mine: s.gui };
-			const start = (prefer: { port?: number; remotePort?: number; token?: string; csrf?: string }, net = netSource({ run, world, sessions, hub: (s.hub = s.hub?.me === me() ? s.hub : createHub(pi, me(), bridge)) })) => startGui({ read: net.read, net, call, hub: s.hub, dir: bundle, paired: join(guiDir, "paired.json"), ...prefer, onStop: (asked) => void stopOwn(asked), onRemote: async () => tell((await switchRemote(s.gui!, true, guiDir, ts)).text), onRemoteOff: async () => tell((await switchRemote(s.gui!, false, guiDir, ts)).text), spawn: createSpawn({ run, sleep, call, live: async (id) => (await sessions()).some((x) => x.id === id), sessionAt: async (pane) => (await sessions()).find((x) => x.herdrLocation?.paneId === pane)?.id }), close: createCloser({ run, sleep, me, sessions, ask: async (key, keepPane) => s.hub?.close(key, keepPane) }) });
+			const start = (prefer: { port?: number; remotePort?: number; token?: string; csrf?: string }, net = netSource({ run, world, sessions, hub: (s.hub = s.hub?.me === me() ? s.hub : createHub(pi, me(), bridge)) })) => startGui({ read: net.read, net, call, hub: s.hub, dir: bundle, paired: join(guiDir, "paired.json"), ...prefer, onStop: (asked) => void stopOwn(asked), onSaveFailed: (reason) => tell(reason, "warning"), onRemote: async () => tell((await switchRemote(s.gui!, true, guiDir, ts)).text), onRemoteOff: async () => tell((await switchRemote(s.gui!, false, guiDir, ts)).text), spawn: createSpawn({ run, sleep, call, live: async (id) => (await sessions()).some((x) => x.id === id), sessionAt: async (pane) => (await sessions()).find((x) => x.herdrLocation?.paneId === pane)?.id }), close: createCloser({ run, sleep, me, sessions, ask: async (key, keepPane) => s.hub?.close(key, keepPane) }) });
 			const shared = await sharedGui(guiDir, [label(), me()], start, sleep, { version, take });
 			if ((s.gui = shared.mine) && !manual) await resume(s.gui, was);
 			return shared;
@@ -85,10 +86,14 @@ export function createHost({ pi, cfg, s, guiDir, me, tell }: Kit, { bridge, conn
 			const { url, owner, stale } = await share(mode.startsWith("remote"), mode.startsWith("remote"));
 			if (mode.startsWith("remote") && !s.gui) return tell(older(owner));
 			if (stale) tell(older(owner), "warning");
-			if (mode === "remote off") return tell((await switchRemote(s.gui!, false, guiDir, ts)).text);
+			if (mode === "remote off") {
+				tell((await switchRemote(s.gui!, false, guiDir, ts)).text);
+				return void unsaved(s.gui!);
+			}
 			if (mode === "remote") {
 				const { text, lines, link } = await switchRemote(s.gui!, true, guiDir, ts), block = (active: boolean) => pi.events.emit("herdr:blocked", { active, label: "Showing the remote pairing QR code" });
 				tell(text);
+				unsaved(s.gui!);
 				return void (lines && link && s.ui && (await showLines(s.ui, lines, { block, keys: pairingKeys(link, copy, openUrl) })));
 			}
 			tell(`Straw net GUI: ${url}`);
