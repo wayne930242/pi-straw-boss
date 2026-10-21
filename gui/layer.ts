@@ -7,7 +7,7 @@ import { rankOf, unitOf } from "./alerts.ts";
 import { type Alert, createStack, tally } from "./overlay.ts";
 import { m } from "./paraglide/messages.js";
 import { type Answer, post } from "./post.ts";
-import { aim, byId, doing, fillPlate, hang, html, mark, PLATE, roleName, sync, text } from "./render.ts";
+import { aim, byId, doing, fillPlate, hang, html, mark, PLATE, roleName, say, sync, text } from "./render.ts";
 
 // The overlay layer's DOM, a chunk fetched on the first alert, dialog, or tile: the HUD alert with its queue, the dialogs in the dock (stacked; the
 // rules are in overlay.ts), and the tiles beside the current view. A tile is a document (a demo document in the dev fixture) or a session's terminal (mirror.ts); tiles share the
@@ -116,7 +116,7 @@ export function mountPanels(deps: PanelDeps) {
 		fillPlate(el.querySelector(".plate")!, a.role, a.mark);
 		text(el, "h3", a.name);
 		text(el, ".role", roleName(a.role));
-		text(el, ".state", a.gone ? m.left_net() : doing(a.note, a.mark));
+		say(el, ".state", a.note, a.mark, a.gone ? m.left_net() : undefined);
 		text(el, ".where", deps.label(a.ws));
 		text(el, ".tag", a.gone ? m.tag_gone() : ({ waiting: m.tag_question, error: m.tag_error, done: m.tag_finished }[a.mark as "done"] ?? m.tag_update)());
 		text(el, ".queued", queue.length ? m.also_queued({ tally: tally(queue) }) : "");

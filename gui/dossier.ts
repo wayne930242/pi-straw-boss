@@ -1,7 +1,7 @@
 import type { Tile } from "./layer.ts";
 import { docList, docTile } from "./doc.ts";
 import { m } from "./paraglide/messages.js";
-import { doing, fillPlate, html, mark, PLATE, roleName, sync, text } from "./render.ts";
+import { fillPlate, html, mark, PLATE, roleName, say, sync, text } from "./render.ts";
 import { locate, type Scene, type Subject, wsOf } from "./scene.ts";
 import { fillToken, linkTo, tokenEl } from "./tokens.ts";
 
@@ -21,7 +21,7 @@ export function mountDossier(host: HTMLElement, scene: Readonly<Scene>, { openTi
 		fillPlate(root.querySelector(".plate")!, u?.role ?? info?.role ?? "member", mk);
 		text(root, "h3", name);
 		text(root, ".role", roleName(u?.role ?? info?.role ?? "session"));
-		text(root, ".state", u ? doing(u.note, mk) : m.not_in_net());
+		say(root, ".state", u?.note, mk, u ? undefined : m.not_in_net());
 		const note = root.querySelector<HTMLElement>(".d-note")!;
 		note.hidden = state !== "recent" && state !== "unknown";
 		note.replaceChildren(state === "unknown" ? m.note_unknown() : m.note_recent());

@@ -48,6 +48,11 @@ export const mark = (el: HTMLElement, value: Mark) => {
 /** A failed monitor's alert notes `monitor:<status>:<what>` (alerts.ts). */
 const monitorNote = (note: string) => ((i) => (note.slice(8, i) === "stale" ? m.monitor_stale : m.monitor_failed)({ what: note.slice(i + 1) }))(note.indexOf(":", 8));
 export const doing = (note: string | undefined, mk: Mark) => (note ? (note.startsWith("tool:") ? m.using({ tool: note.slice(5) }) : note.startsWith("monitor:") ? monitorNote(note) : Object.hasOwn(NOTE, note) ? NOTE[note]!() : note) : LABEL[mk]());
+/** Writes what a unit is doing into `selector`, flagged `data-monitoring` (red in style.css) while it only waits on a running monitor. */
+export const say = (el: Element, selector: string, note: string | undefined, mk: Mark, value = doing(note, mk)) => {
+	text(el, selector, value);
+	el.querySelector(selector)!.toggleAttribute("data-monitoring", value === doing(note, mk) && note === "watching a monitor");
+};
 /** Points a link at a route: a real href, so middle-click and copy-link work, and data-route for the in-page router. */
 export const aim = (a: Element, route: Route | undefined) => {
 	a.toggleAttribute("hidden", !route);
@@ -107,7 +112,7 @@ function fillUnit(el: HTMLElement, u: Omit<Unit, "id" | "key" | "control" | "rol
 	fillPlate(el.querySelector(".plate")!, u.role, u.mark, u.docs);
 	text(el, ".name", u.name);
 	text(el, ".role", roleName(u.role));
-	text(el, ".note", doing(u.note, u.mark));
+	say(el, ".note", u.note, u.mark);
 	aimUnit(el.querySelector(":scope > .card > .quit-btn")!, u);
 	sync(el.querySelector(".subs")!, u.subs ?? [], unitEl, fillUnit);
 }
