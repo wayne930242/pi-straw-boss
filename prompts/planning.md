@@ -35,9 +35,9 @@ Tasks that share one anchor share one checkpoint. Do not verify the same thing s
 
 A change-set that touches a shared contract, authorization or permission data, or a migration gets one fresh-context reviewer after its anchor passes. Other change-sets take the author's own read of the diff against the brief.
 
-## 4. Confirm, then start
+## 4. Start
 
-Show the boss the plan through your question tool before the first dispatch: the graph, the tasks with their owners, the edges and what they leave parallel, each shared anchor and what it checks, and every human checkpoint. Start only on their confirmation. A change to the graph, an edge, or an anchor goes back to the boss in the same way.
+Dispatch without asking the boss to confirm the plan, and change the graph, an edge, or an anchor the same way: the todos record it. Through your question tool, bring the boss only the decisions the plan cannot settle, before the task they block: a requirement that is unclear or contradicts the architecture, and an authorization the work needs, such as a merge to a shared branch or a deploy.
 
 ## 5. Run it
 
