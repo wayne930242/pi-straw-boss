@@ -387,6 +387,36 @@ test("the spinner timer runs only while a row is working, and stop() ends every 
 	assert.equal(reads, stopped, "the poll stopped");
 });
 
+test("the spinner stays still while the tower's tab is off screen, and starts once it is on screen", async () => {
+	const { tui, state, ui } = fakeUi();
+	let snap: Snapshot = { ...snapshot([net(1, "working", "Main One", "main")]), visible: false };
+	const dashboard = startDashboard({ ui: ui as never, collect: async () => snap, frameMs: 5, pollMs: 40, minGapMs: 0 });
+	const title = () => state.component?.render(80)[0] ?? "";
+	await until(() => title().includes(`⠋ ${TOWER_LABEL} Alpha`), "first frame");
+	await sleep(20);
+	const before = tui.renders;
+	await sleep(30);
+	assert.ok(tui.renders - before <= 1, `rendered ${tui.renders - before} times off screen`);
+	snap = { ...snap, visible: true };
+	const frames = new Set<string>();
+	await until(() => (frames.add(title().slice(3, 4)), frames.size >= 3), "animation frames once on screen");
+	dashboard.stop();
+});
+
+test("collect says the tower is visible only when its tab is the active tab of the focused workspace", async () => {
+	const herdr = world.herdr;
+	const tower = world.tower("tower-wA", "wA:t7", "wA:p7");
+	await tower.start();
+	const visible = async (tabId?: string) => (await collect({ run: herdr.runFor("wA:p7"), sessions: () => world.broker.sessionList(), workspaceId: "wA", tabId })).visible;
+	Object.assign(herdr.workspace("wA"), { focused: true, active_tab_id: "wA:t7" });
+	assert.equal(await visible("wA:t7"), true);
+	assert.equal(await visible(), undefined, "no tab given, nothing known");
+	herdr.workspace("wA").active_tab_id = "wA:t1";
+	assert.equal(await visible("wA:t7"), false, "another tab of the workspace is on screen");
+	Object.assign(herdr.workspace("wA"), { focused: false, active_tab_id: "wA:t7" });
+	assert.equal(await visible("wA:t7"), false, "another workspace is on screen");
+});
+
 test("the role marks take their colors from theme roles: the tower warning, a main agent accent, a member success, all bold, and [sub] dim", async () => {
 	const { state, ui } = fakeUi({ fg: (tone, text) => `<${tone}:${text}>`, bold: (text) => `*${text}*` });
 	const dashboard = startDashboard({ ui: ui as never, collect: async () => sample, pollMs: 100_000 });

@@ -41,7 +41,7 @@ export const settle = async () => {
 
 interface Tokens { [name: string]: string }
 interface FakePane { pane_id: string; tab_id: string; workspace_id: string; agent?: string; agent_status?: string; agent_session?: { value: string }; label?: string; tokens: Tokens; env?: string[]; cwd?: string; processes?: { argv?: string[]; argv0?: string; name?: string }[] }
-interface FakeWorkspace { workspace_id: string; label: string; agent_status?: string; tokens: Tokens; worktree?: { checkout_path?: string; is_linked_worktree?: boolean; repo_key?: string } }
+interface FakeWorkspace { workspace_id: string; label: string; agent_status?: string; focused?: boolean; active_tab_id?: string; tokens: Tokens; worktree?: { checkout_path?: string; is_linked_worktree?: boolean; repo_key?: string } }
 
 /** A tiny Herdr: workspaces, tabs, panes, and the CLI subcommands the extension calls. */
 export class FakeHerdr {

@@ -19,7 +19,7 @@ export class HerdrError extends Error {
 }
 export type Sleep = (ms: number) => Promise<void>;
 export interface Place { paneId: string; tabId: string; workspaceId: string }
-export interface Workspace { workspace_id: string; label: string; agent_status?: string; tokens?: Record<string, string>; worktree?: { checkout_path?: string; is_linked_worktree?: boolean; repo_key?: string } }
+export interface Workspace { workspace_id: string; label: string; agent_status?: string; focused?: boolean; active_tab_id?: string; tokens?: Record<string, string>; worktree?: { checkout_path?: string; is_linked_worktree?: boolean; repo_key?: string } }
 export interface Pane { pane_id: string; tab_id: string; workspace_id?: string; agent?: string; agent_status?: string; agent_session?: { value: string }; label?: string; cwd?: string; tokens?: Record<string, string> }
 export interface HerdrTab { tab_id: string; workspace_id: string; label?: string }
 export interface Location { status: string; workspace?: { id: string; label: string }; tab?: { id: string; label: string }; paneId?: string }

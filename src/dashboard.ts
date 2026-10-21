@@ -4,7 +4,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { ARROW, headOf, type HerdrRun, type HerdrWorld, isSub, MARK, type Pane, parentOf, type Session, TOWER_LABEL, type Workspace, worldOf } from "./herdr.ts";
 
-// The tower's monitoring screen: a widget above the editor, never focused, redrawn only while something is working.
+// The tower's monitoring screen: a widget above the editor, never focused, animated only while something is working and the tower's tab is on screen.
 //
 // Data sources, all read-only:
 //  - pi-intercom listSessions(): every live session, its status (idle, thinking, tool:<name>), and its Herdr location.
@@ -20,11 +20,11 @@ export type Mark = "working" | "waiting" | "idle" | "done" | "error" | "unknown"
 /** One line of the tree. `net` rows are tab (0) > session (1) > subagent (2); `towers` rows are flat. */
 /** `ended`: a subagent whose run is over (pi-herdr-agents recorded it done, or its pane is gone or back at a shell); its parent has the result. */
 export interface Row { group: "net" | "towers"; depth: number; mark: Mark; text: string; kind?: string; note?: string; workspace?: string; id?: string; file?: string; pane?: string; ended?: boolean; finished?: boolean }
-export interface Snapshot { title: string; mark: Mark; head: boolean; rows: Row[]; gui?: string }
+export interface Snapshot { title: string; mark: Mark; head: boolean; rows: Row[]; gui?: string; visible?: boolean } // visible: the tower's tab is the active tab of the focused workspace (unknown without a tabId)
 export type Tone = "accent" | "warning" | "muted" | "success" | "dim" | "error" | "border" | "title" | "tower" | "main" | "member";
 export type Paint = (tone: Tone, text: string) => string;
 /** `world` reads the panes and workspaces; without it they are listed through `run`. */
-export interface Sources { run: HerdrRun; world?: HerdrWorld; sessions(): Promise<Session[]>; workspaceId: string; now?: number; gui?(): Promise<string | undefined> }
+export interface Sources { run: HerdrRun; world?: HerdrWorld; sessions(): Promise<Session[]>; workspaceId: string; tabId?: string; now?: number; gui?(): Promise<string | undefined> }
 
 const KEY = "straw-boss-dashboard";
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -187,7 +187,7 @@ export function subagents(parent: Pane | undefined, all: Pane[], now: number, li
  * One reading of the world as rows: this tower's own net in detail (each tab's joined sessions with their subagents, then its
  * sub workspaces), and one summary line for every other tower. Other workspaces' sessions, and sessions that did not join, are not listed.
  */
-export async function collect({ run, world = worldOf(run), sessions, workspaceId, now = Date.now(), gui }: Sources): Promise<Snapshot> {
+export async function collect({ run, world = worldOf(run), sessions, workspaceId, tabId, now = Date.now(), gui }: Sources): Promise<Snapshot> {
 	const [live, { panes: ps, workspaces: all }] = await Promise.all([sessions(), world()]);
 	const head = headOf(all);
 	const mine = all.find((w) => w.workspace_id === workspaceId);
@@ -215,7 +215,7 @@ export async function collect({ run, world = worldOf(run), sessions, workspaceId
 	for (const w of all.filter((x) => x !== mine && !isSub(x) && live.some((s) => s.id === x.tokens?.tower))) rows.push({ group: "towers", depth: 0, mark: markOf(w.agent_status), text: w.label, kind: w === head ? "head tower" : "tower" });
 	// The title shows what needs attention most: a waiting row, then a working one, else the workspace's own status.
 	const attention = (["waiting", "working"] as const).find((m) => rows.some((r) => r.mark === m || (m === "working" && r.mark === "commanding"))); // commanding is active, like working
-	return { title: mine?.label ?? workspaceId, mark: attention ?? markOf(mine?.agent_status), head: Boolean(mine) && mine === head, rows, gui: await gui?.().catch(() => undefined) };
+	return { title: mine?.label ?? workspaceId, mark: attention ?? markOf(mine?.agent_status), head: Boolean(mine) && mine === head, rows, gui: await gui?.().catch(() => undefined), visible: tabId === undefined ? undefined : Boolean(mine?.focused) && mine?.active_tab_id === tabId };
 }
 
 export interface Dashboard { poke(): void; stop(): void }
@@ -227,12 +227,12 @@ export const SAFETY_MS = 30_000;
 const DEBOUNCE_MS = 500;
 
 /**
- * Shows the dashboard in a tower's TUI. The spinner timer (8 fps) runs only while a row is working. Data is re-read when `watch` reports
+ * Shows the dashboard in a tower's TUI. The spinner timer (1 fps; each tick redraws the whole TUI) runs only while a row is working and the tower is not `visible: false`. Data is re-read when `watch` reports
  * a change (collected for `debounceMs`, so a burst is one read), when poke() says intercom changed (at once), and every `pollMs` as a safety net;
  * two reads are never closer than `minGapMs`, and a request that comes inside the gap or while a read runs is read when it ends, not dropped.
  * stop() clears the timers and the subscription and removes the widget, and pi disposing the widget does the same.
  */
-export function startDashboard({ ui, collect: read, watch, frameMs = 125, pollMs = SAFETY_MS, minGapMs = 500, debounceMs = DEBOUNCE_MS }: { ui: ExtensionContext["ui"]; collect(): Promise<Snapshot> } & Timing): Dashboard {
+export function startDashboard({ ui, collect: read, watch, frameMs = 1000, pollMs = SAFETY_MS, minGapMs = 500, debounceMs = DEBOUNCE_MS }: { ui: ExtensionContext["ui"]; collect(): Promise<Snapshot> } & Timing): Dashboard {
 	let live: Dashboard | undefined;
 	ui.setWidget(KEY, (tui, theme) => {
 		let snap: Snapshot = { title: "", mark: "unknown", head: false, rows: [] }, frame = 0, busy = false, again = false, stopped = false, last = 0, due = Infinity;
@@ -258,7 +258,7 @@ export function startDashboard({ ui, collect: read, watch, frameMs = 125, pollMs
 			busy = false;
 			last = Date.now();
 			if (stopped) return;
-			const working = snap.mark === "working" || snap.rows.some((r) => r.mark === "working");
+			const working = snap.visible !== false && (snap.mark === "working" || snap.rows.some((r) => r.mark === "working"));
 			if (working && !spinner) spinner = setInterval(() => (frame++, tui.requestRender()), frameMs).unref();
 			if (!working && spinner) spinner = void clearInterval(spinner);
 			tui.requestRender();
