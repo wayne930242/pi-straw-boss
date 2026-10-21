@@ -62,7 +62,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.27.0 to 299: the one-server-per-machine record and handover (gui.json, requestStop, sharedGui) came out into handover.ts, which has its own figure.
 	// Remote listener: a second loopback server with its own handler, port, and close, so a request is remote by the listener it arrived on: 299 to 320.
 	// Unreleased to 323: finished subagents a page dismissed stay hidden until they leave the net (net.ts), and gui.ts hands the dismissal to control.
-	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 323, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
+	// Unreleased to 327: a tower's subagents, collected as a member's are (net.ts: the towers' rows, one subagent builder for both).
+	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 327, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
 	// Input (the spec's figure), remote access over Tailscale, its terminal pairing panel (QR, c copies, o opens), and the QR encoder each have their own.
 	// What a waiting session waits on (0.5.0, read for display only; answering is deferred) has its own as well.
 	// 0.5.1 raised remote.ts from 165 to 185 (a recorded server counts as running only if its process started when the entry says: a reused PID
@@ -200,7 +201,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.25.1 raised views.ts to 348 for a phone's comms scrolled into view as the session opens, so its composer is on screen.
 	// 0.27.0 split views.ts (348) into its coordinator (90) and the modules it calls: the Scene they read (scene.ts), the unit token (tokens.ts), the location bar and
 	// the entrance (nav.ts), the workspace route (workspace.ts), the dossier (dossier.ts), the session's comms (session.ts), and the bars above its composer (bars.ts).
-	for (const [name, max] of [["router.ts", 80], ["chat.ts", 275], ["markdown.ts", 180], ["views.ts", 90], ["scene.ts", 32], ["tokens.ts", 23], ["nav.ts", 43], ["workspace.ts", 59], ["dossier.ts", 49], ["session.ts", 115], ["bars.ts", 50], ["lightbox.ts", 34], ["layer.ts", 249], ["askkeys.ts", 75], ["composer.ts", 190], ["ask.ts", 185], ["mirror.ts", 175], ["keypad.ts", 124], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
+	// Unreleased raised workspace.ts to 60 for the tower's subagents tethered under it.
+	for (const [name, max] of [["router.ts", 80], ["chat.ts", 275], ["markdown.ts", 180], ["views.ts", 90], ["scene.ts", 32], ["tokens.ts", 23], ["nav.ts", 43], ["workspace.ts", 60], ["dossier.ts", 49], ["session.ts", 115], ["bars.ts", 50], ["lightbox.ts", 34], ["layer.ts", 249], ["askkeys.ts", 75], ["composer.ts", 190], ["ask.ts", 185], ["mirror.ts", 175], ["keypad.ts", 124], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
 	// 0.28.0 to 185 with the answer keys' hooks into gui/ask.ts (the focus on the first option, the textarea). 0.28.0 raised gui/ask.ts from 156 to 175 for the secret panel: the masked field with Show and Hide, Submit, the way back to the terminal, the unsupported-remote notice, and a value that leaves with its one request.
 	// 0.10.0: the page's text comes from Paraglide's messages (gui/messages), which raised chat.ts, views.ts, layer.ts, ask.ts, mirror.ts, and doc.ts by one
 	// line each for the messages import; the strings replaced in place. gui/i18n.ts picks the locale (the menu's choice, the browser's languages with
@@ -275,7 +277,8 @@ test("the TypeScript source stays within its size budgets", () => {
 		// Unreleased to 833: main.ts mounts the dialogs' keys (hotkeys.ts) and takes the modal selector from it.
 	// Unreleased to 835: quit.ts aims a finished subagent's button at Dismiss and posts it without asking.
 	// Unreleased to 840: render.ts's `say`, which flags a unit's note red while it only waits on a running monitor.
-	assert.ok(page <= 840, `the page's TypeScript has ${page} lines`);
+	// Unreleased to 841: render.ts draws a tower's subagents under its base's header.
+	assert.ok(page <= 841, `the page's TypeScript has ${page} lines`);
 });
 
 test("the built page is small, self-contained (no remote URLs, fonts, or imports), and carries no demo fixture", { skip: !existsSync(join(root, "dist/gui/index.html")) && "run npm run gui:build first" }, () => {
@@ -325,7 +328,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 38.2 KB / 14.55 KB gzipped for the note of a unit kept working by a running monitor, in both languages.
 	// Unreleased to 38.75 KB / 14.7 KB gzipped for Dismiss on a finished subagent (quit.ts), in both languages.
 	// Unreleased to 38.85 KB for `say`: the note of a unit that only waits on a running monitor flagged red wherever it shows.
-	assert.ok(size(entry).length <= 38_850 && gz(entry) <= 14_700, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// Unreleased to 39.05 KB / 14.75 KB gzipped for a tower's subagents on the map: under its base's header, and counted in the totals, alerts, and log.
+	assert.ok(size(entry).length <= 39_050 && gz(entry) <= 14_750, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).

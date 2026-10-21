@@ -181,7 +181,7 @@ test("an alert says when its unit has closed: its pane is gone, or pi-herdr-agen
 });
 
 test("alerts come from towers, agents, subagents, and units outside the net; the first snapshot raises only questions and errors", () => {
-	const net: Net = { bases: [{ id: "w1", label: "W", mark: "working", head: true, tower: { name: "tower", mark: "waiting", key: "t", control: true }, outposts: [], tabs: [{ id: "t1", label: "a", units: [{ id: "m", key: "m", control: true, name: "m", role: "main", mark: "idle", subs: [{ id: "s", key: "s", control: true, name: "s", role: "subagent", mark: "done", subs: [] }] }] }], outside: [{ id: "o", key: "o", control: true, name: "o", role: "outside", mark: "error", subs: [] }] }] };
+	const net: Net = { bases: [{ id: "w1", label: "W", mark: "working", head: true, tower: { name: "tower", mark: "waiting", key: "t", control: true, subs: [] }, outposts: [], tabs: [{ id: "t1", label: "a", units: [{ id: "m", key: "m", control: true, name: "m", role: "main", mark: "idle", subs: [{ id: "s", key: "s", control: true, name: "s", role: "subagent", mark: "done", subs: [] }] }] }], outside: [{ id: "o", key: "o", control: true, name: "o", role: "outside", mark: "error", subs: [] }] }] };
 	const first = alertsOf(net, 1);
 	assert.deepEqual([...first.keys()].sort(), ["m", "o", "s", "t"]);
 	assert.deepEqual(arrivals(undefined, first).map((a) => a.key).sort(), ["o", "t"], "a finished subagent at load is not news");

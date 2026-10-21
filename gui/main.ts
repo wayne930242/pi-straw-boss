@@ -59,7 +59,7 @@ const openTile = (tile: Tile, take?: boolean) => withPanels((p) => p.tiles.open(
 const tabIcon = document.querySelector<HTMLLinkElement>('link[rel="icon"]'), plainIcon = tabIcon && decodeURIComponent(tabIcon.href.slice(tabIcon.href.indexOf(",") + 1));
 let badged = 0;
 function badge(net: Net) {
-	const n = net.bases.flatMap((b) => [...(b.tower ? [b.tower] : []), ...[...b.tabs.flatMap((t) => t.units), ...b.outside].flatMap((u) => [u, ...u.subs])]).filter((u) => u.mark === "waiting" || u.pending).length;
+	const n = net.bases.flatMap((b) => [...(b.tower ? [b.tower, ...b.tower.subs] : []), ...[...b.tabs.flatMap((t) => t.units), ...b.outside].flatMap((u) => [u, ...u.subs])]).filter((u) => u.mark === "waiting" || u.pending).length;
 	if (!tabIcon || !plainIcon || n === badged) return;
 	badged = n;
 	const dot = `<circle cx='23' cy='9' r='9' fill='#ffd166' stroke='#0b1220' stroke-width='2'/><text x='23' y='13' text-anchor='middle' font-family='sans-serif' font-size='${n > 9 ? 9 : 12}' font-weight='700' fill='#06101e'>${n > 9 ? "9+" : n}</text>`;

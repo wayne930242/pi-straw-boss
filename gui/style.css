@@ -206,6 +206,7 @@ svg { display: block; }
 .unit[data-mark="idle"] > .card { opacity: 0.85; }
 .subs { position: relative; margin: 6px 0 0 22px; padding-left: 18px; }
 .subs:empty { display: none; }
+.base > .tower-subs { margin: -8px 0 12px 22px; }
 .subs::before { content: ""; position: absolute; left: 3px; top: -4px; bottom: 22px; width: 1px; background: repeating-linear-gradient(rgba(122, 152, 224, 0.5) 0 4px, transparent 4px 8px); }
 .subs > .unit > .card::before { content: ""; position: absolute; left: -15px; top: 50%; width: 15px; height: 1px; background: repeating-linear-gradient(90deg, rgba(122, 152, 224, 0.5) 0 4px, transparent 4px 8px); }
 .subs > .unit { position: relative; }
@@ -334,6 +335,9 @@ a.tower:hover::before { border-color: var(--c); }
 .say p { max-height: 4.05em; overflow: hidden; overflow-wrap: anywhere; }
 .drones { position: relative; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; width: 100%; padding-top: 16px; }
 .drones:empty { display: none; }
+/* A tower's subagents tether under the big tower at the left of the base header, not under the middle. */
+.tower-drones { justify-content: flex-start; padding-left: 35px; margin-top: -8px; }
+.drones.tower-drones::before { left: 82px; }
 .drones::before { content: ""; position: absolute; top: 0; left: 50%; width: 1px; height: 14px; background: repeating-linear-gradient(rgba(122, 152, 224, 0.6) 0 4px, transparent 4px 8px); }
 .camp .token { width: 156px; }
 [data-group="outside"] .plate { filter: saturate(0.3); outline: 1px dashed rgba(139, 153, 186, 0.55); outline-offset: 4px; }
@@ -587,6 +591,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 	.bases { gap: 18px; }
 	.keep { padding: 6px; gap: 12px; }
 	.tower.big { width: 84px; height: 84px; }
+	.tower-drones { padding-left: 1px; } .drones.tower-drones::before { left: 48px; }
 	.tally { flex-wrap: wrap; }
 	.col { width: 100%; }
 	/* Full-screen layers, one above the next: a session's comms with its composer fixed at the bottom over the keyboard, a tile opened over it, and the dossier (Info) over both. */

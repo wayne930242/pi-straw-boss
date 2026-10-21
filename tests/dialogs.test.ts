@@ -401,7 +401,7 @@ test("documents: a tower carries its documents too, in the snapshot's JSON", asy
 	const x = hub(), path = file([]);
 	x.h.receive("S", x.list([], { file: path, documents: [doc()] }));
 	const refs = new Map<string, Ref>([["S", { key: "S", base: "wA", name: "tower", role: "tower", file: path, pane: "wA:p1" }]]);
-	const out: Net = { bases: [{ id: "wA", label: "Alpha", mark: "idle", head: true, tower: { name: "tower", mark: "idle", key: "S", control: true }, outposts: [], outside: [], tabs: [] }] };
+	const out: Net = { bases: [{ id: "wA", label: "Alpha", mark: "idle", head: true, tower: { name: "tower", mark: "idle", key: "S", control: true, subs: [] }, outposts: [], outside: [], tabs: [] }] };
 	await withPending(out, (key) => refs.get(key)?.file, x.h.relayed([{ id: "S", herdrLocation: { status: "current", paneId: "wA:p1" } }], refs));
 	const tower = JSON.parse(JSON.stringify(out)).bases[0].tower;
 	assert.deepEqual(tower.docs.map((d: { display: string }) => d.display), ["docs/plan.html"]);

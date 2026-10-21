@@ -71,7 +71,7 @@ test("arrivals: nothing the first time a unit is seen, then each capability it d
 
 test("a document arrives as a tile only on its own unit's comms; elsewhere nothing opens (towers and subagents included)", () => {
 	const u = (key: string, docs: DocCard[] = [], subs: Unit[] = []): Unit => ({ id: key, key, control: true, name: `n-${key}`, role: "main", mark: "idle", subs, docs });
-	const net = (extra: DocCard[]): Net => ({ bases: [{ id: "w", label: "w", mark: "idle", head: true, tower: { name: "tw", mark: "idle", key: "T", control: true, docs: extra.filter((c) => c.cap.startsWith("t")) }, outposts: [], outside: [], tabs: [{ id: "t", label: "t", units: [u("S", extra.filter((c) => c.cap.startsWith("s"))), u("M", extra.filter((c) => c.cap.startsWith("m")), [u("C", extra.filter((c) => c.cap.startsWith("c")))])] }] }] });
+	const net = (extra: DocCard[]): Net => ({ bases: [{ id: "w", label: "w", mark: "idle", head: true, tower: { name: "tw", mark: "idle", key: "T", control: true, docs: extra.filter((c) => c.cap.startsWith("t")), subs: [] }, outposts: [], outside: [], tabs: [{ id: "t", label: "t", units: [u("S", extra.filter((c) => c.cap.startsWith("s"))), u("M", extra.filter((c) => c.cap.startsWith("m")), [u("C", extra.filter((c) => c.cap.startsWith("c")))])] }] }] });
 	const known = new Map<string, Set<string>>(), opened: [string, string][] = [];
 	shelve(net([]), known, "S", (unit, c) => opened.push([unit, c.cap]));
 	shelve(net([card("s1", "a.md"), card("m1", "b.md"), card("t1", "c.md"), card("c1", "d.md")]), known, "S", (unit, c) => opened.push([unit, c.cap]));

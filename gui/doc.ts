@@ -70,7 +70,7 @@ export function docTile(unit: string, card: DocCard): Tile {
 export function shelve(net: Net, seen: Map<string, Set<string>>, at: string | undefined, arrive: (unit: string, card: DocCard) => void) {
 	const cards = new Map<string, DocCard>(), keys = new Set<string>();
 	for (const b of net.bases)
-		for (const u of [...(b.tower ? [b.tower] : []), ...[...b.tabs.flatMap((t) => t.units), ...b.outside].flatMap((x) => [x, ...x.subs])]) {
+		for (const u of [...(b.tower ? [b.tower, ...b.tower.subs] : []), ...[...b.tabs.flatMap((t) => t.units), ...b.outside].flatMap((x) => [x, ...x.subs])]) {
 			for (const c of u.docs ?? []) cards.set(c.cap, c);
 			for (const c of arrivals(seen, u.key, u.docs)) if (u.key === at) arrive(u.name, c);
 			keys.add(u.key);

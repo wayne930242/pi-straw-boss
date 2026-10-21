@@ -60,6 +60,19 @@ test("a sub workspace that already shows as a launched subagent is not an outpos
 	assert.equal(net.bases[0]!.tabs[0]!.units[0]!.subs[0]!.name, "fix");
 });
 
+test("a tower's subagents hang under the tower, count toward its base, and are neither outside the net nor an outpost", () => {
+	const known = [...panes.map((p) => (p.pane_id === "wA:p5" ? { ...p, workspace_id: "wA", agent: "pi" } : p)), pane("wA:p9", "wA:t3", {}, { workspace_id: "wA", agent: "pi", agent_status: "blocked" })];
+	const refs = new Map<string, Ref>();
+	const net = buildNet({ sessions: sessions.filter((s) => s.id !== "m2"), panes: known, workspaces, children: (p) => (p?.pane_id === "wA:p5" ? [child("scout", "waiting", { id: "tc-1", pane: "wA:p9" }), child("fix", "working", { id: "tc-2", workspace: "wA2" })] : []) }, refs);
+	const alpha = net.bases[0]!;
+	assert.deepEqual(alpha.tower?.subs.map((s) => [s.key, s.name, s.role, s.mark, s.control]), [["tc-1", "scout", "subagent", "waiting", true], ["tc-2", "fix", "subagent", "working", false]]);
+	assert.deepEqual(alpha.outside, [], "the tower's subagent pane belongs to the net");
+	assert.deepEqual(alpha.outposts, [], "a sub workspace the tower launched is its subagent, not an outpost");
+	assert.equal(alpha.mark, "waiting", "a tower's waiting subagent raises its base");
+	assert.equal(refs.get("tc-1")?.role, "subagent");
+	assert.deepEqual(net.bases[1]!.tower?.subs, []);
+});
+
 test("the snapshot is plain JSON that round-trips, and an empty Herdr is an empty net", () => {
 	const net = buildNet({ sessions, panes, workspaces, children: () => [] });
 	assert.equal(JSON.stringify(JSON.parse(JSON.stringify(net))), JSON.stringify(net));

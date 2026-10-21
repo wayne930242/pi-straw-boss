@@ -5,11 +5,11 @@ import { aim, aimOpening, html, LABEL, mark, PLATE, sync, text, urgent } from ".
 import { type Scene, wsOf } from "./scene.ts";
 import { fillToken, tokenEl } from "./tokens.ts";
 
-// The workspace route: its base zoomed in. The tower, each tab as a squad of unit tokens, subagents tethered under their launcher, outposts, and the
+// The workspace route: its base zoomed in. The tower with its subagents, each tab as a squad of unit tokens, subagents tethered under their launcher, outposts, and the
 // workspace's other pi panes as unaligned units.
 
 const colEl = () => html(`<div class="col"><a class="token">${PLATE}<span class="name"></span><span class="line"><em class="role"></em><span class="note"></span></span></a><div class="say"><p></p></div><div class="drones"></div></div>`);
-const ZOOM = () => `<div class="zoom-in"><header class="base keep"><a class="tower big"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></a><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>${m.head_tower()}</span><h2></h2><p></p></div><dl class="tally"><div><dt>${m.squads()}</dt><dd></dd></div><div><dt>${m.units()}</dt><dd></dd></div><div data-mark="working"><dt>${m.stat_working()}</dt><dd></dd></div><div data-mark="waiting"><dt>${m.stat_waiting()}</dt><dd></dd></div></dl></header><div class="spawn-btns"><button type="button" class="pair-btn"></button></div><div class="squads"></div><div class="camps"><section class="tab squad camp" data-group="outposts"><h3><svg><use href="#i-outpost"/></svg><b>${m.outposts()}</b><small></small></h3><div class="formation"></div></section><section class="tab squad camp" data-group="outside"><h3><svg><use href="#i-outside"/></svg><b>${m.outside_net()}</b><small>${m.outside_note()}</small></h3><div class="formation"></div></section></div><p class="lost" hidden></p></div>`;
+const ZOOM = () => `<div class="zoom-in"><header class="base keep"><a class="tower big"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></a><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>${m.head_tower()}</span><h2></h2><p></p></div><dl class="tally"><div><dt>${m.squads()}</dt><dd></dd></div><div><dt>${m.units()}</dt><dd></dd></div><div data-mark="working"><dt>${m.stat_working()}</dt><dd></dd></div><div data-mark="waiting"><dt>${m.stat_waiting()}</dt><dd></dd></div></dl></header><div class="drones tower-drones"></div><div class="spawn-btns"><button type="button" class="pair-btn"></button></div><div class="squads"></div><div class="camps"><section class="tab squad camp" data-group="outposts"><h3><svg><use href="#i-outpost"/></svg><b>${m.outposts()}</b><small></small></h3><div class="formation"></div></section><section class="tab squad camp" data-group="outside"><h3><svg><use href="#i-outside"/></svg><b>${m.outside_net()}</b><small>${m.outside_note()}</small></h3><div class="formation"></div></section></div><p class="lost" hidden></p></div>`;
 
 export function drawWorkspace(host: HTMLElement, scene: Readonly<Scene>) {
 	if (!host.firstElementChild) host.append(html(ZOOM()));
@@ -31,7 +31,8 @@ export function drawWorkspace(host: HTMLElement, scene: Readonly<Scene>) {
 	text(root, "h2", base.label);
 	aimOpening(root.querySelector(".spawn-btns button")!, base);
 	text(root, ".title p", base.tower ? m.control_tower({ state: LABEL[base.tower.mark]() }) : m.no_tower());
-	const all = base.tabs.flatMap((t) => t.units.flatMap((u) => [u, ...u.subs]));
+	sync(root.querySelector(".tower-drones")!, base.tower?.subs ?? [], tokenEl, (el, s) => (el.classList.add("drone"), fillToken(el, s, base.id)));
+	const all = [...(base.tower?.subs ?? []), ...base.tabs.flatMap((t) => t.units.flatMap((u) => [u, ...u.subs]))];
 	[base.tabs.length, all.length, all.filter((u) => u.mark === "working").length, all.filter((u) => u.mark === "waiting").length].forEach((n, i) => (root.querySelectorAll("dd")[i]!.textContent = String(n)));
 	const fillCol = (col: HTMLElement, u: Unit) => {
 		mark(col, u.mark);

@@ -11,7 +11,7 @@ function named(net: Net): Map<string, { name: string; mark: Mark }> {
 	const all = new Map<string, { name: string; mark: Mark }>();
 	for (const base of net.bases) {
 		if (base.tower) all.set(`tower:${base.id}`, { name: m.tower_name({ label: base.label }), mark: base.tower.mark });
-		for (const unit of base.tabs.flatMap((t) => t.units)) for (const u of [unit, ...unit.subs]) all.set(u.id, { name: u.name, mark: u.mark });
+		for (const u of [...(base.tower?.subs ?? []), ...base.tabs.flatMap((t) => t.units.flatMap((unit) => [unit, ...unit.subs]))]) all.set(u.id, { name: u.name, mark: u.mark });
 		for (const o of base.outposts) all.set(o.id, { name: o.label, mark: o.mark });
 	}
 	return all;

@@ -23,7 +23,7 @@ export function alertsOf(net: Net, at: number): Map<string, Alert> {
 	const out = new Map<string, Alert>();
 	for (const b of net.bases) {
 		// `pending` is always set, so a refreshed alert drops a question that is gone.
-		for (const x of [...(b.tower ? [{ ...b.tower, role: "tower" }] : []), ...[...b.tabs.flatMap((t) => t.units), ...b.outside].flatMap((u) => [u, ...u.subs])] as Partial<Unit>[]) {
+		for (const x of [...(b.tower ? [{ ...b.tower, role: "tower" }, ...b.tower.subs] : []), ...[...b.tabs.flatMap((t) => t.units), ...b.outside].flatMap((u) => [u, ...u.subs])] as Partial<Unit>[]) {
 			out.set(x.key!, { key: x.key!, ws: b.id, name: x.name!, role: x.role!, mark: x.mark!, note: x.note, at, pending: x.pending, closed: !x.control || Boolean(x.ended) });
 			// One alert per failed monitor, while its session lists it; a monitor that ran again under the same id is a new one (`at`).
 			for (const mo of x.monitors ?? []) if (mo.status === "error" || mo.status === "stale") ((key) => out.set(key, { key, unit: x.key!, ws: b.id, name: x.name!, role: x.role!, mark: "error", note: `monitor:${mo.status}:${mo.what}`, at }))(`${x.key}\u001fmonitor:${mo.id}:${mo.at}`);

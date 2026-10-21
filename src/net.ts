@@ -17,7 +17,7 @@ export interface Queued { text: string; as: "steer" | "followUp" }
 export interface Unit extends Shelf { queued?: Queued[]; monitors?: Monitor[]; id: string; key: string; control: boolean; name: string; role: "main" | "member" | "subagent" | "outside"; mark: Mark; note?: string; subs: Unit[]; pending?: Pending; ended?: boolean }
 export interface Tab { id: string; label: string; units: Unit[] }
 export interface Outpost { id: string; label: string; mark: Mark }
-export interface Base { id: string; label: string; mark: Mark; head: boolean; tower: ({ name: string; mark: Mark; key: string; control: boolean; pending?: Pending; queued?: Queued[]; monitors?: Monitor[] } & Shelf) | null; tabs: Tab[]; outposts: Outpost[]; outside: Unit[] }
+export interface Base { id: string; label: string; mark: Mark; head: boolean; tower: ({ name: string; mark: Mark; key: string; control: boolean; pending?: Pending; queued?: Queued[]; monitors?: Monitor[]; subs: Unit[] } & Shelf) | null; tabs: Tab[]; outposts: Outpost[]; outside: Unit[] }
 export interface Net { bases: Base[] }
 /** What the server may read for a key: the registry entry is the allow list, and paths never come from the browser. */
 export interface Ref { key: string; base: string; name: string; role: string; file?: string; pane?: string }
@@ -43,11 +43,18 @@ export function buildNet({ sessions, panes: ps, workspaces: all, children, sessi
 		const pane = paneOf(s), role = joinedRole(pane?.tokens?.sb_role);
 		return role ? [{ s, pane, role, base: s.herdrLocation?.workspace?.id, tab: s.herdrLocation?.tab }] : [];
 	});
-	const rowsOf = new Map(joined.map(({ s, pane }) => [s.id, children(pane)]));
+	const towerOf = (w: Workspace) => sessions.find((s) => s.id === w.tokens?.tower);
+	// A tower launches subagents too: they hang under it, as a member's hang under the member.
+	const towers = all.filter((w) => !isSub(w)).flatMap((w) => ((t) => (t ? [t] : []))(towerOf(w)));
+	const rowsOf = new Map([...joined, ...towers.map((s) => ({ s, pane: paneOf(s) }))].map(({ s, pane }) => [s.id, children(pane)]));
 	// A sub workspace that already shows as a launched subagent is not an outpost as well.
 	const claimed = new Set([...rowsOf.values()].flat().map((r) => r.workspace));
 	const held = new Set([...joined.map((j) => j.pane?.pane_id), ...[...rowsOf.values()].flat().map((r) => r.pane)]);
 	const keep = (r: Ref) => (refs.set(r.key, r), r.key);
+	const subsOf = (launcher: string, base: string) => (rowsOf.get(launcher) ?? []).map((r): Unit => {
+		const key = keep({ key: r.id ?? `${launcher}/${r.text}`, base, name: r.text, role: "subagent", file: readable(r.file), pane: r.pane });
+		return { id: key, key, control: Boolean(r.pane), name: r.text, role: "subagent", mark: r.mark, note: r.note, subs: [], ...(r.ended && { ended: true }) };
+	});
 	const bases = all.filter((w) => !isSub(w)).flatMap((w): Base[] => {
 		const mine = joined.filter((j) => j.base === w.workspace_id && j.tab);
 		const tabs = Object.values(Object.groupBy(mine, (j) => j.tab!.id)).map((group = []): Tab => ({
@@ -55,16 +62,13 @@ export function buildNet({ sessions, panes: ps, workspaces: all, children, sessi
 			label: group[0]!.tab!.label,
 			units: group.toSorted((a, b) => Number(b.role === "main") - Number(a.role === "main")).map(({ s, pane, role }): Unit => {
 				const mark = sessionMark(s, pane);
-				const subs = (rowsOf.get(s.id) ?? []).map((r): Unit => {
-					const key = keep({ key: r.id ?? `${s.id}/${r.text}`, base: w.workspace_id, name: r.text, role: "subagent", file: readable(r.file), pane: r.pane });
-					return { id: key, key, control: Boolean(r.pane), name: r.text, role: "subagent", mark: r.mark, note: r.note, subs: [], ...(r.ended && { ended: true }) };
-				});
+				const subs = subsOf(s.id, w.workspace_id);
 				const key = keep({ key: s.id, base: w.workspace_id, name: s.name ?? s.id, role, file: piFile(pane, s.id), pane: pane?.pane_id });
 				return { id: key, key, control: pane?.agent === "pi", name: s.name ?? s.id, role, mark, note: note(mark, s.status), subs };
 			}),
 		}));
 		const outposts = all.filter((x) => isSub(x) && parentOf(all, x) === w && !claimed.has(x.workspace_id)).map((x): Outpost => ({ id: x.workspace_id, label: x.label, mark: markOf(x.agent_status) }));
-		const tower = sessions.find((s) => s.id === w.tokens?.tower), towerPane = tower && paneOf(tower);
+		const tower = towerOf(w), towerPane = tower && paneOf(tower), towerSubs = tower ? subsOf(tower.id, w.workspace_id) : [];
 		const outside = ps.filter((p) => p.workspace_id === w.workspace_id && p.agent === "pi" && p.pane_id !== towerPane?.pane_id && !held.has(p.pane_id)).flatMap((p): Unit[] => {
 			const s = sessions.find((x) => x.herdrLocation?.paneId === p.pane_id), file = p.agent_session?.value;
 			const key = s?.id ?? (file && basename(file, ".jsonl").split("_").pop());
@@ -73,12 +77,12 @@ export function buildNet({ sessions, panes: ps, workspaces: all, children, sessi
 			keep({ key, base: w.workspace_id, name, role: "outside", file: readable(file, s?.id), pane: p.pane_id });
 			return [{ id: key, key, control: true, name, role: "outside", mark, note: note(mark, s?.status), subs: [] }];
 		});
-		const marks = [...tabs.flatMap((t) => t.units.flatMap((u) => [u.mark, ...u.subs.map((c) => c.mark)])), ...outposts.map((o) => o.mark)];
+		const marks = [...towerSubs.map((c) => c.mark), ...tabs.flatMap((t) => t.units.flatMap((u) => [u.mark, ...u.subs.map((c) => c.mark)])), ...outposts.map((o) => o.mark)];
 		// A base shows what needs attention most: a waiting unit, then a working one, else the workspace's own status.
 		const mark = (["waiting", "working"] as const).find((m) => marks.includes(m)) ?? markOf(w.agent_status);
 		if (!tower && !tabs.length) return [];
 		const named = tower && keep({ key: tower.id, base: w.workspace_id, name: tower.name ?? tower.id, role: "tower", file: piFile(towerPane, tower.id), pane: towerPane?.pane_id });
-		return [{ id: w.workspace_id, label: w.label, mark, head: w === headOf(all), tower: tower && named ? { name: tower.name ?? tower.id, mark: sessionMark(tower, towerPane), key: named, control: towerPane?.agent === "pi" } : null, tabs, outposts, outside }];
+		return [{ id: w.workspace_id, label: w.label, mark, head: w === headOf(all), tower: tower && named ? { name: tower.name ?? tower.id, mark: sessionMark(tower, towerPane), key: named, control: towerPane?.agent === "pi", subs: towerSubs } : null, tabs, outposts, outside }];
 	});
 	return { bases };
 }
@@ -96,12 +100,12 @@ export async function collectNet({ run, world = worldOf(run), sessions, now = Da
 export function netSource(env: { run: HerdrRun; world?: HerdrWorld; sessions(): Promise<Session[]>; sessionDir?: string; hub?: { relayed(sessions: Session[], refs: Map<string, Ref>): Relayed } }) {
 	let refs = new Map<string, Ref>(), live: Session[] = [];
 	const gone = new Map<string, { ref: Ref; at: number }>(), sessions = async () => (live = await env.sessions()), dismissed = new Set<string>(), ended = new Set<string>();
-	const drop = (u: Unit) => (u.subs.forEach((c) => c.ended && ended.add(c.key)), (u.subs = u.subs.filter((c) => !(c.ended && dismissed.has(c.key))))); // finished subagents the page dismissed
+	const drop = (u: { subs: Unit[] }) => (u.subs.forEach((c) => c.ended && ended.add(c.key)), (u.subs = u.subs.filter((c) => !(c.ended && dismissed.has(c.key))))); // finished subagents the page dismissed
 	return {
 		async read(): Promise<Net> {
 			const next = new Map<string, Ref>(), at = Date.now(), net = await collectNet({ ...env, sessions, refs: next });
 			ended.clear();
-			net.bases.forEach((b) => [...b.tabs.flatMap((t) => t.units), ...b.outside].forEach(drop));
+			net.bases.forEach((b) => [...(b.tower ? [b.tower] : []), ...b.tabs.flatMap((t) => t.units), ...b.outside].forEach(drop));
 			for (const key of dismissed) if (!next.has(key)) dismissed.delete(key); // gone from the net: nothing left to hide
 			await withPending(net, (key) => next.get(key)?.file, env.hub?.relayed(live, next)); // what waiting units wait on, and the dialogs bridges relay
 			for (const [key, ref] of refs) if (!next.has(key)) gone.set(key, { ref, at });

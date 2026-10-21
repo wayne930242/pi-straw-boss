@@ -13,8 +13,8 @@ export type Found = { u: Who & { subs: Unit[] }; base: Base; squad?: string; lau
 
 export function locate(net: Net | undefined, key: string): Found | undefined {
 	for (const base of net?.bases ?? []) {
-		if (base.tower?.key === key) return { u: { key, name: base.tower.name, role: "tower", mark: base.tower.mark, control: base.tower.control, pending: base.tower.pending, docs: base.tower.docs, docsCut: base.tower.docsCut, subs: [] }, base };
-		for (const [squad, units] of [...base.tabs.map((t) => [t.label, t.units] as const), [undefined, base.outside] as const])
+		if (base.tower?.key === key) return { u: { key, name: base.tower.name, role: "tower", mark: base.tower.mark, control: base.tower.control, pending: base.tower.pending, docs: base.tower.docs, docsCut: base.tower.docsCut, subs: base.tower.subs }, base };
+		for (const [squad, units] of [...base.tabs.map((t) => [t.label, t.units] as const), [undefined, base.outside] as const, [undefined, base.tower?.subs ?? []] as const])
 			for (const u of units) {
 				if (u.key === key) return { u, base, squad };
 				const sub = u.subs.find((s) => s.key === key);

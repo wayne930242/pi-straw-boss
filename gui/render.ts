@@ -127,7 +127,7 @@ export function aimOpening(button: HTMLElement, b: Base, tab?: string) {
 	if (button.textContent !== (kind === "main" ? m.open_main() : m.open_member())) button.textContent = kind === "main" ? m.open_main() : m.open_member();
 }
 
-const baseEl = () => html(`<section class="base"><header><div class="tower"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></div><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>${m.head_tower()}</span><h2><a class="enter-base"></a></h2><p></p><button type="button" class="quit-btn tower-quit" data-close="unit" hidden></button></div><button type="button" class="quit-btn" data-close="base"></button></header><div class="spawn-btns"><button type="button" class="pair-btn"></button></div><div class="tabs"></div><div class="outposts" data-label="${m.outposts()}"></div></section>`);
+const baseEl = () => html(`<section class="base"><header><div class="tower"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></div><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>${m.head_tower()}</span><h2><a class="enter-base"></a></h2><p></p><button type="button" class="quit-btn tower-quit" data-close="unit" hidden></button></div><button type="button" class="quit-btn" data-close="base"></button></header><div class="subs tower-subs"></div><div class="spawn-btns"><button type="button" class="pair-btn"></button></div><div class="tabs"></div><div class="outposts" data-label="${m.outposts()}"></div></section>`);
 function fillBase(el: HTMLElement, b: Base) {
 	mark(el, b.mark);
 	el.classList.toggle("head", b.head);
@@ -140,6 +140,7 @@ function fillBase(el: HTMLElement, b: Base) {
 	aimOpening(el.querySelector(".spawn-btns button")!, b);
 	aimBase(el.querySelector("header > .quit-btn")!, b);
 	aimTower(el.querySelector(".tower-quit")!, b.tower);
+	sync(el.querySelector(".tower-subs")!, b.tower?.subs ?? [], unitEl, fillUnit);
 	sync(el.querySelector(".tabs")!, b.tabs, () => html(`<div class="tab"><h3><span></span><button type="button" class="tab-add"></button><button type="button" class="quit-btn" data-close="tab"></button></h3><div class="units"></div></div>`), (tab, t) => {
 		text(tab, "h3 span", m.tab_label({ label: t.label }));
 		aimSquad(tab.querySelector(".quit-btn")!, b, t);
@@ -185,7 +186,7 @@ export function mountPage(): Page {
 		layout,
 		/** The totals in the header: drawn for every route, since the header is always in view. */
 		stats(net) {
-			const units = net.bases.flatMap((b) => b.tabs.flatMap((t) => t.units.flatMap((u) => [u, ...u.subs])));
+			const units = net.bases.flatMap((b) => [...(b.tower?.subs ?? []), ...b.tabs.flatMap((t) => t.units.flatMap((u) => [u, ...u.subs]))]);
 			const count = (m?: Mark) => String(units.filter((u) => !m || u.mark === m).length);
 			for (const [id, value] of [["s-bases", String(net.bases.length)], ["s-agents", count()], ["s-working", count("working")], ["s-waiting", count("waiting")]] as const) byId(id, HTMLElement).textContent = value;
 		},
