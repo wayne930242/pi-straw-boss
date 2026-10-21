@@ -103,10 +103,10 @@ export function netSource(env: { run: HerdrRun; world?: HerdrWorld; sessions(): 
 	return {
 		async read(): Promise<Net> {
 			const next = new Map<string, Ref>(), at = Date.now(), net = await collectNet({ ...env, sessions, refs: next });
+			await withPending(net, (key) => next.get(key)?.file, env.hub?.relayed(live, next)); // what waiting units wait on, and the dialogs bridges relay; a subagent watching a monitor is not finished, so this comes before the finished are counted
 			ended.clear();
 			net.bases.forEach((b) => [...(b.tower ? [b.tower] : []), ...b.tabs.flatMap((t) => t.units), ...b.outside].forEach(drop));
 			for (const key of dismissed) if (!next.has(key)) dismissed.delete(key); // gone from the net: nothing left to hide
-			await withPending(net, (key) => next.get(key)?.file, env.hub?.relayed(live, next)); // what waiting units wait on, and the dialogs bridges relay
 			for (const [key, ref] of refs) if (!next.has(key)) gone.set(key, { ref, at });
 			for (const [key, old] of gone) if (next.has(key) || at - old.at > RECENT_MS) gone.delete(key);
 			refs = next;

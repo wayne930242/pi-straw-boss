@@ -114,7 +114,7 @@ export const waitsForSecret = async (file: string) => (await pendingOf(file), CA
 export interface Relayed { dialogsOf(key: string): Dialog[] | undefined; merge(key: string, file: Pending | undefined, dialogs: Dialog[], readable: boolean, calls?: OpenCall[]): Pending; docsOf?(key: string): Pick<Unit, "docs" | "docsCut"> | undefined; queuedOf?(key: string): Queued[] | undefined; monitorsOf?(key: string): Monitor[] | undefined }
 
 const unitsOf = (b: Net["bases"][number]) => [...(b.tower ? [b.tower, ...b.tower.subs] : []), ...[...b.tabs.flatMap((t) => t.units), ...b.outside].flatMap((u) => [u, ...u.subs])];
-/** Adds what each waiting unit waits on, and the documents each unit shows, to a snapshot. A unit with a relayed dialog waits even before Herdr reports its pane blocked. */
+/** Adds what each waiting unit waits on (and takes a subagent that still watches a running monitor out of the finished), and the documents each unit shows, to a snapshot. A unit with a relayed dialog waits even before Herdr reports its pane blocked. */
 export async function withPending(net: Net, fileOf: (key: string) => string | undefined, relayed?: Relayed): Promise<Net> {
 	const jobs: Promise<unknown>[] = [];
 	for (const b of net.bases)
@@ -124,7 +124,9 @@ export async function withPending(net: Net, fileOf: (key: string) => string | un
 			const queued = relayed?.queuedOf?.(u.key);
 			if (queued?.length) u.queued = queued;
 			const monitors = relayed?.monitorsOf?.(u.key); if (monitors?.length) u.monitors = monitors;
-			if (u.mark === "idle" && monitors?.some((x) => x.status === "running")) [u.mark, b.mark, (u as Unit).note] = ["commanding", b.mark === "waiting" ? b.mark : "working", "watching a monitor"]; // idle with a running monitor: it will wake
+			// A unit marked done, or a subagent whose run is recorded done, whose pi is alive (control) and watches a running monitor has not finished: it wakes when the monitor reports.
+			if (u.control && (u.mark === "done" || (u as Unit).ended) && monitors?.some((x) => x.status === "running")) [(u as Unit).ended, u.mark] = [undefined, u.mark === "done" ? "idle" : u.mark];
+			if (u.mark === "idle" && !(u as Unit).ended && monitors?.some((x) => x.status === "running")) [u.mark, b.mark, (u as Unit).note] = ["commanding", b.mark === "waiting" ? b.mark : "working", "watching a monitor"]; // idle with a running monitor: it will wake
 			if (dialogs?.length) [u.mark, b.mark] = ["waiting", "waiting"];
 			if (dialogs?.length && u !== b.tower) (u as Unit).note = "waiting on a question";
 			const file = u.mark === "waiting" ? fileOf(u.key) : undefined;

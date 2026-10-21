@@ -257,3 +257,29 @@ test("the sessions-directory check resolves symlinks: a linked sessions director
 		rmSync(root, { recursive: true, force: true });
 	}
 });
+
+test("a subagent whose run is recorded done but whose pi still watches a running monitor is not finished: not ended, not dismissable, kept by dismiss all, commanding; once the monitor stops it is finished again", async () => {
+	const root = realpathSync(mkdtempSync(join(tmpdir(), "psb-net-watching-")));
+	try {
+		const dir = join(root, "sessions"), file = join(dir, "2026_s1.jsonl"), activity = join(dir, "artifacts", "s1", "subagent-activity");
+		mkdirSync(activity, { recursive: true });
+		writeFileSync(file, "");
+		for (const name of ["kid-gone", "kid-open"]) writeFileSync(join(activity, `${name}.json`), JSON.stringify({ phase: "done" }));
+		const open = { pane_id: "wA:p9", workspace_id: "wA", tab_id: "wA:t1", agent: "pi", agent_status: "idle", label: "kid-open", agent_session: { value: join(dir, "2026_kid-open.jsonl") } } as Pane;
+		const ps = [...panes.map((p) => (p.pane_id === "wA:p1" ? { ...p, agent: "pi", agent_session: { value: file } } : p)), open];
+		const herdr = async (args: string[]) => JSON.stringify({ result: args[0] === "pane" ? { panes: ps } : { workspaces } });
+		let status: "running" | "done" = "running";
+		const hub = { relayed: () => ({ dialogsOf: () => undefined, merge: () => ({}) as never, monitorsOf: (key: string) => (key === "kid-open" ? [{ id: "m", what: "npm run dev", status, lines: 0, at: 0 }] : undefined) }) };
+		const source = netSource({ run: herdr, sessions: async () => [session("s1", "one", { ws: "wA", tab: "wA:t1", pane: "wA:p1" })], sessionDir: dir, hub });
+		const kids = async () => Object.fromEntries((await source.read()).bases[0]!.tabs[0]!.units[0]!.subs.map((c) => [c.key, [Boolean(c.ended), c.mark]]));
+		assert.deepEqual(await kids(), { "kid-gone": [true, "done"], "kid-open": [false, "commanding"] }, "watching is not finished");
+		assert.equal(source.dismiss("kid-open"), false, "no Dismiss for it");
+		assert.equal(source.dismissAll(), 1, "dismiss all takes only the finished one");
+		assert.deepEqual(Object.keys(await kids()), ["kid-open"]);
+		status = "done";
+		assert.deepEqual(await kids(), { "kid-open": [true, "idle"] }, "the monitor stopped and pi is idle: finished as before");
+		assert.equal(source.dismiss("kid-open"), true);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});

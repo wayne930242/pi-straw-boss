@@ -168,3 +168,29 @@ test("waitsForSecret: any open call of secret_drop, and a file that cannot be re
 	assert.equal(await waitsForSecret(join(scratch, "missing.jsonl")), false);
 	assert.equal(await waitsForSecret(scratch), true, "a path that cannot be read as a file hides the mirror");
 });
+
+test("an ended subagent with a running monitor and its pi alive stops being ended; with no pi alive (no control) it stays ended", async () => {
+	const kid = (key: string, control: boolean): Unit => ({ id: key, key, control, name: key, role: "subagent", mark: "idle", ended: true, subs: [] });
+	const net: Net = { bases: [{ id: "w", label: "w", mark: "idle", head: true, tower: null, outposts: [], outside: [], tabs: [{ id: "t", label: "t", units: [{ id: "m", key: "m", control: true, name: "m", role: "main", mark: "idle", subs: [kid("a", true), kid("b", false), kid("c", true)] }] }] }] };
+	await withPending(net, () => undefined, { dialogsOf: () => undefined, merge: () => ({}) as never, monitorsOf: (key) => [{ id: "m", what: "tests", status: key === "c" ? "done" : "running", lines: 0, at: 0 }] });
+	const [a, b, c] = net.bases[0]!.tabs[0]!.units[0]!.subs;
+	assert.deepEqual([[a!.ended, a!.mark, a!.note], [b!.ended, b!.mark], [c!.ended, c!.mark]], [[undefined, "commanding", "watching a monitor"], [true, "idle"], [true, "idle"]]);
+	assert.equal(net.bases[0]!.tabs[0]!.units[0]!.mark, "commanding", "its parent commands too");
+});
+
+test("any unit marked done that has a running monitor and a live pi is not done (it commands, and raises no finished notice); when the monitor stops it is done again", async () => {
+	const { alertsOf, arrivals } = await import("../gui/alerts.ts");
+	const unit = (key: string, role: Unit["role"], mark: Unit["mark"]): Unit => ({ id: key, key, control: true, name: key, role, mark, subs: [] });
+	const make = (): Net => ({ bases: [{ id: "w", label: "w", mark: "idle", head: true, tower: null, outposts: [], outside: [unit("o", "outside", "done")], tabs: [{ id: "t", label: "t", units: [unit("m", "main", "done"), unit("k", "subagent", "done")] }] }] });
+	const read = async (status: "running" | "done") => {
+		const net = make();
+		await withPending(net, () => undefined, { dialogsOf: () => undefined, merge: () => ({}) as never, monitorsOf: () => [{ id: "x", what: "tests", status, lines: 0, at: 0 }] });
+		return net;
+	};
+	const watching = await read("running"), before = alertsOf(make(), 1).size ? new Map([...alertsOf(make(), 1)].map(([k, a]) => [k, { ...a, mark: "working" as const }])) : undefined;
+	assert.deepEqual([watching.bases[0]!.outside[0]!.mark, ...watching.bases[0]!.tabs[0]!.units.map((u) => u.mark)], ["commanding", "commanding", "commanding"]);
+	assert.deepEqual(arrivals(before, alertsOf(watching, 2)), [], "no finished notice while a monitor runs");
+	const stopped = await read("done");
+	assert.deepEqual([stopped.bases[0]!.outside[0]!.mark, ...stopped.bases[0]!.tabs[0]!.units.map((u) => u.mark)], ["done", "done", "done"]);
+	assert.deepEqual(arrivals(before, alertsOf(stopped, 3)).map((a) => a.key).sort(), ["k", "m", "o"], "once the monitor stops they finish, and say so");
+});
