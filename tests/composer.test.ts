@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { aftermath, confirmed, recall } from "../gui/composer.ts";
+import { aftermath, blocked, confirmed, recall } from "../gui/composer.ts";
+import { m } from "../gui/paraglide/messages.js";
+import { closed } from "../gui/scene.ts";
 import type { Answer } from "../gui/post.ts";
 
 const answer = (status: number, reason?: string): Answer => ({ ok: status < 400, status, body: reason ? { reason } : {} });
@@ -33,4 +35,16 @@ test("a stored note is read back as written: ours as [tone, text], a plain-text 
 	assert.deepEqual(recall("[broken"), ["error", "[broken"], "a damaged note still says something");
 	assert.equal(recall(null), undefined);
 	assert.equal(recall(""), undefined);
+});
+
+test("a finished subagent whose pi has exited has a closed channel and a composer that says so; one whose pi still runs keeps both", () => {
+	assert.equal(closed({ control: false, ended: true }, "live"), true, "finished, and no pane runs pi on its session");
+	assert.equal(closed({ control: true, ended: true }, "live"), false, "finished, but pi still runs (interactive, not auto-exited): it keeps its composer");
+	assert.equal(closed({ control: false }, "live"), false, "a unit that has not finished keeps the rule it had (no pane is said by the composer)");
+	assert.equal(closed({ control: true }, undefined), false, "the history has not said yet: the unit in the net decides");
+	assert.equal(closed(undefined, undefined), true, "neither a unit nor a state");
+	for (const unit of [undefined, { control: true }]) assert.equal(closed(unit, "recent"), true, "a session that left the net");
+	const gone = { name: "kid", control: false, live: !closed({ control: false, ended: true }, "live"), mark: "done" as const, online: true };
+	assert.equal(blocked(gone), m.blocked_ended(), "the existing ended reason, not the pane one");
+	assert.equal(blocked({ ...gone, control: true, live: !closed({ control: true, ended: true }, "live") }), undefined, "and an interactive finished subagent can be typed to");
 });

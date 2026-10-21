@@ -23,6 +23,12 @@ export function locate(net: Net | undefined, key: string): Found | undefined {
 	}
 }
 
+/**
+ * Whether a unit's channel is closed: its session left the net (`state`), or it is a finished subagent that no pane runs pi for any more. A finished
+ * subagent whose pi still runs (an interactive one, not auto-exited) keeps its channel, and so does a unit that is not finished.
+ */
+export const closed = (u: { control?: boolean; ended?: boolean } | undefined, state?: string) => (state ? state !== "live" : !u) || Boolean(u?.ended && !u.control);
+
 /** The unit a session route is about, as the net describes it, else as the history's header does: the same facts the comms header and the dossier both show. */
 export function subject(scene: Readonly<Scene>) {
 	if (scene.route.view !== "session") return;

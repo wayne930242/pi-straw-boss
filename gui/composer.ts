@@ -20,7 +20,7 @@ type Flight = { sent?: string; answer: Promise<Answer> };
 // Sends on their way, by session key. They outlive a composer replaced meanwhile (the route left and came back), whose successor waits for
 // them before it sends again and settles its own box, so text is neither shown as unsent after it went nor sent twice.
 const flights = new Map<string, Flight>();
-/** `answerable`: its question panel on the page answers it. */
+/** `live`: its channel is open (scene.ts `closed`). `answerable`: its question panel on the page answers it. */
 export interface Unit { name: string; control: boolean; live: boolean; mark: Mark; online: boolean; answerable?: boolean }
 
 /** The server's input API for one session. */
@@ -128,6 +128,7 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 	function draw() {
 		const why = blocked(unit), working = unit.mark === "working";
 		box.placeholder = why ?? m.placeholder({ name: unit.name });
+		box.disabled = attach.disabled = !unit.live; // a closed channel (the session left the net, or a finished subagent's pi exited) takes no typing at all, as it takes no sending
 		send.disabled = busy || Boolean(why) || !box.value.trim(); // nothing typed, nothing to send
 		follow.hidden = stop.hidden = !working || Boolean(why);
 		[follow.disabled, stop.disabled] = [send.disabled, busy]; // a follow-up needs a message too

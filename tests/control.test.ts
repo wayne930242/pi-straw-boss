@@ -415,3 +415,15 @@ test("dismiss: one key hides that subagent, all:true hides every finished one th
 	assert.deepEqual([(await phone.post("dismiss", { all: true })).status, (await phone.post("dismiss", { key: "kid-done" })).status], [200, 200], "a paired device dismisses as the page does");
 	assert.deepEqual(dismissed, ["kid-done", "kid-live", "kid-done"]);
 });
+
+test("a finished subagent whose pi exited (no pane backs it) is refused input and keys with 409 not_live and Herdr is not asked; one whose pi still runs is typed to", async () => {
+	const gone = await setup({ found: { role: "subagent", pane: undefined } });
+	for (const [path, payload] of [["sessions/sess-1/input", { text: "hi", as: "send" }], ["sessions/sess-1/keys", { keys: ["esc"] }]] as const) {
+		const r = await send(gone.gui, path, payload);
+		assert.deepEqual([r.status, r.body.error], [409, "not_live"], path);
+	}
+	assert.deepEqual(gone.calls, [], "Herdr was not asked");
+	const alive = await setup({ found: { role: "subagent" } });
+	assert.equal((await send(alive.gui, "sessions/sess-1/input", { text: "hi", as: "send" })).status, 200, "pi still runs in its pane");
+	assert.equal(alive.typed().length, 1);
+});
