@@ -15,8 +15,11 @@ import type { Net, Unit } from "../src/net.ts";
 export interface Alert { key: string; unit?: string; ws: string; name: string; role: string; mark: Mark; note?: string; at: number; pending?: Pending; gone?: boolean; closed?: boolean }
 /** The unit an alert is about. */
 export const unitOf = (a: Alert) => a.unit ?? a.key;
-/** Questions and errors outrank plain state changes. */
-export const rankOf = (m: Mark) => (m === "waiting" || m === "error" ? 0 : 1);
+/**
+ * 0 for a unit that waits on the user (mark waiting, or a dialog pending): the only prominent alert, in the HUD and the dialogs. 1 for the
+ * rest (an error, a monitor that failed, a unit that finished): notices, kept in the header's Notices list and never opened by themselves.
+ */
+export const rankOf = (a: Pick<Alert, "mark" | "pending">) => (a.mark === "waiting" || a.pending ? 0 : 1);
 
 /** Every unit of a net that can raise an alert (agents, subagents, towers, and the units outside the net), by key, and each monitor of theirs that failed or went quiet. */
 export function alertsOf(net: Net, at: number): Map<string, Alert> {
@@ -31,7 +34,13 @@ export function alertsOf(net: Net, at: number): Map<string, Alert> {
 	}
 	return out;
 }
-/** The alerts a new snapshot raises: a unit that turned to waiting or error, and (after the first snapshot) one that finished. */
+/**
+ * The alerts a new snapshot raises: a unit that started to wait on the user, and (after the first snapshot, so a page that opens on old
+ * failures is not buzzed by them) one that failed or finished.
+ */
 export function arrivals(before: Map<string, Alert> | undefined, now: Map<string, Alert>): Alert[] {
-	return [...now.values()].filter((a) => before?.get(a.key)?.mark !== a.mark && (rankOf(a.mark) === 0 || (before !== undefined && a.mark === "done")));
+	return [...now.values()].filter((a) => {
+		const old = before?.get(a.key);
+		return rankOf(a) === 0 ? !old || rankOf(old) !== 0 || old.mark !== a.mark : before !== undefined && old?.mark !== a.mark && (a.mark === "error" || a.mark === "done");
+	});
 }

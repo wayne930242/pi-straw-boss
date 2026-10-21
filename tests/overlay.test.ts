@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Mark } from "../src/dashboard.ts";
 import type { Net, Unit } from "../src/net.ts";
-import { type Alert, alertsOf, arrivals, unitOf } from "../gui/alerts.ts";
+import { type Alert, alertsOf, arrivals, rankOf, unitOf } from "../gui/alerts.ts";
 import type { Monitor } from "../src/monitors.ts";
 import { createStack, tally } from "../gui/overlay.ts";
 import { createTiles, intel, MAX_TILES, type Tile } from "../gui/layer.ts";
@@ -31,15 +31,15 @@ test("an alert that arrives while a dialog is open queues behind it: the open di
 	assert.deepEqual([page.shown, page.queued, stack.open[0]!.mark], [["a"], ["b", "c"], "error"], "a unit already open refreshes its dialog instead of queueing");
 });
 
-test("questions and errors queue ahead of plain state changes, oldest first in each", () => {
+test("questions queue ahead of notices (an error, a finish), oldest first in each", () => {
 	const { page, stack } = harness();
 	stack.arrive(alert("done1", "done", 1));
 	stack.arrive(alert("q2", "waiting", 5));
 	stack.arrive(alert("e1", "error", 3));
 	stack.arrive(alert("done0", "done", 0));
-	assert.deepEqual(page.queued, ["e1", "q2", "done0", "done1"]);
+	assert.deepEqual(page.queued, ["q2", "done0", "done1", "e1"]);
 	stack.arrive(alert("e1", "error", 9));
-	assert.deepEqual(page.queued, ["e1", "q2", "done0", "done1"], "a repeated arrival keeps its place");
+	assert.deepEqual(page.queued, ["q2", "done0", "done1", "e1"], "a repeated arrival keeps its place");
 });
 
 test("closing reveals the dialog beneath; with none beneath, the next queued question; plain state changes wait for the user", () => {
@@ -109,7 +109,7 @@ test("a finished unit's alert is resolved once opened: Later does not put it bac
 
 test("Open comms closes the alert and reveals nothing queued over the comms the user is going to", () => {
 	const { page, stack } = harness();
-	stack.arrive(alert("e", "error", 1));
+	stack.arrive(alert("e", "waiting", 1));
 	stack.arrive(alert("a", "waiting", 2));
 	stack.next();
 	assert.deepEqual([page.shown, page.queued], [["e"], ["a"]]);
@@ -180,11 +180,11 @@ test("an alert says when its unit has closed: its pane is gone, or pi-herdr-agen
 	assert.equal(alertsOf(net, 2).get("s")!.closed, true, "a subagent pi-herdr-agents recorded done counts as closed while its pane still runs pi");
 });
 
-test("alerts come from towers, agents, subagents, and units outside the net; the first snapshot raises only questions and errors", () => {
+test("alerts come from towers, agents, subagents, and units outside the net; the first snapshot raises only questions", () => {
 	const net: Net = { bases: [{ id: "w1", label: "W", mark: "working", head: true, tower: { name: "tower", mark: "waiting", key: "t", control: true, subs: [] }, outposts: [], tabs: [{ id: "t1", label: "a", units: [{ id: "m", key: "m", control: true, name: "m", role: "main", mark: "idle", subs: [{ id: "s", key: "s", control: true, name: "s", role: "subagent", mark: "done", subs: [] }] }] }], outside: [{ id: "o", key: "o", control: true, name: "o", role: "outside", mark: "error", subs: [] }] }] };
 	const first = alertsOf(net, 1);
 	assert.deepEqual([...first.keys()].sort(), ["m", "o", "s", "t"]);
-	assert.deepEqual(arrivals(undefined, first).map((a) => a.key).sort(), ["o", "t"], "a finished subagent at load is not news");
+	assert.deepEqual(arrivals(undefined, first).map((a) => a.key).sort(), ["t"], "a failure or a finished subagent at load is not news");
 	net.bases[0]!.tabs[0]!.units[0]!.mark = "waiting";
 	net.bases[0]!.tabs[0]!.units[0]!.subs[0]!.mark = "working";
 	const second = alertsOf(net, 2);
@@ -304,7 +304,7 @@ test("an alert carries the question its unit waits on, and an open dialog drops 
 	assert.equal(stack.open[0]!.pending, undefined, "the refreshed dialog no longer shows the question");
 });
 
-test("the queue count says what is in it: one session waiting beside a unit that only finished reads as 1 needs you and 1 finished, never as two questions", () => {
+test("the queue count says what is in it: one session waiting beside a unit that only finished reads as 1 needs you and 1 notice, never as two questions", () => {
 	const { page, stack } = harness();
 	const queue = () => stack.queue;
 	// The live check: a dialog is open for one session, another asks a question, and a subagent finished earlier.
@@ -312,16 +312,16 @@ test("the queue count says what is in it: one session waiting beside a unit that
 	stack.show(alert("p2", "waiting", 2));
 	stack.arrive(alert("p1", "waiting", 3));
 	assert.deepEqual(page.queued, ["p1", "scout"]);
-	assert.equal(tally(queue()), "1 needs you · 1 finished");
+	assert.equal(tally(queue()), "1 needs you · 1 notice");
 	assert.equal(tally(queue().slice(0, 1)), "1 needs you");
-	assert.equal(tally(queue().slice(1)), "1 finished");
-	assert.equal(tally([alert("a", "waiting", 1), alert("b", "error", 2), alert("c", "done", 3), alert("d", "done", 4)]), "2 need you · 2 finished");
+	assert.equal(tally(queue().slice(1)), "1 notice");
+	assert.equal(tally([alert("a", "waiting", 1), alert("b", "error", 2), alert("c", "done", 3), alert("d", "done", 4)]), "1 needs you · 3 notices");
 	assert.equal(tally([]), "");
 	// What the count promises is what the queue holds: every counted unit is a distinct alert that still shows its state, and none is the open dialog's own.
 	stack.prune((key) => ({ p1: alert("p1", "waiting", 3), p2: alert("p2", "waiting", 2), scout: alert("scout", "done", 1) })[key]);
 	assert.deepEqual(queue().map((a) => a.key), ["p1", "scout"]);
 	stack.prune((key) => ({ p2: alert("p2", "waiting", 2), scout: alert("scout", "done", 1) })[key]);
-	assert.equal(tally(queue()), "1 finished", "a question that was answered leaves the count at once");
+	assert.equal(tally(queue()), "1 notice", "a question that was answered leaves the count at once");
 });
 
 test("a dialog whose unit left the net stays open without its question or actions, and shows the unit again if it comes back", () => {
@@ -346,4 +346,22 @@ test("redraw draws the same models again, so the page can follow the stream stat
 	const before = draws;
 	stack.redraw();
 	assert.equal(draws, before + 1);
+});
+
+test("only a unit waiting on the user raises the prominent alert; an error, a failed monitor, and a finish go to the notices list", () => {
+	const { page, stack } = harness();
+	const unit = (key: string, mark: Mark, extra: Partial<Unit> = {}): Unit => ({ id: key, key, control: true, name: key, role: "main", mark, subs: [], ...extra });
+	const net = (units: Unit[]): Net => ({ bases: [{ id: "w1", label: "W", mark: "working", head: true, tower: null, outposts: [], tabs: [{ id: "t1", label: "a", units }], outside: [] }] });
+	const before = alertsOf(net([unit("e", "working"), unit("q", "working"), unit("p", "working"), unit("s", "working"), unit("f", "working", { subs: [unit("sub", "working", { role: "subagent" })] })]), 1);
+	const mon = (status: Monitor["status"]): Monitor => ({ id: "1", what: "job", status, lines: 0, at: 1 });
+	const now = alertsOf(net([unit("e", "error"), unit("q", "waiting"), unit("p", "working", { pending: { callId: "c1", tool: "ctx.ui.confirm" } }), unit("s", "working", { monitors: [mon("error")] }), unit("f", "working", { subs: [unit("sub", "done", { role: "subagent" })] })]), 2);
+	const fresh = arrivals(before, now);
+	assert.deepEqual(fresh.map((a) => [a.key.split("\u001f")[0], a.mark, rankOf(a)]).sort(), [["e", "error", 1], ["p", "working", 0], ["q", "waiting", 0], ["s", "error", 1], ["sub", "done", 1]], "every change arrives, but only the unit that waits (a question or a pending dialog) ranks as prominent");
+	for (const a of fresh) stack.arrive(a);
+	stack.next();
+	assert.deepEqual(page.shown, ["q"], "the HUD alert opens the question first, never an error");
+	assert.equal(tally(stack.queue), "1 needs you · 3 notices", "the count keeps questions apart from notices (q is open)");
+	assert.deepEqual(arrivals(undefined, alertsOf(net([unit("e", "error"), unit("q", "waiting")]), 1)).map((a) => a.key), ["q"], "an error already there when the page opens is not news");
+	assert.equal(rankOf({ mark: "error" }), 1);
+	assert.equal(rankOf({ mark: "waiting" }), 0);
 });

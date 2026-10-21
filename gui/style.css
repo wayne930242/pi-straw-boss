@@ -50,7 +50,7 @@ svg { display: block; }
 .tog { display: inline-flex; align-items: center; gap: 6px; } .tog::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
 .tog[data-state="on"] { color: #cfe6ff; border-color: #2c5b74; } .tog[data-state="on"]::before { background: #38e0ff; box-shadow: 0 0 6px #38e0ff; }
 .tog[data-state="ask"]::before { background: #ffd166; } .tog[data-state="blocked"]::before { background: #ff6b81; }
-.tog[data-state="done"] { color: #cfe6ff; } .tog[data-state="done"]::before { background: #7ee2a8; box-shadow: 0 0 6px #7ee2a8; }
+.tog[data-state="done"] { color: #cfe6ff; } .tog[data-state="done"]::before { background: #7ee2a8; box-shadow: 0 0 6px #7ee2a8; } .tog[data-state="error"] { color: #ffd6dc; } .tog[data-state="error"]::before { background: #ff6b81; box-shadow: 0 0 6px #ff6b81; }
 .alert-row { display: flex; align-items: center; gap: 10px; } .done-btn { flex: none; white-space: nowrap; }
 /* The header's popovers (the sound panel, the finished list) hang under their button; hang() in render.ts places them. */
 .hud-pop { position: fixed; inset: auto; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: #0e1628; color: var(--text); font: 13px/1.4 var(--sans); box-shadow: 0 12px 32px #02050c99; }

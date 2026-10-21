@@ -19,10 +19,10 @@ import { m } from "./paraglide/messages.js";
 // through `io`), so the rules are tested without a browser.
 
 export type { Alert };
-const order = (a: Alert, b: Alert) => rankOf(a.mark) - rankOf(b.mark) || a.at - b.at;
+const order = (a: Alert, b: Alert) => rankOf(a) - rankOf(b) || a.at - b.at;
 /** The queue in words, the same in the header and in every dialog: what needs the user, and what only finished (closing never reveals those). */
 export const tally = (queue: Alert[]) => {
-	const asking = queue.filter((a) => rankOf(a.mark) === 0).length, rest = queue.length - asking;
+	const asking = queue.filter((a) => rankOf(a) === 0).length, rest = queue.length - asking;
 	return [asking && m.tally_need({ count: asking }), rest && m.tally_finished({ count: rest })].filter(Boolean).join(" · ");
 };
 
@@ -61,7 +61,7 @@ export function createStack<F>(io: StackIO<F>) {
 		 * them gone); open dialogs take the unit's current state, or show `gone` when the unit left the net.
 		 */
 		prune(now: (key: string) => Alert | undefined) {
-			queue = queue.filter((q) => ((u) => u?.mark === q.mark && !(rankOf(q.mark) !== 0 && u.closed))(now(q.key)));
+			queue = queue.filter((q) => ((u) => u?.mark === q.mark && !(rankOf(q) !== 0 && u.closed))(now(q.key)));
 			for (const o of open) {
 				const unit = now(o.alert.key);
 				o.alert = unit ? { ...o.alert, ...unit, gone: undefined, at: o.alert.at } : { ...o.alert, mark: "unknown", note: undefined, pending: undefined, gone: true };
@@ -79,12 +79,12 @@ export function createStack<F>(io: StackIO<F>) {
 		},
 		/** The HUD alert: the first question or error. Finished units wait in their own list (`resolve`). */
 		next() {
-			const head = queue.find((q) => rankOf(q.mark) === 0);
+			const head = queue.find((q) => rankOf(q) === 0);
 			if (head) show(head, io.focused());
 		},
 		/** The user cleared finished units from their list, one (going to its comms) or all. A question or an error is never cleared: it is answered. */
 		resolve(keys: string[]) {
-			queue = queue.filter((q) => rankOf(q.mark) === 0 || !keys.includes(q.key));
+			queue = queue.filter((q) => rankOf(q) === 0 || !keys.includes(q.key));
 			draw();
 		},
 		/**
@@ -96,9 +96,9 @@ export function createStack<F>(io: StackIO<F>) {
 		close(how: "close" | "later" | "go" = "close"): boolean {
 			const top = open.pop();
 			if (!top) return false;
-			const below = open.at(-1), next = how === "close" ? queue.find((q) => rankOf(q.mark) === 0) : undefined;
+			const below = open.at(-1), next = how === "close" ? queue.find((q) => rankOf(q) === 0) : undefined;
 			// A finished unit's alert is read once it is opened: only a question or an error goes back for later.
-			if (how === "later" && top.alert.mark === top.raised && rankOf(top.raised) === 0) queue = [...queue, top.alert].sort(order);
+			if (how === "later" && top.alert.mark === top.raised && rankOf({ mark: top.raised, pending: top.alert.pending }) === 0) queue = [...queue, top.alert].sort(order);
 			if (!below && next) {
 				show(next, top.back);
 				return true;

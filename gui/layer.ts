@@ -120,7 +120,7 @@ export function mountPanels(deps: PanelDeps) {
 		text(el, ".where", deps.label(a.ws));
 		text(el, ".tag", a.gone ? m.tag_gone() : ({ waiting: m.tag_question, error: m.tag_error, done: m.tag_finished }[a.mark as "done"] ?? m.tag_update)());
 		text(el, ".queued", queue.length ? m.also_queued({ tally: tally(queue) }) : "");
-		el.querySelector<HTMLElement>(".later")!.hidden = rankOf(a.mark) !== 0; // a finished one is read once opened: nothing to keep for later
+		el.querySelector<HTMLElement>(".later")!.hidden = rankOf(a) !== 0; // a finished one is read once opened: nothing to keep for later
 		if (!intels.has(a.key)) learn(a);
 		tell(el, a);
 		let ask = asks.get(el);
@@ -130,10 +130,10 @@ export function mountPanels(deps: PanelDeps) {
 	// Finished units wait under the HUD's Finished button, apart from what needs the user: a row goes to the unit's comms and clears it, Clear all clears every one.
 	const [doneBtn, donePop, doneList] = [byId("done", HTMLButtonElement), byId("done-pop", HTMLElement), byId("done-list", HTMLElement)];
 	const drawDone = (queue: Alert[]) => {
-		const done = queue.filter((a) => rankOf(a.mark) !== 0);
+		const done = queue.filter((a) => rankOf(a) !== 0);
 		doneBtn.hidden = !done.length;
 		doneBtn.textContent = `${m.finished_button()} ${done.length}`;
-		doneBtn.title = m.finished_title();
+		[doneBtn.title, doneBtn.dataset.state] = [m.finished_title(), done.some((a) => a.mark === "error") ? "error" : "done"]; // a failure tints the button; it never opens anything
 		if (!done.length && donePop.matches(":popover-open")) donePop.hidePopover();
 		sync(doneList, done.map((a) => ({ ...a, id: a.key })), doneEl, (el, a) => {
 			const it = intels.get(a.key);
@@ -157,7 +157,7 @@ export function mountPanels(deps: PanelDeps) {
 		render(open, queue) {
 			sync(dock, open.map((a) => ({ ...a, id: a.key })), dialogEl, (el, a) => fill(el, a, open.length - 1 - open.findIndex((o) => o.key === a.key), queue));
 			// The HUD alert holds what needs the user; finished units are in their own list.
-			const asking = queue.filter((a) => rankOf(a.mark) === 0), head = asking[0];
+			const asking = queue.filter((a) => rankOf(a) === 0), head = asking[0];
 			button.disabled = !head;
 			button.dataset.mark = head?.mark ?? "unknown";
 			text(button, "#alert-count", String(asking.length));

@@ -190,7 +190,21 @@
 			}
 		}
 	],
-	"tally_finished": "{count} finished",
+	"tally_finished": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} notice",
+				"countPlural=other": "{count} notices"
+			}
+		}
+	],
 	"refused": "Refused ({status}).",
 	"unreachable": "The server could not be reached.",
 	"unsure": "Not confirmed. Check the terminal before sending again.",
@@ -355,8 +369,8 @@
 	"sound_volume": "Volume",
 	"sound_try": "▶ Try",
 	"sound_title": "Sounds: on or off, volume, and a try",
-	"finished_button": "Done",
-	"finished_title": "Finished units: a row opens its comms and clears it, or clear them all",
+	"finished_button": "Notices",
+	"finished_title": "Notices: units that finished or failed. A row opens its comms and clears it, or clear them all",
 	"clear_all": "Clear all",
 	"dialog_enlarge": "Enlarge (F)",
 	"dialog_shrink": "Shrink (F)",

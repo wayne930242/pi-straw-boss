@@ -10,7 +10,8 @@ import waitingUrl from "./sounds/waiting.mp3";
 // opens a small panel with the switch, a volume (0 to 100, default 60), and a try; the sounds play through Web Audio, whose gain an
 // iPhone honours (it ignores an audio element's volume).
 // A reminder is a system notification while the page is hidden or unfocused (the alert queue shows it on a focused page);
-// clicking it brings the page forward on that unit. A batch plays one sound, the most urgent of its marks.
+// clicking it brings the page forward on that unit. Only a question is urgent: a failure or a finish shows a silent system notification, and with Sound on plays its
+// own softer clip (the error clip) beside the question's. A batch plays one sound, the most urgent of its marks.
 
 type Kind = "waiting" | "error" | "done";
 const SOUNDS: Record<Kind, string> = { waiting: waitingUrl, error: errorUrl, done: doneUrl };
@@ -94,7 +95,7 @@ export function mountNotify(open: (a: Alert) => void): Notifier {
 			if (sound) play((["waiting", "error", "done"] as const).find((k) => due.some((d) => d.k === k))!);
 			if (!remind || !can || Notification.permission !== "granted" || (!document.hidden && document.hasFocus())) return;
 			for (const { a, k } of due) {
-				const n = new Notification(a.name, { body: { waiting: m.notify_waiting, error: m.notify_error, done: m.notify_done }[k]({ note: a.note ?? "" }).trim(), tag: a.key, icon: document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href });
+				const n = new Notification(a.name, { body: { waiting: m.notify_waiting, error: m.notify_error, done: m.notify_done }[k]({ note: a.note ?? "" }).trim(), tag: a.key, icon: document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href, silent: k !== "waiting" }); // only a question may make the system beep: a failure or a finish is a quiet notice
 				n.onclick = () => (window.focus(), n.close(), open(a));
 			}
 		},
