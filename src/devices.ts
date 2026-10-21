@@ -20,29 +20,40 @@ export function labelOf(ua = ""): string {
 
 export function createDevices(file?: string) {
 	const devices = new Map<string, Device>();
-	let identity: Identity | undefined, wanted = false;
+	let identity: Identity | undefined, wanted = false, error: string | undefined;
 	const num = (v: unknown, or: number) => (typeof v === "number" && Number.isFinite(v) ? v : or);
 	try {
 		const saved = file && JSON.parse(readFileSync(file, "utf8")), now = Date.now();
 		if (saved?.host && saved.login) identity = { host: String(saved.host), login: String(saved.login) };
-		wanted = saved?.wanted === true;
-		// An older file kept only `sessions` (hash to expiry).
+		// An older file (0.32.1 and earlier) kept only `sessions` (hash to expiry) and was written only while remote was on, so one with devices and no wish says remote was on.
 		const old = Object.entries(saved?.sessions ?? {}).map(([h, until]): [string, Record<string, unknown>] => [h, { until }]);
+		wanted = typeof saved?.wanted === "boolean" ? saved.wanted : old.length > 0;
 		for (const [h, d] of [...old, ...Object.entries<Record<string, unknown>>(saved?.devices ?? {})]) {
 			const until = num(d?.until, 0);
 			if (/^[0-9a-f]{64}$/.test(h) && until > now) devices.set(h, { until, label: typeof d.label === "string" ? d.label.slice(0, 80) : "", paired: num(d.paired, 0), seen: num(d.seen, 0) });
 		}
 	} catch {} // none saved
+	// A file that cannot be written (a full disk, a directory that went away) must not throw out of the request that changed the state: the
+	// state stays in memory for this server's life, and `error` says what failed until a save works again.
 	const save = () => {
 		if (!file) return;
-		if (!identity || !(devices.size || wanted)) return rmSync(file, { force: true });
-		writeFileSync(`${file}.tmp`, JSON.stringify({ ...identity, wanted, devices: Object.fromEntries(devices) }), { mode: 0o600 });
-		renameSync(`${file}.tmp`, file);
+		try {
+			if (!identity || !(devices.size || wanted)) rmSync(file, { force: true });
+			else {
+				writeFileSync(`${file}.tmp`, JSON.stringify({ ...identity, wanted, devices: Object.fromEntries(devices) }), { mode: 0o600 });
+				renameSync(`${file}.tmp`, file);
+			}
+			error = undefined;
+		} catch (e) {
+			error = (e as Error).message;
+		}
 	};
 	return {
 		/** The identity the saved devices were paired under, and whether remote access was left on. */
 		get identity() { return identity; },
 		get wanted() { return wanted; },
+		/** Why the last save failed (the devices are then kept in memory only), or undefined. */
+		get error() { return error; },
 		set(next: { identity?: Identity; wanted?: boolean }) {
 			({ identity = identity, wanted = wanted } = next);
 			save();

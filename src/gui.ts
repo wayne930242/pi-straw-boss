@@ -137,7 +137,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 			} catch {
 				return void fail(404);
 			}
-			if ((parts[0] === "server" || (parts[0] === "remote" && parts[1] !== "pair")) && who.remote) return void fail(403); // only this machine stops the server, opens it to the tailnet or closes it, and lists or unpairs devices
+			if ((parts[0] === "server" || parts[0] === "remote") && who.remote) return void fail(403); // only this machine stops the server, opens it to the tailnet or closes it, and lists or unpairs devices
 			if (["sessions", "remote", "server", "dirs", "open", "close", "dismiss"].includes(parts[0]!)) return void control(req, who.origin, parts).then(answer, () => answer({ status: 500, body: { error: "internal", reason: "The request could not be handled." } }));
 			// An entry never changes once written, so its image is cached for a day; the token in the URL keeps it to this page.
 			if (req.method === "GET" && parts[0] === "image") return void image(files, parts.slice(1)).then((p) => (p ? res.writeHead(200, { ...HEADERS, "content-type": p.type, "cache-control": "private, max-age=86400" }).end(p.bytes) : fail(404)), () => fail(404));

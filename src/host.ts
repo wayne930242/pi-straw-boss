@@ -7,7 +7,7 @@ import { answers, markReload, readRecord, requestStop, type Shared, sharedGui } 
 import type { Membership } from "./membership.ts";
 import { netSource } from "./net.ts";
 import { pairingKeys, showLines } from "./pairing.ts";
-import { switchRemote } from "./remote.ts";
+import { identity, switchRemote } from "./remote.ts";
 import { createSpawn } from "./spawn.ts";
 import { type Channel, type Kit, REGISTER } from "./state.ts";
 
@@ -39,10 +39,18 @@ export function createHost({ pi, cfg, s, guiDir, me, tell }: Kit, { bridge, conn
 		return true;
 	};
 	// A server that starts here picks up where the last one left off: remote access comes back when it was wanted on (no QR; a failure is told, and the wish
-	// stays for the next start), and a serve entry a crashed server left goes when it was not.
-	const resume = async (gui: Gui) => {
-		if (!gui.access.wanted) return void (await switchRemote(gui, false, guiDir, ts, true).catch(() => {}));
+	// stays for the next start), and a serve entry a crashed server left goes when it was not. It comes back only as the Tailscale identity the devices
+	// were paired under: as another one (a different tailnet or user signed in) it stays off and says so, leaving the wish and the old devices for when
+	// that identity returns; turning remote on by hand as the new identity (`/boss gui remote`) voids them. `was` is a /reload from a build of
+	// 0.32.1 or earlier, whose gui.json said remote was on though its paired.json (written only once a device paired) may not exist.
+	const resume = async (gui: Gui, was = false) => {
+		if (!gui.access.wanted && !was) return void (await switchRemote(gui, false, guiDir, ts, true).catch(() => {}));
 		try {
+			const [now, remembered] = [await identity(ts), gui.access.remembered];
+			if (remembered && (remembered.host !== now.host || remembered.login !== now.login)) {
+				await switchRemote(gui, false, guiDir, ts, true).catch(() => {});
+				return void tell(`Remote access stays off: the Tailscale identity is now ${now.login} on ${now.host}, not ${remembered.login} on ${remembered.host} that the paired devices belong to; sign in as that identity again, or turn it on here with /boss gui remote (that unpairs the old devices)`, "warning");
+			}
 			tell((await switchRemote(gui, true, guiDir, ts)).text);
 		} catch (error) {
 			tell(`Remote access stays off: ${(error as Error).message}; it is tried again when the server next starts`, "warning");
@@ -50,12 +58,12 @@ export function createHost({ pi, cfg, s, guiDir, me, tell }: Kit, { bridge, conn
 	};
 	// One server per machine: a second /boss gui, here or in another session, opens the one that runs, unless `take` (or a newer version) takes it
 	// over. Two calls in flight in this session share one start. `manual`: the caller turns remote on or off itself, so a new server does not resume it.
-	const share = (take = false, manual = false) =>
+	const share = (take = false, manual = false, was = false) =>
 		(opening ??= (async () => {
 			if (s.gui) return { url: s.gui.url, owner: label(), mine: s.gui };
 			const start = (prefer: { port?: number; remotePort?: number; token?: string; csrf?: string }, net = netSource({ run, world, sessions, hub: (s.hub = s.hub?.me === me() ? s.hub : createHub(pi, me(), bridge)) })) => startGui({ read: net.read, net, call, hub: s.hub, dir: bundle, paired: join(guiDir, "paired.json"), ...prefer, onStop: (asked) => void stopOwn(asked), onRemote: async () => tell((await switchRemote(s.gui!, true, guiDir, ts)).text), onRemoteOff: async () => tell((await switchRemote(s.gui!, false, guiDir, ts)).text), spawn: createSpawn({ run, sleep, call, live: async (id) => (await sessions()).some((x) => x.id === id), sessionAt: async (pane) => (await sessions()).find((x) => x.herdrLocation?.paneId === pane)?.id }), close: createCloser({ run, sleep, me, sessions, ask: async (key, keepPane) => s.hub?.close(key, keepPane) }) });
 			const shared = await sharedGui(guiDir, [label(), me()], start, sleep, { version, take });
-			if ((s.gui = shared.mine) && !manual) await resume(s.gui);
+			if ((s.gui = shared.mine) && !manual) await resume(s.gui, was);
 			return shared;
 		})().finally(() => (opening = undefined)));
 	const older = (owner: string) => `The straw net GUI runs in session ${owner} on a pi-straw-boss older than 0.11.0, which cannot hand it over; /reload that session or run the command there`;
@@ -63,8 +71,8 @@ export function createHost({ pi, cfg, s, guiDir, me, tell }: Kit, { bridge, conn
 		sessions,
 		share,
 		/** The server again after a /reload, /new, /resume, or a takeover by a newer version; remote access comes back with it when it was wanted on, and the paired devices are still paired. */
-		async restore() {
-			await share(false);
+		async restore(was = false) {
+			await share(false, false, was);
 		},
 		/** `mode` is "", "stop", "remote", or "remote off", and works from any session: remote access (remote.ts) goes with the server, so a session takes it over first. */
 		async command(mode: string) {

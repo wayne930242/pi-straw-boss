@@ -410,6 +410,47 @@ test("remote access that was on comes back by itself when a new server starts (a
 	assert.equal(existsSync(join(world.stateDir, "paired.json")), false, "with no device and no wish, nothing is kept");
 });
 
+test("a new server turns remote on again only as the Tailscale identity it was on as; another identity leaves it off, says why, and keeps the wish", async () => {
+	const ts = fakeTailscale();
+	let login = "me@example.com";
+	const run = async (args: string[]) => (args[0] === "status" ? (await ts.run(args)).replace("me@example.com", login) : ts.run(args));
+	const a = world.agent({ id: "viewer-a", pane: "wA:p1", tab: "wA:t1", deps: { ...deps, tailscale: run } });
+	await a.start();
+	const command = a.command("gui remote");
+	await until(() => a.overlays.length === 1, "the QR overlay");
+	a.overlays[0]!.handleInput!("q");
+	await command;
+	await a.command("gui stop");
+	login = "someone-else@example.com";
+	await a.command("gui");
+	assert.deepEqual(ts.config(), {}, "not turned on as another user");
+	assert.equal(a.notices.filter((n) => /Tailscale identity/.test(n.text)).map((n) => n.level).join(), "warning", "told why");
+	const kept = JSON.parse(readFileSync(join(world.stateDir, "paired.json"), "utf8"));
+	assert.deepEqual([kept.wanted, kept.login], [true, "me@example.com"], "the wish and the old identity's devices are kept for when it matches again");
+	await a.command("gui stop");
+	login = "me@example.com";
+	await a.command("gui");
+	assert.ok(proxyOf(ts.config()), "back as the remembered identity, the next start turns it on");
+	await a.stop();
+});
+
+test("a /reload from a build before durable pairing brings remote back: its gui.json carried remote, and its paired.json had devices but no wish", async () => {
+	const ts = fakeTailscale();
+	const a = world.agent({ id: "viewer-a", pane: "wA:p1", tab: "wA:t1", deps: { ...deps, tailscale: ts.run } });
+	await a.start();
+	await a.command("gui");
+	await a.stop("reload");
+	// What 0.32.1 left: remote on at the reload, and no device paired yet, so no paired.json.
+	const record = readRecord(world.stateDir)!;
+	writeFileSync(join(world.stateDir, "gui.json"), JSON.stringify({ ...record, remote: true }));
+	const reloaded = world.agent({ id: "viewer-a", pane: "wA:p1", tab: "wA:t1", deps: { ...deps, tailscale: ts.run } });
+	await reloaded.fire("session_start", { reason: "reload" });
+	await until(() => proxyOf(ts.config()) !== undefined, "remote on after the reload");
+	assert.equal(reloaded.overlays.length, 0, "with no QR");
+	await reloaded.command("gui stop");
+	await reloaded.stop();
+});
+
 test("when Tailscale cannot be reached at a server's start, the user is told why and the wish stays for the next start; a stop never clears it", async () => {
 	const ts = fakeTailscale();
 	let down = false;

@@ -92,6 +92,10 @@ export function createAccess(token: string, ended: (device?: string) => void = (
 		get remote() { return remote; },
 		/** Whether remote access is wanted on: set by turning it on, kept by a stop, cleared only by turning it off. */
 		get wanted() { return devices.wanted; },
+		/** The identity the saved devices were paired under (or the current one while on): a restart turns remote on again only as this one. */
+		get remembered() { return remote ?? devices.identity; },
+		/** Why paired.json could not be written last time, or undefined; the devices are then kept in memory only. */
+		get saveError() { return devices.error; },
 		devices: {
 			list: devices.list,
 			unpair(id: string) {

@@ -280,9 +280,7 @@ test("over the tailnet: only this user's paired devices get in, a code pairs onc
 	assert.equal((await remoteGet(gui, `${page}api/sessions/sess-1/input`, json(`https://${HOST}`, "0".repeat(32)), "POST", body)).status, 403, "CSRF applies over remote too");
 	assert.equal((await remoteGet(gui, `${page}api/sessions/sess-1/input`, json(`https://${HOST}`), "POST", body)).status, 200);
 	assert.deepEqual(calls, ["pane.get", "agent.prompt"]);
-	const pair = await remoteGet(gui, `${page}api/remote/pair`, json(`https://${HOST}`), "POST", "{}");
-	assert.equal(pair.status, 200);
-	assert.match(JSON.parse(pair.body).url, new RegExp(`^https://${HOST}/${gui.token}/pair/[\\w-]{22}$`));
+	assert.equal((await remoteGet(gui, `${page}api/remote/pair`, json(`https://${HOST}`), "POST", "{}")).status, 403, "pairing a new device is the desktop's: a paired device cannot mint a code");
 	let ended = false;
 	const stream = get({ host: "127.0.0.1", port: gui.remotePort, path: `${page}events`, headers: { host: HOST, "tailscale-user-login": LOGIN, "x-forwarded-for": "100.87.7.97", cookie: jar }, agent: false }, (res) => (res.resume(), res.on("close", () => (ended = true))));
 	stream.on("error", () => (ended = true));
@@ -476,4 +474,29 @@ test("the desktop page lists, unpairs one, and unpairs all; a paired device is r
 	await until(() => ends.tablet, "the last stream to end");
 	assert.equal((await remoteGet(gui, page, { cookie: tablet })).status, 401);
 	assert.deepEqual(JSON.parse((await mine("remote/devices")).body).devices, []);
+});
+
+test("a paired.json an older build wrote (sessions, no wish) counts as wanted on; one with no sessions and no wish does not", () => {
+	const hash = "a".repeat(64), file = join(scratch, "legacy.json");
+	writeFileSync(file, JSON.stringify({ host: HOST, login: LOGIN, sessions: { [hash]: Date.now() + 3600_000 } }));
+	const legacy = createAccess("t".repeat(32), () => {}, file);
+	assert.equal(legacy.wanted, true, "remote was on when the older build's /reload saved its devices");
+	assert.deepEqual(legacy.remembered, { host: HOST, login: LOGIN });
+	assert.equal(legacy.devices.list().length, 1);
+	writeFileSync(file, JSON.stringify({ host: HOST, login: LOGIN, sessions: {} }));
+	assert.equal(createAccess("t".repeat(32), () => {}, file).wanted, false);
+	writeFileSync(file, JSON.stringify({ host: HOST, login: LOGIN, wanted: false, sessions: { [hash]: Date.now() + 3600_000 } }));
+	assert.equal(createAccess("t".repeat(32), () => {}, file).wanted, false, "an explicit no is kept");
+});
+
+test("a paired.json that cannot be written does not throw out of a request: the state stays in memory and the failure is reported", () => {
+	const file = join(scratch, "no-such-dir", "paired.json"), access = createAccess("t".repeat(32), () => {}, file);
+	assert.doesNotThrow(() => access.enable({ host: HOST, login: LOGIN }));
+	const req = (path: string[]) => ({ method: "GET", headers: { host: HOST, "tailscale-user-login": LOGIN, "x-forwarded-for": "100.1.2.3" } }) as unknown as IncomingMessage;
+	const verdict = access.check(req([]), "remote", 1234, "t".repeat(32), ["pair", access.pair()!]);
+	assert.ok("cookie" in verdict, "a code still pairs");
+	assert.equal(access.devices.list().length, 1, "the device is kept in memory");
+	assert.match(access.saveError ?? "", /no-such-dir|ENOENT/, "and the failure can be read");
+	assert.doesNotThrow(() => access.devices.unpairAll());
+	assert.equal(existsSync(file), false);
 });
