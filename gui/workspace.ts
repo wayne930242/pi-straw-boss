@@ -47,7 +47,7 @@ export function drawWorkspace(host: HTMLElement, scene: Readonly<Scene>) {
 		aimOpening(el.querySelector(".tab-add")!, base, t.id);
 		const busy = t.units.flatMap((u) => [u, ...u.subs]);
 		text(el, "h3 small", m.unit_count({ count: busy.length }));
-		mark(el, (["waiting", "error", "working"] as const).find((m) => busy.some((u) => u.mark === m)) ?? "idle");
+		mark(el, (["waiting", "error", "working"] as const).find((m) => busy.some((u) => u.mark === m || (m === "working" && u.mark === "commanding"))) ?? "idle"); // commanding counts as working here
 		sync(el.querySelector(".formation")!, t.units, colEl, fillCol);
 	});
 	const camp = (group: string, list: { id: string; key?: string; name: string; role: string; mark: Mark; note?: string }[]) => {

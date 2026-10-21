@@ -13,7 +13,7 @@ import { formatRoute, type Route } from "./router.ts";
 // badge) and the keyed `sync` are shared with the focus views, so a unit looks and moves the same on every route.
 
 export const ICON: Record<string, string> = { main: "main", member: "member", subagent: "subagent", outpost: "outpost", outside: "outside", tower: "tower" };
-export const LABEL: Record<Mark, () => string> = { working: m.mark_working, waiting: m.mark_waiting, idle: m.mark_idle, done: m.mark_done, error: m.mark_error, unknown: m.mark_unknown };
+export const LABEL: Record<Mark, () => string> = { commanding: m.mark_commanding, working: m.mark_working, waiting: m.mark_waiting, idle: m.mark_idle, done: m.mark_done, error: m.mark_error, unknown: m.mark_unknown };
 const ROLE: Record<string, () => string> = { main: m.role_main, member: m.role_member, subagent: m.role_subagent, tower: m.role_tower, outpost: m.role_outpost, outside: m.role_outside, session: m.role_session };
 /** The server's fixed status words; any other note (a subagent's tool or phase) shows as it is. */
 const NOTE: Record<string, () => string> = { thinking: m.note_thinking, "watching a monitor": m.note_monitoring, idle: m.mark_idle, "waiting on a question": m.mark_waiting, finished: m.mark_done };
@@ -171,7 +171,7 @@ function wire(map: HTMLElement, svg: SVGSVGElement, dots: HTMLElement, still: bo
 		svg.replaceChildren(...paths.map((d) => ((line) => (line.setAttribute("class", "wire"), line.setAttribute("d", d), line))(document.createElementNS("http://www.w3.org/2000/svg", "path"))));
 		dots.replaceChildren(...packets(wires, still));
 	}
-	dots.querySelectorAll<HTMLElement>(".packet").forEach((dot, i) => dot.toggleAttribute("data-live", head!.dataset.mark === "working" || ends[i]!.dataset.mark === "working"));
+	dots.querySelectorAll<HTMLElement>(".packet").forEach((dot, i) => dot.toggleAttribute("data-live", ["working", "commanding"].includes(head!.dataset.mark ?? "") || ["working", "commanding"].includes(ends[i]!.dataset.mark ?? "")));
 }
 
 export interface Page { show(net: Net): void; stats(net: Net): void; log(entries: Entry[]): void; layout(): void; pause(paused: boolean): void }
@@ -188,7 +188,8 @@ export function mountPage(): Page {
 		stats(net) {
 			const units = net.bases.flatMap((b) => [...(b.tower?.subs ?? []), ...b.tabs.flatMap((t) => t.units.flatMap((u) => [u, ...u.subs]))]);
 			const count = (m?: Mark) => String(units.filter((u) => !m || u.mark === m).length);
-			for (const [id, value] of [["s-bases", String(net.bases.length)], ["s-agents", count()], ["s-working", count("working")], ["s-waiting", count("waiting")]] as const) byId(id, HTMLElement).textContent = value;
+			byId("s-commanding", HTMLElement).parentElement!.toggleAttribute("data-on", units.some((u) => u.mark === "commanding"));
+			for (const [id, value] of [["s-bases", String(net.bases.length)], ["s-agents", count()], ["s-working", count("working")], ["s-commanding", count("commanding")], ["s-waiting", count("waiting")]] as const) byId(id, HTMLElement).textContent = value;
 		},
 		show(net) {
 			sync(bases, net.bases, baseEl, fillBase);

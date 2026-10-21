@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { basename, join, sep } from "node:path";
-import { type Mark, markOf, type Row, sessionMark, subagents } from "./dashboard.ts";
+import { commanding, type Mark, markOf, type Row, sessionMark, subagents } from "./dashboard.ts";
 import { headOf, type HerdrRun, type HerdrWorld, isSub, type Pane, parentOf, type Session, type Workspace, worldOf } from "./herdr.ts";
 import { type Pending, type Relayed, withPending } from "./ask.ts";
 import type { Shelf } from "./documents.ts";
@@ -61,8 +61,7 @@ export function buildNet({ sessions, panes: ps, workspaces: all, children, sessi
 			id: group[0]!.tab!.id,
 			label: group[0]!.tab!.label,
 			units: group.toSorted((a, b) => Number(b.role === "main") - Number(a.role === "main")).map(({ s, pane, role }): Unit => {
-				const mark = sessionMark(s, pane);
-				const subs = subsOf(s.id, w.workspace_id);
+				const subs = subsOf(s.id, w.workspace_id), mark = commanding(sessionMark(s, pane), subs.map((c) => c.mark));
 				const key = keep({ key: s.id, base: w.workspace_id, name: s.name ?? s.id, role, file: piFile(pane, s.id), pane: pane?.pane_id });
 				return { id: key, key, control: pane?.agent === "pi", name: s.name ?? s.id, role, mark, note: note(mark, s.status), subs };
 			}),
@@ -77,12 +76,12 @@ export function buildNet({ sessions, panes: ps, workspaces: all, children, sessi
 			keep({ key, base: w.workspace_id, name, role: "outside", file: readable(file, s?.id), pane: p.pane_id });
 			return [{ id: key, key, control: true, name, role: "outside", mark, note: note(mark, s?.status), subs: [] }];
 		});
-		const marks = [...towerSubs.map((c) => c.mark), ...tabs.flatMap((t) => t.units.flatMap((u) => [u.mark, ...u.subs.map((c) => c.mark)])), ...outposts.map((o) => o.mark)];
+		const marks = [...towerSubs.map((c) => c.mark), ...tabs.flatMap((t) => t.units.flatMap((u) => [u.mark, ...u.subs.map((c) => c.mark)])), ...outposts.map((o) => o.mark)]; // a commanding unit has a working or waiting subagent here, which the base shows already
 		// A base shows what needs attention most: a waiting unit, then a working one, else the workspace's own status.
 		const mark = (["waiting", "working"] as const).find((m) => marks.includes(m)) ?? markOf(w.agent_status);
 		if (!tower && !tabs.length) return [];
 		const named = tower && keep({ key: tower.id, base: w.workspace_id, name: tower.name ?? tower.id, role: "tower", file: piFile(towerPane, tower.id), pane: towerPane?.pane_id });
-		return [{ id: w.workspace_id, label: w.label, mark, head: w === headOf(all), tower: tower && named ? { name: tower.name ?? tower.id, mark: sessionMark(tower, towerPane), key: named, control: towerPane?.agent === "pi", subs: towerSubs } : null, tabs, outposts, outside }];
+		return [{ id: w.workspace_id, label: w.label, mark, head: w === headOf(all), tower: tower && named ? { name: tower.name ?? tower.id, mark: commanding(sessionMark(tower, towerPane), towerSubs.map((c) => c.mark)), key: named, control: towerPane?.agent === "pi", subs: towerSubs } : null, tabs, outposts, outside }];
 	});
 	return { bases };
 }

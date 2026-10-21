@@ -47,7 +47,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.27.0 to 275: what a tick re-reads for every child is cached (the pane that runs each child, indexed once per pane list; the two directories pi-herdr-agents keeps; a launch script's session file),
 	// and the screen reads on Herdr's events (watch, debounced) with a 30 s safety poll, and reads again what was requested inside the minimum gap or while a read ran, instead of dropping it.
 	// 0.27.0 to 277: the gap is checked again when a pending read fires, and a listing remembers when it was read.
-	assert.ok(count("src/dashboard.ts") <= 277, `src/dashboard.ts has ${count("src/dashboard.ts")} lines`);
+	// Unreleased to 286: `commanding`, the mark of a session that is idle while a subagent of it works or waits (or a monitor runs), and the rows built with it.
+	assert.ok(count("src/dashboard.ts") <= 286, `src/dashboard.ts has ${count("src/dashboard.ts")} lines`);
 	// 0.5.0 raised the server's figure from 300 to 320 for the CSRF meta, the POST routing into control.ts, and the remote access check (pairing, remote streams);
 	// 0.6.0 to 325 for the hub's start and stop with the server, the answer route's fresh reading, gui.json's ownerSession, and the sessions a reading binds dialogs with;
 	// 0.7.0 to 330 for the terminal mirror (Phase 3 task 1): each stream's `hello` with its id, and the mirrors it holds created, closed with it, and stopped with the server.
@@ -137,11 +138,12 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased: intercept.ts (143, new: the wrap of ctx.ui.select and confirm, a dialog contract owner under straw-boss:ui) has its own figure. owners.ts 139 to 145 for that owner
 	// (`twin`, a confirm's flag in the select and its digest), bridge.ts 246 to 250 for the rule that a twin yields to a contract owner's dialog on the same tool call,
 	// and control.ts 179 to 180 for the refusal of a confirm from a paired device.
+	// Unreleased raised ask.ts to 139: a unit that is idle while a subagent of it commands (by a monitor) commands too, after the loop; a running monitor makes an idle unit commanding.
 	// Unreleased raised host.ts to 97: a new server resumes remote when it was wanted on (resume) and the page's remote off.
 	// Unreleased raised control.ts to 191 for remote/off, remote/devices, remote/unpair, remote/unpair-all and dismiss {all} (the confirm refusal is gone), and remote.ts to 216 for
 	// the wish to keep remote on, the unpair calls, and the renewing cookie check; the paired devices themselves (saved hashes, names, sliding expiry) are devices.ts, 83 at most.
 	assert.ok(count("src/devices.ts") <= 83, `src/devices.ts has ${count("src/devices.ts")} lines`);
-	for (const [name, max] of [["commands.ts", 32], ["control.ts", 191], ["closer.ts", 70], ["upload.ts", 50], ["spawn.ts", 169], ["remote.ts", 216], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 136], ["bridge.ts", 250], ["owners.ts", 145], ["dialogs.ts", 237], ["seal.ts", 56], ["monitors.ts", 75], ["order.ts", 97], ["mirror.ts", 135], ["probe.ts", 40], ["keys.ts", 103], ["documents.ts", 80], ["docs.ts", 150], ["orphan.ts", 115], ["opener.ts", 90], ["server-watch.ts", 110], ["handover.ts", 93], ["towertab.ts", 65], ["state.ts", 106], ["briefing.ts", 33], ["reach.ts", 96], ["election.ts", 24], ["guard.ts", 83], ["presence.ts", 93], ["membership.ts", 115], ["tools.ts", 80], ["tower.ts", 44], ["closing.ts", 23], ["host.ts", 97], ["boss.ts", 36], ["session.ts", 148], ["digest.ts", 45], ["intercept.ts", 175]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
+	for (const [name, max] of [["commands.ts", 32], ["control.ts", 191], ["closer.ts", 70], ["upload.ts", 50], ["spawn.ts", 169], ["remote.ts", 216], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 139], ["bridge.ts", 250], ["owners.ts", 145], ["dialogs.ts", 237], ["seal.ts", 56], ["monitors.ts", 75], ["order.ts", 97], ["mirror.ts", 135], ["probe.ts", 40], ["keys.ts", 103], ["documents.ts", 80], ["docs.ts", 150], ["orphan.ts", 115], ["opener.ts", 90], ["server-watch.ts", 110], ["handover.ts", 93], ["towertab.ts", 65], ["state.ts", 106], ["briefing.ts", 33], ["reach.ts", 96], ["election.ts", 24], ["guard.ts", 83], ["presence.ts", 93], ["membership.ts", 115], ["tools.ts", 80], ["tower.ts", 44], ["closing.ts", 23], ["host.ts", 97], ["boss.ts", 36], ["session.ts", 148], ["digest.ts", 45], ["intercept.ts", 175]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
 	// 0.19.0 to 258 for the todo list: rpiv-todo's snapshots marked as the index reads them, and the newest one read for a reset or a change that adds one.
 	assert.ok(count("src/history.ts") <= 258, `src/history.ts has ${count("src/history.ts")} lines`);
 	// The item mapping and the stream glue came out of the reader to keep it within its budget; the spec sets no figure for them.
@@ -207,8 +209,9 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.27.0 split views.ts (348) into its coordinator (90) and the modules it calls: the Scene they read (scene.ts), the unit token (tokens.ts), the location bar and
 	// the entrance (nav.ts), the workspace route (workspace.ts), the dossier (dossier.ts), the session's comms (session.ts), and the bars above its composer (bars.ts).
 	// Unreleased raised workspace.ts to 60 for the tower's subagents tethered under it.
+	// Unreleased raised session.ts to 116: the comms head carries the unit's mark, so it glows while the unit is commanding.
 	// Unreleased raised scene.ts to 38 for `closed` (a channel is closed when its session left the net or a finished subagent's pi exited) and composer.ts to 191 (a closed channel's box is disabled).
-	for (const [name, max] of [["router.ts", 80], ["chat.ts", 275], ["markdown.ts", 180], ["views.ts", 90], ["scene.ts", 38], ["tokens.ts", 23], ["nav.ts", 43], ["workspace.ts", 60], ["dossier.ts", 49], ["session.ts", 115], ["bars.ts", 50], ["lightbox.ts", 34], ["layer.ts", 249], ["askkeys.ts", 75], ["composer.ts", 191], ["ask.ts", 185], ["mirror.ts", 175], ["keypad.ts", 124], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
+	for (const [name, max] of [["router.ts", 80], ["chat.ts", 275], ["markdown.ts", 180], ["views.ts", 90], ["scene.ts", 38], ["tokens.ts", 23], ["nav.ts", 43], ["workspace.ts", 60], ["dossier.ts", 49], ["session.ts", 116], ["bars.ts", 50], ["lightbox.ts", 34], ["layer.ts", 249], ["askkeys.ts", 75], ["composer.ts", 191], ["ask.ts", 185], ["mirror.ts", 175], ["keypad.ts", 124], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
 	// 0.28.0 to 185 with the answer keys' hooks into gui/ask.ts (the focus on the first option, the textarea). 0.28.0 raised gui/ask.ts from 156 to 175 for the secret panel: the masked field with Show and Hide, Submit, the way back to the terminal, the unsupported-remote notice, and a value that leaves with its one request.
 	// 0.10.0: the page's text comes from Paraglide's messages (gui/messages), which raised chat.ts, views.ts, layer.ts, ask.ts, mirror.ts, and doc.ts by one
 	// line each for the messages import; the strings replaced in place. gui/i18n.ts picks the locale (the menu's choice, the browser's languages with
@@ -286,7 +289,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased to 840: render.ts's `say`, which flags a unit's note red while it only waits on a running monitor.
 	// Unreleased to 841: render.ts draws a tower's subagents under its base's header.
 	// Unreleased to 852: quit.ts counts the finished subagents and draws the HUD's Dismiss finished button (endedSubs, showDismissAll), main.ts calls it.
-	assert.ok(page <= 852, `the page's TypeScript has ${page} lines`);
+	// Unreleased to 853: the commanding mark's HUD figure and glow flag (render.ts), and the packets' live check.
+	assert.ok(page <= 853, `the page's TypeScript has ${page} lines`);
 });
 
 test("the built page is small, self-contained (no remote URLs, fonts, or imports), and carries no demo fixture", { skip: !existsSync(join(root, "dist/gui/index.html")) && "run npm run gui:build first" }, () => {
@@ -338,7 +342,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 38.85 KB for `say`: the note of a unit that only waits on a running monitor flagged red wherever it shows.
 	// Unreleased to 39.05 KB / 14.75 KB gzipped for a tower's subagents on the map: under its base's header, and counted in the totals, alerts, and log.
 	// Unreleased to 39.5 KB / 14.85 KB gzipped for the HUD's Dismiss finished (quit.ts: the finished subagents counted, the button shown and labelled) in both languages.
-	assert.ok(size(entry).length <= 39_500 && gz(entry) <= 14_850, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// Unreleased to 40 KB / 15 KB gzipped for the commanding mark (its label, HUD figure, and glow hooks) in both languages.
+	assert.ok(size(entry).length <= 40_000 && gz(entry) <= 15_000, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).
@@ -404,6 +409,6 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 47.65 KB: the own-words box is a textarea that grows with its lines (Shift+Enter breaks one).
 	// 0.28.0, with the textarea, to 48.1 KB / 11.7 KB for the secret panel's steps, destination, and masked field.
 	// The secret's masked field is a text input drawn as dots by CSS (never type=password), to 48.2 KB.
-	// Unreleased to 48.7 KB / 11.8 KB gzipped for the paired devices list on the pairing tile.
-	assert.ok(total(css, (n) => size(n).length) <= 48_700 && total(css, gz) <= 11_800, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// Unreleased to 48.7 KB / 11.8 KB gzipped for the paired devices list on the pairing tile, then to 50 KB / 12 KB for the commanding mark's colour, badge, and glow.
+	assert.ok(total(css, (n) => size(n).length) <= 50_000 && total(css, gz) <= 12_000, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });

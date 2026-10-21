@@ -288,6 +288,29 @@ test("a member that launched subagents keeps them when it is promoted: the dashb
 	assert.deepEqual(await read(), { rows: [[0, "tab work", undefined], [1, "Solo", "main"], [2, "builder", "subagent"]], unit: ["Solo", "main", subs] });
 });
 
+test("a session that is itself idle while a subagent of it works or waits is commanding, in the tower's dashboard and the GUI net alike; its own working or waiting wins, and finished subagents do not count", async () => {
+	const kid = (id: string, status: string, label: string, pane: string) => Object.assign(world.herdr.addPane(pane, "wA:t1"), { agent_status: status, label, agent_session: { value: join(scratch, "sessions", `2026-10-17T00-00-01-000Z_${id}-1a2b3c4d-5e6f7a8b-9c0d.jsonl`) } });
+	const files = ["cmd-a", "cmd-b", "cmd-c", "cmd-d", "cmd-e"].map((id) => launch(id, id === "cmd-b" ? [{ id: "k-b", name: "old", activity: { phase: "done" } }] : id === "cmd-e" ? [{ id: "k-e", name: "waiter" }] : [{ id: `k-${id.slice(-1)}`, name: "worker" }]));
+	const agents = ["a", "b", "c", "d", "e"].map((x, i) => world.agent({ id: `cmd-${x}`, name: `S-${x}`, pane: `wA:p${i + 1}`, tab: "wA:t1" }));
+	await Promise.all(agents.map((a) => a.start()));
+	agents.forEach((a, i) => (world.herdr.pane(`wA:p${i + 1}`).agent_session = { value: files[i]! }));
+	kid("k-a", "working", "worker", "wA:p20");
+	kid("k-c", "working", "worker", "wA:p21");
+	kid("k-d", "working", "worker", "wA:p22");
+	kid("k-e", "blocked", "waiter", "wA:p23");
+	agents[2]!.status = "tool:edit"; // c works itself
+	world.herdr.pane("wA:p4").agent_status = "blocked"; // d waits itself
+	const [run, sessions] = [world.herdr.runFor("wA:p1"), () => world.broker.sessionList()];
+	const marks = (rows: { text: string; kind?: string; mark: string }[]) => rows.filter((r) => r.kind === "main" || r.kind === "member").map((r) => [r.text, r.mark]);
+	const want = [["S-a", "commanding"], ["S-b", "idle"], ["S-c", "working"], ["S-d", "waiting"], ["S-e", "commanding"]];
+	assert.deepEqual(marks((await collect({ run, sessions, workspaceId: "wA" })).rows), want, "idle with a working sub, or a waiting one, commands; idle with only a finished one is idle");
+	const read = await collectNet({ run, sessions, sessionDir: join(scratch, "sessions") });
+	assert.deepEqual(read.bases[0]!.tabs[0]!.units.map((u) => [u.name, u.mark]), want);
+	assert.equal(read.bases[0]!.mark, "waiting", "the base keeps what needs attention most: a waiting unit");
+	const tagged = (tone: Tone, text: string) => `<${tone}:${text}>`;
+	assert.ok(render(snapshot([net(1, "commanding", "S-a", "main")]), 0, 100, tagged).join("\n").includes("<title:◈> <main:"), "its own glyph and tone, not the spinner");
+});
+
 test("a blocked pane marks its session as waiting, and pi-herdr-agents workers and towers are not listed as members", async () => {
 	const loner = world.agent({ id: "loner", pane: "wA:p4", tab: "wA:t1" });
 	const worker = world.agent({ id: "worker", pane: "wA:p5", tab: "wA:t1", env: { PI_SUBAGENT_ID: "run" } });

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { askOf, openCalls, pendingOf, questionsOf, waitsForSecret, withPending } from "../src/ask.ts";
-import type { Net } from "../src/net.ts";
+import type { Net, Unit } from "../src/net.ts";
 
 const scratch = mkdtempSync(join(tmpdir(), "psb-ask-test-"));
 after(() => rmSync(scratch, { recursive: true, force: true }));
@@ -65,13 +65,22 @@ test("a snapshot carries what each waiting unit waits on; others carry nothing",
 	assert.deepEqual([a!.pending?.callId, a!.pending?.ask?.question, b!.pending], ["c9", "Pick a color", undefined]);
 });
 
-test("an idle unit with a running monitor shows as working, its base too; a finished monitor leaves it idle", async () => {
-	const unit = (key: string) => ({ id: key, key, control: true, name: key, role: "main" as const, mark: "idle" as const, subs: [] });
-	const net: Net = { bases: [{ id: "w", label: "w", mark: "idle", head: true, tower: null, outposts: [], outside: [], tabs: [{ id: "t", label: "t", units: [unit("a"), unit("b")] }] }] };
+test("an idle unit with a running monitor is commanding, its base working; a finished monitor leaves it idle, and its own waiting or working wins", async () => {
+	const unit = (key: string, mark: "idle" | "working" = "idle", subs: Unit[] = []): Unit => ({ id: key, key, control: true, name: key, role: "main" as const, mark, subs });
+	const net: Net = { bases: [{ id: "w", label: "w", mark: "idle", head: true, tower: null, outposts: [], outside: [], tabs: [{ id: "t", label: "t", units: [unit("a"), unit("b"), unit("c", "working"), unit("d")] }] }] };
 	const mon = (status: "running" | "done") => [{ id: "m", what: "npm run dev", status, lines: 0, at: 0 }];
-	await withPending(net, () => undefined, { dialogsOf: () => undefined, merge: () => ({}) as never, monitorsOf: (key) => mon(key === "a" ? "running" : "done") });
-	const [a, b] = net.bases[0]!.tabs[0]!.units;
-	assert.deepEqual([a!.mark, a!.note, b!.mark, net.bases[0]!.mark], ["working", "watching a monitor", "idle", "working"]);
+	const dialog = { id: "q", owner: "x", digest: "0".repeat(64) } as never;
+	await withPending(net, () => undefined, { dialogsOf: (key) => (key === "d" ? [dialog] : undefined), merge: () => ({}) as never, monitorsOf: (key) => mon(key === "b" ? "done" : "running") });
+	const [a, b, c, d] = net.bases[0]!.tabs[0]!.units;
+	assert.deepEqual([a!.mark, a!.note, b!.mark, c!.mark, d!.mark, net.bases[0]!.mark], ["commanding", "watching a monitor", "idle", "working", "waiting", "waiting"]);
+});
+
+test("a unit whose subagent is commanding by a monitor commands as well; a base with only commanding units is working", async () => {
+	const unit = (key: string, subs: Unit[] = []): Unit => ({ id: key, key, control: true, name: key, role: key === "kid" ? "subagent" : "main", mark: "idle", subs });
+	const net: Net = { bases: [{ id: "w", label: "w", mark: "idle", head: true, tower: null, outposts: [], outside: [], tabs: [{ id: "t", label: "t", units: [unit("boss", [unit("kid")]), unit("quiet", [{ ...unit("old"), mark: "done", ended: true }])] }] }] };
+	await withPending(net, () => undefined, { dialogsOf: () => undefined, merge: () => ({}) as never, monitorsOf: (key) => (key === "kid" ? [{ id: "m", what: "tests", status: "running", lines: 0, at: 0 }] : undefined) });
+	const [boss, quiet] = net.bases[0]!.tabs[0]!.units;
+	assert.deepEqual([boss!.subs[0]!.mark, boss!.mark, quiet!.mark, net.bases[0]!.mark], ["commanding", "commanding", "idle", "working"]);
 });
 
 test("only the current branch counts: a call left on a branch the user moved away from shows nothing, and the new branch's call shows", async () => {

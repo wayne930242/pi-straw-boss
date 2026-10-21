@@ -4,7 +4,7 @@ import { m } from "./paraglide/messages.js";
 
 export interface Entry { text: string; mark: Mark }
 
-const WORDS: Record<Mark, (i: { name: string }) => string> = { working: m.log_working, waiting: m.log_waiting, idle: m.log_idle, done: m.log_done, error: m.log_error, unknown: m.log_unknown };
+const WORDS: Record<Mark, (i: { name: string }) => string> = { commanding: m.log_commanding, working: m.log_working, waiting: m.log_waiting, idle: m.log_idle, done: m.log_done, error: m.log_error, unknown: m.log_unknown };
 
 /** Everything in a net that has a state, by id: towers, agents, subagents, and outposts. */
 function named(net: Net): Map<string, { name: string; mark: Mark }> {

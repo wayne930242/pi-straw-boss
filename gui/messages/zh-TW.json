@@ -332,5 +332,8 @@
 	"unpair_device": "解除 {name} 的配對",
 	"unpair_all": "全部解除配對",
 	"remote_turn_off": "關閉遠端存取",
-	"remote_stays": "關閉遠端存取不會刪除已配對的裝置；要結束某個裝置的配對，請按它的「解除配對」。"
+	"remote_stays": "關閉遠端存取不會刪除已配對的裝置；要結束某個裝置的配對，請按它的「解除配對」。",
+	"mark_commanding": "指揮中",
+	"log_commanding": "{name} 指揮中",
+	"stat_commanding": "指揮中"
 }

@@ -374,5 +374,8 @@
 	"unpair_device": "Unpair {name}",
 	"unpair_all": "Unpair all",
 	"remote_turn_off": "Turn off remote access",
-	"remote_stays": "Turning remote access off keeps the paired devices. Unpair a device to end its pairing."
+	"remote_stays": "Turning remote access off keeps the paired devices. Unpair a device to end its pairing.",
+	"mark_commanding": "commanding",
+	"log_commanding": "{name} is commanding",
+	"stat_commanding": "Commanding"
 }

@@ -1,4 +1,5 @@
 import { open, stat } from "node:fs/promises";
+import { commanding } from "./dashboard.ts";
 import { type Json, parse } from "./items.ts";
 import type { Net, Queued, Unit } from "./net.ts";
 import type { Answerable, Dialog } from "./owners.ts";
@@ -123,7 +124,7 @@ export async function withPending(net: Net, fileOf: (key: string) => string | un
 			const queued = relayed?.queuedOf?.(u.key);
 			if (queued?.length) u.queued = queued;
 			const monitors = relayed?.monitorsOf?.(u.key); if (monitors?.length) u.monitors = monitors;
-			if (u.mark === "idle" && monitors?.some((x) => x.status === "running")) [u.mark, b.mark, (u as Unit).note] = ["working", b.mark === "waiting" ? b.mark : "working", "watching a monitor"]; // idle with a running monitor: it will wake
+			if (u.mark === "idle" && monitors?.some((x) => x.status === "running")) [u.mark, b.mark, (u as Unit).note] = ["commanding", b.mark === "waiting" ? b.mark : "working", "watching a monitor"]; // idle with a running monitor: it will wake
 			if (dialogs?.length) [u.mark, b.mark] = ["waiting", "waiting"];
 			if (dialogs?.length && u !== b.tower) (u as Unit).note = "waiting on a question";
 			const file = u.mark === "waiting" ? fileOf(u.key) : undefined;
@@ -131,6 +132,8 @@ export async function withPending(net: Net, fileOf: (key: string) => string | un
 			if (file) jobs.push(pendingWith(file).then(({ pending, calls }) => (u.pending = join(pending, calls))));
 			else if (dialogs?.length) u.pending = join();
 		}
+	// A unit that is idle while a subagent of it commands (by a monitor above) commands too.
+	for (const b of net.bases) for (const u of unitsOf(b)) u.mark = commanding(u.mark, u.subs.map((c) => c.mark));
 	await Promise.all(jobs);
 	return net;
 }

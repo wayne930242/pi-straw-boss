@@ -15,7 +15,8 @@ import { ARROW, headOf, type HerdrRun, type HerdrWorld, isSub, MARK, type Pane, 
 //    subagent-activity/<child id>.json, and its pane's session file is named `<timestamp>_<child id>-<8 hex>-<8 hex>-<4 hex>.jsonl` (pi-herdr-agents makes it so).
 //    The parent pane's own session file names the artifacts directory, so children group under the session that launched them.
 
-export type Mark = "working" | "waiting" | "idle" | "done" | "error" | "unknown";
+/** `commanding`: itself idle while a subagent of it works or waits, or a monitor of it runs (see `commanding`). */
+export type Mark = "working" | "waiting" | "idle" | "done" | "error" | "unknown" | "commanding";
 /** One line of the tree. `net` rows are tab (0) > session (1) > subagent (2); `towers` rows are flat. */
 /** `ended`: a subagent whose run is over (pi-herdr-agents recorded it done, or its pane is gone or back at a shell); its parent has the result. */
 export interface Row { group: "net" | "towers"; depth: number; mark: Mark; text: string; kind?: string; note?: string; workspace?: string; id?: string; file?: string; pane?: string; ended?: boolean; finished?: boolean }
@@ -28,8 +29,8 @@ export interface Sources { run: HerdrRun; world?: HerdrWorld; sessions(): Promis
 const KEY = "straw-boss-dashboard";
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 // One glyph and one theme color per state; a working row shows the animated spinner instead of a fixed glyph.
-const GLYPH: Record<Exclude<Mark, "working">, string> = { waiting: "?", idle: "○", done: "✓", error: "✗", unknown: "·" };
-const TONE: Record<Mark, Tone> = { working: "accent", waiting: "warning", idle: "dim", done: "success", error: "error", unknown: "muted" };
+const GLYPH: Record<Exclude<Mark, "working">, string> = { waiting: "?", idle: "○", done: "✓", error: "✗", unknown: "·", commanding: "◈" };
+const TONE: Record<Mark, Tone> = { working: "accent", waiting: "warning", idle: "dim", done: "success", error: "error", unknown: "muted", commanding: "title" };
 const HERDR_MARK: Record<string, Mark> = { working: "working", blocked: "waiting", idle: "idle", done: "done" };
 // A row's role mark goes before its name, the same glyph as Herdr's sidebar shows (src/herdr.ts); a tab or sub workspace has none.
 const ROLE: Record<string, [Tone, string]> = { main: ["main", MARK.main], member: ["member", MARK.member], subagent: ["dim", ARROW], tower: ["tower", TOWER_LABEL], "head tower": ["tower", TOWER_LABEL] };
@@ -44,6 +45,11 @@ export function sessionMark(s: Session, pane?: Pane): Mark {
 	const busy = s.status ? s.status !== "idle" : undefined;
 	return pane?.agent_status === "blocked" ? "waiting" : busy === undefined ? markOf(pane?.agent_status) : busy ? "working" : "idle";
 }
+/**
+ * A session that is idle itself but commands work shows as commanding, not idle: a subagent of it is working, waiting, or commanding, or one of its
+ * monitors runs (`monitoring`). Its own state wins: working and waiting stay as they are, and a finished subagent counts for nothing.
+ */
+export const commanding = (mark: Mark, subs: Mark[], monitoring = false): Mark => (mark === "idle" && (monitoring || subs.some((m) => m === "working" || m === "waiting" || m === "commanding")) ? "commanding" : mark);
 const pad = (text: string, width: number) => text + " ".repeat(Math.max(0, width - visibleWidth(text)));
 
 /** The pure half: a snapshot in, a framed tree out. One shared spinner frame animates every working row. */
@@ -185,8 +191,8 @@ export async function collect({ run, world = worldOf(run), sessions, workspaceId
 	const [live, { panes: ps, workspaces: all }] = await Promise.all([sessions(), world()]);
 	const head = headOf(all);
 	const mine = all.find((w) => w.workspace_id === workspaceId);
-	const sessionRow = (s: Session, role: string): Row => {
-		const mark = sessionMark(s, ps.find((p) => p.pane_id === s.herdrLocation?.paneId));
+	const sessionRow = (s: Session, role: string, kids: Row[]): Row => {
+		const mark = commanding(sessionMark(s, ps.find((p) => p.pane_id === s.herdrLocation?.paneId)), kids.map((k) => k.mark));
 		return { group: "net", depth: 1, mark, text: s.name ?? s.id, kind: role, note: { working: s.status, waiting: "waiting on a question" }[mark as "working"] };
 	};
 	const joined = live.filter((s) => s.herdrLocation?.workspace?.id === workspaceId).flatMap((s) => {
@@ -197,7 +203,10 @@ export async function collect({ run, world = worldOf(run), sessions, workspaceId
 	const rows: Row[] = [];
 	for (const group of Object.values(Object.groupBy(joined, (j) => j.tab.id))) {
 		rows.push({ group: "net", depth: 0, mark: "unknown", text: `tab ${group![0]!.tab.label}` });
-		for (const { s, pane, role } of group!.sort((a, b) => Number(b.role === "main") - Number(a.role === "main"))) rows.push(sessionRow(s, role), ...subagents(pane, ps, now));
+		for (const { s, pane, role } of group!.sort((a, b) => Number(b.role === "main") - Number(a.role === "main"))) {
+			const kids = subagents(pane, ps, now);
+			rows.push(sessionRow(s, role, kids), ...kids);
+		}
 	}
 	// Sub workspaces are linked worktrees: they hang under this tower like subagents, and their sessions never join. One that
 	// already shows as a launched subagent (pi-herdr-agents runs worktree children there) is not listed a second time.
@@ -205,7 +214,7 @@ export async function collect({ run, world = worldOf(run), sessions, workspaceId
 	for (const sub of all.filter((x) => isSub(x) && mine && parentOf(all, x) === mine && !claimed.has(x.workspace_id))) rows.push({ group: "net", depth: 0, mark: markOf(sub.agent_status), text: sub.label, kind: "sub workspace" });
 	for (const w of all.filter((x) => x !== mine && !isSub(x) && live.some((s) => s.id === x.tokens?.tower))) rows.push({ group: "towers", depth: 0, mark: markOf(w.agent_status), text: w.label, kind: w === head ? "head tower" : "tower" });
 	// The title shows what needs attention most: a waiting row, then a working one, else the workspace's own status.
-	const attention = (["waiting", "working"] as const).find((m) => rows.some((r) => r.mark === m));
+	const attention = (["waiting", "working"] as const).find((m) => rows.some((r) => r.mark === m || (m === "working" && r.mark === "commanding"))); // commanding is active, like working
 	return { title: mine?.label ?? workspaceId, mark: attention ?? markOf(mine?.agent_status), head: Boolean(mine) && mine === head, rows, gui: await gui?.().catch(() => undefined) };
 }
 

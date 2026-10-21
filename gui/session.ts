@@ -6,7 +6,7 @@ import { mountComposer, postTo } from "./composer.ts";
 import { docFor, docTile } from "./doc.ts";
 import type { Tile } from "./layer.ts";
 import { m } from "./paraglide/messages.js";
-import { aim, doing, html, LABEL, urgent, text } from "./render.ts";
+import { aim, doing, html, LABEL, mark, urgent, text } from "./render.ts";
 import { closed, locate, type Scene, type Subject, wsOf } from "./scene.ts";
 import { linkTo } from "./tokens.ts";
 
@@ -96,6 +96,7 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 			chat?.docs();
 			const head = view.querySelector<HTMLElement>(".comms-head");
 			if (head) {
+				mark(head, mk); // the head glows while the unit is commanding
 				text(head, "h2 span", u?.name ?? scene.info?.name ?? "");
 				text(head, "p", [hit?.base.label, hit?.squad && m.squad_label({ label: hit.squad })].filter(Boolean).join(" · "));
 				const chan = head.querySelector<HTMLElement>(".chan")!, open = !closed(u, state);
@@ -107,7 +108,7 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 			drawTodos(view, scene.info?.todos);
 			drawMonitors(view, u?.monitors);
 			drawQueued(view, u?.queued);
-			chat?.setLive(mk === "working" ? `${doing(u!.note, mk)}` : urgent(mk) ? LABEL[mk]() : "", mk);
+			chat?.setLive(mk === "working" || mk === "commanding" ? `${doing(u!.note, mk)}` : urgent(mk) ? LABEL[mk]() : "", mk);
 			composer?.update({ name, control: Boolean(u?.control), live: !closed(u, state), mark: mk, online: online(), answerable: Boolean(u?.pending?.answer) });
 			asker?.update(u?.pending, mk === "waiting" && Boolean(u?.control) && online()); // its dialog above the composer, answerable or not
 		},
