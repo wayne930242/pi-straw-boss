@@ -6,6 +6,7 @@ import type { Data, HistoryEvent } from "./chat.ts";
 import type { Post } from "./composer.ts";
 import { changes } from "./log.ts";
 import { type Alert, alertsOf, arrivals, unitOf } from "./alerts.ts";
+import type { Drawer } from "./drawer.ts";
 import type { mountPanels, Tile } from "./layer.ts";
 import { MODAL, mountHotkeys } from "./hotkeys.ts";
 import { mountNotify } from "./notify.ts";
@@ -77,6 +78,7 @@ function show(net: Net) {
 	if (document.hidden) return;
 	page.stats(net);
 	showDismissAll(el("dismiss-all"), net);
+	drawer?.net(net);
 	const fresh = arrivals(known, now);
 	if (fresh.length || panels) withPanels((p) => p.alerts(fresh, now));
 	known = now;
@@ -93,6 +95,7 @@ function show(net: Net) {
 function navigate(next: Route) {
 	const before = current, from = next.view === "workspace" && before.view === "map" ? document.querySelector(`#bases [data-key="${CSS.escape(next.ws)}"]`)?.getBoundingClientRect() : undefined;
 	current = next;
+	drawer?.route(next);
 	if (next.view !== "map") loadFocus();
 	el("map").hidden = next.view !== "map";
 	el("legend").hidden = next.view === "session";
@@ -197,6 +200,12 @@ addEventListener("keydown", (event) => {
 mountHotkeys((hotkey) => panels?.hotkey(hotkey) ?? false); // Space opens the next alert, F enlarges the top dialog; nothing before the overlay layer has loaded
 el("pair").hidden = location.hostname !== "127.0.0.1"; // pairing is this computer's: a paired device comes in by its tailnet name (remote.ts)
 el("pair").addEventListener("click", () => void import("./pair.ts").then(({ pairTile }) => openTile(pairTile(), true)));
+// The phone's quick-switch drawer (drawer.ts, swipe.ts): its own chunk, fetched where there is a touch screen or a narrow window, now or once the window narrows.
+let drawer: Drawer | undefined;
+const touchy = matchMedia("(pointer: coarse), (max-width: 640px)");
+const loadDrawer = () => void import("./drawer.ts").then(({ mountDrawer }) => ((drawer ??= mountDrawer()), latest && drawer.net(latest), drawer.route(current)));
+if (touchy.matches) loadDrawer();
+else touchy.addEventListener("change", () => touchy.matches && !drawer && loadDrawer(), { once: true });
 mountQuit({ route: () => current, net: () => latest, go: (route) => router.go(route) });
 // The opening buttons on the map and in a base (data-open with data-ws and data-tab) open their tile, read against the newest net.
 document.addEventListener("click", (event) => {

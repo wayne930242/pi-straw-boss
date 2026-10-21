@@ -137,7 +137,7 @@ function mountToolbar(control: Control) {
 	// On a phone it folds to a "demo" tab in the right margin, which no panel reaches; a tap shows the rest.
 	const phone = innerWidth < 640;
 	if (phone) bar.style.cssText += ";left:auto;bottom:auto;right:0;top:40%;writing-mode:vertical-rl;flex-direction:column;padding:6px 1px;gap:4px";
-	const buttons = [["demo", () => buttons.slice(1).forEach((b) => (b.style.display = b.style.display ? "" : "none"))], ["drop stream", control.drop], ["go silent", control.silence], ["restore", control.restore], ["doc arrives", control.doc]].map(([label, run]) => {
+	const buttons = [["demo", () => buttons.slice(1).forEach((b) => (b.style.display = b.style.display ? "" : "none"))], ["drop stream", control.drop], ["go silent", control.silence], ["restore", control.restore], ["doc arrives", control.doc], ["drawer", () => document.dispatchEvent(new Event("sb-drawer"))]].map(([label, run]) => {
 		const button = document.createElement("button");
 		[button.textContent, button.onclick] = [label as string, run as () => void];
 		button.style.cssText = `all:unset;cursor:pointer;padding:3px 9px;border-radius:8px;background:#1a2748;color:#dbe6ff;${phone ? "padding:8px 1px;" : ""}${label !== "demo" && phone ? "display:none" : ""}`;

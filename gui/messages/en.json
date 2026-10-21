@@ -377,5 +377,15 @@
 	"remote_stays": "Turning remote access off keeps the paired devices. Unpair a device to end its pairing.",
 	"mark_commanding": "commanding",
 	"log_commanding": "{name} is commanding",
-	"stat_commanding": "Commanding"
+	"stat_commanding": "Commanding",
+	"short_working": "working",
+	"short_waiting": "waiting",
+	"short_idle": "idle",
+	"short_done": "ended",
+	"short_error": "error",
+	"short_unknown": "unknown",
+	"short_commanding": "commanding",
+	"drawer_title": "All units",
+	"drawer_label": "Switch to a unit",
+	"drawer_close": "Close the list"
 }

@@ -335,5 +335,15 @@
 	"remote_stays": "關閉遠端存取不會刪除已配對的裝置；要結束某個裝置的配對，請按它的「解除配對」。",
 	"mark_commanding": "指揮中",
 	"log_commanding": "{name} 指揮中",
-	"stat_commanding": "指揮中"
+	"stat_commanding": "指揮中",
+	"short_working": "工作中",
+	"short_waiting": "等待",
+	"short_idle": "閒置",
+	"short_done": "已結束",
+	"short_error": "錯誤",
+	"short_unknown": "無狀態",
+	"short_commanding": "指揮中",
+	"drawer_title": "所有單位",
+	"drawer_label": "切換到其他單位",
+	"drawer_close": "關閉清單"
 }
