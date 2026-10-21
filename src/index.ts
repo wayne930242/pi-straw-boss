@@ -4,6 +4,7 @@ import { startBridge } from "./bridge.ts";
 import { interceptUi } from "./intercept.ts";
 import { registerBoss } from "./boss.ts";
 import { createBriefing } from "./briefing.ts";
+import { createDigest } from "./digest.ts";
 import { afterExit, createClosing } from "./closing.ts";
 import { createElection } from "./election.ts";
 import { createGuard, GUARD_MS } from "./guard.ts";
@@ -41,14 +42,14 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		const bridge = startBridge(pi, { env, dir: guiDir, local: () => (s.hub?.running ? s.hub : undefined), close: (keep) => (closeSelf ? closeSelf(keep) : "A subagent is closed by the session that launched it.") });
 		interceptUi(pi); // any extension's select and confirm reach the same bridge, subagents included
 		if (env.PI_SUBAGENT_ID) return;
-		const briefing = createBriefing(kit), reach = createReach(kit), election = createElection(kit), presence = createPresence(kit);
+		const briefing = createBriefing(kit), reach = createReach(kit), election = createElection(kit), presence = createPresence(kit), digest = createDigest(run, now);
 		const guard = createGuard(kit, { ...election, openTower: reach.openTower });
 		// A join adds the tools of a joined session, and the tools promote through the membership: each is built with the other's hook.
 		const membership = createMembership(kit, { presence, election, guard, briefing, openTower: reach.openTower, register: () => (tools.addNetTools(), tools.addPromote()) });
-		const tools = createTools(kit, { ...reach, promote: membership.promote });
+		const tools = createTools(kit, { ...reach, promote: membership.promote, digest });
 		const host = createHost(kit, { bridge, connected: membership.connected });
 		closeSelf = createClosing(kit);
-		registerSession(kit, { briefing, presence, membership, guard, host, reach, startTower: createTower(kit, { membership, presence, tools }) });
+		registerSession(kit, { briefing, presence, membership, guard, host, reach, digest, startTower: createTower(kit, { membership, presence, tools }) });
 		registerBoss(kit, { host, membership, reach, closeSelf });
 	};
 }

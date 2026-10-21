@@ -1,11 +1,12 @@
 import { Type, type Static, type TSchema } from "typebox";
+import type { Digest } from "./digest.ts";
 import type { Membership } from "./membership.ts";
 import { opener } from "./opener.ts";
 import type { Reach } from "./reach.ts";
 import type { Kit } from "./state.ts";
 
 /** The tools the agent calls: what a joined session has (status, call_tower, broadcast, rename, promote), and the tower's boss_open_main. */
-export function createTools({ pi, cfg, s, role }: Kit, { send, openTower, status, broadcast, promote }: Pick<Reach, "send" | "openTower" | "status" | "broadcast"> & Pick<Membership, "promote">) {
+export function createTools({ pi, cfg, s, me, role }: Kit, { send, openTower, status, broadcast, promote, digest }: Pick<Reach, "send" | "openTower" | "status" | "broadcast"> & Pick<Membership, "promote"> & { digest: Digest }) {
 	const tool = <P extends TSchema>(name: string, description: string, parameters: P, body: (params: Static<P>) => Promise<{ text: string; details?: unknown }>) =>
 		pi.registerTool({
 			name, label: name, description, parameters,
@@ -46,7 +47,9 @@ export function createTools({ pi, cfg, s, role }: Kit, { send, openTower, status
 					const phrase = name.replace(/\s+/g, " ").trim();
 					if (!phrase) throw new Error("The name is empty");
 					if (Array.from(phrase).length > 40) throw new Error(`The name has ${Array.from(phrase).length} characters; keep it a short phrase (at most 16 fit the tab)`);
+					const was = pi.getSessionName() || s.ownName || me().slice(0, 8);
 					pi.setSessionName(phrase);
+					if (s.joined) await digest.note(s.at.workspaceId, `${was} renamed itself "${phrase}" (tab ${s.info.tab})`).catch(() => {});
 					return { text: `This session is now named "${phrase}".`, details: { name: phrase } };
 				});
 		},

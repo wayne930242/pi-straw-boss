@@ -191,10 +191,16 @@ export class FakeHerdr {
 			// Herdr takes the positional id before the options; anything else fails like the real CLI.
 			if (args[3] !== "--source") throw new Error(`unknown option in ${args.join(" ")}`);
 			const target = group === "pane" ? this.pane(args[2]!).tokens : this.workspace(args[2]!).tokens;
+			// Herdr's limits: 16 token changes a report, 32 tokens a pane or workspace, and a value cut to 80 characters with its newlines dropped.
+			if (args.filter((arg) => arg === "--token" || arg === "--clear-token").length > 16) throw new Error("herdr report-metadata failed: invalid_metadata_token a metadata report may update at most 16 tokens");
+			const next = { ...target };
 			args.forEach((arg, i) => {
-				if (arg === "--token") target[args[i + 1]!.split("=")[0]!] = args[i + 1]!.split("=").slice(1).join("=");
-				if (arg === "--clear-token") delete target[args[i + 1]!];
+				if (arg === "--token") next[args[i + 1]!.split("=")[0]!] = Array.from(args[i + 1]!.split("=").slice(1).join("=").replace(/\n/g, "")).slice(0, 80).join("");
+				if (arg === "--clear-token") delete next[args[i + 1]!];
 			});
+			if (Object.keys(next).length > 32) throw new Error(`herdr report-metadata failed: invalid_metadata_token ${group} metadata may contain at most 32 tokens`);
+			for (const key of Object.keys(target)) delete target[key];
+			Object.assign(target, next);
 			if (group === "workspace") this.wsTokenHistory.push(target.tower);
 			if (group === "workspace") this.emit("workspace.metadata_updated", "workspace_metadata_updated", { workspace: this.workspace(args[2]!) });
 			return out({});
@@ -405,6 +411,7 @@ export class Agent {
 			registerCommand: (name: string, command: { handler(args: string, ctx: unknown): Promise<void>; getArgumentCompletions?(prefix: string): { value: string }[] | null }) => this.commands.set(name, command),
 			appendEntry: (customType: string, data: unknown) => this.entries.push({ customType, data }),
 			setSessionName: (name: string) => void (this.name = name), // pi-intercom reports the new name to the broker
+			getSessionName: () => this.name,
 			sendMessage: (message: { customType: string; content: string }, options?: { deliverAs?: string }) => void this.sent.push({ ...message, deliverAs: options?.deliverAs }),
 		} as unknown as ExtensionAPI;
 		// pi-intercom's side of the extension API.

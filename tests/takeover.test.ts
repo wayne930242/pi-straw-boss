@@ -25,11 +25,13 @@ test("a new Herdr server's takeover makes every session write its tokens again a
 	const a = await main("a", "wA:p1", "wA:t1");
 	const b = world.agent({ id: "b", name: "b", pane: "wA:p2", tab: "wA:t1" });
 	await b.start();
-	const before = [tokens("wA:p7"), tokens("wA:p1"), tokens("wA:p2"), world.herdr.workspace("wA").tokens];
+	// The tower's digest (digest.ts) lives in the server's memory only, so a new server starts without it; the role tokens come back.
+	const roles = () => Object.fromEntries(Object.entries(world.herdr.workspace("wA").tokens).filter(([key]) => !key.startsWith("sbd_")));
+	const before = [tokens("wA:p7"), tokens("wA:p1"), tokens("wA:p2"), roles()];
 	assert.ok(before.every((t) => Object.keys(t).length >= 1) && before[1]!.sb_role === "main" && before[1]!.sb_order);
 
 	await world.takeover();
-	assert.deepEqual([tokens("wA:p7"), tokens("wA:p1"), tokens("wA:p2"), world.herdr.workspace("wA").tokens], before);
+	assert.deepEqual([tokens("wA:p7"), tokens("wA:p1"), tokens("wA:p2"), roles()], before);
 	assert.ok(a && tower && b);
 });
 

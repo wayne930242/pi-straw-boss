@@ -1,4 +1,5 @@
 import type { Briefing } from "./briefing.ts";
+import type { Digest } from "./digest.ts";
 import type { Guard } from "./guard.ts";
 import { answers, newer, readRecord } from "./handover.ts";
 import { isSub, panes, place, report, waitFor, workspaces } from "./herdr.ts";
@@ -13,9 +14,12 @@ const KID_MARK_MS = [3_000, 15_000];
 const SUBAGENT_TOOLS = ["subagent", "subagent_resume"];
 
 /** What the session does at its start, around each run, and at its end. */
-export function registerSession(kit: Kit, { briefing, presence, membership, guard, host, reach, startTower }: { briefing: Briefing; presence: Presence; membership: Membership; guard: Guard; host: ReturnType<typeof createHost>; reach: Reach; startTower(): Promise<void> }) {
+export function registerSession(kit: Kit, { briefing, presence, membership, guard, host, reach, digest, startTower }: { briefing: Briefing; presence: Presence; membership: Membership; guard: Guard; host: ReturnType<typeof createHost>; reach: Reach; digest: Digest; startTower(): Promise<void> }) {
 	const { pi, cfg, s, guiDir, me, role, tell } = kit;
 	const { run, env, version } = cfg;
+	const who = () => pi.getSessionName() || s.ownName || me().slice(0, 8);
+	// What the tower learns at its next run (digest.ts); a line that cannot be written is not worth failing anything for.
+	const note = (text: string) => void digest.note(s.at.workspaceId, text).catch(() => {});
 	// Watches for subagents this session launched whose result can no longer reach it (orphan.ts), and the watch on the Herdr server.
 	let nudges: ReturnType<typeof orphans> | undefined, nudgeTimer: ReturnType<typeof setInterval> | undefined, unwatch: (() => void) | undefined;
 	const stopWatching = () => {
@@ -73,6 +77,7 @@ export function registerSession(kit: Kit, { briefing, presence, membership, guar
 			} else {
 				if (!s.stopped) unwatch = cfg.watch(presence.restore); // a shutdown that came while Herdr was asked about the workspace has stopped nothing yet
 				starting = membership.joinNet().then(async () => {
+					note(`${who()} joined tab ${s.info.tab}`);
 					const taken = (await claimOpened()) && (await membership.promote(false));
 					if (taken && !taken.promoted) tell(taken.text, "warning");
 				});
@@ -89,7 +94,14 @@ export function registerSession(kit: Kit, { briefing, presence, membership, guar
 		})().catch(() => {});
 	});
 
-	pi.on("before_agent_start", (event) => briefing.begin(event.systemPromptOptions.sections));
+	// The tower's run starts with what happened in its workspace since its last run, and the digest is cleared as it is read.
+	pi.on("before_agent_start", async (event) => {
+		const sections = event.systemPromptOptions.sections;
+		briefing.begin(sections);
+		if (!s.holdsTower || !sections[ENTRY]) return;
+		const lines = await digest.take(s.at.workspaceId).catch(() => []);
+		if (lines.length) sections[ENTRY] += `\n\nSince your last run:\n${lines.map((line) => `- ${line}`).join("\n")}`;
+	});
 	pi.on("agent_settled", () => briefing.settled());
 
 	// A member that dispatches or resumes a subagent without promoting is promoted here, before the subagent starts, unless the tab already has a main.
@@ -107,7 +119,10 @@ export function registerSession(kit: Kit, { briefing, presence, membership, guar
 
 	// A launched subagent is marked within seconds, once its pane shows its session file, instead of at the next 4 minute refresh.
 	pi.on("tool_result", (event) => {
-		if (SUBAGENT_TOOLS.includes(event.toolName) && !s.isTower && !s.barred && role()) for (const ms of KID_MARK_MS) setTimeout(() => void presence.publish(), ms).unref();
+		if (!SUBAGENT_TOOLS.includes(event.toolName) || s.isTower || s.barred || !role()) return;
+		for (const ms of KID_MARK_MS) setTimeout(() => void presence.publish(), ms).unref();
+		const { name, agent } = event.input as { name?: unknown; agent?: unknown };
+		if (!event.isError) note(`${who()} ${event.toolName === "subagent" ? "started" : "resumed"} subagent ${typeof name === "string" && name ? name : "unnamed"}${typeof agent === "string" && agent ? ` (${agent})` : ""}`);
 	});
 
 	pi.on("session_shutdown", async (event) => {
