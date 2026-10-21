@@ -7,7 +7,8 @@ import { PROMPT_DIR } from "./fakes.ts";
 // main.md was 150 words; renaming itself with boss_rename when its work turns to another task took it to 170.
 // 0.22.0 to 185 for planning by planning.md before the first dispatch, with the boss's confirmation; 0.31.0 kept 185 when the confirmation gave way to asking only for decisions.
 // 0.32.0 added the terse caveman-style rule for text agents read to every role prompt: main 210, tower 205, member 95, member-no-main 105.
-const BUDGETS: Record<string, number> = { "main.md": 210, "tower.md": 205, "member.md": 95, "member-no-main.md": 105 };
+// 0.32.1 added that a brief keeps its goal, context, reasons, scope, what others own, and acceptance check, and that an unsure reader restates or asks: +45 each.
+const BUDGETS: Record<string, number> = { "main.md": 255, "tower.md": 250, "member.md": 140, "member-no-main.md": 150 };
 const PLACEHOLDERS = new Set(["tab", "workspace", "main", "tower", "head", "dir"]);
 const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
 
@@ -21,7 +22,7 @@ test("every role prompt stays within its word budget", () => {
 test("every role prompt writes to agents terse but keeps what flips meaning", () => {
 	for (const file of Object.keys(BUDGETS)) {
 		const text = readFileSync(`${PROMPT_DIR}/${file}`, "utf8");
-		for (const term of ["caveman-style", "negations", "quoted decisions verbatim", "full sentences"]) assert.ok(text.includes(term), `${file} names ${term}`);
+		for (const term of ["caveman-style", "negations", "quoted decisions verbatim", "full sentences", "what others own", "acceptance check", "reasons with their cause", "restates it or asks"]) assert.ok(text.includes(term), `${file} names ${term}`);
 	}
 });
 
