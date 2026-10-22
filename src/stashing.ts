@@ -12,7 +12,7 @@ import type { Kit } from "./state.ts";
 // The checks take up to three rounds of a few seconds, then every agent has 30 s to quit.
 const STASH_MS = 120_000;
 
-export function createStashing({ cfg, s, guiDir, tell }: Kit, { host }: { host: Pick<ReturnType<typeof createHost>, "share" | "sessions"> }) {
+export function createStashing({ cfg, s, guiDir, tell, me }: Kit, { host }: { host: Pick<ReturnType<typeof createHost>, "share" | "sessions"> }) {
 	const { run, sleep } = cfg;
 	return {
 		names: () => listStashes(guiDir),
@@ -30,6 +30,18 @@ export function createStashing({ cfg, s, guiDir, tell }: Kit, { host }: { host: 
 			if (reply.status === 200) return tell(`Stashed ${label} as "${name}" (${String(reply.body.sessions)} sessions); /boss pop ${name} brings it back`);
 			const why = typeof reply.body.reason === "string" ? reply.body.reason : reply.status ? `the server answered ${reply.status}` : "the GUI server did not answer";
 			tell(reply.status === 404 && reply.body.error === "not_found" ? `The GUI server cannot stash yet (an older pi-straw-boss in session ${shared.owner}); /reload it first` : why, "error");
+		},
+		/** Quits every tower, main, and member on the net and closes their bases, or nothing when anything there would be lost. */
+		async closeAll() {
+			const shared = await host.share();
+			const record = readRecord(guiDir);
+			if (shared.stale || !record) throw new Error(`The straw net GUI runs in session ${shared.owner} on a version that cannot close all; /reload that session first`);
+			tell("Closing every base on the net…");
+			const reply = await postServer(record, "close/all", { by: me() }, STASH_MS * 4);
+			if (reply.status === 200) return tell(`Closed ${(reply.body.closed as string[]).join(", ")}`);
+			// A session still here to read this was not closed: the server went with its own base, timed out, or is down.
+			if (reply.status === 0) return tell("The GUI server did not answer (it may have closed with its own base); check what is still open", "warning");
+			tell(reply.body.reason === "No such action." ? `The GUI server cannot close all yet (an older pi-straw-boss in session ${shared.owner}); /reload it first` : String(reply.body.reason ?? `the server answered ${reply.status}`), "error");
 		},
 		/** Pops `given`; with no name, the only stash, or the one picked from the list. */
 		async pop(given: string | undefined) {

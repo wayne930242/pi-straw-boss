@@ -1,6 +1,6 @@
 import type { Reply } from "./control.ts";
 import { type HerdrRun, panes, type Session, type Sleep } from "./herdr.ts";
-import { stashBase } from "./stash.ts";
+import { closeAll, stashBase } from "./stash.ts";
 
 // What the page's close buttons ask for. Closing is each session's own (index.ts): its bridge is asked to quit it as /boss close does, and its
 // shutdown clears its tokens (a tower's clears the base's mains). One unit closes its own pane afterwards; for a squad or a base every agent
@@ -11,6 +11,7 @@ import { stashBase } from "./stash.ts";
 //   POST /<token>/api/close/tab {workspace, tab}       every agent in the tab quits, then the tab closes
 //   POST /<token>/api/close/base {workspace}           every agent in the workspace quits, then the workspace closes
 //   POST /<token>/api/close/stash {workspace, name}    the base is checked and recorded first (stash.ts), then closed as above
+//   POST /<token>/api/close/all                        every base of the net is checked, then each closes as above (stash.ts closeAll)
 
 const EXIT_MS = 30_000, JOINED = new Set(["main", "member", "tower"]);
 /** `check` and `stateDir` are a stash's: without them this closer stashes nothing. */
@@ -45,11 +46,13 @@ export function createCloser({ run, sleep, me, sessions, ask, check, stateDir }:
 			const r = await ask(json.key, false);
 			return r?.accepted ? { status: 200, body: { closing: true } } : no(409, "refused", r?.reason ?? "The session did not answer; close it in its terminal.");
 		}
-		if (kind === "stash" && check && stateDir) {
+		if ((kind === "stash" && stateDir) || kind === "all") {
+			if (!check) return no(404, "not_found", "No such action.");
 			if (busy) return no(429, "busy", "Another close is still on its way.");
 			busy = true;
 			try {
-				return await stashBase({ run, sleep, sessions, check, stateDir }, json, (workspace) => batch(workspace, undefined, true), refresh);
+				const quit = (workspace: string) => batch(workspace, undefined, true);
+				return await (kind === "all" ? closeAll({ run, sleep, sessions, check }, me(), quit, refresh, typeof json.by === "string" ? json.by : undefined) : stashBase({ run, sleep, sessions, check, stateDir: stateDir! }, json, quit, refresh));
 			} catch (error) {
 				return no(502, "stash_failed", (error as Error).message);
 			} finally {

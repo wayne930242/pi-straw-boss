@@ -5,12 +5,12 @@ import { join } from "node:path";
 import { test } from "node:test";
 import type { Pane, Session } from "../src/herdr.ts";
 import { createCloser } from "../src/closer.ts";
-import { listStashes, nameOk, popBase, type Stash, stashBase, stashFile } from "../src/stash.ts";
+import { closeAll, listStashes, nameOk, popBase, type Stash, stashBase, stashFile } from "../src/stash.ts";
 
 // Stash and pop (docs/specs/2026-10-22-stash/spec.md): a base is checked before anything closes, recorded, then closed; a pop resumes
 // each pi from its session file, the tower first and each tab's main before its members, and closes what it opened when one fails.
 
-const at = (id: string, name: string, paneId: string): Session => ({ id, name, herdrLocation: { status: "ok", paneId } as Session["herdrLocation"] });
+const at = (id: string, name: string, paneId: string): Session => ({ id, name, herdrLocation: { status: "ok", paneId, workspace: { id: paneId.split(":")[0]!, label: "" } } as Session["herdrLocation"] });
 
 function world() {
 	const dir = mkdtempSync(join(tmpdir(), "sb-stash-"));
@@ -64,7 +64,7 @@ test("anything a resume would lose refuses the stash, names every reason, and cl
 	const r = await s.go();
 	assert.equal(r.status, 409);
 	const reason = String((r.body as { reason: string }).reason);
-	for (const bit of [/main · A is working/, /pane wA:p5 is a subagent/, /pane wA:p4 runs node/, /member · A: a background monitor is running/, /tower · A did not answer the stash check/]) assert.match(reason, bit);
+	for (const bit of [/main · A is working/, /pane wA:p5 is a subagent/, /pane wA:p4 runs node/, /member · A: a background monitor is running/, /tower · A did not answer the check/]) assert.match(reason, bit);
 	assert.deepEqual(s.closed, []);
 	assert.equal(existsSync(stashFile(w.dir, "A")), false);
 });
@@ -215,4 +215,72 @@ test("two pops of one stash: the first claims it on disk, the second opens nothi
 	assert.equal(q.ran.length, 0);
 	await first;
 	assert.deepEqual(listStashes(w.dir), []);
+});
+
+// Close all: every base of the net, checked first as a stash checks it, minus what only a pop needs.
+function twoBases() {
+	const w = world();
+	w.all.push({ workspace_id: "wC", label: "Base C" }, { workspace_id: "wD", label: "Shells only" });
+	w.panes.push({ pane_id: "wC:p1", tab_id: "wC:t1", workspace_id: "wC", agent: "pi", agent_status: "idle", agent_session: { value: "/not-yet.jsonl" }, tokens: { sb_role: "member" } }, { pane_id: "wD:p1", tab_id: "wD:t1", workspace_id: "wD", cwd: w.dir });
+	w.live.push(at("c", "member · C", "wC:p1"), at("gui", "gui", "wA:p2"));
+	const run = w.run;
+	w.run = async (args: string[]) => (args[0] === "tab" && args[1] === "list" && args[3] !== "wA" ? JSON.stringify({ result: { tabs: [{ tab_id: `${args[3]}:t1`, workspace_id: args[3] }] } }) : run(args));
+	const closed: string[] = [];
+	const go = (check: (key: string) => Promise<{ reason?: string } | undefined> = async () => ({}), by?: string, onClose = (_ws: string) => {}) => closeAll({ run: w.run, sleep: async () => {}, sessions: async () => w.live, check }, "gui", async (ws) => (closed.push(ws), onClose(ws), { status: 200, body: {} }), undefined, by);
+	return { w, closed, go };
+}
+
+test("close all checks every base of the net, then closes each, the server's own base last; a workspace outside the net is left alone", async () => {
+	const t = twoBases();
+	const r = await t.go();
+	assert.equal(r.status, 200, JSON.stringify(r.body));
+	assert.deepEqual(t.closed, ["wC", "wA"]);
+	assert.deepEqual((r.body as { closed: string[] }).closed, ["Base C", "Base A"]);
+});
+
+test("one refusal anywhere closes nothing and lists every reason, base by base", async () => {
+	const t = twoBases();
+	t.w.fg["wA:p4"] = ["zsh", "vite"];
+	const r = await t.go(async (key) => (key === "c" ? { reason: "a background monitor is running" } : {}));
+	assert.equal(r.status, 409);
+	const why = String((r.body as { reason: string }).reason);
+	assert.match(why, /Base A: pane wA:p4 runs vite/);
+	assert.match(why, /member · C: a background monitor is running/);
+	assert.deepEqual(t.closed, []);
+});
+
+test("a base that stops half way leaves the rest open and says which closed", async () => {
+	const t = twoBases();
+	const r = await closeAll({ run: t.w.run, sleep: async () => {}, sessions: async () => t.w.live, check: async () => ({}) }, "gui", async (ws) => (t.closed.push(ws), ws === "wA" ? { status: 409, body: { reason: "Nothing was closed: b (busy)." } } : { status: 200, body: {} }));
+	assert.equal(r.status, 409);
+	assert.match(String((r.body as { reason: string }).reason), /busy.*Closed before it: Base C; the rest stay open/);
+});
+
+test("close all closes the invoker's base after the others and the server's last; a stale role token puts no workspace on the net", async () => {
+	const t = twoBases();
+	t.w.all.push({ workspace_id: "wE", label: "Stale" });
+	t.w.panes.push({ pane_id: "wE:p1", tab_id: "wE:t1", workspace_id: "wE", cwd: t.w.dir, tokens: { sb_role: "member" } });
+	const r = await t.go(async () => ({}), "c");
+	assert.equal(r.status, 200, JSON.stringify(r.body));
+	assert.deepEqual(t.closed, ["wC", "wA"], "wE (stale token) is not on the net; the invoker's base wC before the server's wA");
+});
+
+test("a base is looked at again just before it closes: a job started meanwhile stops the run and names what closed", async () => {
+	const t = twoBases();
+	t.w.all.push({ workspace_id: "wF", label: "Base F" });
+	t.w.panes.push({ pane_id: "wF:p1", tab_id: "wF:t1", workspace_id: "wF", agent: "pi", agent_status: "idle", agent_session: { value: "/x.jsonl" }, tokens: { sb_role: "main" } });
+	t.w.live.push(at("f", "main · F", "wF:p1"));
+	const r = await t.go(async () => ({}), undefined, (ws) => ws === "wC" && (t.w.panes.find((p) => p.pane_id === "wF:p1")!.agent_status = "working"));
+	assert.equal(r.status, 409);
+	assert.match(String((r.body as { reason: string }).reason), /Base F cannot close now: main · F is working.*Closed before it: Base C/);
+	assert.deepEqual(t.closed, ["wC"]);
+});
+
+test("the server's own session is asked again before its base closes with it", async () => {
+	const t = twoBases();
+	let asked = 0;
+	const r = await t.go(async (key) => (key === "gui" && ++asked >= 1 ? { reason: "a turn is running" } : {}));
+	assert.equal(r.status, 409);
+	assert.match(String((r.body as { reason: string }).reason), /Base A cannot close now: a turn is running/);
+	assert.deepEqual(t.closed, ["wC"]);
 });
