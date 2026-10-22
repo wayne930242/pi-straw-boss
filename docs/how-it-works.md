@@ -444,8 +444,14 @@ The plugin needs Herdr 0.9.3 or newer, git, node 18 or newer, and a Unix shell, 
 | `/boss status` | Show `boss_status`. |
 | `/boss tower` | Open this workspace's tower if none runs, then focus its tab. |
 | `/boss gui` | Open the whole net in the browser (any session; joins nothing). `/boss gui stop` stops the server. |
+| `/boss stash [name]` | Put this base away under `name` (the workspace label by default) and close it; see **Stash and pop**. |
+| `/boss pop [name]` | Open a stashed base again (any session; with no name, the only stash or one picked from the list). |
 
 `/boss` and `boss_promote` are unavailable in a sub workspace.
+
+### Stash and pop
+
+`/boss stash` puts a whole base away and `/boss pop` opens it again ([spec](specs/2026-10-22-stash/spec.md)). The stash runs in the session that holds the GUI server, which `/boss stash` starts in the background when none runs (no browser opens): only the server can ask every session's bridge. It first checks, closing nothing: Herdr's view (every pi pane is a tower, main, or member that is `idle` or `done` and has a session file; no subagent in the base or its sub workspaces; no shell with anything but the shell in its foreground; the base is not itself a sub workspace) and each session's own, through its bridge's `stash-check` (no running turn, no queued message, no open dialog, no running monitor). A session that does not answer within three rounds counts as a refusal, so a session on an older pi-straw-boss is never closed by a stash. Every reason is listed in one refusal. Then it writes `stash/<name>.json` in the state directory (the label and folder, each tab in order with the tower's tab first, each pane's role, session file, name, and folder) and closes the base as **Quit** on a base does. A batch that stops half way (an agent refuses or stays up) deletes the manifest and names each session's `pi --session` file instead, because popping it would run a session file twice. `/boss pop` opens a new workspace with the same label and resumes each pi with `pi --session <file>`: the tower first (its session carries its tower mark), then per tab the main (with the one-time `sb_open_main` token, as a main the page opens) and then the members, each awaited in its role for up to 60 s; shells reopen in their folders. On success the manifest moves to `stash/popped/`; on a failure the new workspace closes and the manifest stays for another try. Monitors, pending intercom asks, and pane sizes are not carried over.
 
 ## What it writes
 

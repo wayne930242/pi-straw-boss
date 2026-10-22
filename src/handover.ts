@@ -51,6 +51,24 @@ export async function requestStop(r: GuiRecord, asked: Asked, sleep: (ms: number
 	return false;
 }
 
+/** One POST to a recorded server's API from this machine, as its own page sends it: the status and the JSON body (status 0 when it did not answer). */
+export function postServer(r: GuiRecord, path: string, json: Record<string, unknown>, timeoutMs: number) {
+	const body = JSON.stringify(json), origin = `http://127.0.0.1:${r.port}`;
+	return new Promise<{ status: number; body: Record<string, unknown> }>((done) => {
+		const headers = { host: `127.0.0.1:${r.port}`, origin, "content-type": "application/json", "x-sb-csrf": r.csrf ?? "", "content-length": Buffer.byteLength(body) };
+		const req = request({ host: "127.0.0.1", port: r.port, path: `/${r.token}/api/${path}`, method: "POST", headers, agent: false, timeout: timeoutMs }, (res) => {
+			let text = "";
+			res.setEncoding("utf8").on("data", (c: string) => (text += c)).on("end", () => {
+				let parsed: Record<string, unknown> = {};
+				try { parsed = JSON.parse(text) as Record<string, unknown>; } catch { /* a body that is not JSON says nothing more than its status */ }
+				done({ status: res.statusCode ?? 0, body: parsed });
+			});
+		});
+		req.on("error", () => done({ status: 0, body: {} })).on("timeout", () => (req.destroy(), done({ status: 0, body: {} })));
+		req.end(body);
+	});
+}
+
 /** Whether a recorded server answers its own page. */
 export const answers = (r: GuiRecord) =>
 	new Promise<boolean>((done) => {

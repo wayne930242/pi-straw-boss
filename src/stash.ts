@@ -1,0 +1,218 @@
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import type { Reply } from "./control.ts";
+import { createTab, type HerdrRun, isSub, type Pane, panes, parentOf, report, result, type Session, type Sleep, startPi, tabs, waitFor, workspaces } from "./herdr.ts";
+
+// Stash and pop (docs/specs/2026-10-22-stash/spec.md). A stash puts a whole base away: it checks that every pane can be resumed losing
+// nothing (Herdr's view here, each session's own view through its bridge's `stash-check`), writes a manifest of what ran where, then closes
+// the base as its close button does (closer.ts). A pop opens a new workspace from the manifest and resumes each pi from its session file:
+// the tower first (its session marks it a tower), then per tab the main (with the one-time sb_open_main token, as spawn.ts opens a main),
+// then the members. Anything a resume cannot bring back (a running turn, a subagent, a monitor, a busy shell) refuses the stash instead.
+//   POST /<token>/api/close/stash {workspace, name}    checks, writes <state dir>/stash/<name>.json, then closes the base
+
+export type StashRole = "tower" | "main" | "member";
+export interface StashPane { kind: StashRole | "shell"; cwd: string; session?: string; name?: string }
+export interface StashTab { label?: string; panes: StashPane[] }
+export interface Stash { version: 1; name: string; label: string; cwd: string; stashedAt: string; tabs: StashTab[] }
+
+const ROLES = new Set<string>(["tower", "main", "member"]), SETTLED = new Set(["idle", "done"]);
+const SHELLS = new Set(["zsh", "bash", "fish", "sh", "dash", "ksh", "tcsh", "csh", "nu", "login"]);
+const MAX_NAME = 64, CHECK_ROUNDS = 3, CHECK_GAP_MS = 2000, JOIN_MS = 60_000;
+const no = (status: number, error: string, reason: string): Reply => ({ status, body: { error, reason } });
+
+/** A stash name is a file name: at most 64 characters, no slash, backslash, or control character, not starting with a dot. */
+export const nameOk = (name: unknown): name is string => typeof name === "string" && name.length > 0 && name.length <= MAX_NAME && name === name.trim() && !name.startsWith(".") && !/[/\\\p{Cc}]/u.test(name);
+const dirOf = (stateDir: string) => join(stateDir, "stash");
+export const stashFile = (stateDir: string, name: string) => join(dirOf(stateDir), `${name}.json`);
+
+/** The stashes waiting to be popped, by name. */
+export function listStashes(stateDir: string): string[] {
+	try {
+		return readdirSync(dirOf(stateDir)).filter((f) => f.endsWith(".json")).map((f) => f.slice(0, -5)).filter(nameOk).sort((a, b) => a.localeCompare(b));
+	} catch {
+		return [];
+	}
+}
+
+const str = (v: unknown): v is string => typeof v === "string" && v.length > 0;
+function paneOk(p: unknown): p is StashPane {
+	const x = p as Partial<StashPane> | null;
+	return x !== null && typeof x === "object" && (x.kind === "shell" || ROLES.has(x.kind as string)) && str(x.cwd) && (x.kind === "shell" || str(x.session)) && (x.name === undefined || typeof x.name === "string");
+}
+/** What a pop can open: the stash checks it before it closes anything, the pop before it opens anything. */
+const stashOk = (st: Stash | null) => st?.version === 1 && str(st.label) && str(st.cwd) && Array.isArray(st.tabs) && st.tabs.length > 0 && st.tabs.every((t) => Array.isArray(t?.panes) && t.panes.length > 0 && t.panes.every(paneOk) && (t.label === undefined || typeof t.label === "string"));
+export function readStash(stateDir: string, name: string, file = stashFile(stateDir, name)): Stash {
+	if (!nameOk(name)) throw new Error(`"${name}" is not a stash name`);
+	let st: Stash;
+	try {
+		st = JSON.parse(readFileSync(file, "utf8")) as Stash;
+	} catch (error) {
+		throw new Error((error as NodeJS.ErrnoException).code === "ENOENT" ? `Nothing is stashed as "${name}"` : `The stash "${name}" cannot be read: ${(error as Error).message}`);
+	}
+	if (!stashOk(st)) throw new Error(`The stash "${name}" is not a manifest this version reads`);
+	return st;
+}
+
+/** What runs in a shell pane's foreground besides the shell; undefined when Herdr cannot say. */
+async function foreground(run: HerdrRun, paneId: string): Promise<string[] | undefined> {
+	try {
+		const procs = (await result(run, ["pane", "process-info", "--pane", paneId])).process_info?.foreground_processes as { name?: string; argv0?: string }[] | undefined;
+		if (!Array.isArray(procs)) return undefined;
+		return procs.map((p) => String(p.argv0 ?? p.name ?? "").replace(/^-/, "").split("/").pop()!).filter((n) => !SHELLS.has(n));
+	} catch {
+		return undefined;
+	}
+}
+
+/** Herdr's side of the check, and the manifest's tabs: tower tab first, then Herdr's tab order, each tab's panes in Herdr's order. */
+export async function survey(run: HerdrRun, workspaceId: string, live: Session[]) {
+	const all = await workspaces(run), ws = all.find((w) => w.workspace_id === workspaceId);
+	if (!ws) return undefined;
+	const reasons: string[] = [], agents: Session[] = [], out: StashTab[] = [];
+	if (isSub(ws)) reasons.push(`${ws.label} is a sub workspace; stash the base it belongs to`);
+	// A sub workspace is neither recorded nor closed: anything running in it would lose the base it reports to.
+	for (const sub of all.filter((w) => isSub(w) && parentOf(all, w)?.workspace_id === workspaceId)) {
+		const ps = await panes(run, sub.workspace_id), busy = ps.filter((p) => p.agent).length;
+		if (busy) reasons.push(`its sub workspace ${sub.label} runs ${busy} agent${busy > 1 ? "s" : ""}`);
+		for (const p of ps.filter((x) => !x.agent)) if ((await foreground(run, p.pane_id))?.length !== 0) reasons.push(`pane ${p.pane_id} in its sub workspace ${sub.label} runs something`);
+	}
+	const here = await panes(run, workspaceId), sessionAt = (p: Pane) => live.find((s) => s.herdrLocation?.paneId === p.pane_id);
+	for (const t of await tabs(run, workspaceId)) {
+		const tab: StashTab = { ...(t.label ? { label: t.label } : {}), panes: [] };
+		for (const p of here.filter((x) => x.tab_id === t.tab_id)) {
+			const cwd = p.cwd ?? ws.worktree?.checkout_path ?? "", session = sessionAt(p), who = session?.name ?? `pane ${p.pane_id}`;
+			if (!p.agent) {
+				const fg = await foreground(run, p.pane_id);
+				if (!cwd) reasons.push(`pane ${p.pane_id} has no folder Herdr knows of`);
+				if (!fg) reasons.push(`Herdr cannot say what runs in pane ${p.pane_id}`);
+				else if (fg.length) reasons.push(`pane ${p.pane_id} runs ${fg.join(", ")}`);
+				tab.panes.push({ kind: "shell", cwd });
+				continue;
+			}
+			const role = p.tokens?.sb_role ?? "";
+			if (p.agent !== "pi") reasons.push(`pane ${p.pane_id} runs ${p.agent}, which a stash cannot resume`);
+			else if (!ROLES.has(role)) reasons.push(`${who} is a subagent or outside the net`);
+			if (p.agent !== "pi" || !ROLES.has(role)) continue;
+			if (!SETTLED.has(p.agent_status ?? "")) reasons.push(`${who} is ${p.agent_status ?? "in an unknown state"}`);
+			const file = p.agent_session?.value;
+			if (!file || !existsSync(file)) reasons.push(`${who} has no session file Herdr knows of`);
+			if (!cwd) reasons.push(`${who} has no folder Herdr knows of`);
+			if (session) agents.push(session);
+			else reasons.push(`${who} is not on the intercom net`);
+			tab.panes.push({ kind: role as StashRole, cwd, ...(file ? { session: file } : {}), ...(session?.name ? { name: session.name } : {}) });
+		}
+		if (tab.panes.length) out.push(tab);
+	}
+	const towered = (t: StashTab) => t.panes.some((p) => p.kind === "tower");
+	const tabsOut = [...out.filter(towered), ...out.filter((t) => !towered(t))];
+	const cwd = tabsOut.flatMap((t) => t.panes).find((p) => p.kind === "tower")?.cwd ?? ws.worktree?.checkout_path ?? tabsOut[0]?.panes[0]?.cwd ?? "";
+	if (!tabsOut.length) reasons.push(`${ws.label} has nothing in it to stash`);
+	return { label: ws.label, cwd, tabs: tabsOut, reasons, agents };
+}
+
+export interface StashDeps { run: HerdrRun; sleep: Sleep; sessions(): Promise<Session[]>; check(key: string): Promise<{ reason?: string } | undefined>; stateDir: string; now?: () => Date }
+
+/** The server's stash: every check first (nothing closes on a refusal), then the manifest, then `closeBase` (the close-base batch). */
+export async function stashBase(d: StashDeps, json: Record<string, unknown>, closeBase: (workspace: string) => Promise<Reply>, refresh?: () => Promise<unknown>): Promise<Reply> {
+	if (!str(json.workspace) || json.workspace.length > 200) return no(400, "bad_request", "A base is named by its workspace.");
+	if (!nameOk(json.name)) return no(400, "bad_request", `A stash name has at most ${MAX_NAME} characters, no slash, backslash, or control character, and does not start with a dot.`);
+	const name = json.name, file = stashFile(d.stateDir, name);
+	if (existsSync(file)) return no(409, "exists", `Something is stashed as "${name}" already; pop it or pick another name.`);
+	const sv = await survey(d.run, json.workspace, await d.sessions());
+	if (!sv) return no(404, "not_found", "That base is not open any more.");
+	// A bridge that has not told this server about itself yet (one just started) gets another round after the net is read again.
+	const reasons = [...sv.reasons], named = (s: Session) => s.name ?? s.id.slice(0, 8);
+	let pending = sv.agents;
+	for (let round = 0; pending.length && round < CHECK_ROUNDS; round++) {
+		if (round) (await d.sleep(CHECK_GAP_MS), await refresh?.());
+		const got = await Promise.all(pending.map(async (s) => ({ s, r: await d.check(s.id) })));
+		for (const { s, r } of got) if (r?.reason) reasons.push(`${named(s)}: ${r.reason}`);
+		pending = got.filter(({ r }) => !r).map(({ s }) => s);
+	}
+	for (const s of pending) reasons.push(`${named(s)} did not answer the stash check (an older pi-straw-boss, or a stuck session)`);
+	// Herdr's side once more, since the rounds took seconds: a shell job or a subagent started meanwhile refuses too. The sessions' own side is
+	// asked again by the close itself (`ifStashable`), so a turn started now refuses that session's quit and stops the batch.
+	if (!reasons.length) reasons.push(...((await survey(d.run, json.workspace, await d.sessions()))?.reasons ?? ["the base is not open any more"]));
+	if (reasons.length) return no(409, "refused", `Nothing was stashed: ${reasons.join("; ")}.`);
+	const stash: Stash = { version: 1, name, label: sv.label, cwd: sv.cwd, stashedAt: (d.now?.() ?? new Date()).toISOString(), tabs: sv.tabs };
+	if (!stashOk(stash)) return no(500, "unreadable", "Nothing was stashed: the manifest would not be one a pop can read.");
+	mkdirSync(dirOf(d.stateDir), { recursive: true, mode: 0o700 });
+	writeFileSync(file, JSON.stringify(stash, null, 2), { mode: 0o600, flag: "wx" });
+	const closed = await closeBase(json.workspace);
+	if (closed.status === 200) return { status: 200, body: { stashed: name, sessions: sv.agents.length } };
+	// A batch that stopped half way leaves sessions running beside ones that quit: popping would run a session file twice, so the manifest goes.
+	rmSync(file, { force: true });
+	const quit = sv.tabs.flatMap((t) => t.panes).filter((p) => p.session).map((p) => `${p.name ?? "?"}: pi --session ${p.session}`);
+	const why = (closed.body as { reason?: string }).reason ?? "the base did not close";
+	return no(closed.status, "stash_failed", `${why} Nothing is stashed; a session that did quit resumes with its own file (${quit.join("; ")}).`);
+}
+
+/** `agentDir`: the popping session's PI_CODING_AGENT_DIR, when it runs under one, so each pi resumes with the same settings and extensions. */
+export interface PopDeps { run: HerdrRun; sleep: Sleep; stateDir: string; live(sessionId: string): Promise<boolean>; agentDir?: string; now?: () => Date }
+const RANK: Record<StashPane["kind"], number> = { tower: 0, main: 1, member: 2, shell: 3 };
+const roleEnv = (kind: StashPane["kind"]) => (kind === "shell" ? [] : [`STRAW_BOSS_ROLE=${kind}`]), flags = (env: string[]) => env.flatMap((e) => ["--env", e]);
+
+/** Resumes one pi in its pane and waits until it is back in its role (a member may come back as the tab's main: the guard's choice). */
+async function resume({ run, sleep, live }: PopDeps, ws: string, paneId: string, p: StashPane) {
+	if (p.kind === "tower") await report(run, "pane", paneId, { sb_role: "tower" });
+	if (p.kind === "main") await report(run, "pane", paneId, { sb_open_main: "1" }); // authorises exactly this pi to promote itself (session.ts)
+	// Herdr agent names are unique across workspaces and lowercase only.
+	const agent = p.kind === "tower" ? `tower-${ws.toLowerCase()}` : `${p.kind}-${randomUUID().slice(0, 8)}`;
+	await startPi(run, sleep, agent, paneId, ["--session", p.session!, ...(p.name ? ["--name", p.name] : [])]);
+	const back = p.kind === "tower"
+		? await waitFor(sleep, async () => ((id) => id && live(id))((await workspaces(run)).find((w) => w.workspace_id === ws)?.tokens?.tower), JOIN_MS, 1000)
+		: await waitFor(sleep, async () => ((r) => (p.kind === "main" ? r === "main" : r === "member" || r === "main"))((await panes(run, ws)).find((x) => x.pane_id === paneId)?.tokens?.sb_role), JOIN_MS, 500);
+	if (!back) throw new Error(`${p.name ?? p.session} did not come back as the ${p.kind} within ${JOIN_MS / 1000} s (pane ${paneId})`);
+}
+
+/**
+ * Opens the stash `name` in a new workspace; on any failure the new workspace closes and the manifest goes back, so popping again starts over.
+ * The manifest is claimed first by moving it into stash/.popping/ (one rename, which only one session wins), so two pops never run one session file twice.
+ */
+export async function popBase(d: PopDeps, name: string): Promise<{ workspace: string; label: string; sessions: number }> {
+	if (!nameOk(name)) throw new Error(`"${name}" is not a stash name`);
+	const claimed = join(dirOf(d.stateDir), ".popping", `${name}.json`);
+	mkdirSync(dirname(claimed), { recursive: true, mode: 0o700 });
+	try {
+		renameSync(stashFile(d.stateDir, name), claimed);
+	} catch (error) {
+		throw new Error((error as NodeJS.ErrnoException).code === "ENOENT" ? `Nothing is stashed as "${name}" (or another session is popping it)` : (error as Error).message);
+	}
+	try {
+		const r = await open(d, name, claimed);
+		mkdirSync(join(dirOf(d.stateDir), "popped"), { recursive: true, mode: 0o700 });
+		renameSync(claimed, join(dirOf(d.stateDir), "popped", `${name}-${(d.now?.() ?? new Date()).toISOString().replace(/[:.]/g, "-")}.json`));
+		return r;
+	} catch (error) {
+		renameSync(claimed, stashFile(d.stateDir, name));
+		throw error;
+	}
+}
+async function open(d: PopDeps, name: string, file: string) {
+	const { run } = d, st = readStash(d.stateDir, name, file), all = st.tabs.flatMap((t) => t.panes);
+	const envOf = (kind: StashPane["kind"]) => [...roleEnv(kind), ...(d.agentDir ? [`PI_CODING_AGENT_DIR=${d.agentDir}`] : [])];
+	const gone = [...new Set([...all.filter((p) => p.session && !existsSync(p.session)).map((p) => p.session!), ...all.map((p) => p.cwd).filter((c) => !statSync(c, { throwIfNoEntry: false })?.isDirectory())])];
+	if (gone.length) throw new Error(`Nothing was opened: ${gone.join(", ")} no longer exist${gone.length > 1 ? "" : "s"}`);
+	const root = st.tabs[0]!.panes[0]!;
+	const created = await result(run, ["workspace", "create", "--cwd", root.cwd, "--label", st.label, "--no-focus", ...flags(envOf(root.kind))]);
+	const ws: string = created.workspace.workspace_id;
+	try {
+		let sessions = 0;
+		for (const [i, tab] of st.tabs.entries()) {
+			const ids: string[] = [];
+			for (const [j, p] of tab.panes.entries()) {
+				if (i === 0 && j === 0) ids.push(created.root_pane.pane_id as string);
+				else if (j === 0) ids.push((await createTab(run, ws, p.cwd, envOf(p.kind), tab.label)).paneId);
+				else ids.push((await result(run, ["pane", "split", ids[j - 1]!, "--direction", "right", "--cwd", p.cwd, "--no-focus", ...flags(envOf(p.kind))])).pane.pane_id as string);
+			}
+			if (i === 0 && tab.label) await run(["tab", "rename", created.tab.tab_id as string, tab.label]);
+			const starts = tab.panes.map((p, j) => ({ p, pane: ids[j]! })).filter(({ p }) => p.kind !== "shell").sort((a, b) => RANK[a.p.kind] - RANK[b.p.kind]);
+			for (const { p, pane } of starts) (await resume(d, ws, pane, p), sessions++);
+		}
+		return { workspace: ws, label: st.label, sessions };
+	} catch (error) {
+		await run(["workspace", "close", ws]).catch(() => {});
+		throw error;
+	}
+}

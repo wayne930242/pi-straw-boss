@@ -61,6 +61,10 @@ test("an agent still running after the wait keeps the squad open", async () => {
 	assert.deepEqual(s.closes(), []);
 });
 
+test("a closer without a stash check stashes nothing", async () => {
+	assert.equal((await setup().close("stash", { workspace: "wA", name: "A" })).status, 404);
+});
+
 test("one unit closes its own pane; a bad request is refused", async () => {
 	const s = setup();
 	assert.equal((await s.close("unit", { key: "b" })).status, 200);

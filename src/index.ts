@@ -18,6 +18,7 @@ import { createReach } from "./reach.ts";
 import { tailscale } from "./remote.ts";
 import { herdrEvents, herdrWatch } from "./server-watch.ts";
 import { registerSession } from "./session.ts";
+import { createStashing } from "./stashing.ts";
 import { type Config, createKit, type Deps } from "./state.ts";
 import { createTools } from "./tools.ts";
 import { createTower } from "./tower.ts";
@@ -50,7 +51,7 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		const host = createHost(kit, { bridge, connected: membership.connected });
 		closeSelf = createClosing(kit);
 		registerSession(kit, { briefing, presence, membership, guard, host, reach, digest, startTower: createTower(kit, { membership, presence, tools }) });
-		registerBoss(kit, { host, membership, reach, closeSelf });
+		registerBoss(kit, { host, membership, reach, closeSelf, stashing: createStashing(kit, { host }) });
 	};
 }
 

@@ -20,7 +20,8 @@ import { type Monitor, trackMonitors } from "./monitors.ts";
 // Enter guard asks it what the editor would submit (`probe`, probe.ts), and it answers with a class and at most a command name, never the draft. It relays
 // the documents the session shows with its dialogs (documents.ts) and hands a form answer for one of them to their owner. The composer's `/` menu
 // asks it (`commands`) for the session's commands that match what is typed, and it answers with their names, sources, and descriptions.
-// A close button asks it (`close`) to quit its session the way /boss close does (index.ts), which answers whether it will.
+// A close button asks it (`close`) to quit its session the way /boss close does (index.ts), which answers whether it will. A stash asks it
+// first (`stash-check`, stash.ts) whether the session can be put away and resumed losing nothing; that question never quits anything.
 // It relays the session's queue too: pi tells extensions only whether messages wait (hasPendingMessages), so the bridge keeps what it saw
 // typed while the agent works (`input` with a streaming behavior) and drops one when its user message starts; a queue pi emptied another
 // way (Esc, Alt+Up) clears at the next check. And it relays the session's background monitors (monitors.ts).
@@ -43,14 +44,16 @@ export interface ProbeResult extends Editor { version: 1; type: "probe-result"; 
 export interface CommandsResult { version: 1; type: "commands-result"; bridgeId: string; reqId: string; commands: Cmd[] }
 export interface FormReply { version: 1; type: "form-result"; bridgeId: string; id: string; answerId: string; accepted: boolean; reason?: string }
 export interface CloseResult { version: 1; type: "close-result"; bridgeId: string; reqId: string; accepted: boolean; reason?: string }
-export type ToHub = Dialogs | Ack | ProbeResult | FormReply | CommandsResult | CloseResult;
+/** `reason`: why the session cannot be stashed now; none when it can. */
+export interface StashCheckResult { version: 1; type: "stash-check-result"; bridgeId: string; reqId: string; reason?: string }
+export type ToHub = Dialogs | Ack | ProbeResult | FormReply | CommandsResult | CloseResult | StashCheckResult;
 export interface FormMessage { version: 1; type: "form"; to: string; id: string; answerId: string; fields: Fields }
 /** An answer on the wire: never a secret's `value`. */
 export interface AnswerMessage extends Omit<Answer, "value"> { version: 1; type: "answer"; to: string }
 /** The hub when it runs in this session: it takes what a remote bridge would publish, from this session's id. */
 export interface LocalHub { receive(from: string, msg: ToHub): void }
 /** What the hub calls on the bridge of its own session. */
-export interface Bridge { deliver(msg: AnswerMessage, reply: (ack: Ack) => void): void; sync(): void; probe(): Editor; commands(prefix: string): Cmd[]; form(msg: FormMessage, reply: (r: FormReply) => void): void; close(keepPane: boolean): { accepted: boolean; reason?: string } }
+export interface Bridge { deliver(msg: AnswerMessage, reply: (ack: Ack) => void): void; sync(): void; probe(): Editor; commands(prefix: string): Cmd[]; form(msg: FormMessage, reply: (r: FormReply) => void): void; close(keepPane: boolean, ifStashable?: boolean): { accepted: boolean; reason?: string }; stashCheck(): string | undefined }
 interface Channel { snapshot(): { connected: boolean; owner?: { sessionId: string; epoch: string } }; publish(payload: unknown, options?: { audience?: "owner" | "capable" }): void }
 interface Rec { adapter: OwnerAdapter; d: Dialog; state: "open" | "settling" | "unknown" | "closed"; answerId?: string; accepted?: boolean; by?: string; at?: number; last?: Ack; waiting: ((ack: Ack) => void)[] }
 type Event = { type: string; fromSessionId?: string; owner?: { sessionId: string; epoch: string }; payload?: Record<string, unknown> };
@@ -61,7 +64,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 	const chans = new Map<string, Channel>(), me = () => env.PI_INTERCOM_SESSION_ID ?? "";
 	let g: string | undefined, gpid = 0, seen: number | undefined, poll: ReturnType<typeof setInterval> | undefined, offs: (() => void)[] = [], warned = false;
 	let file: () => string | undefined = () => undefined, tell = (_text: string) => {}, editor = (): Editor => ({ editor: "unknown" }), docs: Doc[] = [];
-	let queued: Queued[] = [], waits = () => false;
+	let queued: Queued[] = [], waits = () => false, idle = () => true;
 	const open = () => [...recs.values()].filter((r) => r.state !== "closed");
 	const alive = () => { try { return gpid > 0 && (process.kill(gpid, 0), true); } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; } }; // a server that died without removing gui.json gets no probe answers
 
@@ -111,7 +114,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 	const onEvent = (from: string, ch: Channel, e: Event) => {
 		if (e.type === "owner" || e.type === "connection") return from === g && push();
 		const owner = ch.snapshot().owner, p = e.payload;
-		if (p?.type === "probe" || p?.type === "commands" || p?.type === "close") follow(); // a probe goes only to the server gui.json names at this moment
+		if (p?.type === "probe" || p?.type === "commands" || p?.type === "close" || p?.type === "stash-check") follow(); // a probe goes only to the server gui.json names at this moment
 		// Only G's own session, as the broker's current owner of this channel and the server gui.json names now, may answer, probe, or ask for a sync.
 		if (e.type !== "message" || p?.version !== 1 || e.fromSessionId !== from || owner?.sessionId !== from || e.owner?.epoch !== owner.epoch) return;
 		if (p.type === "sync" && from === g) push();
@@ -119,11 +122,18 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 		if (p.type === "form" && p.to === bridgeId && from === g) form(p as unknown as FormMessage, (r) => send(from, r));
 		if (p.type === "answer" && p.to === bridgeId && from === g) deliver(p as unknown as AnswerMessage, (ack) => send(from, ack));
 		if (p.type === "probe" && p.to === bridgeId && from === g && alive() && typeof p.probeId === "string" && p.probeId.length <= 64) send(from, { version: 1, type: "probe-result", bridgeId, probeId: p.probeId, ...editor() });
-		if (p.type === "close" && p.to === bridgeId && from === g && alive() && typeof p.reqId === "string" && p.reqId.length <= 64 && typeof p.keepPane === "boolean") send(from, { version: 1, type: "close-result", bridgeId, reqId: p.reqId, ...shut(p.keepPane) });
+		if (p.type === "close" && p.to === bridgeId && from === g && alive() && typeof p.reqId === "string" && p.reqId.length <= 64 && typeof p.keepPane === "boolean") send(from, { version: 1, type: "close-result", bridgeId, reqId: p.reqId, ...shut(p.keepPane, p.ifStashable === true) });
+		if (p.type === "stash-check" && p.to === bridgeId && from === g && alive() && typeof p.reqId === "string" && p.reqId.length <= 64) send(from, { version: 1, type: "stash-check-result", bridgeId, reqId: p.reqId, ...((r) => (r ? { reason: r } : {}))(stashCheck()) });
 		if (p.type === "commands" && p.to === bridgeId && from === g && alive() && typeof p.reqId === "string" && p.reqId.length <= 64 && typeof p.prefix === "string" && p.prefix.length <= MAX_PREFIX) send(from, { version: 1, type: "commands-result", bridgeId, reqId: p.reqId, commands: listCommands(pi, p.prefix) });
 	};
-	const shut = (keepPane: boolean) => {
-		const why = close(keepPane);
+	/** Why this session cannot be stashed and resumed as it is now: a turn or a queue, a dialog, or a monitor that a resume would not bring back. */
+	const stashCheck = () => {
+		const why = [!idle() && "a turn is running", waits() && "messages wait in its queue", open().length > 0 && "a dialog is open", (monitors?.list() ?? []).some((m) => m.status === "running") && "a background monitor is running"].filter(Boolean);
+		return why.length ? why.join(", ") : undefined;
+	};
+	/** `ifStashable`: a stash's close, refused when the session stopped being stashable since its check (a turn started meanwhile). */
+	const shut = (keepPane: boolean, ifStashable = false) => {
+		const why = (ifStashable && stashCheck()) || close(keepPane);
 		return why ? { accepted: false, reason: why } : { accepted: true };
 	};
 	const changed = () => {
@@ -215,6 +225,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 		docs = [];
 		queued = [];
 		waits = () => { try { return ctx.hasPendingMessages(); } catch { return false; } }; // a replaced session's context throws
+		idle = () => { try { return ctx.isIdle(); } catch { return false; } };
 		file = () => ctx.sessionManager.getSessionFile();
 		tell = (text) => ctx.hasUI && ctx.ui.notify(text, "warning");
 		editor = () => probeEditor(ctx);
@@ -246,5 +257,5 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 		offs.splice(0).forEach((off) => off());
 		(clearInterval(poll), (poll = undefined));
 	});
-	return { deliver, sync: () => ((seen = -1), follow()), probe: () => editor(), commands: (prefix) => listCommands(pi, prefix), form, close: shut };
+	return { deliver, sync: () => ((seen = -1), follow()), probe: () => editor(), commands: (prefix) => listCommands(pi, prefix), form, close: shut, stashCheck };
 }

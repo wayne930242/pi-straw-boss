@@ -348,6 +348,35 @@ test("a commands request from G for this bridge is answered with the session's c
 	assert.deepEqual(s.bridge.commands("bo").map((c) => c.name), ["boss"], "the hub of this session asks in-process");
 });
 
+test("a stash check from G for this bridge says what a resume would lose, quits nothing, and only answers G", () => {
+	const s = session();
+	s.own();
+	let idle = true, pending = false;
+	Object.assign(s.ctx, { isIdle: () => idle, hasPendingMessages: () => pending });
+	const to = bridgeIdOf(s), results = () => s.published.filter((p) => p.payload.type === "stash-check-result").map((p) => p.payload as unknown as { reqId: string; reason?: string });
+	s.message({ version: 1, type: "stash-check", to, reqId: "r1" });
+	assert.deepEqual(results().map((r) => [r.reqId, r.reason]), [["r1", undefined]], "an idle session with nothing open can go");
+	[idle, pending] = [false, true];
+	s.open();
+	s.events.emit("monitor:started", { monitorId: "1", command: "npm run dev" });
+	s.message({ version: 1, type: "stash-check", to, reqId: "r2" });
+	assert.equal(results().at(-1)!.reason, "a turn is running, messages wait in its queue, a dialog is open, a background monitor is running");
+	s.message({ version: 1, type: "stash-check", to, reqId: "a" }, { from: "X" });
+	s.message({ version: 1, type: "stash-check", to: "someone-else", reqId: "b" });
+	s.message({ version: 1, type: "stash-check", to, reqId: "x".repeat(65) });
+	assert.equal(results().length, 2, "another sender, another bridge, an id too long");
+	assert.deepEqual(s.closes, [], "a check never quits the session");
+	assert.match(String(s.bridge.stashCheck()), /a turn is running/, "the hub of this session asks in-process");
+	s.message({ version: 1, type: "close", to, reqId: "c1", keepPane: true, ifStashable: true });
+	assert.deepEqual(s.published.filter((p) => p.payload.type === "close-result").map((p) => (p.payload as unknown as { accepted: boolean }).accepted), [false]);
+	assert.deepEqual(s.closes, [], "a stash's close is refused while the session is not stashable");
+	[idle, pending] = [true, false];
+	s.events.emit("robot-hand:closed", { version: 1, id: "d1", by: "local" });
+	s.events.emit("monitor:finished", { monitorId: "1", status: "done", exitCode: 0 });
+	s.message({ version: 1, type: "close", to, reqId: "c2", keepPane: true, ifStashable: true });
+	assert.deepEqual(s.closes, [true], "and taken once it is again");
+});
+
 test("a probe counts only from G as the channel's current owner, at its epoch, for this bridge, from the server gui.json names now", () => {
 	const s = session();
 	s.own();

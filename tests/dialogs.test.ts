@@ -35,7 +35,7 @@ function hub({ me = "G", owner = "G" } = {}) {
 	const forms: FormMessage[] = [];
 	let formReply: ((m: FormMessage) => FormReply | undefined) | undefined;
 	const events = { emit: (ch: string, r: never) => ch === REGISTER && ((reg = r), (r as { onReady(c: unknown): void }).onReady({ snapshot: () => ({ connected: true, owner: { sessionId: owner, epoch: "e1" } }), publish: (payload: unknown, options: unknown) => void published.push({ payload, options }) })), on: () => () => {} };
-	const local = { deliver: (m: AnswerMessage, r: (a: Ack) => void) => { delivered.push(m); const a = reply?.(m); if (a) r(a); }, sync: () => {}, probe: () => editor, commands: () => [], close: () => ({ accepted: true }), form: (m: FormMessage, r: (x: FormReply) => void) => { forms.push(m); const x = formReply?.(m); if (x) r(x); } };
+	const local = { deliver: (m: AnswerMessage, r: (a: Ack) => void) => { delivered.push(m); const a = reply?.(m); if (a) r(a); }, sync: () => {}, probe: () => editor, commands: () => [], close: () => ({ accepted: true }), stashCheck: () => undefined, form: (m: FormMessage, r: (x: FormReply) => void) => { forms.push(m); const x = formReply?.(m); if (x) r(x); } };
 	const h = createHub({ events } as unknown as ExtensionAPI, me, local);
 	h.start(() => changes.push(1));
 	const list = (dialogs: Dialog[], extra: Partial<Dialogs> = {}): Dialogs => ({ version: 1, type: "dialogs", bridgeId: "B", pane: "wA:p1", file: null, dialogs, closed: [], ...extra });
@@ -266,6 +266,26 @@ test("commands: the hub asks the bound bridge for a prefix and takes only its ma
 		x.h.receive("S", { ...(result(bad) as object), reqId: id } as never);
 		assert.equal(await again, undefined, why);
 	}
+});
+
+test("stash check: the hub asks the bound bridge and takes only this request's answer, a reason or none", async () => {
+	const x = hub(), path = file([]);
+	assert.equal(await x.h.stashCheck("S"), undefined, "no bridge at all");
+	x.h.receive("S", x.list([], { file: path }));
+	await read(x, path);
+	const asked = x.h.stashCheck("S"), req = x.published.at(-1)!.payload as { type: string; to: string; reqId: string };
+	assert.deepEqual([req.type, req.to], ["stash-check", "B"]);
+	const result = (extra: Record<string, unknown> = {}) => ({ version: 1, type: "stash-check-result", bridgeId: "B", reqId: req.reqId, ...extra }) as never;
+	x.h.receive("X", result({ reason: "from someone else" }));
+	x.h.receive("S", result({ reqId: "other" }));
+	x.h.receive("S", result({ reason: "a turn is running" }));
+	assert.deepEqual(await asked, { reason: "a turn is running" });
+	const again = x.h.stashCheck("S");
+	x.h.receive("S", { ...(result() as object), reqId: (x.published.at(-1)!.payload as { reqId: string }).reqId } as never);
+	assert.deepEqual(await again, {}, "no reason: it can go");
+	const long = x.h.stashCheck("S");
+	x.h.receive("S", { ...(result({ reason: "x".repeat(513) }) as object), reqId: (x.published.at(-1)!.payload as { reqId: string }).reqId } as never);
+	assert.equal(await long, undefined, "a reason too long is no answer");
 });
 
 test("probe: no bound bridge, another pane or file, a hub that does not own the channel, or a silent bridge is unknown; in its own session the hub asks its bridge in-process", async () => {
