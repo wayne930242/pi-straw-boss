@@ -31,12 +31,12 @@ export function createStashing({ cfg, s, guiDir, tell, me }: Kit, { host }: { ho
 			const why = typeof reply.body.reason === "string" ? reply.body.reason : reply.status ? `the server answered ${reply.status}` : "the GUI server did not answer";
 			tell(reply.status === 404 && reply.body.error === "not_found" ? `The GUI server cannot stash yet (an older pi-straw-boss in session ${shared.owner}); /reload it first` : why, "error");
 		},
-		/** Quits every tower, main, and member on the net and closes their bases, or nothing when anything there would be lost. */
+		/** Quits this base's tower, mains, and members and closes it, or nothing when anything there would be lost. */
 		async closeAll() {
 			const shared = await host.share();
 			const record = readRecord(guiDir);
 			if (shared.stale || !record) throw new Error(`The straw net GUI runs in session ${shared.owner} on a version that cannot close all; /reload that session first`);
-			tell("Closing every base on the net…");
+			tell("Closing this base…");
 			const reply = await postServer(record, "close/all", { by: me() }, STASH_MS * 4);
 			if (reply.status === 200) return tell(`Closed ${(reply.body.closed as string[]).join(", ")}`);
 			// A session still here to read this was not closed: the server went with its own base, timed out, or is down.

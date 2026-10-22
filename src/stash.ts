@@ -129,24 +129,25 @@ async function askSessions(d: Pick<StashDeps, "sleep" | "check">, agents: Sessio
 }
 
 /**
- * Close all: every base of the net (a workspace with a live tower or a joined main or member; sub workspaces and workspaces outside the net are
- * left alone) is checked as a stash checks it, minus what only a pop needs. One refusal anywhere closes nothing. Then each base closes as its
- * close button does, each session quitting only while it can still be stashed, and the base of the server's own session last (it ends with it).
+ * Close all: the invoker's own base (its tower, mains, members, and shells; never another base, a sub workspace, or a workspace outside the net)
+ * is checked as a stash checks it, minus what only a pop needs; any refusal closes nothing. Then it closes as its close button does, each session
+ * quitting only while it can still be stashed. The base is looked at again just before it closes, and the server's own session, when it sits
+ * there, is asked again too (its batch does not ask it).
  */
 export async function closeAll(d: Pick<StashDeps, "run" | "sleep" | "sessions" | "check">, me: string, closeBase: (workspace: string) => Promise<Reply>, refresh?: () => Promise<unknown>, by?: string): Promise<Reply> {
 	const live = await d.sessions(), alive = new Set(live.map((s) => s.id)), ps = await panes(d.run), lives = (p: Pane) => live.some((s) => s.herdrLocation?.paneId === p.pane_id);
+	// Only the invoker's own base: the other bases of the net are not its to close.
+	const baseOf = (id?: string) => (id ? live.find((s) => s.id === id)?.herdrLocation?.workspace?.id : undefined), mine = baseOf(me), theirs = baseOf(by);
+	if (!theirs) return no(400, "bad_request", "Close all closes the base of the session that asks; that session is not on the net.");
 	// A role token outlives its pi up to its TTL: only a live tower, main, or member puts a workspace on the net.
-	const bases = (await workspaces(d.run)).filter((w) => !isSub(w) && ((w.tokens?.tower && alive.has(w.tokens.tower)) || ps.some((p) => p.workspace_id === w.workspace_id && (p.tokens?.sb_role === "main" || p.tokens?.sb_role === "member") && lives(p))));
-	if (!bases.length) return no(404, "not_found", "No base is on the net.");
+	const bases = (await workspaces(d.run)).filter((w) => w.workspace_id === theirs && !isSub(w) && ((w.tokens?.tower && alive.has(w.tokens.tower)) || ps.some((p) => p.workspace_id === w.workspace_id && (p.tokens?.sb_role === "main" || p.tokens?.sb_role === "member") && lives(p))));
+	if (!bases.length) return no(404, "not_found", "This session's workspace is not a base on the net.");
 	const surveyAll = async (sessions: Session[]) => Promise.all(bases.map(async (w) => ({ w, sv: await survey(d.run, w.workspace_id, sessions, false) })));
 	const first = await surveyAll(live), reasons = first.flatMap(({ w, sv }) => (sv ? sv.reasons.map((r) => `${w.label}: ${r}`) : []));
 	reasons.push(...(await askSessions(d, first.flatMap(({ sv }) => sv?.agents ?? []), refresh)));
 	if (!reasons.length) reasons.push(...(await surveyAll(await d.sessions())).flatMap(({ w, sv }) => (sv?.reasons ?? []).map((r) => `${w.label}: ${r}`)));
 	if (reasons.length) return no(409, "refused", `Nothing was closed: ${reasons.join("; ")}.`);
-	// The invoker's base closes after the others, so it hears how the run ended; the server's own base last of all, since it ends with it.
-	const baseOf = (id?: string) => (id ? live.find((s) => s.id === id)?.herdrLocation?.workspace?.id : undefined), mine = baseOf(me), theirs = baseOf(by);
-	const rank = (w: { workspace_id: string }) => (w.workspace_id === mine ? 2 : w.workspace_id === theirs ? 1 : 0);
-	const order = bases.toSorted((a, b) => rank(a) - rank(b)), done: string[] = [];
+	const order = bases, done: string[] = [];
 	const stop = (why: string) => no(409, "close_failed", `${why} Closed before it: ${done.join(", ") || "none"}; the rest stay open.`);
 	for (const w of order) {
 		// The run takes minutes: each base is looked at again just before it closes (a shell job, a subagent left running), and the server's own

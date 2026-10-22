@@ -11,7 +11,7 @@ import { closeAll, stashBase } from "./stash.ts";
 //   POST /<token>/api/close/tab {workspace, tab}       every agent in the tab quits, then the tab closes
 //   POST /<token>/api/close/base {workspace}           every agent in the workspace quits, then the workspace closes
 //   POST /<token>/api/close/stash {workspace, name}    the base is checked and recorded first (stash.ts), then closed as above
-//   POST /<token>/api/close/all                        every base of the net is checked, then each closes as above (stash.ts closeAll)
+//   POST /<token>/api/close/all {by}                   the base of session `by` is checked, then closes as above (stash.ts closeAll)
 
 const EXIT_MS = 30_000, JOINED = new Set(["main", "member", "tower"]);
 /** `check` and `stateDir` are a stash's: without them this closer stashes nothing. */
