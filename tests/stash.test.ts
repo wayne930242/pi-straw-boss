@@ -108,6 +108,18 @@ test("through the closer, a stash quits each session only while it can still be 
 	assert.ok(flags.every(([, f]) => !f));
 });
 
+test("a pi that never replied (Herdr names a file pi has not written yet) is stashed without one and starts fresh at pop", async () => {
+	const w = world();
+	w.panes[3]!.agent_session = { value: join(w.dir, "never-written.jsonl") };
+	assert.equal((await stasher(w).go()).status, 200);
+	const st = JSON.parse(readFileSync(stashFile(w.dir, "A"), "utf8")) as Stash;
+	assert.equal(st.tabs[0]!.panes[0]!.session, undefined);
+	const p = popper(w);
+	assert.equal((await p.pop()).sessions, 3);
+	const tower = p.ran.find((a) => a[0] === "agent" && a[2]!.startsWith("tower"))!;
+	assert.ok(!tower.includes("--session") && tower.includes("tower · A"), "the tower starts fresh under its name");
+});
+
 test("a shell Herdr knows no folder of refuses the stash: a pop could not reopen it", async () => {
 	const w = world();
 	delete w.panes[2]!.cwd;

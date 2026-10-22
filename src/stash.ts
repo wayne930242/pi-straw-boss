@@ -38,8 +38,9 @@ export function listStashes(stateDir: string): string[] {
 const str = (v: unknown): v is string => typeof v === "string" && v.length > 0;
 function paneOk(p: unknown): p is StashPane {
 	const x = p as Partial<StashPane> | null;
-	return x !== null && typeof x === "object" && (x.kind === "shell" || ROLES.has(x.kind as string)) && str(x.cwd) && (x.kind === "shell" || str(x.session)) && (x.name === undefined || typeof x.name === "string");
+	return x !== null && typeof x === "object" && (x.kind === "shell" || ROLES.has(x.kind as string)) && str(x.cwd) && (x.session === undefined || str(x.session)) && (x.name === undefined || typeof x.name === "string");
 }
+/** `session` is absent for a pi that never wrote its file (pi writes it at the first reply): it has no conversation to lose, so a pop starts it fresh in its role. */
 /** What a pop can open: the stash checks it before it closes anything, the pop before it opens anything. */
 const stashOk = (st: Stash | null) => st?.version === 1 && str(st.label) && str(st.cwd) && Array.isArray(st.tabs) && st.tabs.length > 0 && st.tabs.every((t) => Array.isArray(t?.panes) && t.panes.length > 0 && t.panes.every(paneOk) && (t.label === undefined || typeof t.label === "string"));
 export function readStash(stateDir: string, name: string, file = stashFile(stateDir, name)): Stash {
@@ -95,8 +96,9 @@ export async function survey(run: HerdrRun, workspaceId: string, live: Session[]
 			else if (!ROLES.has(role)) reasons.push(`${who} is a subagent or outside the net`);
 			if (p.agent !== "pi" || !ROLES.has(role)) continue;
 			if (!SETTLED.has(p.agent_status ?? "")) reasons.push(`${who} is ${p.agent_status ?? "in an unknown state"}`);
-			const file = p.agent_session?.value;
-			if (!file || !existsSync(file)) reasons.push(`${who} has no session file Herdr knows of`);
+			// A path Herdr names whose file does not exist yet is a session that never replied: nothing to resume, it starts fresh at pop.
+			const named = p.agent_session?.value, file = named && existsSync(named) ? named : undefined;
+			if (!named) reasons.push(`${who} has no session file Herdr knows of`);
 			if (!cwd) reasons.push(`${who} has no folder Herdr knows of`);
 			if (session) agents.push(session);
 			else reasons.push(`${who} is not on the intercom net`);
@@ -159,11 +161,11 @@ async function resume({ run, sleep, live }: PopDeps, ws: string, paneId: string,
 	if (p.kind === "main") await report(run, "pane", paneId, { sb_open_main: "1" }); // authorises exactly this pi to promote itself (session.ts)
 	// Herdr agent names are unique across workspaces and lowercase only.
 	const agent = p.kind === "tower" ? `tower-${ws.toLowerCase()}` : `${p.kind}-${randomUUID().slice(0, 8)}`;
-	await startPi(run, sleep, agent, paneId, ["--session", p.session!, ...(p.name ? ["--name", p.name] : [])]);
+	await startPi(run, sleep, agent, paneId, [...(p.session ? ["--session", p.session] : []), ...(p.name ? ["--name", p.name] : [])]);
 	const back = p.kind === "tower"
 		? await waitFor(sleep, async () => ((id) => id && live(id))((await workspaces(run)).find((w) => w.workspace_id === ws)?.tokens?.tower), JOIN_MS, 1000)
 		: await waitFor(sleep, async () => ((r) => (p.kind === "main" ? r === "main" : r === "member" || r === "main"))((await panes(run, ws)).find((x) => x.pane_id === paneId)?.tokens?.sb_role), JOIN_MS, 500);
-	if (!back) throw new Error(`${p.name ?? p.session} did not come back as the ${p.kind} within ${JOIN_MS / 1000} s (pane ${paneId})`);
+	if (!back) throw new Error(`${p.name ?? p.session ?? p.kind} did not come back as the ${p.kind} within ${JOIN_MS / 1000} s (pane ${paneId})`);
 }
 
 /**
