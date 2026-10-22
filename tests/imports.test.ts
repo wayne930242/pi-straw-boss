@@ -65,7 +65,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased to 323: finished subagents a page dismissed stay hidden until they leave the net (net.ts), and gui.ts hands the dismissal to control.
 	// Unreleased to 327: a tower's subagents, collected as a member's are (net.ts: the towers' rows, one subagent builder for both).
 	// Unreleased to 335: Dismiss finished (net.ts: dismissAll), the streams of one device told apart (gui.ts: remotes by device, the renewed cookie, remote/* shut to a paired device, the options and handlers for off, devices, and dismissAll).
-	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 335, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
+	// Unreleased to 337: the stashed bases in the net (net.ts: the type and the list read with each snapshot).
+	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 337, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
 	// Input (the spec's figure), remote access over Tailscale, its terminal pairing panel (QR, c copies, o opens), and the QR encoder each have their own.
 	// What a waiting session waits on (0.5.0, read for display only; answering is deferred) has its own as well.
 	// 0.5.1 raised remote.ts from 165 to 185 (a recorded server counts as running only if its process started when the entry says: a reused PID
@@ -149,7 +150,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// and the refresh handed to it; handover.ts 93 to 111 for postServer, a POST to the recorded server as its page sends one; boss.ts 36 to 40 for stash, pop, and the stash names in Tab; closer.ts 70 to 71 for close/stash's batch asking `ifStashable`.
 	// Unreleased (close all): stash.ts 221 to 262 for closeAll (the invoker's own base checked as a stash checks it, looked at again before it closes, the server's session asked again when it sits there) and the check shared with it;
 	// stashing.ts 46 to 58 for /boss close all through the server; closer.ts 71 to 74 for close/all; boss.ts 40 to 41 for its Tab entry.
-	for (const [name, max] of [["commands.ts", 32], ["control.ts", 199], ["stash.ts", 262], ["stashing.ts", 58], ["closer.ts", 74], ["upload.ts", 50], ["spawn.ts", 169], ["remote.ts", 225], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 141], ["bridge.ts", 261], ["owners.ts", 145], ["dialogs.ts", 240], ["seal.ts", 56], ["monitors.ts", 75], ["order.ts", 97], ["mirror.ts", 135], ["probe.ts", 40], ["keys.ts", 103], ["documents.ts", 80], ["docs.ts", 150], ["orphan.ts", 115], ["opener.ts", 90], ["server-watch.ts", 110], ["handover.ts", 111], ["towertab.ts", 65], ["state.ts", 106], ["briefing.ts", 33], ["reach.ts", 96], ["election.ts", 24], ["guard.ts", 83], ["presence.ts", 93], ["membership.ts", 115], ["tools.ts", 80], ["tower.ts", 44], ["closing.ts", 23], ["host.ts", 110], ["boss.ts", 41], ["session.ts", 148], ["digest.ts", 45], ["intercept.ts", 175]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
+	for (const [name, max] of [["commands.ts", 32], ["control.ts", 199], ["stash.ts", 284], ["stashing.ts", 58], ["closer.ts", 87], ["upload.ts", 50], ["spawn.ts", 169], ["remote.ts", 225], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 141], ["bridge.ts", 261], ["owners.ts", 145], ["dialogs.ts", 240], ["seal.ts", 56], ["monitors.ts", 75], ["order.ts", 97], ["mirror.ts", 135], ["probe.ts", 40], ["keys.ts", 103], ["documents.ts", 80], ["docs.ts", 150], ["orphan.ts", 115], ["opener.ts", 90], ["server-watch.ts", 110], ["handover.ts", 111], ["towertab.ts", 65], ["state.ts", 106], ["briefing.ts", 33], ["reach.ts", 96], ["election.ts", 24], ["guard.ts", 83], ["presence.ts", 93], ["membership.ts", 115], ["tools.ts", 80], ["tower.ts", 44], ["closing.ts", 23], ["host.ts", 111], ["boss.ts", 41], ["session.ts", 148], ["digest.ts", 45], ["intercept.ts", 175]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
 	// 0.19.0 to 258 for the todo list: rpiv-todo's snapshots marked as the index reads them, and the newest one read for a reset or a change that adds one.
 	assert.ok(count("src/history.ts") <= 258, `src/history.ts has ${count("src/history.ts")} lines`);
 	// The item mapping and the stream glue came out of the reader to keep it within its budget; the spec sets no figure for them.
@@ -303,7 +304,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased to 853: the commanding mark's HUD figure and glow flag (render.ts), and the packets' live check.
 	// Unreleased to 862: main.ts loads the phone drawer (drawer.ts) where there is a touch screen or a narrow window and hands it each snapshot and route; the demo's toolbar gets a drawer button.
 	// Then to 863 for the alert ranking (alerts.ts: waiting or a pending dialog is prominent, the rest are notices).
-	assert.ok(page <= 863, `the page's TypeScript has ${page} lines`);
+	// Unreleased to 888 for stash and pop on the map (quit.ts: aimStash, showStashed and its Pop buttons, Stash and Pop in the click handler; render.ts and main.ts wire them, and hang the Stashed list under its button).
+	assert.ok(page <= 888, `the page's TypeScript has ${page} lines`);
 });
 
 test("the built page is small, self-contained (no remote URLs, fonts, or imports), and carries no demo fixture", { skip: !existsSync(join(root, "dist/gui/index.html")) && "run npm run gui:build first" }, () => {
@@ -357,7 +359,9 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 39.5 KB / 14.85 KB gzipped for the HUD's Dismiss finished (quit.ts: the finished subagents counted, the button shown and labelled) in both languages.
 	// Unreleased to 40 KB / 15 KB gzipped for the commanding mark (its label, HUD figure, and glow hooks) in both languages.
 	// Unreleased to 40.5 KB / 15.2 KB gzipped for loading the phone drawer (main.ts) and the glow of the commanding mark's neighbours (labels shared with the drawer).
-	assert.ok(size(entry).length <= 40_500 && gz(entry) <= 15_200, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// Unreleased (stash and pop on the page): stash.ts 262 to 284 (stashedList, close all naming its base; nameFor, the server's session asked again before its base is stashed, a failed pop never stashed over another), closer.ts 74 to 87 (close/pop), host.ts 110 to 111 (the import of
+	// popBase and stashedList). The map chunk to 42.7 KB / 15.8 KB gzipped for stash and pop on the map (quit.ts: a base's Stash, the HUD's Stashed list with Pop, Quit checked first) in both languages.
+	assert.ok(size(entry).length <= 42_700 && gz(entry) <= 15_800, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).
@@ -424,5 +428,6 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// 0.28.0, with the textarea, to 48.1 KB / 11.7 KB for the secret panel's steps, destination, and masked field.
 	// The secret's masked field is a text input drawn as dots by CSS (never type=password), to 48.2 KB.
 	// Unreleased to 48.7 KB / 11.8 KB gzipped for the paired devices list on the pairing tile, then to 50 KB / 12 KB for the commanding mark's colour, badge, and glow, and to 51.8 KB / 12.4 KB for the phone drawer.
-	assert.ok(total(css, (n) => size(n).length) <= 51_800 && total(css, gz) <= 12_400, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// Unreleased to 52 KB / 12.45 KB for the base's Stash beside its Quit and the Stashed list's rows.
+	assert.ok(total(css, (n) => size(n).length) <= 52_000 && total(css, gz) <= 12_450, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });

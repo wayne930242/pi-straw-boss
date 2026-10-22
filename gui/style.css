@@ -76,7 +76,8 @@ svg { display: block; }
 .squad .tab-add { margin-left: 0; }
 .tab-add:hover, .new-base:hover { color: #38e0ff; border-color: #38e0ff; }
 .quit-btn { flex: none; margin-left: 6px; padding: 2px 9px; border: 1px solid var(--line); border-radius: 8px; background: none; color: var(--dim); font: 600 12px var(--sans); cursor: pointer; } .quit-btn:hover { color: #ff8a9c; border-color: #ff8a9c66; }
-.base > header > .quit-btn { margin-left: auto; align-self: flex-start; } .card > .quit-btn { margin-left: auto; }
+.base > header > .quit-btn { margin-left: auto; align-self: flex-start; }
+#stashed-list li { display: flex; align-items: center; gap: 8px; } #stashed-list span { flex: 1; overflow-wrap: anywhere; } .card > .quit-btn { margin-left: auto; }
 .card > .quit-btn, .tower-quit { position: relative; z-index: 2; } /* above the card's link */
 .tower-quit { margin: 6px 0 0; }
 .sheet { margin: auto; max-width: min(420px, calc(100vw - 32px)); padding: 18px 20px; border: 1px solid var(--line); border-radius: 16px; background: #0e1628; color: var(--text); font: 14px/1.5 var(--sans); }
@@ -608,7 +609,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 	.brand p, .link span { display: none; }
 	.alert-row { order: 3; flex: 1 1 100%; min-width: 0; } .alert-row .alerts { flex: 1 1 auto; width: auto; min-width: 0; } .done-btn { min-height: 40px; }
 	/* The brand and the link's dot, then Remind, Sound, Phone, and the language as four even buttons a thumb can hit. */
-	.brand { flex: 1 1 calc(100% - 40px); min-width: 0; } .link { order: 1; } .hud > .pair-btn { order: 2; flex: 1 1 0; min-width: 0; min-height: 40px; justify-content: center; padding: 6px 8px; white-space: nowrap; } .hud > .lang { flex: none; padding-right: 26px; }
+	.brand { flex: 1 1 calc(100% - 40px); min-width: 0; } .link { order: 1; } .hud > .pair-btn { order: 2; flex: 1 1 auto; min-width: 0; min-height: 40px; justify-content: center; padding: 6px 8px; white-space: nowrap; } .hud > .lang { flex: none; padding-right: 26px; }
 	.log { max-height: none; } .log li:nth-child(n+3) { display: none; }
 	/* The location bar, and the map and the workspace. */
 	.crumbs { gap: 6px; } .crumbs > * + *::before { margin-right: 6px; } .crumbs > * { max-width: 16ch; }

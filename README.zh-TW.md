@@ -86,6 +86,7 @@ pi install npm:pi-straw-boss
 | `/boss` | 接手成為這個分頁的主智慧體。 |
 | `/boss status`、`/boss tower` | 顯示狀態；開啟塔台並切換過去。 |
 | `/boss close all` | 讓這個基地的塔台、主智慧體和成員結束，連同 shell 一起關掉，不存 stash。會先用 stash 的同一套檢查；有會遺失的東西（正在跑的回合、排隊中的訊息、對話框、Monitor、子智慧體、前景有程式的 shell）就什麼都不關，並列出所有原因。其他基地完全不碰。 |
+| 網頁上的「收起」「已收起」「接回」 | 基地的「收起」以基地名稱收起它；上方的「已收起」列出收起的基地，按「接回」打開。基地的「關掉」會先檢查，和 `/boss close all` 一樣。 |
 | `/boss stash [名稱]`、`/boss pop [名稱]` | 把整個基地（塔台、主智慧體、成員和閒置的 shell）收起來並關掉；之後再打開，每個 pi 都從自己的 session 檔接回原本的角色。只要有接回後會遺失的東西就拒絕並說明原因：正在跑的回合、排隊中的訊息、開著的對話框、執行中的 Monitor、子智慧體，或前景有程式在跑的 shell。 |
 | `/boss gui`、`/boss gui stop` | 在瀏覽器開啟網（任何 session 都能開，不會加入任何東西）；停止它的伺服器，在哪個 session 都可以。整台機器只跑一個伺服器、一個網址：開它的 session `/reload` 之後，會在原網址重開；版本較新的 session 會接手，開著的頁面也會自動換成新版。可以在通訊畫面直接打字給某個 session，或用終端機畫面下方的按鍵面板操作它的終端機，在桌面上也可以點進終端機直接打字；在等回覆的 `robot_hand` 選單、`ask_user_question` 問卷或 pi-code 的 hook 確認，可以在那裡或它的警示裡作答（任何 extension 的 `select` 和 `confirm` 也可以，`confirm` 也可以從配對的裝置作答；其他對話框只能看，要回到終端機回答；`secret_drop` 的機密一律在終端機輸入，任何頁面（本機或 tailnet）都不接受，因為 pi-intercom 的身分是自己申報的，無法驗證）。session 用 [pi-herdr-doc-review](https://www.npmjs.com/package/pi-herdr-doc-review) 0.4.0 以上顯示的文件，會開在它的通訊畫面旁邊：HTML 放在沙箱框架裡，表單送出的答案會傳給智慧體；純文字只能讀。 |
 | `/boss gui remote`、`/boss gui remote off` | 透過你的 tailnet 用手機連 GUI（`tailscale serve`，絕不用 Funnel）：掃 QR code 配對，手機配對後會一直有效（從最後一次使用起算 90 天，重啟與 `remote off` 都不影響），直到你在「手機」視窗解除配對；遠端存取在 stop、`/reload`、換新伺服器之後仍會保持開啟，直到 `remote off`；關閉時只移除它自己的 serve 設定。serve 指向 GUI 伺服器的第二個 loopback 監聽埠，請求算不算遠端取決於它進來的監聽埠，不看它帶什麼標頭。 |

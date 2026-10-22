@@ -10,8 +10,8 @@ import type { Drawer } from "./drawer.ts";
 import type { mountPanels, Tile } from "./layer.ts";
 import { MODAL, mountHotkeys } from "./hotkeys.ts";
 import { mountNotify } from "./notify.ts";
-import { mountQuit, showDismissAll } from "./quit.ts";
-import { mountPage } from "./render.ts";
+import { mountQuit, showDismissAll, showStashed } from "./quit.ts";
+import { hang, mountPage } from "./render.ts";
 import { createRouter, parseRoute, type Route, upOf, watchOf } from "./router.ts";
 import { createStream, type Source, type Status } from "./stream.ts";
 import type { mountFocus } from "./views.ts";
@@ -78,6 +78,7 @@ function show(net: Net) {
 	if (document.hidden) return;
 	page.stats(net);
 	showDismissAll(el("dismiss-all"), net);
+	showStashed(el("stashed"), el("stashed-list"), net);
 	drawer?.net(net);
 	const fresh = arrivals(known, now);
 	if (fresh.length || panels) withPanels((p) => p.alerts(fresh, now));
@@ -207,6 +208,7 @@ const loadDrawer = () => void import("./drawer.ts").then(({ mountDrawer }) => ((
 if (touchy.matches) loadDrawer();
 else touchy.addEventListener("change", () => touchy.matches && !drawer && loadDrawer(), { once: true });
 mountQuit({ route: () => current, net: () => latest, go: (route) => router.go(route) });
+el("stashed-pop").addEventListener("toggle", (e) => (e as ToggleEvent).newState === "open" && hang(el("stashed-pop"), el("stashed")));
 // The opening buttons on the map and in a base (data-open with data-ws and data-tab) open their tile, read against the newest net.
 document.addEventListener("click", (event) => {
 	const button = (event.target as Element | null)?.closest?.<HTMLElement>("button[data-open]");

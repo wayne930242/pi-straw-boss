@@ -47,3 +47,24 @@ No P0 or P1. All fixed in this change set:
 
 After the fixes: `npm run check` clean; `npm test` 726 pass, 1 skipped, 0 fail. The live check above ran before these fixes; they change the
 check and the claim, not the start order, and were not run live again.
+
+## Stash and pop on the page (0.36.0)
+
+A base's Stash (beside + Main), the HUD's Stashed list with Pop, and a base's Quit checked as `/boss close all` is.
+
+- Browser (demo fixture, agent-browser): desktop and phone widths, English and 正體中文; the Stashed list hangs under its button, the confirm
+  sheets read right, and the phone HUD buttons wrap instead of overlapping.
+- Live in scratch workspaces (own `PI_CODING_AGENT_DIR`), through the GUI server with the page's own requests: `close/stash` 200 (3
+  sessions), `close/pop` 200 (tower, main, member back), `close/all {workspace}` 409 on a base with `sleep` in a shell, 200 on the popped base.
+
+Review (fresh-context reviewer, claude-opus-5-5): no P0 or P1. Fixed in this change set:
+
+| Finding | Fix | Evidence |
+|---|---|---|
+| F001 P2: the page could not stash a base whose label is not a valid or free name | The page sends no name; the server derives a free, valid one from the label (`nameFor`), as `/boss stash` now does by default | `tests/stash.test.ts` |
+| F002 P3: a pop's 429 talked about a close | "Another close or pop is still on its way." | read |
+| F003 P3: close all's refusals said "this session" when the page named the base | Worded for both callers | read |
+| D1 (earlier): a failed pop could put its manifest back over one stashed under its name meanwhile | Linked back only under a free name, and the error says which | `tests/stash.test.ts` |
+| D2 (earlier): a stash did not ask the server's own session again before its base closed | Asked once more before the manifest is written | `tests/stash.test.ts` |
+
+After the fixes: `npm run check` clean; `npm test` 737 pass, 1 skipped, 0 fail. The derived name and the fixes above were not run live again.

@@ -28,6 +28,7 @@ const demo = (): Net => ({
 		] },
 		{ id: "w4", label: "Quarry Tools", mark: "idle", head: false, tower: null, outposts: [], outside: [], tabs: [{ id: "w4:t1", label: "quarry", units: [unit("d1", "quarry-scout", "member", "idle")] }] },
 	],
+	stashed: [{ name: "Juniper Lab", label: "Juniper Lab", at: "2026-10-22T09:00:00.000Z" }, { name: "night run", label: "Harbor API", at: "2026-10-22T08:00:00.000Z" }],
 });
 
 // Where each state can go next: work mostly continues, sometimes asks a question or finishes; an error is rare.

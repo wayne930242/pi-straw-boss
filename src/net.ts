@@ -1,3 +1,4 @@
+import type { Stashed } from "./stash.ts";
 import { homedir } from "node:os";
 import { basename, join, sep } from "node:path";
 import { commanding, type Mark, markOf, type Row, sessionMark, subagents } from "./dashboard.ts";
@@ -18,7 +19,8 @@ export interface Unit extends Shelf { queued?: Queued[]; monitors?: Monitor[]; i
 export interface Tab { id: string; label: string; units: Unit[] }
 export interface Outpost { id: string; label: string; mark: Mark }
 export interface Base { id: string; label: string; mark: Mark; head: boolean; tower: ({ name: string; mark: Mark; key: string; control: boolean; pending?: Pending; queued?: Queued[]; monitors?: Monitor[]; subs: Unit[] } & Shelf) | null; tabs: Tab[]; outposts: Outpost[]; outside: Unit[] }
-export interface Net { bases: Base[] }
+/** `stashed`: the bases put away with /boss stash, waiting to be popped (stash.ts). */
+export interface Net { bases: Base[]; stashed?: Stashed[] }
 /** What the server may read for a key: the registry entry is the allow list, and paths never come from the browser. */
 export interface Ref { key: string; base: string; name: string; role: string; file?: string; pane?: string }
 export interface Found extends Ref { live: boolean; successor?: string }
@@ -96,7 +98,7 @@ export async function collectNet({ run, world = worldOf(run), sessions, now = Da
  * The net as the server reads it: each read also refreshes the registry. A key that left the net (the pane closed, or moved to
  * another session) stays findable for ten minutes, the window finished subagents already use, with the pane's new session as its successor.
  */
-export function netSource(env: { run: HerdrRun; world?: HerdrWorld; sessions(): Promise<Session[]>; sessionDir?: string; hub?: { relayed(sessions: Session[], refs: Map<string, Ref>): Relayed } }) {
+export function netSource(env: { run: HerdrRun; world?: HerdrWorld; sessions(): Promise<Session[]>; sessionDir?: string; hub?: { relayed(sessions: Session[], refs: Map<string, Ref>): Relayed }; stashed?(): Stashed[] }) {
 	let refs = new Map<string, Ref>(), live: Session[] = [];
 	const gone = new Map<string, { ref: Ref; at: number }>(), sessions = async () => (live = await env.sessions()), dismissed = new Set<string>(), ended = new Set<string>();
 	const drop = (u: { subs: Unit[] }) => (u.subs.forEach((c) => c.ended && ended.add(c.key)), (u.subs = u.subs.filter((c) => !(c.ended && dismissed.has(c.key))))); // finished subagents the page dismissed
@@ -110,7 +112,8 @@ export function netSource(env: { run: HerdrRun; world?: HerdrWorld; sessions(): 
 			for (const [key, ref] of refs) if (!next.has(key)) gone.set(key, { ref, at });
 			for (const [key, old] of gone) if (next.has(key) || at - old.at > RECENT_MS) gone.delete(key);
 			refs = next;
-			return net;
+			const stashed = env.stashed?.() ?? [];
+			return stashed.length ? { ...net, stashed } : net;
 		},
 		lookup(key: string): Found | undefined {
 			const live = refs.get(key), old = gone.get(key)?.ref;

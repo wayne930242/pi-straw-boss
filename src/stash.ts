@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Reply } from "./control.ts";
 import { createTab, type HerdrRun, isSub, type Pane, panes, parentOf, report, result, type Session, type Sleep, startPi, tabs, waitFor, workspaces } from "./herdr.ts";
@@ -25,6 +25,18 @@ const no = (status: number, error: string, reason: string): Reply => ({ status, 
 export const nameOk = (name: unknown): name is string => typeof name === "string" && name.length > 0 && name.length <= MAX_NAME && name === name.trim() && !name.startsWith(".") && !/[/\\\p{Cc}]/u.test(name);
 const dirOf = (stateDir: string) => join(stateDir, "stash");
 export const stashFile = (stateDir: string, name: string) => join(dirOf(stateDir), `${name}.json`);
+/** A free stash name from a base label (or a taken name): slashes and control characters become "-", it is trimmed and cut, then " 2", " 3"… */
+export function nameFor(label: string, stateDir: string): string {
+	const base = label.replace(/[/\\\p{Cc}]/gu, "-").trim().replace(/^\.+/, "").slice(0, MAX_NAME - 4).trim() || "base";
+	for (let n = 1; ; n++) if (!existsSync(stashFile(stateDir, n > 1 ? `${base} ${n}` : base))) return n > 1 ? `${base} ${n}` : base;
+}
+
+/** A stash as the page lists it. */
+export interface Stashed { name: string; label: string; at: string }
+/** The stashes waiting to be popped with their labels, for the page; a manifest that does not read is left out. */
+export function stashedList(stateDir: string): Stashed[] {
+	return listStashes(stateDir).flatMap((name) => { try { const st = readStash(stateDir, name); return [{ name, label: st.label, at: st.stashedAt }]; } catch { return []; } });
+}
 
 /** The stashes waiting to be popped, by name. */
 export function listStashes(stateDir: string): string[] {
@@ -134,14 +146,14 @@ async function askSessions(d: Pick<StashDeps, "sleep" | "check">, agents: Sessio
  * quitting only while it can still be stashed. The base is looked at again just before it closes, and the server's own session, when it sits
  * there, is asked again too (its batch does not ask it).
  */
-export async function closeAll(d: Pick<StashDeps, "run" | "sleep" | "sessions" | "check">, me: string, closeBase: (workspace: string) => Promise<Reply>, refresh?: () => Promise<unknown>, by?: string): Promise<Reply> {
+export async function closeAll(d: Pick<StashDeps, "run" | "sleep" | "sessions" | "check">, me: string, closeBase: (workspace: string) => Promise<Reply>, refresh?: () => Promise<unknown>, by?: string, workspace?: string): Promise<Reply> {
 	const live = await d.sessions(), alive = new Set(live.map((s) => s.id)), ps = await panes(d.run), lives = (p: Pane) => live.some((s) => s.herdrLocation?.paneId === p.pane_id);
 	// Only the invoker's own base: the other bases of the net are not its to close.
-	const baseOf = (id?: string) => (id ? live.find((s) => s.id === id)?.herdrLocation?.workspace?.id : undefined), mine = baseOf(me), theirs = baseOf(by);
-	if (!theirs) return no(400, "bad_request", "Close all closes the base of the session that asks; that session is not on the net.");
+	const baseOf = (id?: string) => (id ? live.find((s) => s.id === id)?.herdrLocation?.workspace?.id : undefined), mine = baseOf(me), theirs = workspace ?? baseOf(by);
+	if (!theirs) return no(400, "bad_request", "Close all needs a base: name its workspace, or ask from a session of the net.");
 	// A role token outlives its pi up to its TTL: only a live tower, main, or member puts a workspace on the net.
 	const bases = (await workspaces(d.run)).filter((w) => w.workspace_id === theirs && !isSub(w) && ((w.tokens?.tower && alive.has(w.tokens.tower)) || ps.some((p) => p.workspace_id === w.workspace_id && (p.tokens?.sb_role === "main" || p.tokens?.sb_role === "member") && lives(p))));
-	if (!bases.length) return no(404, "not_found", "This session's workspace is not a base on the net.");
+	if (!bases.length) return no(404, "not_found", "That workspace is not a base on the net.");
 	const surveyAll = async (sessions: Session[]) => Promise.all(bases.map(async (w) => ({ w, sv: await survey(d.run, w.workspace_id, sessions, false) })));
 	const first = await surveyAll(live), reasons = first.flatMap(({ w, sv }) => (sv ? sv.reasons.map((r) => `${w.label}: ${r}`) : []));
 	reasons.push(...(await askSessions(d, first.flatMap(({ sv }) => sv?.agents ?? []), refresh)));
@@ -164,21 +176,28 @@ export async function closeAll(d: Pick<StashDeps, "run" | "sleep" | "sessions" |
 	return { status: 200, body: { closed: done } };
 }
 
-export interface StashDeps { run: HerdrRun; sleep: Sleep; sessions(): Promise<Session[]>; check(key: string): Promise<{ reason?: string } | undefined>; stateDir: string; now?: () => Date }
+/** `me`: the server's own session, which its batch does not ask: it is checked again when it sits in the base. */
+export interface StashDeps { run: HerdrRun; sleep: Sleep; sessions(): Promise<Session[]>; check(key: string): Promise<{ reason?: string } | undefined>; stateDir: string; now?: () => Date; me?: string }
 
 /** The server's stash: every check first (nothing closes on a refusal), then the manifest, then `closeBase` (the close-base batch). */
 export async function stashBase(d: StashDeps, json: Record<string, unknown>, closeBase: (workspace: string) => Promise<Reply>, refresh?: () => Promise<unknown>): Promise<Reply> {
 	if (!str(json.workspace) || json.workspace.length > 200) return no(400, "bad_request", "A base is named by its workspace.");
-	if (!nameOk(json.name)) return no(400, "bad_request", `A stash name has at most ${MAX_NAME} characters, no slash, backslash, or control character, and does not start with a dot.`);
-	const name = json.name, file = stashFile(d.stateDir, name);
-	if (existsSync(file)) return no(409, "exists", `Something is stashed as "${name}" already; pop it or pick another name.`);
+	// Without a name (the page's Stash) the base's label names it, made a free, valid name.
+	if (json.name !== undefined && !nameOk(json.name)) return no(400, "bad_request", `A stash name has at most ${MAX_NAME} characters, no slash, backslash, or control character, and does not start with a dot.`);
+	if (typeof json.name === "string" && existsSync(stashFile(d.stateDir, json.name))) return no(409, "exists", `Something is stashed as "${json.name}" already; pop it or pick another name.`);
 	const sv = await survey(d.run, json.workspace, await d.sessions());
 	if (!sv) return no(404, "not_found", "That base is not open any more.");
 	const reasons = [...sv.reasons, ...(await askSessions(d, sv.agents, refresh))];
 	// Herdr's side once more, since the rounds took seconds: a shell job or a subagent started meanwhile refuses too. The sessions' own side is
 	// asked again by the close itself (`ifStashable`), so a turn started now refuses that session's quit and stops the batch.
 	if (!reasons.length) reasons.push(...((await survey(d.run, json.workspace, await d.sessions()))?.reasons ?? ["the base is not open any more"]));
+	// The server's own session quits only with its workspace, unasked: when it sits in the base, it is asked once more now.
+	if (!reasons.length && d.me && (await d.sessions()).find((s) => s.id === d.me)?.herdrLocation?.workspace?.id === json.workspace) {
+		const r = await d.check(d.me);
+		if (!r || r.reason) reasons.push(r?.reason ?? "this server's session did not answer");
+	}
 	if (reasons.length) return no(409, "refused", `Nothing was stashed: ${reasons.join("; ")}.`);
+	const name = typeof json.name === "string" ? json.name : nameFor(sv.label, d.stateDir), file = stashFile(d.stateDir, name);
 	const stash: Stash = { version: 1, name, label: sv.label, cwd: sv.cwd, stashedAt: (d.now?.() ?? new Date()).toISOString(), tabs: sv.tabs };
 	if (!stashOk(stash)) return no(500, "unreadable", "Nothing was stashed: the manifest would not be one a pop can read.");
 	mkdirSync(dirOf(d.stateDir), { recursive: true, mode: 0o700 });
@@ -229,8 +248,11 @@ export async function popBase(d: PopDeps, name: string): Promise<{ workspace: st
 		renameSync(claimed, join(dirOf(d.stateDir), "popped", `${name}-${(d.now?.() ?? new Date()).toISOString().replace(/[:.]/g, "-")}.json`));
 		return r;
 	} catch (error) {
-		renameSync(claimed, stashFile(d.stateDir, name));
-		throw error;
+		// Back under its name, unless something was stashed under it meanwhile: then under a free one, never over the other.
+		const back = existsSync(stashFile(d.stateDir, name)) ? nameFor(name, d.stateDir) : name;
+		linkSync(claimed, stashFile(d.stateDir, back));
+		rmSync(claimed, { force: true });
+		throw back === name ? error : new Error(`${(error as Error).message}; it is stashed again as "${back}", since "${name}" was taken meanwhile`);
 	}
 }
 async function open(d: PopDeps, name: string, file: string) {

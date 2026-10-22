@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import type { Pane, Session } from "../src/herdr.ts";
 import { createCloser } from "../src/closer.ts";
-import { closeAll, listStashes, nameOk, popBase, type Stash, stashBase, stashFile } from "../src/stash.ts";
+import { closeAll, listStashes, nameFor, nameOk, stashedList, popBase, type Stash, stashBase, stashFile } from "../src/stash.ts";
 
 // Stash and pop (docs/specs/2026-10-22-stash/spec.md): a base is checked before anything closes, recorded, then closed; a pop resumes
 // each pi from its session file, the tower first and each tab's main before its members, and closes what it opened when one fails.
@@ -272,4 +272,67 @@ test("the base is looked at again just before it closes, and the server's own se
 	assert.equal(late.status, 409);
 	assert.match(String((late.body as { reason: string }).reason), /main · A is working/);
 	assert.deepEqual([...t.closed, ...u.closed], []);
+});
+
+test("the page's Quit names its base: close all closes that base alone, checked first", async () => {
+	const t = twoBases();
+	const r = await closeAll({ run: t.w.run, sleep: async () => {}, sessions: async () => t.w.live, check: async () => ({}) }, "gui", async (ws) => (t.closed.push(ws), { status: 200, body: {} }), undefined, undefined, "wC");
+	assert.equal(r.status, 200, JSON.stringify(r.body));
+	assert.deepEqual(t.closed, ["wC"]);
+});
+
+test("the page's Pop goes through the closer: a bad name is refused, a failure says why, a success says what came back", async () => {
+	const w = world(), popped: string[] = [];
+	const close = createCloser({ run: w.run, sleep: async () => {}, me: () => "gui", sessions: async () => [], ask: async () => ({ accepted: true }), check: async () => ({}), stateDir: w.dir, pop: async (name) => { popped.push(name); if (name === "bad") throw new Error("Nothing is stashed as \"bad\""); return { workspace: "wN", label: "Base A", sessions: 3 }; } });
+	assert.equal((await close("pop", { name: "../x" })).status, 400);
+	const failed = await close("pop", { name: "bad" });
+	assert.equal(failed.status, 409);
+	assert.match(String((failed.body as { reason: string }).reason), /Nothing is stashed as "bad"/);
+	assert.deepEqual((await close("pop", { name: "A" })).body, { workspace: "wN", label: "Base A", sessions: 3 });
+	assert.deepEqual(popped, ["bad", "A"]);
+});
+
+test("the page lists each stash with its label; a manifest that does not read is left out", async () => {
+	const w = world();
+	await stasher(w).go();
+	writeFileSync(stashFile(w.dir, "broken"), "{");
+	assert.deepEqual(stashedList(w.dir), [{ name: "A", label: "Base A", at: "2026-10-22T10:00:00.000Z" }]);
+});
+
+test("the page's Stash sends no name: the label names it, made valid and free when it is not", async () => {
+	assert.equal(nameFor("feat/x\tbranch", "/nonexistent"), "feat-x-branch");
+	assert.equal(nameFor("..hidden", "/nonexistent"), "hidden");
+	assert.equal(nameFor(" / ", "/nonexistent"), "-");
+	assert.ok(nameOk(nameFor("x".repeat(200), "/nonexistent")));
+	const w = world();
+	w.all[0]!.label = "feat/x";
+	const deps = { run: w.run, sleep: async () => {}, sessions: async () => w.live, check: async () => ({}), stateDir: w.dir };
+	const first = await stashBase(deps, { workspace: "wA" }, async () => ({ status: 200, body: {} }));
+	assert.deepEqual(first.body, { stashed: "feat-x", sessions: 3 });
+	const second = await stashBase(deps, { workspace: "wA" }, async () => ({ status: 200, body: {} }));
+	assert.deepEqual(second.body, { stashed: "feat-x 2", sessions: 3 });
+});
+
+test("a stash of the server's own base asks the server's session once more before anything is recorded", async () => {
+	const w = world(), asked: string[] = [];
+	w.live.push(at("gui", "gui", "wA:p2"));
+	const deps = { run: w.run, sleep: async () => {}, sessions: async () => w.live, check: async (key: string) => (asked.push(key), key === "gui" ? { reason: "gui is working" } : {}), stateDir: w.dir, me: "gui" };
+	const r = await stashBase(deps, { workspace: "wA", name: "A" }, async () => ({ status: 200, body: {} }));
+	assert.equal(r.status, 409);
+	assert.equal(asked.at(-1), "gui");
+	assert.equal((await stashBase({ ...deps, me: "elsewhere" }, { workspace: "wA", name: "B" }, async () => ({ status: 200, body: {} }))).status, 200);
+	assert.match(String((r.body as { reason: string }).reason), /gui is working/);
+	assert.equal(existsSync(stashFile(w.dir, "A")), false);
+});
+
+test("a pop that fails while something was stashed under its name meanwhile comes back under a free name, over nothing", async () => {
+	const w = world();
+	await stasher(w).go();
+	const p = popper(w, { fail: "member" });
+	const popping = p.pop();
+	writeFileSync(stashFile(w.dir, "A"), "{}");
+	await assert.rejects(popping, /stashed again as "A 2"/);
+	assert.deepEqual(listStashes(w.dir), ["A", "A 2"]);
+	assert.equal(readFileSync(stashFile(w.dir, "A"), "utf8"), "{}");
+	assert.equal(existsSync(join(w.dir, "stash", ".popping", "A.json")), false);
 });

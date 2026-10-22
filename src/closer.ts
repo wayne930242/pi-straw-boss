@@ -1,6 +1,6 @@
 import type { Reply } from "./control.ts";
 import { type HerdrRun, panes, type Session, type Sleep } from "./herdr.ts";
-import { closeAll, stashBase } from "./stash.ts";
+import { closeAll, nameOk, stashBase } from "./stash.ts";
 
 // What the page's close buttons ask for. Closing is each session's own (index.ts): its bridge is asked to quit it as /boss close does, and its
 // shutdown clears its tokens (a tower's clears the base's mains). One unit closes its own pane afterwards; for a squad or a base every agent
@@ -10,15 +10,16 @@ import { closeAll, stashBase } from "./stash.ts";
 //   POST /<token>/api/close/unit {key}                 that session quits and closes its pane
 //   POST /<token>/api/close/tab {workspace, tab}       every agent in the tab quits, then the tab closes
 //   POST /<token>/api/close/base {workspace}           every agent in the workspace quits, then the workspace closes
-//   POST /<token>/api/close/stash {workspace, name}    the base is checked and recorded first (stash.ts), then closed as above
-//   POST /<token>/api/close/all {by}                   the base of session `by` is checked, then closes as above (stash.ts closeAll)
+//   POST /<token>/api/close/stash {workspace, name?}   the base is checked and recorded first (stash.ts), then closed as above; no name: its label
+//   POST /<token>/api/close/all {workspace} or {by}    that base, or the base of session `by`, is checked, then closes as above (stash.ts closeAll)
+//   POST /<token>/api/close/pop {name}                 opens a stash again from the server's session (stash.ts popBase)
 
 const EXIT_MS = 30_000, JOINED = new Set(["main", "member", "tower"]);
 /** `check` and `stateDir` are a stash's: without them this closer stashes nothing. */
-export interface CloserDeps { run: HerdrRun; sleep: Sleep; me(): string; sessions(): Promise<Session[]>; ask(key: string, keepPane: boolean, ifStashable?: boolean): Promise<{ accepted: boolean; reason?: string } | undefined>; check?(key: string): Promise<{ reason?: string } | undefined>; stateDir?: string }
+export interface CloserDeps { run: HerdrRun; sleep: Sleep; me(): string; sessions(): Promise<Session[]>; ask(key: string, keepPane: boolean, ifStashable?: boolean): Promise<{ accepted: boolean; reason?: string } | undefined>; check?(key: string): Promise<{ reason?: string } | undefined>; stateDir?: string; pop?(name: string): Promise<{ workspace: string; label: string; sessions: number }> }
 const no = (status: number, error: string, reason: string): Reply => ({ status, body: { error, reason } });
 
-export function createCloser({ run, sleep, me, sessions, ask, check, stateDir }: CloserDeps) {
+export function createCloser({ run, sleep, me, sessions, ask, check, stateDir, pop }: CloserDeps) {
 	let busy = false;
 	const name = (s: Session) => s.name ?? s.id.slice(0, 8);
 
@@ -46,13 +47,25 @@ export function createCloser({ run, sleep, me, sessions, ask, check, stateDir }:
 			const r = await ask(json.key, false);
 			return r?.accepted ? { status: 200, body: { closing: true } } : no(409, "refused", r?.reason ?? "The session did not answer; close it in its terminal.");
 		}
+		if (kind === "pop" && pop) {
+			if (!nameOk(json.name)) return no(400, "bad_request", "A stash is named by its name.");
+			if (busy) return no(429, "busy", "Another close or pop is still on its way.");
+			busy = true;
+			try {
+				return { status: 200, body: await pop(json.name) };
+			} catch (error) {
+				return no(409, "pop_failed", (error as Error).message);
+			} finally {
+				busy = false;
+			}
+		}
 		if ((kind === "stash" && stateDir) || kind === "all") {
 			if (!check) return no(404, "not_found", "No such action.");
-			if (busy) return no(429, "busy", "Another close is still on its way.");
+			if (busy) return no(429, "busy", "Another close or pop is still on its way.");
 			busy = true;
 			try {
 				const quit = (workspace: string) => batch(workspace, undefined, true);
-				return await (kind === "all" ? closeAll({ run, sleep, sessions, check }, me(), quit, refresh, typeof json.by === "string" ? json.by : undefined) : stashBase({ run, sleep, sessions, check, stateDir: stateDir! }, json, quit, refresh));
+				return await (kind === "all" ? closeAll({ run, sleep, sessions, check }, me(), quit, refresh, typeof json.by === "string" ? json.by : undefined, typeof json.workspace === "string" && json.workspace.length <= 200 ? json.workspace : undefined) : stashBase({ run, sleep, sessions, check, stateDir: stateDir!, me: me() }, json, quit, refresh));
 			} catch (error) {
 				return no(502, "stash_failed", (error as Error).message);
 			} finally {
@@ -61,7 +74,7 @@ export function createCloser({ run, sleep, me, sessions, ask, check, stateDir }:
 		}
 		if (kind !== "tab" && kind !== "base") return no(404, "not_found", "No such action.");
 		if (!str(json.workspace) || (kind === "tab" && !str(json.tab))) return no(400, "bad_request", "A squad is named by its workspace and tab, a base by its workspace.");
-		if (busy) return no(429, "busy", "Another close is still on its way.");
+		if (busy) return no(429, "busy", "Another close or pop is still on its way.");
 		busy = true;
 		try {
 			return await batch(json.workspace, kind === "tab" ? (json.tab as string) : undefined);

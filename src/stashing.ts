@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { postServer, readRecord } from "./handover.ts";
 import { workspaces } from "./herdr.ts";
 import type { createHost } from "./host.ts";
-import { listStashes, nameOk, popBase, stashFile } from "./stash.ts";
+import { listStashes, nameFor, nameOk, popBase, stashFile } from "./stash.ts";
 import type { Kit } from "./state.ts";
 
 // /boss stash and /boss pop, this session's side (stash.ts holds the checks, the manifest, and the reopening). A stash runs in the session
@@ -19,7 +19,7 @@ export function createStashing({ cfg, s, guiDir, tell, me }: Kit, { host }: { ho
 		/** Stashes this session's base under `name`, by default the workspace label. When this session is in it, it quits with the rest. */
 		async stash(given: string | undefined) {
 			if (!s.joined && !s.isTower) throw new Error("Only a session of the net stashes its base: this one has not joined");
-			const ws = s.at.workspaceId, label = (await workspaces(run)).find((w) => w.workspace_id === ws)?.label ?? ws, name = given?.trim() || label;
+			const ws = s.at.workspaceId, label = (await workspaces(run)).find((w) => w.workspace_id === ws)?.label ?? ws, name = given?.trim() || nameFor(label, guiDir);
 			if (!nameOk(name)) throw new Error(`"${name}" cannot name a stash: at most 64 characters, no slash, backslash, or control character, not starting with a dot`);
 			if (existsSync(stashFile(guiDir, name))) throw new Error(`Something is stashed as "${name}" already; pop it or pick another name`);
 			const shared = await host.share();
