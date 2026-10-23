@@ -83,6 +83,10 @@ export class FakeClient extends EventEmitter implements IntercomLike {
 		this.broker.disconnect(this.peer);
 		this.sessionId = null;
 	}
+	/** The broker hands this client a message, as it does one a session sent. */
+	incoming(from: Session, message: Incoming) {
+		this.emit("message", from, message);
+	}
 	/** The broker goes away under the client, as a crash does. */
 	drop() {
 		if (!this.connected) return;

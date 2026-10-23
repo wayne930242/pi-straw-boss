@@ -1,13 +1,16 @@
 import { spawn as spawnProcess } from "node:child_process";
 import { closeSync, mkdirSync, openSync, realpathSync, statSync, truncateSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { agentFiles, alive, ask, findIntercom, liveHeld, type Reply, stateDirOf, tsxLoader } from "./paths.ts";
+import { agentFiles, ask, findIntercom, holder, NoSidecar, type Reply, stateDirOf, tsxLoader } from "./paths.ts";
 import { startSidecar } from "./sidecar.ts";
 
 // `cli.ts` is what straw-boss runs: `join` at a session's start (it starts the sidecar of the pane, detached), and the commands of straw-net.py, each of which
-// sends one request to the sidecar of this pane over its socket and prints the answer. Exit codes: 0 ok, 1 refused or failed (the reason on stderr), 2 no sidecar for this pane.
+// sends one request to the sidecar of this pane over its socket and prints the answer. Exit codes: 0 ok, 1 refused or failed or not answered in time (the reason on
+// stderr), 2 a usage error, or no sidecar for this pane.
 
 export class UsageError extends Error {}
+/** How long a command waits for the sidecar's answer, in ms. `call-tower` may have to open a tower tab first, which takes up to a minute and a half. */
+export const ASK_MS: Record<string, number> = { default: 60_000, "call-tower": 120_000 };
 const USAGE = `usage: cli.ts join --pane P --kind claude|codex --session S [--record FILE] [--cli straw-net.py]
        cli.ts status | promote | stop [--pane P]
        cli.ts call-tower --message M [--workspace W] [--pane P]
@@ -55,6 +58,8 @@ export interface CliDeps {
 	/** How long join waits for the state file, and how long it waits for a sidecar it asked to stop. */
 	joinMs?: number;
 	stopMs?: number;
+	/** How long a command waits for an answer, whatever it is (replaces ASK_MS). */
+	askMs?: number;
 }
 const LOG_MAX = 256 * 1024;
 const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -66,8 +71,8 @@ const detached = ({ command, args, env, cwd, log }: SpawnSpec) => {
 	child.unref();
 	return { exited: new Promise<number | null>((resolve) => child.once("exit", (code) => resolve(code))) };
 };
-async function until(check: () => boolean, ms: number) {
-	for (const end = Date.now() + ms; Date.now() < end; await pause(50)) if (check()) return true;
+async function until(check: () => boolean | Promise<boolean>, ms: number) {
+	for (const end = Date.now() + ms; Date.now() < end; await pause(50)) if (await check()) return true;
 	return check();
 }
 
@@ -79,18 +84,19 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 	} catch (error) {
 		if (!(error instanceof UsageError)) throw error;
 		err(`${error.message}\n`);
-		return 1;
+		return 2;
 	}
 	const files = agentFiles(deps.stateDir ?? stateDirOf(env), args.pane);
 	if (args.command === "serve") return serve(args);
 	if (args.command === "join") return join(args);
-	if (!liveHeld(files)) return (err(`no net sidecar for pane ${args.pane}: it joins when the session starts, if pi-straw-boss and pi-intercom are installed\n`), 2);
 	const { command, pane: _pane, ...request } = args;
 	let reply: Reply;
 	try {
-		reply = await ask(files.socket, { cmd: command, ...Object.fromEntries(Object.entries(request).filter(([, value]) => value !== undefined)) });
+		reply = await ask(files.socket, { cmd: command, ...Object.fromEntries(Object.entries(request).filter(([, value]) => value !== undefined)) }, deps.askMs ?? ASK_MS[command] ?? ASK_MS.default);
 	} catch (error) {
-		return (err(`the net sidecar for pane ${args.pane} does not answer: ${(error as Error).message}\n`), 2);
+		// Nothing listening is no sidecar. A sidecar that was reached and did not answer in time may still carry the request out: it is not "no sidecar", so a caller does not send it twice.
+		if (error instanceof NoSidecar) return (err(`no net sidecar for pane ${args.pane}: it joins when the session starts, if pi-straw-boss and pi-intercom are installed\n`), 2);
+		return (err(`${(error as Error).message} (pane ${args.pane}); the request may still be carried out, so check before sending it again\n`), 1);
 	}
 	if (!reply.ok) return (err(`${reply.error}\n`), 1);
 	const { ok: _ok, ...body } = reply;
@@ -98,15 +104,20 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 	return 0;
 
 	async function join(a: Args) {
-		const started = (session: string) => ((held) => held?.session === session)(liveHeld(files));
-		const old = liveHeld(files);
-		if (old && old.session === a.session) return (out(`already joined as ${old.id}\n`), 0);
+		const started = async (session: string) => ((h) => h?.held.session === session && h.state !== "leaving")(await holder(files));
+		const old = await holder(files);
+		if (old && old.held.session === a.session && old.state !== "leaving") return (out(`already joined as ${old.held.id}\n`), 0);
 		if (old) {
-			// Another session in the pane (a /clear, or a resume): the sidecar of the one before leaves first, so the pane never has two.
-			await ask(files.socket, { cmd: "stop" }, 15_000).catch(() => {});
-			if (!(await until(() => !liveHeld(files), deps.stopMs ?? 10_000))) {
-				try { process.kill(old.pid, "SIGTERM"); } catch { /* gone meanwhile */ }
-				if (!(await until(() => !liveHeld(files), 3000))) return (err(`the net sidecar of session ${old.session} (pid ${old.pid}) did not leave\n`), 1);
+			// Another session in the pane (a /clear, or a resume), or this one on its way out: the sidecar of the one before leaves first, so the pane never has two.
+			if (old.state !== "leaving") await ask(files.socket, { cmd: "stop" }, 15_000).catch(() => {});
+			if (!(await until(async () => !(await holder(files)), deps.stopMs ?? 10_000))) {
+				// Only a process that answered on the sidecar's own socket is signalled: a pid in a state file may belong to anything by now.
+				const stuck = await holder(files);
+				if (stuck && stuck.state !== "starting" && stuck.held.pid !== process.pid) {
+					try { process.kill(stuck.held.pid, "SIGTERM"); } catch { /* gone meanwhile */ }
+					await until(async () => !(await holder(files)), 3000);
+				}
+				if (await holder(files)) return (err(`the net sidecar of session ${old.held.session} (pid ${old.held.pid}) did not leave\n`), 1);
 			}
 		}
 		let loader: string;
@@ -120,7 +131,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 		const child = (deps.spawn ?? detached)({ command: process.execPath, args: ["--import", pathToFileURL(loader).href, fileURLToPath(import.meta.url), "serve", "--pane", a.pane, "--kind", a.kind!, "--session", a.session!, ...flags], env: { ...env, HERDR_PANE_ID: a.pane }, cwd: process.cwd(), log: files.log });
 		const waitMs = deps.joinMs ?? 3000;
 		const outcome = await Promise.race([until(() => started(a.session!), waitMs).then((ok) => (ok ? "up" : "slow")), child.exited.then((code) => `exited with code ${code}`)]);
-		if (outcome === "up") return (out(`joining as ${liveHeld(files)!.id}\n`), 0);
+		if (outcome === "up") return (out(`joining as ${(await holder(files))!.held.id}\n`), 0);
 		return (err(`the net sidecar ${outcome === "slow" ? `did not start within ${waitMs / 1000} s` : outcome}; see ${files.log}\n`), 1);
 	}
 

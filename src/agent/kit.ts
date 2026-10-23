@@ -13,7 +13,7 @@ const NAMESPACE = /^[a-z0-9][a-z0-9._/-]{0,63}$/;
 /** The part of pi-intercom's `IntercomClient` the sidecar uses; pi-intercom is a runtime requirement found by path (intercom.ts), not an import. */
 export interface Registration { name?: string; cwd: string; model: string; pid: number; startedAt: number; lastActivity: number; status?: string; herdrPaneId?: string; acknowledgesReceipts?: boolean; extensions?: { namespace: string; ownerEligible: boolean }[] }
 export type Broker = { type: string } & Record<string, unknown>;
-export interface Incoming { id: string; replyTo?: string; content: { text: string } }
+export interface Incoming { id: string; replyTo?: string; content: { text: string; attachments?: { name: string }[] }; crossMachine?: { origin: { name: string; machine: string } } }
 export interface IntercomLike {
 	readonly sessionId: string | null;
 	isConnected(): boolean;

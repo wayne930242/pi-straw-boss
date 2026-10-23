@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { agentFiles, ask, liveHeld } from "../src/agent/paths.ts";
+import { agentFiles, alive, ask, holder, type Held, liveHeld, readHeld } from "../src/agent/paths.ts";
 import { type AgentDeps, type Sidecar, startSidecar } from "../src/agent/sidecar.ts";
 import { netMembers } from "../src/reach.ts";
 import { FakeClient } from "./agent-fakes.ts";
@@ -21,11 +22,11 @@ const SESSION = "085ff3b1-aaaa-bbbb-cccc-111122223333";
 const fast = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, Math.min(ms, 2)));
 
 /** A Claude Code pane in tab wA:t1 and the sidecar that is its presence in the net. */
-async function claude(over: { pane?: string; session?: string; record?: string; kind?: "claude" | "codex"; deps?: AgentDeps; wait?: boolean } = {}) {
+async function claude(over: { pane?: string; session?: string; record?: string; kind?: "claude" | "codex"; deps?: AgentDeps; wait?: boolean; cli?: string } = {}) {
 	const pane = over.pane ?? "wA:p3", clients: FakeClient[] = [], log: string[] = [];
 	if (!world.herdr.panes.some((p) => p.pane_id === pane)) Object.assign(world.herdr.addPane(pane, "wA:t1", over.kind ?? "claude"), { agent_status: "idle" });
 	const sidecar = await startSidecar({
-		pane, kind: over.kind ?? "claude", session: over.session ?? SESSION, record: over.record, cli: "/x/straw-net.py",
+		pane, kind: over.kind ?? "claude", session: over.session ?? SESSION, record: over.record, cli: over.cli ?? "/x/straw-net.py",
 		deps: { run: world.herdr.runFor(pane), api: world.herdr.api, events: world.herdr.events, watch: world.watch, stateDir: world.stateDir, sleep: fast, autoTower: false, pollMs: 150, recordMs: 10, log: (line) => log.push(line), connect: () => (clients[clients.push(new FakeClient(world.broker, pane)) - 1]!), ...over.deps },
 	});
 	started.push(sidecar);
@@ -48,7 +49,7 @@ test("a sidecar joins its tab as a member beside a pi, with the tokens, the name
 	assert.equal(tokens.sb_role, "member");
 	assert.ok(tokens.sb_order && tokens.sb_mark && tokens.sb_tab === "work", JSON.stringify(tokens));
 	assert.ok(Object.entries(world.herdr.workspace("wA").tokens).some(([k, v]) => k.startsWith("sbd_") && v.endsWith("claude-085ff3b1 joined tab work")), JSON.stringify(world.herdr.workspace("wA").tokens));
-	const held = liveHeld(agentFiles(world.stateDir, "wA:p3"));
+	const held = await liveHeld(agentFiles(world.stateDir, "wA:p3"));
 	assert.deepEqual([held?.session, held?.kind, held?.id, held?.pid], [SESSION, "claude", sidecar.id, process.pid]);
 	assert.deepEqual(world.broker.registrations.filter((r) => r.id === sidecar.id).map((r) => [r.namespace.split("/").slice(0, 2).join("/"), r.ownerEligible]), [["straw-boss/tab", true]], "only the tab channel, owner-eligible: no GUI channel, so no GUI takeover can pick it");
 	assert.equal(existsSync(join(world.stateDir, "gui.json")), false, "it hosts no GUI server");
@@ -79,7 +80,7 @@ test("a second sidecar for a pane that has one is refused, and a state file of a
 	world.herdr.addPane("wA:p4", "wA:t1", "claude");
 	writeFileSync(files.state, JSON.stringify({ pid: 2 ** 22 + 1, session: "dead", kind: "claude", pane: "wA:p4", id: "claude-dead", name: "x", startedAt: 0 }));
 	const { sidecar } = await claude({ pane: "wA:p4", session: "fresh-session-id" });
-	assert.equal(liveHeld(files)?.session, "fresh-session-id");
+	assert.equal((await liveHeld(files))?.session, "fresh-session-id");
 	assert.equal(roleOf("wA:p4"), "member");
 	await sidecar.stop("done");
 });
@@ -303,4 +304,176 @@ test("a broker without the extension bus makes the join fail loudly and the side
 	await sidecar.done;
 	assert.ok(log.some((l) => /join failed/.test(l)), log.join("\n"));
 	assert.equal(existsSync(agentFiles(world.stateDir, "wA:p3").state), false);
+});
+
+
+// ── review findings (R-F001 … R-F008) ──
+
+const staleHeld = (pane: string, over: Partial<Held> = {}): Held => ({ pid: 2 ** 22 + 1, session: "stale-session", kind: "claude", pane, id: "claude-stale-session", name: "x", startedAt: Date.now() - 3_600_000, ...over });
+const sleeper = () => {
+	const child = spawn("sleep", ["60"], { stdio: "ignore" });
+	return { child, stop: () => void child.kill("SIGKILL") };
+};
+
+test("R-F001: a message that says agent_blocked, typed into a pane whose prompt then stalls, is dropped once and does not hold the queue", async () => {
+	const a = world.agent({ id: "a", name: "Pi One", pane: "wA:p1", tab: "wA:t1" });
+	await a.start();
+	const { sidecar, log } = await claude({ deps: { pollMs: 40 } });
+	world.herdr.failPrompt = (text) => (text.includes("why does herdr answer agent_blocked") ? "agent_prompt_stalled" : undefined);
+	world.broker.outbox(a, { requestId: "r1", to: sidecar.id, message: "why does herdr answer agent_blocked here?" });
+	world.broker.outbox(a, { requestId: "r2", to: sidecar.id, message: "a plain one behind it" });
+	await until(() => world.herdr.prompts.length === 1, "the plain message behind the stalled one");
+	await new Promise((resolve) => setTimeout(resolve, 300)); // several polls
+	assert.equal(world.herdr.promptTries.filter((t) => t.includes("agent_blocked here")).length, 1, "the stalled line is typed once");
+	assert.match(world.herdr.prompts[0]!.text, /a plain one behind it$/);
+	assert.ok(log.some((l) => /could not type a message/.test(l)), log.join("\n"));
+});
+
+test("R-F002: a state file whose pid is alive but is not a sidecar (nothing answers on the socket) does not hold the pane, and is never signalled", async () => {
+	const victim = sleeper();
+	try {
+		world.herdr.addPane("wA:p4", "wA:t1", "claude");
+		const files = agentFiles(world.stateDir, "wA:p4");
+		mkdirSync(files.dir, { recursive: true });
+		writeFileSync(files.state, JSON.stringify(staleHeld("wA:p4", { pid: victim.child.pid! })));
+		const { sidecar } = await claude({ pane: "wA:p4", session: "fresh-session-id" });
+		assert.equal((await liveHeld(files))?.session, "fresh-session-id");
+		assert.equal(victim.child.exitCode, null);
+		assert.equal(alive(victim.child.pid!), true, "the unrelated process is untouched");
+		await sidecar.stop("done");
+	} finally {
+		victim.stop();
+	}
+});
+
+test("R-F002: EPERM is not ours, so a state file naming pid 1 does not lock the pane", async () => {
+	assert.equal(alive(1), false);
+	world.herdr.addPane("wA:p4", "wA:t1", "claude");
+	const files = agentFiles(world.stateDir, "wA:p4");
+	mkdirSync(files.dir, { recursive: true });
+	writeFileSync(files.state, JSON.stringify(staleHeld("wA:p4", { pid: 1 })));
+	const { sidecar } = await claude({ pane: "wA:p4", session: "fresh-session-id" });
+	assert.equal(readHeld(files)?.pid, process.pid);
+	await sidecar.stop("done");
+});
+
+test("R-F002: a holder that is still starting (alive, young, not listening yet) holds the pane; one that answers for another session does too", async () => {
+	world.herdr.addPane("wA:p4", "wA:t1", "claude");
+	const files = agentFiles(world.stateDir, "wA:p4");
+	mkdirSync(files.dir, { recursive: true });
+	writeFileSync(files.state, JSON.stringify(staleHeld("wA:p4", { pid: process.pid, startedAt: Date.now() })));
+	assert.equal((await holder(files))?.state, "starting");
+	await assert.rejects(claude({ pane: "wA:p4", session: "fresh-session-id" }), /already held/);
+});
+
+test("R-F003: sidecars racing for one pane that has a leftover state file: exactly one wins, and the leftover's removal never takes the winner's file", async () => {
+	world.herdr.addPane("wA:p4", "wA:t1", "claude");
+	const files = agentFiles(world.stateDir, "wA:p4");
+	mkdirSync(files.dir, { recursive: true });
+	writeFileSync(files.state, JSON.stringify(staleHeld("wA:p4")));
+	const results = await Promise.allSettled([1, 2, 3, 4].map((i) => claude({ pane: "wA:p4", session: `racer-${i}`, wait: false })));
+	const won = results.filter((r) => r.status === "fulfilled");
+	assert.equal(won.length, 1, results.map((r) => (r.status === "rejected" ? String(r.reason) : "won")).join(" | "));
+	const winner = (won[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof claude>>>).value.sidecar;
+	await winner.ready;
+	assert.equal(readHeld(files)?.session, winner.id.replace(/^claude-/, ""));
+	assert.equal((await holder(files))?.state, "up");
+});
+
+test("R-F003: leaving removes the state file only while it is this sidecar's own", async () => {
+	const { sidecar } = await claude();
+	const files = agentFiles(world.stateDir, "wA:p3");
+	writeFileSync(files.state, JSON.stringify(staleHeld("wA:p3", { session: SESSION, pid: process.pid + 1 })));
+	await sidecar.stop("done");
+	assert.equal(readHeld(files)?.pid, process.pid + 1, "another process's file is left alone");
+});
+
+test("R-F007: while a sidecar is leaving its socket says so, and it is no live holder of the pane", async () => {
+	const { sidecar, clients } = await claude();
+	const files = agentFiles(world.stateDir, "wA:p3");
+	assert.equal((await holder(files))?.state, "up");
+	let release!: () => void;
+	const gate = new Promise<void>((resolve) => (release = resolve)), disconnect = clients[0]!.disconnect.bind(clients[0]);
+	clients[0]!.disconnect = async () => (await gate, disconnect());
+	const stopped = sidecar.stop("test");
+	await new Promise((resolve) => setTimeout(resolve, 60));
+	assert.equal((await holder(files))?.state, "leaving");
+	assert.equal(await liveHeld(files), undefined);
+	release();
+	await stopped;
+	assert.equal(await holder(files), undefined);
+});
+
+test("R-F004: a rename survives the broker connection being made again", async () => {
+	const { sidecar, clients } = await claude();
+	await sidecar.request({ cmd: "rename", name: "MP-3584 cost mask" });
+	clients[0]!.drop();
+	await until(() => clients.length === 2 && world.broker.sessions.has(sidecar.id), "the new connection");
+	await world.quiet();
+	assert.equal((await world.broker.sessionList()).find((x) => x.id === sidecar.id)?.name, "MP-3584 cost mask");
+});
+
+test("R-F006: a pane that now runs another agent keeps the tokens its new owner wrote when the sidecar leaves", async () => {
+	const { sidecar } = await claude();
+	Object.assign(world.herdr.pane("wA:p3"), { agent: "pi" });
+	Object.assign(world.herdr.pane("wA:p3").tokens, { sb_role: "main", sb_order: "0010", sb_mark: "★" });
+	world.herdr.emit("pane.updated", "pane_updated", { pane_id: "wA:p3" });
+	await sidecar.done;
+	const { sb_role, sb_order, sb_mark } = world.herdr.pane("wA:p3").tokens;
+	assert.deepEqual({ sb_role, sb_order, sb_mark }, { sb_role: "main", sb_order: "0010", sb_mark: "★" });
+	assert.equal(existsSync(agentFiles(world.stateDir, "wA:p3").state), false);
+});
+
+test("R-F006: a new Herdr server does not get tokens written into a pane that runs another agent now", async () => {
+	const { sidecar } = await claude({ deps: { pollMs: 100_000 } });
+	Object.assign(world.herdr.pane("wA:p3"), { agent: "pi" });
+	await world.takeover();
+	await world.quiet();
+	assert.deepEqual(world.herdr.pane("wA:p3").tokens, {});
+	await sidecar.stop("done");
+});
+
+test("R-F008: the reply hint is shell-quoted, and a sender id or a --cli path with spaces and quotes stays one word each", async () => {
+	const { clients } = await claude({ cli: "/My Tools/straw net.py" });
+	clients[0]!.incoming({ id: "a b", name: "cli" } as never, { id: "m0", content: { text: "one" } });
+	clients[0]!.incoming({ id: `we ird'id "x"`, name: "cli" } as never, { id: "m1", content: { text: "two" } });
+	await until(() => world.herdr.prompts.length === 2, "the prompts");
+	const hints = world.herdr.prompts.map((p) => /reply="([^"]*)"/.exec(p.text)![1]);
+	assert.deepEqual(hints, [String.raw`'/My Tools/straw net.py' send --to 'a b' --message '…'`, String.raw`'/My Tools/straw net.py' send --to $'we ird\'id \x22x\x22' --message '…'`]);
+});
+
+test("R-F008: a cross-machine message carries pi's unverified marker, and attachments are noted", async () => {
+	const { clients } = await claude();
+	clients[0]!.incoming({ id: "relay-1", name: "pi-intercom-cli" } as never, { id: "m2", content: { text: "from afar", attachments: [{ type: "file", name: "notes.md", content: "SECRET BODY" }] }, crossMachine: { type: "ssh-relay", origin: { name: "Mac", machine: "studio" } } } as never);
+	await until(() => world.herdr.prompts.length === 1, "the prompt");
+	const typed = world.herdr.prompts[0]!.text;
+	assert.match(typed, /^\[straw net from="Mac@studio · unverified cross-machine" id=relay-1 role=session\] from afar/);
+	assert.match(typed, /1 attachment: notes\.md/);
+	assert.ok(!typed.includes("SECRET BODY"));
+	assert.ok(!typed.includes("reply="), "a sidecar cannot answer across machines");
+});
+
+test("R-F008: the inherited PI_INTERCOM_* and PI_SUBAGENT_* variables reach neither the sidecar's environment nor its broker client", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "psb-fake-intercom-"));
+	scratch.push(dir);
+	mkdirSync(join(dir, "broker"));
+	writeFileSync(join(dir, "package.json"), "{}");
+	writeFileSync(join(dir, "config.ts"), `export const loadConfig = () => ({ brokerCommand: "x", brokerArgs: [] });`);
+	writeFileSync(join(dir, "broker", "spawn.ts"), `export const spawnBrokerIfNeeded = async () => void ((globalThis as any).__seen.push(["spawn", process.env.PI_INTERCOM_SCOPE_ID, process.env.PI_SUBAGENT_RUN_ID]));`);
+	writeFileSync(join(dir, "broker", "client.ts"), `export class IntercomClient { constructor() { (globalThis as any).__seen.push(["client", process.env.PI_INTERCOM_SCOPE_ID, process.env.PI_SUBAGENT_RUN_ID]); return (globalThis as any).__client(); } }`);
+	const seen: unknown[][] = [], g = globalThis as Record<string, unknown>, saved = { ...process.env };
+	g.__seen = seen;
+	g.__client = () => new FakeClient(world.broker, "wA:p3");
+	Object.assign(process.env, { PI_INTERCOM_SCOPE_ID: "other-pool", PI_SUBAGENT_RUN_ID: "run-1", STRAW_BOSS_INTERCOM: dir });
+	try {
+		const inherited = { PI_INTERCOM_SCOPE_ID: "other-pool", PI_SUBAGENT_RUN_ID: "run-1", STRAW_BOSS_INTERCOM: dir, PI_CODING_AGENT_DIR: "/agent" };
+		const { sidecar } = await claude({ deps: { connect: undefined, env: inherited } });
+		assert.deepEqual(seen, [["spawn", undefined, undefined], ["client", undefined, undefined]]);
+		await sidecar.stop("done");
+	} finally {
+		for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+		Object.assign(process.env, saved);
+		delete g.__seen;
+		delete g.__client;
+	}
 });

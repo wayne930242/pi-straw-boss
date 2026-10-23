@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, rmSync, statSync, unlinkSync } from "node:fs";
 import { createServer } from "node:net";
 import { pathToFileURL } from "node:url";
 import { createDigest } from "../digest.ts";
@@ -12,7 +12,8 @@ import { createReach } from "../reach.ts";
 import { herdrEvents, herdrWatch } from "../server-watch.ts";
 import type { Config, Deps, Scope } from "../state.ts";
 import { type Incoming, type IntercomLike, createHeadlessKit } from "./kit.ts";
-import { agentFiles, alive, findIntercom, type Held, readHeld, type Reply, stateDirOf } from "./paths.ts";
+import { claim } from "./claim.ts";
+import { agentFiles, findIntercom, type Held, readHeld, type Reply, stateDirOf } from "./paths.ts";
 
 // The net presence of one Claude Code or Codex pane (docs/specs/2026-10-23-claude-codex-net): it registers with the pi-intercom broker as a session, joins the tab's
 // net through the same modules a pi session uses (membership, election, guard, presence, reach, digest), types the messages sent to it into its pane, and
@@ -44,10 +45,15 @@ export interface Sidecar {
 const RETRY_MS = [1000, 2000, 5000, 10_000, 30_000];
 const CONFIRM_MS = 1500, GATE_MS = 8000, SEEN_MAX = 200;
 const PANE_EVENTS = ["pane.closed", "pane.exited", "pane.updated", "pane.agent_detected", "pane.agent_status_changed"];
-const held = new Set<string>(); // state files this process holds: a test runs several sidecars in one process
 const unavailable = (what: string) => (() => { throw new Error(`${what} is not available in a net sidecar`); }) as never;
 const clean = (text: string) => text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").replace(/\s+/g, " ").trim();
 const quote = (value: string) => (/[\s"\]=]/.test(value) ? `"${value.replace(/"/g, "'")}"` : value);
+/** One shell word for the reply hint: plain text as is, anything else in single quotes, and a double quote or a control character as an escape in $'…' (the hint sits inside double quotes). */
+const shell = (value: string) => /^[\w@%+=:,./-]+$/.test(value) ? value
+	: /["\u0000-\u001f\u007f]/.test(value) ? `$'${value.replace(/[\\'"\u0000-\u001f\u007f]/g, (c) => (c === "\\" || c === "'" ? `\\${c}` : `\\x${c.charCodeAt(0).toString(16).padStart(2, "0")}`))}'`
+	: `'${value.replace(/'/g, `'\\''`)}'`;
+/** What a pi session's own environment sets and an agent that merely runs in its shell must not carry over: its intercom identity and pool, its subagent role, and the tower role. */
+const piOwn = (key: string) => /^PI_(INTERCOM|SUBAGENT)_/.test(key) || key === "STRAW_BOSS_ROLE";
 
 /** The configuration of a pi session, with what only the GUI and the tower's host use left unavailable. */
 function agentConfig(d: AgentDeps, env: NodeJS.ProcessEnv): Config {
@@ -63,6 +69,8 @@ function agentConfig(d: AgentDeps, env: NodeJS.ProcessEnv): Config {
 
 /** pi-intercom's client, its broker started when none runs, from the directory pi-intercom is installed in. */
 async function intercomClient(env: NodeJS.ProcessEnv): Promise<IntercomLike> {
+	// pi-intercom's client reads its pool and the like from this process's own environment: the agent's shell may have been started from a pi's.
+	for (const key of Object.keys(process.env)) if (piOwn(key)) delete process.env[key];
 	const dir = findIntercom(env), load = (file: string) => import(pathToFileURL(`${dir}/${file}`).href);
 	const [client, spawn, config] = await Promise.all([load("broker/client.ts"), load("broker/spawn.ts"), load("config.ts")]);
 	const { brokerCommand, brokerArgs } = config.loadConfig();
@@ -73,27 +81,16 @@ async function intercomClient(env: NodeJS.ProcessEnv): Promise<IntercomLike> {
 export async function startSidecar({ pane, kind, session, record, cli = "straw-net.py", deps = {} }: SidecarOptions): Promise<Sidecar> {
 	const id = `${kind}-${session}`, name = `${kind}-${session.slice(0, 8)}`;
 	// The inherited environment is the agent's: whatever a pi session set in it (its intercom id, its subagent or tower role) is not this process's.
-	const { PI_INTERCOM_SESSION_ID: _id, PI_SUBAGENT_ID: _sub, STRAW_BOSS_ROLE: _role, ...inherited } = deps.env ?? process.env;
+	const inherited = Object.fromEntries(Object.entries(deps.env ?? process.env).filter(([key]) => !piOwn(key)));
 	const env: NodeJS.ProcessEnv = { ...inherited, HERDR_PANE_ID: pane, PI_INTERCOM_SESSION_ID: id };
 	const cfg = agentConfig(deps, env), { run, world, sleep, now } = cfg;
 	const log = (line: string) => (deps.log ?? ((text) => console.error(`${new Date().toISOString()} ${text}`)))(line);
 	const files = agentFiles(cfg.stateDir ?? stateDirOf(env), pane);
-	// One sidecar per pane: the state file is created exclusively, and one that names a process that has ended is a leftover.
+	// One sidecar per pane: the state file is claimed exclusively. A holder is a process that answers on the pane's socket (a pid alone is not one), or one that is young and has not opened it yet.
 	mkdirSync(files.dir, { recursive: true, mode: 0o700 });
 	chmodSync(files.dir, 0o700);
 	const mine: Held = { pid: process.pid, session, kind, pane, id, name, startedAt: now() };
-	for (let attempt = 0; ; attempt++) {
-		try {
-			writeFileSync(files.state, JSON.stringify(mine), { flag: "wx", mode: 0o600 });
-			break;
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "EEXIST" || attempt > 2) throw error;
-			const other = readHeld(files);
-			if (other && alive(other.pid) && (other.pid !== process.pid || held.has(files.state))) throw new Error(`pane ${pane} is already held by a net sidecar (pid ${other.pid}, session ${other.session})`);
-			unlinkSync(files.state);
-		}
-	}
-	held.add(files.state);
+	await claim(files, mine, pane, now);
 
 	const kit = createHeadlessKit({ client: undefined as unknown as IntercomLike, env, cfg, log: (text, level) => log(level && level !== "info" ? `${level}: ${text}` : text) });
 	const { s, me } = kit;
@@ -106,6 +103,15 @@ export async function startSidecar({ pane, kind, session, record, cli = "straw-n
 	const done = new Promise<void>((resolve) => (finish = resolve));
 	const timers: ReturnType<typeof setInterval>[] = [], stops: (() => void)[] = [];
 	const server = createServer();
+	// The pane runs another agent now (a quit Claude Code, then pi in the same pane): its role tokens are that agent's, not ours to write or to clear.
+	const foreign = async () => {
+		try {
+			const found = (await world()).panes.find((p) => p.pane_id === pane);
+			return Boolean(found?.agent && found.agent !== kind);
+		} catch {
+			return false;
+		}
+	};
 	const leave = (why: string) => (leaving ??= (async () => {
 		log(`left: ${why}`);
 		s.stopped = true;
@@ -114,12 +120,14 @@ export async function startSidecar({ pane, kind, session, record, cli = "straw-n
 		presence.stop();
 		guard.stop();
 		await presence.settled();
-		if (s.joined) await presence.clear().catch(() => {});
+		// The tokens on the pane are its new agent's once another agent runs there.
+		if (s.joined && !(await foreign())) await presence.clear().catch(() => {});
 		await client?.disconnect().catch(() => {});
 		server.close();
-		if (readHeld(files)?.session === session) rmSync(files.state, { force: true });
 		rmSync(files.socket, { force: true });
-		held.delete(files.state);
+		// Last, and only this sidecar's own file: a sidecar for the pane can claim it the moment it is gone.
+		const left = readHeld(files);
+		if (left?.pid === process.pid && left.session === session) rmSync(files.state, { force: true });
 		finish();
 	})());
 
@@ -132,7 +140,7 @@ export async function startSidecar({ pane, kind, session, record, cli = "straw-n
 		next.on("message", (from, message) => void receive(from, message));
 		next.on("disconnected", () => void reconnect(next));
 		next.on("error", () => {});
-		await next.connect({ name, cwd: process.cwd(), model: kind === "claude" ? "claude-code" : "codex", pid: process.pid, startedAt: mine.startedAt, lastActivity: now(), herdrPaneId: pane }, id);
+		await next.connect({ name: s.ownName || name, cwd: process.cwd(), model: kind === "claude" ? "claude-code" : "codex", pid: process.pid, startedAt: mine.startedAt, lastActivity: now(), herdrPaneId: pane }, id);
 	};
 	const reconnect = async (dropped: IntercomLike) => {
 		if (leaving || reconnecting || dropped !== client) return;
@@ -167,7 +175,8 @@ export async function startSidecar({ pane, kind, session, record, cli = "straw-n
 					await run(["agent", "prompt", pane, queue[0]!, ...gate], GATE_MS + 5000);
 					queue.shift();
 				} catch (error) {
-					if (/agent_blocked/.test((error as Error).message)) return void (blocked = true);
+					// Herdr's own word (its stderr), not the error's text, which repeats the typed line.
+					if (/agent_blocked/.test(String((error as { stderr?: unknown }).stderr ?? ""))) return void (blocked = true);
 					// A stall or timeout means the input was sent and may sit in the composer: it is not sent again.
 					log(`could not type a message into the pane: ${(error as Error).message}`);
 					queue.shift();
@@ -186,10 +195,14 @@ export async function startSidecar({ pane, kind, session, record, cli = "straw-n
 			const info = (await client?.listSessions().catch(() => []))?.find((x) => x.id === from.id) ?? from as { id: string; name?: string; herdrLocation?: { paneId?: string } };
 			const location = (info as { herdrLocation?: { paneId?: string } }).herdrLocation?.paneId;
 			const sbRole = location ? (await panes(run).catch(() => [])).find((p) => p.pane_id === location)?.tokens?.sb_role : undefined;
-			const text = clean(message.content.text);
-			if (!text) return;
-			const sender = clean(info.name ?? info.id), fromId = clean(info.id);
-			queue.push(`[straw net from=${quote(sender)} id=${quote(fromId)} role=${["tower", "main", "member"].includes(sbRole ?? "") ? sbRole : "session"} reply="${cli.replace(/"/g, "'")} send --to ${fromId} --message '…'"] ${text}`);
+			// A message relayed from another machine is named as pi names it, and cannot be answered from here (a sidecar sends only within this machine's intercom).
+			const relay = message.crossMachine?.origin, attachments = message.content.attachments ?? [];
+			const text = clean(message.content.text), attached = attachments.length ? ` [${attachments.length} attachment${attachments.length > 1 ? "s" : ""}: ${attachments.map((f) => clean(f.name)).join(", ")} — not carried into this pane]` : "";
+			if (!text && !attached) return;
+			const sender = relay ? `${clean(relay.name)}@${clean(relay.machine)} · unverified cross-machine` : clean(info.name ?? info.id), fromId = clean(info.id);
+			const role = relay ? "session" : ["tower", "main", "member"].includes(sbRole ?? "") ? sbRole : "session";
+			const reply = relay ? "" : ` reply="${shell(cli)} send --to ${shell(fromId)} --message '…'"`;
+			queue.push(`[straw net from=${quote(sender)} id=${quote(fromId)} role=${role}${reply}] ${text}${attached}`);
 			void drain();
 		}).catch((error: Error) => log(`could not take a message: ${error.message}`));
 	};
@@ -244,6 +257,8 @@ export async function startSidecar({ pane, kind, session, record, cli = "straw-n
 		return value;
 	};
 	const commands: Record<string, (r: Record<string, unknown>) => Promise<Record<string, unknown>>> = {
+		// Who answers on this pane's socket, and whether it is on its way out: how the commands tell a sidecar from a leftover state file.
+		hello: async () => ({ pid: process.pid, session, leaving: Boolean(leaving) }),
 		status: async () => ({ ...(await reach.status()) }),
 		promote: async () => {
 			const { promoted, text: said } = await membership.promote(false);
@@ -284,7 +299,7 @@ export async function startSidecar({ pane, kind, session, record, cli = "straw-n
 		try {
 			const command = commands[String(r.cmd)];
 			if (!command || !Object.hasOwn(commands, String(r.cmd))) throw new Error(`unknown command ${String(r.cmd)}`);
-			if (r.cmd !== "stop") await ready.catch((error: Error) => { throw new Error(`this sidecar did not join the net: ${error.message}`); });
+			if (r.cmd !== "stop" && r.cmd !== "hello") await ready.catch((error: Error) => { throw new Error(`this sidecar did not join the net: ${error.message}`); });
 			return { ok: true, ...(await command(r)) };
 		} catch (error) {
 			return { ok: false, error: (error as Error).message };
@@ -292,7 +307,7 @@ export async function startSidecar({ pane, kind, session, record, cli = "straw-n
 	};
 	server.on("connection", (conn) => {
 		let line = "";
-		conn.setEncoding("utf8").setTimeout(120_000, () => conn.destroy());
+		conn.setEncoding("utf8").setTimeout(150_000, () => conn.destroy()); // longer than the slowest command's wait (cli.ts ASK_MS)
 		conn.on("error", () => {});
 		conn.on("data", (chunk) => {
 			line += chunk;
@@ -321,7 +336,7 @@ export async function startSidecar({ pane, kind, session, record, cli = "straw-n
 		if (sub) throw new Error(sub);
 		await open();
 		await membership.joinNet();
-		stops.push(cfg.watch(presence.restore));
+		stops.push(cfg.watch(() => void foreign().then((other) => other || presence.restore())));
 		void digest.note(s.at.workspaceId, `${name} joined tab ${s.info.tab}`).catch(() => {});
 		watchRecord();
 		watchPane();

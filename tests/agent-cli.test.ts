@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
+import { spawn as spawnChild } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { parseArgs, run, type SpawnSpec, UsageError } from "../src/agent/cli.ts";
-import { agentFiles, type Held } from "../src/agent/paths.ts";
+import { ASK_MS, parseArgs, run, type SpawnSpec, UsageError } from "../src/agent/cli.ts";
+import { agentFiles, alive, type Held, readHeld } from "../src/agent/paths.ts";
 
 const dirs: string[] = [], servers: Server[] = [];
 afterEach(() => {
@@ -27,7 +28,7 @@ const output = () => {
 	return { out, err, deps: { out: (text: string) => void out.push(text), err: (text: string) => void err.push(text) } };
 };
 /** A sidecar's control socket that answers each request with `answer` and records what it was asked. */
-async function sidecarAt(files: ReturnType<typeof agentFiles>, answer: (request: Record<string, unknown>) => Record<string, unknown>) {
+async function sidecarAt(files: ReturnType<typeof agentFiles>, answer: (request: Record<string, unknown>) => Record<string, unknown>, hello: (held: Held) => Record<string, unknown> = () => ({})) {
 	mkdirSync(files.dir, { recursive: true });
 	const asked: Record<string, unknown>[] = [];
 	const server = createServer((conn) => {
@@ -36,6 +37,11 @@ async function sidecarAt(files: ReturnType<typeof agentFiles>, answer: (request:
 			line += chunk;
 			if (!line.includes("\n")) return;
 			const request = JSON.parse(line);
+			// Who it is: what a sidecar answers before anything else, from the state file it would have written.
+			if (request.cmd === "hello") {
+				const held = readHeld(files);
+				return void conn.end(`${JSON.stringify(held && alive(held.pid) ? { ok: true, pid: held.pid, session: held.session, ...hello(held) } : { ok: false, error: "no state" })}\n`);
+			}
 			asked.push(request);
 			conn.end(`${JSON.stringify(answer(request))}\n`);
 		});
@@ -83,14 +89,25 @@ test("a pane with no sidecar is exit 2 for every command that talks to one, with
 
 test("a state file of a process that has ended, or a socket nobody listens on, is no sidecar either", async () => {
 	const { stateDir, files } = scratch();
-	mkdirSync(files.dir, { recursive: true });
 	writeFileSync(files.state, JSON.stringify(held({ pid: 2 ** 22 + 1 })));
 	const gone = output();
 	assert.equal(await run(["status", "--pane", PANE], { stateDir, ...gone.deps }), 2);
 	writeFileSync(files.state, JSON.stringify(held()));
 	const silent = output();
 	assert.equal(await run(["status", "--pane", PANE], { stateDir, ...silent.deps }), 2);
-	assert.match(silent.err.join(""), /does not answer/);
+	assert.match(silent.err.join(""), /no net sidecar for pane wA:p3/);
+});
+
+test("R-F005: a sidecar that is connected to and does not answer in time is exit 1 (it may still act), not 2 (no sidecar); call-tower is given longer than the rest", { timeout: 4000 }, async () => {
+	const { stateDir, files } = scratch();
+	writeFileSync(files.state, JSON.stringify(held()));
+	const server = createServer(() => {});
+	servers.push(server);
+	await new Promise<void>((resolve) => server.listen(files.socket, resolve));
+	const o = output();
+	assert.equal(await run(["call-tower", "--message", "m", "--pane", PANE], { stateDir, askMs: 150, ...o.deps }), 1);
+	assert.match(o.err.join(""), /did not answer within 0\.15 s/);
+	assert.ok(ASK_MS["call-tower"]! >= 120_000 && ASK_MS["call-tower"]! > ASK_MS.default!, JSON.stringify(ASK_MS));
 });
 
 test("a command sends one request and prints the reply: the text, or the status as JSON; a refusal is exit 1 with its reason", async () => {
@@ -116,9 +133,9 @@ test("a command sends one request and prints the reply: the text, or the status 
 	assert.deepEqual(asked, [{ cmd: "status" }, { cmd: "promote" }, { cmd: "call-tower", message: "help", workspace: "Beta" }, { cmd: "broadcast", message: "b" }, { cmd: "send", to: "t", message: "s" }, { cmd: "rename", name: "n" }]);
 });
 
-test("a usage error is exit 1 with the usage on stderr", async () => {
+test("a usage error is exit 2 with the usage on stderr", async () => {
 	const o = output();
-	assert.equal(await run(["send", "--message", "x"], { stateDir: scratch().stateDir, env: { HERDR_PANE_ID: PANE }, ...o.deps }), 1);
+	assert.equal(await run(["send", "--message", "x"], { stateDir: scratch().stateDir, env: { HERDR_PANE_ID: PANE }, ...o.deps }), 2);
 	assert.match(o.err.join(""), /--to is required/);
 });
 
@@ -126,7 +143,7 @@ const spawner = (files: ReturnType<typeof agentFiles>, write: boolean) => {
 	const spawned: SpawnSpec[] = [];
 	return { spawned, spawn: (spec: SpawnSpec) => {
 		spawned.push(spec);
-		if (write) writeFileSync(files.state, JSON.stringify(held({ session: spec.args[spec.args.indexOf("--session") + 1]! })));
+		if (write) writeFileSync(files.state, JSON.stringify(held({ session: spec.args[spec.args.indexOf("--session") + 1]!, startedAt: Date.now() })));
 		return { exited: new Promise<number | null>(() => {}) };
 	} };
 };
@@ -150,6 +167,7 @@ test("join is idempotent: a live sidecar of the same session is left alone, a de
 	const { stateDir, files } = scratch();
 	mkdirSync(files.dir, { recursive: true });
 	writeFileSync(files.state, JSON.stringify(held()));
+	await sidecarAt(files, () => ({ ok: true }));
 	const same = spawner(files, true);
 	assert.equal(await run(joinArgs, { stateDir, spawn: same.spawn, loader: "/l.mjs", ...output().deps }), 0);
 	assert.deepEqual(same.spawned, []);
@@ -169,7 +187,7 @@ test("join for another session in a pane that has a sidecar (a /clear) stops the
 		return { ok: true, text: "Left the net." };
 	});
 	const spawned: SpawnSpec[] = [];
-	const spawnNew = (spec: SpawnSpec) => (order.push("spawn"), writeFileSync(files.state, JSON.stringify(held())), spawned.push(spec), { exited: new Promise<number | null>(() => {}) });
+	const spawnNew = (spec: SpawnSpec) => (order.push("spawn"), writeFileSync(files.state, JSON.stringify(held({ startedAt: Date.now() }))), spawned.push(spec), { exited: new Promise<number | null>(() => {}) });
 	assert.equal(await run(joinArgs, { stateDir, spawn: spawnNew, loader: "/l.mjs", ...output().deps }), 0);
 	assert.deepEqual(order, ["stop", "spawn"]);
 	assert.equal(spawned.length, 1);
@@ -186,4 +204,47 @@ test("join says so, with exit 1, when the sidecar's state file does not appear i
 	const noLoader = output();
 	assert.equal(await run(joinArgs, { stateDir, env: { PI_CODING_AGENT_DIR: stateDir }, spawn: () => ({ exited: new Promise<number | null>(() => {}) }), ...noLoader.deps }), 1);
 	assert.match(noLoader.err.join(""), /pi-intercom/);
+});
+
+test("R-F002: join never signals a process the sidecar's socket has not confirmed: a state file naming an unrelated live pid is a leftover", async () => {
+	const { stateDir, files } = scratch();
+	const victim = spawnChild("sleep", ["60"], { stdio: "ignore" });
+	try {
+		writeFileSync(files.state, JSON.stringify(held({ pid: victim.pid!, session: "old-session", startedAt: Date.now() - 3_600_000 })));
+		const { spawned, spawn } = spawner(files, true);
+		assert.equal(await run(joinArgs, { stateDir, spawn, loader: "/l.mjs", stopMs: 100, ...output().deps }), 0);
+		assert.equal(spawned.length, 1);
+		assert.equal(alive(victim.pid!), true);
+		assert.equal(victim.exitCode, null, "it was not sent SIGTERM");
+	} finally {
+		victim.kill("SIGKILL");
+	}
+});
+
+test("R-F002: a sidecar that answers on its socket and does not leave when asked is stopped by SIGTERM", async () => {
+	const { stateDir, files } = scratch();
+	const stubborn = spawnChild("sleep", ["60"], { stdio: "ignore" });
+	stubborn.once("exit", () => rmSync(files.state, { force: true }));
+	try {
+		writeFileSync(files.state, JSON.stringify(held({ pid: stubborn.pid!, session: "old-session" })));
+		await sidecarAt(files, () => ({ ok: true, text: "Left the net." }));
+		const { spawned, spawn } = spawner(files, true);
+		assert.equal(await run(joinArgs, { stateDir, spawn, loader: "/l.mjs", stopMs: 150, ...output().deps }), 0);
+		assert.equal(spawned.length, 1);
+		assert.notEqual(stubborn.exitCode ?? stubborn.signalCode, null, "it was sent SIGTERM");
+	} finally {
+		stubborn.kill("SIGKILL");
+	}
+});
+
+test("R-F007: a join for the session whose sidecar is leaving waits for it to be gone, then starts a new one, and does not say it is already joined", async () => {
+	const { stateDir, files } = scratch();
+	writeFileSync(files.state, JSON.stringify(held()));
+	await sidecarAt(files, () => ({ ok: true, text: "Left the net." }), (held) => ({ leaving: held.startedAt === 1 })); // the one that is leaving is the file as it was written; the new sidecar's is not
+	setTimeout(() => rmSync(files.state, { force: true }), 120);
+	const { spawned, spawn } = spawner(files, true);
+	const o = output();
+	assert.equal(await run(joinArgs, { stateDir, spawn, loader: "/l.mjs", ...o.deps }), 0);
+	assert.equal(spawned.length, 1);
+	assert.doesNotMatch(o.out.join(""), /already joined/);
 });

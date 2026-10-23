@@ -21,27 +21,55 @@ export type AgentFiles = ReturnType<typeof agentFiles>;
 /** What a running sidecar writes first: who holds the pane. */
 export interface Held { pid: number; session: string; kind: string; pane: string; id: string; name: string; startedAt: number }
 
-export const alive = (pid: number) => {
+/** Whether `pid` is a live process of this user: a sidecar is, so EPERM (another user's process) is not one of ours. */
+export const alive = (pid: unknown) => {
 	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (error) {
-		return (error as NodeJS.ErrnoException).code === "EPERM";
+		return typeof pid === "number" && Number.isInteger(pid) && pid > 1 && process.kill(pid, 0);
+	} catch {
+		return false;
 	}
 };
 export function readHeld(files: AgentFiles): Held | undefined {
+	return parseHeld(readRaw(files));
+}
+export function readRaw(files: AgentFiles): string | undefined {
 	try {
-		const held = JSON.parse(readFileSync(files.state, "utf8")) as Held;
+		return readFileSync(files.state, "utf8");
+	} catch {
+		return undefined;
+	}
+}
+export function parseHeld(raw: string | undefined): Held | undefined {
+	try {
+		const held = JSON.parse(raw ?? "") as Held;
 		return typeof held.pid === "number" && typeof held.session === "string" ? held : undefined;
 	} catch {
 		return undefined;
 	}
 }
-/** The sidecar that holds the pane now: its state file names a process that is running. */
-export const liveHeld = (files: AgentFiles) => ((held) => (held && alive(held.pid) ? held : undefined))(readHeld(files));
+
+/** How long a state file whose owner has not opened its socket yet still counts: a sidecar listens within a moment of claiming the pane. */
+export const STARTING_MS = 15_000;
+/** `up` and `leaving` are confirmed by the sidecar itself, over its socket (same pid and session); `starting` is a young file whose process is alive and does not answer yet. */
+export interface Holder { held: Held; state: "up" | "starting" | "leaving" }
+/**
+ * Who holds the pane for a state file. A pid alone proves nothing (pids are reused, and a crash leaves the file behind), so the holder is the process that
+ * answers `hello` on the pane's socket with the file's own pid and session. Only a young file whose process is alive is given the benefit of the doubt.
+ */
+export async function judge(files: AgentFiles, held: Held | undefined, now: () => number = Date.now): Promise<Holder | undefined> {
+	if (!held) return undefined;
+	const reply = await ask(files.socket, { cmd: "hello" }, 3000).catch(() => undefined);
+	if (reply?.ok && reply.pid === held.pid && reply.session === held.session) return { held, state: reply.leaving ? "leaving" : "up" };
+	return alive(held.pid) && now() - held.startedAt < STARTING_MS ? { held, state: "starting" } : undefined;
+}
+export const holder = (files: AgentFiles, now?: () => number) => judge(files, readHeld(files), now);
+/** The sidecar that holds the pane and is not on its way out. */
+export const liveHeld = async (files: AgentFiles) => ((h) => (h && h.state !== "leaving" ? h.held : undefined))(await holder(files));
 
 /** One request to a sidecar's control socket: one JSON line out, one JSON line back. */
 export interface Reply { ok: boolean; error?: string; text?: string; [key: string]: unknown }
+/** Nothing listens on the socket (it was never made, or the sidecar behind it has ended); any other failure means a sidecar was reached. */
+export class NoSidecar extends Error {}
 export const ask = (socket: string, request: Record<string, unknown>, timeoutMs = 60_000) =>
 	new Promise<Reply>((resolve, reject) => {
 		let reply = "";
@@ -55,7 +83,7 @@ export const ask = (socket: string, request: Record<string, unknown>, timeoutMs 
 			try { resolve(JSON.parse(reply.split("\n")[0]!) as Reply); } catch { reject(new Error(`the sidecar answered ${reply.slice(0, 100)}`)); }
 		});
 		conn.on("timeout", () => (conn.destroy(), reject(new Error(`the sidecar did not answer within ${timeoutMs / 1000} s`))));
-		conn.on("error", reject);
+		conn.on("error", (error) => reject(["ENOENT", "ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code ?? "") ? new NoSidecar(error.message) : error));
 		conn.on("close", () => reply.includes("\n") || reject(new Error("the sidecar closed the connection without an answer")));
 	});
 

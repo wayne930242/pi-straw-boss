@@ -58,6 +58,9 @@ export class FakeHerdr {
 	calls: string[][] = [];
 	/** What `agent prompt` typed into a pane, and the gate options it carried. */
 	prompts: { pane: string; text: string; args: string[] }[] = [];
+	/** Every `agent prompt` asked for, typed or not, and a switch that makes one fail with the Herdr code it returns (a stall after the input was sent, for one). */
+	promptTries: string[] = [];
+	failPrompt?: (text: string) => string | undefined;
 	closed: string[] = [];
 	/** Socket API calls, and a switch that makes `tab.move` fail as an unreachable socket would. */
 	moves: { tab_id: string; insert_index: number }[] = [];
@@ -180,7 +183,10 @@ export class FakeHerdr {
 		}
 		if (group === "agent" && cmd === "prompt") {
 			const pane = this.pane(args[2]!);
-			if (pane.agent_status === "blocked") throw new Error(`herdr ${args.join(" ")} failed: agent_blocked: agent is blocked`);
+			this.promptTries.push(args[3]!);
+			if (pane.agent_status === "blocked") throw Object.assign(new Error(`herdr ${args.join(" ")} failed: agent_blocked: agent is blocked`), { stderr: "agent_blocked: agent is blocked" });
+			const code = this.failPrompt?.(args[3]!);
+			if (code) throw Object.assign(new Error(`herdr ${args.join(" ")} failed: ${code}`), { stderr: code });
 			this.prompts.push({ pane: pane.pane_id, text: args[3]!, args: args.slice(4) });
 			return out({ type: "agent_prompted", agent: { pane_id: pane.pane_id, agent: pane.agent } });
 		}

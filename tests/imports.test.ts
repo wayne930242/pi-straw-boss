@@ -167,7 +167,9 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased (net sidecar): composer.ts 191 to 192 and tokens.ts 23 to 24 for the agent badge and the composer's notice for a unit that is not a pi session.
 	// Unreleased (net sidecar): src/agent/ holds the net sidecar of a Claude Code or Codex session (docs/specs/2026-10-23-claude-codex-net): kit.ts (the modules' two pi dependencies over a raw
 	// intercom client), paths.ts (where its files and pi-intercom are), sidecar.ts (the session in the net), and cli.ts (what straw-boss runs: join, and the commands of straw-net.py). None of it is loaded by the extension or by the page, and none imports the host, the GUI, or the dialogs.
-	for (const [name, max] of [["kit.ts", 161], ["paths.ts", 78], ["sidecar.ts", 332], ["cli.ts", 147]] as const) assert.ok(count(`src/agent/${name}`) <= max, `src/agent/${name} has ${count(`src/agent/${name}`)} lines`);
+	// Unreleased (net sidecar review): claim.ts (45, new: the pane's state file claimed whole with a link, a leftover removed under a lock), paths.ts 78 to 106 (a holder is who answers on the socket, not a pid), cli.ts 147 to 158
+	// (the wait per command, join through that holder), and sidecar.ts 332 to 347 (the shell-quoted hint, the relay marker and attachment note, the pi variables left out, a pane another agent has taken).
+	for (const [name, max] of [["kit.ts", 161], ["paths.ts", 106], ["sidecar.ts", 347], ["cli.ts", 158], ["claim.ts", 45]] as const) assert.ok(count(`src/agent/${name}`) <= max, `src/agent/${name} has ${count(`src/agent/${name}`)} lines`);
 	assert.ok(count("src/history.ts") <= 258, `src/history.ts has ${count("src/history.ts")} lines`);
 	// The item mapping and the stream glue came out of the reader to keep it within its budget; the spec sets no figure for them.
 	// 0.19.0 to 108 for Todo and todosOf, a todo snapshot checked field by field.
@@ -209,7 +211,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased to 239: index.ts (58), /boss stash and pop built beside /boss (its import).
 	// Unreleased to 241: index.ts (60), the two dependencies of the GUI takeover (`gone` with its import, `adoptMs` with its default).
 	// Unreleased to 243: herdr.ts, `herdrSocket`, the socket a session's Herdr is named by, which the watches default to and gui.json records.
-	assert.ok(rest <= 243, `the rest of src has ${rest} lines`);
+	// Unreleased to 244 (net sidecar review): herdr.ts, the `stderr` a failed herdrRun carries, so a caller reads Herdr's own code and not the line the message repeats.
+	assert.ok(rest <= 244, `the rest of src has ${rest} lines`);
 	// The page: the files the spec budgets one by one, then this round's own figures (no figure in the spec): the focus views, the overlay
 	// layer (alert spotting and the stack model in the map's chunk, the layer's DOM and tiles in a chunk of their own), the dev-only demo, and everything else.
 	// 0.18.1 raised mirror.ts to 154 for embed, a terminal shown inside the session view instead of a tile.
