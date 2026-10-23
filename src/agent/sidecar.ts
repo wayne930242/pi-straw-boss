@@ -195,7 +195,7 @@ export async function startSidecar({ pane, kind, session, record, cli = "straw-n
 	};
 
 	// The pane: the agent leaves when Herdr says the pane closed or no longer runs it (read again once, a moment later, so a flicker is not a quit), and a blocked pane that frees takes its queue.
-	let seen = false, checking: Promise<void> | undefined, again = false;
+	let seen = false, checking: Promise<unknown> | undefined, again = false, unreadable: string | undefined; // a Herdr that does not answer is told once, not every poll
 	const gone = async () => ((p) => !p || p.agent !== kind ? (p ? "the pane no longer runs " + kind : "the pane closed") : undefined)((await world()).panes.find((x) => x.pane_id === pane));
 	const check = async () => {
 		if (leaving) return;
@@ -212,7 +212,7 @@ export async function startSidecar({ pane, kind, session, record, cli = "straw-n
 	const watchPane = () => {
 		const run1 = () => {
 			if (checking) return void (again = true);
-			checking = check().catch((error: Error) => log(`could not read the pane: ${error.message}`)).finally(() => {
+			checking = check().then(() => (unreadable = undefined), (error: Error) => unreadable !== error.message && log(`could not read the pane: ${(unreadable = error.message)}`)).finally(() => {
 				checking = undefined;
 				if (again) ((again = false), run1());
 			});
