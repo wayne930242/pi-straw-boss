@@ -86,11 +86,11 @@ export function registerSession(kit: Kit, { briefing, presence, membership, guar
 		}
 		starting?.catch((error: Error) => tell(`Straw Boss: ${error.message}`, "error"));
 		// The GUI this process ran before a /reload, /new, or /resume starts again on its URL, and a session newer than the running server
-		// takes it over, once pi-intercom has published this session's id: the server's dialogs are routed by it.
+		// takes it over (one with a screen: a print run is no host), once pi-intercom has published this session's id: the server's dialogs are routed by it.
 		// A /new, /resume, or /fork is another session: it waits for the new id, not the one pi-intercom may still show from before.
 		const record = readRecord(guiDir), back = record?.reload && !record.stopped && record.pid === process.pid && event.reason !== "startup";
 		const ready = () => Boolean(me()) && (!back || event.reason === "reload" || me() !== record!.ownerSession);
-		if (back || (record && newer(version, record.version))) void (async () => {
+		if (back || (record && ctx.hasUI && newer(version, record.version))) void (async () => {
 			if ((await waitFor(cfg.sleep, ready, CONNECT_MS)) && (back || (await answers(record!)))) await host.restore(Boolean(back && record!.remote));
 		})().catch(() => {});
 	});

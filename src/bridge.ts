@@ -29,7 +29,8 @@ import { type Monitor, trackMonitors } from "./monitors.ts";
 // into an impostor's hands): the bridge never relays a secret dialog, and refuses any answer to one.
 
 export const REGISTER = "intercom:extension-register";
-const VERDICT_MS = 2000, POLL_MS = 2000, KEEP_MS = 120_000, KEEP = 16, MAX_GUIS = 8, MAX_MESSAGE = 15 * 1024;
+// pi-intercom has no unregister: every host the session joins stays one of its channels, and the broker takes at most 32 per session (the tab, the viewer, and the hub's own take a few).
+const VERDICT_MS = 2000, POLL_MS = 2000, KEEP_MS = 120_000, KEEP = 16, MAX_GUIS = 16, MAX_MESSAGE = 15 * 1024;
 /** At most this many queued messages go to the GUI (the oldest, which are delivered first), each cut to this many characters. */
 export const MAX_QUEUED = 5, QUEUED_TEXT = 200;
 const clipQueued = (text: string) => (text.length > QUEUED_TEXT ? `${text.slice(0, QUEUED_TEXT - 1)}…` : text);
@@ -99,7 +100,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 		} catch {
 			g = undefined;
 		}
-		if (g && g !== me() && !chans.has(g)) join_(g);
+		if (g && g !== me() && !chans.has(g) && alive()) join_(g); // a host whose process is gone is not joined: the survivor that takes over rewrites gui.json within moments
 		push();
 		return true;
 	};

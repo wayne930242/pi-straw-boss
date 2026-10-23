@@ -164,7 +164,7 @@ test("a session with a newer pi-straw-boss takes the running server over when it
 	await a.start();
 	await a.command("gui");
 	const url = urlOf(a), before = opened.length;
-	const b = world.agent({ id: "viewer-b", pane: "wB:p1", tab: "wB:t1", deps: { ...deps, version: "1.1.0" } });
+	const b = world.agent({ id: "viewer-b", pane: "wB:p1", tab: "wB:t1", ui: true, deps: { ...deps, version: "1.1.0" } });
 	await b.start();
 	await until(() => readRecord(world.stateDir)?.version === "1.1.0", "the takeover");
 	const record = readRecord(world.stateDir)!;
@@ -386,6 +386,7 @@ test("remote access that was on comes back by itself when a new server starts (a
 	assert.equal(proxyOf(ts.config()), `http://127.0.0.1:${second.remotePort}`, "the next server turned remote on again by itself");
 	assert.equal(a.overlays.length, overlays, "without the pairing QR");
 	assert.match(a.notices.at(-2)!.text, /^Remote access is on for me@example.com/);
+	assert.doesNotMatch(a.notices.at(-2)!.text, /scan the QR/, "no QR was shown, so the notice does not ask for a scan");
 	// A /reload of the session that runs it.
 	await a.stop("reload");
 	assert.deepEqual(ts.config(), {}, "the session's end takes the entry down");
@@ -393,7 +394,7 @@ test("remote access that was on comes back by itself when a new server starts (a
 	await reloaded.fire("session_start", { reason: "reload" });
 	await until(() => proxyOf(ts.config()) !== undefined, "remote on again after the reload");
 	// A takeover by a session with a newer version: its server starts where the first stopped, and remote is on there as well.
-	const newer = world.agent({ id: "viewer-n", pane: "wN:p1", tab: "wN:t1", deps: { ...deps, tailscale: ts.run, version: "99.0.0" } });
+	const newer = world.agent({ id: "viewer-n", pane: "wN:p1", tab: "wN:t1", ui: true, deps: { ...deps, tailscale: ts.run, version: "99.0.0" } });
 	await newer.start();
 	await until(() => readRecord(world.stateDir)?.version === "99.0.0", "the takeover");
 	const taken = readRecord(world.stateDir)!;

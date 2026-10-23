@@ -244,20 +244,31 @@ test("when G is this session the hub is called in-process; a sync resends; the s
 	assert.equal(s.count(), 2, "only intercom's register listener and the test's owner are left: the bridge's own are gone");
 });
 
-test("a sync from G resends; a gui.json naming another server is followed; past 8 servers the session stays read-only and says so once", async () => {
+test("a sync from G resends; a gui.json naming another server is followed; past 16 servers the session stays read-only and says so once", async () => {
 	const s = session();
 	s.open();
 	s.own();
 	s.message({ version: 1, type: "sync" });
 	assert.equal(s.lists().length, 2);
-	for (let i = 1; i <= 9; i++) {
+	for (let i = 1; i <= 17; i++) {
 		await new Promise((resolve) => setTimeout(resolve, 5));
 		s.record(`G${i}`);
 		s.bridge.sync();
 	}
-	assert.equal(s.regs.length, 8);
+	assert.equal(s.regs.length, 16, "intercom has no unregister, so every host the session joined stays registered; 16 of its 32 channels are for hosts");
 	assert.deepEqual(s.notices.length, 1);
 	assert.match(s.notices[0]!, /answer its dialogs in the terminal/);
+});
+
+test("no channel is joined for a server whose process is already gone: the survivor that takes over rewrites gui.json within moments, and that one is joined", async () => {
+	const s = session({ gui: "" }); // gui.json does not exist yet
+	s.record("D", 2 ** 22 + 7);
+	s.bridge.sync();
+	assert.equal(s.regs.length, 0, "a host that is gone is not worth one of the session's channels");
+	await new Promise((resolve) => setTimeout(resolve, 5));
+	s.record("E");
+	s.bridge.sync();
+	assert.deepEqual(s.regs.map((r) => r.namespace), [guiNamespace("E")]);
 });
 
 test("once gui.json names another server, the one it named before can no longer answer, even while it still owns its channel", async () => {

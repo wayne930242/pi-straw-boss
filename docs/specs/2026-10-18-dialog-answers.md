@@ -198,7 +198,7 @@ paired device is 403 `local_only` and nothing is sent; this computer's page and 
 | Terminal answered first | `stale`: "It was already answered in the terminal." |
 | No verdict within 2 s, no ack within 5 s | `unknown`; Check again replays the same `answerId`; other answers get `busy` until the owner closes it. |
 | GUI server stops mid-answer | The page says "Not confirmed"; the dialog stays as it is; the next server resyncs. |
-| 8 GUI channels in one process | Read-only for that session, one warning in its terminal. |
+| 16 GUI channels in one process (pi-intercom cannot unregister one, so every host a session has joined counts; a host whose process is already gone is not joined) | Read-only for that session, one warning in its terminal. |
 | A scratch server with another state directory | Only bridges reading that directory follow it. |
 | A wrapped `select`/`confirm` that cannot be relayed (no call or two in flight, `secret_drop`, nested, oversize), or whose relay fails to start | The original call, untouched: terminal-only. |
 | A confirm answered from a paired device | 403 `local_only`; the page shows it read-only. |

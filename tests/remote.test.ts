@@ -305,7 +305,7 @@ test("switchRemote turns the entry on with a QR and records it, and off removes 
 	const off = await switchRemote(gui, false, dir, ts.run);
 	assert.deepEqual([off.changed, gui.access.remote, existsSync(join(dir, "remote.json"))], [true, undefined, false]);
 	assert.deepEqual(ts.config(), theirs);
-	assert.deepEqual(await switchRemote(gui, false, dir, ts.run), { text: "Remote access is off", changed: false }, "nothing on, nothing recorded: Tailscale is not asked");
+	assert.deepEqual(await switchRemote(gui, false, dir, ts.run), { text: "Remote access is off", plain: "Remote access is off", changed: false }, "nothing on, nothing recorded: Tailscale is not asked");
 	writeFileSync(join(dir, "remote.json"), JSON.stringify({ target: "http://127.0.0.1:4000" }));
 	const crashed = fakeTailscale({ ...theirs, ...entry("http://127.0.0.1:4000") });
 	assert.equal((await switchRemote(gui, false, dir, crashed.run)).changed, true);

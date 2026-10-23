@@ -1,7 +1,6 @@
 import { createConnection, type Socket } from "node:net";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
+import { herdrSocket } from "./herdr.ts";
 
 /** Starts watching the Herdr server; `onTakeover` runs each time a server answers again after the one watched went away. Returns the stop function. */
 export type HerdrWatch = (onTakeover: () => void) => () => void;
@@ -16,7 +15,7 @@ const ACK_MS = 5000;
  * acknowledges the subscription it calls `onTakeover` once. The first connection of a watch, which finds the server the session started in, does not.
  * The socket and the retry timer never keep pi alive; `stop` ends both.
  */
-export const herdrWatch = (socketPath = process.env.HERDR_SOCKET_PATH || join(homedir(), ".config", "herdr", "herdr.sock"), retryMs = RETRY_MS): HerdrWatch => (onTakeover) => {
+export const herdrWatch = (socketPath = herdrSocket(), retryMs = RETRY_MS): HerdrWatch => (onTakeover) => {
 	let socket: Socket | undefined, timer: ReturnType<typeof setTimeout> | undefined, stopped = false, initial = true, retries = 0;
 	const attempt = () => {
 		const first = initial, text = new StringDecoder("utf8");
@@ -61,7 +60,7 @@ export const herdrWatch = (socketPath = process.env.HERDR_SOCKET_PATH || join(ho
 export type HerdrEvents = (types: string[], onEvent: (event: { event: string; data: Record<string, unknown> } | null) => void) => () => void;
 
 /** One `events.subscribe` connection that reconnects like the watch above (0.25 s, 0.5 s, 1 s, then every 2 s) and never keeps pi alive. */
-export const herdrEvents = (socketPath = process.env.HERDR_SOCKET_PATH || join(homedir(), ".config", "herdr", "herdr.sock"), retryMs = RETRY_MS): HerdrEvents => (types, onEvent) => {
+export const herdrEvents = (socketPath = herdrSocket(), retryMs = RETRY_MS): HerdrEvents => (types, onEvent) => {
 	let socket: Socket | undefined, timer: ReturnType<typeof setTimeout> | undefined, stopped = false, retries = 0;
 	const attempt = () => {
 		const text = new StringDecoder("utf8");

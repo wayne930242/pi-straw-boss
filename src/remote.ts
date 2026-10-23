@@ -196,7 +196,7 @@ export const cookieFor = (token: string, value: string) => `sb_remote=${value}; 
  * remote stream ends, but the paired devices stay. `stop` is the server going away (a stop, a takeover, a /reload, the session's end): the
  * entry goes the same way, and remote stays wanted, so the next server turns it on again. `dir` holds remote.json, the entry's target while it is on.
  */
-export async function switchRemote(gui: { port: number; remotePort: number; token: string; access: Access }, on: boolean, dir: string, run: Run = tailscale, stop = false): Promise<{ text: string; lines?: string[]; link?: () => string; changed: boolean }> {
+export async function switchRemote(gui: { port: number; remotePort: number; token: string; access: Access }, on: boolean, dir: string, run: Run = tailscale, stop = false): Promise<{ text: string; plain: string; lines?: string[]; link?: () => string; changed: boolean }> {
 	// An entry from before the remote listener points at the local port; it is this server's own, so it is repointed or removed like a recorded one.
 	const target = `http://127.0.0.1:${gui.remotePort}`, old = `http://127.0.0.1:${gui.port}`, file = join(dir, "remote.json");
 	let stale: string | undefined;
@@ -209,10 +209,11 @@ export async function switchRemote(gui: { port: number; remotePort: number; toke
 		const was = gui.access.remote;
 		gui.access.disable(stop);
 		const id = was ?? (stale ? await identity(run).catch(() => undefined) : undefined);
-		if (!id) return { text: "Remote access is off", changed: false };
+		if (!id) return { text: "Remote access is off", plain: "Remote access is off", changed: false };
 		const left = { remains: false }, removed = await serveOff(run, id.host, [was && target, stale, old], left);
 		if (removed || !left.remains) rmSync(file, { force: true }); // an entry of ours under another host (the identity changed) is still to remove: its record stays
-		return { text: removed ? `Remote access is off; the Tailscale serve entry on ${PORT} is removed` : `Remote access is off; the ${PORT} entry no longer pointed here, so it was left alone`, changed: true };
+		const text = removed ? `Remote access is off; the Tailscale serve entry on ${PORT} is removed` : `Remote access is off; the ${PORT} entry no longer pointed here, so it was left alone`;
+		return { text, plain: text, changed: true };
 	}
 	const id = await identity(run);
 	await serveOn(run, id.host, target, [stale, old]);
@@ -221,5 +222,6 @@ export async function switchRemote(gui: { port: number; remotePort: number; toke
 	// Every link is a new one-time pairing URL: the QR's own, and one per press of c or o in the overlay.
 	const link = () => `https://${id.host}/${gui.token}/pair/${gui.access.pair()}`;
 	const lines = [...qrLines(qr(link())), "", "Scan with a device signed in to Tailscale as", id.login, "", "c  copy a new one-time link", "o  open one in this computer's browser", "Esc or q  close"];
-	return { text: `Remote access is on for ${id.login}, tailnet only: https://${id.host}/${gui.token}/ (scan the QR; it works once, within ten minutes)`, lines, link, changed: true };
+	const plain = `Remote access is on for ${id.login}, tailnet only: https://${id.host}/${gui.token}/`; // `plain`: for a server that starts again, where no QR is shown
+	return { text: `${plain} (scan the QR; it works once, within ten minutes)`, plain, lines, link, changed: true };
 }

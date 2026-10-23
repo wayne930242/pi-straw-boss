@@ -82,7 +82,9 @@ export async function panes(run: HerdrRun, workspace?: string): Promise<Pane[]> 
 }
 
 // Herdr answers one request per connection with one newline-ended frame, which may arrive in pieces (split anywhere, even inside a character).
-export const herdrCall = (socketPath = process.env.HERDR_SOCKET_PATH || join(homedir(), ".config", "herdr", "herdr.sock")): HerdrCall => (method, params, timeoutMs = 5000) =>
+/** The socket of the Herdr server a process runs under: the one its environment names, else the default. Two sessions are on the same Herdr when this is the same text. */
+export const herdrSocket = (env: NodeJS.ProcessEnv = process.env) => env.HERDR_SOCKET_PATH || join(homedir(), ".config", "herdr", "herdr.sock");
+export const herdrCall = (socketPath = herdrSocket()): HerdrCall => (method, params, timeoutMs = 5000) =>
 	new Promise((resolve, reject) => {
 		const socket = createConnection(socketPath).setTimeout(timeoutMs), text = new StringDecoder("utf8");
 		let reply = "";
