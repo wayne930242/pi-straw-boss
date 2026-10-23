@@ -447,7 +447,7 @@ test("poke re-reads early but not more often than the minimum gap: a poke inside
 test("Herdr's events re-read the screen once per burst, after the debounce; one that arrives during a read is read when it ends; a reconnection re-reads; stop() unsubscribes", async () => {
 	const { ui } = fakeUi();
 	let reads = 0, fire = () => {}, unwatched = 0, gate: Promise<void> | undefined;
-	const dashboard = startDashboard({ ui: ui as never, collect: async () => (reads++, await gate, snapshot([])), pollMs: 100_000, minGapMs: 0, debounceMs: 30, watch: (refresh) => ((fire = refresh), () => void unwatched++) });
+	const dashboard = startDashboard({ ui: ui as never, collect: async () => (reads++, await gate, snapshot([])), pollMs: 100_000, minGapMs: 0, debounceMs: 150, watch: (refresh) => ((fire = refresh), () => void unwatched++) });
 	await until(() => reads === 1, "first read");
 	fire();
 	fire();
@@ -455,14 +455,14 @@ test("Herdr's events re-read the screen once per burst, after the debounce; one 
 	await settle();
 	assert.equal(reads, 1, "waits for the debounce");
 	await until(() => reads === 2, "the burst's read");
-	await sleep(80);
+	await sleep(250);
 	assert.equal(reads, 2, "a burst is one read");
 	let release = () => {};
 	gate = new Promise<void>((resolve) => (release = resolve));
 	fire();
 	await until(() => reads === 3, "a read that waits");
 	fire();
-	await sleep(80);
+	await sleep(250);
 	assert.equal(reads, 3, "the event during the read waits for it");
 	release();
 	await until(() => reads === 4, "the read the event asked for");
@@ -472,7 +472,7 @@ test("Herdr's events re-read the screen once per burst, after the debounce; one 
 	dashboard.stop();
 	assert.equal(unwatched, 1);
 	fire();
-	await sleep(80);
+	await sleep(250);
 	assert.equal(reads, 5, "nothing is read after stop");
 });
 
