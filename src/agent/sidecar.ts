@@ -238,11 +238,11 @@ export async function startSidecar({ pane, kind, session, record, cli = "straw-n
 		run1();
 	};
 
-	// Promotion: the orchestrator record straw-boss writes for this session appearing or changing makes it ask for the tab's main (never by force).
+	// Promotion: the orchestrator record straw-boss writes for this session, found at the join (a resumed main agent) or appearing or changing later, makes it ask for the tab's main (never by force).
 	const mtime = () => (record ? statSync(record, { throwIfNoEntry: false })?.mtimeMs : undefined);
 	const watchRecord = () => {
 		if (!record) return;
-		let last = mtime(), busy = false;
+		let last: number | undefined, busy = false;
 		timers.push(setInterval(() => {
 			const now_ = mtime();
 			if (busy || now_ === undefined || now_ === last) return;

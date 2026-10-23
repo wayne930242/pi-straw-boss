@@ -106,16 +106,13 @@ test("the orchestrator record promotes the sidecar when it appears or changes, a
 	assert.ok(!log.some((l) => /error/i.test(l)), log.join("\n"));
 });
 
-test("a record that was there before the sidecar started promotes nothing until it changes", async () => {
+test("a record that was there before the sidecar started promotes it at the join, as a resumed main agent", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "psb-record-"));
 	scratch.push(dir);
 	const record = join(dir, "r.json");
 	writeFileSync(record, "{}");
 	await claude({ record });
-	await world.quiet();
-	assert.equal(roleOf("wA:p3"), "member");
-	utimesSync(record, new Date(), new Date(Date.now() + 5000));
-	await until(() => roleOf("wA:p3") === "main", "the main role after the change");
+	await until(() => roleOf("wA:p3") === "main", "the main role from the existing record");
 });
 
 test("a sidecar that owns the tab channel decides a pi's claim and records the main", async () => {
