@@ -2,7 +2,7 @@ import type { Briefing } from "./briefing.ts";
 import type { Digest } from "./digest.ts";
 import type { Guard } from "./guard.ts";
 import { answers, newer, readRecord } from "./handover.ts";
-import { isSub, panes, place, report, waitFor, workspaces } from "./herdr.ts";
+import { herdrSocket, isSub, panes, place, report, waitFor, workspaces } from "./herdr.ts";
 import type { createHost } from "./host.ts";
 import { CONNECT_MS, type Membership } from "./membership.ts";
 import { orphans } from "./orphan.ts";
@@ -86,12 +86,13 @@ export function registerSession(kit: Kit, { briefing, presence, membership, guar
 		}
 		starting?.catch((error: Error) => tell(`Straw Boss: ${error.message}`, "error"));
 		// The GUI this process ran before a /reload, /new, or /resume starts again on its URL, and a session newer than the running server
-		// takes it over (one with a screen: a print run is no host), once pi-intercom has published this session's id: the server's dialogs are routed by it.
+		// takes it over (one with a screen: a print run is no host, and one on the Herdr the server serves), once pi-intercom has published this session's id: the server's dialogs are routed by it.
+		// Under gui.lock the restore keeps a stop typed while it waited, and a takeover does not start a server that went down meanwhile: a survivor adopts that.
 		// A /new, /resume, or /fork is another session: it waits for the new id, not the one pi-intercom may still show from before.
 		const record = readRecord(guiDir), back = record?.reload && !record.stopped && record.pid === process.pid && event.reason !== "startup";
 		const ready = () => Boolean(me()) && (!back || event.reason === "reload" || me() !== record!.ownerSession);
-		if (back || (record && ctx.hasUI && newer(version, record.version))) void (async () => {
-			if ((await waitFor(cfg.sleep, ready, CONNECT_MS)) && (back || (await answers(record!)))) await host.restore(Boolean(back && record!.remote));
+		if (back || (record && ctx.hasUI && newer(version, record.version) && (!record.herdr || record.herdr === herdrSocket(env)))) void (async () => {
+			if ((await waitFor(cfg.sleep, ready, CONNECT_MS)) && (back || (await answers(record!)))) await host.restore(Boolean(back && record!.remote), back ? { stopped: true } : { stopped: true, down: true });
 		})().catch(() => {});
 	});
 

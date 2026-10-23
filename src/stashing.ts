@@ -11,6 +11,8 @@ import type { Kit } from "./state.ts";
 
 // The checks take up to three rounds of a few seconds, then every agent has 30 s to quit.
 const STASH_MS = 120_000;
+// Both need the server, and start it when none runs, unless it was stopped on purpose: only /boss gui starts that one.
+const STOPPED = "The straw net GUI was stopped on purpose; /boss gui starts it, then run this again";
 
 export function createStashing({ cfg, s, guiDir, tell, me }: Kit, { host }: { host: Pick<ReturnType<typeof createHost>, "share" | "sessions"> }) {
 	const { run, sleep } = cfg;
@@ -22,7 +24,8 @@ export function createStashing({ cfg, s, guiDir, tell, me }: Kit, { host }: { ho
 			const ws = s.at.workspaceId, label = (await workspaces(run)).find((w) => w.workspace_id === ws)?.label ?? ws, name = given?.trim() || nameFor(label, guiDir);
 			if (!nameOk(name)) throw new Error(`"${name}" cannot name a stash: at most 64 characters, no slash, backslash, or control character, not starting with a dot`);
 			if (existsSync(stashFile(guiDir, name))) throw new Error(`Something is stashed as "${name}" already; pop it or pick another name`);
-			const shared = await host.share();
+			const shared = await host.share(false, false, false, { stopped: true });
+			if (shared.stopped) throw new Error(STOPPED);
 			const record = readRecord(guiDir);
 			if (shared.stale || !record) throw new Error(`The straw net GUI runs in session ${shared.owner} on a version that cannot stash; /reload that session first`);
 			tell(`Stashing ${label} as "${name}"…`);
@@ -33,7 +36,8 @@ export function createStashing({ cfg, s, guiDir, tell, me }: Kit, { host }: { ho
 		},
 		/** Quits this base's tower, mains, and members and closes it, or nothing when anything there would be lost. */
 		async closeAll() {
-			const shared = await host.share();
+			const shared = await host.share(false, false, false, { stopped: true });
+			if (shared.stopped) throw new Error(STOPPED);
 			const record = readRecord(guiDir);
 			if (shared.stale || !record) throw new Error(`The straw net GUI runs in session ${shared.owner} on a version that cannot close all; /reload that session first`);
 			tell("Closing this base…");

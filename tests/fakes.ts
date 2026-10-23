@@ -546,10 +546,10 @@ export class World {
 		return agent;
 	}
 	/** A tower session in a tower tab, as `herdr agent start` would leave it. */
-	tower(id: string, tab: string, pane: string, ui = false): Agent {
+	tower(id: string, tab: string, pane: string, ui = false, deps: Partial<Deps> = {}): Agent {
 		this.herdr.addTab(tab, TOWER_LABEL, undefined);
 		this.herdr.addPane(pane, tab);
-		return this.agent({ id, name: `tower · ${id}`, pane, tab, env: { STRAW_BOSS_ROLE: "tower" }, ui });
+		return this.agent({ id, name: `tower · ${id}`, pane, tab, env: { STRAW_BOSS_ROLE: "tower" }, ui, deps });
 	}
 	/** `herdr agent start` boots a tower session in the pane, as pi would. */
 	autoTowers(): void {

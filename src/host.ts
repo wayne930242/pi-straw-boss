@@ -5,7 +5,7 @@ import type { Bridge } from "./bridge.ts";
 import { createCloser } from "./closer.ts";
 import { createHub } from "./dialogs.ts";
 import { type Gui, startGui } from "./gui.ts";
-import { adoptable, adoptGui, markReload, markStopped, readRecord, type Shared, sharedGui, stopRecorded } from "./handover.ts";
+import { adoptable, adoptGui, downgrades, type Keep, markReload, markStopped, readRecord, type Shared, sharedGui, stopRecorded } from "./handover.ts";
 import { herdrSocket } from "./herdr.ts";
 import type { Membership } from "./membership.ts";
 import { netSource } from "./net.ts";
@@ -67,25 +67,38 @@ export function createHost({ pi, cfg, s, guiDir, me, tell }: Kit, { bridge, conn
 	const start = (prefer: { port?: number; remotePort?: number; token?: string; csrf?: string }, net = netSource({ run, world, sessions, stashed: () => stashedList(guiDir), hub: (s.hub = s.hub?.me === me() ? s.hub : createHub(pi, me(), bridge)) })) => startGui({ read: net.read, net, call, hub: s.hub, dir: bundle, paired: join(guiDir, "paired.json"), ...prefer, onStop: (asked) => void stopOwn(asked), onSaveFailed: (reason) => tell(reason, "warning"), onRemote: async () => tell((await switchRemote(s.gui!, true, guiDir, ts)).text), onRemoteOff: async () => tell((await switchRemote(s.gui!, false, guiDir, ts)).text), spawn: createSpawn({ run, sleep, call, live: async (id) => (await sessions()).some((x) => x.id === id), sessionAt: async (pane) => (await sessions()).find((x) => x.herdrLocation?.paneId === pane)?.id }), close: createCloser({ run, sleep, me, sessions, ask: async (key, keepPane, ifStashable) => s.hub?.close(key, keepPane, ifStashable), check: async (key) => s.hub?.stashCheck(key), stateDir: guiDir, pop: (name) => popBase({ run, sleep, stateDir: guiDir, live: async (id) => (await sessions()).some((x) => x.id === id), agentDir: cfg.env.PI_CODING_AGENT_DIR }, name) }) });
 	// One server per machine: a second /boss gui, here or in another session, opens the one that runs, unless `take` (or a newer version) takes it
 	// over. Two calls in flight in this session share one start. `manual`: the caller turns remote on or off itself, so a new server does not resume it.
-	let adopting: Promise<void> | undefined;
-	const share = (take = false, manual = false, was = false) =>
-		(opening ??= (async () => {
+	let adopting: Promise<void> | undefined, leaving = false;
+	// A server whose start time `ps` could not tell has no `started` in its record, so no survivor adopts it: said once.
+	let blind = false;
+	const noticed = (shared?: Shared) => void (shared?.blind && !blind && ((blind = true), tell("This session could not read its own start time (ps failed), so no other session takes the straw net GUI over if this session ends; /boss gui starts it again", "warning")));
+	// `keep` (handover.ts): a call that leaves a stopped or down server as it is does not hand its answer to one that starts it, so a /boss gui that finds such a call in flight waits for it.
+	const share = async (take = false, manual = false, was = false, keep?: Keep): Promise<Shared> => {
+		while (opening && leaving && !keep) await opening.then(() => {}, () => {});
+		if (!opening) leaving = Boolean(keep);
+		return (opening ??= (async () => {
 			await adopting; // an adoption under way is this session's start
 			if (s.gui) return { url: s.gui.url, owner: label(), mine: s.gui };
-			const shared = await sharedGui(guiDir, [label(), me()], start, sleep, { version, take, herdr });
+			const shared = await sharedGui(guiDir, [label(), me()], start, sleep, { version, take, herdr, keep });
+			noticed(shared);
 			if ((s.gui = shared.mine) && !manual) await resume(s.gui, was);
 			return shared;
 		})().finally(() => (opening = undefined)));
+	};
 	// The server belongs to the machine, not to the session that started it. When that session ends without a stop (a closed pane, a quit, a crash), a survivor starts the server
 	// again on the same URL (handover.ts adoptGui), with remote access as `resume` leaves it, no QR, and no browser. Every session looks once every `adoptMs`; gui.lock lets exactly
 	// one of them start it. It is left alone when the record says it was stopped on purpose, when `adoptable` (handover.ts) says no (an old build's record, another Herdr's, a newer build's), and while the session
 	// that ran it lives: a /reload, /new, or /resume brings it back in that process, so a survivor never takes it from a reload. Only an interactive session adopts: a pi-herdr-agents subagent never reaches this host (index.ts), as it is
 	// short-lived and its parent is the session to host, and neither does a print-mode run, whose end is just as near and whose screen would not show the notice.
-	let looking: ReturnType<typeof setInterval> | undefined, refused: string | undefined;
+	// Towers outlive the sessions they open, so the host is biased toward them and away from the churn of a short-lived session: a tower takes the server at the first look that finds its owner
+	// gone, anyone else at the second, and a build older than the server at the third, by which time any newer survivor has taken it (the next newer session takes it back).
+	let looking: ReturnType<typeof setInterval> | undefined, refused: string | undefined, seen = { key: "", looks: 0 };
 	const adopt = async () => {
 		if (s.gui || s.stopped || s.closing || !s.hasUI || !me() || opening || adopting) return;
 		const wrote = statSync(join(guiDir, "gui.json"), { throwIfNoEntry: false })?.mtimeMs, record = readRecord(guiDir);
-		if (!wrote || !record || record.stopped || !adoptable(record, { version, herdr }) || !cfg.gone(record, wrote) || refused === `${record.pid}/${wrote}`) return;
+		if (!wrote || !record || record.stopped || !adoptable(record, { herdr }) || !cfg.gone(record, wrote) || refused === `${record.pid}/${wrote}`) return void (seen = { key: "", looks: 0 });
+		const key = `${record.pid}/${wrote}`;
+		seen = { key, looks: seen.key === key ? seen.looks + 1 : 1 };
+		if (seen.looks <= (downgrades(record, version) ? 2 : s.isTower ? 0 : 1)) return;
 		await (adopting = (async () => {
 			let shared: Shared | undefined;
 			try {
@@ -95,6 +108,7 @@ export function createHost({ pi, cfg, s, guiDir, me, tell }: Kit, { bridge, conn
 				return tell(`Could not take over the straw net GUI after session ${record.owner} ended: ${(error as Error).message}; /boss gui starts it`, "warning");
 			}
 			if (!shared?.mine) return;
+			noticed(shared);
 			s.gui = shared.mine;
 			tell(`This session now hosts the straw net GUI: session ${shared.from} ended, ${shared.moved ? `and its port was taken meanwhile, so the URL changed: ${shared.url}` : "and the URL is unchanged"}`);
 			await resume(s.gui);
@@ -105,8 +119,8 @@ export function createHost({ pi, cfg, s, guiDir, me, tell }: Kit, { bridge, conn
 		sessions,
 		share,
 		/** The server again after a /reload, /new, /resume, or a takeover by a newer version; remote access comes back with it when it was wanted on, and the paired devices are still paired. */
-		async restore(was = false) {
-			await share(false, false, was);
+		async restore(was = false, keep?: Keep) {
+			await share(false, false, was, keep);
 		},
 		/** `mode` is "", "stop", "remote", or "remote off", and works from any session: remote access (remote.ts) goes with the server, so a session takes it over first. */
 		async command(mode: string) {

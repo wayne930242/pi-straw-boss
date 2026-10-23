@@ -18,8 +18,13 @@ import { alive, runs, startOf } from "./remote.ts";
  * build up to 0.32.1 (remote was on at that /reload); paired.json keeps the wish since.
  */
 export interface GuiRecord { pid: number; started?: string; port: number; remotePort?: number; token: string; csrf?: string; owner: string; ownerSession?: string; version?: string; herdr?: string; reload?: boolean; stopped?: boolean; remote?: boolean }
-/** `stale`: the running server is older and could not be taken over. `from`: the owner whose end a survivor took the server over from. `moved`: the recorded port was taken, so the URL changed. */
-export interface Shared { url: string; owner: string; mine?: Gui; stale?: boolean; from?: string; moved?: boolean }
+/**
+ * `stale`: the running server is older and could not be taken over. `from`: the owner whose end a survivor took the server over from. `moved`: the recorded port was taken, so the URL changed.
+ * `stopped`: it was stopped on purpose and `keep.stopped` left it so. `blind`: this process's start time could not be read, so the record it wrote has no `started` and no survivor adopts that server.
+ */
+export interface Shared { url: string; owner: string; mine?: Gui; stale?: boolean; from?: string; moved?: boolean; stopped?: boolean; blind?: boolean }
+/** What a start under gui.lock leaves alone: a server stopped on purpose, a server that is down. Only `/boss gui` starts either. */
+export interface Keep { stopped?: boolean; down?: boolean }
 
 /** Whether version `a` is newer than `b`; a server that recorded none predates the handover. */
 export function newer(a: string, b?: string) {
@@ -55,9 +60,10 @@ export function markStopped(dir: string, seen: Pick<GuiRecord, "pid" | "started"
 	if (record?.pid === seen.pid && record.started === seen.started && record.port === seen.port && record.token === seen.token) writeFileSync(join(dir, "gui.json"), JSON.stringify({ ...record, stopped: true }), { mode: 0o600 });
 }
 
-/** Whether a survivor of this build may take over `record`'s server: its writer marks stops (`started`), it serves the survivor's own Herdr, and it is not a newer build's, which an older one would downgrade. */
-export const adoptable = (record: GuiRecord, { version, herdr }: { version: string; herdr: string }) =>
-	Boolean(record.started) && record.herdr === herdr && !(record.version && newer(record.version, version));
+/** Whether a survivor may take over `record`'s server: its writer marks stops (`started`), and it serves the survivor's own Herdr. */
+export const adoptable = (record: GuiRecord, { herdr }: { herdr: string }) => Boolean(record.started) && record.herdr === herdr;
+/** Whether the server is a newer build's than the survivor: an older survivor takes it only when no newer one has, and downgrades it until the next newer session takes it back. */
+export const downgrades = (record: GuiRecord, version: string) => Boolean(record.version && newer(record.version, version));
 
 /**
  * A look at whether the process that recorded a server is gone for good, for a survivor to decide on: its pid is dead, or now belongs to another process (one that
@@ -157,8 +163,11 @@ async function lockGui(dir: string, sleep: (ms: number) => Promise<void>, patien
 }
 const unlockGui = (dir: string) => rmSync(join(dir, "gui.lock"), { force: true });
 /** Records the server this process started. */
-const writeRecord = (dir: string, gui: Gui, [owner, ownerSession]: [string, string], version: string, herdr: string) =>
-	writeFileSync(join(dir, "gui.json"), JSON.stringify({ pid: process.pid, started: startOf(process.pid), port: gui.port, remotePort: gui.remotePort, token: gui.token, csrf: gui.csrf, owner, ownerSession, version, herdr }), { mode: 0o600 });
+const writeRecord = (dir: string, gui: Gui, [owner, ownerSession]: [string, string], version: string, herdr: string) => {
+	const started = startOf(process.pid);
+	writeFileSync(join(dir, "gui.json"), JSON.stringify({ pid: process.pid, started, port: gui.port, remotePort: gui.remotePort, token: gui.token, csrf: gui.csrf, owner, ownerSession, version, herdr }), { mode: 0o600 });
+	return started ? {} : { blind: true };
+};
 type Start = (prefer: { port?: number; remotePort?: number; token?: string; csrf?: string }) => Promise<Gui>;
 
 /**
@@ -181,17 +190,22 @@ export async function stopRecorded(dir: string, by: string, sleep: (ms: number) 
 	}
 }
 
-/** `take` takes the running server over whatever its version; a newer `version` takes it over anyway. `herdr` is the socket the server's net is read from. */
-export async function sharedGui(dir: string, who: [string, string], start: Start, sleep: (ms: number) => Promise<void>, { version = VERSION, take = false, herdr = "" } = {}): Promise<Shared> {
+/**
+ * `take` takes the running server over whatever its version; a newer `version` takes it over anyway. `herdr` is the socket the server's net is read from. `keep`: a server stopped on purpose, or one
+ * that is down, is left as it is (read under the lock, so a stop typed meanwhile counts): the restore after a /reload keeps a stop, the takeover by a newer version also keeps a down server, and
+ * `/boss stash` and `/boss close all` keep a stop.
+ */
+export async function sharedGui(dir: string, who: [string, string], start: Start, sleep: (ms: number) => Promise<void>, { version = VERSION, take = false, herdr = "", keep = {} as Keep } = {}): Promise<Shared> {
 	await lockGui(dir, sleep, true);
 	try {
 		const record = readRecord(dir);
+		if (record?.stopped && keep.stopped) return { url: urlOf(record), owner: record.owner, stopped: true };
 		const theirs = record && (await answers(record)) && { url: urlOf(record), owner: record.owner };
+		if (record && !theirs && keep.down) return { url: urlOf(record), owner: record.owner };
 		if (theirs && !(take || newer(version, record.version))) return theirs;
 		if (theirs && !(await requestStop(record, { by: who[0], take: true }, sleep))) return { ...theirs, stale: true };
 		const gui = await start(record ? { port: record.port, remotePort: record.remotePort, token: record.token, csrf: record.csrf } : {});
-		writeRecord(dir, gui, who, version, herdr);
-		return { url: gui.url, owner: who[0], mine: gui };
+		return { url: gui.url, owner: who[0], mine: gui, ...writeRecord(dir, gui, who, version, herdr) };
 	} finally {
 		unlockGui(dir);
 	}
@@ -199,7 +213,7 @@ export async function sharedGui(dir: string, who: [string, string], start: Start
 
 /**
  * A survivor's takeover of a server whose session ended: starts it again on the recorded port, token, and secret. It starts nothing when the server answers, when a deliberate stop
- * ended it, when `adoptable` says no (an old build's record, another Herdr, a newer build), or when the session that ran it still lives (its /reload, /new, or /resume brings it back
+ * ended it, when `adoptable` says no (an old build's record, another Herdr), or when the session that ran it still lives (its /reload, /new, or /resume brings it back
  * in that process). Undefined then, and when another session holds gui.lock: that one is starting it, or is about to look. The lock is the arbiter, so of several survivors looking at
  * once exactly one starts it. `moved` is set when the recorded port was taken and the server got another.
  */
@@ -207,10 +221,9 @@ export async function adoptGui(dir: string, who: [string, string], start: Start,
 	if (!(await lockGui(dir, sleep, false))) return undefined;
 	try {
 		const record = readRecord(dir), wrote = statSync(join(dir, "gui.json"), { throwIfNoEntry: false })?.mtimeMs ?? 0;
-		if (!record || record.stopped || !adoptable(record, { version, herdr }) || !gone(record, wrote) || (await answers(record))) return undefined;
+		if (!record || record.stopped || !adoptable(record, { herdr }) || !gone(record, wrote) || (await answers(record))) return undefined;
 		const gui = await start({ port: record.port, remotePort: record.remotePort, token: record.token, csrf: record.csrf });
-		writeRecord(dir, gui, who, version, herdr);
-		return { url: gui.url, owner: who[0], mine: gui, from: record.owner, ...(gui.url === urlOf(record) ? {} : { moved: true }) };
+		return { url: gui.url, owner: who[0], mine: gui, from: record.owner, ...writeRecord(dir, gui, who, version, herdr), ...(gui.url === urlOf(record) ? {} : { moved: true }) };
 	} finally {
 		unlockGui(dir);
 	}

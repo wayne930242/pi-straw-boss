@@ -285,19 +285,128 @@ test("when the recorded port is taken meanwhile, the adopting session prints the
 	}
 });
 
-test("a build older than the server does not adopt it, so it cannot downgrade the server; one as new does", async () => {
-	const a = survivor("viewer-a", "wA:p1", "wA:t1", { version: "99.0.0" }), old = survivor("viewer-b", "wB:p1", "wB:t1", { version: "0.0.1" });
+/** `gone` as the fake world answers it, counting the looks that found the owner gone: each look of a survivor, and the check it repeats under gui.lock. */
+const counting = () => {
+	const looks = { n: 0 };
+	return { looks, deps: { gone: (record: { ownerSession?: string }) => (world.gone.has(record.ownerSession ?? "") ? (looks.n++, true) : false) } };
+};
+
+test("an older build adopts a newer build's server only after seeing its owner gone for three looks, so the GUI is not left down; a newer survivor takes it first when there is one", async () => {
+	const a = survivor("viewer-a", "wA:p1", "wA:t1", { version: "99.0.0" }), count = counting(), old = survivor("viewer-b", "wB:p1", "wB:t1", { version: "0.0.1", ...count.deps });
 	await Promise.all([a.start(), old.start()]);
 	await a.command("gui");
 	const url = urlOf(a);
 	await a.stop();
+	await until(() => serving(url), "the older build hosting");
+	assert.equal(readRecord(world.stateDir)!.version, "0.0.1");
+	assert.equal(hosts(old).length, 1);
+	assert.equal(count.looks.n, 3 + 1, "three looks, and the check again under the lock");
+	// The next newer session takes it back through the newer-version takeover.
+	const next = survivor("viewer-n", "wN:p1", "wN:t1", { version: "99.0.0" });
+	await next.start();
+	await until(() => readRecord(world.stateDir)?.ownerSession === "viewer-n", "the newer session takes it back");
+	assert.equal(await serving(url), true);
+	await next.stop();
+	await old.stop();
+	// With a newer survivor present, it wins: the older one sees a running server by its third look.
+	const b = survivor("viewer-c", "wC:p1", "wC:t1", { version: "99.0.0" }), c = survivor("viewer-d", "wD:p1", "wD:t1", { version: "99.0.0" });
+	const slowOld = survivor("viewer-e", "wE:p1", "wE:t1", { version: "0.0.1", adoptMs: 60 });
+	await Promise.all([b.start(), c.start(), slowOld.start()]);
+	await b.command("gui");
+	await b.stop();
+	await until(() => serving(url), "a newer survivor hosting");
 	await pause();
-	assert.equal(await serving(url), false);
-	assert.equal(hosts(old).length, 0);
-	const current = survivor("viewer-c", "wC:p1", "wC:t1", { version: "99.0.0" });
-	await current.start();
-	await until(() => serving(url), "a build as new hosting");
 	assert.equal(readRecord(world.stateDir)!.version, "99.0.0");
+	assert.equal(hosts(slowOld).length, 0);
+});
+
+test("a tower takes the server over at its first look, anyone else one look later, so a long-lived session hosts it more often than a short-lived one", async () => {
+	const a = survivor("viewer-a", "wA:p1", "wA:t1"), tower = counting(), plain = counting();
+	const t = world.tower("tower-1", "wT:t1", "wT:p1", true, { ...deps, ...tower.deps }), m = survivor("viewer-b", "wB:p1", "wB:t1", plain.deps);
+	await Promise.all([a.start(), t.start(), m.start()]);
+	await a.command("gui");
+	const url = urlOf(a);
+	await a.stop();
+	await until(() => serving(url), "a survivor hosting");
+	await pause();
+	assert.equal(readRecord(world.stateDir)!.ownerSession, "tower-1", "the tower, not the main");
+	assert.equal(tower.looks.n, 1 + 1, "its first look, and the check under the lock");
+	assert.equal(hosts(m).length, 0);
+	plain.looks.n = 0; // its looks while the tower hosted found a running server
+	await t.stop();
+	await until(() => readRecord(world.stateDir)?.ownerSession === "viewer-b" && serving(url), "the main hosting when no tower is left");
+	assert.equal(plain.looks.n, 2 + 1, "it waited one look");
+});
+
+test("the newer-version takeover leaves a server of another Herdr alone, so a scratch Herdr's session cannot take the machine's GUI", async () => {
+	const home = { HERDR_SOCKET_PATH: join(scratch, "home.sock") }, scratchHerdr = { HERDR_SOCKET_PATH: join(scratch, "scratch.sock") };
+	const a = world.agent({ id: "viewer-a", pane: "wA:p1", tab: "wA:t1", ui: true, env: home, deps });
+	await a.start();
+	await a.command("gui");
+	const n = world.agent({ id: "scratch-n", pane: "wN:p1", tab: "wN:t1", ui: true, env: scratchHerdr, deps: { ...deps, version: "99.0.0" } });
+	await n.start();
+	await pause();
+	assert.equal(readRecord(world.stateDir)!.ownerSession, "viewer-a", "the server stays with the Herdr it serves");
+	const same = world.agent({ id: "viewer-n", pane: "wM:p1", tab: "wM:t1", ui: true, env: home, deps: { ...deps, version: "99.0.0" } });
+	await same.start();
+	await until(() => readRecord(world.stateDir)?.ownerSession === "viewer-n", "a newer session of the same Herdr takes it");
+});
+
+test("the restore after a /reload and the takeover by a newer version start nothing a stop or a down server says no to, under gui.lock", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "psb-restore-test-"));
+	try {
+		const record = { pid: 1, started: "Mon Oct 23 10:00:00 2026", port: 5, token: "t", csrf: "c", owner: "x", ownerSession: "s" }; // nothing answers on port 5
+		const started: number[] = [], start = async () => (started.push(1), { url: "http://127.0.0.1:5/t/", port: 5, remotePort: 6, token: "t", csrf: "c" } as never);
+		const quick = async () => {};
+		writeFileSync(join(dir, "gui.json"), JSON.stringify({ ...record, reload: true, stopped: true })); // a stop typed while the owner's /reload waited
+		const stopped = await sharedGui(dir, ["a", "a"], start, quick, { keep: { stopped: true } });
+		assert.deepEqual([started.length, stopped.mine, stopped.stopped], [0, undefined, true], "a stopped record is not started again");
+		assert.equal(readRecord(dir)!.stopped, true, "and the stop stays on record");
+		writeFileSync(join(dir, "gui.json"), JSON.stringify({ ...record, reload: true }));
+		const down = await sharedGui(dir, ["a", "a"], start, quick, { keep: { stopped: true, down: true } });
+		assert.deepEqual([started.length, down.mine], [0, undefined], "nothing answers: a newer session starts nothing");
+		await sharedGui(dir, ["a", "a"], start, quick, { keep: { stopped: true } });
+		assert.equal(started.length, 1, "the reload's own restore starts a server that is down, as before");
+		assert.equal(existsSync(join(dir, "gui.lock")), false);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("/boss stash and /boss close all do not start a server that was stopped on purpose; only /boss gui does", async () => {
+	const a = survivor("viewer-a", "wA:p1", "wA:t1");
+	await a.start();
+	await a.command("gui");
+	const url = urlOf(a);
+	await a.command("gui stop");
+	assert.equal(await serving(url), false);
+	for (const command of ["stash", "close all"]) {
+		await a.command(command);
+		assert.match(a.notices.at(-1)!.text, /stopped on purpose.*\/boss gui/, command);
+		assert.equal(a.notices.at(-1)!.level, "error");
+		assert.equal(await serving(url), false, `${command} left it stopped`);
+		assert.equal(readRecord(world.stateDir)!.stopped, true);
+	}
+	await a.command("gui");
+	assert.equal(await serving(url), true);
+});
+
+test("a session whose start time cannot be read says once that no other session can take the server over", async () => {
+	const a = survivor("viewer-a", "wA:p1", "wA:t1"), path = process.env.PATH;
+	await a.start();
+	process.env.PATH = scratch; // no `ps`
+	try {
+		await a.command("gui");
+		await a.command("gui stop");
+		await a.command("gui");
+	} finally {
+		process.env.PATH = path;
+	}
+	assert.equal(readRecord(world.stateDir)!.started, undefined);
+	const told = a.notices.filter((n) => /start time/.test(n.text));
+	assert.equal(told.length, 1, "once");
+	assert.equal(told[0]!.level, "warning");
+	assert.match(told[0]!.text, /no other session takes the straw net GUI over/);
 });
 
 test("a session without a screen does not take the server over for being newer; one with a screen does", async () => {
