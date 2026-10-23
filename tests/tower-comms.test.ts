@@ -296,6 +296,19 @@ test("an opened main stays closable by its tower after a /reload: the opener is 
 	await until(() => again.stopped, "the reloaded main quit");
 });
 
+test("the same session resumed in another pane is the boss's main: no opener is restored, and the tower cannot close it", async () => {
+	const { towerA, main } = await opened();
+	await main.stop("quit");
+	const elsewhere = world.agent({ id: main.id, name: main.name, pane: "wA:p102", tab: "wA:t102", entries: main.entries });
+	await elsewhere.fire("session_start", { reason: "resume" });
+	await world.quiet();
+	assert.equal(world.herdr.pane("wA:p102").tokens.sb_opened_by, undefined, "no marker in the boss's pane");
+	assert.equal(elsewhere.regs.has("straw-boss/control"), false, "it does not listen for close asks");
+	world.herdr.pane("wA:p102").agent_status = "idle";
+	await assert.rejects(towerA.tool("boss_close_main", { main: main.id }));
+	assert.ok(!elsewhere.stopped);
+});
+
 test("a name with a C1 control character is quoted by what is written, not by the raw value", () => {
 	const line = header({ from: { name: "a\u0085b", id: "x", role: "main" }, kind: "broadcast", scope: "tab", to: [], reply: false });
 	assert.match(line, /from="a b"/);

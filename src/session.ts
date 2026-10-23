@@ -49,7 +49,7 @@ export function registerSession(kit: Kit, { briefing, presence, membership, guar
 		const mine = (await panes(run, s.at.workspaceId).catch(() => [])).find((p) => p.pane_id === s.at.paneId);
 		if (mine?.tokens?.sb_open_main !== "1") return false;
 		s.openedBy = mine.tokens.sb_opened_by;
-		pi.appendEntry(ENTRY, { openedBy: s.openedBy }); // a /reload, /new, or /resume restores it at session_start
+		pi.appendEntry(ENTRY, { openedBy: s.openedBy, openedPane: s.at.paneId }); // a /reload or /new in this pane restores it after the join
 		await report(run, "pane", s.at.paneId, { sb_open_main: null }).catch(() => {});
 		return true;
 	};
@@ -62,7 +62,6 @@ export function registerSession(kit: Kit, { briefing, presence, membership, guar
 		briefing.load();
 		s.saved = Object.assign({}, ...ctx.sessionManager.getBranch().flatMap((e) => (e.type === "custom" && e.customType === ENTRY ? [e.data] : [])));
 		s.isTower ||= Boolean(s.saved.tower);
-		s.openedBy ||= s.saved.openedBy;
 		const log = ctx.sessionManager;
 		stopWatching();
 		nudges = orphans({ run, file: () => log.getSessionFile(), entries: () => log.getEntries(), sessions: host.sessions, send: reach.send, type: ENTRY, remember: (key) => pi.appendEntry(ENTRY, { nudged: key }), me, tell });
@@ -83,6 +82,7 @@ export function registerSession(kit: Kit, { briefing, presence, membership, guar
 				starting = membership.joinNet().then(async () => {
 					note(`${who()} joined tab ${s.info.tab}`);
 					const claimed = await claimOpened();
+					if (!claimed && s.saved.openedBy && s.saved.openedPane === s.at.paneId) s.openedBy = s.saved.openedBy; // only in the tower's pane: resumed in the boss's pane, it is the boss's main
 					if (s.openedBy) {
 						control.register(); // the tower that opened this main may ask it to close (closemain.ts), also after a reload
 						await presence.publish(); // sb_opened_by was cleared at shutdown

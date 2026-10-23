@@ -24,7 +24,7 @@ export interface Channel {
 	listSessions(): Promise<Session[]>;
 }
 export interface SendResult { requestId?: string; status: string; code?: string; detail?: string }
-export interface Saved { tower?: boolean; openedBy?: string }
+export interface Saved { tower?: boolean; openedBy?: string; openedPane?: string }
 export type Role = "tower" | "main" | "member";
 export type Scope = "tab" | "workspace" | "towers" | "all";
 /**
