@@ -309,6 +309,44 @@ test("the same session resumed in another pane is the boss's main: no opener is 
 	assert.ok(!elsewhere.stopped);
 });
 
+const closeResult = (towerA: Awaited<ReturnType<typeof opened>>["towerA"], id: string) => towerA.tool("boss_close_main", { main: id }).then(() => "closed", () => "refused");
+const roundTrip = <T>(x: T): T => JSON.parse(JSON.stringify(x)); // what a session file gives back
+
+test("a main the boss popped stays the boss's through a restart and a /reload in its pane: the pop's claim overrides the first opener", async () => {
+	const { towerA, main } = await opened();
+	await main.stop("quit");
+	world.herdr.addTab("wA:t150", "popped", undefined);
+	const popped = world.agent({ id: main.id, name: main.name, pane: "wA:p150", tab: "wA:t150", env: { STRAW_BOSS_ROLE: "main" }, entries: roundTrip(main.entries) });
+	(world.herdr.pane("wA:p150").tokens as Record<string, string>).sb_open_main = "1"; // a pop marks the pane, with no sb_opened_by
+	await popped.fire("session_start", { reason: "startup" });
+	await world.quiet();
+	await popped.stop("reload");
+	const reloaded = world.agent({ id: main.id, name: main.name, pane: "wA:p150", env: { STRAW_BOSS_ROLE: "main" }, entries: roundTrip(popped.entries) });
+	await reloaded.fire("session_start", { reason: "reload" });
+	await world.quiet();
+	assert.equal(world.herdr.pane("wA:p150").tokens.sb_opened_by, undefined, "no marker after a /reload");
+	await reloaded.stop("quit");
+	const restarted = world.agent({ id: main.id, name: main.name, pane: "wA:p150", env: { STRAW_BOSS_ROLE: "main" }, entries: roundTrip(reloaded.entries) });
+	await restarted.fire("session_start", { reason: "startup" });
+	await world.quiet();
+	assert.equal(world.herdr.pane("wA:p150").tokens.sb_opened_by, undefined, "no marker after a restart");
+	assert.equal(restarted.regs.has("straw-boss/control"), false);
+	world.herdr.pane("wA:p150").agent_status = "idle";
+	assert.equal(await closeResult(towerA, main.id), "refused");
+	assert.ok(!restarted.stopped);
+});
+
+test("`pi --session` in the tower's own pane, after the opened main quit there, is the boss's main", async () => {
+	const { towerA, main } = await opened();
+	await main.stop("quit");
+	const again = world.agent({ id: main.id, name: main.name, pane: NEW.pane, entries: roundTrip(main.entries) });
+	await again.fire("session_start", { reason: "startup" });
+	await world.quiet();
+	world.herdr.pane(NEW.pane).agent_status = "idle";
+	assert.equal(await closeResult(towerA, main.id), "refused");
+	assert.ok(!again.stopped);
+});
+
 test("a name with a C1 control character is quoted by what is written, not by the raw value", () => {
 	const line = header({ from: { name: "a\u0085b", id: "x", role: "main" }, kind: "broadcast", scope: "tab", to: [], reply: false });
 	assert.match(line, /from="a b"/);
