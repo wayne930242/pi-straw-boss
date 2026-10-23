@@ -175,22 +175,36 @@ export function findCheckoutUser(roots, panes, workspaces, ignore = {}) {
 	return null;
 }
 
-/** How long a parent pi session may be silent before the worktrees its children left are no longer held for it. */
+/** How long a parent pi session that is not open in any pane may be silent before the worktrees its children left are no longer held for it. */
 export const RETAIN_IDLE_HOURS = 72;
 const HOUR_MS = 3_600_000;
 /** The `retain_idle_hours` setting in milliseconds; a value that is not a positive number falls back to the default, never to no protection. */
 export const retainIdleMs = (config = {}) => (typeof config.retain_idle_hours === "number" && Number.isFinite(config.retain_idle_hours) && config.retain_idle_hours > 0 ? config.retain_idle_hours : RETAIN_IDLE_HOURS) * HOUR_MS;
 
 /**
+ * The pane in which pi runs the session `sessionId`, from Herdr's pane list: Herdr reports a pi pane's session as the path of its
+ * session file (`<time>_<session id>.jsonl`). A pane whose agent has exited, another agent, or a session reported any other way is
+ * not matched.
+ * @returns {string | undefined} the pane id
+ */
+export function findSessionPane(panes, sessionId) {
+	if (typeof sessionId !== "string" || sessionId.length === 0) return undefined;
+	const tail = `_${sessionId}.jsonl`;
+	return panes.find((pane) => pane.agent === "pi" && pane.agent_session?.kind === "path" && typeof pane.agent_session.value === "string" && pane.agent_session.value.split("/").at(-1).endsWith(tail))?.pane_id;
+}
+
+/**
  * Whether pi-herdr-agents still holds a checkout for the session that launched it. It never removes a worktree by itself: the
  * parent session does, with `worktree_remove`, which marks the child's manifest `removed`. Until then the checkout belongs to the
- * parent, so a manifest that names it and is not `removed` holds it while the parent session shows activity within `idleMs`
- * (a parent that wrote nothing for that long has ended). `manifests` come from io.managedClient: `{ file, name, state, createdAt,
- * activityAt, paths }`, or `{ file, unreadable }` for a record that names the checkout but could not be read, which holds it
- * (fail closed). A newer `removed` manifest on the same path means the owner took the checkout away since.
+ * parent, so a manifest that names it and is not `removed` holds it while the parent is alive: its session is open in a pane of
+ * `panes` (Herdr's pane list, however long it has been idle), or else it showed activity within `idleMs` (a parent that wrote
+ * nothing for that long, and is open nowhere, has ended). `panes` is null when Herdr could not be asked, and the idle limit alone
+ * decides then. `manifests` come from io.managedClient: `{ file, name, state, createdAt, activityAt, paths, parentId }`, or
+ * `{ file, unreadable }` for a record that names the checkout but could not be read, which holds it (fail closed). A newer
+ * `removed` manifest on the same path means the owner took the checkout away since.
  * @returns {string | null} why the checkout stays, or null when no live parent holds it
  */
-export function findRetainer(roots, manifests, now, idleMs) {
+export function findRetainer(roots, manifests, now, idleMs, panes = null) {
 	const mine = manifests.filter((entry) => entry.unreadable !== undefined || (entry.paths ?? []).some((path) => roots.includes(path)));
 	for (const entry of mine) {
 		if (entry.unreadable !== undefined) return `a pi-herdr-agents record (${entry.file}) names it but could not be read (${entry.unreadable})`;
@@ -200,6 +214,8 @@ export function findRetainer(roots, manifests, now, idleMs) {
 		if (mine.some((other) => other.state === "removed" && other.createdAt > entry.createdAt)) continue;
 		const idle = now - entry.activityAt;
 		const label = `pi-herdr-agents child ${entry.name ?? entry.file} (${entry.state ?? "state unknown"})`;
+		const open = panes ? findSessionPane(panes, entry.parentId) : undefined;
+		if (open) return `${label} holds it: its parent session is open in pane ${open}; it stays until the parent runs worktree_remove or the session is closed and idle for ${Math.round((idleMs / HOUR_MS) * 10) / 10}h`;
 		if (!Number.isFinite(idle)) return `${label} holds it, and its parent session's activity time is unknown`;
 		if (idle <= idleMs) return `${label} holds it for its parent session, last active ${Math.round((Math.max(idle, 0) / HOUR_MS) * 10) / 10}h ago; it stays until the parent runs worktree_remove or is idle for ${Math.round((idleMs / HOUR_MS) * 10) / 10}h`;
 	}

@@ -128,7 +128,7 @@ description = "toggle the straw net view"
 另一個選用的 Herdr plugin 放在 [`herdr-reaper/`](herdr-reaper)，專門清理 worktree 工作區裡智慧體跑完留下的東西。
 只處理 worktree 是 linked git worktree 的工作區（不管它叫什麼名字）：智慧體結束、pane 的 shell 閒置之後，就關掉這個 pane，但絕不關掉有焦點的 pane。
 Herdr 接著會關掉分頁和工作區，plugin 再在 `git status` 乾淨、而且沒有別的東西還在用它（沒有別的 pane 在裡面工作，也沒有別的工作區開在同一個 checkout）時移除這個工作區的 checkout。
-pi-herdr-agents 建立的 worktree 會留著，直到它的父 session 用 `worktree_remove` 移除，或父 session 已靜默 72 小時（`retain_idle_hours`）；任何有你的行程以它為工作目錄的 checkout 也一樣不動。
+pi-herdr-agents 建立的 worktree 會留著，直到它的父 session 用 `worktree_remove` 移除；父 session 只要還開在某個 Herdr pane 裡就一直留著，沒有開著時則等它靜默 72 小時（`retain_idle_hours`）；任何有你的行程以它為工作目錄的 checkout 也一樣不動。
 git 忽略的檔案（`.env`、`node_modules`、快取、本機資料庫）不算變更，所以會跟著 checkout 一起被刪掉。
 分支一律保留；有未提交變更的 checkout 也留著，原因寫在 plugin 日誌裡。
 含已初始化 submodule 的 checkout，只有在每個 submodule（含巢狀的）都沒有未提交或未追蹤的檔案，且 HEAD 已被某個 remote-tracking ref（或主儲存庫自己那份 module 的 ref）包含、不會遺失任何 commit 時才會移除：reaper 先跑 `git submodule deinit --all`，刪掉 worktree 的 `.git/worktrees/<id>/modules`（有它在，git 不肯移除 worktree），再跑不帶 `--force` 的 `git worktree remove`。不符合就保留，日誌會寫出是哪個 submodule、為什麼；若移除做到一半失敗、留下 git 已不再追蹤的檔案，日誌會寫「half-removed」並指出該目錄，由你自己刪除。

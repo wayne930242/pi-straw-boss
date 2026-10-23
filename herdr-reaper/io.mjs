@@ -3,7 +3,8 @@ import { execFile } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { mkdir, readdir, readFile, readlink, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import { getuid } from "node:process";
 import { promisify } from "node:util";
 import { applyOps, emptyState } from "./decide.mjs";
@@ -129,44 +130,152 @@ const listDir = (path, { stray = false } = {}) => readdir(path).catch((error) =>
 	throw error;
 });
 
+// One sweep is one process, and within it every checkout asks for the same machine-wide facts. A read is reused for this long, which
+// covers a sweep and no more: a process that moves into a checkout after the read is seen by the next sweep, as before.
+const SNAPSHOT_MS = 10_000;
+
+/** Runs `read` unless its last successful result is younger than `maxAgeMs`; a failure is never remembered. `forget()` drops the result. */
+function remembered(read, now, maxAgeMs) {
+	let last;
+	const get = async () => {
+		if (last && now() - last.at < maxAgeMs) return last.value;
+		const value = await read();
+		last = { at: now(), value };
+		return value;
+	};
+	return Object.assign(get, { forget: () => void (last = undefined) });
+}
+
+/** A path without `.`/`..` segments or a trailing slash, and with symlinks and the file system's own spelling resolved when it exists. */
+const canonical = (path) => {
+	const absolute = resolve(path);
+	try {
+		return realpathSync.native(absolute);
+	} catch {
+		return absolute;
+	}
+};
+
+const expandHome = (path, home) => (path === "~" ? home : path.startsWith("~/") ? join(home, path.slice(2)) : path);
+
+/** The `sessionDir` of a pi settings file; null when the file is absent or sets none. A file that cannot be read or parsed throws. */
+async function sessionDirSetting(file) {
+	let text;
+	try {
+		text = await readFile(file, "utf8");
+	} catch (error) {
+		if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
+		throw new Error(`cannot read ${file}: ${error.message}`);
+	}
+	let settings;
+	try {
+		settings = JSON.parse(text);
+	} catch (error) {
+		throw new Error(`cannot read ${file}: ${error.message}`);
+	}
+	const dir = settings?.sessionDir;
+	return typeof dir === "string" && dir.length > 0 ? dir : null;
+}
+
+/**
+ * Where pi may keep the sessions of the repository whose worktrees are being judged, as `(repoRoot) => directories`: pi's default
+ * (`<agent dir>/sessions`, the agent dir being `PI_CODING_AGENT_DIR` or `~/.pi/agent`), `PI_CODING_AGENT_SESSION_DIR`, the user's
+ * `sessionDir` setting (`<agent dir>/settings.json`) and the project's (`<repoRoot>/.pi/settings.json`), a relative one resolved from
+ * the repository. All of them are returned, not the one pi would pick: the reaper cannot know which session a command line
+ * (`--session-dir`) or another environment chose, and a manifest found in a directory that was not the parent's holds nothing wrong.
+ * A settings file that cannot be read throws, which keeps the checkouts.
+ */
+export function sessionLocator(env = process.env, home = homedir()) {
+	const agentDir = expandHome(env.PI_CODING_AGENT_DIR || join(home, ".pi/agent"), home);
+	return async (repoRoot) => {
+		const dirs = [join(agentDir, "sessions")];
+		if (env.PI_CODING_AGENT_SESSION_DIR) dirs.push(expandHome(env.PI_CODING_AGENT_SESSION_DIR, home));
+		const settings = [join(agentDir, "settings.json"), ...(repoRoot ? [join(repoRoot, ".pi", "settings.json")] : [])];
+		for (const file of settings) {
+			const dir = await sessionDirSetting(file);
+			if (dir) dirs.push(isAbsolute(expandHome(dir, home)) ? expandHome(dir, home) : resolve(repoRoot ?? agentDir, dir));
+		}
+		return [...new Set(dirs.map((dir) => resolve(dir)))];
+	};
+}
+
 /**
  * pi-herdr-agents' records of the worktrees it created. Each worktree child writes a manifest to
- * `<sessions>/<cwd>/artifacts/<parent session id>/worktree-runs/<child id>.json` (state, path, branch, the child's session file) and
- * marks it `removed` when the parent runs `worktree_remove`. Nothing else records who owns a checkout.
- * `manifests(roots)` returns the manifests that name one of the checkout's path spellings, each with the newest activity time of the
- * manifest, its parent session's file (`<sessions>/<cwd>/<time>_<parent session id>.jsonl`) and the child's session file. A file
- * that names the path but is not valid JSON comes back as `{ file, unreadable }`: it may be a manifest being written. A sessions
- * directory that does not exist means pi-herdr-agents is not installed; any other read failure throws.
+ * `<session dir>/artifacts/<parent session id>/worktree-runs/<child id>.json` (state, path, branch, the child's session file) and
+ * marks it `removed` when the parent runs `worktree_remove`. Nothing else records who owns a checkout. The session dir is
+ * `<sessions>/<cwd>` in pi's default layout and the configured directory itself when `sessionDir` is set, so each directory given
+ * is read as both.
+ * `dirs` is a directory, a list of them, or `(repoRoot) => directories` (see sessionLocator). `manifests(roots, repoRoot)` returns
+ * the manifests whose `path` is the same directory as one of the checkout's spellings (compared by canonical path, so a symlinked
+ * prefix, a trailing slash or another case does not matter), each with the newest activity time of the manifest, its `updatedAt`,
+ * its parent session's file (`<session dir>/<time>_<parent session id>.jsonl`) and the child's session file, and the parent's
+ * session id as `parentId`. A file that cannot be parsed comes back as `{ file, unreadable }` when its text mentions the
+ * checkout's directory name: it may be a manifest being written. A directory that does not exist is said once through `log` and
+ * holds nothing (pi-herdr-agents may not be installed); any other read failure throws.
+ * The scan of a directory is reused for `maxAgeMs`.
  */
-export function managedClient(sessionsDir) {
-	return {
-		manifests: async (roots) => {
-			const needles = roots.map((root) => JSON.stringify(root).slice(1, -1));
-			const found = [];
-			for (const cwdDir of await listDir(sessionsDir)) {
-				const artifacts = join(sessionsDir, cwdDir, "artifacts");
-				for (const sessionId of await listDir(artifacts, { stray: true })) {
-					const runs = join(artifacts, sessionId, "worktree-runs");
-					for (const name of (await listDir(runs, { stray: true })).filter((entry) => entry.endsWith(".json"))) {
-						const file = join(runs, name);
-						const text = await readFile(file, "utf8");
-						if (!needles.some((needle) => text.includes(needle))) continue;
-						let record;
-						try {
-							record = JSON.parse(text);
-						} catch (error) {
-							found.push({ file, unreadable: error.message });
-							continue;
-						}
-						if (record === null || typeof record !== "object" || record.owner !== "pi-herdr-subagents") continue;
-						const parent = (await listDir(join(sessionsDir, cwdDir))).filter((entry) => entry.endsWith(`_${sessionId}.jsonl`)).map((entry) => join(sessionsDir, cwdDir, entry));
-						const times = await Promise.all([file, ...parent, ...(typeof record.sessionFile === "string" ? [record.sessionFile] : [])].map(fileTime));
-						const spellings = [record.path, ...(typeof record.path === "string" && existsSync(record.path) ? [realpathSync.native(record.path)] : [])].filter((path) => typeof path === "string");
-						found.push({ file, name: record.name, state: record.state, createdAt: record.createdAt, activityAt: Math.max(...times, Number(record.updatedAt) || 0), paths: spellings });
+export function managedClient(dirs, { log = () => {}, now = Date.now, maxAgeMs = SNAPSHOT_MS } = {}) {
+	const warned = new Set();
+	const scans = new Map();
+	// Every manifest file below a directory, read and parsed once: `{ file, sessionDir, sessionId, record | (error, text) }`.
+	const readDir = async (dir) => {
+		let children;
+		try {
+			children = await readdir(dir);
+		} catch (error) {
+			if (error.code !== "ENOENT") throw error;
+			if (!warned.has(dir)) {
+				warned.add(dir);
+				log(`pi sessions directory ${dir} does not exist, so no pi-herdr-agents record is read from it; if pi keeps its sessions elsewhere, set sessionDir in pi's settings, or PI_CODING_AGENT_DIR or PI_CODING_AGENT_SESSION_DIR in Herdr's environment`);
+			}
+			return [];
+		}
+		const files = [];
+		for (const sessionDir of [dir, ...children.map((child) => join(dir, child))]) {
+			const artifacts = join(sessionDir, "artifacts");
+			for (const sessionId of await listDir(artifacts, { stray: true })) {
+				const runs = join(artifacts, sessionId, "worktree-runs");
+				for (const name of (await listDir(runs, { stray: true })).filter((entry) => entry.endsWith(".json"))) {
+					const file = join(runs, name);
+					const text = await readFile(file, "utf8");
+					try {
+						files.push({ file, sessionDir, sessionId, record: JSON.parse(text) });
+					} catch (error) {
+						files.push({ file, sessionDir, sessionId, error: error.message, text: text.toLowerCase() });
 					}
 				}
 			}
-			return found;
+		}
+		return files;
+	};
+	const scan = (dir) => {
+		if (!scans.has(dir)) scans.set(dir, remembered(() => readDir(dir), now, maxAgeMs));
+		return scans.get(dir)();
+	};
+	const describe = async (file, wanted) => {
+		const record = file.record;
+		if (record === null || typeof record !== "object" || record.owner !== "pi-herdr-subagents" || typeof record.path !== "string") return null;
+		const path = (file.canonicalPath ??= canonical(record.path));
+		if (!wanted.has(path)) return null;
+		const parent = (await listDir(file.sessionDir)).filter((entry) => entry.endsWith(`_${file.sessionId}.jsonl`)).map((entry) => join(file.sessionDir, entry));
+		const times = await Promise.all([file.file, ...parent, ...(typeof record.sessionFile === "string" ? [record.sessionFile] : [])].map(fileTime));
+		return { file: file.file, name: record.name, state: record.state, createdAt: record.createdAt, activityAt: Math.max(...times, Number(record.updatedAt) || 0), paths: [...new Set([record.path, resolve(record.path), path])], parentId: file.sessionId };
+	};
+	return {
+		manifests: async (roots, repoRoot) => {
+			const listed = typeof dirs === "function" ? await dirs(repoRoot) : [dirs].flat();
+			const wanted = new Set(roots.map(canonical));
+			// A torn file cannot be matched by path, so it is matched by the checkout's directory name, in any case.
+			const names = roots.map((root) => JSON.stringify(basename(resolve(root))).slice(1, -1).toLowerCase()).filter(Boolean);
+			const found = new Map();
+			for (const dir of new Set(listed.map((entry) => resolve(entry)))) {
+				for (const file of await scan(dir)) {
+					if (found.has(file.file)) continue;
+					const entry = file.error === undefined ? await describe(file, wanted) : names.some((name) => file.text.includes(name)) ? { file: file.file, unreadable: file.error } : null;
+					if (entry) found.set(file.file, entry);
+				}
+			}
+			return [...found.values()];
 		},
 	};
 }
@@ -174,49 +283,49 @@ export function managedClient(sessionsDir) {
 /**
  * Every process of the user with the directory it works in, from anywhere on the machine, not only Herdr's panes: `lsof` on macOS,
  * `/proc` on Linux. Throws when the list cannot be had (the caller then keeps the checkout); processes of other users are not listed.
+ * One list is reused for `maxAgeMs`, so a sweep over many checkouts lists the processes once.
  */
-export function processClient(platform = process.platform) {
+export function processClient(platform = process.platform, { now = Date.now, maxAgeMs = SNAPSHOT_MS } = {}) {
 	const uid = getuid?.();
-	return {
-		cwds: async () => {
-			if (uid === undefined) throw new Error("the user id is unavailable");
-			if (platform === "darwin") {
-				let stdout;
+	const cwds = remembered(async () => {
+		if (uid === undefined) throw new Error("the user id is unavailable");
+		if (platform === "darwin") {
+			let stdout;
+			try {
+				({ stdout } = await run("lsof", ["-n", "-P", "-a", "-u", String(uid), "-d", "cwd", "-Fpcn"], { maxBuffer: 64 * 1024 * 1024, timeout: GIT_TIMEOUT_MS }));
+			} catch (error) {
+				throw new Error(`lsof failed to list processes (${error.killed ? "no answer in time" : `exit ${error.code ?? "unknown"}`})`);
+			}
+			const listed = [];
+			for (const record of stdout.split(/^p/m).slice(1)) {
+				const [pid, ...fields] = record.split("\n");
+				const cwd = fields.find((line) => line.startsWith("n"))?.slice(1);
+				if (!/^\d+$/.test(pid)) throw new Error("lsof printed a record this reaper cannot read");
+				// A process lsof shows no cwd for (a kernel task, one whose directory was deleted) holds no directory it can name.
+				if (!cwd?.startsWith("/")) continue;
+				listed.push({ pid: Number(pid), name: fields.find((line) => line.startsWith("c"))?.slice(1), cwd });
+			}
+			if (listed.length === 0) throw new Error("lsof listed no processes");
+			return listed;
+		}
+		if (platform === "linux") {
+			const listed = [];
+			for (const pid of (await readdir("/proc")).filter((entry) => /^\d+$/.test(entry))) {
 				try {
-					({ stdout } = await run("lsof", ["-n", "-P", "-a", "-u", String(uid), "-d", "cwd", "-Fpcn"], { maxBuffer: 64 * 1024 * 1024, timeout: GIT_TIMEOUT_MS }));
+					if ((await stat(`/proc/${pid}`)).uid !== uid) continue;
+					const name = (await readFile(`/proc/${pid}/comm`, "utf8")).trim();
+					listed.push({ pid: Number(pid), name, cwd: await readlink(`/proc/${pid}/cwd`) });
 				} catch (error) {
-					throw new Error(`lsof failed to list processes (${error.killed ? "no answer in time" : `exit ${error.code ?? "unknown"}`})`);
+					// A process that exited while the list was read is not a holder; one that cannot be read is not known to be harmless.
+					if (error.code !== "ENOENT" && error.code !== "ESRCH") throw new Error(`process ${pid} could not be inspected (${error.code ?? error.message})`);
 				}
-				const listed = [];
-				for (const record of stdout.split(/^p/m).slice(1)) {
-					const [pid, ...fields] = record.split("\n");
-					const cwd = fields.find((line) => line.startsWith("n"))?.slice(1);
-					if (!/^\d+$/.test(pid)) throw new Error("lsof printed a record this reaper cannot read");
-					// A process lsof shows no cwd for (a kernel task, one whose directory was deleted) holds no directory it can name.
-					if (!cwd?.startsWith("/")) continue;
-					listed.push({ pid: Number(pid), name: fields.find((line) => line.startsWith("c"))?.slice(1), cwd });
-				}
-				if (listed.length === 0) throw new Error("lsof listed no processes");
-				return listed;
 			}
-			if (platform === "linux") {
-				const listed = [];
-				for (const pid of (await readdir("/proc")).filter((entry) => /^\d+$/.test(entry))) {
-					try {
-						if ((await stat(`/proc/${pid}`)).uid !== uid) continue;
-						const name = (await readFile(`/proc/${pid}/comm`, "utf8")).trim();
-						listed.push({ pid: Number(pid), name, cwd: await readlink(`/proc/${pid}/cwd`) });
-					} catch (error) {
-						// A process that exited while the list was read is not a holder; one that cannot be read is not known to be harmless.
-						if (error.code !== "ENOENT" && error.code !== "ESRCH") throw new Error(`process ${pid} could not be inspected (${error.code ?? error.message})`);
-					}
-				}
-				if (listed.length === 0) throw new Error("/proc listed no processes");
-				return listed;
-			}
-			throw new Error(`process listing is not supported on ${platform}`);
-		},
-	};
+			if (listed.length === 0) throw new Error("/proc listed no processes");
+			return listed;
+		}
+		throw new Error(`process listing is not supported on ${platform}`);
+	}, now, maxAgeMs);
+	return { cwds, forget: cwds.forget };
 }
 
 /** The herdr CLI: every call prints one JSON line whose `result` is returned; an `error` or a failed exit throws. */

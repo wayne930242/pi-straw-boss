@@ -55,11 +55,14 @@ const spellings = (checkout, deps) => [...new Set([checkout, deps.git.realpath?.
 
 /**
  * Whether pi-herdr-agents still holds the checkout for the session that launched it (see findRetainer). Fails closed: records that
- * cannot be read, or a reaper wired without the reader, keep the checkout.
+ * cannot be read, or a reaper wired without the reader, keep the checkout. Herdr's panes tell whether the parent session is still
+ * open; a list that cannot be had leaves the idle limit alone to decide, and the other guards read the panes again anyway.
  */
-async function checkoutRetainer(checkout, deps) {
+async function checkoutRetainer(checkout, repoRoot, deps) {
 	try {
-		return findRetainer(spellings(checkout, deps), await deps.managed.manifests(spellings(checkout, deps)), deps.now(), retainIdleMs(deps.config));
+		const roots = spellings(checkout, deps);
+		const [found, panes] = await Promise.all([deps.managed.manifests(roots, repoRoot), deps.herdr.listPanes().catch(() => null)]);
+		return findRetainer(roots, found, deps.now(), retainIdleMs(deps.config), panes);
 	} catch (error) {
 		return `pi-herdr-agents' records could not be read (${error.message.split("\n")[0]})`;
 	}
@@ -96,7 +99,7 @@ async function reapCheckout(entry, deps, dryRun, ignore = {}) {
 		return "kept";
 	}
 	// Each of these is a reason to wait, not to give up: the pending entry is retried every sweep until it clears.
-	const user = (await checkoutRetainer(entry.checkout, deps)) ?? (await checkoutUser(entry.checkout, deps, ignore)) ?? (await checkoutHolder(entry.checkout, deps, ignore));
+	const user = (await checkoutRetainer(entry.checkout, entry.repoRoot, deps)) ?? (await checkoutUser(entry.checkout, deps, ignore)) ?? (await checkoutHolder(entry.checkout, deps, ignore));
 	if (user) {
 		deps.log(`${dryRun ? "would keep" : "keep"} checkout ${entry.checkout}: ${user}, branch kept`);
 		return "in-use";
@@ -235,6 +238,8 @@ async function sweepLocked(deps, confirmMs, dryRun) {
 		if (dryRun) continue;
 		try {
 			await deps.herdr.closePane(close.paneId);
+			// The shell that just exited is in any process list read before this.
+			deps.processes?.forget?.();
 			ops.push(del(["agentSeen", close.key]), del(["candidates", close.key]));
 		} catch (error) {
 			deps.log(`failed to close ${close.paneId}: ${error.message}`);

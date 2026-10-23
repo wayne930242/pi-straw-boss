@@ -2,15 +2,15 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { test } from "node:test";
 import {
 	CONFIRM_MS, PIN_GLYPH, PIN_TOKEN, SWEEP_INTERVAL_MS,
 	applyOps, decideRemoval, emptyState, findCheckoutUser, findProcessHolder, findRetainer, isPinned, migratePins, noteParents, noteWorkspaces, onRename, planSweep, prunePanes, prunePins, set, shellIsIdle, togglePin,
 } from "../herdr-reaper/decide.mjs";
-import { createStore, gitClient, gitReason, managedClient, processClient, withLock } from "../herdr-reaper/io.mjs";
+import { createStore, gitClient, gitReason, managedClient, processClient, sessionLocator, withLock } from "../herdr-reaper/io.mjs";
 import { SOURCE, runEvent, runPinToggle, runSweep } from "../herdr-reaper/sweep.mjs";
 
 const NOW = 1_000_000_000;
@@ -1199,6 +1199,26 @@ test("findRetainer: a checkout pi-herdr-agents has not released stays while its 
 	assert.notEqual(findRetainer(roots, [manifest({ activityAt: undefined })], NOW, 72 * HOUR), null, "no usable activity time fails closed");
 });
 
+// A pane Herdr lists for a pi that runs on `file`.
+const piPane = (id, file, extra = {}) => ({ pane_id: id, agent: "pi", agent_session: { agent: "pi", kind: "path", source: "herdr:pi", value: file }, ...extra });
+const PARENT_FILE = "/s/--proj--/2026-10-20T00-00-00-000Z_01abc.jsonl";
+
+test("findRetainer: a parent session that is open in a pane holds its children's checkouts however long it has been idle", () => {
+	const roots = ["/wt/linked"];
+	const old = manifest({ parentId: "01abc", activityAt: NOW - 200 * HOUR });
+	assert.equal(findRetainer(roots, [old], NOW, 72 * HOUR, []), null, "idle past the limit and open nowhere: the parent has ended");
+	assert.match(findRetainer(roots, [old], NOW, 72 * HOUR, [piPane("w:p1", PARENT_FILE)]), /parent session is open in pane w:p1/, "an idle tower left open over a long weekend still holds it");
+	assert.equal(findRetainer(roots, [old], NOW, 72 * HOUR, [piPane("w:p1", "/s/--proj--/2026-10-20T00-00-00-000Z_01abd.jsonl")]), null, "another session's pane is not the parent");
+	assert.equal(findRetainer(roots, [old], NOW, 72 * HOUR, [piPane("w:p1", "/s/--proj--/2026-10-20T00-00-00-000Z_x01abc.jsonl")]), null, "the id must match whole, not as a tail");
+	assert.equal(findRetainer(roots, [old], NOW, 72 * HOUR, [piPane("w:p1", PARENT_FILE, { agent: "codex" })]), null, "only a pane running pi counts");
+	assert.equal(findRetainer(roots, [old], NOW, 72 * HOUR, [piPane("w:p1", PARENT_FILE, { agent: undefined })]), null, "a pane whose agent has exited does not");
+	assert.equal(findRetainer(roots, [old], NOW, 72 * HOUR, [piPane("w:p1", PARENT_FILE, { agent_session: { kind: "id", value: PARENT_FILE } })]), null, "a session reported by anything but its path is not read");
+	assert.equal(findRetainer(roots, [manifest({ activityAt: NOW - 200 * HOUR })], NOW, 72 * HOUR, [piPane("w:p1", PARENT_FILE)]), null, "a record that names no parent id is not matched to any pane");
+	assert.equal(findRetainer(roots, [{ ...old, state: "removed" }], NOW, 72 * HOUR, [piPane("w:p1", PARENT_FILE)]), null, "worktree_remove still releases it");
+	assert.equal(findRetainer(roots, [old], NOW, 72 * HOUR, null), null, "panes that could not be listed fall back to the idle limit");
+	assert.notEqual(findRetainer(roots, [manifest({ parentId: "01abc", activityAt: NOW - HOUR })], NOW, 72 * HOUR, null), null, "and the idle limit still holds an active parent");
+});
+
 test("findProcessHolder: any process with its cwd at or below the checkout", () => {
 	const roots = ["/private/wt/x", "/wt/x"];
 	assert.equal(findProcessHolder(roots, [{ pid: 1, name: "zsh", cwd: "/repo" }]), null);
@@ -1282,6 +1302,26 @@ test("Guard 1: unreadable pi-herdr-agents records keep the checkout", async () =
 	}
 });
 
+test("Guard 1: a parent session that is open in a pane holds the checkout past the idle limit, and the checkout is freed once it is not", async () => {
+	const dir = await tempDir();
+	try {
+		const w = retainedWorld();
+		w.manifests = [manifest({ parentId: "01abc", activityAt: NOW - 200 * HOUR })];
+		const store = createStore(dir);
+		w.workspaces.push(workspace("t", "tower", { worktree: undefined }));
+		w.panes.push(piPane("t:p1", PARENT_FILE, { workspace_id: "t", terminal_id: "term_t", cwd: "/repo" }));
+		await runSweep(w.deps(store), { confirmMs: 0 });
+		assert.deepEqual(w.removed, [], w.logs.join("\n"));
+		assert.ok(w.logs.some((line) => line.startsWith("keep checkout /wt/linked") && line.includes("parent session is open in pane t:p1")), w.logs.join("\n"));
+		assert.equal((await store.read()).pending["/wt/linked"]?.inUse, true);
+		w.panes = w.panes.filter((candidate) => candidate.pane_id !== "t:p1");
+		await runSweep(w.deps(store, () => NOW + 60_000), { confirmMs: 0 });
+		assert.deepEqual(w.removed, ["/wt/linked"], "the parent closed and idle for days: released");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
 test("Guard 2: a process anywhere on the machine with its cwd in the checkout keeps it, in normal, pending and dry runs", async () => {
 	const dir = await tempDir();
 	try {
@@ -1297,6 +1337,26 @@ test("Guard 2: a process anywhere on the machine with its cwd in the checkout ke
 		w.holders = [{ pid: 1, name: "zsh", cwd: "/repo" }];
 		await runSweep(w.deps(store, () => NOW + 60_000), { confirmMs: 0 });
 		assert.deepEqual(w.removed, ["/wt/linked"], "removed once the process is gone");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("Guard 2: a sweep that closed a pane reads the process list again, so the shell that just exited does not hold its own checkout", async () => {
+	const dir = await tempDir();
+	try {
+		const w = world({ workspaces: [workspace("a", "linked")], panes: [pane("a:p1", "a")], checkouts: { "/wt/linked": {} } });
+		w.holders = [{ pid: 10, name: "zsh", cwd: "/wt/linked" }];
+		// A process list read earlier in the sweep, as processClient reuses one for a few seconds.
+		let snapshot = structuredClone(w.holders);
+		w.processes = { cwds: async () => structuredClone(snapshot), forget: () => void (snapshot = structuredClone(w.holders)) };
+		const close = w.herdr.closePane;
+		w.herdr.closePane = async (id) => {
+			await close(id);
+			w.holders = [];
+		};
+		await runSweep(w.deps(createStore(dir)), { confirmMs: 0 });
+		assert.deepEqual(w.removed, ["/wt/linked"], w.logs.join("\n"));
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -1385,6 +1445,143 @@ test("managedClient reads pi-herdr-agents' manifests below the sessions director
 	}
 });
 
+// A sessions directory holding one session's manifests, laid out as pi does: `<session dir>/artifacts/<parent id>/worktree-runs`.
+const runRecord = (name, path, extra = {}) => JSON.stringify({ version: 1, kind: "worktree-run", owner: "pi-herdr-subagents", state: "ready_for_review", name, createdAt: 5, updatedAt: NOW - HOUR, path, ...extra });
+async function sessionWith(sessionDir, files, parentId = "01abc") {
+	const runs = join(sessionDir, "artifacts", parentId, "worktree-runs");
+	await mkdir(runs, { recursive: true });
+	for (const [name, text] of Object.entries(files)) await writeFile(join(runs, name), text);
+	await writeFile(join(sessionDir, `2026-10-23T00-00-00-000Z_${parentId}.jsonl`), "{}\n");
+}
+
+test("managedClient matches a manifest by the canonical path of the checkout, whatever spelling either side uses", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pane-reaper-spell-"));
+	try {
+		const real = join(root, "real", "wt");
+		await mkdir(real, { recursive: true });
+		await symlink(join(root, "real"), join(root, "link"));
+		const linked = join(root, "link", "wt");
+		await sessionWith(join(root, "sessions", "--proj--"), {
+			"link.json": runRecord("link", linked),
+			"slash.json": runRecord("slash", `${real}/`),
+			"plain.json": runRecord("plain", real),
+			"dots.json": runRecord("dots", join(root, "real", "x", "..", "wt")),
+			"other.json": runRecord("other", join(root, "real", "other")),
+		});
+		const client = managedClient(join(root, "sessions"));
+		const names = (found) => found.map((entry) => basename(entry.file)).sort();
+		for (const roots of [[real], [linked], [`${real}/`], [await realpath(real)]]) {
+			assert.deepEqual(names(await client.manifests(roots)), ["dots.json", "link.json", "plain.json", "slash.json"], `a checkout spelled ${JSON.stringify(roots)}`);
+		}
+		// What the sweep passes: the checkout and its real path. The manifest written with another spelling still holds it.
+		const spelled = [linked, await realpath(linked)];
+		assert.notEqual(findRetainer(spelled, await client.manifests(spelled), NOW, 72 * HOUR), null);
+		// The same checkout in the other case, on a file system that ignores case (APFS by default).
+		const shouted = join(root, "real", "WT");
+		if (existsSync(shouted)) assert.deepEqual(names(await client.manifests([shouted])), ["dots.json", "link.json", "plain.json", "slash.json"], "case spelling");
+		assert.deepEqual(await client.manifests([join(root, "real", "nothing")]), [], "a path nobody named");
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("managedClient finds the manifests of a custom session directory, which pi lays out without the per-cwd level", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pane-reaper-flat-"));
+	try {
+		const flat = join(root, "flat");
+		const nested = join(root, "sessions");
+		await sessionWith(flat, { "a.json": runRecord("flat-kid", "/wt/linked", { updatedAt: NOW - 9 * HOUR }) }, "flatparent");
+		await sessionWith(join(nested, "--proj--"), { "b.json": runRecord("nested-kid", "/wt/linked", { updatedAt: NOW - 9 * HOUR }) }, "nestedparent");
+		const at = (path, time) => utimes(path, new Date(time), new Date(time));
+		await at(join(flat, "artifacts", "flatparent", "worktree-runs", "a.json"), NOW - 5 * HOUR);
+		await at(join(nested, "--proj--", "artifacts", "nestedparent", "worktree-runs", "b.json"), NOW - 5 * HOUR);
+		await at(join(flat, "2026-10-23T00-00-00-000Z_flatparent.jsonl"), NOW - 2 * HOUR);
+		await at(join(nested, "--proj--", "2026-10-23T00-00-00-000Z_nestedparent.jsonl"), NOW - 3 * HOUR);
+		const found = await managedClient([flat, nested]).manifests(["/wt/linked"]);
+		assert.deepEqual(found.map((entry) => [entry.name, entry.parentId]).sort(), [["flat-kid", "flatparent"], ["nested-kid", "nestedparent"]]);
+		assert.equal(found.find((entry) => entry.name === "flat-kid").activityAt, NOW - 2 * HOUR, "the flat layout's parent session file is found beside the artifacts directory");
+		assert.equal(found.find((entry) => entry.name === "nested-kid").activityAt, NOW - 3 * HOUR);
+		await writeFile(join(flat, "artifacts", "flatparent", "worktree-runs", "a.json"), runRecord("flat-kid", "/wt/linked", { updatedAt: NOW + 3 * HOUR }));
+		await at(join(flat, "artifacts", "flatparent", "worktree-runs", "a.json"), NOW - 5 * HOUR);
+		assert.equal((await managedClient([flat]).manifests(["/wt/linked"]))[0].activityAt, NOW + 3 * HOUR, "the record's own updatedAt counts as activity too");
+		assert.equal((await managedClient([flat, flat, join(flat, "")]).manifests(["/wt/linked"])).length, 1, "a directory listed twice is read once");
+		assert.equal((await managedClient([nested, join(nested, "--proj--")]).manifests(["/wt/linked"])).length, 1, "and so is a manifest reached through two of them");
+		const located = managedClient(async (repoRoot) => (repoRoot === "/repo/a" ? [flat] : [nested]));
+		assert.deepEqual((await located.manifests(["/wt/linked"], "/repo/a")).map((entry) => entry.name), ["flat-kid"], "the directories can depend on the repository");
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("managedClient says once that a sessions directory is missing, and a directory that exists still counts", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pane-reaper-missing-"));
+	try {
+		await sessionWith(join(root, "sessions", "--proj--"), { "a.json": runRecord("kid", "/wt/linked") });
+		const lines = [];
+		const client = managedClient([join(root, "gone"), join(root, "sessions")], { log: (line) => lines.push(line) });
+		assert.equal((await client.manifests(["/wt/linked"])).length, 1);
+		await client.manifests(["/wt/linked"]);
+		await client.manifests(["/wt/linked"]);
+		assert.equal(lines.length, 1, lines.join("\n"));
+		assert.ok(lines[0].includes(join(root, "gone")) && lines[0].includes("does not exist"), lines[0]);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("sessionLocator: the default sessions directory, PI_CODING_AGENT_DIR, PI_CODING_AGENT_SESSION_DIR and the sessionDir setting of the user and the project", async () => {
+	const home = await tempDir();
+	const repo = await tempDir();
+	try {
+		const agent = join(home, ".pi", "agent");
+		await mkdir(agent, { recursive: true });
+		const locate = (env = {}) => sessionLocator(env, home)(repo);
+		assert.deepEqual(await locate(), [join(agent, "sessions")], "no setting: pi's default, and a missing settings file is not an error");
+		assert.deepEqual(await locate({ PI_CODING_AGENT_DIR: "~/elsewhere" }), [join(home, "elsewhere", "sessions")]);
+		assert.deepEqual(await locate({ PI_CODING_AGENT_SESSION_DIR: "~/via-env" }), [join(agent, "sessions"), join(home, "via-env")], "the variable adds a directory; sessions made before stay where they were");
+		await writeFile(join(agent, "settings.json"), JSON.stringify({ theme: "dark", sessionDir: "~/via-user" }));
+		assert.deepEqual(await locate(), [join(agent, "sessions"), join(home, "via-user")]);
+		await mkdir(join(repo, ".pi"));
+		await writeFile(join(repo, ".pi", "settings.json"), JSON.stringify({ sessionDir: "pi-sessions" }));
+		assert.deepEqual(await locate({ PI_CODING_AGENT_SESSION_DIR: join(home, "via-env") }), [join(agent, "sessions"), join(home, "via-env"), join(home, "via-user"), join(repo, "pi-sessions")], "a relative project setting resolves from the repository");
+		await writeFile(join(repo, ".pi", "settings.json"), JSON.stringify({ sessionDir: join(home, "via-user") }));
+		assert.deepEqual(await locate(), [join(agent, "sessions"), join(home, "via-user")], "the same directory is listed once");
+		await writeFile(join(repo, ".pi", "settings.json"), JSON.stringify({ sessionDir: 5 }));
+		assert.deepEqual(await locate(), [join(agent, "sessions"), join(home, "via-user")], "a setting that is not a path names nothing");
+		await writeFile(join(agent, "settings.json"), "{ not json");
+		await assert.rejects(() => locate(), /settings\.json/, "a settings file that cannot be read is an error, which the sweep turns into keeping the checkout");
+	} finally {
+		await rm(home, { recursive: true, force: true });
+		await rm(repo, { recursive: true, force: true });
+	}
+});
+
+test("managedClient reads the sessions once per sweep: a second look within the window is the first one's, a later one is new", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pane-reaper-memo-"));
+	try {
+		const session = join(root, "sessions", "--proj--");
+		await sessionWith(session, { "a.json": runRecord("first", "/wt/linked") });
+		let clock = 1_000;
+		const client = managedClient(join(root, "sessions"), { now: () => clock, maxAgeMs: 10_000 });
+		assert.deepEqual((await client.manifests(["/wt/linked"])).map((entry) => entry.name), ["first"]);
+		await writeFile(join(session, "artifacts", "01abc", "worktree-runs", "b.json"), runRecord("second", "/wt/linked"));
+		clock += 9_999;
+		assert.deepEqual((await client.manifests(["/wt/linked"])).map((entry) => entry.name), ["first"], "within the window the scan is reused");
+		assert.deepEqual((await client.manifests(["/wt/other"])).length, 0, "and serves another checkout from the same scan");
+		clock += 2;
+		assert.deepEqual((await client.manifests(["/wt/linked"])).map((entry) => entry.name).sort(), ["first", "second"], "after the window it is read again");
+		await rm(join(root, "sessions"), { recursive: true, force: true });
+		await writeFile(join(root, "sessions"), "a file, not a directory");
+		clock += 20_000;
+		await assert.rejects(() => client.manifests(["/wt/linked"]));
+		await rm(join(root, "sessions"), { force: true });
+		await sessionWith(session, { "a.json": runRecord("third", "/wt/linked") });
+		assert.deepEqual((await client.manifests(["/wt/linked"])).map((entry) => entry.name), ["third"], "a failed read is not remembered");
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
 test("processClient lists the cwd of a running process, so a shell started in a directory is found", async () => {
 	const root = await mkdtemp(join(tmpdir(), "pane-reaper-proc-"));
 	const { spawn } = await import("node:child_process");
@@ -1402,4 +1599,45 @@ test("processClient lists the cwd of a running process, so a shell started in a 
 		child.kill();
 		await rm(root, { recursive: true, force: true });
 	}
+});
+
+test("processClient lists the processes once per sweep: a second look within the window is the first one's, a later one or one after forget() is new", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pane-reaper-procmemo-"));
+	const { spawn } = await import("node:child_process");
+	const start = async () => {
+		const child = spawn("sleep", ["30"], { cwd: root, stdio: "ignore" });
+		await new Promise((resolve) => child.once("spawn", resolve));
+		return child;
+	};
+	const children = [];
+	try {
+		let clock = 1_000;
+		const client = processClient(undefined, { now: () => clock, maxAgeMs: 10_000 });
+		const first = await start();
+		children.push(first);
+		const listed = async () => new Set((await client.cwds()).map((entry) => entry.pid));
+		assert.ok((await listed()).has(first.pid));
+		const second = await start();
+		children.push(second);
+		clock += 9_999;
+		const reused = await listed();
+		assert.ok(reused.has(first.pid) && !reused.has(second.pid), "within the window the list is reused");
+		clock += 2;
+		assert.ok((await listed()).has(second.pid), "after the window it is read again");
+		first.kill();
+		await new Promise((resolve) => first.once("exit", resolve));
+		assert.ok((await listed()).has(first.pid), "reused again");
+		client.forget();
+		const fresh = await listed();
+		assert.ok(!fresh.has(first.pid) && fresh.has(second.pid), "forget() drops the list at once");
+	} finally {
+		for (const child of children) child.kill();
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("the reaper's docs name every state a held worktree can be in, and what counts as the parent's activity", async () => {
+	const doc = await readFile(new URL("../docs/how-it-works.md", import.meta.url), "utf8");
+	for (const state of ["provisioning", "provisioned", "running", "ready_for_review", "needs_help", "failed", "cancelled"]) assert.ok(doc.includes(`\`${state}\``), `how-it-works.md lists ${state}`);
+	assert.ok(doc.includes("`updatedAt`"), "the manifest's own updatedAt is part of the activity time");
 });
