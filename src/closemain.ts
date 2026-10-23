@@ -5,8 +5,8 @@ import { type Kit, REGISTER } from "./state.ts";
 
 // A tower closes the mains it opened (boss_open_main). It asks the main's own extension to quit as /boss close does, and the main decides: it checks that the
 // request is from the tower of its workspace, that a tower opened it (its pane's `sb_opened_by` token), and that nothing running would be lost, as a stash
-// checks. The ask goes over one intercom extension channel every joined session and every tower registers, `straw-boss/control`, with the "capable" audience;
-// the broker names the sender, and a request is for one session (`to`). It does not go through the GUI server, which may be stopped, and a bridge's close
+// checks. The ask goes over one intercom extension channel that towers and the mains a tower opened register, `straw-boss/control`, with the "capable" audience;
+// the sender id is the one the session reports to the broker (self-reported, a same-user trust boundary), and a request is for one session (`to`). It does not go through the GUI server, which may be stopped, and a bridge's close
 // (bridge.ts) answers only that server.
 //   {type: "close-main", to: <main session id>, reqId}                          tower → main
 //   {type: "close-main-result", to: <tower session id>, reqId, accepted, reason?}   main → tower
@@ -61,7 +61,7 @@ export function createCloseMain({ pi, cfg, s, me }: Kit, { closeSelf, check }: {
 	};
 
 	return {
-		/** Every joined session, and every tower, hears and answers asks; registering twice is a no-op. */
+		/** Every tower, and every main a tower opened, hears and answers asks; registering twice is a no-op. */
 		register() {
 			if (channel) return;
 			pi.events.emit(REGISTER, { namespace: CONTROL, ownerEligible: false, onReady: (c: NonNullable<typeof channel>) => (channel = c), onEvent });

@@ -12,7 +12,7 @@ export interface Stamp { from: Party; kind: Kind; scope: string; to: Party[]; re
 
 /** Control characters and runs of whitespace become one space, so a name cannot start a second line or a second field. */
 export const clean = (text: string) => text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").replace(/\s+/g, " ").trim();
-const quote = (value: string) => (/[\s"\]=;]/.test(value) ? `"${clean(value).replace(/"/g, "'")}"` : clean(value));
+const quote = (value: string) => (/[\s"\]=;]/.test(clean(value)) ? `"${clean(value).replace(/"/g, "'")}"` : clean(value));
 const roleOf = (p: Party) => (p.head ? "head tower" : p.role);
 /** A header names at most this many recipients, then how many more there are (a scope `all` broadcast can reach every session on the machine). */
 const MAX_NAMED = 20;

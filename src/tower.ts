@@ -25,6 +25,7 @@ export function createTower({ pi, cfg, s, guiDir, me }: Kit, { membership, prese
 		await sleep(SETTLE_MS);
 		const all = await workspaces(run);
 		const [ps, sessions] = [await panes(run, s.at.workspaceId), await s.c.listSessions()];
+		if (s.stopped) return; // a shutdown during the waits: nothing may start after it
 		const ws = all.find((w) => w.workspace_id === s.at.workspaceId);
 		const holder = ws?.tokens?.tower;
 		const rival = ps.find((p) => p.pane_id !== s.at.paneId && p.agent === "pi" && p.tokens?.sb_role === "tower");

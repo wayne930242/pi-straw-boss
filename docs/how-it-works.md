@@ -73,7 +73,7 @@ A main a tower opened (`boss_open_main`) tells the sender and the tower when its
 - its pane carries `sb_opened_by`, so a tower opened it: a main the boss opened is never closed by a tower;
 - Herdr reports it `idle` or `done`.
 
-Then it asks the main's own extension to quit as `/boss close` does, over the intercom extension channel `straw-boss/control` (the "capable" audience; the broker names the sender, and a message is for one session, `to`). It does not use the GUI server, which may be stopped, and a bridge's `close` answers only that server. Only a main opened by a tower registers the channel (right after it consumes `sb_open_main`), and so does every tower.
+Then it asks the main's own extension to quit as `/boss close` does, over the intercom extension channel `straw-boss/control` (the "capable" audience; a message is for one session, `to`; the sender id is self-reported like every pi-intercom identity, so the channel rests on the same-user trust boundary: a same-user process posing as the tower could close an idle tower-opened main, which that user can already do with `herdr pane close`). It does not use the GUI server, which may be stopped, and a bridge's `close` answers only that server. Only a main opened by a tower registers the channel (right after it consumes `sb_open_main`), and so does every tower. The opener is saved in the session, so after a `/reload`, `/new`, or `/resume` the main writes `sb_opened_by` again and registers the channel again.
 
 ```text
 {type: "close-main", to: <main session id>, reqId}                              tower → main

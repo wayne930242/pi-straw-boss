@@ -49,8 +49,8 @@ export function registerSession(kit: Kit, { briefing, presence, membership, guar
 		const mine = (await panes(run, s.at.workspaceId).catch(() => [])).find((p) => p.pane_id === s.at.paneId);
 		if (mine?.tokens?.sb_open_main !== "1") return false;
 		s.openedBy = mine.tokens.sb_opened_by;
+		pi.appendEntry(ENTRY, { openedBy: s.openedBy }); // a /reload, /new, or /resume restores it at session_start
 		await report(run, "pane", s.at.paneId, { sb_open_main: null }).catch(() => {});
-		control.register(); // the tower that opened this main may ask it to close (closemain.ts)
 		return true;
 	};
 
@@ -62,6 +62,7 @@ export function registerSession(kit: Kit, { briefing, presence, membership, guar
 		briefing.load();
 		s.saved = Object.assign({}, ...ctx.sessionManager.getBranch().flatMap((e) => (e.type === "custom" && e.customType === ENTRY ? [e.data] : [])));
 		s.isTower ||= Boolean(s.saved.tower);
+		s.openedBy ||= s.saved.openedBy;
 		const log = ctx.sessionManager;
 		stopWatching();
 		nudges = orphans({ run, file: () => log.getSessionFile(), entries: () => log.getEntries(), sessions: host.sessions, send: reach.send, type: ENTRY, remember: (key) => pi.appendEntry(ENTRY, { nudged: key }), me, tell });
@@ -81,7 +82,12 @@ export function registerSession(kit: Kit, { briefing, presence, membership, guar
 				if (!s.stopped) unwatch = cfg.watch(presence.restore); // a shutdown that came while Herdr was asked about the workspace has stopped nothing yet
 				starting = membership.joinNet().then(async () => {
 					note(`${who()} joined tab ${s.info.tab}`);
-					const taken = (await claimOpened()) && (await membership.promote(false));
+					const claimed = await claimOpened();
+					if (s.openedBy) {
+						control.register(); // the tower that opened this main may ask it to close (closemain.ts), also after a reload
+						await presence.publish(); // sb_opened_by was cleared at shutdown
+					}
+					const taken = claimed && (await membership.promote(false));
 					if (taken && !taken.promoted) tell(taken.text, "warning");
 				});
 			}

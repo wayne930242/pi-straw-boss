@@ -281,3 +281,22 @@ test("a header names the first 20 recipients and counts the rest, so a broadcast
 	assert.match(line, /to="s0 \(member\); .*; s19 \(member\); \+5 more" reply=none\]$/);
 	assert.ok(!line.includes("s20"));
 });
+
+test("an opened main stays closable by its tower after a /reload: the opener is restored from the session", async () => {
+	const { towerA, main } = await opened();
+	await main.stop("reload");
+	assert.equal(world.herdr.pane(NEW.pane).tokens.sb_opened_by, undefined, "shutdown cleared the marker");
+	const again = world.agent({ id: main.id, name: main.name, pane: NEW.pane, tab: NEW.tab, env: { STRAW_BOSS_ROLE: "main" }, entries: main.entries });
+	await again.fire("session_start", { reason: "reload" });
+	await world.quiet();
+	assert.ok(world.herdr.pane(NEW.pane).tokens.sb_opened_by, "the marker is written again");
+	assert.equal(again.regs.has("straw-boss/control"), true, "the channel is registered again");
+	world.herdr.pane(NEW.pane).agent_status = "idle";
+	await towerA.tool("boss_close_main", { main: main.id });
+	await until(() => again.stopped, "the reloaded main quit");
+});
+
+test("a name with a C1 control character is quoted by what is written, not by the raw value", () => {
+	const line = header({ from: { name: "a\u0085b", id: "x", role: "main" }, kind: "broadcast", scope: "tab", to: [], reply: false });
+	assert.match(line, /from="a b"/);
+});
