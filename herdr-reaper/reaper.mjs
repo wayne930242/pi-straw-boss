@@ -14,7 +14,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CONFIRM_MS } from "./decide.mjs";
-import { createStore, gitClient, herdrClient, loadConfig, withLock } from "./io.mjs";
+import { createStore, gitClient, herdrClient, loadConfig, managedClient, processClient, withLock } from "./io.mjs";
 import { runEvent, runPinToggle, runSweep } from "./sweep.mjs";
 
 const TICK_MS = 15_000;
@@ -30,6 +30,8 @@ const pluginId = env.HERDR_PLUGIN_ID ?? "wayne930242.straw-boss-reaper";
 const stateDir = env.HERDR_PLUGIN_STATE_DIR ?? join(env.XDG_STATE_HOME ?? join(homedir(), ".local/state"), "herdr/plugins", pluginId);
 const configDir = env.HERDR_PLUGIN_CONFIG_DIR ?? join(homedir(), ".config/herdr/plugins/config", pluginId);
 const bin = env.HERDR_BIN_PATH ?? "herdr";
+// Where pi keeps its sessions, and with them the manifests pi-herdr-agents writes for the worktrees it creates.
+const sessionsDir = join(env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi/agent"), "sessions");
 const beatFile = join(stateDir, "ticker.json");
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const log = (line) => console.log(line);
@@ -107,7 +109,7 @@ async function ticker() {
 async function main(mode) {
 	if (mode === "ticker") return ticker();
 	const config = await loadConfig(configDir);
-	const deps = { herdr: herdrClient(bin), git: gitClient(), store: createStore(stateDir), log, now: Date.now, config };
+	const deps = { herdr: herdrClient(bin), git: gitClient(), managed: managedClient(sessionsDir), processes: processClient(), store: createStore(stateDir), log, now: Date.now, config };
 	switch (mode) {
 		case "startup":
 			return ensureTicker();

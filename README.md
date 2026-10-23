@@ -36,7 +36,7 @@ Run a few agents on the same project and they start stepping on each other: two 
 - **Tidy tabs.** When a pi starts in a tab or quits out of it, the tab's panes are made equal again, so workers split off one by one don't leave a chain of halves.
 - **Stranded subagents are asked to report.** A subagent that stays open after finishing, while the pi that launched it was restarted and no longer receives its result, is asked once over intercom to send its final report there ([how it works](docs/how-it-works.md#orphaned-subagents)).
 - **A net view in Herdr's sidebar.** An optional plugin turns the Agents list into the net, towers first and each subagent under its launcher, on by default and switched by one key.
-- **A reaper for leftover worktree panes.** A second optional plugin closes the panes agents leave behind in worktree workspaces, removes the clean checkouts, and keeps the workspaces you pin.
+- **A reaper for leftover worktree panes.** A second optional plugin closes the panes agents leave behind in worktree workspaces, removes the clean checkouts nothing holds, and keeps the workspaces you pin.
 
 ## Install
 
@@ -129,6 +129,7 @@ Run `herdr server reload-config` to load the key, and `herdr plugin unlink wayne
 A second optional Herdr plugin, in [`herdr-reaper/`](herdr-reaper), cleans up after agents that ran in worktree workspaces.
 In a workspace whose worktree is a linked git worktree (whatever its name), it closes the pane of an agent that has exited once the pane's shell is idle, and never the focused pane.
 Herdr then closes the tab and the workspace, and the plugin removes the workspace's checkout if `git status` is clean and nothing else is using it (no other pane works in it, no other workspace is open on it).
+A worktree that pi-herdr-agents created is kept until its parent session removes it with `worktree_remove` (or the parent session has been silent for 72 hours, `retain_idle_hours`), and so is any checkout a process of yours has as its working directory.
 Git-ignored files (`.env`, `node_modules`, caches, local databases) do not make a checkout dirty, so they are deleted with it.
 The branch always stays, and so does a dirty checkout, with the reason in the plugin log.
 A checkout with initialized submodules is removed only when every submodule (nested ones too) has no uncommitted or untracked paths and its HEAD is contained in a remote-tracking ref (or in a ref of the main repository's own copy of the module), so no commit is lost; the reaper then runs `git submodule deinit --all`, deletes the worktree's `.git/worktrees/<id>/modules` (which git refuses to remove the worktree around), and runs a plain `git worktree remove`. Otherwise it stays and the log names the submodule and why; if a removal fails partway and leaves files git no longer tracks, the log says "half-removed" and names the directory for you to delete.

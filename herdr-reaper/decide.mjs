@@ -175,6 +175,50 @@ export function findCheckoutUser(roots, panes, workspaces, ignore = {}) {
 	return null;
 }
 
+/** How long a parent pi session may be silent before the worktrees its children left are no longer held for it. */
+export const RETAIN_IDLE_HOURS = 72;
+const HOUR_MS = 3_600_000;
+/** The `retain_idle_hours` setting in milliseconds; a value that is not a positive number falls back to the default, never to no protection. */
+export const retainIdleMs = (config = {}) => (typeof config.retain_idle_hours === "number" && Number.isFinite(config.retain_idle_hours) && config.retain_idle_hours > 0 ? config.retain_idle_hours : RETAIN_IDLE_HOURS) * HOUR_MS;
+
+/**
+ * Whether pi-herdr-agents still holds a checkout for the session that launched it. It never removes a worktree by itself: the
+ * parent session does, with `worktree_remove`, which marks the child's manifest `removed`. Until then the checkout belongs to the
+ * parent, so a manifest that names it and is not `removed` holds it while the parent session shows activity within `idleMs`
+ * (a parent that wrote nothing for that long has ended). `manifests` come from io.managedClient: `{ file, name, state, createdAt,
+ * activityAt, paths }`, or `{ file, unreadable }` for a record that names the checkout but could not be read, which holds it
+ * (fail closed). A newer `removed` manifest on the same path means the owner took the checkout away since.
+ * @returns {string | null} why the checkout stays, or null when no live parent holds it
+ */
+export function findRetainer(roots, manifests, now, idleMs) {
+	const mine = manifests.filter((entry) => entry.unreadable !== undefined || (entry.paths ?? []).some((path) => roots.includes(path)));
+	for (const entry of mine) {
+		if (entry.unreadable !== undefined) return `a pi-herdr-agents record (${entry.file}) names it but could not be read (${entry.unreadable})`;
+	}
+	for (const entry of mine) {
+		if (entry.state === "removed") continue;
+		if (mine.some((other) => other.state === "removed" && other.createdAt > entry.createdAt)) continue;
+		const idle = now - entry.activityAt;
+		const label = `pi-herdr-agents child ${entry.name ?? entry.file} (${entry.state ?? "state unknown"})`;
+		if (!Number.isFinite(idle)) return `${label} holds it, and its parent session's activity time is unknown`;
+		if (idle <= idleMs) return `${label} holds it for its parent session, last active ${Math.round((Math.max(idle, 0) / HOUR_MS) * 10) / 10}h ago; it stays until the parent runs worktree_remove or is idle for ${Math.round((idleMs / HOUR_MS) * 10) / 10}h`;
+	}
+	return null;
+}
+
+/**
+ * The first process whose cwd is the checkout or below it. `processes` are `{ pid, name, cwd }` for the user's processes anywhere on
+ * the machine, not only Herdr's panes; `ignorePids` are the idle shells of panes this run closes (a dry run).
+ * @returns {string | null}
+ */
+export function findProcessHolder(roots, processes, ignorePids = new Set()) {
+	for (const process of processes) {
+		if (ignorePids.has(process.pid) || !roots.some((root) => within(process.cwd, root))) continue;
+		return `process ${process.name ?? "unknown"} (pid ${process.pid}) is working in it (${process.cwd})`;
+	}
+	return null;
+}
+
 /**
  * Whether a checkout may be removed after its workspace closed. A dirty tree stays on disk; so does a detached HEAD no branch
  * or tag contains, because removing the checkout would be the last place those commits live.

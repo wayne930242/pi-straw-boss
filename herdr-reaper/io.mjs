@@ -1,9 +1,10 @@
 // What the reaper reaches outside itself with: its state file and locks, the herdr CLI, and git.
 import { execFile } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { mkdir, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, readlink, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
+import { getuid } from "node:process";
 import { promisify } from "node:util";
 import { applyOps, emptyState } from "./decide.mjs";
 
@@ -118,6 +119,104 @@ export async function loadConfig(dir) {
 		if (error.code === "ENOENT") return {};
 		throw new Error(`cannot read ${join(dir, "config.json")}: ${error.message}`);
 	}
+}
+
+const fileTime = (path) => stat(path).then((info) => info.mtimeMs, () => 0);
+// A missing directory is a layout pi-herdr-agents has not made, and a stray file where a session directory would be is not one;
+// anything else (permissions, a file where the sessions directory should be) is not "nothing there".
+const listDir = (path, { stray = false } = {}) => readdir(path).catch((error) => {
+	if (error.code === "ENOENT" || (stray && error.code === "ENOTDIR")) return [];
+	throw error;
+});
+
+/**
+ * pi-herdr-agents' records of the worktrees it created. Each worktree child writes a manifest to
+ * `<sessions>/<cwd>/artifacts/<parent session id>/worktree-runs/<child id>.json` (state, path, branch, the child's session file) and
+ * marks it `removed` when the parent runs `worktree_remove`. Nothing else records who owns a checkout.
+ * `manifests(roots)` returns the manifests that name one of the checkout's path spellings, each with the newest activity time of the
+ * manifest, its parent session's file (`<sessions>/<cwd>/<time>_<parent session id>.jsonl`) and the child's session file. A file
+ * that names the path but is not valid JSON comes back as `{ file, unreadable }`: it may be a manifest being written. A sessions
+ * directory that does not exist means pi-herdr-agents is not installed; any other read failure throws.
+ */
+export function managedClient(sessionsDir) {
+	return {
+		manifests: async (roots) => {
+			const needles = roots.map((root) => JSON.stringify(root).slice(1, -1));
+			const found = [];
+			for (const cwdDir of await listDir(sessionsDir)) {
+				const artifacts = join(sessionsDir, cwdDir, "artifacts");
+				for (const sessionId of await listDir(artifacts, { stray: true })) {
+					const runs = join(artifacts, sessionId, "worktree-runs");
+					for (const name of (await listDir(runs, { stray: true })).filter((entry) => entry.endsWith(".json"))) {
+						const file = join(runs, name);
+						const text = await readFile(file, "utf8");
+						if (!needles.some((needle) => text.includes(needle))) continue;
+						let record;
+						try {
+							record = JSON.parse(text);
+						} catch (error) {
+							found.push({ file, unreadable: error.message });
+							continue;
+						}
+						if (record === null || typeof record !== "object" || record.owner !== "pi-herdr-subagents") continue;
+						const parent = (await listDir(join(sessionsDir, cwdDir))).filter((entry) => entry.endsWith(`_${sessionId}.jsonl`)).map((entry) => join(sessionsDir, cwdDir, entry));
+						const times = await Promise.all([file, ...parent, ...(typeof record.sessionFile === "string" ? [record.sessionFile] : [])].map(fileTime));
+						const spellings = [record.path, ...(typeof record.path === "string" && existsSync(record.path) ? [realpathSync.native(record.path)] : [])].filter((path) => typeof path === "string");
+						found.push({ file, name: record.name, state: record.state, createdAt: record.createdAt, activityAt: Math.max(...times, Number(record.updatedAt) || 0), paths: spellings });
+					}
+				}
+			}
+			return found;
+		},
+	};
+}
+
+/**
+ * Every process of the user with the directory it works in, from anywhere on the machine, not only Herdr's panes: `lsof` on macOS,
+ * `/proc` on Linux. Throws when the list cannot be had (the caller then keeps the checkout); processes of other users are not listed.
+ */
+export function processClient(platform = process.platform) {
+	const uid = getuid?.();
+	return {
+		cwds: async () => {
+			if (uid === undefined) throw new Error("the user id is unavailable");
+			if (platform === "darwin") {
+				let stdout;
+				try {
+					({ stdout } = await run("lsof", ["-n", "-P", "-a", "-u", String(uid), "-d", "cwd", "-Fpcn"], { maxBuffer: 64 * 1024 * 1024, timeout: GIT_TIMEOUT_MS }));
+				} catch (error) {
+					throw new Error(`lsof failed to list processes (${error.killed ? "no answer in time" : `exit ${error.code ?? "unknown"}`})`);
+				}
+				const listed = [];
+				for (const record of stdout.split(/^p/m).slice(1)) {
+					const [pid, ...fields] = record.split("\n");
+					const cwd = fields.find((line) => line.startsWith("n"))?.slice(1);
+					if (!/^\d+$/.test(pid)) throw new Error("lsof printed a record this reaper cannot read");
+					// A process lsof shows no cwd for (a kernel task, one whose directory was deleted) holds no directory it can name.
+					if (!cwd?.startsWith("/")) continue;
+					listed.push({ pid: Number(pid), name: fields.find((line) => line.startsWith("c"))?.slice(1), cwd });
+				}
+				if (listed.length === 0) throw new Error("lsof listed no processes");
+				return listed;
+			}
+			if (platform === "linux") {
+				const listed = [];
+				for (const pid of (await readdir("/proc")).filter((entry) => /^\d+$/.test(entry))) {
+					try {
+						if ((await stat(`/proc/${pid}`)).uid !== uid) continue;
+						const name = (await readFile(`/proc/${pid}/comm`, "utf8")).trim();
+						listed.push({ pid: Number(pid), name, cwd: await readlink(`/proc/${pid}/cwd`) });
+					} catch (error) {
+						// A process that exited while the list was read is not a holder; one that cannot be read is not known to be harmless.
+						if (error.code !== "ENOENT" && error.code !== "ESRCH") throw new Error(`process ${pid} could not be inspected (${error.code ?? error.message})`);
+					}
+				}
+				if (listed.length === 0) throw new Error("/proc listed no processes");
+				return listed;
+			}
+			throw new Error(`process listing is not supported on ${platform}`);
+		},
+	};
 }
 
 /** The herdr CLI: every call prints one JSON line whose `result` is returned; an `error` or a failed exit throws. */

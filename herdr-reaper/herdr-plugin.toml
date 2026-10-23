@@ -1,8 +1,8 @@
 id = "wayne930242.straw-boss-reaper"
 name = "Straw Boss Reaper"
-version = "0.2.1"
+version = "0.3.0"
 min_herdr_version = "0.9.3"
-description = "Close the panes agents leave behind in linked-worktree workspaces, remove the clean checkouts, and pin the workspaces to keep"
+description = "Close the panes agents leave behind in linked-worktree workspaces, remove the clean checkouts nothing holds, and pin the workspaces to keep"
 platforms = ["macos", "linux"]
 
 # Starts the ticker, the process that runs a sweep every ten minutes. The event hooks start it too, so a plugin linked or installed

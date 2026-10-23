@@ -36,7 +36,7 @@
 - **分頁保持整齊。** pi 在分頁裡啟動或結束時，分頁裡的 pane 會重新平均分配，一個一個切出來的 worker 就不會留下一長串對半切的窄 pane。
 - **斷線的子智慧體會被提醒回報。** 子智慧體做完後還開著，但開出它的 pi 已經重開、收不到它的結果時，它會收到一則 intercom，請它把最終報告送回去，只會送一次（[運作方式](docs/how-it-works.md#orphaned-subagents)）。
 - **Herdr 側邊欄的網路檢視。** 一個選用的 plugin 會把 Agents 清單排成網的樣子：塔台在前，每個子智慧體排在開出它的人底下。預設開啟，按一個鍵就能切換。
-- **清理閒置的 worktree pane。** 另一個選用的 plugin 會關掉智慧體在 worktree 工作區留下的 pane，移除乾淨的 checkout，並保留你釘選的工作區。
+- **清理閒置的 worktree pane。** 另一個選用的 plugin 會關掉智慧體在 worktree 工作區留下的 pane，移除乾淨且沒有東西在用的 checkout，並保留你釘選的工作區。
 
 ## 安裝
 
@@ -128,6 +128,7 @@ description = "toggle the straw net view"
 另一個選用的 Herdr plugin 放在 [`herdr-reaper/`](herdr-reaper)，專門清理 worktree 工作區裡智慧體跑完留下的東西。
 只處理 worktree 是 linked git worktree 的工作區（不管它叫什麼名字）：智慧體結束、pane 的 shell 閒置之後，就關掉這個 pane，但絕不關掉有焦點的 pane。
 Herdr 接著會關掉分頁和工作區，plugin 再在 `git status` 乾淨、而且沒有別的東西還在用它（沒有別的 pane 在裡面工作，也沒有別的工作區開在同一個 checkout）時移除這個工作區的 checkout。
+pi-herdr-agents 建立的 worktree 會留著，直到它的父 session 用 `worktree_remove` 移除，或父 session 已靜默 72 小時（`retain_idle_hours`）；任何有你的行程以它為工作目錄的 checkout 也一樣不動。
 git 忽略的檔案（`.env`、`node_modules`、快取、本機資料庫）不算變更，所以會跟著 checkout 一起被刪掉。
 分支一律保留；有未提交變更的 checkout 也留著，原因寫在 plugin 日誌裡。
 含已初始化 submodule 的 checkout，只有在每個 submodule（含巢狀的）都沒有未提交或未追蹤的檔案，且 HEAD 已被某個 remote-tracking ref（或主儲存庫自己那份 module 的 ref）包含、不會遺失任何 commit 時才會移除：reaper 先跑 `git submodule deinit --all`，刪掉 worktree 的 `.git/worktrees/<id>/modules`（有它在，git 不肯移除 worktree），再跑不帶 `--force` 的 `git worktree remove`。不符合就保留，日誌會寫出是哪個 submodule、為什麼；若移除做到一半失敗、留下 git 已不再追蹤的檔案，日誌會寫「half-removed」並指出該目錄，由你自己刪除。

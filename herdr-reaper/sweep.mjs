@@ -2,7 +2,7 @@
 // so tests can run them against fakes; reaper.mjs wires the real ones.
 import {
 	CONFIRM_MS, PIN_GLYPH, PIN_TOKEN, SWEEP_INTERVAL_MS,
-	applyOps, del, decideRemoval, findCheckoutUser, forgetWorkspace, inScope, isPinned, migratePins, noteParents, noteWorkspaces, onRename, pinKey, planParents, planSweep, prunePanes, prunePins, set, shellIsIdle, togglePin,
+	applyOps, del, decideRemoval, findCheckoutUser, findProcessHolder, findRetainer, forgetWorkspace, inScope, isPinned, migratePins, noteParents, noteWorkspaces, onRename, pinKey, planParents, planSweep, prunePanes, prunePins, retainIdleMs, set, shellIsIdle, togglePin,
 } from "./decide.mjs";
 import { withLock } from "./io.mjs";
 
@@ -45,16 +45,47 @@ async function checkoutFacts(deps, checkout, pinned) {
 async function checkoutUser(checkout, deps, ignore) {
 	try {
 		const [panes, workspaces] = await Promise.all([deps.herdr.listPanes(), deps.herdr.listWorkspaces()]);
-		const roots = [...new Set([checkout, deps.git.realpath?.(checkout) ?? checkout])];
-		return findCheckoutUser(roots, panes, workspaces, ignore);
+		return findCheckoutUser(spellings(checkout, deps), panes, workspaces, ignore);
 	} catch (error) {
 		return `Herdr could not be listed again (${error.message.split("\n")[0]})`;
 	}
 }
 
+const spellings = (checkout, deps) => [...new Set([checkout, deps.git.realpath?.(checkout) ?? checkout])];
+
+/**
+ * Whether pi-herdr-agents still holds the checkout for the session that launched it (see findRetainer). Fails closed: records that
+ * cannot be read, or a reaper wired without the reader, keep the checkout.
+ */
+async function checkoutRetainer(checkout, deps) {
+	try {
+		return findRetainer(spellings(checkout, deps), await deps.managed.manifests(spellings(checkout, deps)), deps.now(), retainIdleMs(deps.config));
+	} catch (error) {
+		return `pi-herdr-agents' records could not be read (${error.message.split("\n")[0]})`;
+	}
+}
+
+/**
+ * Looks for any process of the user, not only a Herdr pane, working in the checkout. The panes `ignore` names are being closed
+ * (a dry run), so their idle shells do not count. Fails closed: a process list that cannot be had keeps the checkout.
+ */
+async function checkoutHolder(checkout, deps, ignore) {
+	try {
+		const ignorePids = new Set();
+		for (const paneId of ignore.panes ?? []) {
+			const info = await deps.herdr.processInfo(paneId);
+			if (typeof info?.shell_pid === "number") ignorePids.add(info.shell_pid);
+		}
+		return findProcessHolder(spellings(checkout, deps), await deps.processes.cwds(), ignorePids);
+	} catch (error) {
+		return `the processes on this machine could not be listed (${error.message.split("\n")[0]})`;
+	}
+}
+
 /**
  * Removes a closed workspace's checkout when it is clean, and says why when it is not. The branch is never touched.
- * @returns {Promise<"removed" | "in-use" | "kept">} "in-use" means a pane or workspace still uses a clean checkout: worth retrying later
+ * @returns {Promise<"removed" | "in-use" | "kept">} "in-use" means something still holds a clean checkout, worth retrying later: a pane, a workspace
+ * or any process working in it, or a pi-herdr-agents child whose parent session has not removed it
  */
 async function reapCheckout(entry, deps, dryRun, ignore = {}) {
 	// Read the pins again: the user may have pinned the workspace while this sweep ran.
@@ -64,7 +95,8 @@ async function reapCheckout(entry, deps, dryRun, ignore = {}) {
 		deps.log(`${dryRun ? "would keep" : "keep"} checkout ${entry.checkout}: ${decision.reason}${decision.gone ? "" : ", branch kept"}`);
 		return "kept";
 	}
-	const user = await checkoutUser(entry.checkout, deps, ignore);
+	// Each of these is a reason to wait, not to give up: the pending entry is retried every sweep until it clears.
+	const user = (await checkoutRetainer(entry.checkout, deps)) ?? (await checkoutUser(entry.checkout, deps, ignore)) ?? (await checkoutHolder(entry.checkout, deps, ignore));
 	if (user) {
 		deps.log(`${dryRun ? "would keep" : "keep"} checkout ${entry.checkout}: ${user}, branch kept`);
 		return "in-use";

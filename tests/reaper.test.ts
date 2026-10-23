@@ -8,9 +8,9 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
 	CONFIRM_MS, PIN_GLYPH, PIN_TOKEN, SWEEP_INTERVAL_MS,
-	applyOps, decideRemoval, emptyState, findCheckoutUser, isPinned, migratePins, noteParents, noteWorkspaces, onRename, planSweep, prunePanes, prunePins, set, shellIsIdle, togglePin,
+	applyOps, decideRemoval, emptyState, findCheckoutUser, findProcessHolder, findRetainer, isPinned, migratePins, noteParents, noteWorkspaces, onRename, planSweep, prunePanes, prunePins, set, shellIsIdle, togglePin,
 } from "../herdr-reaper/decide.mjs";
-import { createStore, gitClient, gitReason, withLock } from "../herdr-reaper/io.mjs";
+import { createStore, gitClient, gitReason, managedClient, processClient, withLock } from "../herdr-reaper/io.mjs";
 import { SOURCE, runEvent, runPinToggle, runSweep } from "../herdr-reaper/sweep.mjs";
 
 const NOW = 1_000_000_000;
@@ -26,7 +26,8 @@ const tempDir = () => mkdtemp(join(tmpdir(), "pane-reaper-"));
 
 // Sweeps against a fake Herdr and git
 function world({ workspaces, panes, infos = {}, checkouts = {} }) {
-	const w = { workspaces: structuredClone(workspaces), panes: structuredClone(panes), calls: [], removed: [], logs: [], tokens: [] };
+	// `manifests` are pi-herdr-agents' records of managed worktrees and `holders` the processes whose cwd is somewhere; both start empty.
+	const w = { workspaces: structuredClone(workspaces), panes: structuredClone(panes), calls: [], removed: [], logs: [], tokens: [], manifests: [], holders: [] };
 	const find = (id) => w.workspaces.find((candidate) => candidate.workspace_id === id);
 	w.herdr = {
 		listWorkspaces: async () => structuredClone(w.workspaces),
@@ -61,7 +62,9 @@ function world({ workspaces, panes, infos = {}, checkouts = {} }) {
 			delete checkouts[path];
 		},
 	};
-	w.deps = (store, now = () => NOW) => ({ herdr: w.herdr, git: w.git, store, log: (line) => w.logs.push(line), now, config: {} });
+	w.managed = { manifests: async () => structuredClone(w.manifests) };
+	w.processes = { cwds: async () => structuredClone(w.holders) };
+	w.deps = (store, now = () => NOW, config = {}) => ({ herdr: w.herdr, git: w.git, managed: w.managed, processes: w.processes, store, log: (line) => w.logs.push(line), now, config });
 	return w;
 }
 
@@ -1171,6 +1174,232 @@ test("Real git: a worktree with a changed, unpushed or nested-changed submodule 
 		assert.ok(w.logs.includes(`keep checkout ${nested}: submodule community has 1 uncommitted paths, branch kept`), w.logs.join("\n"));
 		for (const name of ["changed", "local", "nested"]) assert.ok(subGit(repo, "branch", "--list", name).includes(name));
 	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+// Guards: what the reaper must not remove although the checkout is clean and its workspace is gone.
+const HOUR = 3_600_000;
+const manifest = (extra = {}) => ({ file: "/s/a/artifacts/p/worktree-runs/c.json", name: "mp3679-finish", state: "needs_help", createdAt: NOW - 3 * HOUR, activityAt: NOW - HOUR, paths: ["/wt/linked"], ...extra });
+
+test("findRetainer: a checkout pi-herdr-agents has not released stays while its parent session is active", () => {
+	const roots = ["/wt/linked"];
+	assert.equal(findRetainer(roots, [], NOW, 72 * HOUR), null, "no record: a checkout Herdr made for the user");
+	assert.equal(findRetainer(roots, [manifest({ paths: ["/wt/other"] })], NOW, 72 * HOUR), null, "a record of another checkout");
+	for (const state of ["provisioning", "provisioned", "running", "ready_for_review", "needs_help", "failed", "cancelled"]) {
+		assert.match(findRetainer(roots, [manifest({ state })], NOW, 72 * HOUR), new RegExp(`mp3679-finish.*${state}|${state}.*mp3679-finish`), `${state} is not released`);
+	}
+	assert.equal(findRetainer(roots, [manifest({ state: "removed" })], NOW, 72 * HOUR), null, "worktree_remove marked it removed");
+	assert.equal(findRetainer(["/private/wt/linked", "/wt/linked"], [manifest({ paths: ["/private/wt/linked"] })], NOW, 72 * HOUR) === null, false, "any spelling of the path matches");
+	assert.equal(findRetainer(roots, [manifest({ activityAt: NOW - 72 * HOUR - 1 })], NOW, 72 * HOUR), null, "a parent session idle past the limit has ended");
+	assert.notEqual(findRetainer(roots, [manifest({ activityAt: NOW - 72 * HOUR })], NOW, 72 * HOUR), null, "exactly at the limit still holds");
+	assert.equal(findRetainer(roots, [manifest({ state: "ready_for_review", createdAt: NOW - 5 * HOUR }), manifest({ state: "removed", createdAt: NOW - 2 * HOUR })], NOW, 72 * HOUR), null, "a newer record of a removal supersedes an older run on the path");
+	assert.notEqual(findRetainer(roots, [manifest({ state: "removed", createdAt: NOW - 5 * HOUR }), manifest({ state: "running", createdAt: NOW - 2 * HOUR })], NOW, 72 * HOUR), null, "a path reused after a removal is held again");
+	assert.match(findRetainer(roots, [{ file: "/s/bad.json", unreadable: "Unexpected end of JSON input" }], NOW, 72 * HOUR), /bad\.json.*could not be read/, "a record that names the path but cannot be read fails closed");
+	assert.notEqual(findRetainer(roots, [manifest({ activityAt: undefined })], NOW, 72 * HOUR), null, "no usable activity time fails closed");
+});
+
+test("findProcessHolder: any process with its cwd at or below the checkout", () => {
+	const roots = ["/private/wt/x", "/wt/x"];
+	assert.equal(findProcessHolder(roots, [{ pid: 1, name: "zsh", cwd: "/repo" }]), null);
+	assert.match(findProcessHolder(roots, [{ pid: 7, name: "vite", cwd: "/private/wt/x/app" }]), /vite \(pid 7\)/);
+	assert.match(findProcessHolder(roots, [{ pid: 7, name: "pi", cwd: "/wt/x" }]), /pid 7/);
+	assert.equal(findProcessHolder(roots, [{ pid: 7, name: "pi", cwd: "/wt/xyz" }]), null, "a sibling with the same prefix is not inside");
+	assert.equal(findProcessHolder(roots, [{ pid: 7, name: "zsh", cwd: "/wt/x" }], new Set([7])), null, "the shell of a pane this run closes is ignored");
+});
+
+// A pi-herdr-agents child leaves its worktree's root shell in the workspace; the reaper closed it and then removed the checkout.
+const retainedWorld = (extra = {}) => {
+	const w = world({ workspaces: [workspace("a", "linked")], panes: [pane("a:p1", "a")], checkouts: { "/wt/linked": {} }, ...extra });
+	w.manifests = [manifest()];
+	return w;
+};
+
+test("Guard 1: a managed worktree its parent has not removed survives the close of its last pane, and is freed once the parent session is idle", async () => {
+	const dir = await tempDir();
+	try {
+		const w = retainedWorld();
+		const store = createStore(dir);
+		await runSweep(w.deps(store), { confirmMs: 0, dryRun: true });
+		assert.ok(w.logs.some((line) => line.startsWith("would keep checkout /wt/linked") && line.includes("pi-herdr-agents") && line.includes("mp3679-finish")), w.logs.join("\n"));
+		w.logs.length = 0;
+		await runSweep(w.deps(store), { confirmMs: 0 });
+		assert.deepEqual(w.calls, ["close a:p1"], "the idle shell still closes");
+		assert.deepEqual(w.removed, [], "but the checkout stays");
+		assert.ok(w.logs.some((line) => line.startsWith("keep checkout /wt/linked") && line.includes("pi-herdr-agents") && line.endsWith("branch kept")), w.logs.join("\n"));
+		assert.equal((await store.read()).pending["/wt/linked"]?.inUse, true, "it waits as pending, with no give-up");
+		// Days later, with the parent still active, nothing changes.
+		w.manifests = [manifest({ activityAt: NOW + 70 * HOUR })];
+		await runSweep(w.deps(store, () => NOW + 71 * HOUR), { confirmMs: 0 });
+		assert.deepEqual(w.removed, []);
+		// The parent session ended: no activity for longer than the limit.
+		await runSweep(w.deps(store, () => NOW + 150 * HOUR), { confirmMs: 0 });
+		assert.deepEqual(w.removed, ["/wt/linked"], w.logs.join("\n"));
+		assert.deepEqual((await store.read()).pending, {});
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("Guard 1: worktree_remove marks the record removed, and a retain_idle_hours setting moves the limit", async () => {
+	const dir = await tempDir();
+	try {
+		const removed = retainedWorld();
+		removed.manifests = [manifest({ state: "removed" })];
+		await runSweep(removed.deps(createStore(dir)), { confirmMs: 0 });
+		assert.deepEqual(removed.removed, ["/wt/linked"], "a released checkout is the reaper's again");
+		const short = retainedWorld();
+		short.manifests = [manifest({ activityAt: NOW - 2 * HOUR })];
+		await runSweep(short.deps(createStore(await tempDir()), () => NOW, { retain_idle_hours: 1 }), { confirmMs: 0 });
+		assert.deepEqual(short.removed, ["/wt/linked"], "idle 2h against a 1h limit");
+		const invalid = retainedWorld();
+		invalid.manifests = [manifest({ activityAt: NOW - 2 * HOUR })];
+		await runSweep(invalid.deps(createStore(await tempDir()), () => NOW, { retain_idle_hours: -5 }), { confirmMs: 0 });
+		assert.deepEqual(invalid.removed, [], "a setting that makes no sense falls back to the default limit, not to no protection");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("Guard 1: unreadable pi-herdr-agents records keep the checkout", async () => {
+	const dir = await tempDir();
+	try {
+		const w = retainedWorld();
+		w.managed.manifests = async () => {
+			throw new Error("EACCES: permission denied, scandir sessions");
+		};
+		await runSweep(w.deps(createStore(dir)), { confirmMs: 0 });
+		assert.deepEqual(w.removed, []);
+		assert.ok(w.logs.some((line) => line.startsWith("keep checkout /wt/linked") && line.includes("could not be read") && line.includes("EACCES")), w.logs.join("\n"));
+		const missing = retainedWorld();
+		missing.manifests = [];
+		const deps = missing.deps(createStore(await tempDir()));
+		delete deps.managed;
+		await runSweep(deps, { confirmMs: 0 });
+		assert.deepEqual(missing.removed, [], "a reaper wired without the reader keeps everything");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("Guard 2: a process anywhere on the machine with its cwd in the checkout keeps it, in normal, pending and dry runs", async () => {
+	const dir = await tempDir();
+	try {
+		const w = world({ workspaces: [workspace("a", "linked")], panes: [pane("a:p1", "a")], checkouts: { "/wt/linked": {} } });
+		w.holders = [{ pid: 4242, name: "node", cwd: "/wt/linked/src" }, { pid: 1, name: "zsh", cwd: "/repo" }];
+		const store = createStore(dir);
+		await runSweep(w.deps(store), { confirmMs: 0, dryRun: true });
+		assert.ok(w.logs.some((line) => line.startsWith("would keep checkout /wt/linked") && line.includes("node (pid 4242)")), w.logs.join("\n"));
+		await runSweep(w.deps(store), { confirmMs: 0 });
+		assert.deepEqual(w.removed, []);
+		assert.ok(w.logs.some((line) => line.startsWith("keep checkout /wt/linked") && line.includes("node (pid 4242)") && line.endsWith("branch kept")), w.logs.join("\n"));
+		assert.equal((await store.read()).pending["/wt/linked"]?.inUse, true);
+		w.holders = [{ pid: 1, name: "zsh", cwd: "/repo" }];
+		await runSweep(w.deps(store, () => NOW + 60_000), { confirmMs: 0 });
+		assert.deepEqual(w.removed, ["/wt/linked"], "removed once the process is gone");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("Guard 2: the idle shell of a pane a dry run would close does not hold the checkout, and an unreadable process list keeps it", async () => {
+	const dir = await tempDir();
+	try {
+		const w = world({ workspaces: [workspace("a", "linked")], panes: [pane("a:p1", "a")], checkouts: { "/wt/linked": {} } });
+		w.holders = [{ pid: 10, name: "zsh", cwd: "/wt/linked" }];
+		await runSweep(w.deps(createStore(dir)), { confirmMs: 0, dryRun: true });
+		assert.ok(w.logs.some((line) => line.startsWith("would remove checkout /wt/linked")), w.logs.join("\n"));
+		const blind = world({ workspaces: [workspace("a", "linked")], panes: [pane("a:p1", "a")], checkouts: { "/wt/linked": {} } });
+		blind.processes.cwds = async () => {
+			throw new Error("lsof failed to enumerate processes");
+		};
+		await runSweep(blind.deps(createStore(await tempDir())), { confirmMs: 0 });
+		assert.deepEqual(blind.removed, []);
+		assert.ok(blind.logs.some((line) => line.startsWith("keep checkout /wt/linked") && line.includes("lsof failed")), blind.logs.join("\n"));
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("Guard 3: uncommitted and untracked files keep the checkout, ignored files do not show", async () => {
+	const dir = await tempDir();
+	try {
+		const w = world({
+			workspaces: [workspace("a", "edited"), workspace("b", "untracked")],
+			panes: [pane("a:p1", "a"), pane("b:p1", "b")],
+			checkouts: { "/wt/edited": { dirty: " M src/a.ts\n" }, "/wt/untracked": { dirty: "?? notes.md\n" } },
+		});
+		await runSweep(w.deps(createStore(dir)), { confirmMs: 0 });
+		assert.deepEqual(w.removed, []);
+		assert.ok(w.logs.some((line) => line.startsWith("keep checkout /wt/untracked: uncommitted changes (1 paths)")), w.logs.join("\n"));
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("Guard 5: closing the last pane of a managed worktree's workspace does not remove its checkout; a Herdr-made worktree is still reaped", async () => {
+	const dir = await tempDir();
+	try {
+		const w = world({ workspaces: [workspace("a", "managed"), workspace("b", "plain")], panes: [pane("a:p1", "a"), pane("b:p1", "b")], checkouts: { "/wt/managed": {}, "/wt/plain": {} } });
+		w.manifests = [manifest({ paths: ["/wt/managed"], state: "ready_for_review" })];
+		await runSweep(w.deps(createStore(dir)), { confirmMs: 0 });
+		assert.deepEqual(w.calls.sort(), ["close a:p1", "close b:p1"]);
+		assert.deepEqual(w.removed, ["/wt/plain"]);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+// The readers that feed the guards, against real files and a real process.
+test("managedClient reads pi-herdr-agents' manifests below the sessions directory", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pane-reaper-sessions-"));
+	try {
+		const session = join(root, "--proj--");
+		const runs = join(session, "artifacts", "01abc", "worktree-runs");
+		await mkdir(runs, { recursive: true });
+		const child = join(root, "child.jsonl");
+		await writeFile(child, "{}\n");
+		await utimes(child, new Date(NOW - 5 * HOUR), new Date(NOW - 5 * HOUR));
+		const write = (name, value) => writeFile(join(runs, name), typeof value === "string" ? value : JSON.stringify(value));
+		await write("one.json", { version: 1, kind: "worktree-run", owner: "pi-herdr-subagents", state: "ready_for_review", name: "kid", createdAt: 5, updatedAt: NOW - 9 * HOUR, path: "/wt/linked", sessionFile: child });
+		await utimes(join(runs, "one.json"), new Date(NOW - 9 * HOUR), new Date(NOW - 9 * HOUR));
+		await write("two.json", { version: 1, kind: "worktree-run", owner: "pi-herdr-subagents", state: "removed", name: "old", createdAt: 1, updatedAt: 2, path: "/wt/other" });
+		await write("torn.json", '{"state": "running", "path": "/wt/linked"');
+		await write("noise.json", "not json at all");
+		const parent = join(session, "2026-10-23T00-00-00-000Z_01abc.jsonl");
+		await writeFile(parent, "{}\n");
+		await utimes(parent, new Date(NOW - 2 * HOUR), new Date(NOW - 2 * HOUR));
+		const client = managedClient(root);
+		const found = await client.manifests(["/wt/linked"]);
+		assert.deepEqual(found.map((entry) => entry.file.split("/").at(-1)).sort(), ["one.json", "torn.json"], "only records that name the checkout, torn ones included");
+		const one = found.find((entry) => entry.file.endsWith("one.json"));
+		assert.equal(one.state, "ready_for_review");
+		assert.equal(one.name, "kid");
+		assert.deepEqual(one.paths, ["/wt/linked"]);
+		assert.equal(one.activityAt, NOW - 2 * HOUR, "the newest of the record, the parent session file and the child session file");
+		assert.match(found.find((entry) => entry.file.endsWith("torn.json")).unreadable, /JSON/);
+		assert.deepEqual(await managedClient(join(root, "absent")).manifests(["/wt/linked"]), [], "no sessions directory: pi-herdr-agents is not installed");
+		await assert.rejects(() => managedClient(join(root, "--proj--", "2026-10-23T00-00-00-000Z_01abc.jsonl")).manifests(["/wt/linked"]), "a sessions path that is not a directory is an error");
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("processClient lists the cwd of a running process, so a shell started in a directory is found", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pane-reaper-proc-"));
+	const { spawn } = await import("node:child_process");
+	const { realpathSync } = await import("node:fs");
+	const child = spawn("sleep", ["30"], { cwd: root, stdio: "ignore" });
+	try {
+		await new Promise((resolve) => child.once("spawn", resolve));
+		const listed = await processClient().cwds();
+		const mine = listed.find((entry) => entry.pid === child.pid);
+		assert.ok(mine, "the child is listed");
+		assert.equal(mine.cwd, realpathSync(root));
+		const holder = findProcessHolder([root, realpathSync(root)], listed);
+		assert.match(holder, new RegExp(`pid ${child.pid}`));
+	} finally {
+		child.kill();
 		await rm(root, { recursive: true, force: true });
 	}
 });
