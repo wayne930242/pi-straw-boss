@@ -1,6 +1,6 @@
 import { createConnection, type Socket } from "node:net";
 import { StringDecoder } from "node:string_decoder";
-import { herdrSocket } from "./herdr.ts";
+import { herdrSocket, localEndpoint } from "./endpoint.ts";
 
 /** Starts watching the Herdr server; `onTakeover` runs each time a server answers again after the one watched went away. Returns the stop function. */
 export type HerdrWatch = (onTakeover: () => void) => () => void;
@@ -27,7 +27,7 @@ export const herdrWatch = (socketPath = herdrSocket(), retryMs = RETRY_MS): Herd
 			current.destroy();
 			if (!stopped) timer = setTimeout(attempt, retryMs[Math.min(retries++, retryMs.length - 1)]).unref();
 		};
-		const current = (socket = createConnection(socketPath).setTimeout(ACK_MS));
+		const current = (socket = createConnection(localEndpoint(socketPath)).setTimeout(ACK_MS));
 		current.unref();
 		current.on("connect", () => current.write(`${JSON.stringify({ id: `straw-boss-watch-${Date.now()}`, method: "events.subscribe", params: { subscriptions: [{ type: "workspace.renamed" }] } })}\n`));
 		current.on("data", (chunk) => {
@@ -71,7 +71,7 @@ export const herdrEvents = (socketPath = herdrSocket(), retryMs = RETRY_MS): Her
 			current.destroy();
 			if (!stopped) timer = setTimeout(attempt, retryMs[Math.min(retries++, retryMs.length - 1)]).unref();
 		};
-		const current = (socket = createConnection(socketPath).setTimeout(ACK_MS));
+		const current = (socket = createConnection(localEndpoint(socketPath)).setTimeout(ACK_MS));
 		current.unref();
 		current.on("connect", () => current.write(`${JSON.stringify({ id: `straw-boss-events-${Date.now()}`, method: "events.subscribe", params: { subscriptions: types.map((type) => ({ type })) } })}\n`));
 		current.on("data", (chunk) => {

@@ -282,12 +282,14 @@ export function managedClient(dirs, { log = () => {}, now = Date.now, maxAgeMs =
 
 /**
  * Every process of the user with the directory it works in, from anywhere on the machine, not only Herdr's panes: `lsof` on macOS,
- * `/proc` on Linux. Throws when the list cannot be had (the caller then keeps the checkout); processes of other users are not listed.
+ * `/proc` on Linux. Throws when the list cannot be had (the caller then keeps the checkout), and always on Windows; processes of other users are not listed.
  * One list is reused for `maxAgeMs`, so a sweep over many checkouts lists the processes once.
  */
 export function processClient(platform = process.platform, { now = Date.now, maxAgeMs = SNAPSHOT_MS } = {}) {
 	const uid = getuid?.();
 	const cwds = remembered(async () => {
+		// Windows offers no way to read another process's working directory, so a checkout cannot be shown to be unused, and none is removed there.
+		if (platform === "win32") throw new Error("Windows cannot tell which processes work in a checkout, so the reaper keeps every checkout there");
 		if (uid === undefined) throw new Error("the user id is unavailable");
 		if (platform === "darwin") {
 			let stdout;

@@ -1,17 +1,32 @@
 id = "wayne930242.straw-boss"
 name = "Straw Boss"
-version = "0.2.0"
+version = "0.3.0"
 min_herdr_version = "0.9.3"
 description = "Turn the sidebar Agents list into a straw net view when Herdr starts, and toggle it by key: towers first, then main agents, then members"
-# agent.view.set is a socket method, and the script reaches it over a Unix socket.
-platforms = ["macos", "linux"]
+# agent.view.set is a socket method, which the CLI cannot send: the script reaches it over Herdr's Unix socket, or its named pipe on Windows.
+platforms = ["macos", "linux", "windows"]
 
 # Runs once after the server restores its session, and exits: the net view is on by default.
+# On macOS and Linux through run.sh, which finds node when a Herdr started from an app has a bare PATH; Windows has no bash, and Herdr finds node on PATH there.
 [[startup]]
+platforms = ["macos", "linux"]
 command = ["/bin/bash", "run.sh", "net-view.mjs", "startup"]
 
+[[startup]]
+platforms = ["windows"]
+command = ["node", "net-view.mjs", "startup"]
+
+# Action ids are unique across platforms, so the Windows command is its own action: bind `wayne930242.straw-boss.net-windows` there.
 [[actions]]
 id = "net"
 title = "Toggle the straw net view"
 contexts = ["global"]
+platforms = ["macos", "linux"]
 command = ["/bin/bash", "run.sh", "net-view.mjs"]
+
+[[actions]]
+id = "net-windows"
+title = "Toggle the straw net view"
+contexts = ["global"]
+platforms = ["windows"]
+command = ["node", "net-view.mjs"]

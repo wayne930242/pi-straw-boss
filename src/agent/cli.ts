@@ -66,7 +66,7 @@ const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 const detached = ({ command, args, env, cwd, log }: SpawnSpec) => {
 	try { if (statSync(log).size > LOG_MAX) truncateSync(log); } catch { /* no log yet */ }
 	const fd = openSync(log, "a", 0o600);
-	const child = spawnProcess(command, args, { detached: true, stdio: ["ignore", fd, fd], env, cwd });
+	const child = spawnProcess(command, args, { detached: true, stdio: ["ignore", fd, fd], env, cwd, windowsHide: true });
 	closeSync(fd);
 	child.unref();
 	return { exited: new Promise<number | null>((resolve) => child.once("exit", (code) => resolve(code))) };

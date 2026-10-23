@@ -252,9 +252,12 @@ test("the manifest declares the startup hook and the action, the minimum Herdr v
 	const manifest = readFileSync(join(PLUGIN, "herdr-plugin.toml"), "utf8");
 	assert.match(manifest, /^id = "wayne930242\.straw-boss"$/m, "the view's source is plugin:<this id>");
 	assert.match(manifest, /^min_herdr_version = "0\.9\.3"$/m);
-	assert.match(manifest, /\[\[startup\]\]\ncommand = \["\/bin\/bash", "run\.sh", "net-view\.mjs", "startup"\]/);
-	assert.equal(manifest.match(/\[\[startup\]\]/g).length, 1, "one hook, and it is the one-shot startup of net-view.mjs");
-	assert.match(manifest, /\[\[actions\]\]\nid = "net"\ntitle = .*\ncontexts = \["global"\]\ncommand = \["\/bin\/bash", "run\.sh", "net-view\.mjs"\]/);
+	assert.match(manifest, /^platforms = \["macos", "linux", "windows"\]$/m);
+	assert.match(manifest, /\[\[startup\]\]\nplatforms = \["macos", "linux"\]\ncommand = \["\/bin\/bash", "run\.sh", "net-view\.mjs", "startup"\]/);
+	assert.match(manifest, /\[\[startup\]\]\nplatforms = \["windows"\]\ncommand = \["node", "net-view\.mjs", "startup"\]/, "Windows has no bash: its twin runs node");
+	assert.equal(manifest.match(/\[\[startup\]\]/g).length, 2, "one hook per platform, and it is the one-shot startup of net-view.mjs");
+	assert.match(manifest, /\[\[actions\]\]\nid = "net"\ntitle = .*\ncontexts = \["global"\]\nplatforms = \["macos", "linux"\]\ncommand = \["\/bin\/bash", "run\.sh", "net-view\.mjs"\]/);
+	assert.match(manifest, /\[\[actions\]\]\nid = "net-windows"\ntitle = .*\ncontexts = \["global"\]\nplatforms = \["windows"\]\ncommand = \["node", "net-view\.mjs"\]/, "an action id is unique across platforms");
 	for (const file of ["run.sh", "net-view.mjs"]) assert.ok(existsSync(join(PLUGIN, file)), file);
 });
 
@@ -262,7 +265,8 @@ test("the startup command from the manifest turns the view on and then exits by 
 	const herdr = fakeHerdr();
 	const fake = await socket(async (request, reply) => reply(`${JSON.stringify({ id: request.id, result: await herdr.handle(request.method, request.params) })}\n`));
 	const manifest = readFileSync(join(PLUGIN, "herdr-plugin.toml"), "utf8");
-	const command = JSON.parse(manifest.match(/\[\[startup\]\]\ncommand = (\[.*\])/)[1]);
+	const platform = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux";
+	const command = JSON.parse([...manifest.matchAll(/\[\[startup\]\]\nplatforms = (\[.*\])\ncommand = (\[.*\])/g)].find((m) => JSON.parse(m[1]).includes(platform))[2]);
 	// Herdr runs it from the plugin directory with the plugin's environment and the PATH of whatever started the server.
 	const env = { PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, HOME: fake.dir, HERDR_PLUGIN_ID: "wayne930242.straw-boss", HERDR_PLUGIN_STATE_DIR: join(fake.dir, "state"), HERDR_SOCKET_PATH: fake.path, HERDR_PLUGIN_EVENT: "startup" };
 	const child = spawn(command[0], command.slice(1), { cwd: PLUGIN, env, stdio: ["ignore", "pipe", "pipe"] });

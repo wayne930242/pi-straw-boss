@@ -25,6 +25,13 @@ export const netView = () => ({
 });
 
 /**
+ * Where to connect for Herdr's socket path: on Windows the path is a marker file and Herdr listens on the named pipe `\\.\pipe\` + that path,
+ * elsewhere it is the Unix socket itself (the extension's `localEndpoint`, kept here because this folder imports nothing from it).
+ * @param {string} socketPath
+ */
+export const localEndpoint = (socketPath, platform = process.platform) => (platform === "win32" ? `\\\\.\\pipe\\${socketPath}` : socketPath);
+
+/**
  * One request on Herdr's socket; resolves with `result`, rejects with an Error whose `code` is Herdr's (or timeout,
  * socket_error, bad_frame, closed). The frame may arrive in pieces, even inside a character.
  * @param {string} socketPath
@@ -32,7 +39,7 @@ export const netView = () => ({
  */
 export const socketCall = (socketPath) => (method, params) =>
 	new Promise((resolve, reject) => {
-		const socket = createConnection(socketPath).setTimeout(5000), text = new StringDecoder("utf8");
+		const socket = createConnection(localEndpoint(socketPath)).setTimeout(5000), text = new StringDecoder("utf8");
 		let reply = "";
 		const fail = (code, message) => {
 			socket.destroy();
@@ -56,7 +63,7 @@ export const socketCall = (socketPath) => (method, params) =>
 		socket.on("close", () => fail("closed", "the connection closed before an answer"));
 	});
 
-/** Names one run of the Herdr server: the socket file is made anew when a server starts, and a restart drops the view. */
+/** Names one run of the Herdr server: the socket file (on Windows its marker file) is made anew when a server starts, and a restart drops the view. */
 export const instanceOf = (socketPath) => {
 	const { ino, birthtimeMs } = statSync(socketPath);
 	return `${ino}:${birthtimeMs}`;

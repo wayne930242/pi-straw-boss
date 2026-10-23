@@ -11,11 +11,17 @@ import { fileURLToPath } from "node:url";
 /** The `straw-boss` directory of pi's agent directory, where the GUI's record and the sidecars' files live. */
 export const stateDirOf = (env: NodeJS.ProcessEnv = process.env) => join(env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "straw-boss");
 
-/** The files of the sidecar of one pane, named by a hash of the pane id (a pane id is not a safe file name). */
-export function agentFiles(stateDir: string, pane: string) {
+/**
+ * The files of the sidecar of one pane, named by a hash of the pane id (a pane id is not a safe file name). On Windows the control socket is a named pipe,
+ * which lives in the pipe namespace and not beside the files: its name is a hash of where the files are, so another state directory has another pipe.
+ */
+export function agentFiles(stateDir: string, pane: string, platform: NodeJS.Platform = process.platform) {
 	const base = join(stateDir, "agents", createHash("sha256").update(pane).digest("hex").slice(0, 16));
-	return { dir: dirname(base), state: `${base}.json`, socket: `${base}.sock`, log: `${base}.log` };
+	const socket = platform === "win32" ? `\\\\.\\pipe\\straw-boss-${createHash("sha256").update(base).digest("hex").slice(0, 16)}` : `${base}.sock`;
+	return { dir: dirname(base), state: `${base}.json`, socket, log: `${base}.log` };
 }
+/** Whether the control socket is a file to remove and restrict: a Unix socket is; a Windows named pipe ends with its server, and its access is set as it is made. */
+export const socketIsFile = (platform: NodeJS.Platform = process.platform) => platform !== "win32";
 export type AgentFiles = ReturnType<typeof agentFiles>;
 
 /** What a running sidecar writes first: who holds the pane. */

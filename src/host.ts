@@ -6,7 +6,7 @@ import { createCloser } from "./closer.ts";
 import { createHub } from "./dialogs.ts";
 import { type Gui, startGui } from "./gui.ts";
 import { adoptable, adoptGui, downgrades, type Keep, markReload, markStopped, readRecord, type Shared, sharedGui, stopRecorded } from "./handover.ts";
-import { herdrSocket } from "./herdr.ts";
+import { herdrSocket } from "./endpoint.ts";
 import type { Membership } from "./membership.ts";
 import { netSource } from "./net.ts";
 import { pairingKeys, showLines } from "./pairing.ts";

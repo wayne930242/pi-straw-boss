@@ -30,6 +30,8 @@ const pluginId = env.HERDR_PLUGIN_ID ?? "wayne930242.straw-boss-reaper";
 const stateDir = env.HERDR_PLUGIN_STATE_DIR ?? join(env.XDG_STATE_HOME ?? join(homedir(), ".local/state"), "herdr/plugins", pluginId);
 const configDir = env.HERDR_PLUGIN_CONFIG_DIR ?? join(homedir(), ".config/herdr/plugins/config", pluginId);
 const bin = env.HERDR_BIN_PATH ?? "herdr";
+// The manifest names the Windows twin of each action `<id>-windows`, since an action id is unique across platforms.
+const sweepAction = `${pluginId}.${process.platform === "win32" ? "sweep-windows" : "sweep"}`;
 const beatFile = join(stateDir, "ticker.json");
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const log = (line) => console.log(line);
@@ -52,7 +54,7 @@ async function ensureTicker() {
 		if (statSync(logFile).size > LOG_LIMIT_BYTES) truncateSync(logFile);
 	} catch {}
 	const out = openSync(logFile, "a");
-	const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "ticker"], { detached: true, stdio: ["ignore", out, out], env });
+	const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "ticker"], { detached: true, stdio: ["ignore", out, out], env, windowsHide: true });
 	child.unref();
 	closeSync(out);
 	log("ticker started");
@@ -87,12 +89,12 @@ async function ticker() {
 		} catch (error) {
 			// The sweep action reads the state file too and logs the failure where the plugin's other errors are.
 			console.log(`${error.message}; ticker invokes a sweep to surface it, then stops`);
-			spawn(bin, ["plugin", "action", "invoke", `${pluginId}.sweep`], { stdio: "ignore", env }).on("error", () => {});
+			spawn(bin, ["plugin", "action", "invoke", sweepAction], { stdio: "ignore", env, windowsHide: true }).on("error", () => {});
 			return;
 		}
 		if (Date.now() >= state.nextSweepAt) {
 			await store.apply([{ op: "set", path: ["nextSweepAt"], value: Date.now() + 10 * 60_000 }]);
-			const invoke = spawn(bin, ["plugin", "action", "invoke", `${pluginId}.sweep`], { stdio: "ignore", env });
+			const invoke = spawn(bin, ["plugin", "action", "invoke", sweepAction], { stdio: "ignore", env, windowsHide: true });
 			const code = await new Promise((resolve) => invoke.on("close", resolve).on("error", () => resolve(1)));
 			failures = code === 0 ? 0 : failures + 1;
 			console.log(`${new Date().toISOString()} sweep invoked, exit ${code}`);

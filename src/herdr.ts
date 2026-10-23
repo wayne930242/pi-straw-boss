@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createConnection } from "node:net";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
+import { herdrSocket, localEndpoint } from "./endpoint.ts";
+export { herdrSocket } from "./endpoint.ts"; // session.ts reads it here, with the rest of Herdr
 
 export type HerdrRun = (args: string[], timeoutMs?: number) => Promise<string>;
 /** One request on Herdr's socket API; rejects with the error Herdr answered. */
@@ -83,11 +84,9 @@ export async function panes(run: HerdrRun, workspace?: string): Promise<Pane[]> 
 }
 
 // Herdr answers one request per connection with one newline-ended frame, which may arrive in pieces (split anywhere, even inside a character).
-/** The socket of the Herdr server a process runs under: the one its environment names, else the default. Two sessions are on the same Herdr when this is the same text. */
-export const herdrSocket = (env: NodeJS.ProcessEnv = process.env) => env.HERDR_SOCKET_PATH || join(homedir(), ".config", "herdr", "herdr.sock");
 export const herdrCall = (socketPath = herdrSocket()): HerdrCall => (method, params, timeoutMs = 5000) =>
 	new Promise((resolve, reject) => {
-		const socket = createConnection(socketPath).setTimeout(timeoutMs), text = new StringDecoder("utf8");
+		const socket = createConnection(localEndpoint(socketPath)).setTimeout(timeoutMs), text = new StringDecoder("utf8");
 		let reply = "";
 		const fail = (code: string, message: string) => (socket.destroy(), reject(new HerdrError(code, `herdr ${method} failed: ${code} ${message}`.trim())));
 		socket.on("connect", () => socket.write(`${JSON.stringify({ id: `straw-boss-${Date.now()}`, method, params })}\n`));
