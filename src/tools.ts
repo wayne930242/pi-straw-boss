@@ -54,8 +54,9 @@ export function createTools({ pi, cfg, s, me, role }: Kit, { send, openTower, st
 					const was = pi.getSessionName() || s.ownName || me().slice(0, 8);
 					pi.setSessionName(phrase);
 					const label = tabLabel(phrase);
-					const tab = role() !== "main" ? "" : await cfg.run(["tab", "rename", s.at.tabId, label]).then(() => ` The tab is now labelled "${label}".`, (err: unknown) => ` The tab kept its label: ${String(err)}`);
-					if (s.joined) await digest.note(s.at.workspaceId, `${was} renamed itself "${phrase}" (tab ${s.info.tab})`).catch(() => {});
+					const failed = role() !== "main" ? undefined : await cfg.run(["tab", "rename", s.at.tabId, label]).then(() => "", (err: unknown) => String(err)); // "" when relabelled
+					const tab = failed === undefined ? "" : failed ? ` The tab kept its label: ${failed}` : ` The tab is now labelled "${label}".`;
+					if (s.joined) await digest.note(s.at.workspaceId, `${was} renamed itself "${phrase}" (tab ${failed === "" ? label : s.info.tab})`).catch(() => {});
 					return { text: `This session is now named "${phrase}".${tab}`, details: { name: phrase } };
 				});
 		},

@@ -44,3 +44,27 @@ test("boss_rename labels a main agent's tab even when someone else named it, and
 	await a1.tool("boss_rename", { name: "a phrase longer than sixteen" });
 	assert.equal(tab(), "a phrase longer…", "cut as pi-auto-tab-name cuts it");
 });
+
+test("boss_rename still names the session when the tab rename fails, and says the tab kept its label", async () => {
+	world = new World();
+	const herdr = world.herdr.runFor("wA:p1");
+	const run = (args: string[]) => (args[0] === "tab" && args[1] === "rename" ? Promise.reject(new Error("herdr is gone")) : herdr(args));
+	const a1 = world.agent({ id: "a1", pane: "wA:p1", tab: "wA:t1", deps: { run } });
+	await a1.start();
+	await a1.promote();
+	const before = world.herdr.tabs.find((t) => t.tab_id === "wA:t1")?.label;
+	const { content } = await a1.tool("boss_rename", { name: "MP-1 export" });
+	const text = (content[0] as { text: string }).text;
+	assert.equal(a1.name, "MP-1 export");
+	assert.match(text, /kept its label: Error: herdr is gone/);
+	assert.equal(world.herdr.tabs.find((t) => t.tab_id === "wA:t1")?.label, before);
+});
+
+test("the digest line of a main's rename names the tab by its new label", async () => {
+	world = new World();
+	const a1 = world.agent({ id: "a1", pane: "wA:p1", tab: "wA:t1" });
+	await a1.start();
+	await a1.promote();
+	await a1.tool("boss_rename", { name: "MP-3810 製程編輯" });
+	assert.ok(Object.values(world.herdr.workspace("wA").tokens).some((v) => /renamed itself "MP-3810 製程編輯" \(tab MP-3810 製程編輯\)/.test(v)), "the digest names the new label");
+});
