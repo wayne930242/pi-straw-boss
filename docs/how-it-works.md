@@ -378,14 +378,14 @@ A child closed by the user rather than the plugin is handled the same way, by th
 The `pin` action is one toggle, in the `workspace` context: it sets or clears the workspace token `pin`, a Nerd Font pin (nf-md-pin, U+F0403), through `workspace.report_metadata` under the source `wayne930242.straw-boss-reaper`.
 Herdr shows a workspace token only where a row asks for it, so add `{ token = "$pin" }` to `[ui.sidebar.spaces]` rows as the README shows.
 Bind it with `[[keys.command]]` (`prefix+i` in the README's example: `prefix+P` is Herdr's default `rename_pane`, and `alt` combinations are often taken by window managers such as AeroSpace); a key invokes it in the focused workspace.
-A pin is also written to the plugin's state file, keyed by the checkout path, because Herdr drops workspace tokens when its server restarts: a sweep puts the token back, and the pin survives a workspace being closed and opened again.
+A pin is also written to the plugin's state file, because Herdr drops workspace tokens when its server restarts, and a sweep puts the token back. A linked worktree's pin is keyed by its checkout path, so it outlives the workspace and the checkout is never removed; any other workspace's pin is keyed by its id (`workspace:<id>`) and goes when the workspace closes, so a later workspace on the same main checkout starts unpinned. A sweep moves a main-checkout pin an older version keyed by its path to the ids of the workspaces open on it.
 A workspace is pinned when either the token or the state entry says so, and a pinned workspace is skipped by every sweep and its checkout is never removed.
 
-A pin does nothing else: closing a pinned workspace closes it, and the pin keyed by its checkout keeps that checkout from being removed until the checkout is gone or you unpin a workspace on it.
+A pin does nothing else: closing a pinned workspace closes it, and a linked worktree's pin keeps its checkout from being removed until the checkout is gone or you unpin a workspace on it.
 
 **Pinning by renaming.**
-Herdr's `workspace.renamed` event does not say who renamed, but nothing renames a workspace except the user: pi-herdr-agents, Straw Boss and Herdr's own worktree command all set the label when they create the workspace.
-So every rename pins the workspace (any workspace, linked worktree or not, within `only_under`) and marks its record `renamed`; a workspace already pinned stays as it is.
+Herdr's `workspace.renamed` event does not say who renamed, but nothing renames a workspace except the user: pi-herdr-agents and Straw Boss set the label when they create the workspace, and `herdr workspace create --label` and `herdr worktree create --label` fire no rename. `herdr worktree open --label` on a worktree whose workspace is already open does fire one, and counts as a rename.
+So every rename pins the workspace (any workspace, linked worktree or not, within `only_under`) and marks its record `renamed`, even when a sweep recorded the new label first; a workspace already pinned stays as it is.
 Unpinning clears the token and the state entry and leaves the name alone.
 Herdr reuses the ids of closed workspaces, so a `workspace.created` event replaces any earlier record of its id, the `workspace.closed` event (or a `pane.exited` that took the workspace's last pane) deletes the record and any `workspace:<id>` pin of the id, and a sweep drops the records of the workspaces it closed.
 Each record also stores the workspace's checkout path, and a record whose checkout differs from the live workspace's belongs to an earlier workspace on a reused id and is ignored.

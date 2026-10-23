@@ -2,7 +2,7 @@
 // so tests can run them against fakes; reaper.mjs wires the real ones.
 import {
 	CONFIRM_MS, PIN_GLYPH, PIN_TOKEN, SWEEP_INTERVAL_MS,
-	applyOps, del, decideRemoval, findCheckoutUser, forgetWorkspace, inScope, isPinned, noteParents, noteWorkspaces, onRename, pinKey, planParents, planSweep, prunePanes, prunePins, set, shellIsIdle, togglePin,
+	applyOps, del, decideRemoval, findCheckoutUser, forgetWorkspace, inScope, isPinned, migratePins, noteParents, noteWorkspaces, onRename, pinKey, planParents, planSweep, prunePanes, prunePins, set, shellIsIdle, togglePin,
 } from "./decide.mjs";
 import { withLock } from "./io.mjs";
 
@@ -166,7 +166,7 @@ async function sweepLocked(deps, confirmMs, dryRun) {
 	const now = deps.now();
 	const state = await deps.store.read();
 	const [workspaces, panes] = await Promise.all([deps.herdr.listWorkspaces(), deps.herdr.listPanes()]);
-	const bookkeeping = [...noteWorkspaces(workspaces, state), ...prunePanes(panes, state), ...prunePins(workspaces, state, deps.git), ...noteParents(workspaces, state, deps.config)];
+	const bookkeeping = [...noteWorkspaces(workspaces, state), ...prunePanes(panes, state), ...prunePins(workspaces, state, deps.git), ...migratePins(workspaces, state), ...noteParents(workspaces, state, deps.config)];
 	const plan = await planSweep({ workspaces, panes, state, now, confirmMs, config: deps.config }, deps.herdr);
 	const ops = [...bookkeeping, ...plan.ops];
 	for (const line of plan.skips) deps.log(line);

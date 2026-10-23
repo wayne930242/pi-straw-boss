@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
 	CONFIRM_MS, PIN_GLYPH, PIN_TOKEN, SWEEP_INTERVAL_MS,
-	applyOps, decideRemoval, emptyState, findCheckoutUser, isPinned, noteParents, noteWorkspaces, onRename, planSweep, prunePanes, prunePins, set, shellIsIdle, togglePin,
+	applyOps, decideRemoval, emptyState, findCheckoutUser, isPinned, migratePins, noteParents, noteWorkspaces, onRename, planSweep, prunePanes, prunePins, set, shellIsIdle, togglePin,
 } from "../herdr-reaper/decide.mjs";
 import { createStore, gitClient, gitReason, withLock } from "../herdr-reaper/io.mjs";
 import { SOURCE, runEvent, runPinToggle, runSweep } from "../herdr-reaper/sweep.mjs";
@@ -171,7 +171,7 @@ test("Renames", async () => {
 	assert.equal(onRename({ ...linked, worktree: worktree("/repo", false) }, known("orig")).pin, true, "a main-checkout workspace too");
 	assert.equal(onRename({ workspace_id: "w9", label: "plain" }, state()).pin, true, "and one without a checkout");
 	assert.equal(onRename(linked, state({ workspaces: { w2: { label: "orig", checkout: "/wt/renamed" } }, pins: { "/wt/renamed": {} } })).pin, false, "already pinned");
-	assert.deepEqual(onRename(linked, known("renamed")), { ops: [], pin: false }, "no label change, no pin");
+	assert.equal(onRename(linked, known("renamed")).pin, true, "a sweep that recorded the new label first does not swallow the rename");
 });
 
 test("Workspace records", async () => {
@@ -193,6 +193,10 @@ test("Pin toggle", async () => {
 	assert.deepEqual(togglePin(linked, state({ pins: { "/wt/feat-x": {} } }), NOW), { action: "unpin", key: "/wt/feat-x" });
 	assert.deepEqual(togglePin({ ...linked, tokens: { [PIN_TOKEN]: PIN_GLYPH } }, state(), NOW), { action: "unpin", key: "/wt/feat-x" }, "the token alone pins");
 	assert.deepEqual(togglePin({ workspace_id: "w9", label: "plain" }, state(), NOW).key, "workspace:w9", "a workspace without a checkout is pinned by its id");
+	assert.deepEqual(togglePin(parentShell(), state(), NOW).key, "workspace:m", "so is a main checkout's: the pin goes with the workspace");
+	const old = state({ pins: { "/repo": { preLabel: "repo" }, "/wt/child": {}, "/elsewhere": {} } });
+	const migrated = applyOps(old, migratePins([parentShell("m"), parentShell("m2"), childOf()], old));
+	assert.deepEqual(Object.keys(migrated.pins).sort(), ["/elsewhere", "/wt/child", "workspace:m", "workspace:m2"], "an old main-checkout pin moves to the ids of the workspaces on it");
 });
 
 test("State store: ops merge, locks exclude", async () => {
@@ -959,6 +963,59 @@ test("Renaming the parent shell pins it, and renaming it back keeps it open", as
 		await runSweep(w.deps(store), { confirmMs: 0 });
 		assert.deepEqual(w.closedWorkspaces, [], "renaming it back does not undo that the user named it");
 		assert.ok(w.logs.some((line) => /skip parent repo.*workspace is pinned/.test(line)), w.logs.join("\n"));
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("A renamed parent shell's pin goes with it: the next parent shell on that checkout is closed as usual", async () => {
+	const dir = await tempDir();
+	try {
+		const w = parentWorld({ workspaces: [parentShell(), childOf()], panes: [pane("m:p1", "m"), pane("c:p1", "c", { agent: "pi" })] });
+		const store = createStore(dir);
+		await runSweep(w.deps(store), { confirmMs: 0 });
+		w.workspaces.find((candidate) => candidate.workspace_id === "m").label = "mine";
+		await runEvent(w.deps(store), "workspace.renamed", { workspace_id: "m" });
+		assert.deepEqual(Object.keys((await store.read()).pins), ["workspace:m"]);
+		w.workspaces = w.workspaces.filter((candidate) => candidate.workspace_id !== "m");
+		w.panes = w.panes.filter((candidate) => candidate.workspace_id !== "m");
+		await runEvent(w.deps(store), "workspace.closed", { workspace_id: "m" });
+		assert.deepEqual((await store.read()).pins, {});
+		w.workspaces.push(parentShell("m2"));
+		w.panes.push(pane("m2:p1", "m2"));
+		await runSweep(w.deps(store), { confirmMs: 0 });
+		w.workspaces = w.workspaces.filter((candidate) => candidate.workspace_id !== "c");
+		w.panes = w.panes.filter((candidate) => candidate.workspace_id !== "c");
+		await runSweep(w.deps(store), { confirmMs: 0 });
+		assert.deepEqual(w.closedWorkspaces, ["m2"], w.logs.join("\n"));
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("pane.exited: a workspace its last pane took is forgotten with its id pin, a linked checkout's pin stays, and another pane keeps it", async () => {
+	const dir = await tempDir();
+	try {
+		const store = createStore(dir);
+		const plain = { workspace_id: "p", label: "plain" };
+		const w = world({ workspaces: [workspace("a", "kept"), plain], panes: [pane("a:p1", "a"), pane("a:p2", "a"), pane("p:p1", "p")] });
+		await runSweep(w.deps(store), { confirmMs: CONFIRM_MS });
+		await runPinToggle(w.deps(store), "a");
+		await runPinToggle(w.deps(store), "p");
+		assert.deepEqual(Object.keys((await store.read()).pins).sort(), ["/wt/kept", "workspace:p"]);
+		w.panes = w.panes.filter((candidate) => candidate.pane_id !== "a:p1");
+		await runEvent(w.deps(store), "pane.exited", { workspace_id: "a", pane_id: "a:p1" });
+		assert.ok("a" in (await store.read()).workspaces, "another pane keeps the workspace and its record");
+		w.workspaces = [workspace("a", "kept")];
+		w.panes = w.panes.filter((candidate) => candidate.workspace_id !== "p");
+		await runEvent(w.deps(store), "pane.exited", { workspace_id: "p", pane_id: "p:p1" });
+		w.workspaces = [];
+		w.panes = [];
+		await runEvent(w.deps(store), "pane.exited", { workspace_id: "a", pane_id: "a:p2" });
+		const after = await store.read();
+		assert.deepEqual([after.workspaces.a, after.workspaces.p], [undefined, undefined]);
+		assert.deepEqual(Object.keys(after.pins), ["/wt/kept"], "the id pin goes; the linked checkout's stays, so the checkout is never removed");
+		assert.deepEqual(w.workspaces, [], "nothing reopens");
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}

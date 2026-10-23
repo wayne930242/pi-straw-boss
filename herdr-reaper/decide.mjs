@@ -55,8 +55,11 @@ const recordOf = (workspace, state) => {
 	return record && (record.checkout ?? null) === checkoutOf(workspace) ? record : undefined;
 };
 export const isLinked = (workspace) => worktreeOf(workspace).is_linked_worktree === true;
-/** The key a pin is stored under: the checkout outlives its workspace (a pinned checkout is never removed), the workspace id does not. */
-export const pinKey = (workspace) => worktreeOf(workspace).checkout_path ?? `workspace:${workspace.workspace_id}`;
+/**
+ * The key a pin is stored under. A linked worktree's pin is its checkout's, which outlives the workspace so a pinned checkout is never
+ * removed; any other workspace's pin is its id's and goes with it, so a later workspace on the same main checkout starts unpinned.
+ */
+export const pinKey = (workspace) => (isLinked(workspace) && checkoutOf(workspace)) || `workspace:${workspace.workspace_id}`;
 export const isPinned = (workspace, state) => Boolean(workspace.tokens?.[PIN_TOKEN]) || pinKey(workspace) in state.pins;
 
 /** `only_under` limits the plugin to repositories below the listed directories; empty means every repository. */
@@ -205,8 +208,6 @@ export function decideRemoval({ pinned, exists, dirty, hidden = "", detached, co
  * @returns {{ ops: object[], pin: boolean }}
  */
 export function onRename(workspace, state) {
-	const record = recordOf(workspace, state);
-	if (record?.label === workspace.label) return { ops: [], pin: false };
 	// The record keeps that the user renamed it: a parent shell with a name of the user's is never closed.
 	const ops = [set(["workspaces", workspace.workspace_id], { label: workspace.label, checkout: checkoutOf(workspace), renamed: true })];
 	return { ops, pin: !isPinned(workspace, state) };
@@ -336,6 +337,22 @@ export function prunePins(workspaces, state, git) {
 	return Object.keys(state.pins)
 		.filter((key) => (key.startsWith("workspace:") ? !live.has(key.slice("workspace:".length)) : !git.exists(key)))
 		.map((key) => del(["pins", key]));
+}
+
+/**
+ * Moves the pins older versions keyed by a main checkout's path to the id of each live workspace on that checkout: only a linked
+ * worktree's pin is kept by its checkout. A path no live workspace is on stays until one opens there or prunePins drops it.
+ */
+export function migratePins(workspaces, state) {
+	const ops = [];
+	for (const key of Object.keys(state.pins)) {
+		if (key.startsWith("workspace:")) continue;
+		const on = workspaces.filter((workspace) => checkoutOf(workspace) === key);
+		if (on.length === 0 || on.some(isLinked)) continue;
+		for (const workspace of on) ops.push(set(["pins", `workspace:${workspace.workspace_id}`], state.pins[key]));
+		ops.push(del(["pins", key]));
+	}
+	return ops;
 }
 
 /** The pin action toggles the pin and nothing else: the name stays as it is. */
