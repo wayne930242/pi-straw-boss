@@ -501,6 +501,12 @@ export class Agent {
 	}
 }
 
+// Most tests never call `stopAll`, so every World's state directory is removed when the test process exits (only this process's own).
+const stateDirs = new Set<string>();
+process.once("exit", () => {
+	for (const dir of stateDirs) rmSync(dir, { recursive: true, force: true });
+});
+
 export class World {
 	herdr = new FakeHerdr();
 	broker = new FakeBroker(this.herdr);
@@ -519,7 +525,11 @@ export class World {
 		await this.quiet();
 	}
 	/** The state directory of the one-GUI-per-machine record, private to this world. */
-	stateDir = mkdtempSync(join(tmpdir(), "psb-state-test-"));
+	stateDir = (() => {
+		const dir = mkdtempSync(join(tmpdir(), "psb-state-test-"));
+		stateDirs.add(dir);
+		return dir;
+	})();
 
 	constructor() {
 		// Closing a tab kills the pi inside it.
