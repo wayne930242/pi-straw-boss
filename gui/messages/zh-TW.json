@@ -157,6 +157,7 @@
 	"blocked_offline": "串流中斷；要等它恢復才能送出。",
 	"blocked_ended": "這個 session 已不再即時；紀錄仍可閱讀。",
 	"blocked_no_pane": "這個單位沒有即時的 pi 窗格，無處可輸入。",
+	"blocked_agent": "這是 {agent} 工作階段。它在 net 裡，但這個頁面無法對它輸入，也看不到它的紀錄，請到它自己的終端機操作。",
 	"blocked_answer_above": "它在等待對話框：請在上方或它的終端機中回答。",
 	"blocked_answer_terminal": "它在等待對話框；請在它的終端機中回答。",
 	"message": "訊息",

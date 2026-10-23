@@ -364,6 +364,7 @@ test("the composer clears only what was confirmed, and says why it cannot send",
 	assert.match(blocked({ ...unit, online: false })!, /stream is down/);
 	assert.match(blocked({ ...unit, live: false })!, /no longer live/);
 	assert.match(blocked({ ...unit, control: false })!, /No live pi pane/);
+	assert.match(blocked({ ...unit, control: false, agent: "claude" })!, /This is a Claude session\. It is in the net, but this page cannot type into it/, "an agent that is not pi says what it is, not that a pi pane is missing");
 	assert.match(blocked({ ...unit, mark: "waiting" })!, /dialog/);
 });
 

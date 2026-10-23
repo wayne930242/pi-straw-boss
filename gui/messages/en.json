@@ -213,6 +213,7 @@
 	"blocked_offline": "The stream is down; sending waits for it to come back.",
 	"blocked_ended": "This session is no longer live; its history stays readable.",
 	"blocked_no_pane": "No live pi pane backs this unit, so there is nothing to type into.",
+	"blocked_agent": "This is a {agent} session. It is in the net, but this page cannot type into it or show its log: use its own terminal.",
 	"blocked_answer_above": "It waits on a dialog: answer it above, or in its terminal.",
 	"blocked_answer_terminal": "It waits on a dialog; answer it in its terminal.",
 	"message": "Message",

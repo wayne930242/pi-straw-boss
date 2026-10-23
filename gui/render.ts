@@ -18,6 +18,8 @@ const ROLE: Record<string, () => string> = { main: m.role_main, member: m.role_m
 /** The server's fixed status words; any other note (a subagent's tool or phase) shows as it is. */
 const NOTE: Record<string, () => string> = { thinking: m.note_thinking, "watching a monitor": m.note_monitoring, idle: m.mark_idle, "waiting on a question": m.mark_waiting, finished: m.mark_done };
 /** A role as the page names it; one it does not know shows as it is. */
+/** The agent of a unit that is not a pi session (src/net.ts `Unit.agent`): its badge, and its name in the composer's notice. */
+export const AGENT = { claude: "Claude", codex: "Codex" } as const;
 export const roleName = (role: string) => (Object.hasOwn(ROLE, role) ? ROLE[role]!() : role);
 /** Marks that ask for the user: a click on such a unit opens its alert instead of its route. */
 export const urgent = (m: Mark) => m === "waiting" || m === "error";
@@ -102,7 +104,7 @@ export function sync<T extends { id: string }>(parent: Element, items: T[], make
 	}
 }
 
-const unitEl = () => html(`<div class="unit"><div class="card"><a class="hit"></a>${PLATE}<div class="meta"><span class="name"></span><span class="line"><em class="role"></em><span class="note"></span></span></div><button type="button" class="quit-btn" data-close="unit" hidden></button></div><div class="subs"></div></div>`);
+const unitEl = () => html(`<div class="unit"><div class="card"><a class="hit"></a>${PLATE}<div class="meta"><span class="name"></span><span class="line"><em class="role"></em><em class="agent"></em><span class="note"></span></span></div><button type="button" class="quit-btn" data-close="unit" hidden></button></div><div class="subs"></div></div>`);
 function fillUnit(el: HTMLElement, u: Omit<Unit, "id" | "key" | "control" | "role" | "subs"> & { key?: string; control?: boolean; role: Unit["role"] | "outpost"; subs?: Unit[] }) {
 	const ws = el.closest<HTMLElement>(".base")?.dataset.key, hit = el.querySelector(".hit")!;
 	aim(hit, u.key && ws ? { view: "session", ws, key: u.key } : undefined);
@@ -112,6 +114,7 @@ function fillUnit(el: HTMLElement, u: Omit<Unit, "id" | "key" | "control" | "rol
 	fillPlate(el.querySelector(".plate")!, u.role, u.mark, u.docs);
 	text(el, ".name", u.name);
 	text(el, ".role", roleName(u.role));
+	text(el, ".agent", u.agent ? AGENT[u.agent] : "");
 	say(el, ".note", u.note, u.mark);
 	aimUnit(el.querySelector(":scope > .card > .quit-btn")!, u);
 	sync(el.querySelector(".subs")!, u.subs ?? [], unitEl, fillUnit);

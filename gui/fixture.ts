@@ -21,7 +21,7 @@ const demo = (): Net => ({
 			{ id: "w1:t2", label: "ops", units: [{ ...unit("a3", "ops-main", "main", "waiting", "waiting on a question"), pending: ask(0) }] },
 		] },
 		{ id: "w2", label: "Lighthouse Web", mark: "working", head: false, tower: { name: "tower · Lighthouse Web", mark: "idle", key: "t2", control: true, subs: [] }, outposts: [], outside: [], tabs: [
-			{ id: "w2:t1", label: "checkout", units: [unit("b1", "checkout-main", "main", "working", "thinking", [unit("b1/e2e", "e2e-runner", "subagent", "working", "thinking")]), unit("b2", "checkout-style", "member", "working", "tool:read")] },
+			{ id: "w2:t1", label: "checkout", units: [unit("b1", "checkout-main", "main", "working", "thinking", [unit("b1/e2e", "e2e-runner", "subagent", "working", "thinking")]), { ...unit("b2", "claude-checkout", "member", "working", "tool:read"), control: false, agent: "claude" as const }] },
 		] },
 		{ id: "w3", label: "Orchard Data", mark: "idle", head: false, tower: { name: "tower · Orchard Data", mark: "done", key: "t3", control: true, subs: [] }, outposts: [], outside: [], tabs: [
 			{ id: "w3:t1", label: "etl", units: [unit("c1", "etl-main", "main", "idle")] },

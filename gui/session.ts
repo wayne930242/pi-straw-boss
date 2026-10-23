@@ -109,7 +109,7 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 			drawMonitors(view, u?.monitors);
 			drawQueued(view, u?.queued);
 			chat?.setLive(mk === "working" || mk === "commanding" ? `${doing(u!.note, mk)}` : urgent(mk) ? LABEL[mk]() : "", mk);
-			composer?.update({ name, control: Boolean(u?.control), live: !closed(u, state), mark: mk, online: online(), answerable: Boolean(u?.pending?.answer) });
+			composer?.update({ name, control: Boolean(u?.control), agent: u?.agent, live: !closed(u, state), mark: mk, online: online(), answerable: Boolean(u?.pending?.answer) });
 			asker?.update(u?.pending, mk === "waiting" && Boolean(u?.control) && online()); // its dialog above the composer, answerable or not
 		},
 	};

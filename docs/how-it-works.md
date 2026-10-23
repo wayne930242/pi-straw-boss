@@ -453,6 +453,7 @@ The plugin needs Herdr 0.9.3 or newer, git, node 18 or newer, and a Unix shell, 
 - Pane tokens `sb_order` (a sort key), `sb_mark` (a role label) and, on subagents, `sb_indent` (a tree branch) and `sb_name` (the subagent's name) next to `sb_role`, and the subagent ones on the panes of the subagents the session launched, with the same refresh, TTL and takeover rewrite; they feed the sidebar net view and the optional rows below (see [Sidebar net view](#sidebar-net-view)).
 - A pi session entry `straw-boss` (`tower`) so a resumed tower keeps its role. Members write no entry for their role: every session joins at start, so entries saved by 0.4.0 (`asked`, `joined`) are ignored. The one other entry carries `nudged`, a subagent run that was asked to report (see [Orphaned subagents](#orphaned-subagents)).
 - Every message it sends through intercom (`boss_broadcast`, `call_tower`, the nudge, the request handed to an opened main) has a message id with a nonce of the current process: pi-intercom refuses an id it saw from a session again with other content, and a restarted pi keeps its session id.
+- A net sidecar (see [From Claude Code or Codex](#from-claude-code-or-codex)) writes the same `sb_role`, `sb_order`, `sb_mark`, `sb_main_tab`/`sb_tab` tokens for its pane with the same refresh and takeover rewrite, the digest line `<name> joined tab <label>`, and, in the state directory, `agents/<sha256 of the pane id, 16 hex>.json` (its pid, session, and kind), the `.sock` control socket (mode 600, in a 700 directory), and the `.log`; it holds one `straw-boss/tab/…` channel and never the GUI's. It types net messages into its pane with `herdr agent prompt`, and keeps one `events.subscribe` connection for the pane's events besides the takeover watch.
 - One `events.subscribe` connection to Herdr's socket per joined session or tower, which carries no events of interest and is read only for its closing (see [A new Herdr server](#sidebar-net-view)).
 - A tower with a UI keeps one more `events.subscribe` connection for its dashboard (panes, tabs, and workspaces changing, see [Tower dashboard](#tower-dashboard)); it reconnects like the one above, and closes with the dashboard.
 - While remote access is on, one `tailscale serve` entry (HTTPS 8443, proxying to the GUI server's remote listener), removed when it goes off or the server stops; `paired.json` (the identity the devices were paired under, whether remote is wanted on, and the paired devices as cookie hashes with name, paired, last-seen, and expiry times) is written at each change and deleted only when there is nothing to keep: no device and remote not wanted (the last unpair after remote off, or remote off with no device), or no remembered identity. Remote off alone keeps the devices; unpairing the last device while remote is wanted keeps the wish; a different Tailscale identity turning remote on drops the devices; a stop, a takeover, a `/reload`, and the end of the session never touch it; an expired device is dropped when it is next used or when the file is read.
@@ -463,7 +464,51 @@ The tower tab is labelled with the radio tower glyph (U+F043B) alone and its Her
 
 ## From Claude Code or Codex
 
-Read-only discovery works from any shell in a Herdr pane:
+A Claude Code or Codex main-agent session joins the net through a **net sidecar**: one small Node process per pane, started by [straw-boss](https://github.com/wayne930242/straw-boss) when the session starts (the design record is `docs/specs/2026-10-23-claude-codex-net/spec.md` in the straw-boss repository). Dispatched straw-boss workers and coworkers never get one, and nor does a session in a sub workspace (the sidecar checks, as a pi does, and leaves). The sidecar needs pi-straw-boss and pi-intercom in pi's `npm/node_modules`; without them straw-boss starts nothing and the session works as before.
+
+The sidecar is not a pi, so it has no tools, no prompts, and no terminal of its own. It registers with the pi-intercom broker as a session (id `claude-<provider session id>` or `codex-<provider session id>`, name `claude-<first 8>`, model `claude-code` or `codex`, the pane as its Herdr pane, no intercom status, so its state in the net is Herdr's own `agent_status` for the pane) and then runs the same modules a pi session does: the tab channel and its election, the guard, the pane tokens, `boss_status`/`boss_broadcast`/`call_tower` underneath, and the digest. A small headless kit (`src/agent/kit.ts`) gives those modules the only two things they ask pi for: the extension channel and the outbox, over a raw pi-intercom client. It never hosts the GUI server and never registers the GUI's dialog channel, so the GUI's takeover cannot pick it.
+
+**Starting.** straw-boss's SessionStart hook runs, and returns at once:
+
+```bash
+node --import <tsx loader> <pi-straw-boss>/src/agent/cli.ts join \
+  --pane "$HERDR_PANE_ID" --kind claude|codex --session <provider session id> \
+  [--record <orchestrator record file>] [--cli <straw-net.py>]
+```
+
+`<tsx loader>` is the one pi-intercom starts its own broker with, found beside pi-intercom (`STRAW_BOSS_INTERCOM` names pi-intercom's directory when it is not beside this package or under pi's `npm/node_modules`). `join` starts the sidecar detached and returns once its state file exists, or after 3 s with exit 1 and the log's path. A pane holds one sidecar: the same session joining again does nothing; another session in the pane (`/clear`, or a resume) stops the old sidecar, waits for it to leave, and starts a new one.
+
+**Roles.** The sidecar joins as a member, like every pi, and can own its tab's channel (so it decides pi claims and runs the guard, and opens the tower, which is always a pi). It becomes the tab's main only by promotion, never by force: when the orchestrator `--record` file straw-boss keeps for the session appears or changes (`register-orchestrator.py`, or the session's first dispatch), or when it runs `promote`. A tab that has a live main refuses it and the session stays a member. `/boss` stays a pi command; a pi can take the tab over from a Claude main. A main demoted because its tower quit is promoted again on the next record change, or by `promote`.
+
+**Commands.** `straw-net.py` runs `cli.ts <command>` for the pane it is in (`--pane`, else `HERDR_PANE_ID`); each command sends one request to the sidecar over the socket and prints the answer.
+
+| Command | Same as | Effect |
+|---|---|---|
+| `status` | `boss_status` | The tabs' mains, this workspace's tower, the head tower, and the other towers, as JSON. |
+| `promote` | `boss_promote` | Ask to be the tab's main; refused while it has a live main. |
+| `call-tower --message M [--workspace W]` | `call_tower` | Send to the tower; a main opens the tower tab when none runs. |
+| `broadcast --message M [--scope tab\|workspace\|towers\|all]` | `boss_broadcast` | One message to every other session in the scope; default `workspace`. |
+| `send --to ID --message M` | intercom `send` | One message to one session; this is how it replies. |
+| `rename --name N` | `boss_rename` | The session's name in the net and a digest line. |
+| `stop` | | Leave the net now. |
+
+Exit codes: 0 done; 1 refused or failed (the reason on stderr); 2 no sidecar for this pane.
+
+**Receiving.** Each intercom message sent to the sidecar is typed into its pane with `herdr agent prompt`, as one line, newlines and control characters folded to spaces:
+
+```text
+[straw net from=<name> id=<session id> role=<tower|main|member|session> reply="<straw-net.py> send --to <session id> --message '…'"] <message>
+```
+
+From an idle or done pane it uses Herdr's own gate (`--wait --until working --until blocked`), so a clean exit means a turn started; into a working pane it is a plain submission (the provider queues it). A **blocked** pane (a permission prompt is open) refuses input, so its messages wait in memory, in order, until Herdr reports the pane free; a message still waiting when the sidecar leaves is lost. A message id seen twice is typed once.
+
+**Leaving.** The sidecar leaves within about 10 s of Herdr reporting the pane closed or exited, or its agent no longer `claude`/`codex` (read again once, 1.5 s later, so a flicker is not a quit; an agent Herdr has not detected yet at the start is waited for up to 30 s), and at once on `stop`, SIGTERM, or a join that fails. It clears the pane's tokens, then disconnects from the broker, so no role token outlives the session, and removes its files. A broker that goes away is reconnected to with a backoff of 1, 2, 5, 10, then 30 s.
+
+**In the GUI** the unit is on the map in its tab's squad, as main or member, under its name, with its state from Herdr (a permission prompt shows as waiting, answered in the terminal) and a small badge naming the agent. It has no control: the composer says the page cannot type into it, Quit is disabled, no comms log or terminal mirror opens (both need a pi session file), and stash and close-all of its base refuse, naming the pane. It counts toward its base's mark and appears in the dashboard, the sidebar net view, and the digest.
+
+**Limits.** The broker finds a non-pi session by the pane it launched in, so a pane moved to another tab drops out of the net until its next session start. One more Node process runs per Claude or Codex main-agent pane.
+
+Without a sidecar, read-only discovery still works from any shell in a Herdr pane:
 
 ```bash
 herdr workspace get "$HERDR_WORKSPACE_ID" | jq -r '.result.workspace.tokens.tower'
@@ -471,7 +516,7 @@ herdr pane list --workspace "$HERDR_WORKSPACE_ID" | jq -r '.result.panes[] | sel
 node ~/.pi/agent/npm/node_modules/pi-intercom/cli.mjs ask --to "$TOWER_SESSION_ID" --text "<message>"
 ```
 
-Opening a missing tower needs a pi session.
+Opening a missing tower needs a pi session or a main sidecar.
 
 ## Development
 

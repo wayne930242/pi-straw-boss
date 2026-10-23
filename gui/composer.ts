@@ -2,6 +2,7 @@ import type { Mark } from "../src/dashboard.ts";
 import { h } from "./dom.ts";
 import { m } from "./paraglide/messages.js";
 import { type Answer, post, sendFile } from "./post.ts";
+import { AGENT } from "./render.ts";
 import { mountSlash } from "./slash.ts";
 
 // The composer under a unit's comms log. What is typed goes to the unit's terminal through Herdr, as if typed there: Enter sends it (a
@@ -21,7 +22,7 @@ type Flight = { sent?: string; answer: Promise<Answer> };
 // them before it sends again and settles its own box, so text is neither shown as unsent after it went nor sent twice.
 const flights = new Map<string, Flight>();
 /** `live`: its channel is open (scene.ts `closed`). `answerable`: its question panel on the page answers it. */
-export interface Unit { name: string; control: boolean; live: boolean; mark: Mark; online: boolean; answerable?: boolean }
+export interface Unit { name: string; control: boolean; agent?: keyof typeof AGENT; live: boolean; mark: Mark; online: boolean; answerable?: boolean }
 
 /** The server's input API for one session. */
 export const postTo = (key: string): Post => (action, body) => post(`sessions/${encodeURIComponent(key)}/${action}`, body);
@@ -48,7 +49,7 @@ export const settle = (now: string, sent: string) => (now.startsWith(sent) ? now
 export function blocked(u: Unit): string | undefined {
 	if (!u.online) return m.blocked_offline();
 	if (!u.live) return m.blocked_ended();
-	if (!u.control) return m.blocked_no_pane();
+	if (!u.control) return u.agent ? m.blocked_agent({ agent: AGENT[u.agent] }) : m.blocked_no_pane();
 	if (u.mark === "waiting") return u.answerable ? m.blocked_answer_above() : m.blocked_answer_terminal();
 }
 

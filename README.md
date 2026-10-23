@@ -61,6 +61,7 @@ Each of these is optional. When it is installed, Straw Boss picks it up; without
 | pi-code (hooks extension, with its dialog events) | Its hook confirmation ("Allow bash?": Allow or Deny, before any gated tool call) can be answered from the GUI. |
 | [pi-herdr-doc-review](https://www.npmjs.com/package/pi-herdr-doc-review) 0.4.0 or newer | Documents a session shows open beside its comms: HTML in a sandboxed frame whose form answers the agent, text read-only. |
 | [@juicesharp/rpiv-todo](https://www.npmjs.com/package/@juicesharp/rpiv-todo) 2.13 or newer | A session's todo list shows above its composer in the GUI, read from the session file. |
+| [straw-boss](https://github.com/wayne930242/straw-boss) (Claude Code and Codex) | A Claude Code or Codex main-agent session joins the tab's net through a small sidecar process that straw-boss starts with the session: a member, or a main when it registers as an orchestrator. It shows in the tower dashboard, the sidebar, and the GUI with an agent badge (the GUI cannot type into it), calls the tower and broadcasts with `straw-net.py`, and hears net messages as `[straw net …]` lines typed into its pane ([how](docs/how-it-works.md#from-claude-code-or-codex)). |
 
 Any extension's `select` and `confirm` (an `mp-infra` command review, say) can be answered from the GUI too, with no change to that extension: Straw Boss wraps them on pi's shared `ctx.ui`, opens pi's own dialog as always, and relays the same dialog; the first answer wins. Both can be answered from a paired device. `input`, `editor`, and `custom` are never touched, and they, with `ask_user` from pi-ask-user, show read-only in the GUI, with the terminal one tap away.
 
@@ -165,7 +166,7 @@ Run `bash herdr-reaper/run.sh reaper.mjs dry-run` first to see what it would do,
 
 ## Learn more
 
-[How it works](docs/how-it-works.md) covers roles, the tower, the dashboard, the browser view, what the extension writes, and how Claude Code or Codex agents can find a tower.
+[How it works](docs/how-it-works.md) covers roles, the tower, the dashboard, the browser view, what the extension writes, and how Claude Code or Codex sessions join the net.
 
 ## License
 

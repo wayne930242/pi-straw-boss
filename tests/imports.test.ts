@@ -71,7 +71,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased to 327: a tower's subagents, collected as a member's are (net.ts: the towers' rows, one subagent builder for both).
 	// Unreleased to 335: Dismiss finished (net.ts: dismissAll), the streams of one device told apart (gui.ts: remotes by device, the renewed cookie, remote/* shut to a paired device, the options and handlers for off, devices, and dismissAll).
 	// Unreleased to 337: the stashed bases in the net (net.ts: the type and the list read with each snapshot).
-	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 337, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
+	// Unreleased (net sidecar) to 338: `Unit.agent`, the agent of a unit that is not a pi session (net.ts).
+	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 338, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
 	// Input (the spec's figure), remote access over Tailscale, its terminal pairing panel (QR, c copies, o opens), and the QR encoder each have their own.
 	// What a waiting session waits on (0.5.0, read for display only; answering is deferred) has its own as well.
 	// 0.5.1 raised remote.ts from 165 to 185 (a recorded server counts as running only if its process started when the entry says: a reused PID
@@ -163,6 +164,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// looks a survivor waits (a tower one, anyone else two, an older build three), the one warning when `ps` cannot read the start time, and `share` with `keep`; session.ts 149 to 150 for the Herdr check of the newer-version takeover; stashing.ts 58 to 62 for refusing a stopped server.
 	for (const [name, max] of [["commands.ts", 32], ["control.ts", 199], ["stash.ts", 284], ["stashing.ts", 62], ["closer.ts", 87], ["upload.ts", 50], ["spawn.ts", 169], ["remote.ts", 227], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 141], ["bridge.ts", 262], ["owners.ts", 145], ["dialogs.ts", 240], ["seal.ts", 56], ["monitors.ts", 75], ["order.ts", 97], ["mirror.ts", 135], ["probe.ts", 40], ["keys.ts", 103], ["documents.ts", 80], ["docs.ts", 150], ["orphan.ts", 115], ["opener.ts", 90], ["server-watch.ts", 110], ["handover.ts", 230], ["towertab.ts", 65], ["state.ts", 110], ["briefing.ts", 33], ["reach.ts", 96], ["election.ts", 24], ["guard.ts", 83], ["presence.ts", 93], ["membership.ts", 115], ["tools.ts", 80], ["tower.ts", 44], ["closing.ts", 23], ["host.ts", 164], ["boss.ts", 41], ["session.ts", 150], ["digest.ts", 45], ["intercept.ts", 175]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
 	// 0.19.0 to 258 for the todo list: rpiv-todo's snapshots marked as the index reads them, and the newest one read for a reset or a change that adds one.
+	// Unreleased (net sidecar): composer.ts 191 to 192 and tokens.ts 23 to 24 for the agent badge and the composer's notice for a unit that is not a pi session.
 	// Unreleased (net sidecar): src/agent/ holds the net sidecar of a Claude Code or Codex session (docs/specs/2026-10-23-claude-codex-net): kit.ts (the modules' two pi dependencies over a raw
 	// intercom client), paths.ts (where its files and pi-intercom are), sidecar.ts (the session in the net), and cli.ts (what straw-boss runs: join, and the commands of straw-net.py). None of it is loaded by the extension or by the page, and none imports the host, the GUI, or the dialogs.
 	for (const [name, max] of [["kit.ts", 161], ["paths.ts", 78], ["sidecar.ts", 332], ["cli.ts", 147]] as const) assert.ok(count(`src/agent/${name}`) <= max, `src/agent/${name} has ${count(`src/agent/${name}`)} lines`);
@@ -235,7 +237,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased raised workspace.ts to 60 for the tower's subagents tethered under it.
 	// Unreleased raised session.ts to 116: the comms head carries the unit's mark, so it glows while the unit is commanding.
 	// Unreleased raised scene.ts to 38 for `closed` (a channel is closed when its session left the net or a finished subagent's pi exited) and composer.ts to 191 (a closed channel's box is disabled).
-	for (const [name, max] of [["router.ts", 80], ["chat.ts", 275], ["markdown.ts", 180], ["views.ts", 90], ["scene.ts", 38], ["tokens.ts", 23], ["nav.ts", 43], ["workspace.ts", 60], ["dossier.ts", 49], ["session.ts", 116], ["bars.ts", 50], ["lightbox.ts", 34], ["layer.ts", 249], ["askkeys.ts", 75], ["composer.ts", 191], ["ask.ts", 185], ["mirror.ts", 175], ["keypad.ts", 124], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
+	for (const [name, max] of [["router.ts", 80], ["chat.ts", 275], ["markdown.ts", 180], ["views.ts", 90], ["scene.ts", 38], ["tokens.ts", 24], ["nav.ts", 43], ["workspace.ts", 60], ["dossier.ts", 49], ["session.ts", 116], ["bars.ts", 50], ["lightbox.ts", 34], ["layer.ts", 249], ["askkeys.ts", 75], ["composer.ts", 192], ["ask.ts", 185], ["mirror.ts", 175], ["keypad.ts", 124], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
 	// 0.28.0 to 185 with the answer keys' hooks into gui/ask.ts (the focus on the first option, the textarea). 0.28.0 raised gui/ask.ts from 156 to 175 for the secret panel: the masked field with Show and Hide, Submit, the way back to the terminal, the unsupported-remote notice, and a value that leaves with its one request.
 	// 0.10.0: the page's text comes from Paraglide's messages (gui/messages), which raised chat.ts, views.ts, layer.ts, ask.ts, mirror.ts, and doc.ts by one
 	// line each for the messages import; the strings replaced in place. gui/i18n.ts picks the locale (the menu's choice, the browser's languages with
@@ -321,7 +323,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased to 862: main.ts loads the phone drawer (drawer.ts) where there is a touch screen or a narrow window and hands it each snapshot and route; the demo's toolbar gets a drawer button.
 	// Then to 863 for the alert ranking (alerts.ts: waiting or a pending dialog is prominent, the rest are notices).
 	// Unreleased to 888 for stash and pop on the map (quit.ts: aimStash, showStashed and its Pop buttons, Stash and Pop in the click handler; render.ts and main.ts wire them, and hang the Stashed list under its button).
-	assert.ok(page <= 888, `the page's TypeScript has ${page} lines`);
+	// Unreleased (net sidecar) to 891: render.ts holds the agent labels and the badge on the card.
+	assert.ok(page <= 891, `the page's TypeScript has ${page} lines`);
 });
 
 test("the built page is small, self-contained (no remote URLs, fonts, or imports), and carries no demo fixture", { skip: !existsSync(join(root, "dist/gui/index.html")) && "run npm run gui:build first" }, () => {
@@ -377,7 +380,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 40.5 KB / 15.2 KB gzipped for loading the phone drawer (main.ts) and the glow of the commanding mark's neighbours (labels shared with the drawer).
 	// Unreleased (stash and pop on the page): stash.ts 262 to 284 (stashedList, close all naming its base; nameFor, the server's session asked again before its base is stashed, a failed pop never stashed over another), closer.ts 74 to 87 (close/pop), host.ts 110 to 111 (the import of
 	// popBase and stashedList). The map chunk to 42.7 KB / 15.8 KB gzipped for stash and pop on the map (quit.ts: a base's Stash, the HUD's Stashed list with Pop, Quit checked first) in both languages.
-	assert.ok(size(entry).length <= 42_700 && gz(entry) <= 15_800, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// Unreleased (net sidecar) to 42.8 KB / 15.85 KB gzipped for the agent badge on a unit that is not a pi session (the card and the token).
+	assert.ok(size(entry).length <= 42_800 && gz(entry) <= 15_850, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).
@@ -413,7 +417,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 92.1 KB / 37.5 KB for the answer form's keyboard (gui/askkeys.ts, about 2.3 KB raw and 1.0 KB gzipped) and the focus on a dialog's first option.
 	// 0.28.0, with the answer keys, to 94.6 KB / 38.4 KB: the secret panel (+2.3 KB / +0.8 KB gzipped) (gui/ask.ts) and its nine messages in both languages.
 	// Unreleased to 101.7 KB / 41.9 KB gzipped for the notices list's plural and the Notices button's tint, after 101.5 KB / 41.8 KB for the phone drawer (gui/drawer.ts and swipe.ts, about 4 KB raw, with their messages in both languages), after 96 KB / 38.8 KB for the paired devices under the pairing code (gui/devices.ts, with its messages in both languages) and the answer panel without its read-only confirm.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 101_700 && total(chunks, gz) <= 41_900, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// Unreleased (net sidecar) to 102 KB / 41.95 KB gzipped for the composer's notice about an agent that is not pi (both languages).
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 102_000 && total(chunks, gz) <= 41_950, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
@@ -445,5 +450,6 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// The secret's masked field is a text input drawn as dots by CSS (never type=password), to 48.2 KB.
 	// Unreleased to 48.7 KB / 11.8 KB gzipped for the paired devices list on the pairing tile, then to 50 KB / 12 KB for the commanding mark's colour, badge, and glow, and to 51.8 KB / 12.4 KB for the phone drawer.
 	// Unreleased to 52 KB / 12.45 KB for the base's Stash beside its Quit and the Stashed list's rows.
-	assert.ok(total(css, (n) => size(n).length) <= 52_000 && total(css, gz) <= 12_450, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// Unreleased (net sidecar) to 52.2 KB for the agent badge.
+	assert.ok(total(css, (n) => size(n).length) <= 52_200 && total(css, gz) <= 12_450, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });

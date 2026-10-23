@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { afterEach, test } from "node:test";
+import { buildNet } from "../src/net.ts";
 import { PROMPT_DIR, settle, until, World } from "./fakes.ts";
 
 let world = new World();
@@ -277,3 +278,23 @@ test("what a session pinned as owner of the tab it left is not carried to the ta
 	assert.equal(state("wA:t1")?.main, "m");
 });
 
+
+test("a claude or codex pane that joined the net is a unit with the agent named, no control, and no file; a pi pane is not marked", () => {
+	const at = (pane: string) => ({ status: "current" as const, paneId: pane, workspace: { id: "wA", label: "Alpha" }, tab: { id: "wA:t1", label: "work" } });
+	const net = buildNet({
+		sessions: [{ id: "claude-1", name: "claude-085ff3b1", herdrLocation: at("wA:p1") }, { id: "codex-1", name: "codex-9", herdrLocation: at("wA:p2") }, { id: "pi-1", name: "pi one", herdrLocation: at("wA:p3") }, { id: "claude-2", name: "claude-quiet", herdrLocation: at("wA:p4") }],
+		panes: [
+			{ pane_id: "wA:p1", tab_id: "wA:t1", workspace_id: "wA", agent: "claude", agent_status: "working", tokens: { sb_role: "member" }, agent_session: { value: "/home/u/.claude/projects/x/s.jsonl" } },
+			{ pane_id: "wA:p2", tab_id: "wA:t1", workspace_id: "wA", agent: "codex", agent_status: "idle", tokens: { sb_role: "main" } },
+			{ pane_id: "wA:p3", tab_id: "wA:t1", workspace_id: "wA", agent: "pi", agent_status: "idle", tokens: { sb_role: "member" } },
+			{ pane_id: "wA:p4", tab_id: "wA:t1", workspace_id: "wA", agent: "claude", tokens: {} },
+		],
+		workspaces: [{ workspace_id: "wA", label: "Alpha", tokens: {} }],
+		children: () => [],
+	}, new Map());
+	const units = net.bases[0]!.tabs[0]!.units;
+	assert.deepEqual(units.map((u) => [u.name, u.role, u.control, u.agent ?? null, u.mark]), [["codex-9", "main", false, "codex", "idle"], ["claude-085ff3b1", "member", false, "claude", "working"], ["pi one", "member", true, null, "idle"]], "a session whose pane carries no role did not join");
+	const refs = new Map();
+	buildNet({ sessions: [{ id: "claude-1", name: "c", herdrLocation: at("wA:p1") }], panes: [{ pane_id: "wA:p1", tab_id: "wA:t1", workspace_id: "wA", agent: "claude", tokens: { sb_role: "member" }, agent_session: { value: "/home/u/.claude/projects/x/s.jsonl" } }], workspaces: [{ workspace_id: "wA", label: "Alpha", tokens: {} }], children: () => [] }, refs);
+	assert.equal(refs.get("claude-1").file, undefined, "nothing of Claude's transcript is readable through the server");
+});
