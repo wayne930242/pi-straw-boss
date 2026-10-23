@@ -1,12 +1,17 @@
 import { spawn } from "node:child_process";
 import type { Kit } from "./state.ts";
 
-/** Closes a pane once the pi process `pid` has exited (at most 60 s), from a node process of its own, so pi's shutdown runs to the end first; node, not sh, so Windows can too. */
+/**
+ * Closes a pane once the pi process `pid` has exited (at most 60 s), from a process of its own, so pi's shutdown runs to the end first. Windows has no sh, so there
+ * the wait runs in node (pi runs on node there; a Bun-built pi would read `-e` as its own flag, so sh stays the waiter elsewhere).
+ */
 export const afterExit = (pid: number, args: string[]) => {
 	const herdr = process.env.HERDR_BIN_PATH || "herdr";
-	const script = `const [pid, bin, ...args] = process.argv.slice(1); let i = 0; const alive = () => { try { return process.kill(+pid, 0); } catch (e) { return e.code === "EPERM"; } };
+	const sh = `i=0; while kill -0 ${pid} 2>/dev/null && [ $i -lt 120 ]; do sleep 0.5; i=$((i+1)); done; exec "$0" "$@"`;
+	const node = `const [bin, ...args] = process.argv.slice(1); let i = 0; const alive = () => { try { return process.kill(${pid}, 0); } catch (e) { return e.code === "EPERM"; } };
 	const t = setInterval(() => { if (alive() && ++i < 120) return; clearInterval(t); require("node:child_process").spawn(bin, args, { stdio: "ignore", windowsHide: true }).on("error", () => {}); }, 500);`;
-	spawn(process.execPath, ["-e", script, String(pid), herdr, ...args], { detached: true, stdio: "ignore", windowsHide: true }).on("error", () => {}).unref();
+	const [cmd, pre] = process.platform === "win32" ? [process.execPath, ["-e", node]] : ["sh", ["-c", sh]];
+	spawn(cmd, [...pre, herdr, ...args], { detached: true, stdio: "ignore", windowsHide: true }).on("error", () => {}).unref();
 };
 
 /**
