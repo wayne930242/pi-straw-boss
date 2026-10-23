@@ -11,6 +11,9 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 // Pi reloads extension TypeScript on /reload, but Node caches native .js/.mjs modules for the
 // life of the process. A relative JavaScript import would keep an old version after an upgrade.
 test("extension code imports relative modules only as .ts", () => {
+	for (const name of readdirSync(join(root, "src/agent")).filter((file) => file.endsWith(".ts"))) {
+		for (const [, specifier] of readFileSync(join(root, "src/agent", name), "utf8").matchAll(/from\s+["'](\.\.\/(?:host|gui|dialogs|bridge|handover|mirror|control)\.ts)["']/g)) assert.fail(`src/agent/${name} imports ${specifier}: a net sidecar never hosts or reaches the GUI`);
+	}
 	for (const dir of ["src", "src/agent"]) {
 		for (const name of readdirSync(join(root, dir)).filter((file) => file.endsWith(".ts"))) {
 			for (const [, specifier] of readFileSync(join(root, dir, name), "utf8").matchAll(/from\s+["'](\.[^"']*)["']/g)) {
@@ -160,9 +163,9 @@ test("the TypeScript source stays within its size budgets", () => {
 	// looks a survivor waits (a tower one, anyone else two, an older build three), the one warning when `ps` cannot read the start time, and `share` with `keep`; session.ts 149 to 150 for the Herdr check of the newer-version takeover; stashing.ts 58 to 62 for refusing a stopped server.
 	for (const [name, max] of [["commands.ts", 32], ["control.ts", 199], ["stash.ts", 284], ["stashing.ts", 62], ["closer.ts", 87], ["upload.ts", 50], ["spawn.ts", 169], ["remote.ts", 227], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 141], ["bridge.ts", 262], ["owners.ts", 145], ["dialogs.ts", 240], ["seal.ts", 56], ["monitors.ts", 75], ["order.ts", 97], ["mirror.ts", 135], ["probe.ts", 40], ["keys.ts", 103], ["documents.ts", 80], ["docs.ts", 150], ["orphan.ts", 115], ["opener.ts", 90], ["server-watch.ts", 110], ["handover.ts", 230], ["towertab.ts", 65], ["state.ts", 110], ["briefing.ts", 33], ["reach.ts", 96], ["election.ts", 24], ["guard.ts", 83], ["presence.ts", 93], ["membership.ts", 115], ["tools.ts", 80], ["tower.ts", 44], ["closing.ts", 23], ["host.ts", 164], ["boss.ts", 41], ["session.ts", 150], ["digest.ts", 45], ["intercept.ts", 175]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
 	// 0.19.0 to 258 for the todo list: rpiv-todo's snapshots marked as the index reads them, and the newest one read for a reset or a change that adds one.
-	// 0.39.0 src/agent/ holds the net sidecar of a Claude Code or Codex session (docs/specs/2026-10-23-claude-codex-net): kit.ts (the modules' two pi dependencies over a raw
-	// intercom client). None of it is loaded by the extension or by the page, and none imports the host, the GUI, or the dialogs.
-	for (const [name, max] of [["kit.ts", 161]] as const) assert.ok(count(`src/agent/${name}`) <= max, `src/agent/${name} has ${count(`src/agent/${name}`)} lines`);
+	// Unreleased (net sidecar): src/agent/ holds the net sidecar of a Claude Code or Codex session (docs/specs/2026-10-23-claude-codex-net): kit.ts (the modules' two pi dependencies over a raw
+	// intercom client), paths.ts (where its files and pi-intercom are), and sidecar.ts (the session in the net). None of it is loaded by the extension or by the page, and none imports the host, the GUI, or the dialogs.
+	for (const [name, max] of [["kit.ts", 161], ["paths.ts", 78], ["sidecar.ts", 332]] as const) assert.ok(count(`src/agent/${name}`) <= max, `src/agent/${name} has ${count(`src/agent/${name}`)} lines`);
 	assert.ok(count("src/history.ts") <= 258, `src/history.ts has ${count("src/history.ts")} lines`);
 	// The item mapping and the stream glue came out of the reader to keep it within its budget; the spec sets no figure for them.
 	// 0.19.0 to 108 for Todo and todosOf, a todo snapshot checked field by field.

@@ -56,6 +56,8 @@ export class FakeHerdr {
 	];
 	panes: FakePane[] = [];
 	calls: string[][] = [];
+	/** What `agent prompt` typed into a pane, and the gate options it carried. */
+	prompts: { pane: string; text: string; args: string[] }[] = [];
 	closed: string[] = [];
 	/** Socket API calls, and a switch that makes `tab.move` fail as an unreachable socket would. */
 	moves: { tab_id: string; insert_index: number }[] = [];
@@ -176,6 +178,12 @@ export class FakeHerdr {
 			tab.label = args.slice(3).join(" ");
 			return out({});
 		}
+		if (group === "agent" && cmd === "prompt") {
+			const pane = this.pane(args[2]!);
+			if (pane.agent_status === "blocked") throw new Error(`herdr ${args.join(" ")} failed: agent_blocked: agent is blocked`);
+			this.prompts.push({ pane: pane.pane_id, text: args[3]!, args: args.slice(4) });
+			return out({ type: "agent_prompted", agent: { pane_id: pane.pane_id, agent: pane.agent } });
+		}
 		if (group === "agent" && cmd === "start") {
 			if (this.busy-- > 0) throw new Error(`herdr ${args.join(" ")} failed: agent_pane_busy: agent target pane ${flag("--pane")} is not an available shell`);
 			if (!/^[a-z][a-z0-9_-]{0,31}$/.test(args[2]!)) throw new Error(`herdr agent start failed: invalid_agent_name: ${args[2]}`);
@@ -218,11 +226,14 @@ export class FakeHerdr {
 	}
 }
 
-interface Registration { namespace: string; ownerEligible: boolean; onReady(channel: unknown): void; onEvent(event: Record<string, unknown>): void }
+export interface Registration { namespace: string; ownerEligible: boolean; onReady(channel: unknown): void; onEvent(event: Record<string, unknown>): void }
+
+/** What the broker needs of a connected session: a pi `Agent`, or a net sidecar's stand-in (agent-fakes.ts), which also hears the messages sent to it. */
+export interface Peer { id: string; name: string; pane: string; status?: string; regs: Map<string, Registration>; receive?(from: { id: string; name?: string }, text: string, messageId: string): void }
 
 /** A tiny pi-intercom broker: owner by connection order, compare-and-swap-free state, an outbox. */
 export class FakeBroker {
-	sessions = new Map<string, Agent>();
+	sessions = new Map<string, Peer>();
 	owners = new Map<string, string>();
 	states = new Map<string, { revision: number; payload: unknown }>();
 	delivered: { from: string; to: string; message: string; tokens: string }[] = [];
@@ -239,10 +250,10 @@ export class FakeBroker {
 		this.herdr = herdr;
 	}
 
-	connect(agent: Agent): void {
+	connect(agent: Peer): void {
 		this.sessions.set(agent.id, agent);
 	}
-	register(agent: Agent, registration: Registration): void {
+	register(agent: Peer, registration: Registration): void {
 		if (!NAMESPACE.test(registration.namespace)) throw new Error(`Invalid intercom extension namespace: ${registration.namespace}`);
 		if (agent.regs.has(registration.namespace)) throw new Error(`Intercom extension namespace already registered: ${registration.namespace}`);
 		agent.regs.set(registration.namespace, registration);
@@ -270,7 +281,7 @@ export class FakeBroker {
 		this.deliver(agent.id, ns, { type: "connection", connected: true, supported: true });
 		this.elect(ns);
 	}
-	disconnect(agent: Agent): void {
+	disconnect(agent: Peer): void {
 		this.sessions.delete(agent.id);
 		for (const ns of agent.regs.keys()) this.elect(ns);
 		for (const other of this.sessions.values()) for (const ns of other.regs.keys()) this.deliver(other.id, ns, { type: "session_left", sessionId: agent.id });
@@ -283,6 +294,7 @@ export class FakeBroker {
 		this.ids.set(used, this.ids.get(used) ?? request.message);
 		const status = reused ? { status: "failed", code: "delivery_failed", detail: "Message id was reused with different authored content" } : !target ? { status: "blocked", code: "target_not_found" } : this.failing.has(request.to) ? { status: "failed", code: "delivery_failed" } : { status: "sent" };
 		if (status.status === "sent") this.delivered.push({ from: from.id, to: request.to, message: request.message, tokens: JSON.stringify(this.herdr.workspaces.map((w) => w.tokens.tower)) });
+		if (status.status === "sent") target?.receive?.({ id: from.id, name: from.name }, request.message, request.requestId);
 		setImmediate(() => from.emit("intercom:outbox-result", { version: 1, requestId: request.requestId, ...status }));
 	}
 	/** What pi-intercom's listSessions() would answer right now. */
@@ -310,7 +322,7 @@ export class FakeBroker {
 		this.events++;
 		setImmediate(() => this.sessions.get(id)?.regs.get(ns)?.onEvent(event));
 	}
-	private info(agent: Agent) {
+	private info(agent: Peer) {
 		const pane = this.herdr.panes.find((p) => p.pane_id === agent.pane);
 		const tab = this.herdr.tabs.find((t) => t.tab_id === pane?.tab_id);
 		const workspace = this.herdr.workspaces.find((w) => w.workspace_id === pane?.workspace_id);
