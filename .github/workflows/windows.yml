@@ -1,11 +1,11 @@
 name: Windows
 
-# The Windows transport on a real Windows machine: Herdr's named pipe behind its marker file, a sidecar's control pipe, and the reaper's
-# Windows paths (tests/platform.test.ts). The rest of the suite drives Unix sockets, bash and lsof, and runs on Linux in the publish job.
+# The Windows transport on a real Windows machine: Herdr's named pipe behind its marker file, a sidecar's control pipe, and every module a
+# session, a sidecar, and the sidebar plugin load (tests/platform.test.ts). The rest of the suite drives Unix sockets and bash, and runs on Linux in the publish job.
 on:
   push:
     branches: [main]
-    paths: ["src/**", "herdr-plugin/**", "herdr-reaper/**", "tests/platform.test.ts", "package.json", "package-lock.json", ".github/workflows/windows.yml"]
+    paths: ["src/**", "herdr-plugin/**", "tests/platform.test.ts", "package.json", "package-lock.json", ".github/workflows/windows.yml"]
   pull_request:
   workflow_call:
   workflow_dispatch:

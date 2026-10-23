@@ -154,8 +154,7 @@ export async function planSweep({ workspaces, panes, state, now, confirmMs = CON
 	return { closes, skips, ops, nextAt, expectClosed };
 }
 
-// Paths are split on both separators: Herdr on Windows reports them with backslashes.
-const within = (path, root) => typeof path === "string" && root.length > 0 && (path === root || (/[\\/]$/.test(root) ? path.startsWith(root) : [`${root}/`, `${root}\\`].some((prefix) => path.startsWith(prefix))));
+const within = (path, root) => typeof path === "string" && root.length > 0 && (path === root || path.startsWith(root.endsWith("/") ? root : `${root}/`));
 
 /**
  * What still uses a checkout: a live pane whose cwd or foreground cwd is the checkout or below it, or a live workspace on the same
@@ -191,7 +190,7 @@ export const retainIdleMs = (config = {}) => (typeof config.retain_idle_hours ==
 export function findSessionPane(panes, sessionId) {
 	if (typeof sessionId !== "string" || sessionId.length === 0) return undefined;
 	const tail = `_${sessionId}.jsonl`;
-	return panes.find((pane) => pane.agent === "pi" && pane.agent_session?.kind === "path" && typeof pane.agent_session.value === "string" && pane.agent_session.value.split(/[\\/]/).at(-1).endsWith(tail))?.pane_id;
+	return panes.find((pane) => pane.agent === "pi" && pane.agent_session?.kind === "path" && typeof pane.agent_session.value === "string" && pane.agent_session.value.split("/").at(-1).endsWith(tail))?.pane_id;
 }
 
 /**
@@ -332,7 +331,7 @@ export function noteParents(workspaces, state, config = {}) {
 /** The label Herdr gives a workspace it opens for a repository's main checkout. */
 const hasDefaultLabel = (workspace) => {
 	const { repo_name: repoName, checkout_path: checkout } = worktreeOf(workspace);
-	return workspace.label === repoName || workspace.label === checkout?.split(/[\\/]/).filter(Boolean).at(-1);
+	return workspace.label === repoName || workspace.label === checkout?.split("/").filter(Boolean).at(-1);
 };
 
 /**

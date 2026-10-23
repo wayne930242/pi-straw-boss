@@ -1,5 +1,5 @@
-// @ts-nocheck: the plugin scripts are plain JavaScript, and the reaper's panes are loose test data.
-// What differs on Windows: Herdr's socket is a named pipe behind a marker file, and so is a sidecar's control socket. The pure parts are
+// @ts-nocheck: the plugin script is plain JavaScript.
+// What differs on Windows: Herdr's socket is a named pipe behind a marker file, and a sidecar's control socket is a named pipe. The pure parts are
 // checked for every platform here; the live parts run on the platform the suite runs on (the Windows CI job runs this file).
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -7,10 +7,8 @@ import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { findCheckoutUser, findProcessHolder, findSessionPane } from "../herdr-reaper/decide.mjs";
-import { processClient } from "../herdr-reaper/io.mjs";
 import { instanceOf, localEndpoint as pluginEndpoint, socketCall } from "../herdr-plugin/net-view.mjs";
-import { agentFiles, ask, NoSidecar, socketIsFile } from "../src/agent/paths.ts";
+import { agentFiles, ask, newPipe, NoSidecar, socketIsFile, socketOf } from "../src/agent/paths.ts";
 import { herdrSocket, localEndpoint } from "../src/endpoint.ts";
 import { herdrCall } from "../src/herdr.ts";
 import { herdrEvents } from "../src/server-watch.ts";
@@ -36,11 +34,16 @@ test("a client connects to the named pipe named by the socket path on Windows, a
 	for (const platform of ["win32", "linux", "darwin"] as const) assert.equal(pluginEndpoint(path, platform), localEndpoint(path, platform));
 });
 
-test("a sidecar's control socket is a named pipe on Windows, one per state directory and pane, and a file beside the state file elsewhere", () => {
-	const a = agentFiles("/s", "wA:p1", "win32"), b = agentFiles("/t", "wA:p1", "win32"), c = agentFiles("/s", "wA:p2", "win32");
-	assert.match(a.socket, /^\\\\\.\\pipe\\straw-boss-[0-9a-f]{16}$/);
-	assert.equal(new Set([a.socket, b.socket, c.socket]).size, 3);
-	assert.equal(agentFiles("/s", "wA:p1", "darwin").socket, agentFiles("/s", "wA:p1", "darwin").state.replace(/\.json$/, ".sock"));
+test("a sidecar's control socket is a file beside its state file, or on Windows a named pipe of random name that its state file records", () => {
+	const files = agentFiles("/s", "wA:p1");
+	assert.equal(files.socket, files.state.replace(/\.json$/, ".sock"));
+	const [a, b] = [newPipe(), newPipe()];
+	assert.match(a, /^\\\\\.\\pipe\\straw-boss-[0-9a-f]{32}$/);
+	assert.notEqual(a, b, "no other account can know the name before the sidecar makes it");
+	const held = { pid: 1, session: "s", kind: "claude", pane: "wA:p1", id: "i", name: "n", startedAt: 0 };
+	assert.equal(socketOf(files, { ...held, pipe: a }), a);
+	assert.equal(socketOf(files, held), files.socket);
+	assert.equal(socketOf(files, undefined), files.socket);
 	assert.deepEqual([socketIsFile("win32"), socketIsFile("linux"), socketIsFile("darwin")], [false, true, true]);
 });
 
@@ -81,30 +84,21 @@ test("the extension, its watch, and the plugin reach Herdr over this platform's 
 });
 
 test("a sidecar's control socket answers on this platform, and a closed one reads as no sidecar", async () => {
-	const dir = mkdtempSync(join(tmpdir(), "psb-platform-agent-")), files = agentFiles(dir, "wA:p1");
+	const dir = mkdtempSync(join(tmpdir(), "psb-platform-agent-")), files = agentFiles(dir, "wA:p1"), socket = socketIsFile() ? files.socket : newPipe();
 	const server: Server = createServer((c) => c.on("data", () => c.end(`${JSON.stringify({ ok: true, pid: process.pid })}\n`)).on("error", () => {}));
 	mkdirSync(files.dir, { recursive: true });
 	try {
-		await new Promise<void>((resolve) => server.listen(files.socket, resolve));
-		assert.deepEqual(await ask(files.socket, { cmd: "hello" }, 3000), { ok: true, pid: process.pid });
+		await new Promise<void>((resolve) => server.listen(socket, resolve));
+		assert.deepEqual(await ask(socket, { cmd: "hello" }, 3000), { ok: true, pid: process.pid });
 		await new Promise<void>((resolve) => server.close(() => resolve()));
-		if (socketIsFile()) rmSync(files.socket, { force: true });
-		await assert.rejects(ask(files.socket, { cmd: "hello" }, 3000), (error) => error instanceof NoSidecar);
+		if (socketIsFile()) rmSync(socket, { force: true });
+		await assert.rejects(ask(socket, { cmd: "hello" }, 3000), (error) => error instanceof NoSidecar);
 	} finally {
 		server.close();
 		rmSync(dir, { recursive: true, force: true });
 	}
 });
 
-test("on Windows the reaper cannot list processes, so it keeps every checkout, and says why", async () => {
-	await assert.rejects(processClient("win32").cwds(), /Windows cannot tell which processes work in a checkout, so the reaper keeps every checkout there/);
-});
-
-test("the reaper reads Windows paths: a cwd below a checkout, and a session file's name", () => {
-	const roots = [String.raw`C:\wt\linked`];
-	assert.match(findCheckoutUser(roots, [{ pane_id: "w:p1", workspace_id: "w", cwd: String.raw`C:\wt\linked\src` }], []) ?? "", /pane w:p1/);
-	assert.equal(findCheckoutUser(roots, [{ pane_id: "w:p1", workspace_id: "w", cwd: String.raw`C:\wt\linked-2` }], []), null, "a sibling with the same prefix is not inside");
-	assert.match(findProcessHolder(roots, [{ pid: 7, name: "node", cwd: String.raw`C:\wt\linked\a` }]) ?? "", /pid 7/);
-	const panes = [{ pane_id: "w:p2", agent: "pi", agent_session: { kind: "path", value: String.raw`C:\Users\F\.pi\agent\sessions\x\2026-10-24_abc.jsonl` } }];
-	assert.equal(findSessionPane(panes, "abc"), "w:p2");
+test("every module a Windows session or sidecar loads links on this platform (a named import Windows lacks fails before any code runs)", async () => {
+	for (const path of ["../src/index.ts", "../src/closing.ts", "../src/agent/sidecar.ts", "../src/agent/cli.ts", "../herdr-plugin/net-view.mjs"]) await import(path);
 });

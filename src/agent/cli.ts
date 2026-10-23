@@ -1,7 +1,7 @@
 import { spawn as spawnProcess } from "node:child_process";
 import { closeSync, mkdirSync, openSync, realpathSync, statSync, truncateSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { agentFiles, ask, findIntercom, holder, NoSidecar, type Reply, stateDirOf, tsxLoader } from "./paths.ts";
+import { agentFiles, ask, findIntercom, holder, NoSidecar, readHeld, type Reply, socketOf, stateDirOf, tsxLoader } from "./paths.ts";
 import { startSidecar } from "./sidecar.ts";
 
 // `cli.ts` is what straw-boss runs: `join` at a session's start (it starts the sidecar of the pane, detached), and the commands of straw-net.py, each of which
@@ -92,7 +92,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 	const { command, pane: _pane, ...request } = args;
 	let reply: Reply;
 	try {
-		reply = await ask(files.socket, { cmd: command, ...Object.fromEntries(Object.entries(request).filter(([, value]) => value !== undefined)) }, deps.askMs ?? ASK_MS[command] ?? ASK_MS.default);
+		reply = await ask(socketOf(files, readHeld(files)), { cmd: command, ...Object.fromEntries(Object.entries(request).filter(([, value]) => value !== undefined)) }, deps.askMs ?? ASK_MS[command] ?? ASK_MS.default);
 	} catch (error) {
 		// Nothing listening is no sidecar. A sidecar that was reached and did not answer in time may still carry the request out: it is not "no sidecar", so a caller does not send it twice.
 		if (error instanceof NoSidecar) return (err(`no net sidecar for pane ${args.pane}: it joins when the session starts, if pi-straw-boss and pi-intercom are installed\n`), 2);
@@ -109,7 +109,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 		if (old && old.held.session === a.session && old.state !== "leaving") return (out(`already joined as ${old.held.id}\n`), 0);
 		if (old) {
 			// Another session in the pane (a /clear, or a resume), or this one on its way out: the sidecar of the one before leaves first, so the pane never has two.
-			if (old.state !== "leaving") await ask(files.socket, { cmd: "stop" }, 15_000).catch(() => {});
+			if (old.state !== "leaving") await ask(socketOf(files, old.held), { cmd: "stop" }, 15_000).catch(() => {});
 			if (!(await until(async () => !(await holder(files)), deps.stopMs ?? 10_000))) {
 				// Only a process that answered on the sidecar's own socket is signalled: a pid in a state file may belong to anything by now.
 				const stuck = await holder(files);

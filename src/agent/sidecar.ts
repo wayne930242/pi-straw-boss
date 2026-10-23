@@ -13,7 +13,7 @@ import { herdrEvents, herdrWatch } from "../server-watch.ts";
 import type { Config, Deps, Scope } from "../state.ts";
 import { type Incoming, type IntercomLike, createHeadlessKit } from "./kit.ts";
 import { claim } from "./claim.ts";
-import { agentFiles, findIntercom, type Held, readHeld, type Reply, socketIsFile, stateDirOf } from "./paths.ts";
+import { agentFiles, findIntercom, type Held, newPipe, readHeld, type Reply, socketIsFile, stateDirOf } from "./paths.ts";
 
 // The net presence of one Claude Code or Codex pane (docs/specs/2026-10-23-claude-codex-net): it registers with the pi-intercom broker as a session, joins the tab's
 // net through the same modules a pi session uses (membership, election, guard, presence, reach, digest), types the messages sent to it into its pane, and
@@ -89,7 +89,8 @@ export async function startSidecar({ pane, kind, session, record, cli = "straw-n
 	// One sidecar per pane: the state file is claimed exclusively. A holder is a process that answers on the pane's socket (a pid alone is not one), or one that is young and has not opened it yet.
 	mkdirSync(files.dir, { recursive: true, mode: 0o700 });
 	chmodSync(files.dir, 0o700);
-	const mine: Held = { pid: process.pid, session, kind, pane, id, name, startedAt: now() };
+	const socket = socketIsFile() ? files.socket : newPipe();
+	const mine: Held = { pid: process.pid, session, kind, pane, id, name, startedAt: now(), ...(socketIsFile() ? {} : { pipe: socket }) };
 	await claim(files, mine, pane, now);
 
 	const kit = createHeadlessKit({ client: undefined as unknown as IntercomLike, env, cfg, log: (text, level) => log(level && level !== "info" ? `${level}: ${text}` : text) });
@@ -124,7 +125,7 @@ export async function startSidecar({ pane, kind, session, record, cli = "straw-n
 		if (s.joined && !(await foreign())) await presence.clear().catch(() => {});
 		await client?.disconnect().catch(() => {});
 		server.close();
-		if (socketIsFile()) rmSync(files.socket, { force: true });
+		if (socketIsFile()) rmSync(socket, { force: true });
 		// Last, and only this sidecar's own file: a sidecar for the pane can claim it the moment it is gone.
 		const left = readHeld(files);
 		if (left?.pid === process.pid && left.session === session) rmSync(files.state, { force: true });
@@ -317,10 +318,10 @@ export async function startSidecar({ pane, kind, session, record, cli = "straw-n
 		});
 	});
 	await new Promise<void>((resolve, reject) => {
-		if (socketIsFile() && existsSync(files.socket)) unlinkSync(files.socket);
+		if (socketIsFile() && existsSync(socket)) unlinkSync(socket);
 		server.once("error", reject);
-		// A named pipe's default access already shuts out other accounts: only its creator, administrators, and SYSTEM may write to it.
-		server.listen(files.socket, () => (server.off("error", reject), socketIsFile() && chmodSync(files.socket, 0o600), resolve()));
+		// A named pipe's default access lets only its creator, administrators, and SYSTEM write to it or make another instance of it.
+		server.listen(socket, () => (server.off("error", reject), socketIsFile() && chmodSync(socket, 0o600), resolve()));
 	}).catch(async (error) => (await leave("the control socket could not listen"), Promise.reject(error)));
 
 	// The join: Herdr must say the pane is not in a sub workspace, then the broker, then the tab.

@@ -18,7 +18,7 @@ export function herdrSocket(env: NodeJS.ProcessEnv = process.env, platform: Node
 	return session ? path.join(config, "sessions", session, "herdr.sock") : path.join(config, "herdr.sock");
 }
 /**
- * Where a client connects for a local socket path. On Windows the path is a marker file, and the server is the named pipe `\\.\pipe\` + that path:
- * Herdr names its pipe that way, and the sidecars do too. Elsewhere it is the Unix socket at the path.
+ * Where a client connects for Herdr's socket path. On Windows the path is a marker file, and Herdr listens on the named pipe `\\.\pipe\` + that path
+ * (a sidecar's pipe is a full pipe name already, and does not go through here). Elsewhere it is the Unix socket at the path.
  */
 export const localEndpoint = (socketPath: string, platform: NodeJS.Platform = process.platform) => (platform === "win32" ? `\\\\.\\pipe\\${socketPath}` : socketPath);

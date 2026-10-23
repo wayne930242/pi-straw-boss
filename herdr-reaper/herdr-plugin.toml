@@ -1,117 +1,53 @@
 id = "wayne930242.straw-boss-reaper"
 name = "Straw Boss Reaper"
-version = "0.4.0"
+version = "0.3.0"
 min_herdr_version = "0.9.3"
 description = "Close the panes agents leave behind in linked-worktree workspaces, remove the clean checkouts nothing holds, and pin the workspaces to keep"
-# On Windows it closes panes but keeps every checkout: Windows cannot tell which processes work in one.
-platforms = ["macos", "linux", "windows"]
-
-# Every entry runs reaper.mjs: on macOS and Linux through run.sh, which finds node when a Herdr started from an app has a bare PATH,
-# and on Windows, which has no bash, with the node Herdr finds on PATH. Action ids are unique across platforms, so each Windows action
-# is `<id>-windows` (bind `wayne930242.straw-boss-reaper.pin-windows` there).
+platforms = ["macos", "linux"]
 
 # Starts the ticker, the process that runs a sweep every ten minutes. The event hooks start it too, so a plugin linked or installed
 # while Herdr runs needs no restart.
 [[startup]]
-platforms = ["macos", "linux"]
 command = ["/bin/bash", "run.sh", "reaper.mjs", "startup"]
-
-[[startup]]
-platforms = ["windows"]
-command = ["node", "reaper.mjs", "startup"]
 
 # Bookkeeping: a workspace appearing, being renamed (which pins it) or closing, a pane exiting, and an
 # agent starting or being released. No event hook sweeps by itself.
 [[events]]
 on = "workspace.created"
-platforms = ["macos", "linux"]
-command = ["/bin/bash", "run.sh", "reaper.mjs", "event"]
-
-[[events]]
-on = "workspace.created"
-platforms = ["windows"]
-command = ["node", "reaper.mjs", "event"]
-
-[[events]]
-on = "workspace.renamed"
-platforms = ["macos", "linux"]
 command = ["/bin/bash", "run.sh", "reaper.mjs", "event"]
 
 [[events]]
 on = "workspace.renamed"
-platforms = ["windows"]
-command = ["node", "reaper.mjs", "event"]
-
-[[events]]
-on = "workspace.closed"
-platforms = ["macos", "linux"]
 command = ["/bin/bash", "run.sh", "reaper.mjs", "event"]
 
 [[events]]
 on = "workspace.closed"
-platforms = ["windows"]
-command = ["node", "reaper.mjs", "event"]
+command = ["/bin/bash", "run.sh", "reaper.mjs", "event"]
 
 # Herdr removes a workspace whose last pane exits without a workspace.closed event, so its record is forgotten from this hook.
 [[events]]
 on = "pane.exited"
-platforms = ["macos", "linux"]
-command = ["/bin/bash", "run.sh", "reaper.mjs", "event"]
-
-[[events]]
-on = "pane.exited"
-platforms = ["windows"]
-command = ["node", "reaper.mjs", "event"]
-
-[[events]]
-on = "pane.agent_detected"
-platforms = ["macos", "linux"]
 command = ["/bin/bash", "run.sh", "reaper.mjs", "event"]
 
 [[events]]
 on = "pane.agent_detected"
-platforms = ["windows"]
-command = ["node", "reaper.mjs", "event"]
+command = ["/bin/bash", "run.sh", "reaper.mjs", "event"]
 
 # The ticker runs this every ten minutes, and a few seconds after an agent was released.
 [[actions]]
 id = "sweep"
 title = "Reap leftover worktree panes (scheduled sweep)"
 contexts = ["global"]
-platforms = ["macos", "linux"]
 command = ["/bin/bash", "run.sh", "reaper.mjs", "sweep"]
-
-[[actions]]
-id = "sweep-windows"
-title = "Reap leftover worktree panes (scheduled sweep)"
-contexts = ["global"]
-platforms = ["windows"]
-command = ["node", "reaper.mjs", "sweep"]
 
 [[actions]]
 id = "reap-now"
 title = "Reap leftover worktree panes now"
 contexts = ["global"]
-platforms = ["macos", "linux"]
 command = ["/bin/bash", "run.sh", "reaper.mjs", "reap-now"]
-
-[[actions]]
-id = "reap-now-windows"
-title = "Reap leftover worktree panes now"
-contexts = ["global"]
-platforms = ["windows"]
-command = ["node", "reaper.mjs", "reap-now"]
 
 [[actions]]
 id = "pin"
 title = "Pin / unpin workspace"
 contexts = ["workspace"]
-platforms = ["macos", "linux"]
 command = ["/bin/bash", "run.sh", "reaper.mjs", "pin"]
-
-[[actions]]
-id = "pin-windows"
-title = "Pin / unpin workspace"
-contexts = ["workspace"]
-platforms = ["windows"]
-command = ["node", "reaper.mjs", "pin"]

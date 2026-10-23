@@ -50,7 +50,7 @@ pi install npm:pi-straw-boss
 
 - pi running inside [Herdr](https://herdr.dev) 0.9.4 or newer.
 - [pi-intercom](https://www.npmjs.com/package/pi-intercom) 0.17.1 or newer: the net's channels, messages, and the GUI's dialog relay run over it.
-- Windows support is experimental: the extension reaches Herdr over its named pipe there, and the two Herdr plugins run with the `node` on `PATH` ([what differs](docs/how-it-works.md#windows)).
+- Windows support is experimental: the extension reaches Herdr over its named pipe there, the sidebar plugin runs with the `node` on `PATH`, and the worktree reaper is macOS and Linux only ([what differs](docs/how-it-works.md#windows)).
 
 ### Works with
 
@@ -150,7 +150,7 @@ A pinned workspace is never reaped and its checkout is never removed; that is al
 Renaming a workspace pins it at once, and the `pin` action toggles the pin of the workspace it runs in; unpinning leaves the name as it is.
 The pin is the workspace token `$pin`, a Nerd Font pin glyph, which a Space row shows once you add it.
 It needs Herdr 0.9.3 or newer, git and node 18 or newer.
-On Windows it closes panes but never removes a checkout, since Windows cannot tell which processes work in one; the log says so for each checkout it keeps. Its actions there are `sweep-windows`, `reap-now-windows`, and `pin-windows`.
+It runs on macOS and Linux only: on Windows, Herdr does not report what a pane's shell is running, so the reaper could not tell an idle pane from one running a build or an editor.
 
 ```bash
 herdr plugin install wayne930242/pi-straw-boss/herdr-reaper
@@ -169,7 +169,7 @@ rows = [["state_icon", "workspace", { token = "$pin" }], ["branch", "git_status"
 
 `herdr plugin link /path/to/pi-straw-boss/herdr-reaper` links a checkout instead, and `herdr plugin unlink wayne930242.straw-boss-reaper` removes the plugin.
 The plugin starts reaping as soon as it is installed or linked, with no trial run and no confirmation: its first sweep treats every idle, agent-less pane in a linked-worktree workspace as one whose agent exited, about a minute and a half after the first hook runs.
-Run `bash herdr-reaper/run.sh reaper.mjs dry-run` (on Windows `node herdr-reaper/reaper.mjs dry-run`) first to see what it would do, and pin the workspaces you want to keep (the pin action works once the plugin is linked, and a `config.json` with `only_under` can be put in the plugin's config directory before that).
+Run `bash herdr-reaper/run.sh reaper.mjs dry-run` first to see what it would do, and pin the workspaces you want to keep (the pin action works once the plugin is linked, and a `config.json` with `only_under` can be put in the plugin's config directory before that).
 [How it works](docs/how-it-works.md#worktree-reaper) has the rules and the limits.
 
 ## Learn more

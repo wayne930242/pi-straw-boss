@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { createRequire } from "node:module";
@@ -11,21 +11,23 @@ import { fileURLToPath } from "node:url";
 /** The `straw-boss` directory of pi's agent directory, where the GUI's record and the sidecars' files live. */
 export const stateDirOf = (env: NodeJS.ProcessEnv = process.env) => join(env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "straw-boss");
 
-/**
- * The files of the sidecar of one pane, named by a hash of the pane id (a pane id is not a safe file name). On Windows the control socket is a named pipe,
- * which lives in the pipe namespace and not beside the files: its name is a hash of where the files are, so another state directory has another pipe.
- */
-export function agentFiles(stateDir: string, pane: string, platform: NodeJS.Platform = process.platform) {
+/** The files of the sidecar of one pane, named by a hash of the pane id (a pane id is not a safe file name). */
+export function agentFiles(stateDir: string, pane: string) {
 	const base = join(stateDir, "agents", createHash("sha256").update(pane).digest("hex").slice(0, 16));
-	const socket = platform === "win32" ? `\\\\.\\pipe\\straw-boss-${createHash("sha256").update(base).digest("hex").slice(0, 16)}` : `${base}.sock`;
-	return { dir: dirname(base), state: `${base}.json`, socket, log: `${base}.log` };
+	return { dir: dirname(base), state: `${base}.json`, socket: `${base}.sock`, log: `${base}.log` };
 }
-/** Whether the control socket is a file to remove and restrict: a Unix socket is; a Windows named pipe ends with its server, and its access is set as it is made. */
+/**
+ * Whether the control socket is the file `files.socket` (removed and made mode 600). On Windows it is a named pipe instead, in a namespace every account shares:
+ * each sidecar names its own at random and records it in its state file (`Held.pipe`), which other accounts cannot read, so none can take the name first.
+ */
 export const socketIsFile = (platform: NodeJS.Platform = process.platform) => platform !== "win32";
+export const newPipe = () => `\\\\.\\pipe\\straw-boss-${randomBytes(16).toString("hex")}`;
+/** Where the sidecar that wrote `held` answers. */
+export const socketOf = (files: AgentFiles, held: Held | undefined) => (typeof held?.pipe === "string" ? held.pipe : files.socket);
 export type AgentFiles = ReturnType<typeof agentFiles>;
 
 /** What a running sidecar writes first: who holds the pane. */
-export interface Held { pid: number; session: string; kind: string; pane: string; id: string; name: string; startedAt: number }
+export interface Held { pid: number; session: string; kind: string; pane: string; id: string; name: string; startedAt: number; pipe?: string }
 
 /** Whether `pid` is a live process of this user: a sidecar is, so EPERM (another user's process) is not one of ours. */
 export const alive = (pid: unknown) => {
@@ -64,7 +66,7 @@ export interface Holder { held: Held; state: "up" | "starting" | "leaving" }
  */
 export async function judge(files: AgentFiles, held: Held | undefined, now: () => number = Date.now): Promise<Holder | undefined> {
 	if (!held) return undefined;
-	const reply = await ask(files.socket, { cmd: "hello" }, 3000).catch(() => undefined);
+	const reply = await ask(socketOf(files, held), { cmd: "hello" }, 3000).catch(() => undefined);
 	if (reply?.ok && reply.pid === held.pid && reply.session === held.session) return { held, state: reply.leaving ? "leaving" : "up" };
 	return alive(held.pid) && now() - held.startedAt < STARTING_MS ? { held, state: "starting" } : undefined;
 }

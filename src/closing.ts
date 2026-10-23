@@ -1,11 +1,12 @@
 import { spawn } from "node:child_process";
 import type { Kit } from "./state.ts";
 
-/** Closes a pane once the pi process `pid` has exited, from a process of its own, so pi's shutdown runs to the end first. */
+/** Closes a pane once the pi process `pid` has exited (at most 60 s), from a node process of its own, so pi's shutdown runs to the end first; node, not sh, so Windows can too. */
 export const afterExit = (pid: number, args: string[]) => {
 	const herdr = process.env.HERDR_BIN_PATH || "herdr";
-	const script = `i=0; while kill -0 ${pid} 2>/dev/null && [ $i -lt 120 ]; do sleep 0.5; i=$((i+1)); done; exec "$0" "$@"`;
-	spawn("sh", ["-c", script, herdr, ...args], { detached: true, stdio: "ignore" }).unref();
+	const script = `const [pid, bin, ...args] = process.argv.slice(1); let i = 0; const alive = () => { try { return process.kill(+pid, 0); } catch (e) { return e.code === "EPERM"; } };
+	const t = setInterval(() => { if (alive() && ++i < 120) return; clearInterval(t); require("node:child_process").spawn(bin, args, { stdio: "ignore", windowsHide: true }).on("error", () => {}); }, 500);`;
+	spawn(process.execPath, ["-e", script, String(pid), herdr, ...args], { detached: true, stdio: "ignore", windowsHide: true }).on("error", () => {}).unref();
 };
 
 /**
