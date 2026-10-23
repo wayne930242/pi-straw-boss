@@ -83,7 +83,7 @@ pi install npm:pi-straw-boss
 | `call_tower` | 傳訊息給這個工作區的塔台，或別的工作區的塔台。 |
 | `boss_open_main` | 只有塔台能用：替沒有 session 負責的請求開一個分頁，啟動新的主智慧體。 |
 | `boss_broadcast` | 傳訊息給一個分頁、一個工作區、所有塔台，或所有 session。 |
-| `boss_rename` | 用一個短語替這個 session 命名，說明它現在在做什麼；net、GUI，以及裝了 pi-auto-tab-name 時的分頁名稱都會跟著顯示。主智慧體換工作時會呼叫它。 |
+| `boss_rename` | 用一個短語替這個 session 命名，說明它現在在做什麼；net 與 GUI 會顯示它，主智慧體的分頁也會改成這個名稱。主智慧體換工作時會呼叫它。 |
 | `/boss` | 接手成為這個分頁的主智慧體。 |
 | `/boss status`、`/boss tower` | 顯示狀態；開啟塔台並切換過去。 |
 | `/boss close all` | 讓這個基地的塔台、主智慧體和成員結束，連同 shell 一起關掉，不存 stash。會先用 stash 的同一套檢查；有會遺失的東西（正在跑的回合、排隊中的訊息、對話框、Monitor、子智慧體、前景有程式的 shell）就什麼都不關，並列出所有原因。其他基地完全不碰。 |
