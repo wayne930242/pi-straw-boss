@@ -316,7 +316,10 @@ export function processClient(platform = process.platform, { now = Date.now, max
 					const name = (await readFile(`/proc/${pid}/comm`, "utf8")).trim();
 					listed.push({ pid: Number(pid), name, cwd: await readlink(`/proc/${pid}/cwd`) });
 				} catch (error) {
-					// A process that exited while the list was read is not a holder; one that cannot be read is not known to be harmless.
+					// A process that exited while the list was read is not a holder. One of this user's that the kernel will not let it inspect
+					// (non-dumpable: ssh-agent, gpg-agent, setuid helpers) is skipped like another user's: failing closed on it would keep every
+					// checkout on a machine that runs one. Any other failure is not known to be harmless.
+					if (error.code === "EACCES" || error.code === "EPERM") continue;
 					if (error.code !== "ENOENT" && error.code !== "ESRCH") throw new Error(`process ${pid} could not be inspected (${error.code ?? error.message})`);
 				}
 			}
