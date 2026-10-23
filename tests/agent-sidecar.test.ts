@@ -8,7 +8,7 @@ import { agentFiles, alive, ask, holder, type Held, liveHeld, readHeld } from ".
 import { type AgentDeps, type Sidecar, startSidecar } from "../src/agent/sidecar.ts";
 import { netMembers } from "../src/reach.ts";
 import { FakeClient } from "./agent-fakes.ts";
-import { until, World } from "./fakes.ts";
+import { bare, until, World } from "./fakes.ts";
 
 let world = new World();
 const started: Sidecar[] = [], scratch: string[] = [];
@@ -241,7 +241,8 @@ test("control: broadcast reaches the pi sessions in scope, and call-tower needs 
 	assert.match(tab.text, /Broadcast to 1 session/);
 	await sidecar.request({ cmd: "broadcast", message: "default note" });
 	await sidecar.request({ cmd: "broadcast", message: "all note", scope: "all" });
-	assert.deepEqual(lines().filter((l) => l.from === sidecar.id).map((l) => [l.to, l.message]), [["a", "tab note"], ["a", "default note"], ["a", "all note"], ["b", "all note"]]);
+	assert.deepEqual(lines().filter((l) => l.from === sidecar.id).map((l) => [l.to, bare(l.message)]), [["a", "tab note"], ["a", "default note"], ["a", "all note"], ["b", "all note"]]);
+	assert.match(lines().find((l) => l.from === sidecar.id && bare(l.message) === "tab note")!.message, /^\[straw net from=claude-\w+ id=claude-\S+ role=member workspace=Alpha kind=broadcast scope=tab to="a \(member of Alpha\)" reply=none\] tab note$/, "a sidecar's message opens with the same header a pi's does");
 	const none = await sidecar.request({ cmd: "call-tower", message: "help" });
 	assert.equal(none.ok, false);
 	assert.match((none as { error: string }).error, /has no tower yet: it opens when a member there promotes itself to main/);
@@ -250,7 +251,7 @@ test("control: broadcast reaches the pi sessions in scope, and call-tower needs 
 	world.herdr.workspace("wA").tokens.tower = "tower-wA";
 	const called = (await sidecar.request({ cmd: "call-tower", message: "help" })) as { text: string };
 	assert.match(called.text, /^Sent to the tower of Alpha/);
-	assert.deepEqual(lines().filter((l) => l.to === "tower-wA").map((l) => [l.from, l.message]), [[sidecar.id, "help"]]);
+	assert.deepEqual(lines().filter((l) => l.to === "tower-wA").map((l) => [l.from, bare(l.message)]), [[sidecar.id, "help"]]);
 });
 
 test("a main sidecar opens the tower itself for call-tower", async () => {

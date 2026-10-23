@@ -21,16 +21,19 @@ export interface OpenerEnv {
 	cwd: string;
 	sessions(): Promise<Session[]>;
 	send(to: string, message: string): Promise<{ status: string; code?: string; detail?: string }>;
+	/** The tower itself: the main reports to it as well as to the sender, and it closes the main afterwards (closemain.ts). */
+	tower(): { id: string; name: string };
 }
 export interface OpenRequest { request: string; sender: string; label?: string }
 export interface Opened { tab: string; pane: string; main: string; sender: string; repeated?: true }
 
-/** The text the new main starts from: who asked, and what, with nothing summarised. */
-export const handoff = (workspace: string, sender: Session, request: string) =>
+/** The text the new main starts from: who asked, and what, with nothing summarised. The main answers the sender and the tower that opened it, then waits to be closed. */
+export const handoff = (workspace: string, sender: Session, request: string, tower: { id: string; name: string }) =>
 	[
 		`Straw Boss: the tower of workspace ${workspace} opened this tab for you because no session owned the request below, and you are its main agent.`,
-		"Do the work, dispatching workers as your main agent prompt describes, and report the outcome to the sender with intercom send.",
+		"Do the work, dispatching workers as your main agent prompt describes. When it is done, report the outcome with intercom send to both: the sender and the tower that opened this tab. Then wait; the tower closes this tab after your done report, so end it with the result and nothing you still have to do. If you wait for a boss decision, say so in your report and the tower leaves you open.",
 		`Sender: ${sender.name ?? sender.id} (session id ${sender.id})`,
+		`Tower: ${tower.name} (session id ${tower.id})`,
 		"Request, verbatim:",
 		request,
 	].join("\n");
@@ -67,7 +70,7 @@ export function opener(env: OpenerEnv) {
 				return role === "main" ? (await env.sessions()).find((s) => s.herdrLocation?.paneId === paneId) : undefined;
 			}, MAIN_WAIT_MS, 500);
 			if (!main) throw new Error(`The pi in pane ${paneId} did not become the main agent of its tab within ${MAIN_WAIT_MS / 1000} s`);
-			const sent = await env.send(main.id, handoff(workspace.label, sender, request));
+			const sent = await env.send(main.id, handoff(workspace.label, sender, request, env.tower()));
 			if (sent.status !== "sent") throw new Error(`The new main ${main.name ?? main.id} did not take the request: ${sent.status} ${sent.code ?? ""} ${sent.detail ?? ""}`.trim());
 			return { tab: tabId, pane: paneId, main: main.id, sender: sender.id };
 		} catch (error) {

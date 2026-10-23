@@ -101,7 +101,7 @@ test("sessions that never join do not promote: a subagent call in a sub workspac
 	await t.toolCall("subagent");
 	assert.deepEqual(sub.tokens, {});
 	assert.deepEqual(t.tokens, { sb_role: "tower" });
-	assert.deepEqual(world.broker.registrations.map((r) => r.id), ["tower-wA"]);
+	assert.deepEqual(world.broker.registrations.map((r) => r.id), ["tower-wA", "tower-wA"]);
 	assert.deepEqual(world.herdr.commands("tab", "create"), []);
 });
 

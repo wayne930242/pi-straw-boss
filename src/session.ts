@@ -1,4 +1,5 @@
 import type { Briefing } from "./briefing.ts";
+import type { Control } from "./closemain.ts";
 import type { Digest } from "./digest.ts";
 import type { Guard } from "./guard.ts";
 import { answers, newer, readRecord } from "./handover.ts";
@@ -14,7 +15,7 @@ const KID_MARK_MS = [3_000, 15_000];
 const SUBAGENT_TOOLS = ["subagent", "subagent_resume"];
 
 /** What the session does at its start, around each run, and at its end. */
-export function registerSession(kit: Kit, { briefing, presence, membership, guard, host, reach, digest, startTower }: { briefing: Briefing; presence: Presence; membership: Membership; guard: Guard; host: ReturnType<typeof createHost>; reach: Reach; digest: Digest; startTower(): Promise<void> }) {
+export function registerSession(kit: Kit, { briefing, presence, membership, guard, host, reach, digest, control, startTower }: { briefing: Briefing; presence: Presence; membership: Membership; guard: Guard; host: ReturnType<typeof createHost>; reach: Reach; digest: Digest; control: Control; startTower(): Promise<void> }) {
 	const { pi, cfg, s, guiDir, me, role, tell } = kit;
 	const { run, env, version } = cfg;
 	const who = () => pi.getSessionName() || s.ownName || me().slice(0, 8);
@@ -49,6 +50,7 @@ export function registerSession(kit: Kit, { briefing, presence, membership, guar
 		if (mine?.tokens?.sb_open_main !== "1") return false;
 		s.openedBy = mine.tokens.sb_opened_by;
 		await report(run, "pane", s.at.paneId, { sb_open_main: null }).catch(() => {});
+		control.register(); // the tower that opened this main may ask it to close (closemain.ts)
 		return true;
 	};
 
@@ -133,6 +135,8 @@ export function registerSession(kit: Kit, { briefing, presence, membership, guar
 		await host.release(event.reason !== "quit"); // a /reload, /new, or /resume starts the GUI again in this process
 		s.dashboard?.stop();
 		s.dashboard = undefined;
+		s.headWatch?.();
+		s.headWatch = undefined;
 		presence.stop();
 		guard.stop();
 		stopWatching();

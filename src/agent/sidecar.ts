@@ -266,10 +266,8 @@ export async function startSidecar({ pane, kind, session, record, cli = "straw-n
 			return { text: said, role: kit.role() };
 		},
 		"call-tower": async (r) => {
-			const message = text(r.message, "message"), tower = await reach.openTower(typeof r.workspace === "string" ? r.workspace : undefined);
-			const result = await reach.send(tower.id, message);
-			if (result.status !== "sent") throw new Error(`The tower of ${tower.target.label} did not take the message: ${result.status} ${result.code ?? ""} ${result.detail ?? ""}`.trim());
-			return { text: `Sent to the tower of ${tower.target.label}${tower.routed ? ` (${tower.routed.label} is a sub workspace)` : ""}${tower.opened ? " (opened it)" : ""}. It replies through intercom.`, workspace: tower.target.workspace_id, towerId: tower.id, opened: tower.opened };
+			const { text: said, details } = await reach.callTower(text(r.message, "message"), typeof r.workspace === "string" ? r.workspace : undefined);
+			return { text: said, workspace: details.workspace, towerId: details.towerId, opened: details.opened };
 		},
 		broadcast: async (r) => {
 			const scope = (r.scope ?? "workspace") as Scope;

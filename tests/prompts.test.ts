@@ -8,7 +8,9 @@ import { PROMPT_DIR } from "./fakes.ts";
 // 0.22.0 to 185 for planning by planning.md before the first dispatch, with the boss's confirmation; 0.31.0 kept 185 when the confirmation gave way to asking only for decisions.
 // 0.32.0 added the terse caveman-style rule for text agents read to every role prompt: main 210, tower 205, member 95, member-no-main 105.
 // 0.32.1 added that a brief keeps its goal, context, reasons, scope, what others own, and acceptance check, and that an unsure reader restates or asks: +45 each.
-const BUDGETS: Record<string, number> = { "main.md": 255, "tower.md": 250, "member.md": 140, "member-no-main.md": 150 };
+// 0.40.0 (tower comms): tower 250 to 330 for tower_list and tower_send, the header every message opens with and what to do with its recipients, reporting back once, and closing the mains it opened;
+// main 255 to 290 for reporting to the tower that opened it and waiting to be closed.
+const BUDGETS: Record<string, number> = { "main.md": 290, "tower.md": 330, "member.md": 140, "member-no-main.md": 150 };
 const PLACEHOLDERS = new Set(["tab", "workspace", "main", "tower", "head", "dir"]);
 const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
 

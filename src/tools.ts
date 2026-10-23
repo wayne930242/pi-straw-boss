@@ -1,6 +1,7 @@
 import { Type, type Static, type TSchema } from "typebox";
 import type { Digest } from "./digest.ts";
 import type { Membership } from "./membership.ts";
+import type { CloseMain } from "./closemain.ts";
 import { opener } from "./opener.ts";
 import type { Reach } from "./reach.ts";
 import type { Kit } from "./state.ts";
@@ -9,7 +10,7 @@ import type { Kit } from "./state.ts";
 export const tabLabel = (name: string): string => Array.from(name).length > 16 ? `${Array.from(name).slice(0, 16).join("").trimEnd()}…` : name;
 
 /** The tools the agent calls: what a joined session has (status, call_tower, broadcast, rename, promote), and the tower's boss_open_main. */
-export function createTools({ pi, cfg, s, me, role }: Kit, { send, openTower, status, broadcast, promote, digest }: Pick<Reach, "send" | "openTower" | "status" | "broadcast"> & Pick<Membership, "promote"> & { digest: Digest }) {
+export function createTools({ pi, cfg, s, me, role }: Kit, { post, callTower, status, broadcast, towerList, towerSend, promote, digest, closeMain }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend"> & Pick<Membership, "promote"> & { digest: Digest; closeMain: CloseMain }) {
 	const tool = <P extends TSchema>(name: string, description: string, parameters: P, body: (params: Static<P>) => Promise<{ text: string; details?: unknown }>) =>
 		pi.registerTool({
 			name, label: name, description, parameters,
@@ -24,25 +25,20 @@ export function createTools({ pi, cfg, s, me, role }: Kit, { send, openTower, st
 				const result = await status();
 				return { text: JSON.stringify(result, null, 2), details: result };
 			});
-			tool("call_tower", "Send a message to the tower of your workspace, or of another workspace by id or exact label. Opens the tower tab when none is running; the tower replies through intercom.",
+			tool("call_tower", "Send a message to the tower of your workspace, or of another workspace by id or exact label. Opens the tower tab when none is running. The message goes out under a header the code writes (your name, role, and workspace, the recipient, and whether you expect a reply). A tower replies through intercom unless you say reply is false.",
 				Type.Object({
 					message: Type.String({ description: "What the tower needs to know or do: at most two sentences, details by reference." }),
 					workspace: Type.Optional(Type.String({ description: "Another workspace's id or exact label. Omit for your own." })),
+					reply: Type.Optional(Type.Boolean({ description: "Whether you wait for the tower's answer. Default true; false for a notice." })),
 				}),
-				async ({ message, workspace }) => {
-					const tower = await openTower(workspace);
-					const result = await send(tower.id, message);
-					if (result.status !== "sent") throw new Error(`The tower of ${tower.target.label} did not take the message: ${result.status} ${result.code ?? ""} ${result.detail ?? ""}`.trim());
-					const via = tower.routed ? ` (${tower.routed.label} is a sub workspace)` : "";
-					const text = `Sent to the tower of ${tower.target.label}${via}${tower.opened ? " (opened it)" : ""}. It replies through intercom.`;
-					return { text, details: { workspace: tower.target.workspace_id, towerId: tower.id, opened: tower.opened, status: result.status } };
-				});
-			tool("boss_broadcast", "Send one message to every other session in a scope. tab, workspace, and towers reach only sessions that joined the net; all reaches every pi session on this machine (for notices such as the boss going to sleep).",
+				({ message, workspace, reply }) => callTower(message, workspace, reply ?? true));
+			tool("boss_broadcast", "Send one message to every other session in a scope. tab, workspace, and towers reach only sessions that joined the net (towers: each workspace's tower, else its mains, else its members); all reaches every pi session on this machine (for notices such as the boss going to sleep). The message goes out under a header the code writes (your name and role, the scope, every recipient). A tower reaches other towers with tower_send instead.",
 				Type.Object({
 					message: Type.String({ description: "The message, once; receivers do not re-broadcast it." }),
 					scope: Type.Optional(Type.Union([Type.Literal("tab"), Type.Literal("workspace"), Type.Literal("towers"), Type.Literal("all")], { description: "Default workspace." })),
+					reply: Type.Optional(Type.Boolean({ description: "Whether you wait for answers. Default false." })),
 				}),
-				({ message, scope }) => broadcast(message, scope ?? "workspace"));
+				({ message, scope, reply }) => broadcast(message, scope ?? "workspace", reply ?? false));
 			// The session's name is what the net and the GUI show for it. A main agent names its tab too: the tab is its squad, and pi-auto-tab-name
 			// leaves a tab alone once anyone else labelled it. A tower keeps its own name.
 			if (!s.isTower) tool("boss_rename", "Name this session with a short phrase for the work it is doing now, at most 16 characters (e.g. \"MP-3584 cost mask\", \"重構通知模組\"). The net and the GUI show it, and a main agent's Herdr tab takes it as its label.",
@@ -69,8 +65,9 @@ export function createTools({ pi, cfg, s, me, role }: Kit, { send, openTower, st
 		},
 		// Tower only. The tower runs no commands: this is its one way to start work, in a new tab of its own workspace.
 		addOpenMain() {
-			const open = opener({ run: cfg.run, sleep: cfg.sleep, workspaceId: s.at.workspaceId, cwd: process.cwd(), sessions: () => s.c.listSessions(), send });
-			tool("boss_open_main", "Open a new tab in this workspace with a new pi as its main agent and hand it a request that no session owns. Does not ask the boss and does not take focus. Opens at most one main per request; when it fails, tell the sender.",
+			// The request reaches the new main under a header, and names the tower the main reports to as well as the sender.
+			const open = opener({ run: cfg.run, sleep: cfg.sleep, workspaceId: s.at.workspaceId, cwd: process.cwd(), sessions: () => s.c.listSessions(), send: (to, message) => post(to, message, "handoff", "main", true), tower: () => ({ id: me(), name: s.ownName || me() }) });
+			tool("boss_open_main", "Open a new tab in this workspace with a new pi as its main agent and hand it a request that no session owns. Does not ask the boss and does not take focus. Opens at most one main per request; when it fails, tell the sender. The main reports its outcome to the sender and to you; close it with boss_close_main after its done report.",
 				Type.Object({
 					request: Type.String({ description: "The sender's request exactly as it reached you, with every boss decision it quotes kept verbatim." }),
 					sender: Type.String({ description: "The intercom name or session id of the session that made the request; the new main reports back to it." }),
@@ -78,8 +75,25 @@ export function createTools({ pi, cfg, s, me, role }: Kit, { send, openTower, st
 				}),
 				async (input) => {
 					const opened = await open(input);
-					const text = opened.repeated ? `A main was already opened for this request (tab ${opened.tab}); nothing new opened.` : `Opened tab ${opened.tab} with a main agent (session ${opened.main}) and handed it the request. It reports to ${opened.sender}.`;
+					const text = opened.repeated ? `A main was already opened for this request (tab ${opened.tab}); nothing new opened.` : `Opened tab ${opened.tab} with a main agent (session ${opened.main}) and handed it the request. It reports to ${opened.sender} and to you.`;
 					return { text, details: opened };
+				});
+		},
+		// Tower only. Towers talk to each other with these: who is out there, and one message to one tower or all. Closing is for the mains a tower opened itself.
+		addTowerComms() {
+			tool("tower_list", "List every workspace's tower: its workspace, whether it is the head tower or you, who a message for it reaches (its tower; in a workspace without one, its mains, else its members), that session's state (idle or working), and what its tabs are working on (each tab's main and members by the names they gave themselves).", Type.Object({}), towerList);
+			tool("tower_send", "Send one message to another tower (workspace id or exact label), or to every other tower when workspace is omitted. A workspace without a tower is reached through its mains, else its members, and the result says so. The message goes out under a header the code writes (your name, role, and workspace, every recipient, whether you expect a reply): do not send again to a tower the header of a message you got already names as a recipient.",
+				Type.Object({
+					message: Type.String({ description: "The message, once: what the other towers need to know or do, details by reference." }),
+					workspace: Type.Optional(Type.String({ description: "One workspace's id or exact label. Omit for every other tower." })),
+					reply: Type.Optional(Type.Boolean({ description: "Whether you wait for an answer. Default false; true only when you act on it." })),
+				}),
+				({ message, workspace, reply }) => towerSend(message, workspace, reply ?? false));
+			tool("boss_close_main", "Close a main you opened with boss_open_main: ask it to quit as /boss close would, so its pane and tab close. Only mains opened by a tower in your workspace, never one the boss opened. Refused while it has a running turn, a queued message, an open dialog, a monitor, or a subagent; try again later. Close an opened main after its done report, unless it waits for a boss decision.",
+				Type.Object({ main: Type.String({ description: "The opened main's intercom name or session id." }) }),
+				async ({ main }) => {
+					const closed = await closeMain(main);
+					return { text: closed.text, details: closed };
 				});
 		},
 	};

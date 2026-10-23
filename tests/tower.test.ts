@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, mock, test } from "node:test";
 import { towerModel } from "../src/herdr.ts";
-import { settle, until, World } from "./fakes.ts";
+import { bare, settle, until, World } from "./fakes.ts";
 
 let world = new World();
 afterEach(async () => {
@@ -25,7 +25,7 @@ test("call_tower with a live tower sends one outbox request and opens nothing", 
 	await tower.start();
 	const a = await main();
 	const result = await a.tool("call_tower", { message: "port 3000 is taken" });
-	assert.deepEqual(world.broker.delivered.map((d) => [d.from, d.to, d.message]), [["main-1", "tower-wA", "port 3000 is taken"]]);
+	assert.deepEqual(world.broker.delivered.map((d) => [d.from, d.to, bare(d.message)]), [["main-1", "tower-wA", "port 3000 is taken"]]);
 	assert.equal(world.herdr.commands("tab", "create").length + world.herdr.commands("agent", "start").length, 0);
 	assert.deepEqual(result.details, { workspace: "wA", towerId: "tower-wA", opened: false, status: "sent" });
 });
@@ -209,9 +209,9 @@ test("two callers racing to open the tower open one tab", async () => {
 test("the tower registers its tab channel as not owner-eligible, writes both tokens, and keeps its role from the entry on resume", async () => {
 	const tower = world.tower("tower-wA", "wA:t7", "wA:p7");
 	await tower.start();
-	assert.deepEqual(world.broker.registrations.map((r) => [r.id, r.ownerEligible]), [["tower-wA", false]]);
+	assert.deepEqual(world.broker.registrations.map((r) => [r.id, r.namespace.split("/").slice(0, 2).join("/"), r.ownerEligible]), [["tower-wA", "straw-boss/tab", false], ["tower-wA", "straw-boss/control", false]], "its tab channel, and the control channel a main it opened answers on");
 	assert.deepEqual([tower.tokens, world.herdr.workspace("wA").tokens], [{ sb_role: "tower" }, { tower: "tower-wA" }]);
-	assert.deepEqual([...tower.tools.keys()].sort(), ["boss_broadcast", "boss_open_main", "boss_status", "call_tower"]);
+	assert.deepEqual([...tower.tools.keys()].sort(), ["boss_broadcast", "boss_close_main", "boss_open_main", "boss_status", "call_tower", "tower_list", "tower_send"]);
 	assert.deepEqual(tower.entries, [{ customType: "straw-boss", data: { tower: true, workspaceId: "wA" } }]);
 	assert.match((await tower.run())["straw-boss"]!, /^You are the tower of Herdr workspace Alpha;/);
 
@@ -291,7 +291,7 @@ test("call_tower resolves a workspace by id or exact label; towers reach the hea
 	await a.tool("call_tower", { message: "by label", workspace: "Beta" });
 	await a.tool("call_tower", { message: "by id", workspace: "wB" });
 	await towerB.tool("call_tower", { message: "to the head tower", workspace: "Alpha" });
-	assert.deepEqual(world.broker.delivered.map((d) => [d.to, d.message]), [["tower-wB", "by label"], ["tower-wB", "by id"], ["tower-wA", "to the head tower"]]);
+	assert.deepEqual(world.broker.delivered.map((d) => [d.to, bare(d.message)]), [["tower-wB", "by label"], ["tower-wB", "by id"], ["tower-wA", "to the head tower"]]);
 	await assert.rejects(towerA.tool("call_tower", { message: "me" }), /tower of that workspace/);
 	await assert.rejects(a.tool("call_tower", { message: "x", workspace: "Gamma" }), /No workspace matches "Gamma"\. Workspaces: wA \(Alpha\), wB \(Beta\)/);
 	world.herdr.workspaces.push({ workspace_id: "wC", label: "Beta", tokens: {}, worktree: undefined } as never);

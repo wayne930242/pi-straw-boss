@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
-import { Agent, World } from "./fakes.ts";
+import { Agent, bare, World } from "./fakes.ts";
 
 let world: World;
 let a1: Agent;
@@ -53,7 +53,7 @@ test("one failed recipient fails the call after the others were reported, and th
 	world.broker.failing.add("c");
 	await assert.rejects(a1.tool("boss_broadcast", { message: "lunch" }), /Not every recipient received it:\n.*c: failed \(delivery_failed\)/s);
 	assert.deepEqual(world.broker.delivered.map((d) => d.to).sort(), ["a2", "tower-wA"]);
-	assert.deepEqual(world.broker.delivered.map((d) => d.message), ["lunch", "lunch"]);
+	assert.deepEqual(world.broker.delivered.map((d) => bare(d.message)), ["lunch", "lunch"]);
 });
 
 test("a broadcast with no recipients succeeds and says so", async () => {
@@ -71,5 +71,5 @@ test("a restarted pi keeps its session id, and what it sends carries a message i
 	const again = world.agent({ id: "a1", pane: "wA:p1", tab: "wA:t1" });
 	await again.start();
 	await again.tool("boss_broadcast", { message: "two", scope: "tab" });
-	assert.deepEqual(world.broker.delivered.map((d) => [d.to, d.message]), [["a2", "one"], ["a2", "two"]]);
+	assert.deepEqual(world.broker.delivered.map((d) => [d.to, bare(d.message)]), [["a2", "one"], ["a2", "two"]]);
 });

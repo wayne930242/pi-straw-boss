@@ -65,6 +65,8 @@ export interface State {
 	queue: Promise<void>;
 	/** Set while this session holds the tower role. */
 	dashboard: ReturnType<typeof startDashboard> | undefined;
+	/** A tower's watch on the head workspace (headwatch.ts); stops with the session. */
+	headWatch: (() => void) | undefined;
 	// The GUI: the hub and server run in the session that shares it; `viewer` is the channel of a session outside the net that only reads.
 	hub: Hub | undefined;
 	gui: Gui | undefined;
@@ -94,7 +96,7 @@ export function createKit(pi: ExtensionAPI, cfg: Config): Kit {
 		// SAFETY: as `c` above.
 		at: undefined as unknown as Place,
 		mainId: undefined, pinned: undefined, info: {}, ownName: "", openedBy: undefined, kids: new Set(),
-		ui: undefined, hasUI: false, saved: {}, queue: Promise.resolve(), dashboard: undefined, hub: undefined, gui: undefined, viewer: undefined, quit: undefined, closing: undefined,
+		ui: undefined, hasUI: false, saved: {}, queue: Promise.resolve(), dashboard: undefined, headWatch: undefined, hub: undefined, gui: undefined, viewer: undefined, quit: undefined, closing: undefined,
 	};
 	const me = () => env.PI_INTERCOM_SESSION_ID ?? "";
 	const role = (): Role | undefined => {

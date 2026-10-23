@@ -1,5 +1,8 @@
+import type { Control } from "./closemain.ts";
 import { collect, startDashboard } from "./dashboard.ts";
+import type { Digest } from "./digest.ts";
 import { answers, readRecord, urlOf } from "./handover.ts";
+import { watchHead } from "./headwatch.ts";
 import { headOf, report, waitFor, workspaces, panes, place } from "./herdr.ts";
 import type { Membership } from "./membership.ts";
 import type { Presence } from "./presence.ts";
@@ -11,7 +14,7 @@ const SETTLE_MS = 2000;
 const SCREEN_EVENTS = ["pane.created", "pane.closed", "pane.updated", "pane.moved", "pane.exited", "pane.agent_detected", "tab.created", "tab.closed", "tab.renamed", "tab.moved", "tab.focused", "workspace.focused", "workspace.created", "workspace.updated", "workspace.metadata_updated", "workspace.renamed", "workspace.moved", "workspace.reordered", "workspace.closed"];
 
 /** A session that is a tower (`STRAW_BOSS_ROLE=tower`, or marked so in its session) takes the role: its marks, its tools, its dashboard. */
-export function createTower({ pi, cfg, s, guiDir, me }: Kit, { membership, presence, tools }: { membership: Membership; presence: Presence; tools: Tools }) {
+export function createTower({ pi, cfg, s, guiDir, me }: Kit, { membership, presence, tools, control, digest }: { membership: Membership; presence: Presence; tools: Tools; control: Control; digest: Digest }) {
 	const { run, world, sleep, events } = cfg;
 	return async function startTower() {
 		s.at = await place(run);
@@ -36,6 +39,9 @@ export function createTower({ pi, cfg, s, guiDir, me }: Kit, { membership, prese
 		s.info = { workspace: ws?.label ?? s.at.workspaceId, head: headOf(all)?.label ?? "" };
 		tools.addNetTools();
 		tools.addOpenMain();
+		tools.addTowerComms();
+		control.register();
+		s.headWatch = watchHead({ run, events, digest, workspaceId: s.at.workspaceId });
 		presence.keepFresh();
 		await presence.publish();
 		// The dashboard lives exactly as long as this session holds the tower role.

@@ -4,6 +4,7 @@ import { startBridge } from "./bridge.ts";
 import { interceptUi } from "./intercept.ts";
 import { registerBoss } from "./boss.ts";
 import { createBriefing } from "./briefing.ts";
+import { createCloseMain } from "./closemain.ts";
 import { createDigest } from "./digest.ts";
 import { afterExit, createClosing } from "./closing.ts";
 import { createElection } from "./election.ts";
@@ -49,10 +50,11 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		const guard = createGuard(kit, { ...election, openTower: reach.openTower });
 		// A join adds the tools of a joined session, and the tools promote through the membership: each is built with the other's hook.
 		const membership = createMembership(kit, { presence, election, guard, briefing, openTower: reach.openTower, register: () => (tools.addNetTools(), tools.addPromote()) });
-		const tools = createTools(kit, { ...reach, promote: membership.promote, digest });
+		const tools = createTools(kit, { ...reach, promote: membership.promote, digest, closeMain: (query) => control.closeMain(query) });
 		const host = createHost(kit, { bridge, connected: membership.connected });
 		closeSelf = createClosing(kit);
-		registerSession(kit, { briefing, presence, membership, guard, host, reach, digest, startTower: createTower(kit, { membership, presence, tools }) });
+		const control = createCloseMain(kit, { closeSelf, check: bridge.stashCheck });
+		registerSession(kit, { briefing, presence, membership, guard, host, reach, digest, control, startTower: createTower(kit, { membership, presence, tools, control, digest }) });
 		registerBoss(kit, { host, membership, reach, closeSelf, stashing: createStashing(kit, { host }) });
 	};
 }

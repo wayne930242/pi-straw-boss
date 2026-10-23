@@ -27,6 +27,9 @@ export function decode(m: boolean[][]) {
 /** The modules of a QR drawn for the terminal (`qrLines`: light as blocks, two rows per line), quiet zone included. */
 export const fromLines = (lines: string[]) => lines.flatMap((line) => [[...line].map((c) => c === " " || c === "▄"), [...line].map((c) => c === " " || c === "▀")]);
 
+/** A message as the person wrote it, without the header Straw Boss puts before it (src/header.ts). */
+export const bare = (message: string) => message.replace(/^\[straw net [^\]]*\] /, "");
+
 export const PROMPT_DIR = fileURLToPath(new URL("../prompts", import.meta.url));
 const NAMESPACE = /^[a-z0-9][a-z0-9._/-]{0,63}$/;
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -363,6 +366,9 @@ export class Agent {
 	overlays: (Overlay & { closed: boolean })[] = [];
 	/** What pi-intercom reports as this session's status. */
 	status = "idle";
+	/** What pi's context says of the run: `isIdle()` and `hasPendingMessages()`. */
+	idle = true;
+	pending = false;
 	/** The session file pi would name, and the run's abort signal (ctx.signal). */
 	file?: string;
 	/** Entries of the transcript besides the extension's own (custom messages, for instance), as ctx.sessionManager.getEntries() returns them. */
@@ -395,6 +401,8 @@ export class Agent {
 		this.ctx = {
 			hasUI: Boolean(options.ui),
 			get signal() { return self.signal; },
+			isIdle: () => self.idle,
+			hasPendingMessages: () => self.pending,
 			shutdown: () => void self.stop("quit"), // pi quits as /quit would
 			ui: {
 				notify: (text: string, level?: string) => this.notices.push({ text, level }),
