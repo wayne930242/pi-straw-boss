@@ -1,12 +1,10 @@
 // The reaper's decisions, with no I/O: which panes of a linked-worktree workspace to close, whether a closed workspace's checkout
-// may be removed, which empty parent shell of a worktree group to close, when a rename is the user's, what pinning does, and when a closed pinned workspace reopens. sweep.mjs gathers Herdr's and git's state, calls these, and
+// may be removed, which empty parent shell of a worktree group to close, and what a rename and the pin toggle do. sweep.mjs gathers Herdr's and git's state, calls these, and
 // carries the results out.
 //
 // State is one JSON object the plugin keeps between runs; changes to it are returned as ops ({ op: "set" | "del", path, value }) so
 // concurrent runs merge instead of overwriting each other.
 
-/** A rename this long after a workspace appeared is the user's; pi-herdr-agents names its workspaces within seconds. */
-export const RENAME_GRACE_MS = 60_000;
 /** A pane must qualify for this long before it is closed, so an agent restarting in the same pane is not caught between runs. */
 export const CONFIRM_MS = 60_000;
 export const SWEEP_INTERVAL_MS = 10 * 60_000;
@@ -16,7 +14,6 @@ export const PIN_GLYPH = String.fromCodePoint(0xf0403);
 
 export const emptyState = () => ({
 	initialized: false,
-	seeded: false,
 	nextSweepAt: 0,
 	agentSeen: {},
 	candidates: {},
@@ -58,7 +55,7 @@ const recordOf = (workspace, state) => {
 	return record && (record.checkout ?? null) === checkoutOf(workspace) ? record : undefined;
 };
 export const isLinked = (workspace) => worktreeOf(workspace).is_linked_worktree === true;
-/** The key a pin is stored under: the checkout survives a workspace being reopened, the workspace id does not. */
+/** The key a pin is stored under: the checkout outlives its workspace (a pinned checkout is never removed), the workspace id does not. */
 export const pinKey = (workspace) => worktreeOf(workspace).checkout_path ?? `workspace:${workspace.workspace_id}`;
 export const isPinned = (workspace, state) => Boolean(workspace.tokens?.[PIN_TOKEN]) || pinKey(workspace) in state.pins;
 
@@ -203,37 +200,27 @@ export function decideRemoval({ pinned, exists, dirty, hidden = "", detached, co
 }
 
 /**
- * What a `workspace.renamed` event means. The user's rename pins the workspace, remembering the label it had before; a rename
- * soon after the workspace appeared is pi-herdr-agents naming it and changes nothing but the remembered label.
- * @returns {{ ops: object[], pin: { preLabel: string } | null, note: string | null }}
+ * What a `workspace.renamed` event means. Nothing renames a workspace but the user (pi-herdr-agents names its worktree workspaces
+ * when it creates them), so every rename pins the workspace and records that its name is the user's.
+ * @returns {{ ops: object[], pin: boolean }}
  */
-export function onRename(workspace, state, now) {
+export function onRename(workspace, state) {
 	const record = recordOf(workspace, state);
-	const remember = (createdAt) => set(["workspaces", workspace.workspace_id], { createdAt, label: workspace.label, checkout: checkoutOf(workspace) });
-	if (!record) return { ops: [remember(0)], pin: null, note: null };
-	if (record.label === workspace.label) return { ops: [], pin: null, note: null };
-	const age = now - record.createdAt;
-	if (record.createdAt !== 0 && age <= RENAME_GRACE_MS) {
-		return { ops: [set(["workspaces", workspace.workspace_id], { ...record, label: workspace.label })], pin: null, note: null };
-	}
+	if (record?.label === workspace.label) return { ops: [], pin: false };
 	// The record keeps that the user renamed it: a parent shell with a name of the user's is never closed.
-	const ops = [set(["workspaces", workspace.workspace_id], { ...record, label: workspace.label, renamed: true })];
-	if (!isLinked(workspace) || isPinned(workspace, state)) return { ops, pin: null, note: null };
-	return { ops, pin: { preLabel: record.label }, note: `auto-pin ${workspace.label}: renamed by the user (was "${record.label}")` };
+	const ops = [set(["workspaces", workspace.workspace_id], { label: workspace.label, checkout: checkoutOf(workspace), renamed: true })];
+	return { ops, pin: !isPinned(workspace, state) };
 }
 
-/** Keeps a created/label record for every workspace; a workspace first seen after the first call is new, one from before is old. */
-export function noteWorkspaces(workspaces, state, now, createdIds = new Set()) {
-	const ops = state.seeded ? [] : [set(["seeded"], true)];
+/** Keeps a label record for every live workspace and drops the records of workspaces that are gone. */
+export function noteWorkspaces(workspaces, state, createdIds = new Set()) {
+	const ops = [];
 	for (const workspace of workspaces) {
 		const record = recordOf(workspace, state);
 		const checkout = checkoutOf(workspace);
-		if (createdIds.has(workspace.workspace_id)) {
-			// A created event is the word on a workspace's age, even over an older record: Herdr reuses ids of closed workspaces, and a
-			// rename event may have made the record first.
-			ops.push(set(["workspaces", workspace.workspace_id], { createdAt: now, label: workspace.label, checkout }));
-		} else if (!record) {
-			ops.push(set(["workspaces", workspace.workspace_id], { createdAt: state.seeded ? now : 0, label: workspace.label, checkout }));
+		if (createdIds.has(workspace.workspace_id) || !record) {
+			// A created event starts a fresh record, even over an older one: Herdr reuses ids of closed workspaces.
+			ops.push(set(["workspaces", workspace.workspace_id], { label: workspace.label, checkout }));
 		} else if (record.label !== workspace.label) {
 			// A label change no rename event reported is not attributed to the user.
 			ops.push(set(["workspaces", workspace.workspace_id, "label"], workspace.label));
@@ -251,23 +238,6 @@ export const forgetWorkspace = (workspaceId) => [
 	del(["parents", workspaceId]),
 	del(["parentCandidates", workspaceId]),
 ];
-
-/**
- * What reopens a pinned workspace that closed: its record and pin, read before the closed hook forgets them. A pinned workspace is
- * one to keep, so a close (the last pane exiting, or the user closing it) brings it back on the same directory under the same name.
- * Nothing reopens when the workspace was not pinned, or another live workspace is already open on its checkout.
- * @returns {{ label: string, cwd: string | null, checkout: string | null, key: string, entry: object } | null}
- */
-export function reopenPlan(workspaceId, state, workspaces) {
-	const record = state.workspaces[workspaceId];
-	if (!record) return null;
-	const checkout = record.checkout ?? null;
-	const key = checkout ?? `workspace:${workspaceId}`;
-	const entry = state.pins[key];
-	if (!entry) return null;
-	if (checkout && workspaces.some((workspace) => checkoutOf(workspace) === checkout)) return null;
-	return { label: record.label, cwd: checkout ?? entry.cwd ?? null, checkout, key, entry };
-}
 
 /** The repository a workspace belongs to, the same for a main checkout and its linked worktrees. */
 const groupOf = (workspace) => worktreeOf(workspace).repo_key ?? worktreeOf(workspace).repo_root ?? null;
@@ -360,7 +330,7 @@ export function prunePanes(panes, state) {
 	return ["agentSeen", "candidates"].flatMap((name) => Object.keys(state[name]).filter((key) => !live.has(key)).map((key) => del([name, key])));
 }
 
-/** Forgets the pins of workspaces that can no longer come back: a workspace id that is gone, and a checkout that is no longer on disk. */
+/** Forgets the pins nothing can match any more: a workspace id that is gone, and a checkout that is no longer on disk. */
 export function prunePins(workspaces, state, git) {
 	const live = new Set(workspaces.map((workspace) => workspace.workspace_id));
 	return Object.keys(state.pins)
@@ -368,17 +338,9 @@ export function prunePins(workspaces, state, git) {
 		.map((key) => del(["pins", key]));
 }
 
-/** The pin action toggles: unpinning renames the workspace back to the label it had before the pin. */
-export function togglePin(workspace, state, now, cwd = null) {
+/** The pin action toggles the pin and nothing else: the name stays as it is. */
+export function togglePin(workspace, state, now) {
 	const key = pinKey(workspace);
-	if (isPinned(workspace, state)) {
-		// Without a record the checkout's name is the best guess for a linked worktree; any other workspace keeps its name.
-		const basename = isLinked(workspace) ? worktreeOf(workspace).checkout_path?.split("/").filter(Boolean).at(-1) : undefined;
-		const label = state.pins[key]?.preLabel ?? basename;
-		return { action: "unpin", key, restoreLabel: label && label !== workspace.label ? label : null };
-	}
-	// A workspace without a checkout keeps its directory in the pin, so a close can reopen it there.
-	const entry = { preLabel: workspace.label, auto: false, at: now };
-	if (!checkoutOf(workspace) && cwd) entry.cwd = cwd;
-	return { action: "pin", key, entry };
+	if (isPinned(workspace, state)) return { action: "unpin", key };
+	return { action: "pin", key, entry: { auto: false, at: now } };
 }

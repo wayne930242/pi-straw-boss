@@ -10,7 +10,7 @@ platforms = ["macos", "linux"]
 [[startup]]
 command = ["/bin/bash", "run.sh", "reaper.mjs", "startup"]
 
-# Bookkeeping, and reopening a pinned workspace that closed: a workspace appearing, being renamed or closing, a pane exiting, and an
+# Bookkeeping: a workspace appearing, being renamed (which pins it) or closing, a pane exiting, and an
 # agent starting or being released. No event hook sweeps by itself.
 [[events]]
 on = "workspace.created"
@@ -24,7 +24,7 @@ command = ["/bin/bash", "run.sh", "reaper.mjs", "event"]
 on = "workspace.closed"
 command = ["/bin/bash", "run.sh", "reaper.mjs", "event"]
 
-# Herdr removes a workspace whose last pane exits without a workspace.closed event, so a pinned one is reopened from this hook.
+# Herdr removes a workspace whose last pane exits without a workspace.closed event, so its record is forgotten from this hook.
 [[events]]
 on = "pane.exited"
 command = ["/bin/bash", "run.sh", "reaper.mjs", "event"]

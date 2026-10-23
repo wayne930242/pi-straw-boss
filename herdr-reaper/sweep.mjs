@@ -2,7 +2,7 @@
 // so tests can run them against fakes; reaper.mjs wires the real ones.
 import {
 	CONFIRM_MS, PIN_GLYPH, PIN_TOKEN, SWEEP_INTERVAL_MS,
-	applyOps, del, decideRemoval, findCheckoutUser, forgetWorkspace, inScope, isPinned, noteParents, noteWorkspaces, onRename, pinKey, reopenPlan, planParents, planSweep, prunePanes, prunePins, set, shellIsIdle, togglePin,
+	applyOps, del, decideRemoval, findCheckoutUser, forgetWorkspace, inScope, isPinned, noteParents, noteWorkspaces, onRename, pinKey, planParents, planSweep, prunePanes, prunePins, set, shellIsIdle, togglePin,
 } from "./decide.mjs";
 import { withLock } from "./io.mjs";
 
@@ -12,9 +12,6 @@ const CLOSE_WAIT_MS = 5000;
 const PENDING_GIVE_UP_MS = 60 * 60_000;
 // After a pane exits, how long to wait for Herdr to remove a workspace that has no other pane.
 const EXIT_WAIT_MS = 3000;
-// A pinned workspace that closed this many times within the window of being reopened stays closed.
-const REOPEN_LIMIT = 3;
-const REOPEN_WINDOW_MS = 60_000;
 // A sweep scheduled for the end of a confirmation wait runs this much later, so the pane has surely qualified for the whole wait.
 const SWEEP_SLACK_MS = 2000;
 
@@ -169,7 +166,7 @@ async function sweepLocked(deps, confirmMs, dryRun) {
 	const now = deps.now();
 	const state = await deps.store.read();
 	const [workspaces, panes] = await Promise.all([deps.herdr.listWorkspaces(), deps.herdr.listPanes()]);
-	const bookkeeping = [...noteWorkspaces(workspaces, state, now), ...prunePanes(panes, state), ...prunePins(workspaces, state, deps.git), ...noteParents(workspaces, state, deps.config)];
+	const bookkeeping = [...noteWorkspaces(workspaces, state), ...prunePanes(panes, state), ...prunePins(workspaces, state, deps.git), ...noteParents(workspaces, state, deps.config)];
 	const plan = await planSweep({ workspaces, panes, state, now, confirmMs, config: deps.config }, deps.herdr);
 	const ops = [...bookkeeping, ...plan.ops];
 	for (const line of plan.skips) deps.log(line);
@@ -262,75 +259,25 @@ async function pin(workspace, entry, key, deps) {
 	await deps.herdr.setToken(workspace.workspace_id, SOURCE, PIN_TOKEN, PIN_GLYPH);
 }
 
-/** The directory of a workspace without a checkout: its focused pane's, else its first pane's; null when Herdr cannot say. */
-async function workspaceCwd(deps, workspaceId) {
-	try {
-		const mine = (await deps.herdr.listPanes()).filter((pane) => pane.workspace_id === workspaceId);
-		return (mine.find((pane) => pane.focused) ?? mine[0])?.cwd ?? null;
-	} catch {
-		return null;
-	}
-}
-
-/**
- * Reopens a pinned workspace that closed, on the same directory and under the same name, and pins the new one. A checkout pin
- * carries over by its path; a pin keyed by the old workspace id moves to the new id.
- */
-async function reopenPinned(deps, closedId, plan, now) {
-	if (plan.checkout && !deps.git.exists(plan.checkout)) return deps.log(`skip reopening ${plan.label}: its checkout ${plan.checkout} is gone`);
-	// A workspace that dies right after each reopen (a broken shell, a directory the shell cannot use) must not reopen forever.
-	const recent = (plan.entry.reopens ?? []).filter((at) => now - at < REOPEN_WINDOW_MS);
-	if (recent.length >= REOPEN_LIMIT) return deps.log(`skip reopening ${plan.label}: it closed ${recent.length} times within ${REOPEN_WINDOW_MS / 1000}s of reopening; open it again yourself`);
-	if (!plan.cwd) deps.log(`reopening ${plan.label} in Herdr's default directory: its pin has no directory`);
-	let created;
-	try {
-		created = await deps.herdr.createWorkspace(plan.label, plan.cwd);
-	} catch (error) {
-		return deps.log(`failed to reopen pinned workspace ${plan.label}: ${error.message.split("\n")[0]}`);
-	}
-	const id = created?.workspace_id;
-	if (!id) return deps.log(`failed to reopen pinned workspace ${plan.label}: Herdr returned no workspace id`);
-	// The entry comes from the read the plan was made on, so a sweep that pruned the old id's pin meanwhile cannot empty it.
-	const key = plan.checkout ?? `workspace:${id}`;
-	const ops = [set(["workspaces", id], { createdAt: now, label: plan.label, checkout: plan.checkout }), set(["pins", key], { ...plan.entry, reopens: [...recent, now] })];
-	// Herdr may hand the closed id back; the pin then stays where it is.
-	if (key !== plan.key) ops.push(del(["pins", plan.key]));
-	await deps.store.apply(ops);
-	await deps.herdr.setToken(id, SOURCE, PIN_TOKEN, PIN_GLYPH);
-	deps.log(`reopen pinned workspace ${plan.label} (workspace ${closedId} closed; now ${id})`);
-}
-
 /** The pin action: toggles the workspace the action was invoked in. */
 export async function runPinToggle(deps, workspaceId) {
 	const [workspace, state] = [await deps.herdr.getWorkspace(workspaceId), await deps.store.read()];
-	const choice = togglePin(workspace, state, deps.now(), workspace.worktree?.checkout_path ? null : await workspaceCwd(deps, workspaceId));
+	const choice = togglePin(workspace, state, deps.now());
 	if (choice.action === "pin") {
 		await pin(workspace, choice.entry, choice.key, deps);
 		return deps.log(`pin ${workspace.label}`);
 	}
-	// The state file first: the rename event this causes must find the label already recorded.
-	const ops = [del(["pins", choice.key])];
-	if (choice.restoreLabel) ops.push(set(["workspaces", workspaceId, "label"], choice.restoreLabel));
-	await deps.store.apply(ops);
+	await deps.store.apply([del(["pins", choice.key])]);
 	await deps.herdr.clearToken(workspaceId, SOURCE, PIN_TOKEN);
-	if (choice.restoreLabel) await deps.herdr.renameWorkspace(workspaceId, choice.restoreLabel);
-	deps.log(`unpin ${workspace.label}${choice.restoreLabel ? `; renamed back to ${choice.restoreLabel}` : ""}`);
+	deps.log(`unpin ${workspace.label}`);
 }
 
 /**
- * A workspace that is no longer open: forget its record, and reopen it when it was pinned. Both a workspace.closed and a pane.exited
- * event can report the same close, so this runs under a lock on a fresh read, and the second finds the record already gone.
+ * A workspace that is no longer open: forget its record and any pin keyed by its id, so a workspace that later gets the id inherits
+ * neither. A checkout-keyed pin stays: the checkout of a pinned workspace is never removed, closed or not.
  */
-async function workspaceGone(deps, id, now) {
-	const outcome = await withLock(deps.store.dir, "reopen", async () => {
-		const state = await deps.store.read();
-		if (!(id in state.workspaces)) return;
-		const reopen = reopenPlan(id, state, await deps.herdr.listWorkspaces());
-		// The id-keyed pin is moved, not forgotten, when the workspace reopens.
-		await deps.store.apply(forgetWorkspace(id).filter((op) => !(reopen && op.path[0] === "pins")));
-		if (reopen) await reopenPinned(deps, id, reopen, now);
-	}, { waitMs: 30_000 });
-	if (outcome.held) deps.log(`workspace ${id} closed while another run held the reopen lock; not reopened`);
+async function workspaceGone(deps, id) {
+	await deps.store.apply(forgetWorkspace(id));
 }
 
 const idOf = (payload) => payload.workspace_id ?? payload.workspace?.workspace_id;
@@ -346,11 +293,11 @@ export async function runEvent(deps, name, payload) {
 		const workspaces = await deps.herdr.listWorkspaces();
 		const workspace = workspaces.find((candidate) => candidate.workspace_id === idOf(payload));
 		if (!workspace) return;
-		const result = onRename(workspace, state, now);
+		const result = onRename(workspace, state);
 		await deps.store.apply(result.ops);
 		if (result.pin && inScope(workspace, deps.config)) {
-			await pin(workspace, { preLabel: result.pin.preLabel, auto: true, at: now }, pinKey(workspace), deps);
-			deps.log(result.note);
+			await pin(workspace, { auto: true, at: now }, pinKey(workspace), deps);
+			deps.log(`auto-pin ${workspace.label}: renamed`);
 		}
 		return;
 	}
@@ -359,7 +306,7 @@ export async function runEvent(deps, name, payload) {
 		if (!id) return;
 		// Its id may already belong to a new workspace; that one's record is kept, and a stale one (another checkout) is replaced.
 		const live = (await deps.herdr.listWorkspaces()).find((candidate) => candidate.workspace_id === id);
-		if (!live) return workspaceGone(deps, id, now);
+		if (!live) return workspaceGone(deps, id);
 		const record = state.workspaces[id];
 		if (record && (record.checkout ?? null) !== (live.worktree?.checkout_path ?? null)) await deps.store.apply(forgetWorkspace(id));
 		return;
@@ -371,7 +318,7 @@ export async function runEvent(deps, name, payload) {
 		const deadline = deps.now() + EXIT_WAIT_MS;
 		for (;;) {
 			const [workspaces, panes] = await Promise.all([deps.herdr.listWorkspaces(), deps.herdr.listPanes()]);
-			if (!workspaces.some((candidate) => candidate.workspace_id === id)) return workspaceGone(deps, id, now);
+			if (!workspaces.some((candidate) => candidate.workspace_id === id)) return workspaceGone(deps, id);
 			// Another pane keeps the workspace open: an ordinary pane exit.
 			if (panes.some((candidate) => candidate.workspace_id === id && candidate.pane_id !== payload.pane_id)) return;
 			if (deps.now() >= deadline) return;
@@ -396,5 +343,5 @@ export async function runEvent(deps, name, payload) {
 	const workspaces = await deps.herdr.listWorkspaces();
 	const created = new Set([idOf(payload)].filter(Boolean));
 	// A worktree workspace may be gone again before a sweep sees it, so the parent is remembered when the worktree appears.
-	await deps.store.apply([...noteWorkspaces(workspaces, state, now, created), ...noteParents(workspaces, state, deps.config)]);
+	await deps.store.apply([...noteWorkspaces(workspaces, state, created), ...noteParents(workspaces, state, deps.config)]);
 }

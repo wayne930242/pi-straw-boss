@@ -137,8 +137,8 @@ Every other workspace, including a main-checkout workspace that never had a work
 It sweeps every 10 minutes and a minute after an agent exits, and the `reap-now` action sweeps at once.
 Every close, removal, skip and pin is a line in the plugin log (`herdr plugin log list --plugin wayne930242.straw-boss-reaper`).
 
-A pinned workspace is never reaped, and one that closes (its last pane exits, or you close it) reopens on the same directory under the same name, pinned; unpin it first to close it for good.
-The `pin` action toggles the pin of the workspace it runs in, and a workspace you rename more than a minute after it appeared is pinned for you (pi-herdr-agents names its workspaces within seconds, which pins nothing); unpinning also renames it back.
+A pinned workspace is never reaped and its checkout is never removed; that is all a pin does. Closing a pinned workspace closes it.
+Renaming a workspace pins it at once, and the `pin` action toggles the pin of the workspace it runs in; unpinning leaves the name as it is.
 The pin is the workspace token `$pin`, a Nerd Font pin glyph, which a Space row shows once you add it.
 It needs Herdr 0.9.3 or newer, git and node 18 or newer.
 

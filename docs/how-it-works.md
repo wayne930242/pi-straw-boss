@@ -369,7 +369,7 @@ Each decision is a line in the plugin log with its reason (`close`, `remove chec
 **The parent shell.**
 When a linked-worktree workspace is open, Herdr groups it under the workspace of the repository's main checkout and opens a plain shell workspace for that checkout if none exists.
 The plugin remembers a non-linked workspace as a parent once a linked worktree workspace with the same `worktree.repo_key` (else `repo_root`) was seen open, in a sweep or by the `workspace.created` hook, within `only_under`; a workspace never seen with a worktree under it is never remembered, so it is never closed.
-After the checkout step of a sweep, on a fresh look at Herdr, a remembered parent is closed (`herdr workspace close`, never the group form, so Herdr refuses if a worktree workspace appeared meanwhile) when no linked workspace of its repository is left and every pane has no agent and an idle shell, none is focused, the workspace is not pinned, and its name is the one Herdr gave it (the repository or checkout directory name) and was never renamed by the user (a rename after the 60 s grace, recorded in the workspace record).
+After the checkout step of a sweep, on a fresh look at Herdr, a remembered parent is closed (`herdr workspace close`, never the group form, so Herdr refuses if a worktree workspace appeared meanwhile) when no linked workspace of its repository is left and every pane has no agent and an idle shell, none is focused, the workspace is not pinned, and its name is the one Herdr gave it (the repository or checkout directory name) and was never renamed (a rename also pins it).
 It must qualify for `CONFIRM_MS` (60 s) first, tracked in `parentCandidates`; closing the workspace closes only its panes, and the main checkout and every branch stay.
 The log lines are `wait parent <label> (workspace <id>): ...`, `skip parent ...: <reason>` (worktree workspace still open, pinned, name changed, agent or running process in a pane, focused pane), and `close parent workspace ...`; a dry run prints `would close parent workspace ...`, counting the worktree workspaces it would close as gone.
 A child closed by the user rather than the plugin is handled the same way, by the next sweep (up to 10 minutes later) and the confirmation wait.
@@ -381,29 +381,14 @@ Bind it with `[[keys.command]]` (`prefix+i` in the README's example: `prefix+P` 
 A pin is also written to the plugin's state file, keyed by the checkout path, because Herdr drops workspace tokens when its server restarts: a sweep puts the token back, and the pin survives a workspace being closed and opened again.
 A workspace is pinned when either the token or the state entry says so, and a pinned workspace is skipped by every sweep and its checkout is never removed.
 
-**Reopening a pinned workspace.**
-Herdr has no hook that runs before a close and none that can refuse one, so a pin cannot stop a workspace from closing; the plugin brings it back instead.
-A workspace closed through Herdr (a key, `herdr workspace close`, closing its last pane or tab) fires `workspace.closed`, but one whose last pane's process exits is removed with only a `pane.exited` event (Herdr 0.9.5), so the `pane.exited` hook waits up to 3 s for the workspace to go and handles it the same way; another pane still in the workspace ends the wait at once.
-Both hooks can report one close, so the reopen runs under a lock on a fresh read of the state file, and the second finds the record already gone.
-When the closed workspace's record and pin are still in the state file (the hook reads them before forgetting the id) and no live workspace is open on its checkout, the plugin runs `herdr workspace create --label <label> --no-focus --cwd <dir>` with the label the record held at the close, so the name never changes, and puts the pin token on the new workspace.
-The directory is the checkout; a workspace without one keeps its focused pane's directory in the pin entry (`cwd`, written by the pin action), and its id-keyed pin moves to the new id.
-A checkout that is gone is not reopened (`skip reopening ...`), and a failed create is logged and leaves the workspace closed.
-A workspace that closed 3 times within 60 s of being reopened stays closed (`skip reopening ... open it again yourself`), so a shell that dies at once does not reopen forever; the pin entry keeps the recent reopen times (`reopens`).
-A pin without a directory (one made before pins recorded `cwd`) reopens in Herdr's default directory, and the log says so.
-When another run holds the reopen lock for 30 s, the close is logged as not reopened and the workspace stays closed.
-Whether Herdr fires these hooks while its server shuts down is unverified; a create that fails then is only logged.
-The reopened workspace is new: its scrollback and processes are gone and it gets a new id and sidebar position.
-This covers every close, the user's own included, so closing a pinned workspace for good means unpinning it first; sweeps never close a pinned workspace.
+A pin does nothing else: closing a pinned workspace closes it, and the pin keyed by its checkout keeps that checkout from being removed until the checkout is gone or you unpin a workspace on it.
 
 **Pinning by renaming.**
-Herdr's `workspace.renamed` event does not say who renamed, so the plugin goes by time.
-It records when each workspace appeared (the `workspace.created` event, or the first sweep that saw it; workspaces that were there when the plugin started count as old) and the label it has.
-A rename more than `RENAME_GRACE_MS` (60 s) after that pins a linked-worktree workspace and records the label it had just before.
-A rename within the 60 s (pi-herdr-agents naming the workspace it just opened) only updates the recorded label, so the pre-rename label of a later pin is the name pi-herdr-agents chose.
-Unpinning clears the token and renames the workspace back to the recorded label, or to the checkout's directory name when none was recorded; the rename event that causes finds the label already recorded and pins nothing.
-Herdr reuses the ids of closed workspaces, so a `workspace.created` event replaces any earlier record of its id, the `workspace.closed` event deletes the record and any `workspace:<id>` pin of the id, and a sweep drops the records of the workspaces it closed.
-Each record also stores the workspace's checkout path, and a record whose checkout differs from the live workspace's belongs to an earlier workspace on a reused id and is ignored, so a new workspace is never auto-pinned from, or renamed back to, the old one's label.
-A checkout-keyed pin is kept on purpose: it is how a pin survives a workspace being closed and opened again.
+Herdr's `workspace.renamed` event does not say who renamed, but nothing renames a workspace except the user: pi-herdr-agents, Straw Boss and Herdr's own worktree command all set the label when they create the workspace.
+So every rename pins the workspace (any workspace, linked worktree or not, within `only_under`) and marks its record `renamed`; a workspace already pinned stays as it is.
+Unpinning clears the token and the state entry and leaves the name alone.
+Herdr reuses the ids of closed workspaces, so a `workspace.created` event replaces any earlier record of its id, the `workspace.closed` event (or a `pane.exited` that took the workspace's last pane) deletes the record and any `workspace:<id>` pin of the id, and a sweep drops the records of the workspaces it closed.
+Each record also stores the workspace's checkout path, and a record whose checkout differs from the live workspace's belongs to an earlier workspace on a reused id and is ignored.
 
 **When it runs.**
 A sweep runs every 10 minutes and again when an agent was released, `CONFIRM_MS` later.
@@ -413,7 +398,7 @@ After an uninstall, unlink or server exit it therefore lives until its next swee
 The state directory belongs to the plugin id, so two Herdr servers on one machine (a named session, say) would share it: one ticker for both, and workspace and pane ids of the two servers colliding in the state file. Use the plugin with one server.
 A ticker beats in `ticker.json`; a hook starts a new one only when the beat is older than 45 s, and two started together settle it with a lock.
 The ticker ends after three failed invocations in a row, which happens when the Herdr server is gone or the plugin was unlinked; the next hook of a new server starts another.
-The event hooks do bookkeeping only (`workspace.created`, `workspace.renamed`, `workspace.closed`, `pane.agent_detected`), and none is hooked to `pane.updated`, so no per-output work exists.
+The event hooks do bookkeeping only (`workspace.created`, `workspace.renamed`, `workspace.closed`, `pane.exited`, `pane.agent_detected`), and none is hooked to `pane.updated`, so no per-output work exists.
 The `pane.agent_detected` event for a release marks the pane a candidate from that moment and schedules the sweep for the end of its wait; the other events cost one `herdr` call and a state write.
 Sweeps never overlap (a lock whose holder keeps touching it, so only a dead run's lock goes stale after 10 minutes, and one waiter at a time takes a stale lock over; a second sweep logs that it was skipped). Every `herdr` call has a 30 s timeout and every git call 60 s (5 minutes to remove a checkout), so a hung call fails instead of holding the lock.
 `bash herdr-reaper/run.sh reaper.mjs dry-run`, run in a terminal inside Herdr, prints what a sweep would do now without changing anything, the state file included; it reads the plugin's state, so its first-sweep rule applies until the plugin has swept once.
