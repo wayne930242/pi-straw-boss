@@ -64,6 +64,7 @@ export function registerSession(kit: Kit, { briefing, presence, membership, guar
 		stopWatching();
 		nudges = orphans({ run, file: () => log.getSessionFile(), entries: () => log.getEntries(), sessions: host.sessions, send: reach.send, type: ENTRY, remember: (key) => pi.appendEntry(ENTRY, { nudged: key }), me, tell });
 		nudgeTimer = setInterval(() => void nudges?.poll().catch(() => {}), cfg.nudgeMs).unref();
+		host.watch(); // the server of a session that ended without a stop is taken over here (host.ts)
 		// Starting runs in the background: pi awaits session_start handlers in turn, and pi-intercom connects in its own, after this one.
 		let starting: Promise<void> | undefined;
 		if (s.isTower) {
@@ -87,7 +88,7 @@ export function registerSession(kit: Kit, { briefing, presence, membership, guar
 		// The GUI this process ran before a /reload, /new, or /resume starts again on its URL, and a session newer than the running server
 		// takes it over, once pi-intercom has published this session's id: the server's dialogs are routed by it.
 		// A /new, /resume, or /fork is another session: it waits for the new id, not the one pi-intercom may still show from before.
-		const record = readRecord(guiDir), back = record?.reload && record.pid === process.pid && event.reason !== "startup";
+		const record = readRecord(guiDir), back = record?.reload && !record.stopped && record.pid === process.pid && event.reason !== "startup";
 		const ready = () => Boolean(me()) && (!back || event.reason === "reload" || me() !== record!.ownerSession);
 		if (back || (record && newer(version, record.version))) void (async () => {
 			if ((await waitFor(cfg.sleep, ready, CONNECT_MS)) && (back || (await answers(record!)))) await host.restore(Boolean(back && record!.remote));

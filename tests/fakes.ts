@@ -419,7 +419,7 @@ export class Agent {
 		if (!options.noIntercom) events.on("intercom:outbox-request", (request) => world.broker.outbox(this, request as { requestId: string; to: string; message: string }));
 		world.broker.connect(this);
 		// The extension's waits are real in production; here they are capped so timeouts take milliseconds.
-		createStrawBoss({ run: world.herdr.runFor(this.pane), api: world.herdr.api, watch: world.watch, env, sleep: (ms) => sleep(Math.min(ms, 2)), promptDir: PROMPT_DIR, stateDir: world.stateDir, autoTower: false, later: (_pid, args) => void world.herdr.runFor(this.pane)(args), events: world.herdr.events, ...options.deps })(pi);
+		createStrawBoss({ run: world.herdr.runFor(this.pane), api: world.herdr.api, watch: world.watch, env, sleep: (ms) => sleep(Math.min(ms, 2)), promptDir: PROMPT_DIR, stateDir: world.stateDir, autoTower: false, gone: (record) => world.gone.has(record.ownerSession ?? ""), later: (_pid, args) => void world.herdr.runFor(this.pane)(args), events: world.herdr.events, ...options.deps })(pi);
 	}
 
 	private dialog(kind: "select" | "confirm", title: string, second: unknown, opts?: { signal?: AbortSignal; timeout?: number }): Promise<unknown> {
@@ -497,6 +497,7 @@ export class Agent {
 		// pi-intercom loads before Straw Boss, and its own session_shutdown has put back the session id it found at start (none) by now.
 		delete this.env?.PI_INTERCOM_SESSION_ID;
 		await this.fire("session_shutdown", { reason });
+		if (reason === "quit") this.world.gone.add(this.id); // the process ends with the session; a reload, /new, or resume keeps it
 		this.world.broker.disconnect(this);
 	}
 }
@@ -524,6 +525,8 @@ export class World {
 		for (const watcher of [...this.watchers]) watcher.onTakeover();
 		await this.quiet();
 	}
+	/** Sessions whose pi process has ended: the owner check of a GUI record (handover.ts `ownerGone`) answers by this, since every fake session shares the test's own pid. */
+	gone = new Set<string>();
 	/** The state directory of the one-GUI-per-machine record, private to this world. */
 	stateDir = (() => {
 		const dir = mkdtempSync(join(tmpdir(), "psb-state-test-"));

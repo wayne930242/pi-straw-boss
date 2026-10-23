@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { startDashboard } from "./dashboard.ts";
 import type { Hub } from "./dialogs.ts";
 import type { Gui } from "./gui.ts";
+import type { GuiRecord } from "./handover.ts";
 import type { HerdrApi, HerdrCall, HerdrRun, HerdrWorld, Place, Session, Sleep } from "./herdr.ts";
 import type { Run } from "./remote.ts";
 import type { HerdrEvents, HerdrWatch } from "./server-watch.ts";
@@ -26,8 +27,11 @@ export interface SendResult { requestId?: string; status: string; code?: string;
 export interface Saved { tower?: boolean }
 export type Role = "tower" | "main" | "member";
 export type Scope = "tab" | "workspace" | "towers" | "all";
-/** `run` is the CLI for every command; left out, Herdr's listings go over the socket instead (`socketReads`) and `world` is one `session.snapshot`. `world` is the dashboard's and the GUI's reading of panes and workspaces. */
-export interface Deps { run?: HerdrRun; world?: HerdrWorld; api?: HerdrApi; call?: HerdrCall; tailscale?: Run; copy?: (text: string) => Promise<void>; env?: NodeJS.ProcessEnv; sleep?: Sleep; promptDir?: string; bundle?: string; openUrl?: (url: string) => Promise<void>; watch?: HerdrWatch; stateDir?: string; autoTower?: boolean; nudgeMs?: number; version?: string; guardMs?: number; couple?: boolean; events?: HerdrEvents; detectMs?: number; now?: () => number; later?: (pid: number, args: string[]) => void }
+/**
+ * `run` is the CLI for every command; left out, Herdr's listings go over the socket instead (`socketReads`) and `world` is one `session.snapshot`. `world` is the dashboard's and the GUI's reading of panes and workspaces.
+ * `gone` says whether the process that recorded a GUI server has ended for good (handover.ts `ownerGone`), which a survivor needs before it takes the server over; `adoptMs` is how often a session looks.
+ */
+export interface Deps { run?: HerdrRun; world?: HerdrWorld; api?: HerdrApi; call?: HerdrCall; tailscale?: Run; copy?: (text: string) => Promise<void>; env?: NodeJS.ProcessEnv; sleep?: Sleep; promptDir?: string; bundle?: string; openUrl?: (url: string) => Promise<void>; watch?: HerdrWatch; stateDir?: string; autoTower?: boolean; nudgeMs?: number; version?: string; guardMs?: number; couple?: boolean; events?: HerdrEvents; detectMs?: number; now?: () => number; later?: (pid: number, args: string[]) => void; gone?: (record: GuiRecord, wrote: number) => boolean; adoptMs?: number }
 /** The dependencies with their defaults filled in. */
 export type Config = Required<Omit<Deps, "bundle" | "stateDir">> & Pick<Deps, "bundle" | "stateDir">;
 

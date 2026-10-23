@@ -161,7 +161,7 @@ export function createAccess(token: string, ended: (device?: string) => void = (
 	};
 }
 export type Access = ReturnType<typeof createAccess>;
-const alive = (pid: unknown) => {
+export const alive = (pid: unknown) => {
 	try {
 		return typeof pid === "number" && pid > 0 && process.kill(pid, 0);
 	} catch (error) {
