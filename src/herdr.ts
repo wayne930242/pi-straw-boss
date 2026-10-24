@@ -118,13 +118,37 @@ function listing(args: string[]): { method: string; params: Record<string, unkno
 	return undefined;
 }
 
+/** `pane current` as the CLI asks it, for the pane the process runs in; without HERDR_PANE_ID the CLI's own answer is left to it. */
+function current(args: string[], pane: string | undefined): { method: string; params: Record<string, unknown> } | undefined {
+	return args.length === 2 && args[0] === "pane" && args[1] === "current" && pane ? { method: "pane.current", params: { caller_pane_id: pane } } : undefined;
+}
+
+/** `<pane|workspace> report-metadata <id> --source S [--ttl-ms N] [--token k=v]... [--clear-token k]...` as its socket request; anything else is left to the CLI. */
+function metadata(args: string[]): { method: string; params: Record<string, unknown> } | undefined {
+	const [kind, cmd, id, ...flags] = args;
+	if ((kind !== "pane" && kind !== "workspace") || cmd !== "report-metadata" || !id || flags.length % 2) return undefined;
+	const tokens: Record<string, string | null> = {};
+	let source: string | undefined, ttl: number | undefined;
+	for (let i = 0; i < flags.length; i += 2) {
+		const [flag, value] = [flags[i]!, flags[i + 1]!], at = value.indexOf("=");
+		if (flag === "--source") source = value;
+		else if (flag === "--ttl-ms" && /^\d+$/.test(value)) ttl = Number(value);
+		else if (flag === "--token" && at > 0) tokens[value.slice(0, at)] = value.slice(at + 1);
+		else if (flag === "--clear-token") tokens[value] = null;
+		else return undefined;
+	}
+	if (!source) return undefined;
+	return { method: `${kind}.report_metadata`, params: { [kind === "pane" ? "pane_id" : "workspace_id"]: id, source, tokens, ...(ttl === undefined ? {} : { ttl_ms: ttl }) } };
+}
+
 /**
- * `run` with Herdr's listings (`pane list`, `workspace list`, `tab list --workspace`) answered over the socket instead of by a spawned CLI:
- * the same `{result}` text, so every reader works unchanged. Every other command, the writes included, still goes to `run`.
- * A listing that fails rejects with Herdr's own error (a HerdrError with its code); nothing falls back to the CLI.
+ * `run` with Herdr's listings (`pane list`, `workspace list`, `tab list --workspace`), `pane current`, and `report-metadata` answered over the socket
+ * instead of by a spawned CLI: the same `{result}` text, so every caller works unchanged. A spawned CLI costs a process start on every call, which a
+ * loaded machine turns into seconds, and these are the calls every session makes as it starts and on its timers. Every other command still goes to `run`.
+ * A request that fails rejects with Herdr's own error (a HerdrError with its code); nothing falls back to the CLI.
  */
-export const socketReads = (run: HerdrRun, call: HerdrCall): HerdrRun => async (args, timeoutMs) => {
-	const request = listing(args);
+export const socketRun = (run: HerdrRun, call: HerdrCall, pane = process.env.HERDR_PANE_ID): HerdrRun => async (args, timeoutMs) => {
+	const request = listing(args) ?? current(args, pane) ?? metadata(args);
 	return request ? JSON.stringify({ result: await call(request.method, request.params, timeoutMs) }) : run(args, timeoutMs);
 };
 

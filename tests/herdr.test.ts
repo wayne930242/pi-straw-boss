@@ -4,7 +4,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { herdrCall, HerdrError, herdrRun, herdrWorld, panes, place, report, socketReads, tabs, waitFor, workspaces, worldOf } from "../src/herdr.ts";
+import { herdrCall, HerdrError, herdrRun, herdrWorld, panes, place, report, socketRun, tabs, waitFor, workspaces, worldOf } from "../src/herdr.ts";
 
 test("report puts the positional id first, adds a TTL only when it sets a token, and clears with --clear-token", async () => {
 	const calls: string[][] = [];
@@ -80,10 +80,10 @@ test("herdrCall returns Herdr's result, even split mid-character across reads, a
 	}
 });
 
-test("socketReads answers Herdr's listings over the socket in the CLI's reply shape, and leaves every other command to the CLI", async () => {
+test("socketRun answers Herdr's listings over the socket in the CLI's reply shape, and leaves every other command to the CLI", async () => {
 	const asked: [string, unknown, number | undefined][] = [], cli: string[][] = [];
 	const call = async (method: string, params: Record<string, unknown>, timeoutMs?: number) => (asked.push([method, params, timeoutMs]), method === "pane.list" ? { type: "pane_list", panes: [{ pane_id: "wA:p1" }] } : method === "workspace.list" ? { type: "workspace_list", workspaces: [{ workspace_id: "wA" }] } : { type: "tab_list", tabs: [{ tab_id: "wA:t1" }] });
-	const run = socketReads(async (args) => (cli.push(args), JSON.stringify({ result: { pane: { pane_id: "wA:p1" } } })), call);
+	const run = socketRun(async (args) => (cli.push(args), JSON.stringify({ result: { pane: { pane_id: "wA:p1" } } })), call, "");
 	assert.deepEqual(await panes(run), [{ pane_id: "wA:p1" }]);
 	await panes(run, "wA");
 	assert.deepEqual(await workspaces(run), [{ workspace_id: "wA" }]);
@@ -92,15 +92,30 @@ test("socketReads answers Herdr's listings over the socket in the CLI's reply sh
 	assert.deepEqual(asked, [["pane.list", {}, undefined], ["pane.list", { workspace_id: "wA" }, undefined], ["workspace.list", {}, undefined], ["tab.list", { workspace_id: "wA" }, undefined], ["pane.list", {}, 1234]]);
 	assert.deepEqual(cli, []);
 	// Nothing else is a listing: writes, single reads, and listings the socket form does not cover go to the CLI as they came.
-	const others = [["pane", "current"], ["tab", "list"], ["workspace", "list", "--workspace", "wA"], ["pane", "list", "--workspace"], ["pane", "list", "--cwd", "x"], ["pane", "list", "wA"], ["pane", "report-metadata", "wA:p1", "--source", "straw-boss", "--token", "a=b"], ["tab", "close", "wA:t1"]];
+	// `pane current` without HERDR_PANE_ID, and a report-metadata the socket form does not cover (no source, an unknown flag, a token without `=`), too.
+	const others = [["pane", "current"], ["tab", "list"], ["workspace", "list", "--workspace", "wA"], ["pane", "list", "--workspace"], ["pane", "list", "--cwd", "x"], ["pane", "list", "wA"], ["pane", "report-metadata", "wA:p1", "--token", "a=b"], ["pane", "report-metadata", "wA:p1", "--source", "s", "--title", "t"], ["pane", "report-metadata", "wA:p1", "--source", "s", "--token", "ab"], ["tab", "report-metadata", "wA:t1", "--source", "s"], ["tab", "close", "wA:t1"]];
 	for (const args of others) await run(args);
 	assert.deepEqual(cli, others);
 	assert.equal(asked.length, 5);
 });
 
+test("socketRun sends pane current for the process's pane and report-metadata over the socket, with the tokens, clears, and TTL report() writes", async () => {
+	const asked: [string, unknown][] = [];
+	const call = async (method: string, params: Record<string, unknown>) => (asked.push([method, params]), method === "pane.current" ? { type: "pane_current", pane: { pane_id: "wA:p2", tab_id: "wA:t1", workspace_id: "wA" } } : { type: "ok" });
+	const run = socketRun(async () => assert.fail("the CLI must not run"), call, "wA:p2");
+	assert.deepEqual(await place(run), { paneId: "wA:p2", tabId: "wA:t1", workspaceId: "wA" });
+	await report(run, "pane", "wA:p2", { sb_role: "main", sb_name: "a=b", sb_tab: null });
+	await report(run, "workspace", "wA", { tower: null });
+	assert.deepEqual(asked, [
+		["pane.current", { caller_pane_id: "wA:p2" }],
+		["pane.report_metadata", { pane_id: "wA:p2", source: "straw-boss", tokens: { sb_role: "main", sb_name: "a=b", sb_tab: null }, ttl_ms: 600000 }],
+		["workspace.report_metadata", { workspace_id: "wA", source: "straw-boss", tokens: { tower: null } }],
+	]);
+});
+
 test("a listing that fails over the socket rejects with Herdr's own error and does not fall back to the CLI", async () => {
 	const cli: string[][] = [];
-	const run = socketReads(async (args) => (cli.push(args), "{}"), async () => { throw new HerdrError("workspace_not_found", "herdr pane.list failed: workspace_not_found workspace wX not found"); });
+	const run = socketRun(async (args) => (cli.push(args), "{}"), async () => { throw new HerdrError("workspace_not_found", "herdr pane.list failed: workspace_not_found workspace wX not found"); });
 	await assert.rejects(panes(run, "wX"), (e: HerdrError) => e instanceof HerdrError && e.code === "workspace_not_found" && /workspace wX not found/.test(e.message));
 	await assert.rejects(workspaces(run), (e: HerdrError) => e.code === "workspace_not_found");
 	assert.deepEqual(cli, []);
@@ -114,7 +129,7 @@ test("the listings go over a real socket as one request each, with the workspace
 		reply(`${JSON.stringify(result ? { id: request.id, result } : { id: request.id, error: { code: "workspace_not_found", message: "workspace wX not found" } })}\n`);
 	});
 	try {
-		const call = herdrCall(fake.path), run = socketReads(async () => assert.fail("the CLI must not run"), call);
+		const call = herdrCall(fake.path), run = socketRun(async () => assert.fail("the CLI must not run"), call);
 		assert.deepEqual(await panes(run, "wA"), [{ pane_id: "wA:p1", tab_id: "wA:t1", tokens: { sb_role: "main" } }]);
 		await assert.rejects(workspaces(run), (e: HerdrError) => e.code === "workspace_not_found");
 		assert.deepEqual(await herdrWorld(call)(), { panes: [{ pane_id: "wA:p1" }], workspaces: [{ workspace_id: "wA" }], tabs: [] });

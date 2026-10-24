@@ -13,6 +13,7 @@ import { ENTRY, type Kit } from "./state.ts";
 
 const KID_MARK_MS = [3_000, 15_000];
 const SUBAGENT_TOOLS = ["subagent", "subagent_resume"];
+const CHECKING = "Straw Boss is still asking Herdr whether this is a sub workspace; try again in a moment";
 
 /** What the session does at its start, around each run, and at its end. */
 export function registerSession(kit: Kit, { briefing, presence, membership, guard, host, reach, digest, control, startTower }: { briefing: Briefing; presence: Presence; membership: Membership; guard: Guard; host: ReturnType<typeof createHost>; reach: Reach; digest: Digest; control: Control; startTower(): Promise<void> }) {
@@ -42,6 +43,8 @@ export function registerSession(kit: Kit, { briefing, presence, membership, guar
 	};
 	// A tab the tower opened for a request starts its pi with this role: it promotes itself as soon as it has joined (opener.ts).
 	const opensAsMain = env.STRAW_BOSS_ROLE === "main";
+	// The session start in progress, and its answer to whether this session may join (true) once Herdr has said what workspace it is in.
+	let started: object | undefined, checked: Promise<boolean> = Promise.resolve(false);
 	// STRAW_BOSS_ROLE=main stays in the new tab's shell, so a later pi started there would self-promote. The tower's one-time pane token is what
 	// authorises it: this pi consumes the token and keeps the opener's marker (sb_opened_by) fresh, which the tower counts to enforce its limits.
 	const claimOpened = async () => {
@@ -55,6 +58,7 @@ export function registerSession(kit: Kit, { briefing, presence, membership, guar
 	};
 
 	pi.on("session_start", async (event, ctx) => {
+		const start = (started = {});
 		s.stopped = false;
 		s.ui = ctx.ui;
 		s.hasUI = ctx.hasUI;
@@ -73,24 +77,29 @@ export function registerSession(kit: Kit, { briefing, presence, membership, guar
 			unwatch = cfg.watch(presence.restore);
 			starting = startTower();
 		} else {
-			const bar = await barReason();
-			s.barred = bar?.text;
-			if (bar) {
-				tell(bar.text, bar.level);
-			} else {
+			// Asking Herdr whether this is a sub workspace waits in the background too: on a loaded machine a Herdr call takes seconds, and pi-intercom
+			// connects only after this handler returns. Until the answer comes the session counts as barred, so nothing joins (membership.ts) or promotes early.
+			s.barred = CHECKING;
+			checked = barReason().then((bar) => {
+				if (start !== started) return false; // a /new or /resume started another session meanwhile, which asks again
+				s.barred = bar?.text;
+				if (bar) tell(bar.text, bar.level);
+				return !bar;
+			});
+			starting = checked.then(async (joinable) => {
+				if (!joinable) return;
 				if (!s.stopped) unwatch = cfg.watch(presence.restore); // a shutdown that came while Herdr was asked about the workspace has stopped nothing yet
-				starting = membership.joinNet().then(async () => {
-					note(`${who()} joined tab ${s.info.tab}`);
-					const claimed = await claimOpened();
-					if (!claimed && event.reason !== "startup" && s.saved.openedBy && s.saved.openedPane === s.at.paneId) s.openedBy = s.saved.openedBy; // only the same pi in the tower's pane (/reload, /fork): `pi --session` anywhere is the boss's main
-					if (s.openedBy) {
-						control.register(); // the tower that opened this main may ask it to close (closemain.ts), also after a reload
-						await presence.publish(); // sb_opened_by was cleared at shutdown
-					}
-					const taken = claimed && (await membership.promote(false));
-					if (taken && !taken.promoted) tell(taken.text, "warning");
-				});
-			}
+				await membership.joinNet();
+				note(`${who()} joined tab ${s.info.tab}`);
+				const claimed = await claimOpened();
+				if (!claimed && event.reason !== "startup" && s.saved.openedBy && s.saved.openedPane === s.at.paneId) s.openedBy = s.saved.openedBy; // only the same pi in the tower's pane (/reload, /fork): `pi --session` anywhere is the boss's main
+				if (s.openedBy) {
+					control.register(); // the tower that opened this main may ask it to close (closemain.ts), also after a reload
+					await presence.publish(); // sb_opened_by was cleared at shutdown
+				}
+				const taken = claimed && (await membership.promote(false));
+				if (taken && !taken.promoted) tell(taken.text, "warning");
+			});
 		}
 		starting?.catch((error: Error) => tell(`Straw Boss: ${error.message}`, "error"));
 		// The GUI this process ran before a /reload, /new, or /resume starts again on its URL, and a session newer than the running server
@@ -117,7 +126,9 @@ export function registerSession(kit: Kit, { briefing, presence, membership, guar
 	// A member that dispatches or resumes a subagent without promoting is promoted here, before the subagent starts, unless the tab already has a main.
 	// A tower only coordinates: it dispatches no subagent (one would outlive it with no one to take its result), and opens a main for the work instead.
 	pi.on("tool_call", async (event) => {
-		if (!SUBAGENT_TOOLS.includes(event.toolName) || s.barred) return;
+		if (!SUBAGENT_TOOLS.includes(event.toolName)) return;
+		await checked; // a subagent launched while session start still asks Herdr about the workspace waits for the answer
+		if (s.barred) return;
 		if (s.isTower) return { block: true, reason: "A tower dispatches no subagents. Open a main for this work with boss_open_main, or route it to the main that owns it." };
 		try {
 			await membership.joinNet();

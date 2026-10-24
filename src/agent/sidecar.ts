@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 import { createDigest } from "../digest.ts";
 import { createElection } from "../election.ts";
 import { createGuard, GUARD_MS } from "../guard.ts";
-import { herdrApi, herdrCall, herdrRun, herdrWorld, isSub, place, socketReads, worldOf, panes, workspaces } from "../herdr.ts";
+import { herdrApi, herdrCall, herdrRun, herdrWorld, isSub, place, socketRun, worldOf, panes, workspaces } from "../herdr.ts";
 import type { Briefing } from "../briefing.ts";
 import { createMembership } from "../membership.ts";
 import { createPresence } from "../presence.ts";
@@ -57,7 +57,7 @@ const piOwn = (key: string) => /^PI_(INTERCOM|SUBAGENT)_/.test(key) || key === "
 
 /** The configuration of a pi session, with what only the GUI and the tower's host use left unavailable. */
 function agentConfig(d: AgentDeps, env: NodeJS.ProcessEnv): Config {
-	const call = d.call ?? herdrCall(), run = d.run ?? socketReads(herdrRun, call);
+	const call = d.call ?? herdrCall(), run = d.run ?? socketRun(herdrRun, call);
 	return {
 		run, world: d.world ?? (d.run ? worldOf(run) : herdrWorld(call)), api: d.api ?? herdrApi(), call, env, stateDir: d.stateDir,
 		sleep: d.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))), now: d.now ?? Date.now,
