@@ -22,7 +22,8 @@ export const ID_CHARS = 26, SHORT_ID_CHARS = 6;
 /** A device's id: the first 16 bytes of sha256(signing public key) in base32 (26 characters). */
 export const deviceId = (signPub: Uint8Array): string => base32(sha256(signPub).subarray(0, 16));
 export const shortId = (id: string): string => id.slice(0, SHORT_ID_CHARS);
-export const idOk = (id: unknown): id is string => typeof id === "string" && /^[a-z2-7]{26}$/.test(id);
+/** Canonical only: 16 bytes are 128 bits, so the 26th character holds 3 bits and 2 padding bits that must be zero (its value is a multiple of 4: a, e, i, m, q, u, y, 4). */
+export const idOk = (id: unknown): id is string => typeof id === "string" && /^[a-z2-7]{25}[aeimquy4]$/.test(id);
 
 /** The public half of a device: what the roster stores and an invite pins. */
 export interface KeyRecord { id: string; signPub: Buffer; boxPub: Buffer }

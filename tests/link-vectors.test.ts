@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { CanonError, dec, enc, readBool, readInt } from "../src/link/canon.ts";
 import { CONTEXT, openSealedKey, requestBytes, sealKey, signBytes } from "../src/link/crypto.ts";
 import { base32, deviceFromSeeds, encodeKeyRecord, keyRecordHash, labelOk, type DeviceKeys } from "../src/link/device.ts";
+import { idOk } from "../src/link/device.ts";
 import { buildEnvelope, decodeEnvelope, encodeEnvelope, encodeHeader, openEnvelope } from "../src/link/envelope.ts";
 import { BIP39_ENGLISH, BIP39_ENGLISH_SHA256 } from "../src/link/bip39-english.ts";
 import { buildJoinRequest, checkJoiner, decodeInvite, encodeInvite, inviteHash, openJoinRequest, safetyWords, type Invite } from "../src/link/join.ts";
@@ -139,7 +140,7 @@ test("joining: invite text, join request, the word list and safety words, and th
 	for (const t of j.invalidInvites) assert.equal(decodeInvite(t), null, t.slice(0, 24));
 	const r = j.request, blob = buildJoinRequest({ team: h(r.team), secret: h(r.secret), record: dev(r.joiner), label: r.label, nonce: h(r.nonce) });
 	assert.equal(blob.toString("hex"), r.blob);
-	const opened = openJoinRequest({ team: h(r.team), secret: h(r.secret), blob });
+	const opened = openJoinRequest({ forDevice: "", team: h(r.team), secret: h(r.secret), blob });
 	assert.ok(opened.ok && opened.label === r.label && opened.record.id === V.devices[r.joiner].id);
 	// An independent reading of the key: HKDF-SHA256 of the secret, info "straw-link/join-key/1" ‖ team, and the MAC as HMAC-SHA256.
 	const k = Buffer.from(hkdfSync("sha256", h(r.secret), Buffer.alloc(0), Buffer.concat([Buffer.from("straw-link/join-key/1"), h(r.team)]), 32));
@@ -149,7 +150,8 @@ test("joining: invite text, join request, the word list and safety words, and th
 	const [rec, label, mac] = dec(Buffer.concat([d.update(ct.subarray(0, -16)), d.final()]), 3);
 	assert.equal(rec!.toString("hex"), V.devices[r.joiner].keyRecord);
 	assert.equal(mac!.toString("hex"), createHmac("sha256", h(r.secret)).update(Buffer.concat([Buffer.from(CONTEXT.join), h(r.team), enc(rec!, label!)])).digest("hex"));
-	for (const x of j.requestRefusals) assert.deepEqual(openJoinRequest({ team: TEAM, secret: h(x.secret), blob }), x.expect, x.name);
+	for (const x of j.requestRefusals) assert.deepEqual(openJoinRequest({ forDevice: x.forDevice, team: TEAM, secret: h(x.secret), blob }), x.expect, x.name);
+	for (const id of j.invalidIds) assert.equal(idOk(id), false, JSON.stringify(id));
 	assert.deepEqual(j.wordList, { count: 2048, sha256: BIP39_ENGLISH_SHA256, first: "abandon", last: "zoo" });
 	assert.equal(BIP39_ENGLISH.length, 2048);
 	for (const w of j.safetyWords) assert.deepEqual(safetyWords({ team: h(w.team), inviter: dev(w.inviter), joiner: dev(w.joiner), secret: h(w.secret) }), w.words);

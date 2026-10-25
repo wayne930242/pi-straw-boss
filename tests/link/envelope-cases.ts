@@ -89,6 +89,10 @@ export function envelopeCases(): EnvelopeCase[] {
 	add("a presence marked queued", forge({ kind: "presence", header: { ephemeral: false, seq: 1 } }), "ephemeral-mismatch");
 	add("a tower message marked ephemeral", forge({ header: { ephemeral: true, seq: 0 } }), "ephemeral-mismatch");
 	add("a recipient that is not an id", forge({ header: { to: ["Not An Id"] } }), "bad-header");
+	// The 26th character carries 2 padding bits; the same 16 bytes written with them set are a different string, and not an id.
+	const loose = (id: string) => id.slice(0, 25) + "abcdefghijklmnopqrstuvwxyz234567"[("abcdefghijklmnopqrstuvwxyz234567".indexOf(id[25]!) + 1) % 32];
+	add("a recipient id with the padding bits of its last character set", forge({ header: { to: [loose(D.bob.id)] } }), "bad-header");
+	add("a sender id with the padding bits of its last character set", forge({ header: { from: loose(D.alice.id) } }), "bad-header");
 	add("a sender that was removed", forge({ from: "eve", header: { epoch: 2, head: { seq: 5, hash: entryHash(log[5]!) } }, key: teamKey(2) }), "not-member");
 	add("a sender that never was a member", forge({ from: "mallory" }), "not-member");
 	add("an attended device sending a kind only unattended devices send", forge({ kind: "dialog-open", from: "alice" }), "kind-not-allowed");

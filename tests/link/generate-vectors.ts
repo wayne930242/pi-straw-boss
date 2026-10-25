@@ -71,7 +71,7 @@ export function generateVectors() {
 	const secret = Buffer.alloc(32, 0x5c), invite: Invite = { relay: "https://link.example.org", team: TEAM, secret, inviterId: DEVICES.alice.id, inviterKeyHash: keyRecordHash(DEVICES.alice), forDevice: "" };
 	const inviteJson = (i: Invite) => ({ relay: i.relay, team: hex(i.team), secret: hex(i.secret), inviterId: i.inviterId, inviterKeyHash: hex(i.inviterKeyHash), forDevice: i.forDevice });
 	const reqNonce = Buffer.alloc(12, 7), blob = buildJoinRequest({ team: TEAM, secret, record: DEVICES.mallory, label: "new-laptop", nonce: reqNonce });
-	const opened = openJoinRequest({ team: TEAM, secret, blob });
+	const opened = openJoinRequest({ forDevice: "", team: TEAM, secret, blob });
 	const joinedLog = [...log, addEntry({ state: view(log), signer: DEVICES.alice, record: DEVICES.mallory, label: "new-laptop", attended: true, ...det("add-new") })];
 	const viaBob = [...log, addEntry({ state: view(log), signer: DEVICES.bob, record: DEVICES.mallory, label: "new-laptop", attended: true, ...det("add-new") })];
 	const joiner = (name: string, i: Invite, entries: typeof log, label?: string) => {
@@ -132,7 +132,11 @@ export function generateVectors() {
 			pinnedInvite: { ...inviteJson({ ...invite, forDevice: DEVICES.dave.id }), text: encodeInvite({ ...invite, forDevice: DEVICES.dave.id }) },
 			invalidInvites: [encodeInvite(invite).replace("strawlink1:", "strawlink2:"), encodeInvite(invite) + "A", "strawlink1:", encodeInvite({ ...invite, relay: "http://example.org" }), encodeInvite({ ...invite, forDevice: "nope" })],
 			request: { team: hex(TEAM), secret: hex(secret), joiner: "mallory", label: "new-laptop", nonce: hex(reqNonce), blob: hex(blob), opens: opened.ok },
-			requestRefusals: [{ name: "another secret", secret: hex(Buffer.alloc(32, 1)), expect: openJoinRequest({ team: TEAM, secret: Buffer.alloc(32, 1), blob }) }],
+			requestRefusals: [
+				{ name: "another secret", secret: hex(Buffer.alloc(32, 1)), forDevice: "", expect: openJoinRequest({ forDevice: "", team: TEAM, secret: Buffer.alloc(32, 1), blob }) },
+				{ name: "an invite pinned to another device", secret: hex(secret), forDevice: DEVICES.dave.id, expect: openJoinRequest({ forDevice: DEVICES.dave.id, team: TEAM, secret, blob }) },
+			],
+			invalidIds: ["", "short", DEVICES.alice.id.toUpperCase(), DEVICES.alice.id + "a", DEVICES.alice.id.slice(0, 25) + "b", DEVICES.bob.id.slice(0, 25) + "7", DEVICES.alice.id.slice(0, 25) + "1"],
 			safetyWords: [
 				{ team: hex(TEAM), inviter: "alice", joiner: "mallory", secret: hex(secret), words: safetyWords({ team: TEAM, inviter: DEVICES.alice, joiner: DEVICES.mallory, secret }) },
 				{ team: hex(TEAM), inviter: "bob", joiner: "eve", secret: hex(Buffer.alloc(32, 1)), words: safetyWords({ team: TEAM, inviter: DEVICES.bob, joiner: DEVICES.eve, secret: Buffer.alloc(32, 1) }) },
