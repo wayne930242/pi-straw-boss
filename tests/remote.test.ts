@@ -263,6 +263,15 @@ test("over the tailnet: only this user's paired devices get in, a code pairs onc
 	assert.equal((await remoteGet(gui, page, bare)).status, 403, "remote is off: nothing on the remote listener gets in, bare or not");
 	gui.access.enable({ host: HOST, login: LOGIN });
 	assert.equal((await remoteGet(gui, page)).status, 401, "not paired yet");
+	// Launching the installed app on Android is a navigation from another site, which leaves the SameSite=Strict cookie behind: the page reloads itself once.
+	const launch = await remoteGet(gui, page, { "sec-fetch-site": "cross-site", "sec-fetch-dest": "document" });
+	assert.deepEqual([launch.status, launch.headers["content-type"]], [401, "text/html; charset=utf-8"]);
+	assert.match(launch.body, /<meta http-equiv="refresh" content="0">/, "a page load from outside reloads itself, same-origin, so the cookie can ride along");
+	for (const headers of [{ "sec-fetch-site": "same-origin", "sec-fetch-dest": "document" }, { "sec-fetch-site": "cross-site", "sec-fetch-dest": "script" }, { "sec-fetch-dest": "document" }]) {
+		const r = await remoteGet(gui, page, headers);
+		assert.deepEqual([r.status, r.headers["content-type"]], [401, "text/plain"], `${JSON.stringify(headers)}: the plain refusal, so the reload never loops`);
+		assert.match(r.body, /not paired.*camera/);
+	}
 	for (const headers of [{ "tailscale-user-login": undefined }, { "tailscale-user-login": "other@example.com" }, { "tailscale-funnel-request": "?1" }, { host: "box.tail1.ts.net" }, { host: "evil.example:8443" }]) assert.equal((await remoteGet(gui, page, headers)).status, 403, JSON.stringify(headers));
 	const code = gui.access.pair()!;
 	const paired = await remoteGet(gui, `${page}pair/${code}`);
