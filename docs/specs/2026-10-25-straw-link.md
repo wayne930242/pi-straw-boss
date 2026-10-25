@@ -36,10 +36,12 @@ to one project each.
 ## Terms
 
 - **Device**: one computer's Straw Link identity: an Ed25519 signing key and an X25519 encryption key, with a label. Its id is the first
-  16 bytes of `sha256(signing public key)` in base32 (26 characters); its **short id** is the first 6. Its **key record** is the canonical
+  16 bytes of `sha256(signing public key)` in lowercase RFC 4648 base32 without padding (26 characters, the last one's two spare bits
+  zero, so each id has one spelling); its **short id** is the first 6. Its **key record** is the canonical
   encoding of `(id, signing public key, encryption public key)`. A device is **attended** (someone works at it) or **unattended** (pi runs
   there in auto mode with nobody at it); the roster records which.
-- **Label**: a device's display name, 1 to 40 characters of letters, digits, space, `.`, `_`, `-`, unique within a team.
+- **Label**: a device's display name, 1 to 40 ASCII letters, digits, spaces, `.`, `_`, `-`, with no space at either end, unique within a
+  team.
 - **Team**: a set of devices bound to one project, with a random 16-byte id and a 32-byte team key per epoch.
 - **Roster**: the team's append-only log of membership entries, each signed by a member with the authority for it. Every device keeps a
   copy and checks every entry.
@@ -138,8 +140,10 @@ Node's built-in `crypto` only, so pi-straw-boss keeps no runtime dependency (ver
 ChaCha20-Poly1305 with AAD). Bun is not supported for Straw Link until its `chacha20-poly1305` is checked.
 
 **Encoding.** Every signed or authenticated structure is a canonical byte string: fields in a fixed order, each as a 4-byte big-endian
-length followed by its bytes; a list is a 4-byte count followed by its encoded items; integers are 8-byte big-endian. JSON is only the
-wire wrapper, never what is signed.
+length followed by its bytes; a list is one such field whose bytes are a 4-byte count followed by its encoded items; integers are 8-byte
+big-endian and at most 2^53. A decoder rejects truncated fields, trailing bytes, and lengths past the end. JSON is only the wire
+wrapper, never what is signed. Signatures and AADs are checked over the bytes received, never over a re-encoding of decoded fields.
+`tests/link/vectors.json` in this repository fixes every byte layout below, with invalid cases and their reasons; the relay replays it.
 
 **Domain separation.** Every signature and MAC covers `context ‖ team id ‖ canonical fields`, with these contexts:
 
@@ -148,14 +152,16 @@ wire wrapper, never what is signed.
 | `straw-link/envelope/1` | An envelope |
 | `straw-link/roster/1` | A roster entry |
 | `straw-link/request/1` | A relay request |
-| `straw-link/join/1` | A join request (MAC with the invite secret) |
+| `straw-link/join/1` | A join request: HMAC-SHA256(invite secret, context ‖ team ‖ canonical(B's key record, label)) |
+| `straw-link/labels/1` | AAD (with team and epoch) of labels and label tables under a team key |
 
 | Use | Primitive |
 |---|---|
 | Sign | Ed25519 (`crypto.sign(null, …)`) |
 | Encrypt an envelope | ChaCha20-Poly1305 with the epoch's team key, a random 96-bit nonce, and the envelope's canonical header as AAD |
-| Seal a key to one device | A fresh X25519 key; HKDF-SHA256 of the shared secret with info `straw-link/seal/1 ‖ team ‖ epoch ‖ ephemeral public key ‖ recipient public key`; ChaCha20-Poly1305 with that one-use key and a zero nonce |
-| Encrypt a join request | ChaCha20-Poly1305 with HKDF-SHA256(invite secret, info `straw-link/join-key/1 ‖ team`) |
+| Seal a key to one device | A fresh X25519 key; HKDF-SHA256 of the shared secret with info `straw-link/seal/1 ‖ team ‖ epoch ‖ ephemeral public key ‖ recipient public key`; ChaCha20-Poly1305 with that one-use key, a zero nonce, and empty AAD |
+| Encrypt a join request | ChaCha20-Poly1305 with HKDF-SHA256(invite secret, info `straw-link/join-key/1 ‖ team`), empty AAD |
+| HKDF | SHA-256 with an empty salt everywhere |
 | Safety words | `sha256("straw-link/safety/1" ‖ team ‖ sha256(inviter key record) ‖ joiner key record ‖ invite secret)`, first 44 bits as 4 words of the BIP-39 English list |
 
 A random 96-bit nonce stays safe far beyond any team's traffic within one epoch; no rotation by message count.
@@ -181,14 +187,19 @@ A receiver drops an envelope, and records why in the link log, unless every chec
    `from` for that kind, and an older one is ignored without effect on queued messages. A sender saves its next `seq` before it sends,
    so a crash never reuses one.
 5. `roster head` is not ahead of this device's copy; if it is, the receiver fetches the roster first, and a relay that cannot show that
-   head raises the roster-mismatch notice.
+   head raises the roster-mismatch notice. A head not ahead must match this device's entry hash at that seq, else roster-mismatch.
+
+The header checks (version, team, kind, ephemeral flag) run first, then the signature, then 1 to 6, so a forged envelope never moves a
+`seq` or `ts` guard.
 6. `ts` is no more than 10 minutes in the future and no older than 7 days.
 
 The relay keeps envelopes from one sender in that sender's order.
 
 ## Message kinds
 
-Plaintexts are canonical structures too; every text field is cut to its limit and never parsed as a header.
+Plaintexts are canonical structures too; every text field is cut to its limit and never parsed as a header. Limits the table leaves
+open: 64 KB for a dialog and its answer, 256 bytes for ids, labels, and states. Only `presence` may go to the whole team; a
+`dialog-answer` comes only from an attended device.
 
 | Kind | Sender → receiver | Plaintext | Notes |
 |---|---|---|---|
@@ -207,7 +218,8 @@ Read acknowledgements go to the relay as relay requests, not as envelopes.
 ## Roster
 
 An entry is the canonical structure `(seq, prev = sha256(previous entry), op, subject, by, epoch, payload)` with its signature, where
-`subject` is a device's key record, its role (`admin` or `member`), and `attended`.
+`subject` is a device's key record, its role (`admin` or `member`), and `attended`. The first epoch is 1; `create` has `prev` of 32 zero
+bytes; an entry's hash covers its full encoding including the signature.
 
 | Op | Signed by | Payload |
 |---|---|---|
@@ -223,6 +235,8 @@ Rules every client and the relay enforce:
   messages.
 - A `remove` or `role` that would leave no attended admin is invalid.
 - A removed device id is banned: no later `add` may name it. A device comes back only with new keys.
+- An `add` gives the role `member`; an unattended device never becomes admin. A `role` or `remove` carries the subject's current key
+  record and `attended`. A `remove` or `rotate` seals the new key to exactly the remaining members.
 - The relay appends an entry only when `prev` is the head and the entry is valid by these rules, and answers a conflict with the head.
   Every rule that makes an entry invalid is one the relay can check from plaintext (keys, roles, `attended`, signers, bans), so a client
   that still meets an invalid entry has met a dishonest relay: it stops using the team and raises a roster-fork notice; it never skips
@@ -241,7 +255,7 @@ A (attended member)                      relay                               B (
 GUI: Invite to <team>
   s = 32 random bytes
   POST /v1/invites {team, h: sha256(s), expires}  (signed by A)
-  QR: strawlink1:<base64url(canonical(relay URL, team, s, A's id, sha256(A's key record)))>
+  QR: strawlink1:<base64url(canonical(relay URL, team, s, A's id, sha256(A's key record), pinned device id or empty))>
                                                                    GUI: Join a team → scan with the camera, or paste
                                                                    B makes its device keys if it has none
                        ◄── POST /v1/invites/<h>/join {B's key record, label,
@@ -398,7 +412,7 @@ it checks Ed25519 signatures with the standard library, checks roster entries, a
 | `POST /v1/invites`, `POST /v1/invites/{h}/join` | Hold an invite hash until it expires; take one join request and pass it to the inviter's stream. |
 
 - Every request but a join carries `X-Straw-Device`, `X-Straw-Time`, and `X-Straw-Sig`: Ed25519 over `straw-link/request/1 ‖ team ‖
-  method ‖ path with query ‖ time ‖ sha256(body)`. The relay accepts it only from a current, non-removed member within 5 minutes of its
+  canonical(method, path with query, time, sha256(body))`. The relay accepts it only from a current, non-removed member within 5 minutes of its
   clock.
 - Envelopes are kept 7 days or until every addressee has acknowledged them; ephemeral ones keep only the last per device and kind and are
   never queued.
