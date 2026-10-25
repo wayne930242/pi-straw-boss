@@ -11,6 +11,7 @@ import { deviceFromSeeds, type DeviceKeys } from "./device.ts";
 //   device.json, device.id   the device keys, its label, the next sequence number; the id for an infra to read
 //   teams/<team>.json        roster copy, team keys by epoch, relay URL, last event id, last sequence number per sender
 //   inbox/<envelope id>.json messages waiting for a tower
+//   outbox/<team>/<seq>-<envelope id>.bin   envelopes built and not yet taken by the relay
 //   holder.json, holder.lock the link holder's record, and the lock every write below goes under
 //   link.log                 why an envelope was dropped, and the other things an operator asks about
 //
@@ -91,6 +92,7 @@ const pidAlive = (pid: number) => {
 };
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const count = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
+const outboxName = (seq: number, id: Buffer) => `${String(seq).padStart(12, "0")}-${id.toString("hex")}.bin`;
 const mkdirPrivate = (dir: string) => {
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	try { chmodSync(dir, 0o700); } catch { /* a file system without modes */ }
@@ -208,7 +210,7 @@ export class LinkStore {
 
 	// ---- Files ---------------------------------------------------------------------------------------------------------------------
 
-	private write(path: string, text: string): void {
+	private write(path: string, text: string | Uint8Array): void {
 		const tmp = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
 		try {
 			writeFileSync(tmp, text, { mode: 0o600 });
@@ -391,6 +393,39 @@ export class LinkStore {
 			}
 		}
 		return gone;
+	}
+
+	// ---- The outbox ----------------------------------------------------------------------------------------------------------------
+
+	/** An envelope built and not yet taken by the relay: kept so a holder that ends, or is replaced, does not lose it. */
+	putOutbox(team: string, item: { seq: number; id: Buffer; bytes: Uint8Array }): void {
+		this.assertLocked("Writing the outbox");
+		if (!HEX16.test(team)) throw new Error("an outbox folder is named by the team id in hex");
+		mkdirPrivate(this.path("outbox", team));
+		this.write(this.path("outbox", team, outboxName(item.seq, item.id)), item.bytes);
+	}
+	removeOutbox(team: string, item: { seq: number; id: Buffer }): void {
+		this.assertLocked("Removing from the outbox");
+		if (HEX16.test(team)) rmSync(this.path("outbox", team, outboxName(item.seq, item.id)), { force: true });
+	}
+	/** The envelopes of a team still waiting to land, in `seq` order. */
+	outboxPending(team: string): { seq: number; id: Buffer; bytes: Buffer }[] {
+		if (!HEX16.test(team)) return [];
+		let names: string[];
+		try {
+			names = readdirSync(this.path("outbox", team));
+		} catch {
+			return [];
+		}
+		return names.flatMap((name) => {
+			const m = /^(\d{12})-([0-9a-f]{32})\.bin$/.exec(name);
+			if (!m) return [];
+			try {
+				return [{ seq: Number(m[1]), id: Buffer.from(m[2]!, "hex"), bytes: readFileSync(this.path("outbox", team, name)) }];
+			} catch {
+				return [];
+			}
+		}).sort((a, b) => a.seq - b.seq);
 	}
 
 	// ---- The log -------------------------------------------------------------------------------------------------------------------

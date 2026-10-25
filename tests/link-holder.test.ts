@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
@@ -45,6 +45,7 @@ interface Rig {
 	/** Added to the real time the holder reads. */
 	skew: number;
 	share: "presence" | "status";
+	postWaitMs: number;
 	start(): Promise<void>;
 	restart(over?: { store?: LinkStore }): Promise<void>;
 }
@@ -57,12 +58,12 @@ function rig(name: "a" | "b", o: { entries?: ReturnType<typeof rosterOf>; seed?:
 	first.ensure();
 	writeDevice(first, keys, name === "a" ? "alice-mac" : "bob-mac");
 	if (o.seed !== false) writeTeam(first, entries, keys);
-	const r = { name, dir, project, offers: [], notices: [], displaced: 0, isHolder: true, skew: 0, share: "status" } as unknown as Rig;
+	const r = { name, dir, project, offers: [], notices: [], displaced: 0, isHolder: true, skew: 0, share: "status", postWaitMs: 3000 } as unknown as Rig;
 	r.net = o.towers === false ? netOf([]) : netOf([[`tower-${name}`, `w-${name}`, `label-${name}`, project]]);
 	const build = (store: LinkStore) => new LinkHolder({
 		store, isHolder: () => r.isHolder, config: () => config(project, r.share)(), net: async () => r.net, relay: clientFor(relay),
 		offer: (tower, id) => void r.offers.push({ tower: tower.id, id }), notify: (text) => void r.notices.push(text), onDisplaced: () => void r.displaced++,
-		now: () => Date.now() + r.skew, backoff: () => 5, drainMs: 20, presenceMs: 40, offerAgainMs: 60_000, postWaitMs: 3000, haltRetryMs: 150,
+		now: () => Date.now() + r.skew, backoff: () => 5, drainMs: 20, presenceMs: 40, offerAgainMs: 60_000, postWaitMs: r.postWaitMs, haltRetryMs: 150,
 	});
 	r.store = first;
 	r.holder = build(first);
@@ -492,4 +493,55 @@ test("SLH-F003: an offer is sticky: a tower that opens nearer the project root d
 	b.net = netOf([two]);
 	await until(() => b.offers.length === 2, 3000, "the new tower offered it once the first is gone");
 	assert.equal(b.offers[1]!.tower, "tower-2");
+});
+
+const outboxFiles = (r: Rig) => {
+	try {
+		return readdirSync(join(r.dir, "outbox", TEAM_HEX));
+	} catch {
+		return [];
+	}
+};
+
+test("SLH-F005: a message the relay has not taken is saved on disk before the first post, survives the holder, goes first after a restart, and leaves the disk when it lands", async () => {
+	const a = rig("a");
+	a.postWaitMs = 100;
+	await a.start();
+	relay.failPosts = 100_000;
+	const first = await send(a, "keep me");
+	assert.ok(first.ok && first.details.status === "queued", JSON.stringify(first));
+	assert.equal(outboxFiles(a).length, 1, "the envelope is on disk");
+	assert.match(outboxFiles(a)[0]!, /^000000000001-[0-9a-f]{32}\.bin$/);
+	assert.equal(device(a).nextSeq, 2);
+	await a.holder.stop();
+	relay.failPosts = 0;
+	assert.equal(queued().length, 0);
+	await a.restart();
+	await until(() => queued().length === 1, 3000, "the saved message to land after the restart");
+	await until(() => outboxFiles(a).length === 0, 3000, "its file to be removed once it landed");
+	assert.ok((await send(a, "after")).ok);
+	assert.deepEqual(queued().map((st) => st.envelope.header.seq), [1, 2], "the saved one first");
+	assert.equal(queued()[0]!.envelope.header.from, alice.id);
+});
+
+test("SLH-F005/F018: a refusal that arrives after the send answered queued is told to the boss, and the file goes", async () => {
+	const a = rig("a");
+	a.postWaitMs = 100;
+	let mode: "ok" | "down" | "refuse" = "ok";
+	const fetched = relay.fetch;
+	relay.fetch = async (input, init) => {
+		if (String(input).endsWith("/envelopes") && mode !== "ok") {
+			const body = JSON.parse(Buffer.from(init!.body as Uint8Array).toString("utf8")) as { envelope: string };
+			if (!parseEnvelope(Buffer.from(body.envelope, "base64url"))!.header.ephemeral) return new Response(JSON.stringify({ error: mode === "down" ? "unavailable" : "bad-envelope" }), { status: mode === "down" ? 503 : 422, headers: { "content-type": "application/json" } });
+		}
+		return fetched(input, init);
+	};
+	await a.start();
+	mode = "down";
+	const sent = await send(a, "doomed");
+	assert.ok(sent.ok && sent.details.status === "queued");
+	assert.equal(outboxFiles(a).length, 1);
+	mode = "refuse";
+	await until(() => a.notices.some((n) => /the relay refused the message to bob-mac/.test(n)), 3000, "the late refusal");
+	await until(() => outboxFiles(a).length === 0, 3000, "the refused file removed");
 });

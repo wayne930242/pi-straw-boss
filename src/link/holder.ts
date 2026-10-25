@@ -2,10 +2,10 @@ import { Buffer } from "node:buffer";
 import type { Session } from "../herdr.ts";
 import type { LinkConfig } from "./config.ts";
 import { shortId, type DeviceKeys } from "./device.ts";
-import { buildEnvelope, openEnvelope, recordTaken, type Header, type ReceiveState } from "./envelope.ts";
+import { buildEnvelope, openEnvelope, parseEnvelope, recordTaken, type Header, type ReceiveState } from "./envelope.ts";
 import { PayloadTooLargeError, RelayError, UnauthorizedError } from "./errors.ts";
 import { encodePlaintext, LIMITS, type Presence, type TowerMessage, type WorkspaceState } from "./kinds.ts";
-import { Outbox } from "./outbox.ts";
+import { Outbox, type QueuedEnvelope } from "./outbox.ts";
 import type { RelayClient } from "./relay.ts";
 import { decodeEntry, encodeEntry, replayEncoded, type RosterEntry, type RosterState } from "./roster.ts";
 import { inside, resolveDevice, towersFor, type MemberRef, type NetView } from "./routing.ts";
@@ -59,6 +59,8 @@ const PRESENCE_ONLINE_MS = 90_000;
 /** The most devices of one team `list` answers with: the answer has to fit the channel's request size. */
 const MAX_LISTED_DEVICES = 100;
 const INBOX_MAX_AGE_MS = 7 * 24 * 3600_000;
+/** Why the relay refused an envelope for good. */
+const refusal = (error: Error) => (error instanceof PayloadTooLargeError ? "the relay refuses a message this large" : error instanceof RelayError ? `the relay refused it: ${error.code}` : error.message);
 const b64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64url");
 
 /** What the holder keeps in memory for one team it runs. */
@@ -75,8 +77,8 @@ interface TeamRun {
 	dead: string | undefined;
 	settled: Map<string, "posted" | "halted" | Error>;
 	haltTimer: ReturnType<typeof setTimeout> | undefined;
-	/** Ids of sends that stopped waiting (they answered "queued"): a later outcome is not kept for them. */
-	gone: Set<string>;
+	/** Sends that stopped waiting (they answered "queued") and messages restored from disk, by id, with how to name them: a later refusal is told to the boss, and no outcome is kept for them. */
+	gone: Map<string, string>;
 	waiters: Map<string, () => void>;
 }
 
@@ -205,20 +207,35 @@ export class LinkHolder {
 		const { store } = this.o, device = this.device!;
 		const { tf } = this.loadTeam(team);
 		const teamId = Buffer.from(team, "hex"), client = this.o.relay(tf.relay, device.keys);
-		const gone = new Set<string>(), settled = new Map<string, "posted" | "halted" | Error>(), waiters = new Map<string, () => void>();
+		const gone = new Map<string, string>(), settled = new Map<string, "posted" | "halted" | Error>(), waiters = new Map<string, () => void>();
 		const settle = (id: Buffer, outcome: "posted" | "halted" | Error) => {
 			const key = id.toString("hex");
-			if (gone.delete(key)) return;
+			const who = gone.get(key);
+			if (who !== undefined) {
+				if (outcome === "halted") return;
+				gone.delete(key);
+				if (outcome instanceof Error) this.o.notify(`Straw Link: the relay refused ${who}: ${refusal(outcome)}`, "warning");
+				return;
+			}
 			settled.set(key, outcome);
 			waiters.get(key)?.();
 		};
+		// The envelope leaves the disk once the relay holds it or refused it for good; a crash before this reposts it, and the relay dedupes on the id.
+		const forget = (item: QueuedEnvelope) => void store.withLock(() => store.removeOutbox(team, item)).catch((error: Error) => store.log({ event: "outbox-remove-failed", team, error: error.message }));
 		const outbox = new Outbox({
 			post: (bytes, signal) => client.postEnvelope(teamId, bytes, signal),
-			reserveSeq: () => store.withLock(() => store.reserveSeq()),
+			// Reserve the seq, build the envelope, and write it to disk under one lock: another holder that takes over never sees a number without its file.
+			reserveSeq: () => store.reserveSeq(),
+			atomically: (step) => store.withLock(step),
+			save: (item) => store.putOutbox(team, item),
 			backoff: this.o.backoff, sleep: this.o.sleep,
-			onPosted: (item) => settle(item.id, "posted"),
+			onPosted: (item) => {
+				forget(item);
+				settle(item.id, "posted");
+			},
 			onRejected: (item, error) => {
 				store.log({ event: "send-rejected", team, error: String(error) });
+				forget(item);
 				settle(item.id, error instanceof Error ? error : new Error(String(error)));
 			},
 			onHalt: (item, error) => {
@@ -232,6 +249,16 @@ export class LinkHolder {
 		});
 		const run: TeamRun = { team, teamId, client, outbox, stream: undefined, presences: new Map(), lastEphemeral: new Map(), presenceTimer: undefined, dead: undefined, settled, haltTimer: undefined, gone, waiters };
 		this.runs.set(team, run);
+		// What an earlier holder (or this one before a restart) built and did not see land goes first, in order, before anything new is accepted.
+		for (const item of store.outboxPending(team)) {
+			const sealed = parseEnvelope(item.bytes);
+			if (!sealed || sealed.header.seq !== item.seq || !Buffer.from(sealed.header.id).equals(item.id) || sealed.header.from !== device.keys.id) {
+				store.log({ event: "outbox-skipped", team, seq: item.seq, id: item.id.toString("hex") });
+				continue;
+			}
+			gone.set(item.id.toString("hex"), `a message queued earlier (seq ${item.seq})`);
+			outbox.enqueue(item);
+		}
 		run.stream = client.stream(teamId, {
 			onEvent: (event) => this.onEvent(run, event),
 			lastEventId: tf.lastEventId || undefined,
@@ -495,16 +522,15 @@ export class LinkHolder {
 		run.waiters.delete(id);
 		const outcome = run.settled.get(id);
 		run.settled.delete(id);
-		if (outcome === undefined || outcome === "halted") run.gone.add(id);
 		const who = members.find((m) => m.team === target.team && m.id === target.id);
 		const name = `${who?.label ?? "device"} (${shortId(target.id)})`;
+		if (outcome === undefined || outcome === "halted") run.gone.set(id, `the message to ${name}`);
 		store.log({ event: "send", team: run.team, to: target.id, id, outcome: outcome === undefined ? "queued" : outcome === "posted" ? "posted" : String(outcome) });
 		const details = { team: run.team, device: target.id, id, seq: queued.seq };
 		if (outcome === "posted") return { ok: true, text: `Sent to the tower of ${name}${req.workspace ? ` (workspace ${req.workspace})` : ""} through the relay. ${req.reply ? "It replies through tower_send." : "It is told no reply is expected."}`, details: { ...details, status: "posted" } };
-		if (outcome === "halted") return { ok: true, text: `The relay refused this device just now; the message to ${name} is queued on this computer and tried again within ${Math.round((this.o.haltRetryMs ?? 60_000) / 1000)} s.`, details: { ...details, status: "queued" } };
-		if (outcome === undefined) return { ok: true, text: `The relay did not take the message to ${name} yet; it is queued on this computer and retried until it lands.`, details: { ...details, status: "queued" } };
-		const refused = outcome instanceof PayloadTooLargeError ? "the relay refuses a message this large" : outcome instanceof RelayError ? `the relay refused it: ${outcome.code}` : outcome.message;
-		return { ok: false, error: `The message to ${name} was not sent: ${refused}` };
+		if (outcome === "halted") return { ok: true, text: `The relay refused this device just now; the message to ${name} is saved on this computer and tried again within ${Math.round((this.o.haltRetryMs ?? 60_000) / 1000)} s.`, details: { ...details, status: "queued" } };
+		if (outcome === undefined) return { ok: true, text: `The relay did not take the message to ${name} yet; it is saved on this computer and sent again until the relay takes it.`, details: { ...details, status: "queued" } };
+		return { ok: false, error: `The message to ${name} was not sent: ${refusal(outcome)}` };
 	}
 
 	// ---- Presence ----------------------------------------------------------------------------------------------------------------------

@@ -173,3 +173,18 @@ test("the link log appends one JSON line per entry and keeps itself bounded", as
 	assert.ok(existsSync(join(store.dir, "link.log.1")), "rotated once past the cap");
 	assert.ok(statSync(join(store.dir, "link.log")).size <= 400 + 120);
 });
+
+test("SLH-F005: the outbox keeps envelopes private, one file per envelope, listed in seq order, written and removed only under the lock", { skip: !POSIX && "no modes" }, async () => {
+	const store = open(), id = (n: number) => Buffer.alloc(16, n);
+	assert.deepEqual(store.outboxPending(TEAM), []);
+	assert.throws(() => store.putOutbox(TEAM, { seq: 1, id: id(1), bytes: Buffer.from("x") }), /under the Straw Link lock/);
+	await store.withLock(() => {
+		store.putOutbox(TEAM, { seq: 10, id: id(2), bytes: Buffer.from("ten") });
+		store.putOutbox(TEAM, { seq: 9, id: id(1), bytes: Buffer.from("nine") });
+	});
+	assert.equal(mode(join(store.dir, "outbox", TEAM)), 0o700);
+	for (const name of readdirSync(join(store.dir, "outbox", TEAM))) assert.equal(mode(join(store.dir, "outbox", TEAM, name)), 0o600, name);
+	assert.deepEqual(store.outboxPending(TEAM).map((e) => [e.seq, e.bytes.toString()]), [[9, "nine"], [10, "ten"]], "numeric order, not the order written");
+	await store.withLock(() => store.removeOutbox(TEAM, { seq: 9, id: id(1) }));
+	assert.deepEqual(store.outboxPending(TEAM).map((e) => e.seq), [10]);
+});
