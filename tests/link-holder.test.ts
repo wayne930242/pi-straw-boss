@@ -544,6 +544,9 @@ test("SLH-F005/F018: a refusal that arrives after the send answered queued is to
 	mode = "refuse";
 	await until(() => a.notices.some((n) => /the relay refused the message to bob-mac/.test(n)), 3000, "the late refusal");
 	await until(() => outboxFiles(a).length === 0, 3000, "the refused file removed");
+	// SLH-F018: nothing is kept for a send that stopped waiting.
+	const runs = (a.holder as unknown as { runs: Map<string, { settled: Map<string, unknown>; gone: Map<string, string> }> }).runs;
+	assert.equal([...runs.values()].reduce((n, r) => n + r.settled.size + r.gone.size, 0), 0, "no outcome and no waiting mark left behind");
 });
 
 test("SLH-F019: the inbox is capped per sender and in all: past the cap the envelope stays at the relay, unacknowledged, with one notice", async () => {
