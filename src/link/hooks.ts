@@ -43,8 +43,10 @@ export function createRemoteTurns({ pi, now, config, policy: policyDeps, home, a
 	const turns = new Turns(levelOf, () => void (setOrigin(turns.lowest ? `remote:${turns.lowest.id}` : undefined)));
 	const trackedFor = new Map<string, { at: number; value: Tracked }>();
 	const scopeFor = (cwd: string): Scope | undefined => {
-		const sender = turns.lowest;
-		const project = sender && config().teams.get(sender.team)?.project;
+		// Every sender's team must bind the same project: a run that carries senders of several teams reads only where all of them may, and with different
+		// projects there is no such place, so every call goes to the gate.
+		const projects = new Set(turns.list.map((s) => config().teams.get(s.team)?.project));
+		const project = projects.size === 1 ? [...projects][0] : undefined;
 		if (!project) return undefined;
 		return {
 			project, cwd, home, agentDir, linkDir,
@@ -84,7 +86,7 @@ export function createRemoteTurns({ pi, now, config, policy: policyDeps, home, a
 		const hidden = hideOldRemote(e.messages, turns);
 		return hidden ? { messages: hidden } : undefined;
 	});
-	/** A hook that throws would let the call run (pi reports the error and goes on), so a failure while holding a remote turn blocks the call instead. */
+	/** A failing tool_call hook blocks the call in pi (a tool_result hook's error lets the result through), so a failure while holding a remote turn must refuse explicitly: tool_call blocks, tool_result shows nothing. */
 	const closed = (what: string, error: unknown) => {
 		log({ event: "remote-hook-failed", what, error: String(error) });
 		return `a remote request could not be checked (${what}); it is refused`;
