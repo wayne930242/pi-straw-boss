@@ -9,6 +9,7 @@ import type { Briefing } from "../briefing.ts";
 import { createMembership } from "../membership.ts";
 import { createPresence } from "../presence.ts";
 import { createReach } from "../reach.ts";
+import { createRoles } from "../roles.ts";
 import { herdrEvents, herdrWatch } from "../server-watch.ts";
 import type { Config, Deps, Scope } from "../state.ts";
 import { type Incoming, type IntercomLike, createHeadlessKit } from "./kit.ts";
@@ -97,7 +98,7 @@ export async function startSidecar({ pane, kind, session, record, cli = "straw-n
 	const { s, me } = kit;
 	const reach = createReach(kit), election = createElection(kit), presence = createPresence(kit), digest = createDigest(run, now);
 	const guard = createGuard(kit, { ...election, openTower: reach.openTower });
-	const membership = createMembership(kit, { presence, election, guard, briefing: { rebrief() {} } as unknown as Briefing, openTower: reach.openTower, register() {} });
+	const membership = createMembership(kit, { presence, election, guard, briefing: { rebrief() {} } as unknown as Briefing, roles: createRoles(kit), openTower: reach.openTower, register() {} });
 
 	// Leaving: what a pi session does at its shutdown, minus the tower's part. The tokens go before the broker hears the session leave.
 	let client: IntercomLike | undefined, leaving: Promise<void> | undefined, finish!: () => void;

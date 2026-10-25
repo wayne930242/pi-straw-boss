@@ -17,6 +17,7 @@ import { herdrApi, herdrCall, herdrRun, herdrWorld, socketRun, worldOf } from ".
 import { createMembership } from "./membership.ts";
 import { createPresence } from "./presence.ts";
 import { createReach } from "./reach.ts";
+import { createRoles } from "./roles.ts";
 import { tailscale } from "./remote.ts";
 import { herdrEvents, herdrWatch } from "./server-watch.ts";
 import { registerSession } from "./session.ts";
@@ -46,15 +47,15 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		const bridge = startBridge(pi, { env, dir: guiDir, local: () => (s.hub?.running ? s.hub : undefined), close: (keep) => (closeSelf ? closeSelf(keep) : "A subagent is closed by the session that launched it.") });
 		interceptUi(pi); // any extension's select and confirm reach the same bridge, subagents included
 		if (env.PI_SUBAGENT_ID) return;
-		const briefing = createBriefing(kit), reach = createReach(kit), election = createElection(kit), presence = createPresence(kit), digest = createDigest(run, now);
+		const briefing = createBriefing(kit), roles = createRoles(kit), reach = createReach(kit), election = createElection(kit), presence = createPresence(kit), digest = createDigest(run, now);
 		const guard = createGuard(kit, { ...election, openTower: reach.openTower });
 		// A join adds the tools of a joined session, and the tools promote through the membership: each is built with the other's hook.
-		const membership = createMembership(kit, { presence, election, guard, briefing, openTower: reach.openTower, register: () => (tools.addNetTools(), tools.addPromote()) });
+		const membership = createMembership(kit, { presence, election, guard, briefing, roles, openTower: reach.openTower, register: () => (tools.addNetTools(), tools.addPromote()) });
 		const tools = createTools(kit, { ...reach, promote: membership.promote, digest, closeMain: (query) => control.closeMain(query) });
 		const host = createHost(kit, { bridge, connected: membership.connected });
 		closeSelf = createClosing(kit);
 		const control = createCloseMain(kit, { closeSelf, check: bridge.stashCheck });
-		registerSession(kit, { briefing, presence, membership, guard, host, reach, digest, control, startTower: createTower(kit, { membership, presence, tools, control, digest }) });
+		registerSession(kit, { briefing, roles, presence, membership, guard, host, reach, digest, control, startTower: createTower(kit, { membership, presence, tools, control, digest, roles }) });
 		registerBoss(kit, { host, membership, reach, closeSelf, stashing: createStashing(kit, { host }) });
 	};
 }

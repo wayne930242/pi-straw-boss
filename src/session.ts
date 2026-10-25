@@ -9,6 +9,7 @@ import { CONNECT_MS, type Membership } from "./membership.ts";
 import { orphans } from "./orphan.ts";
 import type { Presence } from "./presence.ts";
 import type { Reach } from "./reach.ts";
+import type { Roles } from "./roles.ts";
 import { ENTRY, type Kit } from "./state.ts";
 
 const KID_MARK_MS = [3_000, 15_000];
@@ -16,7 +17,7 @@ const SUBAGENT_TOOLS = ["subagent", "subagent_resume"];
 const CHECKING = "Straw Boss is still asking Herdr whether this is a sub workspace; try again in a moment";
 
 /** What the session does at its start, around each run, and at its end. */
-export function registerSession(kit: Kit, { briefing, presence, membership, guard, host, reach, digest, control, startTower }: { briefing: Briefing; presence: Presence; membership: Membership; guard: Guard; host: ReturnType<typeof createHost>; reach: Reach; digest: Digest; control: Control; startTower(): Promise<void> }) {
+export function registerSession(kit: Kit, { briefing, roles, presence, membership, guard, host, reach, digest, control, startTower }: { briefing: Briefing; roles: Roles; presence: Presence; membership: Membership; guard: Guard; host: ReturnType<typeof createHost>; reach: Reach; digest: Digest; control: Control; startTower(): Promise<void> }) {
 	const { pi, cfg, s, guiDir, me, role, tell } = kit;
 	const { run, env, version } = cfg;
 	const who = () => pi.getSessionName() || s.ownName || me().slice(0, 8);
@@ -65,7 +66,9 @@ export function registerSession(kit: Kit, { briefing, presence, membership, guar
 		s.quit = () => ctx.shutdown();
 		briefing.load();
 		s.saved = Object.assign({}, ...ctx.sessionManager.getBranch().flatMap((e) => (e.type === "custom" && e.customType === ENTRY ? [e.data] : [])));
-		s.isTower ||= Boolean(s.saved.tower);
+		s.file = ctx.sessionManager.getSessionFile();
+		// A Herdr restore resumes the pane into this session file without STRAW_BOSS_ROLE and, when pi had not yet written the file, without its entries: the record decides (roles.ts).
+		s.isTower ||= Boolean(s.saved.tower) || roles.held(env.HERDR_PANE_ID) === "tower";
 		const log = ctx.sessionManager;
 		stopWatching();
 		nudges = orphans({ run, file: () => log.getSessionFile(), entries: () => log.getEntries(), sessions: host.sessions, send: reach.send, type: ENTRY, remember: (key) => pi.appendEntry(ENTRY, { nudged: key }), me, tell });
@@ -97,8 +100,11 @@ export function registerSession(kit: Kit, { briefing, presence, membership, guar
 					control.register(); // the tower that opened this main may ask it to close (closemain.ts), also after a reload
 					await presence.publish(); // sb_opened_by was cleared at shutdown
 				}
-				const taken = claimed && (await membership.promote(false));
-				if (taken && !taken.promoted) tell(taken.text, "warning");
+				// A main a Herdr restore resumed in its own pane and tab takes the role back; a tab that has a live main already keeps it.
+				const resumed = !claimed && roles.held(s.at.paneId, s.at.tabId) === "main";
+				s.restored = resumed;
+				const taken = (claimed || resumed) && (await membership.promote(false));
+				if (taken && !taken.promoted) (s.restored = false, tell(taken.text, claimed ? "warning" : "info"));
 			});
 		}
 		starting?.catch((error: Error) => tell(`Straw Boss: ${error.message}`, "error"));
@@ -147,6 +153,7 @@ export function registerSession(kit: Kit, { briefing, presence, membership, guar
 	});
 
 	pi.on("session_shutdown", async (event) => {
+		if (s.closing) roles.forget(); // closed on purpose: a Herdr restore does not bring it back (roles.ts)
 		// A closed session, and a tower that quits however it was asked, take their pane with them (and an emptied tab); a /reload, /new, resume or fork keeps it.
 		if ((s.closing ? !s.closing.keepPane : s.isTower) && event.reason === "quit" && env.HERDR_PANE_ID) cfg.later(process.pid, ["pane", "close", env.HERDR_PANE_ID]);
 		await host.release(event.reason !== "quit"); // a /reload, /new, or /resume starts the GUI again in this process

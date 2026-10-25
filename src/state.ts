@@ -61,6 +61,9 @@ export interface State {
 	ui: ExtensionContext["ui"] | undefined;
 	hasUI: boolean;
 	saved: Saved;
+	/** The pi session file, the key of this session's role record (roles.ts), and whether the role being taken is one a Herdr restore gave back. */
+	file: string | undefined;
+	restored: boolean;
 	/** Claims, refreshes, and guard checks run one at a time through this chain. */
 	queue: Promise<void>;
 	/** Set while this session holds the tower role. */
@@ -96,7 +99,7 @@ export function createKit(pi: ExtensionAPI, cfg: Config): Kit {
 		// SAFETY: as `c` above.
 		at: undefined as unknown as Place,
 		mainId: undefined, pinned: undefined, info: {}, ownName: "", openedBy: undefined, kids: new Set(),
-		ui: undefined, hasUI: false, saved: {}, queue: Promise.resolve(), dashboard: undefined, headWatch: undefined, hub: undefined, gui: undefined, viewer: undefined, quit: undefined, closing: undefined,
+		ui: undefined, hasUI: false, saved: {}, file: undefined, restored: false, queue: Promise.resolve(), dashboard: undefined, headWatch: undefined, hub: undefined, gui: undefined, viewer: undefined, quit: undefined, closing: undefined,
 	};
 	const me = () => env.PI_INTERCOM_SESSION_ID ?? "";
 	const role = (): Role | undefined => {
