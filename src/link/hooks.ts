@@ -74,6 +74,10 @@ export function createRemoteTurns({ pi, now, config, policy: policyDeps, home, a
 	/** Calls the gate let through: their output is the boss's to see whole. */
 	const approved = new Set<string>();
 
+	// A run is remote until pi says it settled (not at an agent_end: a retry, a compaction, or a queued message continues the run); a new session starts clean.
+	pi.on("agent_settled", () => turns.settle());
+	pi.on("session_start", () => turns.settle());
+	pi.on("session_shutdown", () => (turns.settle(), gate.dispose()));
 	pi.on("message_start", (e) => void turns.see(e.message));
 	pi.on("message_end", (e) => void turns.see(e.message));
 	pi.on("context", (e) => {
@@ -108,5 +112,5 @@ export function createRemoteTurns({ pi, now, config, policy: policyDeps, home, a
 		return { content: [{ type: "text" as const, text: kept || "(nothing here that a remote request may see)" }] };
 	});
 
-	return { turns, answerForward, dispose: () => gate.dispose() };
+	return { turns, answerForward };
 }

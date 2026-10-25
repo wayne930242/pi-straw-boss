@@ -285,13 +285,12 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 		log: (event) => store.log(event), tell,
 		ask: (op) => ask(op),
 	});
-	const { turns, answerForward } = remote;
+	const { answerForward } = remote;
 
 	// ---- Session hooks -------------------------------------------------------------------------------------------------------------------
 
 	pi.on("session_start", (_event, ctx) => {
 		stopped = false;
-		turns.settle();
 		lastCtx = ctx;
 		seen.clear();
 		// Every entry of the session file, not only this branch: a crash between sending a message and writing the `seen` entry, or a restart on another branch, must not take it twice.
@@ -308,11 +307,9 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 	// The context pi hands every event is how a tower asks whether it is idle; a run that ends is the moment to look for a held message.
 	pi.on("before_agent_start", (_event, ctx) => void (lastCtx = ctx));
 	pi.on("agent_end", (_event, ctx) => void ((lastCtx = ctx), schedule(0)));
-	pi.on("agent_settled", (_event, ctx) => void ((lastCtx = ctx), turns.settle(), schedule(0)));
+	pi.on("agent_settled", (_event, ctx) => void ((lastCtx = ctx), schedule(0)));
 	pi.on("session_shutdown", async () => {
 		stopped = true;
-		turns.settle();
-		remote.dispose();
 		clearInterval(ticker);
 		clearTimeout(pumpTimer);
 		pumpTimer = undefined;
