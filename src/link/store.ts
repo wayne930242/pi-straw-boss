@@ -1,8 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes, randomUUID } from "node:crypto";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { hostname } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { startOf } from "../remote.ts";
 import { deviceFromSeeds, type DeviceKeys } from "./device.ts";
 
 // Straw Link's state on disk (docs/specs/2026-10-25-straw-link.md, Storage and policy): `<pi agent dir>/straw-boss/link/`, mode 700, files 600
@@ -77,8 +78,12 @@ export interface InboxItem {
 export interface StoreOptions {
 	/** Whether a process lives; the lock of one that does not is taken over at once. */
 	alive?: (pid: number) => boolean;
+	/** When a process started (see `startOf`); undefined when it cannot be told. A lock is kept past its age while its owner is the process that took it. */
+	start?: (pid: number) => string | undefined;
 	now?: () => number;
 	staleMs?: number;
+	/** Told after each flush to disk (`file` before a rename, `dir` after it); for tests. */
+	synced?: (kind: "file" | "dir", path: string) => void;
 	/** The log rotates once it passes this many bytes (default 1 MiB). */
 	logMax?: number;
 }
@@ -101,19 +106,25 @@ const mkdirPrivate = (dir: string) => {
 export class LinkStore {
 	readonly dir: string;
 	private readonly alive: (pid: number) => boolean;
+	private readonly start: (pid: number) => string | undefined;
+	private ownStart: string | undefined | null = null;
 	private readonly now: () => number;
 	private readonly staleMs: number;
 	private readonly logMax: number;
+	private readonly synced: ((kind: "file" | "dir", path: string) => void) | undefined;
 	private readonly scope = new AsyncLocalStorage<symbol>();
 	private held: symbol | undefined;
+	private token: string | undefined;
 	private tail: Promise<unknown> = Promise.resolve();
 
 	constructor(dir: string, o: StoreOptions = {}) {
 		this.dir = dir;
 		this.alive = o.alive ?? pidAlive;
+		this.start = o.start ?? startOf;
 		this.now = o.now ?? Date.now;
 		this.staleMs = o.staleMs ?? LOCK_STALE_MS;
 		this.logMax = o.logMax ?? 1024 * 1024;
+		this.synced = o.synced;
 	}
 
 	private path(...parts: string[]) {
@@ -128,16 +139,20 @@ export class LinkStore {
 
 	/**
 	 * Runs `fn` holding `link/holder.lock`, one caller at a time in this process (in call order) and across processes. `fn` may await, but keep it to
-	 * a few seconds: a lock older than 10 s is taken for a dead holder's. Not re-entrant. A function that outlives its lock cannot write any more.
+	 * a few seconds: a lock older than 10 s is taken over unless its owner is still the process that took it. Not re-entrant. A write checks, right
+	 * before it replaces a file, that the lock file still carries this call's token, so a function that lost its lock (a process that was
+	 * suspended past the age) fails instead of overwriting what the new owner wrote.
 	 */
 	withLock<T>(fn: () => T | Promise<T>, waitMs = LOCK_WAIT_MS): Promise<T> {
 		const run = this.tail.then(async () => {
 			const token = await this.acquire(waitMs), scope = Symbol("lock");
 			this.held = scope;
+			this.token = token;
 			try {
 				return await this.scope.run(scope, fn);
 			} finally {
 				this.held = undefined;
+				this.token = undefined;
 				this.release(token);
 			}
 		});
@@ -148,6 +163,14 @@ export class LinkStore {
 		const scope = this.scope.getStore();
 		if (!scope || scope !== this.held) throw new Error(`${what} must run under the Straw Link lock`);
 	}
+	/** The lock file still carries the token of the call that is writing: a lock taken over as stale is no longer ours, and nothing is written under it. */
+	private assertOwnsLock(): void {
+		let token: unknown;
+		try {
+			token = (JSON.parse(readFileSync(this.lock, "utf8")) as { token?: unknown }).token;
+		} catch { /* unreadable: lost */ }
+		if (token !== this.token) throw new Error("The Straw Link lock was taken over while this step ran; nothing was written");
+	}
 	private get lock() {
 		return this.path("holder.lock");
 	}
@@ -156,7 +179,7 @@ export class LinkStore {
 		const token = randomUUID(), end = Date.now() + waitMs;
 		for (;;) {
 			try {
-				writeFileSync(this.lock, JSON.stringify({ pid: process.pid, token, t: this.now() }), { flag: "wx", mode: 0o600 });
+				writeFileSync(this.lock, JSON.stringify({ pid: process.pid, ...(this.started() ? { started: this.started() } : {}), token, t: this.now() }), { flag: "wx", mode: 0o600 });
 				return token;
 			} catch (error) {
 				if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -170,6 +193,10 @@ export class LinkStore {
 			await new Promise((r) => setTimeout(r, 10 + Math.floor(Math.random() * 20)));
 		}
 	}
+	private started(): string | undefined {
+		if (this.ownStart === null) this.ownStart = this.start(process.pid);
+		return this.ownStart;
+	}
 	/** The content of the lock when it is a dead process's or an old one's, else undefined (a lock being written reads empty for a moment and is not stale). */
 	private stale(): string | undefined {
 		let raw: string, age: number;
@@ -179,12 +206,16 @@ export class LinkStore {
 		} catch {
 			return undefined;
 		}
-		if (age > this.staleMs) return raw;
+		let info: { pid?: unknown; started?: unknown };
 		try {
-			const pid = (JSON.parse(raw) as { pid?: unknown }).pid;
-			if (typeof pid === "number" && !this.alive(pid)) return raw;
-		} catch { /* partial: wait */ }
-		return undefined;
+			info = JSON.parse(raw) as typeof info;
+		} catch {
+			return age > this.staleMs ? raw : undefined; // partial: wait, unless it never completed
+		}
+		if (typeof info.pid === "number" && !this.alive(info.pid)) return raw;
+		if (age <= this.staleMs) return undefined;
+		// Old: the owner is still in it when it is the process that took the lock (a suspended laptop, a long section). Only when that cannot be told is age enough.
+		return typeof info.pid === "number" && typeof info.started === "string" && this.start(info.pid) === info.started ? undefined : raw;
 	}
 	/** Of several processes that find the same stale lock, the one that makes `holder.lock.stale` looks again and removes it, so none removes the fresh lock another has just taken. */
 	private breakStale(raw: string): void {
@@ -213,12 +244,35 @@ export class LinkStore {
 	private write(path: string, text: string | Uint8Array): void {
 		const tmp = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
 		try {
-			writeFileSync(tmp, text, { mode: 0o600 });
+			// Flushed before the rename and the directory after it, so a crash of the machine leaves the old file or the new one, never an empty one,
+			// and a sequence number or an acknowledged message that was saved stays saved (libuv's fsync is F_FULLFSYNC on macOS).
+			const fd = openSync(tmp, "wx", 0o600);
+			try {
+				const bytes = typeof text === "string" ? Buffer.from(text, "utf8") : text;
+				for (let done = 0; done < bytes.length;) done += writeSync(fd, bytes, done);
+				fsyncSync(fd);
+			} finally {
+				closeSync(fd);
+			}
+			this.synced?.("file", tmp);
+			this.assertOwnsLock();
 			renameSync(tmp, path);
+			this.syncDir(dirname(path));
 		} catch (error) {
 			rmSync(tmp, { force: true });
 			throw error;
 		}
+	}
+	private syncDir(dir: string): void {
+		try {
+			const fd = openSync(dir, "r");
+			try {
+				fsyncSync(fd);
+			} finally {
+				closeSync(fd);
+			}
+		} catch { /* a file system that cannot flush a directory (Windows) */ }
+		this.synced?.("dir", dir);
 	}
 	private read<T>(path: string, parse: (v: unknown) => T | undefined): T | undefined {
 		try {

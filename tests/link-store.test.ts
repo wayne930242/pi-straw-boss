@@ -188,3 +188,45 @@ test("SLH-F005: the outbox keeps envelopes private, one file per envelope, liste
 	await store.withLock(() => store.removeOutbox(TEAM, { seq: 9, id: id(1) }));
 	assert.deepEqual(store.outboxPending(TEAM).map((e) => e.seq), [10]);
 });
+
+test("SLH-F007: a lock older than the age is kept while its owner is still the process that took it, and a step whose lock was taken over writes nothing", async () => {
+	const opts = { alive: () => true, start: () => "Mon Oct 26 01:00:00 2026", staleMs: 150 };
+	const a = open(opts), b = new LinkStore(a.dir, opts), order: string[] = [];
+	const first = a.withLock(async () => {
+		order.push("A in");
+		await new Promise((r) => setTimeout(r, 450));
+		a.writeHolder({ session: "A", version: "1", pid: 1, tower: false, since: 1 });
+		order.push("A wrote");
+	});
+	await new Promise((r) => setTimeout(r, 30));
+	const second = b.withLock(() => {
+		order.push("B in");
+		b.writeHolder({ session: "B", version: "1", pid: 1, tower: false, since: 1 });
+	}, 3000);
+	await Promise.all([first, second]);
+	assert.deepEqual(order, ["A in", "A wrote", "B in"], "B waited for the live owner");
+	assert.equal(a.readHolder()?.session, "B");
+
+	// A start time that is not the owner's means the pid was reused: the old lock is stale.
+	writeFileSync(join(a.dir, "holder.lock"), JSON.stringify({ pid: 1, started: "another process", token: "x", t: 1 }));
+	const old = new Date(Date.now() - 60_000);
+	utimesSync(join(a.dir, "holder.lock"), old, old);
+	await a.withLock(() => undefined, 300);
+
+	// The lock file now carries another token: this step lost its lock, so its write fails instead of replacing the new owner's.
+	await assert.rejects(a.withLock(() => {
+		writeFileSync(join(a.dir, "holder.lock"), JSON.stringify({ pid: 1, token: "someone else", t: Date.now() }));
+		a.writeHolder({ session: "late", version: "1", pid: 1, tower: false, since: 1 });
+	}), /taken over/);
+	assert.equal(a.readHolder()?.session, "B");
+	rmSync(join(a.dir, "holder.lock"), { force: true });
+});
+
+test("SLH-F008: every file is flushed to disk before it replaces the old one, and its directory after", async () => {
+	const seen: string[] = [];
+	const store = open({ synced: (kind, path) => void seen.push(`${kind}:${path.endsWith(".tmp") ? "tmp" : "dir"}`) });
+	await store.withLock(() => store.writeHolder({ session: "s", version: "1", pid: 1, tower: false, since: 1 }));
+	assert.deepEqual(seen, ["file:tmp", "dir:dir"]);
+	assert.equal(store.readHolder()?.session, "s");
+	assert.ok(!readdirSync(store.dir).some((n) => n.endsWith(".tmp")));
+});
