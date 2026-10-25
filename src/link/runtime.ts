@@ -6,18 +6,17 @@ import { type Party, stamp } from "../header.ts";
 import type { Session } from "../herdr.ts";
 import { startOf } from "../remote.ts";
 import { type Channel, type Kit, REGISTER } from "../state.ts";
-import { decide, filterListing, readTracked, searchRoot, type Scope, type Tracked } from "./allow.ts";
-import { type Level, readLinkConfig } from "./config.ts";
+import { readLinkConfig } from "./config.ts";
 import type { DeviceKeys } from "./device.ts";
 import { holderAlive, LinkElection } from "./election.ts";
 import { type AllyTeam, type ConfirmView, LinkHolder, type RelayPort, type SendResult } from "./holder.ts";
 import { RelayClient } from "./relay.ts";
 import type { NetView } from "./routing.ts";
-import { createGate, type ForwardPort } from "./gate.ts";
-import { type PolicyDeps, readPolicy } from "./policy.ts";
+import { type PolicyDeps } from "./policy.ts";
+import { createRemoteTurns } from "./hooks.ts";
 import { type HolderRecord, type InboxItem, LinkStore } from "./store.ts";
 import { restrictLabel } from "./text.ts";
-import { hideOldRemote, MESSAGE_TYPE, Turns } from "./turn.ts";
+import { MESSAGE_TYPE } from "./turn.ts";
 import { chunks, NAMESPACE, Reassembler } from "./wire.ts";
 
 // Straw Link inside a pi session (docs/specs/2026-10-25-straw-link.md, Architecture, Link holder). Every joined session, and every tower, is a
@@ -280,84 +279,13 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 
 	// ---- Remote turns --------------------------------------------------------------------------------------------------------------------
 
-	/** The level this computer gives a device: the policy file's on an unattended device, config.json's otherwise, `reply` when none names it. */
-	let refusedTold = "";
-	const levelOf = (device: string): Level => {
-		const policy = readPolicy(opts.policy);
-		if (policy.mode === "unattended") return policy.trust.get(device) ?? "reply";
-		if (policy.mode === "refused") {
-			if (refusedTold !== policy.reason) (refusedTold = policy.reason, store.log({ event: "policy-refused", reason: policy.reason }), tell(`Straw Link: unattended mode is refused (${policy.reason}); every sender stays at reply`, "error"));
-			return "reply";
-		}
-		return config().trust.get(device) ?? "reply";
-	};
-	const turns = new Turns(levelOf, () => void (s.remoteOrigin = turns.lowest ? `remote:${turns.lowest.id}` : undefined));
-	const trackedFor = new Map<string, { at: number; value: Tracked }>();
-	const scopeFor = (cwd: string): Scope | undefined => {
-		const sender = turns.lowest;
-		const project = sender && config().teams.get(sender.team)?.project;
-		if (!project) return undefined;
-		return {
-			project, cwd, home, agentDir, linkDir: join(guiDir, "link"),
-			tracked: () => {
-				const hit = trackedFor.get(project);
-				if (hit && cfg.now() - hit.at < 3000) return hit.value;
-				const value = readTracked(project);
-				trackedFor.set(project, { at: cfg.now(), value });
-				return value;
-			},
-		};
-	};
-	// The sender's device is asked as well at `forward`: the request goes through the holder, and its answer comes back the same way.
-	const forwardWaits = new Map<string, (allow: boolean) => void>();
-	const answerForward = (dialogId: string, allow: boolean) => forwardWaits.get(dialogId)?.(allow);
-	const forward: ForwardPort = {
-		async send(req) {
-			const answer = await ask({ op: "confirm-request", ...req });
-			if (!answer.ok) throw new Error(answer.error);
-		},
-		listen(dialogId, on) {
-			forwardWaits.set(dialogId, on);
-			return () => (forwardWaits.delete(dialogId), void ask({ op: "forget-confirm", dialogId }).catch(() => undefined));
-		},
-	};
-	const gate = createGate({ bus: pi.events, forward, timeoutMs: opts.gateMs, onError: (what, error) => store.log({ event: "gate-failed", what, error: error.message }) });
-	/** Calls the gate let through: their output is the boss's to see whole. */
-	const approved = new Set<string>();
-
-	pi.on("message_start", (e) => void turns.see(e.message));
-	pi.on("message_end", (e) => void turns.see(e.message));
-	pi.on("context", (e) => {
-		const hidden = hideOldRemote(e.messages, turns);
-		return hidden ? { messages: hidden } : undefined;
+	const remote = createRemoteTurns({
+		pi, now: cfg.now, config, policy: opts.policy, home, agentDir, linkDir: join(guiDir, "link"), gateMs: opts.gateMs,
+		setOrigin: (origin) => void (s.remoteOrigin = origin), tower: () => s.ownName || pi.getSessionName() || sid(),
+		log: (event) => store.log(event), tell,
+		ask: (op) => ask(op),
 	});
-	pi.on("tool_call", async (e, ctx) => {
-		if (!turns.active) return;
-		const input = e.input as Record<string, unknown>, level = turns.level!;
-		if (e.toolName === "link_request") return { block: true, reason: "a remote turn cannot ask for a link action, whatever its sender's level" };
-		if (level === "dispatch") return;
-		const scope = scopeFor((ctx as { cwd?: string }).cwd ?? process.cwd());
-		const verdict = scope ? decide(e.toolName, input, turns.list, scope) : ({ kind: "gate" } as const);
-		if (verdict.kind === "allow") return;
-		if (verdict.kind === "refuse") return { block: true, reason: verdict.reason };
-		const lowest = turns.lowest;
-		const outcome = await gate.ask({
-			toolCallId: e.toolCallId, tool: e.toolName, input, senders: turns.list, tower: s.ownName || pi.getSessionName() || sid(),
-			...(level === "forward" && lowest && lowest.id !== "?" ? { forwardTo: lowest } : {}),
-			...(ctx.hasUI ? { ui: ctx.ui } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}),
-		});
-		if (!outcome.allow) return { block: true, reason: outcome.reason };
-		approved.add(e.toolCallId);
-	});
-	pi.on("tool_result", (e, ctx) => {
-		const asked = approved.delete(e.toolCallId);
-		if (!turns.active || turns.level === "dispatch" || asked || !["grep", "find", "ls"].includes(e.toolName)) return;
-		const scope = scopeFor((ctx as { cwd?: string }).cwd ?? process.cwd());
-		const text = e.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("\n");
-		const kept = scope ? filterListing(e.toolName, searchRoot(e.input, scope), text, scope) : "";
-		// content replaced without structuredContent: pi drops the structured copy, which would still hold what was filtered out.
-		return { content: [{ type: "text" as const, text: kept || "(nothing here that a remote request may see)" }] };
-	});
+	const { turns, answerForward } = remote;
 
 	// ---- Session hooks -------------------------------------------------------------------------------------------------------------------
 
@@ -384,7 +312,7 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 	pi.on("session_shutdown", async () => {
 		stopped = true;
 		turns.settle();
-		gate.dispose();
+		remote.dispose();
 		clearInterval(ticker);
 		clearTimeout(pumpTimer);
 		pumpTimer = undefined;
