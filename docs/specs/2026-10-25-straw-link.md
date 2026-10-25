@@ -268,6 +268,7 @@ GUI: Invite to <team>
                              mac}, encrypted under HKDF(s)
 A (over its stream) decrypts, checks the mac, the label, the id ban
 A's GUI: B's label and short id, three sets of 4 words → A taps the set B's screen shows
+                                                                   (B computes its words from the QR's key-record hash, before its add)
 A posts `add` for B
                                                                    B fetches the roster: its `add` must be signed by A's id from the QR,
                                                                    A's key record must hash to the QR's value; then B checks every entry
@@ -421,11 +422,12 @@ it checks Ed25519 signatures with the standard library, checks roster entries, a
 
 - Every request but a join carries `X-Straw-Device`, `X-Straw-Time`, and `X-Straw-Sig`: Ed25519 over `straw-link/request/1 ‖ team ‖
   canonical(method, path with query, time, sha256(body))`. The relay accepts it only from a current, non-removed member within 5 minutes of its
-  clock.
+  clock. The path is the request target the relay receives, so a relay URL is an origin with no path, and an ingress in front of it
+  must not rewrite paths.
 - Envelopes are kept 7 days or until every addressee has acknowledged them; ephemeral ones keep only the last per device and kind and are
   never queued.
-- Caps per team: 50 MB stored, 256 KB per envelope, 600 envelopes a minute. Per invite: one join request. Over a cap the relay answers
-  429 and the client tells the tower.
+- Caps per team: 50 MB stored, 256 KB per envelope, 600 envelopes a minute. Per invite: one join request. Over the storage or rate cap
+  the relay answers 429 and the client retries later and tells the tower; a single envelope over 256 KB is 413, refused for good.
 - An SSE stream sends a comment every 25 seconds to keep proxies from closing it.
 - Logs hold team ids, device ids, sizes, and status codes, never bodies.
 
