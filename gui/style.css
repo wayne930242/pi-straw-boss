@@ -123,7 +123,7 @@ svg { display: block; }
 	:is(.card:hover, .card:focus-within) > .quit-btn, :is(.tab h3:hover, .tab h3:focus-within) > .quit-btn, :is(.base > header:hover, .base > header:focus-within) :is(.quit-btn, .tower-quit) { opacity: 1; }
 }
 #stashed-list li { display: flex; align-items: center; gap: 8px; } #stashed-list span { flex: 1; overflow-wrap: anywhere; } .card > .quit-btn { margin-left: auto; }
-.card > .quit-btn, .tower-quit { position: relative; z-index: 2; } /* above the card's link */
+.card > .quit-btn, .base > header > .quit-btn, .tower-quit { position: relative; z-index: 2; } /* above the card's link: the header's stretched .enter-base::after paints over a plain button once hovering lifts its opacity to 1 and it stops being a stacking context */
 .tower-quit { margin: 6px 0 0; }
 .sheet { margin: auto; max-width: min(420px, calc(100vw - 32px)); padding: 18px 20px; border: 1px solid var(--line); border-radius: 16px; background: var(--raised); color: var(--text); font: 14px/1.5 var(--sans); }
 .sheet::backdrop { background: color-mix(in srgb, var(--shadow) 60%, transparent); } .sheet p { margin: 0 0 14px; } .sheet-row { display: flex; justify-content: flex-end; gap: 10px; } .sheet .later { padding: 6px 14px; border-radius: 10px; cursor: pointer; }
