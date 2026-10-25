@@ -24,7 +24,7 @@ before(() => {
 	git("init", "-q");
 	put(".gitignore", "ignored.log\nbuild/\n");
 	put("src/a.ts", "export const a = 1;");
-	put("src/deep/b.ts", "export const b = 2;");
+	put("src/deep/b.ts", "export const b = 2;\ncontext line");
 	put("README.md", "# readme");
 	put(".env.example", "TOKEN=1");
 	put("keys/server.pem", "pem");
