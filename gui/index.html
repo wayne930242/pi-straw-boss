@@ -39,23 +39,30 @@
       <button class="pair-btn tog done-btn" id="done" type="button" data-state="done" popovertarget="done-pop" aria-haspopup="dialog" hidden></button>
     </div>
     <div class="hud-pop done-pop" id="done-pop" popover><ul id="done-list"></ul><button class="pair-btn" id="done-clear" type="button"></button></div>
-    <button class="pair-btn tog" id="remind" type="button" aria-pressed="true"></button>
-    <button class="pair-btn tog" id="sound" type="button" popovertarget="sound-pop" aria-haspopup="dialog"></button>
-    <div class="hud-pop sound-pop" id="sound-pop" popover>
-      <label><span id="sound-on-label"></span><input type="checkbox" role="switch" id="sound-on"></label>
-      <label><span id="sound-vol-label"></span><input type="range" id="sound-vol" min="0" max="100" step="5"><output id="sound-vol-out" for="sound-vol"></output></label>
-      <button class="pair-btn" id="sound-try" type="button"></button>
+    <button class="pair-btn prefs-btn" id="prefs" type="button" popovertarget="prefs-pop" aria-haspopup="dialog" aria-label="Settings" data-m-label="settings" data-m-title="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.4 7.4 0 0 0-1.7-1L15 3.3h-4l-.4 2.6a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.4 7.4 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7.4 7.4 0 0 0 1.7-1l2.5 1 2-3.5zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></svg></button>
+    <!-- Settings a person sets once: the reminder and sound switches, pairing a phone, the language. The sound panel hangs under the last row. -->
+    <div class="hud-pop prefs-pop" id="prefs-pop" popover>
+      <button class="pair-btn tog" id="remind" type="button" aria-pressed="true"></button>
+      <button class="pair-btn" id="pair" type="button" title="Pair a phone over Tailscale (/boss gui remote turns remote access on)" data-m="pair_button" data-m-title="pair_title">Phone</button>
+      <select class="pair-btn lang" id="lang" aria-label="Language" data-m-label="language"></select>
+      <button class="pair-btn tog" id="sound" type="button" popovertarget="sound-pop" aria-haspopup="dialog"></button>
+      <div class="hud-pop sound-pop" id="sound-pop" popover>
+        <label><span id="sound-on-label"></span><input type="checkbox" role="switch" id="sound-on"></label>
+        <label><span id="sound-vol-label"></span><input type="range" id="sound-vol" min="0" max="100" step="5"><output id="sound-vol-out" for="sound-vol"></output></label>
+        <button class="pair-btn" id="sound-try" type="button"></button>
+      </div>
     </div>
-    <button class="pair-btn" id="dismiss-all" type="button" data-close="dismiss-all" hidden></button>
-    <button class="pair-btn" id="stashed" type="button" popovertarget="stashed-pop" aria-haspopup="dialog" hidden></button>
-    <div class="hud-pop done-pop" id="stashed-pop" popover><ul id="stashed-list"></ul></div>
-    <button class="pair-btn" id="pair" type="button" title="Pair a phone over Tailscale (/boss gui remote turns remote access on)" data-m="pair_button" data-m-title="pair_title">Phone</button>
-    <select class="pair-btn lang" id="lang" aria-label="Language" data-m-label="language"></select>
     <div class="link" id="link" data-state="connecting"><i></i><span id="link-text">connecting</span></div>
   </header>
   <div class="banner" id="banner" role="status" hidden></div>
   <div class="bar">
     <nav class="crumbs" id="crumbs" aria-label="Location" data-m-label="location"><b>Straw Net</b><span data-m="all_bases">all bases</span></nav>
+    <!-- What acts on the map's contents comes and goes with them, so it sits here rather than shift the header. -->
+    <div class="bar-acts">
+      <button class="pair-btn" id="dismiss-all" type="button" data-close="dismiss-all" hidden></button>
+      <button class="pair-btn" id="stashed" type="button" popovertarget="stashed-pop" aria-haspopup="dialog" hidden></button>
+      <div class="hud-pop done-pop" id="stashed-pop" popover><ul id="stashed-list"></ul></div>
+    </div>
     <ul class="legend" id="legend" aria-label="States" data-m-label="states">
       <li data-mark="working"><b class="badge"></b><span data-m="mark_working">working</span></li>
       <li data-mark="commanding"><b class="badge"></b><span data-m="mark_commanding">commanding</span></li>

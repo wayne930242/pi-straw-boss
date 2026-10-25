@@ -1,6 +1,7 @@
 {
 	"$schema": "https://inlang.com/schema/inlang-message-format",
 	"locale_name": "English",
+	"settings": "Settings",
 	"language": "Language",
 	"brand_label": "Straw Net: all bases",
 	"tagline": "live net · comms",
