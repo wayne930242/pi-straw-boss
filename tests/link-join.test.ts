@@ -21,18 +21,24 @@ test("the word list is the BIP-39 English list: 2048 words, the published hash",
 });
 
 test("the safety words are the first 44 bits of the transcript hash as 4 words, and move with every input", () => {
-	const words = safetyWords({ team: TEAM, inviter: D.alice, joiner: D.mallory, secret: SECRET });
+	const words = safetyWords({ team: TEAM, inviterKeyHash: keyRecordHash(D.alice), joiner: D.mallory, secret: SECRET });
 	const h = createHash("sha256").update("straw-link/safety/1").update(TEAM).update(keyRecordHash(D.alice)).update(encodeKeyRecord(D.mallory)).update(SECRET).digest();
 	const bits = [...h.subarray(0, 6)].map((b) => b.toString(2).padStart(8, "0")).join("").slice(0, 44);
 	assert.deepEqual(words, [0, 11, 22, 33].map((i) => BIP39_ENGLISH[parseInt(bits.slice(i, i + 11), 2)]));
 	assert.equal(words.length, 4);
 	const others = [
-		safetyWords({ team: Buffer.alloc(16, 1), inviter: D.alice, joiner: D.mallory, secret: SECRET }),
-		safetyWords({ team: TEAM, inviter: D.bob, joiner: D.mallory, secret: SECRET }),
-		safetyWords({ team: TEAM, inviter: D.alice, joiner: D.eve, secret: SECRET }),
-		safetyWords({ team: TEAM, inviter: D.alice, joiner: D.mallory, secret: Buffer.alloc(32, 1) }),
+		safetyWords({ team: Buffer.alloc(16, 1), inviterKeyHash: keyRecordHash(D.alice), joiner: D.mallory, secret: SECRET }),
+		safetyWords({ team: TEAM, inviterKeyHash: keyRecordHash(D.bob), joiner: D.mallory, secret: SECRET }),
+		safetyWords({ team: TEAM, inviterKeyHash: keyRecordHash(D.alice), joiner: D.eve, secret: SECRET }),
+		safetyWords({ team: TEAM, inviterKeyHash: keyRecordHash(D.alice), joiner: D.mallory, secret: Buffer.alloc(32, 1) }),
 	];
 	for (const o of others) assert.notDeepEqual(o, words);
+});
+
+test("the joiner computes the safety words from the QR alone, before it is added", () => {
+	const inv = invite(), scanned = decodeInvite(encodeInvite(inv))!;
+	const fromQr = safetyWords({ team: scanned.team, inviterKeyHash: scanned.inviterKeyHash, joiner: D.mallory, secret: scanned.secret });
+	assert.deepEqual(fromQr, safetyWords({ team: inv.team, inviterKeyHash: keyRecordHash(D.alice), joiner: D.mallory, secret: inv.secret }));
 });
 
 test("an invite is strawlink1: and the base64url of its canonical fields, and only that decodes", () => {

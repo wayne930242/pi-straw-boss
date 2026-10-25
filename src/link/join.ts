@@ -101,8 +101,8 @@ export function openJoinRequest(o: { team: Uint8Array; secret: Uint8Array; blob:
  * `sha256("straw-link/safety/1" ‖ team ‖ sha256(inviter key record) ‖ joiner key record ‖ invite secret)`, the first 44 bits as 4 words of
  * the BIP-39 English list (11 bits each, most significant first).
  */
-export function safetyWords(o: { team: Uint8Array; inviter: KeyRecord; joiner: KeyRecord; secret: Uint8Array }): string[] {
-	const h = sha256(Buffer.from("straw-link/safety/1", "utf8"), o.team, keyRecordHash(o.inviter), encodeKeyRecord(o.joiner), o.secret);
+export function safetyWords(o: { team: Uint8Array; inviterKeyHash: Uint8Array; joiner: KeyRecord; secret: Uint8Array }): string[] {
+	const h = sha256(Buffer.from("straw-link/safety/1", "utf8"), o.team, o.inviterKeyHash, encodeKeyRecord(o.joiner), o.secret);
 	const bits = h.readBigUInt64BE(0) >> 20n;
 	return [3n, 2n, 1n, 0n].map((i) => BIP39_ENGLISH[Number((bits >> (i * 11n)) & 0x7ffn)]!);
 }

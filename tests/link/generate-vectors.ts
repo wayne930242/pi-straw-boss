@@ -138,8 +138,8 @@ export function generateVectors() {
 			],
 			invalidIds: ["", "short", DEVICES.alice.id.toUpperCase(), DEVICES.alice.id + "a", DEVICES.alice.id.slice(0, 25) + "b", DEVICES.bob.id.slice(0, 25) + "7", DEVICES.alice.id.slice(0, 25) + "1"],
 			safetyWords: [
-				{ team: hex(TEAM), inviter: "alice", joiner: "mallory", secret: hex(secret), words: safetyWords({ team: TEAM, inviter: DEVICES.alice, joiner: DEVICES.mallory, secret }) },
-				{ team: hex(TEAM), inviter: "bob", joiner: "eve", secret: hex(Buffer.alloc(32, 1)), words: safetyWords({ team: TEAM, inviter: DEVICES.bob, joiner: DEVICES.eve, secret: Buffer.alloc(32, 1) }) },
+				{ team: hex(TEAM), inviter: "alice", joiner: "mallory", secret: hex(secret), words: safetyWords({ team: TEAM, inviterKeyHash: keyRecordHash(DEVICES.alice), joiner: DEVICES.mallory, secret }) },
+				{ team: hex(TEAM), inviter: "bob", joiner: "eve", secret: hex(Buffer.alloc(32, 1)), words: safetyWords({ team: TEAM, inviterKeyHash: keyRecordHash(DEVICES.bob), joiner: DEVICES.eve, secret: Buffer.alloc(32, 1) }) },
 			],
 			wordList: { count: BIP39_ENGLISH.length, sha256: BIP39_ENGLISH_SHA256, first: BIP39_ENGLISH[0], last: BIP39_ENGLISH.at(-1) },
 			joiner: [

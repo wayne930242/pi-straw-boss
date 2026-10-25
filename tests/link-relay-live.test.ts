@@ -103,7 +103,7 @@ describe("two clients against the real relay", { skip }, () => {
 	let relay: ChildProcess | undefined, relayLog = "", url = "", token = "";
 	let a!: Peer, b!: Peer, outbox: Outbox, invite!: Invite, inviteText = "", secret!: Buffer;
 	let aSeq = 0;
-	let cursorPastTower = 0, aWords: string[] = [];
+	let cursorPastTower = 0, bWords: string[] = [];
 
 	const post = (peer: Peer) => (bytes: Buffer, signal: AbortSignal) => peer.client.postEnvelope(team, bytes, signal);
 	const build = (from: Peer, kind: "tower" | "presence", seq: number, text: string, to: string[] = []): Envelope =>
@@ -194,6 +194,8 @@ describe("two clients against the real relay", { skip }, () => {
 		const scanned = decodeInvite(inviteText);
 		assert.ok(scanned);
 		const blob = buildJoinRequest({ team: scanned.team, secret: scanned.secret, record: recordOf(b.keys), label: "bob-mac" });
+		// B shows its words before any add: from the QR's inviter key hash alone (the roster answers 401 until B is a member).
+		bWords = safetyWords({ team: scanned.team, inviterKeyHash: scanned.inviterKeyHash, joiner: recordOf(b.keys), secret: scanned.secret });
 		await b.client.join(inviteHash(scanned.secret), blob);
 		const again = await b.client.join(inviteHash(scanned.secret), blob).catch((e) => e);
 		assert.ok(again instanceof ConflictError && again.code === "invite-used", "an invite works once");
@@ -206,10 +208,10 @@ describe("two clients against the real relay", { skip }, () => {
 		assert.ok(opened.ok, opened.ok ? "" : opened.reason);
 		assert.equal(opened.label, "bob-mac");
 		assert.equal(opened.record.id, b.keys.id);
-		const words = safetyWords({ team, inviter: a.keys, joiner: opened.record, secret });
+		const words = safetyWords({ team, inviterKeyHash: keyRecordHash(a.keys), joiner: opened.record, secret });
 		assert.equal(words.length, 4);
 		for (const w of words) assert.ok(BIP39_ENGLISH.includes(w));
-		aWords = words;
+		assert.deepEqual(words, bWords, "A's words match what B showed from the QR, before posting the add");
 	});
 
 	it("A posts the add (a stale one is a 409 with the head); B checks the roster and opens the team key", async () => {
@@ -226,9 +228,6 @@ describe("two clients against the real relay", { skip }, () => {
 		assert.ok(checked.ok, checked.ok ? "" : checked.reason);
 		b.roster = checked.state;
 		assert.ok(b.roster.keys.get(1)?.equals(key1), "B opened the team key sealed to it");
-		// The words B shows are computed from the inviter's key record, which B only has from the roster it just checked.
-		const inviterRecord = rows.entries[0]!.entry.subject!.record;
-		assert.deepEqual(safetyWords({ team, inviter: inviterRecord, joiner: b.keys, secret }), aWords);
 	});
 
 	it("A sends a tower message to B; B receives it over SSE, opens it, and acknowledges it after delivering", async () => {
