@@ -34,7 +34,10 @@ export class Turns {
 		// A straw-link message that does not name a sender this code put there is still remote, and at the lowest level.
 		const id = typeof d.from === "string" && DEVICE.test(d.from) ? d.from : "?";
 		const label = restrictLabel(typeof d.label === "string" ? d.label : "unknown");
-		const level: Level = id === "?" ? "reply" : this.levelOf(id);
+		let level: Level = "reply";
+		try {
+			if (id !== "?") level = this.levelOf(id);
+		} catch { /* a policy that cannot be read raises no one above reply */ }
 		const was = this.senders.get(id);
 		const sender: RemoteSender = { id, short: typeof d.short === "string" && /^[a-z2-7]{6}$/.test(d.short) ? d.short : id.slice(0, 6), label, team: typeof d.team === "string" ? d.team : "", level: was && RANK[was.level] < RANK[level] ? was.level : level };
 		this.senders.set(id, sender);

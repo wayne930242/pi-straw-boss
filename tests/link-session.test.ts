@@ -38,6 +38,7 @@ async function rig(trust: [string, "reply" | "forward" | "dispatch"][] = []) {
 	const faux = createFauxCore({ models: [{ id: "faux-1" }] });
 	const runtime = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: null, refreshOnCreate: false });
 	runtime.registerProvider("faux", { api: faux.api as never, baseUrl: "http://faux.invalid", apiKey: "x", streamSimple: faux.streamSimple as never, models: [{ id: "faux-1", name: "faux", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100_000, maxTokens: 4000 }] });
+	let broken = false;
 	const events: string[] = [], hooks: { on(event: string, fn: () => void): void } = { on: () => {} };
 	const listeners = new Map<string, (() => void)[]>();
 	hooks.on = (event, fn) => void listeners.set(event, [...(listeners.get(event) ?? []), fn]);
@@ -47,11 +48,11 @@ async function rig(trust: [string, "reply" | "forward" | "dispatch"][] = []) {
 		extensionFactories: [(pi) => {
 			api = pi;
 			createRemoteTurns({
-				pi, now: Date.now, config: () => ({ teams: new Map([[TEAM_HEX, { project, share: "status" as const, name: "project" }]]), trust: new Map(trust), problems: [] }),
+				pi, now: Date.now, config: () => (broken ? (() => { throw new Error("config.json cannot be read"); })() : { teams: new Map([[TEAM_HEX, { project, share: "status" as const, name: "project" }]]), trust: new Map(trust), problems: [] }),
 				policy: { read: () => { throw Object.assign(new Error("none"), { code: "ENOENT" }); } }, home: join(root, "home"), agentDir, linkDir: join(agentDir, "straw-boss", "link"), gateMs: 40,
 				setOrigin: () => {}, tower: () => "tower", log: () => {}, tell: () => {}, ask: async () => ({ ok: false, error: "no holder in this test" }),
 			});
-			for (const t of ["agent_end", "agent_settled", "message_start", "tool_execution_start", "turn_end"]) pi.on(t as never, ((e: { message?: { role?: string; customType?: string }; toolName?: string }) => {
+			for (const t of ["agent_start", "agent_end", "agent_settled", "message_start", "tool_execution_start", "turn_end"]) pi.on(t as never, ((e: { message?: { role?: string; customType?: string }; toolName?: string }) => {
 				events.push(`${t}${e.message ? `:${e.message.customType ?? e.message.role}` : ""}${e.toolName ? `:${e.toolName}` : ""}`);
 				for (const fn of listeners.get(t) ?? []) fn();
 			}) as never);
@@ -71,7 +72,7 @@ async function rig(trust: [string, "reply" | "forward" | "dispatch"][] = []) {
 	const remote = (id = "1".padStart(32, "0"), from = bob.id) => ({ customType: MESSAGE_TYPE, content: `[straw net …] REMOTE-TEXT-${id}`, display: true, details: { id, team: TEAM_HEX, from, label: "bob-mac", short: shortId(from) } });
 	/** The text the bash calls of the session came back with, in order. */
 	const outcomes = () => session.messages.filter((m) => (m as { role: string }).role === "toolResult").map((m) => ((m as { content: { text?: string }[] }).content.map((c) => c.text ?? "").join("")).trim());
-	return { faux, session, events, api: () => api, hooks, settled, remote, outcomes };
+	return { faux, session, events, api: () => api, hooks, settled, remote, outcomes, breakConfig: () => void (broken = true) };
 }
 const bash = (cmd: string) => fauxAssistantMessage([fauxToolCall("bash", { command: cmd })]);
 const BLOCKED = /declined a remote request/;
@@ -148,4 +149,22 @@ test("the level comes from the sender's device id: bob at dispatch runs his call
 	r.api().sendMessage(r.remote(), { triggerTurn: true });
 	await r.settled(1);
 	assert.equal(r.outcomes()[0], "go");
+});
+
+test("a hook that fails while it holds a remote turn blocks the call instead of letting it run", async () => {
+	const r = await rig();
+	r.hooks.on("tool_execution_start", () => r.breakConfig());
+	r.faux.setResponses([bash("echo must-not-run"), fauxAssistantMessage("done")]);
+	r.api().sendMessage(r.remote(), { triggerTurn: true });
+	await r.settled(1);
+	assert.match(r.outcomes()[0]!, /could not be checked \(tool_call\); it is refused/);
+});
+
+test("a policy that cannot be read when the message enters the run still makes it a remote turn, at reply", async () => {
+	const r = await rig([[bob.id, "dispatch"]]);
+	r.hooks.on("agent_start", () => r.breakConfig());
+	r.faux.setResponses([bash("echo must-not-run"), fauxAssistantMessage("done")]);
+	r.api().sendMessage(r.remote(), { triggerTurn: true });
+	await r.settled(1);
+	assert.match(r.outcomes()[0]!, /could not be checked/, "the run was held, not let through");
 });

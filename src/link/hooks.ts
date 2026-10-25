@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import { decide, filterListing, readTracked, type Scope, searchRoot, type Tracked } from "./allow.ts";
 import { type Level, type LinkConfig } from "./config.ts";
 import { createGate, type ForwardPort } from "./gate.ts";
@@ -70,7 +70,7 @@ export function createRemoteTurns({ pi, now, config, policy: policyDeps, home, a
 			return () => (forwardWaits.delete(dialogId), void ask({ op: "forget-confirm", dialogId }).catch(() => undefined));
 		},
 	};
-	const gate = createGate({ bus: pi.events, forward, timeoutMs: gateMs, onError: (what, error) => log({ event: "gate-failed", what, error: error.message }) });
+	const gate = createGate({ bus: pi.events, forward, timeoutMs: gateMs, onError: (what, error) => (log({ event: "gate-failed", what, error: error.message }), what === "forward" && tell(`Straw Link: the sender's device could not be asked to confirm (${error.message}); answer here`, "warning")) });
 	/** Calls the gate let through: their output is the boss's to see whole. */
 	const approved = new Set<string>();
 
@@ -84,8 +84,20 @@ export function createRemoteTurns({ pi, now, config, policy: policyDeps, home, a
 		const hidden = hideOldRemote(e.messages, turns);
 		return hidden ? { messages: hidden } : undefined;
 	});
+	/** A hook that throws would let the call run (pi reports the error and goes on), so a failure while holding a remote turn blocks the call instead. */
+	const closed = (what: string, error: unknown) => {
+		log({ event: "remote-hook-failed", what, error: String(error) });
+		return `a remote request could not be checked (${what}); it is refused`;
+	};
 	pi.on("tool_call", async (e, ctx) => {
 		if (!turns.active) return;
+		try {
+			return await held(e, ctx);
+		} catch (error) {
+			return { block: true, reason: closed("tool_call", error) };
+		}
+	});
+	const held = async (e: ToolCallEvent, ctx: ExtensionContext) => {
 		const input = e.input as Record<string, unknown>, level = turns.level!;
 		if (e.toolName === "link_request") return { block: true, reason: "a remote turn cannot ask for a link action, whatever its sender's level" };
 		if (level === "dispatch") return;
@@ -101,15 +113,20 @@ export function createRemoteTurns({ pi, now, config, policy: policyDeps, home, a
 		});
 		if (!outcome.allow) return { block: true, reason: outcome.reason };
 		approved.add(e.toolCallId);
-	});
+	};
 	pi.on("tool_result", (e, ctx) => {
 		const asked = approved.delete(e.toolCallId);
 		if (!turns.active || turns.level === "dispatch" || asked || !["grep", "find", "ls"].includes(e.toolName)) return;
-		const scope = scopeFor((ctx as { cwd?: string }).cwd ?? process.cwd());
-		const text = e.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("\n");
-		const kept = scope ? filterListing(e.toolName, searchRoot(e.input, scope), text, scope) : "";
 		// content replaced without structuredContent: pi drops the structured copy, which would still hold what was filtered out.
-		return { content: [{ type: "text" as const, text: kept || "(nothing here that a remote request may see)" }] };
+		const show = (text: string) => ({ content: [{ type: "text" as const, text: text || "(nothing here that a remote request may see)" }] });
+		try {
+			const scope = scopeFor((ctx as { cwd?: string }).cwd ?? process.cwd());
+			const text = e.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("\n");
+			return show(scope ? filterListing(e.toolName, searchRoot(e.input, scope), text, scope) : "");
+		} catch (error) {
+			closed("tool_result", error);
+			return show("");
+		}
 	});
 
 	return { turns, answerForward };
