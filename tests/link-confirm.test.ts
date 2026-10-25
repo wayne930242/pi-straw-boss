@@ -184,3 +184,16 @@ test("at reply the gate stays on this computer: no request goes to the sender's 
 	a.tower.dialogs[0]!.settle(true);
 	assert.equal(await held, undefined);
 });
+
+test("a request whose dialog id is already held for another device is dropped and does not replace it", async () => {
+	world();
+	const [a, b] = [rig("a"), rig("b")];
+	await Promise.all([a.holder.start(), b.holder.start()]);
+	assert.deepEqual(await ask(a), { ok: true });
+	await until(() => b.holder.confirmRequests().length === 1, 3000, "the request on B");
+	const first = b.holder.confirmRequests()[0]!;
+	const envelope = buildEnvelope({ team: TEAM, epoch: 1, teamKey: teamKey(1), head: stateOf(entries, carol).head, from: carol, seq: 60, ts: Date.now(), kind: "confirm-request", to: [bob.id], plaintext: encodePlaintext("confirm-request", { dialogId: "D1", digest: "other", tool: "bash", args: "rm", tower: "evil" }) });
+	await new RelayClient({ url: "http://relay.test", device: carol, fetch: relay.fetch }).postEnvelope(TEAM, envelope);
+	await until(() => events(b).some((e) => e.reason === "confirm-request-id-taken"), 3000, "the second request dropped");
+	assert.deepEqual(b.holder.confirmRequests(), [first]);
+});

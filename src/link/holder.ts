@@ -367,7 +367,7 @@ export class LinkHolder {
 			}
 			if (header.kind === "tower") this.stage(run, roster, header, opened.message as TowerMessage);
 			else if (header.kind === "confirm-request") this.takeConfirmRequest(run, roster, header, opened.message as ConfirmRequest);
-			else if (header.kind === "confirm-answer") this.takeConfirmAnswer(run, header, opened.message as ConfirmAnswer);
+			else if (header.kind === "confirm-answer") this.takeConfirmAnswer(run, roster, header, opened.message as ConfirmAnswer);
 			else store.log({ event: "unhandled-kind", team: run.team, kind: header.kind, from: header.from });
 			// The sequence guard moves only after the message is in the inbox (or known not to need it), in the same locked write (R-F021).
 			const next = recordTaken(state, header);
@@ -604,14 +604,17 @@ export class LinkHolder {
 	private takeConfirmRequest(run: TeamRun, roster: RosterState, header: Header, p: ConfirmRequest): void {
 		const from = header.from, sender = roster.members.get(from), now = this.now();
 		for (const [id, c] of this.confirms) if (now - c.at > CONFIRM_MAX_MS) this.confirms.delete(id);
+		// answerConfirm takes the dialog id alone, so one id held for another device must not be replaced (its answer would go to the wrong requester).
+		const held = this.confirms.get(p.dialogId);
+		if (held && held.from !== from) return void this.o.store.log({ event: "drop", team: run.team, reason: "confirm-request-id-taken", from, kind: "confirm-request" });
 		while (this.confirms.size >= CONFIRM_MAX) this.confirms.delete(this.confirms.keys().next().value!);
 		this.confirms.set(p.dialogId, { dialogId: p.dialogId, team: run.team, from, fromLabel: sender?.label ?? shortId(from), fromShort: shortId(from), digest: p.digest, tool: p.tool, args: p.args, tower: p.tower, at: now });
 		this.o.notify(`Straw Link: ${sender?.label ?? shortId(from)} asks you to confirm a ${p.tool} call from its tower`, "warning");
 	}
-	private takeConfirmAnswer(run: TeamRun, header: Header, p: ConfirmAnswer): void {
+	private takeConfirmAnswer(run: TeamRun, roster: RosterState, header: Header, p: ConfirmAnswer): void {
 		const ask = this.asked.get(p.dialogId);
-		// Only the device the request went to, with the dialog's digest, and only once; anything else is dropped without using the dialog up.
-		if (!ask || ask.team !== run.team || ask.device !== header.from || ask.digest !== p.digest) return void this.o.store.log({ event: "drop", team: run.team, reason: "confirm-answer-unexpected", from: header.from, kind: "confirm-answer" });
+		// Only the device the request went to (and still a member of the roster), with the dialog's digest, and only once; anything else is dropped without using the dialog up.
+		if (!ask || !roster.members.has(header.from) || ask.team !== run.team || ask.device !== header.from || ask.digest !== p.digest) return void this.o.store.log({ event: "drop", team: run.team, reason: "confirm-answer-unexpected", from: header.from, kind: "confirm-answer" });
 		this.asked.delete(p.dialogId);
 		try {
 			this.o.confirmed?.(ask.tower, p.dialogId, p.allow);
