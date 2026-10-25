@@ -721,6 +721,9 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 	.comms-in, .dossier.full { position: fixed; left: 0; right: 0; top: var(--vvt, 0px); height: var(--vvh, 100dvh); background: var(--bg); }
 	.tiles:has(.tile) { position: fixed; left: 0; right: 0; top: var(--vvt, 0px); height: var(--vvh, 100dvh); background: var(--bg); } /* apart: a browser without :has() drops only this rule */
 	.comms-in { z-index: 15; min-height: 0; grid-template-columns: minmax(0, 1fr); border: 0; border-radius: 0; }
+	/* The entrance plays on the comms, not their view: a transform on the view would hold the fixed comms under the HUD until it ends. */
+	#session-view.enter-slide, #session-view.enter-back { animation: none; } #session-view.enter-slide > .comms-in { animation: slide 0.4s ease-out both; }
+	#session-view > .lost { position: fixed; inset: var(--vvt, 0px) 0 auto; height: var(--vvh, 100dvh); z-index: 15; margin: 0; background: var(--bg); } /* the channel opening already covers the screen */
 	.tiles:has(.tile) { z-index: 16; overflow-y: auto; padding: 8px; }
 	.tile { height: calc(var(--vvh, 100dvh) - 16px); min-height: 300px; border-radius: 16px; }
 	.dossier.full { z-index: 17; overflow-y: auto; overscroll-behavior: contain; border: 0; border-radius: 0; padding: max(16px, env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom)); }

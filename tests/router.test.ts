@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { formatRoute, parseRoute, type Route, upOf, watchOf } from "../gui/router.ts";
+import { depthOf, formatRoute, parseRoute, type Route, upOf, watchOf } from "../gui/router.ts";
 
 test("routes parse below the base and format back, for the map, a workspace, and a session", () => {
 	assert.deepEqual(parseRoute(""), { view: "map" });
@@ -42,4 +42,9 @@ test("one level up goes from a session to its workspace to the map, and each rou
 	assert.deepEqual(upOf(upOf(session)), { view: "map" });
 	assert.deepEqual(upOf({ view: "map" }), { view: "map" });
 	assert.deepEqual([watchOf({ view: "map" }), watchOf({ view: "workspace", ws: "wA" }), watchOf(session)], [null, "w:wA", "k"]);
+});
+
+test("a history entry counts the page's own entries behind it, and an entry the page did not push counts none", () => {
+	assert.equal(depthOf({ depth: 2 }), 2);
+	for (const state of [null, undefined, {}, { depth: 0 }, { depth: -1 }, "x"]) assert.equal(depthOf(state), 0, JSON.stringify(state));
 });
