@@ -78,6 +78,7 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 	let ticker: ReturnType<typeof setInterval> | undefined, looking: Promise<void> | undefined;
 	let lastCtx: Pick<ExtensionContext, "isIdle" | "hasPendingMessages"> | undefined;
 	const sid = () => me() || mySession;
+	const holderUp = opts.alive ?? holderAlive();
 	let lookError = "";
 	/** A look that failed (the holder could not start, the lock was not free, a disk error): in the log, and once per message to the boss. */
 	const lookFailed = (error: Error) => {
@@ -139,7 +140,7 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 		if (!(s.holdsTower || s.joined) || !me()) return;
 		mySession = me();
 		if (!connect()) return;
-		election ??= new LinkElection({ store, self, alive: opts.alive ?? holderAlive(), now: cfg.now, onGain: gained, onLose: lost });
+		election ??= new LinkElection({ store, self, alive: holderUp, now: cfg.now, onGain: gained, onLose: lost });
 		await election.tick();
 	})().finally(() => (looking = undefined)));
 
@@ -233,7 +234,7 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 	};
 	const ask = async (op: Record<string, unknown>): Promise<{ ok: boolean; error?: string; [key: string]: unknown }> => {
 		const record = store.readHolder();
-		if (!record || !(opts.alive ?? holderAlive())(record)) throw new Error(NO_HOLDER);
+		if (!record || !holderUp(record)) throw new Error(NO_HOLDER);
 		if (holder && election?.isHolder()) return (await handle(op, sid())) as { ok: boolean };
 		if (!channel) throw new Error(NO_HOLDER);
 		const reqId = `${sid()}-${nonce}-${pending.size}-${Date.now()}`;

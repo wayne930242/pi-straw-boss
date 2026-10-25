@@ -150,3 +150,19 @@ test("SLH-F002: a holder that fails to start gives the record back, so the next 
 	assert.equal(gains, 2);
 	assert.equal(store.readHolder()?.session, "tower");
 });
+
+test("SLH-F017: holderAlive asks ps for a process's start time once in a while, not at every look", () => {
+	const rec = { session: "s", version: "1", pid: 7, started: "Mon Oct 26 00:00:00 2026", tower: true, since: 1 };
+	let asked = 0, clock = 0;
+	const up = holderAlive(() => true, () => (asked++, "Mon Oct 26 00:00:00 2026"), () => clock);
+	for (let i = 0; i < 20; i++) assert.equal(up(rec), true);
+	assert.equal(asked, 1);
+	clock += 31_000;
+	assert.equal(up(rec), true);
+	assert.equal(asked, 2, "asked again after the cache expired");
+	let alive = true;
+	const dies = holderAlive(() => alive, () => rec.started, () => clock);
+	assert.equal(dies(rec), true);
+	alive = false;
+	assert.equal(dies(rec), false, "a process that is gone is noticed at once, cached start time or not");
+});

@@ -23,12 +23,18 @@ export function outranks(a: Pick<Candidate, "version" | "tower">, b: Pick<Candid
 }
 
 /** Whether the process that wrote a record still runs: its PID is alive and started when the record says (a PID reused after a crash started later). When `ps` cannot say, the record stands. */
-export const holderAlive = (alive: (pid: number) => boolean = pidAlive as (pid: number) => boolean, start: (pid: number) => string | undefined = startOf) => (record: HolderRecord): boolean => {
-	if (!alive(record.pid)) return false;
-	if (!record.started) return true;
-	const now = start(record.pid);
-	return now === undefined || now === record.started;
+export const holderAlive = (alive: (pid: number) => boolean = pidAlive as (pid: number) => boolean, start: (pid: number) => string | undefined = startOf, now: () => number = Date.now) => {
+	// `ps` blocks the event loop while it runs, and every candidate looks every 2 s: a start time is asked again only after START_TTL_MS (the PID check, which is cheap, runs every time).
+	const known = new Map<number, { at: number; start: string | undefined }>();
+	return (record: HolderRecord): boolean => {
+		if (!alive(record.pid)) return false;
+		if (!record.started) return true;
+		let seen = known.get(record.pid);
+		if (!seen || now() - seen.at > START_TTL_MS) known.set(record.pid, (seen = { at: now(), start: start(record.pid) }));
+		return seen.start === undefined || seen.start === record.started;
+	};
 };
+const START_TTL_MS = 30_000;
 
 export interface ElectionOptions {
 	store: LinkStore;
