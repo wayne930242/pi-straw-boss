@@ -178,10 +178,13 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 		}
 		if (idle) {
 			held.shift();
+			// What the holder has done since the offer counts: the file is gone when another tower took the message or its sender left the team, and this session may have stopped being a tower.
+			const item = s.holdsTower ? store.readInbox(next.id) : undefined;
+			if (!item) return void schedule(0);
 			try {
-				pi.sendMessage({ customType: MESSAGE_TYPE, content: lineFor(next.item), display: true, details: { id: next.id, team: next.item.team, from: next.item.from, label: next.item.fromLabel, short: next.item.fromShort, seq: next.item.seq, sentAt: next.item.sentAt } }, { triggerTurn: true });
+				pi.sendMessage({ customType: MESSAGE_TYPE, content: lineFor(item), display: true, details: { id: next.id, team: item.team, from: item.from, label: item.fromLabel, short: item.fromShort, seq: item.seq, sentAt: item.sentAt } }, { triggerTurn: true });
 			} catch (error) {
-				tell(`Straw Link: a message from ${next.item.fromLabel} could not be put into this session: ${(error as Error).message}`, "error");
+				tell(`Straw Link: a message from ${item.fromLabel} could not be put into this session: ${(error as Error).message}`, "error");
 				return void schedule();
 			}
 			seen.add(next.id);

@@ -58,6 +58,10 @@ export interface TowerPick { session: Session; pane: Pane; workspace: Workspace 
  * the sender named one, restricts the choice to the workspace with that label, and a message with no tower there waits instead of going to another.
  */
 export function towerFor(view: NetView, project: string, toWorkspace?: string): TowerPick | undefined {
+	return towersFor(view, project, toWorkspace)[0];
+}
+/** Every tower `towerFor` could pick, in the order it would pick them. */
+export function towersFor(view: NetView, project: string, toWorkspace?: string): TowerPick[] {
 	const picks = view.panes.flatMap((pane) => {
 		if (pane.tokens?.sb_role !== "tower" || !pane.cwd) return [];
 		const workspace = view.workspaces.find((w) => w.workspace_id === pane.workspace_id);
@@ -68,8 +72,7 @@ export function towerFor(view: NetView, project: string, toWorkspace?: string): 
 		return [{ session, pane, workspace, depthIn, order: view.workspaces.indexOf(workspace) }];
 	});
 	picks.sort((a, b) => a.depthIn - b.depthIn || a.order - b.order);
-	const [first] = picks;
-	return first && { session: first.session, pane: first.pane, workspace: first.workspace };
+	return picks.map((p) => ({ session: p.session, pane: p.pane, workspace: p.workspace }));
 }
 
 export interface MemberRef { team: string; id: string; label?: string }

@@ -8,7 +8,7 @@ import { encodePlaintext, LIMITS, type Presence, type TowerMessage, type Workspa
 import { Outbox } from "./outbox.ts";
 import type { RelayClient } from "./relay.ts";
 import { decodeEntry, encodeEntry, replayEncoded, type RosterEntry, type RosterState } from "./roster.ts";
-import { inside, resolveDevice, towerFor, type MemberRef, type NetView } from "./routing.ts";
+import { inside, resolveDevice, towersFor, type MemberRef, type NetView } from "./routing.ts";
 import type { Backoff, Sleep } from "./retry.ts";
 import type { Disposition, EnvelopeEvent, RelayEvent, RosterEvent } from "./sse.ts";
 import { TeamFileError, type InboxItem, type LinkStore, type TeamFile } from "./store.ts";
@@ -430,12 +430,14 @@ export class LinkHolder {
 				await store.withLock(() => store.removeInbox(id));
 				continue;
 			}
-			const pick = towerFor(net, policy.project, item.toWorkspace);
-			if (!pick) {
+			const picks = towersFor(net, policy.project, item.toWorkspace), first = picks[0];
+			if (!first) {
 				this.tellOnce(`inbox/${id}`, `Straw Link: a message from ${item.fromLabel} waits in the inbox; no tower is open on ${policy.project}${item.toWorkspace ? ` in workspace ${item.toWorkspace}` : ""}`, "info");
 				continue;
 			}
-			const was = this.offered.get(id);
+			// An offer is sticky: the tower that has it keeps it while it is still a tower of the project, so a tower that opens nearer the root,
+			// or a changed workspace order, never gives the same message to a second one while the first still holds it.
+			const was = this.offered.get(id), pick = (was && picks.find((p) => p.session.id === was.tower)) || first;
 			if (was && was.tower === pick.session.id && this.now() - was.at < (this.o.offerAgainMs ?? 30_000)) continue;
 			this.offered.set(id, { tower: pick.session.id, at: this.now() });
 			await this.o.offer(pick.session, id);

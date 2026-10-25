@@ -476,3 +476,20 @@ test("SLH-F004: a 401 on a post halts the team's outbox for a while: the send sa
 	assert.ok(third.ok && third.details.status === "posted", JSON.stringify(third));
 	assert.deepEqual(queued().map((st) => st.envelope.header.seq), [1, 2], "in order, no gap");
 });
+
+test("SLH-F003: an offer is sticky: a tower that opens nearer the project root does not get a message the first tower still holds; if the first goes, the new one is offered it", async () => {
+	const [a, b] = [rig("a"), rig("b", { towers: false })];
+	mkdirSync(join(b.project, "sub"), { recursive: true });
+	const one = ["tower-1", "w1", "one", join(b.project, "sub")] as [string, string, string, string], two = ["tower-2", "w2", "two", b.project] as [string, string, string, string];
+	b.net = netOf([one]);
+	await Promise.all([a.start(), b.start()]);
+	await send(a, "only once");
+	await until(() => b.offers.length === 1, 3000, "tower-1 offered the message");
+	b.net = netOf([one, two]);
+	for (let i = 0; i < 5; i++) await b.holder.drain();
+	await new Promise((r) => setTimeout(r, 100));
+	assert.deepEqual(b.offers.map((o) => o.tower), ["tower-1"], "tower-2 is nearer the root but tower-1 still holds the message");
+	b.net = netOf([two]);
+	await until(() => b.offers.length === 2, 3000, "the new tower offered it once the first is gone");
+	assert.equal(b.offers[1]!.tower, "tower-2");
+});

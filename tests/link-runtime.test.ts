@@ -268,3 +268,22 @@ test("SLH-F002: a session that cannot start the link holder tells the boss once,
 	assert.equal(tower.notices.filter((n) => /could not start the link holder/.test(n.text)).length, 1, "told once");
 	assert.equal(holderOf(a), undefined, "no record kept for a holder that does not run");
 });
+
+test("SLH-F003/F015: a message a busy tower holds is not sent once its inbox file is gone (another tower took it, or its sender left the team), and not by a session that stopped being a tower", async () => {
+	const [a, b] = [computer("a"), computer("b")];
+	const [ta, tb] = [a.tower("tower-a"), b.tower("tower-b")];
+	await Promise.all([ta.start(), tb.start()]);
+	await until(() => holderOf(a) && holderOf(b), "holders");
+	tb.idle = false;
+	await ta.tool("tower_send", { message: "taken elsewhere", device: "bob-mac" });
+	const store = new LinkStore(b.dir);
+	await until(() => store.inboxIds().length === 1, "in B's inbox");
+	await new Promise((r) => setTimeout(r, 120));
+	const [id] = store.inboxIds();
+	await store.withLock(() => store.removeInbox(id!));
+	tb.idle = true;
+	await tb.fire("agent_end");
+	await new Promise((r) => setTimeout(r, 150));
+	assert.equal(linkMessages(tb).length, 0, "the held copy is not sent after the file is gone");
+	assert.equal(tb.entries.filter((e) => e.customType === "straw-link-seen").length, 0);
+});
