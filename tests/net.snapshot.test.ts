@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { changes } from "../gui/log.ts";
+import { said } from "../gui/log.ts";
 import type { Row } from "../src/dashboard.ts";
 import type { Pane, Session, Workspace } from "../src/herdr.ts";
 import { buildNet, type Net, netSource, type Ref } from "../src/net.ts";
@@ -91,20 +91,9 @@ test("workspaces outside the net, and sub workspaces whose parent is outside it,
 	assert.deepEqual(net, { bases: [] });
 });
 
-test("changes lists joins, leaves, and state changes, and nothing for the first snapshot", () => {
-	const before = buildNet({ sessions, panes, workspaces, children: () => [child("lint", "working")] });
-	assert.deepEqual(changes(undefined, before), []);
-	const after: Net = structuredClone(before);
-	const unit = after.bases[0]!.tabs[0]!.units[0]!;
-	unit.mark = "waiting";
-	unit.subs = [];
-	after.bases[0]!.tabs[0]!.units.push({ id: "new", key: "new", control: false, name: "fresh", role: "member", mark: "idle", subs: [] });
-	assert.deepEqual(changes(before, after), [
-		{ text: "api-main is waiting on a question", mark: "waiting" },
-		{ text: "fresh joined", mark: "idle" },
-		{ text: "lint left", mark: "idle" },
-	]);
-	assert.deepEqual(changes(after, after), []);
+test("the timeline words each event: a join, a leave, and each state", () => {
+	const e = (kind: "joined" | "mark" | "left", mark: Net["bases"][number]["mark"] = "idle") => said({ at: 1, ws: "wA", key: "k", name: "api-main", mark, kind });
+	assert.deepEqual([e("joined"), e("left"), e("mark", "waiting"), e("mark", "error")], ["api-main joined", "api-main left", "api-main is waiting on a question", "api-main hit an error"]);
 });
 
 test("units carry a route key and say whether a live pi pane backs them; the registry holds exactly the keys the snapshot shows", () => {

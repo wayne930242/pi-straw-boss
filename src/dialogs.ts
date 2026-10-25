@@ -10,7 +10,7 @@ import { type Answer, type Answerable, type Dialog, OWNERS, questionsDigest, typ
 import { checkCommands, type Cmd } from "./commands.ts";
 import { checkProbe, type Editor } from "./probe.ts";
 import { type Monitor, monitorsOk } from "./monitors.ts";
-import { todoOk, type TodoSum } from "./activity.ts";
+import { todoOk, type TodoSum } from "./todo.ts";
 
 // The hub, in the session that runs the GUI server: it takes the dialog lists bridges relay (bridge.ts), binds each to the unit on the
 // bridge's pane, decides whether the page may answer it, and carries an answer to that bridge. A list counts only from the session intercom

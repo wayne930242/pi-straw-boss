@@ -7,7 +7,8 @@ import { type Pending, type Relayed, withPending } from "./ask.ts";
 import type { Shelf } from "./documents.ts";
 import type { Monitor } from "./monitors.ts";
 import { canonical } from "./history.ts";
-import { type NetEvent, type Tick, type TodoSum, trackActivity } from "./activity.ts";
+import { type NetEvent, type Tick, trackActivity } from "./activity.ts";
+import type { TodoSum } from "./todo.ts";
 
 // The whole straw net as one JSON-able snapshot for the browser view: every workspace as a base with its tower, tabs, agents,
 // and subagents (linked to their launcher the way the tower dashboard links them), and sub workspaces as outposts.

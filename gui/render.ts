@@ -2,8 +2,8 @@ import type { Mark } from "../src/dashboard.ts";
 import type { Base, Net, Unit } from "../src/net.ts";
 import { mountCalm } from "./calm.ts";
 import { replay } from "./dom.ts";
-import type { Entry } from "./log.ts";
 import { m } from "./paraglide/messages.js";
+import { mountMinimap } from "./minimap.ts";
 import { packets } from "./packets.ts";
 import { aimBase, aimSquad, aimStash, aimTower, aimUnit } from "./quit.ts";
 import { formatRoute, type Route } from "./router.ts";
@@ -104,7 +104,25 @@ export function sync<T extends { id: string }>(parent: Element, items: T[], make
 	}
 }
 
-const unitEl = () => html(`<div class="unit"><div class="card"><a class="hit"></a>${PLATE}<div class="meta"><span class="name"></span><span class="line"><em class="role"></em><em class="agent"></em><span class="note"></span></span></div><button type="button" class="quit-btn" data-close="unit" hidden></button></div><div class="subs"></div></div>`);
+/** How long ago `since` was, in the page's language: 40s, 12m, 3h, 2d. */
+const ago = (since: number, n = Math.max(0, Date.now() - since) / 1000) => (n < 60 ? m.age_s({ n: String(Math.floor(n)) }) : n < 3600 ? m.age_m({ n: String(Math.floor(n / 60)) }) : n < 86_400 ? m.age_h({ n: String(Math.floor(n / 3600)) }) : m.age_d({ n: String(Math.floor(n / 86_400)) }));
+/** How long a unit has been in its state, kept current by mountPage's clock; empty while the server has not seen it take that state. */
+const age = (el: HTMLElement, since?: number) => ((since === undefined ? delete el.dataset.since : (el.dataset.since = String(since))), (el.textContent = since === undefined ? "" : ago(since)));
+/** A unit's last steps (activity.ts ticks) as a row of marks along its card's foot, the newest brightest. */
+function ticks(card: HTMLElement, list: Unit["ticks"] = []) {
+	const row = card.querySelector<HTMLElement>(":scope > .ticks")!, sig = list.map((t) => `${t.at}${t.mark}`).join();
+	if (row.dataset.sig === sig) return;
+	row.dataset.sig = sig;
+	card.classList.toggle("ticked", list.length > 0);
+	row.replaceChildren(...list.map((t, i) => {
+		const dot = document.createElement("i");
+		dot.dataset.mark = t.mark;
+		dot.style.setProperty("--o", ((i + 1) / list.length).toFixed(2));
+		return dot;
+	}));
+}
+
+const unitEl = () => html(`<div class="unit"><div class="card"><a class="hit"></a>${PLATE}<div class="meta"><span class="name"></span><span class="line"><em class="role"></em><em class="agent"></em><span class="note"></span><span class="age"></span></span><span class="todo" hidden><b></b><span></span></span></div><button type="button" class="quit-btn" data-close="unit" hidden></button><span class="ticks" aria-hidden="true"></span></div><div class="subs"></div></div>`);
 function fillUnit(el: HTMLElement, u: Omit<Unit, "id" | "key" | "control" | "role" | "subs"> & { key?: string; control?: boolean; role: Unit["role"] | "outpost"; subs?: Unit[] }) {
 	const ws = el.closest<HTMLElement>(".base")?.dataset.key, hit = el.querySelector(".hit")!;
 	aim(hit, u.key && ws ? { view: "session", ws, key: u.key } : undefined);
@@ -116,6 +134,11 @@ function fillUnit(el: HTMLElement, u: Omit<Unit, "id" | "key" | "control" | "rol
 	text(el, ".role", roleName(u.role));
 	text(el, ".agent", u.agent ? AGENT[u.agent] : "");
 	say(el, ".note", u.note, u.mark);
+	age(el.querySelector(":scope > .card .age")!, u.since);
+	const todo = el.querySelector<HTMLElement>(":scope > .card .todo")!;
+	todo.hidden = !u.todo;
+	if (u.todo) (text(todo, "b", `${u.todo.done < u.todo.total ? "◐" : "✓"} ${u.todo.done}/${u.todo.total}`), text(todo, "span", u.todo.now ?? ""));
+	ticks(el.querySelector(":scope > .card")!, u.ticks);
 	aimUnit(el.querySelector(":scope > .card > .quit-btn")!, u);
 	sync(el.querySelector(".subs")!, u.subs ?? [], unitEl, fillUnit);
 }
@@ -130,7 +153,7 @@ export function aimOpening(button: HTMLElement, b: Base, tab?: string) {
 	if (button.textContent !== (kind === "main" ? m.open_main() : m.open_member())) button.textContent = kind === "main" ? m.open_main() : m.open_member();
 }
 
-const baseEl = () => html(`<section class="base"><header><div class="tower"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></div><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>${m.head_tower()}</span><h2><a class="enter-base"></a></h2><p></p><button type="button" class="quit-btn tower-quit" data-close="unit" hidden></button></div><button type="button" class="quit-btn" data-close="base"></button></header><div class="subs tower-subs"></div><div class="spawn-btns"><button type="button" class="pair-btn"></button><button type="button" class="pair-btn" data-close="stash"></button></div><div class="tabs"></div><div class="outposts" data-label="${m.outposts()}"></div></section>`);
+const baseEl = () => html(`<section class="base"><header><div class="tower"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></div><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>${m.head_tower()}</span><h2><a class="enter-base"></a></h2><p><span class="tstate"></span><span class="age"></span></p><button type="button" class="quit-btn tower-quit" data-close="unit" hidden></button></div><button type="button" class="quit-btn" data-close="base"></button></header><div class="subs tower-subs"></div><div class="spawn-btns"><button type="button" class="pair-btn"></button><button type="button" class="pair-btn" data-close="stash"></button></div><div class="tabs"></div><div class="outposts" data-label="${m.outposts()}"></div></section>`);
 function fillBase(el: HTMLElement, b: Base) {
 	mark(el, b.mark);
 	el.classList.toggle("head", b.head);
@@ -139,7 +162,8 @@ function fillBase(el: HTMLElement, b: Base) {
 	mark(tower, b.tower?.mark ?? "unknown");
 	text(el, "h2 a", b.label);
 	aim(el.querySelector("h2 a")!, { view: "workspace", ws: b.id });
-	text(el, ".title p", b.tower ? m.control_tower({ state: LABEL[b.tower.mark]() }) : m.no_tower());
+	text(el, ".title .tstate", b.tower ? m.control_tower({ state: LABEL[b.tower.mark]() }) : m.no_tower());
+	age(el.querySelector(".title .age")!, b.tower?.since);
 	aimOpening(el.querySelector(".spawn-btns button")!, b);
 	aimBase(el.querySelector("header > .quit-btn")!, b);
 	aimStash(el.querySelector(".spawn-btns [data-close=stash]")!, b);
@@ -151,7 +175,7 @@ function fillBase(el: HTMLElement, b: Base) {
 		aimOpening(tab.querySelector(".tab-add")!, b, t.id);
 		sync(tab.querySelector(".units")!, t.units, unitEl, fillUnit);
 	});
-	sync(el.querySelector(".outposts")!, b.outposts.map((o) => ({ id: o.id, name: o.label, role: "outpost" as const, mark: o.mark, note: o.mark === "unknown" ? m.no_agent() : undefined })), unitEl, fillUnit);
+	sync(el.querySelector(".outposts")!, b.outposts.map((o) => ({ id: o.id, name: o.label, role: "outpost" as const, mark: o.mark, note: o.mark === "unknown" ? m.no_agent() : undefined, since: o.since, ticks: o.ticks })), unitEl, fillUnit);
 }
 
 /** Draws the head tower's wires to every other tower, with a packet travelling along each while one end of it works, in the map's own coordinates. */
@@ -178,17 +202,18 @@ function wire(map: HTMLElement, svg: SVGSVGElement, dots: HTMLElement, still: bo
 	dots.querySelectorAll<HTMLElement>(".packet").forEach((dot, i) => dot.toggleAttribute("data-live", ["working", "commanding"].includes(head!.dataset.mark ?? "") || ["working", "commanding"].includes(ends[i]!.dataset.mark ?? "")));
 }
 
-export interface Page { show(net: Net): void; stats(net: Net): void; log(entries: Entry[]): void; layout(): void; pause(paused: boolean): void }
+export interface Page { show(net: Net): void; stats(net: Net): void; layout(): void; pause(paused: boolean): void }
 
 // The bases pack like masonry: the grid's rows are ROW px, and each card spans the rows its height and the gap take, so a short base tucks in
 // under its neighbour while the reading order stays the grid's. A ResizeObserver reports before paint, so a card never shows unpacked.
 const ROW = 2, GAP = 20;
 
 export function mountPage(): Page {
-	const [map, bases, links, dots, log] = [byId("map", HTMLElement), byId("bases", HTMLElement), byId("links", SVGSVGElement), byId("packets", HTMLElement), byId("log", HTMLElement)];
+	const [map, bases, links, dots] = [byId("map", HTMLElement), byId("bases", HTMLElement), byId("links", SVGSVGElement), byId("packets", HTMLElement)];
 	const still = matchMedia("(prefers-reduced-motion: reduce)").matches, packed = new Set<Element>();
 	const pack = new ResizeObserver((all) => all.forEach(({ target, borderBoxSize }) => ((target as HTMLElement).style.gridRowEnd = `span ${Math.ceil((borderBoxSize[0]!.blockSize + GAP) / ROW)}`)));
-	const layout = () => !map.hidden && wire(map, links, dots, still);
+	const minimap = mountMinimap(map, bases), layout = () => (minimap(), !map.hidden && wire(map, links, dots, still));
+	setInterval(() => document.querySelectorAll<HTMLElement>(".age[data-since]").forEach((el) => age(el, Number(el.dataset.since))), 15_000); // the cards' clocks
 	new ResizeObserver(layout).observe(map);
 	// The header's height, for what sits under it (the side column, the tiles, the dialogs, the comms' height): it wraps on a narrow window.
 	new ResizeObserver(([e]) => document.documentElement.style.setProperty("--hud", `${Math.ceil(e!.borderBoxSize[0]!.blockSize)}px`)).observe(document.querySelector(".hud")!);
@@ -207,17 +232,6 @@ export function mountPage(): Page {
 			for (const el of bases.children) if (!packed.has(el)) (packed.add(el), pack.observe(el));
 			for (const el of packed) if (!el.isConnected) (packed.delete(el), pack.unobserve(el));
 			requestAnimationFrame(layout);
-		},
-		log(entries) {
-			const time = new Date().toLocaleTimeString([], { hour12: false });
-			for (const e of entries) {
-				const li = html(`<li><span></span><time></time></li>`);
-				li.dataset.mark = e.mark;
-				text(li, "span", e.text);
-				text(li, "time", time);
-				log.prepend(li);
-			}
-			while (log.children.length > 12) log.lastElementChild!.remove();
 		},
 		pause(paused) {
 			document.documentElement.classList.toggle("paused", paused);

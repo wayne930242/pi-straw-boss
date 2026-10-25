@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { TICKS, todoOfBranch, todoOk, trackActivity, WINDOW_MS } from "../src/activity.ts";
+import { TICKS, trackActivity, WINDOW_MS } from "../src/activity.ts";
+import { todoOfBranch, todoOk } from "../src/todo.ts";
 import type { Mark } from "../src/dashboard.ts";
 import type { Net, Unit } from "../src/net.ts";
 

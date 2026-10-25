@@ -8,7 +8,7 @@ import { type Cmd, listCommands, MAX_PREFIX } from "./commands.ts";
 import type { Queued } from "./net.ts";
 import { type Editor, probeEditor } from "./probe.ts";
 import { type Monitor, trackMonitors } from "./monitors.ts";
-import { todoOfBranch, type TodoSum } from "./activity.ts";
+import { todoOfBranch, type TodoSum } from "./todo.ts";
 
 // The bridge runs in every pi session inside Herdr, subagents included. It turns the owners' dialog events (owners.ts) into one list of open
 // dialogs, relays it to the one running GUI server (gui.json in the state directory names its session G), and hands the server's answers to
@@ -25,7 +25,7 @@ import { todoOfBranch, type TodoSum } from "./activity.ts";
 // first (`stash-check`, stash.ts) whether the session can be put away and resumed losing nothing; that question never quits anything.
 // It relays the session's queue too: pi tells extensions only whether messages wait (hasPendingMessages), so the bridge keeps what it saw
 // typed while the agent works (`input` with a streaming behavior) and drops one when its user message starts; a queue pi emptied another
-// way (Esc, Alt+Up) clears at the next check. And it relays the session's background monitors (monitors.ts) and its todo list in short (activity.ts), read
+// way (Esc, Alt+Up) clears at the next check. And it relays the session's background monitors (monitors.ts) and its todo list in short (todo.ts), read
 // from the branch after each tool call and turn, and after a move in the tree.
 // A secret_drop is answered in the terminal only (SB-F001: intercom identities are self-reported, so a relayed secret dialog could be answered
 // into an impostor's hands): the bridge never relays a secret dialog, and refuses any answer to one.

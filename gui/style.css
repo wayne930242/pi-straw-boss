@@ -279,17 +279,36 @@ svg { display: block; }
 .side { display: grid; gap: 16px; position: sticky; top: calc(var(--hud, 64px) + 20px); }
 .panel { padding: 14px 16px; border: 1px solid var(--line); border-radius: 18px; background: var(--panel); }
 .panel h2 { margin-bottom: 10px; color: var(--dim); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; }
-/* The net log folds away from its heading; a phone shows only its two newest entries. */
-.net-log summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; }
-.net-log summary::-webkit-details-marker { display: none; }
-.net-log summary::after { content: "▾"; color: var(--dim); transition: transform 0.2s; }
-.net-log:not([open]) summary::after { transform: rotate(-90deg); }
-.net-log:not([open]) h2 { margin-bottom: 0; }
-.log { list-style: none; padding: 0; display: grid; gap: 7px; max-height: 360px; overflow: hidden; }
-.log:empty::before { content: attr(data-empty); color: var(--dim); font-size: 12px; }
-.log li { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; font-size: 12px; animation: slide 0.4s ease-out both; }
-.log li::before { content: ""; width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: var(--c); }
-.log time { grid-column: 2; font: 11px var(--mono); color: var(--dim); }
+/* The timeline under the stage (timeline.ts): its newest event in the header, then a mark per event placed by its time, in three rows, named on hover. */
+.timeline summary { display: flex; align-items: baseline; gap: 10px; min-width: 0; list-style: none; cursor: pointer; }
+.timeline summary::-webkit-details-marker { display: none; }
+.timeline summary::after { content: "▾"; margin-left: 8px; color: var(--dim); transition: transform 0.2s; }
+.timeline:not([open]) summary::after { transform: rotate(-90deg); }
+.timeline h2 { flex: none; margin: 0; }
+.tl-at { flex: none; color: var(--dim); font: 11px var(--mono); } .tl-last { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12.5px; }
+.tl-span { flex: none; margin-left: auto; color: var(--dim); font-size: 11px; }
+.tl-lanes { position: relative; height: 46px; margin-top: 8px; border-top: 1px dashed var(--line); }
+.tl-lanes::after { content: ""; position: absolute; right: 0; top: 0; bottom: 0; width: 2px; border-radius: 1px; background: var(--accent); box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 60%, transparent); } /* now */
+.tl-mark { position: absolute; width: 10px; height: 10px; margin-left: -5px; }
+.tl-mark::before { content: ""; position: absolute; inset: 1px; border-radius: 2px; background: var(--c); }
+.tl-mark:is([data-mark="waiting"], [data-mark="error"], [data-mark="commanding"])::before { transform: rotate(45deg); }
+.tl-mark:is([data-mark="done"], .joined, .left)::before { border-radius: 50%; } .tl-mark.left::before { background: none; box-shadow: inset 0 0 0 1.5px var(--c); }
+.tl-mark:hover::before, .tl-mark:focus-visible::before { box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 35%, transparent); } .tl-mark:focus-visible { outline: none; }
+.tl-mark:hover::after, .tl-mark:focus-visible::after { content: attr(aria-label); position: absolute; z-index: 1; bottom: calc(100% + 8px); left: -6px; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--raised); color: var(--text); font: 12px var(--sans); white-space: nowrap; box-shadow: 0 6px 16px color-mix(in srgb, var(--shadow) 60%, transparent); }
+.tl-mark.end:hover::after, .tl-mark.end:focus-visible::after { left: auto; right: -6px; }
+.tl-axis { display: flex; justify-content: space-between; margin-top: 4px; color: var(--dim); font: 10px var(--mono); }
+/* A card's clock, its todo in short, and its last steps along its foot (render.ts). */
+.line .age { flex: none; color: var(--dim); font: 10.5px var(--mono); opacity: 0.85; } .line .age:empty { display: none; } .line .age::before { content: "· "; }
+.unit[data-mark="waiting"] > .card .age, .title .age { color: var(--amber); opacity: 1; } .title .age { color: var(--dim); } .title .age:not(:empty)::before { content: " · "; }
+.todo { display: flex; gap: 6px; align-items: baseline; min-width: 0; font-size: 11.5px; } .todo b { flex: none; color: var(--violet); font: 600 10.5px var(--mono); }
+.todo span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; opacity: 0.85; } .todo span:empty { display: none; }
+.ticks { position: absolute; left: 52px; right: 12px; bottom: 3px; display: flex; gap: 3px; height: 3px; pointer-events: none; } .ticks:empty { display: none; }
+.ticks i { flex: 0 0 6px; border-radius: 1px; background: var(--c); opacity: calc(0.25 + 0.65 * var(--o, 1)); }
+.card.ticked { padding-bottom: 11px; } .subs .ticks { left: 44px; }
+/* The map's overview in a corner (minimap.ts). */
+.minimap { position: fixed; right: 20px; bottom: 20px; z-index: 4; box-sizing: content-box; padding: 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); opacity: 0.65; cursor: pointer; transition: opacity 0.2s; }
+.minimap:hover { opacity: 1; } .minimap.away { opacity: 0; pointer-events: none; } .mm-in { position: absolute; inset: 6px; } .mm-in i { position: absolute; border-radius: 2px; background: color-mix(in srgb, var(--c) 35%, var(--surface-1)); }
+.mm-view { position: absolute; left: 4px; right: 4px; top: 6px; border: 1px solid var(--accent); border-radius: 3px; background: color-mix(in srgb, var(--accent) 8%, transparent); pointer-events: none; }
 .credit { padding: 0 6px; color: var(--dim); font-size: 11px; }
 /* The location bar, with the states' legend at its right end. */
 .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin: 12px 6px 0; }
@@ -676,7 +695,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 	.alert-row { order: 3; flex: 1 1 100%; min-width: 0; } .alert-row .alerts { flex: 1 1 auto; width: auto; min-width: 0; } .done-btn { min-height: 40px; }
 	/* The brand and the link's dot, then Remind, Sound, Phone, and the language as four even buttons a thumb can hit. */
 	.brand { flex: 1 1 calc(100% - 40px); min-width: 0; } .link { order: 1; } .hud > .pair-btn { order: 2; flex: 1 1 auto; min-width: 0; min-height: 40px; justify-content: center; padding: 6px 8px; white-space: nowrap; } .hud > .lang { flex: none; padding-right: 26px; }
-	.log { max-height: none; } .log li:nth-child(n+3) { display: none; }
+	.tl-span { display: none; }
 	/* The location bar, and the map and the workspace. */
 	.crumbs { gap: 6px; } .crumbs > * + *::before { margin-right: 6px; } .crumbs > * { max-width: 16ch; }
 	.crumbs:not(.open) > .mid { display: none; } .crumbs:not(.open) > .crumb-more { display: block; flex: none; }

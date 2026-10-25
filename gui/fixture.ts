@@ -1,3 +1,4 @@
+import { trackActivity } from "../src/activity.ts";
 import type { Mark } from "../src/dashboard.ts";
 import type { Net, Unit } from "../src/net.ts";
 import type { Data, Page } from "./chat.ts";
@@ -17,11 +18,11 @@ const doc = (cap: string, display: string, reason: string, revision = 1) => ({ c
 const demo = (): Net => ({
 	bases: [
 		{ id: "w1", label: "Harbor API", mark: "working", head: true, tower: { name: "tower · Harbor API", mark: "working", key: "t1", control: true, subs: [unit("t1/triage", "triage-scout", "subagent", "working", "tool:read")] }, outposts: [{ id: "w1-fix", label: "harbor-api-hotfix", mark: "working" }], outside: [unit("o1", "scratch-notes", "outside", "idle")], tabs: [
-			{ id: "w1:t1", label: "billing", units: [{ ...unit("a1", "billing-main", "main", "commanding", "watching a monitor", [unit("a1/lint", "lint-sweep", "subagent", "working", "tool:bash"), { ...unit("a1/docs", "docs-writer", "subagent", "done", "finished"), ended: true }]), docs: [doc("plan", "docs/rollout-plan.md", "Rollout plan ready"), doc("review", "docs/ledger-review.html", "Review the ledger fix and pick a window")], queued: [{ text: "Also check the refund path while you are in there.", as: "steer" }, { text: "When done, write a short summary for the changelog.", as: "followUp" }], monitors: [{ id: "3", what: "billing dev server on 5173", status: "running", lines: 48, at: 3, last: "12:04:51 [vite] hmr update /src/ledger.ts" }, { id: "2", what: "ledger integration tests", status: "error", exit: 1, lines: 212, at: 2, ended: 4, last: "✖ rounds half-cent refunds down (expected 10.01, got 10.00)" }] }, unit("a2", "billing-tests", "member", "idle")] },
-			{ id: "w1:t2", label: "ops", units: [{ ...unit("a3", "ops-main", "main", "waiting", "waiting on a question"), pending: ask(0) }] },
+			{ id: "w1:t1", label: "billing", units: [{ todo: { done: 2, total: 5, now: "Fixing the ledger rounding order" }, ...unit("a1", "billing-main", "main", "commanding", "watching a monitor", [unit("a1/lint", "lint-sweep", "subagent", "working", "tool:bash"), { ...unit("a1/docs", "docs-writer", "subagent", "done", "finished"), ended: true }]), docs: [doc("plan", "docs/rollout-plan.md", "Rollout plan ready"), doc("review", "docs/ledger-review.html", "Review the ledger fix and pick a window")], queued: [{ text: "Also check the refund path while you are in there.", as: "steer" }, { text: "When done, write a short summary for the changelog.", as: "followUp" }], monitors: [{ id: "3", what: "billing dev server on 5173", status: "running", lines: 48, at: 3, last: "12:04:51 [vite] hmr update /src/ledger.ts" }, { id: "2", what: "ledger integration tests", status: "error", exit: 1, lines: 212, at: 2, ended: 4, last: "✖ rounds half-cent refunds down (expected 10.01, got 10.00)" }] }, unit("a2", "billing-tests", "member", "idle")] },
+			{ id: "w1:t2", label: "ops", units: [{ todo: { done: 1, total: 3, now: "Checking the migration runs before traffic" }, ...unit("a3", "ops-main", "main", "waiting", "waiting on a question"), pending: ask(0) }] },
 		] },
 		{ id: "w2", label: "Lighthouse Web", mark: "working", head: false, tower: { name: "tower · Lighthouse Web", mark: "idle", key: "t2", control: true, subs: [] }, outposts: [], outside: [], tabs: [
-			{ id: "w2:t1", label: "checkout", units: [unit("b1", "checkout-main", "main", "working", "thinking", [unit("b1/e2e", "e2e-runner", "subagent", "working", "thinking")]), { ...unit("b2", "claude-checkout", "member", "working", "tool:read"), control: false, agent: "claude" as const }] },
+			{ id: "w2:t1", label: "checkout", units: [{ todo: { done: 3, total: 4, now: "Writing the checkout e2e test" }, ...unit("b1", "checkout-main", "main", "working", "thinking", [unit("b1/e2e", "e2e-runner", "subagent", "working", "thinking")]) }, { ...unit("b2", "claude-checkout", "member", "working", "tool:read"), control: false, agent: "claude" as const }] },
 		] },
 		{ id: "w3", label: "Orchard Data", mark: "idle", head: false, tower: { name: "tower · Orchard Data", mark: "done", key: "t3", control: true, subs: [] }, outposts: [], outside: [], tabs: [
 			{ id: "w3:t1", label: "etl", units: [unit("c1", "etl-main", "main", "idle")] },
@@ -82,19 +83,24 @@ export function createFixture({ resume, tick = 2500 }: { resume(): void; tick?: 
 			if (current === this) current = undefined;
 		}
 	}
-	// Every tick one agent changes state, so the page always has something moving.
-	setInterval(() => {
+	// Every tick one agent changes state, so the page always has something moving; the server's activity tracker runs over each snapshot.
+	let clock = Date.now();
+	const track = trackActivity(() => clock), TOOLS = ["tool:edit", "tool:bash", "tool:read", "thinking"];
+	const advance = () => {
 		const all = units(net);
 		const pick = all[step % all.length]!;
 		if (pick.pending?.answer) return void step++; // a dialog the page can answer stays until it is answered
 		const options = NEXT[pick.mark];
 		pick.mark = step % 17 === 16 ? "error" : options[step % options.length]!;
-		pick.note = pick.mark === "working" ? "tool:edit" : pick.mark === "waiting" ? "waiting on a question" : undefined;
+		pick.note = pick.mark === "working" ? TOOLS[step % TOOLS.length] : pick.mark === "waiting" ? "waiting on a question" : undefined;
 		pick.pending = pick.mark === "waiting" ? ask(++waits) : undefined;
-		net = structuredClone(net);
+		net = track(structuredClone(net));
 		step++;
-		current?.send("message", net);
-	}, tick);
+		return true;
+	};
+	// The demo starts with most of half an hour behind it, so the timeline and the cards' clocks have something to show.
+	for (let i = 41; i > 0; i--) ((clock = Date.now() - i * 40_000), i === 41 ? (net = track(net)) : advance());
+	setInterval(() => ((clock = Date.now()), advance() && current?.send("message", net)), tick);
 	const control: Control = {
 		drop: () => ((dropped = true), current?.fail()),
 		silence: () => (silent = true),

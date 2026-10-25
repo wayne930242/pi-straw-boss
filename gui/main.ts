@@ -4,7 +4,6 @@ import { m } from "./paraglide/messages.js";
 import type { Net } from "../src/net.ts";
 import type { Data, HistoryEvent } from "./chat.ts";
 import type { Post } from "./composer.ts";
-import { changes } from "./log.ts";
 import { type Alert, alertsOf, arrivals, unitOf } from "./alerts.ts";
 import type { Drawer } from "./drawer.ts";
 import type { mountPanels, Tile } from "./layer.ts";
@@ -14,14 +13,15 @@ import { mountQuit, showDismissAll, showStashed } from "./quit.ts";
 import { hang, mountPage } from "./render.ts";
 import { createRouter, parseRoute, type Route, upOf, watchOf } from "./router.ts";
 import { createStream, type Source, type Status } from "./stream.ts";
+import { mountTimeline } from "./timeline.ts";
 import type { mountFocus } from "./views.ts";
 
 startI18n();
-const page = mountPage();
+const page = mountPage(), timeline = mountTimeline(document.getElementById("timeline") as HTMLDetailsElement);
 const el = (id: string) => document.getElementById(id)!;
 const time = (at?: number) => (at ? new Date(at).toLocaleTimeString([], { hour12: false }) : m.never());
 
-let shown: Net | undefined, logged: Net | undefined, latest: Net | undefined, pending: Net | undefined, status: Status = { state: "connecting", attempt: 0 };
+let shown: Net | undefined, latest: Net | undefined, pending: Net | undefined, status: Status = { state: "connecting", attempt: 0 };
 let current: Route = { view: "map" }, started = false, known: Map<string, Alert> | undefined, hello = "";
 
 // The focus views (the zoomed-in base, the session's comms and dossier) are a separate chunk, fetched on the first route that is not the
@@ -55,7 +55,7 @@ const withPanels = (call: (p: Panels) => void) => {
 const openTile = (tile: Tile, take?: boolean) => withPanels((p) => p.tiles.open(tile, take));
 
 // The header, the alert queue, and the focus views follow every snapshot. A hidden page keeps only the newest snapshot and draws it
-// when it comes back, so a background tab does no DOM work; the net log follows on every route, the map is drawn only while in view.
+// when it comes back, so a background tab does no DOM work; the timeline follows on every route, the map is drawn only while in view.
 // The tab's icon carries the count of units waiting on an answer, a hidden tab's above all; a browser that keeps the first icon shows it plain.
 const tabIcon = document.querySelector<HTMLLinkElement>('link[rel="icon"]'), plainIcon = tabIcon && decodeURIComponent(tabIcon.href.slice(tabIcon.href.indexOf(",") + 1));
 let badged = 0;
@@ -83,8 +83,7 @@ function show(net: Net) {
 	const fresh = arrivals(known, now);
 	if (fresh.length || panels) withPanels((p) => p.alerts(fresh, now));
 	known = now;
-	page.log(changes(logged, net));
-	logged = net;
+	timeline.net(net);
 	withFocus((f) => f.net(net));
 	if (current.view !== "map") return;
 	page.show(net);

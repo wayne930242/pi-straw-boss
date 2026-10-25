@@ -4,7 +4,7 @@ import { type Json, parse } from "./items.ts";
 import type { Net, Queued, Unit } from "./net.ts";
 import type { Answerable, Dialog } from "./owners.ts";
 import type { Monitor } from "./monitors.ts";
-import type { TodoSum } from "./activity.ts";
+import type { TodoSum } from "./todo.ts";
 
 // What a waiting session waits on: the current branch's newest assistant message's tool call with no result yet, read from the end of
 // its session file. The snapshot carries it so the alert and the session view can show an ask_user question (its context and options).
