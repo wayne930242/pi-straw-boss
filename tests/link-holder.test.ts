@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import { buildEnvelope } from "../src/link/envelope.ts";
+import { buildEnvelope, parseEnvelope } from "../src/link/envelope.ts";
 import { LinkHolder } from "../src/link/holder.ts";
 import { encodePlaintext } from "../src/link/kinds.ts";
 import { RelayClient } from "../src/link/relay.ts";
@@ -62,7 +62,7 @@ function rig(name: "a" | "b", o: { entries?: ReturnType<typeof rosterOf>; seed?:
 	const build = (store: LinkStore) => new LinkHolder({
 		store, isHolder: () => r.isHolder, config: () => config(project, r.share)(), net: async () => r.net, relay: clientFor(relay),
 		offer: (tower, id) => void r.offers.push({ tower: tower.id, id }), notify: (text) => void r.notices.push(text), onDisplaced: () => void r.displaced++,
-		now: () => Date.now() + r.skew, backoff: () => 5, drainMs: 20, presenceMs: 40, offerAgainMs: 60_000, postWaitMs: 3000,
+		now: () => Date.now() + r.skew, backoff: () => 5, drainMs: 20, presenceMs: 40, offerAgainMs: 60_000, postWaitMs: 3000, haltRetryMs: 150,
 	});
 	r.store = first;
 	r.holder = build(first);
@@ -451,4 +451,28 @@ test("SLH-F002: a holder whose start fails is not active, and starts again once 
 	writeFileSync(file, good);
 	await b.holder.start();
 	assert.equal(b.holder.active, true);
+});
+
+test("SLH-F004: a 401 on a post halts the team's outbox for a while: the send says queued, a send meanwhile is refused up front, and the queued message lands once the halt is over", async () => {
+	const [a, b] = [rig("a"), rig("b", { towers: false })];
+	let refuse = 0;
+	const fetched = relay.fetch;
+	relay.fetch = async (input, init) => {
+		if (String(input).endsWith("/envelopes") && refuse > 0) {
+			const body = JSON.parse(Buffer.from(init!.body as Uint8Array).toString("utf8")) as { envelope: string };
+			if (!parseEnvelope(Buffer.from(body.envelope, "base64url"))!.header.ephemeral && refuse-- > 0) return new Response(JSON.stringify({ error: "clock-skew" }), { status: 401, headers: { "content-type": "application/json" } });
+		}
+		return fetched(input, init);
+	};
+	await Promise.all([a.start(), b.start()]);
+	refuse = 1;
+	const first = await send(a, "one");
+	assert.ok(first.ok && first.details.status === "queued", JSON.stringify(first));
+	const second = await send(a, "two");
+	assert.ok(!second.ok && /refusing this device/.test(second.error), JSON.stringify(second));
+	await until(() => queued().length === 1, 3000, "the refused message to land after the halt");
+	await until(() => b.store.inboxIds().length === 1, 3000, "it reaches B");
+	const third = await send(a, "three");
+	assert.ok(third.ok && third.details.status === "posted", JSON.stringify(third));
+	assert.deepEqual(queued().map((st) => st.envelope.header.seq), [1, 2], "in order, no gap");
 });

@@ -46,6 +46,8 @@ export interface HolderOptions {
 	offerAgainMs?: number;
 	/** How long `send` waits for the relay to take an envelope before it reports it queued (default 20 s). */
 	postWaitMs?: number;
+	/** How long a team's outbox stays halted by a 401 before the refused envelope is tried again (default 60 s; a 401 can be a clock that was off). */
+	haltRetryMs?: number;
 }
 
 export interface SendRequest { fromSession: string; device: string; workspace?: string; text: string; reply: boolean }
@@ -71,7 +73,10 @@ interface TeamRun {
 	presenceTimer: ReturnType<typeof setInterval> | undefined;
 	/** Set when the team can no longer be used (removed, forked, file lost); nothing more is taken from it. */
 	dead: string | undefined;
-	settled: Map<string, "posted" | Error>;
+	settled: Map<string, "posted" | "halted" | Error>;
+	haltTimer: ReturnType<typeof setTimeout> | undefined;
+	/** Ids of sends that stopped waiting (they answered "queued"): a later outcome is not kept for them. */
+	gone: Set<string>;
 	waiters: Map<string, () => void>;
 }
 
@@ -126,6 +131,7 @@ export class LinkHolder {
 	}
 	private async stopRun(run: TeamRun): Promise<void> {
 		clearInterval(run.presenceTimer);
+		clearTimeout(run.haltTimer);
 		// Envelopes the relay has not taken yet get a moment: a holder that steps down should not drop a message the boss just sent.
 		let grace: ReturnType<typeof setTimeout> | undefined;
 		await Promise.race([run.outbox.idle(), new Promise<void>((resolve) => (grace = setTimeout(resolve, 2000)))]);
@@ -199,9 +205,10 @@ export class LinkHolder {
 		const { store } = this.o, device = this.device!;
 		const { tf } = this.loadTeam(team);
 		const teamId = Buffer.from(team, "hex"), client = this.o.relay(tf.relay, device.keys);
-		const settled = new Map<string, "posted" | Error>(), waiters = new Map<string, () => void>();
-		const settle = (id: Buffer, outcome: "posted" | Error) => {
+		const gone = new Set<string>(), settled = new Map<string, "posted" | "halted" | Error>(), waiters = new Map<string, () => void>();
+		const settle = (id: Buffer, outcome: "posted" | "halted" | Error) => {
 			const key = id.toString("hex");
+			if (gone.delete(key)) return;
 			settled.set(key, outcome);
 			waiters.get(key)?.();
 		};
@@ -216,11 +223,14 @@ export class LinkHolder {
 			},
 			onHalt: (item, error) => {
 				this.tellOnce(`halt/${team}`, `Straw Link: the relay refused this device (${error.code}); it is no longer a member of team ${team.slice(0, 6)}, or its clock is off`, "error");
-				settle(item.id, error);
+				settle(item.id, "halted");
+				// A 401 can be a clock that was off: the refused envelope is tried again after a while, and a send meanwhile is refused up front.
+				run.haltTimer = setTimeout(() => this.runs.get(team) === run && !run.dead && run.outbox.resume(), this.o.haltRetryMs ?? 60_000);
+				run.haltTimer.unref();
 			},
 			onRetry: (_item, error) => store.log({ event: "send-retry", team, error: String(error) }),
 		});
-		const run: TeamRun = { team, teamId, client, outbox, stream: undefined, presences: new Map(), lastEphemeral: new Map(), presenceTimer: undefined, dead: undefined, settled, waiters };
+		const run: TeamRun = { team, teamId, client, outbox, stream: undefined, presences: new Map(), lastEphemeral: new Map(), presenceTimer: undefined, dead: undefined, settled, haltTimer: undefined, gone, waiters };
 		this.runs.set(team, run);
 		run.stream = client.stream(teamId, {
 			onEvent: (event) => this.onEvent(run, event),
@@ -252,6 +262,7 @@ export class LinkHolder {
 		this.o.store.log({ event: "team-stopped", team: run.team, why });
 		this.tellOnce(`dead/${run.team}`, `Straw Link: team ${run.team.slice(0, 6)} stopped: ${why}`, level);
 		clearInterval(run.presenceTimer);
+		clearTimeout(run.haltTimer);
 		void run.stream?.stop();
 	}
 
@@ -462,6 +473,7 @@ export class LinkHolder {
 		const target = resolveDevice(req.device, members, this.device.keys.id);
 		if (!target.ok) return { ok: false, error: target.error };
 		const run = teams.find((r) => r.team === target.team)!;
+		if (run.outbox.haltedBy) return { ok: false, error: `The relay is refusing this device (${run.outbox.haltedBy.code}), so nothing is sent to team ${run.team.slice(0, 6)} right now; it is tried again every ${Math.round((this.o.haltRetryMs ?? 60_000) / 1000)} s` };
 		const workspace = net.workspaces.find((w) => w.workspace_id === pane.workspace_id);
 		const queued = await run.outbox.submit((seq) => {
 			const { state } = this.loadTeam(run.team), key = state.keys.get(state.epoch);
@@ -481,11 +493,13 @@ export class LinkHolder {
 		run.waiters.delete(id);
 		const outcome = run.settled.get(id);
 		run.settled.delete(id);
+		if (outcome === undefined || outcome === "halted") run.gone.add(id);
 		const who = members.find((m) => m.team === target.team && m.id === target.id);
 		const name = `${who?.label ?? "device"} (${shortId(target.id)})`;
 		store.log({ event: "send", team: run.team, to: target.id, id, outcome: outcome === undefined ? "queued" : outcome === "posted" ? "posted" : String(outcome) });
 		const details = { team: run.team, device: target.id, id, seq: queued.seq };
 		if (outcome === "posted") return { ok: true, text: `Sent to the tower of ${name}${req.workspace ? ` (workspace ${req.workspace})` : ""} through the relay. ${req.reply ? "It replies through tower_send." : "It is told no reply is expected."}`, details: { ...details, status: "posted" } };
+		if (outcome === "halted") return { ok: true, text: `The relay refused this device just now; the message to ${name} is queued on this computer and tried again within ${Math.round((this.o.haltRetryMs ?? 60_000) / 1000)} s.`, details: { ...details, status: "queued" } };
 		if (outcome === undefined) return { ok: true, text: `The relay did not take the message to ${name} yet; it is queued on this computer and retried until it lands.`, details: { ...details, status: "queued" } };
 		const refused = outcome instanceof PayloadTooLargeError ? "the relay refuses a message this large" : outcome instanceof RelayError ? `the relay refused it: ${outcome.code}` : outcome.message;
 		return { ok: false, error: `The message to ${name} was not sent: ${refused}` };
