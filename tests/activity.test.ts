@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { TICKS, trackActivity, WINDOW_MS } from "../src/activity.ts";
+import { GAP_MS, TICKS, trackActivity, WINDOW_MS } from "../src/activity.ts";
 import { todoOfBranch, todoOk } from "../src/todo.ts";
 import type { Mark } from "../src/dashboard.ts";
 import type { Net, Unit } from "../src/net.ts";
@@ -58,7 +58,7 @@ test("ticks keep the newest few, and events only the last 30 minutes", () => {
 	const ticks = first(track(net([unit("a", "working", `tool:n${TICKS + 3}`)]))).ticks!;
 	assert.equal(ticks.length, TICKS);
 	assert.equal(ticks.at(-1)!.at, (TICKS + 3) * 1000);
-	at = 100_000;
+	at += 1000;
 	track(net([unit("a", "error")]));
 	at += WINDOW_MS + 1;
 	assert.equal(track(net([unit("a", "error")])).events, undefined, "the error is older than the window");
@@ -73,4 +73,27 @@ test("the todo summary follows rpiv-todo's replay: state entries win over tool r
 	assert.equal(todoOfBranch([{ type: "custom", customType: "rpiv-todo-state", data: snapshot([]) }]), undefined, "an emptied list is none");
 	assert.equal(todoOfBranch([{ type: "custom", customType: "rpiv-todo-state", data: { tasks: "x" } }]), undefined);
 	assert.ok(todoOk(todoOfBranch([entry])));
+});
+
+test("a reading long after the last is a fresh start: what changed in between has no time, and no events", () => {
+	let at = 1000;
+	const track = trackActivity(() => at);
+	track(net([unit("a", "working"), unit("b", "idle")]));
+	at = 2000;
+	assert.equal(first(track(net([unit("a", "waiting"), unit("b", "idle")]))).since, 2000);
+	at += GAP_MS + 1; // no page watched: the server did not read
+	const back = track(net([unit("a", "idle"), unit("c", "working")]));
+	assert.deepEqual([first(back).since, back.bases[0]!.tabs[0]!.units[1]!.since], [undefined, undefined]);
+	assert.deepEqual(back.events?.map((e) => e.kind), ["mark"], "only the change seen while watched");
+	at += 1000;
+	assert.equal(first(track(net([unit("a", "working"), unit("c", "working")]))).since, at, "watched again: the clock runs");
+});
+
+test("a key twice in one reading is told once, and does not flap", () => {
+	let at = 1000;
+	const track = trackActivity(() => at);
+	track(net([unit("a", "working"), unit("a", "idle", "tool:x")]));
+	at = 2000;
+	const again = track(net([unit("a", "working"), unit("a", "idle", "tool:x")]));
+	assert.deepEqual([again.events, first(again).ticks], [undefined, undefined]);
 });

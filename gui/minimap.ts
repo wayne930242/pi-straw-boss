@@ -37,7 +37,7 @@ export function mountMinimap(map: HTMLElement, bases: HTMLElement) {
 	addEventListener("scroll", () => (frame ||= requestAnimationFrame(place)), { passive: true });
 	addEventListener("resize", draw);
 	box.addEventListener("click", (e) => {
-		const r = map.getBoundingClientRect(), y = (e.clientY - box.getBoundingClientRect().top) / scale;
+		const r = map.getBoundingClientRect(), y = (e.clientY - inner.getBoundingClientRect().top) / scale;
 		scrollTo({ top: r.top + scrollY + y - innerHeight / 2, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
 	});
 	return draw;

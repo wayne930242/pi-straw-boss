@@ -67,7 +67,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 	const chans = new Map<string, Channel>(), me = () => env.PI_INTERCOM_SESSION_ID ?? "";
 	let g: string | undefined, gpid = 0, seen: number | undefined, poll: ReturnType<typeof setInterval> | undefined, offs: (() => void)[] = [], warned = false;
 	let file: () => string | undefined = () => undefined, tell = (_text: string) => {}, editor = (): Editor => ({ editor: "unknown" }), docs: Doc[] = [];
-	let queued: Queued[] = [], waits = () => false, idle = () => true, todo: TodoSum | undefined, branch = (): Iterable<unknown> => [];
+	let queued: Queued[] = [], waits = () => false, idle = () => true, todo: TodoSum | undefined, branch = (): readonly unknown[] => [];
 	const open = () => [...recs.values()].filter((r) => r.state !== "closed");
 	const alive = () => { try { return gpid > 0 && (process.kill(gpid, 0), true); } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; } }; // a server that died without removing gui.json gets no probe answers
 
