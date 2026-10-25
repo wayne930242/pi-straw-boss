@@ -555,3 +555,16 @@ Built in `src/link/{store,election,holder,routing,config,runtime,wire,text}.ts`;
 - **A tower is chosen by the pane's cwd** (`pane list` gives each pane its cwd; a Herdr workspace has none): the tower pane whose cwd is nearest the project root, then workspace order; `symlink`s are resolved before comparing; a sub workspace has no tower.
 - **Candidates wait one look before taking a vacant record** (a tower at once, any other session at its second look), so a tower that starts a moment later is still preferred; a newer pi-straw-boss, or a tower against a non-tower on the same build, takes a live holder's record at once, and a non-tower never takes it from a tower.
 - **Requests between towers and the holder** travel in base64 chunks on `straw-boss/link` (the broker refuses an extension payload over 16 KiB); a request over 40 chunks is refused when built. A deliver is only an offer naming an inbox id.
+
+## Build record: step 4 (remote turns, 2026-10-26)
+
+Built in `src/link/{turn,allow,gate,policy}.ts` with the hooks in `runtime.ts`, the confirm kinds in `holder.ts`, and the gate registered in `owners.ts`; `docs/how-it-works.md` describes the behavior. Where the spec left a choice, the code took this one:
+
+- **A run with several remote senders asks one device at `forward`**: the first sender at the run's lowest level. Its answer decides; the others are not asked.
+- **`tower_send` back to the sender** accepts the sender's device id, short id, or label as `device`. The holder resolves a label across every team of the tower, so a label that is also another team's device is still ambiguity the holder reports; the allowlist only decides whether the call passes the hook.
+- **The deny list applies to any tool's path arguments** (`path`, `file_path`, `filePath`, `file`, `directory`, `dir`, `cwd`, `paths`, `files`), not only to the allowlisted tools, since a refused outright path is never worth a confirm; the argument check is by name, so a tool that hides a path in a command string (bash) reaches the gate, where the boss reads the full arguments.
+- **R-F023** is read as hiding: a later local turn sees a marker naming the device and no text of a peer's request that did not start the current run (the spec's wording is "wraps"; hiding is the stricter reading and `hideOldRemote` in `turn.ts` is the one place to change).
+- **R-F027**: the stale comment in `owners.ts` is fixed; a paired device answers a `confirm` as this computer's page does.
+- **The unattended policy check** (`policy.ts`) is built and used for trust only; refusing to run the holder, `dialog-open` to controllers, and opening a tower for a controller are step 6.
+- **The sender's side of `forward`** has the holder API (`confirmRequests`, `answerConfirm`) and a notice; the alert in the GUI is step 5.
+- **A policy file that exists but cannot be read** (not `ENOENT`) refuses unattended mode instead of leaving the device attended.
