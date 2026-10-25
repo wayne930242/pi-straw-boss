@@ -264,15 +264,21 @@ test("over the tailnet: only this user's paired devices get in, a code pairs onc
 	gui.access.enable({ host: HOST, login: LOGIN });
 	assert.equal((await remoteGet(gui, page)).status, 401, "not paired yet");
 	// Launching the installed app on Android is a navigation from another site, which leaves the SameSite=Strict cookie behind: the page reloads itself once.
-	const launch = await remoteGet(gui, page, { "sec-fetch-site": "cross-site", "sec-fetch-dest": "document" });
-	assert.deepEqual([launch.status, launch.headers["content-type"]], [401, "text/html; charset=utf-8"]);
-	assert.match(launch.body, /<meta http-equiv="refresh" content="0">/, "a page load from outside reloads itself, same-origin, so the cookie can ride along");
-	for (const headers of [{ "sec-fetch-site": "same-origin", "sec-fetch-dest": "document" }, { "sec-fetch-site": "cross-site", "sec-fetch-dest": "script" }, { "sec-fetch-dest": "document" }]) {
-		const r = await remoteGet(gui, page, headers);
+	for (const site of ["cross-site", "same-site", "none"]) {
+		const launch = await remoteGet(gui, page, { "sec-fetch-site": site, "sec-fetch-dest": "document" });
+		assert.deepEqual([launch.status, launch.headers["content-type"]], [401, "text/html; charset=utf-8"], site);
+		assert.match(launch.body, /<meta http-equiv="refresh" content="0">/, `${site}: a page load from outside reloads itself, same-origin, so the cookie can ride along`);
+		assert.match(launch.body, /<a href="">/, "and links to itself for a browser that blocks refresh");
+	}
+	for (const [headers, method] of [[{ "sec-fetch-site": "same-origin", "sec-fetch-dest": "document" }], [{ "sec-fetch-site": "cross-site", "sec-fetch-dest": "script" }], [{ "sec-fetch-dest": "document" }], [{ "sec-fetch-site": "cross-site", "sec-fetch-dest": "document" }, "POST"]] as const) {
+		const r = await remoteGet(gui, page, headers, method, method && "{}");
 		assert.deepEqual([r.status, r.headers["content-type"]], [401, "text/plain"], `${JSON.stringify(headers)}: the plain refusal, so the reload never loops`);
 		assert.match(r.body, /not paired.*camera/);
 	}
-	for (const headers of [{ "tailscale-user-login": undefined }, { "tailscale-user-login": "other@example.com" }, { "tailscale-funnel-request": "?1" }, { host: "box.tail1.ts.net" }, { host: "evil.example:8443" }]) assert.equal((await remoteGet(gui, page, headers)).status, 403, JSON.stringify(headers));
+	for (const headers of [{ "tailscale-user-login": undefined }, { "tailscale-user-login": "other@example.com" }, { "tailscale-funnel-request": "?1" }, { host: "box.tail1.ts.net" }, { host: "evil.example:8443" }]) {
+		assert.equal((await remoteGet(gui, page, headers)).status, 403, JSON.stringify(headers));
+		assert.equal((await remoteGet(gui, page, { ...headers, "sec-fetch-site": "cross-site", "sec-fetch-dest": "document" })).status, 403, `${JSON.stringify(headers)}: identity is checked before the reload`);
+	}
 	const code = gui.access.pair()!;
 	const paired = await remoteGet(gui, `${page}pair/${code}`);
 	assert.equal(paired.status, 200);
@@ -282,6 +288,7 @@ test("over the tailnet: only this user's paired devices get in, a code pairs onc
 	assert.equal((await remoteGet(gui, `${page}pair/${code}`)).status, 403, "the same QR does not pair twice");
 	const jar = cookie.split(";")[0]!;
 	assert.equal((await remoteGet(gui, page, { cookie: jar })).status, 200);
+	assert.equal((await remoteGet(gui, page, { cookie: jar, "sec-fetch-site": "cross-site", "sec-fetch-dest": "document" })).status, 200, "a page load from outside that carries the cookie goes straight in");
 	assert.equal((await remoteGet(gui, page, { cookie: jar, "tailscale-user-login": "other@example.com" })).status, 403, "a cookie alone is not enough");
 	const json = (origin: string, csrf = gui.csrf) => ({ cookie: jar, origin, "sec-fetch-site": "same-origin", "content-type": "application/json", "x-sb-csrf": csrf });
 	const body = JSON.stringify({ text: "from the phone", as: "send" });
