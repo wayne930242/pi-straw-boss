@@ -36,6 +36,9 @@ export const LIMITS = {
 	dialog: 64 * 1024,
 	/** Not in the spec: ids, labels, names, tool names, and states. */
 	short: 256,
+	/** Not in the spec: a presence names at most this many workspaces, and each at most this many tabs; the rest is cut when it is decoded. */
+	presenceWorkspaces: 32,
+	presenceTabs: 64,
 } as const;
 const short = (s: string) => cutBytes(s, LIMITS.short);
 
@@ -88,9 +91,9 @@ const decoders: { [K in Kind]: (b: Buffer) => Plaintexts[K] } = {
 		if (hash.length !== 32) throw new RangeError("a roster hash is 32 bytes");
 		return {
 			label: s(label), headSeq: readInt(seq), headHash: hash,
-			workspaces: readList(spaces).map((w) => {
+			workspaces: readList(spaces).slice(0, LIMITS.presenceWorkspaces).map((w) => {
 				const [wl, tower, tabs] = dec(w, 3) as [Buffer, Buffer, Buffer];
-				return { label: s(wl), tower: s(tower), tabs: readList(tabs).map((t) => { const [tl, st] = dec(t, 2) as [Buffer, Buffer]; return { label: s(tl), state: s(st) }; }) };
+				return { label: s(wl), tower: s(tower), tabs: readList(tabs).slice(0, LIMITS.presenceTabs).map((t) => { const [tl, st] = dec(t, 2) as [Buffer, Buffer]; return { label: s(tl), state: s(st) }; }) };
 			}),
 		};
 	},

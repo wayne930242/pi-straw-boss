@@ -54,6 +54,8 @@ export interface AllyDevice { id: string; short: string; label: string; online: 
 export interface AllyTeam { team: string; name: string; devices: AllyDevice[] }
 
 const PRESENCE_ONLINE_MS = 90_000;
+/** The most devices of one team `list` answers with: the answer has to fit the channel's request size. */
+const MAX_LISTED_DEVICES = 100;
 const INBOX_MAX_AGE_MS = 7 * 24 * 3600_000;
 const b64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64url");
 
@@ -503,7 +505,7 @@ export class LinkHolder {
 			} catch {
 				return [];
 			}
-			const devices = [...roster.members].filter(([id]) => id !== this.device!.keys.id).map(([id, m]): AllyDevice => {
+			const devices = [...roster.members].filter(([id]) => id !== this.device!.keys.id).slice(0, MAX_LISTED_DEVICES).map(([id, m]): AllyDevice => {
 				const seen = run.presences.get(id), age = seen ? this.now() - seen.at : null;
 				return { id, short: shortId(id), label: m.label ?? shortId(id), online: age !== null && age <= PRESENCE_ONLINE_MS, ageMs: age, roster: seen?.presence.headSeq ?? null, workspaces: seen?.presence.workspaces ?? [] };
 			});

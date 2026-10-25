@@ -68,6 +68,15 @@ test("each kind's plaintext round-trips, is cut to its limit, and refuses anothe
 	assert.equal(decodePlaintext("presence", Buffer.from("x")), null);
 });
 
+test("SLH-F006: a presence is cut to 32 workspaces of 64 tabs each when it is decoded", () => {
+	const tabs = Array.from({ length: 80 }, (_, i) => ({ label: `tab ${i}`, state: "idle" }));
+	const presence = { ...SAMPLE.presence, workspaces: Array.from({ length: 50 }, (_, i) => ({ label: `ws ${i}`, tower: "idle", tabs })) };
+	const back = decodePlaintext("presence", encodePlaintext("presence", presence))!;
+	assert.equal(back.workspaces.length, LIMITS.presenceWorkspaces);
+	assert.ok(back.workspaces.every((w) => w.tabs.length === LIMITS.presenceTabs));
+	assert.equal(back.workspaces[0]!.tabs.at(-1)!.label, "tab 63");
+});
+
 test("the envelope's signature binds the team: the same bytes do not verify under another team's context", () => {
 	const e: Envelope = decodeEnvelope(envelopeCases()[0]!.envelope);
 	const other = { ...receiveState(baseState()), team: Buffer.alloc(16, 5) };

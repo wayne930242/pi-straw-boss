@@ -77,6 +77,7 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 	let ticker: ReturnType<typeof setInterval> | undefined, looking: Promise<void> | undefined;
 	let lastCtx: Pick<ExtensionContext, "isIdle" | "hasPendingMessages"> | undefined;
 	const sid = () => me() || mySession;
+	const failed = (what: string) => (error: Error) => store.log({ event: `${what}-failed`, error: error.message });
 
 	// ---- The channel ---------------------------------------------------------------------------------------------------------------
 
@@ -146,7 +147,7 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 	const confirm = (id: string) => {
 		const record = store.readHolder();
 		if (!record) return;
-		if (holder && election?.isHolder()) void holder.taken(id, sid());
+		if (holder && election?.isHolder()) void holder.taken(id, sid()).catch(failed("taken"));
 		else publish({ version: 1, type: "taken", to: record.session, id });
 	};
 	const lineFor = (item: InboxItem): string => {
@@ -196,8 +197,19 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 
 	const reassembler = new Reassembler(), pending = new Map<string, { resolve: (body: unknown) => void; reject: (error: Error) => void; holder: string; timer: ReturnType<typeof setTimeout> }>();
 	const serve = async (from: string, reqId: string, body: unknown) => {
-		const answer = await handle(body, from).catch((error: Error): SendResult => ({ ok: false, error: error.message }));
-		for (const c of chunks("res", from, reqId, answer)) publish(c);
+		// Nothing here may reject: a promise nobody awaits that rejects ends the pi process.
+		try {
+			const answer = await handle(body, from).catch((error: Error): SendResult => ({ ok: false, error: error.message }));
+			let parts;
+			try {
+				parts = chunks("res", from, reqId, answer);
+			} catch {
+				parts = chunks("res", from, reqId, { ok: false, error: "The answer was too large to hand back; the teammates' presence is bigger than a request may hold" });
+			}
+			for (const c of parts) publish(c);
+		} catch (error) {
+			store.log({ event: "serve-failed", from, error: String(error) });
+		}
 	};
 	/** What the holder does for a tower's request; the holder itself checks that the sender is the tower of a bound workspace. */
 	const handle = async (body: unknown, from: string): Promise<unknown> => {
@@ -225,7 +237,7 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 		const p = event.payload as Record<string, unknown> | undefined, from = event.fromSessionId;
 		if (event.type !== "message" || !p || p.version !== 1 || !from || from === sid() || p.to !== sid()) return;
 		if (p.type === "offer" && typeof p.id === "string" && from === store.readHolder()?.session) takeOffer(p.id);
-		else if (p.type === "taken" && typeof p.id === "string" && holder) void holder.taken(p.id, from);
+		else if (p.type === "taken" && typeof p.id === "string" && holder) void holder.taken(p.id, from).catch(failed("taken"));
 		else if (p.type === "req") {
 			const got = reassembler.push(`req/${from}`, p, cfg.now());
 			if (got) void serve(from, got.reqId, got.body);

@@ -3,12 +3,15 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
+import { buildEnvelope } from "../src/link/envelope.ts";
+import { encodePlaintext } from "../src/link/kinds.ts";
+import { RelayClient } from "../src/link/relay.ts";
 import { type InboxItem, LinkStore } from "../src/link/store.ts";
 import { MESSAGE_TYPE, remoteTowers } from "../src/link/runtime.ts";
 import { FakeRelay } from "./link/fake-relay.ts";
-import { alice, bob, clientFor, rosterOf, TEAM_HEX, writeDevice, writeTeam } from "./link/holder-world.ts";
+import { alice, bob, clientFor, rosterOf, stateOf, TEAM_HEX, writeDevice, writeTeam } from "./link/holder-world.ts";
 import { Agent, type Registration, until, World } from "./fakes.ts";
-import { TEAM } from "./link/scenario.ts";
+import { teamKey, TEAM } from "./link/scenario.ts";
 
 // Straw Link inside pi sessions: the election among the sessions of a computer, the `straw-boss/link` channel, tower_send with `device`, tower_list's
 // remote towers, and a delivery that waits for an idle tower and enters its session as a `straw-link` message sent with triggerTurn.
@@ -226,4 +229,32 @@ test("remoteTowers cuts what a presence says to the label character set, and lis
 	assert.equal(rows[0]!.workspace, "evil___kind_x");
 	assert.deepEqual(rows[0]!.tabs, [{ label: "___", state: "working" }]);
 	assert.deepEqual([rows[1]!.workspace, rows[1]!.online, rows[1]!.seenSecondsAgo], [null, false, null]);
+});
+
+test("SLH-F006: a teammate's presence too large for an answer does not take the holder's process down; the tower that asked gets a short error at once", async () => {
+	const a = computer("a"), holder = a.tower("tower-1", "wA"), other = a.tower("tower-2", "wB");
+	const rejections: unknown[] = [];
+	const onRejection = (reason: unknown) => void rejections.push(reason);
+	process.on("unhandledRejection", onRejection);
+	try {
+		await holder.start();
+		await until(() => holderOf(a)?.session === "tower-1", "tower-1 as holder");
+		await other.start();
+		await until(() => relay.opened.some((o) => o.device === alice.id), "the holder's stream");
+		const tabs = Array.from({ length: 64 }, (_, i) => ({ label: `a tab with a rather long label ${i} `.padEnd(100, "x"), state: "working".padEnd(60, "y") }));
+		const workspaces = Array.from({ length: 32 }, (_, i) => ({ label: `workspace ${i}`, tower: "idle", tabs }));
+		const state = stateOf(rosterOf(), bob);
+		const big = buildEnvelope({ team: TEAM, epoch: 1, teamKey: teamKey(1), head: state.head, from: bob, seq: 0, ts: Date.now(), kind: "presence", to: [], plaintext: encodePlaintext("presence", { label: "bob-mac", headSeq: state.head.seq, headHash: state.head.hash, workspaces }) });
+		await new RelayClient({ url: "http://relay.test", device: bob, fetch: relay.fetch }).postEnvelope(TEAM, big);
+		await until(async () => ((await holder.tool("tower_list")).details as { remote?: { workspace: string | null }[] }).remote?.some((r) => r.workspace !== null), "the big presence at the holder");
+		const started = Date.now();
+		const list = (await other.tool("tower_list")).details as { remote?: unknown[] };
+		assert.ok(Date.now() - started < 5000, "answered, not timed out");
+		assert.deepEqual(list.remote ?? [], [], "the list is empty rather than a crash");
+		await new Promise((r) => setTimeout(r, 50));
+		assert.deepEqual(rejections, [], "no unhandled rejection");
+		assert.equal(holderOf(a)?.session, "tower-1");
+	} finally {
+		process.off("unhandledRejection", onRejection);
+	}
 });
