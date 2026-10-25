@@ -154,7 +154,7 @@ test("joining: invite text, join request, the word list and safety words, and th
 	for (const id of j.invalidIds) assert.equal(idOk(id), false, JSON.stringify(id));
 	assert.deepEqual(j.wordList, { count: 2048, sha256: BIP39_ENGLISH_SHA256, first: "abandon", last: "zoo" });
 	assert.equal(BIP39_ENGLISH.length, 2048);
-	for (const w of j.safetyWords) assert.deepEqual(safetyWords({ team: h(w.team), inviter: dev(w.inviter), joiner: dev(w.joiner), secret: h(w.secret) }), w.words);
+	for (const w of j.safetyWords) assert.deepEqual(safetyWords({ team: h(w.team), inviterKeyHash: keyRecordHash(dev(w.inviter)), joiner: dev(w.joiner), secret: h(w.secret) }), w.words);
 	for (const c of j.joiner) {
 		const x = checkJoiner({ invite: inv(c.invite), self: dev(c.self), entries: c.entries.map((e: string) => decodeEntry(h(e))), label: c.label ?? undefined });
 		assert.equal(x.ok ? "ok" : x.reason, c.expect, c.name);
