@@ -36,6 +36,7 @@ export function registerSession(kit: Kit, { briefing, roles, presence, membershi
 	const barReason = async () => {
 		try {
 			const here = (placed = await place(run)), { workspaceId } = here;
+			if (!here.terminalId) tell("Straw Boss: this Herdr reports no terminal_id for the pane, so a main of this session cannot come back after a Herdr restore (roles.ts)", "warning");
 			const all = await workspaces(run);
 			const sub = all.find((w) => w.workspace_id === workspaceId);
 			return sub && isSub(sub) ? { text: `${sub.label} is a sub workspace, so this session cannot join the net; the main agent of its parent workspace represents it`, level: "info" as const } : undefined;
@@ -91,6 +92,7 @@ export function registerSession(kit: Kit, { briefing, roles, presence, membershi
 				if (bar) tell(bar.text, bar.level);
 				return !bar;
 			});
+			let keepRestored = false;
 			starting = checked.then(async (joinable) => {
 				if (!joinable) return;
 				if (!s.stopped) unwatch = cfg.watch(presence.restore); // a shutdown that came while Herdr was asked about the workspace has stopped nothing yet
@@ -109,13 +111,16 @@ export function registerSession(kit: Kit, { briefing, roles, presence, membershi
 					await presence.publish(); // sb_opened_by was cleared at shutdown
 				}
 				if (!claimed && !resumed) return;
-				const taken = await membership.promote(false);
+				const taken = await membership.promote(false).catch((error) => {
+					if (resumed) keepRestored = true; // the owner may still confirm after the claim timed out, and that refresh must not open a tower
+					throw error;
+				});
 				if (!taken.promoted) {
 					tell(taken.text, claimed ? "warning" : "info");
 					if (resumed) roles.forget(); // another main holds the tab, and this session stays a member: its record would claim the next restore
 				}
 			}).finally(() => {
-				if (start === started) s.restored = false; // the promotion consumes it when it makes this session the main; one found main already, or a join that failed, does not
+				if (start === started && !keepRestored) s.restored = false; // the promotion consumes it when it makes this session the main; one found main already, or a join that failed, does not
 			});
 		}
 		starting?.catch((error: Error) => tell(`Straw Boss: ${error.message}`, "error"));

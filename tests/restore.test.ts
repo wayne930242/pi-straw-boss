@@ -36,11 +36,12 @@ async function net() {
 }
 
 /** Herdr stops and a new server resumes the panes: the processes end, the panes and tabs stay, the tokens are gone. Resumed sessions start with ids of their own. */
-async function restore(resumed: { id: string; pane: string; file: string; deps?: Parameters<World["agent"]>[0]["deps"] }[]): Promise<Agent[]> {
+async function restore(resumed: { id: string; pane: string; file: string; deps?: Parameters<World["agent"]>[0]["deps"] }[], afterRestart?: () => void): Promise<Agent[]> {
 	const [panes, tabs] = [[...world.herdr.panes], [...world.herdr.tabs]];
 	for (const agent of [...world.agents]) await agent.stop("quit");
 	[world.herdr.panes, world.herdr.tabs] = [panes, tabs]; // the quit closes a tower's pane through a Herdr that is already gone
 	world.herdr.restart();
+	afterRestart?.();
 	const back: Agent[] = [];
 	for (const { id, pane, file, deps } of resumed) back.push(await pi({ id, pane, deps }, file)); // no STRAW_BOSS_ROLE: the resume starts pi in a plain shell
 	await world.quiet();
@@ -248,4 +249,67 @@ test("the guard leaves a restored tab to the main the restore is bringing back, 
 	clock += 31_000;
 	world.herdr.emit("pane.agent_detected", "pane_agent_detected", { pane_id: "wA:p9", workspace_id: "wA" }); // any event of the workspace makes the guard look again
 	await until(() => other.tokens.sb_role === "main", "crowned after the wait");
+});
+
+test("the wait for a restored main ends by its own timer, with no event to make the guard look again", async () => {
+	await net();
+	const deps = { restoreMs: 300 };
+	const [, member] = await restore([{ id: "tower-2", pane: "wA:p7", file: FILES.tower, deps }, { id: "member-2", pane: "wA:p2", file: FILES.member, deps }]) as [Agent, Agent];
+	await until(() => world.herdr.workspace("wA").tokens.tower === "tower-2", "the tower is back");
+	assert.equal(member.tokens.sb_role, "member", "waiting for the main");
+	await until(() => member.tokens.sb_role === "main", "crowned by the guard's own timer", 5000);
+});
+
+test("a pane Herdr reports without a terminal_id restores no main, waits for none, and says so once", async () => {
+	await net();
+	const [, member, main] = await restore(
+		[{ id: "tower-2", pane: "wA:p7", file: FILES.tower }, { id: "member-2", pane: "wA:p2", file: FILES.member }, { id: "main-2", pane: "wA:p1", file: FILES.main }],
+		() => world.herdr.panes.forEach((p) => delete (p as { terminal_id?: string }).terminal_id),
+	) as [Agent, Agent, Agent];
+	await world.quiet();
+	assert.equal(main.notices.filter((n) => /no terminal_id/.test(n.text)).length, 1, "the main's session warns once");
+	assert.equal(main.tokens.sb_role === "main" && member.tokens.sb_role === "main", false, "no second main");
+	assert.equal([main, member].filter((a) => a.tokens.sb_role === "main").length, 1, "the guard crowned one session without waiting");
+});
+
+test("a pane list that fails does not stop the guard from crowning", async () => {
+	await net();
+	const [, member] = await restore([{ id: "tower-2", pane: "wA:p7", file: FILES.tower }, { id: "member-2", pane: "wA:p2", file: FILES.member }]) as [Agent, Agent];
+	await until(() => world.herdr.workspace("wA").tokens.tower === "tower-2", "the tower is back");
+	await world.quiet();
+	assert.equal(member.tokens.sb_role, "member", "waiting for the main");
+	world.herdr.failPanes = true;
+	world.herdr.emit("pane.agent_detected", "pane_agent_detected", { pane_id: "wA:p9", workspace_id: "wA" });
+	await until(() => member.tokens.sb_role === "main", "crowned although the pane list failed");
+});
+
+test("the guard does not wait for a pane whose session is another than the recorded main's", async () => {
+	await net();
+	const [, member] = await restore([{ id: "tower-2", pane: "wA:p7", file: FILES.tower }, { id: "member-2", pane: "wA:p2", file: FILES.member }], () => {
+		world.herdr.pane("wA:p1").agent_session = { value: "/s/someone-else.jsonl" }; // the pane id was reused by another session
+	}) as [Agent, Agent];
+	await until(() => member.tokens.sb_role === "main", "crowned at once");
+});
+
+test("a restored main whose claim times out still opens no tower once the owner confirms it later", async () => {
+	world.herdr.addTab("wA:t1", "work", "wA:p1");
+	world.herdr.addPane("wA:p2", "wA:t1");
+	const fast = { autoTower: true, couple: false, sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, Math.min(ms, 2))) };
+	const first = world.agent({ id: "main-1", pane: "wA:p1", deps: fast });
+	first.file = FILES.main;
+	await first.start();
+	await first.promote();
+	await first.stop("quit");
+	world.herdr.commands("tab", "create").length = 0;
+	world.herdr.restart();
+	world.broker.dropClaims = true;
+	const member = await pi({ id: "member-2", pane: "wA:p2", deps: fast }, FILES.member); // the owner of the tab channel
+	const back = await pi({ id: "main-2", pane: "wA:p1", deps: fast }, FILES.main);
+	await until(() => back.notices.some((n) => /did not confirm/.test(n.text)), "the claim timed out");
+	assert.equal(member.tokens.sb_role, "member");
+	world.broker.dropClaims = false;
+	assert.match(await back.promote(), /the main agent of tab/);
+	await world.quiet();
+	assert.equal(back.tokens.sb_role, "main");
+	assert.equal(world.herdr.commands("tab", "create").length, 0, "the restored main opens no tower, though its claim timed out first");
 });

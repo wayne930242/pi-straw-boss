@@ -9,11 +9,11 @@ import type { Kit } from "./state.ts";
 export const GUARD_MS = 4 * 60_000;
 const TOWER_GRACE_MS = 15_000, TOWER_OPEN_MS = 60_000;
 // How long the guard leaves a tab without a main for the one a Herdr restore is bringing back (roles.ts), before it crowns whoever is there.
-const RESTORE_WAIT_MS = 30_000;
+export const RESTORE_WAIT_MS = 30_000;
 
 /** The tab channel owner's check that a base has mains only while it has a tower. */
 export function createGuard({ cfg, s, me }: Kit, { claim, pin, openTower, roles }: Election & Pick<Reach, "openTower"> & { roles: Roles }) {
-	const { run, autoTower, couple, guardMs, events, now } = cfg;
+	const { run, autoTower, couple, guardMs, events, now, restoreMs } = cfg;
 	// A base has mains only while it has a tower. The owner of each tab channel, its earliest member, checks when Herdr says a workspace's tokens
 	// or this workspace's panes changed, and every guardMs: with a live tower and no live main it promotes itself; with no tower for
 	// TOWER_GRACE_MS (at once when the tower quit) it clears the tab's main, unless that main is younger than TOWER_OPEN_MS and its tower may
@@ -26,11 +26,18 @@ export function createGuard({ cfg, s, me }: Kit, { claim, pin, openTower, roles 
 	const restoring = async () => {
 		const record = roles.mainOf(s.at.tabId, s.at.workspaceId);
 		if (!record?.terminal) return undefined;
-		const pane = (await panes(run, s.at.workspaceId)).find((p) => p.pane_id === record.pane);
+		let pane;
+		try {
+			pane = (await panes(run, s.at.workspaceId)).find((p) => p.pane_id === record.pane);
+		} catch {
+			return undefined; // a pane list that cannot be had is no reason to hold the crown back
+		}
 		if (!pane?.terminal_id || pane.terminal_id === record.terminal) return undefined;
+		// A pane id can be reused: where Herdr names the pane's session, it must be the recorded main's.
+		if (pane.agent_session?.value && record.file && pane.agent_session.value !== record.file) return undefined;
 		const until = awaited.get(record.pane) ?? now();
 		awaited.set(record.pane, until);
-		return now() < until + RESTORE_WAIT_MS ? until + RESTORE_WAIT_MS : undefined;
+		return now() < until + restoreMs ? until + restoreMs : undefined;
 	};
 	const guard = async (joining = false) => {
 		const owner = s.c.snapshot().owner?.sessionId === me();

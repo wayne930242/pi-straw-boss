@@ -70,6 +70,8 @@ export class FakeHerdr {
 	failMove = false;
 	/** Makes every `list` call fail, as a Herdr that cannot answer. */
 	failReads = false;
+	/** Pane lists fail while this is set (the workspace and tab lists still answer). */
+	failPanes = false;
 	wsTokenHistory: (string | undefined)[] = [];
 	onAgentStart?: (pane: FakePane) => void;
 	onTabClose?: (paneIds: string[]) => void;
@@ -140,6 +142,7 @@ export class FakeHerdr {
 		const flag = (name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
 		const out = (result: unknown) => JSON.stringify({ result });
 		if (this.failReads && cmd === "list") throw new Error(`herdr ${args.join(" ")} failed: not answering`);
+		if (this.failPanes && group === "pane" && cmd === "list") throw new Error("herdr pane list failed: not answering");
 		if (group === "pane" && cmd === "current") return out({ pane: this.pane(self) });
 		// The foreground processes of a pane, as Herdr lists them (a launch script shows its argv; pi shows only its argv0).
 		if (group === "pane" && cmd === "process-info") return out({ process_info: { pane_id: flag("--pane"), foreground_processes: this.pane(flag("--pane")!).processes ?? [] } });
@@ -246,6 +249,8 @@ export interface Peer { id: string; name: string; pane: string; status?: string;
 export class FakeBroker {
 	sessions = new Map<string, Peer>();
 	owners = new Map<string, string>();
+	/** A claim published to the owner is lost on the way, as when the owner does not answer in time. */
+	dropClaims = false;
 	states = new Map<string, { revision: number; payload: unknown }>();
 	delivered: { from: string; to: string; message: string; tokens: string }[] = [];
 	failing = new Set<string>();
@@ -278,6 +283,7 @@ export class FakeBroker {
 				if (!this.connected) throw new Error("Intercom is not connected");
 				this.published.push({ from: agent.id, ns, payload, options });
 				if (options?.ownerOnly && owner !== agent.id) return;
+				if (this.dropClaims && (payload as { type?: string })?.type === "claim") return;
 				if (options?.audience === "capable") this.capable(ns).forEach((id) => this.deliver(id, ns, event));
 				else if (owner) this.deliver(owner, ns, event);
 			},

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
@@ -474,4 +474,22 @@ test("R-F008: the inherited PI_INTERCOM_* and PI_SUBAGENT_* variables reach neit
 		delete g.__seen;
 		delete g.__client;
 	}
+});
+
+test("a sidecar that becomes its tab's main deletes the record of the pi main it replaced, so a restore does not give the tab back to that pi", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "psb-record-"));
+	scratch.push(dir);
+	const roles = join(world.stateDir, "roles"), held = () => (existsSync(roles) ? readdirSync(roles) : []);
+	world.herdr.addTab("wA:t1", "work", "wA:p1");
+	const agent = world.agent({ id: "pi-main", pane: "wA:p1", tab: "wA:t1" });
+	agent.file = "/s/main.jsonl";
+	await agent.start();
+	await agent.promote();
+	await agent.stop("quit"); // a quit keeps the record
+	assert.equal(held().length, 1, "the pi main left its record");
+	const record = join(dir, "r.json");
+	await claude({ record });
+	writeFileSync(record, "{}");
+	await until(() => roleOf("wA:p3") === "main", "the sidecar is the main");
+	assert.deepEqual(held(), [], "the pi main's record is gone, and the sidecar, which has no session file, wrote none");
 });

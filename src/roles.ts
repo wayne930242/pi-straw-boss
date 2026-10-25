@@ -14,10 +14,10 @@ import type { Kit } from "./state.ts";
 // Two checks keep a record from outliving its meaning. A tab has one main record: the session that becomes its main drops the others for the tab (a demoted
 // main, whose record would race the new one at a restore). And a main takes the role back only in a pane whose terminal is not the one it recorded: Herdr starts
 // a new terminal for a pane it restores, while a `/resume` in the same shell after a /quit finds the old one, and that is no restore. (A tower needs no such
-// check: it closes its pane when it quits, and a pane id is not used again.)
+// check: it closes its pane when it quits, and its record is dropped then.)
 
 const KEEP_MS = 90 * 24 * 3600_000;
-export interface RoleRecord { role: "tower" | "main"; pane: string; tab: string; workspace: string; terminal?: string; at: number }
+export interface RoleRecord { role: "tower" | "main"; pane: string; tab: string; workspace: string; terminal?: string; file?: string; at: number }
 /** Where a session runs now: the pane, tab, and workspace of the record must all be these. */
 export interface Here { paneId?: string; tabId?: string; workspaceId?: string; terminalId?: string }
 
@@ -38,7 +38,7 @@ export function createRoles({ cfg, s, guiDir, tell }: Kit) {
 		}
 		try {
 			const r = JSON.parse(raw) as Partial<RoleRecord>;
-			return (r.role === "tower" || r.role === "main") && typeof r.pane === "string" && typeof r.tab === "string" && typeof r.workspace === "string" && (r.terminal === undefined || typeof r.terminal === "string") ? (r as RoleRecord) : undefined;
+			return (r.role === "tower" || r.role === "main") && typeof r.pane === "string" && typeof r.tab === "string" && typeof r.workspace === "string" && (r.terminal === undefined || typeof r.terminal === "string") && (r.file === undefined || typeof r.file === "string") ? (r as RoleRecord) : undefined;
 		} catch {
 			return undefined; // a record that cannot be read proves nothing
 		}
@@ -78,19 +78,21 @@ export function createRoles({ cfg, s, guiDir, tell }: Kit) {
 		/** The main record of a tab, whichever session left it: the main a Herdr restore may be bringing back there. */
 		mainOf,
 		remember(role: RoleRecord["role"]) {
-			if (!s.file) return; // a session pi does not keep has nothing to resume
-			try {
-				mkdirSync(dir, { recursive: true, mode: 0o700 });
-				const file = path(s.file), temp = `${file}.${process.pid}.tmp`, at = cfg.now();
-				writeFileSync(temp, JSON.stringify({ role, pane: s.at.paneId, tab: s.at.tabId, workspace: s.at.workspaceId, ...(s.at.terminalId ? { terminal: s.at.terminalId } : {}), at } satisfies RoleRecord), { mode: 0o600 });
-				renameSync(temp, file);
-			} catch (error) {
-				return void tell(`Straw Boss: could not record this session's role, so a Herdr restore will not bring it back: ${(error as Error).message}`, "warning");
+			if (s.file) {
+				try {
+					mkdirSync(dir, { recursive: true, mode: 0o700 });
+					const file = path(s.file), temp = `${file}.${process.pid}.tmp`, at = cfg.now();
+					writeFileSync(temp, JSON.stringify({ role, pane: s.at.paneId, tab: s.at.tabId, workspace: s.at.workspaceId, ...(s.at.terminalId ? { terminal: s.at.terminalId } : {}), file: s.file, at } satisfies RoleRecord), { mode: 0o600 });
+					renameSync(temp, file);
+				} catch (error) {
+					return void tell(`Straw Boss: could not record this session's role, so a Herdr restore will not bring it back: ${(error as Error).message}`, "warning");
+				}
 			}
-			// The record is written; what follows tidies other files, and one that vanished meanwhile (another session tidying too) is no failure of this write.
+			// What follows tidies other files, and one that vanished meanwhile (another session tidying too) is no failure. It runs also for a session with no file of
+			// its own (a sidecar's main): the demoted main's record must not outlive the tab's new main.
 			let names: string[] = [];
 			try {
-				names = readdirSync(dir).filter((name) => name.endsWith(".json") && join(dir, name) !== path(s.file!));
+				names = readdirSync(dir).filter((name) => name.endsWith(".json") && (!s.file || join(dir, name) !== path(s.file)));
 			} catch { /* nothing to tidy */ }
 			for (const name of names) {
 				try {

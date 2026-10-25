@@ -3,7 +3,7 @@ import { createServer } from "node:net";
 import { pathToFileURL } from "node:url";
 import { createDigest } from "../digest.ts";
 import { createElection } from "../election.ts";
-import { createGuard, GUARD_MS } from "../guard.ts";
+import { createGuard, GUARD_MS, RESTORE_WAIT_MS } from "../guard.ts";
 import { herdrApi, herdrCall, herdrRun, herdrWorld, isSub, place, socketRun, worldOf, panes, workspaces } from "../herdr.ts";
 import type { Briefing } from "../briefing.ts";
 import { createMembership } from "../membership.ts";
@@ -22,7 +22,7 @@ import { agentFiles, findIntercom, type Held, newPipe, readHeld, type Reply, soc
 
 export type Kind = "claude" | "codex";
 /** `connect` hands a new client of the broker (started when none runs); the rest are the dependencies of a pi session, replaceable the same way. */
-export interface AgentDeps extends Pick<Deps, "run" | "world" | "api" | "call" | "sleep" | "now" | "events" | "watch" | "guardMs" | "couple" | "autoTower" | "detectMs" | "stateDir"> {
+export interface AgentDeps extends Pick<Deps, "run" | "world" | "api" | "call" | "sleep" | "now" | "events" | "watch" | "guardMs" | "couple" | "autoTower" | "detectMs" | "stateDir" | "restoreMs"> {
 	env?: NodeJS.ProcessEnv;
 	connect?: () => IntercomLike | Promise<IntercomLike>;
 	/** How often the pane is read when Herdr's events say nothing, how often the record file is looked at, and how long an agent Herdr has not detected yet is waited for. */
@@ -64,7 +64,7 @@ function agentConfig(d: AgentDeps, env: NodeJS.ProcessEnv): Config {
 		sleep: d.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))), now: d.now ?? Date.now,
 		watch: d.watch ?? herdrWatch(), events: d.events ?? herdrEvents(), guardMs: d.guardMs ?? GUARD_MS, couple: d.couple ?? true, autoTower: d.autoTower ?? true, detectMs: d.detectMs ?? 1000,
 		tailscale: unavailable("tailscale"), copy: unavailable("copy"), openUrl: unavailable("openUrl"), later: unavailable("later"), gone: unavailable("gone"),
-		promptDir: "", bundle: undefined, nudgeMs: 0, version: "", adoptMs: 0,
+		promptDir: "", bundle: undefined, nudgeMs: 0, version: "", adoptMs: 0, restoreMs: d.restoreMs ?? RESTORE_WAIT_MS,
 	};
 }
 
