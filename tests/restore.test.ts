@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { until, World, type Agent } from "./fakes.ts";
@@ -36,13 +36,13 @@ async function net() {
 }
 
 /** Herdr stops and a new server resumes the panes: the processes end, the panes and tabs stay, the tokens are gone. Resumed sessions start with ids of their own. */
-async function restore(resumed: { id: string; pane: string; file: string }[]): Promise<Agent[]> {
+async function restore(resumed: { id: string; pane: string; file: string; deps?: Parameters<World["agent"]>[0]["deps"] }[]): Promise<Agent[]> {
 	const [panes, tabs] = [[...world.herdr.panes], [...world.herdr.tabs]];
 	for (const agent of [...world.agents]) await agent.stop("quit");
 	[world.herdr.panes, world.herdr.tabs] = [panes, tabs]; // the quit closes a tower's pane through a Herdr that is already gone
 	world.herdr.restart();
 	const back: Agent[] = [];
-	for (const { id, pane, file } of resumed) back.push(await pi({ id, pane }, file)); // no STRAW_BOSS_ROLE: the resume starts pi in a plain shell
+	for (const { id, pane, file, deps } of resumed) back.push(await pi({ id, pane, deps }, file)); // no STRAW_BOSS_ROLE: the resume starts pi in a plain shell
 	await world.quiet();
 	return back;
 }
@@ -125,4 +125,127 @@ test("a record untouched for 90 days is swept when another is written", async ()
 	await next.promote();
 	assert.ok(!readdirSync(roles).includes(old!), "the old record is gone");
 	assert.ok(readdirSync(roles).length >= 2, "the others stay");
+});
+
+const roles = () => join(world.stateDir, "roles");
+const records = () => readdirSync(roles()).filter((name) => name !== "dangling.json").map((name) => JSON.parse(readFileSync(join(roles(), name), "utf8")) as { role: string; pane: string });
+
+test("a demoted main's record does not win its tab back: the main that took the tab does, whichever pi starts first", async () => {
+	for (const order of [["main", "member"], ["member", "main"]] as const) {
+		const { main, member } = await net();
+		const stale = readdirSync(roles()).map((name) => [name, readFileSync(join(roles(), name), "utf8")] as const).find(([, text]) => text.includes('"pane":"wA:p1"'))!;
+		await member.command(""); // /boss: forces the promotion, so the first main is demoted
+		await until(() => member.tokens.sb_role === "main" && main.tokens.sb_role === "member", "the member took the tab");
+		assert.deepEqual(records().map((r) => `${r.role} ${r.pane}`).sort(), ["main wA:p2", "tower wA:p7"], "one main record for the tab");
+		writeFileSync(join(roles(), stale[0]), stale[1]); // and a demoted main's record from before a tab had only one, back beside it
+		// Without the guard, which crowns whoever joins a tab first once the tower is back: only the records decide here.
+		const deps = { couple: false };
+		const files = { main: { id: "main-2", pane: "wA:p1", file: FILES.main, deps }, member: { id: "member-2", pane: "wA:p2", file: FILES.member, deps } };
+		const back = await restore([{ id: "tower-2", pane: "wA:p7", file: FILES.tower }, ...order.map((who) => files[who])]);
+		const [first, second] = back.slice(1) as [Agent, Agent], [then, now] = order[0] === "main" ? [first, second] : [second, first];
+		await until(() => now.tokens.sb_role === "main", `the member is main again (${order.join(", ")} first)`);
+		assert.equal(then.tokens.sb_role, "member", "the demoted main stays a member");
+		await world.stopAll();
+		world = new World();
+	}
+});
+
+test("a tower comes back only in the pane, tab, and workspace it recorded", async () => {
+	await net();
+	world.herdr.pane("wA:p7").tab_id = "wA:t2"; // the pane moved to another tab of its workspace
+	const [moved] = await restore([{ id: "tower-2", pane: "wA:p7", file: FILES.tower }]) as [Agent];
+	assert.equal(moved.tokens.sb_role, "member", "same pane id, other tab");
+	assert.equal(world.herdr.workspace("wA").tokens.tower, undefined);
+	await world.stopAll();
+
+	world = new World();
+	await net();
+	world.herdr.pane("wA:p7").tab_id = "wB:t1"; // and to another workspace
+	world.herdr.pane("wA:p7").workspace_id = "wB";
+	const [other] = await restore([{ id: "tower-3", pane: "wA:p7", file: FILES.tower }]) as [Agent];
+	assert.equal(other.tokens.sb_role, "member", "same pane id, other workspace");
+	assert.equal(world.herdr.workspace("wB").tokens.tower, undefined);
+});
+
+test("a main that quit and is resumed in the same shell takes no role from its record, which a later restore does not honor either", async () => {
+	world.herdr.addTab("wA:t7", "tower", "wA:p7");
+	await pi({ id: "tower-1", pane: "wA:p7", tab: "wA:t7", env: { STRAW_BOSS_ROLE: "tower" } }, FILES.tower);
+	const deps = { couple: false }; // the guard would crown the one member of a tab anyway
+	const main = await pi({ id: "main-1", pane: "wA:p1", tab: "wA:t1", deps }, FILES.main);
+	await main.promote();
+	assert.ok(records().some((r) => r.pane === "wA:p1"), "the main left a record");
+	await main.stop("quit"); // /quit: the pane and its shell stay
+	const again = await pi({ id: "main-2", pane: "wA:p1", deps }, FILES.main); // `pi --session` (or /resume) in that shell
+	assert.equal(again.tokens.sb_role, "member", "no restore brought it, so no claim was made");
+	assert.ok(!records().some((r) => r.pane === "wA:p1"), "the record is gone");
+	const [back] = await restore([{ id: "tower-2", pane: "wA:p7", file: FILES.tower }, { id: "main-3", pane: "wA:p1", file: FILES.main, deps }]).then((all) => all.slice(1)) as [Agent];
+	assert.equal(back.tokens.sb_role, "member", "and the next Herdr restore finds nothing to give back");
+});
+
+test("a restored main opens no tower, and opens one the next time it becomes the main", async () => {
+	world.herdr.addTab("wA:t1", "work", "wA:p1");
+	const main = world.agent({ id: "main-1", pane: "wA:p1", deps: { autoTower: true } });
+	main.file = FILES.main;
+	await main.start();
+	await main.promote();
+	await world.quiet();
+	assert.equal(world.herdr.commands("tab", "create").length, 1, "the first main of a workspace opens the tower");
+	// Herdr stops and a new server resumes the main alone, and the broker still knows its session id.
+	const [panes, tabs] = [[...world.herdr.panes], [...world.herdr.tabs]];
+	await main.stop("quit");
+	[world.herdr.panes, world.herdr.tabs] = [panes.filter((p) => p.pane_id === "wA:p1"), tabs];
+	world.herdr.restart();
+	const back = world.agent({ id: "main-1", pane: "wA:p1", deps: { autoTower: true } });
+	back.file = FILES.main;
+	await back.start();
+	await world.quiet();
+	assert.equal(back.tokens.sb_role, "main", "it is the main again");
+	assert.equal(world.herdr.commands("tab", "create").length, 0, "its tower is coming back, so it opens none");
+	world.herdr.addPane("wA:p2", "wA:t1");
+	const rival = world.agent({ id: "rival-1", pane: "wA:p2" });
+	rival.file = FILES.member;
+	await rival.start();
+	await rival.command(""); // takes the tab
+	await until(() => back.tokens.sb_role === "member", "the main was demoted");
+	await back.command("");
+	await until(() => back.tokens.sb_role === "main", "and took the tab back");
+	await world.quiet();
+	assert.equal(world.herdr.commands("tab", "create").length, 1, "this time it opens the tower");
+});
+
+test("a record directory entry that vanishes during the sweep does not make the write look failed", async () => {
+	mkdirSync(roles(), { recursive: true });
+	symlinkSync(join(world.stateDir, "nowhere"), join(roles(), "dangling.json")); // statSync of it fails with ENOENT, as a file removed between readdir and stat does
+	world.herdr.addTab("wA:t7", "tower", "wA:p7");
+	const main = await pi({ id: "main-1", pane: "wA:p1", tab: "wA:t1" }, FILES.main);
+	await main.promote();
+	assert.ok(records().some((r) => r.pane === "wA:p1"), "the record was written");
+	assert.deepEqual(main.notices.filter((n) => /could not record/.test(n.text)), [], "and nothing said it was not");
+});
+
+test("the guard leaves a restored tab to the main the restore is bringing back, and crowns the member that is there once it has waited long enough", async () => {
+	await net();
+	let clock = Date.now();
+	const deps = { now: () => clock };
+	// The member's pi comes back first, with its tower: the guard would crown it as the tab's only member, but the main's pane is back in a new terminal and its pi is on the way.
+	const [, member] = await restore([{ id: "tower-2", pane: "wA:p7", file: FILES.tower, deps }, { id: "member-2", pane: "wA:p2", file: FILES.member, deps }]) as [Agent, Agent];
+	await until(() => world.herdr.workspace("wA").tokens.tower === "tower-2", "the tower is back");
+	await world.quiet();
+	assert.equal(member.tokens.sb_role, "member", "nobody is crowned while the main is expected");
+	const main = await pi({ id: "main-2", pane: "wA:p1", deps }, FILES.main);
+	await until(() => main.tokens.sb_role === "main", "the main is main again");
+	assert.equal(member.tokens.sb_role, "member");
+
+	// A main whose pi never comes back (it was not running when Herdr stopped) holds the tab only for the wait.
+	await world.stopAll();
+	world = new World();
+	await net();
+	clock = Date.now();
+	const [, other] = await restore([{ id: "tower-3", pane: "wA:p7", file: FILES.tower, deps }, { id: "member-3", pane: "wA:p2", file: FILES.member, deps }]) as [Agent, Agent];
+	await until(() => world.herdr.workspace("wA").tokens.tower === "tower-3", "the tower is back");
+	await world.quiet();
+	assert.equal(other.tokens.sb_role, "member", "waiting");
+	clock += 31_000;
+	world.herdr.emit("pane.agent_detected", "pane_agent_detected", { pane_id: "wA:p9", workspace_id: "wA" }); // any event of the workspace makes the guard look again
+	await until(() => other.tokens.sb_role === "main", "crowned after the wait");
 });

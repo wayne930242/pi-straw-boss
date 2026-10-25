@@ -1,15 +1,18 @@
 import { panes, workspaces } from "./herdr.ts";
 import type { Election } from "./election.ts";
 import type { Reach } from "./reach.ts";
+import type { Roles } from "./roles.ts";
 import type { Kit } from "./state.ts";
 
 // The tower and the mains go together (guard below): Herdr's events start each check, and a sweep every GUARD_MS catches what no event tells; how
 // long a tower may be gone (a /reload) before the mains are cleared, and how long a fresh main's tower may take to open.
 export const GUARD_MS = 4 * 60_000;
 const TOWER_GRACE_MS = 15_000, TOWER_OPEN_MS = 60_000;
+// How long the guard leaves a tab without a main for the one a Herdr restore is bringing back (roles.ts), before it crowns whoever is there.
+const RESTORE_WAIT_MS = 30_000;
 
 /** The tab channel owner's check that a base has mains only while it has a tower. */
-export function createGuard({ cfg, s, me }: Kit, { claim, pin, openTower }: Election & Pick<Reach, "openTower">) {
+export function createGuard({ cfg, s, me }: Kit, { claim, pin, openTower, roles }: Election & Pick<Reach, "openTower"> & { roles: Roles }) {
 	const { run, autoTower, couple, guardMs, events, now } = cfg;
 	// A base has mains only while it has a tower. The owner of each tab channel, its earliest member, checks when Herdr says a workspace's tokens
 	// or this workspace's panes changed, and every guardMs: with a live tower and no live main it promotes itself; with no tower for
@@ -17,6 +20,18 @@ export function createGuard({ cfg, s, me }: Kit, { claim, pin, openTower }: Elec
 	// still be opening. A check that has to wait for either sets one timer for it. A demoted main keeps its subagents.
 	let missing: number | undefined, guardTimer: ReturnType<typeof setInterval> | undefined, unlisten: (() => void) | undefined;
 	let soon: ReturnType<typeof setTimeout> | undefined, soonAt = Infinity, checking = false, again: boolean | undefined;
+	// When the guard first held back for the pane of a main a restore has yet to bring back.
+	const awaited = new Map<string, number>();
+	/** The time until which the tab waits for the main a Herdr restore is bringing back: its pane runs in a new terminal, and its pi, joined or not, has not taken the tab yet. */
+	const restoring = async () => {
+		const record = roles.mainOf(s.at.tabId, s.at.workspaceId);
+		if (!record?.terminal) return undefined;
+		const pane = (await panes(run, s.at.workspaceId)).find((p) => p.pane_id === record.pane);
+		if (!pane?.terminal_id || pane.terminal_id === record.terminal) return undefined;
+		const until = awaited.get(record.pane) ?? now();
+		awaited.set(record.pane, until);
+		return now() < until + RESTORE_WAIT_MS ? until + RESTORE_WAIT_MS : undefined;
+	};
 	const guard = async (joining = false) => {
 		const owner = s.c.snapshot().owner?.sessionId === me();
 		if (!s.joined || s.isTower || s.stopped || (!owner && !joining)) return void (missing = undefined);
@@ -25,7 +40,12 @@ export function createGuard({ cfg, s, me }: Kit, { claim, pin, openTower }: Elec
 		const state = s.c.snapshot().state?.payload as { main?: string; since?: number } | undefined, main = s.pinned ?? state?.main;
 		if (live(ws?.tokens?.tower)) {
 			missing = undefined;
-			if (owner && !live(main)) await claim(s.c, me(), false);
+			if (owner && !live(main)) {
+				// Whoever joins a restored tab first would be crowned over the main the restore is bringing back.
+				const waitUntil = await restoring();
+				if (waitUntil === undefined) await claim(s.c, me(), false);
+				else wake(waitUntil);
+			}
 			return;
 		}
 		// A tower opens by itself when this base has two members while another base already has one: they start to collide (the other rule, a

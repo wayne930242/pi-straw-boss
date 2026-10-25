@@ -11,9 +11,15 @@ import type { Kit } from "./state.ts";
 // A record is dropped when the session is closed on purpose (Closing). A /quit, a guard demotion, and a Herdr stop all look alike from inside the process, and
 // a stop demotes the mains just before it ends them, so none of those drops it: a record outlives a demotion, which is why a restored main never opens its tower
 // (the tower comes back with its own record, and a base without one clears its mains, guard.ts).
+// Two checks keep a record from outliving its meaning. A tab has one main record: the session that becomes its main drops the others for the tab (a demoted
+// main, whose record would race the new one at a restore). And a main takes the role back only in a pane whose terminal is not the one it recorded: Herdr starts
+// a new terminal for a pane it restores, while a `/resume` in the same shell after a /quit finds the old one, and that is no restore. (A tower needs no such
+// check: it closes its pane when it quits, and a pane id is not used again.)
 
 const KEEP_MS = 90 * 24 * 3600_000;
-export interface RoleRecord { role: "tower" | "main"; pane: string; tab: string; workspace: string; at: number }
+export interface RoleRecord { role: "tower" | "main"; pane: string; tab: string; workspace: string; terminal?: string; at: number }
+/** Where a session runs now: the pane, tab, and workspace of the record must all be these. */
+export interface Here { paneId?: string; tabId?: string; workspaceId?: string; terminalId?: string }
 
 const keyOf = (file: string) => createHash("sha256").update(file).digest("hex").slice(0, 32);
 
@@ -21,43 +27,81 @@ const keyOf = (file: string) => createHash("sha256").update(file).digest("hex").
 export function createRoles({ cfg, s, guiDir, tell }: Kit) {
 	const dir = join(guiDir, "roles");
 	const path = (file: string) => join(dir, `${keyOf(file)}.json`);
-	const read = (file: string): RoleRecord | undefined => {
+	const load = (record: string, quiet = false): RoleRecord | undefined => {
 		let raw: string;
 		try {
-			raw = readFileSync(path(file), "utf8");
+			raw = readFileSync(record, "utf8");
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-			tell(`Straw Boss: could not read this session's role record: ${(error as Error).message}`, "warning");
+			if (!quiet) tell(`Straw Boss: could not read this session's role record: ${(error as Error).message}`, "warning");
 			return undefined;
 		}
 		try {
 			const r = JSON.parse(raw) as Partial<RoleRecord>;
-			return (r.role === "tower" || r.role === "main") && typeof r.pane === "string" && typeof r.tab === "string" && typeof r.workspace === "string" ? (r as RoleRecord) : undefined;
+			return (r.role === "tower" || r.role === "main") && typeof r.pane === "string" && typeof r.tab === "string" && typeof r.workspace === "string" && (r.terminal === undefined || typeof r.terminal === "string") ? (r as RoleRecord) : undefined;
 		} catch {
 			return undefined; // a record that cannot be read proves nothing
 		}
 	};
+	const within = (here: Here): RoleRecord | undefined => {
+		const record = s.file ? load(path(s.file)) : undefined;
+		return record && here.paneId === record.pane && here.tabId === record.tab && here.workspaceId === record.workspace ? record : undefined;
+	};
+	/** The newest main record of a tab. A tab has one, but a demoted main's record from before the one-record rule may be left beside it. */
+	const mainOf = (tab: string, workspace: string): RoleRecord | undefined => {
+		let names: string[] = [];
+		try {
+			names = readdirSync(dir).filter((name) => name.endsWith(".json"));
+		} catch { /* no records */ }
+		const mains = names.flatMap((name) => load(join(dir, name), true) ?? []).filter((r) => r.role === "main" && r.tab === tab && r.workspace === workspace);
+		return mains.sort((a, b) => b.at - a.at)[0];
+	};
+	const forget = () => {
+		if (s.file) rmSync(path(s.file), { force: true });
+	};
 	return {
-		/** The role this session recorded for the pane (and tab, once it knows its place) it is in now; undefined when it recorded none there. */
-		held(pane: string | undefined, tab?: string): RoleRecord["role"] | undefined {
-			const record = s.file && pane ? read(s.file) : undefined;
-			return record && record.pane === pane && (tab === undefined || record.tab === tab) ? record.role : undefined;
+		/**
+		 * The role this session recorded for the pane, tab, and workspace it is in now; undefined when it recorded none there, or when `here` lacks one of the
+		 * three. A main also needs proof of a restart (a terminal other than the one it recorded) and the newest main record of its tab: a tab has one main.
+		 */
+		held(here: Here): RoleRecord["role"] | undefined {
+			const record = within(here);
+			if (record?.role === "tower") return "tower";
+			if (!record || !record.terminal || !here.terminalId || record.terminal === here.terminalId) return undefined;
+			return mainOf(record.tab, record.workspace)?.at === record.at ? "main" : undefined;
 		},
+		/** Whether the record is a main's from this very terminal: a pi started in the shell that outlived the session, which no restore brought. */
+		sameShell(here: Here): boolean {
+			const record = within(here);
+			return record?.role === "main" && record.terminal !== undefined && record.terminal === here.terminalId;
+		},
+		/** The main record of a tab, whichever session left it: the main a Herdr restore may be bringing back there. */
+		mainOf,
 		remember(role: RoleRecord["role"]) {
 			if (!s.file) return; // a session pi does not keep has nothing to resume
 			try {
 				mkdirSync(dir, { recursive: true, mode: 0o700 });
 				const file = path(s.file), temp = `${file}.${process.pid}.tmp`, at = cfg.now();
-				writeFileSync(temp, JSON.stringify({ role, pane: s.at.paneId, tab: s.at.tabId, workspace: s.at.workspaceId, at } satisfies RoleRecord), { mode: 0o600 });
+				writeFileSync(temp, JSON.stringify({ role, pane: s.at.paneId, tab: s.at.tabId, workspace: s.at.workspaceId, ...(s.at.terminalId ? { terminal: s.at.terminalId } : {}), at } satisfies RoleRecord), { mode: 0o600 });
 				renameSync(temp, file);
-				for (const name of readdirSync(dir)) if (name.endsWith(".json") && at - statSync(join(dir, name)).mtimeMs > KEEP_MS) rmSync(join(dir, name), { force: true });
 			} catch (error) {
-				tell(`Straw Boss: could not record this session's role, so a Herdr restore will not bring it back: ${(error as Error).message}`, "warning");
+				return void tell(`Straw Boss: could not record this session's role, so a Herdr restore will not bring it back: ${(error as Error).message}`, "warning");
+			}
+			// The record is written; what follows tidies other files, and one that vanished meanwhile (another session tidying too) is no failure of this write.
+			let names: string[] = [];
+			try {
+				names = readdirSync(dir).filter((name) => name.endsWith(".json") && join(dir, name) !== path(s.file!));
+			} catch { /* nothing to tidy */ }
+			for (const name of names) {
+				try {
+					const other = join(dir, name), record = load(other, true);
+					// A tab has one main: the others' records, a demoted main's among them, would race this one at a restore.
+					const rival = role === "main" && record?.role === "main" && record.tab === s.at.tabId && record.workspace === s.at.workspaceId;
+					if (rival || cfg.now() - statSync(other).mtimeMs > KEEP_MS) rmSync(other, { force: true });
+				} catch { /* gone already, or unreadable: left for the next write */ }
 			}
 		},
-		forget() {
-			if (s.file) rmSync(path(s.file), { force: true });
-		},
+		forget,
 	};
 }
 export type Roles = ReturnType<typeof createRoles>;

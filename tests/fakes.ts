@@ -43,7 +43,7 @@ export const settle = async () => {
 };
 
 interface Tokens { [name: string]: string }
-interface FakePane { pane_id: string; tab_id: string; workspace_id: string; agent?: string; agent_status?: string; agent_session?: { value: string }; label?: string; tokens: Tokens; env?: string[]; cwd?: string; processes?: { argv?: string[]; argv0?: string; name?: string }[] }
+interface FakePane { pane_id: string; tab_id: string; workspace_id: string; terminal_id: string; agent?: string; agent_status?: string; agent_session?: { value: string }; label?: string; tokens: Tokens; env?: string[]; cwd?: string; processes?: { argv?: string[]; argv0?: string; name?: string }[] }
 interface FakeWorkspace { workspace_id: string; label: string; agent_status?: string; focused?: boolean; active_tab_id?: string; tokens: Tokens; worktree?: { checkout_path?: string; is_linked_worktree?: boolean; repo_key?: string } }
 
 /** A tiny Herdr: workspaces, tabs, panes, and the CLI subcommands the extension calls. */
@@ -88,9 +88,11 @@ export class FakeHerdr {
 		for (const l of [...this.listeners]) if (l.types.includes(type)) queueMicrotask(() => l.on({ event, data }));
 	}
 	private next = 100;
+	private terminals = 0;
 	/** A new server starts with no tokens: the old one kept them in memory. Panes, tabs and workspaces stay, as after a live handoff. */
 	restart(): void {
 		for (const holder of [...this.panes, ...this.workspaces]) holder.tokens = {};
+		for (const pane of this.panes) pane.terminal_id = `term_${this.terminals++}`; // a restored pane runs in a new terminal; its id is the same
 		this.wsTokenHistory.length = 0;
 		this.calls.length = 0;
 	}
@@ -100,7 +102,7 @@ export class FakeHerdr {
 
 	/** A pane running pi, or "shell" for a bare shell prompt. */
 	addPane(paneId: string, tabId: string, agent = "pi"): FakePane {
-		const pane = { pane_id: paneId, tab_id: tabId, workspace_id: tabId.split(":")[0]!, agent: agent === "shell" ? undefined : agent, tokens: {} };
+		const pane = { pane_id: paneId, tab_id: tabId, workspace_id: tabId.split(":")[0]!, terminal_id: `term_${this.terminals++}`, agent: agent === "shell" ? undefined : agent, tokens: {} };
 		this.panes.push(pane);
 		return pane;
 	}
@@ -421,7 +423,8 @@ export class Agent {
 			},
 			sessionManager: { getBranch: () => this.entries.map((e) => ({ type: "custom", customType: e.customType, data: e.data })), getEntries: () => [...this.transcript, ...this.entries.map((e) => ({ type: "custom", customType: e.customType, data: e.data }))], getSessionFile: () => this.file },
 		};
-		const env: Record<string, string | undefined> = { ...(options.outsideHerdr ? {} : { HERDR_PANE_ID: options.pane }), PI_INTERCOM_SESSION_ID: this.id, ...options.env };
+		const pane = world.herdr.panes.find((p) => p.pane_id === options.pane);
+		const env: Record<string, string | undefined> = { ...(options.outsideHerdr ? {} : { HERDR_PANE_ID: options.pane, HERDR_TAB_ID: pane?.tab_id, HERDR_WORKSPACE_ID: pane?.workspace_id }), PI_INTERCOM_SESSION_ID: this.id, ...options.env };
 		this.env = env;
 		const events = {
 			on: (channel: string, handler: (data: unknown) => void) => {
