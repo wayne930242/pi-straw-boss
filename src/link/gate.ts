@@ -13,6 +13,8 @@ export const GATE_MS = 10 * 60_000;
 export const MAX_ARGS = 12_000;
 const ANSWER_ID = /^[A-Za-z0-9_-]{16,64}$/;
 const SERVED = 16;
+/** Tells the ctx.ui wrap (src/intercept.ts) not to relay this confirm: the gate publishes it itself, and a second copy would be a second dialog on the page. */
+const NO_RELAY = Symbol.for("pi-straw-boss.no-relay");
 
 /** The sender's device that is asked too, at `forward`: `send` delivers the request; `listen` hears its answer (the holder checked device, digest, and once). */
 export interface ForwardPort {
@@ -98,7 +100,7 @@ export function createGate({ bus, forward, timeoutMs = GATE_MS, onError = () => 
 				offs.push(() => req.signal!.removeEventListener("abort", stop));
 			}
 			if (req.ui) {
-				Promise.resolve(req.ui.confirm(heading, args, { signal: terminal.signal })).then(
+				Promise.resolve(req.ui.confirm(heading, args, { signal: terminal.signal, [NO_RELAY]: true } as { signal: AbortSignal })).then(
 					(yes) => finish(yes === true, "local", yes === true ? "allowed in the terminal" : DECLINED),
 					() => finish(false, "local", DECLINED),
 				);

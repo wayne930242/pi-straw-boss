@@ -15,6 +15,8 @@ import { type Bus, type Select, selectDigest, UI_PREFIX } from "./owners.ts";
 // so it is checked again before each tool call and put back on the new one. A session without a UI has pi's shared no-op object, which is left alone.
 
 const MARK = Symbol.for("pi-straw-boss.ui-intercept");
+/** A key in a dialog's options that says the dialog is already relayed by its owner (the Straw Link gate), so the wrap only counts it. */
+const NO_RELAY = Symbol.for("pi-straw-boss.no-relay");
 const MAX_CHOICES = 100, MAX_TEXT = 12_000, ANSWER_ID = /^[A-Za-z0-9_-]{16,64}$/;
 type Kind = "select" | "confirm";
 type Opts = { signal?: AbortSignal; timeout?: number } | undefined;
@@ -83,6 +85,7 @@ export function interceptUi(pi: ExtensionAPI): void {
 
 	/** One of ctx.ui's `select` or `confirm`, wrapped: what `orig` answers, or the GUI's answer when it came first. */
 	const dialog = (kind: Kind, orig: Call): Call => (title, second, opts) => {
+		if (opts && (opts as Record<symbol, unknown>)[NO_RELAY]) return (counted(orig as never) as Call)(title, second, opts);
 		if (open++ > 0) [...relays.values()].forEach((r) => r.close("error")); // a dialog over a relayed one: the page could not tell which an answer would dismiss
 		let relay: ReturnType<typeof start>;
 		try {
