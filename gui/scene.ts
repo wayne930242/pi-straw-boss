@@ -23,6 +23,9 @@ export function locate(net: Net | undefined, key: string): Found | undefined {
 	}
 }
 
+/** The base whose tower the found unit is: the one base a main can be opened in from its comms, else nothing. */
+export const towerBase = (hit: Found | undefined): Base | undefined => (hit?.u.role === "tower" && hit.base.tower?.key === hit.u.key ? hit.base : undefined);
+
 /**
  * Whether a unit's channel is closed: its session left the net (`state`), or it is a finished subagent that no pane runs pi for any more. A finished
  * subagent whose pi still runs (an interactive one, not auto-exited) keeps its channel, and so does a unit that is not finished.

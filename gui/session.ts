@@ -6,14 +6,14 @@ import { mountComposer, postTo } from "./composer.ts";
 import { docFor, docTile } from "./doc.ts";
 import type { Tile } from "./layer.ts";
 import { m } from "./paraglide/messages.js";
-import { aim, doing, html, LABEL, mark, urgent, text } from "./render.ts";
-import { closed, locate, type Scene, type Subject, wsOf } from "./scene.ts";
+import { aim, aimOpening, doing, html, LABEL, mark, urgent, text } from "./render.ts";
+import { closed, locate, type Scene, type Subject, towerBase, wsOf } from "./scene.ts";
 import { linkTo } from "./tokens.ts";
 
 // The session route's comms: the header, the log (chat.ts, its own chunk), the bars above the composer, the composer, the question panel, and the
 // session's terminal as the other mode. A phone's Info button, in the header, opens the dossier full-screen through `fullScreen`.
 
-const COMMS = () => `<div class="comms-in"><header class="comms-head"><a class="head-back" data-back aria-label="${m.back()}">‹</a><span class="logo"><svg><use href="#i-comms"/></svg></span><div class="head-id"><h2><small>${m.comms()}</small> <span></span></h2><p></p></div><div class="modes" role="group"><button type="button" data-mode="chat" aria-pressed="true">${m.comms()}</button><button type="button" data-mode="term" aria-pressed="false">${m.terminal()}</button></div><span class="chan link" data-state="live"><i></i><b>${m.channel_open()}</b></span><button type="button" class="pair-btn head-info">${m.info()}</button></header><div class="chat-root"></div><div class="queue-list" hidden></div><details class="todos" hidden><summary><b></b><span></span></summary><ol></ol></details><details class="monitors" hidden><summary><b></b><span></span></summary><ul></ul></details><div class="ask-root"></div><div class="composer-root"></div><div class="term-root" hidden></div></div>`;
+const COMMS = () => `<div class="comms-in"><header class="comms-head"><a class="head-back" data-back aria-label="${m.back()}">‹</a><span class="logo"><svg><use href="#i-comms"/></svg></span><div class="head-id"><h2><small>${m.comms()}</small> <span></span></h2><p></p></div><div class="modes" role="group"><button type="button" data-mode="chat" aria-pressed="true">${m.comms()}</button><button type="button" data-mode="term" aria-pressed="false">${m.terminal()}</button></div><span class="chan link" data-state="live"><i></i><b>${m.channel_open()}</b></span><button type="button" class="pair-btn head-main" hidden></button><button type="button" class="pair-btn head-info">${m.info()}</button></header><div class="chat-root"></div><div class="queue-list" hidden></div><details class="todos" hidden><summary><b></b><span></span></summary><ol></ol></details><details class="monitors" hidden><summary><b></b><span></span></summary><ul></ul></details><div class="ask-root"></div><div class="composer-root"></div><div class="term-root" hidden></div></div>`;
 
 export interface SessionDeps {
 	view: HTMLElement; data(key: string): Data; openTile(tile: Tile, focus?: boolean): void; embedTerminal(key: string, name: string, host: HTMLElement): Promise<() => void>; online(): boolean;
@@ -103,6 +103,10 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 				chan.dataset.state = open ? "live" : "closed";
 				text(chan, "b", open ? m.channel_open() : state === "recent" || u?.ended ? m.channel_closed() : m.no_channel());
 				chan.title = chan.querySelector("b")!.textContent ?? ""; // a phone shows the dot alone
+				// A tower's comms open a main in its base (main.ts opens the same tile the map's "+ Main" does); no other unit has the button.
+				const add = head.querySelector<HTMLButtonElement>(".head-main")!, base = towerBase(hit);
+				add.hidden = !base;
+				if (base) (aimOpening(add, base), (add.title = m.open_main_title({ base: base.label })));
 				aim(head.querySelector(".head-back")!, { view: "workspace", ws: wsOf(scene) }); // a phone's full-screen comms go back with it: to the page before, or up when the page opened here
 			}
 			drawTodos(view, scene.info?.todos);
