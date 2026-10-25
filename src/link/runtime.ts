@@ -9,11 +9,14 @@ import { type Channel, type Kit, REGISTER } from "../state.ts";
 import { readLinkConfig } from "./config.ts";
 import type { DeviceKeys } from "./device.ts";
 import { holderAlive, LinkElection } from "./election.ts";
-import { type AllyTeam, LinkHolder, type RelayPort, type SendResult } from "./holder.ts";
+import { type AllyTeam, type ConfirmView, LinkHolder, type RelayPort, type SendResult } from "./holder.ts";
 import { RelayClient } from "./relay.ts";
 import type { NetView } from "./routing.ts";
+import { type PolicyDeps } from "./policy.ts";
+import { createRemoteTurns } from "./hooks.ts";
 import { type HolderRecord, type InboxItem, LinkStore } from "./store.ts";
 import { restrictLabel } from "./text.ts";
+import { MESSAGE_TYPE } from "./turn.ts";
 import { chunks, NAMESPACE, Reassembler } from "./wire.ts";
 
 // Straw Link inside a pi session (docs/specs/2026-10-25-straw-link.md, Architecture, Link holder). Every joined session, and every tower, is a
@@ -33,10 +36,15 @@ export interface LinkDeps {
 	relay?: (url: string, device: DeviceKeys) => RelayPort;
 	alive?: (record: HolderRecord) => boolean;
 	home?: string;
+	/** Where the unattended policy file is and who owns what (policy.ts); the real device reads the fixed path. */
+	policy?: PolicyDeps;
+	/** How long the gate waits for an answer (default 10 minutes). */
+	gateMs?: number;
+	/** Hands the module to a test as soon as it is built. */
+	created?: (link: Link) => void;
 }
 
-/** A remote delivery is a custom message of this type, in the session and for step 4 to classify a run by. */
-export const MESSAGE_TYPE = "straw-link";
+export { MESSAGE_TYPE };
 /** The session entry that remembers which inbox messages this session has already taken, so a restart does not take one twice. */
 export const SEEN = "straw-link-seen";
 const LONG_WAIT_MS = 10 * 60_000;
@@ -122,6 +130,7 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 			store, isHolder: () => Boolean(election?.isHolder()), config, net, offer, notify: tell,
 			relay: opts.relay ?? ((url, device) => new RelayClient({ url, device })),
 			onDisplaced: () => void look().catch(() => undefined),
+			confirmed: (tower, dialogId, allow) => (tower === sid() ? answerForward(dialogId, allow) : publish({ version: 1, type: "confirmed", to: tower, id: dialogId, allow })),
 			drainMs: opts.drainMs, presenceMs: opts.presenceMs, offerAgainMs: opts.offerAgainMs,
 		});
 		holder = fresh;
@@ -226,10 +235,16 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 	};
 	/** What the holder does for a tower's request; the holder itself checks that the sender is the tower of a bound workspace. */
 	const handle = async (body: unknown, from: string): Promise<unknown> => {
-		const op = body as { op?: unknown; device?: unknown; workspace?: unknown; text?: unknown; reply?: unknown };
+		const op = body as { op?: unknown; device?: unknown; workspace?: unknown; text?: unknown; reply?: unknown; allow?: unknown; team?: unknown; dialogId?: unknown; digest?: unknown; tool?: unknown; args?: unknown; tower?: unknown };
 		if (!holder?.active || !election?.isHolder()) return { ok: false, error: "This session is not the link holder; ask again in a moment" };
 		if (op.op === "list") return { ok: true, teams: holder.list() };
 		if (op.op === "send" && typeof op.device === "string" && typeof op.text === "string") return holder.send({ fromSession: from, device: op.device, text: op.text, reply: op.reply === true, ...(typeof op.workspace === "string" && op.workspace ? { workspace: op.workspace } : {}) });
+		if (op.op === "confirm-request" && [op.team, op.device, op.dialogId, op.digest, op.tool, op.args, op.tower].every((v) => typeof v === "string")) {
+			return holder.requestConfirm({ fromSession: from, team: op.team as string, device: op.device as string, dialogId: op.dialogId as string, digest: op.digest as string, tool: op.tool as string, args: op.args as string, tower: op.tower as string });
+		}
+		if (op.op === "confirms") return { ok: true, confirms: holder.confirmRequests() };
+		if (op.op === "answer-confirm" && typeof op.dialogId === "string" && typeof op.allow === "boolean") return holder.answerConfirm(op.dialogId, op.allow);
+		if (op.op === "forget-confirm" && typeof op.dialogId === "string") return (holder.forgetConfirm(op.dialogId), { ok: true });
 		return { ok: false, error: "unknown request" };
 	};
 	const ask = async (op: Record<string, unknown>): Promise<{ ok: boolean; error?: string; [key: string]: unknown }> => {
@@ -250,6 +265,7 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 		const p = event.payload as Record<string, unknown> | undefined, from = event.fromSessionId;
 		if (event.type !== "message" || !p || p.version !== 1 || !from || from === sid() || p.to !== sid()) return;
 		if (p.type === "offer" && typeof p.id === "string" && from === store.readHolder()?.session) takeOffer(p.id);
+		else if (p.type === "confirmed" && typeof p.id === "string" && typeof p.allow === "boolean" && from === store.readHolder()?.session) answerForward(p.id, p.allow);
 		else if (p.type === "taken" && typeof p.id === "string" && holder) void holder.taken(p.id, from).catch(failed("taken"));
 		else if (p.type === "req") {
 			const got = reassembler.push(`req/${from}`, p, cfg.now());
@@ -260,6 +276,16 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 			if (got && wait && wait.holder === from) (clearTimeout(wait.timer), pending.delete(got.reqId), wait.resolve(got.body));
 		}
 	};
+
+	// ---- Remote turns --------------------------------------------------------------------------------------------------------------------
+
+	const remote = createRemoteTurns({
+		pi, now: cfg.now, config, policy: opts.policy, home, agentDir, linkDir: join(guiDir, "link"), gateMs: opts.gateMs,
+		setOrigin: (origin) => void (s.remoteOrigin = origin), tower: () => s.ownName || pi.getSessionName() || sid(),
+		log: (event) => store.log(event), tell,
+		ask: (op) => ask(op),
+	});
+	const { answerForward } = remote;
 
 	// ---- Session hooks -------------------------------------------------------------------------------------------------------------------
 
@@ -294,7 +320,17 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 		await lost();
 	});
 
-	return {
+	const api = {
+		/** The confirm requests other devices put to this one, waiting for its boss (the GUI of a later step shows them). */
+		async confirms(): Promise<ConfirmView[]> {
+			const answer = await ask({ op: "confirms" });
+			return answer.ok ? (answer.confirms as ConfirmView[]) : [];
+		},
+		/** This device's boss allows or denies a confirm request; the answer goes back to the requesting device. */
+		async answerConfirm(dialogId: string, allow: boolean): Promise<void> {
+			const answer = await ask({ op: "answer-confirm", dialogId, allow });
+			if (!answer.ok) throw new Error(answer.error);
+		},
 		/** Sends `text` to a teammate's tower: the holder checks the device, signs, encrypts, and posts it. */
 		async send(req: { device: string; workspace?: string; text: string; reply: boolean }) {
 			if (!inUse()) throw new Error("Straw Link is not set up on this computer: no team in config.json (link.teams) and no team file");
@@ -317,5 +353,7 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 			return Boolean(election?.holding);
 		},
 	};
+	opts.created?.(api as Link);
+	return api;
 }
 export type Link = ReturnType<typeof createLink>;

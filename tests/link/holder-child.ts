@@ -45,7 +45,7 @@ const election = new LinkElection({
 		const device = store.device()!;
 		holder = new LinkHolder({
 			store, isHolder: () => election.isHolder(), net: async () => net, notify: (text) => say({ ev: "notice", text }), drainMs: 100, presenceMs: 60_000, backoff: () => 50,
-			config: () => ({ teams: new Map([[TEAM_HEX, { project, share: "presence" as const, name: "live" }]]), problems: [] }),
+			config: () => ({ teams: new Map([[TEAM_HEX, { project, share: "presence" as const, name: "live" }]]), trust: new Map(), problems: [] }),
 			relay: (relayUrl, keys) => new ChildClient({ url: relayUrl, device: keys }),
 			offer: (session, id) => {
 				const item = store.readInbox(id);

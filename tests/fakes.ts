@@ -382,6 +382,8 @@ export class Agent {
 	/** Entries of the transcript besides the extension's own (custom messages, for instance), as ctx.sessionManager.getEntries() returns them. */
 	transcript: { type: string; customType?: string; details?: unknown }[] = [];
 	signal?: AbortSignal;
+	/** The tool's working directory, as pi's ctx.cwd. */
+	cwd?: string;
 	/** Each ctx.ui.select and confirm, open until the test settles it or its signal aborts (which resolves undefined or false, as pi's dialogs do). */
 	dialogs: { kind: "select" | "confirm"; title: string; second: unknown; opts?: { signal?: AbortSignal; timeout?: number }; settle(value: unknown): void; settled: boolean }[] = [];
 	/** The session's ctx.ui, the one object every extension reaches. */
@@ -409,6 +411,7 @@ export class Agent {
 		this.ctx = {
 			hasUI: Boolean(options.ui),
 			get signal() { return self.signal; },
+			get cwd() { return self.cwd; },
 			isIdle: () => self.idle,
 			hasPendingMessages: () => self.pending,
 			shutdown: () => void self.stop("quit"), // pi quits as /quit would

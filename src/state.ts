@@ -75,6 +75,8 @@ export interface State {
 	hub: Hub | undefined;
 	gui: Gui | undefined;
 	viewer: Channel | undefined;
+	/** `remote:<sender device id>` while the run is a Straw Link remote turn: what a message to a local session carries in its header as `origin=`. */
+	remoteOrigin: string | undefined;
 	// Closing: `quit` is pi's shutdown for this session, `closing` says it was asked for (and whether the pane stays).
 	quit: (() => void) | undefined;
 	closing: { keepPane: boolean } | undefined;
@@ -100,7 +102,7 @@ export function createKit(pi: ExtensionAPI, cfg: Config): Kit {
 		// SAFETY: as `c` above.
 		at: undefined as unknown as Place,
 		mainId: undefined, pinned: undefined, info: {}, ownName: "", openedBy: undefined, kids: new Set(),
-		ui: undefined, hasUI: false, saved: {}, file: undefined, restored: false, queue: Promise.resolve(), dashboard: undefined, headWatch: undefined, hub: undefined, gui: undefined, viewer: undefined, quit: undefined, closing: undefined,
+		ui: undefined, hasUI: false, saved: {}, file: undefined, restored: false, queue: Promise.resolve(), dashboard: undefined, headWatch: undefined, hub: undefined, gui: undefined, viewer: undefined, quit: undefined, closing: undefined, remoteOrigin: undefined,
 	};
 	const me = () => env.PI_INTERCOM_SESSION_ID ?? "";
 	const role = (): Role | undefined => {

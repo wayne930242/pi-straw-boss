@@ -5,17 +5,20 @@ import { projectProblem } from "./routing.ts";
 // What the user chose, in `<pi agent dir>/straw-boss/config.json` under `link` (docs/specs/2026-10-25-straw-link.md, Storage and policy):
 //   { "link": { "relay": "https://relay.example", "teams": { "<team id, hex>": { "project": "~/projects/moldplan-center", "share": "status" } }, "trust": {…} } }
 // `project` is the directory a workspace's cwd has to be inside to take the team's messages; `share` is `presence` or `status` (the default).
-// `trust` is for the remote-turn gate (a later step). A team that is wrong is left out and listed in `problems`, never half used.
+// `trust` raises named senders above `reply` for the remote-turn gate (turn.ts). A team that is wrong is left out and listed in `problems`, never half used.
 
 export type Share = "presence" | "status";
 /** `name` is how the team reads in a header: the project's folder name, which this computer chose, never a name a sender gave. */
 export interface TeamPolicy { project: string; share: Share; name: string }
-export interface LinkConfig { relay?: string; teams: Map<string, TeamPolicy>; problems: string[] }
+/** What a remote turn from a sender may do (docs/specs/2026-10-25-straw-link.md, Trust levels); a sender with no entry is at `reply`. */
+export type Level = "reply" | "forward" | "dispatch";
+export const LEVELS: readonly Level[] = ["reply", "forward", "dispatch"];
+export interface LinkConfig { relay?: string; teams: Map<string, TeamPolicy>; trust: Map<string, Level>; problems: string[] }
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 export function readLinkConfig(stateDir: string, { home, agentDir }: { home: string; agentDir: string }): LinkConfig {
-	const out: LinkConfig = { teams: new Map(), problems: [] };
+	const out: LinkConfig = { teams: new Map(), trust: new Map(), problems: [] };
 	let link: unknown;
 	try {
 		link = (JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8")) as { link?: unknown }).link;
@@ -24,6 +27,13 @@ export function readLinkConfig(stateDir: string, { home, agentDir }: { home: str
 	}
 	if (!isObject(link)) return out;
 	if (typeof link.relay === "string") out.relay = link.relay;
+	if (isObject(link.trust)) {
+		for (const [device, level] of Object.entries(link.trust)) {
+			if (!/^[a-z2-7]{26}$/.test(device)) out.problems.push(`trust ${device}: a device id is 26 characters of a-z and 2-7`);
+			else if (!LEVELS.includes(level as Level)) out.problems.push(`trust ${device}: the level has to be reply, forward, or dispatch`);
+			else out.trust.set(device, level as Level);
+		}
+	}
 	if (!isObject(link.teams)) return out;
 	for (const [team, value] of Object.entries(link.teams)) {
 		const bad = (reason: string) => void out.problems.push(`team ${team}: ${reason}`);

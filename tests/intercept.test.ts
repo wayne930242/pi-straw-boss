@@ -330,3 +330,13 @@ test("a dialog that never settles does not hold relaying off for good: agent_end
 	void confirm(r, "after swap", "m");
 	assert.equal(r.sent("pending").length, 3, "a new ui object starts with nothing open");
 });
+
+test("a confirm marked as already relayed by its owner (the Straw Link gate) opens in the terminal only, with one call in flight", async () => {
+	const r = rig();
+	await r.start("c1", "bash");
+	const asked = (r.ui.confirm as (...a: unknown[]) => Promise<unknown>)("gate", "args", { [Symbol.for("pi-straw-boss.no-relay")]: true });
+	assert.equal(r.dialogs.length, 1);
+	assert.equal(r.sent("pending").length, 0, "no second dialog on the page");
+	r.dialogs[0]!.settle(true);
+	assert.equal(await asked, true);
+});

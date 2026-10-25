@@ -184,6 +184,16 @@ test("a gate's dialog (pi-code's hook confirmation) is taken for any tool's call
 	assert.deepEqual(s.lists().at(-1), [], "the end of the gated call closes it");
 });
 
+test("the Straw Link gate is a gate owner: its dialog is relayed for any tool's call in flight", () => {
+	const s = session(), select = { title: "Remote request from bob-mac (abc234): bash", choices: [{ label: "Allow" }, { label: "Deny" }] };
+	s.own();
+	s.fire("tool_execution_start", { toolCallId: "c1", toolName: "bash", args: {} });
+	s.events.emit("straw-link:gate:pending", { version: 1, id: "g1", toolCallId: "c1", digest: selectDigest(select), select });
+	assert.deepEqual(s.lists().at(-1)!.map((d) => [d.owner, d.id, d.toolCallId]), [["straw-link-gate", "g1", "c1"]]);
+	s.events.emit("straw-link:gate:closed", { version: 1, id: "g1", by: "local" });
+	assert.deepEqual(s.lists().at(-1), []);
+});
+
 test("an answer counts only from G as the channel's current owner, at the owner's epoch, for this bridge", () => {
 	const s = session(), seen: string[] = [];
 	s.open();

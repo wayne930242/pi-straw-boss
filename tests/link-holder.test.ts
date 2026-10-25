@@ -431,7 +431,7 @@ test("a presence is never queued or acknowledged, and one older than the last ta
 
 test("a team in config.json with no team file, and a team file with no config entry, are told once and run nothing", async () => {
 	const b = rig("b");
-	const lonely = new LinkHolder({ store: b.store, isHolder: () => true, config: () => ({ teams: new Map(), problems: ["team zz: it has no project"] }), net: async () => b.net, relay: clientFor(relay), offer: () => {}, notify: (t) => void b.notices.push(t), drainMs: 20 });
+	const lonely = new LinkHolder({ store: b.store, isHolder: () => true, config: () => ({ teams: new Map(), trust: new Map(), problems: ["team zz: it has no project"] }), net: async () => b.net, relay: clientFor(relay), offer: () => {}, notify: (t) => void b.notices.push(t), drainMs: 20 });
 	cleanup.push(() => lonely.stop());
 	await lonely.start();
 	await lonely.refresh();

@@ -7,7 +7,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 export interface Bus { emit(channel: string, data: unknown): void; on(channel: string, handler: (data: unknown) => void): () => void }
 export interface Choice { label: string; note?: string; localOnly?: true }
-/** `confirm`: a ctx.ui.confirm relayed as Yes and No; it is answerable from this computer's page and never from a paired device. */
+/** `confirm`: a ctx.ui.confirm relayed as Yes and No, told apart from a select by its digest. A paired device answers it as this computer's page does (docs/how-it-works.md, Remote; R-F027). */
 export interface Select { title: string; choices: Choice[]; copy?: string; confirm?: true }
 export interface Option { title: string; description?: string; preview?: true }
 export interface Question { question: string; header?: string; multiple: boolean; options: Option[] }
@@ -142,4 +142,7 @@ export const piCode = contract("pi-code", "pi-code:dialog", undefined, true);
 /** Any extension's ctx.ui.select or ctx.ui.confirm, relayed by the wrap of ctx.ui (intercept.ts) as a gate on the one tool call in flight. */
 export const UI_PREFIX = "straw-boss:ui";
 export const uiPrompt = contract("pi-ui", UI_PREFIX, undefined, true, SELECT_SHAPE, true);
-export const OWNERS: OwnerAdapter[] = [robotHand, secretDrop, rpiv, mcpAdapter, piCode, uiPrompt];
+/** The gate of a Straw Link remote turn (src/link/gate.ts): its confirmation before a tool call the allowlist does not cover. A gate and not a twin: it names the call it asks about by toolCallId, and it is the only dialog of that call. */
+export const GATE_PREFIX = "straw-link:gate";
+export const linkGate = contract("straw-link-gate", GATE_PREFIX, undefined, true);
+export const OWNERS: OwnerAdapter[] = [robotHand, secretDrop, rpiv, mcpAdapter, piCode, uiPrompt, linkGate];
