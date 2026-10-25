@@ -86,7 +86,8 @@ fit a headless unattended device):
   takes over within a few seconds.
 - Only the holder reads the device keys, holds the relay stream, writes the team files, and runs the tailnet join listener. Every write
   to a team file (roster, sequence numbers) happens under the lock, so two holders during a takeover never deliver one message twice.
-- A takeover resumes the stream from the team file's last event id.
+- A takeover resumes the stream from the team file's last event id. A new stream always carries every queued envelope this device has
+  not acknowledged, whatever its event id, so a saved event id never skips mail; the receive checks drop repeats.
 - The holder acknowledges an envelope to the relay only after it is delivered to a tower or written to the inbox, so a crash or a
   takeover delivers it again rather than losing it; the receive checks drop the second copy.
 - The holder needs a joined pi session to run in. An unattended device's infra starts one pi session at boot, in the first bound project
@@ -197,7 +198,8 @@ The header checks (version, team, kind, ephemeral flag) run first, then the sign
 `seq` or `ts` guard.
 6. `ts` is no more than 10 minutes in the future and no older than 7 days.
 
-The relay keeps envelopes from one sender in that sender's order.
+The relay keeps envelopes from one sender in arrival order and does not reorder by `seq`, so a sender posts its queued envelopes one at
+a time, in `seq` order, and retries an envelope until it lands before it posts the next.
 
 ## Message kinds
 
