@@ -40,7 +40,8 @@ export const MESSAGE_TYPE = "straw-link";
 /** The session entry that remembers which inbox messages this session has already taken, so a restart does not take one twice. */
 export const SEEN = "straw-link-seen";
 const LONG_WAIT_MS = 10 * 60_000;
-const ASK_MS = 30_000;
+/** Longer than the holder's worst case for a send: the lock wait, a reading of Herdr, and the wait for the relay; a tower that gave up earlier would invite a resend of a message that went out. */
+export const ASK_MS = 60_000;
 const NO_HOLDER = "No link holder is running on this computer yet. Straw Link starts within a few seconds of a team being set up; if it stays so, a team file or its config.json entry is missing";
 
 type ChannelEvent = { type: string; fromSessionId?: string; payload?: unknown };
@@ -237,7 +238,7 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 		if (!channel) throw new Error(NO_HOLDER);
 		const reqId = `${sid()}-${nonce}-${pending.size}-${Date.now()}`;
 		const answered = new Promise<unknown>((resolve, reject) => {
-			const timer = setTimeout(() => (pending.delete(reqId), reject(new Error("The link holder did not answer within 30 s"))), ASK_MS);
+			const timer = setTimeout(() => (pending.delete(reqId), reject(new Error(`The link holder did not answer within ${ASK_MS / 1000} s`))), ASK_MS);
 			pending.set(reqId, { resolve, reject, holder: record.session, timer });
 		});
 		for (const c of chunks("req", record.session, reqId, op)) publish(c);

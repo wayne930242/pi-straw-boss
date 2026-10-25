@@ -20,7 +20,7 @@ import { deviceFromSeeds, type DeviceKeys } from "./device.ts";
 // skipped by a new caller. Reads never take the lock; every file is replaced by a rename, so a reader sees the old file or the new one.
 
 export const LOCK_STALE_MS = 10_000;
-const LOCK_WAIT_MS = 15_000;
+export const LOCK_WAIT_MS = 15_000;
 const HEX16 = /^[0-9a-f]{32}$/, HEX32 = /^[0-9a-f]{64}$/;
 
 /** The lock could not be taken within the wait. */

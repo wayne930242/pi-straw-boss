@@ -6,8 +6,9 @@ import { afterEach, beforeEach, test } from "node:test";
 import { buildEnvelope } from "../src/link/envelope.ts";
 import { encodePlaintext } from "../src/link/kinds.ts";
 import { RelayClient } from "../src/link/relay.ts";
-import { type InboxItem, LinkStore } from "../src/link/store.ts";
-import { MESSAGE_TYPE, remoteTowers } from "../src/link/runtime.ts";
+import { type InboxItem, LinkStore, LOCK_WAIT_MS } from "../src/link/store.ts";
+import { POST_WAIT_MS } from "../src/link/holder.ts";
+import { ASK_MS, MESSAGE_TYPE, remoteTowers } from "../src/link/runtime.ts";
 import { FakeRelay } from "./link/fake-relay.ts";
 import { alice, bob, clientFor, rosterOf, stateOf, TEAM_HEX, writeDevice, writeTeam } from "./link/holder-world.ts";
 import { Agent, type Registration, until, World } from "./fakes.ts";
@@ -286,4 +287,8 @@ test("SLH-F003/F015: a message a busy tower holds is not sent once its inbox fil
 	await new Promise((r) => setTimeout(r, 150));
 	assert.equal(linkMessages(tb).length, 0, "the held copy is not sent after the file is gone");
 	assert.equal(tb.entries.filter((e) => e.customType === "straw-link-seen").length, 0);
+});
+
+test("SLH-F013: a tower waits for the holder longer than the holder's worst case for a send, so it never gives up on a message that went out", () => {
+	assert.ok(ASK_MS > LOCK_WAIT_MS + POST_WAIT_MS + 15_000, `${ASK_MS} against ${LOCK_WAIT_MS} + ${POST_WAIT_MS} + a reading of Herdr`);
 });

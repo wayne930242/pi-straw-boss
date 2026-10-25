@@ -44,7 +44,7 @@ export interface HolderOptions {
 	presenceMs?: number;
 	/** How long an offer stands before it is made again (default 30 s). */
 	offerAgainMs?: number;
-	/** How long `send` waits for the relay to take an envelope before it reports it queued (default 20 s). */
+	/** How long `send` waits for the relay to take an envelope before it reports it queued (default 10 s). */
 	postWaitMs?: number;
 	/** How long a team's outbox stays halted by a 401 before the refused envelope is tried again (default 60 s; a 401 can be a clock that was off). */
 	haltRetryMs?: number;
@@ -55,6 +55,8 @@ export type SendResult = { ok: true; text: string; details: Record<string, unkno
 export interface AllyDevice { id: string; short: string; label: string; online: boolean; ageMs: number | null; roster: number | null; workspaces: WorkspaceState[] }
 export interface AllyTeam { team: string; name: string; devices: AllyDevice[] }
 
+/** The default wait for the relay in `send`; the tower waits for the holder's answer longer than this plus the lock wait (runtime.ts `ASK_MS`), or it would give up on a message that was sent. */
+export const POST_WAIT_MS = 10_000;
 const PRESENCE_ONLINE_MS = 90_000;
 /** The most devices of one team `list` answers with: the answer has to fit the channel's request size. */
 const MAX_LISTED_DEVICES = 100;
@@ -515,7 +517,7 @@ export class LinkHolder {
 		const id = queued.id.toString("hex");
 		await new Promise<void>((resolve) => {
 			if (run.settled.has(id)) return resolve();
-			const timer = setTimeout(resolve, this.o.postWaitMs ?? 20_000);
+			const timer = setTimeout(resolve, this.o.postWaitMs ?? POST_WAIT_MS);
 			timer.unref();
 			run.waiters.set(id, () => (clearTimeout(timer), resolve()));
 		});
