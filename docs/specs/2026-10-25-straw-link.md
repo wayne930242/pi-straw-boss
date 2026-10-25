@@ -359,9 +359,17 @@ before `header.ts` quotes them; the session id is the sender's link holder's, as
 ## Unattended devices
 
 An unattended device keeps pi running in the **default** Herdr server, started headless by its infra (launchd or systemd, with a clean
-environment), so pi-intercom resolves its sessions' Herdr locations; a named `herdr --session` is invisible to the net today. Assumption to
-check before building: the default server keeps panes and pi alive without an attached client and comes back after a reboot. The infra
-also starts one pi session in the first bound project at boot, so the device has a link holder before any work arrives.
+environment), so pi-intercom resolves its sessions' Herdr locations; a named `herdr --session` is invisible to the net today. The infra
+runs `herdr server` (not `herdr`, which wants a terminal) under `env -i` with only `HOME`, `PATH`, `TERM`, and `LANG`, and installs Herdr's
+pi integration (`herdr integration install pi`), which lets Herdr resume pi panes from their session files. On first boot it creates the
+workspace (`herdr workspace create --cwd <first bound project>`) and starts pi in it (`herdr pane run <pane> pi`), so the device has a link
+holder before any work arrives; after that, Herdr's restore brings the layout and pi back.
+
+Checked on 2026-10-25 with Herdr 0.9.5 and pi 1.4.0, in an isolated `HOME` with no client ever attached: the server gives a headless
+pane a 120×40 terminal, pi starts in it and joins the net; after `herdr server stop` and a new `herdr server`, Herdr restored the layout
+and restarted pi with its session within a second, and pi joined the net again. Herdr's documentation says restored agent panes resume
+after a client attaches; in 0.9.5 the headless server did not wait for one. Not checked: a real OS reboot, which depends on how the infra
+starts the server at boot (a launchd daemon with `UserName`, or a systemd user unit with lingering enabled).
 
 - **Taking work.** A `tower` message from a controller at `dispatch` goes to the tower of the bound workspace. With none open, the link
   holder opens a workspace in the bound `project` directory (which may be outside the home folder: it comes from the policy file, not from
@@ -443,7 +451,7 @@ envelope to the peer's serve entry, falling back to the relay after 3 seconds or
    the header fields.
 4. Remote turns: holding deliveries, the run classification, the allowlist and deny list, the gate's dialog, `forward`.
 5. GUI: team settings, QR invite and join, ally bases, notices.
-6. Unattended devices, after checking the default-Herdr assumption: the policy file check, `device.id` and `join.txt`, opening a tower for
+6. Unattended devices (the default-Herdr behaviour is checked, **Unattended devices**): the policy file check, `device.id` and `join.txt`, opening a tower for
    a controller, dialogs and `unit-status` for controllers.
 7. Joining over the tailnet.
 8. Relay deployment on moldplan-center's public cloud; a two-computer trial on the moldplan-center project; then one with an unattended
