@@ -83,6 +83,8 @@ export class LinkHolder {
 	private timer: ReturnType<typeof setInterval> | undefined;
 	private running = false;
 	private told = new Set<string>();
+	/** Teams stopped for good (a roster fork, a removed device, a lost team file), with the team file's stamp at that moment. The mark is also on disk, for the next holder. */
+	private stopped = new Map<string, string>();
 	private offered = new Map<string, { tower: string; at: number }>();
 	private draining: Promise<void> | undefined;
 	private again = false;
@@ -158,6 +160,7 @@ export class LinkHolder {
 		}
 		for (const team of store.teamIds()) {
 			if (this.runs.has(team) || !this.running) continue;
+			if (config.teams.has(team) && (await this.stillStopped(team))) continue;
 			if (!config.teams.has(team)) {
 				this.tellOnce(`noconfig/${team}`, `Straw Link: team ${team.slice(0, 6)} has no entry under link.teams in config.json, so it takes no messages`, "info");
 				continue;
@@ -171,6 +174,16 @@ export class LinkHolder {
 		for (const policy of config.teams.keys()) {
 			if (!store.teamIds().includes(policy)) this.tellOnce(`nofile/${policy}`, `Straw Link: team ${policy.slice(0, 6)} is in config.json but this device has no team file for it; join the team again`);
 		}
+	}
+
+	/** Whether the team was stopped and its team file is still the one it was stopped with; a file that was replaced (a join again) lifts the mark. */
+	private async stillStopped(team: string): Promise<boolean> {
+		const { store } = this.o, known = this.stopped.get(team) ?? store.readStopped(team)?.stamp;
+		if (known === undefined) return false;
+		if (known === store.teamStamp(team)) return true;
+		this.stopped.delete(team);
+		await store.withLock(() => store.clearStopped(team));
+		return false;
 	}
 
 	private loadTeam(team: string): { tf: TeamFile; state: RosterState } {
@@ -232,6 +245,10 @@ export class LinkHolder {
 	private kill(run: TeamRun, why: string, level: "info" | "warning" | "error" = "warning"): void {
 		if (run.dead) return;
 		run.dead = why;
+		const { store } = this.o, stamp = store.teamStamp(run.team);
+		this.stopped.set(run.team, stamp);
+		// Queued behind whatever holds the lock now (kill is called inside locked sections too); the in-memory mark above covers the gap.
+		void store.withLock(() => store.markStopped(run.team, why, stamp)).catch((error: Error) => store.log({ event: "stop-mark-failed", team: run.team, error: error.message }));
 		this.o.store.log({ event: "team-stopped", team: run.team, why });
 		this.tellOnce(`dead/${run.team}`, `Straw Link: team ${run.team.slice(0, 6)} stopped: ${why}`, level);
 		clearInterval(run.presenceTimer);

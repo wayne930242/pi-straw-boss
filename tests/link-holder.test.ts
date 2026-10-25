@@ -358,13 +358,48 @@ test("an entry the roster rules refuse is a fork: the team stops with a notice a
 	relay.pushRoster(TEAM, bad);
 	await until(() => b.notices.some((n) => /stopped/.test(n)), 3000, "the fork notice");
 	assert.equal(teamFile(b).entries.length, 2, "the bad entry is not kept");
+	// SLH-F001: it stays stopped past several ticks (drainMs is 20 ms), here and for the next holder, until the team file is replaced.
+	const a = rig("a");
+	await a.start();
+	const opened = relay.opened.filter((o) => o.device === bob.id).length;
+	await new Promise((r) => setTimeout(r, 200));
+	assert.ok((await send(a, "after the fork")).ok);
+	await new Promise((r) => setTimeout(r, 200));
+	assert.equal(relay.opened.filter((o) => o.device === bob.id).length, opened, "no stream was opened again");
+	assert.equal(b.store.inboxIds().length, 0, "nothing was taken from a team that forked");
+	assert.equal(relay.ackedBy(bob.id).length, 0);
+	await b.restart();
+	await new Promise((r) => setTimeout(r, 150));
+	assert.equal(relay.opened.filter((o) => o.device === bob.id).length, opened, "the next holder refuses the team too");
+	assert.equal(b.store.inboxIds().length, 0);
+});
+
+test("SLH-F001: a stopped team is started again when its team file is replaced (the device joined again)", async () => {
+	const b = rig("b", { towers: false });
+	await b.start();
+	rmSync(join(b.dir, "teams", `${TEAM_HEX}.json`));
+	const a = rig("a");
+	await a.start();
+	await send(a, "lost");
+	await until(() => b.notices.some((n) => /stopped/.test(n)), 3000, "the stop notice");
+	const opened = relay.opened.filter((o) => o.device === bob.id).length;
+	writeTeam(b.store, rosterOf(), bob);
+	await until(() => relay.opened.filter((o) => o.device === bob.id).length > opened, 3000, "the team to start again");
+	await until(() => b.store.inboxIds().length === 1, 3000, "the message the relay kept");
 });
 
 test("a relay that refuses the stream for good (the device was removed) ends the team with an error notice", async () => {
 	relay.refuseStreams = 401;
+	let requests = 0;
+	const fetched = relay.fetch;
+	relay.fetch = (input, init) => (String(input).includes("/events") && requests++, fetched(input, init));
 	const b = rig("b", { towers: false });
 	await b.start();
 	await until(() => b.notices.some((n) => /no longer a member/.test(n)), 3000, "the removal notice");
+	// SLH-F001: refused for good means no new stream every tick (drainMs is 20 ms).
+	const before = requests;
+	await new Promise((r) => setTimeout(r, 300));
+	assert.equal(requests, before, "a refused stream is not opened again and again");
 });
 
 test("presence: each holder tells the team it is online; share status adds the bound workspaces and their tabs, share presence only that it is online; an old presence is offline", async () => {

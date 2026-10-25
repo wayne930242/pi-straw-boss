@@ -318,6 +318,24 @@ export class LinkStore {
 		// SAFETY: each field of TeamFile was checked above.
 		return raw as unknown as TeamFile;
 	}
+	/** A reading of the team file that changes when it is replaced (a join again): its modification time and size, or `missing`. */
+	teamStamp(team: string): string {
+		const st = statSync(this.path("teams", `${team}.json`), { throwIfNoEntry: false });
+		return st ? `${st.mtimeMs}:${st.size}` : "missing";
+	}
+	/** Why a team was stopped and what the team file looked like then; the next holder refuses the team until the file is another one. */
+	readStopped(team: string): { reason: string; stamp: string } | undefined {
+		if (!HEX16.test(team)) return undefined;
+		return this.read(this.path("teams", `${team}.stopped`), (v) => (isObject(v) && typeof v.reason === "string" && typeof v.stamp === "string" ? { reason: v.reason, stamp: v.stamp } : undefined));
+	}
+	markStopped(team: string, reason: string, stamp: string): void {
+		this.assertLocked("Marking a team stopped");
+		if (HEX16.test(team)) this.write(this.path("teams", `${team}.stopped`), JSON.stringify({ reason, stamp }));
+	}
+	clearStopped(team: string): void {
+		this.assertLocked("Clearing a team's stopped mark");
+		if (HEX16.test(team)) rmSync(this.path("teams", `${team}.stopped`), { force: true });
+	}
 	/** A new team file (a join or a create). */
 	createTeam(file: TeamFile): void {
 		this.assertLocked("Creating a team file");
