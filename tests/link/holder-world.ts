@@ -42,7 +42,7 @@ export function writeTeam(store: LinkStore, entries: RosterEntry[], self: Device
 	writeFileSync(join(store.dir, "teams", `${TEAM_HEX}.json`), JSON.stringify(file), { mode: 0o600 });
 }
 
-export const config = (project: string, share: "presence" | "status" = "status"): (() => LinkConfig) => () => ({ teams: new Map([[TEAM_HEX, { project, share, name: "moldplan" }]]), problems: [] });
+export const config = (project: string, share: "presence" | "status" = "status"): (() => LinkConfig) => () => ({ teams: new Map([[TEAM_HEX, { project, share, name: "moldplan" }]]), trust: new Map(), problems: [] });
 
 /** A net with the given towers: [session id, workspace id, workspace label, cwd]. */
 export function netOf(towers: [string, string, string, string][], extra: Partial<NetView> = {}): NetView {
