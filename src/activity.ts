@@ -4,7 +4,7 @@ import type { Base, Net } from "./net.ts";
 // What the net did lately, for the map's cards and the page's timeline. The server keeps it across its reads, so a page that reloads sees it too
 // (a server that starts again begins afresh): when each unit took its present state (`since`; none for a unit first seen in it, whose start is
 // unknown), its last steps (`ticks`: each change of its state or of what it is doing), and the net's events (joined, a new state, left) of the
-// last 30 minutes. The server reads the net only while a page watches it, so a reading long after the last one is a fresh start, as the first is:
+// last 30 minutes. The server reads the net every few seconds whether or not a page watches it (gui.ts), so a reading long after the last one (GAP_MS: the server was suspended, or stalled) is a fresh start, as the first is:
 // what changed in between changed at a time it does not know. It imports nothing at run time, so the demo page runs it too.
 
 export interface Tick { at: number; mark: Mark }

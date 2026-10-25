@@ -5,6 +5,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
+import { trackActivity } from "../src/activity.ts";
 import { type Asked, startGui, type Gui } from "../src/gui.ts";
 import { requestStop } from "../src/handover.ts";
 import { canonical } from "../src/history.ts";
@@ -30,7 +31,7 @@ after(async () => {
 });
 
 const net = (label: string): Net => ({ bases: [{ id: "w", label, mark: "idle", head: true, tower: null, tabs: [], outposts: [], outside: [] }] });
-async function serve(read: () => Promise<Net>, options: { pollMs?: number; pingMs?: number; port?: number; token?: string; csrf?: string; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] }; call?: (method: string, params: Record<string, unknown>) => Promise<unknown>; onStop?(asked: Asked): void; onRemote?(): Promise<void> } = {}, bundle = dir) {
+async function serve(read: () => Promise<Net>, options: { pollMs?: number; idleMs?: number; pingMs?: number; port?: number; token?: string; csrf?: string; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] }; call?: (method: string, params: Record<string, unknown>) => Promise<unknown>; onStop?(asked: Asked): void; onRemote?(): Promise<void> } = {}, bundle = dir) {
 	const gui = await startGui({ read, dir: bundle, pollMs: 20, pingMs: 50, ...options });
 	running.push(gui);
 	return gui;
@@ -207,19 +208,38 @@ test("an unreadable net is reported as a problem once, and the next good read se
 	stream.close();
 });
 
-test("the net is read only while someone listens", async () => {
+test("the net is read faster while someone listens, and still slowly when no one does, so its activity is kept", async () => {
 	let reads = 0;
-	const gui = await serve(async () => (reads++, net("a")));
-	await new Promise((resolve) => setTimeout(resolve, 100));
-	assert.equal(reads, 0, "no listener, no reads");
+	const gui = await serve(async () => (reads++, net("a")), { idleMs: 80 });
+	await until(() => reads >= 2, "the idle reads");
 	const stream = listen(gui);
-	await until(() => reads >= 3, "polling");
+	const before = reads;
+	await until(() => reads >= before + 5, "polling");
 	stream.close();
 	await until(() => stream.closed(), "the client to leave");
 	await new Promise((resolve) => setTimeout(resolve, 60));
 	const settled = reads;
-	await new Promise((resolve) => setTimeout(resolve, 100));
-	assert.equal(reads, settled, "polling stopped with the last listener");
+	await until(() => reads > settled, "the idle reads go on");
+	assert.ok(reads - settled < 5, "and only at the idle pace");
+	await gui.stop();
+	const stopped = reads;
+	await new Promise((resolve) => setTimeout(resolve, 200));
+	assert.equal(reads, stopped, "a stopped server reads nothing");
+});
+
+test("what changed while no page listened is on the net the next page gets, as events", async () => {
+	let mark: Net["bases"][number]["mark"] = "idle";
+	const track = trackActivity(), unit = (m: typeof mark): Net => ({ bases: [{ id: "w", label: "w", mark: m, head: true, tower: null, tabs: [{ id: "t", label: "t", units: [{ id: "a", key: "a", control: true, name: "a", role: "main", mark: m, subs: [] }] }], outposts: [], outside: [] }] });
+	let reads = 0;
+	const gui = await serve(async () => (reads++, track(unit(mark))), { idleMs: 30 });
+	await until(() => reads >= 2, "a baseline");
+	mark = "working";
+	await until(() => reads >= 5, "reads after the change");
+	const stream = listen(gui);
+	await until(() => stream.messages().length >= 1, "the first snapshot");
+	const first = JSON.parse(stream.events.find((e) => e.event === "message")!.data) as Net;
+	assert.deepEqual(first.events?.map((e) => [e.name, e.mark, e.kind]), [["a", "working", "mark"]]);
+	stream.close();
 });
 
 test("stop ends open streams and frees the port, and a restart with the same port and token keeps the URL", async () => {

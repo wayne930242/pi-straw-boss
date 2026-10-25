@@ -44,11 +44,11 @@ export interface Gui { url: string; port: number; remotePort: number; token: str
 /** `net` is the registry behind the net reading (the allow list of session keys); without it no session can be watched. `call` reaches Herdr for input. */
 /** `hub` carries answers to the dialogs bridges relay (dialogs.ts); it runs exactly as long as the server. */
 /** `onRemote` and `onRemoteOff` turn remote access on and off from the page, in the session that runs the server. `onStop` takes another session's stop request (requestStop), so the owner also takes its remote entry down; without it the server stops itself. */
-export interface GuiOptions { read(): Promise<Net>; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[]; dismiss?(key: string): boolean; dismissAll?(): number }; call?: HerdrCall; hub?: Hub; dir?: string; paired?: string; port?: number; remotePort?: number; token?: string; csrf?: string; pollMs?: number; pingMs?: number; onStop?(asked: Asked): void; onRemote?(): Promise<void>; onRemoteOff?(): Promise<void>; onSaveFailed?(reason: string): void; spawn?: ControlDeps["spawn"]; close?: ControlDeps["close"] }
+export interface GuiOptions { read(): Promise<Net>; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[]; dismiss?(key: string): boolean; dismissAll?(): number }; call?: HerdrCall; hub?: Hub; dir?: string; paired?: string; port?: number; remotePort?: number; token?: string; csrf?: string; pollMs?: number; idleMs?: number; pingMs?: number; onStop?(asked: Asked): void; onRemote?(): Promise<void>; onRemoteOff?(): Promise<void>; onSaveFailed?(reason: string): void; spawn?: ControlDeps["spawn"]; close?: ControlDeps["close"] }
 export interface Asked { by: string; take: boolean }
 
 /** Starts the server. A preferred `port` and `remotePort` (with the `token` and `csrf`) are reused when free, so a restarted server keeps the URL and the page an open tab already has. */
-export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, port = 0, remotePort = 0, token = randomBytes(16).toString("hex"), csrf = randomBytes(16).toString("hex"), pollMs = 2000, pingMs = 15_000, onStop, onRemote, onRemoteOff, onSaveFailed, spawn, close }: GuiOptions): Promise<Gui> {
+export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, port = 0, remotePort = 0, token = randomBytes(16).toString("hex"), csrf = randomBytes(16).toString("hex"), pollMs = 2000, idleMs = 10_000, pingMs = 15_000, onStop, onRemote, onRemoteOff, onSaveFailed, spawn, close }: GuiOptions): Promise<Gui> {
 	try {
 		if (!statSync(join(dir, "index.html")).isFile()) throw new Error();
 	} catch {
@@ -188,13 +188,17 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 		server.close();
 		throw error;
 	}
-	hub?.start(() => void (clients.size && tick())); // a relayed dialog shows at once, not at the next poll; the net is read only while a page listens
+	hub?.start(() => void (clients.size && tick())); // a relayed dialog shows at once, not at the next poll
+	// With no page listening the net is still read every `idleMs`, so its activity (activity.ts) is kept for the page that comes next: a phone that sleeps
+	// drops its stream, and without this everything done meanwhile was a fresh start with no events (a gap over activity.ts GAP_MS is one).
+	const idle = setInterval(() => clients.size || void tick(), idleMs).unref();
 	function halt() {
 		return new Promise<void>((done) => {
 			hub?.stop();
 			mirrors.stop();
 			clearInterval(poll);
 			clearInterval(beat);
+			clearInterval(idle);
 			clients.forEach((_, c) => c.end());
 			let open = 2;
 			for (const srv of [server, remoteServer]) {
