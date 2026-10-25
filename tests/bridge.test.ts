@@ -134,6 +134,28 @@ test("the session's monitors go with the dialogs, from pi-loop-monitor's events,
 	assert.equal(monitors(), undefined, "no longer listening");
 });
 
+test("the session's todo list in short goes with the dialogs: read from the branch at the start, after a tool call or a tree move, sent only when it changed", () => {
+	const s = session(), branch: unknown[] = [];
+	const state = (tasks: { id: number; subject: string; status: string }[]) => ({ type: "custom", customType: "rpiv-todo-state", data: { tasks, nextId: tasks.length + 1 } });
+	Object.assign(s.ctx.sessionManager, { getBranch: () => branch });
+	branch.push(state([{ id: 1, subject: "Fix rounding", status: "in_progress" }, { id: 2, subject: "Ship", status: "pending" }]));
+	s.fire("session_start");
+	s.own();
+	const lists = () => s.published.filter((p) => p.payload.type === "dialogs").map((p) => (p.payload as Dialogs).todo);
+	assert.deepEqual(lists().at(-1), { done: 0, total: 2, now: "Fix rounding" });
+	const sent = lists().length;
+	s.fire("turn_end");
+	assert.equal(lists().length, sent, "the same list is not sent again");
+	branch.push(state([{ id: 1, subject: "Fix rounding", status: "completed" }, { id: 2, subject: "Ship", status: "pending" }]));
+	s.fire("tool_execution_end", { toolCallId: "c1" });
+	assert.deepEqual(lists().at(-1), { done: 1, total: 2 });
+	branch.splice(1);
+	s.fire("session_tree");
+	assert.deepEqual(lists().at(-1), { done: 0, total: 2, now: "Fix rounding" }, "a move in the tree reads the branch it moved to");
+	s.fire("session_shutdown");
+	assert.equal(lists().at(-1), undefined, "the last list has none");
+});
+
 test("pendings are taken only for a call of the owner's own tool in flight, in contract v1", () => {
 	const s = session();
 	s.own();

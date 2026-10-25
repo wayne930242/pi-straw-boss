@@ -20,8 +20,8 @@ export function pick(stored: string | null, languages: readonly string[]): Local
 const PAGE: Record<string, () => string> = {
 	brand_label: m.brand_label, tagline: m.tagline, totals_label: m.totals_label, stat_bases: m.stat_bases, stat_agents: m.stat_agents, stat_working: m.stat_working,
 	stat_waiting: m.stat_waiting, stat_commanding: m.stat_commanding, mark_commanding: m.mark_commanding, alerts: m.alerts, no_alerts: m.no_alerts, pair_button: m.pair_button, pair_title: m.pair_title, link_connecting: m.link_connecting,
-	location: m.location, all_bases: m.all_bases, documents: m.documents, net_log: m.net_log, states: m.states, mark_working: m.mark_working,
-	mark_waiting: m.mark_waiting, mark_idle: m.mark_idle, mark_done: m.mark_done, mark_error: m.mark_error, credit: m.credit, language: m.language, waiting_changes: m.waiting_changes, new_base: m.new_base,
+	location: m.location, all_bases: m.all_bases, documents: m.documents, timeline: m.timeline, states: m.states, mark_working: m.mark_working,
+	mark_waiting: m.mark_waiting, mark_idle: m.mark_idle, mark_done: m.mark_done, mark_error: m.mark_error, credit: m.credit, language: m.language, new_base: m.new_base,
 };
 export const pageKeys = Object.keys(PAGE);
 

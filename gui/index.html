@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="referrer" content="no-referrer">
 <title>Straw Net</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b1220'/%3E%3Cpath d='M16 5l9 7h-4v13h-10V12H7z' fill='%2338e0ff'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231a1b26'/%3E%3Cpath d='M16 5l9 7h-4v13h-10V12H7z' fill='%237dcfff'/%3E%3C/svg%3E">
 </head>
 <body>
 <!-- Icons: game-icons.net, CC BY 3.0 (Lorc, Delapouite); see gui/ICONS.md -->
@@ -54,8 +54,18 @@
     <div class="link" id="link" data-state="connecting"><i></i><span id="link-text">connecting</span></div>
   </header>
   <div class="banner" id="banner" role="status" hidden></div>
-  <nav class="crumbs" id="crumbs" aria-label="Location" data-m-label="location"><b>Straw Net</b><span data-m="all_bases">all bases</span></nav>
-  <div class="stage" id="stage">
+  <div class="bar">
+    <nav class="crumbs" id="crumbs" aria-label="Location" data-m-label="location"><b>Straw Net</b><span data-m="all_bases">all bases</span></nav>
+    <ul class="legend" id="legend" aria-label="States" data-m-label="states">
+      <li data-mark="working"><b class="badge"></b><span data-m="mark_working">working</span></li>
+      <li data-mark="commanding"><b class="badge"></b><span data-m="mark_commanding">commanding</span></li>
+      <li data-mark="waiting"><b class="badge"></b><span data-m="mark_waiting">waiting on a question</span></li>
+      <li data-mark="idle"><b class="badge"></b><span data-m="mark_idle">idle</span></li>
+      <li data-mark="done"><b class="badge"></b><span data-m="mark_done">finished</span></li>
+      <li data-mark="error"><b class="badge"></b><span data-m="mark_error">error</span></li>
+    </ul>
+  </div>
+  <div class="stage" id="stage" data-view="map">
     <div class="work" id="work">
       <main class="map view" id="map">
         <svg class="links" id="links" aria-hidden="true"></svg>
@@ -68,20 +78,16 @@
     </div>
     <aside class="side">
       <section class="panel dossier" id="dossier" hidden></section>
-      <details class="panel net-log"><summary><h2 data-m="net_log">Logs</h2></summary><ol class="log" id="log" data-m-empty="waiting_changes"></ol></details>
-      <section class="panel" id="legend"><h2 data-m="states">States</h2>
-        <ul class="legend">
-          <li data-mark="working"><b class="badge"></b><span data-m="mark_working">working</span></li>
-          <li data-mark="commanding"><b class="badge"></b><span data-m="mark_commanding">commanding</span></li>
-          <li data-mark="waiting"><b class="badge"></b><span data-m="mark_waiting">waiting on a question</span></li>
-          <li data-mark="idle"><b class="badge"></b><span data-m="mark_idle">idle</span></li>
-          <li data-mark="done"><b class="badge"></b><span data-m="mark_done">finished</span></li>
-          <li data-mark="error"><b class="badge"></b><span data-m="mark_error">error</span></li>
-        </ul>
-      </section>
-      <p class="credit" data-m="credit">Icons from game-icons.net by Lorc and Delapouite, CC BY 3.0.</p>
     </aside>
   </div>
+  <footer class="foot">
+    <details class="panel timeline" id="timeline" open>
+      <summary><h2 data-m="timeline">Net activity</h2><time class="tl-at"></time><span class="tl-last"></span><small class="tl-span"></small></summary>
+      <div class="tl-lanes"></div>
+      <div class="tl-axis"></div>
+    </details>
+    <p class="credit" data-m="credit">Icons from game-icons.net by Lorc and Delapouite, CC BY 3.0.</p>
+  </footer>
 </div>
 <div class="dock" id="dock" aria-label="Alerts" data-m-label="alerts" role="region"></div>
 <script type="module" src="./main.ts"></script>

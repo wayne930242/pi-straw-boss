@@ -4,6 +4,7 @@ import { type Json, parse } from "./items.ts";
 import type { Net, Queued, Unit } from "./net.ts";
 import type { Answerable, Dialog } from "./owners.ts";
 import type { Monitor } from "./monitors.ts";
+import type { TodoSum } from "./todo.ts";
 
 // What a waiting session waits on: the current branch's newest assistant message's tool call with no result yet, read from the end of
 // its session file. The snapshot carries it so the alert and the session view can show an ask_user question (its context and options).
@@ -111,7 +112,7 @@ async function pendingWith(file: string): Promise<{ pending?: Pending; calls: Op
 export const waitsForSecret = async (file: string) => (await pendingOf(file), CACHE.get(file)?.secret !== false); // dropped from the cache meanwhile: hidden until the next look
 
 /** The dialogs bridges relay, by unit key, and how they join what the file says (dialogs.ts); `docsOf`, the documents they list. */
-export interface Relayed { dialogsOf(key: string): Dialog[] | undefined; merge(key: string, file: Pending | undefined, dialogs: Dialog[], readable: boolean, calls?: OpenCall[]): Pending; docsOf?(key: string): Pick<Unit, "docs" | "docsCut"> | undefined; queuedOf?(key: string): Queued[] | undefined; monitorsOf?(key: string): Monitor[] | undefined }
+export interface Relayed { dialogsOf(key: string): Dialog[] | undefined; merge(key: string, file: Pending | undefined, dialogs: Dialog[], readable: boolean, calls?: OpenCall[]): Pending; docsOf?(key: string): Pick<Unit, "docs" | "docsCut"> | undefined; queuedOf?(key: string): Queued[] | undefined; monitorsOf?(key: string): Monitor[] | undefined; todoOf?(key: string): TodoSum | undefined }
 
 const unitsOf = (b: Net["bases"][number]) => [...(b.tower ? [b.tower, ...b.tower.subs] : []), ...[...b.tabs.flatMap((t) => t.units), ...b.outside].flatMap((u) => [u, ...u.subs])];
 /** Adds what each waiting unit waits on (and takes a subagent that still watches a running monitor out of the finished), and the documents each unit shows, to a snapshot. A unit with a relayed dialog waits even before Herdr reports its pane blocked. */
@@ -124,6 +125,7 @@ export async function withPending(net: Net, fileOf: (key: string) => string | un
 			const queued = relayed?.queuedOf?.(u.key);
 			if (queued?.length) u.queued = queued;
 			const monitors = relayed?.monitorsOf?.(u.key); if (monitors?.length) u.monitors = monitors;
+			const todo = relayed?.todoOf?.(u.key); if (todo) u.todo = todo;
 			// A unit marked done, or a subagent whose run is recorded done, whose pi is alive (control) and watches a running monitor has not finished: it wakes when the monitor reports.
 			if (u.control && (u.mark === "done" || (u as Unit).ended) && monitors?.some((x) => x.status === "running")) [(u as Unit).ended, u.mark] = [undefined, u.mark === "done" ? "idle" : u.mark];
 			if (u.mark === "idle" && !(u as Unit).ended && monitors?.some((x) => x.status === "running")) [u.mark, b.mark, (u as Unit).note] = ["commanding", b.mark === "waiting" ? b.mark : "working", "watching a monitor"]; // idle with a running monitor: it will wake
