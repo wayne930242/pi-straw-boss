@@ -267,7 +267,6 @@
 	"first_prompt": "第一句指令（選填）",
 	"base_name": "基地名稱",
 	"open_main_go": "在這裡開主智慧體",
-	"opening": "開啟中…最多可能要一分鐘。",
 	"opened_main": "已在 {base} 的新小隊開好主智慧體。",
 	"open_member": "＋成員",
 	"new_base": "＋新基地",
@@ -361,5 +360,18 @@
 	"drawer_title": "所有單位",
 	"drawer_label": "切換到其他單位",
 	"drawer_map": "回到主地圖",
-	"drawer_close": "關閉清單"
+	"drawer_close": "關閉清單",
+	"deploy_title": "部署{kind} · {name}",
+	"deploy_kind_base": "基地",
+	"deploy_aria": "部署進度",
+	"deploy_create_base": "建立基地",
+	"deploy_create_tab": "開啟分頁",
+	"deploy_create_pane": "分割窗格",
+	"deploy_start": "啟動智慧體",
+	"deploy_join": "加入稻草網",
+	"deploy_deliver": "交付任務",
+	"deploy_failed": "在「{step}」失敗：",
+	"deploy_timeout": "{seconds} 秒內沒有回應。單位可能仍會開好，請看地圖確認。",
+	"deploy_back": "回到表單",
+	"deploy_ready": "單位就緒"
 }

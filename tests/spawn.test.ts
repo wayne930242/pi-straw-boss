@@ -37,9 +37,9 @@ test("the picker lists only visible folders inside home, follows a symlink only 
 		assert.equal(await pickable(refused, home), undefined, refused);
 });
 
-async function gui() {
+async function gui(hook?: (method: string) => Promise<void>) {
 	const calls: { method: string; params: Record<string, unknown> }[] = [];
-	const call = async (method: string, params: Record<string, unknown>) => void calls.push({ method, params });
+	const call = async (method: string, params: Record<string, unknown>) => (calls.push({ method, params }), void (await hook?.(method)));
 	const viewer = world.agent({ id: "viewer-a", pane: "wA:p1", tab: "wA:t1", deps: { bundle, call, openUrl: async () => {} } });
 	await viewer.start();
 	await viewer.command("gui");
@@ -146,4 +146,43 @@ test("an opening is refused outside home or for a missing base, and one that fai
 	const base = await post("open/base", { dir: home, label: "Home" });
 	assert.equal(base.status, 502);
 	assert.deepEqual(world.herdr.workspaces.map((w) => w.workspace_id).filter((id) => !["wA", "wB"].includes(id)), [], "the workspace it created is closed again: no base is left empty");
+});
+
+test("an opening reports its progress step by step while it runs, only the steps it has, and names the step that failed", async () => {
+	world.autoMains();
+	let release!: () => void;
+	const gate = new Promise<void>((done) => (release = done));
+	const { post } = await gui(async (method) => void (method === "agent.prompt" && (await gate)));
+	const steps = async (id: string) => ((await post("open/progress", { id })).body as { steps?: { id: string; state: string }[] }).steps?.map((s) => `${s.id}:${s.state}`) ?? [];
+	const dir = join(home, "projects", "alpha");
+	const running = post("open/base", { dir, label: "Alpha", prompt: "Hello", deploy: "deploy-aaaa-1" });
+	await until(async () => (await steps("deploy-aaaa-1")).includes("deliver:active"), "the first message is being delivered");
+	assert.deepEqual(await steps("deploy-aaaa-1"), ["create:done", "start:done", "join:done", "deliver:active"]);
+	release();
+	assert.equal((await running).status, 200);
+	const done = (await post("open/progress", { id: "deploy-aaaa-1" })).body as { finished: boolean; steps: { state: string }[]; failed?: unknown };
+	assert.deepEqual([done.finished, done.steps.map((s) => s.state), done.failed], [true, ["done", "done", "done", "done"], undefined]);
+	assert.equal((await post("open/base", { dir, label: "Plain", deploy: "deploy-aaaa-2" })).status, 200);
+	assert.deepEqual(await steps("deploy-aaaa-2"), ["create:done", "start:done", "join:done"], "no first message, no delivery step");
+	world.herdr.busy = 99; // pi never starts
+	const failed = await post("open/member", { workspace: "wA", dir: home, deploy: "deploy-aaaa-3" });
+	assert.deepEqual([failed.status, failed.body.step], [502, "start"], "the refusal names the step");
+	const seen = (await post("open/progress", { id: "deploy-aaaa-3" })).body as { finished: boolean; failed: { step: string; reason: string } };
+	assert.equal(seen.finished, false);
+	assert.deepEqual([seen.failed.step, seen.failed.reason], ["start", failed.body.reason]);
+	assert.deepEqual(await steps("deploy-aaaa-3"), ["create:done", "start:failed", "join:pending"]);
+	assert.equal((await post("open/progress", { id: "deploy-nobody" })).status, 404);
+	assert.equal((await post("open/base", { dir, deploy: "x" })).body.error, "bad_request", "an id that is too short is refused");
+});
+
+test("a first message that does not arrive fails the delivery step, and a refusal before any step fails the first", async () => {
+	world.autoMains();
+	const { post } = await gui(async (method) => {
+		if (method === "agent.prompt") throw new Error("pane gone");
+	});
+	const lost = await post("open/base", { dir: join(home, "beta"), label: "Beta", prompt: "Hello", deploy: "deploy-bbbb-1" });
+	assert.deepEqual([lost.status, lost.body.error, lost.body.step], [502, "prompt_failed", "deliver"]);
+	assert.match(String(lost.body.reason), /pane gone/);
+	const none = await post("open/member", { workspace: "wZ", dir: home, deploy: "deploy-bbbb-2" });
+	assert.deepEqual([none.status, none.body.step], [404, "create"]);
 });

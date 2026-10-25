@@ -1,3 +1,4 @@
+import { deployPanel } from "./deploy.ts";
 import { h } from "./dom.ts";
 import type { Tile } from "./layer.ts";
 import { m } from "./paraglide/messages.js";
@@ -11,7 +12,7 @@ interface Listing { path: string; home: string; parent: string | null; dirs: str
 interface Base { id: string; label: string }
 export type Opening = { kind: "base" } | { kind: "main" | "member"; base: Base; tab?: { id: string; label: string } };
 
-export function spawnTile(o: Opening, enter?: (ws: string, key: string, tile: string) => void): Tile {
+export function spawnTile(o: Opening, enter?: (ws: string, key: string, tile: string) => void, chime?: () => void): Tile {
 	const base = o.kind === "base" ? undefined : o.base, tab = o.kind === "base" ? undefined : o.tab;
 	const title = o.kind === "base" ? m.open_base_title() : o.kind === "main" ? m.open_main_title({ base: base!.label }) : tab ? m.open_member_tab_title({ tab: tab.label }) : m.open_member_title({ base: base!.label }), id = `open-${o.kind}-${base?.id ?? ""}-${tab?.id ?? ""}`;
 	return { id, title, body: () => {
@@ -42,19 +43,25 @@ export function spawnTile(o: Opening, enter?: (ws: string, key: string, tile: st
 		up.onclick = () => at?.parent && show(at.parent);
 		go.onclick = () => {
 			if (!at) return;
-			const dir = at.path, text = prompt.value, body = o.kind === "base" ? { dir, label: name.value, prompt: text } : { workspace: base!.id, ...(tab && { tab: tab.id }), dir, prompt: text };
-			go.disabled = true;
-			say(m.opening());
-			void post(`open/${o.kind}`, body).then((r) => {
-				if (!r.ok) return say(r.body.reason ?? m.refused({ status: r.status }));
-				prompt.value = name.value = "";
-				named = false;
-				if (enter && typeof r.body.session === "string") return enter(r.body.workspace as string, r.body.session, id);
-				say(o.kind === "base" ? m.opened_base() : o.kind === "main" ? m.opened_main({ base: base!.label }) : m.opened_member({ base: base!.label }));
-			}, () => say(m.no_answer())).finally(() => (go.disabled = false));
+			const dir = at.path, text = prompt.value, label = name.value.trim() || dir.slice(dir.lastIndexOf("/") + 1), body = o.kind === "base" ? { dir, label: name.value, prompt: text } : { workspace: base!.id, ...(tab && { tab: tab.id }), dir, prompt: text };
+			// The form gives way to the deploy panel while the unit opens; a failure's Back brings the form back as it was.
+			root.replaceChildren(deployPanel({
+				kind: o.kind, split: o.kind === "member" && Boolean(tab), hasPrompt: Boolean(text.trim()), name: o.kind === "base" ? label : dir.slice(dir.lastIndexOf("/") + 1) || dir, chime,
+				open: (deploy) => post(`open/${o.kind}`, { ...body, deploy }),
+				progress: (deploy) => post("open/progress", { id: deploy }),
+				back: () => root.replaceChildren(...form),
+				ready: (opened) => {
+					prompt.value = name.value = "";
+					named = false;
+					root.replaceChildren(...form);
+					if (enter && typeof opened.session === "string") return enter(opened.workspace as string, opened.session, id);
+					say(o.kind === "base" ? m.opened_base() : o.kind === "main" ? m.opened_main({ base: base!.label }) : m.opened_member({ base: base!.label }));
+				},
+			}));
 		};
 		show();
-		return h("div", { class: "spawn" }, h("p", { class: "spawn-at" }, m.folder_here(), " ", where, " ", up), list, note, ...(o.kind === "base" ? [name] : []), prompt, go);
+		const form = [h("p", { class: "spawn-at" }, m.folder_here(), " ", where, " ", up), list, note, ...(o.kind === "base" ? [name] : []), prompt, go], root = h("div", { class: "spawn" }, ...form);
+		return root;
 	} };
 }
 

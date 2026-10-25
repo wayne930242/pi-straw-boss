@@ -323,7 +323,6 @@
 	"first_prompt": "First message (optional)",
 	"base_name": "Base name",
 	"open_main_go": "Open the main here",
-	"opening": "Opening… this can take up to a minute.",
 	"opened_main": "The main is open in a new squad of {base}.",
 	"open_member": "+ Member",
 	"new_base": "+ New base",
@@ -417,5 +416,18 @@
 	"drawer_title": "All units",
 	"drawer_label": "Switch to a unit",
 	"drawer_map": "Back to the map",
-	"drawer_close": "Close the list"
+	"drawer_close": "Close the list",
+	"deploy_title": "Deploying {kind} · {name}",
+	"deploy_kind_base": "base",
+	"deploy_aria": "Deployment progress",
+	"deploy_create_base": "Create the base",
+	"deploy_create_tab": "Open a tab",
+	"deploy_create_pane": "Split a pane",
+	"deploy_start": "Start the agent",
+	"deploy_join": "Join the Straw Net",
+	"deploy_deliver": "Deliver the task",
+	"deploy_failed": "Failed at “{step}”.",
+	"deploy_timeout": "No answer after {seconds} s. The unit may still open; check the map.",
+	"deploy_back": "Back to the form",
+	"deploy_ready": "Unit ready"
 }

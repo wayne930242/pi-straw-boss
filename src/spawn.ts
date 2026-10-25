@@ -3,6 +3,7 @@ import { readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import { checkText, type Reply } from "./control.ts";
+import { createDeploys, type Deploy, type StepId } from "./deploy.ts";
 import { createTab, type HerdrCall, type HerdrRun, isSub, type Pane, panes, report, result, type Sleep, startPi, waitFor, type Workspace, workspaces } from "./herdr.ts";
 
 // What the page opens by itself, each pi started in a folder picked from the home folder. A base starts with no tower: it opens with one member
@@ -14,6 +15,7 @@ import { createTab, type HerdrCall, type HerdrRun, isSub, type Pane, panes, repo
 //   POST /<token>/api/open/base {dir, label, prompt?}             a new workspace in `dir` whose first tab holds a member
 //   POST /<token>/api/open/member {workspace, tab?, dir?, prompt?} a member split into `tab` (in `dir`, else that tab's folder), or in a new tab in `dir`; no tower
 //   POST /<token>/api/open/main {workspace, dir, prompt?}         a new tab in the base whose pi becomes its main; the base has a tower
+// An open may carry `deploy`, an id the page makes; POST /<token>/api/open/progress {id} then answers how far that open has got (deploy.ts), and a refused open names its failed `step`.
 
 const MAX_DIRS = 500, JOIN_WAIT_MS = 60_000, MAX_LABEL = 64;
 
@@ -46,6 +48,7 @@ export async function listDirs(dir: string, home = homedir()) {
 
 export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir() }: SpawnDeps) {
 	let busy = false;
+	const deploys = createDeploys();
 	const opened = async (workspace: string, tab: string, pane: string): Promise<Reply> => ({ status: 200, body: { workspace, tab, pane, ...(sessionAt && { session: await sessionAt(pane) }) } });
 	/** The base's own folder: its checkout, else where its tower runs, else where its first pane runs; home when that is not pickable. */
 	const baseDir = async (workspaceId: unknown) => {
@@ -67,14 +70,17 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 	};
 
 	/** Starts pi in a fresh pane and waits until it has joined the net (as `role`, or as anything when none is named), then types the first message. */
-	async function boot(paneId: string, name: string, prompt: string | undefined, role?: string): Promise<Reply | undefined> {
+	async function boot(d: Deploy, paneId: string, name: string, prompt: string | undefined, role?: string): Promise<Reply | undefined> {
+		d.go("start");
 		await startPi(run, sleep, `${role ?? "member"}-${randomUUID().slice(0, 8)}`, paneId, ["--name", name]);
+		d.go("join");
 		const joined = await waitFor(sleep, async () => {
 			const r = (await panes(run)).find((p) => p.pane_id === paneId)?.tokens?.sb_role;
 			return role ? r === role : r === "member" || r === "main";
 		}, JOIN_WAIT_MS, 500);
 		if (!joined) throw new Error(`The pi in pane ${paneId} did not join the net${role ? ` as the ${role} of its tab` : ""} within ${JOIN_WAIT_MS / 1000} s`);
 		if (!prompt) return;
+		d.go("deliver");
 		if (!call) return no(503, "unavailable", "The agent opened, but this server cannot type into it; send the first message from its comms.");
 		const sent = await call("agent.prompt", { target: paneId, text: prompt }, 15_000).then(() => undefined, (error: Error) => error.message);
 		if (sent) return no(502, "prompt_failed", `The agent opened, but the first message did not arrive: ${sent}`);
@@ -89,7 +95,8 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 		}
 	};
 
-	async function openMain(workspaceId: unknown, dir: string, prompt?: string): Promise<Reply> {
+	async function openMain(d: Deploy, workspaceId: unknown, dir: string, prompt?: string): Promise<Reply> {
+		d.go("create");
 		const ws = await base(workspaceId);
 		if ("status" in ws) return ws;
 		if (!(await towered(ws))) return no(409, "no_tower", "This base has no tower yet: add a member, and the tower opens when a member promotes itself.");
@@ -98,12 +105,13 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 		const failed = await orClose(["tab", "close", tabId], async () => {
 			// sb_open_main authorises exactly one pi in this shell to promote itself (index.ts consumes it).
 			await report(run, "pane", paneId, { sb_open_main: "1" });
-			return boot(paneId, `main · ${name}`, prompt, "main");
+			return boot(d, paneId, `main · ${name}`, prompt, "main");
 		});
 		return failed ?? opened(ws.workspace_id, tabId, paneId);
 	}
 
-	async function openMember(workspaceId: unknown, tabId: unknown, dir: string | undefined, prompt?: string): Promise<Reply> {
+	async function openMember(d: Deploy, workspaceId: unknown, tabId: unknown, dir: string | undefined, prompt?: string): Promise<Reply> {
+		d.go("create");
 		const ws = await base(workspaceId);
 		if ("status" in ws) return ws;
 		if (await towered(ws)) return no(409, "has_tower", "This base has a tower: open a new main instead, in a tab of its own.");
@@ -122,17 +130,26 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 			created = { tabId: lead.tab_id, paneId, close: ["pane", "close", paneId] };
 			dir = cwd;
 		}
-		const failed = await orClose(created.close, () => boot(created.paneId, `member · ${basename(dir!) || dir}`, prompt));
+		const failed = await orClose(created.close, () => boot(d, created.paneId, `member · ${basename(dir!) || dir}`, prompt));
 		return failed ?? opened(ws.workspace_id, created.tabId, created.paneId);
 	}
 
-	async function openBase(dir: string, label: string, prompt?: string): Promise<Reply> {
+	async function openBase(d: Deploy, dir: string, label: string, prompt?: string): Promise<Reply> {
+		d.go("create");
 		const created = await result(run, ["workspace", "create", "--cwd", dir, "--label", label, "--no-focus", "--env", "STRAW_BOSS_ROLE=member"]);
 		const workspaceId: string = created.workspace.workspace_id, paneId: string = created.root_pane.pane_id;
 		// Created by this request a moment ago, with nothing in it but the member attempt: a base is never left empty.
-		const failed = await orClose(["workspace", "close", workspaceId], () => boot(paneId, `member · ${basename(dir) || dir}`, prompt));
+		const failed = await orClose(["workspace", "close", workspaceId], () => boot(d, paneId, `member · ${basename(dir) || dir}`, prompt));
 		return failed ?? opened(workspaceId, created.tab.tab_id, paneId);
 	}
+
+	/** Closes the progress of an open on its reply; a refusal names the step it failed at. */
+	const failed = (d: Deploy, reply: Reply): Reply => {
+		if (reply.status < 400) return (d.finish(), reply);
+		const { reason } = reply.body as { reason: string };
+		d.fail(reason);
+		return { status: reply.status, body: { ...(reply.body as object), step: d.failed!.step } };
+	};
 
 	return async function handle([scope, kind = ""]: string[], json: Record<string, unknown>): Promise<Reply> {
 		if (scope === "dirs" && !kind) {
@@ -141,7 +158,12 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 			if (!dir) return OUTSIDE;
 			return listDirs(dir, home).then((body) => ({ status: 200, body }), () => no(403, "unreadable", "This folder cannot be read."));
 		}
+		if (scope === "open" && kind === "progress") {
+			const seen = deploys.get(json.id);
+			return seen ? { status: 200, body: seen.view() } : no(404, "not_found", "No such opening.");
+		}
 		if (scope !== "open" || !["main", "member", "base"].includes(kind)) return no(404, "not_found", "No such action.");
+		if (json.deploy !== undefined && !deploys.valid(json.deploy)) return no(400, "bad_request", "The opening's id is 8 to 64 letters, digits, - or _.");
 		const split = kind === "member" && json.tab !== undefined;
 		if (split && typeof json.tab !== "string") return no(400, "bad_request", "A tab is named by its id.");
 		const dir = split && json.dir === undefined ? undefined : await pickable(json.dir, home);
@@ -158,10 +180,12 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 		}
 		if (busy) return no(429, "busy", "Another opening is still on its way.");
 		busy = true;
+		const d = deploys.begin(json.deploy as string | undefined, ["create", "start", "join", ...(prompt ? ["deliver" as StepId] : [])]);
 		try {
-			return await (kind === "main" ? openMain(json.workspace, dir!, prompt) : kind === "member" ? openMember(json.workspace, json.tab, dir, prompt) : openBase(dir!, label, prompt));
+			const done = await (kind === "main" ? openMain(d, json.workspace, dir!, prompt) : kind === "member" ? openMember(d, json.workspace, json.tab, dir, prompt) : openBase(d, dir!, label, prompt));
+			return failed(d, done);
 		} catch (error) {
-			return no(502, "open_failed", (error as Error).message);
+			return failed(d, no(502, "open_failed", (error as Error).message));
 		} finally {
 			busy = false;
 		}
