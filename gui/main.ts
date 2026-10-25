@@ -63,7 +63,7 @@ function badge(net: Net) {
 	const n = net.bases.flatMap((b) => [...(b.tower ? [b.tower, ...b.tower.subs] : []), ...[...b.tabs.flatMap((t) => t.units), ...b.outside].flatMap((u) => [u, ...u.subs])]).filter((u) => u.mark === "waiting" || u.pending).length;
 	if (!tabIcon || !plainIcon || n === badged) return;
 	badged = n;
-	const dot = `<circle cx='23' cy='9' r='9' fill='#ffd166' stroke='#0b1220' stroke-width='2'/><text x='23' y='13' text-anchor='middle' font-family='sans-serif' font-size='${n > 9 ? 9 : 12}' font-weight='700' fill='#06101e'>${n > 9 ? "9+" : n}</text>`;
+	const dot = `<circle cx='23' cy='9' r='9' fill='#e0af68' stroke='#1a1b26' stroke-width='2'/><text x='23' y='13' text-anchor='middle' font-family='sans-serif' font-size='${n > 9 ? 9 : 12}' font-weight='700' fill='#16161e'>${n > 9 ? "9+" : n}</text>`;
 	tabIcon.href = `data:image/svg+xml,${encodeURIComponent(n ? plainIcon.replace("</svg>", `${dot}</svg>`) : plainIcon)}`;
 }
 // Reminders and sounds follow every snapshot, a hidden page's above all: `heard` is apart from `known`, which the alert queue
