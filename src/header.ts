@@ -21,21 +21,19 @@ export const REMOTE_ID = /^link:[a-z2-7]{26}$/;
 /** Control characters and runs of whitespace become one space, so a name cannot start a second line or a second field. */
 export const clean = (text: string) => text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").replace(/\s+/g, " ").trim();
 const quote = (value: string) => (/[\s"\]=;]/.test(clean(value)) ? `"${clean(value).replace(/"/g, "'")}"` : clean(value));
-/** The team's name is this computer's own (the project folder or the config's name), not sender text: it keeps its characters, cut to this length. */
-const TEAM_MAX = 80;
 const roleOf = (p: Party) => (p.head ? "head tower" : p.role);
 /** A header names at most this many recipients, then how many more there are (a scope `all` broadcast can reach every session on the machine). */
 const MAX_NAMED = 20;
 const recipient = (p: Party) => `${clean(p.name)} (${roleOf(p)}${p.workspace ? ` of ${clean(p.workspace)}` : ""})`;
 
 export function header({ from, kind, scope, to, reply, remote }: Stamp): string {
-	// A remote header's sender-controlled fields are cut to the label character set and 40 characters here as well as where the link code builds them.
+	// A remote header's sender-controlled fields are cut to the label character set and 40 characters here as well as where the link code builds them; the team is this computer's own name for it, so it keeps its characters (80 at most).
 	if (remote && (!REMOTE_ID.test(from.id) || !/^[a-z2-7]{6}$/.test(remote.short))) throw new Error("A remote header needs a link device id and a short id");
 	const text = (value: string) => (remote ? restrictLabel(value) : value);
 	const fields = [
 		`from=${quote(text(from.name || from.id))}`, `id=${quote(from.id)}`, `role=${from.role}`, ...(from.head ? ["head=yes"] : []),
 		...(from.workspace ? [`workspace=${quote(text(from.workspace))}`] : []),
-		...(remote ? [`remote=${quote(restrictLabel(remote.device))}`, `device=${remote.short}`, `team=${quote(clean(remote.team).slice(0, TEAM_MAX))}`, "verified=yes"] : []),
+		...(remote ? [`remote=${quote(restrictLabel(remote.device))}`, `device=${remote.short}`, `team=${quote(clean(remote.team).slice(0, 80))}`, "verified=yes"] : []),
 		`kind=${kind}`, `scope=${scope}`, `to=${quote([...to.slice(0, MAX_NAMED).map(recipient), ...(to.length > MAX_NAMED ? [`+${to.length - MAX_NAMED} more`] : [])].join("; "))}`, `reply=${reply ? "expected" : "none"}`,
 	];
 	return `[straw net ${fields.join(" ")}]`;
