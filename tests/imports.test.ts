@@ -490,5 +490,6 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased (calm header) to 63.4 KB / 14.1 KB: the totals as one strip, the settings button and panel, the map's actions in the location bar.
 	// Unreleased to 63.45 KB: the work's gauge (layer.ts watches its width) and the work positioned for it.
 	// Unreleased to 63.7 KB / 14.13 KB: a phone's comms play their entrance themselves, not on their view (whose transform held them under the HUD), and "opening the channel" covers the screen.
-	assert.ok(total(css, (n) => size(n).length) <= 63_700 && total(css, gz) <= 14_130, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// Unreleased to 14.14 KB gzipped: the drawer's current unit marked on both edges.
+	assert.ok(total(css, (n) => size(n).length) <= 63_700 && total(css, gz) <= 14_140, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });
