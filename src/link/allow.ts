@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 // What a remote turn at `reply` or `forward` may do without asking (docs/specs/2026-10-25-straw-link.md, Remote turns, Trust levels): the allowlist
@@ -143,6 +143,25 @@ export function filterListing(tool: string, root: string, text: string, s: Scope
 		const rel = inProject(root, s);
 		return rel === undefined || rel === "" || s.tracked().dirs.has(rel);
 	})();
+	// The text of a grep line is attacker-shaped (a file or folder named like `src/a.ts:1: z`), so a line counts only when the tracked file it names
+	// holds that text at that line (pi cuts long lines and marks them, so a prefix of the line is enough). Each file is read once per call.
+	const lines = new Map<string, string[] | undefined>();
+	const linesOf = (abs: string) => {
+		if (!lines.has(abs)) {
+			try {
+				lines.set(abs, readFileSync(abs, "utf8").split("\n"));
+			} catch {
+				lines.set(abs, undefined);
+			}
+		}
+		return lines.get(abs);
+	};
+	const holds = (abs: string, n: number, text: string) => {
+		const real = linesOf(abs)?.[n - 1];
+		if (real === undefined) return false;
+		const shown = text.replace(/\.\.\. \[truncated\]$/, "").trimEnd();
+		return real.replace(/\r$/, "").trimEnd().startsWith(shown);
+	};
 	const clean = (rel: string) => !isAbsolute(rel) && !rel.split("/").includes("..");
 	const keep = (line: string): boolean => {
 		if (tool === "grep") {
@@ -150,7 +169,7 @@ export function filterListing(tool: string, root: string, text: string, s: Scope
 				const prefix = line.slice(0, m.index);
 				if (!prefix) continue;
 				const abs = rootIsDir ? (clean(prefix) ? join(root, prefix) : undefined) : (prefix === basename(root) ? root : undefined);
-				if (abs && keepFile(abs)) return true;
+				if (abs && keepFile(abs) && holds(abs, Number(m[0].slice(1, -2)), line.slice(m.index + m[0].length))) return true;
 			}
 			return false;
 		}

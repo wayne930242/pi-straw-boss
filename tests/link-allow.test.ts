@@ -182,3 +182,11 @@ test("a result outside the project is filtered to nothing even when the search w
 	assert.equal(filterListing("grep", join(root, "outside"), "x.txt:1: outside secret", scope), "");
 	assert.equal(filterListing("ls", join(root, "outside"), "x.txt", scope), "");
 });
+
+test("grep output: a line is kept only when the tracked file really has that text at that line (crafted names cannot leak untracked contents)", () => {
+	// a file named `src/a.ts:1: z` (untracked) whose content is a secret prints as `src/a.ts:1: z:1: secret`; a directory `x\nsrc/a.ts` makes a line `src/a.ts:1: secret`
+	const crafted = ["src/a.ts:1: z:1: secret", "src/a.ts:1: secret", "src/a.ts:9: export const a = 1;", "src/a.ts:1: export const a = 1;"].join("\n");
+	assert.equal(filterListing("grep", project, crafted, scope), "src/a.ts:1: export const a = 1;");
+	// pi cuts long lines and marks them: a prefix of the real line still counts
+	assert.equal(filterListing("grep", project, "src/a.ts:1: export co... [truncated]", scope), "src/a.ts:1: export co... [truncated]");
+});
