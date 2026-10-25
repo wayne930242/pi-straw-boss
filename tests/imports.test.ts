@@ -254,7 +254,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased raised workspace.ts to 60 for the tower's subagents tethered under it.
 	// Unreleased raised session.ts to 116: the comms head carries the unit's mark, so it glows while the unit is commanding.
 	// Unreleased raised scene.ts to 38 for `closed` (a channel is closed when its session left the net or a finished subagent's pi exited) and composer.ts to 191 (a closed channel's box is disabled).
-	for (const [name, max] of [["router.ts", 80], ["chat.ts", 275], ["markdown.ts", 180], ["views.ts", 90], ["scene.ts", 38], ["tokens.ts", 24], ["nav.ts", 43], ["workspace.ts", 60], ["dossier.ts", 49], ["session.ts", 116], ["bars.ts", 50], ["lightbox.ts", 34], ["layer.ts", 249], ["askkeys.ts", 75], ["composer.ts", 192], ["ask.ts", 185], ["mirror.ts", 175], ["keypad.ts", 124], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
+	// Unreleased raised layer.ts to 250: fit() watches a gauge of the work's width, not the work, whose height changes inside the map's packing report.
+	for (const [name, max] of [["router.ts", 80], ["chat.ts", 275], ["markdown.ts", 180], ["views.ts", 90], ["scene.ts", 38], ["tokens.ts", 24], ["nav.ts", 43], ["workspace.ts", 60], ["dossier.ts", 49], ["session.ts", 116], ["bars.ts", 50], ["lightbox.ts", 34], ["layer.ts", 250], ["askkeys.ts", 75], ["composer.ts", 192], ["ask.ts", 185], ["mirror.ts", 175], ["keypad.ts", 124], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
 	// 0.28.0 to 185 with the answer keys' hooks into gui/ask.ts (the focus on the first option, the textarea). 0.28.0 raised gui/ask.ts from 156 to 175 for the secret panel: the masked field with Show and Hide, Submit, the way back to the terminal, the unsupported-remote notice, and a value that leaves with its one request.
 	// 0.10.0: the page's text comes from Paraglide's messages (gui/messages), which raised chat.ts, views.ts, layer.ts, ask.ts, mirror.ts, and doc.ts by one
 	// line each for the messages import; the strings replaced in place. gui/i18n.ts picks the locale (the menu's choice, the browser's languages with
@@ -406,8 +407,9 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased (net sidecar) to 42.8 KB / 15.85 KB gzipped for the agent badge on a unit that is not a pi session (the card and the token).
 	// Unreleased (comfort) to 43.25 KB / 16 KB gzipped for the bases packed like masonry and the header's height published for what sits under it (render.ts).
 	// Unreleased (comfort) to 47.05 KB / 17.25 KB gzipped for what a card says it did lately (its clock, its todo in short, its last steps) and the cards' clock, the timeline (timeline.ts) in place of the net log, and the map's overview (minimap.ts), with their messages in both languages.
-	// Unreleased (calm header) to 47.2 KB: the settings panel's button (its name in both languages, where it hangs).
-	assert.ok(size(entry).length <= 47_200 && gz(entry) <= 17_250, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// 0.42.0 (calm header) to 47.2 KB: the settings panel's button (its name in both languages, where it hangs).
+	// Unreleased to 47.25 KB / 17.3 KB: the links and the overview drawn on the next frame after the cards' packing, not by an observer of the map.
+	assert.ok(size(entry).length <= 47_250 && gz(entry) <= 17_300, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).
@@ -445,7 +447,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 101.7 KB / 41.9 KB gzipped for the notices list's plural and the Notices button's tint, after 101.5 KB / 41.8 KB for the phone drawer (gui/drawer.ts and swipe.ts, about 4 KB raw, with their messages in both languages), after 96 KB / 38.8 KB for the paired devices under the pairing code (gui/devices.ts, with its messages in both languages) and the answer panel without its read-only confirm.
 	// Unreleased (net sidecar) to 102 KB / 41.95 KB gzipped for the composer's notice about an agent that is not pi (both languages).
 	// Unreleased (comfort) to 41.98 KB gzipped: the lazy chunks import the map chunk by its hashed name, and a new hash gzips a few bytes differently.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 102_000 && total(chunks, gz) <= 41_980, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// Unreleased to 102.05 KB / 42 KB gzipped: layer.ts watches a gauge of the work's width (the gauge made and observed), and the column template's agent slot.
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 102_050 && total(chunks, gz) <= 42_000, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
@@ -482,5 +485,6 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased (comfort) to 60 KB / 13.45 KB for the comfort effects: a card's lift and its glow in a new state, presses, the tethers' arrowheads and their flow (resting when the page calms), selection and scrollbar colours.
 	// Unreleased (comfort) to 62.6 KB / 13.95 KB for the timeline's marks, rows, and hover names, a card's clock, todo, and step marks, and the overview, less the net log's rules.
 	// Unreleased (calm header) to 63.4 KB / 14.1 KB: the totals as one strip, the settings button and panel, the map's actions in the location bar.
-	assert.ok(total(css, (n) => size(n).length) <= 63_400 && total(css, gz) <= 14_100, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// Unreleased to 63.45 KB: the work's gauge (layer.ts watches its width) and the work positioned for it.
+	assert.ok(total(css, (n) => size(n).length) <= 63_450 && total(css, gz) <= 14_100, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });

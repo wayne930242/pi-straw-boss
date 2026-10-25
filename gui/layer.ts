@@ -222,7 +222,8 @@ export function mountPanels(deps: PanelDeps) {
 		},
 		enter: (t) => requestAnimationFrame(() => row.querySelector<HTMLElement>(`.tile[data-key="${CSS.escape(t.id)}"]`)?.focus()),
 	});
-	new ResizeObserver(fit).observe(work);
+	// fit() needs only the work's width, so it watches a gauge as wide and no height: the work's height changes inside the map's packing report.
+	new ResizeObserver(fit).observe(work.appendChild(Object.assign(document.createElement("i"), { className: "gauge" })));
 	const terminal = mountTerminals({ tiles, post: to, stream: deps.stream, pad: keypad });
 	return {
 		tiles,

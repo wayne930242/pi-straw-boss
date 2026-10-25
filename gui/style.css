@@ -378,7 +378,7 @@ a { color: inherit; }
 .crumbs > :last-child { flex: 1 1 auto; max-width: none; }
 .crumb-more { display: none; cursor: pointer; color: var(--accent); }
 .crumbs a, .brand { text-decoration: none; }
-.work { display: flex; gap: 20px; min-width: 0; align-items: flex-start; }
+.work { position: relative; display: flex; gap: 20px; min-width: 0; align-items: flex-start; } .gauge { position: absolute; left: 0; right: 0; height: 0; visibility: hidden; }
 .view { flex: 1 1 0; min-width: 0; }
 body[data-stale="true"] .work { opacity: 0.45; }
 .enter-zoom { animation: zoom 0.5s ease-out both; transform-origin: var(--ox, 50%) var(--oy, 0); }

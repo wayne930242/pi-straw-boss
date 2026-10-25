@@ -205,16 +205,20 @@ function wire(map: HTMLElement, svg: SVGSVGElement, dots: HTMLElement, still: bo
 export interface Page { show(net: Net): void; stats(net: Net): void; layout(): void; pause(paused: boolean): void }
 
 // The bases pack like masonry: the grid's rows are ROW px, and each card spans the rows its height and the gap take, so a short base tucks in
-// under its neighbour while the reading order stays the grid's. A ResizeObserver reports before paint, so a card never shows unpacked.
+// under its neighbour while the reading order stays the grid's. A ResizeObserver reports before paint, so a card never shows unpacked. The map is
+// not observed itself: a span changes its height inside that observer's report, which the browser would defer with an error; the links and the
+// overview are drawn again on the next frame instead, after every card's report and every resize of the window.
 const ROW = 2, GAP = 20;
 
 export function mountPage(): Page {
 	const [map, bases, links, dots] = [byId("map", HTMLElement), byId("bases", HTMLElement), byId("links", SVGSVGElement), byId("packets", HTMLElement)];
 	const still = matchMedia("(prefers-reduced-motion: reduce)").matches, packed = new Set<Element>();
-	const pack = new ResizeObserver((all) => all.forEach(({ target, borderBoxSize }) => ((target as HTMLElement).style.gridRowEnd = `span ${Math.ceil((borderBoxSize[0]!.blockSize + GAP) / ROW)}`)));
 	const minimap = mountMinimap(map, bases), layout = () => (minimap(), !map.hidden && wire(map, links, dots, still));
+	let queued = 0;
+	const later = () => (queued ||= requestAnimationFrame(() => ((queued = 0), layout())));
+	const pack = new ResizeObserver((all) => (all.forEach(({ target, borderBoxSize }) => ((target as HTMLElement).style.gridRowEnd = `span ${Math.ceil((borderBoxSize[0]!.blockSize + GAP) / ROW)}`)), later()));
 	setInterval(() => document.querySelectorAll<HTMLElement>(".age[data-since]").forEach((el) => age(el, Number(el.dataset.since))), 15_000); // the cards' clocks
-	new ResizeObserver(layout).observe(map);
+	addEventListener("resize", later);
 	// The header's height, for what sits under it (the side column, the tiles, the dialogs, the comms' height): it wraps on a narrow window.
 	new ResizeObserver(([e]) => document.documentElement.style.setProperty("--hud", `${Math.ceil(e!.borderBoxSize[0]!.blockSize)}px`)).observe(document.querySelector(".hud")!);
 	mountCalm();
