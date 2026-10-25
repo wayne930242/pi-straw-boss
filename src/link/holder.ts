@@ -27,8 +27,8 @@ export interface HolderOptions {
 	isHolder: () => boolean;
 	/** The user's teams and projects, read fresh. */
 	config: () => LinkConfig;
-	/** One reading of Herdr and pi-intercom. */
-	net: () => Promise<NetView>;
+	/** One reading of Herdr and pi-intercom; `withTabs` adds every workspace's tabs (a presence needs them, a delivery does not). */
+	net: (withTabs?: boolean) => Promise<NetView>;
 	relay: (url: string, device: DeviceKeys) => RelayPort;
 	/** Tells a tower a message waits in the inbox for it. The tower takes it when idle and answers with `taken`. */
 	offer: (tower: Session, id: string) => void | Promise<void>;
@@ -473,7 +473,7 @@ export class LinkHolder {
 		if (!policy || run.dead || !this.running) return;
 		const { state } = this.loadTeam(run.team), key = state.keys.get(state.epoch), me = state.members.get(this.device!.keys.id);
 		if (!key) return;
-		const workspaces = policy.share === "status" ? this.statusOf(await this.o.net(), policy.project) : [];
+		const workspaces = policy.share === "status" ? this.statusOf(await this.o.net(true), policy.project) : [];
 		const presence: Presence = { label: me?.label ?? this.device!.label, headSeq: state.head.seq, headHash: state.head.hash, workspaces };
 		const envelope = buildEnvelope({ team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device!.keys, seq: 0, ts: this.now(), kind: "presence", to: [], plaintext: encodePlaintext("presence", presence) });
 		await run.client.postEnvelope(run.teamId, envelope);
