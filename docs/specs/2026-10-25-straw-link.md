@@ -90,11 +90,14 @@ fit a headless unattended device):
 - The holder acknowledges an envelope to the relay only after it is delivered to a tower or written to the inbox, so a crash or a
   takeover delivers it again rather than losing it; the receive checks drop the second copy.
 - The holder needs a joined pi session to run in. An unattended device's infra starts one pi session at boot, in the first bound project
-  (**Unattended devices**).
+  (**Unattended devices**). The election works when one long-lived tower is the only candidate, as in straw-boss-desk, whose shell
+  starts `herdr server` and one tower pi and keeps them alive.
 
 ## Storage and policy
 
-All Straw Link state lives in `~/.pi/agent/straw-boss/link/` (mode 700, files mode 600), never in `config.json`:
+All Straw Link state lives in `<pi agent dir>/straw-boss/link/` (`~/.pi/agent` unless `PI_CODING_AGENT_DIR` names another; mode 700,
+files mode 600 where the OS has modes), never in `config.json`. Paths may hold non-ASCII characters (a Windows profile such as
+`C:\Users\測試PM`), so the code handles them as Unicode paths and never builds a shell command from them:
 
 ```
 link/device.json          signing and encryption key pairs, label, next sequence number
@@ -110,6 +113,7 @@ On an attended device, `config.json` holds what the user chooses:
 ```json
 {
   "link": {
+    "relay": "https://relay.example",
     "teams": { "<team id>": { "project": "~/projects/moldplan-center", "share": "status" } },
     "trust": { "<device id>": "forward" }
   }
@@ -275,7 +279,9 @@ Other members see a valid `add` signed by A → accept B
   ends the invite. An invite works once and lapses after 10 minutes; a second join request to it is refused.
 - B then picks the local directory that is the project (the GUI offers the open workspaces' folders and a folder picker) and its `share`.
 - The scan runs in B's GUI page on `http://127.0.0.1` (a secure context, so the browser may open the camera) with the browser's
-  `BarcodeDetector` where present; elsewhere B pastes the text. No QR decoder is bundled in phase 1.
+  `BarcodeDetector` where present; elsewhere B pastes the text. No QR decoder is bundled in phase 1. Paste is a first-class path, not a
+  fallback: Electron hosts such as straw-boss-desk have `BarcodeDetector` on macOS but not on Windows, and the host handles the camera
+  permission itself.
 - Creating a team (`/boss link create <project>` or the GUI) needs a team token from the relay's operator (**Relay**), and makes the
   `create` entry and the first team key.
 
@@ -428,7 +434,8 @@ time with the moldplan-center infra workflow.
 
 - An ally base for each teammate's workspace on a bound project, beside the local bases, with the device label, short id, and the state
   its presence reports. Its units cannot be opened, except for an unattended device whose controller this is (**Unattended devices**).
-- Team settings: create a team, invite (QR code, its text), invite an unattended device (by id), join (camera or paste, then the project
+- Team settings: create a team (with its relay URL, defaulting to `link.relay` in `config.json`, so teammates outside moldplan-center use
+  their own relay), invite (QR code, its text), invite an unattended device (by id), join (camera or paste, then the project
   folder), accept tailnet joins, the roster with each device's role, attended or not, and last presence, and for an admin, remove,
   change role, and rotate.
 - Notices: a join request waiting, a roster mismatch or fork, a gate or forwarded confirm waiting (an alert, like any confirm), a dialog of
