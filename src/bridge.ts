@@ -8,6 +8,7 @@ import { type Cmd, listCommands, MAX_PREFIX } from "./commands.ts";
 import type { Queued } from "./net.ts";
 import { type Editor, probeEditor } from "./probe.ts";
 import { type Monitor, trackMonitors } from "./monitors.ts";
+import { todoOfBranch, type TodoSum } from "./activity.ts";
 
 // The bridge runs in every pi session inside Herdr, subagents included. It turns the owners' dialog events (owners.ts) into one list of open
 // dialogs, relays it to the one running GUI server (gui.json in the state directory names its session G), and hands the server's answers to
@@ -24,7 +25,8 @@ import { type Monitor, trackMonitors } from "./monitors.ts";
 // first (`stash-check`, stash.ts) whether the session can be put away and resumed losing nothing; that question never quits anything.
 // It relays the session's queue too: pi tells extensions only whether messages wait (hasPendingMessages), so the bridge keeps what it saw
 // typed while the agent works (`input` with a streaming behavior) and drops one when its user message starts; a queue pi emptied another
-// way (Esc, Alt+Up) clears at the next check. And it relays the session's background monitors (monitors.ts).
+// way (Esc, Alt+Up) clears at the next check. And it relays the session's background monitors (monitors.ts) and its todo list in short (activity.ts), read
+// from the branch after each tool call and turn, and after a move in the tree.
 // A secret_drop is answered in the terminal only (SB-F001: intercom identities are self-reported, so a relayed secret dialog could be answered
 // into an impostor's hands): the bridge never relays a secret dialog, and refuses any answer to one.
 
@@ -38,8 +40,8 @@ export const guiNamespace = (g: string) => `straw-boss/gui/${createHash("sha256"
 export type Outcome = "accepted" | "rejected" | "stale" | "busy" | "unknown";
 export interface Ack { version: 1; type: "ack"; bridgeId: string; id: string; answerId: string; outcome: Outcome; reason?: string; by?: string }
 /** `closed`: dialogs closed in the last 2 minutes (at most 16), so an answer that comes late hears who closed it, and a resent one that won, that it won. */
-/** `documents`: what the document owner lists now; `docsCut` when they did not fit the message (they are dropped first). `queued`: the session's queue, oldest first. `monitors`: its background monitors. */
-export interface Dialogs { version: 1; type: "dialogs"; bridgeId: string; pane: string; file: string | null; dialogs: Dialog[]; closed: Closed[]; documents?: Doc[]; docsCut?: true; queued?: Queued[]; monitors?: Monitor[] }
+/** `documents`: what the document owner lists now; `docsCut` when they did not fit the message (they are dropped first). `queued`: the session's queue, oldest first. `monitors`: its background monitors. `todo`: its todo list in short. */
+export interface Dialogs { version: 1; type: "dialogs"; bridgeId: string; pane: string; file: string | null; dialogs: Dialog[]; closed: Closed[]; documents?: Doc[]; docsCut?: true; queued?: Queued[]; monitors?: Monitor[]; todo?: TodoSum }
 export interface Closed { id: string; by: string; answerId?: string }
 export interface ProbeResult extends Editor { version: 1; type: "probe-result"; bridgeId: string; probeId: string }
 export interface CommandsResult { version: 1; type: "commands-result"; bridgeId: string; reqId: string; commands: Cmd[] }
@@ -65,7 +67,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 	const chans = new Map<string, Channel>(), me = () => env.PI_INTERCOM_SESSION_ID ?? "";
 	let g: string | undefined, gpid = 0, seen: number | undefined, poll: ReturnType<typeof setInterval> | undefined, offs: (() => void)[] = [], warned = false;
 	let file: () => string | undefined = () => undefined, tell = (_text: string) => {}, editor = (): Editor => ({ editor: "unknown" }), docs: Doc[] = [];
-	let queued: Queued[] = [], waits = () => false, idle = () => true;
+	let queued: Queued[] = [], waits = () => false, idle = () => true, todo: TodoSum | undefined, branch = (): Iterable<unknown> => [];
 	const open = () => [...recs.values()].filter((r) => r.state !== "closed");
 	const alive = () => { try { return gpid > 0 && (process.kill(gpid, 0), true); } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; } }; // a server that died without removing gui.json gets no probe answers
 
@@ -82,7 +84,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 		const closed = final ? [] : [...recs.values()].filter((r) => r.state === "closed").map((r) => ({ id: r.d.id, by: r.by!, ...(r.by === "remote" && r.answerId ? { answerId: r.answerId } : {}) }));
 		const queue = final ? [] : queued.slice(0, MAX_QUEUED).map((q) => ({ ...q, text: clipQueued(q.text) }));
 		const mons = final ? [] : (monitors?.list() ?? []);
-		let msg: Dialogs = { version: 1, type: "dialogs", bridgeId, pane: env.HERDR_PANE_ID!, file: file() ?? null, dialogs, closed, documents: final ? [] : docs, ...(queue.length ? { queued: queue } : {}), ...(mons.length ? { monitors: mons } : {}) };
+		let msg: Dialogs = { version: 1, type: "dialogs", bridgeId, pane: env.HERDR_PANE_ID!, file: file() ?? null, dialogs, closed, documents: final ? [] : docs, ...(queue.length ? { queued: queue } : {}), ...(mons.length ? { monitors: mons } : {}), ...(todo && !final ? { todo } : {}) };
 		const big = () => Buffer.byteLength(JSON.stringify(msg)) > MAX_MESSAGE; // in bytes, as the broker counts
 		if (big()) msg = { ...msg, documents: [], docsCut: true }; // the documents go first: they stay in the terminal, and the unit says so
 		if (big()) msg = { ...msg, dialogs: dialogs.map(({ select, questions, ...d }) => ({ ...d, big: true as const })) }; // shown read-only: too long to show
@@ -218,6 +220,13 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 		const i = queued.findIndex((q) => q.text === text); // another extension may have changed the text: then the oldest went
 		requeue(queued.filter((_, j) => j !== Math.max(0, i)));
 	});
+	const retodo = () => {
+		const next = todoOfBranch(branch());
+		if (JSON.stringify(next) !== JSON.stringify(todo)) ((todo = next), push());
+	};
+	pi.on("turn_end", retodo);
+	pi.on("session_tree", retodo);
+	pi.on("session_compact", retodo);
 	pi.on("agent_settled", () => {
 		if (queued.length && !waits()) requeue([]);
 	});
@@ -228,6 +237,8 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 		waits = () => { try { return ctx.hasPendingMessages(); } catch { return false; } }; // a replaced session's context throws
 		idle = () => { try { return ctx.isIdle(); } catch { return false; } };
 		file = () => ctx.sessionManager.getSessionFile();
+		branch = () => { try { return ctx.sessionManager.getBranch(); } catch { return []; } }; // a replaced session's context throws
+		todo = todoOfBranch(branch());
 		tell = (text) => ctx.hasUI && ctx.ui.notify(text, "warning");
 		editor = () => probeEditor(ctx);
 		monitors = trackMonitors(bus, () => push());
@@ -245,11 +256,13 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 	pi.on("tool_execution_end", (e) => {
 		calls.get(e.toolCallId)?.stop?.();
 		calls.delete(e.toolCallId);
+		retodo(); // rpiv-todo writes its state during the call, through any tool that runs it
 		open().filter((r) => r.d.toolCallId === e.toolCallId).forEach((r) => report.closed(r.d.id, r.accepted ? "remote" : "error")); // the owner failed to say so
 	});
 	pi.on("session_shutdown", () => {
 		docs = [];
 		queued = [];
+		todo = undefined;
 		monitors?.clear(); // pi-loop-monitor stops a session's monitors with it
 		open().forEach((r) => report.closed(r.d.id, "error"));
 		push(true);

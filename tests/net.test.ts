@@ -17,7 +17,7 @@ test("outside Herdr nothing registers; a pi-herdr-agents worker runs only the di
 	const worker = world.agent({ id: "worker", pane: "wA:p9", tab: "wA:t1", env: { PI_SUBAGENT_ID: "run-1" } });
 	for (const agent of [outside, worker]) {
 		await agent.start();
-		assert.deepEqual(agent.registered, agent === worker ? ["input", "message_start", "agent_settled", "session_start", "tool_execution_start", "tool_execution_end", "session_shutdown", "agent_end"] : [], `${agent.id} registered handlers`);
+		assert.deepEqual(agent.registered, agent === worker ? ["input", "message_start", "turn_end", "session_tree", "session_compact", "agent_settled", "session_start", "tool_execution_start", "tool_execution_end", "session_shutdown", "agent_end"] : [], `${agent.id} registered handlers`);
 		assert.equal(agent.tools.size, 0);
 		assert.equal(agent.commands.size, 0);
 		assert.deepEqual(await agent.run(), {});

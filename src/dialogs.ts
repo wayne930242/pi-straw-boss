@@ -10,6 +10,7 @@ import { type Answer, type Answerable, type Dialog, OWNERS, questionsDigest, typ
 import { checkCommands, type Cmd } from "./commands.ts";
 import { checkProbe, type Editor } from "./probe.ts";
 import { type Monitor, monitorsOk } from "./monitors.ts";
+import { todoOk, type TodoSum } from "./activity.ts";
 
 // The hub, in the session that runs the GUI server: it takes the dialog lists bridges relay (bridge.ts), binds each to the unit on the
 // bridge's pane, decides whether the page may answer it, and carries an answer to that bridge. A list counts only from the session intercom
@@ -87,7 +88,8 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 		// A queue out of shape is left out; the dialogs and documents still go.
 		const queued = msg.type === "dialogs" && Array.isArray(msg.queued) && msg.queued.length <= MAX_QUEUED && msg.queued.every((q) => typeof q?.text === "string" && q.text.length <= QUEUED_TEXT && (q.as === "steer" || q.as === "followUp")) ? msg.queued.map(({ text, as }) => ({ text, as })) : undefined;
 		const monitors = msg.type === "dialogs" && monitorsOk(msg.monitors) ? msg.monitors.map(({ id, what, status, exit, last, lines, at, ended }) => ({ id, what, status, exit, last, lines, at, ended })) : undefined;
-		if (closed && str(msg.pane) && (msg.file === null || str(msg.file)) && Array.isArray(msg.dialogs) && msg.dialogs.every(valid)) (bridges.set(from, { ...msg, ...(docs ? { documents: docs } : { documents: [], docsCut: true as const }), queued, monitors }), change());
+		const todo = msg.type === "dialogs" && todoOk(msg.todo) ? { done: msg.todo.done, total: msg.todo.total, ...(msg.todo.now && { now: msg.todo.now }) } : undefined;
+		if (closed && str(msg.pane) && (msg.file === null || str(msg.file)) && Array.isArray(msg.dialogs) && msg.dialogs.every(valid)) (bridges.set(from, { ...msg, ...(docs ? { documents: docs } : { documents: [], docsCut: true as const }), queued, monitors, todo }), change());
 		if (msg.type === "ack") waiting.get([from, msg.bridgeId, msg.id, msg.answerId].join("\n"))?.(msg);
 		if (msg.type === "probe-result") probes.get([from, msg.bridgeId, msg.probeId].join("\n"))?.(checkProbe({ ...msg }));
 		if (msg.type === "commands-result" && str(msg.reqId)) lists.get([from, msg.bridgeId, msg.reqId].join("\n"))?.(checkCommands(msg.commands));
@@ -162,18 +164,19 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 		/** Binds each relayed list to a unit, from this net reading's sessions and registry. */
 		relayed(sessions, refs) {
 			[bound, targets, reach] = [new Map(), new Map(), new Map()];
-			const shelved: { key: string; from: string; bridgeId: string; docs: Doc[] }[] = [], cut = new Set<string>(), queues = new Map<string, Queued[]>(), mons = new Map<string, Monitor[]>();
+			const shelved: { key: string; from: string; bridgeId: string; docs: Doc[] }[] = [], cut = new Set<string>(), queues = new Map<string, Queued[]>(), mons = new Map<string, Monitor[]>(), todos = new Map<string, TodoSum>();
 			for (const [from, b] of bridges) {
 				const file = sessions.find((s) => s.id === from)?.herdrLocation?.paneId === b.pane ? canonical(b.file ?? undefined) : undefined;
 				const ref = file && [...refs.values()].find((r) => r.pane === b.pane && r.file === file);
 				if (ref) (reach.set(ref.key, { from, bridgeId: b.bridgeId }), shelved.push({ key: ref.key, from, bridgeId: b.bridgeId, docs: b.documents ?? [] }), b.docsCut && cut.add(ref.key));
 				if (ref && b.queued?.length) queues.set(ref.key, b.queued);
 				if (ref && b.monitors?.length) mons.set(ref.key, b.monitors);
+				if (ref && b.todo) todos.set(ref.key, b.todo);
 				if (ref && (b.dialogs.length || b.closed.length)) bound.set(ref.key, { from, b });
 			}
 			const cards = caps.bind(shelved, new Set([...bridges].flatMap(([from, b]) => (b.documents ?? []).map((d) => `${from}\n${b.bridgeId}\n${d.id}`))));
 			shelves = new Map([...cards].flatMap(([key, docs]): [string, Shelf][] => (docs.length || cut.has(key) ? [[key, { ...(docs.length ? { docs } : {}), ...(cut.has(key) ? { docsCut: true as const } : {}) }]] : [])));
-			return { dialogsOf: (key) => bound.get(key)?.b.dialogs, merge, docsOf: (key) => shelves.get(key), queuedOf: (key) => queues.get(key), monitorsOf: (key) => mons.get(key) };
+			return { dialogsOf: (key) => bound.get(key)?.b.dialogs, merge, docsOf: (key) => shelves.get(key), queuedOf: (key) => queues.get(key), monitorsOf: (key) => mons.get(key), todoOf: (key) => todos.get(key) };
 		},
 		/** How a dialog that is no longer open here ended: `accepted` for the answer that won it, else `stale` with who closed it. */
 		ended(key, dialog, answerId) {

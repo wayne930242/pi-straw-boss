@@ -89,6 +89,17 @@ test("a relayed monitor list goes to its unit; one out of shape is left out whil
 	assert.deepEqual([unit.monitors, unit.mark], [undefined, "waiting"]);
 });
 
+test("a relayed todo summary goes to its unit; one out of shape is left out while the dialogs still go", async () => {
+	const x = hub(), path = file([]);
+	x.h.receive("S", x.list([], { file: path, todo: { done: 2, total: 5, now: "Fixing the rounding" } }));
+	assert.deepEqual((await read(x, path)).unit.todo, { done: 2, total: 5, now: "Fixing the rounding" });
+	for (const bad of [{ done: 6, total: 5 }, { done: 0, total: 0 }, { done: 1, total: 2, now: "a\u001b[31mred" }, { done: 1, total: 2, now: "x".repeat(121) }, { done: -1, total: 2 }]) {
+		x.h.receive("S", x.list([dialog()], { file: path, todo: bad as never }));
+		const { unit } = await read(x, path);
+		assert.deepEqual([unit.todo, unit.mark], [undefined, "waiting"], JSON.stringify(bad));
+	}
+});
+
 test("each rule that keeps a dialog in the terminal says why", async () => {
 	const x = hub(), robot = file([["c1", "robot_hand"]]), two = file([["c1", "robot_hand"], ["c2", "bash"]]), secret = file([["c1", "secret_drop"]]);
 	const why = async (dialogs: Dialog[], path: string | undefined = robot) => {
