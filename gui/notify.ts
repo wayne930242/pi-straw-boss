@@ -29,7 +29,7 @@ const write = (key: string, value: string) => {
 	} catch {}
 };
 
-export interface Notifier { signal(fresh: Alert[]): void }
+export interface Notifier { signal(fresh: Alert[]): void; /** The finished-unit clip, when Sound is on: a new unit that is ready (deploy.ts). */ chime(): void }
 
 /** Mounts the header's reminder switch (`#remind`) and sound panel (`#sound`, `#sound-pop`) and returns what plays a snapshot's new alerts. */
 export function mountNotify(open: (a: Alert) => void): Notifier {
@@ -89,6 +89,7 @@ export function mountNotify(open: (a: Alert) => void): Notifier {
 	}
 	draw();
 	return {
+		chime: () => sound && play("done"),
 		signal(fresh) {
 			const due = fresh.flatMap((a) => ((k) => (k ? [{ a, k }] : []))(kindOf(a)));
 			if (!due.length) return;
