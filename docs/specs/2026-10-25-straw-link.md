@@ -445,6 +445,22 @@ time with the moldplan-center infra workflow.
 - Notices: a join request waiting, a roster mismatch or fork, a gate or forwarded confirm waiting (an alert, like any confirm), a dialog of
   an unattended device waiting (an alert), the relay unreachable for more than 2 minutes, a message waiting in the inbox for a tower.
 
+### Link actions an agent asks for
+
+An agent may ask for any link action through one tool, `link_request`, with an action (`create`, `invite`, `invite-unattended`, `join`,
+`trust`, `leave`, and for an admin `remove`, `role`, `rotate`), its arguments, and a one-line reason. The tool never performs the action
+itself: it opens a link dialog through the dialog contract that shows the action, every argument (team, relay URL, project folder,
+device label and short id, trust level), the reason, and which session asked. The action runs only when the user approves it, in the
+GUI, from a paired device, or in the terminal; deny or no answer within 10 minutes refuses it, and the tool returns the outcome (for an
+approved `invite`, the invite text, so the agent can pass it on).
+
+- Approval is per request: no setting, trust level, or earlier approval lets an agent's link action run unasked. A `join` still needs
+  the safety-word comparison; approving the request only opens the join screen with the pasted text filled in.
+- A remote turn cannot call `link_request` at any level, `dispatch` included; it is outside the allowlist and the gate refuses it
+  without a confirm. A request from a remote turn's text reaches the user only as text the local agent may repeat in its own turn.
+- On an unattended device `link_request` is refused: its teams and trust come from its infra's policy file and `join.txt` only.
+- The link holder carries out the approved action; the requesting session never touches the keys or the team files.
+
 ## Presence
 
 The link holder posts one ephemeral `presence` every 30 seconds while online. An ally base whose last presence is older than 90 seconds
@@ -475,7 +491,7 @@ envelope to the peer's serve entry, falling back to the relay after 3 seconds or
 3. The link holder election and its files; `straw-boss/link`; `tower_send` with `device`, `tower_list`; tower-only delivery and the inbox;
    the header fields.
 4. Remote turns: holding deliveries, the run classification, the allowlist and deny list, the gate's dialog, `forward`.
-5. GUI: team settings, QR invite and join, ally bases, notices.
+5. GUI: team settings, QR invite and join, ally bases, notices; `link_request` and its approval dialog.
 6. Unattended devices (the default-Herdr behaviour is checked, **Unattended devices**): the policy file check, `device.id` and `join.txt`, opening a tower for
    a controller, dialogs and `unit-status` for controllers.
 7. Joining over the tailnet.
