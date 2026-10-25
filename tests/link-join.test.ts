@@ -49,22 +49,22 @@ test("an invite is strawlink1: and the base64url of its canonical fields, and on
 
 test("a join request opens only with the invite secret, and carries the joiner's record and label", () => {
 	const blob = buildJoinRequest({ team: TEAM, secret: SECRET, record: D.mallory, label: "new-laptop", nonce: REQ_NONCE });
-	const opened = openJoinRequest({ team: TEAM, secret: SECRET, blob });
+	const opened = openJoinRequest({ forDevice: "", team: TEAM, secret: SECRET, blob });
 	assert.ok(opened.ok && opened.label === "new-laptop" && opened.record.id === D.mallory.id);
-	assert.equal(openJoinRequest({ team: TEAM, secret: Buffer.alloc(32, 1), blob }).ok, false, "another secret");
-	assert.deepEqual(openJoinRequest({ team: TEAM, secret: Buffer.alloc(32, 1), blob }), { ok: false, reason: "bad-ciphertext" });
-	assert.deepEqual(openJoinRequest({ team: Buffer.alloc(16, 2), secret: SECRET, blob }), { ok: false, reason: "bad-ciphertext" }, "another team");
-	assert.deepEqual(openJoinRequest({ team: TEAM, secret: SECRET, blob: Buffer.concat([blob.subarray(0, 20), Buffer.from([blob[20]! ^ 1]), blob.subarray(21)]) }), { ok: false, reason: "bad-ciphertext" });
-	assert.deepEqual(openJoinRequest({ team: TEAM, secret: SECRET, blob: blob.subarray(0, 5) }), { ok: false, reason: "bad-ciphertext" });
+	assert.equal(openJoinRequest({ forDevice: "", team: TEAM, secret: Buffer.alloc(32, 1), blob }).ok, false, "another secret");
+	assert.deepEqual(openJoinRequest({ forDevice: "", team: TEAM, secret: Buffer.alloc(32, 1), blob }), { ok: false, reason: "bad-ciphertext" });
+	assert.deepEqual(openJoinRequest({ forDevice: "", team: Buffer.alloc(16, 2), secret: SECRET, blob }), { ok: false, reason: "bad-ciphertext" }, "another team");
+	assert.deepEqual(openJoinRequest({ forDevice: "", team: TEAM, secret: SECRET, blob: Buffer.concat([blob.subarray(0, 20), Buffer.from([blob[20]! ^ 1]), blob.subarray(21)]) }), { ok: false, reason: "bad-ciphertext" });
+	assert.deepEqual(openJoinRequest({ forDevice: "", team: TEAM, secret: SECRET, blob: blob.subarray(0, 5) }), { ok: false, reason: "bad-ciphertext" });
 	assert.throws(() => buildJoinRequest({ team: TEAM, secret: SECRET, record: D.mallory, label: "bad/label" }), /label/);
 });
 
 test("the inviter refuses a request for another device, a banned id, a member, or a label a member has", () => {
 	const state = view(mainLog()), mk = (record = D.mallory, label = "new-laptop") => buildJoinRequest({ team: TEAM, secret: SECRET, record, label, nonce: REQ_NONCE });
 	assert.deepEqual(openJoinRequest({ team: TEAM, secret: SECRET, blob: mk(), forDevice: D.dave.id, roster: state }), { ok: false, reason: "wrong-device" });
-	assert.deepEqual(openJoinRequest({ team: TEAM, secret: SECRET, blob: mk(D.eve), roster: state }), { ok: false, reason: "banned" });
-	assert.deepEqual(openJoinRequest({ team: TEAM, secret: SECRET, blob: mk(D.bob, "other") , roster: state }), { ok: false, reason: "already-member" });
-	assert.deepEqual(openJoinRequest({ team: TEAM, secret: SECRET, blob: mk(D.mallory, LABELS.alice), roster: state }), { ok: false, reason: "label-taken" });
+	assert.deepEqual(openJoinRequest({ forDevice: "", team: TEAM, secret: SECRET, blob: mk(D.eve), roster: state }), { ok: false, reason: "banned" });
+	assert.deepEqual(openJoinRequest({ forDevice: "", team: TEAM, secret: SECRET, blob: mk(D.bob, "other") , roster: state }), { ok: false, reason: "already-member" });
+	assert.deepEqual(openJoinRequest({ forDevice: "", team: TEAM, secret: SECRET, blob: mk(D.mallory, LABELS.alice), roster: state }), { ok: false, reason: "label-taken" });
 	assert.equal(openJoinRequest({ team: TEAM, secret: SECRET, blob: mk(), forDevice: D.mallory.id, roster: state }).ok, true);
 });
 
@@ -72,12 +72,12 @@ test("a join request whose MAC does not match its fields is refused even when it
 	// Whoever holds the secret can encrypt; the MAC is what ties the record and the label together.
 	const rec = encodeKeyRecord(D.mallory), nonce = REQ_NONCE;
 	const forge = (label: string, macOf: string) => Buffer.concat([nonce, aeadSeal(joinKey(SECRET, TEAM), nonce, enc(rec, str(label), joinMac(SECRET, TEAM, enc(rec, str(macOf)))))]);
-	assert.deepEqual(openJoinRequest({ team: TEAM, secret: SECRET, blob: forge("one", "two") }), { ok: false, reason: "bad-mac" });
-	assert.equal(openJoinRequest({ team: TEAM, secret: SECRET, blob: forge("one", "one") }).ok, true);
-	assert.deepEqual(openJoinRequest({ team: TEAM, secret: SECRET, blob: Buffer.concat([nonce, aeadSeal(joinKey(SECRET, TEAM), nonce, Buffer.from("junk"))]) }), { ok: false, reason: "bad-request" });
-	assert.deepEqual(openJoinRequest({ team: TEAM, secret: SECRET, blob: Buffer.concat([nonce, aeadSeal(joinKey(SECRET, TEAM), nonce, enc(Buffer.from("x"), str("l"), Buffer.alloc(32)))]) }), { ok: false, reason: "bad-record" });
+	assert.deepEqual(openJoinRequest({ forDevice: "", team: TEAM, secret: SECRET, blob: forge("one", "two") }), { ok: false, reason: "bad-mac" });
+	assert.equal(openJoinRequest({ forDevice: "", team: TEAM, secret: SECRET, blob: forge("one", "one") }).ok, true);
+	assert.deepEqual(openJoinRequest({ forDevice: "", team: TEAM, secret: SECRET, blob: Buffer.concat([nonce, aeadSeal(joinKey(SECRET, TEAM), nonce, Buffer.from("junk"))]) }), { ok: false, reason: "bad-request" });
+	assert.deepEqual(openJoinRequest({ forDevice: "", team: TEAM, secret: SECRET, blob: Buffer.concat([nonce, aeadSeal(joinKey(SECRET, TEAM), nonce, enc(Buffer.from("x"), str("l"), Buffer.alloc(32)))]) }), { ok: false, reason: "bad-record" });
 	const bad = enc(rec, str("bad/label"), joinMac(SECRET, TEAM, enc(rec, str("bad/label"))));
-	assert.deepEqual(openJoinRequest({ team: TEAM, secret: SECRET, blob: Buffer.concat([nonce, aeadSeal(joinKey(SECRET, TEAM), nonce, bad)]) }), { ok: false, reason: "bad-label" });
+	assert.deepEqual(openJoinRequest({ forDevice: "", team: TEAM, secret: SECRET, blob: Buffer.concat([nonce, aeadSeal(joinKey(SECRET, TEAM), nonce, bad)]) }), { ok: false, reason: "bad-label" });
 });
 
 /** The main log plus alice's add of mallory under the invite. */
@@ -109,4 +109,11 @@ test("the joiner refuses every roster that is not its inviter's", () => {
 	// A relay that also claims the inviter's id with its own key: the key record cannot be formed.
 	const forged = signEntry(TEAM, relay, { ...fake[1]!, by: D.alice.id });
 	fail({ invite: invite(), self: D.mallory, entries: [fake[0]!, forged] }, "signer-not-member");
+});
+
+test("the inviter always enforces the invite's pinned device, and an empty one means it is not pinned", () => {
+	const blob = buildJoinRequest({ team: TEAM, secret: SECRET, record: D.mallory, label: "new-laptop", nonce: REQ_NONCE });
+	assert.deepEqual(openJoinRequest({ team: TEAM, secret: SECRET, forDevice: D.dave.id, blob }), { ok: false, reason: "wrong-device" });
+	assert.equal(openJoinRequest({ team: TEAM, secret: SECRET, forDevice: D.mallory.id, blob }).ok, true);
+	assert.equal(openJoinRequest({ team: TEAM, secret: SECRET, forDevice: "", blob }).ok, true);
 });

@@ -63,10 +63,10 @@ export function buildJoinRequest(o: { team: Uint8Array; secret: Uint8Array; reco
 export type JoinReason = "bad-ciphertext" | "bad-request" | "bad-record" | "bad-mac" | "bad-label" | "wrong-device" | "banned" | "already-member" | "label-taken";
 export type JoinOpened = { ok: true; record: KeyRecord; label: string } | { ok: false; reason: JoinReason };
 /**
- * What the inviter does with a join request: decrypt, check the MAC, the record, the label, the invite's pinned device, and (with the
+ * What the inviter does with a join request (`forDevice` is the invite's pinned device id, "" when it is not pinned): decrypt, check the MAC, the record, the label, the invite's pinned device, and (with the
  * roster) the id ban, an existing member, and a label a member already has.
  */
-export function openJoinRequest(o: { team: Uint8Array; secret: Uint8Array; blob: Uint8Array; forDevice?: string; roster?: RosterState }): JoinOpened {
+export function openJoinRequest(o: { team: Uint8Array; secret: Uint8Array; blob: Uint8Array; forDevice: string; roster?: RosterState }): JoinOpened {
 	const no = (reason: JoinReason): JoinOpened => ({ ok: false, reason });
 	if (o.blob.length < NONCE_BYTES) return no("bad-ciphertext");
 	const plain = aeadOpen(joinKey(o.secret, o.team), o.blob.subarray(0, NONCE_BYTES), o.blob.subarray(NONCE_BYTES));
@@ -86,7 +86,7 @@ export function openJoinRequest(o: { team: Uint8Array; secret: Uint8Array; blob:
 	const text = readStr(label);
 	if (!equalBytes(mac, joinMac(o.secret, o.team, requestFields(record, text)))) return no("bad-mac");
 	if (!labelOk(text)) return no("bad-label");
-	if (o.forDevice && record.id !== o.forDevice) return no("wrong-device");
+	if (o.forDevice !== "" && record.id !== o.forDevice) return no("wrong-device");
 	if (o.roster) {
 		if (o.roster.banned.has(record.id)) return no("banned");
 		if (o.roster.members.has(record.id)) return no("already-member");
