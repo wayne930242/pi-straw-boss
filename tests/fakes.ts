@@ -361,7 +361,7 @@ export class Agent {
 	entries: { customType: string; data: unknown }[];
 	notices: { text: string; level?: string }[] = [];
 	/** Messages the extension handed pi with pi.sendMessage. */
-	sent: { customType: string; content: string; deliverAs?: string }[] = [];
+	sent: { customType: string; content: string; deliverAs?: string; triggerTurn?: boolean; details?: unknown }[] = [];
 	/** Each ctx.ui.custom overlay, open until it closes itself. */
 	overlays: (Overlay & { closed: boolean })[] = [];
 	/** What pi-intercom reports as this session's status. */
@@ -438,7 +438,7 @@ export class Agent {
 			appendEntry: (customType: string, data: unknown) => this.entries.push({ customType, data }),
 			setSessionName: (name: string) => void (this.name = name), // pi-intercom reports the new name to the broker
 			getSessionName: () => this.name,
-			sendMessage: (message: { customType: string; content: string }, options?: { deliverAs?: string }) => void this.sent.push({ ...message, deliverAs: options?.deliverAs }),
+			sendMessage: (message: { customType: string; content: string }, options?: { deliverAs?: string; triggerTurn?: boolean }) => void this.sent.push({ ...message, deliverAs: options?.deliverAs, triggerTurn: options?.triggerTurn }),
 		} as unknown as ExtensionAPI;
 		// pi-intercom's side of the extension API.
 		if (!options.noIntercom) events.on("intercom:extension-register", (registration) => world.broker.register(this, registration as Registration));

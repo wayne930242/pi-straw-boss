@@ -16,6 +16,10 @@ export interface OutboxOptions {
 	 * crash never reuses one. The outbox never reads or writes that state, and never asks for a number it will not build with.
 	 */
 	reserveSeq: () => number | Promise<number>;
+	/** Runs reserve, build, and `save` as one step (the holder takes its lock around all three), so a second holder never sees a `seq` that is reserved but not saved. */
+	atomically?: <T>(step: () => Promise<T>) => Promise<T>;
+	/** Keeps the built envelope (on disk) before it is queued; it is the caller's to remove once the envelope lands or is refused for good. */
+	save?: (item: QueuedEnvelope) => void | Promise<void>;
 	backoff?: Backoff;
 	sleep?: Sleep;
 	/** The relay holds the envelope. */
@@ -49,10 +53,15 @@ export class Outbox {
 	/** Reserves the next `seq`, builds the envelope with it, and queues it. Calls are served in order, so `seq` order is submit order. */
 	submit(build: (seq: number) => Envelope): Promise<QueuedEnvelope> {
 		const run = this.reserving.then(async () => {
-			const seq = await this.o.reserveSeq();
-			const envelope = build(seq);
-			if (envelope.header.seq !== seq) throw new RangeError(`built with seq ${envelope.header.seq}, reserved ${seq}`);
-			return this.enqueue({ seq, id: envelope.header.id, bytes: encodeEnvelope(envelope) });
+			const step = async (): Promise<QueuedEnvelope> => {
+				const seq = await this.o.reserveSeq();
+				const envelope = build(seq);
+				if (envelope.header.seq !== seq) throw new RangeError(`built with seq ${envelope.header.seq}, reserved ${seq}`);
+				const item = { seq, id: envelope.header.id, bytes: encodeEnvelope(envelope) };
+				await this.o.save?.(item);
+				return item;
+			};
+			return this.enqueue(await (this.o.atomically ? this.o.atomically(step) : step()));
 		});
 		this.reserving = run.catch(() => undefined);
 		return run;

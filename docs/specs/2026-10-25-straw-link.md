@@ -372,12 +372,15 @@ closes the other, as for any contract owner. At `forward` the dialog goes to the
 The header written for the receiving tower adds the verified sender:
 
 ```
-[straw net from=<name> id=<session id> role=tower workspace=<label> remote=<device label> device=<short id> team=<team label>
+[straw net from=<name> id=link:<device id> role=tower workspace=<label> remote=<device label> device=<short id> team=<team name>
  verified=yes kind=tower_send scope=tower to=… reply=…]
 ```
 
-`from`, `workspace`, and the labels are sender-controlled, so the link code restricts them to the label character set and 40 characters
-before `header.ts` quotes them; the session id is the sender's link holder's, as reported in its signed plaintext.
+`from`, `workspace`, and `remote` are sender-controlled, so the link code restricts them to the label character set and 40 characters
+before `header.ts` quotes them. `id=` is `link:` plus the sender's device id, never a session id (the signed plaintext carries none, and a
+local-looking id would let a remote name aim a reply at a local session). `device=` is the short id from the roster. `team=` is this
+computer's own name for the team, the folder name of its `project` (or the name in `config.json`): it is not sender text, so it keeps its
+characters (a folder named in Chinese stays so) and is only cleaned of control characters, quoted, and cut to 80 characters.
 
 ## Unattended devices
 
@@ -539,3 +542,16 @@ Re-check two (third revision): R-F001, N1, N2 resolved; R-F009 resolved with one
 now treated as a fork. No new P0 or P1. Folded in: the `tool_result` filter keeps only attributable tracked paths and replaces
 `structuredContent`; the ephemeral flag is fixed by the kind. For the build: the gate registers in `OWNERS` as a gate, not a twin, and
 the link code always sends `straw-link` messages with `triggerTurn`.
+
+## Build record: step 3 (link holder, 2026-10-26)
+
+Built in `src/link/{store,election,holder,routing,config,runtime,wire,text}.ts`; `docs/how-it-works.md` describes the behavior. Where the spec left a choice, the code took this one:
+
+- **`id=` of a remote header** is `link:` plus the sender's device id, not a session id. The signed `tower` plaintext carries no session id, and a local-looking id would let a remote name aim a reply at a local session. `from`, `workspace`, and `remote` are cut to the label character set and 40 characters; `device=` is the short id from the roster; `team=` is the folder name of this computer's own `project`, never text a sender wrote, so it keeps its characters and is only cleaned, quoted, and cut to 80 (R-F029).
+- **The inbox is the staging area for every delivery**, not only for towerless ones: a checked message is written to `inbox/` first, then the stream acknowledges it, then the holder offers it to a tower, which removes it once it is in its session. This is how "ack only after delivery to a tower or an inbox write" holds without a tower round trip inside the stream handler. The sender's high-water mark moves in the same locked write as the inbox file (R-F021); a crash before it gets the envelope again and delivers it once, a crash after it and before the ack gets it again and the guard drops the copy.
+- **A team file is never created by a write.** `createTeam` (join or create) makes it; `writeTeam` on a missing file throws, and reading a missing or incomplete one is a `TeamFileError`, so a lost file stops the team (R-F021, "a device whose team file is lost must join again").
+- **Ephemeral guards stay in memory**: the newest presence `ts` per sender is not persisted (a restart accepts the next presence), since presence changes no queued state.
+- **The outbox is not persisted.** A message queued while the relay is down is retried by the holder that queued it; if that holder ends first (it waits 2 s for the queue), the message is lost, and `tower_send` has already answered "queued". Persisting it is a possible later change; the spec only requires the saved sequence number.
+- **A tower is chosen by the pane's cwd** (`pane list` gives each pane its cwd; a Herdr workspace has none): the tower pane whose cwd is nearest the project root, then workspace order; `symlink`s are resolved before comparing; a sub workspace has no tower.
+- **Candidates wait one look before taking a vacant record** (a tower at once, any other session at its second look), so a tower that starts a moment later is still preferred; a newer pi-straw-boss, or a tower against a non-tower on the same build, takes a live holder's record at once, and a non-tower never takes it from a tower.
+- **Requests between towers and the holder** travel in base64 chunks on `straw-boss/link` (the broker refuses an extension payload over 16 KiB); a request over 40 chunks is refused when built. A deliver is only an offer naming an inbox id.

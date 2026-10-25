@@ -2,6 +2,7 @@ import { Type, type Static, type TSchema } from "typebox";
 import type { Digest } from "./digest.ts";
 import type { Membership } from "./membership.ts";
 import type { CloseMain } from "./closemain.ts";
+import type { Link } from "./link/runtime.ts";
 import { opener } from "./opener.ts";
 import type { Reach } from "./reach.ts";
 import type { Kit } from "./state.ts";
@@ -10,7 +11,7 @@ import type { Kit } from "./state.ts";
 export const tabLabel = (name: string): string => Array.from(name).length > 16 ? `${Array.from(name).slice(0, 16).join("").trimEnd()}…` : name;
 
 /** The tools the agent calls: what a joined session has (status, call_tower, broadcast, rename, promote), and the tower's boss_open_main. */
-export function createTools({ pi, cfg, s, me, role }: Kit, { post, callTower, status, broadcast, towerList, towerSend, promote, digest, closeMain }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend"> & Pick<Membership, "promote"> & { digest: Digest; closeMain: CloseMain }) {
+export function createTools({ pi, cfg, s, me, role }: Kit, { post, callTower, status, broadcast, towerList, towerSend, promote, digest, closeMain, link }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend"> & Pick<Membership, "promote"> & { digest: Digest; closeMain: CloseMain; link: Link }) {
 	const tool = <P extends TSchema>(name: string, description: string, parameters: P, body: (params: Static<P>) => Promise<{ text: string; details?: unknown }>) =>
 		pi.registerTool({
 			name, label: name, description, parameters,
@@ -81,14 +82,21 @@ export function createTools({ pi, cfg, s, me, role }: Kit, { post, callTower, st
 		},
 		// Tower only. Towers talk to each other with these: who is out there, and one message to one tower or all. Closing is for the mains a tower opened itself.
 		addTowerComms() {
-			tool("tower_list", "List every workspace's tower: its workspace, whether it is the head tower or you, who a message for it reaches (its tower; in a workspace without one, its mains, else its members), that session's state (idle or working), and what its tabs are working on (each tab's main and members by the names they gave themselves).", Type.Object({}), towerList);
-			tool("tower_send", "Send one message to another tower (workspace id or exact label), or to every other tower when workspace is omitted. A workspace without a tower is reached through its mains, else its members, and the result says so. The message goes out under a header the code writes (your name, role, and workspace, every recipient, whether you expect a reply): do not send again to a tower the header of a message you got already names as a recipient.",
+			tool("tower_list", "List every workspace's tower: its workspace, whether it is the head tower or you, who a message for it reaches (its tower; in a workspace without one, its mains, else its members), that session's state (idle or working), and what its tabs are working on (each tab's main and members by the names they gave themselves). When Straw Link is set up, `remote` lists the towers of teammates' computers from their last presence: device label and id, whether it is online, the workspace and tower state, and its tabs. Send to one with tower_send and its device.", Type.Object({}), async () => {
+				const local = await towerList();
+				const remote = await link.remote();
+				if (!remote) return local;
+				const result = { ...(local.details as object), remote };
+				return { text: JSON.stringify(result, null, 2), details: result };
+			});
+			tool("tower_send", "Send one message to another tower (workspace id or exact label), or to every other tower when workspace is omitted. A workspace without a tower is reached through its mains, else its members, and the result says so. The message goes out under a header the code writes (your name, role, and workspace, every recipient, whether you expect a reply): do not send again to a tower the header of a message you got already names as a recipient. With device (a short id, an id, or a label from tower_list's remote list) the message goes over Straw Link to the tower of that teammate's computer instead: workspace then names one of its workspaces, or is omitted for the one bound to your project; an ambiguous device is an error that lists the candidates.",
 				Type.Object({
 					message: Type.String({ description: "The message, once: what the other towers need to know or do, details by reference." }),
-					workspace: Type.Optional(Type.String({ description: "One workspace's id or exact label. Omit for every other tower." })),
+					workspace: Type.Optional(Type.String({ description: "One workspace's id or exact label. Omit for every other tower. With device: a workspace label on that device." })),
+					device: Type.Optional(Type.String({ description: "A teammate's device (short id, id, or label) to send over Straw Link. Omit for towers on this computer." })),
 					reply: Type.Optional(Type.Boolean({ description: "Whether you wait for an answer. Default false; true only when you act on it." })),
 				}),
-				({ message, workspace, reply }) => towerSend(message, workspace, reply ?? false));
+				({ message, workspace, device, reply }) => device === undefined ? towerSend(message, workspace, reply ?? false) : link.send({ device, text: message, reply: reply ?? false, ...(workspace !== undefined ? { workspace } : {}) }));
 			tool("boss_close_main", "Close a main you opened with boss_open_main: ask it to quit as /boss close would, so its pane and tab close. Only mains opened by a tower in your workspace, never one the boss opened. Refused while it has a running turn, a queued message, an open dialog, a monitor, or a subagent; try again later. Close an opened main after its done report, unless it waits for a boss decision.",
 				Type.Object({ main: Type.String({ description: "The opened main's intercom name or session id." }) }),
 				async ({ main }) => {

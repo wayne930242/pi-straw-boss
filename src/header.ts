@@ -3,12 +3,20 @@
 // got it, and whether the sender waits for a reply. It has the shape of the line a net sidecar types before a message (src/agent/sidecar.ts), with the
 // sender's own fields added:
 //   [straw net from=<name> id=<session id> role=<tower|main|member|session> [head=yes] workspace=<label> kind=<kind> scope=<scope> to=<recipients> reply=<expected|none>] <message>
+// A message that came over Straw Link adds the verified sender after the workspace (docs/specs/2026-10-25-straw-link.md, Header):
+//   … workspace=<label> remote=<device label> device=<short id> team=<team> verified=yes kind=tower_send …
 // The sidecar puts its own line, with the role Herdr's tokens give the sender, before this one; the two are not merged.
+
+import { restrictLabel } from "./link/text.ts";
 
 export type Kind = "call_tower" | "broadcast" | "tower_send" | "handoff";
 /** `session` is a pi session that did not join the net (a scope `all` broadcast reaches it). `head`: the tower of the head workspace. */
 export interface Party { name: string; id: string; role: "tower" | "main" | "member" | "session"; head?: boolean; workspace?: string }
-export interface Stamp { from: Party; kind: Kind; scope: string; to: Party[]; reply: boolean }
+/** The verified sender of a message that came over Straw Link: its device label and short id from the roster, and the team. */
+export interface Remote { device: string; short: string; team: string }
+export interface Stamp { from: Party; kind: Kind; scope: string; to: Party[]; reply: boolean; remote?: Remote }
+/** A remote sender's `id=`: never a session id of this machine, so a reply cannot be aimed at a local session by a remote's choice. */
+export const REMOTE_ID = /^link:[a-z2-7]{26}$/;
 
 /** Control characters and runs of whitespace become one space, so a name cannot start a second line or a second field. */
 export const clean = (text: string) => text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").replace(/\s+/g, " ").trim();
@@ -18,10 +26,14 @@ const roleOf = (p: Party) => (p.head ? "head tower" : p.role);
 const MAX_NAMED = 20;
 const recipient = (p: Party) => `${clean(p.name)} (${roleOf(p)}${p.workspace ? ` of ${clean(p.workspace)}` : ""})`;
 
-export function header({ from, kind, scope, to, reply }: Stamp): string {
+export function header({ from, kind, scope, to, reply, remote }: Stamp): string {
+	// A remote header's sender-controlled fields are cut to the label character set and 40 characters here as well as where the link code builds them; the team is this computer's own name for it, so it keeps its characters (80 at most).
+	if (remote && (!REMOTE_ID.test(from.id) || !/^[a-z2-7]{6}$/.test(remote.short))) throw new Error("A remote header needs a link device id and a short id");
+	const text = (value: string) => (remote ? restrictLabel(value) : value);
 	const fields = [
-		`from=${quote(from.name || from.id)}`, `id=${quote(from.id)}`, `role=${from.role}`, ...(from.head ? ["head=yes"] : []),
-		...(from.workspace ? [`workspace=${quote(from.workspace)}`] : []),
+		`from=${quote(text(from.name || from.id))}`, `id=${quote(from.id)}`, `role=${from.role}`, ...(from.head ? ["head=yes"] : []),
+		...(from.workspace ? [`workspace=${quote(text(from.workspace))}`] : []),
+		...(remote ? [`remote=${quote(restrictLabel(remote.device))}`, `device=${remote.short}`, `team=${quote(clean(remote.team).slice(0, 80))}`, "verified=yes"] : []),
 		`kind=${kind}`, `scope=${scope}`, `to=${quote([...to.slice(0, MAX_NAMED).map(recipient), ...(to.length > MAX_NAMED ? [`+${to.length - MAX_NAMED} more`] : [])].join("; "))}`, `reply=${reply ? "expected" : "none"}`,
 	];
 	return `[straw net ${fields.join(" ")}]`;
