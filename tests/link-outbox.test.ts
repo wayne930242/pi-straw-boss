@@ -208,3 +208,42 @@ test("a refused acknowledgement drops its ids and reports them; stop sends one l
 	assert.equal(tries, 1, "one last attempt, no retries");
 	assert.equal(dropped.length, 2);
 });
+
+test("resume() called from inside onHalt restarts the pump once the halting pass returns", async () => {
+	const posted: number[] = [];
+	let halts = 0;
+	const outbox: Outbox = new Outbox({
+		reserveSeq: (() => { let n = 0; return () => ++n; })(),
+		post: async (bytes) => {
+			if (halts === 0) throw new UnauthorizedError(401, "bad-time");
+			posted.push(seqOf(bytes));
+		},
+		sleep: async () => undefined,
+		onHalt: () => { halts++; outbox.resume(); },
+	});
+	await outbox.submit(build);
+	await until(() => posted.length === 1, 1000, "the envelope posted after the resume");
+	assert.equal(outbox.size, 0);
+	assert.equal(outbox.haltedBy, undefined);
+	await outbox.stop();
+});
+
+test("an envelope enqueued one microtask after the last onPosted is still posted", async () => {
+	const posted: number[] = [];
+	let queued = false;
+	const outbox: Outbox = new Outbox({
+		reserveSeq: (() => { let n = 0; return () => ++n; })(),
+		post: async (bytes) => void posted.push(seqOf(bytes)),
+		sleep: async () => undefined,
+		onPosted: () => {
+			if (queued) return;
+			queued = true;
+			queueMicrotask(() => outbox.enqueue({ seq: 2, id: Buffer.alloc(16, 2), bytes: encodeEnvelope(build(2)) }));
+		},
+	});
+	await outbox.submit(build);
+	await until(() => posted.length === 2, 1000, "the second envelope posted");
+	await outbox.idle();
+	assert.equal(outbox.size, 0);
+	await outbox.stop();
+});

@@ -110,8 +110,10 @@ export class Outbox {
 	private kick() {
 		if (this.pumping || this.settled()) return;
 		this.pumping = this.pump().finally(() => {
+			// A kick() or resume() while this pass was winding down saw `pumping` set and did nothing; look again now.
 			this.pumping = undefined;
-			this.release();
+			if (this.settled()) this.release();
+			else this.kick();
 		});
 	}
 
