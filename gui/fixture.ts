@@ -2,6 +2,7 @@ import { trackActivity } from "../src/activity.ts";
 import type { Mark } from "../src/dashboard.ts";
 import type { Net, Unit } from "../src/net.ts";
 import type { Data, Page } from "./chat.ts";
+import { demoOpen } from "./demo-open.ts";
 import { DEMO_DOC, DEMO_PAGE, demoHistory, demoScreen, WHOLE } from "./demo-chat.ts";
 import { docHooks } from "./doc.ts";
 import type { Source } from "./stream.ts";
@@ -39,6 +40,7 @@ const units = (net: Net) => net.bases.flatMap((b) => [...(b.tower?.subs ?? []), 
 export interface Control { drop(): void; silence(): void; restore(): void; doc(): void }
 
 export function createFixture({ resume, tick = 2500 }: { resume(): void; tick?: number }): { open(watch: string | null): Source; data(key: string): Data; control: Control } {
+	demoOpen(); // the opening tiles' folder picker and deploy, with no server
 	let net = demo(), step = 0, waits = 0, dropped = false, silent = false, current: FixtureSource | undefined, live = 0, notes = 0;
 	// The demo documents stand in for the server's: the HTML one as a data: page, the text ones from here.
 	[docHooks.src, docHooks.load] = [() => `data:text/html;charset=utf-8,${encodeURIComponent(DEMO_PAGE)}`, async (cap) => ({ text: cap === "plan" ? DEMO_DOC : `# Notes ${cap.slice(5)}\n\nA demo document that arrived on its own.` })];

@@ -4,6 +4,7 @@ import type { Guard } from "./guard.ts";
 import { place, waitFor, workspaces } from "./herdr.ts";
 import type { Presence } from "./presence.ts";
 import { nameOf, type Reach } from "./reach.ts";
+import type { Roles } from "./roles.ts";
 import { type Channel, type Kit, REGISTER } from "./state.ts";
 
 const NAMESPACE = /^[a-z0-9][a-z0-9._/-]{0,63}$/;
@@ -11,10 +12,10 @@ export const CONNECT_MS = 15_000;
 const CLAIM_MS = 5000;
 type Event = { type: string; fromSessionId?: string; owner?: { sessionId: string }; payload?: { type?: string; force?: boolean } };
 /** What membership calls on the other modules; `register` adds the tools a joined session has. */
-interface Parts { presence: Presence; election: Election; guard: Guard; briefing: Briefing; openTower: Reach["openTower"]; register(): void }
+interface Parts { presence: Presence; election: Election; guard: Guard; briefing: Briefing; roles: Roles; openTower: Reach["openTower"]; register(): void }
 
 /** Joining the tab's net: its intercom channel, the events that change the session's role, and becoming the tab's main. */
-export function createMembership({ pi, cfg, s, me, tell }: Kit, { presence, election, guard, briefing, openTower, register }: Parts) {
+export function createMembership({ pi, cfg, s, me, tell }: Kit, { presence, election, guard, briefing, roles, openTower, register }: Parts) {
 	const { run, sleep, autoTower } = cfg;
 	let joining: Promise<void> | undefined;
 	// A join that failed after registering retries on the tab the session is in now: its channel when it has registered there already, else a new
@@ -63,8 +64,12 @@ export function createMembership({ pi, cfg, s, me, tell }: Kit, { presence, elec
 			s.isMain = s.mainId === me();
 			if (s.isMain !== wasMain) (tell(`This session is ${s.isMain ? "now" : "no longer"} the main agent of ${s.info.tab}`), briefing.rebrief());
 			await presence.publish(sessions);
-			// The workspace's first main opens the tower at once; later mains find it open.
-			if (s.isMain && !wasMain && autoTower) void openTower(undefined, true).catch((error: Error) => tell(`Straw Boss: could not open the tower: ${error.message}`, "warning"));
+			if (s.isMain && !wasMain) {
+				roles.remember("main");
+				// The workspace's first main opens the tower at once; later mains find it open. A main a Herdr restore gave back finds its tower coming back too.
+				if (s.restored) s.restored = false;
+				else if (autoTower) void openTower(undefined, true).catch((error: Error) => tell(`Straw Boss: could not open the tower: ${error.message}`, "warning"));
+			}
 		} catch (error) {
 			tell(`Straw Boss: ${(error as Error).message}`, "warning");
 		}

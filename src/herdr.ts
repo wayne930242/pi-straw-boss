@@ -19,9 +19,9 @@ export class HerdrError extends Error {
 	}
 }
 export type Sleep = (ms: number) => Promise<void>;
-export interface Place { paneId: string; tabId: string; workspaceId: string }
+export interface Place { paneId: string; tabId: string; workspaceId: string; terminalId?: string }
 export interface Workspace { workspace_id: string; label: string; agent_status?: string; focused?: boolean; active_tab_id?: string; tokens?: Record<string, string>; worktree?: { checkout_path?: string; is_linked_worktree?: boolean; repo_key?: string } }
-export interface Pane { pane_id: string; tab_id: string; workspace_id?: string; agent?: string; agent_status?: string; agent_session?: { value: string }; label?: string; cwd?: string; tokens?: Record<string, string> }
+export interface Pane { pane_id: string; tab_id: string; workspace_id?: string; terminal_id?: string; agent?: string; agent_status?: string; agent_session?: { value: string }; label?: string; cwd?: string; tokens?: Record<string, string> }
 export interface HerdrTab { tab_id: string; workspace_id: string; label?: string }
 export interface Location { status: string; workspace?: { id: string; label: string }; tab?: { id: string; label: string }; paneId?: string }
 /** A live pi-intercom session; `status` is idle, thinking, or tool:<name>. */
@@ -65,7 +65,7 @@ export const ARROW = "[sub]";
 
 export async function place(run: HerdrRun): Promise<Place> {
 	const pane = (await result(run, ["pane", "current"])).pane;
-	return { paneId: pane.pane_id, tabId: pane.tab_id, workspaceId: pane.workspace_id };
+	return { paneId: pane.pane_id, tabId: pane.tab_id, workspaceId: pane.workspace_id, ...(pane.terminal_id ? { terminalId: pane.terminal_id } : {}) };
 }
 
 /** A sub workspace is a linked git worktree that Herdr opened as its own workspace: it is treated like a subagent of its parent. */

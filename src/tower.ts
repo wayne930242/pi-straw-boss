@@ -6,6 +6,7 @@ import { watchHead } from "./headwatch.ts";
 import { headOf, report, waitFor, workspaces, panes, place } from "./herdr.ts";
 import type { Membership } from "./membership.ts";
 import type { Presence } from "./presence.ts";
+import type { Roles } from "./roles.ts";
 import { ENTRY, type Kit } from "./state.ts";
 import type { Tools } from "./tools.ts";
 
@@ -14,7 +15,7 @@ const SETTLE_MS = 2000;
 const SCREEN_EVENTS = ["pane.created", "pane.closed", "pane.updated", "pane.moved", "pane.exited", "pane.agent_detected", "tab.created", "tab.closed", "tab.renamed", "tab.moved", "tab.focused", "workspace.focused", "workspace.created", "workspace.updated", "workspace.metadata_updated", "workspace.renamed", "workspace.moved", "workspace.reordered", "workspace.closed"];
 
 /** A session that is a tower (`STRAW_BOSS_ROLE=tower`, or marked so in its session) takes the role: its marks, its tools, its dashboard. */
-export function createTower({ pi, cfg, s, guiDir, me }: Kit, { membership, presence, tools, control, digest }: { membership: Membership; presence: Presence; tools: Tools; control: Control; digest: Digest }) {
+export function createTower({ pi, cfg, s, guiDir, me }: Kit, { membership, presence, tools, control, digest, roles }: { membership: Membership; presence: Presence; tools: Tools; control: Control; digest: Digest; roles: Roles }) {
 	const { run, world, sleep, events } = cfg;
 	return async function startTower() {
 		s.at = await place(run);
@@ -33,10 +34,12 @@ export function createTower({ pi, cfg, s, guiDir, me }: Kit, { membership, prese
 		if ((holder && holder !== me() && sessions.some((x) => x.id === holder)) || (rival && rival.tab_id < s.at.tabId)) {
 			await report(run, "pane", s.at.paneId, { sb_role: null });
 			s.closing = { keepPane: true }; // its tab goes with it already
+			roles.forget();
 			await run(["tab", "close", s.at.tabId]);
 			return;
 		}
 		s.holdsTower = true;
+		roles.remember("tower");
 		s.info = { workspace: ws?.label ?? s.at.workspaceId, head: headOf(all)?.label ?? "" };
 		tools.addNetTools();
 		tools.addOpenMain();

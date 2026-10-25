@@ -32,7 +32,7 @@ export type Scope = "tab" | "workspace" | "towers" | "all";
  * `run` is the CLI for every command; left out, Herdr's listings, `pane current`, and `report-metadata` go over the socket instead (`socketRun`) and `world` is one `session.snapshot`. `world` is the dashboard's and the GUI's reading of panes and workspaces.
  * `gone` says whether the process that recorded a GUI server has ended for good (handover.ts `ownerGone`), which a survivor needs before it takes the server over; `adoptMs` is how often a session looks.
  */
-export interface Deps { run?: HerdrRun; world?: HerdrWorld; api?: HerdrApi; call?: HerdrCall; tailscale?: Run; copy?: (text: string) => Promise<void>; env?: NodeJS.ProcessEnv; sleep?: Sleep; promptDir?: string; bundle?: string; openUrl?: (url: string) => Promise<void>; watch?: HerdrWatch; stateDir?: string; autoTower?: boolean; nudgeMs?: number; version?: string; guardMs?: number; couple?: boolean; events?: HerdrEvents; detectMs?: number; now?: () => number; later?: (pid: number, args: string[]) => void; gone?: (record: GuiRecord, wrote: number) => boolean; adoptMs?: number; link?: LinkDeps }
+export interface Deps { run?: HerdrRun; world?: HerdrWorld; api?: HerdrApi; call?: HerdrCall; tailscale?: Run; copy?: (text: string) => Promise<void>; env?: NodeJS.ProcessEnv; sleep?: Sleep; promptDir?: string; bundle?: string; openUrl?: (url: string) => Promise<void>; watch?: HerdrWatch; stateDir?: string; autoTower?: boolean; nudgeMs?: number; version?: string; guardMs?: number; couple?: boolean; events?: HerdrEvents; detectMs?: number; now?: () => number; later?: (pid: number, args: string[]) => void; gone?: (record: GuiRecord, wrote: number) => boolean; adoptMs?: number; restoreMs?: number; link?: LinkDeps }
 /** The dependencies with their defaults filled in. */
 export type Config = Required<Omit<Deps, "bundle" | "stateDir" | "link">> & Pick<Deps, "bundle" | "stateDir" | "link">;
 
@@ -62,6 +62,9 @@ export interface State {
 	ui: ExtensionContext["ui"] | undefined;
 	hasUI: boolean;
 	saved: Saved;
+	/** The pi session file, the key of this session's role record (roles.ts), and whether the role being taken is one a Herdr restore gave back. */
+	file: string | undefined;
+	restored: boolean;
 	/** Claims, refreshes, and guard checks run one at a time through this chain. */
 	queue: Promise<void>;
 	/** Set while this session holds the tower role. */
@@ -99,7 +102,7 @@ export function createKit(pi: ExtensionAPI, cfg: Config): Kit {
 		// SAFETY: as `c` above.
 		at: undefined as unknown as Place,
 		mainId: undefined, pinned: undefined, info: {}, ownName: "", openedBy: undefined, kids: new Set(),
-		ui: undefined, hasUI: false, saved: {}, queue: Promise.resolve(), dashboard: undefined, headWatch: undefined, hub: undefined, gui: undefined, viewer: undefined, quit: undefined, closing: undefined, remoteOrigin: undefined,
+		ui: undefined, hasUI: false, saved: {}, file: undefined, restored: false, queue: Promise.resolve(), dashboard: undefined, headWatch: undefined, hub: undefined, gui: undefined, viewer: undefined, quit: undefined, closing: undefined, remoteOrigin: undefined,
 	};
 	const me = () => env.PI_INTERCOM_SESSION_ID ?? "";
 	const role = (): Role | undefined => {

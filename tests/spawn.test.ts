@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { afterEach, test } from "node:test";
 import { readRecord } from "../src/handover.ts";
 import { listDirs, pickable } from "../src/spawn.ts";
@@ -30,16 +30,16 @@ afterEach(async () => {
 });
 
 test("the picker lists only visible folders inside home, follows a symlink only to a pickable folder, and refuses any other path", async () => {
-	assert.deepEqual(await listDirs(home, home), { path: home, home, parent: null, dirs: ["beta", "projects", "work"], truncated: false });
+	assert.deepEqual(await listDirs(home, home), { path: home, home, sep, parent: null, dirs: ["beta", "projects", "work"], truncated: false });
 	assert.deepEqual((await listDirs(join(home, "projects"), home)).parent, home);
 	assert.equal(await pickable(join(home, "work"), home), join(home, "projects"), "a symlink resolves to where it leads");
 	for (const refused of [join(home, ".secret"), join(home, ".secret", "keys"), join(home, "hidden-link"), join(home, "out-link"), outside, scratch, "/", join(home, "notes.txt"), join(home, "missing"), "projects", join(home, "..")])
 		assert.equal(await pickable(refused, home), undefined, refused);
 });
 
-async function gui() {
+async function gui(hook?: (method: string) => Promise<void>) {
 	const calls: { method: string; params: Record<string, unknown> }[] = [];
-	const call = async (method: string, params: Record<string, unknown>) => void calls.push({ method, params });
+	const call = async (method: string, params: Record<string, unknown>) => (calls.push({ method, params }), void (await hook?.(method)));
 	const viewer = world.agent({ id: "viewer-a", pane: "wA:p1", tab: "wA:t1", deps: { bundle, call, openUrl: async () => {} } });
 	await viewer.start();
 	await viewer.command("gui");
@@ -61,7 +61,7 @@ test("the picker starts in the base's own folder, and in home when that folder i
 	assert.equal((await post("dirs", { workspace: "wA" })).body.path, join(home, "projects", "alpha"));
 	world.herdr.workspace("wA").worktree = { checkout_path: "/w/alpha" };
 	assert.equal((await post("dirs", { workspace: "wA" })).body.path, home);
-	assert.deepEqual((await post("dirs", { path: join(home, "beta") })).body, { path: join(home, "beta"), home, parent: home, dirs: [], truncated: false });
+	assert.deepEqual((await post("dirs", { path: join(home, "beta") })).body, { path: join(home, "beta"), home, sep, parent: home, dirs: [], truncated: false });
 	assert.deepEqual([(await post("dirs", { path: outside })).status, (await post("dirs", { path: join(home, ".secret") })).body.error], [400, "not_allowed"]);
 });
 
@@ -146,4 +146,82 @@ test("an opening is refused outside home or for a missing base, and one that fai
 	const base = await post("open/base", { dir: home, label: "Home" });
 	assert.equal(base.status, 502);
 	assert.deepEqual(world.herdr.workspaces.map((w) => w.workspace_id).filter((id) => !["wA", "wB"].includes(id)), [], "the workspace it created is closed again: no base is left empty");
+});
+
+test("an opening reports its progress step by step while it runs, only the steps it has, and names the step that failed", async () => {
+	world.autoMains();
+	let release!: () => void;
+	const gate = new Promise<void>((done) => (release = done));
+	const { post } = await gui(async (method) => void (method === "agent.prompt" && (await gate)));
+	const steps = async (id: string) => ((await post("open/progress", { id })).body as { steps?: { id: string; state: string }[] }).steps?.map((s) => `${s.id}:${s.state}`) ?? [];
+	const dir = join(home, "projects", "alpha");
+	const running = post("open/base", { dir, label: "Alpha", prompt: "Hello", deploy: "deploy-aaaa-1" });
+	await until(async () => (await steps("deploy-aaaa-1")).includes("deliver:active"), "the first message is being delivered");
+	assert.deepEqual(await steps("deploy-aaaa-1"), ["create:done", "start:done", "join:done", "deliver:active"]);
+	release();
+	assert.equal((await running).status, 200);
+	const done = (await post("open/progress", { id: "deploy-aaaa-1" })).body as { finished: boolean; steps: { state: string }[]; failed?: unknown };
+	assert.deepEqual([done.finished, done.steps.map((s) => s.state), done.failed], [true, ["done", "done", "done", "done"], undefined]);
+	assert.equal((await post("open/base", { dir, label: "Plain", deploy: "deploy-aaaa-2" })).status, 200);
+	assert.deepEqual(await steps("deploy-aaaa-2"), ["create:done", "start:done", "join:done"], "no first message, no delivery step");
+	world.herdr.busy = 99; // pi never starts
+	const failed = await post("open/member", { workspace: "wA", dir: home, deploy: "deploy-aaaa-3" });
+	assert.deepEqual([failed.status, failed.body.step], [502, "start"], "the refusal names the step");
+	const seen = (await post("open/progress", { id: "deploy-aaaa-3" })).body as { finished: boolean; failed: { step: string; reason: string } };
+	assert.equal(seen.finished, false);
+	assert.deepEqual([seen.failed.step, seen.failed.reason], ["start", failed.body.reason]);
+	assert.deepEqual(await steps("deploy-aaaa-3"), ["create:done", "start:failed", "join:pending"]);
+	assert.equal((await post("open/progress", { id: "deploy-nobody" })).status, 404);
+	assert.equal((await post("open/base", { dir, deploy: "x" })).body.error, "bad_request", "an id that is too short is refused");
+});
+
+test("a first message that does not arrive fails the delivery step, and a refusal before any step fails the first", async () => {
+	world.autoMains();
+	const { post } = await gui(async (method) => {
+		if (method === "agent.prompt") throw new Error("pane gone");
+	});
+	const lost = await post("open/base", { dir: join(home, "beta"), label: "Beta", prompt: "Hello", deploy: "deploy-bbbb-1" });
+	assert.deepEqual([lost.status, lost.body.error, lost.body.step], [502, "prompt_failed", "deliver"]);
+	assert.match(String(lost.body.reason), /pane gone/);
+	const none = await post("open/member", { workspace: "wZ", dir: home, deploy: "deploy-bbbb-2" });
+	assert.deepEqual([none.status, none.body.step], [404, "create"]);
+});
+
+test("a new folder is made in a pickable folder under a plain visible name, and one that is already there is answered as it is", async () => {
+	const { post } = await gui();
+	const parent = join(home, "projects");
+	const made = await post("dirs/new", { path: parent, name: "  hello-test2 " });
+	assert.deepEqual([made.status, made.body], [200, { path: join(parent, "hello-test2"), created: true }]);
+	assert.ok(statSync(join(parent, "hello-test2")).isDirectory());
+	const again = await post("dirs/new", { path: parent, name: "hello-test2" });
+	assert.deepEqual([again.status, again.body], [200, { path: join(parent, "hello-test2"), created: false }], "an existing folder is simply selected");
+	assert.equal((await post("dirs/new", { path: parent, name: "中文專案" })).status, 200, "a CJK name is fine");
+	assert.equal((await post("dirs/new", { path: parent, name: "專".repeat(85) })).status, 200, "255 bytes is the limit");
+	assert.equal((await post("dirs/new", { path: parent, name: "console" })).status, 200, "a name that only starts like a reserved one is fine");
+	const listed = await post("dirs", { path: parent });
+	assert.deepEqual((listed.body.dirs as string[]).includes("hello-test2"), true, "the picker lists it");
+	for (const name of ["", "   ", "..", ".", "../escape", "a/b", "a\\b", ".hidden", "name.", "bad:name", "q?", "x\u0000y", "x".repeat(300), "專".repeat(86), "con", "NUL.txt", "Com1", "lpt9.log", "a\u200Bb", 7, undefined]) {
+		const refused = await post("dirs/new", { path: parent, name });
+		assert.deepEqual([refused.status, refused.body.error], [400, "bad_name"], JSON.stringify(name));
+	}
+	assert.equal(existsSync(join(parent, "escape")) || existsSync(join(home, "escape")), false, "nothing was made outside");
+	for (const path of [outside, join(home, ".secret"), join(home, "hidden-link"), join(home, "out-link"), join(home, "missing"), "projects", join(home, ".."), undefined])
+		assert.deepEqual([(await post("dirs/new", { path, name: "x" })).status, (await post("dirs/new", { path, name: "x" })).body.error], [400, "not_allowed"], String(path));
+	assert.equal(existsSync(join(outside, "x")) || existsSync(join(home, ".secret", "x")), false);
+	assert.equal((await post("dirs/new", { path: home, name: "notes.txt" })).body.error, "not_a_folder", "a file of that name is no folder to select");
+	symlinkSync(outside, join(home, "projects", "to-outside"));
+	assert.equal((await post("dirs/new", { path: parent, name: "to-outside" })).body.error, "not_a_folder", "a link out of home is not followed");
+});
+
+test("the places a picker starts from are home, its Desktop and Documents when they are pickable, and the folders the open bases work in", async () => {
+	const { post } = await gui();
+	const none = await post("dirs/places", {});
+	assert.deepEqual([none.body.home, none.body.sep, none.body.places], [home, sep, []]);
+	mkdirSync(join(home, "Desktop"));
+	mkdirSync(join(home, "Documents"));
+	world.herdr.workspace("wA").worktree = { checkout_path: join(home, "projects", "alpha") };
+	const some = await post("dirs/places", {});
+	assert.deepEqual(some.body.places, [{ name: "Desktop", path: join(home, "Desktop") }, { name: "Documents", path: join(home, "Documents") }]);
+	assert.ok((some.body.recent as string[]).includes(join(home, "projects", "alpha")), "a base's own folder is recent");
+	assert.ok((some.body.recent as string[]).every((dir) => dir !== home && dir.startsWith(`${home}${sep}`)), "only pickable folders under home");
 });
