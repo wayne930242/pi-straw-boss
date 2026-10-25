@@ -56,3 +56,7 @@ SOFTWARE.
 ## Sounds (`gui/sounds/`)
 
 The GUI's sounds come from [Kenney](https://kenney.nl) (www.kenney.nl), released under Creative Commons Zero (CC0 1.0), converted to mono MP3: `waiting.mp3` is `question_002` from Interface Sounds 1.0, `done.mp3` is `confirmation_001` from Interface Sounds 1.0, and `error.mp3` is `lowDown` from Digital Audio.
+
+## BIP-39 English word list (`src/link/bip39-english.ts`)
+
+Straw Link's safety words are drawn from the BIP-39 English word list (2048 words), copied unchanged from [`bip-0039/english.txt`](https://github.com/bitcoin/bips/blob/master/bip-0039/english.txt) in the bitcoin/bips repository (sha256 `2f5eed53a4727b4bf8880d8f3f199efc90e58503646d9ff8eff3a2ed3b24dbda`). BIP-39, "Mnemonic code for generating deterministic keys", is by Marek Palatinus, Pavol Rusnak, Aaron Voisine, and Sean Bowe, and its header names the MIT license. The word list is part of Straw Link's protocol, so another implementation has to use the same list.
