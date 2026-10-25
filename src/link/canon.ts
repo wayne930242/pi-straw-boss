@@ -101,3 +101,14 @@ export const cutChars = (text: string, chars: number): string => {
 	const all = [...text];
 	return all.length <= chars ? text : all.slice(0, chars).join("");
 };
+
+// The bytes a decoded value came from. Decoding is lossy in places (text with invalid UTF-8 reads as U+FFFD), so a signature, a hash, or AEAD
+// associated data over a received value is taken over these bytes, never over a re-encoding. The registry keeps them off the value itself.
+const received = new WeakMap<object, Buffer>();
+/** Remembers the bytes `value` was decoded from, and returns it. */
+export function keepRaw<T extends object>(value: T, bytes: Uint8Array): T {
+	received.set(value, Buffer.from(bytes));
+	return value;
+}
+/** The bytes `value` was decoded from, or `fallback()` for a value built here. */
+export const rawOr = (value: object, fallback: () => Buffer): Buffer => received.get(value) ?? fallback();

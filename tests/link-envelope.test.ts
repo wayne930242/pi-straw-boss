@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildEnvelope, decodeEnvelope, encodeEnvelope, openEnvelope, parseEnvelope, receiveChecks, recordTaken, type Envelope } from "../src/link/envelope.ts";
 import { decodePlaintext, encodePlaintext, KINDS, LIMITS, type Kind } from "../src/link/kinds.ts";
+import { dec, enc } from "../src/link/canon.ts";
 import { entryHash } from "../src/link/roster.ts";
 import { baseState, envelopeCases, NOW, receiveState, SAMPLE } from "./link/envelope-cases.ts";
 import { DEVICES, mainLog, TEAM, teamKey } from "./link/scenario.ts";
@@ -71,4 +72,13 @@ test("the envelope's signature binds the team: the same bytes do not verify unde
 	const e: Envelope = decodeEnvelope(envelopeCases()[0]!.envelope);
 	const other = { ...receiveState(baseState()), team: Buffer.alloc(16, 5) };
 	assert.deepEqual(openEnvelope(e, other), { ok: false, reason: "wrong-team" });
+});
+
+test("a header is signed and decrypted as it was received, never as a re-encoding of what was read from it", () => {
+	// Text that is not UTF-8 reads as U+FFFD, so a re-encoded header differs from the bytes the sender signed.
+	const raw = encodeEnvelope(decodeEnvelope(envelopeCases()[0]!.envelope)), [head, nonce, ct, sig] = dec(raw, 4) as Buffer[], fields = dec(head!, 12);
+	fields[5] = Buffer.from([0xff]);
+	const odd = enc(enc(...fields), nonce!, ct!, sig!), e = decodeEnvelope(odd);
+	assert.equal(e.header.from, "\ufffd");
+	assert.equal(encodeEnvelope(e).toString("hex"), odd.toString("hex"));
 });

@@ -1,4 +1,4 @@
-import { CanonError, dec, enc, int, list, readBool, readInt, readList, readStr, str, bool } from "./canon.ts";
+import { CanonError, dec, enc, int, keepRaw, list, rawOr, readBool, readInt, readList, readStr, str, bool } from "./canon.ts";
 import { CONTEXT, equalBytes, openSealedKey, openUnderTeamKey, sealKey, sealUnderTeamKey, sha256, signBytes, signedBytes, verifyBytes } from "./crypto.ts";
 import { decodeKeyRecord, encodeKeyRecord, labelOk, recordOf, sameRecord, type DeviceKeys, type KeyRecord } from "./device.ts";
 
@@ -40,17 +40,22 @@ function decodeSubject(b: Buffer): Subject | null {
 	return { record: decodeKeyRecord(rec), role: r, attended: readBool(attended) };
 }
 /** The fields a signature covers. */
-const entryBody = (e: Omit<RosterEntry, "sig">): Buffer => enc(int(e.seq), e.prev, str(e.op), encodeSubject(e.subject), str(e.by), int(e.epoch), e.payload);
+const receivedBody = new WeakMap<object, Buffer>();
+const entryBody = (e: Omit<RosterEntry, "sig">): Buffer => receivedBody.get(e) ?? encodeBody(e);
+const encodeBody = (e: Omit<RosterEntry, "sig">): Buffer => enc(int(e.seq), e.prev, str(e.op), encodeSubject(e.subject), str(e.by), int(e.epoch), e.payload);
 export const entrySigned = (team: Uint8Array, e: Omit<RosterEntry, "sig">): Buffer => signedBytes(CONTEXT.roster, team, entryBody(e));
 /** `enc(seq, prev, op, subject, by, epoch, payload, sig)`; its sha256 is the next entry's `prev` and the roster head hash. */
-export const encodeEntry = (e: RosterEntry): Buffer => enc(int(e.seq), e.prev, str(e.op), encodeSubject(e.subject), str(e.by), int(e.epoch), e.payload, e.sig);
+export const encodeEntry = (e: RosterEntry): Buffer => rawOr(e, () => enc(int(e.seq), e.prev, str(e.op), encodeSubject(e.subject), str(e.by), int(e.epoch), e.payload, e.sig));
 export const entryHash = (e: RosterEntry): Buffer => sha256(encodeEntry(e));
 /** An entry, or a CanonError when the bytes are not one. */
 export function decodeEntry(bytes: Uint8Array): RosterEntry {
-	const [seq, prev, op, subject, by, epoch, payload, sig] = dec(bytes, 8) as [Buffer, Buffer, Buffer, Buffer, Buffer, Buffer, Buffer, Buffer], o = readStr(op);
+	const fields = dec(bytes, 8), [seq, prev, op, subject, by, epoch, payload, sig] = fields as [Buffer, Buffer, Buffer, Buffer, Buffer, Buffer, Buffer, Buffer], o = readStr(op);
 	if (!(OPS as readonly string[]).includes(o)) throw new CanonError("unknown op");
 	if (prev.length !== 32 || sig.length !== 64) throw new CanonError("bad prev or signature length");
-	return { seq: readInt(seq), prev, op: o as Op, subject: decodeSubject(subject), by: readStr(by), epoch: readInt(epoch), payload, sig };
+	const entry = { seq: readInt(seq), prev, op: o as Op, subject: decodeSubject(subject), by: readStr(by), epoch: readInt(epoch), payload, sig };
+	// The signature and the hash cover the bytes as received; the body is those fields without the signature.
+	receivedBody.set(entry, enc(...fields.slice(0, 7)));
+	return keepRaw(entry, bytes);
 }
 
 /** Signs an entry without any rule check. The builders below call it; so do tests that need an entry the rules refuse. */

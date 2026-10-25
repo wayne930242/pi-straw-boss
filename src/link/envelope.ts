@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { bool, CanonError, dec, enc, exact, int, list, readBool, readInt, readList, readStr, str } from "./canon.ts";
+import { bool, CanonError, dec, enc, exact, int, keepRaw, list, rawOr, readBool, readInt, readList, readStr, str } from "./canon.ts";
 import { aeadOpen, aeadSeal, CONTEXT, randomNonce, signBytes, signedBytes, verifyBytes } from "./crypto.ts";
 import { idOk, type DeviceKeys } from "./device.ts";
 import { decodePlaintext, KINDS, kindOk, type Kind, type Plaintexts } from "./kinds.ts";
@@ -36,19 +36,21 @@ export const encodeHeader = (h: Header): Buffer =>
 	enc(int(h.v), h.team, int(h.epoch), int(h.head.seq), h.head.hash, str(h.from), int(h.seq), h.id, int(h.ts), str(h.kind), list(h.to.map(str)), bool(h.ephemeral));
 export function decodeHeader(bytes: Uint8Array): Header {
 	const [v, team, epoch, hseq, hhash, from, seq, id, ts, kind, to, eph] = dec(bytes, 12) as [Buffer, Buffer, Buffer, Buffer, Buffer, Buffer, Buffer, Buffer, Buffer, Buffer, Buffer, Buffer];
-	return {
+	return keepRaw({
 		v: readInt(v), team: exact(team, 16, "a team id"), epoch: readInt(epoch), head: { seq: readInt(hseq), hash: exact(hhash, 32, "a roster hash") },
 		from: readStr(from), seq: readInt(seq), id: exact(id, 16, "an envelope id"), ts: readInt(ts), kind: readStr(kind), to: readList(to).map(readStr), ephemeral: readBool(eph),
-	};
+	}, bytes);
 }
-export const encodeEnvelope = (e: Envelope): Buffer => enc(encodeHeader(e.header), e.nonce, e.ct, e.sig);
+/** The header's bytes as received, or its encoding for a header built here. */
+const headerBytesOf = (h: Header): Buffer => rawOr(h, () => encodeHeader(h));
+export const encodeEnvelope = (e: Envelope): Buffer => enc(headerBytesOf(e.header), e.nonce, e.ct, e.sig);
 /** An envelope, or a CanonError when the bytes are not one. */
 export function decodeEnvelope(bytes: Uint8Array): Envelope {
 	const [header, nonce, ct, sig] = dec(bytes, 4) as [Buffer, Buffer, Buffer, Buffer];
 	return { header: decodeHeader(header), nonce: exact(nonce, 12, "a nonce"), ct, sig: exact(sig, 64, "a signature") };
 }
 
-const signedOf = (h: Header, nonce: Uint8Array, ct: Uint8Array, headerBytes = encodeHeader(h)) => signedBytes(CONTEXT.envelope, h.team, headerBytes, nonce, ct);
+const signedOf = (h: Header, nonce: Uint8Array, ct: Uint8Array, headerBytes = headerBytesOf(h)) => signedBytes(CONTEXT.envelope, h.team, headerBytes, nonce, ct);
 
 export interface BuildOptions {
 	team: Uint8Array;
@@ -157,7 +159,7 @@ export function openEnvelope(e: Envelope, state: ReceiveState): Opened {
 	if (!checked.ok) return no(checked.reason);
 	const key = state.keys.get(h.epoch);
 	if (!key) return no("no-key");
-	const plaintext = aeadOpen(key, e.nonce, e.ct, encodeHeader(h));
+	const plaintext = aeadOpen(key, e.nonce, e.ct, headerBytesOf(h));
 	if (!plaintext) return no("bad-ciphertext");
 	const message = decodePlaintext(h.kind as Kind, plaintext);
 	return message ? { ok: true, header: h, plaintext, message } : no("bad-plaintext");

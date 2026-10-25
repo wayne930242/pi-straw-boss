@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { dec, enc } from "../src/link/canon.ts";
+import { sha256 } from "../src/link/crypto.ts";
 import { decodeEntry, encodeEntry, entryHash, replayEncoded, replayRoster, type RosterEntry } from "../src/link/roster.ts";
 import { DEVICES, LABELS, mainLog, TEAM, teamKey, view } from "./link/scenario.ts";
 import { rosterCases } from "./link/roster-cases.ts";
@@ -78,4 +80,14 @@ test("the log is append-only: a changed entry changes every hash after it", () =
 	assert.notDeepEqual(entryHash(other[3]!), entryHash(log[3]!));
 	const r = replayRoster(TEAM, other, { self: DEVICES.alice });
 	assert.ok(!r.ok);
+});
+
+test("an entry is hashed and verified as it was received, never as a re-encoding of what was read from it", () => {
+	// Text that is not UTF-8 reads as U+FFFD, so a re-encoded entry differs from the bytes the signer covered.
+	const fields = dec(encodeEntry(mainLog()[1]!), 8);
+	fields[4] = Buffer.from([0xff]);
+	const odd = enc(...fields), e = decodeEntry(odd);
+	assert.equal(e.by, "\ufffd");
+	assert.equal(encodeEntry(e).toString("hex"), odd.toString("hex"));
+	assert.equal(entryHash(e).toString("hex"), sha256(odd).toString("hex"));
 });
