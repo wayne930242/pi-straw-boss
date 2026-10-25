@@ -21,7 +21,7 @@ const dir = (...p: string[]) => {
 /** A net of workspaces `w1..` in this order, each with the panes given: [pane id, role token, cwd, session id or null]. */
 function net(spec: Record<string, [string, string | undefined, string | undefined, string | null][]>): NetView {
 	const workspaces = Object.keys(spec).map((id) => ({ workspace_id: id, label: `label-${id}`, tokens: {} }));
-	const panes = Object.entries(spec).flatMap(([ws, list]) => list.map(([pane_id, role, cwd]) => ({ pane_id, tab_id: `${ws}:t`, workspace_id: ws, ...(cwd ? { cwd } : {}), tokens: role ? { sb_role: role } : {} })));
+	const panes = Object.entries(spec).flatMap(([ws, list]) => list.map(([pane_id, role, cwd]) => ({ pane_id, tab_id: `${ws}:t`, workspace_id: ws, ...(cwd ? { cwd } : {}), tokens: (role ? { sb_role: role } : {}) as Record<string, string> })));
 	const sessions = Object.values(spec).flatMap((list) => list.flatMap(([pane, , , id]) => (id ? [{ id, herdrLocation: { status: "current", paneId: pane } }] : [])));
 	return { workspaces, panes, sessions, tabs: [] };
 }
