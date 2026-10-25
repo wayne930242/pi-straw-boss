@@ -366,6 +366,9 @@ closes the other, as for any contract owner. At `forward` the dialog goes to the
 - The remote text stays in the tower's context for later turns, which run at full rights. In those turns the `context` event wraps each
   `straw-link` message in a marker naming its device and saying it is a peer's request, not the boss's instruction. This lowers the risk
   without removing it; it is a documented limit, not a guard.
+- Compaction summaries are not hidden: pi's `session_before_compact` can only replace a whole compaction, not mask messages, so a peer's text may
+  survive in a summary without a marker. Also, a message sent through pi-intercom's own tool after a gate approval carries no `origin=`; only
+  `tower_send` adds it. Both are documented limits.
 
 ### Header
 
