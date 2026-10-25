@@ -257,3 +257,16 @@ test("a 408 and a post answer this client cannot read are retried on the same en
 	assert.deepEqual(posted, [1]);
 	assert.equal(rejected.length, 0);
 });
+
+test("SLH-F005: reserve, build and save run as one atomic step, and the envelope is queued only after it was saved", async () => {
+	const order: string[] = [];
+	const o = new Outbox({
+		reserveSeq: () => (order.push("reserve"), 3),
+		atomically: async (step) => { order.push("lock"); try { return await step(); } finally { order.push("unlock"); } },
+		save: (item) => void order.push(`save ${item.seq}`),
+		post: async () => void order.push("post"),
+	});
+	await o.submit((seq) => (order.push(`build ${seq}`), build(seq)));
+	await o.idle();
+	assert.deepEqual(order, ["lock", "reserve", "build 3", "save 3", "unlock", "post"]);
+});
