@@ -16,7 +16,8 @@ export type Opening = { kind: "base" } | { kind: "main" | "member"; base: Base; 
 export function spawnTile(o: Opening, enter?: (ws: string, key: string, tile: string) => void, chime?: () => void): Tile {
 	const base = o.kind === "base" ? undefined : o.base, tab = o.kind === "base" ? undefined : o.tab;
 	const title = o.kind === "base" ? m.open_base_title() : o.kind === "main" ? m.open_main_title({ base: base!.label }) : tab ? m.open_member_tab_title({ tab: tab.label }) : m.open_member_title({ base: base!.label }), id = `open-${o.kind}-${base?.id ?? ""}-${tab?.id ?? ""}`;
-	return { id, title, body: () => {
+	let panel: { close(): void } | undefined;
+	return { id, title, closed: () => panel?.close(), body: () => {
 		const go = h("button", { type: "button", class: "go", disabled: "" }, o.kind === "base" ? m.open_base_go() : o.kind === "main" ? m.open_main_go() : m.open_member_go());
 		const prompt = h("textarea", { rows: "3", placeholder: m.first_prompt() }) as HTMLTextAreaElement, name = h("input", { type: "text", maxlength: "64", placeholder: m.base_name(), "aria-label": m.base_name() }) as HTMLInputElement;
 		let dir: string | undefined, home = "", named = false; // the base name follows the folder until it is typed
@@ -29,7 +30,7 @@ export function spawnTile(o: Opening, enter?: (ws: string, key: string, tile: st
 			if (dir === undefined) return;
 			const at = dir, text = prompt.value, label = name.value.trim() || leaf(at, home), body = o.kind === "base" ? { dir: at, label: name.value, prompt: text } : { workspace: base!.id, ...(tab && { tab: tab.id }), dir: at, prompt: text };
 			// The form gives way to the deploy panel while the unit opens; a failure's Back brings the form back as it was.
-			root.replaceChildren(deployPanel({
+			root.replaceChildren((panel = deployPanel({
 				kind: o.kind, split: o.kind === "member" && Boolean(tab), hasPrompt: Boolean(text.trim()), name: o.kind === "base" ? label : leaf(at, home) || at, chime,
 				open: (deploy) => post(`open/${o.kind}`, { ...body, deploy }),
 				progress: (deploy) => post("open/progress", { id: deploy }),
@@ -41,7 +42,7 @@ export function spawnTile(o: Opening, enter?: (ws: string, key: string, tile: st
 					if (enter && typeof opened.session === "string") return enter(opened.workspace as string, opened.session, id);
 					note.textContent = o.kind === "base" ? m.opened_base() : o.kind === "main" ? m.opened_main({ base: base!.label }) : m.opened_member({ base: base!.label });
 				},
-			}));
+			})));
 		};
 		const note = h("p", { class: "chat-empty" }), form = [picked.el, ...(o.kind === "base" ? [h("label", { class: "spawn-name" }, m.base_name(), name)] : []), prompt, note, go], root = h("div", { class: "spawn" }, ...form);
 		return root;

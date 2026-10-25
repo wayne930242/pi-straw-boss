@@ -122,6 +122,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.27.0 handover.ts (93 at most) holds what gui.ts held for sharing one server between sessions: gui.json's record, the stop request, the takeover.
 	// 0.15.0 raised control.ts to 176 for sessions/<key>/upload, a file's bytes under the same origin and CSRF checks, handed to upload.ts (50 at most).
 	// Unreleased raised spawn.ts to 225 for the folder picker's new folder (makeDir: a plain visible name made inside a pickable folder) and its places (home, Desktop, Documents, the bases' folders), and added deploy.ts (63): an opening reports its steps (create, start, join, deliver) for the page to poll, and a refusal names its failed step.
+	// Unreleased raised spawn.ts to 227: a folder made by a swapped link is taken back, and Windows-reserved names are refused.
 	// 0.15.0 raised spawn.ts from 123 to 168: a base opens with a member and no tower, a base without a tower takes members (split into a squad or in
 	// a new tab), only one with a tower takes mains, and every opening shares the start, join wait, first message, and close-on-failure.
 	// Unreleased raised remote.ts to 203: paired devices saved (hashed) for the server a /reload starts again, and the disable that keeps them; host.ts to 88 for `restore`, which turns remote back on after a /reload.
@@ -174,7 +175,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased raised session.ts 160 to 171: the sub-workspace check at session start runs in the background, so pi-intercom connects without waiting for Herdr, with the barred-while-checking state, the guard against a later session start, and a subagent launch that waits for the answer.
 	// Unreleased (comfort): activity.ts (47, new: when each unit took its state, its last steps, and the net's events of 30 minutes, kept across the server's reads, a reading after a gap a fresh start; no run-time import, so the demo runs it too) and todo.ts (29, new: a session's todo list in short from its branch, and the hub's check);
 	// bridge.ts 262 to 275 for reading that todo list from the branch after each tool call, turn, and tree move and sending it when it changed; dialogs.ts 240 to 243 and ask.ts 141 to 143 for relaying it to its unit.
-	for (const [name, max] of [["commands.ts", 32], ["control.ts", 199], ["stash.ts", 284], ["stashing.ts", 62], ["closer.ts", 87], ["upload.ts", 50], ["spawn.ts", 225], ["deploy.ts", 63], ["remote.ts", 227], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 143], ["bridge.ts", 275], ["owners.ts", 145], ["dialogs.ts", 243], ["seal.ts", 56], ["monitors.ts", 75], ["activity.ts", 47], ["todo.ts", 29], ["order.ts", 97], ["mirror.ts", 135], ["probe.ts", 40], ["keys.ts", 103], ["documents.ts", 80], ["docs.ts", 150], ["orphan.ts", 115], ["opener.ts", 93], ["server-watch.ts", 110], ["handover.ts", 230], ["towertab.ts", 65], ["state.ts", 112], ["briefing.ts", 33], ["reach.ts", 189], ["election.ts", 24], ["guard.ts", 83], ["presence.ts", 93], ["membership.ts", 115], ["tools.ts", 101], ["tower.ts", 51], ["closing.ts", 29], ["host.ts", 164], ["boss.ts", 41], ["session.ts", 171], ["digest.ts", 45], ["closemain.ts", 91], ["headwatch.ts", 21], ["header.ts", 31], ["intercept.ts", 175], ["endpoint.ts", 24]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
+	for (const [name, max] of [["commands.ts", 32], ["control.ts", 199], ["stash.ts", 284], ["stashing.ts", 62], ["closer.ts", 87], ["upload.ts", 50], ["spawn.ts", 227], ["deploy.ts", 63], ["remote.ts", 227], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 143], ["bridge.ts", 275], ["owners.ts", 145], ["dialogs.ts", 243], ["seal.ts", 56], ["monitors.ts", 75], ["activity.ts", 47], ["todo.ts", 29], ["order.ts", 97], ["mirror.ts", 135], ["probe.ts", 40], ["keys.ts", 103], ["documents.ts", 80], ["docs.ts", 150], ["orphan.ts", 115], ["opener.ts", 93], ["server-watch.ts", 110], ["handover.ts", 230], ["towertab.ts", 65], ["state.ts", 112], ["briefing.ts", 33], ["reach.ts", 189], ["election.ts", 24], ["guard.ts", 83], ["presence.ts", 93], ["membership.ts", 115], ["tools.ts", 101], ["tower.ts", 51], ["closing.ts", 29], ["host.ts", 164], ["boss.ts", 41], ["session.ts", 171], ["digest.ts", 45], ["closemain.ts", 91], ["headwatch.ts", 21], ["header.ts", 31], ["intercept.ts", 175], ["endpoint.ts", 24]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
 	// 0.19.0 to 258 for the todo list: rpiv-todo's snapshots marked as the index reads them, and the newest one read for a reset or a change that adds one.
 	// Unreleased (net sidecar): composer.ts 191 to 192 and tokens.ts 23 to 24 for the agent badge and the composer's notice for a unit that is not a pi session.
 	// Unreleased (net sidecar): src/agent/ holds the net sidecar of a Claude Code or Codex session (docs/specs/2026-10-23-claude-codex-net): kit.ts (the modules' two pi dependencies over a raw
@@ -304,10 +305,11 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.15.0 raised composer.ts to 190 for files: pasted, dropped, or picked, each uploaded and its path put in the message.
 	// 0.15.0 to 254 for the squads' + Member buttons, and gui/spawn.ts to 68 for the new base, member, and squad member tiles and the button reader.
 	// Unreleased to 58: the folder picker moved to gui/picker.ts, the opening tile keeps its form (name, first message, open) and the deploy panel, from 75 for the deploy panel taking the form while a unit opens (the panel itself is gui/deploy.ts, 114, with the demo's stand-in server in gui/demo-open.ts, 35).
-	assert.ok(count("gui/deploy.ts") <= 114 && count("gui/demo-open.ts") <= 46, "the deploy panel and its demo stay small");
+	// Unreleased deploy.ts to 124: the timeout measures silence, a late ok still shows ready, and closing the tile stops it.
+	assert.ok(count("gui/deploy.ts") <= 124 && count("gui/demo-open.ts") <= 46, "the deploy panel and its demo stay small");
 	// Unreleased: the folder picker the opening tiles share is Finder's column view: its state (gui/folders.ts: the columns of the selected folder's levels, arrow keys, back and forward, new folder) and its drawing (gui/picker.ts: toolbar, shortcuts, columns, path).
-	assert.ok(count("gui/folders.ts") <= 126 && count("gui/picker.ts") <= 91, "the folder picker stays small");
-	assert.ok(count("gui/spawn.ts") <= 58, `gui/spawn.ts has ${count("gui/spawn.ts")} lines`);
+	assert.ok(count("gui/folders.ts") <= 126 && count("gui/picker.ts") <= 95, "the folder picker stays small");
+	assert.ok(count("gui/spawn.ts") <= 59, `gui/spawn.ts has ${count("gui/spawn.ts")} lines`);
 	// The phone pairing tile and the write helper it shares with the composer (0.5.0, no figure in the spec).
 	const pairing = sum("gui", ["pair.ts", "post.ts"]);
 	// 0.15.0 to 55 for post.ts sending a file's bytes to a session's upload. Unreleased to 58: the paired devices under the code (devices.ts, 31 at most, its own figure).
@@ -469,7 +471,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 103.5 KB / 42.7 KB gzipped: the drawer's map link and Dismiss finished button (gui/drawer.ts, with its message in both languages).
 	// Unreleased to 113 KB / 46.3 KB gzipped: the folder picker (gui/picker.ts, folders.ts), nine more messages in both languages; and
 	// Unreleased to 107.7 KB / 44.4 KB gzipped: the deploy panel (gui/deploy.ts: steps, bar, clock, finish, failure), its demo server, and its twelve messages in both languages.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 113_000 && total(chunks, gz) <= 46_300, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// Unreleased to 113.6 KB / 46.6 KB gzipped: the deploy panel measures silence, and closes with its tile; the picker lands on a column edge.
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 113_600 && total(chunks, gz) <= 46_600, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
@@ -514,5 +517,5 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 64.45 KB / 14.3 KB: the drawer's map link and Dismiss finished row.
 	// Unreleased to 71 KB / 15.45 KB: the folder picker (toolbar and breadcrumb, shortcuts, the columns, the one column of a narrow window); and
 	// Unreleased to 68 KB / 14.95 KB: the deploy panel (bar, step list, running pulse, finish and failure tints, its keyframes).
-	assert.ok(total(css, (n) => size(n).length) <= 71_000 && total(css, gz) <= 15_450, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	assert.ok(total(css, (n) => size(n).length) <= 71_100 && total(css, gz) <= 15_500, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });

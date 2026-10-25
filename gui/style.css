@@ -187,7 +187,7 @@ svg { display: block; }
 .picker-places b { margin: 8px 8px 2px; color: var(--dim); font: 600 11px var(--sans); letter-spacing: 0.08em; text-transform: uppercase; }
 .picker-cols { display: flex; min-width: 0; overflow-x: auto; overflow-y: hidden; outline-offset: -2px; }
 @media (prefers-reduced-motion: no-preference) { .picker-cols, .pcol { scroll-behavior: smooth; } }
-.pcol { flex: none; width: 176px; display: flex; flex-direction: column; gap: 1px; padding: 4px; overflow-y: auto; border-right: 1px solid var(--line); } .pcol:last-child { border-right: 0; }
+.pcol { flex: none; width: var(--pw, 176px); display: flex; flex-direction: column; gap: 1px; padding: 4px; overflow-y: auto; border-right: 1px solid var(--line); } .pcol:last-child { border-right: 0; }
 .pitem { flex: none; display: block; width: 100%; padding: 5px 8px; border: 0; border-radius: 6px; background: none; color: var(--text); font: 13px var(--sans); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; } .pitem:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .pitem[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent-hi); } .pcol[data-focus="true"] .pitem[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 32%, transparent); }
 .pitem[aria-selected="true"]::after { content: "›"; float: right; opacity: 0.7; }
@@ -365,7 +365,7 @@ svg { display: block; }
 .card.ticked { padding-bottom: 11px; } .subs .ticks { left: 44px; }
 /* The map's overview in a corner (minimap.ts). */
 .minimap { position: fixed; right: 20px; bottom: 20px; z-index: 4; box-sizing: content-box; padding: 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); opacity: 0.65; cursor: pointer; transition: opacity 0.2s; }
-.minimap:hover { opacity: 1; } .minimap.away { opacity: 0; pointer-events: none; } .mm-in { position: absolute; inset: 6px; } .mm-in i { position: absolute; border-radius: 2px; background: color-mix(in srgb, var(--c) 35%, var(--surface-1)); }
+.minimap:hover { opacity: 1; } body:has(.tile) .minimap { opacity: 0; pointer-events: none; } body:has(.tile-layer:not([hidden])) .minimap { opacity: 0; pointer-events: none; } .minimap.away { opacity: 0; pointer-events: none; } .mm-in { position: absolute; inset: 6px; } .mm-in i { position: absolute; border-radius: 2px; background: color-mix(in srgb, var(--c) 35%, var(--surface-1)); }
 .mm-view { position: absolute; left: 4px; right: 4px; top: 6px; border: 1px solid var(--accent); border-radius: 3px; background: color-mix(in srgb, var(--accent) 8%, transparent); pointer-events: none; }
 .credit { padding: 0 6px; color: var(--dim); font-size: 11px; }
 /* The location bar, with the states' legend at its right end. */

@@ -44,10 +44,10 @@ const svg = (id: string) => {
 /** The steps an open has, as the server plans them: create, start, join, and deliver only when there is a first message. */
 const planOf = (hasPrompt: boolean): StepId[] => ["create", "start", "join", ...(hasPrompt ? ["deliver" as const] : [])];
 
-export function deployPanel(o: DeployOpts): HTMLElement {
+export function deployPanel(o: DeployOpts): HTMLElement & { close(): void } {
 	const time = o.clock ?? REAL, id = `deploy-${crypto.randomUUID()}`;
 	const label = (step: StepId) => ({ create: o.kind === "base" ? m.deploy_create_base() : o.split ? m.deploy_create_pane() : m.deploy_create_tab(), start: m.deploy_start(), join: m.deploy_join(), deliver: m.deploy_deliver() })[step];
-	let rows: Row[] = planOf(o.hasPrompt).map((step) => ({ id: step, state: "pending", ms: 0, since: 0 })), over: "running" | "ready" | "failed" = "running", polling = false;
+	let rows: Row[] = planOf(o.hasPrompt).map((step) => ({ id: step, state: "pending", ms: 0, since: 0 })), over: "running" | "ready" | "failed" = "running", polling = false, closed = false, timedOut = false, last = "", stopGo = () => {};
 	const bar = h("span", { class: "deploy-fill" }), count = h("span", { class: "deploy-count" }), list = h("ol", { class: "deploy-steps" }), note = h("p", { class: "deploy-note", "aria-live": "polite" }), back = h("button", { type: "button", class: "later" }, m.deploy_back());
 	const title = h("h3", { class: "deploy-title" }, svg(o.kind === "main" ? "main" : "member"), m.deploy_title({ kind: o.kind === "base" ? m.deploy_kind_base() : o.kind === "main" ? m.role_main() : m.role_member(), name: o.name }));
 	const root = h("div", { class: "deploy", role: "status", "aria-label": m.deploy_aria() }, title, h("div", { class: "deploy-bar" }, bar), count, list, note, back);
@@ -73,11 +73,13 @@ export function deployPanel(o: DeployOpts): HTMLElement {
 			item.at.textContent = r.state === "pending" || (r.state === "done" && ms < 1000) ? "" : clock(ms);
 		}
 	};
+	const timeoutNote = m.deploy_timeout({ seconds: TIMEOUT_MS / 1000 }), giveUp = () => fail(undefined, timeoutNote);
 	const stop = () => (stopTick(), stopWait());
 	const fail = (step: StepId | undefined, why: string) => {
 		if (over !== "running") return;
 		over = "failed";
 		stop();
+		timedOut = step === undefined && why === timeoutNote;
 		const at = rows.find((r) => r.id === step) ?? rows.find((r) => r.state === "active") ?? rows[0]!;
 		rows = rows.map((r) => (r === at ? { ...r, state: "failed", ms: r.state === "active" ? time.now() - r.since : r.ms } : r.state === "active" ? { ...r, state: "pending" } : r));
 		note.setAttribute("role", "alert");
@@ -95,20 +97,28 @@ export function deployPanel(o: DeployOpts): HTMLElement {
 		draw();
 		if (polling) return;
 		polling = true;
-		void o.progress(id).then((a) => a.ok && apply(a.body as unknown as Progress), () => {}).finally(() => (polling = false));
+		void o.progress(id).then((a) => {
+			if (!a.ok || over !== "running") return;
+			const seen = JSON.stringify(a.body);
+			if (seen !== last) (last = seen, stopWait(), (stopWait = time.after(giveUp, TIMEOUT_MS))); // the timeout measures silence: each answer that shows change starts it again
+			apply(a.body as unknown as Progress);
+		}, () => {}).finally(() => (polling = false));
 	};
-	const stopTick = time.every(tick, POLL_MS), stopWait = time.after(() => fail(undefined, m.deploy_timeout({ seconds: TIMEOUT_MS / 1000 })), TIMEOUT_MS);
+	const stopTick = time.every(tick, POLL_MS);
+	let stopWait = time.after(giveUp, TIMEOUT_MS);
 	void o.open(id).then((a) => {
-		if (over !== "running") return;
+		if (closed || (over !== "running" && !(over === "failed" && timedOut && a.ok))) return; // an open that answers ok after the timeout is a unit all the same
 		if (!a.ok) return fail(a.body.step as StepId | undefined, a.body.reason ?? m.refused({ status: a.status }));
 		over = "ready";
 		stop();
+		note.setAttribute("role", "status");
 		note.textContent = m.deploy_ready();
 		rows = rows.map((r) => ({ ...r, state: "done", ms: r.state === "active" ? time.now() - r.since : r.ms }));
 		draw();
 		o.chime?.();
-		time.after(() => o.ready(a.body), matchMedia("(prefers-reduced-motion: reduce)").matches ? 600 : 1500);
+		stopGo = time.after(() => o.ready(a.body), matchMedia("(prefers-reduced-motion: reduce)").matches ? 600 : 1500);
 	}, () => fail(undefined, m.no_answer()));
 	draw();
-	return root;
+	/** The tile is closed: polling, the chime, and the way on to the unit stop (the unit still appears in the net). */
+	return Object.assign(root, { close: () => ((closed = true), stop(), stopGo()) });
 }

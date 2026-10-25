@@ -196,9 +196,11 @@ test("a new folder is made in a pickable folder under a plain visible name, and 
 	const again = await post("dirs/new", { path: parent, name: "hello-test2" });
 	assert.deepEqual([again.status, again.body], [200, { path: join(parent, "hello-test2"), created: false }], "an existing folder is simply selected");
 	assert.equal((await post("dirs/new", { path: parent, name: "中文專案" })).status, 200, "a CJK name is fine");
+	assert.equal((await post("dirs/new", { path: parent, name: "專".repeat(85) })).status, 200, "255 bytes is the limit");
+	assert.equal((await post("dirs/new", { path: parent, name: "console" })).status, 200, "a name that only starts like a reserved one is fine");
 	const listed = await post("dirs", { path: parent });
 	assert.deepEqual((listed.body.dirs as string[]).includes("hello-test2"), true, "the picker lists it");
-	for (const name of ["", "   ", "..", ".", "../escape", "a/b", "a\\b", ".hidden", "name.", "bad:name", "q?", "x\u0000y", "x".repeat(300), 7, undefined]) {
+	for (const name of ["", "   ", "..", ".", "../escape", "a/b", "a\\b", ".hidden", "name.", "bad:name", "q?", "x\u0000y", "x".repeat(300), "專".repeat(86), "con", "NUL.txt", "Com1", "lpt9.log", "a\u200Bb", 7, undefined]) {
 		const refused = await post("dirs/new", { path: parent, name });
 		assert.deepEqual([refused.status, refused.body.error], [400, "bad_name"], JSON.stringify(name));
 	}

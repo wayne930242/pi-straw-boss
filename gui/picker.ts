@@ -50,7 +50,11 @@ export function folderPicker(start: Record<string, unknown>, changed: (path: str
 			if (lit) requestAnimationFrame(() => (el.scrollTop = Math.max(0, lit.offsetTop - el.clientHeight / 2)));
 			return el;
 		}));
-		requestAnimationFrame(() => ([cols.scrollLeft, crumbs.scrollLeft] = [cols.scrollWidth, crumbs.scrollWidth])); // the newest column in view; the scroll itself is CSS's (smooth, unless motion is reduced)
+		requestAnimationFrame(() => { // the newest column in view, the columns widened to share the width whole so the scroll lands on a column's edge and none shows in part; the scroll itself is CSS's (smooth, unless motion is reduced)
+			const fit = Math.max(1, Math.floor(cols.clientWidth / 176)), width = cols.clientWidth / fit, n = cols.children.length;
+			cols.style.setProperty("--pw", `${width}px`);
+			[cols.scrollLeft, crumbs.scrollLeft] = [Math.max(0, n - fit) * width, crumbs.scrollWidth];
+		});
 		where.textContent = where.title = s.path ?? "";
 		note.textContent = s.error ?? "";
 		if (s.path !== undefined && s.path !== shown) changed((shown = s.path), s.home);

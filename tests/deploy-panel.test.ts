@@ -170,3 +170,46 @@ test("the server's own failed step shows at once, and a request that gets no ans
 	assert.deepEqual(silent.rows().map((r) => r.split("~")[0]), ["done", "failed", "pending"]);
 	assert.match(silent.panel.cls("deploy-note").text, /No answer after 120 s/);
 });
+
+test("the timeout counts silence, not total time: progress that keeps changing keeps the panel running, and an open that answers ok after the timeout still shows ready", async () => {
+	const slow = setup({ hasPrompt: false });
+	slow.serve((since) => ({ steps: [step("create", "done", 400), step("start", "active", since), step("join", "pending")], finished: false }));
+	await slow.clock.advance(150_000);
+	assert.equal(slow.panel.dataset.state, "running", "the running step's time moves, so it is not silence");
+	const stuck = setup({ hasPrompt: false });
+	stuck.serve({ steps: [step("create", "done", 400), step("start", "active", 0), step("join", "pending")], finished: false });
+	await stuck.clock.advance(125_000);
+	assert.equal(stuck.panel.dataset.state, "failed");
+	const late = setup({ hasPrompt: false });
+	await late.clock.advance(125_000);
+	assert.equal(late.panel.dataset.state, "failed");
+	late.answer(ok({ session: "S2", workspace: "wB" }));
+	for (let i = 0; i < 5; i++) await Promise.resolve();
+	assert.equal(late.panel.dataset.state, "ready", "the open answered after all");
+	await late.clock.advance(1500);
+	assert.deepEqual(late.events, ["chime", `ready:${JSON.stringify({ session: "S2", workspace: "wB" })}`]);
+});
+
+test("closing the tile stops the polling and the chime and never goes on to the unit", async () => {
+	const p = setup();
+	p.serve({ steps: [step("create", "done"), step("start", "active"), step("join", "pending"), step("deliver", "pending")], finished: false });
+	await p.clock.advance(500);
+	(p.panel as unknown as { close(): void }).close();
+	const polled = p.ids.length;
+	await p.clock.advance(3000);
+	assert.equal(p.ids.length, polled);
+	p.answer(ok({ session: "S3", workspace: "wC" }));
+	for (let i = 0; i < 5; i++) await Promise.resolve();
+	await p.clock.advance(2000);
+	assert.deepEqual(p.events, []);
+});
+
+test("the server keeps the last 16 openings and forgets the older ones", async () => {
+	const { createDeploys } = await import("../src/deploy.ts");
+	const deploys = createDeploys(), ids = Array.from({ length: 17 }, (_, i) => `deploy-id-${String(i).padStart(2, "0")}`);
+	for (const id of ids) deploys.begin(id, ["create"]);
+	assert.equal(deploys.get(ids[0]), undefined, "the oldest was evicted");
+	assert.ok(deploys.get(ids[1]) && deploys.get(ids[16]));
+	deploys.begin(undefined, ["create"]);
+	assert.ok(deploys.get(ids[1]), "an open without an id is not kept and evicts nothing");
+});

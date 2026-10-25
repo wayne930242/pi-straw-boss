@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, realpath, stat } from "node:fs/promises";
+import { mkdir, readdir, realpath, rmdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import { checkText, type Reply } from "./control.ts";
@@ -48,16 +48,18 @@ export async function listDirs(dir: string, home = homedir()) {
 	return { path: dir, home: root, sep, parent: dir === root ? null : dirname(dir), dirs: names.slice(0, MAX_DIRS), truncated: names.length > MAX_DIRS };
 }
 
-const BAD_NAME = /[\p{Cc}\\/<>:"|?*]/u;
+const BAD_NAME = /[\p{Cc}\p{Cf}\\/<>:"|?*]/u, RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+const BAD = () => no(400, "bad_name", "A folder name is at most 255 characters, with no / \\ : * ? \" < > | and no leading or trailing dot.");
 /** A new folder `name` in the pickable `parent`: a plain visible name, no path in it, which Windows also takes. A folder already there is answered as it is. */
 export async function makeDir(parent: unknown, name: unknown, home = homedir()): Promise<Reply> {
 	const dir = await pickable(parent, home);
 	if (!dir) return OUTSIDE;
 	const clean = typeof name === "string" ? name.trim() : "";
-	if (!clean || clean.length > MAX_LABEL * 4 || clean.startsWith(".") || /[. ]$/.test(clean) || BAD_NAME.test(clean)) return no(400, "bad_name", "A folder name is at most 255 characters, with no / \\ : * ? \" < > | and no leading or trailing dot.");
+	if (!clean || Buffer.byteLength(clean) > 255 || RESERVED.test(clean) || clean.startsWith(".") || /[. ]$/.test(clean) || BAD_NAME.test(clean)) return BAD();
 	const path = join(dir, clean), made = await mkdir(path).then(() => true, (error: NodeJS.ErrnoException) => (error.code === "EEXIST" ? false : error));
-	if (made instanceof Error) return no(403, "unwritable", `The folder could not be made: ${made.message}`);
+	if (made instanceof Error) return made.code === "ENAMETOOLONG" ? BAD() : no(403, "unwritable", `The folder could not be made: ${made.message}`);
 	const real = await pickable(path, home);
+	if (!real && made) await rmdir(path).catch(() => {}); // a link swapped in after the check: take back the folder this call made
 	return real ? { status: 200, body: { path: real, created: made } } : no(409, "not_a_folder", `${clean} exists here and is not a folder you can pick.`);
 }
 
