@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readdir, realpath, stat } from "node:fs/promises";
+import { mkdir, readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import { checkText, type Reply } from "./control.ts";
@@ -12,6 +12,8 @@ import { createTab, type HerdrCall, type HerdrRun, isSub, type Pane, panes, repo
 // hidden folder; a path from the browser is resolved (symlinks too) before it is listed or used. A new main is authorised to promote itself the
 // way the tower's opener does it (opener.ts), with no limits: the person asked for it. One open at a time; a failed one closes what it created.
 //   POST /<token>/api/dirs {path?, workspace?, tab?}              the folders in `path`, or in the squad's or the base's own folder, or in home
+//   POST /<token>/api/dirs/new {path, name}                        a new folder `name` in the pickable folder `path` (an existing one of that name is answered as it is)
+//   POST /<token>/api/dirs/places {}                              home, its Desktop and Documents when they are pickable, and the folders the open bases work in
 //   POST /<token>/api/open/base {dir, label, prompt?}             a new workspace in `dir` whose first tab holds a member
 //   POST /<token>/api/open/member {workspace, tab?, dir?, prompt?} a member split into `tab` (in `dir`, else that tab's folder), or in a new tab in `dir`; no tower
 //   POST /<token>/api/open/main {workspace, dir, prompt?}         a new tab in the base whose pi becomes its main; the base has a tower
@@ -43,7 +45,20 @@ export async function listDirs(dir: string, home = homedir()) {
 		if (e.isDirectory() || (e.isSymbolicLink() && (await pickable(join(dir, e.name), home)))) names.push(e.name);
 	}
 	names.sort((a, b) => a.localeCompare(b));
-	return { path: dir, home: root, parent: dir === root ? null : dirname(dir), dirs: names.slice(0, MAX_DIRS), truncated: names.length > MAX_DIRS };
+	return { path: dir, home: root, sep, parent: dir === root ? null : dirname(dir), dirs: names.slice(0, MAX_DIRS), truncated: names.length > MAX_DIRS };
+}
+
+const BAD_NAME = /[\p{Cc}\\/<>:"|?*]/u;
+/** A new folder `name` in the pickable `parent`: a plain visible name, no path in it, which Windows also takes. A folder already there is answered as it is. */
+export async function makeDir(parent: unknown, name: unknown, home = homedir()): Promise<Reply> {
+	const dir = await pickable(parent, home);
+	if (!dir) return OUTSIDE;
+	const clean = typeof name === "string" ? name.trim() : "";
+	if (!clean || clean.length > MAX_LABEL * 4 || clean.startsWith(".") || /[. ]$/.test(clean) || BAD_NAME.test(clean)) return no(400, "bad_name", "A folder name is at most 255 characters, with no / \\ : * ? \" < > | and no leading or trailing dot.");
+	const path = join(dir, clean), made = await mkdir(path).then(() => true, (error: NodeJS.ErrnoException) => (error.code === "EEXIST" ? false : error));
+	if (made instanceof Error) return no(403, "unwritable", `The folder could not be made: ${made.message}`);
+	const real = await pickable(path, home);
+	return real ? { status: 200, body: { path: real, created: made } } : no(409, "not_a_folder", `${clean} exists here and is not a folder you can pick.`);
 }
 
 export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir() }: SpawnDeps) {
@@ -57,6 +72,21 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 		const here = await panes(run, ws.workspace_id);
 		const own = ws.worktree?.checkout_path ?? here.find((p) => p.tokens?.sb_role === "tower")?.cwd ?? here[0]?.cwd;
 		return (await pickable(own, home)) ?? (await realpath(home).catch(() => home));
+	};
+	/** Where a person starts from: home, its Desktop and Documents when they are pickable, and the folders the open bases (and the panes in them) work in. */
+	const places = async () => {
+		const root = await realpath(home).catch(() => home), seen = new Set<string>(), recent: string[] = [];
+		const keep = async (path: unknown) => {
+			const dir = await pickable(path, home);
+			if (dir && dir !== root && !seen.has(dir)) (seen.add(dir), recent.push(dir));
+		};
+		for (const ws of await workspaces(run).catch(() => [])) {
+			if (isSub(ws)) continue;
+			await keep(ws.worktree?.checkout_path);
+			for (const pane of await panes(run, ws.workspace_id).catch(() => [])) await keep(pane.cwd);
+		}
+		const named = await Promise.all(["Desktop", "Documents"].map(async (name) => [name, await pickable(join(root, name), home)] as const));
+		return { home: root, sep, places: named.flatMap(([name, path]) => (path ? [{ name, path }] : [])), recent: recent.slice(0, 10) };
 	};
 	const leadOf = async (workspaceId: string, tabId: unknown): Promise<Pane | undefined> => {
 		const here = (await panes(run, workspaceId)).filter((p) => p.tab_id === tabId);
@@ -158,6 +188,8 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 			if (!dir) return OUTSIDE;
 			return listDirs(dir, home).then((body) => ({ status: 200, body }), () => no(403, "unreadable", "This folder cannot be read."));
 		}
+		if (scope === "dirs" && kind === "new") return makeDir(json.path, json.name, home);
+		if (scope === "dirs" && kind === "places") return { status: 200, body: await places() };
 		if (scope === "open" && kind === "progress") {
 			const seen = deploys.get(json.id);
 			return seen ? { status: 200, body: seen.view() } : no(404, "not_found", "No such opening.");

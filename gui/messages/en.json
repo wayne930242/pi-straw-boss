@@ -429,5 +429,7 @@
 	"deploy_failed": "Failed at “{step}”.",
 	"deploy_timeout": "No answer after {seconds} s. The unit may still open; check the map.",
 	"deploy_back": "Back to the form",
-	"deploy_ready": "Unit ready"
+	"deploy_ready": "Unit ready",
+	"new_folder": "New folder",
+	"new_folder_name": "Name of the new folder"
 }

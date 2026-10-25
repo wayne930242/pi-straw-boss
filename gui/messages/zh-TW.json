@@ -373,5 +373,7 @@
 	"deploy_failed": "在「{step}」失敗：",
 	"deploy_timeout": "{seconds} 秒內沒有回應。單位可能仍會開好，請看地圖確認。",
 	"deploy_back": "回到表單",
-	"deploy_ready": "單位就緒"
+	"deploy_ready": "單位就緒",
+	"new_folder": "新資料夾",
+	"new_folder_name": "新資料夾的名稱"
 }

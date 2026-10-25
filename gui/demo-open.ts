@@ -8,9 +8,14 @@ const reply = (status: number, body: unknown) => new Response(JSON.stringify(bod
 export function demoOpen(): void {
 	const real = globalThis.fetch.bind(globalThis), opens = new Map<string, { at: number; plan: string[]; fail: boolean }>();
 	globalThis.fetch = async (input, init) => {
-		const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url, at = /api\/(dirs|open\/\w+)$/.exec(url)?.[1];
+		const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url, at = /api\/(dirs(?:\/\w+)?|open\/\w+)$/.exec(url)?.[1];
 		if (!at || init?.method !== "POST") return real(input, init);
 		const json = JSON.parse(String(init.body ?? "{}")) as Record<string, string>;
+		if (at === "dirs/new") {
+			const path = `${json.path}/${json.name}`;
+			if (/[/\\:*?"<>|]/.test(json.name ?? "") || !json.name?.trim()) return reply(400, { error: "bad_name", reason: "A folder name has no / \\ : * ? \" < > | in it." });
+			return reply(200, { path, created: !(path in tree) && Boolean((tree[json.path!] = [...(tree[json.path!] ?? []), json.name!]), (tree[path] = [])) });
+		}
 		if (at === "dirs") {
 			const path = json.path ?? "/demo";
 			return reply(200, { path, home: "/demo", parent: path === "/demo" ? null : path.slice(0, path.lastIndexOf("/")) || "/demo", dirs: tree[path] ?? [], truncated: false });
