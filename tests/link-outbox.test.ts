@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildEnvelope, decodeEnvelope, encodeEnvelope } from "../src/link/envelope.ts";
-import { ForbiddenError, NetworkError, RateLimitedError, ServerError, UnauthorizedError, UnprocessableError } from "../src/link/errors.ts";
+import { ForbiddenError, NetworkError, PayloadTooLargeError, ProtocolError, RateLimitedError, RelayError, ServerError, UnauthorizedError, UnprocessableError } from "../src/link/errors.ts";
 import { encodePlaintext } from "../src/link/kinds.ts";
 import { AckQueue, Outbox, type QueuedEnvelope } from "../src/link/outbox.ts";
 import { entryHash } from "../src/link/roster.ts";
@@ -99,8 +99,8 @@ test("an envelope the relay refuses for good leaves the queue and the next one g
 	assert.equal(outbox.size, 0);
 });
 
-test("an envelope over the relay's cap is answered 429 but is refused, not retried", async () => {
-	const { outbox, attempts, rejected } = rig(() => { throw new RateLimitedError(429, "envelope-too-large", undefined, undefined); });
+test("an envelope over the relay's cap is answered 413 and is refused, not retried", async () => {
+	const { outbox, attempts, rejected } = rig(() => { throw new PayloadTooLargeError(413, "envelope-too-large"); });
 	await outbox.submit(build);
 	await outbox.idle();
 	assert.deepEqual(attempts, [1]);
@@ -246,4 +246,14 @@ test("an envelope enqueued one microtask after the last onPosted is still posted
 	await outbox.idle();
 	assert.equal(outbox.size, 0);
 	await outbox.stop();
+});
+
+test("a 408 and a post answer this client cannot read are retried on the same envelope", async () => {
+	const failures: unknown[] = [new RelayError(408, "request-timeout"), new ProtocolError(200, "an envelope answer out of shape")];
+	const { outbox, attempts, posted, rejected } = rig((call) => { if (call <= failures.length) throw failures[call - 1]; });
+	await outbox.submit(build);
+	await outbox.idle();
+	assert.deepEqual(attempts, [1, 1, 1]);
+	assert.deepEqual(posted, [1]);
+	assert.equal(rejected.length, 0);
 });

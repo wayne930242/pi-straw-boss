@@ -34,7 +34,7 @@ export class ConflictError extends RelayError {
 		this.head = head;
 	}
 }
-/** 413: a body over the relay's hard limit. */
+/** 413: a body over the relay's hard limit (`body-too-large`), or an envelope over 256 KB (`envelope-too-large`); no retry cures either. */
 export class PayloadTooLargeError extends RelayError {}
 /** 422: a roster entry or envelope the rules refuse; `code` is the rule's reason and `seq` the entry's position when the relay names it. */
 export class UnprocessableError extends RelayError {
@@ -44,7 +44,7 @@ export class UnprocessableError extends RelayError {
 		this.seq = seq;
 	}
 }
-/** 429: a cap (`rate-limited`, `team-full`, `too-many-invites`) or an envelope over 256 KB (`envelope-too-large`, which no retry cures). */
+/** 429: a cap (`rate-limited`, `team-full`, `too-many-invites`). */
 export class RateLimitedError extends RelayError {
 	/** From `Retry-After`, in ms; undefined when the relay sent none. */
 	readonly retryAfterMs: number | undefined;
@@ -66,6 +66,8 @@ export class ProtocolError extends RelayError {}
 
 const isHead = (v: unknown): v is { seq: number; hash: string } => typeof v === "object" && v !== null && Number.isSafeInteger((v as { seq?: unknown }).seq) && /^[0-9a-f]{64}$/.test(String((v as { hash?: unknown }).hash));
 
+const MAX_RETRY_AFTER_MS = 10 * 60_000;
+
 /** The error for a non-2xx answer. */
 export function errorFor(status: number, body: unknown, retryAfter: string | null): RelayError {
 	const obj = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
@@ -79,8 +81,9 @@ export function errorFor(status: number, body: unknown, retryAfter: string | nul
 		case 413: return new PayloadTooLargeError(status, code, body);
 		case 422: return new UnprocessableError(status, code, body, Number.isSafeInteger(obj.seq) ? (obj.seq as number) : undefined);
 		case 429: {
-			const seconds = retryAfter === null ? NaN : Number(retryAfter);
-			return new RateLimitedError(status, code, body, Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : undefined);
+			// Only whole seconds (the HTTP-date form is not honored), clamped: setTimeout overflows above 2^31 ms.
+			const seconds = retryAfter !== null && /^\d+$/.test(retryAfter) ? Number(retryAfter) : NaN;
+			return new RateLimitedError(status, code, body, Number.isFinite(seconds) ? Math.min(seconds * 1000, MAX_RETRY_AFTER_MS) : undefined);
 		}
 		default: return status >= 500 ? new ServerError(status, code, body) : new RelayError(status, code, body);
 	}

@@ -182,3 +182,10 @@ test("a relay URL with a path is refused: the signed target is the path the rela
 	assert.throws(() => new RelayClient({ url: "not a url", device: A }));
 	assert.equal(enc(str("x")).length, 5);
 });
+
+test("Retry-After is whole seconds only, and a huge one is clamped so a timer cannot overflow", async () => {
+	const after = async (value: string) => (await client(json(429, { error: "rate-limited" }, { "retry-after": value })).c.postEnvelope(TEAM, Buffer.from("x")).catch((e) => e)).retryAfterMs;
+	assert.equal(await after("60"), 60_000);
+	assert.equal(await after("99999999"), 600_000);
+	for (const odd of ["1e3", "0x10", "-5", "1.5", "Wed, 21 Oct 2026 07:28:00 GMT", ""]) assert.equal(await after(odd), undefined, JSON.stringify(odd));
+});

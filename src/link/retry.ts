@@ -1,4 +1,4 @@
-import { NetworkError, RateLimitedError, ServerError } from "./errors.ts";
+import { NetworkError, ProtocolError, RateLimitedError, RelayError, ServerError } from "./errors.ts";
 
 // Backoff and the one question every retry loop asks: is this failure worth another try.
 
@@ -28,12 +28,12 @@ export const sleep: Sleep = (ms, signal) =>
 		signal?.addEventListener("abort", done, { once: true });
 	});
 
-/** An envelope over the relay's cap is answered 429, but no retry makes it smaller. */
-const PERMANENT_429 = new Set(["envelope-too-large"]);
-
-/** Whether the same request may succeed later: no answer, a 5xx, or a cap that frees up. Everything else (401, 403, 404, 409, 413, 422) is an answer. */
+/**
+ * Whether the same request may succeed later: no answer, a 408, a 5xx, a cap that frees up, or an answer this client could not read (a cut-off or
+ * garbled body; a post carries its id, so the relay dedupes the repeat). Everything else (401, 403, 404, 409, 413, 422) is an answer.
+ */
 export const isTransient = (error: unknown): boolean =>
-	error instanceof NetworkError || error instanceof ServerError || (error instanceof RateLimitedError && !PERMANENT_429.has(error.code));
+	error instanceof NetworkError || error instanceof ServerError || error instanceof RateLimitedError || error instanceof ProtocolError || (error instanceof RelayError && error.status === 408);
 
 /** What the relay asked us to wait, if it did. */
 export const retryAfterMs = (error: unknown): number | undefined => (error instanceof RateLimitedError ? error.retryAfterMs : undefined);

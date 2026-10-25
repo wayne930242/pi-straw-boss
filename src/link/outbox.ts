@@ -20,7 +20,7 @@ export interface OutboxOptions {
 	sleep?: Sleep;
 	/** The relay holds the envelope. */
 	onPosted?: (item: QueuedEnvelope) => void;
-	/** The relay refused the envelope for good (422, 403, 413, 429 `envelope-too-large`…). It leaves the queue; the next one goes on, and a gap in `seq` is harmless to receivers. */
+	/** The relay refused the envelope for good (422, 403, 413 `envelope-too-large`…). It leaves the queue; the next one goes on, and a gap in `seq` is harmless to receivers. */
 	onRejected?: (item: QueuedEnvelope, error: unknown) => void;
 	/** A 401: this device is not a member (removed) or its clock is off. The queue is kept and nothing is posted until `resume()`. */
 	onHalt?: (item: QueuedEnvelope, error: UnauthorizedError) => void;
