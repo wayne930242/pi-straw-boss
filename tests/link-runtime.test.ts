@@ -95,6 +95,27 @@ test("tower_send with a device goes through the holder to the relay; without a d
 	await assert.rejects(ta.tool("tower_send", { message: "x", device: "carol" }), /No device "carol"/);
 });
 
+test("a tower that is not the holder hands its send and its list to the holder over the channel, a 180 KB message included", async () => {
+	const [a, b] = [computer("a"), computer("b")];
+	const [holder, other, tb] = [a.tower("tower-1", "wA"), a.tower("tower-2", "wB"), b.tower("tower-b")];
+	await holder.start();
+	await until(() => holderOf(a)?.session === "tower-1", "tower-1 as holder");
+	await Promise.all([other.start(), tb.start()]);
+	await until(() => holderOf(b)?.session === "tower-b", "B's holder");
+	const big = "知識庫 ".repeat(18_000);
+	const sent = await other.tool("tower_send", { message: big, device: "bob-mac" });
+	assert.match(text(sent), /Sent to the tower of bob-mac/);
+	await until(() => linkMessages(tb).length === 1, "the big message at B");
+	assert.ok(linkMessages(tb)[0]!.content.endsWith(big), "all of it arrived");
+	assert.equal(relay.stored.filter((st) => !st.ephemeral).length, 1);
+	await assert.rejects(other.tool("tower_send", { message: "x".repeat(200 * 1024), device: "bob-mac" }), /at most 196608|too large/);
+	const list = (await other.tool("tower_list")).details as { remote?: unknown[] };
+	assert.ok(Array.isArray(list.remote), "the list came back through the holder");
+	// The holder ends: a request now finds no live holder and says so at once.
+	await holder.stop();
+	await assert.rejects(other.tool("tower_send", { message: "hi", device: "bob-mac" }), /No link holder is running/);
+});
+
 test("a delivery waits while the tower is busy, is sent when it is idle in that same tick, one at a time, and leaves the inbox once it is in the session", async () => {
 	const [a, b] = [computer("a"), computer("b")];
 	const [ta, tb] = [a.tower("tower-a"), b.tower("tower-b")];

@@ -13,7 +13,7 @@ export const NAMESPACE = "straw-boss/link";
 /** Base64 characters per chunk: 9 KB of bytes, well under the 16 KiB payload limit with the envelope around it. */
 export const CHUNK = 12_000;
 /** The most a reassembled request or answer may hold, as base64 text: 192 KB of message text with its JSON around it. */
-const MAX_TOTAL = 300_000;
+const MAX_TOTAL = 300_000, MAX_CHUNKS = 40;
 
 export interface Chunk { type: "req" | "res"; version: 1; to: string; reqId: string; i: number; n: number; data: string }
 
@@ -21,12 +21,13 @@ export interface Chunk { type: "req" | "res"; version: 1; to: string; reqId: str
 export function chunks(type: "req" | "res", to: string, reqId: string, body: unknown): Chunk[] {
 	const text = Buffer.from(JSON.stringify(body), "utf8").toString("base64");
 	const n = Math.max(1, Math.ceil(text.length / CHUNK));
+	if (n > MAX_CHUNKS || text.length > MAX_TOTAL) throw new Error("The request is too large to hand to the link holder");
 	return Array.from({ length: n }, (_, i) => ({ type, version: 1, to, reqId, i, n, data: text.slice(i * CHUNK, (i + 1) * CHUNK) }));
 }
 
 const isChunk = (p: unknown): p is Chunk => {
 	const c = p as Partial<Chunk> | undefined;
-	return typeof c === "object" && c !== null && typeof c.reqId === "string" && c.reqId.length <= 80 && Number.isSafeInteger(c.i) && Number.isSafeInteger(c.n) && c.n! >= 1 && c.n! <= 40 && c.i! >= 0 && c.i! < c.n! && typeof c.data === "string" && c.data.length <= CHUNK;
+	return typeof c === "object" && c !== null && typeof c.reqId === "string" && c.reqId.length <= 80 && Number.isSafeInteger(c.i) && Number.isSafeInteger(c.n) && c.n! >= 1 && c.n! <= MAX_CHUNKS && c.i! >= 0 && c.i! < c.n! && typeof c.data === "string" && c.data.length <= CHUNK;
 };
 
 /** Collects chunks per sender and request; the last one gives the body. Incomplete requests older than `ttlMs` are forgotten. */
