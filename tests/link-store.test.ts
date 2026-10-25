@@ -70,7 +70,7 @@ test("a lock whose owner is gone is taken over at once; a live owner's fresh loc
 	await live.withLock(() => undefined, 150);
 });
 
-test("a write to the holder record, a team file, the inbox, or the device file outside the lock is refused, so no write can skip it", async () => {
+test("a write to the holder record, a team file, the inbox, or the device file outside the lock is refused in this process (another process's takeover of a lock is the SLH-F007 test below)", async () => {
 	const store = open();
 	assert.throws(() => store.writeHolder({ session: "s", version: "1", pid: 1, tower: false, since: 1 }), /lock/);
 	assert.throws(() => store.createTeam(team()), /lock/);

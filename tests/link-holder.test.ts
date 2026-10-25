@@ -160,7 +160,7 @@ test("the sender's next sequence number is saved before the envelope is sent", a
 	assert.equal(device(a).nextSeq, 3);
 });
 
-test("a send is refused with the reason: no such device, an ambiguous label, a session that is not a tower, a folder outside the project, a message too large, a relay that is down", async () => {
+test("a send is refused with the reason: no such device, this device, a session that is not a tower, a folder outside the project, a message too large (a label two devices share is routing's test; a relay that is down, the queued tests below)", async () => {
 	const entries = rosterOf(["bob", "carol"]);
 	const a = rig("a", { entries });
 	await a.start();

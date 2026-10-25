@@ -266,9 +266,11 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 		stopped = false;
 		lastCtx = ctx;
 		seen.clear();
-		for (const entry of ctx.sessionManager.getBranch()) {
-			const e = entry as { type: string; customType?: string; data?: { id?: unknown } };
+		// Every entry of the session file, not only this branch: a crash between sending a message and writing the `seen` entry, or a restart on another branch, must not take it twice.
+		for (const entry of ctx.sessionManager.getEntries()) {
+			const e = entry as { type: string; customType?: string; data?: { id?: unknown }; details?: { id?: unknown } };
 			if (e.type === "custom" && e.customType === SEEN && typeof e.data?.id === "string") seen.add(e.data.id);
+			if (e.type === "custom_message" && e.customType === MESSAGE_TYPE && typeof e.details?.id === "string") seen.add(e.details.id);
 		}
 		clearInterval(ticker);
 		ticker = setInterval(() => void look().catch(lookFailed), opts.tickMs ?? 2000);

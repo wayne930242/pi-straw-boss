@@ -292,3 +292,17 @@ test("SLH-F003/F015: a message a busy tower holds is not sent once its inbox fil
 test("SLH-F013: a tower waits for the holder longer than the holder's worst case for a send, so it never gives up on a message that went out", () => {
 	assert.ok(ASK_MS > LOCK_WAIT_MS + POST_WAIT_MS + 15_000, `${ASK_MS} against ${LOCK_WAIT_MS} + ${POST_WAIT_MS} + a reading of Herdr`);
 });
+
+test("SLH-F014: a message already in the session as a straw-link message (the seen entry was lost in a crash, or sits on another branch) is not taken again", async () => {
+	const [a, b] = [computer("a"), computer("b")];
+	const [ta, tb] = [a.tower("tower-a"), b.tower("tower-b")];
+	await Promise.all([ta.start(), tb.start()]);
+	await until(() => holderOf(a) && holderOf(b), "holders");
+	const item: InboxItem = { v: 1, id: "ef".repeat(16), team: TEAM_HEX, from: alice.id, fromLabel: "alice-mac", fromShort: alice.shortId, seq: 9, sentAt: 1, received: Date.now(), fromWorkspace: "Alpha", toWorkspace: "", replyExpected: false, text: "crashed in between" };
+	const store = new LinkStore(b.dir);
+	await store.withLock(() => store.putInbox(item));
+	tb.transcript.push({ type: "custom_message", customType: MESSAGE_TYPE, details: { id: item.id } });
+	await tb.fire("session_start", { reason: "resume" });
+	await until(() => store.inboxIds().length === 0, "the message in the transcript confirmed and removed without being sent");
+	assert.equal(linkMessages(tb).length, 0);
+});
