@@ -102,8 +102,14 @@ export class LinkHolder {
 		if (this.running) return;
 		this.running = true;
 		const { store } = this.o;
-		this.device = await store.withLock(() => store.ensureDevice());
-		await this.refresh();
+		try {
+			this.device = await store.withLock(() => store.ensureDevice());
+			await this.refresh();
+		} catch (error) {
+			// `running` stays false after a failed start, so the module sees there is no holder and nothing answers "queued" to a send.
+			await this.stop();
+			throw error;
+		}
 		this.timer = setInterval(() => void this.tick().catch((error: Error) => store.log({ event: "tick-failed", error: error.message })), this.o.drainMs ?? 5000);
 		this.timer.unref();
 	}

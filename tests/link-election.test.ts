@@ -134,3 +134,19 @@ test("holderAlive: the process lives and is the one that wrote the record (same 
 	assert.equal(holderAlive(() => true, () => undefined)(rec), true, "ps cannot say: the record stands");
 	assert.equal(holderAlive(() => true, () => "anything")({ ...rec, started: undefined }), true);
 });
+
+test("SLH-F002: a holder that fails to start gives the record back, so the next look takes it again and the failure is thrown to the caller", async () => {
+	const store = new LinkStore(join(root, "link"), { alive: () => true });
+	store.ensure();
+	let gains = 0;
+	const election = new LinkElection({
+		store, alive: () => true, now: () => 1000, self: () => ({ session: "tower", version: "0.43.0", tower: true, pid: process.pid }),
+		onGain: () => { if (++gains === 1) throw new Error("the lock was not free"); }, onLose: () => {},
+	});
+	await assert.rejects(election.tick(), /the lock was not free/);
+	assert.equal(election.holding, false);
+	assert.equal(store.readHolder(), undefined, "the record is not kept by a holder that never ran");
+	assert.equal(await election.tick(), "holder");
+	assert.equal(gains, 2);
+	assert.equal(store.readHolder()?.session, "tower");
+});

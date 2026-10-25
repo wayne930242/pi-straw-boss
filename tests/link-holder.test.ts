@@ -404,3 +404,16 @@ test("a team in config.json with no team file, and a team file with no config en
 	assert.equal(b.notices.filter((n) => /no project/.test(n)).length, 1);
 	assert.equal(relay.opened.length, 0);
 });
+
+test("SLH-F002: a holder whose start fails is not active, and starts again once the cause is gone", async () => {
+	const b = rig("b", { towers: false });
+	const file = join(b.dir, "device.json"), good = readFileSync(file, "utf8");
+	const { writeFileSync } = await import("node:fs");
+	writeFileSync(file, "{ not json");
+	await assert.rejects(b.holder.start(), /device\.json is damaged/);
+	assert.equal(b.holder.active, false, "no holder: a send says so rather than 'queued'");
+	assert.deepEqual(await b.holder.send({ fromSession: "x", device: "alice-mac", text: "hi", reply: false }), { ok: false, error: "This computer's link holder is not running" });
+	writeFileSync(file, good);
+	await b.holder.start();
+	assert.equal(b.holder.active, true);
+});

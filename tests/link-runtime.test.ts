@@ -258,3 +258,13 @@ test("SLH-F006: a teammate's presence too large for an answer does not take the 
 		process.off("unhandledRejection", onRejection);
 	}
 });
+
+test("SLH-F002: a session that cannot start the link holder tells the boss once, and keeps trying", async () => {
+	const a = computer("a"), tower = a.tower("tower-a");
+	writeFileSync(join(a.dir, "device.json"), "{ not json");
+	await tower.start();
+	await until(() => tower.notices.some((n) => /could not start the link holder: device\.json is damaged/.test(n.text)), "the notice");
+	await new Promise((r) => setTimeout(r, 120));
+	assert.equal(tower.notices.filter((n) => /could not start the link holder/.test(n.text)).length, 1, "told once");
+	assert.equal(holderOf(a), undefined, "no record kept for a holder that does not run");
+});

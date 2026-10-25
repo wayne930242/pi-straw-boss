@@ -95,7 +95,15 @@ export class LinkElection {
 	private async gain(): Promise<void> {
 		if (this.had) return;
 		this.had = true;
-		await this.o.onGain();
+		try {
+			await this.o.onGain();
+		} catch (error) {
+			// A holder that could not start must not keep the record: the next look takes it again (here or in another session), and the caller is told.
+			this.had = false;
+			const me = this.o.self();
+			await this.o.store.withLock(() => void this.o.store.clearHolder((record) => this.isMine(record, me))).catch(() => undefined);
+			throw error;
+		}
 	}
 	private async lose(): Promise<void> {
 		if (!this.had) return;

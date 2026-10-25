@@ -77,6 +77,14 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 	let ticker: ReturnType<typeof setInterval> | undefined, looking: Promise<void> | undefined;
 	let lastCtx: Pick<ExtensionContext, "isIdle" | "hasPendingMessages"> | undefined;
 	const sid = () => me() || mySession;
+	let lookError = "";
+	/** A look that failed (the holder could not start, the lock was not free, a disk error): in the log, and once per message to the boss. */
+	const lookFailed = (error: Error) => {
+		store.log({ event: "look-failed", error: error.message });
+		if (error.message === lookError) return;
+		lookError = error.message;
+		tell(`Straw Link: this session could not start the link holder: ${error.message}`, "error");
+	};
 	const failed = (what: string) => (error: Error) => store.log({ event: `${what}-failed`, error: error.message });
 
 	// ---- The channel ---------------------------------------------------------------------------------------------------------------
@@ -259,9 +267,9 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 			if (e.type === "custom" && e.customType === SEEN && typeof e.data?.id === "string") seen.add(e.data.id);
 		}
 		clearInterval(ticker);
-		ticker = setInterval(() => void look().catch((error: Error) => store.log({ event: "look-failed", error: error.message })), opts.tickMs ?? 2000);
+		ticker = setInterval(() => void look().catch(lookFailed), opts.tickMs ?? 2000);
 		ticker.unref();
-		void look().catch((error: Error) => store.log({ event: "look-failed", error: error.message }));
+		void look().catch(lookFailed);
 	});
 	// The context pi hands every event is how a tower asks whether it is idle; a run that ends is the moment to look for a held message.
 	pi.on("before_agent_start", (_event, ctx) => void (lastCtx = ctx));
