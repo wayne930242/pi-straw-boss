@@ -558,7 +558,7 @@ Built in `src/link/{store,election,holder,routing,config,runtime,wire,text}.ts`;
 
 ## Build record: step 4 (remote turns, 2026-10-26)
 
-Built in `src/link/{turn,allow,gate,policy}.ts` with the hooks in `runtime.ts`, the confirm kinds in `holder.ts`, and the gate registered in `owners.ts`; `docs/how-it-works.md` describes the behavior. Where the spec left a choice, the code took this one:
+Built in `src/link/{turn,allow,gate,policy,hooks}.ts` (`hooks.ts` registers the pi hooks and runs against a real pi agent session without Herdr; `runtime.ts` wires it to the holder), the confirm kinds in `holder.ts`, and the gate registered in `owners.ts`; `docs/how-it-works.md` describes the behavior. Where the spec left a choice, the code took this one:
 
 - **A run with several remote senders asks one device at `forward`**: the first sender at the run's lowest level. Its answer decides; the others are not asked.
 - **`tower_send` back to the sender** accepts the sender's device id, short id, or label as `device`. The holder resolves a label across every team of the tower, so a label that is also another team's device is still ambiguity the holder reports; the allowlist only decides whether the call passes the hook.
@@ -568,3 +568,4 @@ Built in `src/link/{turn,allow,gate,policy}.ts` with the hooks in `runtime.ts`, 
 - **The unattended policy check** (`policy.ts`) is built and used for trust only; refusing to run the holder, `dialog-open` to controllers, and opening a tower for a controller are step 6.
 - **The sender's side of `forward`** has the holder API (`confirmRequests`, `answerConfirm`) and a notice; the alert in the GUI is step 5.
 - **A policy file that exists but cannot be read** (not `ENOENT`) refuses unattended mode instead of leaving the device attended.
+- **Run classification is tested against a real pi agent session** (`tests/link-session.test.ts`, a faux model): a delivery into an idle tower, a message steered into a local run, a follow-up that continues the run, and an automatic retry. pi 1.3.0 fires `tool_execution_start` before `tool_call`, a custom message's `message_start`/`message_end` when it enters the run (steered or not), and one `agent_settled` after the last `agent_end` of a run.
