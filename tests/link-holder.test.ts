@@ -545,3 +545,33 @@ test("SLH-F005/F018: a refusal that arrives after the send answered queued is to
 	await until(() => a.notices.some((n) => /the relay refused the message to bob-mac/.test(n)), 3000, "the late refusal");
 	await until(() => outboxFiles(a).length === 0, 3000, "the refused file removed");
 });
+
+test("SLH-F019: the inbox is capped per sender and in all: past the cap the envelope stays at the relay, unacknowledged, with one notice", async () => {
+	const [a, b] = [rig("a"), rig("b", { towers: false })];
+	await Promise.all([a.start(), b.start()]);
+	await b.holder.stop();
+	const full = new LinkHolder({
+		store: b.store, isHolder: () => true, config: config(b.project), net: async () => b.net, relay: clientFor(relay), offer: () => {}, notify: (t) => void b.notices.push(t),
+		backoff: () => 5, drainMs: 20, presenceMs: 100_000, inboxPerSender: 2,
+	});
+	cleanup.push(() => full.stop());
+	await full.start();
+	for (const text of ["one", "two", "three", "four"]) assert.ok((await send(a, text)).ok);
+	await until(() => b.store.inboxIds().length === 2, 3000, "two messages in the inbox");
+	await new Promise((r) => setTimeout(r, 150));
+	assert.equal(b.store.inboxIds().length, 2, "the cap holds");
+	assert.equal(relay.ackedBy(bob.id).length, 2);
+	assert.equal(relay.pendingFor(bob.id).length, 2, "the rest wait at the relay");
+	assert.equal(b.notices.filter((n) => /too many messages/.test(n)).length, 1);
+});
+
+test("SLH-F019: an unreadable inbox file is dropped, and the inbox is ordered by when the messages came", async () => {
+	const { writeFileSync } = await import("node:fs");
+	const b = rig("b", { towers: false });
+	await b.start();
+	const damaged = "09".repeat(16);
+	writeFileSync(join(b.dir, "inbox", `${damaged}.json`), "garbage");
+	await b.holder.drain();
+	assert.deepEqual(b.store.inboxIds(), []);
+	assert.ok(events(b).some((e) => e.event === "inbox-dropped" && e.reason === "damaged"));
+});

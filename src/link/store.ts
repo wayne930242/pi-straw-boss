@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes, randomUUID } from "node:crypto";
-import { appendFileSync, chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { appendFileSync, chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { startOf } from "../remote.ts";
@@ -410,7 +410,10 @@ export class LinkStore {
 	putInbox(item: InboxItem): void {
 		this.assertLocked("Writing the inbox");
 		if (!HEX16.test(item.id)) throw new Error("an inbox id is the envelope id in hex");
-		this.write(this.path("inbox", `${item.id}.json`), JSON.stringify(item));
+		const path = this.path("inbox", `${item.id}.json`);
+		this.write(path, JSON.stringify(item));
+		// The file's modification time is when the message was received: the inbox is ordered and aged by it without opening a file.
+		try { utimesSync(path, item.received / 1000, item.received / 1000); } catch { /* the time stays that of the write */ }
 	}
 	readInbox(id: string): InboxItem | undefined {
 		if (!HEX16.test(id)) return undefined;
@@ -421,7 +424,7 @@ export class LinkStore {
 			return v as unknown as InboxItem;
 		});
 	}
-	/** Ids of the waiting messages, the oldest first (a damaged file sorts last). */
+	/** Ids of the waiting messages, the oldest received first (by the file's time: no file is opened). */
 	inboxIds(): string[] {
 		let names: string[];
 		try {
@@ -429,19 +432,26 @@ export class LinkStore {
 		} catch {
 			return [];
 		}
-		return names.flatMap((n) => (/^[0-9a-f]{32}\.json$/.test(n) ? [n.slice(0, 32)] : [])).map((id) => ({ id, at: this.readInbox(id)?.received ?? Infinity })).sort((a, b) => a.at - b.at || (a.id < b.id ? -1 : 1)).map((x) => x.id);
+		return names.flatMap((n) => (/^[0-9a-f]{32}\.json$/.test(n) ? [n.slice(0, 32)] : [])).map((id) => ({ id, at: statSync(this.path("inbox", `${id}.json`), { throwIfNoEntry: false })?.mtimeMs ?? Infinity })).sort((a, b) => a.at - b.at || (a.id < b.id ? -1 : 1)).map((x) => x.id);
+	}
+	/** How many waiting messages came from `from` of `team`; opens the files, so ask only when the inbox is already large. */
+	inboxFrom(team: string, from: string): number {
+		return this.inboxIds().filter((id) => {
+			const item = this.readInbox(id);
+			return item?.team === team && item.from === from;
+		}).length;
 	}
 	removeInbox(id: string): void {
 		this.assertLocked("Removing from the inbox");
 		if (HEX16.test(id)) rmSync(this.path("inbox", `${id}.json`), { force: true });
 	}
-	/** Drops what was received more than `maxAgeMs` ago, damaged files too; returns how many. */
+	/** Drops what was received more than `maxAgeMs` ago, by the file's time; returns how many. */
 	purgeInbox(maxAgeMs: number, now = this.now()): number {
 		this.assertLocked("Purging the inbox");
 		let gone = 0;
 		for (const id of this.inboxIds()) {
-			const item = this.readInbox(id);
-			if (!item || now - item.received > maxAgeMs) {
+			const at = statSync(this.path("inbox", `${id}.json`), { throwIfNoEntry: false })?.mtimeMs;
+			if (at !== undefined && now - at > maxAgeMs) {
 				rmSync(this.path("inbox", `${id}.json`), { force: true });
 				gone++;
 			}

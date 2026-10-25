@@ -48,6 +48,9 @@ export interface HolderOptions {
 	postWaitMs?: number;
 	/** How long a team's outbox stays halted by a 401 before the refused envelope is tried again (default 60 s; a 401 can be a clock that was off). */
 	haltRetryMs?: number;
+	/** The most messages kept in the inbox from one sender (default 100) and in all (default 500); past that the relay keeps the envelope. */
+	inboxPerSender?: number;
+	inboxMax?: number;
 }
 
 export interface SendRequest { fromSession: string; device: string; workspace?: string; text: string; reply: boolean }
@@ -346,6 +349,10 @@ export class LinkHolder {
 				if (opened.reason === "roster-ahead" || opened.reason === "roster-mismatch") this.tellOnce(`mismatch/${run.team}/${header.from}`, `Straw Link: a message from ${shortId(header.from)} names a roster this device cannot match (${opened.reason}); the relay may be showing different rosters`);
 				return { d: "ack" };
 			}
+			if (header.kind === "tower" && this.inboxFull(run.team, header.from)) {
+				this.tellOnce(`full/${run.team}/${header.from}`, `Straw Link: the inbox holds too many messages from ${shortId(header.from)}; the relay keeps the rest until some are taken`);
+				return { d: "keep" };
+			}
 			if (header.kind === "tower") this.stage(run, roster, header, opened.message as TowerMessage);
 			else store.log({ event: "unhandled-kind", team: run.team, kind: header.kind, from: header.from });
 			// The sequence guard moves only after the message is in the inbox (or known not to need it), in the same locked write (R-F021).
@@ -363,6 +370,11 @@ export class LinkHolder {
 		return outcome.d;
 	}
 
+	/** Whether the inbox has no room for another message from `from`: the files are counted, and opened only when there are enough to matter. */
+	private inboxFull(team: string, from: string): boolean {
+		const { store } = this.o, each = this.o.inboxPerSender ?? 100, all = this.o.inboxMax ?? 500, held = store.inboxIds().length;
+		return held >= all || (held >= each && store.inboxFrom(team, from) >= each);
+	}
 	/** The message into the inbox, under the lock. */
 	private stage(run: TeamRun, roster: RosterState, header: Header, message: TowerMessage): void {
 		const sender = roster.members.get(header.from);
@@ -444,7 +456,12 @@ export class LinkHolder {
 		const config = this.o.config(), net = await this.o.net();
 		for (const id of ids) {
 			const item = store.readInbox(id);
-			if (!item) continue;
+			if (!item) {
+				// A file that cannot be read as a message (damaged by hand or by a full disk) is dropped, not kept for seven days.
+				store.log({ event: "inbox-dropped", id, reason: "damaged" });
+				await store.withLock(() => store.removeInbox(id));
+				continue;
+			}
 			const policy = config.teams.get(item.team), run = this.runs.get(item.team);
 			if (!policy || !run || run.dead) continue;
 			// The sender's membership is checked again at the moment a tower would get the message.
