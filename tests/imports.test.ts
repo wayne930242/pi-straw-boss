@@ -73,7 +73,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased to 337: the stashed bases in the net (net.ts: the type and the list read with each snapshot).
 	// Unreleased (net sidecar) to 338: `Unit.agent`, the agent of a unit that is not a pi session (net.ts).
 	// Unreleased (comfort) to 343: net.ts types what a unit did lately (since, ticks, todo) and the net's events, and runs each reading through the activity tracker.
-	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 343, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
+	// 0.42.4 to 351: an installed app's launch arrives from another site without the SameSite=Strict cookie, so a page load from outside reloads itself once (gui.ts).
+	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 351, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
 	// Input (the spec's figure), remote access over Tailscale, its terminal pairing panel (QR, c copies, o opens), and the QR encoder each have their own.
 	// What a waiting session waits on (0.5.0, read for display only; answering is deferred) has its own as well.
 	// 0.5.1 raised remote.ts from 165 to 185 (a recorded server counts as running only if its process started when the entry says: a reused PID
