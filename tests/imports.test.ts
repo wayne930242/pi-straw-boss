@@ -311,7 +311,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	assert.ok(count("gui/hotkeys.ts") <= 50, `gui/hotkeys.ts has ${count("gui/hotkeys.ts")} lines`);
 	// The phone drawer (Unreleased): its gesture rules (swipe.ts, apart from the DOM so they are tested) and the list with its touch wiring (drawer.ts) have a figure each.
 	assert.ok(count("gui/swipe.ts") <= 40, `gui/swipe.ts has ${count("gui/swipe.ts")} lines`);
-	assert.ok(count("gui/drawer.ts") <= 143, `gui/drawer.ts has ${count("gui/drawer.ts")} lines`);
+	// Unreleased to 167: a finished subagent's card swiped to the right is dismissed (the card's drag, its release, and quit.ts's dismiss).
+	assert.ok(count("gui/drawer.ts") <= 167, `gui/drawer.ts has ${count("gui/drawer.ts")} lines`);
 	// Unreleased (comfort): the timeline under the stage (gui/timeline.ts: a mark per event of the net's last 30 minutes, placed by its time, named on hover, a link to its unit)
 	// and the map's overview in a corner (gui/minimap.ts: shown while the map runs past the window, its frame moved on a scroll) have a figure each.
 	assert.ok(count("gui/timeline.ts") <= 42, `gui/timeline.ts has ${count("gui/timeline.ts")} lines`);
@@ -411,7 +412,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// 0.42.0 (calm header) to 47.2 KB: the settings panel's button (its name in both languages, where it hangs).
 	// Unreleased to 47.25 KB / 17.3 KB: the links and the overview drawn on the next frame after the cards' packing, not by an observer of the map.
 	// Unreleased to 47.35 KB / 17.31 KB: the comms' Back steps back through the page's own history (router.ts depthOf, data-back).
-	assert.ok(size(entry).length <= 47_350 && gz(entry) <= 17_310, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// Unreleased to 47.4 KB / 17.33 KB: quit.ts's dismiss shared with the drawer's swipe.
+	assert.ok(size(entry).length <= 47_400 && gz(entry) <= 17_330, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).
@@ -451,7 +453,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased (comfort) to 41.98 KB gzipped: the lazy chunks import the map chunk by its hashed name, and a new hash gzips a few bytes differently.
 	// Unreleased to 102.05 KB / 42 KB gzipped: layer.ts watches a gauge of the work's width (the gauge made and observed), and the column template's agent slot.
 	// Unreleased to 102.1 KB: the comms' Back marked data-back, to step back through the page's history.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 102_100 && total(chunks, gz) <= 42_000, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// Unreleased to 102.8 KB / 42.25 KB gzipped: the drawer's swipe to dismiss a finished subagent's card (gui/drawer.ts).
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 102_800 && total(chunks, gz) <= 42_250, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
@@ -491,5 +494,6 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 63.45 KB: the work's gauge (layer.ts watches its width) and the work positioned for it.
 	// Unreleased to 63.7 KB / 14.13 KB: a phone's comms play their entrance themselves, not on their view (whose transform held them under the HUD), and "opening the channel" covers the screen.
 	// Unreleased to 14.14 KB gzipped: the drawer's current unit marked on both edges.
-	assert.ok(total(css, (n) => size(n).length) <= 63_700 && total(css, gz) <= 14_140, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// Unreleased to 63.95 KB / 14.2 KB: the drawer's finished card following the finger and sliding out when dismissed.
+	assert.ok(total(css, (n) => size(n).length) <= 63_950 && total(css, gz) <= 14_200, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });

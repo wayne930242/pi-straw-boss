@@ -4,6 +4,7 @@ import { h } from "./dom.ts";
 import { MODAL } from "./hotkeys.ts";
 import { m } from "./paraglide/messages.js";
 import type { Locale } from "./paraglide/runtime.js";
+import { dismiss } from "./quit.ts";
 import { aim, fillPlate, html, mark, PLATE, roleName, say, sync, text } from "./render.ts";
 import type { Route } from "./router.ts";
 import { chainOf, ignored, intent, settles } from "./swipe.ts";
@@ -11,7 +12,8 @@ import { chainOf, ignored, intent, settles } from "./swipe.ts";
 // The phone's quick switch: a swipe to the right from anywhere pulls a drawer out of the left edge, a condensed map of the net, one row per unit grouped
 // as the map groups them (the base, its tower, each tab, the units outside the net) with the map's own plate, colours, and names, plus one short word
 // for its state. Tapping a row goes to that unit's comms and shuts the drawer, as does a swipe to the left, a tap on the veil, or Escape. It follows the
-// finger while dragged and settles open or shut on release (swipe.ts has the rules). Only the phone layout has it; it stays current with the net.
+// finger while dragged and settles open or shut on release (swipe.ts has the rules). A finished subagent's card swiped to the right is dismissed, by the
+// same rules: it follows the finger and goes once pulled past HALF of its width or flicked. Only the phone layout has it; it stays current with the net.
 
 export interface Row { id: string; key: string; ws: string; name: string; role: string; mark: Mark; note?: string; ended: boolean; sub: boolean }
 export interface Group { id: string; label?: string; rows: Row[] }
@@ -46,12 +48,14 @@ export function mountDrawer() {
 	const body = h("div", { class: "drawer-body" }), close = h("button", { type: "button", class: "x", "aria-label": m.drawer_close() }, "×");
 	const panel = h("aside", { class: "drawer", "aria-label": m.drawer_label() }, h("header", null, h("b", null, m.drawer_title()), close), body), veil = h("div", { class: "drawer-veil" });
 	document.body.append(veil, panel);
-	let latest: Net | undefined, here: string | undefined, open = false, x = 0, width = 0, t: { x0: number; y0: number; mode: "wait" | "drag" | "pass"; was: boolean; base: number; last: number; at: number; v: number } | undefined;
+	let latest: Net | undefined, here: string | undefined, open = false, x = 0, width = 0, t: { x0: number; y0: number; mode: "wait" | "drag" | "pass" | "card"; was: boolean; base: number; last: number; at: number; v: number; card?: HTMLElement } | undefined;
 	const draw = () => {
 		const fillRow = (el: HTMLElement, r: Row & { subs?: Row[] }) => {
 			aim(el.querySelector(".hit")!, { view: "session", ws: r.ws, key: r.key });
 			el.querySelector(".hit")!.setAttribute("aria-label", `${r.name}: ${shortState(r.mark, r.ended)}`);
 			el.classList.toggle("current", r.key === here);
+			el.toggleAttribute("data-dismiss", r.role === "subagent" && r.ended); // swiped to the right, it goes (quit.ts aimUnit's rule)
+			el.dataset.key = r.key;
 			mark(el, r.mark);
 			fillPlate(el.querySelector(".plate")!, r.role, r.mark);
 			text(el, ".name", r.name);
@@ -98,7 +102,8 @@ export function mountDrawer() {
 		t = undefined;
 		if (!phone() || e.touches.length !== 1 || document.querySelector(MODAL) || (open ? !inside : ignored(chainOf(el), Boolean(getSelection()?.toString())))) return;
 		const p = e.touches[0]!;
-		t = { x0: p.clientX, y0: p.clientY, mode: "wait", was: open, base: x, last: p.clientX, at: performance.now(), v: 0 };
+		const card = open ? el.closest<HTMLElement>(".unit[data-dismiss] > .card") ?? undefined : undefined;
+		t = { x0: p.clientX, y0: p.clientY, mode: "wait", was: open, base: x, last: p.clientX, at: performance.now(), v: 0, card };
 	}, { passive: true });
 	document.addEventListener("touchmove", (e) => {
 		if (!t || t.mode === "pass") return;
@@ -106,20 +111,39 @@ export function mountDrawer() {
 		if (t.mode === "wait") {
 			const read = intent(dx, dy, t.was);
 			if (read === "wait") return;
-			if (read === "pass") return void (t.mode = "pass");
-			t.mode = "drag";
-			begin();
+			// Rightwards on the open drawer is a finished subagent's card's, to dismiss it; the drawer has no use for it.
+			if (read === "pass" && t.card && intent(dx, dy, false) === "drag") {
+				t.mode = "card";
+				t.card.classList.add("swiping");
+			} else if (read === "pass") return void (t.mode = "pass");
+			else {
+				t.mode = "drag";
+				begin();
+			}
 		}
 		e.preventDefault(); // a drag under way is the drawer's; a vertical move never gets here
 		const now = performance.now();
 		t.v = (p.clientX - t.last) / Math.max(1, now - t.at);
 		[t.last, t.at] = [p.clientX, now];
-		place(t.base + dx);
+		if (t.mode !== "card") return place(t.base + dx);
+		const pull = Math.max(0, dx);
+		t.card!.style.setProperty("--sx", `${pull}px`);
+		t.card!.style.setProperty("--so", String(1 - pull / t.card!.offsetWidth));
 	}, { passive: false });
-	const lift = () => {
+	/** A card let go: it goes when pulled far or fast enough (a cancelled touch never dismisses), else it slides back. */
+	const release = (card: HTMLElement, gone: boolean) => {
+		card.classList.remove("swiping");
+		card.style.removeProperty("--sx");
+		card.style.removeProperty("--so");
+		if (!gone) return;
+		card.classList.add("gone"); // out to the right; the net's next snapshot takes its row away
+		void dismiss({ key: card.parentElement!.dataset.key! }).then((ok) => ok || card.classList.remove("gone"));
+	};
+	const lift = (e: TouchEvent) => {
 		const done = t;
 		t = undefined;
 		if (done?.mode === "drag") settle(settles(x, width, done.v));
+		if (done?.mode === "card") release(done.card!, e.type === "touchend" && settles(Math.max(0, done.last - done.x0), done.card!.offsetWidth, done.v));
 	};
 	document.addEventListener("touchend", lift);
 	document.addEventListener("touchcancel", lift);

@@ -63,6 +63,9 @@ export function showStashed(button: HTMLElement, list: HTMLElement, net: Net) {
 	}));
 }
 
+/** Dismisses finished subagents, one by key or all; a refusal or no answer says why in the page's dialog. Resolves whether it went. */
+export const dismiss = (body: { key: string } | { all: true }) => import("./post.ts").then(({ post }) => post("dismiss", body)).then((r) => r.ok || (sheet(r.body.reason ?? m.refused({ status: r.status })), false), () => (sheet(m.no_answer()), false));
+
 export interface QuitDeps { route(): Route; net(): Net | undefined; go(route: Route): void }
 
 /** A view of what was just closed goes up to what is left: a closed base to the map, a closed squad or unit to its base. */
@@ -80,7 +83,7 @@ export function mountQuit(deps: QuitDeps) {
 		const b = (event.target as Element | null)?.closest?.<HTMLElement>("button[data-close]"), d = b?.dataset;
 		if (!b || !d) return;
 		event.preventDefault();
-		if (d.close === "dismiss" || d.close === "dismiss-all") return void import("./post.ts").then(({ post }) => post("dismiss", d.close === "dismiss" ? { key: d.key } : { all: true })).then((r) => r.ok || sheet(r.body.reason ?? m.refused({ status: r.status })), () => sheet(m.no_answer()));
+		if (d.close === "dismiss" || d.close === "dismiss-all") return void dismiss(d.close === "dismiss" ? { key: d.key! } : { all: true });
 		if (d.close === "pop") return void (b.toggleAttribute("disabled", true), import("./post.ts").then(({ post }) => post("close/pop", { name: d.name })).then((r) => r.ok || sheet(r.body.reason ?? m.refused({ status: r.status })), () => sheet(m.no_answer())).finally(() => b.toggleAttribute("disabled", false)));
 		const ask = d.close === "stash" ? m.stash_base_ask : d.close === "base" ? m.close_base_ask : d.close === "tab" ? m.close_squad_ask : d.role === "tower" ? m.close_tower_ask : m.close_unit_ask;
 		void sheet(ask({ name: d.name ?? "" }), d.close === "stash" ? m.stash() : m.quit()).then((yes) => {
