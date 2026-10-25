@@ -20,6 +20,8 @@ writeFileSync(join(dir, "index.html"), "<!doctype html><html><head><title>Straw 
 writeFileSync(join(dir, "assets", "app.js"), "console.log(1)");
 writeFileSync(join(dir, "assets", "Symbols-ab12.woff2"), Buffer.from([0x77, 0x4f, 0x46, 0x32, 0xff]));
 writeFileSync(join(dir, "assets", "done-cd34.mp3"), Buffer.from([0x49, 0x44, 0x33, 0x04]));
+writeFileSync(join(dir, "manifest.webmanifest"), '{"name":"Straw Net","start_url":"./"}');
+writeFileSync(join(dir, "icon-192.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
 writeFileSync(join(scratch, "secret.txt"), "outside the bundle");
 const running: Gui[] = [];
 after(async () => {
@@ -80,6 +82,11 @@ test("the page and its assets are served under the token, with no caching and a 
 	assert.match(String(page.headers["content-security-policy"]), /media-src 'self'/, "the page may play its own sounds");
 	const sound = await raw(gui, `/${gui.token}/assets/done-cd34.mp3`);
 	assert.deepEqual([sound.status, sound.headers["content-type"], sound.headers["cache-control"]], [200, "audio/mpeg", "private, max-age=31536000, immutable"], "a sound, named for its hash, is kept");
+	assert.match(String(page.headers["content-security-policy"]), /manifest-src 'self'/, "the page may name its own app manifest");
+	const manifest = await raw(gui, `/${gui.token}/manifest.webmanifest`);
+	assert.deepEqual([manifest.status, manifest.headers["content-type"], JSON.parse(manifest.body).start_url], [200, "application/manifest+json", "./"], "the manifest starts the app at the token path it was fetched under");
+	const icon = await raw(gui, `/${gui.token}/icon-192.png`);
+	assert.deepEqual([icon.status, icon.headers["content-type"]], [200, "image/png"]);
 	const bare = await raw(gui, `/${gui.token}`);
 	assert.deepEqual([bare.status, bare.headers.location], [308, `/${gui.token}/`], "the token path without its slash redirects to the page");
 	assert.equal((await raw(gui, `/${gui.token}/assets/missing.js`)).status, 404);
