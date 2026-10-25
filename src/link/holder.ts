@@ -8,7 +8,7 @@ import { encodePlaintext, LIMITS, type Presence, type TowerMessage, type Workspa
 import { Outbox, type QueuedEnvelope } from "./outbox.ts";
 import type { RelayClient } from "./relay.ts";
 import { decodeEntry, encodeEntry, replayEncoded, type RosterEntry, type RosterState } from "./roster.ts";
-import { inside, resolveDevice, towersFor, type MemberRef, type NetView } from "./routing.ts";
+import { inside, nearestTeams, oneTeamEach, resolveDevice, towersFor, type MemberRef, type NetView } from "./routing.ts";
 import type { Backoff, Sleep } from "./retry.ts";
 import type { Disposition, EnvelopeEvent, RelayEvent, RosterEvent } from "./sse.ts";
 import { TeamFileError, type InboxItem, type LinkStore, type TeamFile } from "./store.ts";
@@ -490,15 +490,15 @@ export class LinkHolder {
 		const pane = net.panes.find((p) => net.sessions.find((x) => x.id === req.fromSession)?.herdrLocation?.paneId === p.pane_id);
 		if (!pane || pane.tokens?.sb_role !== "tower" || !pane.cwd) return { ok: false, error: "Only the tower of a workspace bound to a team can send over Straw Link" };
 		const config = this.o.config();
-		const teams = [...this.runs.values()].filter((run) => !run.dead && config.teams.has(run.team) && inside(pane.cwd!, config.teams.get(run.team)!.project));
+		const teams = nearestTeams(pane.cwd, [...this.runs.values()].filter((run) => !run.dead && config.teams.has(run.team)).map((run) => ({ run, project: config.teams.get(run.team)!.project }))).map((x) => x.run);
 		if (teams.length === 0) return { ok: false, error: `This tower's folder (${pane.cwd}) is not inside the project of any team this device belongs to` };
-		const members: MemberRef[] = teams.flatMap((run) => {
+		const members: MemberRef[] = oneTeamEach(teams.flatMap((run) => {
 			try {
 				return [...this.loadTeam(run.team).state.members].map(([id, m]) => ({ team: run.team, id, ...(m.label !== undefined ? { label: m.label } : {}) }));
 			} catch {
 				return [];
 			}
-		});
+		}));
 		const target = resolveDevice(req.device, members, this.device.keys.id);
 		if (!target.ok) return { ok: false, error: target.error };
 		const run = teams.find((r) => r.team === target.team)!;

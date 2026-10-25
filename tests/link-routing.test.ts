@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { readLinkConfig } from "../src/link/config.ts";
-import { inside, projectProblem, resolveDevice, towerFor, type NetView } from "../src/link/routing.ts";
+import { inside, nearestTeams, oneTeamEach, projectProblem, resolveDevice, towerFor, type NetView } from "../src/link/routing.ts";
 
 // Where a delivery goes (docs/specs/2026-10-25-straw-link.md, Addressing and delivery): only to a tower whose pane's cwd is inside the team's
 // project, the one closest to the project root, then the first in workspace order; and who a `device` argument names (R-F020).
@@ -139,4 +139,23 @@ test("the config: teams with a project and a share, bad ones listed as problems 
 	assert.equal(cfg.problems.length, 3, cfg.problems.join("\n"));
 	assert.ok(cfg.problems.some((p) => p.includes(T3) && /home folder/.test(p)));
 	assert.ok(cfg.problems.some((p) => p.includes(T4)));
+});
+
+test("SLH-F009: a child folder whose name starts with two dots is inside its parent", () => {
+	const project = dir("p"), child = dir("p", "..x"), deeper = dir("p", "..x", "..y");
+	assert.ok(inside(child, project));
+	assert.ok(inside(deeper, project));
+	assert.ok(!inside(project, child), "the parent is not inside the child");
+	assert.ok(!inside(dir("q"), project));
+});
+
+test("SLH-F010: a device in two teams whose projects both hold the tower is one device, reached through the team with the nearest project", () => {
+	const outer = dir("outer"), inner = dir("outer", "inner"), tower = dir("outer", "inner", "api"), other = dir("elsewhere");
+	const teams = [{ team: "outer", project: outer }, { team: "elsewhere", project: other }, { team: "inner", project: inner }];
+	assert.deepEqual(nearestTeams(tower, teams).map((t) => t.team), ["inner", "outer"], "the elsewhere team does not hold the tower");
+	const members = [{ team: "inner", id: "d".repeat(26), label: "Lee" }, { team: "outer", id: "d".repeat(26), label: "Lee" }, { team: "outer", id: "e".repeat(26), label: "Kim" }];
+	const one = oneTeamEach(members);
+	assert.deepEqual(one.map((m) => [m.team, m.label]), [["inner", "Lee"], ["outer", "Kim"]]);
+	assert.deepEqual(resolveDevice("Lee", one, "z".repeat(26)), { ok: true, team: "inner", id: "d".repeat(26) });
+	assert.ok(!resolveDevice("Lee", members, "z".repeat(26)).ok, "listed per team, the same device could not be named at all");
 });

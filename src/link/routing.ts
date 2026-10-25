@@ -17,7 +17,8 @@ const real = (path: string): string | undefined => {
 };
 const within = (child: string, parent: string): string | undefined => {
 	const rel = relative(parent, child);
-	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel)) ? rel : undefined;
+	// `..x` is a folder name; only `..` itself and `../…` leave the parent.
+	return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)) ? rel : undefined;
 };
 
 /** Whether `dir` is `project` or below it, where each really is (a symlink is followed, so a link inside the project that leads out is out). A path that does not exist is not inside. */
@@ -75,7 +76,23 @@ export function towersFor(view: NetView, project: string, toWorkspace?: string):
 	return picks.map((p) => ({ session: p.session, pane: p.pane, workspace: p.workspace }));
 }
 
+/**
+ * The teams whose project holds `dir`, nearest first (the project closest to `dir`, then the order given): where a device that is in several of
+ * them is reached through.
+ */
+export function nearestTeams<T extends { project: string }>(dir: string, teams: T[]): T[] {
+	return teams.flatMap((t, order) => {
+		const d = depth(dir, t.project);
+		return d === undefined ? [] : [{ t, d, order }];
+	}).sort((a, b) => a.d - b.d || a.order - b.order).map((x) => x.t);
+}
+
 export interface MemberRef { team: string; id: string; label?: string }
+/** Each device once, under the first team that lists it (give the teams nearest first): one device in two matching teams is one device, not an ambiguity. */
+export function oneTeamEach(members: MemberRef[]): MemberRef[] {
+	const seen = new Set<string>();
+	return members.filter((m) => !seen.has(m.id) && !!seen.add(m.id));
+}
 export type Resolved = { ok: true; team: string; id: string } | { ok: false; error: string };
 const describe = (m: MemberRef) => `${m.label ?? "unnamed"} (${shortId(m.id)})`;
 /**
