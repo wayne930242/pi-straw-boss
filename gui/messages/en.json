@@ -316,7 +316,6 @@
 	"open_main": "+ Main",
 	"open_main_title": "New main agent in {base}",
 	"folder_here": "Folder:",
-	"folder_up": "Up",
 	"asking_dirs": "Reading folders…",
 	"folder_empty": "No folders here.",
 	"folder_cut": "Showing the first 500 folders.",
@@ -431,5 +430,14 @@
 	"deploy_back": "Back to the form",
 	"deploy_ready": "Unit ready",
 	"new_folder": "New folder",
-	"new_folder_name": "Name of the new folder"
+	"new_folder_name": "Name of the new folder",
+	"picker_back": "Back",
+	"picker_forward": "Forward",
+	"picker_path": "Path",
+	"picker_places": "Places",
+	"picker_label": "Folders",
+	"picker_home": "Home",
+	"picker_desktop": "Desktop",
+	"picker_documents": "Documents",
+	"picker_recent": "Recent"
 }

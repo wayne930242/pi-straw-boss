@@ -260,7 +260,6 @@
 	"open_main": "＋主智慧體",
 	"open_main_title": "在 {base} 開新的主智慧體",
 	"folder_here": "資料夾：",
-	"folder_up": "上一層",
 	"asking_dirs": "正在讀取資料夾…",
 	"folder_empty": "這裡沒有資料夾。",
 	"folder_cut": "只顯示前 500 個資料夾。",
@@ -375,5 +374,14 @@
 	"deploy_back": "回到表單",
 	"deploy_ready": "單位就緒",
 	"new_folder": "新資料夾",
-	"new_folder_name": "新資料夾的名稱"
+	"new_folder_name": "新資料夾的名稱",
+	"picker_back": "上一步",
+	"picker_forward": "下一步",
+	"picker_path": "路徑",
+	"picker_places": "位置",
+	"picker_label": "資料夾",
+	"picker_home": "家目錄",
+	"picker_desktop": "桌面",
+	"picker_documents": "文件",
+	"picker_recent": "最近"
 }

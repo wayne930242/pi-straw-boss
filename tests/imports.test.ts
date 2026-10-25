@@ -303,9 +303,11 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.13.0 raised views.ts to 253 for the base view's two opening buttons; the opening tile (gui/spawn.ts) has its own figure below.
 	// 0.15.0 raised composer.ts to 190 for files: pasted, dropped, or picked, each uploaded and its path put in the message.
 	// 0.15.0 to 254 for the squads' + Member buttons, and gui/spawn.ts to 68 for the new base, member, and squad member tiles and the button reader.
-	// Unreleased to 90 (new folder, the real folder shown) from 75 for the deploy panel taking the form while a unit opens (the panel itself is gui/deploy.ts, 114, with the demo's stand-in server in gui/demo-open.ts, 35).
-	assert.ok(count("gui/deploy.ts") <= 114 && count("gui/demo-open.ts") <= 40 && count("gui/folders.ts") <= 7, "the deploy panel and its demo stay small");
-	assert.ok(count("gui/spawn.ts") <= 90, `gui/spawn.ts has ${count("gui/spawn.ts")} lines`);
+	// Unreleased to 58: the folder picker moved to gui/picker.ts, the opening tile keeps its form (name, first message, open) and the deploy panel, from 75 for the deploy panel taking the form while a unit opens (the panel itself is gui/deploy.ts, 114, with the demo's stand-in server in gui/demo-open.ts, 35).
+	assert.ok(count("gui/deploy.ts") <= 114 && count("gui/demo-open.ts") <= 46, "the deploy panel and its demo stay small");
+	// Unreleased: the folder picker the opening tiles share is Finder's column view: its state (gui/folders.ts: the columns of the selected folder's levels, arrow keys, back and forward, new folder) and its drawing (gui/picker.ts: toolbar, shortcuts, columns, path).
+	assert.ok(count("gui/folders.ts") <= 126 && count("gui/picker.ts") <= 91, "the folder picker stays small");
+	assert.ok(count("gui/spawn.ts") <= 58, `gui/spawn.ts has ${count("gui/spawn.ts")} lines`);
 	// The phone pairing tile and the write helper it shares with the composer (0.5.0, no figure in the spec).
 	const pairing = sum("gui", ["pair.ts", "post.ts"]);
 	// 0.15.0 to 55 for post.ts sending a file's bytes to a session's upload. Unreleased to 58: the paired devices under the code (devices.ts, 31 at most, its own figure).
@@ -325,7 +327,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// and the map's overview in a corner (gui/minimap.ts: shown while the map runs past the window, its frame moved on a scroll) have a figure each.
 	assert.ok(count("gui/timeline.ts") <= 42, `gui/timeline.ts has ${count("gui/timeline.ts")} lines`);
 	assert.ok(count("gui/minimap.ts") <= 44, `gui/minimap.ts has ${count("gui/minimap.ts")} lines`);
-	const shipped = new Set(["timeline.ts", "minimap.ts", "swipe.ts", "drawer.ts", "router.ts", "chat.ts", "lightbox.ts", "follow.ts", "markdown.ts", "views.ts", "scene.ts", "tokens.ts", "nav.ts", "workspace.ts", "dossier.ts", "session.ts", "bars.ts", "layer.ts", "alerts.ts", "overlay.ts", "fixture.ts", "demo-chat.ts", "composer.ts", "pair.ts", "devices.ts", "spawn.ts", "deploy.ts", "demo-open.ts", "folders.ts", "post.ts", "ask.ts", "mirror.ts", "keypad.ts", "doc.ts", "i18n.ts", "slash.ts", "hotkeys.ts", "askkeys.ts"]);
+	const shipped = new Set(["timeline.ts", "minimap.ts", "swipe.ts", "drawer.ts", "router.ts", "chat.ts", "lightbox.ts", "follow.ts", "markdown.ts", "views.ts", "scene.ts", "tokens.ts", "nav.ts", "workspace.ts", "dossier.ts", "session.ts", "bars.ts", "layer.ts", "alerts.ts", "overlay.ts", "fixture.ts", "demo-chat.ts", "composer.ts", "pair.ts", "devices.ts", "spawn.ts", "deploy.ts", "demo-open.ts", "folders.ts", "picker.ts", "post.ts", "ask.ts", "mirror.ts", "keypad.ts", "doc.ts", "i18n.ts", "slash.ts", "hotkeys.ts", "askkeys.ts"]);
 	const page = sum("gui", names("gui").filter((name) => !shipped.has(name)));
 	// 0.8.0 raised it from 540 to 543 for the scroll badge with the count of a unit's documents on its plate (render.ts).
 	// 0.10.0 to 554 for the messages: the import in main.ts, render.ts, log.ts, and stream.ts, the locale started in main.ts, and render.ts's role
@@ -465,8 +467,9 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 102.8 KB / 42.25 KB gzipped: the drawer's swipe to dismiss a finished subagent's card (gui/drawer.ts).
 	// Unreleased to 103.2 KB / 42.55 KB gzipped: a tower's comms head carries "+ Main" (gui/session.ts, scene.ts).
 	// Unreleased to 103.5 KB / 42.7 KB gzipped: the drawer's map link and Dismiss finished button (gui/drawer.ts, with its message in both languages).
+	// Unreleased to 113 KB / 46.3 KB gzipped: the folder picker (gui/picker.ts, folders.ts), nine more messages in both languages; and
 	// Unreleased to 107.7 KB / 44.4 KB gzipped: the deploy panel (gui/deploy.ts: steps, bar, clock, finish, failure), its demo server, and its twelve messages in both languages.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 108_200 && total(chunks, gz) <= 44_550, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 113_000 && total(chunks, gz) <= 46_300, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
@@ -509,6 +512,7 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 63.95 KB / 14.2 KB: the drawer's finished card following the finger and sliding out when dismissed.
 	// Unreleased to 64.05 KB / 14.25 KB: the "+ Main" button in a tower's comms head, and a fifth column for it on a phone.
 	// Unreleased to 64.45 KB / 14.3 KB: the drawer's map link and Dismiss finished row.
+	// Unreleased to 71 KB / 15.45 KB: the folder picker (toolbar and breadcrumb, shortcuts, the columns, the one column of a narrow window); and
 	// Unreleased to 68 KB / 14.95 KB: the deploy panel (bar, step list, running pulse, finish and failure tints, its keyframes).
-	assert.ok(total(css, (n) => size(n).length) <= 68_000 && total(css, gz) <= 14_950, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	assert.ok(total(css, (n) => size(n).length) <= 71_000 && total(css, gz) <= 15_450, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });
