@@ -338,7 +338,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Then to 863 for the alert ranking (alerts.ts: waiting or a pending dialog is prominent, the rest are notices).
 	// Unreleased to 888 for stash and pop on the map (quit.ts: aimStash, showStashed and its Pop buttons, Stash and Pop in the click handler; render.ts and main.ts wire them, and hang the Stashed list under its button).
 	// Unreleased (net sidecar) to 891: render.ts holds the agent labels and the badge on the card.
-	assert.ok(page <= 891, `the page's TypeScript has ${page} lines`);
+	// Unreleased (comfort) to 901: render.ts packs the bases like masonry (a ResizeObserver spanning each card's rows) and publishes the header's height (--hud) for what sits under it; main.ts names the view on the stage.
+	assert.ok(page <= 901, `the page's TypeScript has ${page} lines`);
 });
 
 test("the built page is small, self-contained (no remote URLs, fonts, or imports), and carries no demo fixture", { skip: !existsSync(join(root, "dist/gui/index.html")) && "run npm run gui:build first" }, () => {
@@ -395,7 +396,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased (stash and pop on the page): stash.ts 262 to 284 (stashedList, close all naming its base; nameFor, the server's session asked again before its base is stashed, a failed pop never stashed over another), closer.ts 74 to 87 (close/pop), host.ts 110 to 111 (the import of
 	// popBase and stashedList). The map chunk to 42.7 KB / 15.8 KB gzipped for stash and pop on the map (quit.ts: a base's Stash, the HUD's Stashed list with Pop, Quit checked first) in both languages.
 	// Unreleased (net sidecar) to 42.8 KB / 15.85 KB gzipped for the agent badge on a unit that is not a pi session (the card and the token).
-	assert.ok(size(entry).length <= 42_800 && gz(entry) <= 15_850, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// Unreleased (comfort) to 43.25 KB / 16 KB gzipped for the bases packed like masonry and the header's height published for what sits under it (render.ts).
+	assert.ok(size(entry).length <= 43_250 && gz(entry) <= 16_000, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).
@@ -465,5 +467,6 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 48.7 KB / 11.8 KB gzipped for the paired devices list on the pairing tile, then to 50 KB / 12 KB for the commanding mark's colour, badge, and glow, and to 51.8 KB / 12.4 KB for the phone drawer.
 	// Unreleased to 52 KB / 12.45 KB for the base's Stash beside its Quit and the Stashed list's rows.
 	// Unreleased (net sidecar) to 52.2 KB for the agent badge.
-	assert.ok(total(css, (n) => size(n).length) <= 52_200 && total(css, gz) <= 12_450, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// Unreleased (comfort) to 58 KB / 13.1 KB gzipped: every colour a palette token (color-mix of a token is longer than the literal it replaced), the location bar with the legend, the footer, masonry rows, and Quit shown on hover.
+	assert.ok(total(css, (n) => size(n).length) <= 58_000 && total(css, gz) <= 13_100, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });

@@ -180,11 +180,18 @@ function wire(map: HTMLElement, svg: SVGSVGElement, dots: HTMLElement, still: bo
 
 export interface Page { show(net: Net): void; stats(net: Net): void; log(entries: Entry[]): void; layout(): void; pause(paused: boolean): void }
 
+// The bases pack like masonry: the grid's rows are ROW px, and each card spans the rows its height and the gap take, so a short base tucks in
+// under its neighbour while the reading order stays the grid's. A ResizeObserver reports before paint, so a card never shows unpacked.
+const ROW = 2, GAP = 20;
+const pack = new ResizeObserver((all) => all.forEach(({ target, borderBoxSize }) => ((target as HTMLElement).style.gridRowEnd = `span ${Math.ceil((borderBoxSize[0]!.blockSize + GAP) / ROW)}`)));
+
 export function mountPage(): Page {
 	const [map, bases, links, dots, log] = [byId("map", HTMLElement), byId("bases", HTMLElement), byId("links", SVGSVGElement), byId("packets", HTMLElement), byId("log", HTMLElement)];
-	const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+	const still = matchMedia("(prefers-reduced-motion: reduce)").matches, packed = new Set<Element>();
 	const layout = () => !map.hidden && wire(map, links, dots, still);
 	new ResizeObserver(layout).observe(map);
+	// The header's height, for what sits under it (the side column, the tiles, the dialogs, the comms' height): it wraps on a narrow window.
+	new ResizeObserver(([e]) => document.documentElement.style.setProperty("--hud", `${Math.ceil(e!.borderBoxSize[0]!.blockSize)}px`)).observe(document.querySelector(".hud")!);
 	mountCalm();
 	return {
 		layout,
@@ -197,6 +204,8 @@ export function mountPage(): Page {
 		},
 		show(net) {
 			sync(bases, net.bases, baseEl, fillBase);
+			for (const el of bases.children) if (!packed.has(el)) (packed.add(el), pack.observe(el));
+			for (const el of packed) if (!el.isConnected) (packed.delete(el), pack.unobserve(el));
 			requestAnimationFrame(layout);
 		},
 		log(entries) {
