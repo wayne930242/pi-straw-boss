@@ -209,6 +209,7 @@ if (touchy.matches) loadDrawer();
 else touchy.addEventListener("change", () => touchy.matches && !drawer && loadDrawer(), { once: true });
 mountQuit({ route: () => current, net: () => latest, go: (route) => router.go(route) });
 el("stashed-pop").addEventListener("toggle", (e) => (e as ToggleEvent).newState === "open" && hang(el("stashed-pop"), el("stashed")));
+el("prefs-pop").addEventListener("toggle", (e) => (e as ToggleEvent).newState === "open" && hang(el("prefs-pop"), el("prefs")));
 // The opening buttons on the map and in a base (data-open with data-ws and data-tab) open their tile, read against the newest net.
 document.addEventListener("click", (event) => {
 	const button = (event.target as Element | null)?.closest?.<HTMLElement>("button[data-open]");

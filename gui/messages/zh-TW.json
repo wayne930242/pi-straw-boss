@@ -1,6 +1,7 @@
 {
 	"$schema": "https://inlang.com/schema/inlang-message-format",
 	"locale_name": "正體中文",
+	"settings": "設定",
 	"language": "語言",
 	"brand_label": "Straw Net：所有基地",
 	"tagline": "即時網況 · 通訊",

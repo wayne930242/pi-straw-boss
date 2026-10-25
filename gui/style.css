@@ -66,16 +66,18 @@ svg { display: block; }
 
 .shell { max-width: 2200px; margin: 0 auto; padding: 14px 20px 32px; }
 .hud { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); backdrop-filter: blur(10px); position: sticky; top: 8px; z-index: 5; }
-.brand { display: flex; align-items: center; gap: 12px; margin-right: auto; }
+.brand { display: flex; align-items: center; gap: 12px; margin-right: 8px; }
 .logo { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 11px; color: var(--accent); background: radial-gradient(circle at 30% 25%, color-mix(in srgb, var(--accent) 30%, transparent), color-mix(in srgb, var(--bg-2) 90%, transparent)); border: 1px solid var(--line); }
 .logo svg { width: 24px; height: 24px; filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 70%, transparent)); }
 .brand h1 { font-size: 17px; letter-spacing: 0.14em; text-transform: uppercase; white-space: nowrap; }
-/* The header keeps to one row on a wide screen and wraps rather than scroll the page sideways on a narrower one. */
+/* The header keeps four fixed places on one row: the brand, the totals, the alerts, and the settings with the link's dot at the far end. What comes
+   and goes (the finished list) takes the free room after the alerts, so nothing else moves; on a narrow window the alerts wrap to a row of their own. */
 .brand p { color: var(--dim); font-size: 12px; }
-.stats { display: flex; gap: 6px; }
+.stats { display: flex; gap: 2px; padding: 2px; border-radius: 13px; background: color-mix(in srgb, var(--hi) 4%, transparent); border: 1px solid color-mix(in srgb, var(--hi) 6%, transparent); }
 .stats div, .tally div, .alerts { min-width: 0; padding: 4px 10px; border-radius: 12px; background: color-mix(in srgb, var(--hi) 4%, transparent); border: 1px solid color-mix(in srgb, var(--hi) 6%, transparent); }
 .stats dt, .tally dt { color: var(--dim); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
 .stats dd, .tally dd { font: 600 17px/1.15 var(--mono); font-variant-numeric: tabular-nums; }
+.stats div { min-width: 4.5em; padding: 3px 10px; border-radius: 10px; background: none; border-color: transparent; }
 .tally dd { font-size: 20px; }
 .stats [data-mark] dd, .tally [data-mark] dd, .count b { color: var(--c); }
 .pair-btn { padding: 6px 10px; white-space: nowrap; border-radius: 12px; border: 1px solid var(--line); background: none; color: var(--dim); font: 600 12px var(--sans); letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; }
@@ -84,7 +86,11 @@ svg { display: block; }
 .tog[data-state="on"] { color: var(--text); border-color: color-mix(in srgb, var(--accent) 35%, var(--bg)); } .tog[data-state="on"]::before { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
 .tog[data-state="ask"]::before { background: var(--gold); } .tog[data-state="blocked"]::before { background: var(--err); }
 .tog[data-state="done"] { color: var(--text); } .tog[data-state="done"]::before { background: var(--ok); box-shadow: 0 0 6px var(--ok); } .tog[data-state="error"] { color: color-mix(in srgb, var(--err-soft) 45%, var(--hi)); } .tog[data-state="error"]::before { background: var(--err); box-shadow: 0 0 6px var(--err); }
-.alert-row { display: flex; align-items: center; gap: 10px; } .done-btn { flex: none; white-space: nowrap; }
+.alert-row { display: flex; align-items: center; gap: 10px; min-width: 0; } .done-btn { flex: none; white-space: nowrap; }
+.prefs-btn { margin-left: auto; display: grid; place-items: center; width: 34px; height: 34px; padding: 0; } .prefs-btn svg { width: 18px; height: 18px; fill: currentColor; }
+.prefs-btn:hover, .prefs-btn[aria-expanded="true"] { color: var(--text); }
+.prefs-btn:has(+ .prefs-pop #remind[data-state="blocked"]) { color: var(--err-soft); } /* a reminder the browser blocks shows on the closed button too */
+.prefs-pop { width: 210px; } .prefs-pop:popover-open { display: grid; gap: 6px; } .prefs-pop > .pair-btn { width: 100%; justify-content: flex-start; text-align: left; }
 /* The header's popovers (the sound panel, the finished list) hang under their button; hang() in render.ts places them. */
 .hud-pop { position: fixed; inset: auto; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--raised); color: var(--text); font: 13px/1.4 var(--sans); box-shadow: 0 12px 32px color-mix(in srgb, var(--shadow) 60%, transparent); }
 .sound-pop { width: 240px; gap: 12px; } .sound-pop:popover-open { display: grid; } /* a display of its own would show it closed */ .sound-pop label { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -105,6 +111,7 @@ svg { display: block; }
 .base > .spawn-btns { margin: -4px 0 12px; }
 /* A squad's name stays on one line beside its buttons, cut short with an ellipsis. */
 .tab h3 > span, .squad h3 > b { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; } .tab h3 > button { flex: none; }
+.tab h3 > span { flex-grow: 1; } /* the tab's name takes the row, so its buttons sit at the right end */
 .tab-add { margin-left: auto; flex: none; white-space: nowrap; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line); background: none; color: var(--dim); font: 600 11px var(--sans); letter-spacing: 0.08em; cursor: pointer; }
 .squad .tab-add { margin-left: 0; }
 .tab-add:hover, .new-base:hover { color: var(--accent); border-color: var(--accent); }
@@ -257,7 +264,7 @@ svg { display: block; }
 .meta { display: grid; min-width: 0; }
 .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .line { display: flex; gap: 8px; align-items: baseline; font-size: 12px; color: var(--dim); min-width: 0; }
-.role { font-style: normal; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: color-mix(in srgb, var(--c) 70%, var(--dim)); }
+.role { flex: none; white-space: nowrap; font-style: normal; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: color-mix(in srgb, var(--c) 70%, var(--dim)); }
 .note { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 [data-monitoring] { color: var(--err); font-weight: 600; }
 .unit[data-mark="idle"] > .card { opacity: 0.85; }
@@ -312,6 +319,7 @@ svg { display: block; }
 .credit { padding: 0 6px; color: var(--dim); font-size: 11px; }
 /* The location bar, with the states' legend at its right end. */
 .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin: 12px 6px 0; }
+.bar-acts { display: flex; align-items: center; gap: 8px; } .bar-acts .pair-btn { padding: 3px 9px; border-radius: 10px; font-size: 11px; }
 .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0 0 0 auto; padding: 0; list-style: none; color: var(--dim); font-size: 11px; }
 .legend li { display: flex; align-items: center; gap: 6px; } .legend .badge { width: 13px; height: 13px; font-size: 8px; }
 /* Under the stage: the net log and the icons' credit. */
@@ -619,7 +627,8 @@ div.ask-opts { max-height: none; overflow: visible; } button.ask-opt { text-alig
 .queued { flex: 1 0 100%; color: var(--dim); font-size: 12px; } .queued:empty { display: none; }
 
 html.paused *, html.paused *::before, html.paused *::after { animation-play-state: paused !important; }
-@media (max-width: 1100px) { .stage[data-view] { grid-template-columns: 1fr; } .side { position: static; } .stats { display: none; } }
+@media (max-width: 1100px) { .stage[data-view] { grid-template-columns: 1fr; } .side { position: static; } }
+@media (max-width: 1040px) { .stats { display: none; } } /* the header has room for the totals down to here */
 /* The terminal tile: the pane's screen as the server sent it (SGR only), display only, with Tokyo Night's 16 terminal colours. */
 .term-tile { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 10px; height: 100%; }
 .tile-body:has(.term-tile) { overflow: hidden; padding: 12px 14px; }
@@ -693,8 +702,8 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 	.hud { position: static; flex-wrap: wrap; gap: 10px; padding: 10px 12px; }
 	.brand p, .link span { display: none; }
 	.alert-row { order: 3; flex: 1 1 100%; min-width: 0; } .alert-row .alerts { flex: 1 1 auto; width: auto; min-width: 0; } .done-btn { min-height: 40px; }
-	/* The brand and the link's dot, then Remind, Sound, Phone, and the language as four even buttons a thumb can hit. */
-	.brand { flex: 1 1 calc(100% - 40px); min-width: 0; } .link { order: 1; } .hud > .pair-btn { order: 2; flex: 1 1 auto; min-width: 0; min-height: 40px; justify-content: center; padding: 6px 8px; white-space: nowrap; } .hud > .lang { flex: none; padding-right: 26px; }
+	/* The brand, the settings, and the link's dot, then the alerts across the width. */
+	.brand { flex: 1 1 auto; min-width: 0; } .prefs-btn { width: 40px; height: 40px; } .prefs-pop > * { min-height: 40px; }
 	.tl-span { display: none; }
 	/* The location bar, and the map and the workspace. */
 	.crumbs { gap: 6px; } .crumbs > * + *::before { margin-right: 6px; } .crumbs > * { max-width: 16ch; }
