@@ -42,7 +42,8 @@
 	--sans: ui-rounded, "Avenir Next", "Trebuchet MS", system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 * { box-sizing: border-box; margin: 0; }
-html { color-scheme: dark; }
+html { color-scheme: dark; -webkit-font-smoothing: antialiased; scrollbar-color: color-mix(in srgb, var(--line-c) 45%, transparent) transparent; }
+::selection { background: color-mix(in srgb, var(--accent) 28%, transparent); }
 body {
 	min-height: 100vh;
 	color: var(--text);
@@ -67,7 +68,7 @@ svg { display: block; }
 .hud { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); backdrop-filter: blur(10px); position: sticky; top: 8px; z-index: 5; }
 .brand { display: flex; align-items: center; gap: 12px; margin-right: auto; }
 .logo { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 11px; color: var(--accent); background: radial-gradient(circle at 30% 25%, color-mix(in srgb, var(--accent) 30%, transparent), color-mix(in srgb, var(--bg-2) 90%, transparent)); border: 1px solid var(--line); }
-.logo svg { width: 24px; height: 24px; filter: drop-shadow(0 0 6px var(--accent)); }
+.logo svg { width: 24px; height: 24px; filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 70%, transparent)); }
 .brand h1 { font-size: 17px; letter-spacing: 0.14em; text-transform: uppercase; white-space: nowrap; }
 /* The header keeps to one row on a wide screen and wraps rather than scroll the page sideways on a narrower one. */
 .brand p { color: var(--dim); font-size: 12px; }
@@ -204,7 +205,7 @@ svg { display: block; }
 
 .tower { position: relative; flex: none; width: 64px; height: 64px; display: grid; place-items: center; color: var(--c); }
 .tower::before { content: ""; position: absolute; inset: 0; border-radius: 50%; background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--c) 24%, var(--plate-hi)), var(--plate) 70%); border: 1px solid color-mix(in srgb, var(--c) 45%, transparent); }
-.tower svg { position: relative; width: 38px; height: 38px; filter: drop-shadow(0 0 6px color-mix(in srgb, var(--c) 70%, transparent)); }
+.tower svg { position: relative; width: 38px; height: 38px; filter: drop-shadow(0 0 5px color-mix(in srgb, var(--c) 55%, transparent)); }
 .tower.ghost { opacity: 0.45; }
 .tower.ghost::before { border-style: dashed; }
 .sweep, .pulse { position: absolute; inset: 0; border-radius: 50%; opacity: 0; pointer-events: none; }
@@ -223,6 +224,15 @@ svg { display: block; }
 .outposts::before { content: attr(data-label); color: var(--dim); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
 
 .card { position: relative; display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 12px; background: color-mix(in srgb, var(--hi) 4%, transparent); border: 1px solid color-mix(in srgb, var(--hi) 6%, transparent); transition: background-color 0.4s; }
+@media (hover: hover) and (pointer: fine) {
+	.card { transition: background-color 0.4s, border-color 0.2s, transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.18s; }
+	.card:hover { transform: translateY(-1px); border-color: color-mix(in srgb, var(--c, var(--line-c)) 40%, transparent); box-shadow: 0 6px 18px color-mix(in srgb, var(--shadow) 55%, transparent); }
+	.base { transition: border-color 0.25s; } .base:hover { border-color: color-mix(in srgb, var(--line-c) 36%, transparent); }
+	.pair-btn, .tab-add, .quit-btn, .modes button, .later, .cmp-alt { transition: color 0.15s, border-color 0.15s, background-color 0.15s, transform 0.12s; }
+	.pair-btn:hover:not(:disabled) { color: var(--text); border-color: color-mix(in srgb, var(--line-c) 50%, transparent); background: color-mix(in srgb, var(--hi) 4%, transparent); }
+}
+/* A press gives way a little under the finger or the pointer. */
+:is(.pair-btn, .tab-add, .quit-btn, .go, .later, .cmp-send, .cmp-alt, .ask-send, .sheet-yes, .new-base, .modes button, .spawn-dir, .d-doc, .thought, .more, .tab-btn):active:not(:disabled) { transform: scale(0.97); }
 .unit[data-mark="waiting"] > .card { background: color-mix(in srgb, var(--amber) 11%, transparent); }
 .unit[data-mark="error"] > .card { background: color-mix(in srgb, var(--err) 11%, transparent); }
 .unit[data-mark="working"] > .card { background: color-mix(in srgb, var(--c) 7%, transparent); }
@@ -257,6 +267,12 @@ svg { display: block; }
 .subs::before { content: ""; position: absolute; left: 3px; top: -4px; bottom: 22px; width: 1px; background: repeating-linear-gradient(color-mix(in srgb, var(--line-c) 50%, transparent) 0 4px, transparent 4px 8px); }
 .subs > .unit > .card::before { content: ""; position: absolute; left: -15px; top: 50%; width: 15px; height: 1px; background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--line-c) 50%, transparent) 0 4px, transparent 4px 8px); }
 .subs > .unit { position: relative; }
+/* A tether ends in an arrowhead at its subagent, and runs (its dashes flow from the launcher) while that subagent works. */
+.subs > .unit > .card::after { content: ""; position: absolute; left: -5px; top: calc(50% - 3px); border: 3px solid transparent; border-left: 4px solid color-mix(in srgb, var(--line-c) 60%, transparent); pointer-events: none; }
+.subs > .unit:is([data-mark="working"], [data-mark="commanding"]) > .card::before { animation: flow-x 0.8s linear infinite; }
+.subs:has(> .unit:is([data-mark="working"], [data-mark="commanding"]))::before { animation: flow-y 0.8s linear infinite; }
+@keyframes flow-x { to { background-position: 8px 0; } }
+@keyframes flow-y { to { background-position: 0 8px; } }
 .subs .plate { --s: 30px; }
 .subs .name { font-size: 13px; }
 
@@ -285,6 +301,7 @@ svg { display: block; }
 .enter { animation: pop 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.15) both; }
 .leaving { animation: out 0.35s ease-in both; pointer-events: none; }
 .flash > .card > .plate, .flash.tower { animation: flash 0.6s ease-out; }
+.flash > .card { animation: card-glow 0.9s ease-out; } .flash.flip > .card { animation-name: card-glow-b; } /* the state it took, once round the card */
 /* A one-shot animation plays again when `.flip` swaps it to its `-b` keyframes (replay in dom.ts): no layout read restarts it. */
 .flash.flip > .card > .plate, .flash.flip.tower, .flash.flip.token > .plate { animation-name: flash-b; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -302,6 +319,8 @@ svg { display: block; }
 @keyframes out { to { opacity: 0; transform: scale(0.94); } }
 @keyframes out-b { to { opacity: 0; transform: scale(0.94); } }
 @keyframes flash { 40% { transform: scale(1.12); } }
+@keyframes card-glow { 30% { box-shadow: 0 0 0 1px var(--c4), 0 0 18px 1px var(--c4); } }
+@keyframes card-glow-b { 30% { box-shadow: 0 0 0 1px var(--c4), 0 0 18px 1px var(--c4); } }
 @keyframes flash-b { 40% { transform: scale(1.12); } }
 @keyframes slide { from { opacity: 0; transform: translateX(10px); } }
 @keyframes slide-b { from { opacity: 0; transform: translateX(10px); } }
@@ -315,6 +334,7 @@ svg { display: block; }
 [data-calm] .tower[data-mark="waiting"] .pulse { opacity: 0.55; }
 [data-calm] .plate[data-mark="waiting"]::after { opacity: 0.55; transform: scale(1.25); }
 [data-calm] .packet { animation-play-state: paused !important; opacity: 0; }
+[data-calm] .subs::before, [data-calm] .subs > .unit > .card::before { animation: none !important; }
 @media (prefers-reduced-motion: reduce), (hover: none) and (prefers-reduced-motion: reduce) { .plate[data-mark="commanding"]::before, .tower[data-mark="commanding"]::after { box-shadow: 0 0 12px 3px var(--c4); } .stats [data-mark="commanding"][data-on], .comms-head[data-mark="commanding"] .logo { box-shadow: 0 0 12px 2px var(--c4); } }
 [data-calm] :is(.plate, .tower)[data-mark="commanding"]::before, [data-calm] .tower[data-mark="commanding"]::after { animation: none !important; box-shadow: 0 0 12px 3px var(--c4); }
 [hidden] { display: none !important; }
