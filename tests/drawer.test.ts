@@ -66,3 +66,11 @@ test("a unit's state is one short word, the same colours as the map's, in both l
 	assert.equal(shortState("done", true, "zh-TW"), "已結束");
 	assert.equal(shortState("done", true, "en"), "ended");
 });
+
+test("the drawer's way back to the map and its Dismiss finished button are worded in every locale", () => {
+	for (const locale of ["en", "zh-TW"] as const) {
+		assert.ok(m.drawer_map({}, { locale }).length > 0, locale);
+		assert.match(m.dismiss_all({ count: 2 }, { locale }), /2/, locale);
+	}
+	assert.equal(m.drawer_map({}, { locale: "zh-TW" }), "回到主地圖");
+});

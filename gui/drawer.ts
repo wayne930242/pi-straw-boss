@@ -4,7 +4,7 @@ import { h } from "./dom.ts";
 import { MODAL } from "./hotkeys.ts";
 import { m } from "./paraglide/messages.js";
 import type { Locale } from "./paraglide/runtime.js";
-import { dismiss } from "./quit.ts";
+import { dismiss, showDismissAll } from "./quit.ts";
 import { aim, fillPlate, html, mark, PLATE, roleName, say, sync, text } from "./render.ts";
 import type { Route } from "./router.ts";
 import { chainOf, ignored, intent, settles } from "./swipe.ts";
@@ -46,10 +46,14 @@ const phone = () => matchMedia("(max-width: 640px)").matches;
 
 export function mountDrawer() {
 	const body = h("div", { class: "drawer-body" }), close = h("button", { type: "button", class: "x", "aria-label": m.drawer_close() }, "×");
-	const panel = h("aside", { class: "drawer", "aria-label": m.drawer_label() }, h("header", null, h("b", null, m.drawer_title()), close), body), veil = h("div", { class: "drawer-veil" });
+	// Above the list, always in reach: the way back to the map, and the HUD's own Dismiss finished (quit.ts: the same click, the same request), there while a finished subagent is.
+	const home = h("a", { class: "drawer-map" }, m.drawer_map()), sweep = h("button", { type: "button", class: "pair-btn", "data-close": "dismiss-all", hidden: "" });
+	aim(home, { view: "map" });
+	const panel = h("aside", { class: "drawer", "aria-label": m.drawer_label() }, h("header", null, h("b", null, m.drawer_title()), close), h("div", { class: "drawer-top" }, home, sweep), body), veil = h("div", { class: "drawer-veil" });
 	document.body.append(veil, panel);
 	let latest: Net | undefined, here: string | undefined, open = false, x = 0, width = 0, t: { x0: number; y0: number; mode: "wait" | "drag" | "pass" | "card"; was: boolean; base: number; last: number; at: number; v: number; card?: HTMLElement } | undefined;
 	const draw = () => {
+		showDismissAll(sweep, latest ?? { bases: [] });
 		const fillRow = (el: HTMLElement, r: Row & { subs?: Row[] }) => {
 			aim(el.querySelector(".hit")!, { view: "session", ws: r.ws, key: r.key });
 			el.querySelector(".hit")!.setAttribute("aria-label", `${r.name}: ${shortState(r.mark, r.ended)}`);
@@ -160,6 +164,7 @@ export function mountDrawer() {
 		/** The route shown, so its unit is marked in the list. */
 		route(r: Route) {
 			here = r.view === "session" ? r.key : undefined;
+			home.toggleAttribute("aria-current", r.view === "map");
 			if (open) draw();
 		},
 	};

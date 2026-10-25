@@ -416,5 +416,6 @@
 	"short_commanding": "commanding",
 	"drawer_title": "All units",
 	"drawer_label": "Switch to a unit",
+	"drawer_map": "Back to the map",
 	"drawer_close": "Close the list"
 }

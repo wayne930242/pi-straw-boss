@@ -74,7 +74,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased (net sidecar) to 338: `Unit.agent`, the agent of a unit that is not a pi session (net.ts).
 	// Unreleased (comfort) to 343: net.ts types what a unit did lately (since, ticks, todo) and the net's events, and runs each reading through the activity tracker.
 	// 0.42.4 to 351: an installed app's launch arrives from another site without the SameSite=Strict cookie, so a page load from outside reloads itself once (gui.ts).
-	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 351, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
+	// Unreleased to 355: the server reads the net while no page listens too (gui.ts: the idle reading), for the timeline.
+	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 355, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
 	// Input (the spec's figure), remote access over Tailscale, its terminal pairing panel (QR, c copies, o opens), and the QR encoder each have their own.
 	// What a waiting session waits on (0.5.0, read for display only; answering is deferred) has its own as well.
 	// 0.5.1 raised remote.ts from 165 to 185 (a recorded server counts as running only if its process started when the entry says: a reused PID
@@ -314,7 +315,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// The phone drawer (Unreleased): its gesture rules (swipe.ts, apart from the DOM so they are tested) and the list with its touch wiring (drawer.ts) have a figure each.
 	assert.ok(count("gui/swipe.ts") <= 40, `gui/swipe.ts has ${count("gui/swipe.ts")} lines`);
 	// Unreleased to 167: a finished subagent's card swiped to the right is dismissed (the card's drag, its release, and quit.ts's dismiss).
-	assert.ok(count("gui/drawer.ts") <= 167, `gui/drawer.ts has ${count("gui/drawer.ts")} lines`);
+	// Unreleased to 172: the drawer's way back to the map and its Dismiss finished button.
+	assert.ok(count("gui/drawer.ts") <= 172, `gui/drawer.ts has ${count("gui/drawer.ts")} lines`);
 	// Unreleased (comfort): the timeline under the stage (gui/timeline.ts: a mark per event of the net's last 30 minutes, placed by its time, named on hover, a link to its unit)
 	// and the map's overview in a corner (gui/minimap.ts: shown while the map runs past the window, its frame moved on a scroll) have a figure each.
 	assert.ok(count("gui/timeline.ts") <= 42, `gui/timeline.ts has ${count("gui/timeline.ts")} lines`);
@@ -457,7 +459,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 102.1 KB: the comms' Back marked data-back, to step back through the page's history.
 	// Unreleased to 102.8 KB / 42.25 KB gzipped: the drawer's swipe to dismiss a finished subagent's card (gui/drawer.ts).
 	// Unreleased to 103.2 KB / 42.55 KB gzipped: a tower's comms head carries "+ Main" (gui/session.ts, scene.ts).
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 103_200 && total(chunks, gz) <= 42_550, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// Unreleased to 103.2 KB / 42.4 KB gzipped: the drawer's map link and Dismiss finished button (gui/drawer.ts, with its message in both languages).
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 103_200 && total(chunks, gz) <= 42_400, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
@@ -499,5 +502,6 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 14.14 KB gzipped: the drawer's current unit marked on both edges.
 	// Unreleased to 63.95 KB / 14.2 KB: the drawer's finished card following the finger and sliding out when dismissed.
 	// Unreleased to 64.05 KB / 14.25 KB: the "+ Main" button in a tower's comms head, and a fifth column for it on a phone.
-	assert.ok(total(css, (n) => size(n).length) <= 64_050 && total(css, gz) <= 14_250, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// Unreleased to 64.4 KB / 14.3 KB: the drawer's map link and Dismiss finished row.
+	assert.ok(total(css, (n) => size(n).length) <= 64_400 && total(css, gz) <= 14_300, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });
