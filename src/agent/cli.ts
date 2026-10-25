@@ -55,6 +55,8 @@ export interface CliDeps {
 	spawn?: (spec: SpawnSpec) => { exited: Promise<number | null> };
 	/** The tsx loader; found beside pi-intercom when not given. */
 	loader?: string;
+	/** The directory pi-intercom is looked for beside (findIntercom's `here`); this package's own when not given. */
+	here?: string;
 	/** How long join waits for the state file, and how long it waits for a sidecar it asked to stop. */
 	joinMs?: number;
 	stopMs?: number;
@@ -122,7 +124,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 		}
 		let loader: string;
 		try {
-			loader = deps.loader ?? tsxLoader(findIntercom(env));
+			loader = deps.loader ?? tsxLoader(findIntercom(env, deps.here));
 		} catch (error) {
 			return (err(`${(error as Error).message}\n`), 1);
 		}

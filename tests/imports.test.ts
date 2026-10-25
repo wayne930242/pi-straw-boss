@@ -181,7 +181,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// (the wait per command, join through that holder), and sidecar.ts 332 to 347 (the shell-quoted hint, the relay marker and attachment note, the pi variables left out, a pane another agent has taken).
 	// Unreleased (Windows): paths.ts 106 to 114, the control socket as a named pipe on Windows (a random name recorded in the state file, socketOf, and socketIsFile
 	// for the steps a pipe skips); closing.ts 23 to 29, the wait for pi's exit in node on Windows, which has no sh.
-	for (const [name, max] of [["kit.ts", 161], ["paths.ts", 114], ["sidecar.ts", 347], ["cli.ts", 158], ["claim.ts", 45]] as const) assert.ok(count(`src/agent/${name}`) <= max, `src/agent/${name} has ${count(`src/agent/${name}`)} lines`);
+	// Unreleased: cli.ts 158 to 160, the directory pi-intercom is looked for beside (`here`), so a test runs the same in a checkout next to a pi-intercom checkout.
+	for (const [name, max] of [["kit.ts", 161], ["paths.ts", 114], ["sidecar.ts", 347], ["cli.ts", 160], ["claim.ts", 45]] as const) assert.ok(count(`src/agent/${name}`) <= max, `src/agent/${name} has ${count(`src/agent/${name}`)} lines`);
 	assert.ok(count("src/history.ts") <= 258, `src/history.ts has ${count("src/history.ts")} lines`);
 	// The item mapping and the stream glue came out of the reader to keep it within its budget; the spec sets no figure for them.
 	// 0.19.0 to 108 for Todo and todosOf, a todo snapshot checked field by field.

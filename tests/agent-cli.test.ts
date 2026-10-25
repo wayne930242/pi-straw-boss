@@ -202,7 +202,8 @@ test("join says so, with exit 1, when the sidecar's state file does not appear i
 	assert.equal(await run(joinArgs, { stateDir, spawn: () => ({ exited: Promise.resolve(1) }), loader: "/l.mjs", joinMs: 2000, ...dies.deps }), 1);
 	assert.match(dies.err.join(""), /exited with code 1; see .*\.log/);
 	const noLoader = output();
-	assert.equal(await run(joinArgs, { stateDir, env: { PI_CODING_AGENT_DIR: stateDir }, spawn: () => ({ exited: new Promise<number | null>(() => {}) }), ...noLoader.deps }), 1);
+	// Nowhere to find pi-intercom: not in the agent directory, and not beside the package (a checkout may sit next to a pi-intercom checkout).
+	assert.equal(await run(joinArgs, { stateDir, env: { PI_CODING_AGENT_DIR: stateDir }, here: join(stateDir, "a", "b", "c"), spawn: () => ({ exited: new Promise<number | null>(() => {}) }), ...noLoader.deps }), 1);
 	assert.match(noLoader.err.join(""), /pi-intercom/);
 });
 
