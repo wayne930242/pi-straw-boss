@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 import { buildEnvelope, encodeEnvelope } from "../src/link/envelope.ts";
-import { NetworkError, RateLimitedError, ServerError, UnauthorizedError } from "../src/link/errors.ts";
+import { NetworkError, ProtocolError, RateLimitedError, ServerError, UnauthorizedError } from "../src/link/errors.ts";
 import { encodePlaintext } from "../src/link/kinds.ts";
 import { decodeRelayEvent, EventStream, SseParser, type RelayEvent, type SseMessage, type StreamState } from "../src/link/sse.ts";
 import { encodeEntry, entryHash } from "../src/link/roster.ts";
@@ -52,6 +52,25 @@ test("the parser drops a BOM at the start and keeps half a line until its end ar
 	assert.deepEqual(p.push("llo\n\n").messages, [{ event: "message", data: "hello" }]);
 });
 
+test("a blank line dispatches only when there is data: an event name alone is dropped, and a data line with an empty value counts", () => {
+	const p = new SseParser();
+	assert.deepEqual(p.push("event: roster\n\n").messages, []);
+	assert.deepEqual(p.push("data\n\n").messages, [{ event: "message", data: "" }]);
+	assert.deepEqual(p.push("data: a\n\n").messages, [{ event: "message", data: "a" }], "the dropped event name did not leak into the next message");
+});
+
+test("a line or an event over the cap is a ProtocolError, however it arrives", () => {
+	const big = (n: number) => "x".repeat(n);
+	assert.throws(() => new SseParser().push("data: " + big(1024 * 1024 + 1)), (e) => e instanceof ProtocolError && e.code === "event-too-large");
+	const piecewise = new SseParser();
+	assert.throws(() => { for (let i = 0; i < 100; i++) piecewise.push(big(20_000)); }, (e) => e instanceof ProtocolError && e.code === "event-too-large", "an endless line");
+	const lines = new SseParser();
+	assert.throws(() => { for (let i = 0; i < 100; i++) lines.push(`data: ${big(20_000)}\n`); }, (e) => e instanceof ProtocolError && e.code === "event-too-large", "data lines that never dispatch");
+	const fine = new SseParser();
+	assert.equal(fine.push(`data: ${big(900_000)}\n\n`).messages.length, 1);
+	assert.equal(fine.push(`data: ${big(900_000)}\n\n`).messages.length, 1, "the cap is per event");
+});
+
 // ---- Decoding relay events -----------------------------------------------------------------------------------------------------------
 
 test("a roster event decodes to the entry and checks seq and hash against its bytes", () => {
@@ -92,6 +111,12 @@ test("a join event decodes; unknown event names are skipped; a missing or non-nu
 // ---- The reader ----------------------------------------------------------------------------------------------------------------------
 
 /** A scripted relay for EventStream: each `open` takes the next connection; the test drives its bytes. */
+const started: EventStream[] = [];
+// A failing assertion skips the stop() at the end of a test and would leave its open connection to hang the runner.
+afterEach(async () => {
+	await Promise.all(started.splice(0).map((stream) => stream.stop()));
+});
+
 function harness(o: Partial<ConstructorParameters<typeof EventStream>[0]> = {}) {
 	const opens: { lastEventId: number | undefined; conn: ReturnType<typeof liveStream> }[] = [];
 	const refusals: unknown[] = [];
@@ -114,6 +139,7 @@ function harness(o: Partial<ConstructorParameters<typeof EventStream>[0]> = {}) 
 		backoff: (n) => n * 10,
 		...o,
 	});
+	started.push(stream);
 	return { stream, opens, refusals, events, acked, states, delays };
 }
 
@@ -300,4 +326,26 @@ test("an event name the client does not know advances the cursor and reaches no 
 	await until(() => h.stream.lastEventId === 5, 1000, "cursor");
 	assert.deepEqual(h.events, []);
 	await h.stream.stop();
+});
+
+test("an event over the cap drops the connection and the stream reconnects", async () => {
+	const h = harness();
+	h.stream.start();
+	const first = (await until(() => h.opens[0], 1000, "open")).conn;
+	first.push("data: " + "x".repeat(1024 * 1024 + 1));
+	await until(() => h.opens[1], 1000, "reconnect");
+	const retrying = h.states.find((s) => s.state === "retrying");
+	assert.ok(retrying?.state === "retrying" && retrying.error instanceof ProtocolError && retrying.error.code === "event-too-large");
+	await h.stream.stop();
+});
+
+test("reading done before start does not open the stream; it settles once the stream has run", async () => {
+	const h = harness();
+	const done = h.stream.done;
+	await new Promise((r) => setTimeout(r, 20));
+	assert.equal(h.opens.length, 0, "asking for done is not starting");
+	h.stream.start();
+	await until(() => h.opens[0], 1000, "open");
+	await h.stream.stop();
+	assert.deepEqual(await done, { reason: "stopped" });
 });

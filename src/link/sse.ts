@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 import { CanonError } from "./canon.ts";
 import { parseEnvelope, type Envelope } from "./envelope.ts";
-import { RelayError } from "./errors.ts";
+import { ProtocolError, RelayError } from "./errors.ts";
 import { entryHash, decodeEntry, type RosterEntry } from "./roster.ts";
 import { exponentialBackoff, retryAfterMs, sleep as realSleep, type Backoff, type Sleep } from "./retry.ts";
 
@@ -11,12 +11,20 @@ import { exponentialBackoff, retryAfterMs, sleep as realSleep, type Backoff, typ
 
 export interface SseMessage { id?: string; event: string; data: string }
 
-/** The SSE line format (WHATWG HTML, Server-sent events): `field: value` lines, a blank line dispatches, `:` lines are comments. Feed it text in any chunking. */
+/** The most a line, or the data of an event not yet dispatched, may hold: the relay's events are well under it, and a stream that sends more is broken or hostile. */
+const MAX_EVENT_CHARS = 1024 * 1024;
+
+/**
+ * The SSE line format (WHATWG HTML, Server-sent events): `field: value` lines, a blank line dispatches (when there is data), `:` lines are
+ * comments. Feed it text in any chunking. The `retry:` field is ignored: reconnection timing is this client's backoff. `push` throws a
+ * `ProtocolError` (`event-too-large`) when a line or an event's data passes 1 MiB, so the reader drops the connection and reconnects.
+ */
 export class SseParser {
 	private buf = "";
 	private started = false;
 	private skipLf = false;
 	private data: string[] = [];
+	private dataChars = 0;
 	private event = "";
 	private id: string | undefined;
 
@@ -41,13 +49,15 @@ export class SseParser {
 			if (m[0] === "\r" && at === this.buf.length) this.skipLf = true;
 		}
 		this.buf = this.buf.slice(at);
+		if (this.buf.length + this.dataChars > MAX_EVENT_CHARS) throw new ProtocolError(200, "event-too-large");
 		return out;
 	}
 
 	private line(line: string, out: { messages: SseMessage[]; comments: number }) {
 		if (line === "") {
-			if (this.data.length > 0 || this.event !== "") out.messages.push({ ...(this.id !== undefined ? { id: this.id } : {}), event: this.event || "message", data: this.data.join("\n") });
+			if (this.data.length > 0) out.messages.push({ ...(this.id !== undefined ? { id: this.id } : {}), event: this.event || "message", data: this.data.join("\n") });
 			this.data = [];
+			this.dataChars = 0;
 			this.event = "";
 			return;
 		}
@@ -59,7 +69,10 @@ export class SseParser {
 		const field = colon < 0 ? line : line.slice(0, colon);
 		let value = colon < 0 ? "" : line.slice(colon + 1);
 		if (value.startsWith(" ")) value = value.slice(1);
-		if (field === "data") this.data.push(value);
+		if (field === "data") {
+			this.data.push(value);
+			this.dataChars += value.length + 1;
+		}
 		else if (field === "event") this.event = value;
 		else if (field === "id" && !value.includes("\0")) this.id = value;
 	}
@@ -82,7 +95,9 @@ export type RelayEvent = RosterEvent | EnvelopeEvent | JoinEvent | MalformedEven
 
 /**
  * What a handler says about an event. For an envelope, `ack` means it is delivered to a tower or written to the inbox (or deliberately dropped by
- * the receive checks): only then does the reader queue an acknowledgement. `keep` leaves it queued at the relay, to come again on the next stream.
+ * the receive checks): only then does the reader queue an acknowledgement. `keep` means it cannot be delivered now, so stop taking from that sender: it
+ * stays queued at the relay and comes again on the next stream. A later envelope from the same sender that is taken makes the kept one drop by the
+ * seq guard when it returns.
  */
 export type Disposition = "ack" | "keep";
 
@@ -169,6 +184,8 @@ export class EventStream {
 	private readonly controller = new AbortController();
 	private cursor: number | undefined;
 	private started: Promise<StreamEnd> | undefined;
+	private doneBeforeStart: Promise<StreamEnd> | undefined;
+	private settleDone: ((end: Promise<StreamEnd>) => void) | undefined;
 
 	constructor(options: EventStreamOptions) {
 		this.o = options;
@@ -180,14 +197,21 @@ export class EventStream {
 		return this.cursor;
 	}
 
-	/** Settles once, with why the stream ended; never rejects. */
+	/** Settles once, with why the stream ended; never rejects. Reading it does not open the stream: if `start()` has not run, it settles after it does. */
 	get done(): Promise<StreamEnd> {
-		return this.start();
+		if (this.started) return this.started;
+		this.doneBeforeStart ??= new Promise((resolve) => {
+			this.settleDone = resolve;
+		});
+		return this.doneBeforeStart;
 	}
 
 	/** Opens the stream; calling it again returns the same run. */
 	start(): Promise<StreamEnd> {
-		this.started ??= this.run();
+		if (!this.started) {
+			this.started = this.run();
+			this.settleDone?.(this.started);
+		}
 		return this.started;
 	}
 
