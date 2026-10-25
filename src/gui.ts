@@ -125,7 +125,15 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 		const fail = (code: number) => res.writeHead(code, { ...HEADERS, "content-type": "text/plain" }).end(code === 403 ? "forbidden" : "not found");
 		const answer = ({ status, body }: Reply) => res.writeHead(status, { ...HEADERS, "content-type": TYPES[".json"] }).end(JSON.stringify(body));
 		const who = access.check(req, kind, (own().address() as AddressInfo).port, given, path);
-		if ("status" in who) return void (who.status === 403 ? fail(403) : res.writeHead(401, { ...HEADERS, "content-type": "text/plain" }).end("This device is not paired: scan a new QR code from /boss gui remote."));
+		if ("status" in who) {
+			if (who.status === 403) return void fail(403);
+			// The SameSite=Strict cookie stays behind on a navigation from another site, and Android counts launching the installed app as one: such a
+			// page load reloads itself once, a same-origin navigation that carries the cookie when this device has one. Sec-Fetch-Site decides, so the
+			// reload never loops, and a browser that sends no Sec-Fetch-Site gets the plain refusal.
+			const site = req.headers["sec-fetch-site"];
+			if (req.method === "GET" && req.headers["sec-fetch-dest"] === "document" && typeof site === "string" && site !== "same-origin") return void res.writeHead(401, { ...HEADERS, "content-type": TYPES[".html"] }).end(`<!doctype html><meta http-equiv="refresh" content="0"><p><a href="">Open the straw net</a></p><p>If it does not open, this device is not paired: scan a new QR code from /boss gui remote.</p>`); // the link, same-origin too, for a browser that blocks refresh
+			return void res.writeHead(401, { ...HEADERS, "content-type": "text/plain" }).end("This device is not paired. Scan a new QR code from /boss gui remote with this device's camera; it opens in the browser. An app installed from Chrome on Android shares the browser's pairing, so open it again after pairing. On iOS, pair in Safari, then delete the app and add it to the Home Screen again.");
+		}
 		if ("reissue" in who && who.reissue) res.setHeader("set-cookie", cookieFor(token, who.reissue)); // a use renewed the pairing: the browser's cookie lasts 90 days from now
 		// A pairing code was just exchanged: the cookie is set, and the page reloads itself, so the cookie also rides on a same-site navigation.
 		if ("cookie" in who) return void res.writeHead(200, { ...HEADERS, "content-type": TYPES[".html"], "set-cookie": cookieFor(token, who.cookie) }).end(`<!doctype html><meta http-equiv="refresh" content="0;url=/${token}/"><p>Paired. Opening the straw net…</p>`);
