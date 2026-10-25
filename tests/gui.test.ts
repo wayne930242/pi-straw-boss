@@ -443,3 +443,14 @@ test("a server that has not read the net yet names the stream after its first re
 	a.close();
 	b.close();
 });
+
+test("the shipped app manifest stays under the token path and names only icons the bundle carries", () => {
+	const pub = new URL("../gui/public/", import.meta.url), manifest = JSON.parse(fs.readFileSync(new URL("manifest.webmanifest", pub), "utf8"));
+	assert.deepEqual([manifest.id, manifest.start_url, manifest.scope], ["./", "./", "./"], "relative to the manifest's own URL, so the app starts and stays under /<token>/");
+	for (const { src } of manifest.icons) {
+		assert.doesNotMatch(src, /^(\/|[a-z]+:)/i, `${src} is relative`);
+		assert.ok(fs.existsSync(new URL(src, pub)), `${src} is in gui/public`);
+	}
+	assert.match(fs.readFileSync(new URL("../gui/index.html", import.meta.url), "utf8"), /<link rel="apple-touch-icon" href="\.\/apple-touch-icon\.png">/);
+	assert.ok(fs.existsSync(new URL("apple-touch-icon.png", pub)));
+});
