@@ -189,3 +189,33 @@ test("Retry-After is whole seconds only, and a huge one is clamped so a timer ca
 	assert.equal(await after("99999999"), 600_000);
 	for (const odd of ["1e3", "0x10", "-5", "1.5", "Wed, 21 Oct 2026 07:28:00 GMT", ""]) assert.equal(await after(odd), undefined, JSON.stringify(odd));
 });
+
+test("a relay URL has to be http or https", () => {
+	for (const url of ["file:///etc/passwd", "ws://relay.example", "wss://relay.example", "ftp://relay.example"]) assert.throws(() => new RelayClient({ url, device: A }), /http/, url);
+	assert.doesNotThrow(() => new RelayClient({ url: "http://127.0.0.1:9999", device: A }));
+});
+
+const bodyOf = (chunks: number, size: number, status = 200) => new Response(new ReadableStream<Uint8Array>({
+	pull(c) {
+		if (chunks-- <= 0) return c.close();
+		c.enqueue(new Uint8Array(size).fill(0x20));
+	},
+}), { status });
+
+test("an ordinary answer or error body over 64 KiB is a ProtocolError, read only as far as the cap", async () => {
+	let pulled = 0;
+	const endless = () => new Response(new ReadableStream<Uint8Array>({ pull(c) { pulled++; c.enqueue(new Uint8Array(16_384).fill(0x20)); } }), { status: 200 });
+	const ok = await client(endless).c.postEnvelope(TEAM, Buffer.from("x")).catch((e) => e);
+	assert.ok(ok instanceof ProtocolError, String(ok));
+	assert.ok(pulled < 20, `read ${pulled} chunks of an endless body`);
+	const failed = await client(() => bodyOf(8, 16_384, 500)).c.postEnvelope(TEAM, Buffer.from("x")).catch((e) => e);
+	assert.ok(failed instanceof ProtocolError, "an error body over the cap");
+});
+
+test("a roster answer may be larger, up to 16 MiB", async () => {
+	const pad = " ".repeat(200_000);
+	const { c } = client(() => new Response(JSON.stringify({ head: head(1), entries: [row(0), row(1)] }) + pad));
+	assert.equal((await c.getRoster(TEAM)).entries.length, 2, "200 KB is over the ordinary cap but not the roster's");
+	const huge = client(() => bodyOf(20, 1024 * 1024));
+	await assert.rejects(huge.c.getRoster(TEAM), ProtocolError);
+});

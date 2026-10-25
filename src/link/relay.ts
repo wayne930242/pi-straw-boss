@@ -37,6 +37,8 @@ export interface PostResult {
 }
 
 const MAX_ACK_IDS = 500;
+/** The most of an answer this client reads: the relay's ordinary and error bodies are tiny; a roster read can carry a whole team's log. */
+const MAX_BODY_BYTES = 64 * 1024, MAX_ROSTER_BYTES = 16 * 1024 * 1024;
 const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
 const b64 = (b: Uint8Array) => Buffer.from(b).toString("base64url");
 
@@ -49,6 +51,7 @@ export class RelayClient {
 
 	constructor(o: RelayClientOptions) {
 		const u = new URL(o.url);
+		if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error("the relay URL has to be http or https");
 		if (u.pathname !== "/" || u.search || u.hash) throw new Error("the relay URL has to be an origin, without a path");
 		this.url = u.origin;
 		this.device = o.device;
@@ -69,7 +72,7 @@ export class RelayClient {
 	/** `GET …/roster?after=seq`: the entries after `after` (all when absent) and the head. Entries are decoded and their hashes and seqs checked. */
 	async getRoster(team: Uint8Array, after?: number, signal?: AbortSignal): Promise<{ head: Head; entries: RosterRow[] }> {
 		const target = `/v1/teams/${hex(team)}/roster${after === undefined ? "" : `?after=${after}`}`;
-		const out = await this.json("GET", target, team, undefined, signal);
+		const out = await this.json("GET", target, team, undefined, signal, MAX_ROSTER_BYTES);
 		if (!Array.isArray(out.entries)) throw this.bad("entries is not a list");
 		const entries = out.entries.map((row: unknown): RosterRow => {
 			const r = (typeof row === "object" && row !== null ? row : {}) as Record<string, unknown>;
@@ -212,21 +215,23 @@ export class RelayClient {
 	private async failure(response: Response): Promise<RelayError> {
 		let body: unknown;
 		try {
-			body = JSON.parse(await response.text());
-		} catch {
+			body = JSON.parse(await this.text(response, MAX_BODY_BYTES));
+		} catch (error) {
+			if (error instanceof ProtocolError) throw error;
 			body = undefined;
 		}
 		return errorFor(response.status, body, response.headers.get("retry-after"));
 	}
 
 	/** A request whose answer is a JSON object; a non-2xx answer throws its typed error. */
-	private async json(method: string, target: string, team: Uint8Array | undefined, body: unknown, signal: AbortSignal | undefined): Promise<Record<string, unknown>> {
+	private async json(method: string, target: string, team: Uint8Array | undefined, body: unknown, signal: AbortSignal | undefined, maxBytes = MAX_BODY_BYTES): Promise<Record<string, unknown>> {
 		const response = await this.send(method, target, team, body, signal);
 		if (!response.ok) throw await this.failure(response);
 		let text: string;
 		try {
-			text = await response.text();
+			text = await this.text(response, maxBytes);
 		} catch (error) {
+			if (error instanceof ProtocolError) throw error;
 			if (signal?.aborted) throw signal.reason ?? error;
 			throw new NetworkError("the answer was cut off", error);
 		}
@@ -237,6 +242,25 @@ export class RelayClient {
 			/* falls through */
 		}
 		throw this.bad("the answer is not a JSON object", undefined, response.status);
+	}
+
+	/** The body as text, read through a counter: past `max` bytes the read stops and the answer is a ProtocolError. */
+	private async text(response: Response, max: number): Promise<string> {
+		if (!response.body) return "";
+		const reader = response.body.getReader(), chunks: Uint8Array[] = [];
+		let total = 0;
+		try {
+			for (;;) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				total += value.length;
+				if (total > max) throw this.bad(`the answer is over ${max} bytes`, undefined, response.status);
+				chunks.push(value);
+			}
+		} finally {
+			reader.cancel().catch(() => undefined);
+		}
+		return Buffer.concat(chunks).toString("utf8");
 	}
 
 	private bad(message: string, cause?: unknown, status = 200): ProtocolError {

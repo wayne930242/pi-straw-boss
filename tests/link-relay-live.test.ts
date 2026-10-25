@@ -137,6 +137,8 @@ describe("two clients against the real relay", { skip }, () => {
 		const port = await freePort();
 		url = `http://127.0.0.1:${port}`;
 		relay = spawn(bin, ["serve", "--addr", `127.0.0.1:${port}`, "--db", db], { stdio: ["ignore", "pipe", "pipe"] });
+		// A failed assertion that ends the runner without `after` must not leave the relay running.
+		process.once("exit", () => relay?.kill("SIGKILL"));
 		console.log(`# link-relay-live: relay pid ${relay.pid} on ${url}`);
 		relay.stdout!.on("data", (d: Buffer) => void (relayLog += d.toString()));
 		relay.stderr!.on("data", (d: Buffer) => void (relayLog += d.toString()));
