@@ -1,10 +1,11 @@
 import { Buffer } from "node:buffer";
+import { randomBytes } from "node:crypto";
 import type { Session } from "../herdr.ts";
 import type { LinkConfig } from "./config.ts";
 import { shortId, type DeviceKeys } from "./device.ts";
 import { buildEnvelope, openEnvelope, parseEnvelope, recordTaken, type Header, type ReceiveState } from "./envelope.ts";
 import { PayloadTooLargeError, RelayError, UnauthorizedError } from "./errors.ts";
-import { encodePlaintext, LIMITS, type Presence, type TowerMessage, type WorkspaceState } from "./kinds.ts";
+import { type ConfirmAnswer, type ConfirmRequest, encodePlaintext, LIMITS, type Presence, type TowerMessage, type WorkspaceState } from "./kinds.ts";
 import { Outbox, type QueuedEnvelope } from "./outbox.ts";
 import type { RelayClient } from "./relay.ts";
 import { decodeEntry, encodeEntry, replayEncoded, type RosterEntry, type RosterState } from "./roster.ts";
@@ -36,6 +37,8 @@ export interface HolderOptions {
 	notify: (text: string, level?: "info" | "warning" | "error") => void;
 	/** The holder was displaced or its record is gone: the module stops it. */
 	onDisplaced?: () => void;
+	/** A confirm-answer for a dialog this device's tower put to a sender's device (Remote turns, `forward`): the device, digest, and once were checked. */
+	confirmed?: (tower: string, dialogId: string, allow: boolean) => void;
 	now?: () => number;
 	sleep?: Sleep;
 	backoff?: Backoff;
@@ -53,6 +56,11 @@ export interface HolderOptions {
 	inboxMax?: number;
 }
 
+export interface ConfirmRequestInput { fromSession: string; team: string; device: string; dialogId: string; digest: string; tool: string; args: string; tower: string }
+/** A confirm-request another device sent, waiting for this device's boss. */
+export interface ConfirmView { dialogId: string; team: string; from: string; fromLabel: string; fromShort: string; digest: string; tool: string; args: string; tower: string; at: number }
+const CONFIRM_MAX_MS = 10 * 60_000;
+const CONFIRM_MAX = 20;
 export interface SendRequest { fromSession: string; device: string; workspace?: string; text: string; reply: boolean }
 export type SendResult = { ok: true; text: string; details: Record<string, unknown> } | { ok: false; error: string };
 export interface AllyDevice { id: string; short: string; label: string; online: boolean; ageMs: number | null; roster: number | null; workspaces: WorkspaceState[] }
@@ -98,6 +106,10 @@ export class LinkHolder {
 	/** Teams stopped for good (a roster fork, a removed device, a lost team file), with the team file's stamp at that moment. The mark is also on disk, for the next holder. */
 	private stopped = new Map<string, string>();
 	private offered = new Map<string, { tower: string; at: number }>();
+	/** Dialogs this device's towers put to other devices at `forward`, by dialog id: who may answer, and what the answer has to carry. */
+	private asked = new Map<string, { team: string; device: string; digest: string; tower: string; at: number }>();
+	/** Confirm requests other devices put to this one. */
+	private confirms = new Map<string, ConfirmView>();
 	private draining: Promise<void> | undefined;
 	private again = false;
 
@@ -354,6 +366,8 @@ export class LinkHolder {
 				return { d: "keep" };
 			}
 			if (header.kind === "tower") this.stage(run, roster, header, opened.message as TowerMessage);
+			else if (header.kind === "confirm-request") this.takeConfirmRequest(run, roster, header, opened.message as ConfirmRequest);
+			else if (header.kind === "confirm-answer") this.takeConfirmAnswer(run, header, opened.message as ConfirmAnswer);
 			else store.log({ event: "unhandled-kind", team: run.team, kind: header.kind, from: header.from });
 			// The sequence guard moves only after the message is in the inbox (or known not to need it), in the same locked write (R-F021).
 			const next = recordTaken(state, header);
@@ -550,6 +564,82 @@ export class LinkHolder {
 		if (outcome === "halted") return { ok: true, text: `The relay refused this device just now; the message to ${name} is saved on this computer and tried again within ${Math.round((this.o.haltRetryMs ?? 60_000) / 1000)} s.`, details: { ...details, status: "queued" } };
 		if (outcome === undefined) return { ok: true, text: `The relay did not take the message to ${name} yet; it is saved on this computer and sent again until the relay takes it.`, details: { ...details, status: "queued" } };
 		return { ok: false, error: `The message to ${name} was not sent: ${refusal(outcome)}` };
+	}
+
+	// ---- Confirms across devices (Remote turns, `forward`) ------------------------------------------------------------------------------
+
+	/** A tower of this device asks `device` to confirm a tool call of a remote turn. Only a tower of a bound workspace may, and only of a team's own member. */
+	async requestConfirm(req: ConfirmRequestInput): Promise<{ ok: true } | { ok: false; error: string }> {
+		if (!this.running || !this.device) return { ok: false, error: "This computer's link holder is not running" };
+		const run = this.runs.get(req.team);
+		if (!run || run.dead) return { ok: false, error: "That team is not running on this device" };
+		const policy = this.o.config().teams.get(req.team);
+		const net = await this.o.net();
+		const pane = net.panes.find((p) => net.sessions.find((x) => x.id === req.fromSession)?.herdrLocation?.paneId === p.pane_id);
+		if (!policy || !pane || pane.tokens?.sb_role !== "tower" || !pane.cwd || !inside(pane.cwd, policy.project)) return { ok: false, error: "Only the tower of a workspace bound to the team can ask a device to confirm" };
+		if (!this.loadTeam(run.team).state.members.has(req.device)) return { ok: false, error: "That device is not in the team" };
+		// Written down before the request goes out: an answer can come back before submit returns.
+		const now = this.now();
+		for (const [id, a] of this.asked) if (now - a.at > CONFIRM_MAX_MS) this.asked.delete(id);
+		this.asked.set(req.dialogId, { team: req.team, device: req.device, digest: req.digest, tower: req.fromSession, at: now });
+		try {
+			await run.outbox.submit((seq) => {
+				const { state } = this.loadTeam(run.team), key = state.keys.get(state.epoch);
+				if (!key) throw new Error(`This device holds no key for epoch ${state.epoch}`);
+				return buildEnvelope({
+					team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device!.keys, seq, ts: this.now(), kind: "confirm-request", to: [req.device],
+					plaintext: encodePlaintext("confirm-request", { dialogId: req.dialogId, digest: req.digest, tool: req.tool, args: req.args, tower: req.tower }),
+				});
+			});
+		} catch (error) {
+			this.asked.delete(req.dialogId);
+			return { ok: false, error: (error as Error).message };
+		}
+		return { ok: true };
+	}
+	/** The tower no longer waits (the dialog ended another way): a late answer is dropped. */
+	forgetConfirm(dialogId: string): void {
+		this.asked.delete(dialogId);
+	}
+	private takeConfirmRequest(run: TeamRun, roster: RosterState, header: Header, p: ConfirmRequest): void {
+		const from = header.from, sender = roster.members.get(from), now = this.now();
+		for (const [id, c] of this.confirms) if (now - c.at > CONFIRM_MAX_MS) this.confirms.delete(id);
+		while (this.confirms.size >= CONFIRM_MAX) this.confirms.delete(this.confirms.keys().next().value!);
+		this.confirms.set(p.dialogId, { dialogId: p.dialogId, team: run.team, from, fromLabel: sender?.label ?? shortId(from), fromShort: shortId(from), digest: p.digest, tool: p.tool, args: p.args, tower: p.tower, at: now });
+		this.o.notify(`Straw Link: ${sender?.label ?? shortId(from)} asks you to confirm a ${p.tool} call from its tower`, "warning");
+	}
+	private takeConfirmAnswer(run: TeamRun, header: Header, p: ConfirmAnswer): void {
+		const ask = this.asked.get(p.dialogId);
+		// Only the device the request went to, with the dialog's digest, and only once; anything else is dropped without using the dialog up.
+		if (!ask || ask.team !== run.team || ask.device !== header.from || ask.digest !== p.digest) return void this.o.store.log({ event: "drop", team: run.team, reason: "confirm-answer-unexpected", from: header.from, kind: "confirm-answer" });
+		this.asked.delete(p.dialogId);
+		try {
+			this.o.confirmed?.(ask.tower, p.dialogId, p.allow);
+		} catch (error) {
+			this.o.store.log({ event: "confirmed-failed", error: String(error) });
+		}
+	}
+	/** The confirm requests waiting for this device's boss, newest last (for the GUI). */
+	confirmRequests(): ConfirmView[] {
+		const now = this.now();
+		return [...this.confirms.values()].filter((c) => now - c.at <= CONFIRM_MAX_MS);
+	}
+	/** This device's boss answers a confirm request: allow or deny goes back to the requesting device, and the request is used up. */
+	async answerConfirm(dialogId: string, allow: boolean): Promise<{ ok: true } | { ok: false; error: string }> {
+		const c = this.confirms.get(dialogId);
+		if (!c || this.now() - c.at > CONFIRM_MAX_MS) return { ok: false, error: "That request is gone or has timed out" };
+		const run = this.runs.get(c.team);
+		if (!run || run.dead || !this.running || !this.device) return { ok: false, error: "That team is not running on this device" };
+		this.confirms.delete(dialogId);
+		await run.outbox.submit((seq) => {
+			const { state } = this.loadTeam(run.team), key = state.keys.get(state.epoch);
+			if (!key) throw new Error(`This device holds no key for epoch ${state.epoch}`);
+			return buildEnvelope({
+				team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device!.keys, seq, ts: this.now(), kind: "confirm-answer", to: [c.from],
+				plaintext: encodePlaintext("confirm-answer", { dialogId, digest: c.digest, allow, answerId: randomBytes(16).toString("hex") }),
+			});
+		});
+		return { ok: true };
 	}
 
 	// ---- Presence ----------------------------------------------------------------------------------------------------------------------

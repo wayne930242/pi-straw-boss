@@ -103,7 +103,7 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit) {
 	};
 	/** The message under its header, once for the whole audience: every recipient reads the same line, with the others named in it. */
 	const deliver = async (targets: Session[], message: string, kind: Kind, scope: string, reply: boolean, net: Net) => {
-		const line = stamp({ from: selfParty(net), kind, scope, to: targets.map((x) => partyOf(x, net)), reply }, message);
+		const line = stamp({ from: selfParty(net), kind, scope, to: targets.map((x) => partyOf(x, net)), reply, ...(s.remoteOrigin ? { origin: s.remoteOrigin } : {}) }, message);
 		return Promise.all(targets.map(async (x) => ({ id: x.id, name: nameOf(x), ...(await send(x.id, line)) })));
 	};
 	/** One session by id, with a header. The result is intercom's. */
