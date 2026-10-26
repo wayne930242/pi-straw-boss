@@ -3,7 +3,7 @@
 // checked for every platform here; the live parts run on the platform the suite runs on (the Windows CI job runs this file).
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, watch as fsWatch, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +17,8 @@ import { cmdHidden } from "../src/hidden.ts";
 import { listDirs, pickable } from "../src/spawn.ts";
 import { startedLater, startOf } from "../src/startof.ts";
 import { herdrEvents } from "../src/server-watch.ts";
+import { answerFile, ensureDir, listRequests, readJson, requestFile, writeAtomic } from "../src/trust/files.ts";
+import { digestOf } from "../src/trust/found.ts";
 
 test("herdrSocket resolves the socket as Herdr does: HERDR_SOCKET_PATH, then HERDR_SESSION, in the config directory of the platform", () => {
 	const win = String.raw`C:\Users\F\AppData\Roaming`;
@@ -239,5 +241,76 @@ test("S4: gui.json is replaced by rename while another process reads it in a loo
 		assert.equal(existsSync(join(dir, "gui.json")), true);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+// The project trust channel (src/trust/): request and answer files replaced by rename, found by watch or by stat, and a request whose start time is not known (Windows reads it in the background).
+const TRUST_ID = "00000000-0000-4000-8000-000000000001";
+const trustRequest = (over = {}) => ({ version: 1, id: TRUST_ID, pid: process.pid, herdr: "h", pane: "p1", role: "member", cwd: "/work/demo", at: 1, found: [], digest: digestOf("/work/demo", []), ...over });
+
+test("trust: a request replaced by rename while another process reads it in a loop never fails to parse, and no temporary file is left", async () => {
+	const dir = join(mkdtempSync(join(tmpdir(), "psb-platform-trust-")), "trust");
+	try {
+		assert.equal(ensureDir(dir), true);
+		writeAtomic(dir, requestFile(TRUST_ID), trustRequest());
+		const reader = spawn(process.execPath, ["-e", `
+			const { readFileSync } = require("node:fs");
+			let reads = 0, bad = 0, stop = false;
+			process.stdin.on("data", () => (stop = true));
+			process.stdout.write("ready\\n");
+			const loop = () => {
+				for (let i = 0; i < 50; i++) { reads++; try { JSON.parse(readFileSync(process.argv[1], "utf8")); } catch { bad++; } }
+				if (stop) return process.stdout.write(JSON.stringify({ reads, bad }) + "\\n", () => process.exit(0));
+				setImmediate(loop);
+			};
+			loop();
+		`, join(dir, requestFile(TRUST_ID))], { stdio: ["pipe", "pipe", "inherit"] });
+		let out = "";
+		reader.stdout.on("data", (chunk) => (out += chunk));
+		for (const end = Date.now() + 10_000; !out.includes("ready") && Date.now() < end; ) await new Promise((resolve) => setTimeout(resolve, 20));
+		for (let i = 0; i < 300; i++) writeAtomic(dir, requestFile(TRUST_ID), trustRequest({ at: i }));
+		const done = new Promise<void>((resolve) => reader.on("exit", () => resolve()));
+		reader.stdin.end("stop");
+		await done;
+		const { reads, bad } = JSON.parse(out.split("\n").find((line) => line.startsWith("{"))!) as { reads: number; bad: number };
+		assert.ok(reads > 0);
+		assert.equal(bad, 0);
+		assert.deepEqual(readdirSync(dir), [requestFile(TRUST_ID)]);
+	} finally {
+		rmSync(join(dir, ".."), { recursive: true, force: true });
+	}
+});
+
+test("trust: an answer written by rename is seen within 1 s, by the directory watch or by the 500 ms stat the asking pi falls back to", async () => {
+	const dir = join(mkdtempSync(join(tmpdir(), "psb-platform-trust-")), "trust");
+	try {
+		assert.equal(ensureDir(dir), true);
+		let woke = false;
+		const watcher = (() => { try { return fsWatch(dir, () => (woke = true)); } catch { return undefined; } })();
+		const at = Date.now();
+		writeAtomic(dir, answerFile(TRUST_ID), { version: 1, id: TRUST_ID, digest: "a".repeat(64), choice: "once", answerId: "a".repeat(20) });
+		let seen: number | undefined;
+		while (seen === undefined && Date.now() - at < 1000) {
+			if (woke || readJson(join(dir, answerFile(TRUST_ID)))) seen = Date.now() - at;
+			else await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+		watcher?.close();
+		assert.ok(seen !== undefined && seen < 1000, "seen within a second");
+		assert.deepEqual(readJson(join(dir, answerFile(TRUST_ID)))?.value, { version: 1, id: TRUST_ID, digest: "a".repeat(64), choice: "once", answerId: "a".repeat(20) });
+	} finally {
+		rmSync(join(dir, ".."), { recursive: true, force: true });
+	}
+});
+
+test("trust: a request with no start time is judged by its PID alone, so a live process is listed and a dead one is not", () => {
+	const dir = join(mkdtempSync(join(tmpdir(), "psb-platform-trust-")), "trust");
+	try {
+		assert.equal(ensureDir(dir), true);
+		writeAtomic(dir, requestFile(TRUST_ID), trustRequest());
+		const dead = "00000000-0000-4000-8000-000000000002";
+		writeAtomic(dir, requestFile(dead), trustRequest({ id: dead, pid: 2_000_000_000 }));
+		assert.deepEqual(listRequests(dir).map((r) => r.id), [TRUST_ID]);
+	} finally {
+		rmSync(join(dir, ".."), { recursive: true, force: true });
 	}
 });

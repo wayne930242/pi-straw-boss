@@ -25,10 +25,13 @@ export interface ServeDeps {
 	sleep?(ms: number): Promise<void>;
 }
 
+/** An answer taken for a folder's requests: shared by all of them. */
+interface Taken { answerId: string; at: number; ids: string[]; outcome: Promise<Reply> }
+
 export function createTrustServe(d: ServeDeps) {
 	const now = d.now ?? Date.now, sleep = d.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
 	// One answer per request, in memory (one server runs per machine): the answer id taken for it, and what became of it, kept for a resend of the same answer.
-	const taken = new Map<string, { answerId: string; at: number; outcome: Promise<Reply> }>();
+	const taken = new Map<string, Taken>();
 
 	/** The requests that count: this Herdr's, of a process that runs, whose pane Herdr lists in a workspace it lists. */
 	function listed(panes: Pane[], workspaces: Workspace[]): TrustRequest[] {
@@ -73,18 +76,23 @@ export function createTrustServe(d: ServeDeps) {
 		const { id, digest, choice, answerId } = json;
 		if (typeof id !== "string" || !UUID.test(id) || typeof digest !== "string" || !/^[0-9a-f]{64}$/.test(digest) || !CHOICES.includes(choice as TrustChoice) || typeof answerId !== "string" || !ANSWER_ID.test(answerId)) return no(400, "bad_request", "The answer does not name its question.");
 		const prior = taken.get(id);
-		if (prior) return prior.answerId === answerId ? prior.outcome : no(409, "busy", "Another answer for this question is on its way.", { outcome: "busy" });
+		if (prior) return again(prior, answerId);
 		const world = await d.world(), all = listed(world.panes, world.workspaces), target = all.find((r) => r.id === id);
 		if (!target || target.digest !== digest) return no(409, "stale", "The question changed or is no longer open; read it again.", { outcome: "stale" });
 		const members = all.filter((r) => r.cwd === target.cwd && r.digest === target.digest), ids = members.map((r) => r.id);
 		const other = ids.map((i) => taken.get(i)).find(Boolean);
-		if (other) return other.answerId === answerId ? other.outcome : no(409, "busy", "Another answer for this question is on its way.", { outcome: "busy" });
-		const outcome = (async () => {
-			for (const r of members) writeAtomic(d.dir, answerFile(r.id), { version: 1, id: r.id, digest: r.digest, choice: choice as TrustChoice, answerId } satisfies TrustAnswer);
-			return settle(ids, answerId);
-		})();
-		for (const i of ids) taken.set(i, { answerId, at: now(), outcome });
-		return outcome;
+		if (other) return again(other, answerId);
+		for (const r of members) writeAtomic(d.dir, answerFile(r.id), { version: 1, id: r.id, digest: r.digest, choice: choice as TrustChoice, answerId } satisfies TrustAnswer);
+		const entry: Taken = { answerId, at: now(), ids, outcome: settle(ids, answerId) };
+		for (const i of ids) taken.set(i, entry);
+		return entry.outcome;
+	}
+	/** The same answer sent again hears the outcome it had; one that was not known is looked at again (Check again). Another answer for the same question is busy. */
+	async function again(entry: Taken, answerId: string): Promise<Reply> {
+		if (entry.answerId !== answerId) return no(409, "busy", "Another answer for this question is on its way.", { outcome: "busy" });
+		const last = await entry.outcome;
+		if ((last.body as { outcome?: string }).outcome === "unknown") entry.outcome = settle(entry.ids, answerId);
+		return entry.outcome;
 	}
 
 	/** Calls `poke` when the directory changes, so a request shows at once and not at the next reading. */

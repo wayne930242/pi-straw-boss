@@ -128,7 +128,11 @@ test("stale when the terminal or the end of the pi came first, unknown when no r
 	assert.deepEqual((await s.answer({ id: a.id, digest: a.digest, choice: "trust", answerId: ANSWER })).body, { outcome: "stale", by: "terminal" });
 	stop();
 	const dir1 = dirOf(), slow = put(dir1, 1);
-	assert.deepEqual((await serve(dir1).answer({ id: slow.id, digest: slow.digest, choice: "trust", answerId: ANSWER })).body, { outcome: "unknown" }, "a pi that is slow: its result still closes the alert");
+	const slowServe = serve(dir1);
+	assert.deepEqual((await slowServe.answer({ id: slow.id, digest: slow.digest, choice: "trust", answerId: ANSWER })).body, { outcome: "unknown" }, "a pi that is slow: its result still closes the alert");
+	const late = pi(dir1, slow);
+	assert.deepEqual((await slowServe.answer({ id: slow.id, digest: slow.digest, choice: "trust", answerId: ANSWER })).body, { outcome: "accepted" }, "Check again looks at the pi again, with the same answer");
+	late();
 	const dir2 = dirOf(), b = put(dir2, 1), s2 = serve(dir2);
 	const wrong = await s2.answer({ id: b.id, digest: "f".repeat(64), choice: "trust", answerId: "c".repeat(20) });
 	assert.deepEqual([wrong.status, (wrong.body as { error: string }).error], [409, "stale"]);
