@@ -389,3 +389,18 @@ test("VM pass 5b: BUILTIN\\Administrators owns an entry acceptably (an elevated 
 	assert.match(aclProblems({ sid: OWNER, dir: `O:BAG:DUD:P${ACE(OWNER)}${ACE("SY")}${ACE("BA")}`, files: [] }).join(";"), /grants BA, who is neither the owner nor SYSTEM/);
 	assert.match(aclProblems({ sid: OWNER, dir: good, files: [{ path: "C:\\s\\server.json", sddl: `O:BAG:DUD:AI${ACE(OWNER, "ID")}${ACE("SY", "ID")}${ACE("BA", "ID")}` }] }).join(";"), /server\.json: grants BA, who is neither/);
 });
+
+test("VM pass 5b: both ACL scripts read every entry's owner after /setowner /T and BEFORE /reset, and refuse a foreign owner with nothing below it reset", () => {
+	for (const script of [ACL_SCRIPT, LAUNCH_SCRIPT]) {
+		const lines = script.split("\n").map((l) => l.trim());
+		const setowner = lines.findIndex((l) => /\/setowner .*\/T \/C \/L \/Q/.test(l)), pre = lines.findIndex((l) => l.startsWith("$pre = Walk $dir"));
+		const check = lines.findIndex((l) => /GetOwner\(\[Security\.Principal\.SecurityIdentifier\]\)\.Value/.test(l)), reset = lines.findIndex((l) => /\/reset \/T \/C \/L \/Q/.test(l));
+		assert.ok(setowner > 0 && setowner < pre && pre < check && check < reset, `${setowner} ${pre} ${check} ${reset}`);
+		const line = lines[check]!;
+		assert.match(line, /\$who -ne \$sid -and \$who -ne 'S-1-5-18' -and \$who -ne 'S-1-5-32-544'\) \{ throw /, "the user, SYSTEM and BUILTIN\\Administrators pass; anything else is thrown");
+		assert.match(line, /belongs to another account \(' \+ \$who \+ '\), not to ' \+ \$sid \+ ' \(nothing below it was reset\)/);
+		assert.match(line, /@\(\$pre\.folders\) \+ @\(\$pre\.files\)/, "folders and files alike");
+		assert.match(line, /catch \{ if \(Test-Path -LiteralPath \$p\) \{ throw \}; continue \}/, "an entry that vanished is skipped");
+		assert.ok(!/Get-Acl/.test(line), "owners come from .NET as SIDs (no name translation per file)");
+	}
+});

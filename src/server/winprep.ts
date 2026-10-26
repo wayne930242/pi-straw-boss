@@ -4,7 +4,7 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { system32, system32Path } from "../winpath.ts";
-import { asciiLine, folderProblems, SYSTEM_SID } from "./acl.ts";
+import { ADMINS_SID, asciiLine, CLM_CHECK, execFailure, folderProblems, POWERSHELL_FLAGS, PROGRESS_OFF, SYSTEM_SID } from "./acl.ts";
 
 // The state folder is protected before the first file is created in it (docs/specs/2026-10-26-sb-backend.md, The control socket): a cold start used to leave server.lock, the
 // placeholder record, and server.log with the parent's inherited ACEs (Users read, Authenticated Users modify outside the profile) until the server's PowerShell call, 4 to 7 s later.
@@ -120,11 +120,32 @@ const stepOf = <T>(step: Step, dir: string, fn: () => T): T => {
 	}
 };
 /** Makes the folder the owner's, protects it, and reads its DACL back; the folder is `target`, which holds nothing yet. */
+/** Windows PowerShell 5.1, relative to System32 (`nativeCommand` joins it there). */
+const POWERSHELL = "WindowsPowerShell\\v1.0\\powershell.exe";
+/**
+ * The SID that owns a folder, read by one PowerShell start: `GetAccessControl(…Owner).GetOwner([SecurityIdentifier])` prints a SID, never a name that a listing would cut or another account
+ * could imitate. The Constrained Language check comes first, so a machine that locks PowerShell down says so (the word is told as a sentence by `execFailure`). Used only when `/setowner` was refused.
+ */
+export function ownerOfFolder(dir: string, run: RunNative, timeoutMs?: number): string {
+	const script = [PROGRESS_OFF, CLM_CHECK, `$d = '${dir.replace(/'/g, "''")}'`, "[IO.Directory]::GetAccessControl($d, [Security.AccessControl.AccessControlSections]::Owner).GetOwner([Security.Principal.SecurityIdentifier]).Value"].join("\n");
+	let out: string;
+	try {
+		out = run(POWERSHELL, [...POWERSHELL_FLAGS, "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], timeoutMs);
+	} catch (error) {
+		const failed = error as Error & { stderr?: unknown; stdout?: unknown };
+		throw new Refused(`the owner of ${dir} could not be read (${execFailure(failed, failed.stderr, failed.stdout)})`);
+	}
+	const found = out.split(/\r?\n/).map((line) => line.trim()).filter((line) => /^S-1-[0-9-]+$/i.test(line)).pop();
+	if (!found) throw new Refused(`the owner of ${dir} could not be read (PowerShell gave no SID: ${asciiLine(out).slice(0, 80) || "nothing"})`);
+	return found;
+}
 /**
  * Makes the folder the owner's. `/setowner` needs WRITE_OWNER, which a filtered (UAC) token of an administrator does not have outside its profile unless the parent grants it, even on a folder
- * the user owns (it made every start there fail with exit 5). So a refusal (5, 1307, 1314) is not final: the protect call that follows decides (the owner has WRITE_DAC; a folder another
- * account owns without a grant for the user fails there with exit 5, told as such). Nothing here can tell whose folder it is: a listing cuts long account names and shows names other accounts
- * can create. The exact owner (`O:` of `(Get-Acl).Sddl`) is checked by the PowerShell read-back before any secret is written, and by the launch script before the server is created.
+ * the user owns (it made every start there fail with exit 5). So a refusal (5, 1307, 1314) is not final, but nothing is touched until the owner is known (VM pass 5b, the decoy): an attacker's
+ * folder that grants the user WRITE_DAC but not WRITE_OWNER would let the protect call below hand the user WRITE_OWNER, and the next start's `/setowner` would then succeed on a folder the
+ * attacker made and holds. So on a refusal, and only then (a normal start starts no PowerShell), the owner is read as a SID: the user, `BUILTIN\Administrators` or SYSTEM goes on to the protect call
+ * (the owner has WRITE_DAC; a folder an administrator made without a grant for the user fails there with exit 5, told as such); any other owner, or an owner that cannot be read, is refused with no
+ * call that changes the folder. The exact owner is checked again by the PowerShell read-back before any secret is written, and by the launch script before the server is created.
  */
 function takeOwnership(target: string, run: RunNative, left: () => number | undefined): void {
 	try {
@@ -132,6 +153,10 @@ function takeOwnership(target: string, run: RunNative, left: () => number | unde
 	} catch (error) {
 		const status = (error as { status?: unknown }).status;
 		if (typeof status !== "number" || !OWNER_REFUSED.has(status)) throw error;
+		const owner = ownerOfFolder(target, run, left());
+		if (owner.toUpperCase() !== sid!.toUpperCase() && owner !== ADMINS_SID && owner !== SYSTEM_SID) {
+			throw new Refused(`the folder ${target} belongs to another account (${owner}), not to ${sid}, and this process may not take it over. Run pi as that account (an elevated shell for an administrator's), or delete the folder ${target}, then start again. (owner step, exit ${status}; nothing in the folder was changed)`);
+		}
 	}
 }
 function secure(target: string, run: RunNative, left: () => number | undefined): void {

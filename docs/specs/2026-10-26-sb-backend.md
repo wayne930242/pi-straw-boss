@@ -261,11 +261,22 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
         **BUILTIN\Administrators (`BA`, `S-1-5-32-544`) as an owner, for every entry including `straw-boss\` itself** (VM pass 5b): an
         elevated token's default owner is BA, and the server an elevated `up` starts writes `server.json` and `start-error.json` while the
         launch PowerShell is still running, after the `/setowner /T` pass and before the read-back, so ~50% of elevated cold starts failed
-        with "belongs to another account (BA)". Only an administrator can create a BA-owned object, and an administrator can read the folder
-        whatever its owner or DACL, so BA ownership gives no account anything it lacks; the threat the owner gate stops is another
-        standard account owning an entry. The launch script and `ownerProblems` use the same rule. **BA is not accepted as an ACE**: the
-        DACL rule (allow ACEs for the owner/user and SYSTEM only) is unchanged. A filtered token that cannot protect a BA-owned folder still
-        gets the protect step's refusal ("run pi once as administrator, or delete the folder"): the owner gate comes after it.
+        with "belongs to another account (BA)". BA-owned objects are made by an elevated token, by SYSTEM, and by holders of
+        `SeRestorePrivilege` (Backup Operators). An administrator and SYSTEM can read the folder whatever its owner or DACL, and a backup
+        operator can read and write any file, so BA ownership gives no account anything it lacks; the threat the owner gate stops is another
+        standard account owning an entry. A filtered token passes the gate with a BA owner when an elevated run granted the user full
+        control of what it made. The launch script and `ownerProblems` use the same rule. **BA is not accepted as an ACE**: the DACL rule
+        (allow ACEs for the owner/user and SYSTEM only) is unchanged. A filtered token that cannot protect a BA-owned folder still gets the
+        protect step's refusal ("run pi once as administrator, or delete the folder"): the owner gate comes after it.
+      - **A refused `/setowner` reads the owner before anything is changed** (VM pass 5b, the decoy). Where another standard account owns
+        `straw-boss\` and grants the user WRITE_DAC but not WRITE_OWNER, `/setowner` is refused (5, 1307, 1314), and the protect call
+        (`/inheritance:r /grant:r`) would succeed through WRITE_DAC and hand the user WRITE_OWNER; the next start's `/setowner` would then
+        succeed on a folder the attacker holds, and the owner check would see the user. So on a refusal, and only then (a normal start
+        starts no PowerShell), one PowerShell reads the owner as a SID (`GetAccessControl(…Owner).GetOwner([SecurityIdentifier])`, after the
+        Constrained Language check): the user, BA and SYSTEM go on to the protect call; any other owner is refused ("belongs to another
+        account (<SID>)", the remedy, exit 3) and an owner that cannot be read is refused, with no call that changes the folder. Both ACL
+        scripts do the same below the folder: after `/setowner /T /C /L /Q` they walk it again and read every entry's owner (a SID, through
+        .NET), and refuse a foreign owner BEFORE `/reset /T /C /L`, so the DACL of an entry another account still owns is never reset.
       - **What is below is listed without following links** (R8-F003): Windows PowerShell 5.1's `Get-ChildItem` follows junctions, so the
         scripts walk the folder with `[IO.Directory]::GetFileSystemEntries` and refuse any entry with the `ReparsePoint` attribute
         that is a name-surrogate link (`Get-Item -Force` gives it `LinkType` `Junction` or `SymbolicLink`; one whose type cannot be read is refused too)

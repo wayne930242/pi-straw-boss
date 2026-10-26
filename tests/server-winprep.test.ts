@@ -5,7 +5,7 @@ import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { ensure, lockFor, ServerError, stop } from "../src/server/client.ts";
 import { markStarting, prepareSlot, takeLock } from "../src/server/record.ts";
-import { explainNative, forgetSid, RENAME_WAITS_MS, ownerArgs, ownerSid, protectArgs, protectFolder, readDacl, refuseLink, resetFileAcl } from "../src/server/winprep.ts";
+import { explainNative, forgetSid, RENAME_WAITS_MS, ownerArgs, ownerOfFolder, ownerSid, protectArgs, protectFolder, readDacl, refuseLink, resetFileAcl } from "../src/server/winprep.ts";
 import { ServerWorld } from "./server-world.ts";
 
 // docs/specs/2026-10-26-sb-backend.md, The control socket: on Windows the state folder is protected before the first file is created in it (the VM's second pass found the lock, the
@@ -22,7 +22,7 @@ beforeEach(() => {
 afterEach(() => world.close());
 
 interface Call { file: string; args: string[]; target: string; finalExists: boolean; timeoutMs: number | undefined }
-interface Fake { icacls?: Error & { status?: number; stderr?: string }; failOn?: "owner" | "protect"; dacl?: string; whoami?: string; during?: (call: Call) => void }
+interface Fake { owner?: string | Error; icacls?: Error & { status?: number; stderr?: string }; failOn?: "owner" | "protect"; dacl?: string; whoami?: string; during?: (call: Call) => void }
 /**
  * The native calls, recorded with the folder they act on and whether the final folder `final` exists at that moment; `/save` writes the DACL the folder "has" (`dacl`) the way icacls does, in UTF-16.
  * `during` runs inside a call, to do what another process would do meanwhile.
@@ -33,6 +33,11 @@ function native(final: () => string, over: Fake = {}) {
 		const call: Call = { file, args, target: args[0]!, finalExists: existsSync(final()), timeoutMs };
 		calls.push(call);
 		if (file === "whoami.exe") return over.whoami ?? `"PC\\me","${OWNER}"\r\n`;
+		// The owner read of a folder whose /setowner was refused: one PowerShell start that prints a SID.
+		if (file.endsWith("powershell.exe")) {
+			if (over.owner instanceof Error) throw over.owner;
+			return `${over.owner ?? OWNER}\r\n`;
+		}
 		over.during?.(call);
 		const failing = over.icacls && !args.includes("/save") && (!over.failOn || (over.failOn === "owner" ? args.includes("/setowner") : args.includes("/inheritance:r")));
 		if (failing) throw over.icacls;
@@ -505,4 +510,75 @@ test("R6-F005: the stop message about another account's server is added only to 
 			await w.close();
 		}
 	}
+});
+
+// --- VM pass 5b, the decoy: a refused /setowner reads the owner before anything is changed ---
+
+const FOREIGN = "S-1-5-21-9-9-9-1002";
+const BA = "S-1-5-32-544";
+const changed = (n: ReturnType<typeof native>) => n.calls.filter((c) => c.file === "icacls.exe" && (c.args.includes("/inheritance:r") || c.args.includes("/grant:r") || c.args.includes("/reset")));
+
+test("decoy: /setowner refused and the folder owned by another account is refused with nothing changed (no protect, no grant, no reset), whatever it granted the user", () => {
+	for (const code of [5, 1307, 1314]) for (const existing of [true, false]) {
+		forgetSid();
+		const dir = join(world.root, `decoy-${code}-${existing}`, "straw-boss");
+		if (existing) mkdirSync(dir, { recursive: true });
+		const n = native(() => dir, { icacls: denied(code), failOn: "owner", owner: FOREIGN });
+		assert.throws(() => protectFolder(dir, n.run), (e: unknown) => /belongs to another account \(S-1-5-21-9-9-9-1002\)/.test((e as Error).message) && /Run pi as that account/.test((e as Error).message) && new RegExp(`owner step, exit ${code}`).test((e as Error).message));
+		assert.deepEqual(changed(n), [], "nothing that changes the folder was called");
+		assert.ok(!n.icacls().some((c) => c.args.includes("/save")), "and its DACL was not even read back");
+		assert.equal(n.calls.filter((c) => c.file.endsWith("powershell.exe")).length, 1, "one PowerShell read");
+		if (existing) assert.ok(existsSync(dir), "the folder is not removed");
+		else assert.deepEqual(leftovers(dir), [], "our own temporary folder is removed");
+	}
+});
+
+test("decoy: a refused /setowner on a folder the user, Administrators or SYSTEM owns goes on to the protect call (F1), and a normal start reads no owner at all", () => {
+	for (const owner of [OWNER, OWNER.toLowerCase(), BA, "S-1-5-18"]) {
+		forgetSid();
+		const dir = join(world.root, `ok-${owner}`, "straw-boss");
+		mkdirSync(dir, { recursive: true });
+		const n = native(() => dir, { icacls: denied(5), failOn: "owner", owner });
+		protectFolder(dir, n.run);
+		assert.ok(n.icacls().some((c) => c.args.includes("/inheritance:r")), owner);
+		assert.equal(n.calls.filter((c) => c.file.endsWith("powershell.exe")).length, 1, owner);
+	}
+	forgetSid();
+	const dir = join(world.root, "normal", "straw-boss");
+	const n = native(() => dir);
+	protectFolder(dir, n.run);
+	assert.ok(!n.calls.some((c) => c.file.endsWith("powershell.exe")), "no PowerShell where /setowner worked");
+});
+
+test("decoy: an owner that cannot be read (PowerShell fails, Constrained Language Mode, no SID) is refused with nothing changed; the Constrained Language sentence is told as such", () => {
+	const clm = Object.assign(new Error("Command failed: powershell"), { status: 1, stderr: "sb-constrained-language\r\nAt line:1" });
+	for (const [owner, expected] of [
+		[Object.assign(new Error("Command failed: powershell"), { status: 1, stderr: "boom" }), /owner of .* could not be read \(boom, exit code 1\)/],
+		[clm, /Constrained Language Mode \(likely a policy\)/],
+		[Object.assign(new Error("spawnSync powershell.exe ETIMEDOUT"), { code: "ETIMEDOUT", syscall: "spawnSync powershell.exe", killed: true }), /could not be read/],
+		["\r\n", /gave no SID/],
+	] as const) {
+		forgetSid();
+		const dir = join(world.root, "unreadable", "straw-boss");
+		mkdirSync(dir, { recursive: true });
+		const n = native(() => dir, { icacls: denied(5), failOn: "owner", owner: owner as string | Error });
+		assert.throws(() => protectFolder(dir, n.run), expected);
+		assert.deepEqual(changed(n), []);
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("decoy: the owner read is one -EncodedCommand PowerShell that checks the language mode first and prints the owner as a SID; a quote in the path is doubled", () => {
+	const seen: { file: string; args: string[] }[] = [];
+	const run = (file: string, args: string[]) => { seen.push({ file, args }); return `${FOREIGN}\r\n`; };
+	assert.equal(ownerOfFolder("C:\\Users\\o'brien\\straw-boss", run), FOREIGN);
+	assert.equal(seen.length, 1);
+	assert.match(seen[0]!.file, /WindowsPowerShell\\v1\.0\\powershell\.exe$/);
+	assert.deepEqual(seen[0]!.args.slice(0, 4), ["-NoProfile", "-NonInteractive", "-OutputFormat", "Text"]);
+	const script = Buffer.from(seen[0]!.args[seen[0]!.args.indexOf("-EncodedCommand") + 1]!, "base64").toString("utf16le");
+	const lines = script.split("\n");
+	assert.match(lines[0]!, /ProgressPreference/);
+	assert.match(lines[1]!, /LanguageMode -ne 'FullLanguage'.*sb-constrained-language/, "the language mode is checked before any .NET call");
+	assert.ok(script.includes("$d = 'C:\\Users\\o''brien\\straw-boss'"));
+	assert.match(script, /\[IO\.Directory\]::GetAccessControl\(\$d, \[Security\.AccessControl\.AccessControlSections\]::Owner\)\.GetOwner\(\[Security\.Principal\.SecurityIdentifier\]\)\.Value/);
 });

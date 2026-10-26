@@ -57,6 +57,10 @@ export const ACL_STEPS = [
 	// Everything below the folder is made the user's FIRST, in ONE call (`/C` goes on past an item it may not change; the read-back below is the check): /reset and /inheritance replace DACLs and
 	// never owners, so a folder another account created (a secondary slot's `servers\<hash>`, `link\…`) would keep that account's implicit WRITE_DAC; as the owner the user can then reset it.
 	"& $icacls \"$dir\\*\" /setowner \"*${sid}\" /T /C /L /Q | Out-Null",
+	// Then every entry's owner is read and a foreign one refused BEFORE the reset (VM pass 5b): `/setowner /C` goes on past an entry it may not change, and a reset (WRITE_DAC through a grant the
+	// foreign owner made) would rewrite the DACL of an entry another account still owns. Owners are read as SIDs through .NET (cheap: no name translation), and the user, BUILTIN\Administrators and SYSTEM pass.
+	"$pre = Walk $dir",
+	"foreach ($p in @($pre.folders) + @($pre.files)) { try { $acl = if ([IO.Directory]::Exists($p)) { [IO.Directory]::GetAccessControl($p, [Security.AccessControl.AccessControlSections]::Owner) } else { [IO.File]::GetAccessControl($p, [Security.AccessControl.AccessControlSections]::Owner) }; $who = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value } catch { if (Test-Path -LiteralPath $p) { throw }; continue }; if ($who -ne $sid -and $who -ne 'S-1-5-18' -and $who -ne 'S-1-5-32-544') { throw ('the ' + $p + ' belongs to another account (' + $who + '), not to ' + $sid + ' (nothing below it was reset)') } }",
 	// Then everything already below the folder (server.lock the starter took, server.log, the link and stash folders, a secondary slot's files) is reset in ONE call: its explicit ACEs go and it
 	// inherits the folder's owner and SYSTEM grant again, which an (OI)(CI) grant hands to files and folders alike. `/C` goes on past an item that vanishes meanwhile (a temp file renamed into
 	// place), and the exit code is not the check, since an empty folder has nothing to match: the read-back below is. A call per item would start a process for each of them (link/inbox holds up to 500).
@@ -140,9 +144,9 @@ export function parseSddl(text: string): Sddl {
 	return out;
 }
 
-/** A SID as `S-1-…`: SYSTEM's alias, and the aliases SDDL gives the built-in accounts (local Administrator and Guest, domain Admins and Users) when they are this owner's. */
 /** BUILTIN\Administrators: the default owner of what an elevated token creates. */
 export const ADMINS_SID = "S-1-5-32-544";
+/** A SID as `S-1-…`: SYSTEM's alias, and the aliases SDDL gives the built-in accounts (local Administrator and Guest, domain Admins and Users) when they are this owner's. */
 function canon(sid: string, owner: string): string {
 	const s = sid.toUpperCase();
 	if (s === "SY") return SYSTEM_SID;
@@ -221,7 +225,8 @@ export function ownerProblems(sddl: string, owner: string, path = "the folder", 
 	}
 	if (!found) return [`${path}: the SDDL names no owner`];
 	// BUILTIN\Administrators is accepted as an owner as well as the user (VM pass 5b): an elevated token's default owner is BA, and the server it starts writes `server.json` while the launch script
-	// is still running. Only an administrator can create a BA-owned object, and an administrator can read the folder whatever its owner or DACL, so BA ownership gives no account anything it lacks; the
+	// is still running. BA-owned objects are made by an administrator's elevated token, by SYSTEM, and by holders of SeRestorePrivilege (Backup Operators), who pass this gate anyway: an administrator and
+	// SYSTEM can read the folder whatever its owner or DACL, and a backup operator can read and write any file, so BA ownership gives no account anything it lacks; the
 	// threat this gate stops is another standard account owning an entry. BA is NOT accepted as an ACE (`folderProblems` and `fileProblems` still allow the owner and SYSTEM only).
 	const who = canon(found, owner);
 	return who === owner.toUpperCase() || who === ADMINS_SID || who === "BA" ? [] : [`${path === "the folder" ? path : `the ${kind} ${path}`} belongs to another account (${found}), not to ${owner}`];
