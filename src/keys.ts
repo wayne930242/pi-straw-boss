@@ -27,7 +27,7 @@ export const RATE = 8, RATE_MS = 1000, DOUBLE_MS = 1000, PAIR_MS = 450, MAX_TYPE
 /** C0 and C1 controls and DEL: what could end a line, start an escape sequence, or signal; typed text holds none, a paste only line breaks and tabs. */
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/, PASTE_CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/;
 export interface Reply { status: number; body: unknown }
-export interface KeyDeps { fresh(stream: string, key: string, pane: string): boolean; secret(file: string): Promise<boolean>; answerable(key: string): Promise<boolean>; linkRequest?(file: string, session: string): Promise<boolean>; probe(key: string): Promise<Editor | undefined>; now?(): number }
+export interface KeyDeps { fresh(stream: string, key: string, pane: string): boolean; secret(file: string): Promise<boolean>; answerable(key: string): Promise<boolean>; linkRequest?(found: Found, session: string): Promise<boolean>; probe(key: string): Promise<Editor | undefined>; now?(): number }
 /** `text`: typed characters, sent as they are, or a paste already inside its markers (key is then "text" or "paste"). */
 export interface Asked { key: string; stream?: string; confirmed?: unknown; text?: string; remote?: boolean }
 type Pane = { pane_id: string; agent_status?: string };
@@ -51,7 +51,7 @@ export function createKeys({ fresh, secret, answerable, linkRequest = async () =
 		if (a.stream !== undefined && !fresh(a.stream, session, pane.pane_id)) throw no(409, "no_mirror", "Keys are sent only while this page shows the session's terminal live; open it again.");
 		if (a.key !== "esc" && ((await secret(found.file!)) || (await answerable(session)))) throw no(409, "blocked", "While it waits on a secret or a question only Escape is sent from here; answer the question in its panel or the terminal.");
 		// A link_request's approval dialog in the terminal takes Enter as Yes, and its high-risk actions are approved on this computer only: a paired device sends Escape (No) and nothing else.
-		if (a.key !== "esc" && a.remote && (await linkRequest(found.file!, session))) throw no(403, "local_only", "While it waits on a link request, a paired device can only send Escape; approve it on this computer's own page or terminal.");
+		if (a.key !== "esc" && a.remote && (await linkRequest(found, session))) throw no(403, "local_only", "While it waits on a link request, a paired device can only send Escape; approve it on this computer's own page or terminal.");
 	};
 	/** Counts a key toward the session's rate, or says it is past it. */
 	const counted = (session: string): Reply | undefined => {

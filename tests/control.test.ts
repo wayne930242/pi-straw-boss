@@ -122,7 +122,7 @@ test("Stop sends Escape alone with no mirror, never Ctrl+C or Ctrl+D; any other 
 async function padded({ entries = [header(), user("u1", null, "go")] as unknown[], editor = { editor: "empty" } as Editor | undefined, answerable = false } = {}) {
 	const path = join(scratch, `pad-${Math.random().toString(36).slice(2)}_sess-1.jsonl`);
 	writeFileSync(path, lines(entries));
-	const file = canonical(path)!, calls: [string, Record<string, unknown>][] = [], w = { editor, answerable, status: "idle", probes: 0, moveDuringProbe: false, moved: false, armed: false, afterProbe: false, opens: undefined as (() => void) | undefined, relayedRequest: false, pulls: [] as string[], onBegin: undefined as (() => void) | undefined };
+	const file = canonical(path)!, calls: [string, Record<string, unknown>][] = [], w = { editor, answerable, status: "idle", probes: 0, moveDuringProbe: false, moved: false, armed: false, afterProbe: false, opens: undefined as (() => void) | undefined, relayedRequest: false, at: false, asked: [] as (string | undefined)[], lookups: 0, allow: 1, pulls: [] as string[], onBegin: undefined as (() => void) | undefined };
 	const call = async (method: string, params: Record<string, unknown>) => {
 		calls.push([method, { ...params, ...(method === "pane.send_input" && { at: Date.now() }) }]);
 		if (method === "pane.get" && w.armed) {
@@ -134,8 +134,9 @@ async function padded({ entries = [header(), user("u1", null, "go")] as unknown[
 		return method === "pane.read" ? { read: { text: "pi\r\n> " } } : {};
 	};
 	const target = { from: "S", bridgeId: "B", answer: { dialog: "d1", digest: "a".repeat(64), select: { title: "T", choices: [{ label: "A" }] } } } as Target;
-	const hub = { running: true, me: "G", start() {}, stop() {}, receive() {}, relayed: () => ({ dialogsOf: () => undefined, merge: () => ({ callId: "", tool: "" }) }), has: (_key: string, owner: string) => w.relayedRequest && owner === "straw-link-request", replay: () => undefined, ended: () => undefined, send: async () => ({ status: 200, body: {} }), target: () => (w.answerable ? target : undefined), probe: async () => (w.probes++, (w.moved = w.moveDuringProbe), (w.armed = w.afterProbe), w.editor), pull: async (_key: string, step: string) => (w.pulls.push(step), step === "begin" ? (w.onBegin?.(), { pending: true, ticket: "T" }) : { text: "queued text" }) };
-	const lookup = (key: string): Found | undefined => (key === "sess-1" ? { key, base: "wA", name: "billing", role: "main", file, pane: "wA:p1", live: true } : undefined);
+	const hub = { running: true, me: "G", start() {}, stop() {}, receive() {}, relayed: () => ({ dialogsOf: () => undefined, merge: () => ({ callId: "", tool: "" }) }), has: (_key: string, owner: string, at?: { pane?: string; file?: string }) => (w.asked.push(at?.pane), true) && w.relayedRequest && owner === "straw-link-request" && (!w.at || (at?.pane === "wA:p1" && at?.file === file)), replay: () => undefined, ended: () => undefined, send: async () => ({ status: 200, body: {} }), target: () => (w.answerable ? target : undefined), probe: async () => (w.probes++, (w.moved = w.moveDuringProbe), (w.armed = w.afterProbe), w.editor), pull: async (_key: string, step: string) => (w.pulls.push(step), step === "begin" ? (w.onBegin?.(), { pending: true, ticket: "T" }) : { text: "queued text" }) };
+	// With `w.at`, only the first `w.allow` lookups after `w.lookups` was reset find the session: whatever reads it later (the guard, in the old code) gets nothing.
+	const lookup = (key: string): Found | undefined => (key === "sess-1" && !(w.at && w.lookups++ >= w.allow) ? { key, base: "wA", name: "billing", role: "main", file, pane: "wA:p1", live: true } : undefined);
 	const gui = await startGui({ read: async () => ({ bases: [] }), net: { lookup, workspace: () => [] }, call, hub: hub as unknown as Hub, dir: join(scratch, "bundle"), pollMs: 50 });
 	running.push(gui);
 	const events: string[] = [];
@@ -668,4 +669,21 @@ test("Straw Link's team settings: this computer's page asks the holder by name (
 		assert.deepEqual([name, r.status, r.body.error], [name, 403, "local_only"], `${name} is this computer's own page's`);
 	}
 	assert.deepEqual(seen.map(([n]) => n), ["invite", "trust", "state", "confirm-answer"], "the holder heard nothing from the paired device but those two");
+});
+
+test("a dialog the owner relays and no net reading bound yet is matched by the pane and file of the session the guard holds: a paired device's key, paste, and the queue's Edit get 403 local_only; this computer's page is not limited", async () => {
+	const p = await padded();
+	await p.attach();
+	const phone = await paired(p.gui);
+	p.w.relayedRequest = true;
+	p.w.at = true;
+	const post = (path: string, body: Record<string, unknown>, allow: number) => ((p.w.lookups = 0), (p.w.allow = allow), phone.post(path, body)); // only the handler finds the session; the guard must use what the handler found
+	const refused = [await post("sessions/sess-1/keys", { key: "enter", stream: p.stream }, 1), await post("sessions/sess-1/keys", { paste: "yes", stream: p.stream }, 1), await post("sessions/sess-1/dequeue", { take: "take-0123456789abcde0" }, 1)];
+	assert.deepEqual(refused.map((r) => [r.status, r.body.error]), [[403, "local_only"], [403, "local_only"], [403, "local_only"]], "key, paste, Edit");
+	assert.deepEqual(p.sentKeys(), [], "nothing reached Herdr");
+	// The later look before each write also refuses, so the status alone cannot tell: every question to the hub names the pane the guard holds.
+	assert.ok(p.w.asked.length >= 3 && p.w.asked.every((pane) => pane === "wA:p1"), `asked: ${p.w.asked}`);
+	p.w.at = false;
+	assert.deepEqual((await p.key("enter")).body, { accepted: true }, "this computer's page");
+	p.close();
 });
