@@ -341,7 +341,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	assert.ok(count("gui/swipe.ts") <= 40, `gui/swipe.ts has ${count("gui/swipe.ts")} lines`);
 	// Unreleased to 167: a finished subagent's card swiped to the right is dismissed (the card's drag, its release, and quit.ts's dismiss).
 	// Unreleased to 172: the drawer's way back to the map and its Dismiss finished button.
-	assert.ok(count("gui/drawer.ts") <= 172, `gui/drawer.ts has ${count("gui/drawer.ts")} lines`);
+	// Unreleased to 194: the tower as a row of two buttons (icon, +), Quit on an idle main, and the way back to the map in the drawer's foot.
+	assert.ok(count("gui/drawer.ts") <= 194, `gui/drawer.ts has ${count("gui/drawer.ts")} lines`);
 	// Unreleased (comfort): the timeline under the stage (gui/timeline.ts: a mark per event of the net's last 30 minutes, placed by its time, named on hover, a link to its unit)
 	// and the map's overview in a corner (gui/minimap.ts: shown while the map runs past the window, its frame moved on a scroll) have a figure each.
 	assert.ok(count("gui/timeline.ts") <= 42, `gui/timeline.ts has ${count("gui/timeline.ts")} lines`);
@@ -496,7 +497,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 135.4 KB / 55.15 KB gzipped: the team settings tile (gui/link.ts, its own lazy chunk: forms, roster, invite with its QR, the safety words, the camera) and its messages in both languages.
 	// Unreleased to 135.95 KB / 55.3 KB gzipped: the leave confirm for an only admin and the page's label and share prefill (gui/link.ts), the session view's Quit.
 	// Unreleased to 136.1 KB / 55.4 KB gzipped: a choice only this computer may give (`hereOnly`) is shown disabled on a paired device (gui/ask.ts).
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 136_100 && total(chunks, gz) <= 55_400, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// Unreleased to 137.1 KB / 55.7 KB gzipped: the drawer's tower row (icon and +), Quit on an idle main, and the map link in its foot (gui/drawer.ts).
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 137_100 && total(chunks, gz) <= 55_700, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
@@ -543,5 +545,6 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 68 KB / 14.95 KB: the deploy panel (bar, step list, running pulse, finish and failure tints, its keyframes).
 	// Unreleased to 75.1 KB / 16.35 KB gzipped (Straw Link 75 KB / 16.3 KB, the session view's Quit the rest): Straw Link (the teammates' bases, the notices, the team settings tile with its roster, invite, and join forms).
 	// Unreleased to 71.2 KB / 15.55 KB: the session view's Quit in the comms header (desktop and phone grid).
-	assert.ok(total(css, (n) => size(n).length) <= 75_100 && total(css, gz) <= 16_350, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// Unreleased to 76.2 KB / 16.5 KB: the phone drawer's tower row, its Quit, the map link's foot, and no selection in the drawer.
+	assert.ok(total(css, (n) => size(n).length) <= 76_200 && total(css, gz) <= 16_500, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });
