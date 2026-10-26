@@ -10,6 +10,7 @@ import type { Monitor } from "./monitors.ts";
 import { canonical } from "./history.ts";
 import { type NetEvent, type Tick, trackActivity } from "./activity.ts";
 import type { TodoSum } from "./todo.ts";
+import type { TrustAsk } from "./trust/types.ts";
 
 // The whole straw net as one JSON-able snapshot for the browser view: every workspace as a base with its tower, tabs, agents,
 // and subagents (linked to their launcher the way the tower dashboard links them), and sub workspaces as outposts.
@@ -24,9 +25,9 @@ export interface Unit extends Shelf, Lately { queued?: Queued[]; monitors?: Moni
 export interface Tab { id: string; label: string; units: Unit[] }
 export interface Outpost extends Lately { id: string; label: string; mark: Mark }
 export interface Base { id: string; label: string; mark: Mark; head: boolean; tower: ({ name: string; mark: Mark; key: string; control: boolean; pending?: Pending; queued?: Queued[]; monitors?: Monitor[]; subs: Unit[] } & Shelf & Lately) | null; tabs: Tab[]; outposts: Outpost[]; outside: Unit[] }
-/** `stashed`: the bases put away with /boss stash, waiting to be popped (stash.ts). */
+/** `stashed`: the bases put away with /boss stash, waiting to be popped (stash.ts). `trust`: the folders whose agents wait for a trust decision (trust/serve.ts). */
 /** `link`: Straw Link's teammates' bases, the notices it raises, and the confirms waiting for the boss; absent when Straw Link is not set up or says nothing. */
-export interface Net { bases: Base[]; stashed?: Stashed[]; events?: NetEvent[]; link?: LinkSummary }
+export interface Net { bases: Base[]; stashed?: Stashed[]; trust?: TrustAsk[]; events?: NetEvent[]; link?: LinkSummary }
 /** What the server may read for a key: the registry entry is the allow list, and paths never come from the browser. */
 export interface Ref { key: string; base: string; name: string; role: string; file?: string; pane?: string }
 export interface Found extends Ref { live: boolean; successor?: string }
@@ -96,16 +97,17 @@ export function buildNet({ sessions, panes: ps, workspaces: all, children, sessi
 }
 
 /** One reading of Herdr and intercom as a net. */
-export async function collectNet({ run, world = worldOf(run), sessions, now = Date.now(), refs, sessionDir }: { run: HerdrRun; world?: HerdrWorld; sessions(): Promise<Session[]>; now?: number; refs?: Map<string, Ref>; sessionDir?: string }): Promise<Net> {
+export async function collectNet({ run, world = worldOf(run), sessions, now = Date.now(), refs, sessionDir, trust }: { run: HerdrRun; world?: HerdrWorld; sessions(): Promise<Session[]>; now?: number; refs?: Map<string, Ref>; sessionDir?: string; trust?: { asks(panes: Pane[], workspaces: Workspace[]): TrustAsk[] } }): Promise<Net> {
 	const [live, { panes: ps, workspaces: all }] = await Promise.all([sessions(), world()]);
-	return buildNet({ sessions: live, panes: ps, workspaces: all, children: (pane) => subagents(pane, ps, now), sessionDir }, refs);
+	const net = buildNet({ sessions: live, panes: ps, workspaces: all, children: (pane) => subagents(pane, ps, now), sessionDir }, refs), asks = trust?.asks(ps, all) ?? [];
+	return asks.length ? { ...net, trust: asks } : net;
 }
 
 /**
  * The net as the server reads it: each read also refreshes the registry. A key that left the net (the pane closed, or moved to
  * another session) stays findable for ten minutes, the window finished subagents already use, with the pane's new session as its successor.
  */
-export function netSource(env: { run: HerdrRun; world?: HerdrWorld; sessions(): Promise<Session[]>; sessionDir?: string; hub?: { relayed(sessions: Session[], refs: Map<string, Ref>): Relayed }; stashed?(): Stashed[] }) {
+export function netSource(env: { run: HerdrRun; world?: HerdrWorld; sessions(): Promise<Session[]>; sessionDir?: string; hub?: { relayed(sessions: Session[], refs: Map<string, Ref>): Relayed }; stashed?(): Stashed[]; trust?: { asks(panes: Pane[], workspaces: Workspace[]): TrustAsk[] } }) {
 	let refs = new Map<string, Ref>(), live: Session[] = [];
 	const gone = new Map<string, { ref: Ref; at: number }>(), sessions = async () => (live = await env.sessions()), dismissed = new Set<string>(), ended = new Set<string>();
 	const lately = trackActivity();

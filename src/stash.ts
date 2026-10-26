@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Reply } from "./control.ts";
-import { createTab, type HerdrRun, isSub, type Pane, panes, parentOf, report, result, type Session, type Sleep, startPi, tabs, waitFor, workspaces } from "./herdr.ts";
+import { createTab, type HerdrRun, isSub, type Pane, panes, parentOf, report, result, type Session, type Sleep, startPi, tabs, workspaces } from "./herdr.ts";
+import { waitPastTrust } from "./trust/wait.ts";
 
 // Stash and pop (docs/specs/2026-10-22-stash/spec.md). A stash puts a whole base away: it checks that every pane can be resumed losing
 // nothing (Herdr's view here, each session's own view through its bridge's `stash-check`), writes a manifest of what ran where, then closes
@@ -212,20 +213,21 @@ export async function stashBase(d: StashDeps, json: Record<string, unknown>, clo
 }
 
 /** `agentDir`: the popping session's PI_CODING_AGENT_DIR, when it runs under one, so each pi resumes with the same settings and extensions. */
-export interface PopDeps { run: HerdrRun; sleep: Sleep; stateDir: string; live(sessionId: string): Promise<boolean>; agentDir?: string; now?: () => Date }
+export interface PopDeps { run: HerdrRun; sleep: Sleep; stateDir: string; live(sessionId: string): Promise<boolean>; agentDir?: string; now?: () => Date; trustDir?: string }
 const RANK: Record<StashPane["kind"], number> = { tower: 0, main: 1, member: 2, shell: 3 };
 const roleEnv = (kind: StashPane["kind"]) => (kind === "shell" ? [] : [`STRAW_BOSS_ROLE=${kind}`]), flags = (env: string[]) => env.flatMap((e) => ["--env", e]);
 
 /** Resumes one pi in its pane and waits until it is back in its role (a member may come back as the tab's main: the guard's choice). */
-async function resume({ run, sleep, live }: PopDeps, ws: string, paneId: string, p: StashPane) {
+async function resume({ run, sleep, live, trustDir }: PopDeps, ws: string, paneId: string, p: StashPane) {
 	if (p.kind === "tower") await report(run, "pane", paneId, { sb_role: "tower" });
 	if (p.kind === "main") await report(run, "pane", paneId, { sb_open_main: "1" }); // authorises exactly this pi to promote itself (session.ts)
 	// Herdr agent names are unique across workspaces and lowercase only.
 	const agent = p.kind === "tower" ? `tower-${ws.toLowerCase()}` : `${p.kind}-${randomUUID().slice(0, 8)}`;
 	await startPi(run, sleep, agent, paneId, [...(p.session ? ["--session", p.session] : []), ...(p.name ? ["--name", p.name] : [])]);
+	const watch = trustDir ? { dir: trustDir, pane: paneId } : undefined; // a trust question the pi waits on is not counted (trust/wait.ts)
 	const back = p.kind === "tower"
-		? await waitFor(sleep, async () => ((id) => id && live(id))((await workspaces(run)).find((w) => w.workspace_id === ws)?.tokens?.tower), JOIN_MS, 1000)
-		: await waitFor(sleep, async () => ((r) => (p.kind === "main" ? r === "main" : r === "member" || r === "main"))((await panes(run, ws)).find((x) => x.pane_id === paneId)?.tokens?.sb_role), JOIN_MS, 500);
+		? await waitPastTrust(sleep, async () => ((id) => id && live(id))((await workspaces(run)).find((w) => w.workspace_id === ws)?.tokens?.tower), JOIN_MS, 1000, watch)
+		: await waitPastTrust(sleep, async () => ((r) => (p.kind === "main" ? r === "main" : r === "member" || r === "main"))((await panes(run, ws)).find((x) => x.pane_id === paneId)?.tokens?.sb_role), JOIN_MS, 500, watch);
 	if (!back) throw new Error(`${p.name ?? p.session ?? p.kind} did not come back as the ${p.kind} within ${JOIN_MS / 1000} s (pane ${paneId})`);
 }
 

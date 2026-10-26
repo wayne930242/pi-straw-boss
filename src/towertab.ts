@@ -1,6 +1,7 @@
-import { createTab, type HerdrRun, panes, report, type Sleep, startPi, tabs, TOWER_LABEL, waitFor, type Workspace, workspaces } from "./herdr.ts";
+import { createTab, type HerdrRun, panes, report, type Sleep, startPi, tabs, TOWER_LABEL, type Workspace, workspaces } from "./herdr.ts";
+import { waitPastTrust } from "./trust/wait.ts";
 
-export interface TowerEnv { run: HerdrRun; sleep: Sleep; live(sessionId: string): Promise<boolean>; moveFirst(tabId: string): Promise<void>; model?: string }
+export interface TowerEnv { run: HerdrRun; sleep: Sleep; live(sessionId: string): Promise<boolean>; moveFirst(tabId: string): Promise<void>; model?: string; trustDir?: string }
 
 const TOWER_WAIT_MS = 60_000;
 const opening = new Map<string, Promise<{ id: string; opened: boolean }>>();
@@ -14,7 +15,7 @@ export function ensureTower(env: TowerEnv, workspace: Workspace, cwd: string) {
 	return pending;
 }
 
-async function open({ run, sleep, live, moveFirst, model }: TowerEnv, workspace: Workspace, cwd: string) {
+async function open({ run, sleep, live, moveFirst, model, trustDir }: TowerEnv, workspace: Workspace, cwd: string) {
 	const ws = workspace.workspace_id;
 	const held = async () => {
 		const id = (await workspaces(run)).find((w) => w.workspace_id === ws)?.tokens?.tower;
@@ -27,7 +28,7 @@ async function open({ run, sleep, live, moveFirst, model }: TowerEnv, workspace:
 	// The tab is told apart by the `sb_role=tower` pane token that only Straw Boss writes; a tab merely labelled "tower"
 	// (a pi-herdr-agents subagent can be named so) is someone else's. A tab whose token was cleared (its tower quit) is still ours when it has
 	// exactly the tower label (the glyph), one pane, and no agent in it.
-	let paneId: string;
+	let paneId: string, created: string | undefined;
 	let running = false;
 	const here = await panes(run, ws);
 	const marked = here.find((p) => p.tokens?.sb_role === "tower");
@@ -45,11 +46,12 @@ async function open({ run, sleep, live, moveFirst, model }: TowerEnv, workspace:
 		for (const extra of bare.slice(1)) await run(["tab", "close", extra.tab_id]).catch(() => {});
 	} else {
 		const dir = workspace.worktree?.checkout_path ?? cwd;
-		const created = await createTab(run, ws, dir, ["STRAW_BOSS_ROLE=tower"], TOWER_LABEL);
-		paneId = created.paneId;
+		const made = await createTab(run, ws, dir, ["STRAW_BOSS_ROLE=tower"], TOWER_LABEL);
+		paneId = made.paneId;
+		created = made.tabId;
 		// Marked at once, so a tab left without pi is recognised (while the marker lasts) and the label stays display only.
 		await report(run, "pane", paneId, { sb_role: "tower" });
-		await moveFirst(created.tabId);
+		await moveFirst(made.tabId);
 	}
 	if (!running) {
 		// Herdr agent names are unique across workspaces and lowercase only, so the name carries the lowercased workspace id.
@@ -59,7 +61,11 @@ async function open({ run, sleep, live, moveFirst, model }: TowerEnv, workspace:
 			throw error;
 		});
 	}
-	const id = await waitFor(sleep, held, TOWER_WAIT_MS, 1000);
+	// A trust question the tower waits on is not counted (trust/wait.ts); one nobody answers fails the opening, and a tab this opening made goes with it (a leftover tab is the user's to keep).
+	const id = await waitPastTrust(sleep, held, TOWER_WAIT_MS, 1000, trustDir ? { dir: trustDir, pane: paneId } : undefined).catch(async (error: unknown) => {
+		if (created) await run(["tab", "close", created]).catch(() => {});
+		throw error;
+	});
 	if (!id) throw new Error(`The tower of ${workspace.label} did not publish its token within ${TOWER_WAIT_MS / 1000} s (pane ${paneId})`);
 	return { id, opened: true };
 }
