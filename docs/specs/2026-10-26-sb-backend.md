@@ -210,8 +210,14 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
     - Each secret file (`server.json`, `gui.json`, `paired.json`, everything under `link/`) must hold allow ACEs for the owner SID and
       `SY` only, explicit or inherited. A file written by rename after the `icacls` run inherits exactly those two from the protected
       folder, which is just as safe, so an inherited ACE is accepted on files.
-  - Reading the SID, setting the ACL, and checking every SDDL run in one PowerShell invocation, which answers one JSON line, so the check
-    costs one PowerShell start against the 15 s cold-start budget.
+  - Reading the SID, the server's own start time, setting the ACL, and checking every SDDL run in one PowerShell invocation, which
+    answers one JSON line, so the check costs one PowerShell start against the 15 s cold-start budget. (A PowerShell start took 1.7 to
+    3.1 s in the Windows VM; the server makes no other, because its start time comes with this answer.)
+  - Files that are already in the folder when the ACL is set (`server.lock` the starter took, `server.log` the server opened) are not
+    given the folder's ACL with `/T`: that strips their inherited ACEs, and an `(OI)(CI)` grant does not land on a file, so they ended
+    with an empty DACL that even their owner could not read (the VM's P2). The folder is protected without `/T`, and each file and
+    folder in it then gets `icacls <item> /inheritance:e /grant:r *<owner SID>:F *S-1-5-18:F` (`(OI)(CI)F` for a folder). The check
+    reads `server.json`, `server.lock`, `server.log`, `gui.json`, `paired.json`, and everything under `link/`.
   - If setting or checking fails, the server does not start. It writes `start-error.json` (`code: "acl"`, the reason, the SDDL it read)
     and exits 3. `up` and the session looks read that file (**Starting**).
   - macOS and Linux keep the 700 directory and 600 files they have today.
@@ -239,7 +245,11 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
   Without it the server exits 3 and names the path it looked from. If pi-intercom publishes a JavaScript build, `tsx` becomes a
   dev-only dependency. B1 asks pi-intercom upstream for one.
 - B1 measures a cold `up` on the Windows VM: from `up`'s start to the URL answering 200, with the server not running and the file cache
-  cold. The budget is 15 s, and B1 records the time and the share `tsx` takes.
+  cold. The budget is 15 s, and B1 records the time and the share `tsx` takes. The first measurement (B1 at 271971e) found `tsx` at about
+  0.2 s of 7.4 to 25.6 s and every PowerShell start at 1.7 to 3.1 s, so the cold start folds its PowerShell work into one call (**The
+  control socket**), does not make the requester wait for its own start time (below), and logs each phase in `server.log`
+  (`start-requested … spawnMs`, `start … boot`, `phase name=loader|acl|listen`, `intercom-connected … ms`, `ready ms`,
+  `start-answered ms`, `stop-done`), so a next run shows where the time goes.
 - The command is `<agent dir>/npm/node_modules/pi-straw-boss/dist/server/cli.mjs`, where `<agent dir>` is `$PI_CODING_AGENT_DIR`,
   else `~/.pi/agent` (`%USERPROFILE%\.pi\agent` on Windows). That is where `pi install npm:pi-straw-boss` puts the package, so a shell
   that installs pi-straw-boss into its own agent directory knows the path without asking anything. It runs under plain `node` 22 or newer
@@ -263,8 +273,11 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
   `PI_SUBAGENT_*`, `STRAW_BOSS_ROLE`, and `HERDR_PANE_ID`/`HERDR_TAB_ID`/`HERDR_WORKSPACE_ID`. `PI_INTERCOM_SCOPE_ID`,
   `PI_INTERCOM_TRANSPORT`, and `PI_INTERCOM_TCP` stay, so the server registers in the same broker scope as the sessions; it records them
   in `server.json`.
-- The session holds `server.lock` until the new server answers `hello` or 20 s pass. Then it returns, and says nothing unless the start
-  failed. If it failed, the session reads `start-error.json` and tells the reason once.
+- The session holds `server.lock` until the new server answers `hello` or the start budget passes: 20 s, and 60 s on Windows, where a
+  cold start took 7.4 to 22.9 s in the VM and three starts in a row went past 20 s. Then it returns, and says nothing unless the start
+  failed. If it failed, the session reads `start-error.json` and tells the reason once. The lock does not wait for its holder's own start
+  time (a PowerShell start on Windows): it is taken at once without `started`, judged by the holder's pid alone until the time arrives,
+  and written again with it by rename, only while it still holds the text it wrote.
 - **`start-error.json`** belongs to one start attempt. Whoever starts a server (a session, `up`, `serve`, a restart's requester) deletes it
   under `server.lock` before it spawns, and the new server deletes it again once it answers `hello`. So `status` and `up` never report an
   earlier attempt's failure as the current one.
@@ -274,6 +287,15 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
   `restarting` (a fresh start, not a restart), it writes `{ began, since, reason: "starting", by: <starter> }` first; when it finds one,
   it keeps its `began`, `reason`, and `by` and only moves `since`. A start that dies leaves a `since` that goes stale within 10 s, and
   the record then counts as gone.
+  - **From before the spawn.** On a cold Windows start the new process needs seconds before it can write anything (the VM's `status` said
+    `gone` for the first 18 s). So whoever starts a server (a session, `up`, `serve`'s requester, a restart's requester) writes the
+    `restarting` first, under the lock and before it spawns: into the record that is there (a dead server's, with its GUI, last restart,
+    and last error kept), or, with none, into a placeholder with no socket and no secret, which moves to the new process's pid once it is
+    spawned. The requester touches it every 2 s until the server answers `hello` or the start fails; a start that fails ends the
+    `restarting` at once, so the state is `gone` and not `restarting` for another 10 s. The server rewrites the record as its own, with
+    `restarting` kept, at its first line (before the ACL call and the code load, whose touches it makes itself every 2 s), and the full
+    record, with the secret, after the ACL and when it listens. A shell sees this as `state: "restarting"` with `restarting.reason`
+    `"starting"`; there is no fifth state.
 - **`cli.mjs up`** makes sure a live server runs for the Herdr in its environment and prints one JSON line (**`up`'s output**). Step by
   step:
   - **A record whose `herdr` is another socket than the slot's** (a copied or damaged state directory): it exits 1 at step `herdr`
@@ -963,6 +985,8 @@ One JSON line on stdout:
 }
 ```
 
+- `url` is `null` until the GUI moves into the server (B2): B1's server serves no page, so `up` and `status` have no URL to print, and the
+  `gui` step is absent. B2 fills `url` in (`status` has it too, from the record's `gui`).
 - `version` is the live server's, and `package` the version of the package `up` ran from.
 - `steps` lists every step that ran, in order: `herdr`, `integration` (with `--dir`), `version`, `server`, then `base`, `tower`, and
   `gui` with `--dir`, or `gui` alone without it.
@@ -1173,7 +1197,9 @@ trials), unchanged otherwise.
   7. `boss_server restart` from a main, and Restart server in the GUI, both restart the server on the same URL with their reason in the
      log; the GUI's button is absent on a paired device's page and its endpoint answers 403 there.
 - **Windows VM:**
-  1. `cli.mjs up` brings the page up without a tower pi, and B1 records the cold `up` time against the 15 s budget.
+  1. `cli.mjs up` brings the page up without a tower pi, and B1 records the cold `up` time against the 15 s budget (B1 has no page yet: it
+     records the time to `hello`, and `url` is null). The first run (271971e) found the P0 below and 12.8 to 25.6 s; the log's phases say where
+     the time goes. A `status` polled during the start never says `gone`, and `stop` takes under 2 s on POSIX.
   2. The detached server opens no console window: no window appears, and the node process has no main window handle.
   3. **A run claims:** a `call_tower` wakes a run, and its claim passes, which shows that `herdr pane process-info` reports pi's own node
      PID through the `pi.cmd` wrapper and that `startOf` reads its start time.
