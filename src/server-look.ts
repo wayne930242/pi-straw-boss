@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
 import {
-	type Ctx, decide, describe, ensure, makeCtx, probe, restart, RESTART_EVERY_MS, ServerError, stop,
+	type Ctx, decide, describe, ensure, lockWaitFor, makeCtx, probe, restart, RESTART_EVERY_MS, ServerError, stop,
 } from "./server/client.ts";
 import { tailLog } from "./server/log.ts";
 import { fileOf, readRecord, slotOf } from "./server/record.ts";
@@ -148,7 +148,7 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 		async start() {
 			const ctx = ctxFor();
 			try {
-				return await ensure(ctx, { boss: true, lockWaitMs: 20_000 });
+				return await ensure(ctx, { boss: true, lockWaitMs: lockWaitFor(ctx) });
 			} catch (error) {
 				return refuse(error);
 			}

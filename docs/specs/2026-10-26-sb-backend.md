@@ -169,8 +169,11 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
   - It is taken over only when its holder is dead: its PID is not alive, or started at another time than recorded (`holderAlive`, as
     the link holder's record is judged). A holder that is alive keeps it however long it takes, and a slow cold start on Windows is
     not mistaken for a dead one. One looker at a time decides that, through `server.lock.stale`.
-  - A lock older than 120 s is taken over even from a live holder, since no start or restart may take that long (its own budgets are
-    20 s and 30 s); the taker logs it.
+  - A lock older than 120 s is taken over even from a live holder, since no start or restart may take that long (a start waits 20 s for
+    `hello`, 60 s on Windows; a restart waits up to 15 s for the old server to go first, so about 80 s at most); the taker logs it.
+  - A request that finds the lock busy waits for it as long as a start can hold it: the start wait plus the exit wait of the same timers
+    (30 s, and 70 s on Windows), for `/boss server`, `restart`, `stop`, and `serve`; `up` waits `--timeout` (60 s by default). So `up`
+    can take its lock wait plus the start wait (60 s) on Windows, and none of them turns a cold Windows start into `busy`.
   - Why not the `gui.lock` rule (taken over after 10 s by mtime) with a refresh every 2 s: a refresh depends on the holder's timers
     firing, and a holder blocked on a synchronous call loses the lock while alive. Death is what makes a lock stale, and a start time
     tells it apart from a reused PID.
@@ -203,21 +206,24 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
   agent directory above it, before it writes the secret:
   - The owner's SID comes from `[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value`, read through PowerShell with
     `execFile`, no shell.
-  - The ACL is set with `icacls <dir> /inheritance:r /grant:r *<owner SID>:(OI)(CI)F *S-1-5-18:(OI)(CI)F /T`. Accounts are named by SID
-    only, never by a localized account or group name. SYSTEM is `S-1-5-18`. `/T` reaches files that are already there.
+  - The folder's ACL is set with `icacls <dir> /inheritance:r /grant:r *<owner SID>:(OI)(CI)F *S-1-5-18:(OI)(CI)F`, without `/T`.
+    Accounts are named by SID only, never by a localized account or group name. SYSTEM is `S-1-5-18`.
   - It is checked by SID through `(Get-Acl <path>).Sddl`. No localized text is parsed.
     - The folder's DACL must be protected (`D:P`), with exactly two allow ACEs, the owner SID and `SY`, and no inherited ACE.
-    - Each secret file (`server.json`, `gui.json`, `paired.json`, everything under `link/`) must hold allow ACEs for the owner SID and
+    - Each secret file (`server.json` of the slot and of every secondary slot in `servers/<hash>/`, `gui.json`, `paired.json`, everything under `link/`) must hold allow ACEs for the owner SID and
       `SY` only, explicit or inherited. A file written by rename after the `icacls` run inherits exactly those two from the protected
       folder, which is just as safe, so an inherited ACE is accepted on files.
   - Reading the SID, the server's own start time, setting the ACL, and checking every SDDL run in one PowerShell invocation, which
     answers one JSON line, so the check costs one PowerShell start against the 15 s cold-start budget. (A PowerShell start took 1.7 to
     3.1 s in the Windows VM; the server makes no other, because its start time comes with this answer.)
   - Files that are already in the folder when the ACL is set (`server.lock` the starter took, `server.log` the server opened) are not
-    given the folder's ACL with `/T`: that strips their inherited ACEs, and an `(OI)(CI)` grant does not land on a file, so they ended
-    with an empty DACL that even their owner could not read (the VM's P2). The folder is protected without `/T`, and each file and
-    folder in it then gets `icacls <item> /inheritance:e /grant:r *<owner SID>:F *S-1-5-18:F` (`(OI)(CI)F` for a folder). The check
-    reads `server.json`, `server.lock`, `server.log`, `gui.json`, `paired.json`, and everything under `link/`.
+    given the folder's ACL with `/T` on the folder: that strips their inherited ACEs, and an `(OI)(CI)` grant does not land on a file, so
+    they ended with an empty DACL that even their owner could not read (the VM's P2). The folder is protected first, without `/T`, and
+    everything below it is then reset in one call, `icacls "<dir>\*" /reset /T /C /Q`: its explicit ACEs go and it inherits the owner and
+    SYSTEM grant of the folder again, files and folders alike. It is one process whatever the number of items (a call per item took a
+    process each, and `link/inbox/` alone holds up to 500 files); `/C` goes on past an item that vanishes meanwhile, and the call's exit
+    code is not the check, the read-back is. The check reads `server.json` (of every slot), `server.lock`, `server.log`, `gui.json`,
+    `paired.json`, and everything under `link/`.
   - If setting or checking fails, the server does not start. It writes `start-error.json` (`code: "acl"`, the reason, the SDDL it read)
     and exits 3. `up` and the session looks read that file (**Starting**).
   - macOS and Linux keep the 700 directory and 600 files they have today.

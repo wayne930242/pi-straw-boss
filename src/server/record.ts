@@ -13,7 +13,7 @@ export const FILES = { record: "server.json", lock: "server.lock", stale: "serve
 /** A restart record counts as under way while its `since` is no older than this (the starting server touches it every TOUCH_MS). */
 export const FRESH_MS = 10_000;
 export const TOUCH_MS = 2000;
-/** A lock older than this is taken over even from a live holder: no start or restart may take that long (their budgets are 20 s and 30 s). */
+/** A lock older than this is taken over even from a live holder: no start or restart may take that long (a start waits 20 s for hello, 60 s on Windows, and a restart waits up to 15 s for the old server first). */
 export const LOCK_MAX_MS = 120_000;
 const MARKER_MAX_MS = 10_000;
 

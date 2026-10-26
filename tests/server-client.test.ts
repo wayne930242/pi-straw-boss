@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { afterEach, beforeEach, test } from "node:test";
-import { decide, ensure, intercomOf, launch, probe, restart, sameBroker, serverEnv, ServerError, SPAWN_OPTIONS, stateOf, stop, takeOver } from "../src/server/client.ts";
+import { decide, ensure, intercomOf, launch, lockWaitFor, probe, restart, sameBroker, serverEnv, ServerError, SPAWN_OPTIONS, stateOf, stop, takeOver, timersFor } from "../src/server/client.ts";
 import { fileOf, readLock, readRecord, readStartError, type ServerRecord, takeLock, writeRecord, writeStartError } from "../src/server/record.ts";
 import { callControl } from "../src/server/socket.ts";
 import { ServerWorld, sleep, until } from "./server-world.ts";
@@ -168,6 +168,30 @@ test("R-F002: a start that finds a live server (the look missed its hello) leave
 	assert.equal(world.record()?.pid, s.pid);
 	assert.equal(world.record()?.restarting, undefined, "the mark the starter put on the live record is gone");
 	assert.equal(stateOf(world.ctx(), await probe(world.ctx())), "live");
+});
+
+test("R-F004: the wait for the lock a start or restart holds is that start's wait plus the exit wait, from the same timers: 70 s on Windows, 30 s elsewhere", () => {
+	assert.equal(lockWaitFor({ timers: timersFor("win32") }), 70_000);
+	assert.equal(lockWaitFor({ timers: timersFor("linux") }), 30_000);
+	assert.equal(lockWaitFor({ timers: { start: 600, exit: 200, supervisor: 100, touch: 40 } }), 800);
+});
+
+test("R-F004: stop and restart wait for a busy lock as long as lockWaitFor says, no more and no less (not a fixed 10 s or 20 s)", async () => {
+	const timers = { start: 600, exit: 200, supervisor: 100, touch: 40 };
+	for (const [name, run] of [["stop", (ctx: Parameters<typeof stop>[0]) => stop(ctx)], ["restart", (ctx: Parameters<typeof stop>[0]) => restart(ctx, { reason: "r" })]] as const) {
+		// Released inside the wait: the request gets the lock and goes on.
+		let held = await takeLock(world.slot, "a start", world.ctx().lock, 0);
+		setTimeout(() => held.release(), 400);
+		await run(world.ctx({ timers }));
+		// Held past the wait: busy, at the wait and not at a fixed 10 s.
+		held = await takeLock(world.slot, "a start", world.ctx().lock, 0);
+		const began = Date.now();
+		await assert.rejects(run(world.ctx({ timers })), (e: unknown) => e instanceof ServerError && e.code === "busy", name);
+		const waited = Date.now() - began;
+		held.release();
+		assert.ok(waited >= 700 && waited < 1600, `${name} waited ${waited} ms for a wait of 800 ms`);
+		rmSync(fileOf(world.slot, "record"), { force: true });
+	}
 });
 
 test("a stopped server is not started by an automatic start; the boss's own start clears the mark in server.json and gui.json and starts it", async () => {

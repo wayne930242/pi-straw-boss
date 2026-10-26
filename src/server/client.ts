@@ -24,6 +24,11 @@ export const START_MS = { win32: 60_000, other: 20_000 } as const;
 export const timersFor = (platform: NodeJS.Platform = process.platform): Timers => ({ start: platform === "win32" ? START_MS.win32 : START_MS.other, exit: 10_000, supervisor: 10_000, touch: TOUCH_MS });
 export const TIMERS: Timers = timersFor();
 const HELLO_MS = 2000;
+/**
+ * How long a request waits for a `server.lock` that a start, a restart, or a stop holds: that one's start wait plus its exit wait (a restart waits for the old server to go, then starts
+ * the new one). It follows the timers, so the 60 s start wait of a cold Windows start is waited out (70 s) and not turned into `busy` at a fixed 10 or 20 s.
+ */
+export const lockWaitFor = (ctx: Pick<Ctx, "timers">) => ctx.timers.start + ctx.timers.exit;
 
 export type Refusal = "stopped" | "older" | "scope" | "herdr" | "busy" | "serve" | "start-failed" | "exit-timeout" | "restarting" | "unreachable" | "rate";
 /** An agent's restarts are taken once a minute at most, for the whole machine (the server records the last one that counts). */
@@ -296,7 +301,7 @@ export interface RestartOptions {
  * server to restart with a reason; touches `restarting.since` every 2 s; and starts the new server from its own package, never from one older than the recorded `version`
  * (unless `downgrade`). A server that is down is started instead. The new one keeps the GUI port and token of the record (B2), registers its identities, and clears `restarting`.
  */
-export async function restart(ctx: Ctx, { reason, downgrade = false, upgrade = false, lockWaitMs = 20_000, boss = false, limit = false, counts = !upgrade }: RestartOptions): Promise<Restarted> {
+export async function restart(ctx: Ctx, { reason, downgrade = false, upgrade = false, lockWaitMs = lockWaitFor(ctx), boss = false, limit = false, counts = !upgrade }: RestartOptions): Promise<Restarted> {
 	let lock = await lockFor(ctx, lockWaitMs);
 	const hold: Hold = { release: () => lock.release(), retake: async () => void (lock = await lockFor(ctx, ctx.timers.start)) };
 	try {
@@ -370,7 +375,7 @@ export interface Stopped { outcome: "stopped" | "already-down" }
  */
 export async function stop(ctx: Ctx): Promise<Stopped> {
 	const t0 = ctx.now();
-	const lock = await lockFor(ctx, 10_000);
+	const lock = await lockFor(ctx, lockWaitFor(ctx));
 	const locked = ctx.now();
 	try {
 		const seen = await probe(ctx);

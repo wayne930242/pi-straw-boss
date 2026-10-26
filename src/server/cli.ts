@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { stateDirOf } from "../agent/paths.ts";
 import { newer } from "../semver.ts";
 import {
-	type Ctx, describe, ensure, guiUrl, herdrListens, isIdentity, makeCtx, probe, restart, ServerError, serverEnv, stop, takeOver, waitReady,
+	type Ctx, describe, ensure, guiUrl, herdrListens, isIdentity, lockWaitFor, makeCtx, probe, restart, ServerError, serverEnv, stop, takeOver, waitReady,
 } from "./client.ts";
 import { logSize, readFrom, tailLog } from "./log.ts";
 import { clearStartError, clearStopped, fileOf, readRecord, readStartError, type ServerRecord, slotOf, takeLock } from "./record.ts";
@@ -217,7 +217,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 	}
 
 	async function serve() {
-		const lock = await takeLock(slot, ctx.by, ctx.lock, 20_000).catch((error) => { throw new ServerError("busy", (error as Error).message); });
+		const lock = await takeLock(slot, ctx.by, ctx.lock, lockWaitFor(ctx)).catch((error) => { throw new ServerError("busy", (error as Error).message); });
 		let released = false;
 		const release = () => { if (!released) { released = true; lock.release(); } };
 		try {
