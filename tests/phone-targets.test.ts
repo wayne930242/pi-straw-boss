@@ -33,7 +33,7 @@ test("the phone block gives the controls the audit found small a 44 px box", () 
 	assert.ok(set, "the shared min-height rule");
 	for (const name of [".pair-btn", ".quit-btn", ".later", ".x", ".ask-send", ".ask-opt", ".sheet-yes"]) assert.ok(set[0].includes(name), `${name} is in it`);
 	assert.match(set[1], /min-height:\s*44px/);
-	assert.match(body(":is(.pair-btn, .quit-btn, .later, .x, .tab-add, .ask-send, .sheet-yes, .cmp-yes)"), /min-width:\s*44px/);
+	assert.match(body(":is(.pair-btn, .quit-btn, .later, .go, .x, .tab-add, .ask-send, .sheet-yes, .cmp-yes)"), /min-width:\s*44px/);
 	for (const selector of [".head-back", ".prefs-btn"]) assert.deepEqual([size(selector, "width"), size(selector, "height")], [44, 44], selector);
 	assert.equal(size(".modes button", "min-height"), 44);
 	assert.equal(size(".brand", "min-height"), 44);
@@ -69,4 +69,13 @@ test("the trust question's three choices fill the width: Trust on its own row, t
 
 test("the timeline's marks, too small and too close to be 44 px, take no taps on a phone", () => {
 	assert.match(body(".tl-mark"), /pointer-events:\s*none/);
+});
+
+test("the home list's base name is a 23 px link, but its ::after stretches over the whole header, so a tap anywhere on the title row (outside the quit buttons) hits it", () => {
+	const rule = (selector: string) => css.match(new RegExp(`(?:^|\\n)${selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
+	assert.match(rule(".base > header"), /position:\s*relative/, "the header is what the link's ::after is sized against");
+	assert.match(rule(".hit, .enter-base::after"), /position:\s*absolute;\s*inset:\s*0/);
+	assert.match(rule(".enter-base::after"), /content:\s*""/);
+	assert.doesNotMatch(rule(".title h2"), /position/, "the clipping h2 does not become the containing block");
+	assert.match(body(".tl-mark"), /pointer-events:\s*none/, "and the 10 px activity marks take no taps at all");
 });

@@ -1,3 +1,4 @@
+import { DEQUEUE_KEY } from "./dequeuekey.ts";
 import type { Found } from "./net.ts";
 import type { Editor } from "./probe.ts";
 
@@ -14,7 +15,7 @@ import type { Editor } from "./probe.ts";
 // along and Enter still comes alone and probed; a paste (`{paste, stream}`), up to 4,000 characters with line breaks and tabs but no other
 // control character, inside the bracketed-paste markers so pi takes it as one paste and a line break submits nothing; Delete; and Ctrl or
 // Alt chords (COMBOS) as Herdr names them. Ctrl+Z never goes (pi would stop in the background, where nothing here brings it back), Ctrl+D
-// asks first (it leaves pi on an empty editor), and so does a second Ctrl+C within a second (pi leaves on the second). The composer's Edit sends pi's Alt+Up (`dequeue`), under the guard (a paired device's too: no link_request open) and the rate and with no mirror, as typing needs none. Stop (`{keys: ["esc"]}`, the composer's) needs no mirror. Herdr 0.9 has no
+// asks first (it leaves pi on an empty editor), and so does a second Ctrl+C within a second (pi leaves on the second). The composer's Edit sends pi's dequeue key (`dequeue`: Alt+Up, Alt+Q on Windows and WSL, or the user's own binding, which the session's bridge names, dequeuekey.ts), under the guard (a paired device's too: no link_request open) and the rate and with no mirror, as typing needs none. Stop (`{keys: ["esc"]}`, the composer's) needs no mirror. Herdr 0.9 has no
 // names for Home, End, Page Up, and Page Down: those go as the fixed sequences pi reads (pane.send_text writes them raw), and only they.
 
 /** What the pad can send, as Herdr names the keys. */
@@ -62,12 +63,13 @@ export function createKeys({ fresh, secret, answerable, linkRequest = async () =
 		sent.set(session, [...recent, t]);
 	};
 	return {
-		/** The composer's Edit (`dequeue` in control.ts): pi's own Alt+Up, which takes back the queue. Like typing it needs no mirror, and like any key but Escape it is not sent while a secret or a question waits; it counts toward the rate. */
-		async dequeue(session: string, found: Found, pane: Pane, remote = false): Promise<Plan> {
+		/** The composer's Edit (`dequeue` in control.ts): pi's own dequeue key (`key`, one the session's bridge named, DEQUEUE_KEY), which takes back the queue. Like typing it needs no mirror, and like any key but Escape it is not sent while a secret or a question waits; it counts toward the rate. */
+		async dequeue(session: string, found: Found, pane: Pane, key: string, remote = false): Promise<Plan> {
+			if (!DEQUEUE_KEY.test(key)) throw no(409, "no_key", "pi's dequeue key is not one this page can send; press it in the terminal.");
 			const limited = counted(session);
 			if (limited) throw limited;
-			await guard(session, found, pane, { key: "alt+up", remote });
-			return { keys: ["alt+up"], double: false, calls: [["pane.send_input", { pane_id: pane.pane_id, keys: ["alt+up"] }]] };
+			await guard(session, found, pane, { key, remote });
+			return { keys: [key], double: false, calls: [["pane.send_input", { pane_id: pane.pane_id, keys: [key] }]] };
 		},
 		/** The body as one pad key (or Stop's Escape), or why not, before Herdr is asked; a request that passes counts toward the rate. */
 		check(session: string, json: Record<string, unknown>, remote = false): Asked | Reply {

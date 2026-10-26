@@ -7,6 +7,7 @@ import { type Answer, type Bus, type Dialog, OWNERS, type OwnerAdapter, type Ver
 import { type Cmd, listCommands, MAX_PREFIX } from "./commands.ts";
 import type { Queued } from "./net.ts";
 import { type Editor, probeEditor } from "./probe.ts";
+import { dequeueKey } from "./dequeuebind.ts";
 import { joined, MAX_PULL, type Pull, pulled } from "./pull.ts";
 import { type Monitor, trackMonitors } from "./monitors.ts";
 import { todoOfBranch, type TodoSum } from "./todo.ts";
@@ -26,9 +27,9 @@ import { todoOfBranch, type TodoSum } from "./todo.ts";
 // first (`stash-check`, stash.ts) whether the session can be put away and resumed losing nothing; that question never quits anything.
 // It relays the session's queue too: pi tells extensions only whether messages wait (hasPendingMessages), so the bridge keeps what it saw
 // typed while the agent works (`input` with a streaming behavior) and drops one when its user message starts; a queue pi emptied another
-// way (Esc, Alt+Up) clears at the next check. And it relays the session's background monitors (monitors.ts) and its todo list in short (todo.ts), read
+// way (Esc, the dequeue key) clears at the next check. And it relays the session's background monitors (monitors.ts) and its todo list in short (todo.ts), read
 // from the branch after each tool call and turn, and after a move in the tree.
-// A queue the page takes back (`pull`, pull.ts) is pi's own Alt+Up: the server presses it between a `begin` and a `finish`, and the bridge reads the pulled
+// A queue the page takes back (`pull`, pull.ts) is pi's own dequeue key (Alt+Up, Alt+Q on Windows and WSL, or the user's binding, which `begin` names: dequeuekey.ts): the server presses it between a `begin` and a `finish`, and the bridge reads the pulled
 // messages off the editor, checks them against its own mirror of the queue, leaves the draft that was there, and hands over only the messages; the messages
 // handed over stay kept for ten minutes, for the same take-back (its `take` id) asked again when the answer did not reach the page.
 // A secret_drop is answered in the terminal only (SB-F001: intercom identities are self-reported, so a relayed secret dialog could be answered
@@ -71,7 +72,7 @@ interface Rec { adapter: OwnerAdapter; d: Dialog; state: "open" | "settling" | "
 type Event = { type: string; fromSessionId?: string; owner?: { sessionId: string; epoch: string }; payload?: Record<string, unknown> };
 
 /** `close` quits the session (keeping its pane when `keepPane`), or says why it cannot. */
-export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env: NodeJS.ProcessEnv; dir: string; local(): LocalHub | undefined; close(keepPane: boolean): string | undefined }): Bridge {
+export function startBridge(pi: ExtensionAPI, { env, dir, local, close, platform = process.platform }: { env: NodeJS.ProcessEnv; dir: string; local(): LocalHub | undefined; close(keepPane: boolean): string | undefined; platform?: string }): Bridge {
 	const bus = pi.events as Bus, bridgeId = randomUUID(), recs = new Map<string, Rec>(), calls = new Map<string, { tool: string; signal?: AbortSignal; stop?: () => void }>();
 	const chans = new Map<string, Channel>(), me = () => env.PI_INTERCOM_SESSION_ID ?? "";
 	let g: string | undefined, gpid = 0, seen: number | undefined, poll: ReturnType<typeof setInterval> | undefined, offs: (() => void)[] = [], warned = false;
@@ -149,15 +150,17 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 			const before = text();
 			if (before === undefined) return { reason: "no_editor" };
 			if (!waits()) return { pending: false };
+			const key = dequeueKey({ platform, env }); // pi's own binding for it: Alt+Q on Windows and WSL, Alt+Up elsewhere, or what the user's keybindings.json says
+			if (!key) return { reason: "no_key" }; // bound only to keys the server will not press: nothing is sent
 			ticket = { id: randomUUID(), before, expected: joined(queued), at: Date.now(), take: ref };
-			return { pending: true, ticket: ticket.id };
+			return { pending: true, ticket: ticket.id, key };
 		}
 		const t = ticket;
 		if (!t || t.id !== ref || Date.now() - t.at > TICKET_MS) return { reason: "stale" };
 		ticket = undefined;
 		const limit = Math.min(Date.now() + PULL_WAIT_MS, (deadline ?? Infinity) - PULL_MARGIN_MS); // the hub gives up at the deadline: past it, nothing is cleared
 		while (waits() && Date.now() < limit) await new Promise((r) => setTimeout(r, PULL_STEP_MS));
-		if (waits()) return { reason: "not_taken" }; // the key did not reach pi's dequeue (another binding?), or pi was busy
+		if (waits()) return { reason: "not_taken" }; // the key did not reach pi's dequeue (the binding moved since `begin`?), or pi was busy
 		if (queued.length) requeue([]); // the page's queue line goes now, not at the next 2 s check
 		const now = text(), got = now === undefined ? undefined : pulled(t.before, now, t.expected);
 		if (!got) return { reason: "no_editor" };

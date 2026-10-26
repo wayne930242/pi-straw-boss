@@ -446,6 +446,21 @@ test("each stream is named in hello; a page attaches the terminal mirror to its 
 	b.close();
 });
 
+test("a page that reloads gets the net's queued messages at once, from the server's last reading, with or without a change since", async () => {
+	const queued = [{ text: "queued one", as: "steer" as const }, { text: "queued two", as: "followUp" as const }];
+	const withQueue: Net = { bases: [{ id: "w", label: "w", mark: "working", head: false, tower: null, outposts: [], outside: [], tabs: [{ id: "w:t", label: "t", units: [{ id: "u", key: "u", control: true, name: "main", role: "main", mark: "working", subs: [], queued }] }] }] };
+	const gui = await serve(async () => withQueue, { pollMs: 20 });
+	const first = listen(gui);
+	await until(() => first.events.some((e) => e.event === "message"), "the first reading");
+	first.close();
+	for (let reload = 0; reload < 3; reload++) {
+		const page = listen(gui);
+		await until(() => page.events.some((e) => e.event === "message"), "the reloaded page's net");
+		assert.deepEqual((JSON.parse(page.events.find((e) => e.event === "message")!.data) as Net).bases[0]!.tabs[0]!.units[0]!.queued, queued, `reload ${reload}`);
+		page.close();
+	}
+});
+
 test("a server that has not read the net yet names the stream after its first reading, so a page reconnecting to a new server attaches its terminals to a known session", async () => {
 	let release = () => {};
 	const gate = new Promise<void>((resolve) => (release = resolve));
