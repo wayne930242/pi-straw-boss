@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { stateDirOf } from "../agent/paths.ts";
 import { newer } from "../semver.ts";
 import {
-	type Ctx, describe, ensure, guiUrl, herdrListens, isIdentity, detachWarning, lockFor, lockWaitFor, makeCtx, probe, restart, ServerError, serverEnv, stop, takeOver, type Wait, waitReady, within,
+	type Ctx, unreachableText, describe, ensure, guiUrl, herdrListens, isIdentity, detachWarning, lockFor, lockWaitFor, makeCtx, probe, restart, ServerError, serverEnv, stop, takeOver, type Wait, waitReady, within,
 } from "./client.ts";
 import { ACL_TOKEN } from "./acl.ts";
 import { logSize, readFrom, tailLog } from "./log.ts";
@@ -198,6 +198,10 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 			});
 			const plan = await stepOf("version", async () => {
 				const seen = await probe(ctx, deadline), record = seen.record;
+				if (seen.denied && record) {
+					warnings.push({ code: "server_unreachable", text: unreachableText(record) });
+					return { value: "ensure" as const, detail: "a server runs and refused this process" };
+				}
 				if (!seen.live || !record) return { value: "ensure" as const, detail: "no server runs" };
 				if (newer(version, record.version)) return { value: "upgrade" as const, detail: `server ${record.version}, package ${version}` };
 				if (newer(record.version, version)) {

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import { decide, ensure, intercomOf, launch, lockWaitFor, probe, restart, sameBroker, serverEnv, ServerError, SPAWN_OPTIONS, stateOf, stop, takeOver, timersFor } from "../src/server/client.ts";
+import { decide, describe, ensure, intercomOf, launch, lockWaitFor, probe, restart, sameBroker, serverEnv, ServerError, SPAWN_OPTIONS, stateOf, stop, takeOver, timersFor } from "../src/server/client.ts";
 import { fileOf, readLock, readRecord, readStartError, secretDir, type ServerRecord, takeLock, writeRecord, writeStartError } from "../src/server/record.ts";
 import { callControl, listenControl } from "../src/server/socket.ts";
 import { ServerWorld, sleep, until } from "./server-world.ts";
@@ -28,7 +28,8 @@ test("a server is live when its pid runs, started when the record says, and answ
 	const s = await world.start();
 	await s.handle.ready;
 	assert.equal((await probe(world.ctx())).live, true);
-	assert.equal((await probe(world.ctx({ startOf: () => "T-other" }))).live, false, "the pid now belongs to a process that started at another time");
+	// The hello with the secret and the pid is the proof (VM pass 5, F13): no start time is asked for while it answers.
+	assert.equal((await probe(world.ctx({ startOf: () => "T-other" }))).live, true, "an answering server with the secret is that server");
 	assert.equal((await probe(world.ctx({ startOf: () => `T-${s.pid}` }))).live, true);
 	assert.equal((await probe(world.ctx({ startOf: () => undefined }))).live, true, "when ps cannot say the record stands");
 	world.live.delete(s.pid);
@@ -36,6 +37,8 @@ test("a server is live when its pid runs, started when the record says, and answ
 	world.live.add(s.pid);
 	plant({ pid: s.pid, socket: world.record()!.socket, secret: "0".repeat(64), started: `T-${s.pid}` });
 	assert.equal((await probe(world.ctx())).live, false, "alive pid whose socket refuses its secret");
+	assert.equal((await probe(world.ctx({ startOf: () => "T-other" }))).live, false, "and one that started at another time is not it either");
+	assert.equal((await probe(world.ctx({ startOf: () => "T-other" }))).runs, false);
 });
 
 test("stateOf gives each state a shell sees: live, restarting, stopped, gone", async () => {
@@ -649,4 +652,88 @@ test("R7-F004: the scope is pinned by a process that runs only when the record's
 		const found = await probe(world.ctx({ alive: () => true, startOf: () => now }));
 		assert.equal(found.runs, runs, `${started} vs ${now}`);
 	}
+});
+
+// --- VM pass 5, F11: a server that runs and refused this process for lack of permission is alive, never gone ---
+
+import { chmodSync } from "node:fs";
+import { alive as realAlive } from "../src/remote.ts";
+
+/** A control socket of this process's "server" that this process may not open (mode 000): connect gives EACCES, as an elevated server's pipe does for a filtered token. */
+async function deniedServer() {
+	secretDir(world.slot.dir);
+	const socket = join(world.slot.dir, "d.sock");
+	const server = createServer((c) => c.destroy());
+	await new Promise<void>((resolve) => server.listen(socket, resolve));
+	chmodSync(socket, 0o000);
+	writeRecord(world.slot, { pid: process.pid, started: "T-RUN", version: "0.44.0", herdr: world.slot.herdr, mode: "detached", desk: false, intercom: { transport: "default" }, log: "/l", socket, secret: "s".repeat(64), intercomId: "x" } as ServerRecord);
+	return { close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
+}
+
+test("F11: callControl tells an endpoint that refuses this process (EACCES or EPERM) as `denied`, not as no server", async () => {
+	const s = await deniedServer();
+	try {
+		await assert.rejects(callControl(readRecord(world.slot)!.socket, "x", undefined, 1000), (e: unknown) => (e as { failure?: string }).failure === "denied");
+		await assert.rejects(callControl(join(world.slot.dir, "none.sock"), "x", undefined, 1000), (e: unknown) => (e as { failure?: string }).failure === "no-server");
+	} finally {
+		await s.close();
+	}
+});
+
+test("F11: probe says denied (alive, unreachable) and not gone; status shows live with reachable false and a warning; the look starts nothing; up finds it with a warning and starts no second server", async () => {
+	const s = await deniedServer();
+	try {
+		const ctx = world.ctx({ alive: () => true, startOf: () => "T-RUN" });
+		const seen = await probe(ctx);
+		assert.deepEqual([seen.live, seen.denied, seen.runs], [false, true, true]);
+		assert.equal(stateOf(ctx, seen), "live");
+		assert.deepEqual(look({}, seen), { do: "nothing", why: "live" });
+		const shown = await describe(ctx);
+		assert.equal(shown.state, "live");
+		assert.equal(shown.reachable, false);
+		assert.match(String(shown.warning), /runs but this process may not reach it.*elevated shell/);
+		const done = await ensure(ctx, { boss: true });
+		assert.ok("server" in done && done.server === "found");
+		assert.equal(world.spawned.length, 0, "no second server");
+	} finally {
+		await s.close();
+	}
+});
+
+test("F11: stop and restart of a server that refused this process say so (`unreachable`, from an elevated shell) and do not mark it stopped or start another; a gone server is still already-down", async () => {
+	const s = await deniedServer();
+	try {
+		const ctx = world.ctx({ alive: () => true, startOf: () => "T-RUN" });
+		await assert.rejects(stop(ctx), (e: unknown) => e instanceof ServerError && e.code === "unreachable" && /elevated shell/.test(e.message));
+		await assert.rejects(restart(ctx, { reason: "r", boss: true }), (e: unknown) => e instanceof ServerError && e.code === "unreachable");
+		assert.equal(readRecord(world.slot)?.stopped, undefined, "not marked stopped");
+		assert.equal(world.spawned.length, 0);
+		assert.equal((await stop(world.ctx({ alive: () => false }))).outcome, "already-down", "a dead pid is gone");
+	} finally {
+		await s.close();
+	}
+});
+
+test("F11: a process query that is refused (EPERM) counts as alive, one that finds no process as gone", () => {
+	const kill = process.kill;
+	try {
+		process.kill = ((_pid: number) => { throw Object.assign(new Error("EPERM"), { code: "EPERM" }); }) as typeof process.kill;
+		assert.equal(realAlive(4242), true);
+		process.kill = ((_pid: number) => { throw Object.assign(new Error("ESRCH"), { code: "ESRCH" }); }) as typeof process.kill;
+		assert.equal(realAlive(4242), false);
+	} finally {
+		process.kill = kill;
+	}
+});
+
+test("F13: probe asks for no start time when the server answers hello (no PowerShell start for stop or status); it asks when the hello fails", async () => {
+	const asked: number[] = [];
+	const first = await ensure(world.ctx(), { boss: true });
+	assert.ok("server" in first);
+	const ctx = world.ctx({ startOf: (pid) => (asked.push(pid), "T") });
+	const seen = await probe(ctx);
+	assert.equal(seen.live, true);
+	assert.deepEqual(asked, [], "the hello is the proof");
+	assert.equal((await stop(ctx)).outcome, "stopped");
+	assert.deepEqual(asked, [], "and stop asks for none either");
 });

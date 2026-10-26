@@ -135,20 +135,20 @@ test("N3: a failing PowerShell is told by its own words and exit code, not by No
 	const b64 = "A".repeat(2400);
 	const failing = Object.assign(new Error(`Command failed: C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -NonInteractive -EncodedCommand ${b64}\nCannot invoke method.`), { code: 1, killed: false, signal: null });
 	// The script caught the failure before anything was created and said so: that reason is the one that is recorded, and the plain spawn is told it.
-	const before: LaunchExec = (_f, _a, _o, done) => setImmediate(() => done(failing, '{"rc":-1,"pid":0,"markerError":"Cannot create type. Only core types are supported in this language mode."}\r\n', "At line:1 char:1\r\n+ [wmiclass]'Win32_Process'\r\n"));
+	const before: LaunchExec = (_f, _a, _o, done) => setImmediate(() => done(failing, '{"rc":-1,"pid":0,"markerError":"Cannot index into a null array."}\r\n', "At line:1 char:1\r\n+ [wmiclass]'Win32_Process'\r\n"));
 	const plain: SpawnSpec[] = [];
 	const launched = spawnBreakaway(spec(), { exec: before, fallback: (s) => (plain.push(s), { pid: 9, exited: Promise.resolve(0) }) });
 	const { failure, via } = await launched.started!;
 	assert.equal(via, "direct");
-	assert.equal(failure, "the launch script failed before WMI made the process: Cannot create type. Only core types are supported in this language mode.");
+	assert.equal(failure, "the launch script failed before WMI made the process: Cannot index into a null array.");
 	assert.ok(!failure!.includes("AAAA") && !/Command failed/.test(failure!));
 	assert.equal(plain[0]!.args.at(-1), failure, "the reason that is recorded is that line");
 	// No answer at all: PowerShell's message line (not its error id) and the exit code, in a failed start with no second server.
-	const none: LaunchExec = (_f, _a, _o, done) => setImmediate(() => done(failing, `${BEFORE_CREATE}\r\n`, "Cannot create type. Only core types are supported in this language mode.\r\nAt line:1 char:1\r\n+ [wmiclass]'Win32_Process'\r\n    + FullyQualifiedErrorId : CannotCreateTypeConstrainedLanguage\r\n"));
+	const none: LaunchExec = (_f, _a, _o, done) => setImmediate(() => done(failing, `${BEFORE_CREATE}\r\n`, "Cannot index into a null array.\r\nAt line:1 char:1\r\n+ [wmiclass]'Win32_Process'\r\n    + FullyQualifiedErrorId : CannotCreateTypeConstrainedLanguage\r\n"));
 	const second: SpawnSpec[] = [];
 	const silent = await spawnBreakaway(spec(), { exec: none, fallback: (s) => (second.push(s), { pid: 9, exited: Promise.resolve(0) }) }).started!;
 	assert.equal(silent.via, "failed");
-	assert.match(silent.failure!, /^PowerShell gave no usable answer \(Cannot create type\. Only core types are supported in this language mode\., exit code 1\) \(Win32_Process\.Create may still have started the server\)$/);
+	assert.match(silent.failure!, /^PowerShell gave no usable answer \(Cannot index into a null array\., exit code 1\) \(Win32_Process\.Create may still have started the server\)$/);
 	assert.ok(!silent.failure!.includes("AAAA"));
 	assert.equal(second.length, 0);
 });
@@ -527,4 +527,14 @@ test("R7-F001: launch turns a refusal into ServerError start-failed with an acl 
 	} finally {
 		await w.close();
 	}
+});
+
+test("F12: a launch script that stops on Constrained Language Mode (exit 1, no sb-before-create) falls back with the sentence as the reason; the server's own check then says it the same way", async () => {
+	const died = Object.assign(new Error("Command failed: powershell.exe -EncodedCommand AAAA"), { code: 1, killed: false, signal: null });
+	const exec: LaunchExec = (_f, _a, _o, done) => setImmediate(() => done(died, "", "sb-constrained-language\r\nAt line:1 char:1\r\n"));
+	const plain: SpawnSpec[] = [];
+	const started = await spawnBreakaway(spec(), { exec, fallback: (s) => (plain.push(s), { pid: 9, exited: new Promise(() => {}) }) }).started!;
+	assert.equal(started.via, "direct");
+	assert.equal(started.failure, "PowerShell runs in Constrained Language Mode (likely a policy); pi-straw-boss needs FullLanguage for its permission check, exit code 1");
+	assert.equal(plain[0]!.args.at(-1), started.failure);
 });

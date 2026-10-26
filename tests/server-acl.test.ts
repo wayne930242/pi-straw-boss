@@ -254,7 +254,7 @@ test("asciiLine keeps the last non-empty line as printable ASCII, at most 120 ch
 
 test("N-F006: a PowerShell 5.1 error is told by its message (the first line before the 'At line' position and the '+' lines), not by its FullyQualifiedErrorId at the end", () => {
 	const clm = [
-		"Cannot create type. Only core types are supported in this language mode.",
+		"Cannot index into a null array.",
 		"At line:3 char:8",
 		"+ $si = ([wmiclass]'Win32_ProcessStartup').CreateInstance()",
 		"+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
@@ -263,7 +263,7 @@ test("N-F006: a PowerShell 5.1 error is told by its message (the first line befo
 		"",
 	].join("\r\n");
 	const thrown = ["icacls failed with exit code 5", "At line:1 char:1", '+ throw "icacls failed with exit code 5"', "+ ~~~~~", "    + CategoryInfo          : OperationStopped: (icacls failed with exit code 5:String) [], RuntimeException", "    + FullyQualifiedErrorId : icacls failed with exit code 5", ""].join("\r\n");
-	assert.equal(execFailure(Object.assign(new Error("Command failed: x"), { code: 1 }), clm), "Cannot create type. Only core types are supported in this language mode., exit code 1");
+	assert.equal(execFailure(Object.assign(new Error("Command failed: x"), { code: 1 }), clm), "Cannot index into a null array., exit code 1");
 	assert.equal(execFailure(Object.assign(new Error("Command failed: x"), { code: 1 }), thrown), "icacls failed with exit code 5, exit code 1");
 	assert.equal(messageLine("\r\n\r\nAt line:1\r\n+ x\r\n"), "+ x", "when nothing else is there, the last line stands");
 	assert.equal(messageLine(["first", "second"].join("\n")), "first", "plain text: the first line");
@@ -316,4 +316,9 @@ test("R7-F002: a folder below that another account owns is a problem (named by p
 	assert.throws(() => readMarker(marker({ folders: [theirs] }), "C:\\s", 4321), /belongs to another account/);
 	assert.deepEqual(parseAclOutput(JSON.stringify({ ...base, folders: mine })).folders, [mine], "one folder is not turned into a list by PowerShell");
 	assert.deepEqual(parseAclOutput(JSON.stringify(base)).folders, []);
+});
+
+test("F12: applyAcl under Constrained Language Mode fails with the sentence, not `?`s", async () => {
+	const exec: Exec = (_f, _a, _o, done) => done(Object.assign(new Error("Command failed: x"), { code: 1 }), "", "sb-constrained-language\r\n");
+	await assert.rejects(applyAcl("C:\\s", exec), (e: unknown) => e instanceof AclError && /Constrained Language Mode \(likely a policy\).*exit code 1/.test((e as Error).message));
 });

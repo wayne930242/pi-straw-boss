@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { existsSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { alive as pidAlive } from "../remote.ts";
 import { powershellPath, system32 } from "../winpath.ts";
-import { ACL_STEPS, aclMarkerPath, asciiJson, asciiLine, execFailure, POWERSHELL_FLAGS, PROGRESS_OFF, UTF8_OUT } from "./acl.ts";
+import { ACL_STEPS, aclMarkerPath, asciiJson, asciiLine, CLM_CHECK, execFailure, POWERSHELL_FLAGS, PROGRESS_OFF, UTF8_OUT } from "./acl.ts";
 import type { Launched, SpawnSpec, Started } from "./client.ts";
 
 // The detached server on Windows, started outside the starter's job object (docs/specs/2026-10-26-sb-backend.md, Process model and lifecycle). Node's `detached: true` does not break away from
@@ -53,6 +53,7 @@ export const BEFORE_CREATE = "sb-before-create";
 export const LAUNCH_SCRIPT = [
 	UTF8_OUT,
 	PROGRESS_OFF,
+	CLM_CHECK,
 	"$ErrorActionPreference = 'Stop'",
 	// What the answer says is the source of truth for the starter: `created` turns true the moment WMI says it made the process, and from then on nothing in this script may end without the
 	// answer line (a failure of the check or of the marker is reported in it as `markerError`), so the starter never starts a second server for a first that exists.

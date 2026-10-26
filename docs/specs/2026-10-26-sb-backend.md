@@ -451,6 +451,21 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
     - **`stop` on a folder that is not the caller's** (F8) cannot take the lock; its message says that a server in it was started by
       another account, to stop it from that account (an elevated shell for an elevated run), or end its process; the sentence is added only
       to the owner and protect refusals (exit 5, 1307, 1314), other acl failures keep their own words.
+    - **A server that runs and refused this process is alive, never gone** (VM pass 5, F11). An elevated server's pipe has a default DACL
+      that a filtered token of the same user cannot open: the control connection fails with `EACCES` or `EPERM` (`ControlError` `denied`,
+      told apart from `ENOENT` and `ECONNREFUSED`, which are "no server"), while the process itself is alive (a refused process query,
+      `EPERM`, already counts as alive). `probe` then returns `denied` with `runs` true: `status` says `live` with `reachable: false` and a
+      warning; the look and `ensure` find it and start no second server (`up` adds the warning `server_unreachable`); `stop` and `restart`
+      refuse with `unreachable` ("… runs but this process may not reach it: it was probably started from an elevated pi or shell … stop or
+      restart it from an elevated shell") and never mark the record stopped; the scope stays pinned. Only a hello that answers with the
+      secret makes a server `live`.
+    - **The hello comes before any start-time lookup** (F13). A server that answers hello with the secret and its pid is that server, so
+      `probe` (and with it `stop`, `status` and a second `up`) asks for no start time, which on Windows was a PowerShell start of its own.
+      The start time is asked for only when the hello fails (a server slow to answer, a reused pid).
+    - **Constrained Language Mode is told as that** (F12). Both PowerShell scripts check `$ExecutionContext.SessionState.LanguageMode` first
+      and throw the ASCII word `sb-constrained-language`; `execFailure` turns that word, and the engine's English refusals ("only core types
+      are supported in this language mode"), into one sentence: "PowerShell runs in Constrained Language Mode (likely a policy);
+      pi-straw-boss needs FullLanguage for its permission check", with the exit code, instead of the localized text that came out as `?`s.
     - **No PowerShell failure text is CLIXML.** Windows PowerShell 5.1 started with `-EncodedCommand` and a redirected stderr writes
       `#< CLIXML` + `<Objs …>` to stderr even on success (the progress records of preparing modules the first time). Every PowerShell call
       (`acl.ts`, `breakaway.ts`, `startof.ts`) is started with `-OutputFormat Text`, its script sets `$ProgressPreference =

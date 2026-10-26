@@ -12,7 +12,7 @@ import {
 	type Slot, type StartError, takeLock, TOUCH_MS, touchRestarting, updateRecord,
 } from "./record.ts";
 import { resetFileAcl } from "./winprep.ts";
-import { callControl, ControlError, helloOf, type Reply } from "./socket.ts";
+import { callControl, ControlError, helloWhy, type Reply } from "./socket.ts";
 
 // What reaches the server from outside it (docs/specs/2026-10-26-sb-backend.md, Starting, Stopping, Restarts and upgrades): a pi session's look, the shell's `cli.mjs`, a
 // supervisor's `serve`. All of them judge liveness the same way, take `server.lock` before they start or restart anything, and start the server from their own package.
@@ -156,6 +156,8 @@ export interface Probe {
 	live: boolean;
 	/** The record's process runs (pid alive, started when the record says) whether or not it answered hello in time: a server that is slow to answer still has its broker scope. */
 	runs?: boolean;
+	/** The record's process runs but its control endpoint refused this process for lack of permission (a server started from an elevated shell, a filtered token now): alive, not reachable, never gone. */
+	denied?: boolean;
 	hello: Reply | undefined;
 }
 /** Whether the process that wrote the record still runs: its pid is alive and started when the record says (a pid reused after a crash started later). */
@@ -171,12 +173,17 @@ export function runsAs(ctx: Pick<Ctx, "alive" | "startOf">, record: Pick<ServerR
 export async function probe(ctx: Ctx, deadline?: number, startKnownElsewhere = false): Promise<Probe> {
 	const record = readRecord(ctx.slot);
 	// A record with no socket is a start that has not got far enough to listen (`markStarting`): there is nothing to ask.
-	if (!record || !record.socket || !runsAs(ctx, record, startKnownElsewhere)) return { record, live: false, runs: false, hello: undefined };
-	const hello = await helloOf(record.socket, record.secret, within(ctx, deadline, HELLO_MS));
-	// `runs` pins the broker scope for a server that is slow to answer: only on positive evidence that this is that server (the start time the record names is the one the pid has now), so a pid
-	// reused after a crash, or a record with no start time, pins nothing.
+	if (!record || !record.socket || !ctx.alive(record.pid)) return { record, live: false, runs: false, hello: undefined };
+	// The hello comes first: a server that answers it with the secret and its pid is that server, and no start time has to be asked for (on Windows that is a PowerShell start for a process that
+	// is not this one: `stop` and `status` made one each; VM pass 5, F13). The start time is looked at only when it did not answer.
+	const { hello, denied } = await helloWhy(record.socket, record.secret, within(ctx, deadline, HELLO_MS));
 	const live = Boolean(hello && hello.pid === record.pid);
-	return { record, live, runs: live || (Boolean(record.started) && ctx.startOf(record.pid) === record.started), hello };
+	if (live) return { record, live, runs: true, hello };
+	if (!runsAs(ctx, record, startKnownElsewhere)) return { record, live: false, runs: false, hello: undefined };
+	// `runs` pins the broker scope for a server that is slow to answer: only on positive evidence that this is that server (the start time the record names is the one the pid has now), so a pid
+	// reused after a crash, or a record with no start time, pins nothing. A refusal for lack of permission is a running server that cannot be reached: it is told as that, never as gone.
+	const confirmed = Boolean(record.started) && ctx.startOf(record.pid) === record.started;
+	return { record, live: false, runs: confirmed || denied, ...(denied ? { denied: true } : {}), hello: undefined };
 }
 
 /** Whether Herdr listens at the slot's socket. */
@@ -198,11 +205,13 @@ export type Verdict =
  * and, while that server is live, its broker scope and transport are the record's: a record of a server that is gone (stopped, or crashed) does not pin the scope, and the next start
  * runs in the scope of whoever starts it (VM pass 4, F6). A live server on an older version than the session's is upgraded.
  */
-export function decide(ctx: Pick<Ctx, "version" | "env" | "platform" | "now" | "slot">, seen: Pick<Probe, "record" | "live" | "runs">): Verdict {
-	const { record, live } = seen;
+export function decide(ctx: Pick<Ctx, "version" | "env" | "platform" | "now" | "slot">, seen: Pick<Probe, "record" | "live" | "runs" | "denied">): Verdict {
+	const { record } = seen, live = seen.live;
 	if (record && record.herdr !== ctx.slot.herdr) return { do: "refuse", why: "herdr", text: `the sb server record in ${ctx.slot.dir} names another Herdr socket (${record.herdr}), not ${ctx.slot.herdr}` };
 	// The scope is pinned while the record's process runs (live, or alive and slow to answer): a stopped or dead record pins nothing.
 	if (record && (live || seen.runs === true) && !sameBroker(record.intercom, intercomOf(ctx.env, ctx.platform))) return { do: "refuse", why: "scope", text: "the sb server runs in another pi-intercom scope or transport than this session, so this session uses none" };
+	// A server that runs but refused this process for lack of permission (started from an elevated shell, reached from a filtered token) is there: no second one is started over it, and it is not upgraded from here.
+	if (seen.denied) return { do: "nothing", why: "live" };
 	if (live) return record && newer(ctx.version, record.version) ? { do: "upgrade" } : { do: "nothing", why: "live" };
 	if (record?.stopped) return { do: "nothing", why: "stopped" };
 	if (restartingFresh(record, ctx.now())) return { do: "nothing", why: "restarting" };
@@ -343,7 +352,7 @@ export async function ensure(ctx: Ctx, { boss = false, lockWaitMs = 0, deadline 
 	const lock = await (deadline === undefined ? lockFor(ctx, lockWaitMs) : lockUntil(ctx, deadline));
 	try {
 		let seen = await probe(ctx, deadline);
-		if (boss && seen.record?.stopped && !seen.live && clearStopped(ctx.slot)) seen = { ...seen, record: readRecord(ctx.slot) };
+		if (boss && seen.record?.stopped && !seen.live && !seen.denied && clearStopped(ctx.slot)) seen = { ...seen, record: readRecord(ctx.slot) };
 		const verdict = decide(ctx, seen);
 		if (verdict.do === "nothing" && verdict.why === "live") return { server: "found", record: seen.record! };
 		if (verdict.do !== "start") return { skipped: verdict };
@@ -422,6 +431,7 @@ async function restartLocked(ctx: Ctx, { reason, downgrade, upgrade, boss, limit
 	if (record && record.herdr !== ctx.slot.herdr) throw new ServerError("herdr", `the sb server record names another Herdr socket (${record.herdr}), not ${ctx.slot.herdr}`);
 	// The server runs in the broker scope it was started in, and a requester in another one would move it there: it uses none, and restarts none.
 	if (record && (seen.live || seen.runs === true) && !sameBroker(record.intercom, intercomOf(ctx.env, ctx.platform))) throw new ServerError("scope", "the sb server runs in another pi-intercom scope or transport than this process, so this process does not restart it");
+	if (seen.denied) throw new ServerError("unreachable", unreachableText(record!));
 	if (record?.stopped && !seen.live && !boss) throw new ServerError("stopped", "the sb server was stopped on purpose; /boss server or `cli.mjs up` starts it again");
 	if (record && newer(record.version, ctx.version) && !downgrade) throw new ServerError("older", `the sb server runs pi-straw-boss ${record.version}, newer than this package's ${ctx.version}; a restart from an older package needs --downgrade`);
 	if (boss) clearStopped(ctx.slot);
@@ -496,6 +506,8 @@ export async function stop(ctx: Ctx): Promise<Stopped> {
 		const probed = ctx.now();
 		// As for a restart: the server runs in the broker scope it was started in, and a stop from another one is not its requester's to give.
 		if (seen.record && (seen.live || seen.runs === true) && !sameBroker(seen.record.intercom, intercomOf(ctx.env, ctx.platform))) throw new ServerError("scope", "the sb server runs in another pi-intercom scope or transport than this process, so this process does not stop it");
+		// Running but refused for lack of permission: not down, and not marked stopped.
+		if (seen.denied && seen.record) throw new ServerError("unreachable", unreachableText(seen.record));
 		if (!seen.live || !seen.record) {
 			if (seen.record && !seen.record.stopped) updateRecord(ctx.slot, (r) => ({ ...r, stopped: true }));
 			return { outcome: "already-down" };
@@ -531,10 +543,14 @@ export async function takeOver(ctx: Ctx, old: ServerRecord): Promise<void> {
 	await retire(ctx, old, "serve takes over", false);
 }
 
+/** What is said of a server that runs and refused this process (VM pass 5, F11). */
+export const unreachableText = (record: Pick<ServerRecord, "pid" | "detach">) =>
+	`the sb server (pid ${record.pid}) runs but this process may not reach it: it was probably started from an elevated pi or shell, and this one is not elevated; stop or restart it from an elevated shell`;
+
 /** The state of the server for a shell, from the files and a hello (docs/specs/2026-10-26-sb-backend.md, States for a shell). */
 export type State = "live" | "restarting" | "stopped" | "gone";
-export function stateOf(ctx: Pick<Ctx, "now">, seen: Pick<Probe, "record" | "live">): State {
-	const { record, live } = seen;
+export function stateOf(ctx: Pick<Ctx, "now">, seen: Pick<Probe, "record" | "live" | "denied">): State {
+	const { record } = seen, live = seen.live || seen.denied === true;
 	if (!record) return "gone";
 	if (record.stopped) return "stopped";
 	if (restartingFresh(record, ctx.now())) return "restarting";
@@ -561,6 +577,7 @@ export async function describe(ctx: Ctx): Promise<Record<string, unknown>> {
 			...(record.stopped ? { stopped: true } : {}), ...(record.restarting ? { restarting: record.restarting } : {}), ...(record.lastError ? { lastError: record.lastError } : {}),
 			...(record.lastRestart ? { lastRestart: record.lastRestart } : {}), ...(record.gui ? { gui: record.gui, url: guiUrl(record) } : {}),
 			...(record.detach ? { detach: record.detach, ...(record.detachFailure ? { detachFailure: record.detachFailure } : {}) } : {}), ...(detachWarning(record) ? { warning: detachWarning(record) } : {}),
+			...(seen.denied ? { reachable: false, warning: unreachableText(record) } : {}),
 		} : {}),
 		...(state === "gone" && startError ? { startError } : {}), ...more,
 	};

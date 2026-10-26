@@ -25,6 +25,13 @@ export const asciiJson = (variable: string) => `[regex]::Replace(${variable}, '[
  */
 export const POWERSHELL_FLAGS = ["-NoProfile", "-NonInteractive", "-OutputFormat", "Text"];
 export const PROGRESS_OFF = "$ProgressPreference = 'SilentlyContinue'";
+/**
+ * Under Constrained Language Mode (a machine policy: AppLocker, WDAC, `__PSLockdownPolicy`) the scripts' .NET calls fail with a localized text that comes out as `?`s. A script says so first, in ASCII:
+ * a fixed word that `execFailure` turns into one clear sentence (VM pass 5, F12).
+ */
+export const CLM_WORD = "sb-constrained-language";
+export const CLM_CHECK = `if ($ExecutionContext.SessionState.LanguageMode -ne 'FullLanguage') { throw '${CLM_WORD}' }`;
+export const CLM_TEXT = "PowerShell runs in Constrained Language Mode (likely a policy); pi-straw-boss needs FullLanguage for its permission check";
 /** The first line of every script that prints an answer: the console's output encoding, which may fail where no console is attached. */
 export const UTF8_OUT = "try { [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false) } catch { }";
 
@@ -67,7 +74,7 @@ export const ACL_STEPS = [
  * reset to inherit from the folder by one `icacls <dir>\* /reset /T /C /Q`, whatever the number of items (a call per item took a process each, link/inbox alone holds up to 500); a file
  * created later inherits the owner and SYSTEM from the folder.
  */
-export const ACL_SCRIPT = [UTF8_OUT, PROGRESS_OFF, "$ErrorActionPreference = 'Stop'", ...ACL_STEPS, "$json = $out | ConvertTo-Json -Compress -Depth 4", asciiJson("$json")].join("\n");
+export const ACL_SCRIPT = [UTF8_OUT, PROGRESS_OFF, CLM_CHECK, "$ErrorActionPreference = 'Stop'", ...ACL_STEPS, "$json = $out | ConvertTo-Json -Compress -Depth 4", asciiJson("$json")].join("\n");
 
 /** The PowerShell call: `-EncodedCommand` (UTF-16LE base64) so no quoting of the script can go wrong; `windowsHide` keeps its console off the desktop. */
 export function aclCommand(dir: string, env: NodeJS.ProcessEnv = process.env, timeout = ACL_MS, pid: number = process.pid) {
@@ -228,7 +235,9 @@ const run: Exec = (file, args, options, done) => execFile(file, args, options, (
  */
 export function execFailure(error: Error & { code?: unknown; status?: unknown }, stderr?: unknown, stdout?: unknown): string {
 	// Where stderr has no message (progress records only, or nothing) the last line of stdout stands; the exit code always follows.
-	const last = messageLine(stderr) || asciiLine(stdout);
+	let last = messageLine(stderr) || asciiLine(stdout);
+	// Constrained Language Mode: the script's own word, or the English text of the engine's refusal (a localized one is `?`s, which is why the script says it first).
+	if (last.includes(CLM_WORD) || /only core types are supported in this language mode|supported only on core types in this language mode|constrained language mode/i.test(last)) last = CLM_TEXT;
 	const code = typeof error.code === "number" ? error.code : typeof error.status === "number" ? error.status : undefined;
 	const first = error.message.split(/\r?\n/)[0] ?? "";
 	const text = last || (/^Command failed:/.test(first) ? "" : asciiLine(first));

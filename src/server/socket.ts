@@ -142,7 +142,8 @@ function acceptsConnections(endpoint: string, platform: NodeJS.Platform): Promis
 	});
 }
 
-export type ControlFailure = "no-server" | "refused" | "timeout" | "error";
+/** `denied`: the endpoint is there and this process may not open it (access denied on the pipe or socket: a server started from an elevated shell, reached from a filtered token of the same user). */
+export type ControlFailure = "no-server" | "refused" | "timeout" | "error" | "denied";
 export class ControlError extends Error {
 	failure: ControlFailure;
 	constructor(failure: ControlFailure, message: string) {
@@ -183,11 +184,22 @@ export function callControl(endpoint: string, secret: string, request: Request |
 			}
 		});
 		conn.on("timeout", () => finish(new ControlError("timeout", `no answer within ${timeoutMs} ms`)));
-		conn.on("error", (error) => finish(new ControlError(["ENOENT", "ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code ?? "") ? "no-server" : "error", error.message)));
+		conn.on("error", (error) => {
+			const code = (error as NodeJS.ErrnoException).code ?? "";
+			finish(new ControlError(["ENOENT", "ECONNREFUSED"].includes(code) ? "no-server" : ["EACCES", "EPERM"].includes(code) ? "denied" : "error", error.message));
+		});
 		conn.on("close", () => finish(new ControlError("refused", "the server closed the connection without an answer")));
 	});
 }
 
+/** Like `helloOf`, and says when the endpoint refused this process for lack of permission (`denied`: not "no server"). */
+export async function helloWhy(endpoint: string, secret: string, ms = 2000): Promise<{ hello?: Reply; denied: boolean }> {
+	try {
+		return { hello: (await callControl(endpoint, secret, undefined, ms)).hello, denied: false };
+	} catch (error) {
+		return { denied: error instanceof ControlError && error.failure === "denied" };
+	}
+}
 /** Whether a server answers hello at `endpoint` within `ms`; its facts when it does. */
 export async function helloOf(endpoint: string, secret: string, ms = 2000): Promise<Reply | undefined> {
 	try {
