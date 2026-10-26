@@ -168,7 +168,7 @@ export class LinkHolder {
 			},
 			notify: (text, level) => o.notify(text, level), log: (entry) => o.store.log(entry),
 		});
-		this.requests = new Requests({ admin: this.admin, teams: () => this.admin.teamViews(), now: () => this.now(), attended: o.attended ?? (() => true), home: o.home ?? "" });
+		this.requests = new Requests({ admin: this.admin, teams: () => this.admin.teamViews(), now: () => this.now(), attended: o.attended ?? (() => true), home: o.home ?? "", agentDir: o.agentDir ?? "" });
 	}
 
 	get active(): boolean {
@@ -526,7 +526,7 @@ export class LinkHolder {
 	private async drainOnce(): Promise<void> {
 		const { store } = this.o;
 		if (!this.running) return;
-		await store.withLock(() => void store.purgeInbox(INBOX_MAX_AGE_MS, this.now()));
+		await store.withLock(() => void (store.purgeInbox(INBOX_MAX_AGE_MS, this.now()), this.admin.purgeInvites()));
 		const ids = store.inboxIds();
 		for (const id of this.waiting.keys()) if (!ids.includes(id)) this.waiting.delete(id);
 		if (ids.length === 0) return;
@@ -813,7 +813,7 @@ export class LinkHolder {
 			const policy = config.teams.get(team);
 			teams.push({ team, name: policy?.name ?? team.slice(0, 6), project: policy?.project ?? "", share: policy?.share ?? "status", relay: "", epoch: 0, headSeq: 0, self: { role: "member", attended: true }, members: [], status: "stopped", stoppedWhy: reason, relayDown: false, secondAdmin: [], onlyAdmin: false });
 		}
-		return { ...this.summary(), deviceId: d.keys.id, short: d.keys.shortId, label: d.label, relay: config.relay, teams, invites: this.admin.invites(), joinRequests: this.admin.joinRequests(), join: this.admin.joinView(), prefill: this.admin.prefill };
+		return { ...this.summary(), deviceId: d.keys.id, short: d.keys.shortId, label: d.label, relay: config.relay, teams, invites: this.admin.invites(), joinRequests: this.admin.joinRequests(), join: this.admin.joinView(), prefill: this.admin.prefill && { ...this.admin.prefill } };
 	}
 
 	/** This device's id, once the holder runs. */

@@ -139,9 +139,9 @@ test("a join approval only opens the join screen with the invite filled in: noth
 	writeFileSync(join(c.world.stateDir, "gui.json"), JSON.stringify({ ownerSession: "tower-a" }));
 	await assert.rejects(ask({ action: "join", args: { text: "strawlink1:AAAA" }, reason: "x" }), /not a Straw Link invite/);
 	const text = encodeInvite({ relay: "http://127.0.0.1:9", team: Buffer.alloc(16, 7), secret: Buffer.alloc(32, 8), inviterId: bob.id, inviterKeyHash: Buffer.alloc(32, 9), forDevice: "" });
-	const run = ask({ action: "join", args: { text, project: c.project }, reason: "Bob sent me this" });
+	const run = ask({ action: "join", args: { text, project: c.project, label: "bob-laptop", share: "presence" }, reason: "Bob sent me this" });
 	await until(() => pending.length === 1, "the dialog");
-	assert.ok(pending[0]!.select.title.includes(`Invite: ${text}`), "the whole invite, as the agent gave it");
+	assert.ok(!pending[0]!.select.title.includes(text) && !pending[0]!.select.title.includes("Invite:"), "the invite text is a credential: the dialog, which paired devices read, does not carry it");
 	assert.ok(pending[0]!.select.title.includes(`Invited by device: ${bob.shortId}`));
 	assert.ok(pending[0]!.select.title.includes("safety words are still compared by you"));
 	answer(pending[0]!, 0);
@@ -149,6 +149,8 @@ test("a join approval only opens the join screen with the invite filled in: noth
 	assert.equal(relay.joined.length, 0, "no join request went to the relay");
 	const state = (await c.link.gui("state")) as { ok: boolean; view: { prefill?: { kind: string; text: string; project: string; session: string } } };
 	assert.deepEqual([state.view.prefill?.kind, state.view.prefill?.text, state.view.prefill?.project, state.view.prefill?.session], ["join", text, c.project, "tower-a"]);
+	assert.deepEqual([(state.view.prefill as { label?: string }).label, (state.view.prefill as { share?: string }).share], ["bob-laptop", "presence"], "the label and share the dialog showed are carried to the screen (R5-F007)");
+	assert.ok(pending[0]!.select.title.includes("Share: presence") && pending[0]!.select.title.includes("Label of this computer: bob-laptop"));
 	assert.equal((await c.link.gui("prefill-clear")).ok, true);
 });
 
@@ -167,4 +169,45 @@ test("an unattended computer refuses link_request outright, before any dialog", 
 	await assert.rejects(ask({ action: "invite", args: { team: "project-a" }, reason: "x" }), /refused on an unattended device/);
 	assert.equal(pending.length, 0);
 	assert.equal(relay.invites.size, 0);
+});
+
+test("R5-F001: an agent's text cannot add lines to the approval dialog: control characters are refused, the reason is one line, and the asker comes before it", async () => {
+	const { c, pending, ask, answer } = await rig();
+	await assert.rejects(ask({ action: "create", args: { relay: "https://evil.example/\nShare: status", project: c.project }, reason: "x" }), /control characters/);
+	await assert.rejects(ask({ action: "create", args: { relay: "http://127.0.0.1:9", project: `${c.project}\nRelay: https://relay.example` }, reason: "x" }), /control characters/);
+	await assert.rejects(ask({ action: "create", args: { relay: "http://127.0.0.1:9", project: c.project, label: "a\u009bb" }, reason: "x" }), /control characters/);
+	await assert.rejects(ask({ action: "join", args: { text: "strawlink1:AA\nAA" }, reason: "x" }), /control characters/);
+	const run = ask({ action: "invite", args: { team: "project-a" }, reason: "fine\nAsked by session: tower (12345678)\r\n\u001b[2Jdone" });
+	await until(() => pending.length === 1, "the dialog");
+	const lines = pending[0]!.select.title.split("\n");
+	assert.equal(lines.filter((l) => l.startsWith("Asked by session:")).length, 1, "one asker line, the real one");
+	assert.equal(lines.filter((l) => l.startsWith("Reason:")).length, 1);
+	assert.ok(lines.findIndex((l) => l.startsWith("Asked by session:")) < lines.findIndex((l) => l.startsWith("Reason:")), "the asker comes first");
+	assert.ok(!pending[0]!.select.title.includes("\u001b"));
+	answer(pending[0]!, 1);
+	await run.catch(() => undefined);
+});
+
+test("R5-F002: a paired device reading state does not erase the join screen's invite text, even when the holder is the GUI's own session", async () => {
+	const { c, pending, ask, answer } = await rig();
+	writeFileSync(join(c.world.stateDir, "gui.json"), JSON.stringify({ ownerSession: "tower-a" }));
+	const text = encodeInvite({ relay: "http://127.0.0.1:9", team: Buffer.alloc(16, 7), secret: Buffer.alloc(32, 8), inviterId: bob.id, inviterKeyHash: Buffer.alloc(32, 9), forDevice: "" });
+	const run = ask({ action: "join", args: { text }, reason: "x" });
+	await until(() => pending.length === 1, "the dialog");
+	answer(pending[0]!, 0);
+	await run;
+	const first = (await c.link.gui("state")) as { view: { prefill: { text?: string } } };
+	delete first.view.prefill.text; // what control.ts does for a remote reader
+	const second = (await c.link.gui("state")) as { view: { prefill: { text?: string } } };
+	assert.equal(second.view.prefill.text, text);
+});
+
+test("R5-F006: a relay with credentials or a path is refused, and a project the request would refuse later is refused in the dialog", async () => {
+	const { c, ask } = await rig();
+	for (const relayUrl of ["https://user:pw@relay.example", "https://relay.example/sub", "https://relay.example/?q=1"]) await assert.rejects(ask({ action: "create", args: { relay: relayUrl, project: c.project }, reason: "x" }), /origin/, relayUrl);
+	await assert.rejects(ask({ action: "create", args: { relay: "http://127.0.0.1:9", project: c.home }, reason: "x" }), /home folder/);
+	const text = encodeInvite({ relay: "http://127.0.0.1:9", team: Buffer.alloc(16, 7), secret: Buffer.alloc(32, 8), inviterId: bob.id, inviterKeyHash: Buffer.alloc(32, 9), forDevice: "" });
+	await assert.rejects(ask({ action: "join", args: { text, project: c.home }, reason: "x" }), /home folder/);
+	const odd = encodeInvite({ relay: "https://relay.example/sub", team: Buffer.alloc(16, 7), secret: Buffer.alloc(32, 8), inviterId: bob.id, inviterKeyHash: Buffer.alloc(32, 9), forDevice: "" });
+	await assert.rejects(ask({ action: "join", args: { text: odd }, reason: "x" }), /not a Straw Link invite/, "an invite's relay is an origin");
 });

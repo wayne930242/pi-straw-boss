@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import { readLinkConfig } from "../src/link/config.ts";
+import { decoyWords, shuffled } from "../src/link/admin.ts";
+import { editLinkConfig, readLinkConfig } from "../src/link/config.ts";
+import { safetyWords } from "../src/link/join.ts";
 import { LinkHolder } from "../src/link/holder.ts";
 import { LinkStore } from "../src/link/store.ts";
 import { FakeRelay } from "./link/fake-relay.ts";
@@ -227,4 +229,54 @@ test("the invite text of one still on disk can be shown again, and a cancelled i
 	assert.equal(a.holder.view().invites.length, 1);
 	await a.holder.admin.cancelInvite(made.hash);
 	assert.equal(a.holder.admin.inviteText(made.hash).ok, false);
+});
+
+test("R5-F008: a lapsed invite file, with its secret, is deleted on the purge", async () => {
+	const a = await computer("a", "alice-mac");
+	const id = await team(a);
+	const made = await a.holder.admin.invite({ team: id });
+	assert.ok(made.ok);
+	assert.equal(a.store.invites().length, 1);
+	await a.store.withLock(() => a.holder.admin.purgeInvites());
+	assert.equal(a.store.invites().length, 1, "a live invite stays");
+	a.clock.skew = 11 * 60_000;
+	assert.equal(await a.store.withLock(() => a.holder.admin.purgeInvites()), 1);
+	assert.equal(a.store.invites().length, 0);
+});
+
+test("R5-F009: cancelling an invite also ends the join request waiting on it", async () => {
+	const a = await computer("a", "alice-mac"), b = await computer("b", "bob-mac");
+	const id = await team(a);
+	const { started, request } = await pair(a, b, id);
+	const pick = rightPick(a, started.words);
+	await a.holder.admin.cancelInvite(request.id);
+	assert.equal(a.holder.admin.joinRequests().length, 0);
+	const late = await a.holder.admin.decide({ id: request.id, pick });
+	assert.equal(late.ok, false, "nothing to approve");
+});
+
+test("R5-F010: the decoys and the order of the sets come from the invite secret, so a re-delivered request shows the same three sets", async () => {
+	const a = await computer("a", "alice-mac"), b = await computer("b", "bob-mac");
+	const id = await team(a);
+	const { invite, started, request } = await pair(a, b, id);
+	assert.ok(invite.ok);
+	const secret = Buffer.from(a.store.readInvite(invite.hash)!.secret, "hex");
+	assert.notDeepEqual(decoyWords(secret, 0), decoyWords(secret, 1));
+	assert.deepEqual(decoyWords(secret, 0), decoyWords(Buffer.from(secret), 0));
+	assert.notDeepEqual(decoyWords(secret, 0), decoyWords(Buffer.alloc(32, 1), 0));
+	assert.deepEqual(request.sets, shuffled([started.words, decoyWords(secret, 0), decoyWords(secret, 1)], secret));
+	assert.deepEqual(shuffled([1, 2, 3, 4, 5, 6], secret), shuffled([1, 2, 3, 4, 5, 6], secret));
+	assert.ok(safetyWords);
+});
+
+test("R5-F011: editing config.json writes through a symlink and leaves the link in place", async () => {
+	const real = join(root, "dotfiles");
+	mkdirSync(real, { recursive: true });
+	writeFileSync(join(real, "config.json"), JSON.stringify({ towerModel: "keep-me" }));
+	const stateDir = join(root, "state");
+	mkdirSync(stateDir);
+	symlinkSync(join(real, "config.json"), join(stateDir, "config.json"));
+	editLinkConfig(stateDir, (link) => void (link.relay = "http://127.0.0.1:9"));
+	assert.ok(lstatSync(join(stateDir, "config.json")).isSymbolicLink(), "still a link");
+	assert.deepEqual(JSON.parse(readFileSync(join(real, "config.json"), "utf8")), { towerModel: "keep-me", link: { relay: "http://127.0.0.1:9" } });
 });

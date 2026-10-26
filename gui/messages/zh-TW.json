@@ -434,6 +434,7 @@
 	"link_rotate_sure": "輪換？再按一次",
 	"link_leave": "離開",
 	"link_leave_sure": "離開？再按一次",
+	"link_leave_only_admin_sure": "離開？你是唯一的管理員，離開後沒有人能移除裝置或輪換金鑰。再按一次仍要離開",
 	"link_second_admin": "這台電腦是團隊唯一有人值守的管理員。它一旦遺失，就沒有人能移除裝置或輪換金鑰。請再指定一位有人值守的管理員：",
 	"link_no_project": "沒有專案",
 	"link_no_teams": "這台電腦還沒有團隊。建立一個，或用邀請加入。",

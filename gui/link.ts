@@ -164,7 +164,7 @@ function mount(): HTMLElement {
 			button(m.link_invite(), () => invite(t)),
 			button(m.link_invite_unattended(), () => void ((unattendedForm.hidden = !unattendedForm.hidden), pinned.set(t.team, { open: !unattendedForm.hidden, text: unattended.value }), unattended.focus())),
 			t.self.role === "admin" && sure(m.link_rotate(), m.link_rotate_sure(), () => act("rotate", { team: t.team })),
-			sure(m.link_leave(), m.link_leave_sure(), () => act("leave", { team: t.team, force: t.onlyAdmin })),
+			sure(m.link_leave(), t.onlyAdmin && t.members.length > 1 ? m.link_leave_only_admin_sure() : m.link_leave_sure(), () => act("leave", { team: t.team, force: t.onlyAdmin })),
 		));
 		card.append(table, acts, unattendedForm);
 		return card;
@@ -284,11 +284,14 @@ function mount(): HTMLElement {
 			if (v.prefill.kind === "join") {
 				if (v.prefill.text) pasteIn.value = v.prefill.text;
 				if (v.prefill.project) void joinPick.picker.go(v.prefill.project);
+				if (v.prefill.label) joinLabel.value = v.prefill.label;
+				if (v.prefill.share) joinShare.value = v.prefill.share;
 				joinBox.open = true;
 			} else {
 				if (v.prefill.relay) relayIn.value = v.prefill.relay;
 				if (v.prefill.project) void createPick.picker.go(v.prefill.project);
 				if (v.prefill.share) shareIn.value = v.prefill.share;
+				if (v.prefill.label) labelIn.value = v.prefill.label;
 				createBox.open = true;
 			}
 			status.textContent = m.link_prefilled({ reason: v.prefill.reason });

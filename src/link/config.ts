@@ -1,5 +1,5 @@
-import { chmodSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { chmodSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { projectProblem } from "./routing.ts";
 
 // What the user chose, in `<pi agent dir>/straw-boss/config.json` under `link` (docs/specs/2026-10-25-straw-link.md, Storage and policy):
@@ -55,7 +55,9 @@ export function readLinkConfig(stateDir: string, { home, agentDir }: { home: str
  * this section do not interleave; the file itself is replaced by a rename, so a reader sees the old file or the new one.
  */
 export function editLinkConfig(stateDir: string, edit: (link: Record<string, unknown>) => void): void {
-	const path = join(stateDir, "config.json");
+	let path = join(stateDir, "config.json");
+	// A config.json that is a symlink (a dotfile setup) keeps being one: the file written is the one it points to.
+	try { path = realpathSync(path); } catch { /* no file yet */ }
 	let root: Record<string, unknown> = {};
 	try {
 		const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
@@ -67,7 +69,7 @@ export function editLinkConfig(stateDir: string, edit: (link: Record<string, unk
 	const link = isObject(root.link) ? root.link : {};
 	edit(link);
 	root.link = link;
-	mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
 	const mode = statSync(path, { throwIfNoEntry: false })?.mode ?? 0o600, tmp = `${path}.${process.pid}.tmp`;
 	writeFileSync(tmp, `${JSON.stringify(root, null, 2)}\n`, { mode: mode & 0o777 });
 	try { chmodSync(tmp, mode & 0o777); } catch { /* a file system without modes */ }

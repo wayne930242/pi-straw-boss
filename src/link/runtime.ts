@@ -43,6 +43,8 @@ export interface LinkDeps {
 	/** How long the gate waits for an answer (default 10 minutes), and how long an approval dialog of a `link_request` does. */
 	gateMs?: number;
 	requestMs?: number;
+	/** How long the GUI's summary read waits for the holder (default `SUMMARY_MS`). */
+	summaryMs?: number;
 	/** Hands the module to a test as soon as it is built. */
 	created?: (link: Link) => void;
 }
@@ -53,7 +55,9 @@ export const SEEN = "straw-link-seen";
 const LONG_WAIT_MS = 10 * 60_000;
 /** Longer than the holder's worst case for a send: the lock wait, a reading of Herdr, and the wait for the relay; a tower that gave up earlier would invite a resend of a message that went out. */
 export const ASK_MS = 60_000;
-const NO_HOLDER = "No link holder is running on this computer yet. Straw Link starts within a few seconds of a team being set up; if it stays so, a team file or its config.json entry is missing";
+/** The GUI's net read waits this long for the holder's summary: a holder that is lost must not freeze the map. */
+const SUMMARY_MS = 2000;
+const NO_HOLDER = "No link holder is running on this computer yet. If Straw Link is not set up here, open Teams in the GUI and press Set up; otherwise it starts within a few seconds, and if it stays so a team file or its config.json entry is missing";
 
 type ChannelEvent = { type: string; fromSessionId?: string; payload?: unknown };
 interface Held { id: string; item: InboxItem; at: number; noticed: boolean }
@@ -102,6 +106,7 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 	const sid = () => me() || mySession;
 	const holderUp = opts.alive ?? holderAlive();
 	let lookError = "";
+	let lastSummary: LinkSummary | undefined;
 	/** A look that failed (the holder could not start, the lock was not free, a disk error): in the log, and once per message to the boss. */
 	const lookFailed = (error: Error) => {
 		store.log({ event: "look-failed", error: error.message });
@@ -296,14 +301,22 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 			default: return { ok: false, error: "unknown request" };
 		}
 	};
-	const ask = async (op: Record<string, unknown>): Promise<{ ok: boolean; error?: string; [key: string]: unknown }> => {
+	const ask = async (op: Record<string, unknown>, ms = ASK_MS): Promise<{ ok: boolean; error?: string; [key: string]: unknown }> => {
 		const record = store.readHolder();
 		if (!record || !holderUp(record)) throw new Error(NO_HOLDER);
-		if (holder && election?.isHolder()) return (await handle(op, sid())) as { ok: boolean };
+		if (holder && election?.isHolder()) {
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			const late = new Promise<never>((_, reject) => void (timer = setTimeout(() => reject(new Error(`The link holder did not answer within ${ms / 1000} s`)), ms)));
+			try {
+				return (await Promise.race([handle(op, sid()), late])) as { ok: boolean };
+			} finally {
+				clearTimeout(timer);
+			}
+		}
 		if (!channel && !connect()) throw new Error(NO_HOLDER);
 		const reqId = `${sid()}-${nonce}-${pending.size}-${Date.now()}`;
 		const answered = new Promise<unknown>((resolve, reject) => {
-			const timer = setTimeout(() => (pending.delete(reqId), reject(new Error(`The link holder did not answer within ${ASK_MS / 1000} s`))), ASK_MS);
+			const timer = setTimeout(() => (pending.delete(reqId), reject(new Error(`The link holder did not answer within ${ms / 1000} s`))), ms);
 			pending.set(reqId, { resolve, reject, holder: record.session, timer });
 		});
 		for (const c of chunks("req", record.session, reqId, op)) publish(c);
@@ -416,12 +429,12 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 		},
 		/** The compact reading the net snapshot carries; undefined when Straw Link is not set up or no holder answers. */
 		async summary(): Promise<LinkSummary | undefined> {
-			if (!inUse()) return undefined;
+			if (!inUse()) return (lastSummary = undefined);
 			try {
-				const answer = await ask({ op: "gui", name: "summary", args: {} });
-				return answer.ok ? (answer.summary as LinkSummary) : undefined;
+				const answer = await ask({ op: "gui", name: "summary", args: {} }, opts.summaryMs ?? SUMMARY_MS);
+				return (lastSummary = answer.ok ? (answer.summary as LinkSummary) : undefined);
 			} catch {
-				return undefined;
+				return lastSummary; // a holder that is slow or lost: the last reading, so the map does not freeze waiting
 			}
 		},
 		/**
@@ -432,7 +445,7 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 			if (!attended()) throw new Error("link_request is refused on an unattended device: its teams and trust come from its infra's policy file and join.txt only");
 			const opened = await ask({ op: "request-open", action: r.action, args: r.args, reason: r.reason });
 			if (!opened.ok) throw new Error(opened.error);
-			const id = String(opened.id), lines = [...(opened.lines as string[]), `Asked by session: ${r.asker} (${sid().slice(0, 8)})`];
+			const id = String(opened.id), lines = [...(opened.lines as string[]), `Asked by session: ${r.asker} (${sid().slice(0, 8)})`, `Reason: ${String(opened.reason)}`];
 			const verdict = await approval.approve({ toolCallId: r.toolCallId, lines, asker: r.asker, ui: r.ui, signal: r.signal });
 			if (!verdict.approved) {
 				await ask({ op: "request-drop", id }).catch(() => undefined);

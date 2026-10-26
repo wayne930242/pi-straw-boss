@@ -3,7 +3,8 @@ import { isAbsolute } from "node:path";
 import type { Done, Fail, TeamAdmin, TeamView } from "./admin.ts";
 import { LEVELS, type Level, type Share } from "./config.ts";
 import { idOk, shortId } from "./device.ts";
-import { decodeInvite, relayOk } from "./join.ts";
+import { decodeInvite, originOf } from "./join.ts";
+import { projectProblem } from "./routing.ts";
 
 // `link_request` (docs/specs/2026-10-25-straw-link.md, GUI, Link actions an agent asks for): an agent may ask for a link action, and the boss approves
 // each request. This module is the link holder's half: it checks a request, says in words what it would do (the approval dialog shows these lines, never
@@ -14,6 +15,10 @@ import { decodeInvite, relayOk } from "./join.ts";
 export const ACTIONS = ["create", "invite", "invite-unattended", "join", "trust", "leave", "remove", "role", "rotate"] as const;
 export type Action = (typeof ACTIONS)[number];
 /** The arguments an agent may pass; each action takes the ones it names and refuses the rest. */
+/** C0 and C1 control characters: a line break or an escape in an argument could add lines to the approval dialog. */
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
+/** The agent's reason as one line: every run of whitespace and control characters becomes one space. */
+const oneLine = (s: string) => s.replace(/[\s\u0000-\u001f\u007f-\u009f]+/g, " ").trim();
 export interface RequestArgs { team?: string; relay?: string; project?: string; share?: string; device?: string; level?: string; role?: string; text?: string; label?: string }
 const FIELDS: Record<Action, (keyof RequestArgs)[]> = {
 	create: ["relay", "project", "share", "label"],
@@ -39,11 +44,6 @@ interface Pending { id: string; session: string; action: Action; args: RequestAr
 const no = (error: string): Fail => ({ ok: false, error });
 const clip = (s: string, n = 600) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
-/** The request's arguments as plain text lines, for the dialog: every argument the agent gave, nothing it did not. */
-export function argLines(action: Action, args: RequestArgs): string[] {
-	return FIELDS[action].flatMap((k) => (args[k] === undefined ? [] : [`${k}: ${clip(String(args[k]), 1200)}`]));
-}
-
 /** Whether an action and its arguments are well formed (the holder checks the rest against the teams it has). */
 export function shapeProblem(action: unknown, args: unknown): string | undefined {
 	if (typeof action !== "string" || !(ACTIONS as readonly string[]).includes(action)) return `An action is one of ${ACTIONS.join(", ")}`;
@@ -51,6 +51,7 @@ export function shapeProblem(action: unknown, args: unknown): string | undefined
 	const allowed = FIELDS[action as Action];
 	for (const key of Object.keys(a)) if (!(allowed as string[]).includes(key)) return `${action} takes ${allowed.join(", ")}, not ${key}`;
 	for (const key of Object.keys(a)) if (typeof a[key] !== "string") return `${key} has to be text`;
+	for (const key of ["relay", "project", "label", "text"]) if (typeof a[key] === "string" && CONTROL.test((a[key] as string).trim())) return `${key} may not contain line breaks or other control characters`;
 	for (const key of REQUIRED[action as Action]) if (!a[key] || !String(a[key]).trim()) return `${action} needs ${key}`;
 	return undefined;
 }
@@ -62,6 +63,7 @@ export interface RequestDeps {
 	/** Whether this computer is an attended device: `link_request` is refused on any other. */
 	attended(): boolean;
 	home: string;
+	agentDir: string;
 }
 
 export class Requests {
@@ -86,7 +88,7 @@ export class Requests {
 	}
 
 	/** Checks a request and remembers it; the lines are what the boss is shown. */
-	open(session: string, action: unknown, raw: unknown, reason: string): Done<{ id: string; lines: string[] }> {
+	open(session: string, action: unknown, raw: unknown, reason: string): Done<{ id: string; lines: string[]; reason: string }> {
 		if (!this.d.attended()) return no("link_request is refused on an unattended device: its teams and trust come from its infra's policy file and join.txt only");
 		const bad = shapeProblem(action, raw);
 		if (bad) return no(bad);
@@ -95,12 +97,16 @@ export class Requests {
 		for (const [id, p] of this.pending) if (now - p.at > REQUEST_MS) this.pending.delete(id);
 		if (this.pending.size >= MAX_PENDING) return no("Too many link requests wait for the boss; try again after they are answered");
 		const lines: string[] = [`Action: ${act}`];
-		const p: Pending = { id: randomUUID(), session, action: act, args, reason: clip(reason, 400), at: now };
+		const p: Pending = { id: randomUUID(), session, action: act, args, reason: clip(oneLine(reason) || "(none given)", 400), at: now };
 		switch (act) {
 			case "create": {
 				const share = args.share;
-				if (!relayOk(args.relay!.trim())) return no("The relay has to be an https origin like https://relay.example (http only for this computer)");
+				const origin = originOf(args.relay!.trim());
+				if (!origin) return no("The relay has to be an https origin like https://relay.example, without a path (http only for this computer)");
+				args.relay = origin;
 				if (!isAbsolute(args.project!)) return no("The project has to be an absolute folder path");
+				const problem = projectProblem(args.project!, { home: this.d.home, agentDir: this.d.agentDir });
+				if (problem) return no(problem);
 				if (share !== undefined && share !== "presence" && share !== "status") return no('share is "presence" or "status"');
 				lines.push(`Relay: ${args.relay}`, `Project folder: ${args.project}`, `Share: ${share ?? "status"}`, ...(args.label ? [`Label of this computer: ${args.label}`] : []), "Approving opens the Create team screen with these filled in; you type the relay's team token there, so the agent never sees it.");
 				break;
@@ -108,7 +114,12 @@ export class Requests {
 			case "join": {
 				const invite = decodeInvite(args.text!);
 				if (!invite) return no("That is not a Straw Link invite: it starts with strawlink1:");
-				lines.push(`Invite: ${clip(args.text!.trim(), 1200)}`, `Relay: ${invite.relay}`, `Invited by device: ${shortId(invite.inviterId)}`, ...(invite.forDevice ? [`Pinned to device: ${shortId(invite.forDevice)}`] : []), ...(args.label ? [`Label of this computer: ${args.label}`] : []), ...(args.project ? [`Project folder: ${args.project}`] : []), "Approving only opens the Join screen with the invite filled in; the safety words are still compared by you.");
+				if (args.project) {
+					const problem = projectProblem(args.project, { home: this.d.home, agentDir: this.d.agentDir });
+					if (problem) return no(problem);
+				}
+				if (args.share !== undefined && args.share !== "presence" && args.share !== "status") return no('share is "presence" or "status"');
+				lines.push(`Relay: ${invite.relay}`, `Invited by device: ${shortId(invite.inviterId)}`, ...(invite.forDevice ? [`Pinned to device: ${shortId(invite.forDevice)}`] : []), ...(args.label ? [`Label of this computer: ${args.label}`] : []), ...(args.project ? [`Project folder: ${args.project}`] : []), ...(args.share ? [`Share: ${args.share}`] : []), "Approving only opens the Join screen with the invite filled in; the safety words are still compared by you.");
 				break;
 			}
 			case "trust": {
@@ -150,9 +161,8 @@ export class Requests {
 				if (act === "leave") lines.push("This computer forgets the team (its team file and config entry). The roster at the relay is untouched; an admin removes this device.");
 			}
 		}
-		lines.push(`Reason: ${clip(reason.trim() || "(none given)", 400)}`);
 		this.pending.set(p.id, p);
-		return { ok: true, id: p.id, lines };
+		return { ok: true, id: p.id, lines, reason: p.reason };
 	}
 
 	/** The boss approved: the holder does the action. The id works once, only for the session that asked, and only within ten minutes. */
@@ -166,10 +176,10 @@ export class Requests {
 		const fail = (r: Done) => (r.ok ? undefined : r.error);
 		switch (p.action) {
 			case "create":
-				admin.setPrefill({ kind: "create", relay: a.relay!.trim(), project: a.project!, ...(a.share ? { share: a.share as Share } : {}), reason: p.reason, session });
+				admin.setPrefill({ kind: "create", relay: a.relay!.trim(), project: a.project!, ...(a.label ? { label: a.label } : {}), ...(a.share ? { share: a.share as Share } : {}), reason: p.reason, session });
 				return { ok: true, text: "The Create team screen is open in the boss's GUI with the relay and project filled in. The boss types the relay's team token there; nothing is created until then." };
 			case "join":
-				admin.setPrefill({ kind: "join", text: a.text!.trim(), ...(a.project ? { project: a.project } : {}), reason: p.reason, session });
+				admin.setPrefill({ kind: "join", text: a.text!.trim(), ...(a.project ? { project: a.project } : {}), ...(a.label ? { label: a.label } : {}), ...(a.share ? { share: a.share as Share } : {}), reason: p.reason, session });
 				return { ok: true, text: "The Join screen is open in the boss's GUI with the invite filled in. The boss compares the safety words there; nothing is joined until then." };
 			case "invite": case "invite-unattended": {
 				const made = await admin.invite({ team: p.team!, ...(p.action === "invite-unattended" ? { forDevice: p.device! } : {}) });

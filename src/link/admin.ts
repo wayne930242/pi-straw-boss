@@ -1,11 +1,11 @@
 import { Buffer } from "node:buffer";
-import { randomBytes, randomInt } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { basename, isAbsolute } from "node:path";
 import { BIP39_ENGLISH } from "./bip39-english.ts";
 import { editLinkConfig, type Level, LEVELS, type LinkConfig, type Share } from "./config.ts";
 import { type DeviceKeys, idOk, keyRecordHash, labelOk, recordOf, shortId } from "./device.ts";
 import { ConflictError, NetworkError, NotFoundError, RateLimitedError, type RelayError, UnauthorizedError, UnprocessableError } from "./errors.ts";
-import { decodeInvite, encodeInvite, inviteHash, openJoinRequest, relayOk, buildJoinRequest, checkJoiner, safetyWords, type Invite } from "./join.ts";
+import { decodeInvite, encodeInvite, inviteHash, openJoinRequest, originOf, buildJoinRequest, checkJoiner, safetyWords, type Invite } from "./join.ts";
 import type { RelayPort } from "./holder.ts";
 import { addEntry, createEntry, encodeEntry, removeEntry, roleEntry, rotateEntry, type Role, type RosterEntry, type RosterState } from "./roster.ts";
 import { projectProblem } from "./routing.ts";
@@ -60,21 +60,17 @@ export function relayText(error: unknown, url = ""): string {
 	return (error as RelayError).code ? `The relay answered ${(error as RelayError).status} ${(error as RelayError).code}` : (error as Error).message;
 }
 
-/** The relay URL as an origin, or undefined when it is not one a team can use (https, or http on this computer; no path, query, or fragment). */
-function originOf(raw: string): string | undefined {
-	try {
-		const url = new URL(raw.trim());
-		return relayOk(raw.trim()) && url.pathname === "/" && !url.search && !url.hash ? url.origin : undefined;
-	} catch {
-		return undefined;
-	}
-}
-
-const wordsOf = (): string[] => Array.from({ length: 4 }, () => BIP39_ENGLISH[randomInt(BIP39_ENGLISH.length)]!);
-const shuffle = <T>(items: T[]): T[] => {
-	const out = [...items];
+const stream = (secret: Uint8Array, tag: string, i: number): Buffer => createHmac("sha256", secret).update(`straw-link/${tag}`).update(Buffer.from([i])).digest();
+/** The `i`-th decoy set of a join request: 4 BIP-39 words from HMAC(secret, "straw-link/decoy" ‖ i). The same request gives the same decoys on any holder, so seeing it twice reveals nothing. */
+export const decoyWords = (secret: Uint8Array, i: number): string[] => {
+	const bits = stream(secret, "decoy", i).readBigUInt64BE(0) >> 20n;
+	return [3n, 2n, 1n, 0n].map((k) => BIP39_ENGLISH[Number((bits >> (k * 11n)) & 0x7ffn)]!);
+};
+/** The sets in an order that only the invite secret fixes (a Fisher-Yates shuffle over HMAC output). */
+export const shuffled = <T>(items: T[], secret: Uint8Array): T[] => {
+	const out = [...items], bytes = stream(secret, "shuffle", 0);
 	for (let i = out.length - 1; i > 0; i--) {
-		const j = randomInt(i + 1);
+		const j = bytes[i]! % (i + 1);
 		[out[i], out[j]] = [out[j]!, out[i]!];
 	}
 	return out;
@@ -129,7 +125,7 @@ export interface TeamView {
 	secondAdmin: string[];
 	onlyAdmin: boolean;
 }
-export interface Prefill { kind: "join" | "create"; text?: string; relay?: string; project?: string; share?: Share; reason: string; session: string }
+export interface Prefill { kind: "join" | "create"; text?: string; relay?: string; project?: string; label?: string; share?: Share; reason: string; session: string }
 
 /** `a.b` ids and labels the page shows are data: it puts them in text nodes only. */
 export class TeamAdmin {
@@ -228,6 +224,7 @@ export class TeamAdmin {
 		}
 	}
 	async cancelInvite(hash: string): Promise<Done> {
+		this.requests.delete(hash);
 		await this.h.store.withLock(() => this.h.store.removeInvite(hash));
 		return { ok: true };
 	}
@@ -255,12 +252,12 @@ export class TeamAdmin {
 		if (!opened.ok) return void (await end(opened.reason));
 		if (this.requests.size >= MAX_JOIN_REQUESTS) return void (await end("too many requests wait"));
 		const words = safetyWords({ team: run.teamId, inviterKeyHash: keyRecordHash(this.self), joiner: opened.record, secret: Buffer.from(file.secret, "hex") });
-		const pool = [words];
-		while (pool.length < 3) {
-			const decoy = wordsOf();
+		const secret = Buffer.from(file.secret, "hex"), pool = [words];
+		for (let i = 0; pool.length < 3; i++) {
+			const decoy = decoyWords(secret, i);
 			if (!pool.some((p) => p.join(" ") === decoy.join(" "))) pool.push(decoy);
 		}
-		const sets = shuffle(pool);
+		const sets = shuffled(pool, secret);
 		this.requests.set(hex, { hash: hex, team: run.team, record: opened.record, label: opened.label, unattended: file.forDevice !== "", sets, correct: sets.findIndex((s) => s.join(" ") === words.join(" ")), at: this.h.now(), expires: file.expires });
 		this.h.notify(`Straw Link: ${opened.label} (${shortId(opened.record.id)}) asks to join team ${this.teamName(run.team)}`, "warning");
 	}
@@ -274,6 +271,7 @@ export class TeamAdmin {
 			await this.h.store.withLock(() => this.h.store.removeInvite(i.id));
 		};
 		if (req.expires <= this.h.now()) return (await drop(), no("The invite lapsed"));
+		if (!this.h.store.readInvite(i.id)) return (this.requests.delete(i.id), no("That invite was cancelled"));
 		if (req.unattended ? i.approve !== true : i.pick !== req.correct) {
 			await drop();
 			this.h.log({ event: "join-declined", team: req.team, unattended: req.unattended });
@@ -512,6 +510,13 @@ export class TeamAdmin {
 	invites(): InviteView[] {
 		const now = this.h.now();
 		return this.h.store.invites().filter((i) => i.expires > now).map((i) => ({ hash: i.hash, team: i.team, teamName: this.teamName(i.team), forDevice: i.forDevice, created: i.created, expires: i.expires }));
+	}
+	/** Deletes invite files that have lapsed (their secrets with them); the caller holds the link lock. */
+	purgeInvites(): number {
+		const now = this.h.now();
+		let gone = 0;
+		for (const i of this.h.store.invites()) if (i.expires <= now) (this.h.store.removeInvite(i.hash), gone++);
+		return gone;
 	}
 	joinRequests(): JoinRequestView[] {
 		const now = this.h.now();
