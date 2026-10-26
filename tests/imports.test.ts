@@ -502,7 +502,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 136.1 KB / 55.4 KB gzipped: a choice only this computer may give (`hereOnly`) is shown disabled on a paired device (gui/ask.ts).
 	// Unreleased (queue Edit, on top of the drawer's) to 141.5 KB / 57.25 KB gzipped: the queue's Edit (its bar and wiring, the composer's take-back with its id and the reply kept for a composer that is gone, seven messages in both languages).
 	// Unreleased to 137.1 KB / 55.7 KB gzipped: the drawer's tower row (icon and +), Quit on an idle main, and the map link in its foot (gui/drawer.ts).
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 141_500 && total(chunks, gz) <= 57_250, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// Unreleased (hereOnly, merged with the queue's Edit) to 141.6 KB / 57.25 KB gzipped: the disabled hereOnly choice on a paired device (gui/ask.ts) on top of the queue's Edit.
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 141_600 && total(chunks, gz) <= 57_250, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
