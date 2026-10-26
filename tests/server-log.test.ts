@@ -104,3 +104,24 @@ test("sbr-F014: processes that write the log at once while it rotates lose no li
 	assert.ok(files.length > 3, "it did rotate");
 	assert.deepEqual(readdirSync(root).filter((f) => f.endsWith(".lock")), [], "no lock is left behind");
 });
+
+test("sbr-NEW-1: a stale log lock is removed only while it is still the stale one that was seen; a lock another writer took in between stays", async () => {
+	const { utimesSync } = await import("node:fs");
+	const lock = `${file}.lock`;
+	writeFileSync(file, "x".repeat(200));
+	// A crashed holder: its lock is old.
+	writeFileSync(lock, "999999");
+	utimesSync(lock, new Date(T - 60_000), new Date(T - 60_000));
+	// The writer sees it stale; before it removes it, another writer takes the lock fresh (it removed the stale one itself and now rotates).
+	const log = createLog(file, { max: 100, keep: 3, beforeRemoveStale: () => { rmSync(lock); writeFileSync(lock, "4242"); } });
+	log.line("tick");
+	assert.equal(readFileSync(lock, "utf8"), "4242", "the fresh lock of the other writer is not removed");
+	// With no race, the stale lock goes and a later writer rotates.
+	rmSync(lock);
+	writeFileSync(lock, "999999");
+	utimesSync(lock, new Date(T - 60_000), new Date(T - 60_000));
+	createLog(file, { max: 100, keep: 3 }).line("tock");
+	createLog(file, { max: 100, keep: 3 }).line("tick again");
+	assert.ok(existsSync(`${file}.1`), "a crashed holder's lock does not stop rotation");
+	assert.deepEqual(readdirSync(root).filter((f) => f.endsWith(".lock") || f.endsWith(".rm")), [], "nothing is left behind");
+});
