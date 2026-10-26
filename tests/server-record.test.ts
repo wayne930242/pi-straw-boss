@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import {
-	clearStartError, clearStopped, defaultHerdr, fileOf, FRESH_MS, holderAlive, LOCK_MAX_MS, LockBusy, type LockInfo, readLock, readRecord, readStartError, restartingFresh,
+	clearStartError, clearStopped, defaultHerdr, fileOf, FRESH_MS, holderAlive, LOCK_MAX_MS, LockBusy, type LockInfo, LockUnreadable, readLock, readRecord, readStartError, restartingFresh,
 	restartingNow, type ServerRecord, serverId, slotOf, takeLock, touchRestarting, towerId, towerName, updateRecord, writeRecord, writeStartError,
 } from "../src/server/record.ts";
 
@@ -260,4 +260,36 @@ test("holderAlive: a dead pid is not a holder; an unknown start time lets the re
 	assert.equal(holderAlive(info, { alive: () => true, startOf: () => "T" }), true);
 	assert.equal(holderAlive(info, { alive: () => true, startOf: () => "U" }), false);
 	assert.equal(holderAlive({ ...info, started: undefined }, { alive: () => true, startOf: () => "U" }), true);
+});
+
+// --- VM pass 4, F5: a lock whose permissions were emptied (D:PAI) cannot be opened; it is repaired once, never waited for as held ---
+
+test("F5: a lock that cannot be read (access denied) is repaired once and then taken or judged as any lock; the wait for a held lock is not entered", async () => {
+	const slot = slotOf(root, env(), "linux"), { deps } = lockWorld();
+	plant(slot, { pid: 1, by: "damaged", since: new Date(0).toISOString() });
+	const lock = fileOf(slot, "lock");
+	chmodSync(lock, 0o000);
+	const repaired: string[] = [];
+	const got = await takeLock(slot, "session", { ...deps, repair: (file) => (repaired.push(file), chmodSync(file, 0o600)) }, 5000);
+	assert.deepEqual(repaired, [lock], "repaired once, by name");
+	assert.equal(lockOf(slot).by, "session", "and taken (the holder it names is dead)");
+	got.release();
+});
+
+test("F5: a lock that stays unreadable after the repair, or with no repair to make, is an error that says what to do, at once (never LockBusy, never a wait)", async () => {
+	const slot = slotOf(root, env(), "linux"), { deps } = lockWorld();
+	plant(slot, { pid: 1, by: "damaged", since: new Date().toISOString() });
+	const lock = fileOf(slot, "lock");
+	chmodSync(lock, 0o000);
+	try {
+		const began = Date.now();
+		let calls = 0;
+		await assert.rejects(takeLock(slot, "s", { ...deps, repair: () => void calls++ }, 20_000), (e: unknown) => e instanceof LockUnreadable && /cannot be read \(EACCES\) and its permissions could not be repaired; delete it, or reset them/.test((e as Error).message));
+		assert.equal(calls, 1, "tried once");
+		await assert.rejects(takeLock(slot, "s", deps, 20_000), LockUnreadable);
+		await assert.rejects(takeLock(slot, "s", { ...deps, repair: () => { throw new Error("icacls failed (exit 5)"); } }, 20_000), (e: unknown) => e instanceof LockUnreadable && /icacls failed \(exit 5\)/.test((e as Error).message));
+		assert.ok(Date.now() - began < 2000, "no wait for a lock that is not held");
+	} finally {
+		chmodSync(lock, 0o600);
+	}
 });

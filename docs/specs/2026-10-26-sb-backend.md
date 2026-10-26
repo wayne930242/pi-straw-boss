@@ -246,11 +246,23 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
       folder that is there is made the owner's, protected, and read back where it is. A temporary folder that fails a check is removed.
       `servers/<hash>` of a secondary slot is not made this way: it is made with `mkdir` inside the protected `straw-boss/` after it
       is in place, and inherits the owner and SYSTEM grant.
+      - **A filtered (UAC) token cannot always `/setowner`** (VM pass 4, F1): outside its profile, without a WRITE_OWNER grant from the
+        parent, it gets exit 5 on a folder it owns (Administrators is deny-only in that token), and every start there failed with a wrong
+        "belongs to another account". So when `/setowner` is refused (5, 1307, 1314) the owner is read natively: `cmd /d /s /c "dir /q /a:d
+        <parent>"` names each entry's owner in the console's code page, as `whoami` names the account, so the account name (or the SID, for
+        an owner Windows shows as one) is compared byte for byte, case-insensitively, as a whole field. An owner that is the caller's needs
+        nothing and the protect call decides (an owner has WRITE_DAC). A different owner is refused ("belongs to another account"); an
+        owner that cannot be read is refused too, with its own words ("could not be made yours, and its owner could not be read"). The read
+        is made only after a refusal, so the usual start costs no process for it. A path `cmd` treats specially (`% ! " ^ & | < >`) or a
+        non-ASCII folder name is not asked about (cannot tell).
       - Every `icacls` call carries `/L`, so a link is acted on itself and never its target, and `secure` looks for a link first.
-      - The rename is tried again on `EPERM`, `EBUSY` and `EACCES` (a scanner or the indexer holding the temporary folder; twenty tries
-        10 ms apart, as `writeJson` does).
-      - At every start, a `straw-boss.<16 hex>.tmp` folder older than ten minutes (a start that crashed between the make and the
-        rename) is removed, if it is a folder and not a link.
+      - The rename is tried again on `EPERM`, `EBUSY` and `EACCES` (a scanner or the indexer holding the temporary folder): waits of 10, 20,
+        40, 80, 160, 320, then 500 ms three times, 2.1 s in all. A handle that stays is told as that ("something is holding the new folder …
+        Start again in a moment"); a temporary folder that cannot be removed then is left to the next start's sweep.
+      - At every start, a `straw-boss.<16 hex>.tmp` folder older than a minute (a start that crashed or was held between the make and
+        the rename; a start's own is there for well under that) is removed, if it is a folder and not a link.
+      - The temporary folder lives 35 to 130 ms with the parent's inherited ACEs (outside the profile: Users read, Authenticated Users
+        modify), under a name nobody looks for; the final name never carries a broad ACE (VM pass 4, F9; accepted).
       - Only a program that failed to start is told as "not found" or "did not finish in time"; a read of the file `icacls /save`
         wrote, or a `whoami` that gave no SID, keeps its own words.
       - A PowerShell 5.1 failure is told by its message line: the first line that does not start with `At line`, `+` or `~`, not the
@@ -409,6 +421,25 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
       (`breakaway_failed`). With the line and no answer, a server may exist: a failed start. **Residual:** if `$wmi.Create` itself throws
       after WMI made the process (an RPC drop on the way back), the line is there but the script's catch prints rc -1, which falls back
       to the plain spawn and may leave two servers (the second ends on the lock); the VM should check it.
+    - **A cold start makes one PowerShell start** (VM pass 4, F2). Besides the server's start time, the launch script reads the
+      starter's own (`SB_STARTER_PID`, after the marker is left, so the server is not kept waiting) and the answer carries it
+      (`starterStarted`); the starter remembers both (`rememberStart`). The lock's holder start time waits for that (`startedOrWait`, 20 s
+      grace, then a PowerShell start of its own, as for any other process) instead of asking for it at once, so a CLI `up` starts no
+      PowerShell for itself. While the pid of a start through WMI is not told yet, the record's start time is not asked for either
+      (`runsAs(…, startKnownElsewhere)`): the hello still has to answer, with the pid the record names.
+    - **A server that cannot protect the folder says so in `start-error.json`** (F3). A server started through WMI has no exit code for its
+      starter to read: a foreign ACE planted after the starter protected the folder ended `up` with "exited before it answered". The
+      server writes no log, record, or secret into a folder it could not fix, only `start-error.json` (`acl`, the reason: nothing
+      secret), best effort, and `up` reads it, so it exits 3 with `startError.code` `acl`.
+    - **A lock that cannot be opened is repaired, never waited for** (F5). An empty-DACL `server.lock` (`D:PAI`) read as "held" wedged
+      `up` and `stop` (a filtered user cannot even delete it). When `server.lock` exists and cannot be read (`EACCES`, `EPERM`), its
+      permissions are reset once (`icacls <file> /reset /L /Q`: the owner can) and it is read and judged as any lock; when that fails,
+      the start ends at once with `acl` (exit 3), naming the file and what to do (`LockUnreadable`).
+    - **A record of a server that is gone does not pin the broker scope** (F6). After a stop, the stopped record keeps the old scope, and
+      a start in another `PI_INTERCOM_SCOPE_ID` was refused. The scope and transport are compared only while the server is live (the
+      look, `restart`, `stop`); the new server's record carries the new scope.
+    - **`stop` on a folder that is not the caller's** (F8) cannot take the lock; its message says that a server in it was started by
+      another account, to stop it from that account (an elevated shell for an elevated run), or end its process.
     - **No PowerShell failure text is CLIXML.** Windows PowerShell 5.1 started with `-EncodedCommand` and a redirected stderr writes
       `#< CLIXML` + `<Objs …>` to stderr even on success (the progress records of preparing modules the first time). Every PowerShell call
       (`acl.ts`, `breakaway.ts`, `startof.ts`) is started with `-OutputFormat Text`, its script sets `$ProgressPreference =

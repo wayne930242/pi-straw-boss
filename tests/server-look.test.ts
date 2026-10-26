@@ -67,7 +67,7 @@ test("a session without a screen, a subagent, and a session that has no server d
 	assert.ok(!none.tools.has("boss_server"), "no server: no tool");
 });
 
-test("a session on an older package never starts a server; one on another broker scope says so once and uses none", async () => {
+test("a session on an older package never starts a server; a record of a gone server in another broker scope does not stop a session from starting one (F6)", async () => {
 	plant({ version: "0.45.0", pid: 99 });
 	const old = session("old", { version: "0.44.0" });
 	await old.start();
@@ -79,8 +79,8 @@ test("a session on an older package never starts a server; one on another broker
 	const other = world.agent({ id: "o1", pane: "wA:p93", tab: "wA:t1", ui: true, env: { HOME: sw.env.HOME!, PI_INTERCOM_SCOPE_ID: "team-b" }, deps: { stateDir: sw.stateDir, version: "0.44.0", adoptMs: 30, server: { ctx: reaching(), cli: "/fake/cli.mjs" } } });
 	await other.start();
 	await sleep(200);
-	assert.equal(sw.spawned.length, 0);
-	assert.equal(other.notices.filter((n) => /another pi-intercom scope/.test(n.text)).length, 1);
+	await until(() => sw.spawned.length === 1, "the session starts a server: the record's server is gone, so its scope pins nothing");
+	assert.equal(other.notices.filter((n) => /another pi-intercom scope/.test(n.text)).length, 0);
 });
 
 test("a server stopped on purpose is left down by the look, and /boss server starts it again", async () => {

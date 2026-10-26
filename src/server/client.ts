@@ -8,9 +8,10 @@ import { rememberStart, startOf } from "../startof.ts";
 import { spawnBreakaway } from "./breakaway.ts";
 import { createLog, type Log } from "./log.ts";
 import {
-	adoptStarting, clearStartError, clearStopped, endStarting, fileOf, type IntercomScope, type LockDeps, markStarting, prepareSlot, readRecord, secretDir, readStartError, restartingFresh, type ServerRecord,
+	adoptStarting, clearStartError, clearStopped, endStarting, fileOf, type IntercomScope, type LockDeps, LockUnreadable, markStarting, prepareSlot, readRecord, secretDir, readStartError, restartingFresh, type ServerRecord,
 	type Slot, type StartError, takeLock, TOUCH_MS, touchRestarting, updateRecord,
 } from "./record.ts";
+import { resetFileAcl } from "./winprep.ts";
 import { callControl, ControlError, helloOf, type Reply } from "./socket.ts";
 
 // What reaches the server from outside it (docs/specs/2026-10-26-sb-backend.md, Starting, Stopping, Restarts and upgrades): a pi session's look, the shell's `cli.mjs`, a
@@ -59,6 +60,8 @@ export interface SpawnSpec {
 	cwd: string;
 	/** Windows: the state folder, and the token of the file in it where the starter leaves the ACL check for the server it starts (the token goes on the server's command line only when it was started through WMI). */
 	acl?: { dir: string; token: string };
+	/** Windows: the starter's own pid; the launch PowerShell reads its start time too, so the starter needs no PowerShell start of its own for it. */
+	starterPid?: number;
 	/** How long the start may take to give a pid (Windows: the PowerShell call through WMI); the time the requester has left. */
 	timeoutMs?: number;
 	/** Detached so the server outlives the starter, no stdio so it holds none of the starter's, and no console window on Windows. */
@@ -71,6 +74,8 @@ export interface Started {
 	serverStarted?: string;
 	/** Of `ms`, the milliseconds of the create and of the ACL check that followed in the same PowerShell start. */
 	createMs?: number; aclMs?: number;
+	/** The starter's own start time, read in the same PowerShell start. */
+	starterStarted?: string;
 	/** The process exists but the ACL check could not be left for it (the marker file); the server was told with an error marker. */
 	markerError?: string;
 }
@@ -140,7 +145,7 @@ export function makeCtx(over: Partial<Ctx> & Pick<Ctx, "slot" | "version" | "cli
 		env: process.env, platform: process.platform, node: process.execPath, spawn: platform === "win32" ? (spec) => spawnBreakaway(spec, { fallback: spawnDetached }) : spawnDetached, timers: timersFor(over.platform),
 		kill: (pid, signal) => void process.kill(pid, signal), prepare,
 		// This process holds the locks it takes: it is alive however the liveness check is replaced.
-		lock: { now, alive: (pid) => pid === process.pid || alive(pid), startOf: start, sleep, note: (event, fields) => log.line(event, fields), prepare },
+		lock: { now, alive: (pid) => pid === process.pid || alive(pid), startOf: start, sleep, note: (event, fields) => log.line(event, fields), prepare, ...(platform === "win32" ? { repair: (file: string) => resetFileAcl(file, undefined, 15_000) } : {}) },
 		...over, now, sleep, alive, startOf: start, log,
 	};
 }
@@ -152,17 +157,19 @@ export interface Probe {
 	hello: Reply | undefined;
 }
 /** Whether the process that wrote the record still runs: its pid is alive and started when the record says (a pid reused after a crash started later). */
-export function runsAs(ctx: Pick<Ctx, "alive" | "startOf">, record: Pick<ServerRecord, "pid" | "started">): boolean {
+export function runsAs(ctx: Pick<Ctx, "alive" | "startOf">, record: Pick<ServerRecord, "pid" | "started">, startKnownElsewhere = false): boolean {
 	if (!ctx.alive(record.pid)) return false;
-	if (!record.started) return true;
+	// `startKnownElsewhere`: a start through the launch PowerShell is under way and this record is the server's own (its start time came from that PowerShell): asking for it here would be a
+	// second PowerShell start, and the launch answer remembers it in a moment (VM pass 4, F2).
+	if (!record.started || startKnownElsewhere) return true;
 	const now = ctx.startOf(record.pid);
 	return now === undefined || now === record.started;
 }
 /** A server counts as live when its PID is alive, started at the recorded time, and answers hello on the control socket within 2 s: a PID alone is not enough. */
-export async function probe(ctx: Ctx, deadline?: number): Promise<Probe> {
+export async function probe(ctx: Ctx, deadline?: number, startKnownElsewhere = false): Promise<Probe> {
 	const record = readRecord(ctx.slot);
 	// A record with no socket is a start that has not got far enough to listen (`markStarting`): there is nothing to ask.
-	if (!record || !record.socket || !runsAs(ctx, record)) return { record, live: false, hello: undefined };
+	if (!record || !record.socket || !runsAs(ctx, record, startKnownElsewhere)) return { record, live: false, hello: undefined };
 	const hello = await helloOf(record.socket, record.secret, within(ctx, deadline, HELLO_MS));
 	return { record, live: Boolean(hello && hello.pid === record.pid), hello };
 }
@@ -183,12 +190,13 @@ export type Verdict =
 	| { do: "refuse"; why: "older" | "scope" | "herdr"; text: string };
 /**
  * A session starts a server only when none is live, `server.json` is not `stopped`, no fresh `restarting` is there, its own package is not older than the record's `version`,
- * and its broker scope and transport are the record's (or there is no record). A live server on an older version than the session's is upgraded.
+ * and, while that server is live, its broker scope and transport are the record's: a record of a server that is gone (stopped, or crashed) does not pin the scope, and the next start
+ * runs in the scope of whoever starts it (VM pass 4, F6). A live server on an older version than the session's is upgraded.
  */
 export function decide(ctx: Pick<Ctx, "version" | "env" | "platform" | "now" | "slot">, seen: Pick<Probe, "record" | "live">): Verdict {
 	const { record, live } = seen;
 	if (record && record.herdr !== ctx.slot.herdr) return { do: "refuse", why: "herdr", text: `the sb server record in ${ctx.slot.dir} names another Herdr socket (${record.herdr}), not ${ctx.slot.herdr}` };
-	if (record && !sameBroker(record.intercom, intercomOf(ctx.env, ctx.platform))) return { do: "refuse", why: "scope", text: "the sb server runs in another pi-intercom scope or transport than this session, so this session uses none" };
+	if (record && live && !sameBroker(record.intercom, intercomOf(ctx.env, ctx.platform))) return { do: "refuse", why: "scope", text: "the sb server runs in another pi-intercom scope or transport than this session, so this session uses none" };
 	if (live) return record && newer(ctx.version, record.version) ? { do: "upgrade" } : { do: "nothing", why: "live" };
 	if (record?.stopped) return { do: "nothing", why: "stopped" };
 	if (restartingFresh(record, ctx.now())) return { do: "nothing", why: "restarting" };
@@ -199,7 +207,7 @@ export function decide(ctx: Pick<Ctx, "version" | "env" | "platform" | "now" | "
 const specOf = (ctx: Ctx): SpawnSpec => ({
 	command: ctx.node, args: [ctx.cli, "run", "--detached", "--by", ctx.by], env: serverEnv(ctx.env), cwd: ctx.slot.dir, options: SPAWN_OPTIONS,
 	// Windows: the starter makes the ACL check for the server in its launch PowerShell, and leaves it in a file only this token names.
-	...(ctx.platform === "win32" ? { acl: { dir: ctx.slot.stateDir, token: randomBytes(16).toString("hex") } } : {}),
+	...(ctx.platform === "win32" ? { acl: { dir: ctx.slot.stateDir, token: randomBytes(16).toString("hex") }, starterPid: process.pid } : {}),
 });
 
 /** The server a restart replaces: its record is the one the requester keeps fresh until the new server writes its own. */
@@ -208,12 +216,12 @@ export interface Replaced { pid: number; secret: string }
  * Waits until a new server (not `old`) answers hello and is ready, touching `restarting.since` while it waits (`keeps`: the record whose `restarting` it touches, `old` by default),
  * or the child exits, or `ms` pass.
  */
-export async function waitReady(ctx: Ctx, ms: number, { old, keeps = old, exited, began, deadline }: { old?: Replaced; keeps?: Replaced; exited?: Promise<number | null>; began?: string; /** The time the whole call must end by; `ms` is cut to it. */ deadline?: number } = {}): Promise<ServerRecord | { exit: number | null } | undefined> {
+export async function waitReady(ctx: Ctx, ms: number, { old, keeps = old, exited, began, deadline, pidUnknown }: { /** True while the pid of a start through the launch PowerShell is not told yet: the record's start time is then not asked for. */ pidUnknown?: () => boolean; old?: Replaced; keeps?: Replaced; exited?: Promise<number | null>; began?: string; /** The time the whole call must end by; `ms` is cut to it. */ deadline?: number } = {}): Promise<ServerRecord | { exit: number | null } | undefined> {
 	const end = Math.min(ctx.now() + ms, deadline ?? Infinity);
 	let gone: number | null | undefined, touched = ctx.now();
 	void exited?.then((code) => (gone = code));
 	for (;;) {
-		const found = await probe(ctx, end);
+		const found = await probe(ctx, end, pidUnknown?.() === true);
 		if (found.live && found.hello?.ready === true && found.record && found.record.pid !== old?.pid) return found.record;
 		// A child that exited is told once the probe has had a last look at the record it may have written.
 		if (gone !== undefined) return { exit: gone };
@@ -257,17 +265,19 @@ export async function launch(ctx: Ctx, { began, old, deadline }: { began?: strin
 	}
 	ctx.log.line("start-requested", { by: ctx.by, version: ctx.version, pid: child.pid, spawnMs: ctx.now() - t0 });
 	// A start outside the starter's job object learns its pid late; how long that took is a phase of its own, and a fallback to a plain spawn is told.
-	let note: string | undefined;
+	let note: string | undefined, pidUnknown = child.pid === undefined && child.started !== undefined;
 	void child.started?.then((s) => {
 		ctx.log.line("phase", { name: "breakaway", ms: s.ms, via: s.via, pid: s.pid, ...(s.breakaway === undefined ? {} : { outsideJob: s.breakaway }), createMs: s.createMs, aclMs: s.aclMs });
 		// The launch PowerShell read the server's start time: this process knows it without a PowerShell of its own when it looks at that server.
 		if (s.serverStarted && s.pid > 0) rememberStart(s.pid, s.serverStarted);
+		if (s.starterStarted) rememberStart(process.pid, s.starterStarted);
 		if (s.markerError) ctx.log.line("error", { code: "acl-marker", text: s.markerError });
 		if (s.failure) ctx.log.line("breakaway-failed", { via: s.via, text: s.failure });
 		if (s.via === "failed") note = s.failure;
-	});
+		pidUnknown = false; // after the start times above are remembered
+	}, () => void (pidUnknown = false));
 	try {
-		const outcome = await waitReady(ctx, waitMs, { exited: child.exited, began: began ?? mine?.began, old, keeps, deadline });
+		const outcome = await waitReady(ctx, waitMs, { exited: child.exited, began: began ?? mine?.began, old, keeps, deadline, pidUnknown: () => pidUnknown });
 		if (outcome && "pid" in outcome) {
 			ctx.log.line("start-answered", { pid: outcome.pid, ms: ctx.now() - t0 });
 			// A server that was live all along answered (the look missed its hello, and the child found it and left): it does not clear the mark this start put on its record, so this start does.
@@ -297,6 +307,8 @@ export async function lockFor(ctx: Ctx, waitMs: number, deadline?: number) {
 	}
 	// Prepared just above: the lock only makes the folder again, with no second round of native calls.
 	return takeLock(ctx.slot, ctx.by, { ...ctx.lock, prepare: (slot) => secretDir(slot.dir) }, waitMs).catch((error) => {
+		// A lock that cannot be opened is a start that cannot run here, said as it is (exit 3, `acl`): not a lock another start holds.
+		if (error instanceof LockUnreadable) throw new ServerError("start-failed", `acl: ${error.message}`, { at: new Date(ctx.now()).toISOString(), code: "acl", text: error.message });
 		throw new ServerError("busy", (error as Error).message, undefined, "lock");
 	});
 }
@@ -397,7 +409,7 @@ async function restartLocked(ctx: Ctx, { reason, downgrade, upgrade, boss, limit
 	const seen = await probe(ctx, deadline), record = seen.record;
 	if (record && record.herdr !== ctx.slot.herdr) throw new ServerError("herdr", `the sb server record names another Herdr socket (${record.herdr}), not ${ctx.slot.herdr}`);
 	// The server runs in the broker scope it was started in, and a requester in another one would move it there: it uses none, and restarts none.
-	if (record && !sameBroker(record.intercom, intercomOf(ctx.env, ctx.platform))) throw new ServerError("scope", "the sb server runs in another pi-intercom scope or transport than this process, so this process does not restart it");
+	if (record && seen.live && !sameBroker(record.intercom, intercomOf(ctx.env, ctx.platform))) throw new ServerError("scope", "the sb server runs in another pi-intercom scope or transport than this process, so this process does not restart it");
 	if (record?.stopped && !seen.live && !boss) throw new ServerError("stopped", "the sb server was stopped on purpose; /boss server or `cli.mjs up` starts it again");
 	if (record && newer(record.version, ctx.version) && !downgrade) throw new ServerError("older", `the sb server runs pi-straw-boss ${record.version}, newer than this package's ${ctx.version}; a restart from an older package needs --downgrade`);
 	if (boss) clearStopped(ctx.slot);
@@ -457,13 +469,20 @@ export interface Stopped { outcome: "stopped" | "already-down" }
  */
 export async function stop(ctx: Ctx): Promise<Stopped> {
 	const t0 = ctx.now();
-	const lock = await lockFor(ctx, lockWaitFor(ctx));
+	// A state folder that is not the caller's (made by an elevated run, say) cannot be protected or locked from here, and a stop cannot be made without the lock: it says so, and where the server can be
+	// stopped from, instead of leaving only the ACL text (VM pass 4, F8).
+	const lock = await lockFor(ctx, lockWaitFor(ctx)).catch((error: unknown) => {
+		if (error instanceof ServerError && error.code === "start-failed" && error.startError?.code === "acl") {
+			throw new ServerError("start-failed", `${error.message} (the stop needs the folder: a server that runs in it was started by another account, so stop it from that account, an elevated shell for an elevated run, or end its process)`, error.startError);
+		}
+		throw error;
+	});
 	const locked = ctx.now();
 	try {
 		const seen = await probe(ctx);
 		const probed = ctx.now();
 		// As for a restart: the server runs in the broker scope it was started in, and a stop from another one is not its requester's to give.
-		if (seen.record && !sameBroker(seen.record.intercom, intercomOf(ctx.env, ctx.platform))) throw new ServerError("scope", "the sb server runs in another pi-intercom scope or transport than this process, so this process does not stop it");
+		if (seen.record && seen.live && !sameBroker(seen.record.intercom, intercomOf(ctx.env, ctx.platform))) throw new ServerError("scope", "the sb server runs in another pi-intercom scope or transport than this process, so this process does not stop it");
 		if (!seen.live || !seen.record) {
 			if (seen.record && !seen.record.stopped) updateRecord(ctx.slot, (r) => ({ ...r, stopped: true }));
 			return { outcome: "already-down" };

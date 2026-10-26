@@ -89,8 +89,9 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	let leave: (code: number) => Promise<void> = async (code) => finish(code);
 	const handle: ServerHandle = { ready, done, get endpoint() { return endpoint; }, shutdown: (code = 0) => leave(code) };
 
-	// The folder is ready (on Windows protected) before the log or any file is created in it. A folder that cannot be protected is a server that cannot run here: it leaves with 3 and writes
-	// nothing into it, since an unprotected folder is what it could not fix (a starter that asked for it reads the same reason from its own call, and from the exit code).
+	// The folder is ready (on Windows protected) before the log or any file is created in it. A folder that cannot be protected is a server that cannot run here: it leaves with 3. It writes no
+	// log, record, or secret into a folder it could not fix, only start-error.json, which holds the reason and nothing secret: a server started through WMI has no exit code for its starter to read
+	// (a foreign ACE planted after the starter protected the folder ended `up` with "exited before it answered" and nothing else; VM pass 4, F3), and `up` reads that file.
 	let unprepared: Error | undefined;
 	try {
 		(o.prepare ?? ((s: Slot, ms?: number) => prepareSlot(s, platform, undefined, ms)))(slot);
@@ -98,6 +99,9 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		unprepared = error as Error;
 	}
 	if (unprepared) {
+		try {
+			writeStartError(slot, { code: "acl", text: phrase(unprepared.message, 600) }, now());
+		} catch { /* the folder is not one this process can write in: the exit code is all there is */ }
 		markReady(false);
 		finish(EXIT_CANNOT_RUN);
 		return handle;

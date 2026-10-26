@@ -95,12 +95,32 @@ export function createStartOf({ platform = process.platform, ps = (pid: number) 
 		const keep = setInterval(() => {}, 2 ** 30);
 		return pending.finally(() => clearInterval(keep));
 	};
+	const waiting = new Map<number, ((value: string) => void)[]>();
 	/** Remembers a start time that was read some other way (the server's ACL call tells it), so no second PowerShell start is made for it. */
 	const remember = (pid: number, value: string | undefined) => {
-		if (valid(pid) && value && ISO_START.test(value)) known.set(pid, { value, at: now(), fails: 0 });
+		if (!valid(pid) || !value || !ISO_START.test(value)) return;
+		known.set(pid, { value, at: now(), fails: 0 });
+		for (const resolve of waiting.get(pid) ?? []) resolve(value);
+		waiting.delete(pid);
+	};
+	/**
+	 * `startedLater`, but a start time that is about to be told some other way is waited for first: a Windows start through the launch PowerShell reads the starter's own start time in its one
+	 * PowerShell start (`remember`), and asking for it here at once would be a second PowerShell start (VM pass 4, F2). Only when nothing tells it within `graceMs` is it asked for.
+	 * On macOS and Linux it is `ps`, at once.
+	 */
+	const startedOrWait = (pid: number, graceMs: number): Promise<string | undefined> => {
+		if (platform !== "win32") return Promise.resolve(startOf(pid));
+		const seen = fresh(pid);
+		if (seen) return Promise.resolve(seen.value);
+		return new Promise<string | undefined>((resolve) => {
+			const timer = setTimeout(() => void ask(pid).then(resolve), graceMs);
+			timer.unref();
+			const told = (value: string) => (clearTimeout(timer), resolve(value));
+			waiting.set(pid, [...(waiting.get(pid) ?? []), told]);
+		});
 	};
 	const forget = (pid: number) => void known.delete(pid);
-	return { startOf, startedLater, forget, remember };
+	return { startOf, startedLater, startedOrWait, forget, remember };
 }
 const shared = createStartOf();
 /** When a process started; undefined when it cannot be told (yet, on Windows). A PID reused after a crash belongs to a process that started later. */
@@ -112,6 +132,8 @@ export const startOf = shared.startOf;
 export const startedLater = shared.startedLater;
 /** Remembers a start time read some other way, so it is not read again. */
 export const rememberStart = shared.remember;
+/** This process's (or another's) start time, waiting up to `graceMs` for `rememberStart` to tell it before it is read with a PowerShell start of its own. */
+export const startedOrWait = shared.startedOrWait;
 /** Drops what is cached for a PID that is seen dead, so a process that takes the number later is read afresh. */
 export const forgetStart = shared.forget;
 /** Starts reading this process's own start time in the background (Windows; `ps` is instant elsewhere), so the first record it writes already has it. */

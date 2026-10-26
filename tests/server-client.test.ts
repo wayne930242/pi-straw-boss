@@ -80,7 +80,7 @@ test("a session on another broker scope or transport uses no server; one on the 
 	const other = look({ env: { PI_INTERCOM_SCOPE_ID: "team-b" } }, { record: scoped, live: true });
 	assert.equal(other.do === "refuse" && other.why, "scope");
 	assert.deepEqual(look({ env: { PI_INTERCOM_SCOPE_ID: "team-a" } }, { record: scoped, live: true }), { do: "nothing", why: "live" });
-	assert.equal(look({ env: {} }, { record: scoped, live: false }).do, "refuse");
+	assert.equal(look({ env: {} }, { record: scoped, live: false }).do, "start", "a record of a server that is gone does not pin the scope (F6)");
 	assert.deepEqual(look({ env: { PI_INTERCOM_SCOPE_ID: "anything" } }), { do: "start" }, "no record: the first session defines it");
 	const tcp = look({ env: { PI_INTERCOM_TRANSPORT: "tcp" }, platform: "win32" }, { record: record(), live: true });
 	assert.equal(tcp.do === "refuse" && tcp.why, "scope");
@@ -593,4 +593,31 @@ test("on Windows the starter gives the server's spawn a state folder and a fresh
 	} finally {
 		await w.close();
 	}
+});
+
+// --- VM pass 4, F6: a record of a server that is gone does not pin the broker scope ---
+
+test("F6: after a stop, the next start in another pi-intercom scope runs (the stopped record keeps the old scope but does not pin it); stop and restart of a server that is gone are not refused for it; a live server in another scope still is", async () => {
+	const a = { ...world.env, PI_INTERCOM_SCOPE_ID: "scope-a" }, b = { ...world.env, PI_INTERCOM_SCOPE_ID: "scope-b" };
+	const first = await ensure(world.ctx({ env: a }), { boss: true });
+	assert.ok("server" in first && first.server === "started");
+	assert.equal(readRecord(world.slot)?.intercom.scope, "scope-a");
+	// Live and in scope A: scope B is refused, as before.
+	await assert.rejects(stop(world.ctx({ env: b })), (e: unknown) => e instanceof ServerError && e.code === "scope");
+	await assert.rejects(restart(world.ctx({ env: b }), { reason: "r" }), (e: unknown) => e instanceof ServerError && e.code === "scope");
+	assert.equal((await stop(world.ctx({ env: a }))).outcome, "stopped");
+	// Gone: the old scope is on the record, and scope B is no longer refused.
+	assert.equal(readRecord(world.slot)?.intercom.scope, "scope-a");
+	assert.equal((await stop(world.ctx({ env: b }))).outcome, "already-down");
+	const second = await ensure(world.ctx({ env: b }), { boss: true });
+	assert.ok("server" in second && second.server === "started", JSON.stringify(second));
+	assert.equal(readRecord(world.slot)?.intercom.scope, "scope-b");
+});
+
+test("F6: decide refuses another scope only while the server is live", () => {
+	const rec = { ...({} as ServerRecord), pid: 1, version: "0.44.0", herdr: world.slot.herdr, intercom: { scope: "a", transport: "default" as const }, stopped: true };
+	const env = { PI_INTERCOM_SCOPE_ID: "b" };
+	assert.deepEqual(look({ env }, { record: rec, live: false }), { do: "nothing", why: "stopped" });
+	assert.equal(look({ env }, { record: { ...rec, stopped: false }, live: false }).do, "start");
+	assert.deepEqual(look({ env }, { record: rec, live: true }), { do: "refuse", why: "scope", text: "the sb server runs in another pi-intercom scope or transport than this session, so this session uses none" });
 });

@@ -3,8 +3,8 @@ import { chmodSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, statS
 import { join } from "node:path";
 import { herdrSocket } from "../endpoint.ts";
 import { alive as pidAlive } from "../remote.ts";
-import { startedLater, startOf } from "../startof.ts";
-import { protectFolder, refuseLink, type RunNative } from "./winprep.ts";
+import { startedOrWait, startOf } from "../startof.ts";
+import { protectFolder, refuseLink, resetFileAcl, type RunNative } from "./winprep.ts";
 
 // What the sb server leaves on disk (docs/specs/2026-10-26-sb-backend.md, Process model and lifecycle): `server.json`, the record of the running server;
 // `server.lock`, which makes check-and-start atomic; `start-error.json`, why the last start attempt failed. One server serves one (state directory, Herdr socket)
@@ -237,6 +237,24 @@ export interface LockDeps {
 	note?: (event: string, fields: Record<string, string | number>) => void;
 	/** Makes the slot's folder ready before the lock is written into it (the Windows ACL, before any file); `prepareSlot` by default. */
 	prepare?: (slot: Slot, ms?: number) => void;
+	/** Gives a lock file the folder's ACL again when it cannot be read (access denied); `resetFileAcl` on Windows, none elsewhere. Without one an unreadable lock is an error. */
+	repair?: (file: string) => void;
+}
+/** `server.lock` cannot be opened (access denied): not a start under way. Told as it is, never waited for as a held lock. */
+export class LockUnreadable extends Error {
+	constructor(file: string, code: string, detail?: string) {
+		super(`${file} cannot be read (${code}) and its permissions could not be repaired${detail ? `: ${detail}` : ""}; delete it, or reset them (icacls "${file}" /reset), then start again`);
+	}
+}
+/** The error code when the file exists and cannot be read for lack of permission, else undefined. */
+function deniedCode(file: string): string | undefined {
+	try {
+		readFileSync(file);
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code ?? "";
+		return code === "EACCES" || code === "EPERM" ? code : undefined;
+	}
+	return undefined;
 }
 export class LockBusy extends Error {
 	holder: LockInfo | undefined;
@@ -255,6 +273,7 @@ export function holderAlive(info: LockInfo, deps: Pick<LockDeps, "alive" | "star
 	return now === undefined || now === info.started;
 }
 
+const SELF_START_GRACE_MS = 20_000;
 const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 /**
  * Takes `server.lock`, which a start or a restart holds while it decides and carries out (never a running server). It is created whole and linked into place,
@@ -264,7 +283,8 @@ const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
  */
 export async function takeLock(slot: Slot, by: string, deps: LockDeps = {}, waitMs = 0): Promise<Lock> {
 	const now = deps.now ?? Date.now, sleep = deps.sleep ?? pause, lock = fileOf(slot, "lock"), marker = fileOf(slot, "stale");
-	const self = deps.self ?? { pid: process.pid, started: () => startedLater(process.pid) };
+	// Waits a few seconds for the launch PowerShell to tell this process's start time (a cold start on Windows makes one PowerShell start, not two) before reading it with one of its own.
+	const self = deps.self ?? { pid: process.pid, started: () => startedOrWait(process.pid, SELF_START_GRACE_MS) };
 	// The start time is taken if it is known now (macOS and Linux: always); on Windows it takes seconds (a PowerShell start), and a cold start does not wait for it: the lock is
 	// taken without it and written again with it when it arrives. Until then the lock is judged by its pid alone, as one whose start time `ps` cannot tell is.
 	let known: string | undefined, settled = false;
@@ -277,6 +297,7 @@ export async function takeLock(slot: Slot, by: string, deps: LockDeps = {}, wait
 	const temp = `${lock}.${self.pid}.${randomBytes(4).toString("hex")}.tmp`;
 	writeFileSync(temp, body, { flag: "wx", mode: 0o600 });
 	const end = now() + waitMs;
+	let repaired = false;
 	try {
 		for (;;) {
 			try {
@@ -285,6 +306,18 @@ export async function takeLock(slot: Slot, by: string, deps: LockDeps = {}, wait
 				return { info, release: () => (readRaw(lock) === body ? rmSync(lock, { force: true }) : undefined) };
 			} catch (error) {
 				if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+			}
+			// A lock that is there and cannot be opened was damaged by someone (an empty DACL): its permissions are repaired once, and then it is read; never waited for as "held".
+			const denied = deniedCode(lock);
+			if (denied) {
+				if (repaired || !deps.repair) throw new LockUnreadable(lock, denied);
+				repaired = true;
+				try {
+					deps.repair(lock);
+				} catch (error) {
+					throw new LockUnreadable(lock, denied, (error as Error).message);
+				}
+				continue;
 			}
 			const raw = readRaw(lock), held = parse<LockInfo>(raw);
 			// A lock that cannot be read was caught being written, or is garbage a crash left: it is garbage once it is a few seconds old.

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createConnection } from "node:net";
 import { afterEach, beforeEach, test } from "node:test";
@@ -522,4 +522,17 @@ test("without a token (serve, a plain spawn) the server makes its own check, and
 	assert.equal(await s.handle.ready, true);
 	assert.equal(world.acls.length, own + 1);
 	await s.handle.shutdown(0);
+});
+
+// --- VM pass 4, F3: a server that cannot prepare the folder tells why in start-error.json (only that) ---
+
+test("F3: a server that cannot protect the folder leaves with 3 and writes start-error.json with the acl reason (and no log, record, or secret), for the starter to read", async () => {
+	mkdirSync(world.stateDir, { recursive: true });
+	const s = await world.start({ platform: "win32", prepare: () => { throw new Error("could not protect C:\\s before writing to it: the folder grants WD, who is neither the owner nor SYSTEM"); } });
+	assert.equal(await s.handle.ready, false);
+	assert.equal(await s.handle.done, 3);
+	const error = readStartError(world.slot)!;
+	assert.equal(error.code, "acl");
+	assert.match(error.text, /grants WD, who is neither the owner nor SYSTEM/);
+	assert.deepEqual(readdirSync(world.stateDir), ["start-error.json"], "nothing else was written");
 });

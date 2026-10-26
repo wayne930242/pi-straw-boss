@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, win32 } from "node:path";
 import { system32, system32Path } from "../winpath.ts";
 import { asciiLine, folderProblems, SYSTEM_SID } from "./acl.ts";
 
@@ -13,24 +13,57 @@ import { asciiLine, folderProblems, SYSTEM_SID } from "./acl.ts";
 // below the folder and reads every SDDL back; this closes the window before it, and refuses a folder it cannot make the owner's.
 
 /** Runs a system program (`whoami.exe`, `icacls.exe`) and returns its output; `timeoutMs` bounds it (the time a caller has left). */
-export type RunNative = (file: string, args: string[], timeoutMs?: number) => string;
+export type RunNative = (file: string, args: string[], timeoutMs?: number, raw?: boolean) => string;
 export const NATIVE_MS = 15_000;
 /** A system program by absolute path, run from System32 (a bare name is looked for in the current folder first, which is a project: nodejs/node#46264). */
 export const nativeCommand = (name: string, args: string[], env: NodeJS.ProcessEnv = process.env, timeout = NATIVE_MS) => ({
 	file: system32Path(name, env), args,
 	options: { encoding: "utf8" as const, windowsHide: true, timeout, cwd: system32(env), stdio: ["ignore", "pipe", "pipe"] as ("ignore" | "pipe")[] },
 });
-const runNative: RunNative = (name, args, timeoutMs = NATIVE_MS) => {
+const runNative: RunNative = (name, args, timeoutMs = NATIVE_MS, raw = false) => {
 	const { file, args: argv, options } = nativeCommand(name, args, process.env, Math.max(500, Math.min(timeoutMs, NATIVE_MS)));
-	return execFileSync(file, argv, options);
+	// `raw`: the console's code page bytes kept one to one (latin1), so two programs' spellings of an account name can be compared byte for byte. `cmd /c` gets its line verbatim.
+	return execFileSync(file, argv, { ...options, ...(raw ? { encoding: "latin1" as const } : {}), ...(name === "cmd.exe" ? { windowsVerbatimArguments: true } : {}) });
 };
 
-/** The owner's SID from `whoami /user /fo csv /nh` (`"DOMAIN\name","S-1-5-21-…"`; the CSV layout does not change with the display language). */
-export function ownerSid(run: RunNative = runNative, timeoutMs?: number): string {
-	const text = run("whoami.exe", ["/user", "/fo", "csv", "/nh"], timeoutMs);
-	const sid = /"(S-1-[0-9-]+)"\s*$/.exec(text.trim())?.[1];
-	if (!sid) throw new Refused(`whoami did not give a SID: ${text.trim().slice(0, 120) || "nothing"}`);
-	return sid;
+/** The owner's SID and account name from `whoami /user /fo csv /nh` (`"DOMAIN\name","S-1-5-21-…"`; the CSV layout does not change with the display language). */
+export function ownerIdentity(run: RunNative = runNative, timeoutMs?: number): { sid: string; name: string } {
+	const text = run("whoami.exe", ["/user", "/fo", "csv", "/nh"], timeoutMs, true).trim();
+	const found = /"([^"]*)"\s*,\s*"(S-1-[0-9-]+)"\s*$/.exec(text);
+	if (!found) throw new Refused(`whoami did not give a SID: ${text.slice(0, 120) || "nothing"}`);
+	return { sid: found[2]!, name: found[1]! };
+}
+export const ownerSid = (run: RunNative = runNative, timeoutMs?: number): string => ownerIdentity(run, timeoutMs).sid;
+
+/**
+ * Whether the owner of the folder `dir` is `who`, read natively: `dir /q` of its parent names the owner of each entry, in the console's code page, as `whoami` does, so the account name is
+ * compared byte for byte (the SID too, for an owner Windows shows as one). Only a positive answer counts: a listing that cannot be run or read is `undefined` ("cannot tell"), and a different
+ * owner is `false`. A path that `cmd` would treat specially (`%`, `!`, `"`, `^`, `&`) is not asked about.
+ */
+export function ownedBy(dir: string, who: { sid: string; name: string }, run: RunNative = runNative, timeoutMs?: number): boolean | undefined {
+	const parent = win32.dirname(dir), leaf = win32.basename(dir);
+	if (/[%!"^&|<>]/.test(parent)) return undefined;
+	let text: string;
+	try {
+		text = run("cmd.exe", ["/d", "/s", "/c", `"dir /q /a:d "${parent}""`], timeoutMs, true);
+	} catch {
+		return undefined;
+	}
+	const lower = leaf.toLowerCase();
+	// The folder's own name is latin1 too: compare on the bytes of its UTF-8 spelling only when it is ASCII (the folder is `straw-boss…`).
+	if (!/^[\x20-\x7E]+$/.test(leaf)) return undefined;
+	for (const line of text.split(/\r?\n/)) {
+		const trimmed = line.trimEnd();
+		if (!trimmed.toLowerCase().endsWith(lower)) continue;
+		const head = trimmed.slice(0, trimmed.length - leaf.length);
+		if (!/\s$/.test(head)) continue; // the name is a field of its own
+		const before = head.trimEnd();
+		for (const id of [who.name, who.sid]) {
+			if (id && before.toLowerCase().endsWith(id.toLowerCase()) && (before.length === id.length || /\s/.test(before[before.length - id.length - 1]!))) return true;
+		}
+		return false;
+	}
+	return undefined;
 }
 /** Every call carries `/L`: on a link icacls then acts on the link itself, never on its target (the folder is also looked at for a link before the calls). */
 /** The icacls call that makes the owner the folder's owner (it fails fast where that is not allowed, on a folder another account owns). `/setowner` is a form of its own in icacls' syntax: it is not combined with the grant. */
@@ -59,6 +92,18 @@ export function readDacl(dir: string, run: RunNative, timeoutMs?: number): strin
 	}
 }
 
+/**
+ * Gives a file of the state folder the folder's ACL again (`icacls <file> /reset`: its explicit ACEs go, it inherits the owner and SYSTEM grant). The owner can, with or without a filtered token,
+ * where a file with an empty DACL (`D:PAI`) can be neither read nor deleted by it: the lock of a start that someone damaged is repaired here instead of being waited for as "held".
+ */
+export function resetFileAcl(file: string, run: RunNative = runNative, timeoutMs?: number): void {
+	try {
+		run("icacls.exe", [file, "/reset", "/L", "/Q"], timeoutMs);
+	} catch (error) {
+		throw new Refused(explainNative("protect", file, error as never));
+	}
+}
+
 /** A folder this module refuses on its own check (a link, a DACL with a foreign ACE), as against a program that failed. */
 class Refused extends Error {}
 /** Refuses a folder that is a link or a junction (`icacls` without `/L` would act on its target, and what is written there would land elsewhere). */
@@ -78,7 +123,7 @@ const OWNER_REFUSED = new Set([5, 1307, 1314]);
  * What to tell and what to do when an icacls or whoami call fails. Keyed on the step and the exit code, since the program's text is in the console's code page (CP950, CP932, …), which
  * Node reads as UTF-8: half of it comes out garbled. That text stays as a detail, cut to printable ASCII.
  */
-export function explainNative(step: Step, dir: string, error: Error & { stderr?: unknown; stdout?: unknown; status?: unknown; code?: unknown; syscall?: unknown; killed?: boolean; signal?: unknown }): string {
+export function explainNative(step: Step, dir: string, error: Error & { stderr?: unknown; stdout?: unknown; status?: unknown; code?: unknown; syscall?: unknown; killed?: boolean; signal?: unknown; ownerKnown?: boolean }): string {
 	const status = typeof error.status === "number" ? error.status : undefined;
 	const detail = asciiLine(error.stderr) || asciiLine(error.stdout);
 	const tail = `${step} step${status !== undefined ? `, exit ${status}` : ""}${detail ? `; detail: ${detail}` : ""}`;
@@ -88,13 +133,16 @@ export function explainNative(step: Step, dir: string, error: Error & { stderr?:
 	if (!spawned && status === undefined && !detail && error.message) return `${step === "whoami" ? "whoami" : "icacls"} failed (${tail}; ${asciiLine(error.message)}).`;
 	if (spawned && error.code === "ENOENT") return `${step === "whoami" ? "whoami.exe" : "icacls.exe"} was not found in the Windows System32 folder (${tail}).`;
 	if (spawned && (error.code === "ETIMEDOUT" || error.killed || error.signal)) return `${step === "whoami" ? "whoami" : "icacls"} did not finish in time (${tail}). Start again; if it keeps happening, the machine is too busy or a security tool is holding it.`;
-	if (step === "owner" && status !== undefined && OWNER_REFUSED.has(status)) return `the folder ${dir} belongs to another account, usually Administrators from a run of pi as administrator, and this process may not take it over. ${advice} (${tail}).`;
+	if (step === "owner" && status !== undefined && OWNER_REFUSED.has(status)) {
+		const whose = error.ownerKnown === true ? "belongs to another account, usually Administrators from a run of pi as administrator," : "could not be made yours, and its owner could not be read (it is probably another account's, usually Administrators from a run of pi as administrator),";
+		return `the folder ${dir} ${whose} and this process may not take it over. ${advice} (${tail}).`;
+	}
 	if (step === "protect" && status === 5) return `this process may not change the permissions of the folder ${dir}, which belongs to another account or was made by an administrator's run. ${advice} (${tail}).`;
 	if (status === 87) return `icacls did not accept its arguments on this Windows (${tail}). This is a bug in pi-straw-boss: please report it with this text.`;
 	return `${step === "whoami" ? "whoami" : "icacls"} failed (${tail}).`;
 }
 
-let sid: string | undefined;
+let sid: string | undefined, accountName = "";
 const stepOf = <T>(step: Step, dir: string, fn: () => T): T => {
 	try {
 		return fn();
@@ -104,10 +152,26 @@ const stepOf = <T>(step: Step, dir: string, fn: () => T): T => {
 	}
 };
 /** Makes the folder the owner's, protects it, and reads its DACL back; the folder is `target`, which holds nothing yet. */
+/**
+ * Makes the folder the owner's. `/setowner` needs WRITE_OWNER, which a filtered (UAC) token of an administrator does not have outside its profile unless the parent grants it, even on a folder
+ * the user owns (it made every start there fail with exit 5). So when it is refused (5, 1307, 1314) the owner is read natively (`ownedBy`): a folder that is the owner's already needs nothing,
+ * and the protect call that follows decides the rest (the owner has WRITE_DAC). A folder of another owner, or one whose owner cannot be read, is refused, and the message says which.
+ */
+function takeOwnership(target: string, run: RunNative, left: () => number | undefined): void {
+	try {
+		run("icacls.exe", ownerArgs(target, sid!), left());
+	} catch (error) {
+		const status = (error as { status?: unknown }).status;
+		if (typeof status !== "number" || !OWNER_REFUSED.has(status)) throw error;
+		const owned = ownedBy(target, { sid: sid!, name: accountName }, run, left());
+		if (owned === true) return;
+		throw Object.assign(error as Error, { ownerKnown: owned !== undefined });
+	}
+}
 function secure(target: string, run: RunNative, left: () => number | undefined): void {
 	// A junction that took the name since the first look is refused before any call acts on it (`/L` is the second guard).
 	refuseLink(target);
-	stepOf("owner", target, () => run("icacls.exe", ownerArgs(target, sid!), left()));
+	stepOf("owner", target, () => takeOwnership(target, run, left));
 	stepOf("protect", target, () => run("icacls.exe", protectArgs(target, sid!), left()));
 	// The folder could have been swapped for a link between the first look and the calls: looked at again before anything is read from it or written into it.
 	refuseLink(target);
@@ -122,18 +186,25 @@ function secure(target: string, run: RunNative, left: () => number | undefined):
  */
 export type Rename = (from: string, to: string) => void;
 /** Renames the temporary folder; a scanner or the indexer holding it makes the rename fail for a moment on Windows, so EPERM, EBUSY and EACCES are tried again (as `writeJson` does). */
+export const RENAME_WAITS_MS = [10, 20, 40, 80, 160, 320, 500, 500, 500];
 function renameHeld(from: string, to: string, rename: Rename): void {
 	for (let tries = 0; ; tries++) {
 		try {
 			return rename(from, to);
 		} catch (error) {
-			if (existsSync(to) || tries >= 20 || !["EPERM", "EBUSY", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
-			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+			const code = (error as NodeJS.ErrnoException).code ?? "";
+			if (existsSync(to) || !["EPERM", "EBUSY", "EACCES"].includes(code)) throw error;
+			if (tries >= RENAME_WAITS_MS.length) {
+				// A handle that stays open (a security scanner, the indexer, a backup agent): said as that, with what to do. The folder is removed by a later start's sweep if it cannot be removed now.
+				const total = Math.round(RENAME_WAITS_MS.reduce((a, b) => a + b, 0) / 100) / 10;
+				throw new Refused(`something is holding the new folder ${from} (a security scanner, the indexer, or a backup tool?) and it could not be put in place for ${total} s (${code}). Start again in a moment; if it keeps happening, exclude ${dirname(from)} from that tool`);
+			}
+			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, RENAME_WAITS_MS[tries]!);
 		}
 	}
 }
-const TEMP_MAX_MS = 10 * 60_000;
-/** Removes the temporary folders a crashed start left beside the state folder: a folder (not a link, not a file) of the form `<name>.<16 hex>.tmp` older than ten minutes. Never fails the start. */
+const TEMP_MAX_MS = 60_000;
+/** Removes the temporary folders a crashed start left beside the state folder: a folder (not a link, not a file) of the form `<name>.<16 hex>.tmp` older than a minute (a start holds its temporary folder for well under that: three native calls and the rename). Never fails the start. */
 function sweepTemps(dir: string, at: number): void {
 	const parent = dirname(dir), prefix = `${basename(dir)}.`;
 	try {
@@ -162,7 +233,9 @@ function intoPlace(dir: string, run: RunNative, left: () => number | undefined, 
 		refuseLink(dir);
 		return true;
 	} catch (error) {
-		rmSync(temp, { recursive: true, force: true });
+		try {
+			rmSync(temp, { recursive: true, force: true });
+		} catch { /* held by whatever held the rename: the next start's sweep removes it */ }
 		throw error;
 	}
 }
@@ -177,7 +250,10 @@ export function protectFolder(dir: string, run: RunNative = runNative, timeoutMs
 	// One time for all the calls: each gets what is left of it (at least 100 ms), not the whole of it again.
 	const end = timeoutMs === undefined ? undefined : now() + timeoutMs, left = () => (end === undefined ? undefined : Math.max(100, end - now()));
 	try {
-		sid ??= stepOf("whoami", dir, () => ownerSid(run, left()));
+		if (!sid) {
+			const who = stepOf("whoami", dir, () => ownerIdentity(run, left()));
+			(sid = who.sid), (accountName = who.name);
+		}
 		if (!existsSync(dir) && intoPlace(dir, run, left, rename)) return;
 		secure(dir, run, left);
 	} catch (error) {
@@ -185,4 +261,4 @@ export function protectFolder(dir: string, run: RunNative = runNative, timeoutMs
 	}
 }
 /** For tests: forgets the owner's SID. */
-export const forgetSid = () => { sid = undefined; };
+export const forgetSid = () => { sid = undefined; accountName = ""; };

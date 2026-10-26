@@ -63,7 +63,7 @@ export const LAUNCH_SCRIPT = [
 	"  $si = ([wmiclass]'Win32_ProcessStartup').CreateInstance()",
 	"  $si.ShowWindow = 0",
 	"  $vars = @()",
-	"  foreach ($e in [Environment]::GetEnvironmentVariables('Process').GetEnumerator()) { $k = [string]$e.Key; if ($k -notlike 'SB_LAUNCH_*' -and $k -notlike 'SB_ACL_*' -and $k -ne 'PSModulePath' -and -not $k.StartsWith('=')) { $vars += ($k + '=' + [string]$e.Value) } }",
+	"  foreach ($e in [Environment]::GetEnvironmentVariables('Process').GetEnumerator()) { $k = [string]$e.Key; if ($k -notlike 'SB_LAUNCH_*' -and $k -notlike 'SB_ACL_*' -and $k -ne 'SB_STARTER_PID' -and $k -ne 'PSModulePath' -and -not $k.StartsWith('=')) { $vars += ($k + '=' + [string]$e.Value) } }",
 	"  $si.EnvironmentVariables = $vars",
 	"  $wmi = [wmiclass]'Win32_Process'",
 	`  $si.CreateFlags = ${BASE_FLAGS | CREATE_FLAGS.breakaway}`,
@@ -96,7 +96,10 @@ export const LAUNCH_SCRIPT = [
 	"      Remove-Item -LiteralPath ($env:SB_ACL_MARKER + '.tmp') -Force -ErrorAction SilentlyContinue",
 	"    }",
 	"  }",
-	"  Say ([ordered]@{ rc = [int]$r.ReturnValue; pid = $newPid; breakaway = $away; started = $started; createMs = [int]$createMs; aclMs = [int]($sw.ElapsedMilliseconds - $createMs); markerError = $markerError })",
+	// The starter's own start time, in this same PowerShell (after the marker, so the server is not kept waiting for it): the starter would otherwise start a PowerShell of its own to read it.
+	"  $starterStarted = $null",
+	"  if ($env:SB_STARTER_PID) { try { $starterStarted = (Get-CimInstance Win32_Process -Filter ('ProcessId=' + [int]$env:SB_STARTER_PID)).CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ', [cultureinfo]::InvariantCulture) } catch { } }",
+	"  Say ([ordered]@{ rc = [int]$r.ReturnValue; pid = $newPid; breakaway = $away; started = $started; starterStarted = $starterStarted; createMs = [int]$createMs; aclMs = [int]($sw.ElapsedMilliseconds - $createMs); markerError = $markerError })",
 	"} catch {",
 	// Before the process exists the answer says so (rc -1) and the exit code is 1: the starter falls back to the plain spawn. After it, the answer carries the pid and the starter does not.
 	"  Say ([ordered]@{ rc = $(if ($created) { 0 } else { -1 }); pid = $newPid; breakaway = $away; started = $started; markerError = $_.Exception.Message })",
@@ -109,16 +112,16 @@ export function launchCommand(spec: SpawnSpec, env: NodeJS.ProcessEnv = process.
 	return {
 		file: powershellPath(env),
 		args: [...POWERSHELL_FLAGS, "-EncodedCommand", Buffer.from(LAUNCH_SCRIPT, "utf16le").toString("base64")],
-		options: { encoding: "utf8" as const, timeout, windowsHide: true, cwd: system32(env), env: { ...spec.env, SB_LAUNCH_CMD: commandLine(spec), SB_LAUNCH_CMD_INJOB: commandLine(spec, "wmi-in-job"), SB_LAUNCH_CWD: spec.cwd, ...(spec.acl ? { SB_ACL_DIR: spec.acl.dir, SB_ACL_MARKER: aclMarkerPath(spec.acl.dir, spec.acl.token) } : {}) } as NodeJS.ProcessEnv },
+		options: { encoding: "utf8" as const, timeout, windowsHide: true, cwd: system32(env), env: { ...spec.env, SB_LAUNCH_CMD: commandLine(spec), SB_LAUNCH_CMD_INJOB: commandLine(spec, "wmi-in-job"), SB_LAUNCH_CWD: spec.cwd, ...(spec.starterPid ? { SB_STARTER_PID: String(spec.starterPid) } : {}), ...(spec.acl ? { SB_ACL_DIR: spec.acl.dir, SB_ACL_MARKER: aclMarkerPath(spec.acl.dir, spec.acl.token) } : {}) } as NodeJS.ProcessEnv },
 	};
 }
 
-export interface LaunchAnswer { pid: number; breakaway: boolean; started?: string; createMs?: number; aclMs?: number; markerError?: string }
+export interface LaunchAnswer { pid: number; breakaway: boolean; started?: string; starterStarted?: string; createMs?: number; aclMs?: number; markerError?: string }
 /** The answer says WMI made no process (a return code other than 0, or a script that ended before the create): a plain spawn is safe. Any other failure to read an answer leaves it open that a server exists. */
 class NotCreated extends Error {}
 export function parseLaunchOutput(stdout: string): LaunchAnswer {
 	const line = stdout.trim().split(/\r?\n/).filter(Boolean).at(-1) ?? "";
-	let parsed: { rc?: unknown; pid?: unknown; breakaway?: unknown; started?: unknown; createMs?: unknown; aclMs?: unknown; markerError?: unknown };
+	let parsed: { rc?: unknown; pid?: unknown; breakaway?: unknown; started?: unknown; starterStarted?: unknown; createMs?: unknown; aclMs?: unknown; markerError?: unknown };
 	try {
 		parsed = JSON.parse(line) as typeof parsed;
 	} catch {
@@ -132,6 +135,7 @@ export function parseLaunchOutput(stdout: string): LaunchAnswer {
 	return {
 		pid: parsed.pid, breakaway: parsed.breakaway !== false, ...(typeof parsed.started === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(parsed.started) ? { started: parsed.started } : {}),
 		...(ms(parsed.createMs) ? { createMs: parsed.createMs as number } : {}), ...(ms(parsed.aclMs) ? { aclMs: parsed.aclMs as number } : {}),
+		...(typeof parsed.starterStarted === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(parsed.starterStarted) ? { starterStarted: parsed.starterStarted } : {}),
 		...(why ? { markerError: asciiLine(parsed.markerError) } : {}),
 	};
 }
@@ -213,7 +217,7 @@ export function spawnBreakaway(spec: SpawnSpec, deps: BreakawayDeps): Launched {
 		}
 		// The process exists but the check could not be left for it: the server is told at once, so it ends with `acl` instead of waiting out its 70 s.
 		if (answer.markerError) failMarker(`could not leave the ACL check: ${answer.markerError}`);
-		resolveStarted({ pid: answer.pid, ms: now() - t0, via: "wmi", breakaway: answer.breakaway, ...(answer.started ? { serverStarted: answer.started } : {}), ...(answer.createMs === undefined ? {} : { createMs: answer.createMs }), ...(answer.aclMs === undefined ? {} : { aclMs: answer.aclMs }), ...(answer.markerError ? { markerError: answer.markerError } : {}) });
+		resolveStarted({ pid: answer.pid, ms: now() - t0, via: "wmi", breakaway: answer.breakaway, ...(answer.started ? { serverStarted: answer.started } : {}), ...(answer.starterStarted ? { starterStarted: answer.starterStarted } : {}), ...(answer.createMs === undefined ? {} : { createMs: answer.createMs }), ...(answer.aclMs === undefined ? {} : { aclMs: answer.aclMs }), ...(answer.markerError ? { markerError: answer.markerError } : {}) });
 		timer = setInterval(() => {
 			if (alive(answer.pid)) return;
 			release();

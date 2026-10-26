@@ -60,3 +60,101 @@ test("a failure is never told by CLIXML: the message line when there is an error
 	}
 	assert.equal(BEFORE_CREATE, "sb-before-create");
 });
+
+// --- VM pass 4, F2: a cold start makes one PowerShell start, the launch script's: nobody else asks for the starter's or the server's start time ---
+
+import { createStartOf } from "../src/startof.ts";
+import { launch } from "../src/server/client.ts";
+import { runsAs } from "../src/server/client.ts";
+import { parseLaunchOutput } from "../src/server/breakaway.ts";
+import { fileOf, takeLock } from "../src/server/record.ts";
+import { ServerWorld, sleep, until } from "./server-world.ts";
+import { readFileSync } from "node:fs";
+
+const T = "2026-10-26T08:00:00.000Z";
+
+test("F2: startedOrWait takes a start time that is remembered meanwhile without a PowerShell start of its own, and asks for it only when nothing tells it within the grace", async () => {
+	let launched = 0;
+	const { startedOrWait, remember } = createStartOf({ platform: "win32", launch: (_f, _a, _o, done) => (launched++, queueMicrotask(() => done(null, `${T}\r\n`))) });
+	const told = startedOrWait(77, 60_000);
+	remember(77, T);
+	assert.equal(await told, T);
+	assert.equal(launched, 0, "no PowerShell start: the launch PowerShell told it");
+	assert.equal(await startedOrWait(77, 60_000), T, "known now: at once");
+	assert.equal(launched, 0);
+	// Nothing tells it: after the grace it is asked for, once.
+	const slow = startedOrWait(78, 20);
+	assert.equal(launched, 0, "not at once");
+	assert.equal(await slow, T);
+	assert.equal(launched, 1);
+});
+
+test("F2: off Windows startedOrWait is `ps` at once, as before", async () => {
+	const { startedOrWait } = createStartOf({ platform: "linux", ps: () => "Mon Oct 26 08:00:00 2026" });
+	assert.equal(await startedOrWait(5, 60_000), "Mon Oct 26 08:00:00 2026");
+});
+
+test("F2: the launch script reads the starter's start time in its one PowerShell start (SB_STARTER_PID, after the marker), the answer carries it, and the server never sees the variable", () => {
+	const lines = LAUNCH_SCRIPT.split("\n");
+	const marker = lines.findIndex((l) => /Move\(\$env:SB_ACL_MARKER/.test(l)), starter = lines.findIndex((l) => /\$env:SB_STARTER_PID/.test(l) && /Get-CimInstance Win32_Process/.test(l));
+	assert.ok(marker > 0 && starter > marker, "after the marker, so the server is not kept waiting for it");
+	assert.match(LAUNCH_SCRIPT, /\$k -ne 'SB_STARTER_PID'/);
+	assert.match(LAUNCH_SCRIPT, /starterStarted = \$starterStarted/);
+	assert.equal(LAUNCH_SCRIPT.match(/powershell/gi)?.length ?? 0, 0);
+	const { options } = launchCommand({ command: "node", args: [], env: {}, cwd: "C:\\s", options: { detached: true, stdio: "ignore", windowsHide: true }, starterPid: 4242 }, { SystemRoot: "C:\\Windows" });
+	assert.equal(options.env.SB_STARTER_PID, "4242");
+	assert.ok(!("SB_STARTER_PID" in launchCommand({ command: "node", args: [], env: {}, cwd: "C:\\s", options: { detached: true, stdio: "ignore", windowsHide: true } }, {}).options.env));
+	assert.equal(parseLaunchOutput(`{"rc":0,"pid":9,"starterStarted":"${T}"}`).starterStarted, T);
+	assert.equal(parseLaunchOutput('{"rc":0,"pid":9,"starterStarted":"later"}').starterStarted, undefined);
+});
+
+test("F2: runsAs does not ask for the record's start time while a start through the launch PowerShell is under way (its pid is not told yet)", () => {
+	const asked: number[] = [];
+	const ctx = { alive: () => true, startOf: (pid: number) => (asked.push(pid), "some other time") };
+	assert.equal(runsAs(ctx, { pid: 5, started: T }), false, "asked: another start time");
+	assert.deepEqual(asked, [5]);
+	assert.equal(runsAs(ctx, { pid: 5, started: T }, true), true, "not asked");
+	assert.deepEqual(asked, [5]);
+	assert.equal(runsAs({ alive: () => false, startOf: ctx.startOf }, { pid: 5, started: T }, true), false, "a pid that is gone is gone");
+});
+
+test("F2: launch with a start whose pid is told late (WMI) asks nobody for the server's start time until it is told; with a pid known at once it does, as before", async () => {
+	for (const late of [true, false]) {
+		const w = new ServerWorld();
+		try {
+			const asked: number[] = [];
+			const ctx = w.ctx({
+				startOf: (pid) => (asked.push(pid), T),
+				spawn: (spec) => {
+					const running = w.start({ env: spec.env, started: async () => T });
+					const exited = running.then((r) => r.handle.done);
+					return late
+						? { pid: undefined, exited, started: running.then(async (r) => (await sleep(250), { pid: r.pid, ms: 250, via: "wmi" as const })) }
+						: { pid: 4242, exited };
+				},
+			});
+			const record = await launch(ctx, {});
+			assert.ok(record.pid > 0);
+			if (late) assert.deepEqual(asked, [], "the server's start time was not asked for while its pid was unknown");
+			else assert.ok(asked.length >= 1, "a plain spawn asks, as before");
+		} finally {
+			await w.close();
+		}
+	}
+});
+
+test("F2: the starter's own start time, told by the launch answer, completes the lock without a PowerShell start of its own", async () => {
+	let launched = 0;
+	const own = createStartOf({ platform: "win32", launch: (_f, _a, _o, done) => (launched++, queueMicrotask(() => done(null, `${T}\r\n`))) });
+	const w = new ServerWorld();
+	try {
+		const lock = await takeLock(w.slot, "cli up", { ...w.ctx().lock, self: { pid: process.pid, started: () => own.startedOrWait(process.pid, 60_000) } }, 0);
+		assert.equal(JSON.parse(readFileSync(fileOf(w.slot, "lock"), "utf8")).started, undefined, "taken without it");
+		own.remember(process.pid, T);
+		await until(() => JSON.parse(readFileSync(fileOf(w.slot, "lock"), "utf8")).started === T, "the lock is written again with it");
+		assert.equal(launched, 0);
+		lock.release();
+	} finally {
+		await w.close();
+	}
+});
