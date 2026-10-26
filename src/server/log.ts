@@ -1,10 +1,11 @@
-import { appendFileSync, chmodSync, closeSync, existsSync, fstatSync, openSync, readSync, renameSync, rmSync, statSync } from "node:fs";
+import { appendFileSync, chmodSync, closeSync, existsSync, fstatSync, openSync, readSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 
 // The server's log: `server.log`, mode 600, one line per event. It holds events and their facts (a pid, a version, a reason, an outcome), never message text,
 // a brief, a token, a secret, a CSRF value, or file contents, as the relay's logs hold no bodies. It is rotated at 5 MB and keeps `server.log.1` to `server.log.3`.
 
 export const LOG_MAX = 5 * 1024 * 1024;
 export const LOG_KEEP = 3;
+const LOCK_STALE_MS = 10_000;
 export type Fact = string | number | boolean | undefined;
 
 export interface Log {
@@ -21,12 +22,26 @@ export function createLog(file: string, { now = Date.now, max = LOG_MAX, keep = 
 	const secrets = new Set<string>();
 	let opened = false;
 	const scrub = (text: string) => [...secrets].reduce((out, secret) => out.split(secret).join("[hidden]"), text);
+	// The server, the sessions that restart it, and the CLI all write this file, so a rotation is taken by one of them at a time (`server.log.lock`, created exclusively); one that
+	// finds it taken appends and leaves the rotation to its holder, and checks the size again once it has the lock, as a rotation just done makes the file small.
+	const lockFile = `${file}.lock`;
 	const rotate = () => {
-		const size = statSync(file, { throwIfNoEntry: false })?.size ?? 0;
-		if (size < max) return;
-		rmSync(`${file}.${keep}`, { force: true });
-		for (let n = keep - 1; n >= 1; n--) if (existsSync(`${file}.${n}`)) renameSync(`${file}.${n}`, `${file}.${n + 1}`);
-		renameSync(file, `${file}.1`);
+		if ((statSync(file, { throwIfNoEntry: false })?.size ?? 0) < max) return;
+		try {
+			writeFileSync(lockFile, String(process.pid), { flag: "wx", mode: 0o600 });
+		} catch {
+			// A holder that died in the middle leaves the lock behind: one a few seconds old is not at work any more.
+			if (Date.now() - (statSync(lockFile, { throwIfNoEntry: false })?.mtimeMs ?? Date.now()) > LOCK_STALE_MS) rmSync(lockFile, { force: true });
+			return;
+		}
+		try {
+			if ((statSync(file, { throwIfNoEntry: false })?.size ?? 0) < max) return;
+			rmSync(`${file}.${keep}`, { force: true });
+			for (let n = keep - 1; n >= 1; n--) if (existsSync(`${file}.${n}`)) renameSync(`${file}.${n}`, `${file}.${n + 1}`);
+			renameSync(file, `${file}.1`);
+		} finally {
+			rmSync(lockFile, { force: true });
+		}
 	};
 	return {
 		hide: (...more) => more.forEach((secret) => secret && secrets.add(secret)),

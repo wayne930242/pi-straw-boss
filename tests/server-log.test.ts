@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { createLog, logSize, readFrom, tailLog } from "../src/server/log.ts";
 
@@ -81,4 +83,24 @@ test("a follower reads what was appended, and a rotated file from its start", ()
 test("a log that cannot be written never throws", () => {
 	const log = createLog(join(root, "no", "such", "dir", "server.log"), { now: () => T });
 	assert.doesNotThrow(() => log.line("event"));
+});
+
+test("sbr-F014: processes that write the log at once while it rotates lose no line and no rotated file (the server, session requesters, and the CLI all write it)", async () => {
+	const worker = join(root, "writer.ts");
+	const logModule = pathToFileURL(fileURLToPath(new URL("../src/server/log.ts", import.meta.url))).href;
+	writeFileSync(worker, `import { createLog } from ${JSON.stringify(logModule)};\nconst [file, who] = process.argv.slice(2);\nconst log = createLog(file!, { max: 4096, keep: 400 });\nfor (let i = 0; i < 300; i++) log.line("tick", { who, i, pad: "x".repeat(60) });\n`);
+	const workers = ["a", "b", "c", "d"], failures: string[] = [];
+	await Promise.all(workers.map((who) => new Promise<void>((resolve) => {
+		const child = spawn(process.execPath, ["--experimental-strip-types", worker, file, who], { stdio: ["ignore", "ignore", "pipe"] });
+		let err = "";
+		child.stderr.on("data", (c: Buffer) => (err += c));
+		child.on("close", (code) => (code === 0 ? resolve() : (failures.push(`${who}: ${code} ${err.slice(0, 200)}`), resolve())));
+	})));
+	assert.deepEqual(failures, []);
+	const files = readdirSync(root).filter((f) => f.startsWith("server.log") && !f.endsWith(".lock"));
+	const lines = files.flatMap((f) => readFileSync(join(root, f), "utf8").split("\n").filter(Boolean));
+	assert.equal(lines.length, workers.length * 300, `every line is in one file: ${files.length} files`);
+	for (const who of workers) assert.equal(lines.filter((l) => l.includes(` who=${who} `)).length, 300, who);
+	assert.ok(files.length > 3, "it did rotate");
+	assert.deepEqual(readdirSync(root).filter((f) => f.endsWith(".lock")), [], "no lock is left behind");
 });
