@@ -253,7 +253,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased to 273 (desk mode R1): index.ts (66), startof.ts imported and warmStart called at the session's start.
 	// Unreleased to 275 (project trust): index.ts (68), the relay's import and its registration before the subagent return.
 	assert.ok(rest <= 275, `the rest of src has ${rest} lines`);
-	for (const [name, max] of [["found.ts", 103], ["files.ts", 157], ["ask.ts", 182], ["serve.ts", 110], ["wait.ts", 28], ["types.ts", 15]] as const) assert.ok(count(`src/trust/${name}`) <= max, `src/trust/${name} has ${count(`src/trust/${name}`)} lines`);
+	for (const [name, max] of [["found.ts", 103], ["files.ts", 160], ["ask.ts", 182], ["serve.ts", 110], ["wait.ts", 28], ["types.ts", 15]] as const) assert.ok(count(`src/trust/${name}`) <= max, `src/trust/${name} has ${count(`src/trust/${name}`)} lines`);
 	// The page: the files the spec budgets one by one, then this round's own figures (no figure in the spec): the focus views, the overlay
 	// layer (alert spotting and the stack model in the map's chunk, the layer's DOM and tiles in a chunk of their own), the dev-only demo, and everything else.
 	// 0.18.1 raised mirror.ts to 154 for embed, a terminal shown inside the session view instead of a tile.
@@ -510,6 +510,7 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 136.1 KB / 55.4 KB gzipped: a choice only this computer may give (`hereOnly`) is shown disabled on a paired device (gui/ask.ts).
 	// Unreleased to 137.1 KB / 55.7 KB gzipped: the drawer's tower row (icon and +), Quit on an idle main, and the map link in its foot (gui/drawer.ts).
 	// With project trust: the panel chunk and its messages add 5.3 KB / 2.7 KB gzipped to the figures above (142.45 KB / 58.45 KB gzipped in all).
+	// Unreleased (project trust review fixes): the chat chunks measure 142953 bytes (58690 gzipped) after a fresh build, up from 142450: the two outcome messages (gone, changed), the scroll of the trust step into view, and the changed notice kept beside the new question.
 	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 143_000 && total(chunks, gz) <= 58_750, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.

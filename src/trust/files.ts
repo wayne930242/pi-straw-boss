@@ -35,8 +35,10 @@ export function ensureDir(dir: string, ids = process.getuid !== undefined, home:
 		mkdirSync(dir, { recursive: true, mode: 0o700 });
 		const st = lstatSync(dir);
 		if (!st.isDirectory() || st.isSymbolicLink() || (ids && st.uid !== uid())) return false;
-		const inside = relative(realpathSync(home), realpathSync(dir));
-		if (!ids && (inside.startsWith("..") || isAbsolute(inside))) return false;
+		if (!ids) {
+			const inside = relative(realpathSync(home), realpathSync(dir));
+			if (inside.startsWith("..") || isAbsolute(inside)) return false;
+		}
 		if (process.platform !== "win32" && (st.mode & 0o077) !== 0) chmodSync(dir, 0o700);
 		return true;
 	} catch {

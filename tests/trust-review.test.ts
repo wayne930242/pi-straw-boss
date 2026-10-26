@@ -102,6 +102,7 @@ test("R-F009: without user ids a trust folder must lie in the profile; the confi
 	assert.equal(ensureDir(inside, false, home), true);
 	assert.equal(ensureDir(outside, false, home), false);
 	assert.equal(ensureDir(outside, true, home), true);
+	assert.equal(ensureDir(outside, true, join(root, "no-such-home")), true, "with user ids a missing home does not matter");
 	const calls: number[] = [];
 	const r = { pid: process.pid, started: "x" }, ps = () => (calls.push(1), "x");
 	assert.equal(lives(r, 0, ps), true);
