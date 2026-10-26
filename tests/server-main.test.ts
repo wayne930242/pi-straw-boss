@@ -296,6 +296,19 @@ test("sbr-F002, sbr-F009: a second server never takes over the socket of a serve
 	assert.match(logText(), /start-failed code=start/);
 });
 
+test("sbr-F015: the server does not wait for its own start time (seconds in PowerShell on Windows) to answer hello and be ready; the time is filled into the record when it arrives", async () => {
+	let arrive!: (started: string) => void;
+	const slow = new Promise<string>((resolve) => (arrive = resolve));
+	const s = await world.start({ started: () => slow, platform: "linux" });
+	assert.equal(await s.handle.ready, true, "ready while the start time is still being read");
+	assert.equal(world.record()?.pid, s.pid);
+	assert.equal(world.record()?.started, undefined);
+	assert.equal((await helloOf(s.handle.endpoint, world.record()!.secret))?.ready, true);
+	arrive("2026-10-26T08:00:00.000Z");
+	await until(() => world.record()?.started === "2026-10-26T08:00:00.000Z", "the start time in the record");
+	assert.equal((await ask(s, { cmd: "status" })).reply?.started, "2026-10-26T08:00:00.000Z");
+});
+
 test("a second start for a slot whose server runs and answers does not become another server", async () => {
 	const first = await world.start();
 	await first.handle.ready;

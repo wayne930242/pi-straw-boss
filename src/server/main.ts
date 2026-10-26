@@ -83,6 +83,9 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 
 	secretDir(slot.dir);
 	log.line("start", { pid, mode, version, by, herdr: slot.herdr, desk });
+	// This process's start time takes seconds on Windows (a PowerShell call), so it is asked for now, alongside the ACL call, and filled into the record when it arrives: the
+	// server does not wait for it to listen (a cold start must answer hello inside the requester's 20 s).
+	const startedAtLast = (o.started ?? (() => startedLater(pid)))().catch(() => undefined);
 
 	/** The start cannot go on: told in start-error.json (which `up` and the session looks read) and in the record, and the process leaves with the code. */
 	const abort = (code: "acl" | "loader" | "intercom" | "start", text: string, sddl?: string): ServerHandle => {
@@ -123,7 +126,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	endpoint = endpointFor(slot, platform);
 	log.hide(secret);
 	const own: ServerRecord = {
-		pid, ...(await (o.started ?? (() => startedLater(pid)))().then((started) => (started ? { started } : {}))), version, herdr: slot.herdr, mode, desk, intercom: intercomOf(env, platform),
+		pid, version, herdr: slot.herdr, mode, desk, intercom: intercomOf(env, platform),
 		// What the new server keeps from the one before it, so a restart changes nothing a page or a shell holds: the GUI's port and token (B2 fills them in), and the last error.
 		...(prior?.gui ? { gui: prior.gui } : {}), ...(prior?.lastError ? { lastError: prior.lastError } : {}), ...(prior?.lastRestart ? { lastRestart: prior.lastRestart } : {}),
 		log: fileOf(slot, "log"), socket: endpoint, secret, intercomId: serverId(slot),
@@ -192,6 +195,11 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		return abort("start", `the control socket cannot listen at ${endpoint}: ${(error as Error).message}`);
 	}
 	writeOwn();
+	void startedAtLast.then((started) => {
+		if (!started || phase === "stopping") return;
+		own.started = started;
+		updateRecord(slot, (r) => (r.pid === pid && r.secret === secret ? { ...r, started } : undefined));
+	});
 	timers.push(setInterval(() => {
 		try {
 			if (phase === "restarting" || phase === "stopping") return;
