@@ -53,7 +53,7 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		// A join adds the tools of a joined session, and the tools promote through the membership: each is built with the other's hook.
 		const membership = createMembership(kit, { presence, election, guard, briefing, roles, openTower: reach.openTower, register: () => (tools.addNetTools(), tools.addPromote()) });
 		const tools = createTools(kit, { ...reach, promote: membership.promote, digest, closeMain: (query) => control.closeMain(query), link });
-		const host = createHost(kit, { bridge, connected: membership.connected });
+		const host = createHost(kit, { bridge, connected: membership.connected, link });
 		closeSelf = createClosing(kit);
 		const control = createCloseMain(kit, { closeSelf, check: bridge.stashCheck });
 		registerSession(kit, { briefing, roles, presence, membership, guard, host, reach, digest, control, startTower: createTower(kit, { membership, presence, tools, control, digest, roles }) });

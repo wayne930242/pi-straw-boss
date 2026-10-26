@@ -9,6 +9,7 @@ import type { createMirrors } from "./mirror.ts";
 import type { Found } from "./net.ts";
 import { upload } from "./upload.ts";
 import { ENDING } from "./probe.ts";
+import { qr } from "./qr.ts";
 
 // Typing into a session from the page, through Herdr's own input path only, as if typed in the terminal:
 //   POST /<token>/api/sessions/<key>/input {text, as: "send" | "followUp", confirmed?}   the text, then Enter (or Alt+Enter while it works)
@@ -25,6 +26,8 @@ import { ENDING } from "./probe.ts";
 //   POST /<token>/api/close/unit, close/tab, close/base                                   quits a session, or every agent of a squad or base, then closes it (closer.ts)
 //   POST /<token>/api/close/stash {workspace, name}                                       checks and records a base, then closes it as close/base does (stash.ts); a paired device may, as it may close/base
 //   POST /<token>/api/dirs, open/base, open/member, open/main                            a folder picker, a new base with a member, a new member, a new main (spawn.ts)
+//   POST /<token>/api/link/<name> {…}                                                    Straw Link's team settings, through the link holder (link.ts of the page): state, create, invite, decide, join-start, trust, …
+//                                                                                        This computer's page only, except `state` (without a pending invite's text) and `confirm-answer`, which a paired device may do like it answers any confirm
 //   POST /<token>/api/server/stop {by, take}                                             stops the server: another session's /boss gui stop or takeover (never remote)
 // Every write needs the page's own origin (Origin, Sec-Fetch-Site), a JSON body of at most 64 KB, and the CSRF secret the server wrote into
 // the page; the custom header forces a CORS preflight that is never approved. The key is resolved in the registry (paths and panes never come
@@ -35,8 +38,13 @@ export const MAX_TEXT = 16_384, MAX_BODY = 65_536;
 export { ENDING };
 
 export interface Reply { status: number; body: unknown }
+/** The page's way to Straw Link's holder (runtime.ts `gui`): a named request with arguments, and the setup marker that starts the election before any team exists. */
+export interface LinkPort { call(name: string, args: Record<string, unknown>): Promise<{ ok: boolean; error?: string; [key: string]: unknown }>; enable(): Promise<void> }
+/** What a paired device may ask: read the state, and answer a forwarded confirm. Everything else changes who may command this computer, so only its own page does it. */
+const REMOTE_LINK = ["state", "confirm-answer"];
+const LINK_NAMES = ["enable", "state", "create", "invite", "invite-text", "invite-cancel", "decide", "join-start", "join-project", "join-cancel", "prefill-clear", "remove", "role", "rotate", "trust", "leave", "confirm-answer"];
 /** `answers.target` reads the net afresh, so the binding and the dialog are checked again for every answer. */
-export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; remoteOn?(): Promise<void>; remoteOff?(): Promise<void>; paired?: { on(): boolean; list(): unknown; unpair(id: string): boolean; unpairAll(): number; unsaved(): string | undefined }; saveFailed?(reason: string): void; spawn?(parts: string[], json: Record<string, unknown>): Promise<Reply>; close?(kind: string, json: Record<string, unknown>, refresh?: () => Promise<unknown>): Promise<Reply>; dismiss?(key: unknown): Promise<boolean>; dismissAll?(): Promise<number>; stop?(asked: Asked): void; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; answers?: Pick<Hub, "replay" | "ended" | "send" | "probe" | "commands"> & { target(key: string): Promise<Target | undefined> } }
+export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; remoteOn?(): Promise<void>; remoteOff?(): Promise<void>; paired?: { on(): boolean; list(): unknown; unpair(id: string): boolean; unpairAll(): number; unsaved(): string | undefined }; saveFailed?(reason: string): void; spawn?(parts: string[], json: Record<string, unknown>): Promise<Reply>; close?(kind: string, json: Record<string, unknown>, refresh?: () => Promise<unknown>): Promise<Reply>; dismiss?(key: unknown): Promise<boolean>; dismissAll?(): Promise<number>; stop?(asked: Asked): void; link?: LinkPort; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; answers?: Pick<Hub, "replay" | "ended" | "send" | "probe" | "commands"> & { target(key: string): Promise<Target | undefined> } }
 
 const no = (status: number, error: string, reason: string): Reply => ({ status, body: { error, reason } });
 const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -77,7 +85,7 @@ export function checkText(text: unknown): string | Reply {
 	return typed;
 }
 
-export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, remoteOff, paired, saveFailed, spawn, close, dismiss, dismissAll, stop, mirrors, secret = async () => true, answers }: ControlDeps) {
+export function createControl({ link, lookup, call, csrf, canonical, pair, remoteOn, remoteOff, paired, saveFailed, spawn, close, dismiss, dismissAll, stop, mirrors, secret = async () => true, answers }: ControlDeps) {
 	const busy = new Set<string>();
 	// A change to the paired devices or the remote wish that could not be written to paired.json took effect in memory only: say so (500), to the page and the session.
 	const lost = (): Reply | undefined => {
@@ -86,7 +94,7 @@ export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, r
 	};
 	const pad = createKeys({ fresh: (id, key, pane) => mirrors?.fresh(id, key, pane) ?? false, secret, answerable: async (key) => Boolean(await answers?.target(key)), probe: async (key) => answers?.probe(key) });
 	/** The origin checks, then the session checks, then one Herdr call. `parts` is the path after api/: sessions/<key>/<action>, remote/pair, or server/stop. */
-	return async function handle(req: IncomingMessage, origin: string, [scope, key = "", action = ""]: string[]): Promise<Reply> {
+	return async function handle(req: IncomingMessage, origin: string, [scope, key = "", action = ""]: string[], remote = false): Promise<Reply> {
 		if (req.method !== "POST") return no(405, "method", "Use POST.");
 		const site = req.headers["sec-fetch-site"], type = String(req.headers["content-type"] ?? "").split(";")[0]!.trim().toLowerCase();
 		if (req.headers.origin !== origin || (site !== undefined && site !== "same-origin")) return no(403, "origin", "Only the page itself may send input.");
@@ -100,6 +108,21 @@ export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, r
 			const { by, take } = read.json;
 			if (key !== "stop" || action || !stop) return no(404, "not_found", "No such action.");
 			return typeof by === "string" && by.length <= 200 && typeof take === "boolean" ? (stop({ by, take }), { status: 202, body: { stopping: true } }) : no(400, "bad_request", "A stop names who asks.");
+		}
+		if (scope === "link") {
+			if (!link) return no(503, "unavailable", "This server has no Straw Link.");
+			if (!LINK_NAMES.includes(key) || action) return no(404, "not_found", "No such action.");
+			if (remote && !REMOTE_LINK.includes(key)) return no(403, "local_only", "Straw Link's team settings are changed on this computer's own page.");
+			if (key === "enable") return link.enable().then(() => ({ status: 200, body: {} }), (error: Error) => no(502, "link_failed", error.message));
+			const done = await link.call(key, read.json);
+			if (!done.ok) return no(409, "link_failed", done.error ?? "Straw Link refused it.");
+			const { ok: _ok, ...body } = done;
+			// An invite is drawn as a QR on the page: the rows come from the text the holder made, which never travels any other way.
+			if (typeof body.text === "string" && (key === "invite" || key === "invite-text")) body.rows = qr(body.text).map((row) => row.map(Number).join(""));
+			// A paired device reads the state without what an agent's request put in the join or create screen (an invite text is a credential).
+			const view = body.view as { prefill?: { text?: string } } | undefined;
+			if (remote && view?.prefill) delete view.prefill.text;
+			return { status: 200, body };
 		}
 		if (scope === "dismiss" && !key && read.json.all === true) return dismissAll ? { status: 200, body: { dismissed: await dismissAll() } } : no(503, "unavailable", "This server dismisses nothing.");
 		if (scope === "dismiss" && !key) return (await dismiss?.(read.json.key)) ? { status: 200, body: {} } : no(404, "not_found", "Only a finished subagent on the net can be dismissed.");
