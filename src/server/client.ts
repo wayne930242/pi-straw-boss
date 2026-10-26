@@ -314,6 +314,8 @@ export async function stop(ctx: Ctx): Promise<Stopped> {
 	const lock = await lockFor(ctx, 10_000);
 	try {
 		const seen = await probe(ctx);
+		// As for a restart: the server runs in the broker scope it was started in, and a stop from another one is not its requester's to give.
+		if (seen.record && !sameBroker(seen.record.intercom, intercomOf(ctx.env, ctx.platform))) throw new ServerError("scope", "the sb server runs in another pi-intercom scope or transport than this process, so this process does not stop it");
 		if (!seen.live || !seen.record) {
 			if (seen.record && !seen.record.stopped) updateRecord(ctx.slot, (r) => ({ ...r, stopped: true }));
 			return { outcome: "already-down" };

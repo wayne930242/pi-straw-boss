@@ -379,3 +379,13 @@ test("serve takes over a live detached server by the restart path and waits for 
 	assert.equal(world.record()?.restarting?.by, "cli serve");
 	assert.deepEqual(world.record()?.gui, { port: 4242, token: "t" }, "the record the serve server starts from still holds the port and token");
 });
+
+test("sbr-NEW-2: a stop from another broker scope or transport is refused with the restart's refusal, and the server runs on; a stop on the record's scope goes through", async () => {
+	const s = await world.start();
+	await s.handle.ready;
+	await assert.rejects(stop(world.ctx({ env: { ...world.env, PI_INTERCOM_SCOPE_ID: "other" } })), (e: unknown) => e instanceof ServerError && e.code === "scope");
+	await assert.rejects(stop(world.ctx({ platform: "win32", env: { ...world.env, PI_INTERCOM_TRANSPORT: "tcp" } })), (e: unknown) => e instanceof ServerError && e.code === "scope");
+	assert.equal(world.live.has(s.pid), true, "the server was not asked to stop");
+	assert.notEqual(world.record()?.stopped, true);
+	assert.deepEqual(await stop(world.ctx({ by: "boss" })), { outcome: "stopped" });
+});
