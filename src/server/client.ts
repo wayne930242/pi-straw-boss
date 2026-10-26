@@ -280,29 +280,55 @@ async function restartLocked(ctx: Ctx, { reason, downgrade, upgrade, boss, limit
 	// The server runs in the broker scope it was started in, and a requester in another one would move it there: it uses none, and restarts none.
 	if (record && !sameBroker(record.intercom, intercomOf(ctx.env, ctx.platform))) throw new ServerError("scope", "the sb server runs in another pi-intercom scope or transport than this process, so this process does not restart it");
 	if (record?.stopped && !seen.live && !boss) throw new ServerError("stopped", "the sb server was stopped on purpose; /boss server or `cli.mjs up` starts it again");
-	if (limit && !boss && record?.lastRestart) {
+	if (record && newer(record.version, ctx.version) && !downgrade) throw new ServerError("older", `the sb server runs pi-straw-boss ${record.version}, newer than this package's ${ctx.version}; a restart from an older package needs --downgrade`);
+	if (boss) clearStopped(ctx.slot);
+	const done = (found: ServerRecord): Restarted => ({ server: upgrade ? "upgraded" : "restarted", record: found });
+	const old = record && { pid: record.pid, secret: record.secret };
+	// A server that is down starts, whatever the limit says. A `serve` server down with a fresh `restarting` is between two lives of a supervisor, which another requester is
+	// waiting on: this one waits for that serve as well, and launches a detached server only when none came.
+	if (!seen.live || !record) {
+		if (record?.mode === "serve" && restartingFresh(record, ctx.now())) {
+			const back = await supervised(ctx, hold, old!, undefined);
+			if (back) return done(back);
+		}
+		return { server: "started", record: await launch(ctx) };
+	}
+	if (limit && !boss && record.lastRestart) {
 		const last = Date.parse(record.lastRestart.at);
 		if (Number.isFinite(last) && ctx.now() - last < RESTART_EVERY_MS) throw new ServerError("rate", `The sb server was restarted ${Math.round((ctx.now() - last) / 1000)} s ago (${record.lastRestart.reason}, by ${record.lastRestart.by}); restarts are taken once a minute at most.`);
 	}
-	if (record && newer(record.version, ctx.version) && !downgrade) throw new ServerError("older", `the sb server runs pi-straw-boss ${record.version}, newer than this package's ${ctx.version}; a restart from an older package needs --downgrade`);
-	if (boss) clearStopped(ctx.slot);
-	if (!seen.live || !record) return { server: "started", record: await launch(ctx) };
-	const began = await retire(ctx, record, reason, counts), old = { pid: record.pid, secret: record.secret };
+	const began = await retire(ctx, record, reason, counts);
 	if (record.mode === "serve") {
-		// A supervisor starts a `serve` server again (it exited with the code it restarts on), and that `serve` takes `server.lock` to run: this requester lets go of the lock for
-		// the wait, keeps `restarting` fresh, and takes the lock again only to start a server itself when none came.
-		hold.release();
-		const back = await waitReady(ctx, ctx.timers.supervisor, { old, began });
-		if (back && "pid" in back) return { server: upgrade ? "upgraded" : "restarted", record: back };
-		await hold.retake();
-		const again = await probe(ctx);
-		if (again.live && again.record && again.record.pid !== old.pid) {
-			// A `serve` that took the lock in the gap is starting: wait for it as for any new server.
-			const started = await waitReady(ctx, ctx.timers.start, { old, began });
-			if (started && "pid" in started) return { server: upgrade ? "upgraded" : "restarted", record: started };
-		}
+		const back = await supervised(ctx, hold, old!, began);
+		if (back) return done(back);
 	}
 	return { server: upgrade ? "upgraded" : "restarted", record: await launch(ctx, { began, old }) };
+}
+/**
+ * A supervisor starts a `serve` server again (it exited with the code it restarts on), and that `serve` takes `server.lock` to run: the requester lets go of the lock for the
+ * wait, keeps `restarting` fresh (`began` is the restart it asked for; a requester that only waits touches nothing), and takes the lock again only to start a server itself when
+ * none came. Gives the server that came, or undefined with the lock held again.
+ */
+async function supervised(ctx: Ctx, hold: Hold, old: Replaced, began: string | undefined): Promise<ServerRecord | undefined> {
+	hold.release();
+	const back = await waitReady(ctx, ctx.timers.supervisor, { old, began });
+	if (back && "pid" in back) return back;
+	try {
+		await hold.retake();
+	} catch (error) {
+		// A `serve` that took the lock holds it while it starts, and may hold it past the budget: the restart has worked if the server it starts answers.
+		if (!(error instanceof ServerError && error.code === "busy")) throw error;
+		const started = await waitReady(ctx, ctx.timers.start, { old });
+		if (started && "pid" in started) return started;
+		throw error;
+	}
+	const again = await probe(ctx);
+	if (again.live && again.record && again.record.pid !== old.pid) {
+		// A `serve` that took the lock in the gap is starting: wait for it as for any new server.
+		const started = await waitReady(ctx, ctx.timers.start, { old, began });
+		if (started && "pid" in started) return started;
+	}
+	return undefined;
 }
 
 export interface Stopped { outcome: "stopped" | "already-down" }

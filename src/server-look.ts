@@ -32,7 +32,7 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 		(ui ?? s.ui)?.notify(text, level);
 	};
 	// Only a session with a screen looks: a print run is short-lived, and a subagent never gets here (index.ts).
-	let timer: ReturnType<typeof setInterval> | undefined, looking = false, failedAt: number | undefined, stopped = false, interactive = false;
+	let timer: ReturnType<typeof setInterval> | undefined, looking = false, failedAt: number | undefined, failedUpgrade: string | undefined, stopped = false, interactive = false;
 
 	const slot = () => slotOf(cfg.stateDir ?? guiDir, cfg.env);
 	/** Where the server is started from: the built `dist/server/cli.mjs` of this package, or `src/server/cli.ts` in a checkout (Node runs it as it is). */
@@ -61,7 +61,7 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 	async function look() {
 		if (looking || stopped || !interactive) return;
 		looking = true;
-		let verdictWas: string | undefined;
+		let verdictWas: string | undefined, upgradePair: string | undefined;
 		try {
 			const ctx = ctxFor(), seen = await probe(ctx), verdict = decide(ctx, seen);
 			verdictWas = verdict.do;
@@ -71,16 +71,22 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 				await ensure(ctx);
 			}
 			if (verdict.do === "upgrade") {
-				if (failedAt !== undefined && cfg.now() - failedAt < RETRY_FAILED_MS) return;
+				// An upgrade that failed is asked for again when the record's version or the package's changes, not as time passes: a package whose dist is older than its
+				// package.json (a stale build) would otherwise restart the server once a minute for nothing.
+				const pair = `${seen.record!.version}|${ctx.version}`;
+				if (failedUpgrade === pair) return;
+				upgradePair = pair;
 				const before = seen.record!.version, done = await restart(ctx, { reason: "upgrade", upgrade: true, lockWaitMs: 0 });
 				// An upgrade that starts a server no newer than the one it replaced would be asked for again at every look.
 				if (!newer(done.record.version, before)) throw new Error(`the upgrade started pi-straw-boss ${done.record.version}, not newer than the ${before} it replaced (this session loaded ${cfg.version}; the package on disk is ${ctx.version})`);
 			}
 			failedAt = undefined;
+			failedUpgrade = undefined;
 		} catch (error) {
 			// Another session holds the lock (it starts or restarts the server); the next look finds the result.
 			if (error instanceof ServerError && error.code === "busy") return;
-			failedAt = cfg.now();
+			if (verdictWas === "upgrade") failedUpgrade = upgradePair;
+			else failedAt = cfg.now();
 			tellOnce(`failed:${(error as Error).message}`, `Straw Boss: the sb server could not ${verdictWas === "upgrade" ? "upgrade" : "start"}: ${(error as Error).message}`, "error");
 		} finally {
 			looking = false;

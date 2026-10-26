@@ -143,6 +143,29 @@ test("sbr-F001: an upgrade that starts a server no newer than the one it replace
 	assert.equal(a.notices.filter((n) => /not newer/.test(n.text)).length, 1);
 });
 
+test("sbr-NEW-4: a failed upgrade is not asked for again while the record's version and the package's stay the same, however much time passes; a new package version asks again", async () => {
+	const s = await sw.start({ version: "0.44.0" });
+	await s.handle.ready;
+	let clock = Date.now();
+	const root = join(sw.root, "pkg");
+	mkdirSync(root, { recursive: true });
+	const disk = (version: string) => writeFileSync(join(root, "package.json"), JSON.stringify({ name: "pi-straw-boss", version }));
+	disk("0.45.0");
+	// A stale dist: the package says 0.45.0, but what its spawn starts is 0.44.0.
+	const a = world.agent({
+		id: "a1", pane: "wA:p1", tab: "wA:t1", ui: true, env: { HOME: sw.env.HOME! },
+		deps: { stateDir: sw.stateDir, version: "0.45.0", adoptMs: 30, now: () => clock, server: { ctx: reaching("0.44.0"), cli: "/fake/cli.mjs", root } },
+	});
+	await a.start();
+	await until(() => a.notices.some((n) => /not newer/.test(n.text)), "the notice");
+	assert.equal(sw.spawned.length, 1);
+	clock += 61_000;
+	await sleep(300);
+	assert.equal(sw.spawned.length, 1, "a minute later it still does not restart the server");
+	disk("0.46.0");
+	await until(() => sw.spawned.length === 2, "a new package version asks again");
+});
+
 // --- /boss server ---
 
 test("/boss server shows the state of a live server in one line", async () => {

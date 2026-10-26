@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { afterEach, beforeEach, test } from "node:test";
 import { decide, ensure, intercomOf, launch, probe, restart, sameBroker, serverEnv, ServerError, SPAWN_OPTIONS, stateOf, stop, takeOver } from "../src/server/client.ts";
-import { fileOf, readLock, readRecord, readStartError, type ServerRecord, writeRecord, writeStartError } from "../src/server/record.ts";
+import { fileOf, readLock, readRecord, readStartError, type ServerRecord, takeLock, writeRecord, writeStartError } from "../src/server/record.ts";
 import { callControl } from "../src/server/socket.ts";
 import { ServerWorld, sleep, until } from "./server-world.ts";
 
@@ -388,4 +388,44 @@ test("sbr-NEW-2: a stop from another broker scope or transport is refused with t
 	assert.equal(world.live.has(s.pid), true, "the server was not asked to stop");
 	assert.notEqual(world.record()?.stopped, true);
 	assert.deepEqual(await stop(world.ctx({ by: "boss" })), { outcome: "stopped" });
+});
+
+test("sbr-NEW-3: a restart that finds the serve server down with a fresh restarting waits for the supervisor's serve and starts no detached one", async () => {
+	const s = await world.start({ mode: "serve" });
+	await s.handle.ready;
+	const first = restart(world.ctx(), { reason: "first" });
+	await until(() => world.exitCodes.get(s.pid) === 75, "the old serve server to leave with 75");
+	const second = restart(world.ctx({ by: "second requester" }), { reason: "second" });
+	await sleep(120);
+	const back = await world.start({ mode: "serve" });
+	const [a, b] = await Promise.all([first, second]);
+	assert.equal(a.record.pid, back.pid);
+	assert.equal(b.record.pid, back.pid);
+	assert.equal(world.spawned.length, 0, "neither requester launched a detached server");
+});
+
+test("sbr-NEW-3: a retake that waits out the budget while a serve starts reports the restart, not busy", async () => {
+	const s = await world.start({ mode: "serve" });
+	await s.handle.ready;
+	const ctx = world.ctx({ timers: { start: 300, exit: 2000, supervisor: 200, touch: 40 } });
+	const requested = restart(ctx, { reason: "r" });
+	await until(() => world.exitCodes.get(s.pid) === 75, "the old serve server to leave with 75");
+	// A serve that took the lock holds it while it starts, longer than the retake's budget.
+	const held = await takeLock(world.slot, "serve", world.ctx().lock, 2000);
+	await sleep(250);
+	const back = await world.start({ mode: "serve" });
+	const done = await requested;
+	held.release();
+	assert.equal(done.record.pid, back.pid);
+	assert.equal(world.spawned.length, 0);
+});
+
+test("sbr-NEW-4: a down server always starts, whatever the once-a-minute limit says; a live one is still held to it", async () => {
+	plant({ pid: 99, lastRestart: { at: new Date().toISOString(), reason: "a moment ago", by: "someone" } });
+	const down = await restart(world.ctx(), { reason: "it is down", limit: true });
+	assert.equal(down.server, "started");
+	const s = await world.start({ mode: "detached" });
+	await s.handle.ready;
+	writeRecord(world.slot, { ...world.record()!, lastRestart: { at: new Date().toISOString(), reason: "a moment ago", by: "someone" } });
+	await assert.rejects(restart(world.ctx(), { reason: "again", limit: true }), (e: unknown) => e instanceof ServerError && e.code === "rate");
 });
