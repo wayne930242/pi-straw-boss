@@ -275,7 +275,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased raised scene.ts to 38 for `closed` (a channel is closed when its session left the net or a finished subagent's pi exited) and composer.ts to 191 (a closed channel's box is disabled).
 	// Unreleased raised scene.ts to 41 and session.ts to 121: a tower's comms head carries "+ Main", the map's opening button aimed at the tower's base.
 	// Unreleased raised layer.ts to 250: fit() watches a gauge of the work's width, not the work, whose height changes inside the map's packing report.
-	for (const [name, max] of [["router.ts", 80], ["chat.ts", 277], ["markdown.ts", 180], ["views.ts", 90], ["scene.ts", 41], ["tokens.ts", 24], ["nav.ts", 43], ["workspace.ts", 60], ["dossier.ts", 49], ["session.ts", 122], ["bars.ts", 50], ["lightbox.ts", 34], ["layer.ts", 250], ["askkeys.ts", 75], ["composer.ts", 192], ["ask.ts", 185], ["mirror.ts", 175], ["keypad.ts", 124], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
+	for (const [name, max] of [["router.ts", 80], ["chat.ts", 277], ["markdown.ts", 180], ["views.ts", 90], ["scene.ts", 41], ["tokens.ts", 24], ["nav.ts", 43], ["workspace.ts", 60], ["dossier.ts", 49], ["session.ts", 122], ["bars.ts", 72], ["lightbox.ts", 34], ["layer.ts", 250], ["askkeys.ts", 75], ["composer.ts", 192], ["ask.ts", 185], ["mirror.ts", 175], ["keypad.ts", 124], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
 	// 0.28.0 to 185 with the answer keys' hooks into gui/ask.ts (the focus on the first option, the textarea). 0.28.0 raised gui/ask.ts from 156 to 175 for the secret panel: the masked field with Show and Hide, Submit, the way back to the terminal, the unsupported-remote notice, and a value that leaves with its one request.
 	// 0.10.0: the page's text comes from Paraglide's messages (gui/messages), which raised chat.ts, views.ts, layer.ts, ask.ts, mirror.ts, and doc.ts by one
 	// line each for the messages import; the strings replaced in place. gui/i18n.ts picks the locale (the menu's choice, the browser's languages with
@@ -488,7 +488,7 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 113 KB / 46.3 KB gzipped: the folder picker (gui/picker.ts, folders.ts), nine more messages in both languages; and
 	// Unreleased to 107.7 KB / 44.4 KB gzipped: the deploy panel (gui/deploy.ts: steps, bar, clock, finish, failure), its demo server, and its twelve messages in both languages.
 	// Unreleased to 113.6 KB / 46.6 KB gzipped: the deploy panel measures silence, and closes with its tile; the picker lands on a column edge.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 113_600 && total(chunks, gz) <= 46_600, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 114_600 && total(chunks, gz) <= 46_900, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
@@ -535,5 +535,5 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 68 KB / 14.95 KB: the deploy panel (bar, step list, running pulse, finish and failure tints, its keyframes).
 	// Unreleased to 71.2 KB / 15.55 KB: the session view's Quit in the comms header (desktop and phone grid).
 	// Unreleased to 71.25 KB: the queued row's clamp sits on a box inside the padded row (long unbroken words wrap too).
-	assert.ok(total(css, (n) => size(n).length) <= 71_250 && total(css, gz) <= 15_550, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	assert.ok(total(css, (n) => size(n).length) <= 71_500 && total(css, gz) <= 15_600, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });

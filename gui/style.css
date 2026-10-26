@@ -147,6 +147,9 @@ svg { display: block; }
 .queue-list { display: grid; justify-items: end; gap: 4px; margin: 0 16px 6px; }
 .queue-list p { max-width: min(80%, 640px); margin: 0; padding: 6px 12px; border: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 12px; color: var(--dim); font-size: 14px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
 .queue-list p > span { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.queue-list p[role="button"] { cursor: pointer; }
+.queue-list p[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.queue-list p[data-open] > span { display: block; overflow: visible; }
 .queue-list b { margin-right: 8px; color: var(--accent); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; }
 .in-term .queue-list { display: none; }
 /* The todo list above the composer, as pi's widget shows it in the terminal: ○ waiting, ◐ in progress, ✓ done. */

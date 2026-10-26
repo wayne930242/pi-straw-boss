@@ -75,3 +75,49 @@ test("an empty queue hides the list", () => {
 	assert.equal(draw([]).hidden, true);
 	assert.equal(draw(undefined).hidden, true);
 });
+
+test("an open row shows its full text, and the button semantics only go to rows that overflow", () => {
+	assert.equal(declared(".queue-list p[data-open] > span", "display"), "block");
+	assert.equal(declared(".queue-list p[data-open] > span", "overflow"), "visible");
+	assert.equal(declared(".queue-list p[role=\"button\"]:focus-visible", "outline"), "2px solid var(--accent)");
+	assert.equal(declared(".queue-list p[role=\"button\"]", "cursor"), "pointer");
+});
+
+test("a click or Enter/Space toggles a cut row; a row that fits has no toggle", () => {
+	const els: ElA[] = [];
+	class ElA extends El {
+		attrs = new Map<string, string>();
+		on = new Map<string, (e: unknown) => void>();
+		setAttribute(k: string, v: string) { this.attrs.set(k, v); }
+		removeAttribute(k: string) { this.attrs.delete(k); }
+		getAttribute(k: string) { return this.attrs.get(k) ?? null; }
+		addEventListener(t: string, f: (e: unknown) => void) { this.on.set(t, f); }
+		scrollHeight = 0;
+		clientHeight = 0;
+		constructor(tag: string) { super(tag); els.push(this); }
+	}
+	const frames: (() => void)[] = [];
+	Object.assign(globalThis, { document: { createElement: (t: string) => new ElA(t) }, requestAnimationFrame: (f: () => void) => frames.push(f) });
+	const box = new ElA("div");
+	const run = () => { drawQueued({ querySelector: () => box } as unknown as HTMLElement, [{ text: "long", as: "steer" }, { text: "short", as: "followUp" }]); };
+	const measure = () => { const [lp, sp] = box.kids as ElA[]; (lp!.kids[0] as ElA).scrollHeight = 90; (lp!.kids[0] as ElA).clientHeight = 60; frames.splice(0).forEach((f) => f()); return [lp!, sp!] as const; };
+	run();
+	const [lp, sp] = measure();
+	assert.equal(lp.getAttribute("role"), "button");
+	assert.equal(lp.getAttribute("aria-expanded"), "false");
+	assert.equal(sp.getAttribute("role"), null, "a row that fits has no toggle");
+	lp.on.get("click")!({});
+	assert.equal(lp.getAttribute("aria-expanded"), "true");
+	assert.ok(lp.attrs.has("data-open"));
+	run();
+	const [lp2] = measure();
+	assert.equal(lp2.getAttribute("aria-expanded"), "true", "open survives a redraw of the same item");
+	let prevented = false;
+	lp2.on.get("keydown")!({ key: " ", preventDefault: () => (prevented = true) });
+	assert.ok(prevented);
+	assert.equal(lp2.getAttribute("aria-expanded"), "false");
+	lp2.on.get("keydown")!({ key: "Enter", preventDefault() {} });
+	assert.equal(lp2.getAttribute("aria-expanded"), "true");
+	lp2.on.get("keydown")!({ key: "a", preventDefault() { assert.fail(); } });
+	assert.equal(lp2.getAttribute("aria-expanded"), "true");
+});
