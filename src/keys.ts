@@ -3,7 +3,7 @@ import type { Editor } from "./probe.ts";
 
 // The key pad's keys (POST …/sessions/<key>/keys {key, stream, confirmed?}), checked in order after the write guards and the registry:
 // the key is on the pad and alone, at most 8 a second per session; the page's stream holds this session's mirror, on its pane, and got a
-// frame in the last 3 s; while the session file's open call is `secret_drop` or the unit has an answerable dialog, only Escape (the same on every page, a paired device's too); Enter asks
+// frame in the last 3 s; while the session file's open call is `secret_drop` or the unit has an answerable dialog, only Escape (the same on every page, a paired device's too); while it has an open `link_request` call a paired device (`remote`) too sends only Escape (its approval is given on this computer only, and Enter in the terminal confirm is Yes); Enter asks
 // the session's bridge what it would submit (probe.ts), checks the mirror, the secret, and the dialog again after the answer, and needs the
 // confirm the server names for an ending command, another `/` or `!` command, or an editor it could not read. A second Escape within 1 s
 // (from when Herdr took the first) to a session that neither works nor waits runs pi's double-Escape action, so it needs a confirm; once
@@ -14,7 +14,7 @@ import type { Editor } from "./probe.ts";
 // along and Enter still comes alone and probed; a paste (`{paste, stream}`), up to 4,000 characters with line breaks and tabs but no other
 // control character, inside the bracketed-paste markers so pi takes it as one paste and a line break submits nothing; Delete; and Ctrl or
 // Alt chords (COMBOS) as Herdr names them. Ctrl+Z never goes (pi would stop in the background, where nothing here brings it back), Ctrl+D
-// asks first (it leaves pi on an empty editor), and so does a second Ctrl+C within a second (pi leaves on the second). The composer's Edit sends pi's Alt+Up (`dequeue`), under the guard and the rate and with no mirror, as typing needs none. Stop (`{keys: ["esc"]}`, the composer's) needs no mirror. Herdr 0.9 has no
+// asks first (it leaves pi on an empty editor), and so does a second Ctrl+C within a second (pi leaves on the second). The composer's Edit sends pi's Alt+Up (`dequeue`), under the guard (a paired device's too: no link_request open) and the rate and with no mirror, as typing needs none. Stop (`{keys: ["esc"]}`, the composer's) needs no mirror. Herdr 0.9 has no
 // names for Home, End, Page Up, and Page Down: those go as the fixed sequences pi reads (pane.send_text writes them raw), and only they.
 
 /** What the pad can send, as Herdr names the keys. */
@@ -27,9 +27,9 @@ export const RATE = 8, RATE_MS = 1000, DOUBLE_MS = 1000, PAIR_MS = 450, MAX_TYPE
 /** C0 and C1 controls and DEL: what could end a line, start an escape sequence, or signal; typed text holds none, a paste only line breaks and tabs. */
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/, PASTE_CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/;
 export interface Reply { status: number; body: unknown }
-export interface KeyDeps { fresh(stream: string, key: string, pane: string): boolean; secret(file: string): Promise<boolean>; answerable(key: string): Promise<boolean>; probe(key: string): Promise<Editor | undefined>; now?(): number }
+export interface KeyDeps { fresh(stream: string, key: string, pane: string): boolean; secret(file: string): Promise<boolean>; answerable(key: string): Promise<boolean>; linkRequest?(file: string, session: string): Promise<boolean>; probe(key: string): Promise<Editor | undefined>; now?(): number }
 /** `text`: typed characters, sent as they are, or a paste already inside its markers (key is then "text" or "paste"). */
-export interface Asked { key: string; stream?: string; confirmed?: unknown; text?: string }
+export interface Asked { key: string; stream?: string; confirmed?: unknown; text?: string; remote?: boolean }
 type Pane = { pane_id: string; agent_status?: string };
 /** The keys to send, the Herdr calls that send them, and whether they are the confirmed double-Escape. */
 export interface Plan { keys: string[]; calls: [string, Record<string, unknown>][]; double: boolean }
@@ -45,11 +45,13 @@ const ASK: Record<string, string> = {
 };
 const confirm = (token: string) => no(409, "confirm", ASK[token] ?? `Enter would run /${token} (or the command picked in pi's menu, if it is open), which ends or replaces this session. ${FOCUS}`, { confirm: token });
 
-export function createKeys({ fresh, secret, answerable, probe, now = Date.now }: KeyDeps) {
+export function createKeys({ fresh, secret, answerable, linkRequest = async () => false, probe, now = Date.now }: KeyDeps) {
 	const sent = new Map<string, number[]>(), escaped = new Map<string, number>(), interrupted = new Map<string, number>();
 	const guard = async (session: string, found: Found, pane: Pane, a: Asked) => {
 		if (a.stream !== undefined && !fresh(a.stream, session, pane.pane_id)) throw no(409, "no_mirror", "Keys are sent only while this page shows the session's terminal live; open it again.");
 		if (a.key !== "esc" && ((await secret(found.file!)) || (await answerable(session)))) throw no(409, "blocked", "While it waits on a secret or a question only Escape is sent from here; answer the question in its panel or the terminal.");
+		// A link_request's approval dialog in the terminal takes Enter as Yes, and its high-risk actions are approved on this computer only: a paired device sends Escape (No) and nothing else.
+		if (a.key !== "esc" && a.remote && (await linkRequest(found.file!, session))) throw no(403, "local_only", "While it waits on a link request, a paired device can only send Escape; approve it on this computer's own page or terminal.");
 	};
 	/** Counts a key toward the session's rate, or says it is past it. */
 	const counted = (session: string): Reply | undefined => {
@@ -61,14 +63,14 @@ export function createKeys({ fresh, secret, answerable, probe, now = Date.now }:
 	};
 	return {
 		/** The composer's Edit (`dequeue` in control.ts): pi's own Alt+Up, which takes back the queue. Like typing it needs no mirror, and like any key but Escape it is not sent while a secret or a question waits; it counts toward the rate. */
-		async dequeue(session: string, found: Found, pane: Pane): Promise<Plan> {
+		async dequeue(session: string, found: Found, pane: Pane, remote = false): Promise<Plan> {
 			const limited = counted(session);
 			if (limited) throw limited;
-			await guard(session, found, pane, { key: "alt+up" });
+			await guard(session, found, pane, { key: "alt+up", remote });
 			return { keys: ["alt+up"], double: false, calls: [["pane.send_input", { pane_id: pane.pane_id, keys: ["alt+up"] }]] };
 		},
 		/** The body as one pad key (or Stop's Escape), or why not, before Herdr is asked; a request that passes counts toward the rate. */
-		check(session: string, json: Record<string, unknown>): Asked | Reply {
+		check(session: string, json: Record<string, unknown>, remote = false): Asked | Reply {
 			const stop = json.key === undefined && Array.isArray(json.keys) && json.keys.length === 1 && json.keys[0] === "esc";
 			const alone = json.key === undefined && json.keys === undefined, typed = alone && json.text !== undefined && json.paste === undefined, pasted = alone && json.paste !== undefined && json.text === undefined;
 			if (typed && (typeof json.text !== "string" || !json.text || [...json.text].length > MAX_TYPED || CONTROL.test(json.text))) return no(400, "text", `Typed text is 1 to ${MAX_TYPED} printable characters, without line breaks, tabs, or control keys.`);
@@ -78,8 +80,8 @@ export function createKeys({ fresh, secret, answerable, probe, now = Date.now }:
 			if (!stop && (typeof json.stream !== "string" || !json.stream)) return no(400, "bad_request", "Name this page's stream; reload the page if it reconnected.");
 			const limited = counted(session);
 			if (limited) return limited;
-			if (pasted) return { key: "paste", text: `\x1b[200~${json.paste as string}\x1b[201~`, stream: json.stream as string };
-			return stop ? { key: "esc" } : typed ? { key: "text", text: json.text as string, stream: json.stream as string } : { key: json.key as string, stream: json.stream as string, confirmed: json.confirmed };
+			if (pasted) return { key: "paste", text: `\x1b[200~${json.paste as string}\x1b[201~`, stream: json.stream as string, remote };
+			return stop ? { key: "esc", remote } : typed ? { key: "text", text: json.text as string, stream: json.stream as string, remote } : { key: json.key as string, stream: json.stream as string, confirmed: json.confirmed, remote };
 		},
 		/** The guards that need the pane as Herdr has it now, then the Herdr calls that send the key, in order, 60 ms apart. */
 		async send(session: string, found: Found, pane: Pane, a: Asked): Promise<Plan> {

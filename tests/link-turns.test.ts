@@ -116,6 +116,14 @@ test("link_request is refused at every level, dispatch included, with no dialog 
 	assert.equal(await call(c, "link_request", { action: "invite" }), undefined, "in a local turn the tool is the boss's");
 });
 
+test("RR2-F001: a link_request nested in another tool's call (codemode) is blocked, so the session file always shows it; a direct call is not", async () => {
+	const c = await started({ ui: true });
+	const nested = (await c.tower.fireResult("tool_call", { toolName: "link_request", toolCallId: "c1/0", parentToolCallId: "c1", input: { action: "invite", reason: "x" } })) as { block?: boolean; reason?: string } | undefined;
+	assert.equal(nested?.block, true);
+	assert.match(nested!.reason!, /called directly, not from another tool/);
+	assert.equal(await call(c, "link_request", { action: "invite", reason: "x" }), undefined, "a direct call is the boss's");
+});
+
 test("at dispatch every other call runs as a local one would", async () => {
 	const c = await started({ trust: { [bob.id]: "dispatch" } });
 	await enter(c, remoteMessage(bob));
