@@ -267,8 +267,9 @@ test("the TypeScript source stays within its size budgets", () => {
 	for (const [name, max] of [["found.ts", 103], ["settings.ts", 160], ["files.ts", 160], ["ask.ts", 182], ["serve.ts", 110], ["wait.ts", 28], ["types.ts", 15]] as const) assert.ok(count(`src/trust/${name}`) <= max, `src/trust/${name} has ${count(`src/trust/${name}`)} lines`);
 	// Unreleased (sb server B1, docs/specs/2026-10-26-sb-backend.md): the server's own directory, src/server/, has no figure in the spec; the files each hold one concern:
 	// record.ts (server.json, server.lock, start-error.json, slots), log.ts (server.log, rotated), version.ts (the version rules), acl.ts (the Windows folder ACL by SID), socket.ts (the control socket or pipe and its hello secret),
+	// After the re-check: log.ts 135 (the stale lock removed under a marker), client.ts 412 (the stop's scope check, the wait for a supervisor's serve as one function).
 	// client.ts (what a session or the CLI does to start, restart, stop, and see the server), intercom.ts (the connection through the headless kit), main.ts (the server process), and cli.ts (what cli.mjs runs).
-	for (const [name, max] of [["record.ts", 259], ["log.ts", 111], ["version.ts", 22], ["acl.ts", 183], ["socket.ts", 198], ["client.ts", 384], ["intercom.ts", 102], ["main.ts", 284], ["cli.ts", 276]] as const) assert.ok(count(`src/server/${name}`) <= max, `src/server/${name} has ${count(`src/server/${name}`)} lines`);
+	for (const [name, max] of [["record.ts", 259], ["log.ts", 135], ["version.ts", 22], ["acl.ts", 183], ["socket.ts", 198], ["client.ts", 412], ["intercom.ts", 102], ["main.ts", 284], ["cli.ts", 276]] as const) assert.ok(count(`src/server/${name}`) <= max, `src/server/${name} has ${count(`src/server/${name}`)} lines`);
 	// The page: the files the spec budgets one by one, then this round's own figures (no figure in the spec): the focus views, the overlay
 	// layer (alert spotting and the stack model in the map's chunk, the layer's DOM and tiles in a chunk of their own), the dev-only demo, and everything else.
 	// 0.18.1 raised mirror.ts to 154 for embed, a terminal shown inside the session view instead of a tile.
