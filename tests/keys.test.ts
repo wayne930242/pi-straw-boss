@@ -250,10 +250,26 @@ test("Enter checks the mirror, the secret, and the dialog again after the editor
 test("dequeue: Alt+Up is under the link_request guard, so while a request is open a paired device's take-back throws 403 local_only and this computer's does not", async () => {
 	const open = { value: true }, k = createKeys({ fresh: () => true, secret: async () => false, answerable: async () => false, linkRequest: async () => open.value, probe: async () => ({ editor: "empty" as const }) });
 	const pane = { pane_id: "wA:p1", agent_status: "working" };
-	const refused = await k.dequeue("S", FOUND, pane, true).then(() => undefined, (e: Reply) => e);
+	const refused = await k.dequeue("S", FOUND, pane, "alt+up", true).then(() => undefined, (e: Reply) => e);
 	assert.deepEqual([refused?.status, (refused?.body as { error?: string } | undefined)?.error], [403, "local_only"]);
-	assert.deepEqual((await k.dequeue("S", FOUND, pane, false)).keys, ["alt+up"], "this computer's page");
-	assert.deepEqual((await k.dequeue("S", FOUND, pane)).keys, ["alt+up"], "and a caller that does not say");
+	assert.deepEqual((await k.dequeue("S", FOUND, pane, "alt+up", false)).keys, ["alt+up"], "this computer's page");
+	assert.deepEqual((await k.dequeue("S", FOUND, pane, "alt+up")).keys, ["alt+up"], "and a caller that does not say");
 	open.value = false;
-	assert.deepEqual((await k.dequeue("S", FOUND, pane, true)).keys, ["alt+up"], "no request open: a paired device's too");
+	assert.deepEqual((await k.dequeue("S", FOUND, pane, "alt+up", true)).keys, ["alt+up"], "no request open: a paired device's too");
+});
+
+test("dequeue: the key is the one pi binds (Windows' Alt+Q, a remap), written as it is; one the server will not press throws no_key before it counts or goes", async () => {
+	const k = createKeys({ fresh: () => true, secret: async () => false, answerable: async () => false, probe: async () => ({ editor: "empty" as const }) });
+	const pane = { pane_id: "wA:p1", agent_status: "working" };
+	for (const key of ["alt+q", "alt+up", "ctrl+x", "alt+enter", "ctrl+left"]) {
+		const plan = await k.dequeue("S", FOUND, pane, key);
+		assert.deepEqual([plan.keys, plan.calls], [[key], [["pane.send_input", { pane_id: "wA:p1", keys: [key] }]]], key);
+	}
+	for (const key of ["ctrl+c", "ctrl+d", "ctrl+z", "esc", "escape", "enter", "q", "alt+shift+q", "ctrl+alt+q", "meta+q", "", "alt+f1"]) {
+		const e = await k.dequeue("T", FOUND, pane, key).then(() => undefined, (r: Reply) => r);
+		assert.deepEqual([e?.status, (e?.body as { error?: string } | undefined)?.error], [409, "no_key"], key);
+	}
+	const t = createKeys({ fresh: () => true, secret: async () => false, answerable: async () => false, probe: async () => ({ editor: "empty" as const }), now: () => 0 });
+	for (let i = 0; i < 8; i++) await t.dequeue("U", FOUND, pane, "alt+q");
+	assert.equal((await t.dequeue("U", FOUND, pane, "alt+q").catch((e: Reply) => e) as unknown as Reply).status, 429, "it counts toward the rate");
 });

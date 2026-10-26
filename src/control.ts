@@ -3,6 +3,7 @@ import type { IncomingMessage } from "node:http";
 import { MAX_PREFIX } from "./commands.ts";
 import { ANSWER_ID, checkAnswer, CONTROL, type Hub, type Sent, type Target } from "./dialogs.ts";
 import { HerdrError, type HerdrCall, type Pane } from "./herdr.ts";
+import { defaultDequeue, keyLabel } from "./dequeuekey.ts";
 import { createKeys } from "./keys.ts";
 import type { Asked } from "./gui.ts";
 import { linkRequest as linkRequestOwner } from "./owners.ts";
@@ -17,7 +18,7 @@ import { qr } from "./qr.ts";
 //   POST /<token>/api/sessions/<key>/keys  {key, stream, confirmed?}                     one key pad key under its mirror (keys.ts), or Stop's {keys: ["esc"]}
 //   POST /<token>/api/sessions/<key>/focus                                               brings the session's pane forward in Herdr
 //   POST /<token>/api/sessions/<key>/commands {prefix}                                   its commands that match a typed `/prefix`, from its bridge (commands.ts); null when it did not say
-//   POST /<token>/api/sessions/<key>/dequeue {take}                                      takes the queue back: pi's Alt+Up, then the pulled messages' text for the composer (pull.ts); {empty: true} when nothing was queued; the same `take` asked again gets the text the session kept
+//   POST /<token>/api/sessions/<key>/dequeue {take}                                      takes the queue back: pi's dequeue key (Alt+Up, Alt+Q on Windows and WSL, or the user's binding: dequeuekey.ts), then the pulled messages' text for the composer (pull.ts); {empty: true} when nothing was queued; the same `take` asked again gets the text the session kept
 //   POST /<token>/api/sessions/<key>/answer {dialog, digest, answerId, choice | answers}  answers its dialog through its bridge (dialogs.ts); no keys; a `value` (a secret) is refused from every page (SB-F001)
 //   POST /<token>/api/sessions/<key>/upload (the file's bytes)                            stores a pasted, dropped, or picked file, answers its path (upload.ts)
 //   POST /<token>/api/sessions/<key>/mirror {stream, on}                                  shows the pane's screen on that page's stream (mirror.ts), or stops
@@ -49,7 +50,7 @@ const LINK_NAMES = ["enable", "state", "create", "invite", "invite-text", "invit
 /** `answers.target` reads the net afresh, so the binding and the dialog are checked again for every answer. */
 export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; remoteOn?(): Promise<void>; remoteOff?(): Promise<void>; paired?: { on(): boolean; list(): unknown; unpair(id: string): boolean; unpairAll(): number; unsaved(): string | undefined }; saveFailed?(reason: string): void; spawn?(parts: string[], json: Record<string, unknown>): Promise<Reply>; close?(kind: string, json: Record<string, unknown>, refresh?: () => Promise<unknown>): Promise<Reply>; dismiss?(key: unknown): Promise<boolean>; dismissAll?(): Promise<number>; stop?(asked: Asked): void; link?: LinkPort; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; linkRequest?(file: string): Promise<boolean>; answers?: Pick<Hub, "has" | "replay" | "ended" | "send" | "probe" | "commands" | "pull"> & { target(key: string): Promise<Target | undefined> }; trust?(json: Record<string, unknown>): Promise<Reply> }
 
-const no = (status: number, error: string, reason: string): Reply => ({ status, body: { error, reason } });
+const no = (status: number, error: string, reason: string, extra = {}): Reply => ({ status, body: { error, reason, ...extra } });
 const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 
 /** The request body as JSON, or the reply that refuses it. A body past the limit is drained, not kept. */
@@ -81,13 +82,16 @@ function refused(error: unknown): Reply {
 
 /** What the page hears when taking the queue back cannot be done, by the bridge's reason (pull.ts). */
 const PULL_WHY: Record<string, string> = {
+	no_key: "pi's dequeue key (app.message.dequeue in its keybindings.json) is not one this page can send; press it in the terminal.",
 	no_editor: "This session has no editor to take the messages back into.",
 	stale: "The take-back timed out, or the session changed, after the key went: the messages are in the terminal's editor, not here.",
-	not_taken: "pi did not take its queue back; its dequeue key may not be Alt+Up. Check the terminal.",
 	changed: "The terminal's editor holds something other than the queued messages and the draft (typed meanwhile, or a message pi expanded); the messages are in it, check the terminal.",
 	too_large: "The queued messages are too long to bring here; they are in the terminal's editor.",
 	not_cleared: "The messages could not be cleared from the terminal's editor; they are there, not here.",
 };
+
+/** pi did not clear its queue after the key: the key may not be its dequeue key (a binding that changed since the bridge named it, or an older bridge's guess). */
+const notTaken = (sent: string) => `pi did not take its queue back; its dequeue key may not be ${keyLabel(sent)}. Check the terminal.`;
 
 /** The text as it will be typed, or why it cannot be: CRLF and lone CR become LF, then the size and character checks. */
 export function checkText(text: unknown): string | Reply {
@@ -219,7 +223,8 @@ export function createControl({ link, lookup, call, csrf, canonical, pair, remot
 				if (begun.reason) throw no(409, begun.reason, PULL_WHY[begun.reason]!);
 				if (begun.text !== undefined) return void (direct = { status: 200, body: { text: begun.text } }); // this very take-back was done, and its answer got lost on the way: no key goes
 				if (!begun.pending || !begun.ticket) return void (direct = { status: 200, body: { empty: true } }); // nothing is queued: no key goes
-				const plan = await pad.dequeue(key, found, pane, remote);
+				const sent = begun.key ?? defaultDequeue(); // a bridge that names no key is an older pi-straw-boss: pi's default on this platform
+				const plan = await pad.dequeue(key, found, pane, sent, remote);
 				await live(found); // the guard took a moment: still pi, on this file
 				for (const [method, params] of plan.calls) {
 					if (remote && (await requested(key, found))) throw no(403, "local_only", LINK_LOCAL); // as in keys: a link_request may have opened since the guard looked
@@ -227,7 +232,7 @@ export function createControl({ link, lookup, call, csrf, canonical, pair, remot
 				}
 				const done = await answers.pull(key, "finish", begun.ticket);
 				if (!done) throw no(504, "unsure", "The session did not answer in time. The messages are in the terminal's editor, or the session keeps them for a few minutes: use Fetch again on the page to get them.");
-				if (done.reason) throw no(409, done.reason, PULL_WHY[done.reason]!);
+				if (done.reason) throw no(409, done.reason, done.reason === "not_taken" ? notTaken(sent) : PULL_WHY[done.reason]!, done.reason === "not_taken" ? { key: sent, label: keyLabel(sent) } : {});
 				direct = done.text !== undefined ? { status: 200, body: { text: done.text } } : { status: 200, body: { empty: true } }; // empty: delivered between the check and the key
 			};
 		} else if (action === "answer") {
