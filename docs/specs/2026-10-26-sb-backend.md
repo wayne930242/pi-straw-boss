@@ -1,6 +1,7 @@
 # The sb server: a light Straw Boss backend and a tower that wakes
 
-Status: design, not built. Decisions quoted below were made by the boss on 2026-10-26; **Open questions** lists what still needs the boss.
+Status: design, not built. The boss decided every open question on 2026-10-26 (**Decisions**), and the review of straw-boss-desk's
+owner of the same day is applied (**Review record**).
 Base: pi-straw-boss 0.43.2 (`main` at `ce55ec4`, Straw Link steps 1 to 5b merged), pi 1.4.0, Herdr 0.9.5, pi-intercom 0.17.1.
 Rebases: Straw Link build steps 6 to 8 ([2026-10-25-straw-link.md](2026-10-25-straw-link.md), **Build order**) and desk mode R2 to R4
 ([2026-10-26-desk-mode.md](2026-10-26-desk-mode.md), **Rollout**), both paused until this lands.
@@ -70,6 +71,17 @@ What the design rests on, read from the code and from pi-intercom 0.17.1 on 2026
   - `PI_INTERCOM_STABLE_ID` gives a pi a fixed intercom id (`index.ts:565`).
   - A live process that holds an id keeps it, and a second registration of that id is refused with `SESSION_HELD` (`broker/broker.ts:529`).
   - A message to a disconnected id is queued for 24 h, but not a blocking ask (`broker/broker.ts:44`, `:853`, `:874`).
+  - The broker never sends a message again by itself. To a receiver that registered `acknowledgesReceipts`, a live delivery waits up
+    to 5 s for the receipt (`RECEIPT_TIMEOUT_MS`, `broker/broker.ts:49`; `completeSocketDelivery`, `:1155`). A receiver that
+    disconnects first, or does not answer in time, makes the broker answer the sender `delivery_failed` with `delivery: "unknown"`,
+    `retryable: true`, `outcomeKnown: false` (`failPendingReceipt`, `:1193`; `settlePendingReceiptsForSocket`, `:1205`, called on
+    socket close at `:391`). The message is not put in the mailbox. A retry under the same message id is accepted and delivered again
+    (`replayOrReject`, `:1219`, "a retry of an unconfirmed delivery is safe", `:1234`).
+  - Mail queued for a disconnected id is written to the session when it registers and marked `socket_delivered` at once, with no
+    receipt wait (`flushMailboxForSession`, `broker/broker.ts:1281`, `:1337`).
+  - pi-intercom's outbox (the path Straw Boss sends by) uses the request id as the message id (`index.ts:1236`), refuses a request id
+    already used in the same runtime (`index.ts:1154`), and reports an unconfirmed delivery as `failed`, code `delivery_failed`
+    (`index.ts:1250`).
   - A registration may carry `herdrPaneId`, and the broker resolves it to a Herdr location (`broker/broker.ts:560`, `:702`).
   - `PI_INTERCOM_SCOPE_ID` splits sessions, channels, and broadcasts into separate scopes (`config.ts:23`, `broker/broker.ts:189`).
 - A process that is not pi already runs Straw Boss's net modules: the net sidecar's headless kit gives them an intercom channel and
@@ -109,26 +121,77 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
   uses it, as with the GUI today.
 - `server.lock` makes check-and-start atomic, with the rules of `gui.lock`: taken over after 10 s, one looker at a time through
   `server.lock.stale`.
-- `server.json` (mode 600, written by rename) records `pid`, `started` (process start time, through `startOf`), `version`, `herdr`,
-  `socket` (the control socket path, or the named pipe on Windows), `intercomId` (the server's own intercom session, `sb-server-<8 hex>`),
-  `stopped` (set only by a stop on purpose), and `mode` (`detached` or `serve`).
+- `server.json` (mode 600, written by rename) records:
+  - `pid` and `started` (process start time, through `startOf`), `version`, `herdr`, and `mode` (`detached` or `serve`);
+  - `desk` (whether the server runs with `STRAW_BOSS_DESK=1`);
+  - `gui: { port, token, stopped }`;
+  - `stopped` (set only by a stop on purpose) and `restarting: { since, reason }` (set while a restart is under way, **Restarts and
+    upgrades**);
+  - `socket` (the control socket's path or pipe name), `secret` (the connection secret, **The control socket**), and `intercomId` (the
+    server's own intercom session, `sb-server-<8 hex>`).
 - A server counts as live when its PID is alive, started at the recorded time, and answers `hello` on the control socket within 2 s.
   The sidecar uses the same rule (`src/agent/claim.ts`): a PID alone is not enough.
+
+### The control socket
+
+- macOS and Linux: a Unix socket `server.sock` in the state directory (700), mode 600.
+- Windows: a named pipe `\\.\pipe\sb-<16 random hex>`. Node's `net` creates it with the default DACL, which lets other local accounts
+  connect, and pipe names can be listed, so neither the name nor a file mode protects it. The Unix socket's mode-600 argument does not
+  carry over.
+- So every connection, on every platform, starts with `hello { secret }`. `secret` is 32 random bytes in hex, made new at each server
+  start and written to `server.json`. The server compares it in constant time and closes a connection whose first frame is not a
+  matching `hello`, with no answer (logged at most once a minute). A run reconnecting after a restart reads the new secret from
+  `server.json`.
+- The secret is only as private as `server.json`. On Windows the server sets the state directory's ACL to the user alone before it
+  writes the secret: `icacls <dir> /inheritance:r /grant:r *<user SID>:(OI)(CI)F`, run with `execFile` and no shell, then read back with
+  `icacls <dir>`. If either fails, the server refuses to start (exit 3, with the reason). macOS and Linux keep the 700 directory and 600
+  files they have today.
+- Run tokens (**The wake protocol**) are checked on top of the secret, for requests a run makes.
+- The net sidecar's Windows pipe (how-it-works, **From Claude Code or Codex**) has the same gap today. It is out of scope here and is
+  recorded as a finding for the sidecar, to be fixed with the same `hello` secret.
+
+### Where the command lives
+
+- The command is `<agent dir>/npm/node_modules/pi-straw-boss/src/server/cli.mjs`, where `<agent dir>` is `$PI_CODING_AGENT_DIR`, else
+  `~/.pi/agent` (`%USERPROFILE%\.pi\agent` on Windows). That is where `pi install npm:pi-straw-boss` puts the package, so a shell that
+  installs pi-straw-boss into its own agent directory knows the path without asking anything.
+- `cli.mjs` is plain JavaScript and runs under plain `node` 22 or newer (straw-boss-desk pins Node 22). It loads the TypeScript through
+  `tsx`, which becomes a runtime dependency of pi-straw-boss (`^4`). `cli.mjs` resolves it from the package itself
+  (`createRequire(import.meta.url).resolve("tsx/esm/api")`) and calls its `register()`. It does not look beside pi-intercom. If `tsx`
+  cannot be found, it exits 3 and names the path it looked from.
+- Why a dependency: pi-straw-boss has no runtime dependency today, and the sidecar finds `tsx` beside pi-intercom
+  (`src/agent/paths.ts:106`). That works only because npm happens to hoist pi-intercom's `tsx` there, which is not a contract. The
+  detached start from pi sessions uses the same `cli.mjs`.
 
 ### Starting
 
 - **From pi.** Every interactive pi session in Herdr that is not a subagent and not a run checks at `session_start`, and then every 2 s
   (the adoption cadence it already has), whether a live server runs for its Herdr. If none runs and `server.json` is not `stopped`, it
-  takes `server.lock` and starts one detached: `node --import <tsx loader> <pkg>/src/server/main.ts --detached`. The loader is the one
-  found beside pi-intercom, as for the sidecar. The process gets a constructed environment: the session's environment minus
+  takes `server.lock` and starts one: `node <cli.mjs> run --detached`, spawned with `{ detached: true, stdio: "ignore", windowsHide:
+  true }` and unref'd, so Windows opens no console window. The process gets a constructed environment: the session's environment minus
   `PI_INTERCOM_*`, `PI_SUBAGENT_*`, `STRAW_BOSS_ROLE`, and `HERDR_PANE_ID`/`HERDR_TAB_ID`/`HERDR_WORKSPACE_ID`. The session returns at
   once and says nothing unless the start fails. Of several sessions, the lock lets one start the server. This is what "pi cli 啟動的時候就
   顯示運作" means here: the first pi of the day brings the server up, and the GUI's towers show as standing within a few seconds.
-- **Standalone.** `node <pkg>/src/server/cli.mjs serve` runs in the foreground with `mode: serve`, for launchd, systemd, or the desk shell.
-  It takes the same lock, so a supervisor and a pi session never start two servers. `cli.mjs up` starts a detached one if none runs and
-  prints its record; desk mode builds on it (**Desk mode**).
-- **From the GUI or a command.** `/boss server` (status), `/boss server stop`, and `/boss server restart` in any pi session. `cli.mjs
-  status|stop|restart` do the same from a shell.
+- **`cli.mjs up`** makes sure a live server runs and prints one JSON line (**Desk mode**, `up`'s output). Step by step:
+  - **None runs:** it starts one detached, as a pi session would, and waits for `hello`.
+  - **Stopped on purpose:** it clears `stopped` in `server.json` and in `gui.json` (and `gui.stopped`) under the lock, then starts one.
+  - **Live, GUI stopped:** it starts the GUI listener again on the recorded port and token.
+  - **Live on an older version than the package `up` runs from:** it asks for `upgrade` and starts the new server from its own package.
+  - **Live on a newer version:** it leaves the server alone and warns `server_newer` (exit 0), or, with `--exact`, exits 1 at step
+    `version`. It never downgrades.
+  - **Desk mismatch:** `up` with `STRAW_BOSS_DESK=1` in its environment, against a live server whose `desk` is false, restarts that server
+    with the switch (**Restarts and upgrades**). `up` without the switch, against a desk server, leaves it as it is and warns
+    `desk_on`. Desk mode is read from the environment at start only; there is no control call that changes it.
+  - The JSON's `server` field says which of `found`, `started`, `restarted`, or `upgraded` happened.
+- **`cli.mjs serve`** runs in the foreground with `mode: serve`, for launchd and systemd (unattended devices). It also clears `stopped`.
+  - **None runs:** it runs.
+  - **A live `detached` server:** `serve` takes it over. It asks that server to hand over by the restart path (same port and token,
+    ≤ 10 s) and then runs in the foreground. Exiting instead would make launchd's `KeepAlive` or systemd's `Restart=` start it again and
+    again, while the server that actually runs is one no supervisor watches.
+  - **A live `serve` server:** two supervisors are a configuration error. `serve` prints that server's record and exits 4.
+- straw-boss-desk uses `up` only (a detached server, quit with `cli.mjs stop`); `serve` is for supervisors.
+- **From a pi session:** `/boss server` (status), `/boss server stop`, and `/boss server restart`. `cli.mjs status|stop|restart` do the
+  same from a shell; the docs call it `sb`.
 
 ### Living
 
@@ -141,23 +204,39 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
 
 ### Stopping
 
-- `stop` is on purpose: it writes `stopped` under the lock, ends the runs' claims (a live run gets its `quit`, **The wake protocol**),
-  takes the remote serve entry down, deregisters the tower identities (each workspace then has no live tower), and exits. No session
-  starts it again until `/boss server`, `/boss gui`, `/boss tower`, a promotion that opens a tower, or `cli.mjs up`/`serve`.
+- `stop` is on purpose. It warns first, because every workspace then loses its live tower and mains are demoted 15 s later.
+  `/boss server stop` asks to confirm with that text; `cli.mjs stop` prints it on stderr and goes on, since a shell quitting has nobody
+  to ask.
+- Then it writes `stopped` under the lock, ends the runs' claims (a live run gets its `quit`, **The wake protocol**), takes the remote
+  serve entry down, deregisters the tower identities, and exits.
+- No session starts it again on its own. These do: `/boss server`, `/boss gui`, `/boss tower`, a promotion that opens a tower, and
+  `cli.mjs up` or `serve`, which clear `stopped`. straw-boss-desk stops with `cli.mjs stop` when it quits, and its next launch's `up`
+  brings the server back.
 - A crash, a kill, or a reboot is not a stop. The next session look, or the supervisor, starts it again on the recorded GUI port and
   token, so open pages reconnect.
 
-### Upgrades
+### Restarts and upgrades
 
-- A pi session on a newer pi-straw-boss than `server.json`'s `version` asks the live server to `upgrade` over the control socket. The
-  server stops accepting control requests (answering `restarting`), finishes writes in flight, flushes the queue and run records,
-  releases its intercom ids and `server.lock`, and exits within 10 s. The asking session then starts the new server from the newly
-  installed package.
+- Every restart goes the same way: `restart`, `upgrade`, `up`'s desk restart, and `serve` taking over a detached server.
+  1. The old server writes `restarting: { since, reason }` to `server.json`.
+  2. It stops accepting control requests (answering `restarting`), finishes the writes in flight, flushes the queue and run records,
+     closes the GUI listeners, releases its intercom ids and `server.lock`, and exits within 10 s.
+  3. The new server binds the recorded local and remote ports with the same token and CSRF secret. It retries for up to 5 s while the
+     old ports are let go, then clears `restarting`.
+- So the URL does not change: a page or a desk webview only reconnects its stream, and a page from another build reloads itself at the
+  same URL. The URL changes only when another process has taken the port meanwhile (Moved, **States for a shell**). That is the one case
+  in which a shell reads the record again.
+- Upgrades:
+  - A pi session on a newer pi-straw-boss than `server.json`'s `version` asks the live server to `upgrade`, then starts the new server
+    from its own package.
+  - `up` from a newer package does the same.
+  - A session or an `up` on an older package never downgrades the server.
 - Runs are separate pi processes, and a server restart does not end them. A run whose socket closes reconnects every second for 30 s
-  with its pane and PID. The new server knows it from `tower/<ws>/runs/<id>.json` and takes it back (**Crash and timeout**).
+  with its pane and PID. It reads the new secret from `server.json`. The new server knows it from `tower/<ws>/runs/<id>.json` and takes
+  it back (**Crash and timeout**).
 - A session older than the server does nothing. A session from before this change does not know the server. It sees `gui.json` owned by
   a live process and leaves the GUI alone. It sees `holder.json` held by a newer build and does not take it. If it opens a resident
-  tower, the pi in that tab runs the installed (new) code and hands over (**Migration**).
+  tower, the pi in that tab runs the installed (new) code and hands over (**Migration from resident towers**).
 
 ## What moves out of pi sessions
 
@@ -165,7 +244,7 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
 |---|---|---|
 | GUI server: `gui.ts`, `control.ts`, the dialog hub, trust serve, spawn and deploys, closer, mirrors, documents, uploads, remote access and pairing | The session that hosts it (`host.ts`), adopted by survivors | The server. The hub owns `straw-boss/gui/<hash of the server's intercom id>` with no local bridge. Bridges in sessions do not change. |
 | Link holder: relay streams, inbox, outbox, presence, boards, admin, `link_request` checks, confirms | The elected session (`election.ts`, `runtime.ts`) | The server, the only candidate. It still writes `holder.json` and takes `holder.lock`, so an old build sees a live holder of a newer version and leaves it. |
-| Requests from sessions to the holder (`send`, `list`, `board-read`, `request-*`, `gui`) | Channel `straw-boss/link`, chunked | Control socket, one JSON request per connection. The channel is retired once no build in use needs it (**Migration**). |
+| Requests from sessions to the holder (`send`, `list`, `board-read`, `request-*`, `gui`) | Channel `straw-boss/link`, chunked | Control socket, one JSON request per connection. The channel keeps one use: the server's offers of an ally's reply to the main that asked for it (**Replies for a main**). |
 | Tower marks: workspace token `tower`, pane token `sb_role=tower` (4-minute refresh, 10-minute TTL), the tower tab first | The tower session (`presence.ts`) | The tower service, for each workspace that has one |
 | Head watch, digest line on a head change | Each tower (`headwatch.ts`) | The server, on one events connection |
 | Reading and clearing the digest | The tower at each run (`session.ts:149`) | The tower service, into the brief of each local run |
@@ -219,7 +298,7 @@ An event wakes a run. Everything else is shown in the GUI or handled by the serv
 | A Straw Link `tower` envelope routed to this workspace (**Delivery**, Straw Link spec) | Event `link`, through the inbox as today | Ally (**Ally runs**) |
 | The boss types into the tower from the GUI while no local run is live | Event `boss`, the text verbatim | Local, queued ahead of the rest |
 | An outcome of something a run sent that arrives after that run ended: a relay refusal after "queued", an intercom delivery that failed, a main opened by the opener that failed to start, a `close-main` that timed out | Event `notice`, written by the server | Local |
-| `tower_done({ wakeAfter })` asked for a follow-up | Event `timer`, one per workspace | Local |
+| `tower_done({ wakeAfter })` asked for a follow-up, 5 to 240 minutes, one pending per workspace (D3) | Event `timer` | Local |
 
 These do not wake a run:
 
@@ -228,26 +307,42 @@ These do not wake a run:
   to the ally run waiting for it.
 - A join request, a roster mismatch, the relay unreachable: these are GUI notices for the boss.
 - Herdr events and state changes of mains: the tower reads them in the brief when something else wakes it.
+- An ally's `tower-reply` to a `tower_send` that named `for` (D4): it goes to the main that asked, with no run (**Replies for a main**).
 
-**What "send" means.** The boss's "不管是接收還是送出" is read here as two things. First, the result of a send the tower made comes back
+**What "send" means (D2).** The boss's "不管是接收還是送出" means two things. First, the result of a send the tower made comes back
 after its run ended: the `notice` row above, and replies, which arrive as `intercom` events. Second, the boss asks the tower to send
-something: the `boss` row. A send on its own wakes nothing. **Open questions** Q2 asks the boss to confirm this reading.
+something: the `boss` row. A send on its own wakes nothing.
 
 ## Queueing and concurrency
 
 - **One local run per workspace at a time.** Workspaces are independent, so two workspaces may each have a local run. The server runs at
   most `towerRuns` pi runs at once across the machine (default 4, `config.json`), and the rest wait in their queues.
-- **Ally runs** go in an ally pane beside the local run, one ally run per workspace at a time (Q6).
+- **Ally runs** go in an ally pane beside the local run, one ally run per workspace at a time (D6).
 - **Ordering.** Within a workspace, events go in the order the server received them, except that `boss` events go first. For each
   local event the broker's message id is kept, and for each link event the envelope id.
-- **Dedupe.** An intercom message id is taken once per sender (the broker already refuses a reused id with other content). An envelope
+- **Dedupe.** An intercom message id is taken once per sender, with a retry's `~r<n>` suffix removed (the broker already refuses a
+  reused id with other content). An envelope
   id is taken once (the inbox and the sender's sequence mark already ensure this). A `notice` has an id derived from what it reports, so
   a retry does not double it.
-- **Persistence.** An intercom event is written to `queue/` before the server acknowledges receipt to the broker (it registers with
-  `acknowledgesReceipts`; whether the broker sends a message again when its receipt never came is checked in B5, see **Risks**). A link event stays in `link/inbox/` until a run takes it, as today. The server can therefore restart at any
-  point without losing an event. While the server is down, mail to a tower identity waits in the broker's mailbox (24 h). This holds
-  because every Straw Boss message is a `send`, never a blocking `ask`. A sender using pi-intercom's `ask` to a tower identity that is
-  down gets `E_TARGET_DISCONNECTED`, as for any session that is gone.
+- **Persistence.** The server registers each tower identity with `acknowledgesReceipts` and only after its queue store is open. It reads
+  each message off the socket, writes it to `queue/` with an fsync, and only then sends the receipt `queued`. A link event stays in
+  `link/inbox/` until a run takes it, as today. While the server is down, mail to a tower identity waits in the broker's mailbox (24 h).
+  This holds because every Straw Boss message is a `send`, never a blocking `ask`. A sender using pi-intercom's `ask` to a tower
+  identity that is down gets `E_TARGET_DISCONNECTED`, as for any session that is gone.
+- **The broker never sends again by itself** (**Reality anchor**). Two gaps follow, and each is closed or bounded here:
+  - *A live delivery whose receipt never came* (the server crashed or restarted between reading the message and its receipt): the
+    broker tells the sender the outcome is unknown and drops the message. Straw Boss's sender (`send` in `src/reach.ts`, used by
+    `call_tower`, `tower_send`, `boss_broadcast`, the opener's handoff, and the server's own sends) retries such a failure when the
+    target is a tower identity (`sb-tower-*`). It waits until the identity is live again (up to 30 s, the restart budget), then sends
+    again. pi-intercom's outbox refuses a request id it already used, so the retry goes under `<request id>~r<n>` (at most 3). The
+    server takes a message once per sender and message id with the `~r<n>` suffix removed, so a message that was in fact queued before
+    the crash is not taken twice. A plain `intercom send` from another agent is not retried by Straw Boss: pi-intercom tells that agent
+    the delivery "could not be confirmed", and it decides.
+  - *Mail flushed from the broker's mailbox when the identity registers*: the broker marks it delivered at once, with no receipt, so a
+    crash while the server writes that batch loses it with nobody told. The server keeps the window small: the batch is the first
+    thing it reads after registering, written before anything else is done. The gap itself is in pi-intercom, so B5 proposes an
+    upstream change: a mailbox flush to an `acknowledgesReceipts` session waits for each receipt and puts unreceipted mail back in the
+    mailbox when that session disconnects. Until that ships, it is a documented limit (**Risks**).
 - **Coalescing.** A wake waits 1 s after the first event, so a burst starts one run with all of it.
 - **Events while a local run is live** go to that run, at the next moment it is idle (`isIdle()` and no pending message, checked in the
   same tick, as `pump` does). Each one goes as one custom message `straw-tower` with `triggerTurn`, and the run reports it `taken` once it
@@ -339,7 +434,7 @@ the run's kind on every request, in addition to the hooks in the run.
 |---|---|---|
 | `tower_list`, `board_read` | The full answer, as today | Scoped to the sender's team, as in a remote turn today |
 | `boss_status`, `call_tower` | Inside the workspace, as today | `boss_status` only (allowlisted) |
-| `tower_send` | Sent by the server as the tower identity, with the header the server writes (`id=sb-tower-<ws>`, `role=tower`, `head=yes` when it is) | Only to the sender's device. Any other target needs the gate, and the server checks that the hub holds an Allow for that call's gate dialog (`toolCallId`). A target that is a tower identity of this machine is refused outright, since it would carry peer text into a local run. |
+| `tower_send` | Sent by the server as the tower identity, with the header the server writes (`id=sb-tower-<ws>`, `role=tower`, `head=yes` when it is). With `device`, `reply: true`, and `for: <local session>`, the ally's reply goes to that session (**Replies for a main**) | Only to the sender's device. Any other target needs the gate, and the server checks that the hub holds an Allow for that call's gate dialog (`toolCallId`). A target that is a tower identity of this machine is refused outright, since it would carry peer text into a local run. |
 | `tower_reply` (new) `{ to, message, reply? }` | One message to one local session by id or name, sent as the tower identity under the header. This replaces "answer with intercom send". | Gate, as for `tower_send` to a local target. `origin=remote:<device id>` is stamped by the server. |
 | `boss_open_main`, `boss_close_main` | Run by the server with the persisted ledger and limits; `close-main` goes out from the tower identity | Gate (dispatch: allowed) |
 | `link_request` | Unchanged (the boss approves) | Refused at every level, as today |
@@ -355,13 +450,35 @@ GUI; a boss message is an instruction". "Never ask the boss" stays.
 ## Ally runs
 
 - An ally message never shares a session with local context. Each run serves one device. The messages from that device that are waiting
-  when the run starts go into it, up to 5, oldest first. A message that arrives during the run waits for the next fresh run (Q1).
+  when the run starts go into it, up to 5, oldest first. A message that arrives during the run waits for the next fresh run (D1).
 - The run's level is fixed when it is claimed: the server computes it from `link.trust` or the unattended policy, and the run's hooks
   read the policy again and take the lower of the two. A sender that leaves the roster before the run starts has its messages dropped,
   as today. One that leaves during the run gets its run ended with `quit`.
 - At `dispatch` (an unattended device's controller) the run has the full tower tools of a local run, minus `link_request`, and keeps the
   device's own guards.
-- Replies from allies to the local tower's own questions are Q4.
+- A `confirm-request` from an ally's gate at `forward` stays a GUI alert for the boss and wakes nothing (D5).
+
+### Replies for a main (D4)
+
+A local tower often asks an ally on a main's behalf. Under "every ally message gets its own session", the answer would reach an ally
+run with no local context, and passing it on to the main would need a gate confirm every time. So the local tower names the asker:
+
+- `tower_send({ device, workspace?, text, reply: true, for })` in a local run. `for` is a live local session (id or name) that is a main
+  of the tower's workspace. The server records `{ envelope id, device, for: <session id>, expires: 24 h }` in
+  `tower/<ws>/awaiting.json`.
+- The ally answers from the ally run that the question started. When it calls `tower_send` back to the asking device, its server sends
+  a `tower-reply` envelope instead of `tower`, carrying `inReplyTo` (the envelope id that started the run) and the text. `tower-reply`
+  is a new message kind with its own plaintext, in `src/link/kinds.ts`, `tests/link/vectors.json`, and straw-relay's kind table, as
+  `board` was added in 5b. An ally on an older build sends a plain `tower`, which gets an ally run as before.
+- The asking server takes a `tower-reply` as a reply only when `inReplyTo` names an open record, the envelope comes from that
+  record's device, and the record has not been used. It then closes the record. Anything else (no record, wrong device, used,
+  expired) is treated as a plain `tower` message and gets an ally run.
+- The reply reaches the main as peer data, by the path a tower took a delivery by in step 3: the server offers it over
+  `straw-boss/link`, the main takes an offer only from the server's `intercomId`, holds it until it is idle, and sends it into its
+  session as a `straw-link` custom message with `triggerTurn`, under the verified header plus `kind=link_reply` and `for=<tower>`. No
+  run starts and nothing enters a tower.
+- That main's run is then a remote turn at the replying device's level, with the step-4 hooks (**Security**).
+- If the main has gone (not live, or no longer the tab's main), the reply falls back to an ally run, whose brief says which main asked.
 
 ## Security: Remote turns after the split
 
@@ -377,28 +494,44 @@ GUI; a boss message is an instruction". "Never ask the boss" stays.
 - The verified header for the first message (`id=link:<device>`, label character set, `team=` from this computer).
 - `origin=remote:<device id>` on everything an ally run sends to a local session. The server stamps it now, not the run.
 
-**Simplified, because remote content never shares a session with local context:**
+**Simplified for towers, because remote content never shares a tower session with local context:**
 
 1. Run classification (`turn.ts`: from a `straw-link` `message_start` or `message_end` to `agent_settled`, the lowest level of several
    senders) is replaced by the run's kind and level, fixed at claim for the whole session. There is one sender per run.
 2. Holding a delivery until the tower is idle, and the 10-minute "waited for an idle tower" notice, are gone for ally runs: the session
    starts with the message. The server raises the notice instead when an ally message waits more than 10 minutes for an ally run slot.
-3. `hideOldRemote` and the `context` marker for older peer text are gone: no local run ever holds peer text. They are replaced by a test
-   that a local run never receives a `straw-link` or `link` event.
-4. The documented compaction limit (a peer's text surviving unmarked in a summary) is gone: an ally session holds the brief and peer
-   text only.
+3. `hideOldRemote` and the `context` marker for older peer text are not needed in towers: no local run ever holds peer text. A test
+   checks that a local run never receives a `straw-link` or `link` event.
+4. The documented compaction limit (a peer's text surviving unmarked in a summary) does not apply to towers: an ally session holds
+   the brief and peer text only.
 5. The documented `origin=` limit for pi-intercom's own tool after a gate approval is gone: runs cannot use that tool, and the server
    stamps `origin=` on every send.
-6. The `straw-link-seen` session entry is replaced by the run records' taken ids.
-7. "A steer into a run that began local makes it remote" can no longer happen: a link event is never offered to a local run.
+6. In towers, the `straw-link-seen` session entry is replaced by the run records' taken ids.
+7. "A steer into a run that began local makes it remote" can no longer happen in a tower: a link event is never offered to a local
+   run.
+
+**Reopened by D4, for mains only.** Step 3 sent link deliveries to towers only, so only towers needed the gate (review R-F003). A
+`tower-reply` for a main puts peer text into a main, which runs at full rights. The step-4 machinery therefore stays, scoped to mains
+that take such a reply:
+
+- run classification from the `straw-link` message to `agent_settled`;
+- the allowlist, the deny list, the gate, and `forward`;
+- `link_request` blocked;
+- `hideOldRemote` in later runs;
+- `straw-link-seen`;
+- the documented compaction limit.
+
+It is bounded: only a reply, only from the device asked, once, to the main the local tower named, within 24 h. The remote-turn hooks
+stay registered in every joined session, so this needs no new hook code. B6 gets a fresh-context security review for it.
 
 **New guards:**
 
 - The server enforces the run token's kind on every control request (the table above). An ally run cannot message a tower identity of
   this machine.
 - An ally run's `context` event drops any pi-intercom message, as a backstop. The run's own intercom id is fresh, and no header names it.
-- The control socket lives in the 700 state directory, mode 600, or as a named pipe of random name on Windows recorded in `server.json`.
-  It is the same-user trust boundary pi-intercom rests on. Run tokens are held in memory only, so a file read gives no run's privileges.
+- Every control connection opens with the `hello` secret, and on Windows the state directory carries an owner-only ACL
+  (**The control socket**); a pipe's name and a file mode protect nothing there. Run tokens are held in memory only, so reading
+  `server.json` gives no run's privileges.
 
 ## Unattended devices (Straw Link step 6, rebased)
 
@@ -437,7 +570,7 @@ What changes:
 
 ## `gui.json` and its successor (for straw-boss-desk's owner)
 
-This section stands alone, so straw-boss-desk's owner can review it without the rest.
+This section stands alone, so straw-boss-desk's owner can review it without the rest. The owner agreed to it on 2026-10-26 (D11).
 
 **What stays.** `gui.json` keeps its path (`$PI_CODING_AGENT_DIR/straw-boss/gui.json`), its write by rename (mode 600), and every field
 the contract names: `port`, `token`, `pid`, `started`, `stopped`, `version`, `herdr`, `owner`. The URL stays
@@ -449,23 +582,40 @@ contract) is the server's intercom id.
 
 - **Gone** no longer depends on a pi session surviving. A server that went down without a stop is started again by the next pi session's
   look (within about 6 s while any pi runs) or by its supervisor. With no pi session and no supervisor it stays down until something
-  starts it, which the shell can now do itself (`cli.mjs up`).
+  starts it, which the shell now does itself with `cli.mjs up`.
 - `stopped` in `gui.json` now means that the GUI listener was stopped on purpose (`/boss gui stop`). The server goes on running the
-  tower services and the link. The whole server stopped on purpose is `server.json`'s `stopped`.
+  tower services and the link. The whole server stopped on purpose is `server.json`'s `stopped`. `up` and `serve` clear both.
+- A restart or upgrade keeps the port and token (**Restarts and upgrades**), so the shell's webview reconnects without reading anything.
+  Moved is the only case in which the shell reads a record again.
 
-**The successor: `server.json`.** It sits beside `gui.json` and describes the stack, not only the page: `pid`, `started`, `version`,
-`herdr`, `mode`, `stopped`, and `gui: { port, token }` (a copy of `gui.json`'s, for one read). `socket` and `intercomId` are not for
-the shell. Ready means `server.json` exists, is not `stopped`, its PID is alive with that start time, and the GUI URL answers 200.
+**The successor: `server.json`.** It sits beside `gui.json` and describes the stack, not only the page. The shell may read `pid`,
+`started`, `version`, `herdr`, `mode`, `desk`, `stopped`, `restarting`, and `gui: { port, token, stopped }`. `socket`, `secret`, and
+`intercomId` are for sessions and runs only, and like the token the file is a secret, never logged.
+
+**On the happy path the shell reads no file at all.** `cli.mjs up` prints everything it needs (**`up`'s output**), and `cli.mjs status`
+prints the state below as one JSON line. Files are for watching between launches.
+
+### States for a shell
+
+| State | How to tell from the files | `cli.mjs status` | What the shell does |
+|---|---|---|---|
+| live | `server.json` has no `stopped` and no `restarting`; its `pid` is alive and started at `started`; a GET of the URL answers 200 | `{"state":"live", …}` | Show the page. |
+| moved | live, but `gui.port` differs from the URL the shell loaded | `live`, with the new `url` | Load the new URL once it answers 200. The token stays. |
+| restarting | `server.json` has `restarting` whose `since` is less than 15 s ago | `restarting` | Keep the page; its stream reconnects on the same URL. After 15 s, treat it as gone. |
+| gui stopped | live, and `gui.stopped` (`gui.json`'s `stopped`) is set | `gui-stopped` | Say the GUI was stopped; `up` starts it again. |
+| server stopped | `server.json` has `stopped` | `stopped` | Run `up` at the next launch (it clears `stopped`). |
+| gone | none of the above: the PID is dead or started at another time, `restarting` is older than 15 s, or the URL has not answered for 15 s | `gone` | Run `up`. |
 
 **Migration**, in three releases that the shell pins one at a time:
 
 | Release | `gui.json` | `server.json` | The shell |
 |---|---|---|---|
-| S1 (the server ships) | Written by the server, contract unchanged | Written, documented as the successor | Nothing has to change. It may start `cli.mjs up` instead of waiting for a pi to host the GUI. |
-| S2 (one minor later) | Still written | The documented contract | Reads `server.json`, keeping `gui.json` as a fallback |
+| S1 (the server ships) | Written by the server, contract unchanged | Written, documented as the successor, with `up` and `status` | Nothing has to change. It may use `cli.mjs up` instead of waiting for a pi to host the GUI. |
+| S2 (one minor later) | Still written | The documented contract | Uses `up`'s output and `status`, keeping `gui.json` as a fallback |
 | S3 (after the shell confirms S2 in its pin) | Still written, marked deprecated in how-it-works | Contract | Drops the fallback. `gui.json` stays on disk for older shells and is never removed without a note in the release. |
 
-No schema version is added. The shell keeps pinning the pi-straw-boss version, as the contract already asks.
+No schema version is added. The shell keeps pinning the pi-straw-boss version, as the contract already asks. how-it-works gets the
+**States for a shell** table as it stands here.
 
 ## Desk mode: what changes
 
@@ -474,20 +624,55 @@ spec replaces:
 
 | Seam | Change |
 |---|---|
-| The switch `STRAW_BOSS_DESK=1` | Stays. The server reads it from its own environment (given by the shell to `cli.mjs up`, or inherited from the pane of the pi session that started it, which carries the Herdr server's environment). |
+| The switch `STRAW_BOSS_DESK=1` | Stays. The server reads it from its own environment at start: the one the shell gives `cli.mjs up`, or the one a pi session inherited from its Herdr server. A live server started without it is restarted by `up` with the switch (**Starting**). |
 | S1, the tower opens the GUI at its start | **Dropped.** The server serves the GUI from its start. No tower or pi is needed for the page to answer. |
 | S2, no browser | Stays: `/boss gui` prints the URL and opens nothing in desk mode. The server itself never opens a browser. |
 | S3, the state path | Stays. |
-| S4, `gui.json` as contract | Stays, extended by **`gui.json` and its successor**. |
-| S5, `desk up` | **Replaced by `cli.mjs up --dir <folder> --label <name> [--timeout s]`.** Steps: `herdr`, `integration` (S6), `server` (start or find), `base` (`desk.json`, as specified), `tower` (`ensure-tower`, no pi, no 90 s restore wait: a restored run is quit rather than kept), `gui` (the URL answers). Same JSON output and exit codes. Without the switch it refuses with exit 2, as specified. |
+| S4, `gui.json` as contract | Stays, extended by **`gui.json` and its successor** and **States for a shell**. |
+| S5, `desk up` | **Replaced by `cli.mjs up --dir <folder> --label <name> [--timeout s] [--exact]`** at the path of **Where the command lives**. Steps: `herdr`, `integration` (S6), `server` (start, find, restart for the switch, or upgrade), `base` (`desk.json`, as specified), `tower` (`ensure-tower`, no pi, no 90 s restore wait: a restored run is quit rather than kept), `gui` (the URL answers). With `--dir`, `up` refuses with exit 2 when the switch is missing, as specified. Without `--dir`, `up` only makes sure the server runs. |
 | S6, Herdr's pi integration | Stays, installed by `up`. |
-| S7, S8 | On `main` (R1). |
+| S7, S8 | On `main` (R1). The detached start adds `windowsHide` too (**Starting**). |
 | S9, hidden features | Stays. The server reads the switch and tells the page. |
 | S10, native folder dialog | Unchanged (the page and the shell's preload). |
 | "Out: a GUI server that runs without a pi session" | Reversed by the boss's decision above. |
+| Stopping the stack | straw-boss-desk runs `cli.mjs stop` when it quits, then `herdr server stop`. Its next launch runs `up`. |
 
 For the shell, `start.ps1` and the macOS kit become: start `herdr server` with the switch, run `cli.mjs up`, and record PIDs. A cold
 Windows start no longer waits for a tower pi (66 s measured) before the page answers.
+
+### `up`'s output
+
+One JSON line on stdout:
+
+```json
+{
+  "url": "http://127.0.0.1:52662/<token>/",
+  "pid": 41234,
+  "started": "2026-10-26T08:40:06.000Z",
+  "version": "0.45.0",
+  "package": "0.45.0",
+  "mode": "detached",
+  "desk": true,
+  "server": "found | started | restarted | upgraded",
+  "steps": [{ "name": "herdr", "ok": true, "ms": 40 }, { "name": "server", "ok": true, "ms": 1200, "detail": "restarted: desk switch" }],
+  "warnings": [{ "code": "server_newer", "text": "the server runs 0.46.0, this package is 0.45.0" }],
+  "workspace": "w_…", "pane": "p_…", "tower": "sb-tower-w_…", "created": false, "integration": "current"
+}
+```
+
+- `version` is the live server's, and `package` the version of the package `up` ran from.
+- `steps` lists every step that ran, in order.
+- `warnings` codes: `server_newer`, `desk_on` (a desk server found by an `up` without the switch), `remote_off` (remote access did not
+  resume, with the reason), and `integration_installed`.
+- The last five fields come only with `--dir`.
+- Exit codes:
+  - 0: done.
+  - 1: a step failed. One JSON line `{ "step", "reason", "steps", "warnings" }` goes to stderr; a `gui` failure adds the last 20 lines of
+    the server's log.
+  - 2: usage, or `--dir` without the switch.
+  - 3: the command cannot run (`tsx` not found, or the Windows ACL could not be set).
+  - 4: from `serve` only, a live `serve` server already runs.
+- A second `up` while one runs waits for it on `server.lock` (up to `--timeout`), then reports what it finds.
 
 ## Migration from resident towers
 
@@ -498,60 +683,115 @@ Windows start no longer waits for a tower pi (66 s measured) before the page ans
   the `tower` token for the identity. Its tab becomes the standing pane's tab. A message sent to that pi's own id after it quit waits in
   the broker's mailbox for an id that never comes back, so the hand-over happens at the pi's start, before any agent learns its id.
 - `roles/` records with role `tower` are converted into `service.json` and then deleted. Main records are untouched.
-- The `straw-boss/link` channel is still served by the server for one minor release, for sessions of the previous build that send
-  through it. It is then retired.
+- The `straw-boss/link` channel keeps serving requests from sessions of the previous build for one minor release; after that it carries
+  only the server's offers of replies to mains (**Replies for a main**).
 
 ## Build steps
 
 Inserted before Straw Link step 6, which is rebased on them. Each step passes `npm run check` and `npm test`, updates
 `docs/how-it-works.md`, and is merged on its own.
 
-1. **B1, server skeleton.** `src/server/{main,cli,record,socket}.ts`: `server.json` and `server.lock`, the control socket or named pipe,
-   `hello`, liveness, the start from a session's look, `serve`/`up`/`stop`/`status`/`restart`, `upgrade`, the intercom connection
-   through the headless kit, and `/boss server`. Nothing moves yet.
-2. **B2, the GUI moves.** `host.ts`'s server half moves into the server. Sessions stop hosting and adopting, and `/boss gui` and the GUI
-   commands ask the server. `gui.json` is written by the server under the unchanged contract, and `server.json` is added. Remote access
-   resumes as today.
+1. **B1, server skeleton.**
+   - `src/server/{main,cli,record,socket}.ts` and `cli.mjs`.
+   - `server.json` and `server.lock`.
+   - The control socket or named pipe with the `hello` secret, and the Windows ACL.
+   - Liveness, and the detached start from a session's look with `windowsHide`.
+   - `serve` (with its take-over), `up` without `--dir` (with `server`, version, and desk handling), `stop`, `status`, and `restart`.
+   - The restart path that keeps the port and token, and `upgrade`.
+   - `tsx` as a dependency.
+   - The intercom connection through the headless kit, and `/boss server`.
+
+   Nothing moves yet.
+2. **B2, the GUI moves.**
+   - `host.ts`'s server half moves into the server. Sessions stop hosting and adopting, and `/boss gui` and the GUI commands ask the
+     server.
+   - `gui.json` is written by the server under the unchanged contract, and `server.json` gets `gui`.
+   - Remote access resumes as today.
+   - how-it-works gets **States for a shell**.
 3. **B3, the link holder moves.** The holder runs in the server, sessions stop being candidates, and session requests go over the socket.
    The channel is kept for the previous build.
 4. **B4, tower service without runs.** Identities, standing panes, tokens, head watch, digest, `ensure-tower`, the opener ledger and
    `close-main` in the server, conversion of resident towers. A tower here takes no events yet (behind a flag in tests only).
-5. **B5, local runs.** Queue, wake, claim, the brief, `tower_done`, timeouts and crashes, tower tools over the socket, `tower_reply`,
-   the `intercom` block, the prompt change, `assertSettingsSafe` before every run, and the GUI's tower states, queue, and composer wake.
+5. **B5, local runs.**
+   - Queue, wake, claim, the brief, `tower_done`, timeouts and crashes.
+   - Receipts after the fsync, the sender's `~r<n>` retry and its dedupe.
+   - Tower tools over the socket, `tower_reply`, the `intercom` block, the prompt change.
+   - `assertSettingsSafe` before every run.
+   - The GUI's tower states, queue, and composer wake.
+   - A proposed pi-intercom change: a mailbox flush waits for receipts (**Queueing and concurrency**).
+
    From here the tower is not resident.
-6. **B6, ally runs.** Routing link events into ally runs, session-level remote turns, the removals and new guards of **Security**,
-   server-side token enforcement, the ally brief and thread.
-7. **B7, desk.** `cli.mjs up` with the desk steps, the desk seams as **Desk mode** says, desk mode's how-it-works section.
+6. **B6, ally runs.**
+   - Routing link events into ally runs, session-level remote turns for towers, the guards of **Security**, and server-side token
+     enforcement.
+   - The ally brief and thread.
+   - Replies for a main (D4): `tower_send`'s `for`, the `tower-reply` kind in this client, `tests/link/vectors.json`, and straw-relay's
+     kind table, and the offer to the main.
+7. **B7, desk.** `up --dir` with the desk steps, the desk seams as **Desk mode** says, desk mode's how-it-works section.
 
 Then Straw Link step 6 (unattended devices, as rebased above), step 7 (joining over the tailnet), and step 8 (relay deployment and
 trials), unchanged otherwise.
 
 ## Tests and anchor
 
-- **Unit.** Server record and lock (two starts at once start one; a dead PID or a reused one is not live; `stopped` holds); the
-  constructed environment carries no `PI_INTERCOM_*`, `PI_SUBAGENT_*`, or `STRAW_BOSS_ROLE`; queue order (boss first), dedupe by message
-  and envelope id, coalescing, persistence across a restart; the brief builder's caps per section and in total, the ally scope, and no
-  digest or local note in an ally brief; `tower_done` refused while events are outstanding; idle, too long, and crash outcomes, flags,
-  and the crash-loop hold; run token enforcement for each tool and kind, including an ally run refused a send to a tower identity;
-  claim by pane and PID, a resumed run quit, a hand-started pi accepted.
-- **Integration (fake Herdr and a real pi-intercom broker, as `tests/link/remote-world.ts` builds them).** `call_tower` to a workspace
-  with no run wakes one, the event arrives, the reply leaves with `id=sb-tower-<ws>`, and a main's later reply wakes a second run. Mail
-  sent while the server restarts arrives from the broker's mailbox. The guard keeps a main across a server `upgrade`. Mains are demoted
-  15 s after a `stop`. An old-build session neither adopts the GUI nor takes `holder.json`.
-- **Real pi session (faux model, as `tests/link-session.test.ts`).** A local run gets the brief in its role section and its events in
-  order. An event arriving mid-run is offered at idle and taken once. `tower_done` quits pi. The `intercom` tool is blocked. An ally run
-  is remote from its first message, and its `context` never holds a pi-intercom message.
+- **Unit.**
+  - Server record and lock: two starts at once start one; a dead PID or a reused one is not live; `stopped` holds against a session's
+    look; `up` and `serve` clear `stopped` in `server.json` and `gui.json`.
+  - The control socket: a connection without the secret, or with a wrong one, is closed with no answer.
+  - The detached spawn's options are `{ detached: true, stdio: "ignore", windowsHide: true }`.
+  - The constructed environment carries no `PI_INTERCOM_*`, `PI_SUBAGENT_*`, or `STRAW_BOSS_ROLE`.
+  - `cli.mjs` resolves `tsx` from its own package and exits 3 without it.
+  - `up`:
+    - `server` is `found`, `started`, `restarted` (desk switch), or `upgraded` (older server);
+    - `server_newer` without `--exact`, and exit 1 at `version` with it;
+    - `desk_on`;
+    - the full JSON shape;
+    - exit codes 0 to 3.
+  - `serve`: it takes over a detached server with the same port and token; a live `serve` exits 4.
+  - Every kind of restart keeps the port and token, and a taken port moves only the port.
+  - `status` gives each state of **States for a shell**.
+  - The queue:
+    - order (boss first), coalescing, and persistence across a restart;
+    - dedupe by message id with `~r<n>` removed, and by envelope id;
+    - the receipt goes only after the fsync.
+  - The brief builder's caps per section and in total, the ally scope, and no digest or local note in an ally brief.
+  - `tower_done` is refused while events are outstanding. Idle, too long, and crash outcomes, flags, and the crash-loop hold.
+  - Run token enforcement for each tool and kind, including an ally run refused a send to a tower identity.
+  - Claim by pane and PID, a resumed run quit, a hand-started pi accepted.
+  - `tower-reply`:
+    - taken only for an open record from its device, once;
+    - anything else becomes an ally run;
+    - a gone main falls back to an ally run.
+- **Integration (fake Herdr and a real pi-intercom broker, as `tests/link/remote-world.ts` builds them).**
+  - `call_tower` to a workspace with no run wakes one, the event arrives, and the reply leaves with `id=sb-tower-<ws>`. A main's later
+    reply wakes a second run.
+  - Mail sent while the server is down arrives from the broker's mailbox.
+  - A server killed between reading a message and its receipt: the sender's retry delivers it once.
+  - The broker behaviors in **Reality anchor** (no resend, unknown outcome on disconnect, mailbox flush without receipts, `SESSION_HELD`)
+    are pinned by tests, so a pi-intercom upgrade that changes them fails here.
+  - The guard keeps a main across a server `upgrade`. Mains are demoted 15 s after a `stop`.
+  - An old-build session neither adopts the GUI nor takes `holder.json`.
+- **Real pi session (faux model, as `tests/link-session.test.ts`).**
+  - A local run gets the brief in its role section and its events in order.
+  - An event arriving mid-run is offered at idle and taken once.
+  - `tower_done` quits pi, and the `intercom` tool is blocked.
+  - An ally run is remote from its first message, and its `context` never holds a pi-intercom message.
+  - A main that takes a `tower-reply` runs a remote turn at the replier's level, with the gate, and later runs hide the reply.
 - **Settings.** A refused `assertSettingsSafe` starts no run, keeps the queue, and raises one notice per minute at most.
 - **Live (AGENTS.md, Live checks), in scratch workspaces of the default Herdr with servers started under `env -i`:**
   1. The first pi of a fresh agent dir starts the server, and the GUI shows each tower standing.
   2. A main's `call_tower` wakes a pane in the existing tower tab, the run answers and exits, and the tab stays.
   3. The GUI composer wakes the tower.
-  4. Killing the server mid-run: the run reconnects to the restarted one and finishes.
+  4. Killing the server mid-run: the run reconnects to the restarted one and finishes, and the page reconnects on the same URL.
   5. Two agent dirs and a local relay: an ally message wakes an ally pane at `reply` while a local run works, and its gate shows in the
-     GUI.
-  6. On the Windows VM, `cli.mjs up` brings the page up without a tower pi.
-- **Review.** The change touches a shared contract (`gui.json`, the control socket), security (remote turns), and the process model, so
-  B2, B3, B5, and B6 each get a fresh-context reviewer after their anchor passes.
+     GUI; a `tower_send` with `for` gets its reply into the named main.
+- **Windows VM:**
+  1. `cli.mjs up` brings the page up without a tower pi.
+  2. The detached server opens no console window: no window appears, and the node process has no main window handle.
+  3. A second local account cannot connect to the pipe (closed with no answer) and cannot read `server.json`.
+  4. `up` after `stop` brings the server back; `up` with the switch against a server started without it restarts it on the same URL.
+- **Review.** The change touches a shared contract (`gui.json`, `server.json`, the control socket), security (remote turns, the
+  reopened main path), and the process model, so B1, B2, B3, B5, and B6 each get a fresh-context reviewer after their anchor passes.
 
 ## Risks
 
@@ -560,28 +800,58 @@ trials), unchanged otherwise.
   that window short, and `/boss server` says why it is down.
 - **Cost per wake.** Each wake starts pi (seconds on macOS, up to a minute cold on Windows). Coalescing and handling mid-run events in
   the live run keep the count down. A tower that is messaged often runs often, which is the boss's trade for not keeping it resident.
-- **A message between socket and queue.** If the broker does not send a message again when its receipt was never acknowledged, a server
-  crash between reading a message off the socket and writing it to `queue/` drops that one message. B5 checks the broker's behavior. If
-  it does not resend, the sender's `tower_send` and `call_tower` results say `delivered` only once the server has written the event (an
-  answer on the control socket, not the broker's receipt).
-- **pi-intercom's mailbox and `SESSION_HELD` rules are relied on.** The integration tests pin them, and a pi-intercom upgrade is
+- **Mailbox flush without receipts.** Mail queued in the broker while the server was down is marked delivered when the server
+  registers (`broker/broker.ts:1337`). A crash while the server writes that batch loses it with nobody told. The window is short and
+  bounded (**Queueing and concurrency**); closing it needs the pi-intercom change B5 proposes.
+- **A plain `intercom send` to a tower identity during a restart** fails with an unknown outcome and is not retried by Straw Boss. The
+  sending agent is told it could not be confirmed.
+- **pi-intercom's mailbox, receipt, and `SESSION_HELD` rules are relied on.** The integration tests pin them, and a pi-intercom upgrade is
   checked against them, as the sidecar checks `extension-bus-v1`.
+- **D4 puts peer text into mains again**, bounded as **Security** says and guarded by the step-4 hooks.
 
-## Open questions
+## Decisions (boss, 2026-10-26)
 
-Each question has a recommendation. Everything not listed here is decided in the sections above.
+The boss took every recommendation of the first revision's open questions. straw-boss-desk's owner also agreed to D11.
 
-| # | Question | Recommendation |
+| # | Question | Decision |
 |---|---|---|
-| Q1 | The queue reading: local events go to the live local run; every ally message gets a fresh session, never mixed with local context. May one fresh ally run take several messages from the *same* device that were waiting when it started? | Confirm the reading, and yes: up to 5 waiting messages from one device per ally run, oldest first. A message that arrives during the run waits for the next run. This avoids a pi start per line of a burst without mixing devices or local context. |
-| Q2 | What "送出" means as a wake trigger | Two things only: a late outcome of the tower's own send (a delivery refused or failed, an opened main that failed, a reply arriving), and the boss asking the tower from the GUI. A send on its own does not wake it. |
-| Q3 | Timers | No general timers. `tower_done({ wakeAfter })` only: one pending per workspace, 5 to 240 minutes, for the tower to check on a main it is waiting for. |
-| Q4 | A reply from an ally to a question the local tower asked would, under "every ally message gets its own session", reach an ally run that has no local context. Relaying it to the main that needed it would then take a gate confirm every time. | Let the local tower name the asker: `tower_send({ device, …, reply: true, for: <local session> })`. The reply envelope then goes from the server straight to that session as peer data (`origin=remote`, `kind=link_reply`, verified header), with no ally run and nothing entering a tower. A reply without `for` gets an ally run, as the rule says. |
-| Q5 | Should an ally's `forward` confirm request wake the tower? | No. It is the boss's decision and stays a GUI alert, as today. |
-| Q6 | Concurrency | One local run per workspace. One ally run per workspace beside it, in its own pane of the tower tab. At most 4 pi runs per machine (`towerRuns`). |
-| Q7 | Lifetime of a server started from pi | Resident until stopped on purpose. A `detached` server exits only when its Herdr server has been gone for 60 s. A `serve` server lives as its supervisor says. |
-| Q8 | Stopping the server on purpose leaves every workspace without a live tower, so mains are demoted after 15 s | Accept it: a stop is maintenance, and `/boss server stop` warns of the demotion first. Sessions do not restart a stopped server by themselves. |
-| Q9 | Command names. The boss said "pi sb server"; pi's extension API gives commands inside a session and flags, and no top-level subcommand was found. | `/boss server [stop\|restart]` inside pi, and `node <pkg>/src/server/cli.mjs <serve\|up\|stop\|status\|restart>` for shells and supervisors (the docs call it `sb`). Add a `pi sb` wrapper only if pi offers a seam for it. |
-| Q10 | The idle tower pane | A shell prompt: `herdr agent start` needs one, and it costs no process. The GUI says "standing by". A status screen in the pane would need a process that `agent start` must first stop. |
-| Q11 | `gui.json` | Keep it unchanged as the GUI's contract, and add `server.json` as the successor for the stack, migrated in the three releases above. |
-| Q12 | Run limits | 20 minutes per run. A steer after 60 s idle without `tower_done`, and an end 5 minutes later. Hold the service after 3 failed runs in 10 minutes. |
+| D1 | Queueing | Local events go to the live local run. Every ally message gets a fresh session, never mixed with local context. One ally run takes up to 5 waiting messages from the same device, oldest first; a message that arrives during the run waits for the next run. |
+| D2 | What "送出" means as a wake trigger | Two things only: a late outcome of the tower's own send (a delivery refused or failed, an opened main that failed, a reply arriving), and the boss asking the tower from the GUI. A send on its own does not wake it. |
+| D3 | Timers | No general timers. `tower_done({ wakeAfter })` only: one pending per workspace, 5 to 240 minutes. |
+| D4 | An ally's reply to a question the local tower asked | `tower_send({ device, …, reply: true, for: <local session> })`. The reply goes straight to that main as peer data, with no ally run and nothing entering a tower (**Replies for a main**). A reply without `for` gets an ally run. |
+| D5 | An ally's `forward` confirm request | It does not wake the tower. It stays a GUI alert for the boss. |
+| D6 | Concurrency | One local run per workspace, and one ally run per workspace beside it in its own pane of the tower tab. At most 4 pi runs per machine (`towerRuns`). |
+| D7 | Lifetime of a server started from pi | Resident until stopped on purpose. A `detached` server exits only when its Herdr server has been gone for 60 s. A `serve` server lives as its supervisor says. |
+| D8 | A stop on purpose leaves no live tower | Accepted. Mains are demoted after 15 s, and the stop warns of it first. Sessions do not restart a stopped server by themselves. |
+| D9 | Command names | `/boss server [stop\|restart]` inside pi, and `cli.mjs <serve\|up\|stop\|status\|restart>` at the path of **Where the command lives** for shells and supervisors (the docs call it `sb`). |
+| D10 | The idle tower pane | A shell prompt. The GUI says "standing by" (待命). |
+| D11 | `gui.json` | Unchanged as the GUI's contract, with `server.json` as the successor, migrated in three releases. |
+| D12 | Run limits | 20 minutes per run. A steer after 60 s idle without `tower_done`, and an end 5 minutes later. The service is held after 3 failed runs in 10 minutes. |
+
+## Review record
+
+Review by straw-boss-desk's owner, 2026-10-26, all applied:
+
+1. **Windows named pipe.** A random name is no ACL. Every connection now opens with a `hello` secret kept in `server.json`, and the
+   state directory gets an owner-only ACL on Windows. A Windows test checks that a second account is refused. The claim that the
+   mode-600 argument carries over is gone (**The control socket**).
+2. **Locating the CLI.** The stable path is `<agent dir>/npm/node_modules/pi-straw-boss/src/server/cli.mjs`. It runs under plain Node 22
+   with `tsx` resolved from the package itself (**Where the command lives**).
+3. **The desk switch on a live server started without it.** `up` with the switch restarts it, and `server: "restarted"` says so
+   (**Starting**).
+4. **`stopped`.** `up` and `serve` clear it in `server.json` and `gui.json`. Desk stops with `cli.mjs stop`, and its next `up` brings the
+   server back (**Stopping**).
+5. **serve and detached.** Desk uses `up` only, and `serve` is for supervisors. `serve` takes over a live detached server, and gives
+   exit 4 when a live `serve` server runs, with the reasons (**Starting**).
+6. **Windows detached start.** It uses `windowsHide`, with a unit test and a VM check.
+7. **Version skew.**
+   - `up` reports `version` and `package`.
+   - An older server is upgraded.
+   - A newer one gets a warning, or exit 1 with `--exact`.
+8. **Restart and upgrade keep the port and token.** Moved is the only re-read (**Restarts and upgrades**).
+9. **`up`'s JSON fields** are listed (**`up`'s output**).
+10. **States for a shell** are in one table, which goes into how-it-works.
+
+The open risk of the first revision ("whether the broker re-sends an un-acknowledged delivery", B5) is settled from pi-intercom 0.17.1's
+source: it does not re-send (**Reality anchor**). The design now retries from Straw Boss's sender and dedupes in the server, and the
+remaining gap (a mailbox flush without receipts) is documented, with an upstream change proposed.
