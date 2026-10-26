@@ -348,10 +348,10 @@ async function summaryRig(keepMs: number) {
 }
 
 test("RC-F003: the last summary stands in for a slow holder only while it is fresh; after that, and when the holder is gone, the GUI shows nothing", async () => {
-	const slow = await summaryRig(300);
+	const slow = await summaryRig(1500); // the fresh read waits 150 ms for the deaf holder: the keep time leaves a loaded machine plenty of room
 	slow.deaf();
 	assert.deepEqual(await slow.link.summary(), slow.first, "slow and fresh: the last reading");
-	await new Promise((r) => setTimeout(r, 350));
+	await new Promise((r) => setTimeout(r, 1400)); // with the 150 ms waits on both sides of it, the reading is older than 1.5 s
 	assert.equal(await slow.link.summary(), undefined, "slow and old: nothing");
 	const gone = await summaryRig(60_000);
 	assert.deepEqual(await gone.link.summary(), gone.first);
