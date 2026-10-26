@@ -4,6 +4,7 @@ import { type Kind, type Party, stamp } from "./header.ts";
 import { headOf, isSub, type Pane, panes, parentOf, type Session, towerModel, workspaces, type Workspace } from "./herdr.ts";
 import type { Kit, Scope, SendResult } from "./state.ts";
 import { ensureTower } from "./towertab.ts";
+import { trustDir } from "./trust/files.ts";
 
 const OUTBOX = "intercom:outbox-request";
 const OUTBOX_RESULT = "intercom:outbox-result";
@@ -57,7 +58,7 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit) {
 			throw new Error(`${target.label} has no tower yet: it opens when a member there promotes itself to main`);
 		}
 		const moveFirst = (tabId: string) => api("tab.move", { tab_id: tabId, insert_index: 0 }).catch((error: Error) => tell(`Straw Boss: could not move the tower tab first: ${error.message}`, "warning"));
-		return { target, routed: target !== asked ? asked : undefined, ...(await ensureTower({ run, sleep, live, moveFirst, model: towerModel(guiDir) }, target, process.cwd())) };
+		return { target, routed: target !== asked ? asked : undefined, ...(await ensureTower({ run, sleep, live, moveFirst, model: towerModel(guiDir), trustDir: trustDir(guiDir) }, target, process.cwd())) };
 	};
 	const status = async () => {
 		const sessions = await s.c.listSessions();

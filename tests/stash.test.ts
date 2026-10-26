@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { Pane, Session } from "../src/herdr.ts";
 import { createCloser } from "../src/closer.ts";
+import { requestFile, trustDir, writeAtomic } from "../src/trust/files.ts";
+import { digestOf } from "../src/trust/found.ts";
 import { closeAll, listStashes, nameFor, nameOk, stashedList, popBase, type Stash, stashBase, stashFile } from "../src/stash.ts";
 
 // Stash and pop (docs/specs/2026-10-22-stash/spec.md): a base is checked before anything closes, recorded, then closed; a pop resumes
@@ -147,9 +149,10 @@ test("a close that stops half way keeps nothing stashed and says how each sessio
 });
 
 // Pop: a fake Herdr that answers creates, splits, and starts, and lets each started pi take its role a moment later.
-function popper(w: ReturnType<typeof world>, { fail = "" } = {}) {
+/** `trust`: each pi it starts (but the tower) first asks a trust question that goes after `after` sleeps of the wait, and takes its role then. */
+function popper(w: ReturnType<typeof world>, { fail = "", trust }: { fail?: string; trust?: { after: number } } = {}) {
 	const made: Pane[] = [], ran: string[][] = [];
-	let n = 0, towerToken: string | undefined;
+	let n = 0, towerToken: string | undefined, slept = 0, release: (() => void) | undefined;
 	const pane = (tab: string, env: string[]) => ((p) => (made.push(p), p))({ pane_id: `wN:p${++n}`, tab_id: tab, workspace_id: "wN", tokens: { env: env.join(",") } } as Pane);
 	const envs = (args: string[]) => args.flatMap((a, i) => (args[i - 1] === "--env" ? [a] : []));
 	const run = async (args: string[]) => {
@@ -163,14 +166,19 @@ function popper(w: ReturnType<typeof world>, { fail = "" } = {}) {
 			const p = made.find((x) => x.pane_id === args[args.indexOf("--pane") + 1])!, role = /STRAW_BOSS_ROLE=(\w+)/.exec(p.tokens!.env!)?.[1] ?? "";
 			if (fail && args[2]!.startsWith(fail)) throw new Error("agent did not start");
 			if (role === "tower") towerToken = "T1";
-			else p.tokens!.sb_role = role;
+			else if (trust) {
+				const found = [{ kind: "settings", path: ".pi/settings.json", items: [], more: 0 }], dir = trustDir(w.dir), id = `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+				mkdirSync(dir, { recursive: true, mode: 0o700 });
+				writeAtomic(dir, requestFile(id), { version: 1, id, pid: process.pid, herdr: "h", pane: p.pane_id, role, cwd: "/work/demo", at: 1, found, digest: digestOf("/work/demo", found) });
+				[slept, release] = [0, () => (rmSync(join(dir, requestFile(id))), (p.tokens!.sb_role = role))];
+			} else p.tokens!.sb_role = role;
 			return "{}";
 		}
 		if (group === "workspace" && cmd === "list") return ok({ workspaces: [{ workspace_id: "wN", label: "Base A", tokens: towerToken ? { tower: towerToken } : {} }] });
 		if (group === "pane" && cmd === "list") return ok({ panes: made });
 		return "{}";
 	};
-	return { ran, made, pop: (name = "A", agentDir?: string) => popBase({ run, sleep: async () => {}, stateDir: w.dir, live: async (id) => id === "T1", agentDir, now: () => new Date("2026-10-22T11:00:00Z") }, name) };
+	return { ran, made, pop: (name = "A", agentDir?: string) => popBase({ run, sleep: async () => void (trust && ++slept === trust.after && release?.()), trustDir: trust && trustDir(w.dir), stateDir: w.dir, live: async (id) => id === "T1", agentDir, now: () => new Date("2026-10-22T11:00:00Z") }, name) };
 }
 
 test("a pop resumes the tower first, then each tab's main before its members, and files the stash away", async () => {
@@ -335,4 +343,17 @@ test("a pop that fails while something was stashed under its name meanwhile come
 	assert.deepEqual(listStashes(w.dir), ["A", "A 2"]);
 	assert.equal(readFileSync(stashFile(w.dir, "A"), "utf8"), "{}");
 	assert.equal(existsSync(join(w.dir, "stash", ".popping", "A.json")), false);
+});
+
+test("a pop does not count the time a resumed pi waits on a trust question, and still brings every pane back", async () => {
+	const w = world();
+	await stasher(w).go();
+	const slow = popper(w, { trust: { after: 400 } }); // a question open for 400 waits of 500 ms: more than the 60 s
+	assert.deepEqual(await slow.pop(), { workspace: "wN", label: "Base A", sessions: 3 });
+	const plain = world();
+	await stasher(plain).go();
+	const never = popper(plain, { trust: { after: 100_000_000 } });
+	await assert.rejects(never.pop(), /No trust decision for \/work\/demo within 10 minutes/);
+	assert.ok(never.ran.some((a) => a.join(" ") === "workspace close wN"), "what the pop opened is closed again, and the stash is kept");
+	assert.deepEqual(listStashes(plain.dir), ["A"]);
 });

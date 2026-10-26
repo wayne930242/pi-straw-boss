@@ -1,6 +1,7 @@
 import type { Mark } from "../src/dashboard.ts";
 import type { Pending } from "../src/ask.ts";
 import type { Net, Unit } from "../src/net.ts";
+import type { TrustAsk } from "../src/trust/types.ts";
 
 // Spots the units that need the user in each snapshot of the net. It is all the alert code the map's chunk carries: the queue, the
 // dialogs, and the HUD alert load with the overlay layer (overlay.ts, layer.ts) once the first alert arrives.
@@ -11,8 +12,11 @@ import type { Net, Unit } from "../src/net.ts";
  */
 /**
  * `unit`: the unit an alert of one of its monitors belongs to (its key is the monitor's own); its comms, terminal, and chat are the unit's.
+ * `trust`: a project trust question (src/trust/): the folder's agents wait on it, and its key is the folder and the digest of what was asked.
  */
-export interface Alert { key: string; unit?: string; ws: string; name: string; role: string; mark: Mark; note?: string; at: number; pending?: Pending; gone?: boolean; closed?: boolean }
+export interface Alert { key: string; unit?: string; ws: string; name: string; role: string; mark: Mark; note?: string; at: number; pending?: Pending; gone?: boolean; closed?: boolean; trust?: TrustAsk }
+/** The openings this page runs (deploy.ts): their trust question shows inline in the deploy panel, and is no alert here. */
+export const ownOpenings = new Set<string>();
 /** The unit an alert is about. */
 export const unitOf = (a: Alert) => a.unit ?? a.key;
 /**
@@ -32,6 +36,7 @@ export function alertsOf(net: Net, at: number): Map<string, Alert> {
 			for (const mo of x.monitors ?? []) if (mo.status === "error" || mo.status === "stale") ((key) => out.set(key, { key, unit: x.key!, ws: b.id, name: x.name!, role: x.role!, mark: "error", note: `monitor:${mo.status}:${mo.what}`, at }))(`${x.key}\u001fmonitor:${mo.id}:${mo.at}`);
 		}
 	}
+	for (const t of net.trust ?? []) if (!(t.opening && ownOpenings.has(t.opening))) ((key) => out.set(key, { key, ws: "", name: t.folder.split(/[\\/]/).filter(Boolean).at(-1) ?? t.folder, role: t.agents[0]?.role ?? "none", mark: "waiting", at, trust: t }))(`trust\u001f${t.folder}\u001f${t.digest}`);
 	return out;
 }
 /**

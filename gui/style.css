@@ -678,6 +678,12 @@ div.ask-opts { max-height: none; overflow: visible; } button.ask-opt { text-alig
 .ask-own { min-width: 0; resize: vertical; field-sizing: content; max-height: 10em; padding: 7px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--sunken); color: var(--text); font: 13px var(--sans); }
 .ask-memo { font-size: 12px; } .ask input:disabled, .ask textarea:disabled { opacity: 0.45; }
 .ask-send { padding: 7px 13px; border: 0; border-radius: 10px; background: var(--amber); color: var(--ink); font: 600 13px var(--sans); cursor: pointer; }
+.trust h4 { margin: 4px 0 0; color: var(--dim); font-size: 11px; font-weight: 400; letter-spacing: 0.14em; text-transform: uppercase; } .trust-found { display: grid; gap: 8px; max-height: 14em; overflow: auto; }
+.trust-group b { font: 12.5px var(--mono); overflow-wrap: anywhere; } .trust-group small { display: block; color: var(--err-soft); }
+.trust-group ul { margin: 2px 0 0; padding: 0 0 0 1.2em; font: 12px/1.5 var(--mono); color: var(--dim); overflow-wrap: anywhere; } .trust-more { list-style: none; margin-left: -1.2em; font-family: var(--sans); font-style: italic; }
+.trust-folder { margin: 0; font: 600 13px/1.4 var(--mono); overflow-wrap: anywhere; } .trust .ask-why { max-height: none; overflow: visible; } .trust .ask-acts > :last-child { margin-left: 0; }
+@media (max-width: 600px) { .deploy-trust .trust-found { max-height: 7em; } .deploy-trust .ask-why { font-size: 12px; } }
+.deploy-trust:empty { display: none; } .deploy-trust .ask { margin: 0; }
 .go, .later, .chat-pill, .cmp-send, .cmp-alt { padding: 7px 13px; border-radius: 10px; font: 600 13px var(--sans); text-decoration: none; cursor: pointer; }
 .go, .chat-pill { background: var(--c); color: var(--ink); } a.go { display: inline-flex; align-items: center; justify-content: center; } /* a link centers its text in a touch-sized box as a button does */
 .cmp-send { border: 0; background: var(--accent); color: var(--ink); }

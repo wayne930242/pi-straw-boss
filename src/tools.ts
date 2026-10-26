@@ -6,12 +6,13 @@ import type { Link } from "./link/runtime.ts";
 import { opener } from "./opener.ts";
 import type { Reach } from "./reach.ts";
 import type { Kit } from "./state.ts";
+import { trustDir } from "./trust/files.ts";
 
 /** The tab label for a name, cut at 16 characters as pi-auto-tab-name cuts it, so that extension takes the label as its own and keeps it. */
 export const tabLabel = (name: string): string => Array.from(name).length > 16 ? `${Array.from(name).slice(0, 16).join("").trimEnd()}…` : name;
 
 /** The tools the agent calls: what a joined session has (status, call_tower, broadcast, rename, promote), and the tower's boss_open_main. */
-export function createTools({ pi, cfg, s, me, role }: Kit, { post, callTower, status, broadcast, towerList, towerSend, promote, digest, closeMain, link }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend"> & Pick<Membership, "promote"> & { digest: Digest; closeMain: CloseMain; link: Link }) {
+export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { post, callTower, status, broadcast, towerList, towerSend, promote, digest, closeMain, link }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend"> & Pick<Membership, "promote"> & { digest: Digest; closeMain: CloseMain; link: Link }) {
 	const tool = <P extends TSchema>(name: string, description: string, parameters: P, body: (params: Static<P>) => Promise<{ text: string; details?: unknown }>) =>
 		pi.registerTool({
 			name, label: name, description, parameters,
@@ -86,7 +87,7 @@ export function createTools({ pi, cfg, s, me, role }: Kit, { post, callTower, st
 		// Tower only. The tower runs no commands: this is its one way to start work, in a new tab of its own workspace.
 		addOpenMain() {
 			// The request reaches the new main under a header, and names the tower the main reports to as well as the sender.
-			const open = opener({ run: cfg.run, sleep: cfg.sleep, workspaceId: s.at.workspaceId, cwd: process.cwd(), sessions: () => s.c.listSessions(), send: (to, message) => post(to, message, "handoff", "main", true), tower: () => ({ id: me(), name: s.ownName || me() }) });
+			const open = opener({ run: cfg.run, sleep: cfg.sleep, workspaceId: s.at.workspaceId, cwd: process.cwd(), sessions: () => s.c.listSessions(), send: (to, message) => post(to, message, "handoff", "main", true), tower: () => ({ id: me(), name: s.ownName || me() }), trustDir: trustDir(guiDir) });
 			tool("boss_open_main", "Open a new tab in this workspace with a new pi as its main agent and hand it a request that no session owns. Does not ask the boss and does not take focus. Opens at most one main per request; when it fails, tell the sender. The main reports its outcome to the sender and to you; close it with boss_close_main after its done report.",
 				Type.Object({
 					request: Type.String({ description: "The sender's request exactly as it reached you, with every boss decision it quotes kept verbatim." }),
