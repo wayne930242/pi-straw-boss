@@ -162,11 +162,13 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit) {
 		const mine = net.all.find((w) => w.workspace_id === s.at.workspaceId);
 		// In a remote turn only the workspaces inside the project the senders' teams bind (none when they bind several).
 		const bound = (workspaceId: string) => !within || (within.project !== undefined && net.ps.some((p) => p.workspace_id === workspaceId && p.cwd && inside(p.cwd, within.project!)));
+		// And inside those, only the sessions whose pane directory is inside it, so a tab outside the project shows nothing of itself.
+		const here = (x: Session | undefined) => !within || (within.project !== undefined && net.ps.some((p) => p.pane_id === x?.herdrLocation?.paneId && p.cwd && inside(p.cwd, within.project!)));
 		const towers = stationsOf(net).filter((st) => bound(st.workspace.workspace_id)).map((st) => {
-			const tabs = Object.values(Object.groupBy(st.members, (m) => m.tab.id)).map((group = []) => ({ label: group[0]!.tab.label, main: nameOf(group.find((m) => m.role === "main")?.s) || null, members: group.filter((m) => m.role === "member").map((m) => nameOf(m.s)) }));
-			return { workspace: { id: st.workspace.workspace_id, label: st.workspace.label }, head: st.head, self: st.self, reach: st.via, sessions: st.sessions.map(mark), tabs };
+			const tabs = Object.values(Object.groupBy(st.members.filter((m) => here(m.s)), (m) => m.tab.id)).map((group = []) => ({ label: group[0]!.tab.label, main: nameOf(group.find((m) => m.role === "main")?.s) || null, members: group.filter((m) => m.role === "member").map((m) => nameOf(m.s)) }));
+			return { workspace: { id: st.workspace.workspace_id, label: st.workspace.label }, head: st.head, self: st.self, reach: st.via, sessions: st.sessions.filter(here).map(mark), tabs };
 		});
-		const result = { me: { id: me(), role: role(), workspace: { id: s.at.workspaceId, label: mine?.label } }, head: headOf(net.all)?.workspace_id, towers };
+		const result = { me: { id: me(), role: role(), workspace: { id: s.at.workspaceId, label: mine?.label } }, head: (() => { const h = headOf(net.all)?.workspace_id; return h !== undefined && bound(h) ? h : undefined; })(), towers };
 		return { text: JSON.stringify(result, null, 2), details: result };
 	};
 	/** One tower by workspace id or label (a sub workspace goes to its parent), or every other tower; a workspace without a tower is reached through its mains, else its members. */

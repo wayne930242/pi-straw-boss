@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { cleanText, clean, BOARD, purge, readEntries, wireId, type Entry } from "../board.ts";
+import { MAX_BODY_BYTES } from "./wire.ts";
 import { createHash, randomBytes } from "node:crypto";
 import type { Session } from "../herdr.ts";
 import type { LinkConfig } from "./config.ts";
@@ -100,14 +101,12 @@ const HEAD_DIFF_MS = 2 * 60_000, DOWN_MS = 2 * 60_000, HELD_MS = 10 * 60_000;
 export interface AllyDevice { id: string; short: string; label: string; online: boolean; ageMs: number | null; roster: number | null; workspaces: WorkspaceState[] }
 export interface AllyTeam { team: string; name: string; devices: AllyDevice[] }
 /** An ally's board as a tower reads it: text from the sender, cut and cleaned again; the device's label is the roster's. */
-export interface AllyBoardEntry { id: string; workspace: string; tab: string; main: string; now: string; items: { t: string; done: boolean }[]; updatedSecondsAgo: number }
+export interface AllyBoardEntry { id: string; workspace: string; tab: string; main: string; now: string; items: { t: string; done: boolean }[]; updatedSecondsAgo?: number }
 export interface AllyBoard { origin: "remote"; team: string; teamId: string; device: { id: string; short: string; label: string }; online: boolean; boardSecondsAgo: number; entries: AllyBoardEntry[] }
 /** A board from a device that has been offline longer than this, or is older than 7 days, is not shown (spec, Holding allies' boards). */
 const BOARD_OFFLINE_MS = 2 * 3600_000, BOARD_MAX_AGE_MS = 7 * 24 * 3600_000;
 /** The board is sent at most this often per team, and once an hour unchanged; a relay without the kind is left alone for an hour. */
 const BOARD_MIN_MS = 15_000, BOARD_REFRESH_MS = 3600_000, BOARD_OFF_MS = 3600_000;
-/** What `board-read` answers with at most: the answer has to fit the channel's request size. */
-const BOARD_ANSWER_MAX = 300_000;
 
 /** The default wait for the relay in `send`; the tower waits for the holder's answer longer than this plus the lock wait (runtime.ts `ASK_MS`), or it would give up on a message that was sent. */
 export const POST_WAIT_MS = 10_000;
@@ -337,7 +336,7 @@ export class LinkHolder {
 			},
 			onRetry: (_item, error) => store.log({ event: "send-retry", team, error: String(error) }),
 		});
-		const run: TeamRun = { team, teamId, client, outbox, stream: undefined, presences: new Map(), boards: new Map(), boardSent: { hash: undefined, looked: 0, at: 0, ts: 0, epoch: 0, offUntil: 0, wasEmpty: true }, lastEphemeral: new Map(), presenceTimer: undefined, dead: undefined, settled, haltTimer: undefined, gone, waiters, downSince: undefined, headDiff: new Map() };
+		const run: TeamRun = { team, teamId, client, outbox, stream: undefined, presences: new Map(), boards: new Map(), boardSent: { hash: undefined, looked: 0, at: 0, ts: 0, epoch: 0, offUntil: 0, wasEmpty: false }, lastEphemeral: new Map(), presenceTimer: undefined, dead: undefined, settled, haltTimer: undefined, gone, waiters, downSince: undefined, headDiff: new Map() };
 		this.runs.set(team, run);
 		// What an earlier holder (or this one before a restart) built and did not see land goes first, in order, before anything new is accepted.
 		for (const item of store.outboxPending(team)) {
@@ -791,7 +790,7 @@ export class LinkHolder {
 			const pane = panes.get(x.herdrLocation?.paneId ?? "");
 			if (pane?.tokens?.sb_role !== "main" || !pane.cwd || !inside(pane.cwd, project)) return [];
 			const e = byId.get(x.id);
-			return [{ id: wireId(device, x.id), workspace: x.herdrLocation?.workspace?.label ?? "", tab: x.herdrLocation?.tab?.label ?? "", name: x.name ?? x.id, now: e?.now ?? "", updated: e?.updated ?? 0, items: e?.items ?? [] }];
+			return [{ id: wireId(device, x.id), workspace: x.herdrLocation?.workspace?.label ?? "", tab: x.herdrLocation?.tab?.label ?? "", name: x.name ?? "", now: e?.now ?? "", updated: e?.updated ?? 0, items: e?.items ?? [] }];
 		}).sort((a, b) => b.updated - a.updated).slice(0, LIMITS.boardEntries);
 	}
 
@@ -803,10 +802,11 @@ export class LinkHolder {
 		// A team is looked at once per 15 s: a change inside the window goes out at its end, and a quiet computer does not read Herdr on every tick.
 		const due = [...this.runs.values()].filter((run) => !run.dead && now >= run.boardSent.offUntil && now - run.boardSent.looked >= (this.o.boardMinMs ?? BOARD_MIN_MS));
 		if (due.length === 0) return;
+		// Marked before the awaits, so a tick that starts while this one waits does not look again.
+		for (const run of due) run.boardSent.looked = now;
 		const config = this.o.config(), entries = readEntries(dir), net = await this.o.net();
 		purge(dir, new Set(net.sessions.map((x) => x.id)), now);
 		for (const run of due) {
-			run.boardSent.looked = now;
 			try {
 				await this.sendBoard(run, config.teams.get(run.team), net, entries);
 			} catch (error) {
@@ -877,7 +877,7 @@ export class LinkHolder {
 					online: presence !== undefined && now - presence.at <= PRESENCE_ONLINE_MS, boardSecondsAgo: Math.max(0, Math.round((now - seen.at) / 1000)),
 					entries: seen.board.entries.slice(0, LIMITS.boardEntries).map((e): AllyBoardEntry => ({
 						id: clean(e.id, 16), workspace: clean(e.workspace, BOARD.label), tab: clean(e.tab, BOARD.label), main: clean(e.name, BOARD.label), ...cleanText(e),
-						updatedSecondsAgo: Math.max(0, Math.round((now - e.updated) / 1000)),
+						...(e.updated > 0 ? { updatedSecondsAgo: Math.max(0, Math.round((now - e.updated) / 1000)) } : {}),
 					})),
 				});
 			}
@@ -886,8 +886,8 @@ export class LinkHolder {
 		const out: AllyBoard[] = [];
 		let size = 0;
 		for (const row of rows) {
-			size += JSON.stringify(row).length;
-			if (size > BOARD_ANSWER_MAX) break;
+			size += Buffer.byteLength(JSON.stringify(row), "utf8") + 1;
+			if (size > MAX_BODY_BYTES) break;
 			out.push(row);
 		}
 		return { ok: true, boards: out };

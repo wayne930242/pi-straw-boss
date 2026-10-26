@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { checkEntry, clean, cleanText, DEAD_MS, ENDED_MS, joinLocal, purge, readEntries, removeEntry, writeEntry } from "../src/board.ts";
 import { setBoard } from "../src/boardset.ts";
-import { type Agent, World } from "./fakes.ts";
+import { type Agent, until, World } from "./fakes.ts";
 
 // The work board's local half (docs/specs/2026-10-25-straw-link.md, Work board): the entry rules, the files, expiry, `board_set`, and `board_read`.
 
@@ -89,6 +89,18 @@ test("a dead session's file is deleted once it is 24 hours old; a live one's and
 	assert.deepEqual(readdirSync(dir).sort(), ["dead-young.json", "live-old.json"]);
 });
 
+test("a write that fails leaves no temporary file, and purge removes temporary files a day old but not a young one", () => {
+	mkdirSync(join(dir, "s1.json")); // a directory where the file goes: the rename fails
+	assert.throws(() => writeEntry(dir, "s1", { now: "x", items: [] }, T0));
+	assert.deepEqual(readdirSync(dir), ["s1.json"]);
+	writeFileSync(join(dir, "old.json.1.tmp"), "x");
+	writeFileSync(join(dir, "young.json.2.tmp"), "x");
+	const old = (Date.now() - 2 * DEAD_MS) / 1000;
+	utimesSync(join(dir, "old.json.1.tmp"), old, old);
+	purge(dir, new Set(), Date.now());
+	assert.deepEqual(readdirSync(dir).sort(), ["s1.json", "young.json.2.tmp"]);
+});
+
 test("setBoard refuses a session that is not its tab's main (a member, a demoted main, a tower, a subagent all reach it as not main) and writes only its own file", () => {
 	const base = { dir: join(dir, "board"), stateDir: dir, session: "s1", now: T0, cwd: dir, home: dir, agentDir: join(dir, "agent") };
 	assert.throws(() => setBoard({ ...base, isMain: false, input: { now: "x" } }), /Only the main agent of a tab writes/);
@@ -145,6 +157,16 @@ test("a main's session_shutdown deletes its entry on quit, new, resume, and fork
 		await w.stopAll();
 	}
 	world = new World();
+});
+
+test("board_set is refused for a main that /boss in a member of its tab replaced", async () => {
+	const { main, member } = await town();
+	await main.tool("board_set", { now: "mine" });
+	await member.command("");
+	let refused = "";
+	await until(async () => !refused && (await main.tool("board_set", { now: "still mine?" }).then(() => undefined, (error: Error) => (refused = error.message))), "the old main to learn it was replaced");
+	assert.match(refused, /Only the main agent of a tab writes/);
+	assert.deepEqual(readEntries(boardDir()).map((e) => e.now), ["mine"], "the replaced main's entry stays as it was");
 });
 
 /** A tower reading the board: the local rows join each main's name, tab, workspace, and state from the net. */

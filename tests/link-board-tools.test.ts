@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { writeEntry } from "../src/board.ts";
 import { type Agent, until } from "./fakes.ts";
 import { FakeRelay } from "./link/fake-relay.ts";
-import { alice, type Computer, computer, remoteMessage } from "./link/remote-world.ts";
+import { alice, carol, type Computer, computer, remoteMessage } from "./link/remote-world.ts";
 
 // `board_set` on one computer and `board_read` on another, through a holder and an in-memory relay, and what a remote turn may see of it
 // (docs/specs/2026-10-25-straw-link.md, Work board: Writing, Reading).
@@ -105,9 +105,29 @@ test("in a remote turn board_read and tower_list show only what the senders alre
 	assert.deepEqual(scoped.local.map((r) => r.main), ["inside main"], "no local entry outside the bound project");
 	assert.equal(scoped.remote!.length, 1);
 	assert.deepEqual((await listOf()).towers.map((t) => t.workspace.label), ["Alpha"], "no workspace outside the bound project");
+	const scopedList = JSON.parse(text(await b.c.tower.tool("tower_list"))) as { towers: { tabs: { main: string | null }[]; sessions: { name: string }[] }[] };
+	assert.deepEqual(scopedList.towers.flatMap((t) => t.tabs.map((x) => x.main)), ["inside main"], "a tab whose main runs outside the project is not listed");
 	await b.c.tower.fire("agent_settled", { aborted: false });
 	assert.deepEqual((await read(b.c.tower)).local.map((r) => r.main).sort(), ["inside main", "outside main"], "the next run is local again");
 	writeEntry(join(b.c.world.stateDir, "board"), "left", { now: "ended", items: [] }, Date.now());
 	await b.c.tower.fire("message_start", { message: remoteMessage(alice) });
 	assert.ok(!(await read(b.c.tower)).local.some((r) => r.state === "ended"), "an ended entry has no directory to prove it is bound, so it stays out of a remote turn");
+});
+
+test("senders of two teams in one remote turn get no ally rows from board_read or tower_list", async () => {
+	const a = await setup("a", [{ id: "main-a", name: "api main", inside: true }]);
+	const b = await setup("b", []);
+	await a.agents[0]!.tool("board_set", { now: "alice's work" });
+	await until(async () => (await read(b.c.tower)).remote?.[0]?.entries?.some((e) => e.now === "alice's work"), "A's board at B");
+	const other = "9".repeat(32), listOf = async () => (JSON.parse(text(await b.c.tower.tool("tower_list"))) as { remote?: unknown[] });
+	assert.ok((await listOf()).remote!.length >= 1, "a local turn lists the ally");
+	const config = JSON.parse(readFileSync(join(b.c.world.stateDir, "config.json"), "utf8")) as { link: { teams: Record<string, unknown> } };
+	config.link.teams[other] = { project: b.c.project, share: "status" };
+	writeFileSync(join(b.c.world.stateDir, "config.json"), JSON.stringify(config));
+	const first = remoteMessage(alice), second = remoteMessage(carol);
+	await b.c.tower.fire("message_start", { message: first });
+	assert.equal((await read(b.c.tower)).remote!.length, 1, "one team: the team's ally");
+	await b.c.tower.fire("message_start", { message: { ...second, details: { ...second.details, team: other } } });
+	assert.deepEqual((await read(b.c.tower)).remote, [], "two teams: no ally rows");
+	assert.deepEqual((await listOf()).remote, [], "two teams: no ally towers");
 });

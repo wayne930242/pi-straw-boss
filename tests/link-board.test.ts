@@ -8,15 +8,16 @@ import { removeEntry as removeBoardEntry, wireId, writeEntry } from "../src/boar
 import type { LinkConfig, TeamPolicy } from "../src/link/config.ts";
 import { buildEnvelope } from "../src/link/envelope.ts";
 import { type AllyBoard, LinkHolder } from "../src/link/holder.ts";
-import { type Board, encodePlaintext } from "../src/link/kinds.ts";
+import { type Board, encodePlaintext, KINDS } from "../src/link/kinds.ts";
 import { RelayClient } from "../src/link/relay.ts";
 import { addEntry, createEntry, encodeEntry, removeEntry, replayRoster, type RosterEntry } from "../src/link/roster.ts";
 import type { NetView } from "../src/link/routing.ts";
 import { LinkStore } from "../src/link/store.ts";
 import { FakeRelay } from "./link/fake-relay.ts";
 import { until } from "./link/fakes.ts";
+import { MAX_BODY_BYTES, chunks } from "../src/link/wire.ts";
 import { alice, bob, carol, clientFor, netOf, rosterOf, stateOf, TEAM_HEX, writeDevice, writeTeam } from "./link/holder-world.ts";
-import { det, LABELS, teamKey, TEAM } from "./link/scenario.ts";
+import { DEVICES, det, LABELS, teamKey, TEAM } from "./link/scenario.ts";
 
 // The holder's half of the work board (docs/specs/2026-10-25-straw-link.md, Work board: Sharing with allies, Holding allies' boards).
 
@@ -33,13 +34,13 @@ afterEach(async () => {
 });
 const MIN = 60_000;
 
-interface Main { id: string; name: string; cwd: string; tab?: string }
+interface Main { id: string; name?: string; cwd: string; tab?: string }
 /** A net with a tower and the given mains (each in its own tab of workspace `label-a`). */
 function netWith(project: string, mains: Main[]): NetView {
 	const net = netOf([["tower-a", "w-a", "label-a", project]]);
 	mains.forEach((m, i) => {
 		net.panes.push({ pane_id: `m${i}`, tab_id: `w-a:t${i + 1}`, workspace_id: "w-a", cwd: m.cwd, agent_status: "working", tokens: { sb_role: "main" } });
-		net.sessions.push({ id: m.id, name: m.name, herdrLocation: { status: "current", workspace: { id: "w-a", label: "label-a" }, tab: { id: `w-a:t${i + 1}`, label: m.tab ?? `tab ${i + 1}` }, paneId: `m${i}` } });
+		net.sessions.push({ id: m.id, ...(m.name !== undefined ? { name: m.name } : {}), herdrLocation: { status: "current", workspace: { id: "w-a", label: "label-a" }, tab: { id: `w-a:t${i + 1}`, label: m.tab ?? `tab ${i + 1}` }, paneId: `m${i}` } });
 	});
 	return net;
 }
@@ -54,6 +55,7 @@ interface Rig {
 	store: LinkStore;
 	holder: LinkHolder;
 	net: NetView;
+	netDelayMs: number;
 	skew: number;
 	share: "presence" | "status";
 	notices: string[];
@@ -68,10 +70,10 @@ function rig(name: "a" | "b", o: { entries?: RosterEntry[]; teams?: (r: Rig) => 
 	store.ensure();
 	writeDevice(store, keys, name === "a" ? "alice-mac" : "bob-mac");
 	writeTeam(store, entries, keys);
-	const r = { name, dir, boardDir: join(root, name, "board"), project, other, store, skew: 0, share: "status", notices: [], offers: [], net: netWith(project, []) } as unknown as Rig;
+	const r = { name, dir, boardDir: join(root, name, "board"), project, other, store, netDelayMs: 0, skew: 0, share: "status", notices: [], offers: [], net: netWith(project, []) } as unknown as Rig;
 	const config = (): LinkConfig => ({ teams: o.teams?.(r) ?? new Map([[TEAM_HEX, { project, share: r.share, name: "moldplan" }]]), trust: new Map(), problems: [] });
 	r.holder = new LinkHolder({
-		store, isHolder: () => true, config, net: async () => r.net, relay: clientFor(relay), offer: (tower) => void r.offers.push(tower.id), notify: (t) => void r.notices.push(t),
+		store, isHolder: () => true, config, net: async () => (r.netDelayMs ? await new Promise((done) => setTimeout(done, r.netDelayMs)) : undefined, r.net), relay: clientFor(relay), offer: (tower) => void r.offers.push(tower.id), notify: (t) => void r.notices.push(t),
 		boardDir: r.boardDir, now: () => Date.now() + r.skew, backoff: () => 5, drainMs: 20, presenceMs: 40, offerAgainMs: 60_000,
 	});
 	stops.push(() => r.holder.stop());
@@ -109,7 +111,7 @@ test("the entries a team gets: live mains whose pane cwd is inside the team's pr
 		[idOf("main-in"), "label-a", "api", "api main", "MP-1 export: CSV writer"],
 	].sort());
 	assert.deepEqual(board.entries.find((e) => e.main === "api main")!.items, [{ t: "schema", done: true }, { t: "writer", done: false }]);
-	assert.ok(board.entries.find((e) => e.main === "api main")!.updatedSecondsAgo >= 40);
+	assert.ok(board.entries.find((e) => e.main === "api main")!.updatedSecondsAgo! >= 40);
 	assert.ok(board.entries.every((e) => !e.id.includes("main-")), "the entry id is a hash of the device and session, never the session id");
 	assert.equal(board.origin, "remote");
 	assert.deepEqual([board.device.label, board.device.id, board.device.short], ["alice-mac", alice.id, alice.shortId], "the label is the roster's");
@@ -126,15 +128,15 @@ test("share presence sends no board; a team set to presence after a board went o
 	await until(() => b.holder.list()[0]?.devices[0]?.online, 3000, "A's presence");
 	a.skew += 20_000;
 	await new Promise((r) => setTimeout(r, 200));
-	assert.equal(mine().length, 0, "with presence a team gets none");
-	assert.equal(held(b), undefined);
+	assert.equal(mine().length, 1, "with presence a team gets no entries: only the one empty board every start sends");
+	assert.deepEqual(held(b)?.entries, []);
 	a.share = "status";
 	a.skew += 20_000;
 	await until(() => held(b)?.entries.length === 1, 3000, "the board once the team is at status");
 	a.share = "presence";
 	a.skew += 20_000;
 	await until(() => held(b)?.entries.length === 0, 3000, "an empty board after the switch to presence");
-	assert.equal(mine().length, 2, "the board, then the empty one");
+	assert.equal(mine().length, 3, "the empty one at the start, the board, then the empty one");
 });
 
 test("send on change at most once per 15 seconds, a change inside the window goes out at its end, once at a stream start, and hourly unchanged", async () => {
@@ -311,4 +313,77 @@ test("board_read of one device asks for it as tower_send does: an ambiguous or u
 	assert.match(err.error, /No device "nobody"/);
 	const ok = b.holder.boards({ device: "alice-mac" });
 	assert.ok(ok.ok);
+});
+
+test("a main without a name goes to allies with an empty name, a main with no entry has no age and no now, and no field holds a local session id", async () => {
+	const [a, b] = [rig("a"), rig("b")];
+	a.net = netWith(a.project, [{ id: "main-unnamed", cwd: a.project, tab: "docs" }]);
+	await Promise.all([a.holder.start(), b.holder.start()]);
+	await until(() => held(b)?.entries.length === 1, 3000, "the board");
+	const board = held(b)!, [e] = board.entries;
+	assert.equal(e!.main, "");
+	assert.ok(!JSON.stringify(board).includes("main-unnamed"), "no field holds the session id");
+	assert.ok(!("updatedSecondsAgo" in e!) && e!.now === "", JSON.stringify(e));
+});
+
+test("a team that was set to presence while pi was closed gets one empty board at the first start, so the allies' copy clears", async () => {
+	const [a, b] = [rig("a"), rig("b")];
+	a.share = "presence";
+	await Promise.all([a.holder.start(), b.holder.start()]);
+	await until(() => mine().length === 1, 3000, "one empty board at the start");
+	assert.deepEqual(held(b)?.entries, []);
+	a.skew += 20_000;
+	await new Promise((r) => setTimeout(r, 200));
+	assert.equal(mine().length, 1, "and no more");
+});
+
+test("ticks that overlap while the net is slow send one board, not two", async () => {
+	const [a, b] = [rig("a"), rig("b")];
+	a.net = netWith(a.project, [{ id: "m1", name: "api main", cwd: a.project }]);
+	writeEntry(a.boardDir, "m1", { now: "work", items: [] }, Date.now());
+	a.netDelayMs = 150;
+	await Promise.all([a.holder.start(), b.holder.start()]);
+	await until(() => mine().length >= 1, 3000, "the board");
+	await new Promise((r) => setTimeout(r, 500));
+	assert.equal(mine().length, 1);
+	assert.ok(!events(a).some((e) => e.event === "board-failed"), JSON.stringify(events(a).filter((e) => e.event === "board-failed")));
+});
+
+test("the answer of boards() fits the channel by bytes: CJK boards from five devices are cut to the rows that fit, and the answer can be chunked", async () => {
+	const entries = rosterOf(["bob", "carol", "dave", "eve", "mallory"]);
+	const b = rig("b", { entries });
+	relay.addTeam(TEAM, ["alice", "bob", "carol", "dave", "eve", "mallory"].map((w) => DEVICES[w as keyof typeof DEVICES].id), entries);
+	await b.holder.start();
+	const head = stateOf(entries, alice).head, long = (n: number) => "あ".repeat(n);
+	const full: Board = { entries: Array.from({ length: 24 }, (_, i) => ({ id: `${i}`.padStart(16, "0"), workspace: long(40), tab: long(40), name: long(40), now: long(120), updated: Date.now(), items: Array.from({ length: 8 }, () => ({ t: long(80), done: false })) })) };
+	for (const who of ["alice", "carol", "dave", "eve", "mallory"] as const) {
+		const keys = DEVICES[who];
+		await new RelayClient({ url: "http://relay.test", device: keys, fetch: relay.fetch }).postEnvelope(TEAM, buildEnvelope({ team: TEAM, epoch: 1, teamKey: teamKey(1), head, from: keys, seq: 0, ts: Date.now(), kind: "board", to: [], plaintext: encodePlaintext("board", full) }));
+	}
+	await until(() => { const answer = b.holder.boards(); return answer.ok && answer.boards.length >= 1 && new Set(relay.stored.filter((s) => s.envelope.header.kind === "board").map((s) => s.envelope.header.from)).size === 5; }, 3000, "the boards at B");
+	await new Promise((r) => setTimeout(r, 200));
+	const answer = b.holder.boards();
+	assert.ok(answer.ok);
+	assert.ok(answer.boards.length >= 1 && answer.boards.length < 5, `${answer.boards.length} rows`);
+	assert.ok(Buffer.byteLength(JSON.stringify({ ok: true, boards: answer.boards }), "utf8") <= MAX_BODY_BYTES);
+	assert.doesNotThrow(() => chunks("res", "tower", "req", { ok: true, boards: answer.boards }));
+});
+
+test("a decoder from before the board kind drops a board as an unknown kind while presence keeps working", async () => {
+	const [a, b] = [rig("a"), rig("b")];
+	await Promise.all([a.holder.start(), b.holder.start()]);
+	await until(() => b.holder.list()[0]?.devices[0]?.online, 3000, "A's presence");
+	const head = stateOf(rosterOf(), alice).head;
+	const board = buildEnvelope({ team: TEAM, epoch: 1, teamKey: teamKey(1), head, from: alice, seq: 0, ts: Date.now() + 1000, kind: "board", to: [], plaintext: encodePlaintext("board", { entries: [] }) });
+	const saved = KINDS.board;
+	delete (KINDS as Partial<typeof KINDS>).board; // what a build without the kind knows
+	try {
+		await new RelayClient({ url: "http://relay.test", device: alice, fetch: relay.fetch }).postEnvelope(TEAM, board);
+		await until(() => events(b).some((e) => e.event === "drop" && e.reason === "unknown-kind"), 3000, "the drop");
+		const before = b.holder.list()[0]!.devices[0]!.ageMs!;
+		await new Promise((r) => setTimeout(r, 250));
+		assert.ok(b.holder.list()[0]!.devices[0]!.online && b.holder.list()[0]!.devices[0]!.ageMs! < before + 250, "presence still arrives");
+	} finally {
+		KINDS.board = saved;
+	}
 });

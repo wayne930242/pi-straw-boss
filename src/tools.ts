@@ -119,7 +119,8 @@ export function createTools({ pi, cfg, s, me, role, guiDir }: Kit, { post, callT
 				// In a remote turn the list is scoped like board_read: the senders' teams, and the workspaces inside the project they bind.
 				const scope = link.remoteScope();
 				const local = await towerList(scope ? { project: scope.project } : undefined);
-				const remote = await link.remote(scope?.teams);
+				// Senders of several teams get no ally rows, the same rule as for the local part.
+				const remote = scope && scope.teams.length > 1 ? [] : await link.remote(scope?.teams);
 				if (!remote) return local;
 				const result = { ...(local.details as object), remote };
 				return { text: JSON.stringify(result, null, 2), details: result };

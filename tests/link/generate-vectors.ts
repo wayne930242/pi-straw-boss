@@ -50,14 +50,18 @@ function boardCases() {
 	const long = (n: number, c = "あ") => c.repeat(n);
 	const full = { entries: [{ id: "0123456789abcdef", workspace: long(45), tab: long(45), name: long(45), now: long(130), updated: NOW, items: Array.from({ length: 10 }, (_, i) => ({ t: long(90), done: i % 2 === 0 })) }] };
 	const cut = { entries: [{ ...full.entries[0]!, workspace: long(40), tab: long(40), name: long(40), now: long(120), items: full.entries[0]!.items.slice(0, 8).map((i) => ({ ...i, t: long(80) })) }] };
+	// Built with the raw canonical encoders, not encodePlaintext (which cuts), so the plaintext really holds what the case says it cuts.
+	const rawEntry = (e: { id: string; workspace: string; tab: string; name: string; now: string; updated: number; items: { t: string; done: boolean }[] }) =>
+		enc(str(e.id), str(e.workspace), str(e.tab), str(e.name), str(e.now), int(e.updated), list(e.items.map((i) => enc(str(i.t), bool(i.done)))));
+	const rawBoard = (entries: Parameters<typeof rawEntry>[0][]) => enc(list(entries.map(rawEntry)));
 	const mk = (name: string, plaintext: Buffer, expect: unknown) => ({ name, plaintext: hex(plaintext), expect });
 	const good = encodePlaintext("board", SAMPLE.board);
 	const entryFields = (...extra: Buffer[]) => enc(str("0123456789abcdef"), str("w"), str("t"), str("n"), str("x"), int(NOW), list([]), ...extra);
 	return [
 		mk("an empty board", encodePlaintext("board", { entries: [] }), { entries: [] }),
 		mk("a sample board", good, SAMPLE.board),
-		mk("long labels, a long now, and too many items are cut", encodePlaintext("board", full), cut),
-		mk("26 entries are cut to 24", encodePlaintext("board", { entries: Array.from({ length: 26 }, (_, i) => boardEntry(i)) }), { entries: Array.from({ length: 24 }, (_, i) => boardEntry(i)) }),
+		mk("long labels, a long now, and too many items are cut", rawBoard(full.entries), cut),
+		mk("26 entries are cut to 24", rawBoard(Array.from({ length: 26 }, (_, i) => boardEntry(i))), { entries: Array.from({ length: 24 }, (_, i) => boardEntry(i)) }),
 		mk("a truncated entry", good.subarray(0, good.length - 3), null),
 		mk("trailing bytes", Buffer.concat([good, Buffer.from([0])]), null),
 		mk("an entry with a field too many", enc(list([entryFields(str("extra"))])), null),

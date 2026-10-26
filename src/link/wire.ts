@@ -14,6 +14,8 @@ export const NAMESPACE = "straw-boss/link";
 export const CHUNK = 12_000;
 /** The most a reassembled request or answer may hold, as base64 text: 192 KB of message text with its JSON around it. */
 const MAX_TOTAL = 300_000, MAX_CHUNKS = 40;
+/** The most UTF-8 bytes of JSON a request or answer may hold: what MAX_TOTAL of base64 carries, less room for the wrapper around the rows. */
+export const MAX_BODY_BYTES = Math.floor((MAX_TOTAL * 3) / 4) - 2_000;
 
 export interface Chunk { type: "req" | "res"; version: 1; to: string; reqId: string; i: number; n: number; data: string }
 

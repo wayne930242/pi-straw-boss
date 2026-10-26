@@ -75,8 +75,13 @@ export function writeEntry(dir: string, session: string, text: BoardText, now: n
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	try { chmodSync(dir, 0o700); } catch { /* a file system without modes */ }
 	const file = fileOf(dir, session), temp = `${file}.${process.pid}.tmp`;
-	writeFileSync(temp, `${JSON.stringify(entry)}\n`, { mode: 0o600 });
-	renameSync(temp, file);
+	try {
+		writeFileSync(temp, `${JSON.stringify(entry)}\n`, { mode: 0o600 });
+		renameSync(temp, file);
+	} catch (error) {
+		rmSync(temp, { force: true });
+		throw error;
+	}
 	return entry;
 }
 /** Deletes the entry of `session`; there is no way to name another file. */
@@ -111,6 +116,8 @@ export function purge(dir: string, live: ReadonlySet<string>, now: number): void
 	try {
 		const known = new Set(readEntries(dir).map((e) => `${e.session}.json`));
 		for (const name of readdirSync(dir)) if (name.endsWith(".json") && !known.has(name) && now - statSync(join(dir, name)).mtimeMs > DEAD_MS) rmSync(join(dir, name), { force: true });
+		// A temporary file a failed write or a killed process left behind.
+		for (const name of readdirSync(dir)) if (name.endsWith(".tmp") && now - statSync(join(dir, name)).mtimeMs > DEAD_MS) rmSync(join(dir, name), { force: true });
 	} catch { /* nothing to tidy */ }
 }
 
