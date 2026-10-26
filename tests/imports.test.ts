@@ -547,5 +547,6 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 68 KB / 14.95 KB: the deploy panel (bar, step list, running pulse, finish and failure tints, its keyframes).
 	// Unreleased to 71.2 KB / 15.55 KB: the session view's Quit in the comms header (desktop and phone grid).
 	// Unreleased to 71.75 KB / 15.65 KB gzipped: the trust question (its groups, folded items, and the deploy step's inline copy).
-	assert.ok(total(css, (n) => size(n).length) <= 71_750 && total(css, gz) <= 15_650, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// Unreleased to 72 KB / 15.7 KB gzipped: the trust question names its folder whole, in the panel and in the deploy step.
+	assert.ok(total(css, (n) => size(n).length) <= 72_000 && total(css, gz) <= 15_700, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });

@@ -35,9 +35,9 @@ export function outcome(r: Answer | undefined): { tone: "ok" | "error"; text: st
  * (gone when it is undefined) and whether the stream is live. An answer that was not confirmed is never sent again as a new one: Check again resends the same.
  */
 export function trustPanel(send: TrustPost, accepted?: () => void) {
-	const note = h("p", { class: "ask-note", role: "status", "aria-live": "polite" }), found = h("div", { class: "trust-found" });
-	const buttons = CHOICES.map(([choice, label]) => Object.assign(h("button", { type: "button", class: choice === "trust" ? "ask-send" : "later", "data-choice": choice }, label()), { choice }));
-	const root = h("section", { class: "ask trust" }, h("p", { class: "ask-why" }, m.trust_body()), h("h4", null, m.trust_found()), found, h("div", { class: "ask-acts" }, ...buttons), h("p", { class: "ask-term" }, m.trust_terminal()), note);
+	const note = h("p", { class: "ask-note", role: "status", "aria-live": "polite" }), found = h("div", { class: "trust-found" }), folder = h("p", { class: "trust-folder" });
+	const buttons = CHOICES.map(([choice, label]) => Object.assign(h("button", { type: "button", class: choice === "trust" ? "ask-send" : "cmp-alt", "data-choice": choice }, label()), { choice }));
+	const root = h("section", { class: "ask trust" }, folder, h("p", { class: "ask-why" }, m.trust_body()), h("h4", null, m.trust_found()), found, h("div", { class: "ask-acts" }, ...buttons), h("p", { class: "ask-term" }, m.trust_terminal()), note);
 	let current: Question | undefined, ready = true, done = false, sending = false;
 	const draw = () => buttons.forEach((b) => (b.disabled = !current || !ready || done || sending));
 	const say = (tone: string, text: string, ...kids: HTMLElement[]) => ((note.dataset.tone = tone), note.replaceChildren(text, ...kids));
@@ -64,7 +64,7 @@ export function trustPanel(send: TrustPost, accepted?: () => void) {
 	return Object.assign(root, {
 		update(q: Question | undefined, live = true) {
 			ready = live;
-			if (q && (q.id !== current?.id || q.digest !== current.digest)) (drawFound(q), (done = false), say("", ""));
+			if (q && (q.id !== current?.id || q.digest !== current.digest)) (folder.replaceChildren(q.folder), drawFound(q), (done = false), say("", ""));
 			current = q ?? current;
 			if (!q && !done) (say("error", m.trust_closed()), (done = true));
 			draw();

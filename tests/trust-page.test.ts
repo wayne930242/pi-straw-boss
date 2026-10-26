@@ -75,7 +75,7 @@ test("the opening this page runs shows its question in its deploy panel, not as 
 test("the dialog's line says where the agent runs, or how many wait on the folder", () => {
 	assert.equal(whereOf(ASK), "member in Demo base");
 	assert.equal(whereOf({ ...ASK, agents: [{ pane: "p1", role: "none", base: "B", at: 1 }] }), "session in B");
-	assert.equal(whereOf({ ...ASK, agents: [...ASK.agents, { pane: "p2", role: "main", at: 2 }, { pane: "p3", role: "member", at: 3 }] }), "3 agents are waiting on this folder");
+	assert.equal(whereOf({ ...ASK, agents: [...ASK.agents, { pane: "p2", role: "main", at: 2 }, { pane: "p3", role: "member", at: 3 }] }), "3 agents");
 });
 
 const settle = async () => {
@@ -92,6 +92,7 @@ function panel(reply: (body: Record<string, unknown>) => unknown) {
 
 test("the panel says what trusting does, lists what the folder holds (folded past five items with the rest counted), and offers the three choices", () => {
 	const { p, buttons } = panel(() => ({ ok: true, status: 200, body: { outcome: "accepted" } }));
+	assert.match(p.text, /\/Users\/me\/work\/demo/, "the folder, whole");
 	assert.match(p.text, /Trusting lets the agent load this folder's settings, extensions, skills, prompts, themes, and MCP servers/);
 	assert.match(p.text, /run as programs on this computer/);
 	assert.match(p.text, /\.pi\/settings\.json[\s\S]*package: npm:demo/);

@@ -443,7 +443,7 @@
 	"deploy_trust": "Waiting for your OK to trust this folder",
 	"trust_title": "Trust this folder?",
 	"trust_where_one": "{role} in {base}",
-	"trust_where_many": "{count} agents are waiting on this folder",
+	"trust_where_many": "{count} agents",
 	"trust_body": "Trusting lets the agent load this folder's settings, extensions, skills, prompts, themes, and MCP servers, and install the packages its settings name. Extensions and MCP servers run as programs on this computer. Don't trust a folder you don't know the origin of.",
 	"trust_found": "What it would load",
 	"trust_more": "and {count} more",

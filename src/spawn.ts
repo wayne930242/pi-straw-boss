@@ -121,9 +121,9 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 	/** Starts pi in a fresh pane and waits until it has joined the net (as `role`, or as anything when none is named), then types the first message. */
 	async function boot(d: Deploy, paneId: string, name: string, prompt: string | undefined, role?: string): Promise<Reply | undefined> {
 		d.go("start");
+		d.pane = paneId; // before pi starts: its trust question can be there before `agent start` returns
 		await startPi(run, sleep, `${role ?? "member"}-${randomUUID().slice(0, 8)}`, paneId, ["--name", name]);
 		d.go("join");
-		d.pane = paneId;
 		const joined = await waitPastTrust(sleep, async () => {
 			const r = (await panes(run)).find((p) => p.pane_id === paneId)?.tokens?.sb_role;
 			return role ? r === role : r === "member" || r === "main";

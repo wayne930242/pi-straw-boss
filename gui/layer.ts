@@ -160,7 +160,7 @@ export function mountPanels(deps: PanelDeps) {
 		for (const sel of [".intel", ".go"]) el.querySelector<HTMLElement>(sel)!.hidden = true;
 		text(el, "h3", m.trust_title());
 		text(el, ".role", whereOf(a.trust!));
-		text(el, ".state", a.trust!.folder);
+		text(el, ".state", ""); // the folder is in the panel, whole
 		let panel = trusts.get(el);
 		if (!panel) trusts.set(el, (panel = trustPanel((body) => post("trust/answer", body), () => el.isConnected && !el.classList.contains("leaving") && (stack.raise(el.dataset.key!), stack.close()))));
 		if (!el.querySelector(".trust")) el.querySelector(".ask-root")!.replaceChildren(panel);

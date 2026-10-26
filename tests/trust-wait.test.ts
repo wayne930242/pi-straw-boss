@@ -4,13 +4,15 @@ import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { createDeploy } from "../src/deploy.ts";
+import { createDeploy, createDeploys } from "../src/deploy.ts";
+import { createSpawn } from "../src/spawn.ts";
 import { readRecord } from "../src/handover.ts";
 import { requestFile, trustDir, writeAtomic } from "../src/trust/files.ts";
 import { digestOf } from "../src/trust/found.ts";
 import type { TrustRequest } from "../src/trust/types.ts";
 import { TRUST_MAX_MS, waitPastTrust } from "../src/trust/wait.ts";
 import { until, World } from "./fakes.ts";
+import type { TrustRequest as Req } from "../src/trust/types.ts";
 
 // The openings that wait for a new pi (src/trust/wait.ts, spawn.ts, deploy.ts): a pane with a trust question open does not use up the join wait, the deploy shows a `trust` step
 // with the question, and ten minutes without an answer fail the opening and close what it created.
@@ -141,4 +143,48 @@ test("a question nobody answers in ten minutes fails the opening at the trust st
 	assert.match(String(answer.body.reason), /No trust decision for \/work\/demo within 10 minutes/);
 	assert.equal(answer.body.step, "trust");
 	assert.equal(world.herdr.commands("workspace", "close").length, 1, "the workspace the opening created is closed");
+});
+
+test("the opening that waits on a pane is known from before pi starts, since its trust question can be there before `agent start` returns", async () => {
+	const deploys = createDeploys(), dir = tmp();
+	let seen: string | undefined = "never asked";
+	world.herdr.onAgentStart = (pane) => {
+		seen = deploys.openingOf(pane.pane_id);
+		world.agent({ id: `opened-${pane.pane_id}`, name: "member", pane: pane.pane_id, env: { STRAW_BOSS_ROLE: "member" } }).start();
+	};
+	const spawn = createSpawn({ run: world.herdr.runFor("wA:p1"), sleep: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 2))), live: async () => true, home, deploys, trustDir: dir });
+	const answer = await spawn(["open", "base"], { dir: join(home, "beta"), label: "", deploy: "deploy-early-1" });
+	assert.equal(answer.status, 200, JSON.stringify(answer.body));
+	assert.equal(seen, "deploy-early-1");
+	assert.equal(deploys.openingOf((answer.body as { pane: string }).pane), undefined, "an opening that is over names no pane");
+});
+
+// The tower's opening of a main (opener.ts) waits the same way: a trust question holds it past its 60 s, and ten minutes of it fail the opening and close the tab.
+async function tower() {
+	const t = world.tower("tower-wA", "wA:t7", "wA:p7");
+	await t.start();
+	await world.agent({ id: "sender-1", name: "docs-main", pane: "wA:p1", tab: "wA:t1" }).start();
+	return t;
+}
+test("a main a tower opens waits past 60 s while its pi asks for trust, and the request is handed over once it joins", async () => {
+	const dir = trustDir(world.stateDir);
+	let main: { start(): Promise<unknown> } | undefined;
+	world.herdr.onAgentStart = (pane) => {
+		put(dir, pane.pane_id);
+		main = world.agent({ id: `opened-${pane.pane_id}`, name: `main · ${pane.workspace_id}`, pane: pane.pane_id, env: { STRAW_BOSS_ROLE: "main" } });
+	};
+	const t = await tower();
+	const opening = t.tool("boss_open_main", { request: "Fix the thing", sender: "docs-main" });
+	await new Promise((r) => setTimeout(r, 600));
+	rmSync(join(dir, requestFile(id(1))));
+	await main!.start();
+	const result = await opening;
+	assert.match(result.content.map((c) => (c.type === "text" ? c.text : "")).join(""), /Opened tab/);
+});
+test("a main a tower opens fails after ten minutes of an unanswered trust question, and its tab is closed", async () => {
+	const dir = trustDir(world.stateDir);
+	world.herdr.onAgentStart = (pane) => void put(dir, pane.pane_id);
+	const t = await tower();
+	await assert.rejects(t.tool("boss_open_main", { request: "Fix the thing", sender: "docs-main" }), /No trust decision for \/work\/demo within 10 minutes/);
+	assert.equal(world.herdr.commands("tab", "close").length, 1, "the tab it created is closed");
 });
