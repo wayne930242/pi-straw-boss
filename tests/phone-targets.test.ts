@@ -57,6 +57,11 @@ test("a chip keeps its look: its pill is drawn in ::before inside a 44 px box", 
 	assert.match(pill, /border:\s*1px solid var\(--line\)/, "the one border, on all four sides");
 });
 
+test("the queue's Edit is a 44 px button beside its hint, not alone on a row", () => {
+	assert.match(body(".queue-act"), /flex-wrap:\s*nowrap/);
+	assert.equal(size(".queue-act button", "min-height"), 44);
+});
+
 test("the timeline's marks, too small and too close to be 44 px, take no taps on a phone", () => {
 	assert.match(body(".tl-mark"), /pointer-events:\s*none/);
 });

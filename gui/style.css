@@ -837,6 +837,8 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 	:is(.act > summary, .notice > summary, .rule summary, .todos summary, .monitors summary, .timeline summary) { align-items: center; min-height: 44px; padding-block: 0; box-sizing: border-box; }
 	.todos, .monitors { padding-block: 0; } :is(.todos ol, .monitors ul) { margin: 0 0 10px; }
 	.link-form summary { padding-block: 12px; }
+	/* The queue's hint and Edit share one row instead of the button on a row of its own (two lines saved above the composer). */
+	.queue-act { flex-wrap: nowrap; justify-content: space-between; gap: 10px; } .queue-act span { flex: 1 1 0; text-align: left; } .queue-act button { flex: none; min-width: 56px; min-height: 44px; }
 	.tl-mark { pointer-events: none; } /* 10 px and a few px apart: a finger would hit the wrong event; each unit is one tap away on its card or in the drawer */
 	.picker-body { height: clamp(180px, calc(100dvh - 412px), 360px); } /* the folder list gives way so the name and Open stay on the screen */
 	.tile:has(.spawn, .pair) { max-height: calc(var(--vvh, 100dvh) - 16px); } /* a short form's cap was the desktop's (under the HUD); on a phone the tile is the screen, and the 44 px rows need all of it */
