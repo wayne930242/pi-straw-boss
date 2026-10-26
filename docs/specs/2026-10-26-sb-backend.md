@@ -402,6 +402,19 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
       and exits 1: that, a return code other than 0, and a PowerShell that could not be started at all (`ENOENT`) fall back to the plain
       spawn. A PowerShell that ends with no usable answer line (exit 1 with an empty stdout, rc 0 with no pid, garbage) is treated as "may
       have started": a failed start, no plain spawn.
+    - **A script that died before the create falls back; one that died after it does not.** The script prints the fixed line
+      `sb-before-create` right before the first `Win32_Process.Create` (its stopwatch and every other statement are inside the `try`, so a
+      method a language mode refuses is caught before it). A PowerShell that exits non-zero with no answer line and without that line in its
+      stdout never reached the create (constrained language mode, an AMSI or EDR block, a parse error): the plain spawn, visibly
+      (`breakaway_failed`). With the line and no answer, a server may exist: a failed start. **Residual:** if `$wmi.Create` itself throws
+      after WMI made the process (an RPC drop on the way back), the line is there but the script's catch prints rc -1, which falls back
+      to the plain spawn and may leave two servers (the second ends on the lock); the VM should check it.
+    - **No PowerShell failure text is CLIXML.** Windows PowerShell 5.1 started with `-EncodedCommand` and a redirected stderr writes
+      `#< CLIXML` + `<Objs …>` to stderr even on success (the progress records of preparing modules the first time). Every PowerShell call
+      (`acl.ts`, `breakaway.ts`, `startof.ts`) is started with `-OutputFormat Text`, its script sets `$ProgressPreference =
+      'SilentlyContinue'`, and a failure text read from stderr goes through `plainStderr`: when stderr starts with `#< CLIXML` its text is
+      the `<S S="Error">` strings (XML-unescaped, `_x000D__x000A_` a newline); progress records are not text, so a successful run's
+      progress is no error, and with no error record the last line of stdout and the exit code stand. The detail stays ASCII-only.
 - The process gets a constructed environment: the session's environment minus `PI_INTERCOM_SESSION_ID`, `PI_INTERCOM_STABLE_ID`,
   `PI_SUBAGENT_*`, `STRAW_BOSS_ROLE`, and `HERDR_PANE_ID`/`HERDR_TAB_ID`/`HERDR_WORKSPACE_ID`. `PI_INTERCOM_SCOPE_ID`,
   `PI_INTERCOM_TRANSPORT`, and `PI_INTERCOM_TCP` stay, so the server registers in the same broker scope as the sessions; it records them

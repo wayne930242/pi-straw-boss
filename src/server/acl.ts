@@ -18,6 +18,13 @@ const ACL_MS = 20_000;
  * string: what PowerShell prints or writes here is pure ASCII (sbr-F007).
  */
 export const asciiJson = (variable: string) => `[regex]::Replace(${variable}, '[^\\x00-\\x7F]', [System.Text.RegularExpressions.MatchEvaluator]{ param($m) ('\\u{0:x4}' -f [int][char]$m.Value) })`;
+/**
+ * How every PowerShell call of the package is started. `-OutputFormat Text` keeps the answer plain; and Windows PowerShell 5.1 started with `-EncodedCommand` and a redirected stderr still writes
+ * CLIXML (`#< CLIXML` + `<Objs …>`) to stderr on a successful run (the progress records of preparing its modules the first time), so a script also turns its progress stream off, and a failure text
+ * read from stderr goes through `plainStderr`.
+ */
+export const POWERSHELL_FLAGS = ["-NoProfile", "-NonInteractive", "-OutputFormat", "Text"];
+export const PROGRESS_OFF = "$ProgressPreference = 'SilentlyContinue'";
 /** The first line of every script that prints an answer: the console's output encoding, which may fail where no console is attached. */
 export const UTF8_OUT = "try { [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false) } catch { }";
 
@@ -54,13 +61,13 @@ export const ACL_STEPS = [
  * reset to inherit from the folder by one `icacls <dir>\* /reset /T /C /Q`, whatever the number of items (a call per item took a process each, link/inbox alone holds up to 500); a file
  * created later inherits the owner and SYSTEM from the folder.
  */
-export const ACL_SCRIPT = [UTF8_OUT, "$ErrorActionPreference = 'Stop'", ...ACL_STEPS, "$json = $out | ConvertTo-Json -Compress -Depth 4", asciiJson("$json")].join("\n");
+export const ACL_SCRIPT = [UTF8_OUT, PROGRESS_OFF, "$ErrorActionPreference = 'Stop'", ...ACL_STEPS, "$json = $out | ConvertTo-Json -Compress -Depth 4", asciiJson("$json")].join("\n");
 
 /** The PowerShell call: `-EncodedCommand` (UTF-16LE base64) so no quoting of the script can go wrong; `windowsHide` keeps its console off the desktop. */
 export function aclCommand(dir: string, env: NodeJS.ProcessEnv = process.env, timeout = ACL_MS, pid: number = process.pid) {
 	return {
 		file: powershellPath(env),
-		args: ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(ACL_SCRIPT, "utf16le").toString("base64")],
+		args: [...POWERSHELL_FLAGS, "-EncodedCommand", Buffer.from(ACL_SCRIPT, "utf16le").toString("base64")],
 		options: { encoding: "utf8" as const, timeout, windowsHide: true, cwd: system32(env), env: { ...env, SB_ACL_DIR: dir, SB_ACL_PID: String(pid) } },
 	};
 }
@@ -194,23 +201,39 @@ export type Exec = (file: string, args: string[], options: ReturnType<typeof acl
 const run: Exec = (file, args, options, done) => execFile(file, args, options, (error, stdout, stderr) => done(error, String(stdout), String(stderr)));
 
 /**
- * Why a program failed, for a person: its stderr's message line (see `messageLine`), and its exit code. Never `error.message`, which for a failed
+ * Why a program failed, for a person: its stderr's message line (see `messageLine`), else the last line of its stdout, and its exit code. Never `error.message`, which for a failed
  * child process begins with the whole command line (an `-EncodedCommand` of 2 KB of base64) and so fills any short cut of it.
  */
-export function execFailure(error: Error & { code?: unknown; status?: unknown }, stderr?: unknown): string {
-	const last = messageLine(stderr);
+export function execFailure(error: Error & { code?: unknown; status?: unknown }, stderr?: unknown, stdout?: unknown): string {
+	// Where stderr has no message (progress records only, or nothing) the last line of stdout stands; the exit code always follows.
+	const last = messageLine(stderr) || asciiLine(stdout);
 	const code = typeof error.code === "number" ? error.code : typeof error.status === "number" ? error.status : undefined;
 	const first = error.message.split(/\r?\n/)[0] ?? "";
 	const text = last || (/^Command failed:/.test(first) ? "" : asciiLine(first));
 	const reason = text || (code !== undefined ? "" : typeof error.code === "string" ? error.code : "it failed");
 	return [reason, code !== undefined ? `exit code ${code}` : undefined].filter(Boolean).join(", ").slice(0, 300);
 }
+const XML_ENTITIES: Record<string, string> = { lt: "<", gt: ">", quot: '"', apos: "'", amp: "&" };
+/** One CLIXML string as text: XML entities, then the `_xHHHH_` escapes (`_x000D__x000A_` is a line break, `_x005F_` an underscore). */
+const clixmlString = (raw: string) =>
+	raw
+		.replace(/&(?:#x([0-9a-fA-F]+)|#(\d+)|(lt|gt|quot|apos|amp));/g, (_m, hex?: string, dec?: string, name?: string) => (name ? XML_ENTITIES[name]! : String.fromCodePoint(Number.parseInt(hex ?? dec!, hex ? 16 : 10))))
+		.replace(/_x([0-9a-fA-F]{4})_/g, (_m, code: string) => String.fromCharCode(Number.parseInt(code, 16)));
+/**
+ * The text of a PowerShell stderr. When it is CLIXML (it starts with `#< CLIXML`) the text is the `<S S="Error">` strings, decoded and joined; progress records and the rest of the XML are
+ * not text, so a successful run's progress alone gives "". Anything else is returned as it is.
+ */
+export function plainStderr(text: unknown): string {
+	const raw = String(text ?? "");
+	if (!/^\s*#< CLIXML/.test(raw)) return raw;
+	return [...raw.matchAll(/<S S="Error">([\s\S]*?)<\/S>/g)].map((m) => clixmlString(m[1]!)).join("");
+}
 /**
  * The message of an error PowerShell 5.1 printed: its first non-empty line that does not start with `At line`, `+` or `~` (the position, the source line, the markers, and the
  * `+ CategoryInfo` / `+ FullyQualifiedErrorId` lines that follow the message), as `asciiLine` cuts it. Where every line is one of those, the last line stands.
  */
 export function messageLine(text: unknown): string {
-	const lines = String(text ?? "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+	const lines = plainStderr(text).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 	return asciiLine(lines.find((l) => !/^(At line|[+~])/.test(l)) ?? lines.at(-1));
 }
 /**
@@ -234,7 +257,7 @@ export function applyAcl(dir: string, exec: Exec = run, env: NodeJS.ProcessEnv =
 	const { file, args, options } = aclCommand(dir, env, ACL_MS, pid);
 	return new Promise((resolve, reject) => {
 		exec(file, args, options, (error, stdout, stderr) => {
-			if (error) return reject(new AclError(`could not set the ACL of ${dir}: ${execFailure(error, stderr)}`));
+			if (error) return reject(new AclError(`could not set the ACL of ${dir}: ${execFailure(error, stderr, stdout)}`));
 			try {
 				resolve(verified(parseAclOutput(stdout), dir));
 			} catch (failure) {

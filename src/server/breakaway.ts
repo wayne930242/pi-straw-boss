@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { existsSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { alive as pidAlive } from "../remote.ts";
 import { powershellPath, system32 } from "../winpath.ts";
-import { ACL_STEPS, aclMarkerPath, asciiJson, asciiLine, execFailure, UTF8_OUT } from "./acl.ts";
+import { ACL_STEPS, aclMarkerPath, asciiJson, asciiLine, execFailure, POWERSHELL_FLAGS, PROGRESS_OFF, UTF8_OUT } from "./acl.ts";
 import type { Launched, SpawnSpec, Started } from "./client.ts";
 
 // The detached server on Windows, started outside the starter's job object (docs/specs/2026-10-26-sb-backend.md, Process model and lifecycle). Node's `detached: true` does not break away from
@@ -39,6 +39,8 @@ export function winQuote(arg: string): string {
 export const commandLine = (spec: Pick<SpawnSpec, "command" | "args" | "acl">, how: "wmi" | "wmi-in-job" = "wmi") =>
 	[spec.command, ...spec.args, "--detach", how, ...(spec.acl ? ["--acl-token", spec.acl.token] : [])].map(winQuote).join(" ");
 
+/** Printed by the launch script right before the first `Win32_Process.Create`. */
+export const BEFORE_CREATE = "sb-before-create";
 /**
  * The PowerShell script, the one PowerShell start of a cold start. The command line and the folder come in the environment (SB_LAUNCH_CMD, SB_LAUNCH_CWD, and for the check SB_ACL_DIR and
  * SB_ACL_MARKER), never quoted into the script, and so does the environment the server is to get: this process's own, minus SB_LAUNCH_*, SB_ACL_*, `PSModulePath` (PowerShell sets it itself), and
@@ -50,13 +52,14 @@ export const commandLine = (spec: Pick<SpawnSpec, "command" | "args" | "acl">, h
  */
 export const LAUNCH_SCRIPT = [
 	UTF8_OUT,
+	PROGRESS_OFF,
 	"$ErrorActionPreference = 'Stop'",
 	// What the answer says is the source of truth for the starter: `created` turns true the moment WMI says it made the process, and from then on nothing in this script may end without the
 	// answer line (a failure of the check or of the marker is reported in it as `markerError`), so the starter never starts a second server for a first that exists.
 	"$created = $false; $newPid = 0; $away = $true; $started = $null; $createMs = 0; $markerError = $null",
 	`function Say($o) { $j = $o | ConvertTo-Json -Compress; ${asciiJson("$j")} }`,
-	"$sw = [Diagnostics.Stopwatch]::StartNew()",
 	"try {",
+	"  $sw = [Diagnostics.Stopwatch]::StartNew()",
 	"  $si = ([wmiclass]'Win32_ProcessStartup').CreateInstance()",
 	"  $si.ShowWindow = 0",
 	"  $vars = @()",
@@ -64,6 +67,8 @@ export const LAUNCH_SCRIPT = [
 	"  $si.EnvironmentVariables = $vars",
 	"  $wmi = [wmiclass]'Win32_Process'",
 	`  $si.CreateFlags = ${BASE_FLAGS | CREATE_FLAGS.breakaway}`,
+	// The line the starter looks for when PowerShell ends without an answer: without it nothing was created (the script died earlier), with it a server may exist.
+	`  Write-Output '${BEFORE_CREATE}'`,
 	"  $r = $wmi.Create($env:SB_LAUNCH_CMD, $env:SB_LAUNCH_CWD, $si)",
 	"  $created = ($r.ReturnValue -eq 0)",
 	// A job that does not allow breakaway fails the creation; the same call is made once more without the flag, in this start, and the answer says so.
@@ -103,7 +108,7 @@ export const LAUNCH_SCRIPT = [
 export function launchCommand(spec: SpawnSpec, env: NodeJS.ProcessEnv = process.env, timeout = 30_000) {
 	return {
 		file: powershellPath(env),
-		args: ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(LAUNCH_SCRIPT, "utf16le").toString("base64")],
+		args: [...POWERSHELL_FLAGS, "-EncodedCommand", Buffer.from(LAUNCH_SCRIPT, "utf16le").toString("base64")],
 		options: { encoding: "utf8" as const, timeout, windowsHide: true, cwd: system32(env), env: { ...spec.env, SB_LAUNCH_CMD: commandLine(spec), SB_LAUNCH_CMD_INJOB: commandLine(spec, "wmi-in-job"), SB_LAUNCH_CWD: spec.cwd, ...(spec.acl ? { SB_ACL_DIR: spec.acl.dir, SB_ACL_MARKER: aclMarkerPath(spec.acl.dir, spec.acl.token) } : {}) } as NodeJS.ProcessEnv },
 	};
 }
@@ -194,14 +199,17 @@ export function spawnBreakaway(spec: SpawnSpec, deps: BreakawayDeps): Launched {
 		if (released) return;
 		if (error && (error.killed || error.signal)) return unknown(`PowerShell did not answer within ${Math.round(options.timeout / 1000)} s`);
 		// PowerShell could not be started at all (ENOENT, EACCES, …): nothing was created.
-		if (error && typeof (error as { code?: unknown }).code === "string") return direct(execFailure(error, stderr));
+		if (error && typeof (error as { code?: unknown }).code === "string") return direct(execFailure(error, stderr, stdout));
 		let answer: LaunchAnswer;
 		try {
 			answer = parseLaunchOutput(stdout);
 		} catch (failure) {
 			// The script's answer is the source of truth, whatever the exit code. A refusal of WMI before anything was created falls back; no answer line at all does not.
 			if (failure instanceof NotCreated) return direct((failure as Error).message);
-			return unknown(`PowerShell gave no usable answer${error ? ` (${execFailure(error, stderr)})` : ` (${(failure as Error).message})`}`);
+			// Ended with an error and without the line printed before the create: the script died before it (a method the language mode refuses, an AMSI or EDR block, a parse error), so nothing was
+			// created and the plain spawn is safe, visibly. With the line, or with no error at all, a server may exist: no second one.
+			if (error && !stdout.includes(BEFORE_CREATE)) return direct(execFailure(error, stderr, stdout));
+			return unknown(`PowerShell gave no usable answer${error ? ` (${execFailure(error, stderr, stdout.replace(BEFORE_CREATE, ""))})` : ` (${(failure as Error).message})`}`);
 		}
 		// The process exists but the check could not be left for it: the server is told at once, so it ends with `acl` instead of waiting out its 70 s.
 		if (answer.markerError) failMarker(`could not leave the ACL check: ${answer.markerError}`);

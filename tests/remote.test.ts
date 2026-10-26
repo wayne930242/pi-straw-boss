@@ -583,8 +583,8 @@ test("S7: on win32 a start time comes from a PowerShell call that is asynchronou
 	assert.equal(calls.length, 1, "one call in flight per PID");
 	assert.equal(calls[0]!.file, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "by absolute path: a bare name is looked for in the current folder first");
 	assert.equal(calls[0]!.options.cwd, "C:\\Windows\\System32");
-	assert.deepEqual(calls[0]!.args.slice(0, 3), ["-NoProfile", "-NonInteractive", "-Command"]);
-	assert.equal(calls[0]!.args[3], "$ErrorActionPreference='Stop'; (Get-CimInstance Win32_Process -Filter 'ProcessId=4242').CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ', [cultureinfo]::InvariantCulture)");
+	assert.deepEqual(calls[0]!.args.slice(0, 5), ["-NoProfile", "-NonInteractive", "-OutputFormat", "Text", "-Command"]);
+	assert.equal(calls[0]!.args[5], "$ProgressPreference = 'SilentlyContinue'; $ErrorActionPreference='Stop'; (Get-CimInstance Win32_Process -Filter 'ProcessId=4242').CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ', [cultureinfo]::InvariantCulture)");
 	assert.equal(calls[0]!.options.windowsHide, true);
 	assert.equal(calls[0]!.options.timeout, 15_000);
 	assert.deepEqual(startCommand(4242).args, calls[0]!.args);

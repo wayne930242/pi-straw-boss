@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import { commandLine, LAUNCH_SCRIPT, launchCommand, type LaunchExec, parseLaunchOutput, spawnBreakaway, winQuote } from "../src/server/breakaway.ts";
+import { BEFORE_CREATE, commandLine, LAUNCH_SCRIPT, launchCommand, type LaunchExec, parseLaunchOutput, spawnBreakaway, winQuote } from "../src/server/breakaway.ts";
 import { detachWarning, describe, launch, makeCtx, ServerError, type SpawnSpec, spawnDetached, type Started } from "../src/server/client.ts";
 import { run } from "../src/server/cli.ts";
 import { fileOf, writeRecord } from "../src/server/record.ts";
@@ -93,8 +93,8 @@ test("a start runs one PowerShell by absolute path from System32 with the comman
 	assert.equal(ps.seen.length, 1);
 	assert.equal(ps.seen[0]!.file, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
 	assert.equal(ps.seen[0]!.cwd, "C:\\Windows\\System32");
-	assert.deepEqual(ps.seen[0]!.args.slice(0, 3), ["-NoProfile", "-NonInteractive", "-EncodedCommand"]);
-	assert.equal(Buffer.from(ps.seen[0]!.args[3]!, "base64").toString("utf16le"), LAUNCH_SCRIPT);
+	assert.deepEqual(ps.seen[0]!.args.slice(0, 5), ["-NoProfile", "-NonInteractive", "-OutputFormat", "Text", "-EncodedCommand"]);
+	assert.equal(Buffer.from(ps.seen[0]!.args[5]!, "base64").toString("utf16le"), LAUNCH_SCRIPT);
 	let exited: unknown = "pending";
 	void launched.exited.then((c) => (exited = c));
 	await sleep(40);
@@ -144,7 +144,7 @@ test("N3: a failing PowerShell is told by its own words and exit code, not by No
 	assert.ok(!failure!.includes("AAAA") && !/Command failed/.test(failure!));
 	assert.equal(plain[0]!.args.at(-1), failure, "the reason that is recorded is that line");
 	// No answer at all: PowerShell's message line (not its error id) and the exit code, in a failed start with no second server.
-	const none: LaunchExec = (_f, _a, _o, done) => setImmediate(() => done(failing, "", "Cannot create type. Only core types are supported in this language mode.\r\nAt line:1 char:1\r\n+ [wmiclass]'Win32_Process'\r\n    + FullyQualifiedErrorId : CannotCreateTypeConstrainedLanguage\r\n"));
+	const none: LaunchExec = (_f, _a, _o, done) => setImmediate(() => done(failing, `${BEFORE_CREATE}\r\n`, "Cannot create type. Only core types are supported in this language mode.\r\nAt line:1 char:1\r\n+ [wmiclass]'Win32_Process'\r\n    + FullyQualifiedErrorId : CannotCreateTypeConstrainedLanguage\r\n"));
 	const second: SpawnSpec[] = [];
 	const silent = await spawnBreakaway(spec(), { exec: none, fallback: (s) => (second.push(s), { pid: 9, exited: Promise.resolve(0) }) }).started!;
 	assert.equal(silent.via, "failed");
@@ -383,7 +383,7 @@ const others = (): string[] => readdirSync(dir).filter((f) => f.startsWith("acl.
 
 test("N-F001 (the reviewer's repro): PowerShell exits 1 after the create (the marker could not be moved) with an empty stdout: no plain spawn, a failed start, and the error marker is written for the server that is waiting", async () => {
 	const move = Object.assign(new Error("Command failed: powershell.exe -EncodedCommand AAAA"), { code: 1, killed: false, signal: null });
-	const exec: LaunchExec = (_f, _a, _o, done) => setImmediate(() => done(move, "", 'Exception calling "Move" with "2" argument(s): "Access to the path is denied."\r\nAt line:49 char:7\r\n+ [IO.File]::Move($env:SB_ACL_MARKER + \'.tmp\', $env:SB_ACL_MARKER)\r\n'));
+	const exec: LaunchExec = (_f, _a, _o, done) => setImmediate(() => done(move, `${BEFORE_CREATE}\r\n`, 'Exception calling "Move" with "2" argument(s): "Access to the path is denied."\r\nAt line:49 char:7\r\n+ [IO.File]::Move($env:SB_ACL_MARKER + \'.tmp\', $env:SB_ACL_MARKER)\r\n'));
 	const plain: SpawnSpec[] = [];
 	// PowerShell's own leftover tmp is there, as it is after a failed move: the error marker uses a name of its own.
 	writeFileSync(`${markerFile()}.tmp`, "{}");
@@ -438,4 +438,54 @@ test("N-F001: the error marker has a temporary name of its own and does not repl
 	assert.equal(readFileSync(markerFile(), "utf8"), '{"pid":1}');
 	assert.deepEqual(others().filter((f) => f.endsWith(".tmp")), []);
 	launched.release!();
+});
+
+// --- re-check N2-F001: a PowerShell that dies before the create falls back; one that dies after it does not ---
+
+test("N2-F001: the script prints a fixed line right before the first Win32_Process.Create, and its stopwatch is inside the try (so a refused method is caught before the create)", () => {
+	const lines = LAUNCH_SCRIPT.split("\n");
+	const at = (re: RegExp) => lines.findIndex((l) => re.test(l));
+	assert.equal(BEFORE_CREATE, "sb-before-create");
+	const before = at(/Write-Output 'sb-before-create'/), create = at(/^\s+\$r = \$wmi\.Create\(\$env:SB_LAUNCH_CMD, /), tryAt = lines.indexOf("try {"), watch = at(/Stopwatch/);
+	assert.ok(before > 0 && create === before + 1, "immediately before the first create");
+	assert.ok(watch > tryAt && tryAt > 0, "the stopwatch is inside the try");
+	assert.equal(lines.filter((l) => /Write-Output 'sb-before-create'/.test(l)).length, 1);
+});
+
+test("N2-F001: a PowerShell that exits non-zero without the line in its stdout did not reach the create: the plain spawn, visibly (a refused method, an AMSI or EDR block, a parse error)", async () => {
+	for (const stdout of ["", "something else\r\n"]) {
+		const died = Object.assign(new Error("Command failed: powershell.exe -EncodedCommand AAAA"), { code: 1, killed: false, signal: null });
+		const exec: LaunchExec = (_f, _a, _o, done) => setImmediate(() => done(died, stdout, "Method invocation is not supported in this language mode.\r\nAt line:3 char:1\r\n"));
+		const plain: SpawnSpec[] = [];
+		const started = await spawnBreakaway(withAcl(), { exec, fallback: (s) => (plain.push(s), { pid: 9, exited: new Promise(() => {}) }) }).started!;
+		assert.equal(started.via, "direct", JSON.stringify(stdout));
+		assert.equal(started.failure, "Method invocation is not supported in this language mode., exit code 1");
+		assert.equal(plain.length, 1);
+		assert.equal(plain[0]!.args.at(-1), started.failure);
+		assert.ok(!plain[0]!.args.includes("--acl-token"));
+	}
+});
+
+test("N2-F001: with the line in stdout and no answer the server may exist: a failed start, no plain spawn, an error marker for the waiting server", async () => {
+	const died = Object.assign(new Error("Command failed: powershell.exe -EncodedCommand AAAA"), { code: 1, killed: false, signal: null });
+	const exec: LaunchExec = (_f, _a, _o, done) => setImmediate(() => done(died, `${BEFORE_CREATE}\r\n`, "The RPC server is unavailable.\r\n"));
+	const plain: SpawnSpec[] = [];
+	const launched = spawnBreakaway(withAcl(), { exec, fallback: (s) => (plain.push(s), { pid: 9, exited: new Promise(() => {}) }) });
+	const started = await launched.started!;
+	assert.equal(started.via, "failed");
+	assert.match(started.failure!, /The RPC server is unavailable\., exit code 1\) \(Win32_Process\.Create may still have started the server\)$/);
+	assert.equal(plain.length, 0);
+	assert.match(JSON.parse(readFileSync(markerFile(), "utf8")).error, /may still have started/);
+	launched.release!();
+});
+
+test("a CLIXML stderr never reaches a failure text: the error record's message, or stdout, with the exit code", async () => {
+	const clixml = `#< CLIXML\r\n<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><S S="Error">Access is denied._x000D__x000A_</S><S S="Error">At line:1 char:1_x000D__x000A_</S></Objs>`;
+	const progress = `#< CLIXML\r\n<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S="progress" RefId="0"><MS><PR N="Record"><AV>Preparing modules for first use.</AV></PR></MS></Obj></Objs>`;
+	for (const [stderr, text] of [[clixml, "Access is denied., exit code 1"], [progress, "exit code 1"]] as const) {
+		const died = Object.assign(new Error("Command failed: x"), { code: 1, killed: false, signal: null });
+		const exec: LaunchExec = (_f, _a, _o, done) => setImmediate(() => done(died, "", stderr));
+		const started = await spawnBreakaway(spec(), { exec, fallback: () => ({ pid: 9, exited: Promise.resolve(0) }) }).started!;
+		assert.equal(started.failure, text);
+	}
 });

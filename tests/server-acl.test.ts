@@ -17,8 +17,8 @@ test("the command is one PowerShell start with the folder in the environment, ne
 	const { file, args, options } = aclCommand(dir, { PATH: "p" });
 	assert.equal(file, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
 	assert.equal(options.cwd, "C:\\Windows\\System32");
-	assert.deepEqual(args.slice(0, 3), ["-NoProfile", "-NonInteractive", "-EncodedCommand"]);
-	assert.equal(Buffer.from(args[3]!, "base64").toString("utf16le"), ACL_SCRIPT);
+	assert.deepEqual(args.slice(0, 5), ["-NoProfile", "-NonInteractive", "-OutputFormat", "Text", "-EncodedCommand"]);
+	assert.equal(Buffer.from(args[5]!, "base64").toString("utf16le"), ACL_SCRIPT);
 	assert.ok(!ACL_SCRIPT.includes("測試PM") && !ACL_SCRIPT.includes("straw-boss"));
 	assert.equal(options.env.SB_ACL_DIR, dir);
 	assert.equal(options.windowsHide, true);
@@ -264,5 +264,5 @@ test("N-F006: a PowerShell 5.1 error is told by its message (the first line befo
 	assert.equal(execFailure(Object.assign(new Error("Command failed: x"), { code: 1 }), clm), "Cannot create type. Only core types are supported in this language mode., exit code 1");
 	assert.equal(execFailure(Object.assign(new Error("Command failed: x"), { code: 1 }), thrown), "icacls failed with exit code 5, exit code 1");
 	assert.equal(messageLine("\r\n\r\nAt line:1\r\n+ x\r\n"), "+ x", "when nothing else is there, the last line stands");
-	assert.equal(messageLine(["#< CLIXML", "second"].join("\n")), "#< CLIXML", "plain text: the first line");
+	assert.equal(messageLine(["first", "second"].join("\n")), "first", "plain text: the first line");
 });
