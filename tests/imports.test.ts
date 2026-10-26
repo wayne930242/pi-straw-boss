@@ -534,5 +534,6 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 71 KB / 15.45 KB: the folder picker (toolbar and breadcrumb, shortcuts, the columns, the one column of a narrow window); and
 	// Unreleased to 68 KB / 14.95 KB: the deploy panel (bar, step list, running pulse, finish and failure tints, its keyframes).
 	// Unreleased to 71.2 KB / 15.55 KB: the session view's Quit in the comms header (desktop and phone grid).
-	assert.ok(total(css, (n) => size(n).length) <= 71_200 && total(css, gz) <= 15_550, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// Unreleased to 71.25 KB: the queued row's clamp sits on a box inside the padded row (long unbroken words wrap too).
+	assert.ok(total(css, (n) => size(n).length) <= 71_250 && total(css, gz) <= 15_550, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });

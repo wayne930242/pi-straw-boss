@@ -13,9 +13,9 @@ export function drawQueued(view: HTMLElement, list: Queued[] | undefined) {
 	box.hidden = !list?.length;
 	const tag = (q: Queued) => Object.assign(document.createElement("b"), { textContent: q.as === "steer" ? m.queued_steer() : m.queued_follow() });
 	box.replaceChildren(...(list ?? []).map((q) => {
-		const p = document.createElement("p");
-		p.append(tag(q), document.createTextNode(q.text));
-		return p;
+		const p = Object.assign(document.createElement("p"), { title: q.text }), body = document.createElement("span"); // the padding sits on `p`: padding inside a clamped box shows a sliver of the fourth line
+		body.append(tag(q), q.text);
+		return (p.append(body), p);
 	}));
 }
 /** The session's todo list above the composer: folded to the count and the task in progress, unfolded to every task. */
