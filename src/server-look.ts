@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
 import {
@@ -6,6 +6,7 @@ import {
 } from "./server/client.ts";
 import { tailLog } from "./server/log.ts";
 import { fileOf, readRecord, slotOf } from "./server/record.ts";
+import { newer } from "./semver.ts";
 import { packageRoot } from "./server/version.ts";
 import type { Kit } from "./state.ts";
 
@@ -19,7 +20,7 @@ const MAX_LOG_LINES = 200;
 const STOP_WARNING = "Every workspace then loses its live tower, and mains are demoted 15 s later. The server stays down until /boss server or `cli.mjs up` starts it again.";
 
 /** Replaces what the look reaches the machine with, for tests. */
-export interface ServerLookDeps { ctx?: Partial<Ctx>; cli?: string }
+export interface ServerLookDeps { ctx?: Partial<Ctx>; cli?: string; /** The package folder whose package.json holds the version of the package on disk. */ root?: string }
 
 export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: ServerLookDeps) {
 	const told = new Set<string>();
@@ -41,26 +42,46 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 		return existsSync(built) ? built : join(root, "src", "server", "cli.ts");
 	};
 	const asker = () => `session "${(pi.getSessionName() || s.ownName || me() || "unnamed").replace(/["\n]/g, " ")}" (${me().slice(0, 8) || "no id"})`;
-	const ctxFor = (): Ctx => makeCtx({ slot: slot(), version: cfg.version, cli: cli(), by: asker(), env: cfg.env, now: cfg.now, ...deps.ctx });
+	/**
+	 * The version of the package the server would start from: read from the package.json beside `cli()` each time, because a session keeps the code it loaded (`cfg.version`) while the
+	 * package on disk may have been replaced since (a downgrade). Judging by the loaded version would upgrade, start the older package, and upgrade again at every look.
+	 */
+	const version = () => {
+		if (deps.cli && !deps.root) return cfg.version;
+		try {
+			const found = (JSON.parse(readFileSync(join(deps.root ?? packageRoot(), "package.json"), "utf8")) as { version?: unknown }).version;
+			return typeof found === "string" ? found : cfg.version;
+		} catch {
+			return cfg.version;
+		}
+	};
+	const ctxFor = (): Ctx => makeCtx({ slot: slot(), version: version(), cli: cli(), by: asker(), env: cfg.env, now: cfg.now, ...deps.ctx });
 
 	/** One look: start, upgrade, or leave the server as it is. Anything that cannot be done is told once. */
 	async function look() {
 		if (looking || stopped || !interactive) return;
 		looking = true;
+		let verdictWas: string | undefined;
 		try {
 			const ctx = ctxFor(), seen = await probe(ctx), verdict = decide(ctx, seen);
+			verdictWas = verdict.do;
 			if (verdict.do === "refuse") return tellOnce(verdict.why, `Straw Boss: ${verdict.text}`);
 			if (verdict.do === "start") {
 				if (failedAt !== undefined && cfg.now() - failedAt < RETRY_FAILED_MS) return;
 				await ensure(ctx);
 			}
-			if (verdict.do === "upgrade") await restart(ctx, { reason: "upgrade", upgrade: true, lockWaitMs: 0 });
+			if (verdict.do === "upgrade") {
+				if (failedAt !== undefined && cfg.now() - failedAt < RETRY_FAILED_MS) return;
+				const before = seen.record!.version, done = await restart(ctx, { reason: "upgrade", upgrade: true, lockWaitMs: 0 });
+				// An upgrade that starts a server no newer than the one it replaced would be asked for again at every look.
+				if (!newer(done.record.version, before)) throw new Error(`the upgrade started pi-straw-boss ${done.record.version}, not newer than the ${before} it replaced (this session loaded ${cfg.version}; the package on disk is ${ctx.version})`);
+			}
 			failedAt = undefined;
 		} catch (error) {
 			// Another session holds the lock (it starts or restarts the server); the next look finds the result.
 			if (error instanceof ServerError && error.code === "busy") return;
 			failedAt = cfg.now();
-			tellOnce(`failed:${(error as Error).message}`, `Straw Boss: the sb server could not start: ${(error as Error).message}`, "error");
+			tellOnce(`failed:${(error as Error).message}`, `Straw Boss: the sb server could not ${verdictWas === "upgrade" ? "upgrade" : "start"}: ${(error as Error).message}`, "error");
 		} finally {
 			looking = false;
 		}

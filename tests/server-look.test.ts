@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createRemoteTurns } from "../src/link/hooks.ts";
@@ -113,6 +114,33 @@ test("a session on a newer package asks the live server to upgrade, which starts
 	await until(() => sw.record()?.version === "0.44.0", "the upgrade");
 	assert.equal(sw.record()?.restarting, undefined);
 	assert.match(readFileSync(fileOf(sw.slot, "log"), "utf8"), /restart reason=upgrade by="session \\?"a1\\?" \(a1\)"/);
+});
+
+test("sbr-F001: the version a session judges by is the package.json beside the cli it starts, not the code it loaded: a package replaced by an older one upgrades the server once, not at every look", async () => {
+	const s = await sw.start({ version: "0.43.0" });
+	await s.handle.ready;
+	const root = join(sw.root, "pkg");
+	mkdirSync(root, { recursive: true });
+	writeFileSync(join(root, "package.json"), JSON.stringify({ name: "pi-straw-boss", version: "0.44.0" }));
+	// The session loaded 0.45.0; the package on disk (what its spawn starts) is now 0.44.0.
+	const a = session("a1", { version: "0.45.0", server: { ctx: reaching("0.44.0"), cli: "/fake/cli.mjs", root } });
+	await a.start();
+	await until(() => sw.record()?.version === "0.44.0" && !sw.record()?.restarting, "the upgrade");
+	await sleep(300);
+	assert.equal(sw.spawned.length, 1, "one upgrade, then the server is as new as the package");
+	assert.equal(a.notices.filter((n) => /sb server/.test(n.text)).length, 0);
+});
+
+test("sbr-F001: an upgrade that starts a server no newer than the one it replaced is told once and not asked for again for a minute", async () => {
+	const s = await sw.start({ version: "0.44.0" });
+	await s.handle.ready;
+	// Nothing tells the session that its spawn starts 0.44.0 (a stale cache of the version): the launched server's version is what refuses the loop.
+	const a = session("a1", { version: "0.45.0", server: { ctx: reaching("0.44.0"), cli: "/fake/cli.mjs" } });
+	await a.start();
+	await until(() => a.notices.some((n) => /not newer/.test(n.text)), "the notice");
+	await sleep(300);
+	assert.equal(sw.spawned.length, 1, "no new upgrade for a minute");
+	assert.equal(a.notices.filter((n) => /not newer/.test(n.text)).length, 1);
 });
 
 // --- /boss server ---
