@@ -459,6 +459,7 @@ itself: it opens a link dialog through the dialog contract that shows the action
 device label and short id, trust level), the reason, and which session asked. The action runs only when the user approves it, in the
 GUI, from a paired device, or in the terminal; deny or no answer within 10 minutes refuses it, and the tool returns the outcome (for an
 approved `invite`, the invite text, so the agent can pass it on).
+The terminal's confirm comes up 1.5 s after the dialog is published (pi's confirm takes Enter as Yes, and a paired device's Enter checked just before the call opened could still be on its way); the page and paired devices see the dialog at once, and an answer within that time means the terminal never shows it.
 
 - Approval is per request: no setting, trust level, or earlier approval lets an agent's link action run unasked. A `join` still needs
   the safety-word comparison; approving the request only opens the join screen with the pasted text filled in.

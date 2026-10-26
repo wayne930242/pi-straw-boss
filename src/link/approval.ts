@@ -14,9 +14,11 @@ const SERVED = 16;
 const NO_RELAY = Symbol.for("pi-straw-boss.no-relay");
 /** The longest text the dialog shows; a request with more is refused, since a confirm of a cut text would be a confirm of something else. */
 export const MAX_TEXT = 12_000;
+/** The terminal's confirm waits this long after the dialog is published: pi's confirm takes Enter as Yes, and a paired device's Enter that was checked just before the tool call opened could still be on its way to the pane (control.ts). The page and a paired device see the dialog at once. */
+export const TERMINAL_DELAY_MS = 1_500;
 export interface Verdict { approved: boolean; by: string; reason: string }
 
-export function createApproval({ bus, timeoutMs = REQUEST_MS, onError = () => {} }: { bus: Bus; timeoutMs?: number; onError?: (what: string, error: Error) => void }) {
+export function createApproval({ bus, timeoutMs = REQUEST_MS, terminalDelayMs = TERMINAL_DELAY_MS, onError = () => {} }: { bus: Bus; timeoutMs?: number; terminalDelayMs?: number; onError?: (what: string, error: Error) => void }) {
 	const open = new Map<string, { digest: string; take(choice: number, answerId: string): void }>(), served: string[] = [];
 	let listening: (() => void) | undefined;
 	const tell = (channel: string, data: unknown) => {
@@ -75,10 +77,16 @@ export function createApproval({ bus, timeoutMs = REQUEST_MS, onError = () => {}
 				offs.push(() => req.signal!.removeEventListener("abort", stop));
 			}
 			if (req.ui) {
-				Promise.resolve(req.ui.confirm(heading, body, { signal: terminal.signal, [NO_RELAY]: true } as { signal: AbortSignal })).then(
-					(yes) => finish(yes === true, "local", yes === true ? "approved in the terminal" : declined("")),
-					() => finish(false, "local", declined("")),
-				);
+				const ui = req.ui;
+				const ask = setTimeout(() => {
+					if (done) return;
+					Promise.resolve(ui.confirm(heading, body, { signal: terminal.signal, [NO_RELAY]: true } as { signal: AbortSignal })).then(
+						(yes) => finish(yes === true, "local", yes === true ? "approved in the terminal" : declined("")),
+						() => finish(false, "local", declined("")),
+					);
+				}, terminalDelayMs);
+				ask.unref();
+				offs.push(() => clearTimeout(ask));
 			}
 		});
 	}

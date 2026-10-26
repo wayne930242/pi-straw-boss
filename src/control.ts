@@ -85,6 +85,7 @@ export function checkText(text: unknown): string | Reply {
 	return typed;
 }
 
+const LINK_LOCAL = "While it waits on a link request, a paired device can only send Escape; approve it on this computer's own page or terminal.";
 export function createControl({ link, lookup, call, csrf, canonical, pair, remoteOn, remoteOff, paired, saveFailed, spawn, close, dismiss, dismissAll, stop, mirrors, secret = async () => true, linkRequest = async () => false, answers }: ControlDeps) {
 	const busy = new Set<string>();
 	// A change to the paired devices or the remote wish that could not be written to paired.json took effect in memory only: say so (500), to the page and the session.
@@ -168,7 +169,7 @@ export function createControl({ link, lookup, call, csrf, canonical, pair, remot
 			if (ENDING.test(text) && json.confirmed !== true) return no(409, "confirm", "This command ends or replaces the session; confirm to send it.");
 			job = async () => {
 				const pane = await live(found);
-				if (remote && (await linkRequest(found.file!))) throw no(403, "local_only", "While it waits on a link request, a paired device can only send Escape; approve it on this computer's own page or terminal."); // a prompt's Enter would be taken by its terminal dialog as Yes
+				if (remote && (await linkRequest(found.file!))) throw no(403, "local_only", LINK_LOCAL); // a prompt's Enter would be taken by its terminal dialog as Yes
 				if (pane.agent_status === "blocked") throw no(409, "blocked", "It is waiting on a dialog; answer it in the terminal.");
 				// Enter sends a prompt when idle and a steering message while it works; Alt+Enter queues a follow-up, which only means something while it works.
 				return json.as === "followUp" && pane.agent_status === "working"
@@ -182,7 +183,12 @@ export function createControl({ link, lookup, call, csrf, canonical, pair, remot
 			job = async () => {
 				const plan = await pad.send(key, found, await live(found), asked);
 				if (asked.key === "enter") await live(found); // the editor check took up to a second: still pi, on this file
-				for (const [i, [method, params]] of plan.calls.entries()) await (i ? new Promise((r) => setTimeout(r, 60)) : Promise.resolve()).then(() => call(method, params, 15_000));
+				// A link_request's call may have opened since the guard looked; its terminal confirm takes Enter as Yes, so look again right before each write.
+				for (const [i, [method, params]] of plan.calls.entries()) {
+					if (i) await new Promise((r) => setTimeout(r, 60));
+					if (remote && asked.key !== "esc" && (await linkRequest(found.file!))) throw no(403, "local_only", LINK_LOCAL);
+					await call(method, params, 15_000);
+				}
 				pad.sent(key, plan);
 			};
 		} else if (action === "answer") {

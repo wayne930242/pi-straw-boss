@@ -122,15 +122,19 @@ test("Stop sends Escape alone with no mirror, never Ctrl+C or Ctrl+D; any other 
 async function padded({ entries = [header(), user("u1", null, "go")] as unknown[], editor = { editor: "empty" } as Editor | undefined, answerable = false } = {}) {
 	const path = join(scratch, `pad-${Math.random().toString(36).slice(2)}_sess-1.jsonl`);
 	writeFileSync(path, lines(entries));
-	const file = canonical(path)!, calls: [string, Record<string, unknown>][] = [], w = { editor, answerable, status: "idle", probes: 0, moveDuringProbe: false, moved: false };
+	const file = canonical(path)!, calls: [string, Record<string, unknown>][] = [], w = { editor, answerable, status: "idle", probes: 0, moveDuringProbe: false, moved: false, armed: false, afterProbe: false, opens: undefined as (() => void) | undefined };
 	const call = async (method: string, params: Record<string, unknown>) => {
 		calls.push([method, { ...params, ...(method === "pane.send_input" && { at: Date.now() }) }]);
+		if (method === "pane.get" && w.armed) {
+			w.armed = false;
+			w.opens?.();
+		}
 		if (method === "pane.get") return { pane: { pane_id: "wA:p1", agent: "pi", agent_status: w.status, agent_session: { value: w.moved ? "/s/other_sess-9.jsonl" : file } } };
 		if (method === "pane.layout") return { layout: { panes: [{ pane_id: "wA:p1", rect: { width: 40 } }] } };
 		return method === "pane.read" ? { read: { text: "pi\r\n> " } } : {};
 	};
 	const target = { from: "S", bridgeId: "B", answer: { dialog: "d1", digest: "a".repeat(64), select: { title: "T", choices: [{ label: "A" }] } } } as Target;
-	const hub = { running: true, me: "G", start() {}, stop() {}, receive() {}, relayed: () => ({ dialogsOf: () => undefined, merge: () => ({ callId: "", tool: "" }) }), replay: () => undefined, ended: () => undefined, send: async () => ({ status: 200, body: {} }), target: () => (w.answerable ? target : undefined), probe: async () => (w.probes++, (w.moved = w.moveDuringProbe), w.editor) };
+	const hub = { running: true, me: "G", start() {}, stop() {}, receive() {}, relayed: () => ({ dialogsOf: () => undefined, merge: () => ({ callId: "", tool: "" }) }), replay: () => undefined, ended: () => undefined, send: async () => ({ status: 200, body: {} }), target: () => (w.answerable ? target : undefined), probe: async () => (w.probes++, (w.moved = w.moveDuringProbe), (w.armed = w.afterProbe), w.editor) };
 	const lookup = (key: string): Found | undefined => (key === "sess-1" ? { key, base: "wA", name: "billing", role: "main", file, pane: "wA:p1", live: true } : undefined);
 	const gui = await startGui({ read: async () => ({ bases: [] }), net: { lookup, workspace: () => [] }, call, hub: hub as unknown as Hub, dir: join(scratch, "bundle"), pollMs: 50 });
 	running.push(gui);
@@ -141,7 +145,7 @@ async function padded({ entries = [header(), user("u1", null, "go")] as unknown[
 	const stream = /"stream":"([0-9a-f]+)"/.exec(events.join(""))![1]!;
 	const sentKeys = () => calls.filter(([m]) => m === "pane.send_input").map(([, p]) => p.keys);
 	// (each send_input is recorded with the time Herdr got it)
-	return { gui, w, calls, stream, events, wait, sentKeys, close: () => req.destroy(), key: (key: string, extra: Record<string, unknown> = {}) => send(gui, "sessions/sess-1/keys", { key, stream, ...extra }), attach: async () => (assert.equal((await send(gui, "sessions/sess-1/mirror", { stream, on: true })).status, 200), await wait(() => events.join("").includes("event: mirror"))) };
+	return { gui, w, path, calls, stream, events, wait, sentKeys, close: () => req.destroy(), key: (key: string, extra: Record<string, unknown> = {}) => send(gui, "sessions/sess-1/keys", { key, stream, ...extra }), attach: async () => (assert.equal((await send(gui, "sessions/sess-1/mirror", { stream, on: true })).status, 200), await wait(() => events.join("").includes("event: mirror"))) };
 }
 
 test("the pad: one key per request, only with this page's mirror attached and current, and exactly that key reaches Herdr", async () => {
@@ -450,6 +454,33 @@ test("while a link_request call is open (two dialogs, so none is answerable), a 
 	q.w.status = "blocked";
 	for (const k of ["enter", "1"]) assert.deepEqual((await other.post("sessions/sess-1/keys", { key: k, stream: q.stream })).body, { accepted: true }, `no link_request open: remote ${k}`);
 	q.close();
+});
+
+test("RR-F001: a link_request call that opens after the guard looked (Enter: during the last pane look after the editor probe) still stops a paired device's Enter, typed text, and prompt before they are written; this computer's page is not limited", async () => {
+	const opened = [header(), user("u1", null, "go"), assistant("a1", "u1", [toolCall("c1", "link_request", { action: "trust" })])];
+	const p = await padded();
+	await p.attach();
+	const phone = await paired(p.gui);
+	p.w.opens = () => writeFileSync(p.path, lines(opened));
+	const close = () => { p.w.armed = p.w.afterProbe = false; writeFileSync(p.path, lines([header(), user("u1", null, "go")])); };
+	p.w.afterProbe = true; // the next pane look after the probe is where the call opens
+	const enter = await phone.post("sessions/sess-1/keys", { key: "enter", stream: p.stream });
+	assert.deepEqual([enter.status, enter.body.error, p.sentKeys()], [403, "local_only", []], "Enter");
+	close();
+	await new Promise((r) => setTimeout(r, 1100));
+	p.w.armed = true; // the pane look that comes first
+	const typed = await phone.post("sessions/sess-1/keys", { text: "y", stream: p.stream });
+	assert.deepEqual([typed.status, typed.body.error, p.calls.filter(([m]) => m === "pane.send_text").length], [403, "local_only", 0], "typed text");
+	close();
+	p.w.armed = true;
+	const prompt = await phone.post("sessions/sess-1/input", { text: "go", as: "send" });
+	assert.deepEqual([prompt.status, prompt.body.error, p.calls.filter(([m]) => m === "agent.prompt").length], [403, "local_only", 0], "a prompt");
+	close();
+	await new Promise((r) => setTimeout(r, 1100));
+	p.w.afterProbe = true;
+	assert.deepEqual((await p.key("enter")).body, { accepted: true }, "this computer's page: Enter goes");
+	assert.deepEqual(p.sentKeys(), [["enter"]]);
+	p.close();
 });
 
 test("RC-F004: a link_request approval a bridge relays (the owner's listener, the hub's checks, the net's binding) keeps hereOnly end to end: a paired device's Approve gets 403 and never reaches the bridge, Deny and this computer's Approve do", async () => {

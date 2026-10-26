@@ -44,6 +44,8 @@ export interface LinkDeps {
 	/** How long the gate waits for an answer (default 10 minutes), and how long an approval dialog of a `link_request` does. */
 	gateMs?: number;
 	requestMs?: number;
+	/** How long the terminal's confirm of a link_request waits after the dialog is published (approval.ts). */
+	terminalMs?: number;
 	/** How long the GUI's summary read waits for the holder (default `SUMMARY_MS`). */
 	summaryMs?: number;
 	/** How long after it was read the last summary may still be served when the holder is slow (default `SUMMARY_KEEP_MS`). */
@@ -104,7 +106,7 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 			return undefined;
 		}
 	};
-	const approval = createApproval({ bus: pi.events, timeoutMs: opts.requestMs, onError: (what, error) => store.log({ event: "approval-failed", what, error: error.message }) });
+	const approval = createApproval({ bus: pi.events, timeoutMs: opts.requestMs, terminalDelayMs: opts.terminalMs, onError: (what, error) => store.log({ event: "approval-failed", what, error: error.message }) });
 	const nonce = randomUUID().slice(0, 8);
 	let channel: Channel | undefined, election: LinkElection | undefined, holder: LinkHolder | undefined;
 	let mySession = "", stopped = false, told = false, started: string | undefined;
