@@ -616,16 +616,13 @@ unit's state and monitors, the board says what each main is doing and how far it
   default Herdr (AGENTS.md, Live checks) with two agent dirs and a local relay: a main writes, both towers read, a member and a main
   find no `board_read`. A fresh-context review follows, since the change adds a wire kind shared with the relay and remote content.
 
-### Open questions
+### Further decisions (boss, 2026-10-26)
 
-1. Should `todo` feed the board? Recommended: no. Todos carry owners, `blockedBy`, anchors, and detail written for the main itself;
-   feeding them would send that to allies without the main choosing it, and the board would stop being terse. The fallback is the
-   name: a main with no entry shows its `boss_rename` name and tab.
-2. Should the board need its own share level (`share: "board"`) instead of riding `status`? Recommended: ride `status`, the default, as
-   the boss asked for allies to see it; `presence` keeps it off.
-3. `tower_list` is on the remote-turn allowlist today and its `remote` lists every team's devices, so a sender of team A can read team
-   B's presence (labels, workspaces, tab labels), and its local part lists every workspace of this computer, bound or not
-   (`allow.ts` `FREE`). Recommended: scope it in 5b the way `board_read` is scoped.
+1. `todo` does not feed the board; a main writes its entry with `board_set`. Todos carry owners, `blockedBy`, anchors, and detail
+   written for the main itself, and the board stays terse. A main with no entry shows its `boss_rename` name and tab.
+2. The board rides `share: "status"` (the default); there is no separate `board` share level, and `presence` keeps it off.
+3. 5b also scopes `tower_list` in a remote turn the way `board_read` is scoped: its `remote` lists only the senders' teams, and its
+   local part only workspaces inside the project those teams bind.
 
 ## Threat model
 
