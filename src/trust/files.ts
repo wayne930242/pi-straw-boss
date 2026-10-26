@@ -36,7 +36,7 @@ export function ensureDir(dir: string, ids = process.getuid !== undefined, home:
 		const st = lstatSync(dir);
 		if (!st.isDirectory() || st.isSymbolicLink() || (ids && st.uid !== uid())) return false;
 		if (!ids) {
-			const inside = relative(realpathSync(home), realpathSync(dir));
+			const inside = relative(realpathSync.native(home), realpathSync.native(dir)); // native expands an 8.3 short name (C:\Users\RUNNER~1), as the JS realpath does not
 			if (inside.startsWith("..") || isAbsolute(inside)) return false;
 		}
 		if (process.platform !== "win32" && (st.mode & 0o077) !== 0) chmodSync(dir, 0o700);
