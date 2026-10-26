@@ -4,7 +4,7 @@ import { buildEnvelope, decodeEnvelope, encodeEnvelope, openEnvelope, parseEnvel
 import { decodePlaintext, encodePlaintext, KINDS, LIMITS, type Kind } from "../src/link/kinds.ts";
 import { dec, enc } from "../src/link/canon.ts";
 import { entryHash } from "../src/link/roster.ts";
-import { baseState, envelopeCases, NOW, receiveState, SAMPLE } from "./link/envelope-cases.ts";
+import { ASK_ID, baseState, envelopeCases, NOW, receiveState, SAMPLE } from "./link/envelope-cases.ts";
 import { DEVICES, mainLog, TEAM, teamKey } from "./link/scenario.ts";
 
 // The envelope and its six receive checks (src/link/envelope.ts).
@@ -66,6 +66,27 @@ test("each kind's plaintext round-trips, is cut to its limit, and refuses anothe
 	assert.equal(decodePlaintext("notice", encodePlaintext("notice", { ...SAMPLE.notice, text: "x".repeat(5000) }))!.text.length, 1024);
 	assert.equal(decodePlaintext("notice", encodePlaintext("tower", SAMPLE.tower)), null);
 	assert.equal(decodePlaintext("presence", Buffer.from("x")), null);
+});
+
+test("tower: the fifth field is written only when given, a 4-field tower stays 4 fields, and the fifth is read back", () => {
+	assert.equal(dec(encodePlaintext("tower", SAMPLE.tower)).length, 4);
+	const asked = { ...SAMPLE.tower, awaitsReply: ASK_ID };
+	assert.equal(dec(encodePlaintext("tower", asked)).length, 5);
+	assert.deepEqual(decodePlaintext("tower", encodePlaintext("tower", asked)), asked);
+	assert.equal("awaitsReply" in decodePlaintext("tower", encodePlaintext("tower", SAMPLE.tower))!, false);
+	assert.throws(() => encodePlaintext("tower", { ...SAMPLE.tower, awaitsReply: "nope" }), /ask id/);
+	assert.throws(() => encodePlaintext("tower", { ...SAMPLE.tower, awaitsReply: "" }), /ask id/);
+});
+
+test("caps and tower-reply: rules, round trips, limits, and refusals", () => {
+	assert.deepEqual(KINDS.caps, { ephemeral: true, wholeTeam: true, sender: "any" });
+	assert.deepEqual(KINDS["tower-reply"], { ephemeral: false, wholeTeam: false, sender: "any" });
+	const many = decodePlaintext("caps", encodePlaintext("caps", { features: Array.from({ length: 20 }, (_, i) => `f${i}`) }))!;
+	assert.equal(many.features.length, LIMITS.capsFeatures);
+	const long = decodePlaintext("tower-reply", encodePlaintext("tower-reply", { ...SAMPLE["tower-reply"], text: "é".repeat(200_000) }))!;
+	assert.ok(Buffer.byteLength(long.text) <= LIMITS.towerText && !long.text.includes("\ufffd"));
+	assert.equal(decodePlaintext("tower-reply", encodePlaintext("tower", SAMPLE.tower)), null);
+	assert.equal(decodePlaintext("caps", encodePlaintext("tower-reply", SAMPLE["tower-reply"])), null);
 });
 
 test("SLH-F006: a presence is cut to 32 workspaces of 64 tabs each when it is decoded", () => {

@@ -8,7 +8,7 @@ import { BIP39_ENGLISH, BIP39_ENGLISH_SHA256 } from "../../src/link/bip39-englis
 import { buildJoinRequest, checkJoiner, encodeInvite, inviteHash, openJoinRequest, safetyWords, type Invite } from "../../src/link/join.ts";
 import { encodePlaintext, KINDS, type Kind } from "../../src/link/kinds.ts";
 import { addEntry, encodeEntry, entryHash } from "../../src/link/roster.ts";
-import { envelopeCases, NOW, SAMPLE } from "./envelope-cases.ts";
+import { ASK_ID, envelopeCases, NOW, SAMPLE } from "./envelope-cases.ts";
 import { rosterCases } from "./roster-cases.ts";
 import { DEVICES, det, mainLog, TEAM, teamKey, view, type Who } from "./scenario.ts";
 
@@ -67,6 +67,37 @@ function boardCases() {
 		mk("an entry with a field too many", enc(list([entryFields(str("extra"))])), null),
 		mk("an entry with a field missing", enc(list([enc(str("0123456789abcdef"), str("w"), str("t"), str("n"), str("x"), int(NOW))])), null),
 		mk("an item whose done flag is 2", enc(list([enc(str("0123456789abcdef"), str("w"), str("t"), str("n"), str("x"), int(NOW), list([enc(str("a"), Buffer.from([2]))]))])), null),
+	];
+}
+
+/** `tower` with 4 fields (the old shape) and with the optional fifth, `awaitsReply`: plaintext in, what a decoder gives back out (null for a structure it refuses). */
+function towerCases() {
+	const mk = (name: string, plaintext: Buffer, expect: unknown) => ({ name, plaintext: hex(plaintext), expect });
+	const four = [str("main"), str(""), bool(true), str("Please look.")];
+	const base = { fromWorkspace: "main", toWorkspace: "", replyExpected: true, text: "Please look." };
+	return [
+		mk("four fields, as before the fifth existed", enc(...four), base),
+		mk("five fields, the fifth an ask id", enc(...four, str(ASK_ID)), { ...base, awaitsReply: ASK_ID }),
+		mk("a fifth field that is empty", enc(...four, str("")), null),
+		mk("a fifth field that is not 32 lowercase hex digits", enc(...four, str(ASK_ID.toUpperCase())), null),
+		mk("a fifth field of the wrong length", enc(...four, str(ASK_ID.slice(2))), null),
+		mk("six fields", enc(...four, str(ASK_ID), str("x")), null),
+		mk("three fields", enc(...four.slice(0, 3)), null),
+	];
+}
+
+/** `caps` and `tower-reply` limits and refusals. */
+function capsReplyCases() {
+	const mk = (name: string, kind: Kind, plaintext: Buffer, expect: unknown) => ({ name, kind, plaintext: hex(plaintext), expect });
+	return [
+		mk("an empty caps", "caps", enc(list([])), { features: [] }),
+		mk("caps cut to 16 features", "caps", enc(list(Array.from({ length: 18 }, (_, i) => str(`f${i}`)))), { features: Array.from({ length: 16 }, (_, i) => `f${i}`) }),
+		mk("caps with a trailing field", "caps", enc(list([]), str("x")), null),
+		mk("caps with a cut list", "caps", enc(Buffer.from([0, 0])), null),
+		mk("a tower-reply", "tower-reply", enc(str(ASK_ID), str("ok")), { inReplyTo: ASK_ID, text: "ok" }),
+		mk("a tower-reply with an id of 300 bytes is cut to 256", "tower-reply", enc(str("a".repeat(300)), str("ok")), { inReplyTo: "a".repeat(256), text: "ok" }),
+		mk("a tower-reply with one field", "tower-reply", enc(str(ASK_ID)), null),
+		mk("a tower-reply with three fields", "tower-reply", enc(str(ASK_ID), str("ok"), str("x")), null),
 	];
 }
 
@@ -140,11 +171,15 @@ export function generateVectors() {
 		request: { team: hex(TEAM), method: requestOf.method, path: requestOf.path, time: requestOf.time, body: hex(requestOf.body), signed: hex(requestBytes(requestOf)), signer: "alice", sig: hex(signBytes(DEVICES.alice.signKey, requestBytes(requestOf))) },
 		kinds: (Object.keys(KINDS) as Kind[]).map((kind) => ({ kind, rule: KINDS[kind], value: plainJson(kind), plaintext: hex(encodePlaintext(kind, SAMPLE[kind] as never)) })),
 		boardCases: boardCases(),
+		towerCases: towerCases(),
+		capsReplyCases: capsReplyCases(),
 		limits: [
 			{ kind: "tower", field: "text", unit: "bytes", max: 192 * 1024 },
 			{ kind: "confirm-request", field: "args", unit: "characters", max: 12_000 },
 			{ kind: "unit-status", field: "report", unit: "bytes", max: 4096 },
 			{ kind: "notice", field: "text", unit: "bytes", max: 1024 },
+			{ kind: "tower-reply", field: "text", unit: "bytes", max: 192 * 1024 },
+			{ kind: "caps", field: "features", unit: "features", max: 16 },
 			{ kind: "board", field: "entries", unit: "entries", max: 24 },
 			{ kind: "board", field: "workspace, tab, name", unit: "characters", max: 40 },
 			{ kind: "board", field: "now", unit: "characters", max: 120 },
