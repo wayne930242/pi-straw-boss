@@ -230,25 +230,31 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
     start, under the lock) first makes `straw-boss/` and checks it, with native calls and no PowerShell (whose start costs 2 to 5 s):
     - `whoami /user /fo csv /nh` for the owner's SID, once per process (only the SID is kept, a user does not change; the folder is
       checked again at every start, since other code can delete and make `straw-boss/` again, and a session lives for days);
-    - `icacls <dir> /setowner *<owner SID> /inheritance:r /grant:r *<owner SID>:(OI)(CI)F *S-1-5-18:(OI)(CI)F`, the grant of the PowerShell
-      step below, without `/T`: it makes the folder the owner's (and fails fast on a folder another account owns, instead of the owner
-      checking nothing), protected, and passed on to what is created in it;
+    - `icacls <dir> /setowner *<owner SID> /Q`, which makes the folder the owner's and fails fast on a folder another account owns,
+      instead of the owner checking nothing; then `icacls <dir> /inheritance:r /grant:r *<owner SID>:(OI)(CI)F *S-1-5-18:(OI)(CI)F`, the
+      grant of the PowerShell step below, without `/T`: protected, and passed on to what is created in it. They are two calls because
+      `/setowner` is a form of its own in icacls' syntax and is not combined with the grant;
     - `icacls <dir> /save <tmp>`, whose UTF-16 file holds the folder's DACL as SDDL (no localized text is read): it must be protected
       with exactly the owner and SYSTEM as allow ACEs and none inherited (`folderProblems`), or nothing is written. A foreign ACE
       another account left, which `/grant:r` does not remove, is refused here and not after the lock, the placeholder, and the
       secrets were written into it.
     - a folder that is a link or junction (`lstat`) is refused, for `straw-boss/` and for a secondary slot's `servers/` and
-      `servers/<hash>/`, before any of this: `icacls` without `/L` would act on its target, and the files would land there.
+      `servers/<hash>/`, before any of this and again after the icacls calls, before the DACL is read: `icacls` without `/L` would act on its target, and the files would land there.
     A secondary slot's `servers/<hash>/` is made after the state folder is protected and inherits it. Nothing is written into an
     unprotected folder: a requester whose calls fail stops with `acl` (exit 3, in the JSON's `startError`, not written to a file), and a
-    server whose calls fail exits 3 and writes nothing. The native calls are bounded by the time the call has left (`up --timeout`),
-    at most 15 s each. The PowerShell step that follows stays as it is: it resets what is below the folder and reads every SDDL back.
+    server whose calls fail exits 3 and writes nothing. The native calls share the time the call has left (`up --timeout`): each gets
+    what is left of it (at least 100 ms) and at most 15 s. A failed call is told by the last non-empty line of its stderr and its exit
+    code, never by the message of Node's error, which begins with the whole command line (the same for the ACL PowerShell and the
+    WMI start). The PowerShell step that follows stays as it is: it resets what is below the folder and reads every SDDL back.
     The owner is not read back (the DACL file has none): `/setowner` succeeding is the check.
   - **System programs by absolute path.** A bare program name is looked for in the current folder before `PATH` on Windows
     (nodejs/node#46264), and a pi session's folder is a project. `powershell.exe`, `whoami.exe`, `icacls.exe`, `cmd.exe`, and `clip.exe`
-    are called from `%SystemRoot%\System32` by absolute path (`%SystemRoot%` from the environment, `C:\Windows` only when it is unset) and
+    are called from `%SystemRoot%\System32` by absolute path (`%SystemRoot%` from the environment when it is a drive-letter absolute path, else `windir` likewise, else `C:\Windows`: a relative value would put the program and its working folder in the project) and
     run with that folder as their working directory, in the start-time reader, the ACL call, the folder's native calls, the launch,
     the hidden-folder reader, the browser opener, and the clipboard; the ACL script names `icacls.exe` by `[Environment]::SystemDirectory`.
+    - **The reaper plugin** (`herdr-reaper/`, macOS and Linux) finds `herdr`, `git`, and `lsof` the same way, through its own copy of
+      `exe.mjs` (the plugin may be installed from its folder alone; a test keeps the copy byte for byte equal), and a herdr that is not found
+      is a failed sweep in its log.
     - **Every other program is found by a PATH search that never looks in the current folder** (`src/exe.mjs`): `herdr` (or
       `HERDR_BIN_PATH`, which must then be absolute), `git`, `tailscale`, `ps`, `sh`, and the opener and clipboard commands. Empty, `.`,
       and relative PATH entries are skipped (an empty entry means the current folder on POSIX), on Windows only `.com` and `.exe` of PATHEXT are
@@ -330,7 +336,9 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
     CREATE_BREAKAWAY_FROM_JOB`, the values its list documents; `CREATE_NO_WINDOW` is not in that list, so the window is hidden with
     `ShowWindow = 0` and the process has no console (`DETACHED_PROCESS`). A job that does not allow breakaway fails the creation, so the
     script makes the same call once more without that flag, in the same PowerShell start, and the answer says whether the process is
-    outside the job (`outsideJob` in the `breakaway` phase). The command line and folder go in the PowerShell's environment, never in
+    outside the job (`outsideJob` in the `breakaway` phase), and the second try has a command line of its own, `--detach wmi-in-job`,
+    so that server records it (`detach: "wmi-in-job"`) and `up`, `status`, `boss_server status`, and `/boss server` warn that it stays
+    in the WMI provider host's job. The command line and folder go in the PowerShell's environment, never in
     its script, and so does the server's environment: `Win32_ProcessStartup.EnvironmentVariables` is set from the PowerShell's own
     environment (the starter's, minus its identity variables, plus `SB_LAUNCH_CMD` and `SB_LAUNCH_CWD`, which are not passed on, and
     minus `PSModulePath`, which PowerShell sets itself, and the per-drive `=C:` entries). That property replaces the default block, so the
@@ -348,7 +356,8 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
       starter's job … so it ends with the pane or ssh session that started it"), for as long as that server runs. `breakaway-failed` is
       also in the log.
     - **A PowerShell that does not answer in time is a failed start with no fallback**: WMI may already have created the server, and a
-      second one would race it. The start goes on waiting for a `hello` until its time is out, and its error names the WMI start.
+      second one would race it. The start goes on waiting for a `hello` until its time is out, and its error names the WMI start (the
+      requester waits a moment for the word of a PowerShell that timed out with the end of its own wait, so the sentence is there).
 - The process gets a constructed environment: the session's environment minus `PI_INTERCOM_SESSION_ID`, `PI_INTERCOM_STABLE_ID`,
   `PI_SUBAGENT_*`, `STRAW_BOSS_ROLE`, and `HERDR_PANE_ID`/`HERDR_TAB_ID`/`HERDR_WORKSPACE_ID`. `PI_INTERCOM_SCOPE_ID`,
   `PI_INTERCOM_TRANSPORT`, and `PI_INTERCOM_TCP` stay, so the server registers in the same broker scope as the sessions; it records them
@@ -377,8 +386,9 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
     record, with the secret, after the ACL and when it listens. A shell sees this as `state: "restarting"` with `restarting.reason`
     `"starting"`; there is no fifth state.
   - **Another server's record is not touched without proof.** The server's own placeholder and full record are not written over the record
-    of another process when that process is positively a server: its start time is known and is the one the record names, and the record
-    changed since the server's first look (a server took it meanwhile), or its `hello` answers. A pid that merely runs is not proof: a
+    of another process when that process is positively a server: its start time is known and is the one the record names (a live server
+    whose `hello` was slow keeps its record), or the record changed since the server's first look (a server took it meanwhile) and its
+    process runs, or its `hello` answers. A pid that merely runs is not proof: a
     crashed server's pid is reused by an unrelated process, and on Windows the start time cannot be told until a background read is in, so
     a record of a running pid whose socket nobody answers at is a dead server's, and the new server takes the record. A server that finds
     a live one after it listens closes its endpoint and ends with `start` (exit 1), writing nothing on the other's record (neither its
