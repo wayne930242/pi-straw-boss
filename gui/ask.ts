@@ -88,9 +88,11 @@ export function mountAsk(root: HTMLElement, post: AnswerPost, remote = location.
 		const opts = offered(a).map((c) => option("radio", visible(c.label), [c.note && visible(c.note)], () => ((chosen = c.i), opts.forEach((o, k) => o.setAttribute("aria-checked", String(offered(a)[k]!.i === c.i))), draw()), c.i + 1)); // the terminal's numbers
 		const copy = a.select?.copy !== undefined && h("button", { type: "button", class: "cmp-link" }, m.copy_command());
 		if (copy) (copy.disabled = !navigator.clipboard), (copy.onclick = () => void navigator.clipboard.writeText(a.select!.copy!).then(() => say(x.note, "ok", m.copied()), () => say(x.note, "error", m.clipboard_refused())));
+		const usable = opts.filter((_, k) => !(remote && offered(a)[k]!.hereOnly)); // a choice only this computer may give is shown on a paired device, disabled and out of `controls`, which draw() enables, but in the key group so the numbers keep their places (control.ts refuses it as well)
+		opts.forEach((o) => !usable.includes(o) && (o.disabled = true));
 		x.pick = () => (chosen === undefined ? undefined : { choice: chosen });
 		x.first = wire(x.el, [{ opts, multiple: false, answered: () => chosen !== undefined }], () => x.send);
-		x.controls = opts;
+		x.controls = usable;
 		return [h("pre", { class: "ask-title" }, visible(a.select!.title)), h("div", { class: "ask-opts", role: "radiogroup", "aria-label": m.choices() }, ...opts), h("div", { class: "ask-acts" }, x.send!, copy)];
 	}
 	/** A questionnaire: per question its options (one, or several), its own words, and a note; it goes when every question has an answer. */

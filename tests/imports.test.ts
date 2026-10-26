@@ -75,8 +75,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased (comfort) to 343: net.ts types what a unit did lately (since, ticks, todo) and the net's events, and runs each reading through the activity tracker.
 	// 0.42.4 to 351: an installed app's launch arrives from another site without the SameSite=Strict cookie, so a page load from outside reloads itself once (gui.ts).
 	// Unreleased to 355: the server reads the net while no page listens too (gui.ts: the idle reading), for the timeline.
-	// Unreleased (project trust) to 359: the snapshot's `trust` (net.ts: the type, the asks read with the world, the field), and the server's trust option (gui.ts: the answer route, the directory watch, its stop).
-	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 359, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
+	// Unreleased (project trust) to 361 (on top of Straw Link's summary and channel): the snapshot's `trust` (net.ts: the type, the asks read with the world, the field), and the server's trust option (gui.ts: the answer route, the directory watch, its stop).
+	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 361, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
 	// Input (the spec's figure), remote access over Tailscale, its terminal pairing panel (QR, c copies, o opens), and the QR encoder each have their own.
 	// What a waiting session waits on (0.5.0, read for display only; answering is deferred) has its own as well.
 	// 0.5.1 raised remote.ts from 165 to 185 (a recorded server counts as running only if its process started when the entry says: a reused PID
@@ -183,6 +183,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// membership.ts 115 to 120 (a main records itself, and a restored one does not open a second tower), tower.ts 51 to 54 (records and forgets), session.ts 171 to 178 (the record read at the start, a resumed main promoting, closing dropping it), and sidecar.ts 347 to 348.
 	// Unreleased (merge of Straw Link step 3 and the Herdr restore): state.ts 115 to 116, the link dependency beside restoreMs; then 116 to 118 for the remote origin and the merge of step 4.
 	// Unreleased (restore hardening): roles.ts 63 to 107 (the terminal and workspace a record must match, one main record a tab and the lookup of it, a sweep that cannot fail the write) and guard.ts 83 to 103 (the wait for the main a restore brings back), and session.ts 178 to 189 (the record read before joining, a stale main's record dropped, the restored flag reset when the start ends).
+	// Unreleased: host.ts 164 to 170 for the page's channel to the link holder. tools.ts to 126 for link_request (its parameters and the call into the link module). control.ts 199 to 222 for the page's Straw Link calls (link/<name> to the holder, refused to a paired device unless it only reads).
 	// Unreleased (restored opener): roles.ts 109 to 121 and session.ts 194 to 203, the marker of a main a tower opened kept in its role record and written back when a Herdr restore gives the main its role (the tower that opened it closes it again).
 	// Unreleased (Windows hidden folders): spawn.ts 227 to 239 for the attribute reader the picker asks (listing, pickable, makeDir, the request wrapper), and hidden.ts (61, new: the cmd.exe reader, its cache, and the walk down a path).
 	// Unreleased (Windows short names): spawn.ts 239 to 245, the path as given is read from home as the caller spelled it as well as from the real root (an 8.3 short name is rewritten by realpath).
@@ -190,7 +191,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased (project trust, docs/specs/2026-10-26-project-trust.md): the trust relay has its own directory, src/trust/ (found.ts, files.ts, ask.ts, serve.ts, wait.ts, types.ts), with figures below. The existing modules gained the few lines that reach it:
 	// control.ts 199 to 201 (the trust/answer route), spawn.ts 245 to 247 (the join wait past a trust question, the opening for a pane), stash.ts 284 to 286 and towertab.ts 65 to 66 and opener.ts 93 to 96 (the same wait), stashing.ts 62 to 63, tools.ts 109 to 110 and reach.ts 189 to 190 (the trust directory handed on),
 	// deploy.ts 63 to 98 (the `trust` step and the question in the progress, the opening of a pane), host.ts 164 to 169 (the trust service and the openings it shares with the spawn), handover.ts (`trust: 1` in gui.json, no new line), index.ts 66 to 68 (the relay registered before the subagent return).
-	for (const [name, max] of [["commands.ts", 32], ["control.ts", 201], ["stash.ts", 286], ["stashing.ts", 63], ["closer.ts", 87], ["upload.ts", 50], ["spawn.ts", 247], ["hidden.ts", 61], ["deploy.ts", 98], ["remote.ts", 227], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 143], ["bridge.ts", 275], ["owners.ts", 148], ["dialogs.ts", 243], ["seal.ts", 56], ["monitors.ts", 75], ["activity.ts", 47], ["todo.ts", 29], ["order.ts", 97], ["mirror.ts", 135], ["probe.ts", 40], ["keys.ts", 103], ["documents.ts", 80], ["docs.ts", 150], ["orphan.ts", 115], ["opener.ts", 96], ["handover.ts", 268], ["towertab.ts", 66], ["state.ts", 118], ["roles.ts", 121], ["briefing.ts", 33], ["reach.ts", 190], ["election.ts", 24], ["guard.ts", 110], ["presence.ts", 93], ["membership.ts", 131], ["tools.ts", 110], ["tower.ts", 54], ["closing.ts", 29], ["host.ts", 169], ["boss.ts", 41], ["session.ts", 203], ["digest.ts", 45], ["closemain.ts", 91], ["headwatch.ts", 21], ["header.ts", 47], ["intercept.ts", 175], ["endpoint.ts", 24], ["startof.ts", 99]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
+	// Straw Link GUI follow-up: control.ts 222 to 223 (a paired device's answer to a `hereOnly` choice is refused 403 local_only) and owners.ts 151 to 152 (`Choice.hereOnly` passes through selectOf).
+	for (const [name, max] of [["commands.ts", 32], ["control.ts", 225], ["stash.ts", 286], ["stashing.ts", 63], ["closer.ts", 87], ["upload.ts", 50], ["spawn.ts", 247], ["hidden.ts", 61], ["deploy.ts", 98], ["remote.ts", 227], ["pairing.ts", 60], ["qr.ts", 140], ["ask.ts", 143], ["bridge.ts", 275], ["owners.ts", 152], ["dialogs.ts", 243], ["seal.ts", 56], ["monitors.ts", 75], ["activity.ts", 47], ["todo.ts", 29], ["order.ts", 97], ["mirror.ts", 135], ["probe.ts", 40], ["keys.ts", 103], ["documents.ts", 80], ["docs.ts", 150], ["orphan.ts", 115], ["opener.ts", 96], ["handover.ts", 268], ["towertab.ts", 66], ["state.ts", 118], ["roles.ts", 121], ["briefing.ts", 33], ["reach.ts", 190], ["election.ts", 24], ["guard.ts", 110], ["presence.ts", 93], ["membership.ts", 131], ["tools.ts", 127], ["tower.ts", 54], ["closing.ts", 29], ["host.ts", 175], ["boss.ts", 41], ["session.ts", 203], ["digest.ts", 45], ["closemain.ts", 91], ["headwatch.ts", 21], ["header.ts", 47], ["intercept.ts", 175], ["endpoint.ts", 24], ["startof.ts", 99]] as const) assert.ok(count(`src/${name}`) <= max, `src/${name} has ${count(`src/${name}`)} lines`);
 	// 0.19.0 to 258 for the todo list: rpiv-todo's snapshots marked as the index reads them, and the newest one read for a reset or a change that adds one.
 	// Unreleased (net sidecar): composer.ts 191 to 192 and tokens.ts 23 to 24 for the agent badge and the composer's notice for a unit that is not a pi session.
 	// Unreleased (net sidecar): src/agent/ holds the net sidecar of a Claude Code or Codex session (docs/specs/2026-10-23-claude-codex-net): kit.ts (the modules' two pi dependencies over a raw
@@ -348,7 +350,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	assert.ok(count("gui/swipe.ts") <= 40, `gui/swipe.ts has ${count("gui/swipe.ts")} lines`);
 	// Unreleased to 167: a finished subagent's card swiped to the right is dismissed (the card's drag, its release, and quit.ts's dismiss).
 	// Unreleased to 172: the drawer's way back to the map and its Dismiss finished button.
-	assert.ok(count("gui/drawer.ts") <= 172, `gui/drawer.ts has ${count("gui/drawer.ts")} lines`);
+	// Unreleased to 194: the tower as a row of two buttons (icon, +), Quit on an idle main, and the way back to the map in the drawer's foot.
+	assert.ok(count("gui/drawer.ts") <= 194, `gui/drawer.ts has ${count("gui/drawer.ts")} lines`);
 	// Unreleased (comfort): the timeline under the stage (gui/timeline.ts: a mark per event of the net's last 30 minutes, placed by its time, named on hover, a link to its unit)
 	// and the map's overview in a corner (gui/minimap.ts: shown while the map runs past the window, its frame moved on a scroll) have a figure each.
 	assert.ok(count("gui/timeline.ts") <= 42, `gui/timeline.ts has ${count("gui/timeline.ts")} lines`);
@@ -386,8 +389,9 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased to 888 for stash and pop on the map (quit.ts: aimStash, showStashed and its Pop buttons, Stash and Pop in the click handler; render.ts and main.ts wire them, and hang the Stashed list under its button).
 	// Unreleased (net sidecar) to 891: render.ts holds the agent labels and the badge on the card.
 	// Unreleased (comfort) to 901: render.ts packs the bases like masonry (a ResizeObserver spanning each card's rows) and publishes the header's height (--hud) for what sits under it; main.ts names the view on the stage.
+	// Unreleased to 1389 (1385 for Straw Link, 4 for the session view's Quit): Straw Link's page code (link.ts: the team settings tile; linkbar.ts: the header's notices and the forwarded confirm; linkmodel.ts: their words and marks; render.ts: the teammates' bases).
 	// Unreleased to 906: quit.ts aimSession, the Quit in a unit's comms header (leave exported for its test).
-	assert.ok(page <= 906, `the page's TypeScript has ${page} lines`);
+	assert.ok(page <= 1389, `the page's TypeScript has ${page} lines`);
 });
 
 test("the built page is small, self-contained (no remote URLs, fonts, or imports), and carries no demo fixture", { skip: !existsSync(join(root, "dist/gui/index.html")) && "run npm run gui:build first" }, () => {
@@ -451,9 +455,10 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 47.35 KB / 17.31 KB: the comms' Back steps back through the page's own history (router.ts depthOf, data-back).
 	// Unreleased to 47.4 KB / 17.33 KB: quit.ts's dismiss shared with the drawer's swipe.
 	// Unreleased to 47.45 KB / 17.36 KB: Notifier.chime, the unit-ready sound of the deploy panel (the panel and its messages are in the opening tile's lazy chunk).
+	// Unreleased to 53.15 KB / 19.05 KB (Straw Link 53 KB, the session view's Quit the rest): Straw Link's part of the map (linkbar.ts: the header's notices and the forwarded confirm; linkmodel.ts: their words, the invite's countdown, an ally's mark; render.ts: the teammates' bases) and its messages in both languages. The team settings tile itself is a lazy chunk.
 	// Unreleased to 47.65 KB / 17.45 KB: the session view's Quit (quit.ts aimSession, the map's own Quit aimed at the unit in view); chat.ts 275 to 277 and session.ts 121 to 122 lines for the role label on a message and the Quit.
-	// Unreleased (project trust) to 48.15 KB / 17.7 KB gzipped: a trust question as an alert (alerts.ts), its reminder and its place in the HUD and the tab badge (notify.ts, main.ts), with the messages the map uses in both languages.
-	assert.ok(size(entry).length <= 48_150 && gz(entry) <= 17_700, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// Unreleased (project trust) to 53.65 KB / 19.3 KB gzipped: a trust question as an alert (alerts.ts), its reminder and its place in the HUD and the tab badge (notify.ts, main.ts), with the messages the map uses in both languages.
+	assert.ok(size(entry).length <= 53_650 && gz(entry) <= 19_300, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).
@@ -500,7 +505,12 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 107.7 KB / 44.4 KB gzipped: the deploy panel (gui/deploy.ts: steps, bar, clock, finish, failure), its demo server, and its twelve messages in both languages.
 	// Unreleased to 113.6 KB / 46.6 KB gzipped: the deploy panel measures silence, and closes with its tile; the picker lands on a column edge.
 	// Unreleased (project trust) to 118.9 KB / 49.3 KB gzipped: the trust panel (gui/trust.ts, its own chunk loaded with the first dialog or deploy), the dialog's and the deploy step's use of it, and sixteen messages in both languages.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 118_900 && total(chunks, gz) <= 49_300, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// Unreleased to 135.4 KB / 55.15 KB gzipped: the team settings tile (gui/link.ts, its own lazy chunk: forms, roster, invite with its QR, the safety words, the camera) and its messages in both languages.
+	// Unreleased to 135.95 KB / 55.3 KB gzipped: the leave confirm for an only admin and the page's label and share prefill (gui/link.ts), the session view's Quit.
+	// Unreleased to 136.1 KB / 55.4 KB gzipped: a choice only this computer may give (`hereOnly`) is shown disabled on a paired device (gui/ask.ts).
+	// Unreleased to 137.1 KB / 55.7 KB gzipped: the drawer's tower row (icon and +), Quit on an idle main, and the map link in its foot (gui/drawer.ts).
+	// With project trust: the panel chunk and its messages add 5.3 KB / 2.7 KB gzipped to the figures above (142.45 KB / 58.45 KB gzipped in all).
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 142_450 && total(chunks, gz) <= 58_450, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
@@ -545,8 +555,10 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 64.45 KB / 14.3 KB: the drawer's map link and Dismiss finished row.
 	// Unreleased to 71 KB / 15.45 KB: the folder picker (toolbar and breadcrumb, shortcuts, the columns, the one column of a narrow window); and
 	// Unreleased to 68 KB / 14.95 KB: the deploy panel (bar, step list, running pulse, finish and failure tints, its keyframes).
+	// Unreleased to 75.1 KB / 16.35 KB gzipped (Straw Link 75 KB / 16.3 KB, the session view's Quit the rest): Straw Link (the teammates' bases, the notices, the team settings tile with its roster, invite, and join forms).
 	// Unreleased to 71.2 KB / 15.55 KB: the session view's Quit in the comms header (desktop and phone grid).
+	// Unreleased to 76.2 KB / 16.5 KB: the phone drawer's tower row, its Quit, the map link's foot, and no selection in the drawer.
 	// Unreleased to 71.75 KB / 15.65 KB gzipped: the trust question (its groups, folded items, and the deploy step's inline copy).
 	// Unreleased to 72 KB / 15.7 KB gzipped: the trust question names its folder whole, in the panel and in the deploy step.
-	assert.ok(total(css, (n) => size(n).length) <= 72_000 && total(css, gz) <= 15_700, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	assert.ok(total(css, (n) => size(n).length) <= 77_000 && total(css, gz) <= 16_650, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });

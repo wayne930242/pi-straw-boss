@@ -26,7 +26,7 @@ export const inviteHash = (secret: Uint8Array): Buffer => sha256(secret);
 /** `strawlink1:` + base64url of `enc(relay URL, team, secret, inviter id, sha256(inviter key record), device id or empty)`. */
 export const encodeInvite = (i: Invite): string => PREFIX + enc(str(i.relay), i.team, i.secret, str(i.inviterId), i.inviterKeyHash, str(i.forDevice)).toString("base64url");
 
-const relayOk = (url: string) => {
+export const relayOk = (url: string) => {
 	try {
 		const u = new URL(url);
 		return url.length <= 2048 && (u.protocol === "https:" || (u.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(u.hostname)));
@@ -34,6 +34,15 @@ const relayOk = (url: string) => {
 		return false;
 	}
 };
+/** The relay URL as an origin, or undefined when it is not one a team can use (https, or http on this computer; no credentials, path, query, or fragment). */
+export function originOf(raw: string): string | undefined {
+	try {
+		const url = new URL(raw.trim());
+		return relayOk(raw.trim()) && url.pathname === "/" && !url.search && !url.hash && !url.username && !url.password ? url.origin : undefined;
+	} catch {
+		return undefined;
+	}
+}
 /** An invite from its text, or null: wrong prefix, base64url that is not canonical, a malformed structure, or a field out of shape. */
 export function decodeInvite(text: string): Invite | null {
 	const t = text.trim();
@@ -43,7 +52,7 @@ export function decodeInvite(text: string): Invite | null {
 	try {
 		const [relay, team, secret, inviterId, hash, forDevice] = dec(raw, 6) as [Buffer, Buffer, Buffer, Buffer, Buffer, Buffer];
 		const i: Invite = { relay: readStr(relay), team: exact(team, 16, "a team id"), secret: exact(secret, 32, "a secret"), inviterId: readStr(inviterId), inviterKeyHash: exact(hash, 32, "a hash"), forDevice: readStr(forDevice) };
-		return relayOk(i.relay) && idOk(i.inviterId) && (i.forDevice === "" || idOk(i.forDevice)) ? i : null;
+		return originOf(i.relay) === i.relay && idOk(i.inviterId) && (i.forDevice === "" || idOk(i.forDevice)) ? i : null;
 	} catch (error) {
 		if (error instanceof CanonError) return null;
 		throw error;

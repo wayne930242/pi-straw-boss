@@ -8,6 +8,7 @@ import { type Alert, alertsOf, arrivals, unitOf } from "./alerts.ts";
 import type { Drawer } from "./drawer.ts";
 import type { mountPanels, Tile } from "./layer.ts";
 import { MODAL, mountHotkeys } from "./hotkeys.ts";
+import { mountLinkBar } from "./linkbar.ts";
 import { mountNotify } from "./notify.ts";
 import { mountQuit, showDismissAll, showStashed } from "./quit.ts";
 import { hang, mountPage } from "./render.ts";
@@ -72,6 +73,7 @@ let heard: Map<string, Alert> | undefined;
 function show(net: Net) {
 	latest = pending = net;
 	badge(net);
+	linkBar.net(net.link);
 	const now = alertsOf(net, Date.now());
 	if (heard) notify.signal(arrivals(heard, now)); // what was already waiting when the page opened is no news
 	heard = now;
@@ -173,6 +175,8 @@ document.addEventListener("click", (event) => {
 	withPanels((p) => p.stack.show(alert));
 }, true);
 const router = createRouter((route) => navigate(route));
+const openTeams = () => void import("./link.ts").then(({ linkTile }) => openTile(linkTile(), true));
+const linkBar = mountLinkBar(openTeams, (count) => count && notify.chime());
 const notify = mountNotify((a) => (a.trust ? withPanels((p) => p.stack.show(a)) : router.go({ view: "session", ws: a.ws, key: unitOf(a) })));
 const stream = createStream({
 	open,
@@ -199,6 +203,7 @@ addEventListener("keydown", (event) => {
 	if (!panels?.stack.close() && current.view !== "map") router.go(upOf(current));
 });
 mountHotkeys((hotkey) => panels?.hotkey(hotkey) ?? false); // Space opens the next alert, F enlarges the top dialog; nothing before the overlay layer has loaded
+el("teams").addEventListener("click", openTeams);
 el("pair").hidden = location.hostname !== "127.0.0.1"; // pairing is this computer's: a paired device comes in by its tailnet name (remote.ts)
 el("pair").addEventListener("click", () => void import("./pair.ts").then(({ pairTile }) => openTile(pairTile(), true)));
 // The phone's quick-switch drawer (drawer.ts, swipe.ts): its own chunk, fetched where there is a touch screen or a narrow window, now or once the window narrows.

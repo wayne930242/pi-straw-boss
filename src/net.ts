@@ -1,4 +1,5 @@
 import type { Stashed } from "./stash.ts";
+import type { LinkSummary } from "./link/holder.ts";
 import { homedir } from "node:os";
 import { basename, join, sep } from "node:path";
 import { commanding, type Mark, markOf, type Row, sessionMark, subagents } from "./dashboard.ts";
@@ -25,7 +26,8 @@ export interface Tab { id: string; label: string; units: Unit[] }
 export interface Outpost extends Lately { id: string; label: string; mark: Mark }
 export interface Base { id: string; label: string; mark: Mark; head: boolean; tower: ({ name: string; mark: Mark; key: string; control: boolean; pending?: Pending; queued?: Queued[]; monitors?: Monitor[]; subs: Unit[] } & Shelf & Lately) | null; tabs: Tab[]; outposts: Outpost[]; outside: Unit[] }
 /** `stashed`: the bases put away with /boss stash, waiting to be popped (stash.ts). `trust`: the folders whose agents wait for a trust decision (trust/serve.ts). */
-export interface Net { bases: Base[]; stashed?: Stashed[]; trust?: TrustAsk[]; events?: NetEvent[] }
+/** `link`: Straw Link's teammates' bases, the notices it raises, and the confirms waiting for the boss; absent when Straw Link is not set up or says nothing. */
+export interface Net { bases: Base[]; stashed?: Stashed[]; trust?: TrustAsk[]; events?: NetEvent[]; link?: LinkSummary }
 /** What the server may read for a key: the registry entry is the allow list, and paths never come from the browser. */
 export interface Ref { key: string; base: string; name: string; role: string; file?: string; pane?: string }
 export interface Found extends Ref { live: boolean; successor?: string }
