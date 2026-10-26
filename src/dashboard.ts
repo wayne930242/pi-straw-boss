@@ -58,7 +58,6 @@ export function render({ title, mark, head, rows, gui }: Snapshot, frame: number
 	return [paint("border", "╭─") + name + paint("border", dashes) + tag + paint("border", "─╮"), ...body.map(frameLine), paint("border", `╰${"─".repeat(total - 2)}╯`)].map((l) => truncateToWidth(l, width));
 }
 
-
 /**
  * One reading of the world as rows: this tower's own net in detail (each tab's joined sessions with their subagents, then its
  * sub workspaces), and one summary line for every other tower. Other workspaces' sessions, and sessions that did not join, are not listed.

@@ -3,7 +3,7 @@ import { basename, dirname, join } from "node:path";
 import type { Pane, Session } from "./herdr.ts";
 
 // The tower dashboard's data, without its screen: the marks, the rows, and the subagents a session launched. It imports no pi-tui,
-// typebox, or pi-coding-agent (tests/imports.test.ts walks the graph), so the server can load it where pi is not on disk.
+// typebox, or pi-coding-agent (tests/pure-imports.test.ts walks the graph), so the server can load it where pi is not on disk.
 // Data sources, all read-only:
 //  - pi-herdr-agents subagents: a child's activity file lives at <sessions dir>/artifacts/<parent session id>/
 //    subagent-activity/<child id>.json, and its pane's session file is named `<timestamp>_<child id>-<8 hex>-<8 hex>-<4 hex>.jsonl` (pi-herdr-agents makes it so).

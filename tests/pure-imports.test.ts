@@ -11,17 +11,43 @@ const BANNED = ["@earendil-works/pi-tui", "typebox", "@earendil-works/pi-coding-
 // are not on disk where the server runs. What the server loads is walked from its data modules: a value import of the three anywhere in
 // the graph fails here; a type import is erased, so it stays fine.
 
-/** The module specifiers a file loads at run time: every import and re-export that is not `import type`/`export type`, nor a list of only inline `type` specifiers, and every dynamic `import("…")`. */
+/** `source` without its comments; string and template literals are kept whole, so a `/*` or `//` inside one stays code. */
+function stripComments(source: string): string {
+	let out = "", quote = "";
+	for (let i = 0; i < source.length; i++) {
+		const c = source[i]!, next = source[i + 1];
+		if (quote) {
+			out += c;
+			if (c === "\\") out += source[++i] ?? "";
+			else if (c === quote) quote = "";
+		} else if (c === "/" && next === "/") {
+			while (i < source.length && source[i] !== "\n") i++;
+			out += "\n";
+		} else if (c === "/" && next === "*") {
+			const end = source.indexOf("*/", i + 2);
+			i = end < 0 ? source.length : end + 1;
+			out += " ";
+		} else {
+			if (c === '"' || c === "'" || c === "`") quote = c;
+			out += c;
+		}
+	}
+	return out;
+}
+
+/**
+ * The module specifiers a file loads at run time: every import and re-export whose clause does not begin with `type`, and every dynamic
+ * `import("…")`. `import { type A } from "x"` still loads "x": tsconfig's `verbatimModuleSyntax` keeps it as `import {} from "x"`, and
+ * Node's type stripping keeps it too. A statement starts a line, and a clause holds no `=`, so `export type X = {…}` is never read as one.
+ */
 function valueImports(source: string): string[] {
-	const code = source.replace(/\/\*[\s\S]*?\*\/|(^|[^:"'`\\])\/\/[^\n]*/g, "$1");
+	const code = stripComments(source);
 	const found: string[] = [];
-	for (const [, clause = "", specifier = ""] of code.matchAll(/(?:^|[\n;])\s*(?:import|export)\b([^"'`;]*?)\bfrom\s*["']([^"']+)["']/g)) {
+	for (const [, clause = "", specifier = ""] of code.matchAll(/^[ \t]*(?:import|export)\b([^"'`;=]*?)\bfrom\s*["']([^"']+)["']/gm)) {
 		if (/^\s*type\b/.test(clause)) continue;
-		const named = /^\s*\{([^}]*)\}\s*$/.exec(clause)?.[1];
-		if (named?.trim() && named.split(",").every((part) => !part.trim() || /^type\s/.test(part.trim()))) continue;
 		found.push(specifier);
 	}
-	for (const [, specifier = ""] of code.matchAll(/(?:^|[\n;])\s*import\s*["']([^"']+)["']/g)) found.push(specifier);
+	for (const [, specifier = ""] of code.matchAll(/^[ \t]*import\s*["']([^"']+)["']/gm)) found.push(specifier);
 	for (const [, specifier = ""] of code.matchAll(/\bimport\(\s*["']([^"']+)["']\s*\)/g)) found.push(specifier);
 	return found;
 }
@@ -59,8 +85,15 @@ test("the value-import reader tells value imports from type imports", () => {
 		"import {",
 		"\tp,",
 		'} from "./p.ts";',
+		'const q = "/* not a comment";',
+		'import { r } from "./r.ts";',
+		"export type S = {",
+		"\ts: string;",
+		"}",
+		'import { t } from "./t.ts";',
 	].join("\n");
-	assert.deepEqual(valueImports(source), ["./a.ts", "./e.ts", "./g.ts", "./i.ts", "./j.ts", "./l.ts", "./p.ts", "./side.ts", "./m.ts"]);
+	// c.ts loads although every name is a type: verbatimModuleSyntax keeps `import {} from "./c.ts"`.
+	assert.deepEqual(valueImports(source), ["./a.ts", "./c.ts", "./e.ts", "./g.ts", "./i.ts", "./j.ts", "./l.ts", "./p.ts", "./r.ts", "./t.ts", "./side.ts", "./m.ts"]);
 });
 
 test("the walk finds a banned package behind a chain of relative imports, and not behind a type import", () => {
