@@ -113,12 +113,14 @@ test("devices and pipes are refused: /dev/zero, /dev/null, /dev/stdin, a FIFO, a
 });
 
 test("per-process magic links the child cannot open are refused (Linux only)", { skip: !linux }, async () => {
+	// how many descriptors the child holds depends on the node build (Node 24 on CI has one at 17): one it lacks is unreadable, one it holds is
+	// a pipe, socket, or device and so special; either way refused, never absent
 	for (const t of ["/proc/self/fd/40", "/dev/fd/40", "/proc/self/fd/17", "/dev/fd/19"]) {
-		assert.equal((await settingsRefusal(folder((f) => symlinkSync(t, f))))?.why, "unreadable", t);
+		assert.ok(["unreadable", "special"].includes((await settingsRefusal(folder((f) => symlinkSync(t, f))))?.why ?? ""), t);
 		const d = join(scratch, `d${++n}`);
 		mkdirSync(d);
 		symlinkSync(t.replace(/\/fd\/\d+$/, "/fd/40"), join(d, ".pi"));
-		assert.equal((await settingsRefusal(d))?.why, "unreadable", `.pi -> ${t}`);
+		assert.ok(["unreadable", "special"].includes((await settingsRefusal(d))?.why ?? ""), `.pi -> ${t}`);
 	}
 });
 
