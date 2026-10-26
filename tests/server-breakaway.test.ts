@@ -300,3 +300,68 @@ setInterval(() => {}, 1000);
 		try { process.kill(-starter.pid!, "SIGKILL"); } catch { /* gone */ }
 	}
 });
+
+// --- one PowerShell start for the create and the ACL check (VM pass 3, P3) ---
+
+const TOKEN = "c".repeat(32);
+const withAcl = (over: Partial<SpawnSpec> = {}) => spec({ acl: { dir: dir, token: TOKEN }, ...over });
+
+test("with an ACL check to make, the command line carries the token, the call's environment carries the folder and the marker, and the server never sees them", () => {
+	const s = withAcl();
+	assert.ok(commandLine(s).endsWith(` --detach wmi --acl-token ${TOKEN}`));
+	assert.ok(commandLine(s, "wmi-in-job").endsWith(` --detach wmi-in-job --acl-token ${TOKEN}`));
+	assert.ok(!commandLine(spec()).includes("--acl-token"), "no token without a check");
+	const { options } = launchCommand(s, { SystemRoot: "C:\\Windows" });
+	assert.equal(options.env.SB_ACL_DIR, dir);
+	assert.equal(options.env.SB_ACL_MARKER, join(dir, `acl.${TOKEN}.json`));
+	assert.match(LAUNCH_SCRIPT, /\$k -notlike 'SB_ACL_\*'/, "the check's own variables are not passed on to the server");
+});
+
+test("the launch script makes the ACL check in the same PowerShell start: after the create, for the new pid, with the same steps the server's script runs, and leaves the marker whole (written beside, then moved)", () => {
+	const at = (needle: RegExp) => LAUNCH_SCRIPT.search(needle);
+	assert.ok(at(/\$wmi\.Create\(\$env:SB_LAUNCH_CMD, /) > 0);
+	assert.ok(at(/\$env:SB_ACL_PID = \[string\]\$r\.ProcessId/) > at(/\$wmi\.Create\(\$env:SB_LAUNCH_CMD, /), "the pid is the new one");
+	assert.ok(at(/Get-Acl -LiteralPath \$dir/) > at(/SB_ACL_PID = /));
+	assert.ok(at(/icacls\.exe/) > at(/SB_ACL_PID = /) && at(/\/reset/) > 0, "the same reset and read-back as the server's script");
+	assert.match(LAUNCH_SCRIPT, /if \(\$r\.ReturnValue -eq 0 -and \$env:SB_ACL_DIR\)/, "no check when nothing was created, or when no check was asked for");
+	assert.match(LAUNCH_SCRIPT, /\$m\['error'\] = \$aclError/, "a failure of the check is left in the marker, for the server to end with");
+	assert.match(LAUNCH_SCRIPT, /\[IO\.File\]::WriteAllText\(\$env:SB_ACL_MARKER \+ '\.tmp'/);
+	assert.match(LAUNCH_SCRIPT, /\[IO\.File\]::Move\(\$env:SB_ACL_MARKER \+ '\.tmp', \$env:SB_ACL_MARKER\)/);
+	assert.match(LAUNCH_SCRIPT, /\[regex\]::Replace\(\$mj, '\[\^\\x00-\\x7F\]'/, "sbr-F007: the marker is pure ASCII, \\uXXXX for the rest");
+	assert.match(LAUNCH_SCRIPT, /\[Console\]::OutputEncoding/);
+	assert.equal(LAUNCH_SCRIPT.match(/powershell/gi)?.length ?? 0, 0, "no second PowerShell");
+});
+
+test("the answer carries the server's start time and the milliseconds of the create and of the check; they are logged as a phase and the start time is remembered", () => {
+	const answer = parseLaunchOutput('{"rc":0,"pid":4321,"breakaway":true,"started":"2026-10-26T08:00:00.000Z","createMs":1500,"aclMs":2200}');
+	assert.deepEqual(answer, { pid: 4321, breakaway: true, started: "2026-10-26T08:00:00.000Z", createMs: 1500, aclMs: 2200 });
+	assert.deepEqual(parseLaunchOutput('{"rc":0,"pid":4321,"started":"yesterday","createMs":"x"}'), { pid: 4321, breakaway: true }, "only a start time in the one form is kept");
+});
+
+test("a failed start leaves an error marker the waiting server reads (PowerShell failed, timed out, or WMI refused); a marker already there is left alone; release removes the marker", async () => {
+	for (const answer of [Object.assign(new Error("powershell.exe ENOENT"), { killed: false, signal: null }), '{"rc":21,"pid":0}', Object.assign(new Error("timeout"), { killed: true, signal: "SIGTERM" })]) {
+		rmSync(join(dir, `acl.${TOKEN}.json`), { force: true });
+		const ps = fakePowershell(answer);
+		const launched = spawnBreakaway(withAcl(), { exec: ps.exec, fallback: () => ({ pid: 5, exited: new Promise(() => {}) }) });
+		await launched.started!;
+		const text = readFileSync(join(dir, `acl.${TOKEN}.json`), "utf8");
+		assert.match(JSON.parse(text).error, /./, String(answer));
+		launched.release!();
+	}
+	const ps = fakePowershell('{"rc":21,"pid":0}');
+	writeFileSync(join(dir, `acl.${TOKEN}.json`), '{"pid":1}');
+	const launched = spawnBreakaway(withAcl(), { exec: ps.exec, fallback: () => ({ pid: 5, exited: new Promise(() => {}) }) });
+	await launched.started!;
+	assert.equal(readFileSync(join(dir, `acl.${TOKEN}.json`), "utf8"), '{"pid":1}', "an answer already there stands");
+	launched.release!();
+	assert.throws(() => readFileSync(join(dir, `acl.${TOKEN}.json`)), "release removes the marker");
+});
+
+test("the fallback to a plain spawn is not given a token: the server it starts makes its own check", async () => {
+	const ps = fakePowershell('{"rc":21,"pid":0}');
+	const plain: SpawnSpec[] = [];
+	const launched = spawnBreakaway(withAcl(), { exec: ps.exec, fallback: (s) => (plain.push(s), { pid: 9, exited: new Promise(() => {}) }) });
+	await launched.started!;
+	assert.ok(!plain[0]!.args.includes("--acl-token"), "the plain spawn's server must not wait for a marker nobody makes");
+	launched.release!();
+});

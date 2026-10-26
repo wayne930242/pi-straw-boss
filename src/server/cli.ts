@@ -5,6 +5,7 @@ import { newer } from "../semver.ts";
 import {
 	type Ctx, describe, ensure, guiUrl, herdrListens, isIdentity, detachWarning, lockFor, lockWaitFor, makeCtx, probe, restart, ServerError, serverEnv, stop, takeOver, type Wait, waitReady, within,
 } from "./client.ts";
+import { ACL_TOKEN } from "./acl.ts";
 import { logSize, readFrom, tailLog } from "./log.ts";
 import { clearStartError, clearStopped, fileOf, readRecord, readStartError, type ServerRecord, slotOf, type StartError } from "./record.ts";
 import type { ServerHandle, ServerOptions } from "./main.ts";
@@ -22,7 +23,7 @@ const USAGE = `usage: cli.mjs up [--timeout SECONDS] [--exact]
 export class UsageError extends Error {}
 const FLAGS: Record<string, { value: string[]; switch: string[] }> = {
 	up: { value: ["timeout"], switch: ["exact"] }, serve: { value: [], switch: [] }, stop: { value: [], switch: [] }, status: { value: [], switch: [] },
-	restart: { value: ["reason"], switch: ["downgrade"] }, logs: { value: ["lines"], switch: ["follow"] }, run: { value: ["by", "detach", "detach-reason"], switch: ["detached"] },
+	restart: { value: ["reason"], switch: ["downgrade"] }, logs: { value: ["lines"], switch: ["follow"] }, run: { value: ["by", "detach", "detach-reason", "acl-token"], switch: ["detached"] },
 };
 export interface Args { command: string; flags: Record<string, string | true> }
 export function parseArgs(argv: string[]): Args {
@@ -98,6 +99,10 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 		return 2;
 	}
 	const { command, flags } = args;
+	if (command === "run" && flags["acl-token"] !== undefined && !ACL_TOKEN.test(String(flags["acl-token"]))) {
+		err(`--acl-token is 32 hex digits\n${USAGE}\n`);
+		return 2;
+	}
 	if (command === "run" && flags.detach !== undefined && flags.detach !== "wmi" && flags.detach !== "wmi-in-job" && flags.detach !== "direct") {
 		err(`--detach is wmi, wmi-in-job, or direct\n${USAGE}\n`);
 		return 2;
@@ -264,7 +269,8 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 		scrubIdentity();
 		const via = flags.detach === "wmi" ? "wmi" as const : flags.detach === "wmi-in-job" ? "wmi-in-job" as const : flags.detach === "direct" ? "direct" as const : undefined;
 		const detach = via ? { via, ...(typeof flags["detach-reason"] === "string" ? { failure: flags["detach-reason"] } : {}) } : undefined;
-		const handle = await server({ slot, env: serverEnv(env), mode: "detached", by: ctx.by, version, ...(detach ? { detach } : {}) });
+		const aclToken = typeof flags["acl-token"] === "string" ? flags["acl-token"] : undefined;
+		const handle = await server({ slot, env: serverEnv(env), mode: "detached", by: ctx.by, version, ...(detach ? { detach } : {}), ...(aclToken ? { aclToken } : {}) });
 		return foreground(handle, () => {});
 	}
 	/** The server in this process: signals end it without marking a stop (a kill or a reboot is not a stop), and the exit code is its own. */

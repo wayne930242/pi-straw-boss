@@ -4,7 +4,7 @@ import { createHeadlessKit, type IntercomLike } from "../agent/kit.ts";
 import { herdrEvents, herdrWatch, type HerdrWatch } from "../server-watch.ts";
 import { alive as pidAlive } from "../remote.ts";
 import { rememberStart, startedLater, startOf as processStartOf } from "../startof.ts";
-import { AclError, applyAcl } from "./acl.ts";
+import { AclError, applyAcl, awaitAclMarker } from "./acl.ts";
 import { herdrListens, intercomOf, runsAs } from "./client.ts";
 import { type IntercomModule, loadIntercom, LoaderError } from "./intercom.ts";
 import { createLog } from "./log.ts";
@@ -46,6 +46,10 @@ export interface ServerOptions {
 	acl?: (dir: string, pid: number) => Promise<{ started?: string } | void>;
 	/** Makes the slot's folder ready before the first file is created in it (on Windows, protects the state folder); `prepareSlot` by default. */
 	prepare?: (slot: Slot, ms?: number) => void;
+	/** Windows: the token of the file where the process that started this server left the ACL check (`--acl-token`); with it the server waits for that check and reads it instead of making its own. */
+	aclToken?: string;
+	/** Waits for and verifies that check (`awaitAclMarker` by default). */
+	marker?: (dir: string, token: string, pid: number) => Promise<{ started?: string } | void>;
 	/** How the starter started this process (Windows): through WMI, or by a plain spawn after a failure; kept in the record, so `status` and `up` can say so. */
 	detach?: { via: Detach; failure?: string };
 	herdrUp?: () => Promise<boolean>;
@@ -101,7 +105,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	// `boot`: how long this process had run when it got here (its own start and the load of the server's code), which a cold start on Windows spends before any line is logged.
 	log.line("start", { pid, mode, version, by, herdr: slot.herdr, desk, ...(o.pid === undefined ? { boot: Math.round(process.uptime() * 1000) } : {}) });
 	/** One line per phase of the start: how long it took, and when it ended counted from the start of this server. */
-	const trace = (name: string, began: number) => log.line("phase", { name, ms: now() - began, at: now() - startedAt });
+	const trace = (name: string, began: number, facts: Record<string, string> = {}) => log.line("phase", { name, ms: now() - began, at: now() - startedAt, ...facts });
 	const timers: ReturnType<typeof setInterval>[] = [], stops: (() => void)[] = [];
 
 	/** The start cannot go on: told in start-error.json (which `up` and the session looks read) and in the record, and the process leaves with the code. */
@@ -176,11 +180,13 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	if (platform === "win32") {
 		const began = now();
 		try {
-			aclStarted = (await (o.acl ?? ((dir, who) => applyAcl(dir, undefined, undefined, who)))(slot.stateDir, pid))?.started;
+			// With a token the process that started this server made the check in its own PowerShell start (and read this process's start time there): it is waited for, and its SDDLs are checked here
+			// before the secret is written. Without one (`serve`, a plain spawn) this process makes the check itself.
+			aclStarted = (await (o.aclToken ? (o.marker ?? awaitAclMarker)(slot.stateDir, o.aclToken, pid) : (o.acl ?? ((dir, who) => applyAcl(dir, undefined, undefined, who)))(slot.stateDir, pid)))?.started;
 		} catch (error) {
 			return abort("acl", (error as Error).message, error instanceof AclError ? error.sddl : undefined);
 		}
-		trace("acl", began);
+		trace("acl", began, { via: o.aclToken ? "marker" : "own" });
 		if (aclStarted) rememberStart(pid, aclStarted);
 	}
 	// This process's start time came with the ACL call on Windows; elsewhere it is read at once. The server does not wait for it to listen: it is filled into the record when it is in.

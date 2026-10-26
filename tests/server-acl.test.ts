@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
-import { ACL_SCRIPT, aclCommand, AclError, aclProblems, applyAcl, type Exec, fileProblems, folderProblems, parseAclOutput, parseSddl, SYSTEM_SID } from "../src/server/acl.ts";
+import { ACL_SCRIPT, ACL_TOKEN, aclCommand, aclMarkerPath, AclError, aclProblems, applyAcl, asciiLine, awaitAclMarker, execFailure, type Exec, fileProblems, folderProblems, parseAclOutput, parseSddl, readMarker, SYSTEM_SID } from "../src/server/acl.ts";
 
 // docs/specs/2026-10-26-sb-backend.md, The control socket: on Windows the state directory gets an owner-and-SYSTEM ACL, set and checked by SID in one PowerShell start.
 // Windows is not run here: these pin the command and the SDDL reading.
@@ -192,4 +195,57 @@ test("applyAcl passes when the SDDL is right and fails the start, with the SDDL 
 	await assert.rejects(applyAcl("C:\\s", exec(null, answer({ dir: `O:${OWNER}G:DUD:${ACE(OWNER)}${ACE("SY")}` }))), (e: unknown) => e instanceof AclError && /not protected/.test(e.message) && Boolean(e.sddl?.includes(OWNER)));
 	await assert.rejects(applyAcl("C:\\s", exec(null, answer({ files: [{ path: "link\\team.key", sddl: `O:${OWNER}D:AI${ACE(OWNER, "ID")}${ACE("SY", "ID")}${ACE("WD", "ID")}` }] }))), /link\\team\.key: grants WD/);
 	assert.equal(SYSTEM_SID, "S-1-5-18");
+});
+
+// --- the check made by the process that started the server (one PowerShell start on a cold start) ---
+
+const marker = (over: Record<string, unknown> = {}) => JSON.stringify({ pid: 4321, sid: OWNER, started: "2026-10-26T08:00:00.000Z", dir: good, files: [{ path: "C:\\s\\server.json", sddl: `O:${OWNER}G:DUD:AI${ACE(OWNER, "ID")}${ACE("SY", "ID")}` }], ...over });
+const tmp = () => mkdtempSync(join(tmpdir(), "psb-marker-"));
+
+test("the marker path is in the state folder and named by the token; a token is 32 hex digits", () => {
+	assert.equal(aclMarkerPath(join("C:", "s"), "a".repeat(32)), join("C:", "s", `acl.${"a".repeat(32)}.json`));
+	assert.ok(ACL_TOKEN.test("0123456789abcdef0123456789abcdef"));
+	for (const bad of ["", "abc", "g".repeat(32), "A".repeat(32), "a".repeat(33), "../x" + "a".repeat(29)]) assert.ok(!ACL_TOKEN.test(bad), bad);
+});
+
+test("a marker is checked here, by the server, before it writes its secret: the same SDDL rules as its own check, for this pid only", () => {
+	assert.deepEqual(readMarker(marker(), "C:\\s", 4321), { sid: OWNER, started: "2026-10-26T08:00:00.000Z" });
+	assert.throws(() => readMarker(marker({ pid: 99 }), "C:\\s", 4321), /made for pid 99, not for this server \(pid 4321\)/);
+	assert.throws(() => readMarker(marker({ pid: undefined }), "C:\\s", 4321), /made for pid undefined/);
+	assert.throws(() => readMarker(marker({ dir: `O:${OWNER}G:DUD:AI${ACE("BU", "ID")}` }), "C:\\s", 4321), (e: unknown) => e instanceof AclError && /not owner and SYSTEM only/.test((e as Error).message) && /BU/.test((e as AclError).sddl ?? ""));
+	assert.throws(() => readMarker(marker({ files: [{ path: "C:\\s\\server.json", sddl: `O:${OWNER}G:DUD:AI${ACE("WD", "ID")}` }] }), "C:\\s", 4321), /server\.json.*WD|WD/);
+	assert.throws(() => readMarker("not json", "C:\\s", 4321), /cannot be read/);
+	assert.throws(() => readMarker(JSON.stringify({ pid: 4321, sid: "bad" }), "C:\\s", 4321), AclError);
+});
+
+test("an error marker (the starter could not make the check, or never finished it) is an AclError that says why, as printable ASCII, whatever pid it names", () => {
+	assert.throws(() => readMarker(JSON.stringify({ error: "Cannot create type. Only core types are supported." }), "C:\\s", 4321), (e: unknown) => e instanceof AclError && (e as Error).message === "could not set the ACL of C:\\s: Cannot create type. Only core types are supported.");
+	assert.throws(() => readMarker(JSON.stringify({ pid: 5, error: "\u5b58\u53d6 denied" }), "C:\\s", 4321), /: \? denied$/);
+});
+
+test("awaitAclMarker waits for the file, removes it, and checks it; one that does not come in time is an AclError", async () => {
+	const dir = tmp(), token = "b".repeat(32), file = aclMarkerPath(dir, token);
+	try {
+		let t = 0;
+		const slept: number[] = [];
+		const sleep = async (ms: number) => { slept.push(ms); t += ms; if (t >= 150) writeFileSync(file, marker()); };
+		assert.deepEqual(await awaitAclMarker(dir, token, 4321, { now: () => t, sleep, waitMs: 1000 }), { sid: OWNER, started: "2026-10-26T08:00:00.000Z" });
+		assert.ok(slept.length >= 3 && slept.every((ms) => ms === 50), "polls");
+		assert.equal(existsSync(file), false, "the marker is removed once it is read");
+		t = 0;
+		await assert.rejects(awaitAclMarker(dir, token, 4321, { now: () => t, sleep: async (ms) => void (t += ms), waitMs: 500 }), /did not arrive from the process that started this server within 1 s/);
+		writeFileSync(file, JSON.stringify({ error: "WMI said no" }));
+		await assert.rejects(awaitAclMarker(dir, token, 4321, { waitMs: 500 }), /WMI said no/);
+		assert.equal(existsSync(file), false, "an error marker is removed too");
+		await assert.rejects(awaitAclMarker(dir, "../../evil", 4321), /32 hex digits/);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("asciiLine keeps the last non-empty line as printable ASCII, at most 120 characters", () => {
+	assert.equal(asciiLine("first\r\n\r\n�s���Q�ڡC \r\n"), "?s?Q?C");
+	assert.equal(asciiLine(undefined), "");
+	assert.equal(asciiLine("x".repeat(500)).length, 120);
+	assert.equal(execFailure(Object.assign(new Error("Command failed: x"), { status: 5 }), "�s���Q�ڡC"), "?s?Q?C, exit code 5");
 });

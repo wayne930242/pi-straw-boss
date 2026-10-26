@@ -238,6 +238,18 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
       with exactly the owner and SYSTEM as allow ACEs and none inherited (`folderProblems`), or nothing is written. A foreign ACE
       another account left, which `/grant:r` does not remove, is refused here and not after the lock, the placeholder, and the
       secrets were written into it.
+    - **A folder that is not there is born protected.** Making `straw-boss/` and then protecting it leaves it with the parent's broad
+      ACEs for the time of those calls (443 ms on the VM with an agent folder outside the profile). So the starter and the server make it
+      under an unpredictable name beside it, `straw-boss.<16 hex>.tmp` (a `servers/<hash>` folder the same way), run the three calls
+      above on that name, check that nothing was put into it, and only then rename it to its final name. The final name does not exist
+      while any call runs. When the final name appeared meanwhile (another process was quicker), the temporary folder is dropped and the
+      folder that is there is made the owner's, protected, and read back where it is. A temporary folder that fails a check is removed.
+    - **A failing call is told by a fixed message** for its step and exit code, with what to do, and never by the program's own text,
+      which a console prints in its code page (CP950, CP932) and Node reads as UTF-8: half garbled. The program's last line is kept
+      only as a detail cut to printable ASCII. For example, exit 5 on the owner step: "the folder <dir> belongs to another account,
+      usually Administrators from a run of pi as administrator, and this process may not take it over. Run pi once as administrator, or
+      delete the folder <dir>, then start again. (owner step, exit 5; detail: …)". Exit 87 says icacls did not accept its arguments
+      (a bug in pi-straw-boss, to be reported); a missing program, a timeout, and any other exit have a sentence of their own.
     - a folder that is a link or junction (`lstat`) is refused, for `straw-boss/` and for a secondary slot's `servers/` and
       `servers/<hash>/`, before any of this and again after the icacls calls, before the DACL is read: `icacls` without `/L` would act on its target, and the files would land there.
     A secondary slot's `servers/<hash>/` is made after the state folder is protected and inherits it. Nothing is written into an
@@ -263,8 +275,11 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
       is kept per process while PATH is the same, and searched again once when the program is gone at its start (ENOENT). The `shutdown`
       handler reports a pane that could not be closed on stderr and goes on. `process.execPath` is already absolute.
   - Reading the SID, the server's own start time, setting the ACL, and checking every SDDL run in one PowerShell invocation, which
-    answers one JSON line, so the check costs one PowerShell start against the 15 s cold-start budget. (A PowerShell start took 1.7 to
-    3.1 s in the Windows VM; the server makes no other, because its start time comes with this answer.)
+    answers one JSON line. **A cold start makes only one PowerShell start, the starter's.** The VM measured the launch PowerShell at
+    3.8 to 16 s and the server's ACL PowerShell at 6 to 15 s, so the check is folded into the launch script (below): the starter knows the
+    new pid when `Win32_Process.Create` returns, reads its start time and makes the reset and read-back in the same PowerShell, and the
+    server makes none. A server of `serve`, or one the starter started by the plain spawn, has no starter's check and makes its own with
+    this script.
   - Files that are already in the folder when the ACL is set (`server.lock` the starter took, `server.log` the server opened) are not
     given the folder's ACL with `/T` on the folder: that strips their inherited ACEs, and an `(OI)(CI)` grant does not land on a file, so
     they ended with an empty DACL that even their owner could not read (the VM's P2). The folder is protected first, without `/T`, and
@@ -346,8 +361,19 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
     which node reads at process start), and nothing of it is written to disk. The server is told how it was started: the command line ends
     in `--detach wmi`, which it records in `server.json`. The pid comes with PowerShell's answer; until then the starter keeps
     `restarting` fresh as for any start, and watches the pid afterwards (a gone process is "the server exited before it answered"). The
-    cost is one more PowerShell start in the starter, logged as the phase `breakaway` (`ms`, `via`, `pid`, `outsideJob`) in `server.log`;
-    the server's own PowerShell call (the ACL read-back and its start time) is unchanged.
+    cost is one PowerShell start in the starter, logged as the phase `breakaway` (`ms`, `via`, `pid`, `outsideJob`, and `createMs` and
+    `aclMs`, the parts of it the create and the check took) in `server.log`.
+    - **The ACL check is made in that PowerShell start.** After the create, with the new pid, the script runs the steps of the server's own
+      script (the start time of that pid, the `/reset` of what is in the state folder, every SDDL read back; sbr-F007: its output is pure
+      ASCII, `\uXXXX` for the rest) and leaves the answer, or its error, in `acl.<token>.json` in the protected state folder: a file written
+      beside its name and moved, so it appears whole. The token is 32 random hex digits that only the server's command line carries
+      (`--acl-token`). The server waits for that file (at most 70 s), deletes it, and **checks every SDDL itself** (`aclProblems`, the same
+      rules as its own check, for the pid it is) before it writes its secret anywhere: the ACL is set before the secret is written, and the
+      read-back is made by someone before then, with the verdict taken by the server. An error marker, a marker for another pid, or none
+      in time ends the server with `acl` (exit 3) as its own failing check does. When the start fails (PowerShell, WMI, or its timeout)
+      the starter leaves an error marker so the server that may still come up does not wait for nothing; the plain-spawn fallback starts
+      a server without a token. The answer also carries the server's start time, which the starter remembers (`rememberStart`), so it
+      does not read it again.
     - **A failure is not silent.** When PowerShell or WMI fails (WMI blocked by the Defender rule against process creation from WMI,
       PowerShell in constrained language mode, a rejected flag), the start falls back to the plain spawn, since a server that ends with its
       pane is better than none on a machine where WMI is blocked, and says so: the starter passes `--detach direct --detach-reason <text>`,

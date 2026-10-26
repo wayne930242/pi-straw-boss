@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
+import { existsSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { alive as pidAlive } from "../remote.ts";
 import { powershellPath, system32 } from "../winpath.ts";
-import { execFailure } from "./acl.ts";
+import { ACL_STEPS, aclMarkerPath, asciiJson, execFailure, UTF8_OUT } from "./acl.ts";
 import type { Launched, SpawnSpec, Started } from "./client.ts";
 
 // The detached server on Windows, started outside the starter's job object (docs/specs/2026-10-26-sb-backend.md, Process model and lifecycle). Node's `detached: true` does not break away from
@@ -21,25 +22,40 @@ export function winQuote(arg: string): string {
 	let out = '"', slashes = 0;
 	for (const char of arg) {
 		if (char === "\\") slashes++;
-		else if (char === '"') (out += `${"\\".repeat(slashes * 2 + 1)}"`, slashes = 0);
-		else (out += `${"\\".repeat(slashes)}${char}`, slashes = 0);
+		else if (char === '"') {
+			out += `${"\\".repeat(slashes * 2 + 1)}"`;
+			slashes = 0;
+		} else {
+			out += `${"\\".repeat(slashes)}${char}`;
+			slashes = 0;
+		}
 	}
 	return `${out}${"\\".repeat(slashes * 2)}"`;
 }
-/** How the server is told it was started through WMI (`--detach wmi`, or `wmi-in-job` for the second try without breakaway), which it records in `server.json`. */
-export const commandLine = (spec: Pick<SpawnSpec, "command" | "args">, how: "wmi" | "wmi-in-job" = "wmi") => [spec.command, ...spec.args, "--detach", how].map(winQuote).join(" ");
+/**
+ * How the server is told it was started through WMI (`--detach wmi`, or `wmi-in-job` for the second try without breakaway), which it records in `server.json`; and, when the starter makes the ACL check
+ * for it, the token of the file the check is left in (`--acl-token`).
+ */
+export const commandLine = (spec: Pick<SpawnSpec, "command" | "args" | "acl">, how: "wmi" | "wmi-in-job" = "wmi") =>
+	[spec.command, ...spec.args, "--detach", how, ...(spec.acl ? ["--acl-token", spec.acl.token] : [])].map(winQuote).join(" ");
 
 /**
- * The PowerShell script: the command line and the folder come in the environment (SB_LAUNCH_CMD, SB_LAUNCH_CWD), never quoted into the script, and so does the environment the server is
- * to get: this process's own, minus SB_LAUNCH_*, `PSModulePath` (PowerShell sets it itself), and the per-drive `=C:` entries. The process is created hidden (`ShowWindow` 0) and with no
- * console (DETACHED_PROCESS). The answer is one JSON line: WMI's return code, the new pid, and whether the process is outside the job.
+ * The PowerShell script, the one PowerShell start of a cold start. The command line and the folder come in the environment (SB_LAUNCH_CMD, SB_LAUNCH_CWD, and for the check SB_ACL_DIR and
+ * SB_ACL_MARKER), never quoted into the script, and so does the environment the server is to get: this process's own, minus SB_LAUNCH_*, SB_ACL_*, `PSModulePath` (PowerShell sets it itself), and
+ * the per-drive `=C:` entries. The process is created hidden (`ShowWindow` 0) and with no console (DETACHED_PROCESS).
+ *
+ * Then, with the new pid in hand, the script makes the check the server's own PowerShell would make (acl.ts ACL_STEPS: the start time of that pid, the reset of what is in the state folder, every SDDL
+ * read back) and leaves it in the marker file, a temporary file moved into place (an error is left there too, as `error`). The server reads the marker and writes its secret only after it has checked
+ * the SDDLs itself. The answer is one JSON line: WMI's return code, the new pid, whether the process is outside the job, the server's start time, and the milliseconds the create and the check took.
  */
 export const LAUNCH_SCRIPT = [
+	UTF8_OUT,
 	"$ErrorActionPreference = 'Stop'",
+	"$sw = [Diagnostics.Stopwatch]::StartNew()",
 	"$si = ([wmiclass]'Win32_ProcessStartup').CreateInstance()",
 	"$si.ShowWindow = 0",
 	"$vars = @()",
-	"foreach ($e in [Environment]::GetEnvironmentVariables('Process').GetEnumerator()) { $k = [string]$e.Key; if ($k -notlike 'SB_LAUNCH_*' -and $k -ne 'PSModulePath' -and -not $k.StartsWith('=')) { $vars += ($k + '=' + [string]$e.Value) } }",
+	"foreach ($e in [Environment]::GetEnvironmentVariables('Process').GetEnumerator()) { $k = [string]$e.Key; if ($k -notlike 'SB_LAUNCH_*' -and $k -notlike 'SB_ACL_*' -and $k -ne 'PSModulePath' -and -not $k.StartsWith('=')) { $vars += ($k + '=' + [string]$e.Value) } }",
 	"$si.EnvironmentVariables = $vars",
 	"$wmi = [wmiclass]'Win32_Process'",
 	`$si.CreateFlags = ${BASE_FLAGS | CREATE_FLAGS.breakaway}`,
@@ -48,7 +64,24 @@ export const LAUNCH_SCRIPT = [
 	// A job that does not allow breakaway fails the creation; the same call is made once more without the flag, in this start, and the answer says so.
 	// The server of that second try is told (`--detach wmi-in-job`, its own command line), so it records that it is in the WMI provider host's job and every status says so.
 	`if ($r.ReturnValue -ne 0) { $si.CreateFlags = ${BASE_FLAGS}; $r = $wmi.Create($env:SB_LAUNCH_CMD_INJOB, $env:SB_LAUNCH_CWD, $si); $away = $false }`,
-	"[ordered]@{ rc = [int]$r.ReturnValue; pid = [int]$r.ProcessId; breakaway = $away } | ConvertTo-Json -Compress",
+	"$createMs = $sw.ElapsedMilliseconds",
+	"$started = $null",
+	"if ($r.ReturnValue -eq 0 -and $env:SB_ACL_DIR) {",
+	"  $env:SB_ACL_PID = [string]$r.ProcessId",
+	"  $aclError = $null",
+	"  $out = $null",
+	"  try {",
+	...ACL_STEPS.map((line) => (line.startsWith("//") ? line : `    ${line}`)),
+	"  } catch { $aclError = $_.Exception.Message }",
+	"  $m = [ordered]@{ pid = [int]$r.ProcessId }",
+	"  if ($aclError) { $m['error'] = $aclError } else { foreach ($key in $out.Keys) { $m[$key] = $out[$key] }; $started = $out.started }",
+	"  $mj = $m | ConvertTo-Json -Compress -Depth 4",
+	`  $mj = ${asciiJson("$mj")}`,
+	// The file appears whole, or not at all: written beside its name, then moved.
+	"  [IO.File]::WriteAllText($env:SB_ACL_MARKER + '.tmp', $mj, [Text.Encoding]::ASCII)",
+	"  [IO.File]::Move($env:SB_ACL_MARKER + '.tmp', $env:SB_ACL_MARKER)",
+	"}",
+	"[ordered]@{ rc = [int]$r.ReturnValue; pid = [int]$r.ProcessId; breakaway = $away; started = $started; createMs = [int]$createMs; aclMs = [int]($sw.ElapsedMilliseconds - $createMs) } | ConvertTo-Json -Compress",
 ].join("\n");
 
 /** The PowerShell call, by absolute path and from System32; the environment it runs with is the one the server is to get. */
@@ -56,20 +89,25 @@ export function launchCommand(spec: SpawnSpec, env: NodeJS.ProcessEnv = process.
 	return {
 		file: powershellPath(env),
 		args: ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(LAUNCH_SCRIPT, "utf16le").toString("base64")],
-		options: { encoding: "utf8" as const, timeout, windowsHide: true, cwd: system32(env), env: { ...spec.env, SB_LAUNCH_CMD: commandLine(spec), SB_LAUNCH_CMD_INJOB: commandLine(spec, "wmi-in-job"), SB_LAUNCH_CWD: spec.cwd } as NodeJS.ProcessEnv },
+		options: { encoding: "utf8" as const, timeout, windowsHide: true, cwd: system32(env), env: { ...spec.env, SB_LAUNCH_CMD: commandLine(spec), SB_LAUNCH_CMD_INJOB: commandLine(spec, "wmi-in-job"), SB_LAUNCH_CWD: spec.cwd, ...(spec.acl ? { SB_ACL_DIR: spec.acl.dir, SB_ACL_MARKER: aclMarkerPath(spec.acl.dir, spec.acl.token) } : {}) } as NodeJS.ProcessEnv },
 	};
 }
 
-export function parseLaunchOutput(stdout: string): { pid: number; breakaway: boolean } {
+export interface LaunchAnswer { pid: number; breakaway: boolean; started?: string; createMs?: number; aclMs?: number }
+export function parseLaunchOutput(stdout: string): LaunchAnswer {
 	const line = stdout.trim().split(/\r?\n/).filter(Boolean).at(-1) ?? "";
-	let parsed: { rc?: unknown; pid?: unknown; breakaway?: unknown };
+	let parsed: { rc?: unknown; pid?: unknown; breakaway?: unknown; started?: unknown; createMs?: unknown; aclMs?: unknown };
 	try {
 		parsed = JSON.parse(line) as typeof parsed;
 	} catch {
 		throw new Error(`PowerShell answered ${line.slice(0, 120) || "nothing"}`);
 	}
 	if (parsed.rc !== 0 || typeof parsed.pid !== "number" || !(parsed.pid > 0)) throw new Error(`Win32_Process.Create returned ${String(parsed.rc)} (pid ${String(parsed.pid)})`);
-	return { pid: parsed.pid, breakaway: parsed.breakaway !== false };
+	const ms = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? { value: v } : undefined);
+	return {
+		pid: parsed.pid, breakaway: parsed.breakaway !== false, ...(typeof parsed.started === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(parsed.started) ? { started: parsed.started } : {}),
+		...(ms(parsed.createMs) ? { createMs: parsed.createMs as number } : {}), ...(ms(parsed.aclMs) ? { aclMs: parsed.aclMs as number } : {}),
+	};
 }
 
 export type LaunchExec = (file: string, args: string[], options: ReturnType<typeof launchCommand>["options"], done: (error: (Error & { killed?: boolean; signal?: string | null }) | null, stdout: string, stderr?: string) => void) => unknown;
@@ -95,11 +133,24 @@ export function spawnBreakaway(spec: SpawnSpec, deps: BreakawayDeps): Launched {
 	let timer: ReturnType<typeof setInterval> | undefined, released = false, resolveExit!: (code: number | null) => void, resolveStarted!: (value: Started) => void;
 	const exited = new Promise<number | null>((resolve) => (resolveExit = resolve));
 	const started = new Promise<Started>((resolve) => (resolveStarted = resolve));
+	const marker = spec.acl ? aclMarkerPath(spec.acl.dir, spec.acl.token) : undefined;
+	/** The check could not be made or never finished: a server that waits for it is told at once (it ends with `acl`), and one that is there by mistake does not wait for nothing. */
+	const failMarker = (text: string) => {
+		if (!marker || existsSync(marker)) return;
+		try {
+			writeFileSync(`${marker}.tmp`, JSON.stringify({ error: text.slice(0, 300) }), { flag: "wx" });
+			renameSync(`${marker}.tmp`, marker);
+		} catch {
+			rmSync(`${marker}.tmp`, { force: true }); // a marker the server wrote itself or one already there stands
+		}
+	};
 	const release = () => {
 		released = true;
 		if (timer) clearInterval(timer);
+		if (marker) rmSync(marker, { force: true });
 	};
 	const direct = (failure: string) => {
+		failMarker(failure);
 		const plain = deps.fallback({ ...spec, args: [...spec.args, "--detach", "direct", "--detach-reason", failure.slice(0, 200)] });
 		void plain.exited.then(resolveExit);
 		resolveStarted({ pid: plain.pid ?? 0, ms: now() - t0, via: "direct", failure });
@@ -109,17 +160,19 @@ export function spawnBreakaway(spec: SpawnSpec, deps: BreakawayDeps): Launched {
 		if (released) return;
 		if (error && (error.killed || error.signal)) {
 			// No answer in time: WMI may have created the server already, so there is no second start.
-			resolveStarted({ pid: 0, ms: now() - t0, via: "failed", failure: `PowerShell did not answer within ${Math.round(options.timeout / 1000)} s (Win32_Process.Create may still have started the server)` });
+			const failure = `PowerShell did not answer within ${Math.round(options.timeout / 1000)} s (Win32_Process.Create may still have started the server)`;
+			failMarker(failure);
+			resolveStarted({ pid: 0, ms: now() - t0, via: "failed", failure });
 			return;
 		}
-		let answer: { pid: number; breakaway: boolean };
+		let answer: LaunchAnswer;
 		try {
 			if (error) throw new Error(execFailure(error, stderr));
 			answer = parseLaunchOutput(stdout);
 		} catch (failure) {
 			return direct((failure as Error).message);
 		}
-		resolveStarted({ pid: answer.pid, ms: now() - t0, via: "wmi", breakaway: answer.breakaway });
+		resolveStarted({ pid: answer.pid, ms: now() - t0, via: "wmi", breakaway: answer.breakaway, ...(answer.started ? { serverStarted: answer.started } : {}), ...(answer.createMs === undefined ? {} : { createMs: answer.createMs }), ...(answer.aclMs === undefined ? {} : { aclMs: answer.aclMs }) });
 		timer = setInterval(() => {
 			if (alive(answer.pid)) return;
 			release();

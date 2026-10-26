@@ -488,3 +488,38 @@ test("the server's identity variables are not its own: the kit gets the server's
 	assert.equal(world.record()!.intercom.transport, "tcp");
 	writeFileSync(fileOf(world.slot, "log"), "");
 });
+
+// --- the check made by the process that started the server (one PowerShell start on a cold start) ---
+
+test("with an ACL token the server does not make its own check: it waits for the starter's marker, whose start time it takes, and writes its secret only after the marker is verified", async () => {
+	let seen: string | undefined;
+	const asked: { dir: string; token: string; pid: number }[] = [];
+	const own = world.acls.length;
+	const s = await world.start({
+		platform: "win32", aclToken: "d".repeat(32),
+		marker: async (dir, token, pid) => { asked.push({ dir, token, pid }); seen = world.record()?.secret ? "secret written" : "no secret yet"; return { started: "2026-10-26T08:00:00.000Z" }; },
+	});
+	assert.equal(await s.handle.ready, true);
+	assert.deepEqual(asked, [{ dir: world.stateDir, token: "d".repeat(32), pid: s.pid }]);
+	assert.equal(seen, "no secret yet");
+	assert.equal(world.acls.length, own, "its own PowerShell check is not made");
+	assert.equal(world.record()?.started, "2026-10-26T08:00:00.000Z");
+	await s.handle.shutdown(0);
+});
+
+test("a marker that fails (an error marker, a foreign ACE, a wrong pid, none in time) ends the server with 3 and writes no secret, like its own check would", async () => {
+	const s = await world.start({ platform: "win32", aclToken: "e".repeat(32), marker: async () => { throw new AclError("the ACL of x is not owner and SYSTEM only: BU", "O:S-1-5-21D:(A;;FA;;;BU)"); } });
+	assert.equal(await s.handle.done, 3);
+	const error = readStartError(world.slot)!;
+	assert.equal(error.code, "acl");
+	assert.equal(error.sddl, "O:S-1-5-21D:(A;;FA;;;BU)");
+	assert.equal(world.record()?.secret, "", "no secret was written");
+});
+
+test("without a token (serve, a plain spawn) the server makes its own check, and says through its log which way the check came", async () => {
+	const own = world.acls.length;
+	const s = await world.start({ platform: "win32", marker: async () => { throw new Error("no marker here"); } });
+	assert.equal(await s.handle.ready, true);
+	assert.equal(world.acls.length, own + 1);
+	await s.handle.shutdown(0);
+});

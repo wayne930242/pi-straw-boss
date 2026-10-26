@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { createConnection } from "node:net";
 import { localEndpoint } from "../endpoint.ts";
 import { alive as pidAlive } from "../remote.ts";
 import { newer } from "../semver.ts";
-import { startOf } from "../startof.ts";
+import { rememberStart, startOf } from "../startof.ts";
 import { spawnBreakaway } from "./breakaway.ts";
 import { createLog, type Log } from "./log.ts";
 import {
@@ -56,13 +57,21 @@ export interface SpawnSpec {
 	args: string[];
 	env: NodeJS.ProcessEnv;
 	cwd: string;
+	/** Windows: the state folder, and the token of the file in it where the starter leaves the ACL check for the server it starts (the token goes on the server's command line only when it was started through WMI). */
+	acl?: { dir: string; token: string };
 	/** How long the start may take to give a pid (Windows: the PowerShell call through WMI); the time the requester has left. */
 	timeoutMs?: number;
 	/** Detached so the server outlives the starter, no stdio so it holds none of the starter's, and no console window on Windows. */
 	options: { detached: true; stdio: "ignore"; windowsHide: true };
 }
 /** How a start outside the starter's job went: `wmi` (the pid, and whether the process is outside the job), `direct` (a plain spawn after a failure, which `failure` names), or `failed` (PowerShell did not answer in time: no second start). */
-export interface Started { pid: number; ms: number; via: "wmi" | "direct" | "failed"; failure?: string; breakaway?: boolean }
+export interface Started {
+	pid: number; ms: number; via: "wmi" | "direct" | "failed"; failure?: string; breakaway?: boolean;
+	/** The server's start time, which the launch PowerShell read in its one start (the starter's cache of start times has it without a PowerShell of its own). */
+	serverStarted?: string;
+	/** Of `ms`, the milliseconds of the create and of the ACL check that followed in the same PowerShell start. */
+	createMs?: number; aclMs?: number;
+}
 export interface Launched {
 	pid?: number;
 	/** Resolves when the process is gone (its code, or null when it is not known). */
@@ -185,7 +194,11 @@ export function decide(ctx: Pick<Ctx, "version" | "env" | "platform" | "now" | "
 	return { do: "start" };
 }
 
-const specOf = (ctx: Ctx): SpawnSpec => ({ command: ctx.node, args: [ctx.cli, "run", "--detached", "--by", ctx.by], env: serverEnv(ctx.env), cwd: ctx.slot.dir, options: SPAWN_OPTIONS });
+const specOf = (ctx: Ctx): SpawnSpec => ({
+	command: ctx.node, args: [ctx.cli, "run", "--detached", "--by", ctx.by], env: serverEnv(ctx.env), cwd: ctx.slot.dir, options: SPAWN_OPTIONS,
+	// Windows: the starter makes the ACL check for the server in its launch PowerShell, and leaves it in a file only this token names.
+	...(ctx.platform === "win32" ? { acl: { dir: ctx.slot.stateDir, token: randomBytes(16).toString("hex") } } : {}),
+});
 
 /** The server a restart replaces: its record is the one the requester keeps fresh until the new server writes its own. */
 export interface Replaced { pid: number; secret: string }
@@ -244,7 +257,9 @@ export async function launch(ctx: Ctx, { began, old, deadline }: { began?: strin
 	// A start outside the starter's job object learns its pid late; how long that took is a phase of its own, and a fallback to a plain spawn is told.
 	let note: string | undefined;
 	void child.started?.then((s) => {
-		ctx.log.line("phase", { name: "breakaway", ms: s.ms, via: s.via, pid: s.pid, ...(s.breakaway === undefined ? {} : { outsideJob: s.breakaway }) });
+		ctx.log.line("phase", { name: "breakaway", ms: s.ms, via: s.via, pid: s.pid, ...(s.breakaway === undefined ? {} : { outsideJob: s.breakaway }), createMs: s.createMs, aclMs: s.aclMs });
+		// The launch PowerShell read the server's start time: this process knows it without a PowerShell of its own when it looks at that server.
+		if (s.serverStarted && s.pid > 0) rememberStart(s.pid, s.serverStarted);
 		if (s.failure) ctx.log.line("breakaway-failed", { via: s.via, text: s.failure });
 		if (s.via === "failed") note = s.failure;
 	});

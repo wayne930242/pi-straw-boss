@@ -571,3 +571,26 @@ test("sbr-NEW-4: a down server always starts, whatever the once-a-minute limit s
 	writeRecord(world.slot, { ...world.record()!, lastRestart: { at: new Date().toISOString(), reason: "a moment ago", by: "someone" } });
 	await assert.rejects(restart(world.ctx(), { reason: "again", limit: true }), (e: unknown) => e instanceof ServerError && e.code === "rate");
 });
+
+test("on Windows the starter gives the server's spawn a state folder and a fresh token for the ACL check; elsewhere it gives none", async () => {
+	const w = new ServerWorld();
+	try {
+		const tokens = new Set<string>();
+		for (let i = 0; i < 3; i++) {
+			const ctx = w.ctx({ platform: "win32", spawn: (spec) => (w.spawned.push(spec), { pid: 1, exited: new Promise(() => {}) }) });
+			await ensure(ctx, { boss: true, deadline: ctx.now() + 300 }).catch(() => {});
+		}
+		for (const spec of w.spawned) {
+			assert.equal(spec.acl?.dir, w.stateDir);
+			assert.match(spec.acl?.token ?? "", /^[0-9a-f]{32}$/);
+			tokens.add(spec.acl!.token);
+		}
+		assert.equal(tokens.size, w.spawned.length, "a token is not used twice");
+		assert.ok(w.spawned.length >= 1);
+		const before = w.spawned.length;
+		await ensure(w.ctx({ platform: "linux" }), { boss: true });
+		assert.equal(w.spawned[before]?.acl, undefined);
+	} finally {
+		await w.close();
+	}
+});
