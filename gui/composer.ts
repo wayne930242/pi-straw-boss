@@ -16,7 +16,7 @@ import { mountSlash } from "./slash.ts";
 export const MAX_TEXT = 16_384;
 type Note = [tone: string, text: string];
 export const ENDING = /^\s*\/(quit|exit|new|resume|fork|clone|import|reload)(?=\s|$)/;
-export type Post = (action: "input" | "keys" | "focus" | "answer" | "mirror" | "commands", body: Record<string, unknown>) => Promise<Answer>;
+export type Post = (action: "input" | "keys" | "focus" | "answer" | "mirror" | "commands" | "dequeue", body: Record<string, unknown>) => Promise<Answer>;
 type Flight = { sent?: string; answer: Promise<Answer> };
 // Sends on their way, by session key. They outlive a composer replaced meanwhile (the route left and came back), whose successor waits for
 // them before it sends again and settles its own box, so text is neither shown as unsent after it went nor sent twice.
@@ -45,6 +45,67 @@ export const recall = (raw: string | null): Note | undefined => {
 export const confirmed = (box: string, sent: string) => (box !== "" && !box.startsWith(sent) ? m.sent_edited() : "");
 /** What stays in the box once `sent` was accepted: what was typed after it, or everything when the sent part was edited meanwhile. */
 export const settle = (now: string, sent: string) => (now.startsWith(sent) ? now.slice(sent.length).replace(/^\n/, "") : now);
+/** The box after the queue is taken back: the pulled messages in front of what was already typed, a blank line between, as pi puts them in its own editor. */
+export const withPulled = (pulled: string, draft: string) => (draft.trim() ? `${pulled}\n\n${draft}` : pulled);
+// A take-back (the queue's Edit) outlives its composer like a send does: the server clears pi's queue and editor before it answers, so the answer is the only copy
+// of the messages. Each take-back carries an id the page made; the session keeps what it handed over for the same id asked again (src/bridge.ts, ten minutes), so an
+// answer that got lost (the route left, the network dropped, the page reloaded) is fetched by pressing Edit again.
+const takes = new Map<string, Promise<Answer | undefined>>();
+const TAKE_KEEP_MS = 540_000, ids = new Map<string, { id: string; at: number }>();
+/** Pulled messages a storage that refused could not hold, for the next composer of the session. */
+const rescued = new Map<string, string>();
+const takeSlot = (key: string) => `sb-draft:${key}:take`;
+/** The id of this session's take-back that has no settled answer yet, while the session still keeps its messages. */
+export function recallTake(key: string, now = Date.now()): string | undefined {
+	let t = ids.get(key);
+	if (!t) {
+		try {
+			const [at, id] = (sessionStorage.getItem(takeSlot(key)) ?? "").split(":");
+			if (id && Number(at) > 0) ids.set(key, (t = { id, at: Number(at) }));
+		} catch {} // storage refused: the id lives in this page only
+	}
+	if (t && now - t.at >= TAKE_KEEP_MS) (endTake(key), (t = undefined));
+	return t?.id;
+}
+export function startTake(key: string, now = Date.now()): string {
+	const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join(""); // randomUUID needs a secure context, and a phone may reach this page over plain http
+	ids.set(key, { id, at: now });
+	try {
+		sessionStorage.setItem(takeSlot(key), `${now}:${id}`);
+	} catch {}
+	return id;
+}
+export function endTake(key: string) {
+	ids.delete(key);
+	try {
+		sessionStorage.removeItem(takeSlot(key));
+	} catch {}
+}
+/** Pulled messages for a session whose composer is gone: in front of its stored draft, where the next composer reads it. */
+export function deposit(key: string, pulled: string) {
+	const store = `sb-draft:${key}`;
+	try {
+		sessionStorage.setItem(store, withPulled(pulled, sessionStorage.getItem(store) ?? ""));
+		sessionStorage.setItem(`${store}:note`, JSON.stringify(["ok", m.edit_taken()])); // the composer that comes back says where the messages went
+	} catch {
+		rescued.set(key, withPulled(pulled, rescued.get(key) ?? ""));
+	}
+}
+/** The draft with the messages a refusing storage could not hold in front of it (and forgets them). */
+export function rescue(key: string, draft: string): string {
+	const lost = rescued.get(key);
+	rescued.delete(key);
+	return lost === undefined ? draft : withPulled(lost, draft);
+}
+const SETTLED = ["no_editor", "stale", "not_taken", "changed", "too_large", "not_cleared"]; // the bridge's own answers to a take-back (src/pull.ts WHYS)
+/** What a take-back's answer does, whoever asked: its text goes into the box of the composer still on the page (`into`), else into the stored draft; and the id is dropped only once the answer settles it. Any other refusal (a dialog open, the pane moved, Herdr or the page's token failing, busy, unsure) keeps it: the session may still hold messages it pulled and a reply that never arrived. */
+export function settleTake(key: string, r: Answer, into?: { box: { value: string }; save(): void }) {
+	if (r.ok && typeof r.body.text === "string") {
+		if (into) (into.box.value = withPulled(r.body.text, into.box.value), into.save());
+		else deposit(key, r.body.text);
+	}
+	if (r.ok || r.status === 400 || (r.status === 409 && SETTLED.includes(r.body.error ?? ""))) endTake(key);
+}
 /** Why nothing can be sent right now, or undefined. */
 export function blocked(u: Unit): string | undefined {
 	if (!u.online) return m.blocked_offline();
@@ -69,6 +130,7 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 		} catch {} // storage refused: the draft lives in the box only
 	};
 	keep(() => (box.value = sessionStorage.getItem(store) ?? ""));
+	box.value = rescue(key, box.value);
 	const save = () => keep(() => (box.value ? sessionStorage.setItem(store, box.value) : sessionStorage.removeItem(store)));
 	const grow = CSS.supports("field-sizing", "content") ? () => {} : () => ((box.style.height = "auto"), (box.style.height = `${Math.min(box.scrollHeight, 220)}px`)); // a browser that sizes the box to its text (style.css) needs no measuring per keystroke
 	const say = (text: string, tone = "", ...kids: HTMLElement[]) => ((note.dataset.tone = tone), note.replaceChildren(text, ...kids));
@@ -134,6 +196,45 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 		follow.hidden = stop.hidden = !working || Boolean(why);
 		[follow.disabled, stop.disabled] = [send.disabled, busy]; // a follow-up needs a message too
 	}
+	/** The note of a take-back that may have taken the messages: it carries the button that asks for them again, since the queue (and its Edit line) is gone once the session took it back. */
+	const unsure = () => {
+		const fetchIt = h("button", { type: "button", class: "cmp-yes" }, m.edit_fetch());
+		fetchIt.onclick = () => void takeQueue();
+		say(m.edit_unsure(), "error", fetchIt);
+	};
+	/** One take-back on its way: the reply is stored whether this composer is still there or not (the successor reads it). */
+	function askTake(): Promise<Answer | undefined> {
+		const id = recallTake(key) ?? startTake(key);
+		return post("dequeue", { take: id }).then((r) => (settleTake(key, r, form.isConnected ? { box, save } : undefined), r), () => undefined);
+	}
+	/** The queue's Edit: asks the server to take the session's queued messages back (pi's Alt+Up, src/pull.ts); what comes back is one text, put in front of what is already in the box. Nothing is cleared on any refusal. */
+	async function takeQueue() {
+		if (busy || asking || takes.has(key)) return;
+		const why = blocked(unit);
+		if (why) return say(why, "error");
+		const flight = askTake();
+		takes.set(key, flight);
+		await landTake(flight);
+	}
+	/** Waits for a take-back, this composer's or one a replaced composer started, and shows what it brought. */
+	async function landTake(flight: Promise<Answer | undefined>) {
+		(busy = true), draw(), say(m.edit_taking());
+		try {
+			const r = await flight;
+			if (!form.isConnected) return;
+			if (!r || r.status === 504) return unsure();
+			if (!r.ok) return say(r.body.reason ?? m.refused({ status: r.status }), "error");
+			if (typeof r.body.text !== "string") return say(m.edit_none());
+			const kept = read(); // a composer that was replaced meanwhile left the messages in the stored draft
+			if (kept !== undefined && kept !== box.value) box.value = kept;
+			(box.value = rescue(key, box.value)), save();
+			stash(), grow(), box.focus(), (box.selectionStart = box.selectionEnd = box.value.length);
+			say(m.edit_taken(), "ok");
+		} finally {
+			if (takes.get(key) === flight) takes.delete(key);
+			(busy = false), draw();
+		}
+	}
 	/** Uploads the files one by one and puts each stored path where the cursor is, as a word of its own. */
 	async function attachAll(files: File[]) {
 		if (!files.length || busy) return;
@@ -183,10 +284,12 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 	if (vv) (vv.addEventListener("resize", fit), vv.addEventListener("scroll", fit), fit());
 	grow();
 	if (flights.has(key)) void land(flights.get(key)!);
+	else if (takes.has(key)) void landTake(takes.get(key)!);
 	else keep(() => {
 		const kept = recall(sessionStorage.getItem(noteKey));
 		sessionStorage.removeItem(noteKey);
 		if (kept) say(kept[1], kept[0]);
+		else if (recallTake(key)) unsure(); // a take-back whose answer never came: its button asks for the messages again
 	});
-	return { box, update: (next: Unit) => ((unit = next), draw()), ready: () => !blocked(unit) };
+	return { box, update: (next: Unit) => ((unit = next), draw()), ready: () => !blocked(unit), takeQueue };
 }
