@@ -107,8 +107,8 @@ export function createControl({ link, lookup, call, csrf, canonical, pair, remot
 		return reason ? (saveFailed?.(reason), no(500, "save_failed", reason)) : undefined;
 	};
 	// A link_request is open when the session file shows its call or the runtime that owns the approval relays its dialog (a call nested in codemode is not in the file).
-	const requested = async (key: string, found: Found) => (await linkRequest(found.file!)) || Boolean(answers?.has(key, linkRequestOwner.name));
-	const pad = createKeys({ fresh: (id, key, pane) => mirrors?.fresh(id, key, pane) ?? false, secret, answerable: async (key) => Boolean(await answers?.target(key)), linkRequest: async (file, key) => (await linkRequest(file)) || Boolean(answers?.has(key, linkRequestOwner.name)), probe: async (key) => answers?.probe(key) });
+	const requested = async (key: string, found: Found) => (await linkRequest(found.file!)) || Boolean(answers?.has(key, linkRequestOwner.name, found));
+	const pad = createKeys({ fresh: (id, key, pane) => mirrors?.fresh(id, key, pane) ?? false, secret, answerable: async (key) => Boolean(await answers?.target(key)), linkRequest: async (file, key) => (await linkRequest(file)) || Boolean(answers?.has(key, linkRequestOwner.name, { pane: lookup(key)?.pane, file })), probe: async (key) => answers?.probe(key) });
 	/** The origin checks, then the session checks, then one Herdr call. `parts` is the path after api/: sessions/<key>/<action>, remote/pair, or server/stop. */
 	return async function handle(req: IncomingMessage, origin: string, [scope, key = "", action = ""]: string[], remote = false): Promise<Reply> {
 		if (req.method !== "POST") return no(405, "method", "Use POST.");

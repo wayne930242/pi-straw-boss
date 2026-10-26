@@ -526,3 +526,13 @@ test("a secret's value is never sent: send refuses it with nothing published or 
 	assert.equal(String(checkAnswer(t, { choice: 0, value })).includes(value), false);
 	assert.deepEqual(checkAnswer(t, { choice: 0 }), { choice: 0 }, "other answers are unchanged");
 });
+
+test("RR3-F001: a relayed link-request dialog counts for has() at once, before any net reading binds it, on its own pane and file only", () => {
+	const x = hub(), path = file([["c1", "link_request"]]);
+	x.h.receive("S", x.list([dialog({ owner: "straw-link-request" })], { file: path }));
+	assert.equal(x.h.has("S", "straw-link-request"), false, "not bound yet without the place");
+	assert.equal(x.h.has("S", "straw-link-request", { pane: "wA:p1", file: path }), true, "read from the bridges at once");
+	assert.equal(x.h.has("S", "straw-link-request", { pane: "wA:p2", file: path }), false, "another pane");
+	assert.equal(x.h.has("S", "straw-link-request", { pane: "wA:p1", file: join(scratch, "elsewhere_S.jsonl") }), false, "another file");
+	assert.equal(x.h.has("S", "robot-hand", { pane: "wA:p1", file: path }), false, "another owner");
+});
