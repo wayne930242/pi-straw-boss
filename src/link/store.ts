@@ -13,6 +13,8 @@ import { deviceFromSeeds, type DeviceKeys } from "./device.ts";
 //   teams/<team>.json        roster copy, team keys by epoch, relay URL, last event id, last sequence number per sender
 //   inbox/<envelope id>.json messages waiting for a tower
 //   outbox/<team>/<seq>-<envelope id>.bin   envelopes built and not yet taken by the relay
+//   invites/<hash>.json      the invites this device made and the relay still holds (the secret stays here; the relay holds only its hash)
+//   enabled                  written when the user sets Straw Link up from the GUI, so the election starts before any team exists
 //   holder.json, holder.lock the link holder's record, and the lock every write below goes under
 //   link.log                 why an envelope was dropped, and the other things an operator asks about
 //
@@ -73,6 +75,19 @@ export interface InboxItem {
 	toWorkspace: string;
 	replyExpected: boolean;
 	text: string;
+}
+
+/** An invite this device made, kept until it is used, ends, or lapses: its secret opens the join request that comes back for it. */
+export interface InviteFile {
+	v: 1;
+	/** sha256(secret), hex: what the relay holds. */
+	hash: string;
+	secret: string;
+	team: string;
+	/** The one device id that may use the invite, or "". */
+	forDevice: string;
+	created: number;
+	expires: number;
 }
 
 export interface StoreOptions {
@@ -490,6 +505,55 @@ export class LinkStore {
 				return [];
 			}
 		}).sort((a, b) => a.seq - b.seq);
+	}
+
+	// ---- Invites and the setup marker ----------------------------------------------------------------------------------------------
+
+	putInvite(invite: InviteFile): void {
+		this.assertLocked("Writing an invite");
+		if (!HEX32.test(invite.hash)) throw new Error("an invite file is named by sha256(secret) in hex");
+		mkdirPrivate(this.path("invites"));
+		this.write(this.path("invites", `${invite.hash}.json`), JSON.stringify(invite));
+	}
+	readInvite(hash: string): InviteFile | undefined {
+		if (!HEX32.test(hash)) return undefined;
+		return this.read(this.path("invites", `${hash}.json`), (v) => {
+			if (!isObject(v) || v.v !== 1 || v.hash !== hash || typeof v.secret !== "string" || !HEX32.test(v.secret) || typeof v.team !== "string" || !HEX16.test(v.team) || typeof v.forDevice !== "string" || !count(v.created) || !count(v.expires)) return undefined;
+			// SAFETY: each field of InviteFile was checked above.
+			return v as unknown as InviteFile;
+		});
+	}
+	/** The invites on disk, oldest first. */
+	invites(): InviteFile[] {
+		let names: string[];
+		try {
+			names = readdirSync(this.path("invites"));
+		} catch {
+			return [];
+		}
+		return names.flatMap((n) => (/^[0-9a-f]{64}\.json$/.test(n) ? [n.slice(0, 64)] : [])).flatMap((h) => this.readInvite(h) ?? []).sort((a, b) => a.created - b.created);
+	}
+	removeInvite(hash: string): void {
+		this.assertLocked("Removing an invite");
+		if (HEX32.test(hash)) rmSync(this.path("invites", `${hash}.json`), { force: true });
+	}
+	/** Whether the user set Straw Link up from the GUI (or a request they approved did): the election runs even with no team yet. */
+	get enabled(): boolean {
+		return existsSync(this.path("enabled"));
+	}
+	enable(): void {
+		this.assertLocked("Enabling Straw Link");
+		this.write(this.path("enabled"), JSON.stringify({ v: 1, at: this.now() }));
+	}
+	/** Forgets a team on this computer: its file, its stopped mark, its queued envelopes, and the messages waiting for it. The roster at the relay is untouched. */
+	removeTeam(team: string): void {
+		this.assertLocked("Removing a team");
+		if (!HEX16.test(team)) return;
+		rmSync(this.path("teams", `${team}.json`), { force: true });
+		rmSync(this.path("teams", `${team}.stopped`), { force: true });
+		rmSync(this.path("outbox", team), { recursive: true, force: true });
+		for (const id of this.inboxIds()) if (this.readInbox(id)?.team === team) rmSync(this.path("inbox", `${id}.json`), { force: true });
+		for (const invite of this.invites()) if (invite.team === team) rmSync(this.path("invites", `${invite.hash}.json`), { force: true });
 	}
 
 	// ---- The log -------------------------------------------------------------------------------------------------------------------

@@ -26,7 +26,7 @@ export const inviteHash = (secret: Uint8Array): Buffer => sha256(secret);
 /** `strawlink1:` + base64url of `enc(relay URL, team, secret, inviter id, sha256(inviter key record), device id or empty)`. */
 export const encodeInvite = (i: Invite): string => PREFIX + enc(str(i.relay), i.team, i.secret, str(i.inviterId), i.inviterKeyHash, str(i.forDevice)).toString("base64url");
 
-const relayOk = (url: string) => {
+export const relayOk = (url: string) => {
 	try {
 		const u = new URL(url);
 		return url.length <= 2048 && (u.protocol === "https:" || (u.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(u.hostname)));
