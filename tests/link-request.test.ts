@@ -196,9 +196,9 @@ test("R5-F002: a paired device reading state does not erase the join screen's in
 	await until(() => pending.length === 1, "the dialog");
 	answer(pending[0]!, 0);
 	await run;
-	const first = (await c.link.gui("state")) as { view: { prefill: { text?: string } } };
+	const first = (await c.link.gui("state")) as unknown as { view: { prefill: { text?: string } } };
 	delete first.view.prefill.text; // what control.ts does for a remote reader
-	const second = (await c.link.gui("state")) as { view: { prefill: { text?: string } } };
+	const second = (await c.link.gui("state")) as unknown as { view: { prefill: { text?: string } } };
 	assert.equal(second.view.prefill.text, text);
 });
 
