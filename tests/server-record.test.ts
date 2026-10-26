@@ -314,3 +314,22 @@ test("R6-F004: a lock that is gone by the time it is found unreadable is free, n
 		chmodSync(lock, 0o600);
 	}
 });
+
+test("R7-F005: a lock that reads as denied and as gone at once (delete-pending) is not spun on: a pause between tries, then busy; one that is gone for good is taken", async () => {
+	const slot = slotOf(root, env(), "linux"), { w, deps } = lockWorld();
+	plant(slot, { pid: 1, by: "damaged", since: new Date().toISOString() });
+	const lock = fileOf(slot, "lock");
+	chmodSync(lock, 0o000);
+	try {
+		const before = w.now;
+		await assert.rejects(takeLock(slot, "s", { ...deps, exists: () => false }, 20_000), LockBusy);
+		assert.ok(w.now - before >= 60 && w.now - before <= 120, `paused ${w.now - before} ms`);
+		// Gone for good: the first look finds it gone, and the next link takes it.
+		let gone = 0;
+		const got = await takeLock(slot, "s", { ...deps, exists: (f) => (gone++ === 0 ? (rmSync(f, { force: true }), false) : false) }, 1000);
+		assert.equal(lockOf(slot).by, "s");
+		got.release();
+	} finally {
+		rmSync(lock, { force: true });
+	}
+});

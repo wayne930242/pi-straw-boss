@@ -489,3 +489,42 @@ test("a CLIXML stderr never reaches a failure text: the error record's message, 
 		assert.equal(started.failure, text);
 	}
 });
+
+// --- R7-F001: the owner is checked in the launch PowerShell before anything is created ---
+
+test("R7-F001: the launch script checks the folder's exact owner before the create and before the line that says a server may exist; a foreign owner is rc -2 and `exit 0` with nothing created", () => {
+	const lines = LAUNCH_SCRIPT.split("\n");
+	const at = (re: RegExp) => lines.findIndex((l) => re.test(l));
+	const sddl = at(/Get-Acl -LiteralPath \$env:SB_ACL_DIR/), refuse = at(/rc = -2/), exit = at(/^\s+exit 0$/), line = at(/Write-Output 'sb-before-create'/), create = at(/\$wmi\.Create\(\$env:SB_LAUNCH_CMD, /);
+	assert.ok(sddl > 0 && sddl < refuse && refuse < exit && exit < line && line < create, `${sddl} ${refuse} ${exit} ${line} ${create}`);
+	assert.match(LAUNCH_SCRIPT, /\^O:\(S-\[0-9-\]\+\|\[A-Za-z\]\{2\}\)/, "the owner is the O: of the SDDL");
+	assert.match(LAUNCH_SCRIPT, /\$c -eq 'SY'\) \{ \$c = 'S-1-5-18' \}/);
+	assert.match(LAUNCH_SCRIPT, /LA = '-500'; LG = '-501'; DA = '-512'; DU = '-513'/, "the aliases of ownerProblems");
+	assert.match(LAUNCH_SCRIPT, /if \(\$env:SB_ACL_DIR\) \{\n\s+\$me = /, "only when a check is asked for");
+	assert.match(LAUNCH_SCRIPT, /if \(\$c -ne \$me\) \{\n\s+Say \(\[ordered\]@\{ rc = -2;/, "a different owner is the refusal");
+});
+
+test("R7-F001: an answer of rc -2 is a refusal: the start fails with the reason, no plain spawn, no marker, and exited says 3", async () => {
+	const plain: SpawnSpec[] = [];
+	const text = "the folder belongs to another account (S-1-5-21-9-9-9-1002), not to S-1-5-21-1-2-3-1001";
+	const launched = spawnBreakaway(withAcl(), { exec: fakePowershell(`{"rc":-2,"pid":0,"markerError":"${text}"}\r\n`).exec, fallback: (s) => (plain.push(s), { pid: 9, exited: new Promise(() => {}) }) });
+	const started = await launched.started!;
+	assert.deepEqual([started.via, started.failure, plain.length], ["refused", text, 0]);
+	assert.equal(await launched.exited, 3);
+	assert.deepEqual(others(), [], "no marker");
+	launched.release!();
+	assert.throws(() => parseLaunchOutput(`{"rc":-2,"pid":0,"markerError":"x"}`), /^Error: x$/);
+});
+
+test("R7-F001: launch turns a refusal into ServerError start-failed with an acl start error (exit 3) and does not wait for a hello", async () => {
+	const w = new ServerWorld();
+	try {
+		const text = "the folder belongs to another account (S-1-5-21-9-9-9-1002), not to S-1-5-21-1-2-3-1001";
+		const ctx = w.ctx({ spawn: () => ({ pid: undefined, exited: Promise.resolve(3), started: Promise.resolve({ pid: 0, ms: 5, via: "refused" as const, failure: text }) }) });
+		const began = Date.now();
+		await assert.rejects(launch(ctx, {}), (e: unknown) => e instanceof ServerError && e.code === "start-failed" && e.startError?.code === "acl" && e.startError.text === text && e.message === `acl: ${text}`);
+		assert.ok(Date.now() - began < 2000);
+	} finally {
+		await w.close();
+	}
+});

@@ -633,9 +633,20 @@ test("R6-F003: a server that runs but did not answer hello in time still pins it
 	assert.equal(look({ env }, { record: rec, live: false, runs: false } as Parameters<typeof decide>[1]).do, "start");
 	// A scope-A server whose hello never answers: its pid runs, so scope B can neither stop nor restart it.
 	secretDir(world.slot.dir); // the socket is not there: the hello fails, and the pid (this process) runs
-	writeRecord(world.slot, { ...rec, pid: process.pid, started: undefined, socket: join(world.slot.dir, "mute.sock"), secret: "s".repeat(64), log: "/l", mode: "detached", desk: false, intercomId: "x" } as ServerRecord);
-	const b = world.ctx({ env: { ...world.env, ...env }, alive: () => true });
+	writeRecord(world.slot, { ...rec, pid: process.pid, started: "T-RUN", socket: join(world.slot.dir, "mute.sock"), secret: "s".repeat(64), log: "/l", mode: "detached", desk: false, intercomId: "x" } as ServerRecord);
+	const b = world.ctx({ env: { ...world.env, ...env }, alive: () => true, startOf: () => "T-RUN" });
+	assert.equal((await probe(b)).runs, true);
 	await assert.rejects(stop(b), (e: unknown) => e instanceof ServerError && e.code === "scope");
 	await assert.rejects(restart(b, { reason: "r" }), (e: unknown) => e instanceof ServerError && e.code === "scope");
 	assert.equal(readRecord(world.slot)?.stopped, undefined, "the record was not marked stopped");
+});
+
+test("R7-F004: the scope is pinned by a process that runs only when the record's start time is there and the pid has it now; a reused pid or a record without a start time pins nothing", async () => {
+	secretDir(world.slot.dir);
+	const base = { pid: process.pid, version: "0.44.0", herdr: world.slot.herdr, mode: "detached", desk: false, intercom: { scope: "a", transport: "default" }, log: "/l", socket: join(world.slot.dir, "mute.sock"), secret: "s".repeat(64), intercomId: "x" } as unknown as ServerRecord;
+	for (const [started, now, runs] of [["T1", "T1", true], ["T1", "T2", false], ["T1", undefined, false], [undefined, "T1", false]] as const) {
+		writeRecord(world.slot, { ...base, ...(started ? { started } : {}) });
+		const found = await probe(world.ctx({ alive: () => true, startOf: () => now }));
+		assert.equal(found.runs, runs, `${started} vs ${now}`);
+	}
 });

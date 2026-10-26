@@ -69,7 +69,7 @@ export interface SpawnSpec {
 }
 /** How a start outside the starter's job went: `wmi` (the pid, and whether the process is outside the job), `direct` (a plain spawn after a failure, which `failure` names), or `failed` (PowerShell did not answer in time: no second start). */
 export interface Started {
-	pid: number; ms: number; via: "wmi" | "direct" | "failed"; failure?: string; breakaway?: boolean;
+	pid: number; ms: number; via: "wmi" | "direct" | "failed" | "refused"; failure?: string; breakaway?: boolean;
 	/** The server's start time, which the launch PowerShell read in its one start (the starter's cache of start times has it without a PowerShell of its own). */
 	serverStarted?: string;
 	/** Of `ms`, the milliseconds of the create and of the ACL check that followed in the same PowerShell start. */
@@ -173,7 +173,10 @@ export async function probe(ctx: Ctx, deadline?: number, startKnownElsewhere = f
 	// A record with no socket is a start that has not got far enough to listen (`markStarting`): there is nothing to ask.
 	if (!record || !record.socket || !runsAs(ctx, record, startKnownElsewhere)) return { record, live: false, runs: false, hello: undefined };
 	const hello = await helloOf(record.socket, record.secret, within(ctx, deadline, HELLO_MS));
-	return { record, live: Boolean(hello && hello.pid === record.pid), runs: true, hello };
+	// `runs` pins the broker scope for a server that is slow to answer: only on positive evidence that this is that server (the start time the record names is the one the pid has now), so a pid
+	// reused after a crash, or a record with no start time, pins nothing.
+	const live = Boolean(hello && hello.pid === record.pid);
+	return { record, live, runs: live || (Boolean(record.started) && ctx.startOf(record.pid) === record.started), hello };
 }
 
 /** Whether Herdr listens at the slot's socket. */
@@ -268,7 +271,7 @@ export async function launch(ctx: Ctx, { began, old, deadline }: { began?: strin
 	}
 	ctx.log.line("start-requested", { by: ctx.by, version: ctx.version, pid: child.pid, spawnMs: ctx.now() - t0 });
 	// A start outside the starter's job object learns its pid late; how long that took is a phase of its own, and a fallback to a plain spawn is told.
-	let note: string | undefined, pidUnknown = child.pid === undefined && child.started !== undefined;
+	let note: string | undefined, refusal: string | undefined, pidUnknown = child.pid === undefined && child.started !== undefined;
 	void child.started?.then((s) => {
 		ctx.log.line("phase", { name: "breakaway", ms: s.ms, via: s.via, pid: s.pid, ...(s.breakaway === undefined ? {} : { outsideJob: s.breakaway }), createMs: s.createMs, aclMs: s.aclMs });
 		// The launch PowerShell read the server's start time: this process knows it without a PowerShell of its own when it looks at that server.
@@ -277,6 +280,7 @@ export async function launch(ctx: Ctx, { began, old, deadline }: { began?: strin
 		if (s.markerError) ctx.log.line("error", { code: "acl-marker", text: s.markerError });
 		if (s.failure) ctx.log.line("breakaway-failed", { via: s.via, text: s.failure });
 		if (s.via === "failed") note = s.failure;
+		if (s.via === "refused") refusal = s.failure;
 		pidUnknown = false; // after the start times above are remembered
 	}, () => void (pidUnknown = false));
 	try {
@@ -290,6 +294,11 @@ export async function launch(ctx: Ctx, { began, old, deadline }: { began?: strin
 		if (mine) endStarting(ctx.slot, mine.began, mine.expect);
 		// A PowerShell that timed out at the same moment as the wait: its word is in a moment, and the error is not without the sentence that says WMI may still have started the server.
 		if (!outcome && !note && child.started) await Promise.race([child.started, ctx.sleep(100)]);
+		// The launch script found the folder owned by another account and created nothing: told as an `acl` start error (exit 3), not as a server that did not answer.
+		if (refusal) {
+			ctx.log.line("start-failed", { code: "acl", text: refusal });
+			throw new ServerError("start-failed", `acl: ${refusal}`, { at: new Date(ctx.now()).toISOString(), code: "acl", text: refusal });
+		}
 		ctx.log.line("start-unanswered", { ms: ctx.now() - t0, exit: outcome ? String(outcome.exit) : "none" });
 		throw failed(ctx, outcome, waitMs, note);
 	} finally {

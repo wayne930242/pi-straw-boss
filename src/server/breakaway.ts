@@ -67,6 +67,19 @@ export const LAUNCH_SCRIPT = [
 	"  $si.EnvironmentVariables = $vars",
 	"  $wmi = [wmiclass]'Win32_Process'",
 	`  $si.CreateFlags = ${BASE_FLAGS | CREATE_FLAGS.breakaway}`,
+	// The folder's exact owner is checked BEFORE anything is created (R7-F001): the answer line of this script cannot be forged by the folder's owner, a marker file can. A folder that another
+	// account owns is refused here (rc -2): no server, and the starter fails with `acl` without falling back to a plain spawn (whose own check would refuse it as well).
+	"  if ($env:SB_ACL_DIR) {",
+	"    $me = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value.ToUpperInvariant()",
+	"    $sd = (Get-Acl -LiteralPath $env:SB_ACL_DIR).Sddl",
+	"    $o = ''; if ($sd -match '^O:(S-[0-9-]+|[A-Za-z]{2})') { $o = $Matches[1] }",
+	"    $c = $o.ToUpperInvariant()",
+	"    if ($c -eq 'SY') { $c = 'S-1-5-18' } else { $rid = @{ LA = '-500'; LG = '-501'; DA = '-512'; DU = '-513' }[$c]; if ($rid -and $me.EndsWith($rid)) { $c = $me } }",
+	"    if ($c -ne $me) {",
+	"      Say ([ordered]@{ rc = -2; pid = 0; markerError = ('the folder belongs to another account (' + $o + '), not to ' + $me) })",
+	"      exit 0",
+	"    }",
+	"  }",
 	// The line the starter looks for when PowerShell ends without an answer: without it nothing was created (the script died earlier), with it a server may exist.
 	`  Write-Output '${BEFORE_CREATE}'`,
 	"  $r = $wmi.Create($env:SB_LAUNCH_CMD, $env:SB_LAUNCH_CWD, $si)",
@@ -119,6 +132,8 @@ export function launchCommand(spec: SpawnSpec, env: NodeJS.ProcessEnv = process.
 export interface LaunchAnswer { pid: number; breakaway: boolean; started?: string; starterStarted?: string; createMs?: number; aclMs?: number; markerError?: string }
 /** The answer says WMI made no process (a return code other than 0, or a script that ended before the create): a plain spawn is safe. Any other failure to read an answer leaves it open that a server exists. */
 class NotCreated extends Error {}
+/** The launch script found the state folder owned by another account and made nothing: the start fails with `acl` (exit 3), with no plain-spawn fallback. */
+class OwnerRefused extends Error {}
 export function parseLaunchOutput(stdout: string): LaunchAnswer {
 	const line = stdout.trim().split(/\r?\n/).filter(Boolean).at(-1) ?? "";
 	let parsed: { rc?: unknown; pid?: unknown; breakaway?: unknown; started?: unknown; starterStarted?: unknown; createMs?: unknown; aclMs?: unknown; markerError?: unknown };
@@ -128,6 +143,7 @@ export function parseLaunchOutput(stdout: string): LaunchAnswer {
 		throw new Error(`PowerShell answered ${line.slice(0, 120) || "nothing"}`);
 	}
 	const why = typeof parsed.markerError === "string" && parsed.markerError ? `: ${asciiLine(parsed.markerError)}` : "";
+	if (parsed.rc === -2) throw new OwnerRefused(typeof parsed.markerError === "string" && parsed.markerError ? asciiLine(parsed.markerError) : "the folder belongs to another account");
 	if (parsed.rc === -1) throw new NotCreated(`the launch script failed before WMI made the process${why}`);
 	if (typeof parsed.rc === "number" && parsed.rc !== 0) throw new NotCreated(`Win32_Process.Create returned ${parsed.rc} (pid ${String(parsed.pid)})${why}`);
 	if (parsed.rc !== 0 || typeof parsed.pid !== "number" || !(parsed.pid > 0)) throw new Error(`Win32_Process.Create returned ${String(parsed.rc)} (pid ${String(parsed.pid)})${why}`);
@@ -209,6 +225,10 @@ export function spawnBreakaway(spec: SpawnSpec, deps: BreakawayDeps): Launched {
 			answer = parseLaunchOutput(stdout);
 		} catch (failure) {
 			// The script's answer is the source of truth, whatever the exit code. A refusal of WMI before anything was created falls back; no answer line at all does not.
+			if (failure instanceof OwnerRefused) {
+				resolveStarted({ pid: 0, ms: now() - t0, via: "refused", failure: (failure as Error).message });
+				return resolveExit(3);
+			}
 			if (failure instanceof NotCreated) return direct((failure as Error).message);
 			// Ended with an error and without the line printed before the create: the script died before it (a method the language mode refuses, an AMSI or EDR block, a parse error), so nothing was
 			// created and the plain spawn is safe, visibly. With the line, or with no error at all, a server may exist: no second one.

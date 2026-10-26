@@ -239,6 +239,8 @@ export interface LockDeps {
 	prepare?: (slot: Slot, ms?: number) => void;
 	/** Gives a lock file the folder's ACL again when it cannot be read (access denied); `resetFileAcl` on Windows, none elsewhere. Without one an unreadable lock is an error. */
 	repair?: (file: string) => void;
+	/** Whether a file exists (`existsSync`); a seam for the delete-pending case. */
+	exists?: (file: string) => boolean;
 }
 /** `server.lock` cannot be opened (access denied): not a start under way. Told as it is, never waited for as a held lock. */
 export class LockUnreadable extends Error {
@@ -312,7 +314,12 @@ export async function takeLock(slot: Slot, by: string, deps: LockDeps = {}, wait
 			if (denied) {
 				// A lock that is gone by now (released while it was opened, delete-pending on a file system without POSIX delete) is a free lock; one that is still there gets its permissions repaired
 				// once, and a denial that outlives the repair is retried for about 100 ms before it is told as what it is.
-				if (!existsSync(lock)) continue;
+				// Not at once the second time: a lock that stays "there" for the link and "gone" for the read (delete-pending) is not spun on, but waited for briefly and then told busy.
+				if (!(deps.exists ?? existsSync)(lock)) {
+					if (deniedTries++ >= 5 || (deniedTries > 1 && now() >= end)) throw new LockBusy(undefined);
+					if (deniedTries > 1) await sleep(20);
+					continue;
+				}
 				if (!repaired && deps.repair) {
 					repaired = true;
 					try {

@@ -43,6 +43,9 @@ export const ACL_STEPS = [
 	// inherits the folder's owner and SYSTEM grant again, which an (OI)(CI) grant hands to files and folders alike. `/C` goes on past an item that vanishes meanwhile (a temp file renamed into
 	// place), and the exit code is not the check, since an empty folder has nothing to match: the read-back below is. A call per item would start a process for each of them (link/inbox holds up to 500).
 	"& $icacls \"$dir\\*\" /reset /T /C /Q | Out-Null",
+	// /reset and /inheritance replace DACLs and never owners: a folder below that another account created (a secondary slot's `servers\<hash>`, `link\…`) would stay that account's, with an owner's
+	// implicit WRITE_DAC over what is written in it later. Everything below is made the user's in ONE call (`/C` goes on past an item it may not change; the read-back below is the check).
+	"& $icacls \"$dir\\*\" /setowner \"*${sid}\" /T /C /L /Q | Out-Null",
 	"$files = @()",
 	"foreach ($name in 'server.json', 'server.lock', 'server.log', 'gui.json', 'paired.json') { $p = Join-Path $dir $name; if (Test-Path -LiteralPath $p) { $files += $p } }",
 	"$link = Join-Path $dir 'link'",
@@ -51,7 +54,10 @@ export const ACL_STEPS = [
 	"$servers = Join-Path $dir 'servers'",
 	"if (Test-Path -LiteralPath $servers) { foreach ($slotDir in @(Get-ChildItem -LiteralPath $servers -Directory)) { $p = Join-Path $slotDir.FullName 'server.json'; if (Test-Path -LiteralPath $p) { $files += $p } } }",
 	"$read = @(foreach ($p in $files) { try { [ordered]@{ path = $p; sddl = (Get-Acl -LiteralPath $p).Sddl } } catch { if (Test-Path -LiteralPath $p) { throw } } })",
-	"$out = [ordered]@{ sid = $sid; started = $started; dir = (Get-Acl -LiteralPath $dir).Sddl; files = $read }",
+	// Every folder below, with its owner (`O:`) read back: each must be the user's (`aclProblems`).
+	"$folders = @(Get-ChildItem -LiteralPath $dir -Directory -Recurse -Force | ForEach-Object { $_.FullName })",
+	"$readFolders = @(foreach ($p in $folders) { try { [ordered]@{ path = $p; sddl = (Get-Acl -LiteralPath $p).Sddl } } catch { if (Test-Path -LiteralPath $p) { throw } } })",
+	"$out = [ordered]@{ sid = $sid; started = $started; dir = (Get-Acl -LiteralPath $dir).Sddl; files = $read; folders = $readFolders }",
 ];
 /**
  * The PowerShell script: the folder and the server's pid come in the environment (SB_ACL_DIR, SB_ACL_PID), so no path is ever quoted into the script.
@@ -168,7 +174,7 @@ export function fileProblems(sddl: string, owner: string, path = "a file"): stri
 	return problems;
 }
 
-export interface AclResult { sid: string; dir: string; files: { path: string; sddl: string }[]; started?: string }
+export interface AclResult { sid: string; dir: string; files: { path: string; sddl: string }[]; folders?: { path: string; sddl: string }[]; started?: string }
 /** The answer line of the script, as a value; throws when it is not what the script prints. */
 export function parseAclOutput(stdout: string): AclResult {
 	const line = stdout.trim().split(/\r?\n/).filter(Boolean).at(-1) ?? "";
@@ -178,29 +184,31 @@ export function parseAclOutput(stdout: string): AclResult {
 	} catch {
 		throw new Error(`PowerShell answered ${line.slice(0, 120) || "nothing"}`);
 	}
-	const { sid, dir, files, started } = (parsed ?? {}) as Partial<AclResult> & { files?: unknown };
+	const { sid, dir, files, folders, started } = (parsed ?? {}) as Partial<AclResult> & { files?: unknown; folders?: unknown };
 	if (typeof sid !== "string" || !/^S-1-[0-9-]+$/.test(sid) || typeof dir !== "string") throw new Error(`PowerShell's answer has no SID and SDDL: ${line.slice(0, 120)}`);
 	// PowerShell turns a one-item array into the item itself in some versions.
-	const list = Array.isArray(files) ? files : files && typeof files === "object" ? [files] : [];
+	const listOf = (value: unknown): { path: string; sddl: string }[] => (Array.isArray(value) ? value : value && typeof value === "object" ? [value] : []).filter((f): f is { path: string; sddl: string } => typeof f?.path === "string" && typeof f?.sddl === "string");
 	// The start time is kept only in the one form startof.ts writes, so a record never carries text the other readers would not compare equal.
-	return { sid, dir, files: list.filter((f): f is { path: string; sddl: string } => typeof f?.path === "string" && typeof f?.sddl === "string"), ...(typeof started === "string" && START_TEXT.test(started) ? { started } : {}) };
+	return { sid, dir, files: listOf(files), folders: listOf(folders), ...(typeof started === "string" && START_TEXT.test(started) ? { started } : {}) };
 }
 /**
  * The folder's owner must be the user: the exact `O:` of `(Get-Acl).Sddl`, which PowerShell's read-back has and `icacls /save` has not. A folder another account owns keeps an owner's implicit
  * WRITE_DAC whatever its DACL says now, so it is refused before any secret is written ("belongs to another account"; the native owner read can only say "not known" for a long account name).
  */
-export function ownerProblems(sddl: string, owner: string): string[] {
+export function ownerProblems(sddl: string, owner: string, path = "the folder"): string[] {
 	let found: string | undefined;
 	try {
 		found = parseSddl(sddl).owner;
 	} catch {
 		return []; // folderProblems says the SDDL cannot be read
 	}
-	if (!found) return ["the folder's SDDL names no owner"];
-	return canon(found, owner) === owner.toUpperCase() ? [] : [`the folder belongs to another account (${found}), not to ${owner}`];
+	if (!found) return [`${path}: the SDDL names no owner`];
+	return canon(found, owner) === owner.toUpperCase() ? [] : [`${path === "the folder" ? path : `the folder ${path}`} belongs to another account (${found}), not to ${owner}`];
 }
 /** Every problem in a result: the folder's owner, its DACL, and each secret file's. */
-export const aclProblems = ({ sid, dir, files }: AclResult) => [...ownerProblems(dir, sid), ...folderProblems(dir, sid), ...files.flatMap((f) => fileProblems(f.sddl, sid, f.path))];
+export const aclProblems = ({ sid, dir, files, folders = [] }: AclResult) => [
+	...ownerProblems(dir, sid), ...folderProblems(dir, sid), ...folders.flatMap((f) => ownerProblems(f.sddl, sid, f.path)), ...files.flatMap((f) => fileProblems(f.sddl, sid, f.path)),
+];
 
 const START_TEXT = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
 
@@ -267,7 +275,7 @@ export function asciiLine(text: unknown): string {
 /** The answer of the script as a verified result: throws an AclError (with the SDDL it read) when the folder or a secret file is not owner and SYSTEM only. */
 function verified(result: AclResult, dir: string): { sid: string; started?: string } {
 	const problems = aclProblems(result);
-	if (problems.length) throw new AclError(`the ACL of ${dir} is not owner and SYSTEM only: ${problems.join("; ")}`, [result.dir, ...result.files.map((f) => `${f.path}: ${f.sddl}`)].join("\n"));
+	if (problems.length) throw new AclError(`the ACL of ${dir} is not owner and SYSTEM only: ${problems.join("; ")}`, [result.dir, ...(result.folders ?? []).map((f) => `${f.path}: ${f.sddl}`), ...result.files.map((f) => `${f.path}: ${f.sddl}`)].join("\n"));
 	return { sid: result.sid, ...(result.started ? { started: result.started } : {}) };
 }
 

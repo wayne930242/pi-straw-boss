@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { LAUNCH_SCRIPT } from "../src/server/breakaway.ts";
 import { ACL_SCRIPT, ACL_TOKEN, aclCommand, ownerProblems, plainStderr, aclMarkerPath, AclError, aclProblems, applyAcl, asciiLine, awaitAclMarker, execFailure, messageLine, type Exec, fileProblems, folderProblems, parseAclOutput, parseSddl, readMarker, SYSTEM_SID } from "../src/server/acl.ts";
 
 // docs/specs/2026-10-26-sb-backend.md, The control socket: on Windows the state directory gets an owner-and-SYSTEM ACL, set and checked by SID in one PowerShell start.
@@ -70,7 +71,7 @@ test("the folder is protected first and without /T, then everything already in i
 	assert.match(reset[0]!, /^& \$icacls "\$dir\\\*" \/reset \/T \/C \/Q \| Out-Null$/);
 	assert.ok(lines.indexOf(reset[0]!) > folder, "after the folder");
 	assert.ok(lines.findIndex((l) => l.includes("Get-Acl -LiteralPath $p")) > lines.indexOf(reset[0]!), "the SDDLs are read back after the repair");
-	assert.equal(ACL_SCRIPT.match(/& \$icacls/g)!.length, 2, "icacls is started twice: the folder and the reset");
+	assert.equal(ACL_SCRIPT.match(/& \$icacls/g)!.length, 3, "icacls is started three times, whatever the number of items: the folder, the reset, and the owner of what is below (R7-F002)");
 	assert.equal(ACL_SCRIPT.match(/icacls\.exe/g)!.length, 1, "named once, by the system folder's path");
 	// The files the check reads include the ones that existed before the ACL: the lock the starter took and the log.
 	assert.match(ACL_SCRIPT, /'server\.json', 'server\.lock', 'server\.log'/);
@@ -169,8 +170,8 @@ test("a secret file may hold the owner's and SYSTEM's allow ACEs explicit or inh
 
 test("the script's answer: one JSON line (the last line of the output), a one-item array flattened by PowerShell included", () => {
 	const answer = { sid: OWNER, dir: good, files: [{ path: "C:\\s\\server.json", sddl: good }] };
-	assert.deepEqual(parseAclOutput(`${JSON.stringify(answer)}\r\n`), answer);
-	assert.deepEqual(parseAclOutput(`warning text\n${JSON.stringify({ ...answer, files: answer.files[0] })}`), answer);
+	assert.deepEqual(parseAclOutput(`${JSON.stringify(answer)}\r\n`), { ...answer, folders: [] });
+	assert.deepEqual(parseAclOutput(`warning text\n${JSON.stringify({ ...answer, files: answer.files[0] })}`), { ...answer, folders: [] });
 	assert.deepEqual(parseAclOutput(JSON.stringify({ sid: OWNER, dir: good })).files, []);
 	assert.throws(() => parseAclOutput(""), /answered nothing/);
 	assert.throws(() => parseAclOutput("{not json"), /answered/);
@@ -288,4 +289,31 @@ test("R6-F006: a CLIXML character reference past U+10FFFF is kept as written and
 	for (const ref of ["&#x110000;", "&#1114112;", "&#xFFFFFFFFFFFF;", "&#99999999999999999999;"]) assert.equal(plainStderr(text(ref)), `a${ref}b`);
 	assert.equal(plainStderr(text("&#x41;&#128512;")), "aA\u{1F600}b");
 	assert.doesNotThrow(() => execFailure(Object.assign(new Error("x"), { code: 1 }), text("&#x110000;")));
+});
+
+// --- R7-F002: the folders below are the user's too ---
+
+test("R7-F002: both scripts make everything below the folder the user's in one call after the reset, and read back every folder below with its owner", () => {
+	const lines = ACL_SCRIPT.split("\n");
+	const reset = lines.findIndex((l) => /\/reset \/T \/C \/Q/.test(l)), owner = lines.findIndex((l) => /\/setowner "\*\$\{sid\}" \/T \/C \/L \/Q/.test(l)), folders = lines.findIndex((l) => /Get-ChildItem -LiteralPath \$dir -Directory -Recurse -Force/.test(l));
+	assert.ok(reset > 0 && owner > reset, `${reset} ${owner}`);
+	assert.ok(folders > owner, "read back after the owner is set");
+	assert.equal(lines.filter((l) => /\/setowner/.test(l)).length, 1, "one call, not one per item");
+	assert.match(ACL_SCRIPT, /folders = \$readFolders/);
+	assert.ok(!/foreach[^\n]*icacls/.test(ACL_SCRIPT), "no per-item icacls");
+	assert.ok(LAUNCH_SCRIPT.includes('/setowner "*${sid}" /T /C /L /Q'), "the launch script runs the same steps");
+});
+
+test("R7-F002: a folder below that another account owns is a problem (named by path), on the marker path and the own path; the user's, SYSTEM's alias and missing folders are not", async () => {
+	const base = { sid: OWNER, dir: good, files: [] };
+	const mine = { path: "C:\\s\\servers\\abcd", sddl: `O:${OWNER}G:DUD:AI${ACE(OWNER, "ID")}${ACE("SY", "ID")}` };
+	const theirs = { path: "C:\\s\\servers\\ef01", sddl: `O:${OTHER}G:DUD:AI${ACE(OWNER, "ID")}${ACE("SY", "ID")}` };
+	assert.deepEqual(aclProblems({ ...base, folders: [mine] }), []);
+	assert.deepEqual(aclProblems(base), [], "an answer with no folders list");
+	assert.deepEqual(aclProblems({ ...base, folders: [mine, theirs] }), ["the folder C:\\s\\servers\\ef01 belongs to another account (S-1-5-21-9-9-9-1002), not to " + OWNER]);
+	const exec: Exec = (_f, _a, _o, done) => done(null, JSON.stringify({ ...base, folders: theirs }));
+	await assert.rejects(applyAcl("C:\\s", exec), (e: unknown) => e instanceof AclError && /servers\\ef01 belongs to another account/.test((e as Error).message) && /servers\\ef01: O:/.test((e as AclError).sddl ?? ""));
+	assert.throws(() => readMarker(marker({ folders: [theirs] }), "C:\\s", 4321), /belongs to another account/);
+	assert.deepEqual(parseAclOutput(JSON.stringify({ ...base, folders: mine })).folders, [mine], "one folder is not turned into a list by PowerShell");
+	assert.deepEqual(parseAclOutput(JSON.stringify(base)).folders, []);
 });

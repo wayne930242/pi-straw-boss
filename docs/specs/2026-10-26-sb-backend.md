@@ -248,18 +248,20 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
       is in place, and inherits the owner and SYSTEM grant.
       - **A filtered (UAC) token cannot always `/setowner`** (VM pass 4, F1): outside its profile, without a WRITE_OWNER grant from the
         parent, it gets exit 5 on a folder it owns (Administrators is deny-only in that token), and every start there failed with a wrong
-        "belongs to another account". So when `/setowner` is refused (5, 1307, 1314) the owner is read natively: `cmd /d /s /c "dir /q /a:d
-        <parent>"` names each entry's owner in the console's code page, as `whoami` names the account, so the account name (or the SID, for
-        an owner Windows shows as one) is compared byte for byte, case-insensitively, as a whole field. **The listing proves little**: the
-        owner column is 23 characters wide and cut there with no separator after it (a `DESKTOP-XXXXXXX\name` of 23 or more cannot be
-        told), and the names in it are ones other accounts can create (a folder named after the user's SID is no proof; there is no SID
-        branch). So `/setowner` refused is final only when the listing positively names another owner ("belongs to another account"; `DIRCMD`
-        is cleared for the call so its layout is the plain one). Otherwise (the owner is the caller's, or cannot be told) the protect call
-        goes on, and **the exact owner is checked in the PowerShell read-back before any secret is written**: the folder's `O:` from
-        `(Get-Acl).Sddl` must be the user's SID (`ownerProblems`, in `aclProblems`, on the marker path and the server's own path); another
-        account's folder is refused with `acl` "the folder belongs to another account (<SID>)", whatever its DACL says. The read
-        is made only after a refusal, so the usual start costs no process for it. A path `cmd` treats specially (`% ! " ^ & | < >`) or a
-        non-ASCII folder name is not asked about (cannot tell).
+        "belongs to another account". So a `/setowner` refusal (5, 1307, 1314) is **never final**: the protect call that follows decides (the
+        owner has WRITE_DAC; a folder another account owns that grants the user nothing fails there with exit 5, told as such). Nothing
+        native can tell whose folder it is: `dir /q` cuts the owner column at 23 characters, and the names in a listing are ones other
+        accounts can create (a folder named after the user's SID is no proof), so no listing is read. **The exact owner is checked
+        where it cannot be forged**: the folder's `O:` from `(Get-Acl).Sddl` must be the user's SID (`ownerProblems`, in `aclProblems`):
+        - in the **launch PowerShell before `Win32_Process.Create`** (the answer line of a script cannot be forged by the folder's owner, a
+          marker file can): a different owner is rc -2, nothing is created, and the starter fails with `acl` "the folder belongs to
+          another account (<SID>), not to <SID>" (exit 3), with no plain-spawn fallback, whose own check would refuse it as well;
+        - in the server's own check (`serve`, the plain spawn) and when it reads the marker, before any secret is written.
+        An alias of the user's own built-in account (`LA`, `LG`, `DA`, `DU`) and `SY` for a SYSTEM user are accepted.
+      - **Everything below is the user's too** (R7-F002): `/reset` and `/inheritance` replace DACLs and never owners, so after the reset one
+        call, `icacls "<dir>\*" /setowner *<sid> /T /C /L /Q`, makes the folders below (`servers\<hash>`, `link\…`) the user's, and the
+        read-back lists every folder below with its `O:`, which must be the user's (`folders` in the answer; a folder that another
+        account owns would keep an owner's implicit WRITE_DAC over what is written in it later).
       - Every `icacls` call carries `/L`, so a link is acted on itself and never its target, and `secure` looks for a link first.
       - The rename is tried again on `EPERM`, `EBUSY` and `EACCES` (a scanner or the indexer holding the temporary folder): waits of 10, 20,
         40, 80, 160, 320, then 500 ms three times, 2.1 s in all. A handle that stays is told as that ("something is holding the new folder …
@@ -440,10 +442,11 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
       `up` and `stop` (a filtered user cannot even delete it). When `server.lock` exists and cannot be read (`EACCES`, `EPERM`), its
       permissions are reset once (`icacls <file> /reset /L /Q`: the owner can) and it is read and judged as any lock; when that fails,
       the start ends with `acl` (exit 3), naming the file and what to do (`LockUnreadable`). A lock that is gone by then is free, and a denial
-      that outlives the repair is retried for about 100 ms first (a release in progress on a file system without POSIX delete).
+      that outlives the repair is retried for about 100 ms first (a release in progress on a file system without POSIX delete); a lock that reads
+      as both denied and gone is paused on 20 ms at a time, at most five times, then busy.
     - **A record of a server that is gone does not pin the broker scope** (F6). After a stop, the stopped record keeps the old scope, and
       a start in another `PI_INTERCOM_SCOPE_ID` was refused. The scope and transport are compared only while the record's process runs
-      (it answers hello, or its pid is alive and started when the record says: a server that is slow to answer keeps its scope; the look,
+      (it answers hello, or the record has a start time and the pid has it now: a server that is slow to answer keeps its scope, a pid reused after a crash does not; the look,
       `restart` and `stop`); a stopped or dead record pins nothing, and the new server's record carries the new scope.
     - **`stop` on a folder that is not the caller's** (F8) cannot take the lock; its message says that a server in it was started by
       another account, to stop it from that account (an elevated shell for an elevated run), or end its process; the sentence is added only
