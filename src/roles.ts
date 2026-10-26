@@ -17,7 +17,7 @@ import type { Kit } from "./state.ts";
 // check: it closes its pane when it quits, and its record is dropped then.)
 
 const KEEP_MS = 90 * 24 * 3600_000;
-export interface RoleRecord { role: "tower" | "main"; pane: string; tab: string; workspace: string; terminal?: string; file?: string; at: number }
+export interface RoleRecord { role: "tower" | "main"; pane: string; tab: string; workspace: string; terminal?: string; file?: string; openedBy?: string; at: number }
 /** Where a session runs now: the pane, tab, and workspace of the record must all be these. */
 export interface Here { paneId?: string; tabId?: string; workspaceId?: string; terminalId?: string }
 
@@ -38,7 +38,7 @@ export function createRoles({ cfg, s, guiDir, tell }: Kit) {
 		}
 		try {
 			const r = JSON.parse(raw) as Partial<RoleRecord>;
-			return (r.role === "tower" || r.role === "main") && typeof r.pane === "string" && typeof r.tab === "string" && typeof r.workspace === "string" && (r.terminal === undefined || typeof r.terminal === "string") && (r.file === undefined || typeof r.file === "string") ? (r as RoleRecord) : undefined;
+			return (r.role === "tower" || r.role === "main") && typeof r.pane === "string" && typeof r.tab === "string" && typeof r.workspace === "string" && (r.terminal === undefined || typeof r.terminal === "string") && (r.file === undefined || typeof r.file === "string") && (r.openedBy === undefined || typeof r.openedBy === "string") ? (r as RoleRecord) : undefined;
 		} catch {
 			return undefined; // a record that cannot be read proves nothing
 		}
@@ -56,6 +56,7 @@ export function createRoles({ cfg, s, guiDir, tell }: Kit) {
 		const mains = names.flatMap((name) => load(join(dir, name), true) ?? []).filter((r) => r.role === "main" && r.tab === tab && r.workspace === workspace);
 		return mains.sort((a, b) => b.at - a.at)[0];
 	};
+	let restoredOpener: string | undefined; // what openerOf found for the main being restored, which its new record keeps until the start ends
 	const forget = () => {
 		if (s.file) rmSync(path(s.file), { force: true });
 	};
@@ -75,14 +76,25 @@ export function createRoles({ cfg, s, guiDir, tell }: Kit) {
 			const record = within(here);
 			return record?.role === "main" && record.terminal !== undefined && record.terminal === here.terminalId;
 		},
+		/**
+		 * The marker (`sb_opened_by`) a main a tower opened had before a Herdr restore, for a main taking its role back (`held` said main); none without `here`. A restore is a
+		 * plain startup, which keeps neither the pane's tokens nor the claim of the one-time token, and the tower is a new session. What closes the main is the tower token
+		 * of its workspace at the time of the ask (closemain.ts), so the record only has to bring the marker back: it is read where the main ran (same pane, tab, and
+		 * workspace), and a main the boss opened has none.
+		 */
+		openerOf(here?: Here): string | undefined {
+			const record = here && within(here);
+			return (restoredOpener = record && record.role === "main" ? record.openedBy : undefined);
+		},
 		/** The main record of a tab, whichever session left it: the main a Herdr restore may be bringing back there. */
 		mainOf,
 		remember(role: RoleRecord["role"]) {
+			const openedBy = role === "main" ? s.openedBy ?? restoredOpener : undefined;
 			if (s.file) {
 				try {
 					mkdirSync(dir, { recursive: true, mode: 0o700 });
 					const file = path(s.file), temp = `${file}.${process.pid}.tmp`, at = cfg.now();
-					writeFileSync(temp, JSON.stringify({ role, pane: s.at.paneId, tab: s.at.tabId, workspace: s.at.workspaceId, ...(s.at.terminalId ? { terminal: s.at.terminalId } : {}), file: s.file, at } satisfies RoleRecord), { mode: 0o600 });
+					writeFileSync(temp, JSON.stringify({ role, pane: s.at.paneId, tab: s.at.tabId, workspace: s.at.workspaceId, ...(s.at.terminalId ? { terminal: s.at.terminalId } : {}), file: s.file, ...(openedBy ? { openedBy } : {}), at } satisfies RoleRecord), { mode: 0o600 });
 					renameSync(temp, file);
 				} catch (error) {
 					return void tell(`Straw Boss: could not record this session's role, so a Herdr restore will not bring it back: ${(error as Error).message}`, "warning");

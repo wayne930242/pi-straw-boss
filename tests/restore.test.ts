@@ -313,3 +313,73 @@ test("a restored main whose claim times out still opens no tower once the owner 
 	assert.equal(back.tokens.sb_role, "main");
 	assert.equal(world.herdr.commands("tab", "create").length, 0, "the restored main opens no tower, though its claim timed out first");
 });
+
+// A main the tower opened for a request is closable by that tower (closemain.ts) only while its pane carries `sb_opened_by`, which the main writes from the opener it
+// saved in the session, and only for the same pi in the same pane after a /reload. A Herdr restore is a plain startup, so the record has to carry the opener too.
+const OPENED = { file: "/s/opened.jsonl", pane: "wA:p101" };
+const asOpened = () => {
+	world.herdr.onAgentStart = (pane) => {
+		const agent = world.agent({ id: "opened-1", name: "main · opened", pane: pane.pane_id, env: { STRAW_BOSS_ROLE: "main" } });
+		agent.file = OPENED.file;
+		void agent.start();
+	};
+};
+const closeable = (tower: Agent, id: string) => {
+	world.herdr.pane(OPENED.pane).agent_status = "idle";
+	return tower.tool("boss_close_main", { main: id }).then(() => "closed", (error: Error) => error.message);
+};
+
+test("a main the tower opened is closable by the restored tower after a Herdr restore", async () => {
+	const { tower } = await net();
+	asOpened();
+	await tower.tool("boss_open_main", { request: "Fix the export button.", sender: "member-1" });
+	await until(() => world.herdr.pane(OPENED.pane).tokens.sb_role === "main", "the opened main is main");
+	assert.ok(tokens(OPENED.pane).sb_opened_by, "it is marked as opened");
+	assert.ok(records().some((r) => r.pane === OPENED.pane), "and left its record");
+	world.herdr.onAgentStart = undefined;
+	const [tower2, , back] = await restore([
+		{ id: "tower-2", pane: "wA:p7", file: FILES.tower },
+		{ id: "main-2", pane: "wA:p1", file: FILES.main },
+		{ id: "opened-2", pane: OPENED.pane, file: OPENED.file },
+	]) as [Agent, Agent, Agent];
+	await until(() => world.herdr.workspace("wA").tokens.tower === "tower-2", "the tower is back");
+	await until(() => tokens(OPENED.pane).sb_role === "main", "the opened main is main again");
+	await until(() => Boolean(tokens(OPENED.pane).sb_opened_by), "and marked as opened again");
+	assert.equal(back.regs.has("straw-boss/control"), true, "it listens for close asks");
+	assert.equal(await closeable(tower2, "opened-2"), "closed");
+	await until(() => back.stopped, "the restored main quit");
+});
+
+test("a restored main restored in another workspace than the one that opened it has no opener", async () => {
+	const { tower } = await net();
+	asOpened();
+	await tower.tool("boss_open_main", { request: "Fix the export button.", sender: "member-1" });
+	await until(() => world.herdr.pane(OPENED.pane).tokens.sb_role === "main", "the opened main is main");
+	world.herdr.onAgentStart = undefined;
+	// The main's pane moved to another workspace: its record means nothing there, and the tower of wA is not that workspace's.
+	world.herdr.workspaces.push({ workspace_id: "wB", label: "Beta", tokens: {} });
+	const [, , moved] = await restore([
+		{ id: "tower-2", pane: "wA:p7", file: FILES.tower },
+		{ id: "main-2", pane: "wA:p1", file: FILES.main },
+		{ id: "opened-2", pane: OPENED.pane, file: OPENED.file },
+	], () => Object.assign(world.herdr.pane(OPENED.pane), { workspace_id: "wB" })) as [Agent, Agent, Agent];
+	await world.quiet();
+	assert.equal(tokens(OPENED.pane).sb_role, "member");
+	assert.equal(tokens(OPENED.pane).sb_opened_by, undefined, "no opener in another workspace");
+	assert.equal(moved.regs.has("straw-boss/control"), false);
+});
+
+test("a main the boss opened stays the boss's after a Herdr restore", async () => {
+	await net();
+	assert.equal(tokens("wA:p1").sb_opened_by, undefined);
+	const [tower2, , back] = await restore([
+		{ id: "tower-2", pane: "wA:p7", file: FILES.tower },
+		{ id: "member-2", pane: "wA:p2", file: FILES.member },
+		{ id: "main-2", pane: "wA:p1", file: FILES.main },
+	]) as [Agent, Agent, Agent];
+	await until(() => tokens("wA:p1").sb_role === "main", "the main is main again");
+	assert.equal(tokens("wA:p1").sb_opened_by, undefined);
+	assert.equal(back.regs.has("straw-boss/control"), false);
+	world.herdr.pane("wA:p1").agent_status = "idle";
+	await assert.rejects(tower2.tool("boss_close_main", { main: "main-2" }), /was not opened by a tower/);
+});
