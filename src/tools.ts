@@ -10,12 +10,13 @@ import type { Link } from "./link/runtime.ts";
 import { opener } from "./opener.ts";
 import type { Reach } from "./reach.ts";
 import type { Kit } from "./state.ts";
+import { trustDir } from "./trust/files.ts";
 
 /** The tab label for a name, cut at 16 characters as pi-auto-tab-name cuts it, so that extension takes the label as its own and keeps it. */
 export const tabLabel = (name: string): string => Array.from(name).length > 16 ? `${Array.from(name).slice(0, 16).join("").trimEnd()}…` : name;
 
 /** The tools the agent calls: what a joined session has (status, call_tower, broadcast, rename, promote), and the tower's boss_open_main. */
-export function createTools({ pi, cfg, s, me, role, guiDir }: Kit, { post, callTower, status, broadcast, towerList, towerSend, read, promote, digest, closeMain, link }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend" | "read"> & Pick<Membership, "promote"> & { digest: Digest; closeMain: CloseMain; link: Link }) {
+export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { post, callTower, status, broadcast, towerList, towerSend, read, promote, digest, closeMain, link }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend" | "read"> & Pick<Membership, "promote"> & { digest: Digest; closeMain: CloseMain; link: Link }) {
 	const tool = <P extends TSchema>(name: string, description: string, parameters: P, body: (params: Static<P>) => Promise<{ text: string; details?: unknown }>) =>
 		pi.registerTool({
 			name, label: name, description, parameters,
@@ -45,6 +46,8 @@ export function createTools({ pi, cfg, s, me, role, guiDir }: Kit, { post, callT
 				}),
 				({ message, scope, reply }) => broadcast(message, scope ?? "workspace", reply ?? false));
 			const arg = (description: string) => Type.Optional(Type.String({ description }));
+			// A call nested in another tool's (codemode) is written to the session file only when its parent ends, so the key pad's file check would never see it open.
+			pi.on("tool_call", (e) => (e.toolName === "link_request" && (e as { parentToolCallId?: string }).parentToolCallId ? { block: true, reason: "link_request is called directly, not from another tool" } : undefined));
 			pi.registerTool({
 				name: "link_request", label: "link_request",
 				description: "Ask for a Straw Link action (teams across computers). It never runs unasked: the boss gets an approval dialog that shows the action, every argument, your reason, and this session, and the action runs only when they approve it (in the GUI, from a paired device, or in the terminal); no answer in 10 minutes refuses it. Actions: create (relay, project; opens the Create team screen, where the boss types the relay's token), invite (team; returns an invite text), invite-unattended (team, device id of the unattended computer), join (text; opens the Join screen with the invite filled in, the boss compares the safety words), trust (device, level reply|forward|dispatch), leave (team), and for an admin remove (team, device), role (team, device, role admin|member), rotate (team). Refused on an unattended device.",
@@ -100,7 +103,7 @@ export function createTools({ pi, cfg, s, me, role, guiDir }: Kit, { post, callT
 		// Tower only. The tower runs no commands: this is its one way to start work, in a new tab of its own workspace.
 		addOpenMain() {
 			// The request reaches the new main under a header, and names the tower the main reports to as well as the sender.
-			const open = opener({ run: cfg.run, sleep: cfg.sleep, workspaceId: s.at.workspaceId, cwd: process.cwd(), sessions: () => s.c.listSessions(), send: (to, message) => post(to, message, "handoff", "main", true), tower: () => ({ id: me(), name: s.ownName || me() }) });
+			const open = opener({ run: cfg.run, sleep: cfg.sleep, workspaceId: s.at.workspaceId, cwd: process.cwd(), sessions: () => s.c.listSessions(), send: (to, message) => post(to, message, "handoff", "main", true), tower: () => ({ id: me(), name: s.ownName || me() }), trustDir: trustDir(guiDir) });
 			tool("boss_open_main", "Open a new tab in this workspace with a new pi as its main agent and hand it a request that no session owns. Does not ask the boss and does not take focus. Opens at most one main per request; when it fails, tell the sender. The main reports its outcome to the sender and to you; close it with boss_close_main after its done report.",
 				Type.Object({
 					request: Type.String({ description: "The sender's request exactly as it reached you, with every boss decision it quotes kept verbatim." }),

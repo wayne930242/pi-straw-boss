@@ -4,6 +4,7 @@ import { workspaces } from "./herdr.ts";
 import type { createHost } from "./host.ts";
 import { listStashes, nameFor, nameOk, popBase, stashFile } from "./stash.ts";
 import type { Kit } from "./state.ts";
+import { trustDir } from "./trust/files.ts";
 
 // /boss stash and /boss pop, this session's side (stash.ts holds the checks, the manifest, and the reopening). A stash runs in the session
 // that holds the GUI server, the only one that can ask every bridge in the base whether it may be put away and then ask it to quit; this
@@ -55,7 +56,7 @@ export function createStashing({ cfg, s, guiDir, tell, me }: Kit, { host }: { ho
 			if (!name) return;
 			tell(`Opening "${name}"…`);
 			const live = async (id: string) => (await host.sessions()).some((x) => x.id === id);
-			const r = await popBase({ run, sleep, stateDir: guiDir, live, agentDir: cfg.env.PI_CODING_AGENT_DIR }, name);
+			const r = await popBase({ run, sleep, stateDir: guiDir, live, agentDir: cfg.env.PI_CODING_AGENT_DIR, trustDir: trustDir(guiDir) }, name);
 			tell(`Popped "${name}": ${r.sessions} sessions are back in ${r.label}`);
 		},
 	};

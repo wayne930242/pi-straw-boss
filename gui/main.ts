@@ -61,7 +61,7 @@ const openTile = (tile: Tile, take?: boolean) => withPanels((p) => p.tiles.open(
 const tabIcon = document.querySelector<HTMLLinkElement>('link[rel="icon"]'), plainIcon = tabIcon && decodeURIComponent(tabIcon.href.slice(tabIcon.href.indexOf(",") + 1));
 let badged = 0;
 function badge(net: Net) {
-	const n = net.bases.flatMap((b) => [...(b.tower ? [b.tower, ...b.tower.subs] : []), ...[...b.tabs.flatMap((t) => t.units), ...b.outside].flatMap((u) => [u, ...u.subs])]).filter((u) => u.mark === "waiting" || u.pending).length;
+	const n = net.bases.flatMap((b) => [...(b.tower ? [b.tower, ...b.tower.subs] : []), ...[...b.tabs.flatMap((t) => t.units), ...b.outside].flatMap((u) => [u, ...u.subs])]).filter((u) => u.mark === "waiting" || u.pending).length + (net.trust?.length ?? 0);
 	if (!tabIcon || !plainIcon || n === badged) return;
 	badged = n;
 	const dot = `<circle cx='23' cy='9' r='9' fill='#e0af68' stroke='#1a1b26' stroke-width='2'/><text x='23' y='13' text-anchor='middle' font-family='sans-serif' font-size='${n > 9 ? 9 : 12}' font-weight='700' fill='#16161e'>${n > 9 ? "9+" : n}</text>`;
@@ -177,7 +177,7 @@ document.addEventListener("click", (event) => {
 const router = createRouter((route) => navigate(route));
 const openTeams = () => void import("./link.ts").then(({ linkTile }) => openTile(linkTile(), true));
 const linkBar = mountLinkBar(openTeams, (count) => count && notify.chime());
-const notify = mountNotify((a) => router.go({ view: "session", ws: a.ws, key: unitOf(a) }));
+const notify = mountNotify((a) => (a.trust ? withPanels((p) => p.stack.show(a)) : router.go({ view: "session", ws: a.ws, key: unitOf(a) })));
 const stream = createStream({
 	open,
 	now: Date.now,

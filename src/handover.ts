@@ -16,9 +16,9 @@ import { startedLater, startOf } from "./startof.ts";
  * process now holds is not taken for the owner; only a build that marks its stops writes it, so a record without it is never adopted (a server such a build stopped looks
  * like one it quit). `herdr` is the socket of the Herdr server the server's net is read from: a session on another Herdr does not adopt it. `reload` marks a server its owner's
  * /reload stopped. `stopped` marks one stopped on purpose (a stop from any session): no session starts it again until someone runs /boss gui. `remote` is only ever written by a
- * build up to 0.32.1 (remote was on at that /reload); paired.json keeps the wish since.
+ * build up to 0.32.1 (remote was on at that /reload); paired.json keeps the wish since. `trust: 1` says the server reads project trust requests (trust/serve.ts): a pi relays its trust question only to a server that has it.
  */
-export interface GuiRecord { pid: number; started?: string; port: number; remotePort?: number; token: string; csrf?: string; owner: string; ownerSession?: string; version?: string; herdr?: string; reload?: boolean; stopped?: boolean; remote?: boolean }
+export interface GuiRecord { pid: number; started?: string; port: number; remotePort?: number; token: string; csrf?: string; owner: string; ownerSession?: string; version?: string; herdr?: string; reload?: boolean; stopped?: boolean; remote?: boolean; trust?: 1 }
 /**
  * `stale`: the running server is older and could not be taken over. `from`: the owner whose end a survivor took the server over from. `moved`: the recorded port was taken, so the URL changed.
  * `stopped`: it was stopped on purpose and `keep.stopped` left it so. `late` (never rejects): this process's start time was not known when the record was written (on Windows it is read in the background), so the record has no `started`
@@ -194,7 +194,7 @@ const unlockGui = (dir: string) => rmSync(join(dir, "gui.lock"), { force: true }
  * another server has been recorded since; `late` tells the caller how that ended.
  */
 export const writeRecord = (dir: string, gui: Gui, [owner, ownerSession]: [string, string], version: string, herdr: string, own = { at: startOf, later: startedLater }) => {
-	const started = own.at(process.pid), record: GuiRecord = { pid: process.pid, started, port: gui.port, remotePort: gui.remotePort, token: gui.token, csrf: gui.csrf, owner, ownerSession, version, herdr };
+	const started = own.at(process.pid), record: GuiRecord = { pid: process.pid, started, port: gui.port, remotePort: gui.remotePort, token: gui.token, csrf: gui.csrf, owner, ownerSession, version, herdr, trust: 1 };
 	writeRecordFile(dir, record);
 	if (started) return {};
 	return {

@@ -1,7 +1,7 @@
 import type { Mark } from "../src/dashboard.ts";
 import type { Chat, Data, Who } from "./chat.ts";
 import { mountAsk } from "./ask.ts";
-import { drawMonitors, drawQueued, drawTodos } from "./bars.ts";
+import { drawMonitors, drawQueued, drawTodos, mountQueueEdit } from "./bars.ts";
 import { mountComposer, postTo } from "./composer.ts";
 import { docFor, docTile } from "./doc.ts";
 import type { Tile } from "./layer.ts";
@@ -14,7 +14,7 @@ import { linkTo } from "./tokens.ts";
 // The session route's comms: the header, the log (chat.ts, its own chunk), the bars above the composer, the composer, the question panel, and the
 // session's terminal as the other mode. A phone's Info button, in the header, opens the dossier full-screen through `fullScreen`.
 
-const COMMS = () => `<div class="comms-in"><header class="comms-head"><a class="head-back" data-back aria-label="${m.back()}">‹</a><span class="logo"><svg><use href="#i-comms"/></svg></span><div class="head-id"><h2><small>${m.comms()}</small> <span></span></h2><p></p></div><div class="modes" role="group"><button type="button" data-mode="chat" aria-pressed="true">${m.comms()}</button><button type="button" data-mode="term" aria-pressed="false">${m.terminal()}</button></div><span class="chan link" data-state="live"><i></i><b>${m.channel_open()}</b></span><button type="button" class="pair-btn head-main" hidden></button><button type="button" class="pair-btn head-info">${m.info()}</button><button type="button" class="quit-btn head-quit" data-close="unit" hidden></button></header><div class="chat-root"></div><div class="queue-list" hidden></div><details class="todos" hidden><summary><b></b><span></span></summary><ol></ol></details><details class="monitors" hidden><summary><b></b><span></span></summary><ul></ul></details><div class="ask-root"></div><div class="composer-root"></div><div class="term-root" hidden></div></div>`;
+const COMMS = () => `<div class="comms-in"><header class="comms-head"><a class="head-back" data-back aria-label="${m.back()}">‹</a><span class="logo"><svg><use href="#i-comms"/></svg></span><div class="head-id"><h2><small>${m.comms()}</small> <span></span></h2><p></p></div><div class="modes" role="group"><button type="button" data-mode="chat" aria-pressed="true">${m.comms()}</button><button type="button" data-mode="term" aria-pressed="false">${m.terminal()}</button></div><span class="chan link" data-state="live"><i></i><b>${m.channel_open()}</b></span><button type="button" class="pair-btn head-main" hidden></button><button type="button" class="pair-btn head-info">${m.info()}</button><button type="button" class="quit-btn head-quit" data-close="unit" hidden></button></header><div class="chat-root"></div><div class="queue-list" hidden></div><div class="queue-act" hidden><span>${m.queue_edit_hint()}</span><button type="button" class="cmp-alt">${m.queue_edit()}</button></div><details class="todos" hidden><summary><b></b><span></span></summary><ol></ol></details><details class="monitors" hidden><summary><b></b><span></span></summary><ul></ul></details><div class="ask-root"></div><div class="composer-root"></div><div class="term-root" hidden></div></div>`;
 
 export interface SessionDeps {
 	view: HTMLElement; data(key: string): Data; openTile(tile: Tile, focus?: boolean): void; embedTerminal(key: string, name: string, host: HTMLElement): Promise<() => void>; online(): boolean;
@@ -43,6 +43,7 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 		chat = mountChat(view.querySelector(".chat-root")!, data(key), { who, link, docFor: opener });
 		const send = data(key).post ?? postTo(key);
 		[composer, asker] = [mountComposer(view.querySelector(".composer-root")!, key, send), mountAsk(view.querySelector(".ask-root")!, send, undefined, () => setMode("term"))];
+		mountQueueEdit(view, () => composer?.takeQueue() ?? Promise.resolve());
 		view.querySelectorAll<HTMLButtonElement>(".modes button").forEach((b) => (b.onclick = () => setMode(b.dataset.mode as "chat" | "term")));
 		view.querySelector<HTMLElement>(".head-info")!.onclick = () => fullScreen(true);
 		if (pendingMode === "term") setMode("term");
@@ -113,7 +114,7 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 			}
 			drawTodos(view, scene.info?.todos);
 			drawMonitors(view, u?.monitors);
-			drawQueued(view, u?.queued);
+			drawQueued(view, u?.queued, u?.key);
 			chat?.setLive(mk === "working" || mk === "commanding" ? `${doing(u!.note, mk)}` : urgent(mk) ? LABEL[mk]() : "", mk);
 			composer?.update({ name, control: Boolean(u?.control), agent: u?.agent, live: !closed(u, state), mark: mk, online: online(), answerable: Boolean(u?.pending?.answer) });
 			asker?.update(u?.pending, mk === "waiting" && Boolean(u?.control) && online()); // its dialog above the composer, answerable or not

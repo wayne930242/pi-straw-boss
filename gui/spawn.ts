@@ -34,6 +34,7 @@ export function spawnTile(o: Opening, enter?: (ws: string, key: string, tile: st
 				kind: o.kind, split: o.kind === "member" && Boolean(tab), hasPrompt: Boolean(text.trim()), name: o.kind === "base" ? label : leaf(at, home) || at, chime,
 				open: (deploy) => post(`open/${o.kind}`, { ...body, deploy }),
 				progress: (deploy) => post("open/progress", { id: deploy }),
+				trust: (body) => post("trust/answer", body),
 				back: () => root.replaceChildren(...form),
 				ready: (opened) => {
 					prompt.value = name.value = "";

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import type { Done, Fail, TeamAdmin, TeamView } from "./admin.ts";
 import { LEVELS, type Level, type Share } from "./config.ts";
-import { idOk, shortId } from "./device.ts";
+import { idOk, labelOk, shortId } from "./device.ts";
 import { decodeInvite, originOf } from "./join.ts";
 import { projectProblem } from "./routing.ts";
 
@@ -15,10 +15,10 @@ import { projectProblem } from "./routing.ts";
 export const ACTIONS = ["create", "invite", "invite-unattended", "join", "trust", "leave", "remove", "role", "rotate"] as const;
 export type Action = (typeof ACTIONS)[number];
 /** The arguments an agent may pass; each action takes the ones it names and refuses the rest. */
-/** C0 and C1 control characters: a line break or an escape in an argument could add lines to the approval dialog. */
-const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
-/** The agent's reason as one line: every run of whitespace and control characters becomes one space. */
-const oneLine = (s: string) => s.replace(/[\s\u0000-\u001f\u007f-\u009f]+/g, " ").trim();
+/** C0 and C1 control characters, the Unicode line and paragraph separators, and the bidi marks and overrides: a line break, an escape, or a reordering in an argument could add lines to the approval dialog or disguise them. */
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
+/** The agent's reason as one line: every run of whitespace, control characters, and bidi marks becomes one space. */
+const oneLine = (s: string) => s.replace(/[\s\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]+/g, " ").trim();
 export interface RequestArgs { team?: string; relay?: string; project?: string; share?: string; device?: string; level?: string; role?: string; text?: string; label?: string }
 const FIELDS: Record<Action, (keyof RequestArgs)[]> = {
 	create: ["relay", "project", "share", "label"],
@@ -53,7 +53,9 @@ export function shapeProblem(action: unknown, args: unknown): string | undefined
 	const allowed = FIELDS[action as Action];
 	for (const key of Object.keys(a)) if (!(allowed as string[]).includes(key)) return `${action} takes ${allowed.join(", ")}, not ${key}`;
 	for (const key of Object.keys(a)) if (typeof a[key] !== "string") return `${key} has to be text`;
-	for (const key of ["relay", "project", "label", "text"]) if (typeof a[key] === "string" && CONTROL.test((a[key] as string).trim())) return `${key} may not contain line breaks or other control characters`;
+	// The dialog shows relay, project, and label as given, so those are tested whole (a leading or trailing line break counts); an invite's text is never shown, and a pasted one may end in a newline.
+	for (const key of ["relay", "project", "label"]) if (typeof a[key] === "string" && CONTROL.test(a[key] as string)) return `${key} may not contain line breaks or other control characters`;
+	if (typeof a.text === "string" && CONTROL.test(a.text.trim())) return "text may not contain line breaks or other control characters";
 	for (const key of REQUIRED[action as Action]) if (!a[key] || !String(a[key]).trim()) return `${action} needs ${key}`;
 	return undefined;
 }
@@ -95,6 +97,7 @@ export class Requests {
 		const bad = shapeProblem(action, raw);
 		if (bad) return no(bad);
 		const act = action as Action, args = raw as RequestArgs ?? {};
+		if ((act === "create" || act === "join") && args.label !== undefined && !labelOk(args.label)) return no("A label is 1 to 40 letters, digits, spaces, and . _ - with no space at either end");
 		const now = this.d.now();
 		for (const [id, p] of this.pending) if (now - p.at > REQUEST_MS) this.pending.delete(id);
 		if (this.pending.size >= MAX_PENDING) return no("Too many link requests wait for the boss; try again after they are answered");
