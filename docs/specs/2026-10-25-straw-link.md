@@ -210,12 +210,15 @@ a time, in `seq` order, and retries an envelope until it lands before it posts t
 ## Message kinds
 
 Plaintexts are canonical structures too; every text field is cut to its limit and never parsed as a header. Limits the table leaves
-open: 64 KB for a dialog and its answer, 256 bytes for ids, labels, and states. Only `presence` and `board` may go to the whole team; a
-`dialog-answer` comes only from an attended device.
+open: 64 KB for a dialog and its answer, 256 bytes for ids, labels, and states. Only `presence`, `board`, and `caps` may go to the whole
+team; a `dialog-answer` comes only from an attended device. A plaintext decodes strictly: a structure with another field count or
+trailing bytes is refused (`canon.ts`), so a field added to an existing kind would make every older receiver drop it. A field is
+therefore added only to devices whose last `caps` (no older than 2 h) lists it, and a new kind falls back to an older one where the
+receiver or the relay lacks it (amended 2026-10-26 with [2026-10-26-sb-backend.md](2026-10-26-sb-backend.md), **Replies for a main**).
 
 | Kind | Sender → receiver | Plaintext | Notes |
 |---|---|---|---|
-| `tower` | Any member → named devices | fromWorkspace, toWorkspace (optional), reply expected, text (at most 192 KB) | Delivered to a tower as **Remote turns** says. |
+| `tower` | Any member → named devices | fromWorkspace, toWorkspace (optional), reply expected, text (at most 192 KB), and an optional fifth field `awaitsReply` (an ask id), written only to a device whose `caps` list `tower.awaitsReply` | Delivered to a tower as **Remote turns** says; with the sb server, to an ally run. |
 | `presence` | Any member → whole team | label, roster head, workspaces with tower and tab states and labels (with `share: status`) | Ephemeral: the relay keeps only the last per device and never queues it. |
 | `confirm-request` | Receiver of a remote turn at `forward` → the sender's device | dialog id, digest, tool, full arguments (at most 12 000 characters), requesting tower | Shown as an alert in the sender's GUI. |
 | `confirm-answer` | That device → the requester | dialog id, digest, allow or deny, answer id | Taken only from the device the request went to, only with a matching id and digest, once. |
@@ -225,6 +228,8 @@ open: 64 KB for a dialog and its answer, 256 bytes for ids, labels, and states. 
 | `unit-status` | Unattended device → its controllers | each unit's state, its running monitors, its last report (at most 4 KB) | Ephemeral, like presence. |
 | `notice` | Unattended device → its controllers | kind (failure, waiting more than 30 minutes), unit, text (at most 1 KB) | Raises a notice in the controller's GUI. |
 | `board` | Any member → whole team | the device's work board entries bound to the team's project (**Work board**) | Ephemeral, like presence; read only by towers, as remote content. |
+| `caps` | Any member → whole team | the features this device takes (`tower.awaitsReply`, `tower-reply`) | Ephemeral, like presence; sent at each stream start, on a build change, and hourly; one older than 2 h counts as none. |
+| `tower-reply` | Any member → the device that asked | inReplyTo (an ask id the asker sent), text (at most 192 KB) | Queued and addressed, like `tower`. Sent only to a device whose `caps` list it, else a plain `tower`; taken as a reply only for an open ask from that device, once, and goes to the main that asked (sb server D4). |
 
 Read acknowledgements go to the relay as relay requests, not as envelopes.
 
