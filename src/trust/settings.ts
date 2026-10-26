@@ -92,11 +92,12 @@ export const runChild = (dir: string, timeoutMs = PROBE_TIMEOUT_MS, node = proce
 		const timer = setTimeout(() => done({ failed: "timeout" }), timeoutMs);
 		if (!child) return;
 		child.on("error", (error: NodeJS.ErrnoException) => done({ failed: "crash", ...(error.code && { code: error.code }) }));
-		child.stdout.on("data", (chunk: Buffer) => {
+		// on EMFILE or ENFILE node returns a child with no stdio and reports the error on the next tick
+		child.stdout?.on("data", (chunk: Buffer) => {
 			out += chunk.toString("latin1");
 			if (out.length > MAX_OUT) done({ failed: "output" });
 		});
-		child.stderr.on("data", () => {}); // drained and dropped
+		child.stderr?.on("data", () => {}); // drained and dropped
 		child.on("close", (status) => done(status === 0 ? { out } : { failed: "crash" }));
 	});
 

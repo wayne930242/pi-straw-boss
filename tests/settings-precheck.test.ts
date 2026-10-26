@@ -104,9 +104,9 @@ test("a link to a small file is fine, and to a file over the cap is refused", as
 
 test("devices and pipes are refused: /dev/zero, /dev/null, /dev/stdin, a FIFO, a link to a FIFO", async () => {
 	for (const t of ["/dev/zero", "/dev/null", "/dev/stdin", "/dev/fd/0"]) assert.equal((await settingsRefusal(folder((f) => symlinkSync(t, f))))?.why, "special", t);
-	// the child's stdout is a socket or pipe it cannot reopen (ENXIO, EACCES on macOS): refused or absent, never read
-	assert.ok(["special", "unreadable", undefined].includes((await settingsRefusal(folder((f) => symlinkSync("/dev/fd/1", f))))?.why));
-	assert.equal((await settingsRefusal(folder((f) => execFileSync("mkfifo", [f]))))?.why, "special", "a FIFO opens without blocking and is no plain file");
+	// the child's stdout is a pipe or socket: stat before open says special, and it is never opened
+	assert.equal((await settingsRefusal(folder((f) => symlinkSync("/dev/fd/1", f))))?.why, "special");
+	assert.equal((await settingsRefusal(folder((f) => execFileSync("mkfifo", [f]))))?.why, "special", "a FIFO is no plain file and is never opened");
 	const pipe = join(scratch, "pipe");
 	execFileSync("mkfifo", [pipe]);
 	assert.equal((await settingsRefusal(folder((f) => symlinkSync(pipe, f))))?.why, "special");
