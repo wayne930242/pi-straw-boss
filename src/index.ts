@@ -11,6 +11,7 @@ import { createElection } from "./election.ts";
 import { createGuard, GUARD_MS, RESTORE_WAIT_MS } from "./guard.ts";
 import { openBrowser, VERSION } from "./gui.ts";
 import { ownerGone } from "./handover.ts";
+import { warmStart } from "./startof.ts";
 import { copyText } from "./pairing.ts";
 import { createHost } from "./host.ts";
 import { herdrApi, herdrCall, herdrRun, herdrWorld, socketRun, worldOf } from "./herdr.ts";
@@ -48,6 +49,7 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		const bridge = startBridge(pi, { env, dir: guiDir, local: () => (s.hub?.running ? s.hub : undefined), close: (keep) => (closeSelf ? closeSelf(keep) : "A subagent is closed by the session that launched it.") });
 		interceptUi(pi); // any extension's select and confirm reach the same bridge, subagents included
 		if (env.PI_SUBAGENT_ID) return;
+		warmStart(); // Windows tells a process's start time through PowerShell, 2 to 3 s: read this one's now, in the background, so the records written later carry it
 		const link = createLink(kit), briefing = createBriefing(kit), roles = createRoles(kit), reach = createReach(kit), election = createElection(kit), presence = createPresence(kit), digest = createDigest(run, now);
 		const guard = createGuard(kit, { ...election, openTower: reach.openTower, roles });
 		// A join adds the tools of a joined session, and the tools promote through the membership: each is built with the other's hook.

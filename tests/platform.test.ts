@@ -2,7 +2,8 @@
 // What differs on Windows: Herdr's socket is a named pipe behind a marker file, and a sidecar's control socket is a named pipe. The pure parts are
 // checked for every platform here; the live parts run on the platform the suite runs on (the Windows CI job runs this file).
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +11,9 @@ import { test } from "node:test";
 import { instanceOf, localEndpoint as pluginEndpoint, socketCall } from "../herdr-plugin/net-view.mjs";
 import { agentFiles, ask, newPipe, NoSidecar, socketIsFile, socketOf } from "../src/agent/paths.ts";
 import { herdrSocket, localEndpoint } from "../src/endpoint.ts";
+import { markReload, readRecord, writeRecord, writeRecordFile } from "../src/handover.ts";
 import { herdrCall } from "../src/herdr.ts";
+import { startedLater, startOf } from "../src/startof.ts";
 import { herdrEvents } from "../src/server-watch.ts";
 
 test("herdrSocket resolves the socket as Herdr does: HERDR_SOCKET_PATH, then HERDR_SESSION, in the config directory of the platform", () => {
@@ -101,4 +104,82 @@ test("a sidecar's control socket answers on this platform, and a closed one read
 
 test("every module a Windows session or sidecar loads links on this platform (a named import Windows lacks fails before any code runs)", async () => {
 	for (const path of ["../src/index.ts", "../src/closing.ts", "../src/agent/sidecar.ts", "../src/agent/cli.ts", "../herdr-plugin/net-view.mjs"]) await import(path);
+});
+
+// S7: Windows has no `ps`, so a start time comes from PowerShell, in the background (one call took 2 to 3 s on the Windows 11 ARM VM). The ISO form is Windows-only; the rest holds on every platform.
+const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
+test("S7: this process's start time is known after the background read, the same on every call, and asking never waits on PowerShell", async () => {
+	const t0 = Date.now(), first = startOf(process.pid);
+	assert.ok(Date.now() - t0 < 500, "the first call returns at once (on Windows undefined, with the read going on in the background)");
+	const known = await startedLater(process.pid);
+	assert.ok(known, "startOf(process.pid) is defined once the read is in");
+	assert.equal(startOf(process.pid), known);
+	assert.equal(startOf(process.pid), known, "the same on two calls");
+	if (first) assert.equal(first, known);
+	if (process.platform === "win32") assert.match(known!, ISO);
+	assert.equal(await startedLater(2 ** 22 + 1), undefined, "no such process");
+});
+
+test("S7: another process's start time is told, not earlier than this process's, and cached by PID", async () => {
+	const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore" });
+	try {
+		const mine = await startedLater(process.pid), theirs = await startedLater(child.pid!);
+		assert.ok(theirs, "a live process's start time");
+		if (process.platform === "win32") assert.match(theirs!, ISO);
+		assert.ok(Date.parse(/Z$/.test(theirs!) ? theirs! : `${theirs} UTC`) >= Date.parse(/Z$/.test(mine!) ? mine! : `${mine} UTC`) - 1000, "the child started after this process");
+		assert.equal(startOf(child.pid!), theirs, "answered from the cache");
+	} finally {
+		child.kill();
+	}
+});
+
+test("S7: a gui.json written by this process carries `started` once the background read is in, and survives the writes of a stop mark and a reload mark", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "psb-platform-gui-"));
+	try {
+		const gui = { port: 5000, remotePort: 5001, token: "t".repeat(32), csrf: "c".repeat(32) } as never;
+		const written = writeRecord(dir, gui, ["owner", "session"], "0.43.0", "/h.sock") as { late?: Promise<boolean> };
+		if (written.late) assert.equal(await written.late, true, "the record was written again with the start time");
+		assert.equal(readRecord(dir)!.started, await startedLater(process.pid));
+		assert.ok(readRecord(dir)!.started);
+		markReload(dir);
+		assert.equal(readRecord(dir)!.reload, true);
+		assert.equal(readRecord(dir)!.started, await startedLater(process.pid), "kept");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+// S4 on Windows: a rename onto a file that a reader has open can fail for a moment (EPERM, EBUSY); the writer tries again.
+test("S4: gui.json is replaced by rename while another process reads it in a loop, and no read fails to parse", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "psb-platform-rename-"));
+	try {
+		const record = (port: number) => ({ pid: process.pid, port, token: "t".repeat(32), owner: "o" });
+		writeRecordFile(dir, record(1));
+		const reader = spawn(process.execPath, ["-e", `
+			const { readFileSync } = require("node:fs");
+			let reads = 0, bad = 0, stop = false;
+			process.stdin.on("data", () => (stop = true));
+			process.stdout.write("ready\\n");
+			const loop = () => {
+				for (let i = 0; i < 50; i++) { reads++; try { JSON.parse(readFileSync(process.argv[1], "utf8")); } catch { bad++; } }
+				if (stop) return process.stdout.write(JSON.stringify({ reads, bad }) + "\\n", () => process.exit(0));
+				setImmediate(loop);
+			};
+			loop();
+		`, join(dir, "gui.json")], { stdio: ["pipe", "pipe", "inherit"] });
+		let out = "";
+		reader.stdout.on("data", (chunk) => (out += chunk));
+		for (const end = Date.now() + 10_000; !out.includes("ready") && Date.now() < end; ) await new Promise((resolve) => setTimeout(resolve, 20));
+		for (let i = 0; i < 300; i++) writeRecordFile(dir, record(i));
+		const done = new Promise<void>((resolve) => reader.on("exit", () => resolve()));
+		reader.stdin.end("stop");
+		await done;
+		const { reads, bad } = JSON.parse(out.split("\n").find((line) => line.startsWith("{"))!) as { reads: number; bad: number };
+		assert.ok(reads > 0);
+		assert.equal(bad, 0);
+		assert.deepEqual(readdirSync(dir), ["gui.json"], "no temporary file is left");
+		assert.equal(existsSync(join(dir, "gui.json")), true);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
 });

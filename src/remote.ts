@@ -1,10 +1,11 @@
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { join } from "node:path";
 import { createDevices, SESSION_MS, labelOf } from "./devices.ts";
 import { qr, qrLines } from "./qr.ts";
+import { startedLater, startOf } from "./startof.ts";
 
 // Remote access over Tailscale, tailnet only (never Funnel). `/boss gui remote` adds one `tailscale serve` entry, HTTPS on 8443 to the server's
 // remote listener (a second loopback port, see gui.ts), only when 8443 is free or already ours (remote.json in the state directory remembers our target, the server's PID, and when that
@@ -168,14 +169,6 @@ export const alive = (pid: unknown) => {
 		return (error as NodeJS.ErrnoException).code === "EPERM";
 	}
 };
-/** When a process started, as `ps` prints it in the C locale and UTC (so two pi processes with other LANG or TZ write and read the same text); undefined when ps cannot say. A PID reused after a crash belongs to a process that started later. */
-export const startOf = (pid: number): string | undefined => {
-	try {
-		return execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", timeout: 2000, stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, LC_ALL: "C", TZ: "UTC" } }).trim() || undefined;
-	} catch {
-		return undefined;
-	}
-};
 /**
  * Whether the server that recorded an entry still runs: its PID is alive and that process is the one that wrote the entry (same start
  * time; an entry from before start times were recorded: a process that started after the file was written is not its writer). When ps
@@ -185,7 +178,7 @@ export function runs({ pid, started }: { pid?: unknown; started?: string }, wrot
 	if (!alive(pid)) return false;
 	const now = start(pid as number);
 	if (!now) return true;
-	return started ? now === started : !(Date.parse(`${now} UTC`) > wrote);
+	return started ? now === started : !(Date.parse(/Z$/.test(now) ? now : `${now} UTC`) > wrote);
 }
 /** The session cookie, good for 90 days from now: issued at pairing and again each time a use renews the pairing. */
 export const cookieFor = (token: string, value: string) => `sb_remote=${value}; Path=/${token}/; Max-Age=${SESSION_MS / 1000}; HttpOnly; Secure; SameSite=Strict`;
@@ -217,7 +210,14 @@ export async function switchRemote(gui: { port: number; remotePort: number; toke
 	}
 	const id = await identity(run);
 	await serveOn(run, id.host, target, [stale, old]);
-	writeFileSync(file, JSON.stringify({ target, pid: process.pid, started: startOf(process.pid) }), { mode: 0o600 });
+	const started = startOf(process.pid);
+	writeFileSync(file, JSON.stringify({ target, pid: process.pid, started }), { mode: 0o600 });
+	if (!started) void startedLater(process.pid).then((known) => { // Windows reads its own start time in the background: the entry is written again with it, if it is still this one
+		try {
+			const now = JSON.parse(readFileSync(file, "utf8")) as { target?: string; pid?: number; started?: string };
+			if (known && now.pid === process.pid && now.target === target && !now.started) writeFileSync(file, JSON.stringify({ ...now, started: known }), { mode: 0o600 });
+		} catch {} // the entry is gone: nothing to complete
+	});
 	gui.access.enable(id);
 	// Every link is a new one-time pairing URL: the QR's own, and one per press of c or o in the overlay.
 	const link = () => `https://${id.host}/${gui.token}/pair/${gui.access.pair()}`;

@@ -8,7 +8,8 @@ import { after, mock, test } from "node:test";
 import { startGui, type Gui } from "../src/gui.ts";
 import type { Found } from "../src/net.ts";
 import { labelOf } from "../src/devices.ts";
-import { createAccess, identity, PORT, type Run, runs, serveOff, serveOn, startOf, switchRemote } from "../src/remote.ts";
+import { createAccess, identity, PORT, type Run, runs, serveOff, serveOn, switchRemote } from "../src/remote.ts";
+import { createStartOf, startCommand, startOf } from "../src/startof.ts";
 import { copyText } from "../src/pairing.ts";
 import { until } from "./fakes.ts";
 
@@ -566,4 +567,64 @@ test("remote off keeps remote.json when the entry it records still exists under 
 	const clean = fakeTailscale({});
 	await switchRemote(gui, false, dir, clean.run, true);
 	assert.equal(existsSync(file), false, "nothing of ours is served any more: the record goes");
+});
+
+test("S7: on win32 a start time comes from a PowerShell call that is asynchronous, hidden, and limited to 5 s; nothing waits on it", async () => {
+	const calls: { file: string; args: string[]; options: Record<string, unknown> }[] = [];
+	let finish: (error: Error | null, stdout: string) => void = () => {};
+	const { startOf: start, startedLater } = createStartOf({
+		platform: "win32", ps: () => { throw new Error("no ps on Windows"); },
+		launch: (file, args, options, done) => (calls.push({ file, args, options }), (finish = done)),
+	});
+	assert.equal(start(4242), undefined, "the first look does not wait: unknown yet");
+	assert.equal(start(4242), undefined);
+	assert.equal(calls.length, 1, "one call in flight per PID");
+	assert.equal(calls[0]!.file, "powershell.exe");
+	assert.deepEqual(calls[0]!.args.slice(0, 3), ["-NoProfile", "-NonInteractive", "-Command"]);
+	assert.equal(calls[0]!.args[3], "(Get-Process -Id 4242 -ErrorAction Stop).StartTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')");
+	assert.equal(calls[0]!.options.windowsHide, true);
+	assert.equal(calls[0]!.options.timeout, 5000);
+	assert.deepEqual(startCommand(4242).args, calls[0]!.args);
+	const later = startedLater(4242);
+	finish(null, "2026-10-26T04:21:53.123Z\r\n");
+	assert.equal(await later, "2026-10-26T04:21:53.123Z");
+	assert.equal(start(4242), "2026-10-26T04:21:53.123Z", "the answer is cached by PID");
+	assert.equal(calls.length, 1);
+});
+
+test("S7: a PowerShell failure, a timeout, or text that is not an ISO time is undefined; a failed answer is asked again after 5 s, a good one of another PID after ten minutes, this process's own never", async () => {
+	let clock = 0, reply: [Error | null, string] = [new Error("timed out"), ""], calls = 0;
+	const { startOf: start, startedLater } = createStartOf({
+		platform: "win32", now: () => clock,
+		launch: (_file, _args, _options, done) => (calls++, queueMicrotask(() => done(...reply))),
+	});
+	assert.equal(await startedLater(9), undefined, "the call failed");
+	assert.equal(start(9), undefined);
+	assert.equal(calls, 1, "a failure is not asked again at once");
+	reply = [null, "Mon Oct 26 04:21:53 2026"];
+	clock += 5001;
+	assert.equal(await startedLater(9), undefined, "not an ISO time");
+	assert.equal(calls, 2);
+	reply = [null, "2026-10-26T04:21:53.000Z"];
+	clock += 5001;
+	assert.equal(await startedLater(9), "2026-10-26T04:21:53.000Z");
+	clock += 9 * 60_000;
+	assert.equal(start(9), "2026-10-26T04:21:53.000Z");
+	assert.equal(calls, 3);
+	clock += 2 * 60_000;
+	assert.equal(start(9), undefined, "ten minutes: asked again, so a reused PID is noticed");
+	assert.equal(calls, 4);
+	assert.equal(await startedLater(process.pid), "2026-10-26T04:21:53.000Z");
+	clock += 24 * 3600_000;
+	assert.equal(start(process.pid), "2026-10-26T04:21:53.000Z", "this process's own start time is kept for its life");
+	assert.equal(calls, 5);
+});
+
+test("S7: runs reads the ISO form as it is, with and without a recorded start", () => {
+	const wrote = Date.parse("2026-10-26T04:30:00.000Z");
+	assert.equal(runs({ pid: process.pid, started: "2026-10-26T04:21:53.123Z" }, wrote, () => "2026-10-26T04:21:53.123Z"), true);
+	assert.equal(runs({ pid: process.pid, started: "2026-10-26T04:21:53.123Z" }, wrote, () => "2026-10-26T05:00:00.000Z"), false, "the PID went to a process that started later");
+	assert.equal(runs({ pid: process.pid }, wrote, () => "2026-10-26T04:21:53.123Z"), true, "no recorded start: the process is older than the file");
+	assert.equal(runs({ pid: process.pid }, wrote, () => "2026-10-26T04:45:00.000Z"), false, "no recorded start: the process started after the file was written");
+	assert.equal(runs({ pid: process.pid, started: "2026-10-26T04:21:53.123Z" }, wrote, () => undefined), true, "not known yet: the entry stands");
 });

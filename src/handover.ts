@@ -1,8 +1,9 @@
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { join } from "node:path";
 import { type Asked, type Gui, VERSION } from "./gui.ts";
-import { alive, runs, startOf } from "./remote.ts";
+import { alive, runs } from "./remote.ts";
+import { startedLater, startOf } from "./startof.ts";
 
 // One server per machine. gui.json in the state directory records the running server (pid, local and remote port, token, owner session), and
 // gui.lock makes the check-and-start atomic, so a second /boss gui, from this session or another, opens the running server
@@ -20,9 +21,10 @@ import { alive, runs, startOf } from "./remote.ts";
 export interface GuiRecord { pid: number; started?: string; port: number; remotePort?: number; token: string; csrf?: string; owner: string; ownerSession?: string; version?: string; herdr?: string; reload?: boolean; stopped?: boolean; remote?: boolean }
 /**
  * `stale`: the running server is older and could not be taken over. `from`: the owner whose end a survivor took the server over from. `moved`: the recorded port was taken, so the URL changed.
- * `stopped`: it was stopped on purpose and `keep.stopped` left it so. `blind`: this process's start time could not be read, so the record it wrote has no `started` and no survivor adopts that server.
+ * `stopped`: it was stopped on purpose and `keep.stopped` left it so. `late`: this process's start time was not known when the record was written (on Windows it is read in the background), so the record has no `started`
+ * yet; it settles to true when the record was written again with it, and to false when the time cannot be read, so no survivor adopts that server.
  */
-export interface Shared { url: string; owner: string; mine?: Gui; stale?: boolean; from?: string; moved?: boolean; stopped?: boolean; blind?: boolean }
+export interface Shared { url: string; owner: string; mine?: Gui; stale?: boolean; from?: string; moved?: boolean; stopped?: boolean; late?: Promise<boolean> }
 /** What a start under gui.lock leaves alone: a server stopped on purpose, a server that is down. Only `/boss gui` starts either. */
 export interface Keep { stopped?: boolean; down?: boolean }
 
@@ -33,6 +35,29 @@ export function newer(a: string, b?: string) {
 	return i >= 0 && x[i]! > y[i]!;
 }
 export const urlOf = (r: GuiRecord) => `http://127.0.0.1:${r.port}/${r.token}/`;
+
+let temps = 0;
+/**
+ * Writes gui.json by rename: the record goes to a temporary file in the same directory (mode 600) and is renamed into place, so a reader (a session, or the desk shell) never sees half a file.
+ * On Windows a rename onto a file that a reader has open can fail for a moment, so it is tried a few times.
+ */
+export function writeRecordFile(dir: string, record: GuiRecord) {
+	const file = join(dir, "gui.json"), temp = `${file}.${process.pid}.${temps++}.tmp`;
+	try {
+		writeFileSync(temp, JSON.stringify(record), { mode: 0o600 });
+		for (let tries = 0; ; tries++) {
+			try {
+				return renameSync(temp, file);
+			} catch (error) {
+				if (tries >= 20 || !["EPERM", "EBUSY", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+				Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+			}
+		}
+	} catch (error) {
+		rmSync(temp, { force: true });
+		throw error;
+	}
+}
 
 export function readRecord(dir: string): GuiRecord | undefined {
 	try {
@@ -48,7 +73,7 @@ export function readRecord(dir: string): GuiRecord | undefined {
  */
 export function markReload(dir: string, pid = process.pid) {
 	const record = readRecord(dir);
-	if (record?.pid === pid) writeFileSync(join(dir, "gui.json"), JSON.stringify({ ...record, reload: true }), { mode: 0o600 });
+	if (record?.pid === pid) writeRecordFile(dir, { ...record, reload: true });
 }
 
 /**
@@ -57,7 +82,7 @@ export function markReload(dir: string, pid = process.pid) {
  */
 export function markStopped(dir: string, seen: Pick<GuiRecord, "pid" | "started" | "port" | "token">) {
 	const record = readRecord(dir);
-	if (record?.pid === seen.pid && record.started === seen.started && record.port === seen.port && record.token === seen.token) writeFileSync(join(dir, "gui.json"), JSON.stringify({ ...record, stopped: true }), { mode: 0o600 });
+	if (record?.pid === seen.pid && record.started === seen.started && record.port === seen.port && record.token === seen.token) writeRecordFile(dir, { ...record, stopped: true });
 }
 
 /** Whether a survivor may take over `record`'s server: its writer marks stops (`started`), and it serves the survivor's own Herdr. */
@@ -74,8 +99,10 @@ export function ownerGone(start: (pid: number) => string | undefined = startOf):
 	return (record, wrote) => {
 		const key = `${record.pid}/${record.started ?? wrote}`;
 		if (confirmed === key) return !alive(record.pid);
-		if (!runs(record, wrote, start)) return true;
-		confirmed = key;
+		if (!alive(record.pid)) return true;
+		const now = start(record.pid);
+		if (!runs(record, wrote, () => now)) return true;
+		if (now) confirmed = key; // a start time that is not in yet (Windows) confirms nothing: the next look asks again
 		return false;
 	};
 }
@@ -162,11 +189,22 @@ async function lockGui(dir: string, sleep: (ms: number) => Promise<void>, patien
 	}
 }
 const unlockGui = (dir: string) => rmSync(join(dir, "gui.lock"), { force: true });
-/** Records the server this process started. */
-const writeRecord = (dir: string, gui: Gui, [owner, ownerSession]: [string, string], version: string, herdr: string) => {
-	const started = startOf(process.pid);
-	writeFileSync(join(dir, "gui.json"), JSON.stringify({ pid: process.pid, started, port: gui.port, remotePort: gui.remotePort, token: gui.token, csrf: gui.csrf, owner, ownerSession, version, herdr }), { mode: 0o600 });
-	return started ? {} : { blind: true };
+/**
+ * Records the server this process started. Without this process's start time yet (Windows reads it in the background), the record is written without `started` and again with it when it arrives, unless
+ * another server has been recorded since; `late` tells the caller how that ended.
+ */
+export const writeRecord = (dir: string, gui: Gui, [owner, ownerSession]: [string, string], version: string, herdr: string, own = { at: startOf, later: startedLater }) => {
+	const started = own.at(process.pid), record: GuiRecord = { pid: process.pid, started, port: gui.port, remotePort: gui.remotePort, token: gui.token, csrf: gui.csrf, owner, ownerSession, version, herdr };
+	writeRecordFile(dir, record);
+	if (started) return {};
+	return {
+		late: own.later(process.pid).then((known) => {
+			if (!known) return false;
+			const now = readRecord(dir);
+			if (now?.pid === record.pid && now.port === record.port && now.token === record.token && !now.started) writeRecordFile(dir, { ...now, started: known });
+			return true;
+		}),
+	};
 };
 type Start = (prefer: { port?: number; remotePort?: number; token?: string; csrf?: string }) => Promise<Gui>;
 

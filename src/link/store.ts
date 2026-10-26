@@ -3,7 +3,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { appendFileSync, chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
-import { startOf } from "../remote.ts";
+import { startOf } from "../startof.ts";
 import { deviceFromSeeds, type DeviceKeys } from "./device.ts";
 
 // Straw Link's state on disk (docs/specs/2026-10-25-straw-link.md, Storage and policy): `<pi agent dir>/straw-boss/link/`, mode 700, files 600
@@ -107,7 +107,7 @@ export class LinkStore {
 	readonly dir: string;
 	private readonly alive: (pid: number) => boolean;
 	private readonly start: (pid: number) => string | undefined;
-	private ownStart: string | undefined | null = null;
+	private ownStart: string | undefined;
 	private readonly now: () => number;
 	private readonly staleMs: number;
 	private readonly logMax: number;
@@ -194,8 +194,7 @@ export class LinkStore {
 		}
 	}
 	private started(): string | undefined {
-		if (this.ownStart === null) this.ownStart = this.start(process.pid);
-		return this.ownStart;
+		return (this.ownStart ??= this.start(process.pid)); // not kept while unknown: on Windows it arrives from a background read
 	}
 	/** The content of the lock when it is a dead process's or an old one's, else undefined (a lock being written reads empty for a moment and is not stale). */
 	private stale(): string | undefined {
