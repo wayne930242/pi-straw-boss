@@ -62,6 +62,11 @@ test("the queue's Edit is a 44 px button beside its hint, not alone on a row", (
 	assert.equal(size(".queue-act button", "min-height"), 44);
 });
 
+test("the trust question's three choices fill the width: Trust on its own row, the other two side by side", () => {
+	assert.match(body(".trust .ask-acts"), /grid-template-columns:\s*1fr 1fr/);
+	assert.match(body(".trust .ask-send"), /grid-column:\s*1 \/ -1/);
+});
+
 test("the timeline's marks, too small and too close to be 44 px, take no taps on a phone", () => {
 	assert.match(body(".tl-mark"), /pointer-events:\s*none/);
 });

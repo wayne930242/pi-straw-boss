@@ -845,6 +845,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 	.link-form summary { padding-block: 12px; }
 	/* The queue's hint and Edit share one row instead of the button on a row of its own (two lines saved above the composer). */
 	.queue-act { flex-wrap: nowrap; justify-content: space-between; gap: 10px; } .queue-act span { flex: 1 1 0; text-align: left; } .queue-act button { flex: none; min-width: 56px; min-height: 44px; }
+	.trust .ask-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; } .trust .ask-send { grid-column: 1 / -1; } /* Trust across the width, the other two side by side, instead of 2 + 1 wrapping at a width of their own */
 	.tl-mark { pointer-events: none; } /* 10 px and a few px apart: a finger would hit the wrong event; each unit is one tap away on its card or in the drawer */
 	.picker-body { height: clamp(180px, calc(100dvh - 412px), 360px); } /* the folder list gives way so the name and Open stay on the screen */
 	.tile:has(.spawn, .pair) { max-height: calc(var(--vvh, 100dvh) - 16px); } /* a short form's cap was the desktop's (under the HUD); on a phone the tile is the screen, and the 44 px rows need all of it */
