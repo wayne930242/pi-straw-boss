@@ -3,6 +3,7 @@ import { ownOpenings } from "./alerts.ts";
 import { h } from "./dom.ts";
 import { m } from "./paraglide/messages.js";
 import type { Answer } from "./post.ts";
+import { reasonOf } from "./refusal.ts";
 import { trustPanel, type TrustPost } from "./trust.ts";
 
 // The deploy panel: what a tile shows, in place of its form, while a new unit opens (spawn.ts). The steps and how far they have got come from
@@ -107,7 +108,7 @@ export function deployPanel(o: DeployOpts): HTMLElement & { close(): void } {
 		if (over !== "running") return;
 		rows = p.steps.map((s) => ({ id: s.id, state: s.state, ms: s.ms, since: time.now() - s.ms }));
 		ask(p.trust);
-		if (p.failed) return fail(p.failed.step, p.failed.reason);
+		if (p.failed) return fail(p.failed.step, reasonOf(p.failed.reason, p.failed.settings)!);
 		draw();
 	};
 	const tick = () => {
@@ -125,7 +126,7 @@ export function deployPanel(o: DeployOpts): HTMLElement & { close(): void } {
 	let stopWait = time.after(giveUp, TIMEOUT_MS);
 	void o.open(id).then((a) => {
 		if (closed || (over !== "running" && !(over === "failed" && timedOut && a.ok))) return; // an open that answers ok after the timeout is a unit all the same
-		if (!a.ok) return fail(a.body.step as StepId | undefined, a.body.reason ?? m.refused({ status: a.status }));
+		if (!a.ok) return fail(a.body.step as StepId | undefined, reasonOf(a.body.reason, a.body.settings) ?? m.refused({ status: a.status }));
 		over = "ready";
 		stop();
 		note.setAttribute("role", "status");

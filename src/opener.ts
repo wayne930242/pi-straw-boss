@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createTab, report, panes, startPi, type HerdrRun, type Session, type Sleep, workspaces } from "./herdr.ts";
+import { assertSettingsSafe, SettingsRefused } from "./trust/settings.ts";
 import { waitPastTrust } from "./trust/wait.ts";
 
 // The one thing a tower does besides routing: when no session owns a request, it opens a main for it (docs/how-it-works.md, "Opening a main").
@@ -10,7 +11,7 @@ const MAIN_WAIT_MS = 60_000;
 /** At most this many mains opened by towers are alive in one workspace, and at most one per sender. */
 const MAX_OPENED_MAINS = 2;
 
-/** A limit was hit: nothing opened, and the same request may be tried again once an opened main has finished. */
+/** A limit was hit: nothing opened, and the same request may be tried again once an opened main has finished. A folder pi must not start in (SettingsRefused) is refused the same way. */
 class OpenLimitError extends Error {}
 
 export interface OpenerEnv {
@@ -43,7 +44,7 @@ export const handoff = (workspace: string, sender: Session, request: string, tow
 
 /**
  * Opens a main for a request, once, within the limits above. The same sender and request never open a second main, whether the first attempt is still running, succeeded,
- * or failed (a failed attempt closes the tab it created and is not retried: the sender hears of it instead).
+ * or failed (a failed attempt closes the tab it created and is not retried: the sender hears of it instead). A refused one (a limit, or a folder pi must not start in) created nothing and may be asked again.
  */
 export function opener(env: OpenerEnv) {
 	const seen = new Map<string, Promise<Opened>>();
@@ -61,7 +62,9 @@ export function opener(env: OpenerEnv) {
 		const ofSender = marked.filter((p) => p.tokens!.sb_opened_by === sender.id).length;
 		if (ofSender) throw new OpenLimitError(`Sender ${sender.name ?? sender.id} already has ${ofSender === 1 ? "an opened main" : `${ofSender} opened mains`} running in workspace ${workspace.label}; a sender gets one at a time. Wait for it to finish, or send the request to it.`);
 		if (marked.length >= MAX_OPENED_MAINS) throw new OpenLimitError(`Workspace ${workspace.label} already has ${marked.length} mains opened by its tower (the limit is ${MAX_OPENED_MAINS}); try again when one has finished.`);
-		const { tabId, paneId } = await createTab(run, workspace.workspace_id, workspace.worktree?.checkout_path ?? env.cwd, ["STRAW_BOSS_ROLE=main"], label);
+		const dir = workspace.worktree?.checkout_path ?? env.cwd;
+		assertSettingsSafe([dir]); // before the tab exists: pi reads the folder's .pi/settings.json before any extension can stop it (trust/settings.ts)
+		const { tabId, paneId } = await createTab(run, workspace.workspace_id, dir, ["STRAW_BOSS_ROLE=main"], label);
 		try {
 			// The marker counts toward the limits at once; sb_open_main authorises exactly one pi in this shell to promote itself (it consumes the token).
 			await report(run, "pane", paneId, { sb_opened_by: sender.id, sb_open_main: "1" });
@@ -90,7 +93,7 @@ export function opener(env: OpenerEnv) {
 		const pending = queue.then(() => open(input), () => open(input));
 		queue = pending.catch(() => {});
 		seen.set(key, pending);
-		pending.catch((error) => error instanceof OpenLimitError && seen.get(key) === pending && seen.delete(key));
+		pending.catch((error) => (error instanceof OpenLimitError || error instanceof SettingsRefused) && seen.get(key) === pending && seen.delete(key));
 		return pending;
 	};
 }

@@ -3,6 +3,7 @@
 // The page names an opening by an id it makes, and asks for its progress with POST /<token>/api/open/progress {id}; the last few are kept.
 // A step of its own, `trust`, is inserted before the running one only when the new pi waits on a project trust question (trust/serve.ts): the opening holds there, and the question is in the progress.
 
+import type { SettingsRefusal } from "./trust/settings.ts";
 import type { TrustGroup } from "./trust/types.ts";
 
 export type StepId = "create" | "start" | "join" | "deliver" | "trust";
@@ -10,7 +11,7 @@ export type StepId = "create" | "start" | "join" | "deliver" | "trust";
 export interface TrustPrompt { id: string; digest: string; folder: string; found: TrustGroup[] }
 export type StepState = "pending" | "active" | "done" | "failed";
 /** `ms` is how long the step has run (an active one) or ran (a finished one), by the server's clock. */
-export interface Progress { steps: { id: StepId; state: StepState; ms: number }[]; finished: boolean; failed?: { step: StepId; reason: string }; trust?: TrustPrompt }
+export interface Progress { steps: { id: StepId; state: StepState; ms: number }[]; finished: boolean; failed?: { step: StepId; reason: string; settings?: SettingsRefusal }; trust?: TrustPrompt }
 
 const KEPT = 16, ID = /^[\w-]{8,64}$/;
 
@@ -34,12 +35,12 @@ export function createDeploy(given: StepId[], now: () => number = Date.now) {
 			end("done");
 			finished = true;
 		},
-		/** The running step failed (the first, when none had begun). */
-		fail(reason: string) {
+		/** The running step failed (the first, when none had begun). `settings` says the folder's .pi/settings.json is why (trust/settings.ts), so the page can word it itself. */
+		fail(reason: string, settings?: SettingsRefusal) {
 			const step = active ?? plan[0]!;
 			if (!active) state.set(step, "failed"), took.set(step, 0);
 			end("failed");
-			failed = { step, reason };
+			failed = { step, reason, ...(settings && { settings }) };
 		},
 		get failed() {
 			return failed;

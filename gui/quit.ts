@@ -91,7 +91,7 @@ export function mountQuit(deps: QuitDeps) {
 		if (!b || !d) return;
 		event.preventDefault();
 		if (d.close === "dismiss" || d.close === "dismiss-all") return void dismiss(d.close === "dismiss" ? { key: d.key! } : { all: true });
-		if (d.close === "pop") return void (b.toggleAttribute("disabled", true), import("./post.ts").then(({ post }) => post("close/pop", { name: d.name })).then((r) => r.ok || sheet(r.body.reason ?? m.refused({ status: r.status })), () => sheet(m.no_answer())).finally(() => b.toggleAttribute("disabled", false)));
+		if (d.close === "pop") return void (b.toggleAttribute("disabled", true), Promise.all([import("./post.ts"), import("./refusal.ts")]).then(([{ post }, { reasonOf }]) => post("close/pop", { name: d.name }).then((r) => r.ok || sheet(reasonOf(r.body.reason, r.body.settings) ?? m.refused({ status: r.status })))).catch(() => sheet(m.no_answer())).finally(() => b.toggleAttribute("disabled", false)));
 		const ask = d.close === "stash" ? m.stash_base_ask : d.close === "base" ? m.close_base_ask : d.close === "tab" ? m.close_squad_ask : d.role === "tower" ? m.close_tower_ask : m.close_unit_ask;
 		void sheet(ask({ name: d.name ?? "" }), d.close === "stash" ? m.stash() : m.quit()).then((yes) => {
 			if (!yes) return;

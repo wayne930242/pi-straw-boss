@@ -1,4 +1,5 @@
 import { createTab, type HerdrRun, panes, report, type Sleep, startPi, tabs, TOWER_LABEL, type Workspace, workspaces } from "./herdr.ts";
+import { assertSettingsSafe } from "./trust/settings.ts";
 import { waitPastTrust } from "./trust/wait.ts";
 
 export interface TowerEnv { run: HerdrRun; sleep: Sleep; live(sessionId: string): Promise<boolean>; moveFirst(tabId: string): Promise<void>; model?: string; trustDir?: string }
@@ -40,12 +41,14 @@ async function open({ run, sleep, live, moveFirst, model, trustDir }: TowerEnv, 
 	if (reused) {
 		paneId = reused.pane_id;
 		running = reused.agent === "pi";
+		if (!running) assertSettingsSafe([reused.cwd]); // before the tab is claimed or moved: pi would read the folder's .pi/settings.json at startup (trust/settings.ts)
 		if (!marked) await report(run, "pane", paneId, { sb_role: "tower" });
 		await moveFirst(reused.tab_id);
 		// Other shell-only leftovers are closed; failing to close one leaves a harmless tab, so it does not stop the tower.
 		for (const extra of bare.slice(1)) await run(["tab", "close", extra.tab_id]).catch(() => {});
 	} else {
 		const dir = workspace.worktree?.checkout_path ?? cwd;
+		assertSettingsSafe([dir]);
 		const made = await createTab(run, ws, dir, ["STRAW_BOSS_ROLE=tower"], TOWER_LABEL);
 		paneId = made.paneId;
 		created = made.tabId;

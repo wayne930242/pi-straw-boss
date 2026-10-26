@@ -3,6 +3,7 @@ import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, renameSync,
 import { dirname, join } from "node:path";
 import type { Reply } from "./control.ts";
 import { createTab, type HerdrRun, isSub, type Pane, panes, parentOf, report, result, type Session, type Sleep, startPi, tabs, workspaces } from "./herdr.ts";
+import { assertSettingsSafe } from "./trust/settings.ts";
 import { waitPastTrust } from "./trust/wait.ts";
 
 // Stash and pop (docs/specs/2026-10-22-stash/spec.md). A stash puts a whole base away: it checks that every pane can be resumed losing
@@ -262,6 +263,8 @@ async function open(d: PopDeps, name: string, file: string) {
 	const envOf = (kind: StashPane["kind"]) => [...roleEnv(kind), ...(d.agentDir ? [`PI_CODING_AGENT_DIR=${d.agentDir}`] : [])];
 	const gone = [...new Set([...all.filter((p) => p.session && !existsSync(p.session)).map((p) => p.session!), ...all.map((p) => p.cwd).filter((c) => !statSync(c, { throwIfNoEntry: false })?.isDirectory())])];
 	if (gone.length) throw new Error(`Nothing was opened: ${gone.join(", ")} no longer exist${gone.length > 1 ? "" : "s"}`);
+	// Every pi to start is looked at before anything is made: pi reads a folder's .pi/settings.json at startup, before any extension can stop it (trust/settings.ts).
+	assertSettingsSafe(all.filter((p) => p.kind !== "shell").map((p) => p.cwd), "The stash");
 	const root = st.tabs[0]!.panes[0]!;
 	const created = await result(run, ["workspace", "create", "--cwd", root.cwd, "--label", st.label, "--no-focus", ...flags(envOf(root.kind))]);
 	const ws: string = created.workspace.workspace_id;

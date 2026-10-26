@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { PROMPT_DIR, World } from "./fakes.ts";
 
@@ -188,4 +190,24 @@ test("the tower prompt lets it open a main without asking the boss, and keeps it
 	assert.match(text, /verbatim/);
 	assert.match(text, /Do no work yourself: no commands, process signals, edits, or subagents/);
 	assert.match(text, /Never ask the boss \(no ask_user, robot_hand, focus changes\)/);
+});
+
+test("a workspace folder whose .pi/settings.json pi must not read opens no tab, says why, and the same request may be tried again once it is fixed", async () => {
+	world.autoMains();
+	const { tower } = await net();
+	const dir = realpathSync(mkdtempSync(join(tmpdir(), "psb-opener-")));
+	try {
+		mkdirSync(join(dir, ".pi"));
+		symlinkSync("/dev/zero", join(dir, ".pi", "settings.json"));
+		world.herdr.workspace("wA").worktree = { checkout_path: dir };
+		await assert.rejects(tower.tool("boss_open_main", { request: REQUEST, sender: "sender-1" }), (error: Error) => error.message.includes("pi was not started:") && error.message.includes(join(dir, ".pi", "settings.json")) && error.message.includes("/dev/zero"));
+		assert.deepEqual(world.herdr.commands("tab", "create"), [], "no tab was made");
+		assert.deepEqual(world.herdr.commands("agent", "start"), [], "no pi was started");
+		rmSync(join(dir, ".pi", "settings.json"));
+		writeFileSync(join(dir, ".pi", "settings.json"), "{}");
+		await tower.tool("boss_open_main", { request: REQUEST, sender: "sender-1" });
+		assert.equal(world.herdr.commands("tab", "create").length, 1);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
 });

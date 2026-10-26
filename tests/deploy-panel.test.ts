@@ -157,6 +157,30 @@ test("a failure names the step it failed at and the server's reason, stops polli
 	assert.deepEqual(p.events, ["back"]);
 });
 
+test("a refusal over the folder's .pi/settings.json is worded by the page, in both languages, from the server's facts, with the path and the limit", async () => {
+	const { m } = await import("../gui/paraglide/messages.js");
+	const { reasonOf } = await import("../gui/refusal.ts");
+	const path = "/home/me/proj/.pi/settings.json";
+	const special = { path, why: "special", target: "/dev/zero" }, large = { path, why: "large", size: 300_000, limit: 262_144 }, locked = { path, why: "unreadable", code: "EACCES" };
+	assert.match(reasonOf("server words", special as never)!, /^Not started: \/home\/me\/proj\/\.pi\/settings\.json → \/dev\/zero is not a plain file/);
+	assert.match(reasonOf("server words", large as never)!, /is 293 KB, over the 256 KB limit/);
+	assert.match(reasonOf("server words", locked as never)!, /cannot be read \(EACCES\)/);
+	assert.equal(reasonOf("server words", undefined), "server words", "without facts, the server's own words");
+	assert.match(m.deploy_settings_special({ path: "/a/.pi/settings.json → /dev/zero" }, { locale: "zh-TW" }), /^沒有啟動：\/a\/\.pi\/settings\.json → \/dev\/zero 不是一般檔案/);
+	assert.match(m.deploy_settings_large({ path: "/a", size: "293", limit: "256" }, { locale: "zh-TW" }), /有 293 KB，超過 256 KB 的上限/);
+	assert.match(m.deploy_settings_unreadable({ path: "/a", code: " (EACCES)" }, { locale: "zh-TW" }), /^沒有啟動：讀不到 \/a \(EACCES\)/);
+	const p = setup({ kind: "base" });
+	p.serve({ steps: [step("create", "active", 0), step("start", "pending"), step("join", "pending")], finished: false });
+	await p.clock.advance(500);
+	p.answer({ ok: false, status: 409, body: { error: "settings_unsafe", reason: "pi was not started: ...", step: "create", settings: special } });
+	await p.clock.advance(0);
+	for (let i = 0; i < 5; i++) await Promise.resolve();
+	assert.equal(p.panel.dataset.state, "failed");
+	assert.deepEqual(p.rows().map((r) => r.split("~")[0]).slice(0, 2), ["failed", "pending"], "the create step failed");
+	assert.match(p.panel.cls("deploy-note").text, /^Failed at “Create the base”\. Not started: .*settings\.json → \/dev\/zero is not a plain file/);
+	assert.doesNotMatch(p.panel.cls("deploy-note").text, /11421/, "the upstream issue is in the docs only");
+});
+
 test("the server's own failed step shows at once, and a request that gets no answer fails the running step instead of hanging", async () => {
 	const early = setup();
 	early.serve({ steps: [step("create", "done"), step("start", "done"), step("join", "failed", 60_000), step("deliver", "pending")], finished: false, failed: { step: "join", reason: "The pi in pane wA:p2 did not join the net within 60 s" } });
