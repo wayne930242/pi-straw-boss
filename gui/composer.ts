@@ -97,7 +97,13 @@ export function rescue(key: string, draft: string): string {
 	rescued.delete(key);
 	return lost === undefined ? draft : withPulled(lost, draft);
 }
-const SETTLED = ["no_editor", "stale", "not_taken", "changed", "too_large", "not_cleared"]; // the bridge's own answers to a take-back (src/pull.ts WHYS)
+const SETTLED = ["no_editor", "stale", "not_taken", "changed", "too_large", "not_cleared", "no_key"]; // the bridge's own answers to a take-back (src/pull.ts WHYS)
+/** A take-back's refusal in the page's language, by the server's error code (src/control.ts PULL_WHY and the guards a key meets); undefined for any other, which keeps the server's own reason. */
+export function takeWhy(r: Answer, locale?: "en" | "zh-TW"): string | undefined {
+	const o = locale ? { locale } : undefined, key = typeof r.body.label === "string" ? r.body.label : "?"; // the key that went, as the server writes it: Alt+Q
+	const why: Record<string, () => string> = { no_key: () => m.take_no_key({}, o), no_editor: () => m.take_no_editor({}, o), stale: () => m.take_stale({}, o), not_taken: () => m.take_not_taken({ key }, o), changed: () => m.take_changed({}, o), too_large: () => m.take_too_large({}, o), not_cleared: () => m.take_not_cleared({}, o), blocked: () => m.take_blocked({}, o), local_only: () => m.take_local_only({}, o), rate: () => m.take_rate({}, o), busy: () => m.take_busy({}, o) };
+	return r.status >= 400 && r.status !== 504 ? why[r.body.error ?? ""]?.() : undefined;
+}
 /** What a take-back's answer does, whoever asked: its text goes into the box of the composer still on the page (`into`), else into the stored draft; and the id is dropped only once the answer settles it. Any other refusal (a dialog open, the pane moved, Herdr or the page's token failing, busy, unsure) keeps it: the session may still hold messages it pulled and a reply that never arrived. */
 export function settleTake(key: string, r: Answer, into?: { box: { value: string }; save(): void }) {
 	if (r.ok && typeof r.body.text === "string") {
@@ -223,7 +229,7 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 			const r = await flight;
 			if (!form.isConnected) return;
 			if (!r || r.status === 504) return unsure();
-			if (!r.ok) return say(r.body.reason ?? m.refused({ status: r.status }), "error");
+			if (!r.ok) return say(takeWhy(r) ?? r.body.reason ?? m.refused({ status: r.status }), "error");
 			if (typeof r.body.text !== "string") return say(m.edit_none());
 			const kept = read(); // a composer that was replaced meanwhile left the messages in the stored draft
 			if (kept !== undefined && kept !== box.value) box.value = kept;

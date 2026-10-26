@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { aftermath, blocked, confirmed, deposit, endTake, recall, recallTake, rescue, settleTake, startTake, withPulled } from "../gui/composer.ts";
+import { aftermath, blocked, confirmed, deposit, endTake, recall, recallTake, rescue, settleTake, startTake, takeWhy, withPulled } from "../gui/composer.ts";
 import { m } from "../gui/paraglide/messages.js";
 import { closed } from "../gui/scene.ts";
 import type { Answer } from "../gui/post.ts";
@@ -132,4 +132,21 @@ test("the take-back's id outlives the answer that is unsure (504, busy, no answe
 	settleTake(key, { ok: true, status: 200, body: { empty: true } });
 	assert.equal(recallTake(key), undefined);
 	endTake(key);
+});
+
+test("a take-back's refusal is worded in the page's language, by the server's code; the key that went is named; an unsure answer and any other refusal keep the server's reason", () => {
+	const refusal = (error: string, extra = {}) => ({ ok: false, status: 409, body: { error, reason: "English from the server", ...extra } });
+	for (const error of ["no_key", "no_editor", "stale", "not_taken", "changed", "too_large", "not_cleared", "blocked", "local_only", "rate", "busy"]) {
+		const en = takeWhy(refusal(error, { label: "Alt+Q" }), "en"), zh = takeWhy(refusal(error, { label: "Alt+Q" }), "zh-TW");
+		assert.ok(en && zh && en !== zh, error);
+		assert.match(zh, /[\u4e00-\u9fff]/, `${error} is Chinese under zh-TW`);
+		assert.doesNotMatch(zh, /\b(?:the|and|its)\b/, `${error} has no English words left`);
+	}
+	assert.match(takeWhy(refusal("not_taken", { key: "alt+q", label: "Alt+Q" }), "en")!, /Alt\+Q/);
+	assert.match(takeWhy(refusal("not_taken", { key: "alt+q", label: "Alt+Q" }), "zh-TW")!, /Alt\+Q/);
+	assert.equal(takeWhy({ ok: false, status: 504, body: { error: "unsure", reason: "x" } }, "zh-TW"), undefined, "504 has its own note");
+	assert.equal(takeWhy({ ok: false, status: 409, body: { error: "moved", reason: "x" } }, "zh-TW"), undefined, "anything else shows what the server said");
+	assert.equal(takeWhy({ ok: true, status: 200, body: { text: "t" } }, "zh-TW"), undefined);
+	settleTake("sess-nokey", { ok: false, status: 409, body: { error: "no_key", reason: "x" } });
+	assert.equal(recallTake("sess-nokey"), undefined);
 });

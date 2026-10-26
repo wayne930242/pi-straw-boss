@@ -243,7 +243,7 @@ async function answering({ reply = { status: 200, body: { outcome: "accepted" } 
 		ended: (key: string, dialog: string) => (key === "sess-1" && dialog === "d-closed" ? { status: 200, body: { outcome: "stale", by: "local" } } : undefined),
 		send: async (_key: string, t: Target, a: { answerId: string }) => (sent.push({ to: t.bridgeId, ...a }), stored.set(a.answerId, await reply), reply),
 		commands: async (_key: string, prefix: string) => (prefix === "silent" ? undefined : [{ name: `${prefix}x`, source: "skill" }]),
-		pull: async (_key: string, step: string) => (step === "begin" ? { pending: true, ticket: "T" } : { text: "queued text" }),
+		pull: async (_key: string, step: string) => (step === "begin" ? { pending: true, ticket: "T", key: "alt+up" } : { text: "queued text" }),
 	};
 	const lookup = (key: string): Found | undefined => (key === "sess-1" ? { key, base: "wA", name: "billing", role: "main", file: FILE, pane: "wA:p1", live: true } : undefined);
 	const gui = await startGui({ read: async () => ({ bases: [] }), net: { lookup, workspace: () => [] }, call, hub: { ...hub, target: () => hub.target } as unknown as Hub, dir: join(scratch, "bundle"), pollMs: 50 });
