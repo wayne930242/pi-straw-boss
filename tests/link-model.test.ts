@@ -38,6 +38,8 @@ test("an invite counts down as m:ss and stops at 0:00", () => {
 	assert.equal(countdown(61_000), "1:01");
 	assert.equal(countdown(999), "0:01");
 	assert.equal(countdown(-5), "0:00");
+	assert.equal(countdown(3600_000), "1:00:00");
+	assert.equal(countdown(23 * 3600_000 + 54 * 60_000 + 26_000), "23:54:26");
 });
 
 test("a teammate's last presence: online, how long ago, or not seen", () => {

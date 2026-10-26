@@ -18,6 +18,7 @@ const POLL_MS = 2000;
 type Detector = { detect(source: HTMLVideoElement): Promise<{ rawValue: string }[]> };
 type DetectorClass = new (options: { formats: string[] }) => Detector;
 /** The browser's QR reader where there is one (Chrome, Safari on macOS and iOS); Electron on Windows has none, so pasting is a first-class path. */
+// SAFETY: BarcodeDetector is not in the DOM typings; the optional chain below treats a missing one as "no camera reading here".
 const detectorClass = (): DetectorClass | undefined => (globalThis as unknown as { BarcodeDetector?: DetectorClass }).BarcodeDetector;
 
 const reason = (r: Answer) => r.body.reason ?? m.refused({ status: r.status });
@@ -33,6 +34,8 @@ function mount(): HTMLElement {
 	const status = h("p", { class: "link-status", role: "status" });
 	const head = h("div", { class: "link-head" }), requests = h("div", { class: "link-requests" }), teams = h("div", { class: "link-teams" }), invites = h("div", { class: "link-invites" });
 	let view: LinkView | undefined, sig = "", prefilled = "";
+	/** Each team's invite-by-id form, kept across the rebuilds of the page: whether it is open and what is typed in it. */
+	const pinned = new Map<string, { open: boolean; text: string }>();
 
 	/** One request to the holder; the reason of a refusal goes under the buttons. */
 	const act = async (name: string, body: Record<string, unknown> = {}): Promise<Answer> => {
@@ -152,11 +155,14 @@ function mount(): HTMLElement {
 		}
 		const table = h("table", { class: "link-roster" }, h("thead", null, h("tr", null, ...[m.link_col_device(), m.link_col_role(), m.link_col_kind(), m.link_col_seen(), m.link_col_trust(), ""].map((c) => h("th", null, c)))), h("tbody", null, ...t.members.map((x) => memberRow(t, x))));
 		const unattended = h("input", { type: "text", maxlength: "26", placeholder: m.link_device_id_placeholder(), "aria-label": m.link_device_id() }) as HTMLInputElement;
-		const unattendedForm = h("form", { class: "link-inline", hidden: "" }, unattended, button(m.link_invite_pinned(), () => invite(t, unattended.value.trim()), "go"));
+		const typed = pinned.get(t.team) ?? { open: false, text: "" };
+		unattended.value = typed.text;
+		unattended.oninput = () => pinned.set(t.team, { open: !unattendedForm.hidden, text: unattended.value });
+		const unattendedForm = h("form", { class: "link-inline", ...(typed.open ? {} : { hidden: "" }) }, unattended, button(m.link_invite_pinned(), () => invite(t, unattended.value.trim()), "go"));
 		unattendedForm.onsubmit = (event) => (event.preventDefault(), void invite(t, unattended.value.trim()));
 		const acts = h("div", { class: "devices-acts" }, ...nodes(
 			button(m.link_invite(), () => invite(t)),
-			button(m.link_invite_unattended(), () => void ((unattendedForm.hidden = !unattendedForm.hidden), unattended.focus())),
+			button(m.link_invite_unattended(), () => void ((unattendedForm.hidden = !unattendedForm.hidden), pinned.set(t.team, { open: !unattendedForm.hidden, text: unattended.value }), unattended.focus())),
 			t.self.role === "admin" && sure(m.link_rotate(), m.link_rotate_sure(), () => act("rotate", { team: t.team })),
 			sure(m.link_leave(), m.link_leave_sure(), () => act("leave", { team: t.team, force: t.onlyAdmin })),
 		));
@@ -267,7 +273,8 @@ function mount(): HTMLElement {
 	};
 	const draw = (v: LinkView) => {
 		view = v;
-		const next = JSON.stringify([v.label, v.deviceId, v.relay, v.teams.map((t) => [t, t.members.map((x) => [x.id, Math.floor((x.seenAgoMs ?? -1) / 60_000), x.online])]), v.joinRequests, v.invites, v.alerts.map((a) => a.id)]);
+		// The page is rebuilt only when what it shows changed: a teammate's last presence counts in minutes, so a poll that moved it by seconds leaves a typed field alone.
+		const next = JSON.stringify([v.label, v.deviceId, v.relay, v.teams.map((t) => [{ ...t, members: t.members.map((x) => ({ ...x, seenAgoMs: x.seenAgoMs === null ? null : Math.floor(x.seenAgoMs / 60_000) })) }]), v.joinRequests, v.invites, v.alerts.map((a) => a.id)]);
 		if (status.textContent === m.link_setup_wait()) status.textContent = "";
 		if (shownHash && !v.invites.some((i) => i.hash === shownHash)) hideInvite(); // the invite was used, lapsed, or cancelled
 		if (v.join) drawJoin(v.join);
@@ -308,6 +315,7 @@ function mount(): HTMLElement {
 		if (!root.isConnected && view) return;
 		const r = await post("link/state", {}).catch(() => undefined);
 		if (!r) return;
+		// SAFETY: `view` is what the holder's `state` call returns (src/link/holder.ts LinkView) through control.ts, which passes its JSON on unchanged; the page has no schema to check it against.
 		if (r.ok) return draw(r.body.view as unknown as LinkView);
 		if (r.body.error === "no_holder") return setup();
 		status.textContent = reason(r);

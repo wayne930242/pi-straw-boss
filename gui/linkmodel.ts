@@ -27,10 +27,10 @@ export const urgentFirst = (alerts: LinkAlert[]): LinkAlert[] => {
 	return [...alerts].sort((a, b) => rank[a.level] - rank[b.level]);
 };
 
-/** `m:ss` for what is left of an invite; `0:00` once it has lapsed. */
+/** `m:ss` for what is left of an invite, `h:mm:ss` from an hour on (an unattended device's invite lasts longer); `0:00` once it has lapsed. */
 export function countdown(msLeft: number): string {
-	const s = Math.max(0, Math.ceil(msLeft / 1000));
-	return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+	const s = Math.max(0, Math.ceil(msLeft / 1000)), two = (n: number) => String(n).padStart(2, "0");
+	return s >= 3600 ? `${Math.floor(s / 3600)}:${two(Math.floor(s / 60) % 60)}:${two(s % 60)}` : `${Math.floor(s / 60)}:${two(s % 60)}`;
 }
 
 /** A teammate's last presence: online, or how long ago, or never seen since this computer started. */
