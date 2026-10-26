@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { linkRequest, OWNERS, selectDigest } from "../src/owners.ts";
 import { encodeInvite } from "../src/link/join.ts";
-import { ACTIONS, shapeProblem } from "../src/link/request.ts";
+import { ACTIONS, HERE_ONLY, shapeProblem } from "../src/link/request.ts";
 import { LinkStore } from "../src/link/store.ts";
 import { until } from "./fakes.ts";
 import { FakeRelay } from "./link/fake-relay.ts";
@@ -27,7 +27,7 @@ afterEach(async () => {
 	rmSync(root, { recursive: true, force: true });
 });
 
-type Pending = { version: number; id: string; toolCallId: string; digest: string; select: { title: string; choices: { label: string }[] } };
+type Pending = { version: number; id: string; toolCallId: string; digest: string; select: { title: string; choices: { label: string; hereOnly?: true; note?: string }[] } };
 
 async function rig(o: { requestMs?: number; policy?: Parameters<typeof computer>[3] extends infer T ? (T extends { policy?: infer P } ? P : never) : never } = {}) {
 	const c = computer(root, relay, "a", { ui: true, gateMs: o.requestMs ?? 5000, ...(o.policy ? { policy: o.policy } : {}) });
@@ -210,4 +210,22 @@ test("R5-F006: a relay with credentials or a path is refused, and a project the 
 	await assert.rejects(ask({ action: "join", args: { text, project: c.home }, reason: "x" }), /home folder/);
 	const odd = encodeInvite({ relay: "https://relay.example/sub", team: Buffer.alloc(16, 7), secret: Buffer.alloc(32, 8), inviterId: bob.id, inviterKeyHash: Buffer.alloc(32, 9), forDevice: "" });
 	await assert.rejects(ask({ action: "join", args: { text: odd }, reason: "x" }), /not a Straw Link invite/, "an invite's relay is an origin");
+});
+
+test("only trust, remove, role, rotate, and leave mark Approve here-only; Deny never is, and every other action stays approvable from a paired device", async () => {
+	assert.deepEqual([...HERE_ONLY], ["trust", "remove", "role", "rotate", "leave"]);
+	const { pending, ask, answer } = await rig();
+	const runs: Promise<unknown>[] = [];
+	const marks: Record<string, unknown> = {};
+	for (const [action, args] of [["invite", { team: "project-a" }], ["trust", { device: "bob-mac", level: "forward" }], ["rotate", { team: "project-a" }], ["leave", { team: "project-a" }]] as const) {
+		const before = pending.length;
+		runs.push(ask({ action, args, reason: "x" }, `tc-${action}`).catch(() => undefined));
+		await until(() => pending.length === before + 1, `the ${action} dialog`);
+		const [approve, deny] = pending[before]!.select.choices;
+		marks[action] = [approve!.label, approve!.hereOnly ?? false, deny!.label, deny!.hereOnly ?? false];
+		if (approve!.hereOnly) assert.match(approve!.note ?? "", /this computer only/);
+		answer(pending[before]!, 1);
+	}
+	await Promise.all(runs);
+	assert.deepEqual(marks, { invite: ["Approve", false, "Deny", false], trust: ["Approve", true, "Deny", false], rotate: ["Approve", true, "Deny", false], leave: ["Approve", true, "Deny", false] });
 });

@@ -6,7 +6,8 @@ import { createHash, randomUUID } from "node:crypto";
 // page knows an owner, so swapping one (another ask_user package, another prefix) means replacing its entry in OWNERS.
 
 export interface Bus { emit(channel: string, data: unknown): void; on(channel: string, handler: (data: unknown) => void): () => void }
-export interface Choice { label: string; note?: string; localOnly?: true }
+/** `localOnly`: the choice acts on this computer (a paired device may still pick it). `hereOnly`: only this computer's own page or terminal may pick it; a paired device sees it and cannot (the link_request approvals of docs/specs/2026-10-25-straw-link.md). */
+export interface Choice { label: string; note?: string; localOnly?: true; hereOnly?: true }
 /** `confirm`: a ctx.ui.confirm relayed as Yes and No, told apart from a select by its digest. A paired device answers it as this computer's page does (docs/how-it-works.md, Remote; R-F027). */
 export interface Select { title: string; choices: Choice[]; copy?: string; confirm?: true }
 export interface Option { title: string; description?: string; preview?: true }
@@ -41,7 +42,7 @@ export interface OwnerAdapter {
 
 const str = (v: unknown): v is string => typeof v === "string";
 export const digestOf = (parts: unknown[]) => createHash("sha256").update(JSON.stringify(["pi-dialog/1", ...parts]), "utf8").digest("hex");
-/** Notes, `localOnly`, and `copy` are hints and not hashed; a confirm is told apart by the digest, so a relay cannot pass one off as a select. */
+/** Notes, `localOnly`, `hereOnly`, and `copy` are hints and not hashed; a confirm is told apart by the digest, so a relay cannot pass one off as a select. */
 export const selectDigest = (s: Select) => digestOf(["select", s.title, s.choices.map((c) => c.label), ...(s.confirm ? ["confirm"] : [])]);
 export const secretDigest = (s: Secret) => digestOf(["secret", s.label, s.instructions, s.url ?? null, s.destination]);
 export const questionsDigest = (qs: Question[]) => digestOf(["questions", qs.map((q) => [q.question, q.header ?? null, q.multiple, q.options.map((o) => [o.title, o.description ?? null])])]);
@@ -52,7 +53,7 @@ export function selectOf(owner: string, raw: unknown): Dialog | undefined {
 	const choices = Array.isArray(p?.select?.choices) ? (p.select.choices as Choice[]) : undefined;
 	if (p?.version !== 1 || !str(p.id) || p.id.length > 64 || !str(p.digest) || !str(p.select?.title) || !choices?.length || (p.toolCallId !== undefined && !str(p.toolCallId))) return;
 	if (!choices.every((c) => str(c?.label) && (c.note === undefined || str(c.note)))) return;
-	const select = { title: p.select.title, choices: choices.map((c) => ({ label: c.label, ...(c.note ? { note: c.note } : {}), ...(c.localOnly === true ? { localOnly: true as const } : {}) })), ...(str(p.select.copy) ? { copy: p.select.copy } : {}), ...((p.select as { confirm?: unknown }).confirm === true ? { confirm: true as const } : {}) };
+	const select = { title: p.select.title, choices: choices.map((c) => ({ label: c.label, ...(c.note ? { note: c.note } : {}), ...(c.localOnly === true ? { localOnly: true as const } : {}), ...(c.hereOnly === true ? { hereOnly: true as const } : {}) })), ...(str(p.select.copy) ? { copy: p.select.copy } : {}), ...((p.select as { confirm?: unknown }).confirm === true ? { confirm: true as const } : {}) };
 	return { owner, id: p.id, ...(p.toolCallId ? { toolCallId: p.toolCallId as string } : {}), digest: p.digest, select };
 }
 

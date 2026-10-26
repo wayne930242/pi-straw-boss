@@ -34,6 +34,8 @@ const FIELDS: Record<Action, (keyof RequestArgs)[]> = {
 const REQUIRED: Record<Action, (keyof RequestArgs)[]> = {
 	create: ["relay", "project"], invite: ["team"], "invite-unattended": ["team", "device"], join: ["text"], trust: ["device", "level"], leave: ["team"], remove: ["team", "device"], role: ["team", "device", "role"], rotate: ["team"],
 };
+/** Actions whose approval only this computer may give (the boss: "高風險動作只能在本機核准"): a paired device sees the dialog and can deny, not approve. Every other action is approvable from a paired device. */
+export const HERE_ONLY: readonly Action[] = ["trust", "remove", "role", "rotate", "leave"];
 /** Actions only an admin of the team may do. */
 const ADMIN: Action[] = ["remove", "role", "rotate"];
 export const REQUEST_MS = 10 * 60_000;

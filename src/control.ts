@@ -197,6 +197,7 @@ export function createControl({ link, lookup, call, csrf, canonical, pair, remot
 				if (target?.answer.dialog !== dialog || target.answer.digest !== digest) throw ended ?? no(409, "changed", "The question changed or is no longer open here; read it again.");
 				const checked = checkAnswer(target.answer, json);
 				if (typeof checked === "string") throw no(400, "bad_answer", checked);
+				if (remote && "choice" in checked && target.answer.select?.choices[checked.choice]?.hereOnly) throw no(403, "local_only", "This choice is approved on this computer's own page or terminal; a paired device can only deny."); // decided by the listener and the stored dialog, never the body
 				return answers.send(key, target, { id: dialog, answerId, digest, ...checked });
 			};
 		} else job = async () => call("agent.focus", { target: (await live(found)).pane_id });

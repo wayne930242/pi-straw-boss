@@ -8,6 +8,8 @@ import { ENDING as SERVER_ENDING, MAX_TEXT } from "../src/control.ts";
 import type { Hub, Target } from "../src/dialogs.ts";
 import { startGui, type Gui } from "../src/gui.ts";
 import { HerdrError } from "../src/herdr.ts";
+import { createApproval } from "../src/link/approval.ts";
+import { ACTIONS, HERE_ONLY } from "../src/link/request.ts";
 import { canonical } from "../src/history.ts";
 import type { Editor } from "../src/probe.ts";
 import type { Found } from "../src/net.ts";
@@ -384,6 +386,34 @@ test("answer: a paired device answers a confirmation and a local-only choice as 
 	const secret = await phone.post("sessions/sess-1/answer", body({ answerId: "d".repeat(16), value: "s3cr3t" }));
 	assert.deepEqual([secret.status, secret.body.error], [403, "local_only"], "a secret is entered in the terminal only");
 	assert.equal(sent.length, 3);
+});
+
+test("answer: a link_request approval of trust, remove, role, rotate, or leave is refused from a paired device and given from this computer's page; Deny and every other action's Approve are taken from both", async () => {
+	const { gui, sent, hub } = await answering();
+	const phone = await paired(gui);
+	let n = 0;
+	const answerId = () => String(++n).padStart(16, "0");
+	for (const action of ACTIONS) {
+		// the real dialog the approval publishes for this action, as the bridge would hand it to the page
+		const handlers = new Map<string, (d: unknown) => void>(), published: { digest: string; select: Target["answer"]["select"] }[] = [];
+		const bus = { emit: (channel: string, data: unknown) => (channel.endsWith(":pending") && published.push(data as (typeof published)[number]), undefined), on: (channel: string, h: (d: unknown) => void) => (handlers.set(channel, h), () => handlers.delete(channel)) };
+		const approval = createApproval({ bus });
+		const verdict = approval.approve({ toolCallId: "tc", lines: [`Action: ${action}`], asker: "s", hereOnly: (HERE_ONLY as readonly string[]).includes(action), signal: AbortSignal.timeout(2000) });
+		verdict.catch(() => undefined);
+		const { digest, select } = published[0]!;
+		hub.target = { from: "S", bridgeId: "B", answer: { dialog: "d1", digest, select } } as Target;
+		type Out = { status: number; body: { error?: string; outcome?: string } };
+		const post = async (who: typeof phone | undefined, choice: number) => (await (who ? who.post("sessions/sess-1/answer", body({ digest, answerId: answerId(), choice })) : send(gui, "sessions/sess-1/answer", body({ digest, answerId: answerId(), choice })))) as Out;
+		const before = sent.length, here = (HERE_ONLY as readonly string[]).includes(action);
+		const remoteApprove = await post(phone, 0);
+		if (here) assert.deepEqual([remoteApprove.status, remoteApprove.body.error, sent.length], [403, "local_only", before], `${action}: a paired device cannot approve`);
+		else assert.deepEqual([remoteApprove.status, remoteApprove.body.outcome, sent.length], [200, "accepted", before + 1], `${action}: a paired device approves`);
+		const remoteDeny = await post(phone, 1);
+		assert.deepEqual([remoteDeny.status, remoteDeny.body.outcome], [200, "accepted"], `${action}: a paired device can deny`);
+		const localApprove = await post(undefined, 0);
+		assert.deepEqual([localApprove.status, localApprove.body.outcome], [200, "accepted"], `${action}: this computer's page approves`);
+		assert.equal(sent.length, before + (here ? 2 : 3), `${action}: what reached the bridge`);
+	}
 });
 
 test("the pad from a paired device follows the local page's rule: any pad key goes while a dialog the page cannot answer is open, and only Escape while one it can answer is", async () => {

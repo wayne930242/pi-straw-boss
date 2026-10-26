@@ -13,6 +13,7 @@ import { readFileSync } from "node:fs";
 import { holderAlive, LinkElection } from "./election.ts";
 import { type AllyTeam, type ConfirmView, LinkHolder, type LinkSummary, type RelayPort, type SendResult } from "./holder.ts";
 import { RelayClient } from "./relay.ts";
+import { HERE_ONLY } from "./request.ts";
 import type { NetView } from "./routing.ts";
 import { type PolicyDeps, readPolicy } from "./policy.ts";
 import { createRemoteTurns } from "./hooks.ts";
@@ -446,7 +447,7 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 			const opened = await ask({ op: "request-open", action: r.action, args: r.args, reason: r.reason });
 			if (!opened.ok) throw new Error(opened.error);
 			const id = String(opened.id), lines = [...(opened.lines as string[]), `Asked by session: ${r.asker} (${sid().slice(0, 8)})`, `Reason: ${String(opened.reason)}`];
-			const verdict = await approval.approve({ toolCallId: r.toolCallId, lines, asker: r.asker, ui: r.ui, signal: r.signal });
+			const verdict = await approval.approve({ hereOnly: (HERE_ONLY as readonly string[]).includes(r.action), toolCallId: r.toolCallId, lines, asker: r.asker, ui: r.ui, signal: r.signal });
 			if (!verdict.approved) {
 				await ask({ op: "request-drop", id }).catch(() => undefined);
 				throw new Error(verdict.reason);

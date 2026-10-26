@@ -4,6 +4,7 @@ import { REQUEST_MS } from "./request.ts";
 
 // The approval dialog of a `link_request` (docs/specs/2026-10-25-straw-link.md, GUI, Link actions an agent asks for). It is published through the dialog
 // contract (owners.ts, `linkRequest`, keyed by the tool call's id), so the page, a paired device, and the terminal can answer it; the first answer wins.
+// A high-risk action (`HERE_ONLY` in request.ts) marks Approve `hereOnly`: control.ts refuses it from a paired device, which can still deny.
 // Only an explicit Approve resolves to approval: Deny, the end of the tool call, a timeout, and anything the dialog cannot show all resolve to refusal.
 // There is no setting, level, or earlier approval that skips it: the only caller of `approve` is the tool, once per request.
 
@@ -41,10 +42,10 @@ export function createApproval({ bus, timeoutMs = REQUEST_MS, onError = () => {}
 	};
 
 	/** Puts the request to the boss; resolves with the first answer. `lines` is what the holder says the action does, `asker` which session asked. */
-	function approve(req: { toolCallId: string; lines: string[]; asker: string; ui?: { confirm(title: string, message: string, opts?: { signal?: AbortSignal; timeout?: number }): Promise<boolean> }; signal?: AbortSignal }): Promise<Verdict> {
+	function approve(req: { toolCallId: string; lines: string[]; asker: string; hereOnly?: boolean; ui?: { confirm(title: string, message: string, opts?: { signal?: AbortSignal; timeout?: number }): Promise<boolean> }; signal?: AbortSignal }): Promise<Verdict> {
 		const body = req.lines.join("\n"), heading = `Link request from ${req.asker}`;
 		if (body.length > MAX_TEXT) return Promise.resolve({ approved: false, by: "refused", reason: `a link request whose description is ${body.length} characters long cannot be confirmed (the most is ${MAX_TEXT}); it is refused` });
-		const select: Select = { title: `${heading}\n\n${body}`, choices: [{ label: "Approve" }, { label: "Deny" }] };
+		const select: Select = { title: `${heading}\n\n${body}`, choices: [{ label: "Approve", ...(req.hereOnly ? { hereOnly: true as const, note: "Approved on this computer only; a paired device can deny" } : {}) }, { label: "Deny" }] };
 		const id = randomUUID(), digest = selectDigest(select);
 		listening ??= bus.on(`${REQUEST_PREFIX}:answer`, answered);
 		return new Promise<Verdict>((resolve) => {
