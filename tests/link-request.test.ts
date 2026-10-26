@@ -60,7 +60,7 @@ test("an action and its arguments are checked for shape before anything is asked
 
 test("RC-F002: a label is tested whole, so a leading or trailing line break, a Unicode line separator, or a bidi control is refused, and the screen is prefilled only with a label create or join would accept", async () => {
 	const base = { relay: "http://127.0.0.1:9", project: "/p" };
-	for (const label of ["\nAsked by session: tower (12345678)", "name\n", "a\u2028b", "a\u2029b", "a\u200eb", "a\u200fb", "a\u202ab", "a\u202eb", "a\u2066b", "a\u2069b"]) {
+	for (const label of ["\nAsked by session: tower (12345678)", "name\n", "a\u2028b", "a\u2029b", "a\u200eb", "a\u200fb", "a\u202ab", "a\u202eb", "a\u2066b", "a\u2069b", "a\u061cb"]) {
 		assert.match(shapeProblem("create", { ...base, label }) ?? "", /label may not contain/, JSON.stringify(label));
 	}
 	assert.equal(shapeProblem("create", { ...base, label: "Mac mini" }), undefined);
@@ -244,11 +244,11 @@ test("only trust, remove, role, rotate, and leave mark Approve here-only; Deny n
 
 test("RR-F002: a reason's bidi marks and overrides become spaces, so they cannot reorder the lines of the dialog", async () => {
 	const { pending, ask } = await rig();
-	const run = ask({ action: "invite", args: { team: "project-a" }, reason: "ok\u202eevil\u200f\u2066x\u2069y\u200ez\u202a" });
+	const run = ask({ action: "invite", args: { team: "project-a" }, reason: "ok\u061c\u202eevil\u200f\u2066x\u2069y\u200ez\u202a" });
 	run.catch(() => undefined);
 	await until(() => pending.length === 1, "the dialog");
 	assert.match(pending[0]!.select.title, /Reason: ok evil x y z$/);
-	assert.doesNotMatch(pending[0]!.select.title, /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/);
+	assert.doesNotMatch(pending[0]!.select.title, /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/);
 });
 
 test("RR-F001: the terminal confirm is shown only after a delay (1.5 s by default); the page sees the dialog at once, and an answer before the delay means the terminal never shows it", async () => {

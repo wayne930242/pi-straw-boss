@@ -41,6 +41,8 @@ export function createTools({ pi, cfg, s, me, role }: Kit, { post, callTower, st
 				}),
 				({ message, scope, reply }) => broadcast(message, scope ?? "workspace", reply ?? false));
 			const arg = (description: string) => Type.Optional(Type.String({ description }));
+			// A call nested in another tool's (codemode) is written to the session file only when its parent ends, so the key pad's file check would never see it open.
+			pi.on("tool_call", (e) => (e.toolName === "link_request" && (e as { parentToolCallId?: string }).parentToolCallId ? { block: true, reason: "link_request is called directly, not from another tool" } : undefined));
 			pi.registerTool({
 				name: "link_request", label: "link_request",
 				description: "Ask for a Straw Link action (teams across computers). It never runs unasked: the boss gets an approval dialog that shows the action, every argument, your reason, and this session, and the action runs only when they approve it (in the GUI, from a paired device, or in the terminal); no answer in 10 minutes refuses it. Actions: create (relay, project; opens the Create team screen, where the boss types the relay's token), invite (team; returns an invite text), invite-unattended (team, device id of the unattended computer), join (text; opens the Join screen with the invite filled in, the boss compares the safety words), trust (device, level reply|forward|dispatch), leave (team), and for an admin remove (team, device), role (team, device, role admin|member), rotate (team). Refused on an unattended device.",

@@ -122,7 +122,7 @@ test("Stop sends Escape alone with no mirror, never Ctrl+C or Ctrl+D; any other 
 async function padded({ entries = [header(), user("u1", null, "go")] as unknown[], editor = { editor: "empty" } as Editor | undefined, answerable = false } = {}) {
 	const path = join(scratch, `pad-${Math.random().toString(36).slice(2)}_sess-1.jsonl`);
 	writeFileSync(path, lines(entries));
-	const file = canonical(path)!, calls: [string, Record<string, unknown>][] = [], w = { editor, answerable, status: "idle", probes: 0, moveDuringProbe: false, moved: false, armed: false, afterProbe: false, opens: undefined as (() => void) | undefined };
+	const file = canonical(path)!, calls: [string, Record<string, unknown>][] = [], w = { editor, answerable, status: "idle", probes: 0, moveDuringProbe: false, moved: false, armed: false, afterProbe: false, opens: undefined as (() => void) | undefined, relayedRequest: false };
 	const call = async (method: string, params: Record<string, unknown>) => {
 		calls.push([method, { ...params, ...(method === "pane.send_input" && { at: Date.now() }) }]);
 		if (method === "pane.get" && w.armed) {
@@ -134,7 +134,7 @@ async function padded({ entries = [header(), user("u1", null, "go")] as unknown[
 		return method === "pane.read" ? { read: { text: "pi\r\n> " } } : {};
 	};
 	const target = { from: "S", bridgeId: "B", answer: { dialog: "d1", digest: "a".repeat(64), select: { title: "T", choices: [{ label: "A" }] } } } as Target;
-	const hub = { running: true, me: "G", start() {}, stop() {}, receive() {}, relayed: () => ({ dialogsOf: () => undefined, merge: () => ({ callId: "", tool: "" }) }), replay: () => undefined, ended: () => undefined, send: async () => ({ status: 200, body: {} }), target: () => (w.answerable ? target : undefined), probe: async () => (w.probes++, (w.moved = w.moveDuringProbe), (w.armed = w.afterProbe), w.editor) };
+	const hub = { running: true, me: "G", start() {}, stop() {}, receive() {}, relayed: () => ({ dialogsOf: () => undefined, merge: () => ({ callId: "", tool: "" }) }), has: (_key: string, owner: string) => w.relayedRequest && owner === "straw-link-request", replay: () => undefined, ended: () => undefined, send: async () => ({ status: 200, body: {} }), target: () => (w.answerable ? target : undefined), probe: async () => (w.probes++, (w.moved = w.moveDuringProbe), (w.armed = w.afterProbe), w.editor) };
 	const lookup = (key: string): Found | undefined => (key === "sess-1" ? { key, base: "wA", name: "billing", role: "main", file, pane: "wA:p1", live: true } : undefined);
 	const gui = await startGui({ read: async () => ({ bases: [] }), net: { lookup, workspace: () => [] }, call, hub: hub as unknown as Hub, dir: join(scratch, "bundle"), pollMs: 50 });
 	running.push(gui);
@@ -480,6 +480,25 @@ test("RR-F001: a link_request call that opens after the guard looked (Enter: dur
 	p.w.afterProbe = true;
 	assert.deepEqual((await p.key("enter")).body, { accepted: true }, "this computer's page: Enter goes");
 	assert.deepEqual(p.sentKeys(), [["enter"]]);
+	p.close();
+});
+
+test("RR2-F001: while the owner relays an open link_request dialog, a paired device's Enter, typed text, and prompt are refused even when the session file shows no link_request call (a call nested in codemode is not in the file); Escape and this computer's page are not limited", async () => {
+	const p = await padded();
+	await p.attach();
+	const phone = await paired(p.gui);
+	p.w.status = "blocked";
+	p.w.relayedRequest = true;
+	const enter = await phone.post("sessions/sess-1/keys", { key: "enter", stream: p.stream });
+	assert.deepEqual([enter.status, enter.body.error, p.sentKeys()], [403, "local_only", []], "Enter");
+	const prompt = await phone.post("sessions/sess-1/input", { text: "go", as: "send" });
+	assert.deepEqual([prompt.status, prompt.body.error], [403, "local_only"], "a prompt");
+	await new Promise((r) => setTimeout(r, 1100));
+	assert.deepEqual((await phone.post("sessions/sess-1/keys", { key: "esc", stream: p.stream })).body, { accepted: true }, "Escape");
+	assert.deepEqual((await p.key("enter")).body, { accepted: true }, "this computer's page");
+	p.w.relayedRequest = false;
+	await new Promise((r) => setTimeout(r, 1100));
+	assert.deepEqual((await phone.post("sessions/sess-1/keys", { key: "enter", stream: p.stream })).body, { accepted: true }, "closed: Enter goes");
 	p.close();
 });
 

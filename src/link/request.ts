@@ -16,9 +16,9 @@ export const ACTIONS = ["create", "invite", "invite-unattended", "join", "trust"
 export type Action = (typeof ACTIONS)[number];
 /** The arguments an agent may pass; each action takes the ones it names and refuses the rest. */
 /** C0 and C1 control characters, the Unicode line and paragraph separators, and the bidi marks and overrides: a line break, an escape, or a reordering in an argument could add lines to the approval dialog or disguise them. */
-const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 /** The agent's reason as one line: every run of whitespace, control characters, and bidi marks becomes one space. */
-const oneLine = (s: string) => s.replace(/[\s\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]+/g, " ").trim();
+const oneLine = (s: string) => s.replace(/[\s\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]+/g, " ").trim();
 export interface RequestArgs { team?: string; relay?: string; project?: string; share?: string; device?: string; level?: string; role?: string; text?: string; label?: string }
 const FIELDS: Record<Action, (keyof RequestArgs)[]> = {
 	create: ["relay", "project", "share", "label"],
