@@ -30,6 +30,24 @@ test("the script reads the owner's SID, grants the owner and SYSTEM by SID, inhe
 	assert.ok(!/\$sid:/.test(ACL_SCRIPT), "$sid: would be read as a variable in a scope named sid");
 });
 
+test("sbr-F007: the script sets UTF-8 output on its first line and prints its answer as ASCII only, so no OEM code page can put a backslash inside a JSON string", () => {
+	assert.equal(ACL_SCRIPT.split("\n")[0], "try { [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false) } catch { }");
+	assert.match(ACL_SCRIPT, /\[regex\]::Replace\(\$json, '\[\^\\x00-\\x7F\]', \[System\.Text\.RegularExpressions\.MatchEvaluator\]\{ param\(\$m\) \('\\u\{0:x4\}' -f \[int\]\[char\]\$m\.Value\) \}\)$/);
+	assert.ok(ACL_SCRIPT.trimEnd().endsWith(")"), "the escaped answer is the last output");
+});
+
+test("sbr-F007: an account whose profile path has Big5 characters ending in 0x5C (許, 功) gets its path through: the escaped answer parses, the raw OEM bytes would not", () => {
+	const dir = "C:\\Users\\許功蓋\\.pi\\agent\\straw-boss";
+	const answer = { sid: OWNER, dir: good, files: [{ path: `${dir}\\server.json`, sddl: good }] };
+	// What the script prints: ConvertTo-Json's text with every character above 0x7F as \uXXXX.
+	const escaped = JSON.stringify(answer).replace(/[^\x00-\x7f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+	assert.ok(/^[\x00-\x7f]*$/.test(escaped));
+	assert.equal(parseAclOutput(`${escaped}\r\n`).files[0]?.path, `${dir}\\server.json`);
+	// What a CP950 console wrote before: 許 is B3 5C and 功 is A5 5C, which Node decoded as UTF-8 gives a replacement character and a bare backslash that swallows the next character.
+	const raw = Buffer.concat([Buffer.from('{"sid":"S-1-5-21-1-2-3-1001","dir":"O:SYG:SYD:PAI(A;;FA;;;SY)","files":[{"path":"C:\\\\Users\\\\', "latin1"), Buffer.from([0xb3, 0x5c, 0xa5, 0x5c]), Buffer.from('x","sddl":"y"}]}', "latin1")]);
+	assert.throws(() => parseAclOutput(raw.toString("utf8")), /PowerShell answered/);
+});
+
 test("parseSddl reads owner, DACL flags, and ACEs; SYSTEM's alias and long SIDs both come through", () => {
 	const parsed = parseSddl(good);
 	assert.equal(parsed.owner, OWNER);

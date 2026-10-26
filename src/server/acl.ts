@@ -10,6 +10,9 @@ const ACL_MS = 20_000;
 
 /** The PowerShell script: the folder comes in the environment (SB_ACL_DIR), so no path is ever quoted into the script. */
 export const ACL_SCRIPT = [
+	// Windows PowerShell 5.1 writes redirected output in the OEM code page (CP950, CP932, …) and Node reads UTF-8. The answer is also pure ASCII (below), because in those code pages
+	// the second byte of some characters (Big5 許 and 功, Shift-JIS ソ and 表) is 0x5C, a backslash that would land inside a JSON string. The setting may fail where no console is attached.
+	"try { [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false) } catch { }",
 	"$ErrorActionPreference = 'Stop'",
 	"$dir = $env:SB_ACL_DIR",
 	"$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
@@ -21,7 +24,9 @@ export const ACL_SCRIPT = [
 	"$link = Join-Path $dir 'link'",
 	"if (Test-Path -LiteralPath $link) { $files += @(Get-ChildItem -LiteralPath $link -Recurse -File | ForEach-Object { $_.FullName }) }",
 	"$out = [ordered]@{ sid = $sid; dir = (Get-Acl -LiteralPath $dir).Sddl; files = @($files | ForEach-Object { [ordered]@{ path = $_; sddl = (Get-Acl -LiteralPath $_).Sddl } }) }",
-	"$out | ConvertTo-Json -Compress -Depth 4",
+	"$json = $out | ConvertTo-Json -Compress -Depth 4",
+	// Every character above 0x7F becomes \uXXXX (a UTF-16 unit at a time), which JSON.parse reads back as it was.
+	"[regex]::Replace($json, '[^\\x00-\\x7F]', [System.Text.RegularExpressions.MatchEvaluator]{ param($m) ('\\u{0:x4}' -f [int][char]$m.Value) })",
 ].join("\n");
 
 /** The PowerShell call: `-EncodedCommand` (UTF-16LE base64) so no quoting of the script can go wrong; `windowsHide` keeps its console off the desktop. */
