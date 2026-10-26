@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +10,8 @@ import { guiNamespace, REGISTER, startBridge, type ToHub } from "../src/bridge.t
 import type { Hub, Target } from "../src/dialogs.ts";
 import { startGui, type Gui } from "../src/gui.ts";
 import type { Found } from "../src/net.ts";
-import { defaultDequeue, dequeueKey, keyLabel, validKeyId, windowsKeys } from "../src/dequeuekey.ts";
+import { dequeueKey, validKeyId } from "../src/dequeuebind.ts";
+import { defaultDequeue, keyLabel, windowsKeys } from "../src/dequeuekey.ts";
 import { checkPull, joined, MAX_PULL, type Pull, pulled } from "../src/pull.ts";
 
 // Taking the queue back (pull.ts): the server presses pi's Alt+Up between a `begin` and a `finish` at the bridge, and the page gets only the
@@ -503,4 +504,9 @@ test("dequeue (R-F006): the pane is looked at again right before the key; a sess
 	const r = await send(x.gui, "sessions/sess-1/dequeue", TAKE);
 	assert.equal(r.body.error, "not_pi");
 	assert.deepEqual(x.keys(), [], "no Alt+Up into another program");
+});
+
+test("dequeuekey: the server's half imports nothing from pi, so a server without pi can load it", () => {
+	const source = readFileSync(new URL("../src/dequeuekey.ts", import.meta.url), "utf8");
+	assert.doesNotMatch(source, /^import /m);
 });

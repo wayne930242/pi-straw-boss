@@ -7,7 +7,7 @@ import { type Answer, type Bus, type Dialog, OWNERS, type OwnerAdapter, type Ver
 import { type Cmd, listCommands, MAX_PREFIX } from "./commands.ts";
 import type { Queued } from "./net.ts";
 import { type Editor, probeEditor } from "./probe.ts";
-import { dequeueKey } from "./dequeuekey.ts";
+import { dequeueKey } from "./dequeuebind.ts";
 import { joined, MAX_PULL, type Pull, pulled } from "./pull.ts";
 import { type Monitor, trackMonitors } from "./monitors.ts";
 import { todoOfBranch, type TodoSum } from "./todo.ts";
