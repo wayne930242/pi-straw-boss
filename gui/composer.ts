@@ -97,13 +97,14 @@ export function rescue(key: string, draft: string): string {
 	rescued.delete(key);
 	return lost === undefined ? draft : withPulled(lost, draft);
 }
-/** What a take-back's answer does, whoever asked: its text goes into the box of the composer still on the page (`into`), else into the stored draft; and the id is dropped once the answer settles it (busy and unsure keep it: the session may still hold the messages). */
+const SETTLED = ["no_editor", "stale", "not_taken", "changed", "too_large", "not_cleared"]; // the bridge's own answers to a take-back (src/pull.ts WHYS)
+/** What a take-back's answer does, whoever asked: its text goes into the box of the composer still on the page (`into`), else into the stored draft; and the id is dropped only once the answer settles it. Any other refusal (a dialog open, the pane moved, Herdr or the page's token failing, busy, unsure) keeps it: the session may still hold messages it pulled and a reply that never arrived. */
 export function settleTake(key: string, r: Answer, into?: { box: { value: string }; save(): void }) {
 	if (r.ok && typeof r.body.text === "string") {
 		if (into) (into.box.value = withPulled(r.body.text, into.box.value), into.save());
 		else deposit(key, r.body.text);
 	}
-	if (r.ok || (r.status !== 429 && r.status !== 504)) endTake(key);
+	if (r.ok || r.status === 400 || (r.status === 409 && SETTLED.includes(r.body.error ?? ""))) endTake(key);
 }
 /** Why nothing can be sent right now, or undefined. */
 export function blocked(u: Unit): string | undefined {

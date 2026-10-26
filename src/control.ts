@@ -211,7 +211,7 @@ export function createControl({ link, lookup, call, csrf, canonical, pair, remot
 				await live(found); // the guard took a moment: still pi, on this file
 				for (const [method, params] of plan.calls) await call(method, params, 15_000);
 				const done = await answers.pull(key, "finish", begun.ticket);
-				if (!done) throw no(504, "unsure", "The session did not answer in time. The messages are in the terminal's editor, or the session keeps them for a few minutes: press Edit again to fetch them.");
+				if (!done) throw no(504, "unsure", "The session did not answer in time. The messages are in the terminal's editor, or the session keeps them for a few minutes: use Fetch again on the page to get them.");
 				if (done.reason) throw no(409, done.reason, PULL_WHY[done.reason]!);
 				direct = done.text !== undefined ? { status: 200, body: { text: done.text } } : { status: 200, body: { empty: true } }; // empty: delivered between the check and the key
 			};

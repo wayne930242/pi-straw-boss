@@ -119,8 +119,15 @@ test("the take-back's id outlives the answer that is unsure (504, busy, no answe
 	assert.equal(storage.map.has(`sb-draft:${key}:take`), false);
 	const next = startTake(key);
 	assert.notEqual(next, id);
-	settleTake(key, { ok: false, status: 409, body: { reason: "no" } });
-	assert.equal(recallTake(key), undefined, "a refusal settles it");
+	for (const [status, error] of [[409, "blocked"], [409, "moved"], [502, "herdr"], [403, "csrf"]] as const) {
+		settleTake(key, { ok: false, status, body: { error, reason: "no" } });
+		assert.equal(recallTake(key), next, `${status} ${error} keeps it: a lost reply may still be kept by the session`);
+	}
+	settleTake(key, { ok: false, status: 409, body: { error: "changed", reason: "no" } });
+	assert.equal(recallTake(key), undefined, "the bridge's own refusal settles it");
+	startTake(key);
+	settleTake(key, { ok: false, status: 400, body: { error: "bad_request", reason: "no" } });
+	assert.equal(recallTake(key), undefined, "a bad request settles it");
 	startTake(key);
 	settleTake(key, { ok: true, status: 200, body: { empty: true } });
 	assert.equal(recallTake(key), undefined);

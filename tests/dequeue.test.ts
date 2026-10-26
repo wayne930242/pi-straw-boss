@@ -338,7 +338,7 @@ test("dequeue: refusals keep the editor and the key from going when they come be
 	const unsure = await send(lost.gui, "sessions/sess-1/dequeue", TAKE);
 	assert.equal(unsure.status, 504, "unsure: pi may have taken the messages");
 	assert.match(unsure.body.reason!, /terminal's editor/);
-	assert.match(unsure.body.reason!, /press Edit again/, "R-F002: the 504 tells the truth, where the messages are and how to get them");
+	assert.match(unsure.body.reason!, /Fetch again/, "R-F002: the 504 tells the truth, where the messages are and how to get them");
 	assert.doesNotMatch(unsure.body.reason!, /nothing was taken/i);
 	const late = await served({ pull: (step) => (step === "begin" ? { pending: true, ticket: "T" } : { reason: "stale" }) });
 	const aged = await send(late.gui, "sessions/sess-1/dequeue", TAKE);
