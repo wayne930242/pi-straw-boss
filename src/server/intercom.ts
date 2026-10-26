@@ -83,10 +83,17 @@ export async function loadIntercom({ env, root, from, tsImport }: LoadOptions): 
 		load ??= ((await import(pathToFileURL(api).href)) as { tsImport: TsImport }).tsImport;
 		return (await load(pathToFileURL(join(dir, file)).href, import.meta.url)) as T;
 	};
+	// Each tsImport registers a loader hook and makes a fresh copy of what it loads (tsx 4), so a connect that loaded again at every retry would leak both while the broker is down:
+	// the three modules are loaded once. A load that failed is not kept, so the next attempt tries again.
+	let modules: Promise<{ client: ClientModule; spawn: SpawnModule; config: ConfigModule }> | undefined;
+	const loaded = () => (modules ??= Promise.all([needed<ClientModule>("broker/client.ts"), needed<SpawnModule>("broker/spawn.ts"), needed<ConfigModule>("config.ts")]).then(
+		([client, spawn, config]) => ({ client, spawn, config }),
+		(error: unknown) => { modules = undefined; throw error; },
+	));
 	return {
 		dir, version,
 		async connect() {
-			const [client, spawn, config] = await Promise.all([needed<ClientModule>("broker/client.ts"), needed<SpawnModule>("broker/spawn.ts"), needed<ConfigModule>("config.ts")]);
+			const { client, spawn, config } = await loaded();
 			const { brokerCommand, brokerArgs } = config.loadConfig();
 			await spawn.spawnBrokerIfNeeded(brokerCommand, brokerArgs);
 			return new client.IntercomClient();
