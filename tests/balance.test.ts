@@ -156,6 +156,7 @@ test("the extension runs the helper detached when its pi starts and when it quit
 	assert.match(spawned[0].args[0], /src\/balance\.mjs$/);
 	assert.deepEqual(spawned[0].args.slice(1), ["after-close", "w1", "w:t1"]);
 	assert.equal(spawned[0].options.detached, true, "the helper outlives the quitting pi");
+	assert.equal(spawned[0].options.windowsHide, true, "a detached console child on Windows gets no console window of its own");
 
 	const handlers = new Map();
 	const runs = [];
