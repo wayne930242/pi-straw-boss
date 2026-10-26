@@ -4,12 +4,12 @@ import { createConnection } from "node:net";
 import { localEndpoint } from "../endpoint.ts";
 import { alive as pidAlive } from "../remote.ts";
 import { newer } from "../semver.ts";
-import { rememberStart, startOf } from "../startof.ts";
+import { rememberStart, startedLater, startOf } from "../startof.ts";
 import { spawnBreakaway } from "./breakaway.ts";
 import { createLog, type Log } from "./log.ts";
 import {
 	adoptStarting, clearStartError, clearStopped, endStarting, fileOf, type IntercomScope, type LockDeps, LockUnreadable, markStarting, prepareSlot, readRecord, secretDir, readStartError, restartingFresh, type ServerRecord,
-	type Slot, type StartError, takeLock, TOUCH_MS, touchRestarting, updateRecord,
+	type Slot, type StartError, takeLock, TOUCH_MS, touchRestarting, updateRecord, writeStartError,
 } from "./record.ts";
 import { resetFileAcl } from "./winprep.ts";
 import { callControl, ControlError, helloWhy, type Reply } from "./socket.ts";
@@ -127,6 +127,8 @@ export interface Ctx {
 	sleep(ms: number): Promise<void>;
 	alive(pid: number): boolean;
 	startOf(pid: number): string | undefined;
+	/** The start time of a process once it is known (a bounded wait on Windows, where it takes a PowerShell start); `startOf` by default when a test replaces that. */
+	startedLater(pid: number): Promise<string | undefined>;
 	spawn(spec: SpawnSpec): Launched;
 	kill(pid: number, signal: NodeJS.Signals): void;
 	lock: LockDeps;
@@ -146,6 +148,7 @@ export function makeCtx(over: Partial<Ctx> & Pick<Ctx, "slot" | "version" | "cli
 		kill: (pid, signal) => void process.kill(pid, signal), prepare,
 		// This process holds the locks it takes: it is alive however the liveness check is replaced.
 		lock: { now, alive: (pid) => pid === process.pid || alive(pid), startOf: start, sleep, note: (event, fields) => log.line(event, fields), prepare, ...(platform === "win32" ? { repair: (file: string) => resetFileAcl(file, undefined, 15_000) } : {}) },
+		startedLater: over.startedLater ?? (over.startOf ? async (pid: number) => over.startOf!(pid) : (pid: number) => startedLater(pid, { hold: false })),
 		...over, now, sleep, alive, startOf: start, log,
 	};
 }
@@ -170,6 +173,7 @@ export function runsAs(ctx: Pick<Ctx, "alive" | "startOf">, record: Pick<ServerR
 	return now === undefined || now === record.started;
 }
 /** A server counts as live when its PID is alive, started at the recorded time, and answers hello on the control socket within 2 s: a PID alone is not enough. */
+const DENIED_START_MS = 3000;
 export async function probe(ctx: Ctx, deadline?: number, startKnownElsewhere = false): Promise<Probe> {
 	const record = readRecord(ctx.slot);
 	// A record with no socket is a start that has not got far enough to listen (`markStarting`): there is nothing to ask.
@@ -183,7 +187,12 @@ export async function probe(ctx: Ctx, deadline?: number, startKnownElsewhere = f
 	// `runs` pins the broker scope for a server that is slow to answer: only on positive evidence that this is that server (the start time the record names is the one the pid has now), so a pid
 	// reused after a crash, or a record with no start time, pins nothing. A refusal for lack of permission is a running server that cannot be reached: it is told as that, never as gone.
 	const confirmed = Boolean(record.started) && ctx.startOf(record.pid) === record.started;
-	return { record, live: false, runs: confirmed || denied, ...(denied ? { denied: true } : {}), hello: undefined };
+	if (!denied) return { record, live: false, runs: confirmed, hello: undefined };
+	// Refused for lack of permission: that is "alive and unreachable" only when the process under the pid is the one the record names (R8-F004: a pipe name is free when its server is gone, and something
+	// else can refuse there). Its start time is waited for, a few seconds at most; no match, or none known, is gone: nothing is pinned.
+	const when = confirmed ? record.started : await Promise.race([ctx.startedLater(record.pid).catch(() => undefined), ctx.sleep(within(ctx, deadline, DENIED_START_MS)).then(() => undefined)]);
+	const mine = Boolean(record.started) && when === record.started;
+	return mine ? { record, live: false, runs: true, denied: true, hello: undefined } : { record, live: false, runs: false, hello: undefined };
 }
 
 /** Whether Herdr listens at the slot's socket. */
@@ -306,7 +315,12 @@ export async function launch(ctx: Ctx, { began, old, deadline }: { began?: strin
 		// The launch script found the folder owned by another account and created nothing: told as an `acl` start error (exit 3), not as a server that did not answer.
 		if (refusal) {
 			ctx.log.line("start-failed", { code: "acl", text: refusal });
-			throw new ServerError("start-failed", `acl: ${refusal}`, { at: new Date(ctx.now()).toISOString(), code: "acl", text: refusal });
+			const startError = { at: new Date(ctx.now()).toISOString(), code: "acl" as const, text: refusal };
+			// Written too, so that a later `status` shows why there is no server (the folder is the user's own protected one by now).
+			try {
+				writeStartError(ctx.slot, startError, ctx.now());
+			} catch { /* the error is thrown all the same */ }
+			throw new ServerError("start-failed", `acl: ${refusal}`, startError);
 		}
 		ctx.log.line("start-unanswered", { ms: ctx.now() - t0, exit: outcome ? String(outcome.exit) : "none" });
 		throw failed(ctx, outcome, waitMs, note);

@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { createConnection } from "node:net";
+import { createConnection, createServer as listen } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { slotOf } from "../src/server/record.ts";
-import { callControl, type Control, ControlError, endpointFor, helloOf, listenControl, newSecret, secretMatches } from "../src/server/socket.ts";
+import { callControl, type Control, ControlError, endpointFor, helloOf, listenControl, newSecret, proofOf, secretMatches } from "../src/server/socket.ts";
 
 // docs/specs/2026-10-26-sb-backend.md, The control socket: every connection opens with hello { secret }, compared in constant time; a connection whose first frame is not a
 // matching hello is closed with no answer, and told at most once a minute.
@@ -40,7 +40,9 @@ function raw(endpoint: string, lines: string[], waitMs = 150) {
 
 test("a connection with the secret gets the server's facts, then an answer per request, in order", async () => {
 	const { control } = await serve({ handle: async (r) => ({ ok: true, echo: r.cmd, n: r.n }) });
-	assert.deepEqual((await callControl(control.endpoint, SECRET, undefined)).hello, { ok: true, pid: 7, ready: true });
+	const { proof, ...facts } = (await callControl(control.endpoint, SECRET, undefined)).hello;
+	assert.deepEqual(facts, { ok: true, pid: 7, ready: true });
+	assert.match(String(proof), /^[0-9a-f]{64}$/, "the answer proves the secret (R8-F004)");
 	const { hello, reply } = await callControl(control.endpoint, SECRET, { cmd: "status", n: 1 });
 	assert.equal(hello.pid, 7);
 	assert.deepEqual(reply, { ok: true, echo: "status", n: 1 });
@@ -143,4 +145,30 @@ test("the endpoint: server.sock in the slot's folder; a pipe with a random name 
 	assert.equal(endpointFor(deep, "linux"), short, "the same slot always gets the same path");
 	assert.notEqual(endpointFor(slotOf(join(root, "y".repeat(120)), { HOME: "/h" }, "linux"), "linux"), short);
 	rmSync(short, { force: true });
+});
+
+// --- R8-F004: the hello answer proves the secret ---
+
+test("R8-F004: the proof is an HMAC of the client's nonce and the pid under the secret: it differs by secret, nonce and pid; a client with no nonce gets none", async () => {
+	assert.equal(proofOf("s", "n", 7), proofOf("s", "n", 7));
+	for (const other of [proofOf("t", "n", 7), proofOf("s", "m", 7), proofOf("s", "n", 8)]) assert.notEqual(other, proofOf("s", "n", 7));
+	const { control } = await serve({ handle: async () => ({ ok: true }) });
+	const bare = await raw(control.endpoint, [JSON.stringify({ cmd: "hello", secret: SECRET })]);
+	assert.ok(!JSON.stringify(bare).includes("proof"));
+});
+
+test("R8-F004: a responder at the endpoint that does not know the secret (no proof, or a proof under another secret) is refused by the client, not taken for the server", async () => {
+	for (const make of [() => ({ ok: true, pid: 7, ready: true }), (nonce: string) => ({ ok: true, pid: 7, ready: true, proof: proofOf("not the secret", nonce, 7) }), (nonce: string) => ({ ok: true, pid: 7, ready: true, proof: proofOf(SECRET, nonce, 8) })]) {
+		const dir = mkdtempSync(join(tmpdir(), "psb-fake-"));
+		const endpoint = join(dir, "fake.sock");
+		const fake = listen((conn) => conn.on("data", (chunk) => conn.write(`${JSON.stringify(make(String(JSON.parse(String(chunk).split("\n")[0]!).nonce)))}\n`)));
+		await new Promise<void>((resolve) => fake.listen(endpoint, resolve));
+		try {
+			await assert.rejects(callControl(endpoint, SECRET, undefined, 1000), (e: unknown) => (e as { failure?: string }).failure === "refused" && /does not prove/.test((e as Error).message));
+			assert.equal(await helloOf(endpoint, SECRET, 1000), undefined);
+		} finally {
+			await new Promise<void>((resolve) => fake.close(() => resolve()));
+			rmSync(dir, { recursive: true, force: true });
+		}
+	}
 });

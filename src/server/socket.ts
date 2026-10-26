@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, lstatSync, mkdirSync, rmSync } from "node:fs";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
@@ -25,6 +25,11 @@ const SOCKET_MAX = 100;
 export const newSecret = () => randomBytes(32).toString("hex");
 const digest = (text: string) => createHash("sha256").update(text).digest();
 /** Whether `given` is the secret, compared in constant time (both are hashed first, so the length leaks nothing either). */
+/**
+ * What a server answers a hello's nonce with: HMAC-SHA256 keyed by the secret over the nonce and its pid. A pipe on Windows has a name that is free when its server is gone, so something else
+ * could answer or refuse there; only a process that knows the secret can make this (R8-F004). The client sends a fresh nonce, so an answer cannot be replayed.
+ */
+export const proofOf = (secret: string, nonce: string, pid: unknown) => createHmac("sha256", secret).update(`${nonce}:${String(pid)}`).digest("hex");
 export const secretMatches = (given: unknown, secret: string) => typeof given === "string" && secret.length > 0 && timingSafeEqual(digest(given), digest(secret));
 
 /** Where the slot's server listens: `server.sock` in its folder, a short folder of the user's own when that path is too long, and on Windows a pipe with a random name. */
@@ -94,7 +99,8 @@ export function listenControl({ endpoint, secret, hello, handle, refused, platfo
 					if (frame.cmd !== "hello" || !secretMatches(frame.secret, secret)) return refuse(conn, frame.cmd === "hello" ? "wrong secret" : "first frame is not hello");
 					authed = true;
 					clearTimeout(wait);
-					conn.write(`${JSON.stringify({ ok: true, ...hello() })}\n`);
+					const facts = hello(), nonce = typeof frame.nonce === "string" && frame.nonce.length > 0 && frame.nonce.length <= 128 ? frame.nonce : undefined;
+					conn.write(`${JSON.stringify({ ok: true, ...facts, ...(nonce ? { proof: proofOf(secret, nonce, facts.pid) } : {}) })}\n`);
 					continue;
 				}
 				// Requests on one connection are answered in order, each with one line.
@@ -142,6 +148,7 @@ function acceptsConnections(endpoint: string, platform: NodeJS.Platform): Promis
 	});
 }
 
+const proves = (reply: Reply, secret: string, nonce: string) => typeof reply.proof === "string" && secretMatches(reply.proof, proofOf(secret, nonce, reply.pid));
 /** `denied`: the endpoint is there and this process may not open it (access denied on the pipe or socket: a server started from an elevated shell, reached from a filtered token of the same user). */
 export type ControlFailure = "no-server" | "refused" | "timeout" | "error" | "denied";
 export class ControlError extends Error {
@@ -160,6 +167,7 @@ export function callControl(endpoint: string, secret: string, request: Request |
 	return new Promise((resolve, reject) => {
 		const want = request ? 2 : 1, got: Reply[] = [];
 		let buffer = "", done = false;
+		const nonce = randomBytes(16).toString("hex");
 		const conn = createConnection(endpoint).setEncoding("utf8").setTimeout(timeoutMs);
 		const finish = (error?: ControlError) => {
 			if (done) return;
@@ -168,7 +176,7 @@ export function callControl(endpoint: string, secret: string, request: Request |
 			if (error) reject(error);
 			else resolve({ hello: got[0]!, ...(got[1] ? { reply: got[1] } : {}) });
 		};
-		conn.on("connect", () => conn.write(`${JSON.stringify({ cmd: "hello", secret })}\n${request ? `${JSON.stringify(request)}\n` : ""}`));
+		conn.on("connect", () => conn.write(`${JSON.stringify({ cmd: "hello", secret, nonce })}\n${request ? `${JSON.stringify(request)}\n` : ""}`));
 		conn.on("data", (chunk: string) => {
 			buffer += chunk;
 			for (let at = buffer.indexOf("\n"); at >= 0 && !done; at = buffer.indexOf("\n")) {
@@ -180,6 +188,8 @@ export function callControl(endpoint: string, secret: string, request: Request |
 					return finish(new ControlError("error", `the server answered ${line.slice(0, 80)}`));
 				}
 				if (got.length === 1 && !got[0]!.ok) return finish(new ControlError("refused", String(got[0]!.error ?? "the server refused")));
+				// The answer must prove that its sender knows the secret (a reply with no proof, or a wrong one, is what something else at a free pipe name would give).
+				if (got.length === 1 && !proves(got[0]!, secret, nonce)) return finish(new ControlError("refused", "the answer does not prove that its sender knows the secret"));
 				if (got.length >= want) return finish();
 			}
 		});

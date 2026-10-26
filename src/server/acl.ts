@@ -29,6 +29,8 @@ export const PROGRESS_OFF = "$ProgressPreference = 'SilentlyContinue'";
  * Under Constrained Language Mode (a machine policy: AppLocker, WDAC, `__PSLockdownPolicy`) the scripts' .NET calls fail with a localized text that comes out as `?`s. A script says so first, in ASCII:
  * a fixed word that `execFailure` turns into one clear sentence (VM pass 5, F12).
  */
+/** What the walk below the state folder throws for a link or junction: the word and the path. */
+export const REPARSE_WORD = "sb-reparse-point";
 export const CLM_WORD = "sb-constrained-language";
 export const CLM_CHECK = `if ($ExecutionContext.SessionState.LanguageMode -ne 'FullLanguage') { throw '${CLM_WORD}' }`;
 export const CLM_TEXT = "PowerShell runs in Constrained Language Mode (likely a policy); pi-straw-boss needs FullLanguage for its permission check";
@@ -46,24 +48,28 @@ export const ACL_STEPS = [
 	"$icacls = Join-Path ([Environment]::SystemDirectory) 'icacls.exe'",
 	"& $icacls $dir /inheritance:r /grant:r \"*${sid}:(OI)(CI)F\" '*S-1-5-18:(OI)(CI)F' | Out-Null",
 	"if ($LASTEXITCODE -ne 0) { throw \"icacls failed with exit code $LASTEXITCODE\" }",
-	// Everything already below the folder (server.lock the starter took, server.log, the link and stash folders, a secondary slot's files) is reset in ONE call: its explicit ACEs go and it
+	// The entries below are listed WITHOUT following links (Windows PowerShell 5.1's Get-ChildItem follows junctions): a link or junction anywhere below the folder is refused, before any icacls call
+	// acts below it and again when the SDDLs are read back (R8-F003). `Walk` returns every file and every folder below.
+	"function Walk($root) { $f = New-Object System.Collections.Generic.List[string]; $d = New-Object System.Collections.Generic.List[string]; $todo = New-Object System.Collections.Generic.Stack[string]; $todo.Push($root); while ($todo.Count -gt 0) { $here = $todo.Pop(); foreach ($e in [IO.Directory]::EnumerateFileSystemEntries($here)) { try { $a = [IO.File]::GetAttributes($e) } catch { continue }; if (($a -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw ('sb-reparse-point ' + $e) }; if (($a -band [IO.FileAttributes]::Directory) -ne 0) { $d.Add($e); $todo.Push($e) } else { $f.Add($e) } } }; return @{ files = $f; folders = $d } }",
+	"$null = Walk $dir",
+	// Everything below the folder is made the user's FIRST, in ONE call (`/C` goes on past an item it may not change; the read-back below is the check): /reset and /inheritance replace DACLs and
+	// never owners, so a folder another account created (a secondary slot's `servers\<hash>`, `link\…`) would keep that account's implicit WRITE_DAC; as the owner the user can then reset it.
+	"& $icacls \"$dir\\*\" /setowner \"*${sid}\" /T /C /L /Q | Out-Null",
+	// Then everything already below the folder (server.lock the starter took, server.log, the link and stash folders, a secondary slot's files) is reset in ONE call: its explicit ACEs go and it
 	// inherits the folder's owner and SYSTEM grant again, which an (OI)(CI) grant hands to files and folders alike. `/C` goes on past an item that vanishes meanwhile (a temp file renamed into
 	// place), and the exit code is not the check, since an empty folder has nothing to match: the read-back below is. A call per item would start a process for each of them (link/inbox holds up to 500).
-	"& $icacls \"$dir\\*\" /reset /T /C /Q | Out-Null",
-	// /reset and /inheritance replace DACLs and never owners: a folder below that another account created (a secondary slot's `servers\<hash>`, `link\…`) would stay that account's, with an owner's
-	// implicit WRITE_DAC over what is written in it later. Everything below is made the user's in ONE call (`/C` goes on past an item it may not change; the read-back below is the check).
-	"& $icacls \"$dir\\*\" /setowner \"*${sid}\" /T /C /L /Q | Out-Null",
+	"& $icacls \"$dir\\*\" /reset /T /C /L /Q | Out-Null",
+	"$tree = Walk $dir",
 	"$files = @()",
 	"foreach ($name in 'server.json', 'server.lock', 'server.log', 'gui.json', 'paired.json') { $p = Join-Path $dir $name; if (Test-Path -LiteralPath $p) { $files += $p } }",
 	"$link = Join-Path $dir 'link'",
-	"if (Test-Path -LiteralPath $link) { $files += @(Get-ChildItem -LiteralPath $link -Recurse -File | ForEach-Object { $_.FullName }) }",
+	"$files += @($tree.files | Where-Object { $_.StartsWith($link + '\\') })",
 	// A secondary slot's folder holds that slot's secret in its server.json.
 	"$servers = Join-Path $dir 'servers'",
-	"if (Test-Path -LiteralPath $servers) { foreach ($slotDir in @(Get-ChildItem -LiteralPath $servers -Directory)) { $p = Join-Path $slotDir.FullName 'server.json'; if (Test-Path -LiteralPath $p) { $files += $p } } }",
+	"$files += @($tree.files | Where-Object { $_.StartsWith($servers + '\\') -and [IO.Path]::GetFileName($_) -eq 'server.json' })",
 	"$read = @(foreach ($p in $files) { try { [ordered]@{ path = $p; sddl = (Get-Acl -LiteralPath $p).Sddl } } catch { if (Test-Path -LiteralPath $p) { throw } } })",
-	// Every folder below, with its owner (`O:`) read back: each must be the user's (`aclProblems`).
-	"$folders = @(Get-ChildItem -LiteralPath $dir -Directory -Recurse -Force | ForEach-Object { $_.FullName })",
-	"$readFolders = @(foreach ($p in $folders) { try { [ordered]@{ path = $p; sddl = (Get-Acl -LiteralPath $p).Sddl } } catch { if (Test-Path -LiteralPath $p) { throw } } })",
+	// Every folder below, with its SDDL read back: each must be the user's with allow ACEs for the user and SYSTEM only (`aclProblems`).
+	"$readFolders = @(foreach ($p in $tree.folders) { try { [ordered]@{ path = $p; sddl = (Get-Acl -LiteralPath $p).Sddl } } catch { if (Test-Path -LiteralPath $p) { throw } } })",
 	"$out = [ordered]@{ sid = $sid; started = $started; dir = (Get-Acl -LiteralPath $dir).Sddl; files = $read; folders = $readFolders }",
 ];
 /**
@@ -202,7 +208,7 @@ export function parseAclOutput(stdout: string): AclResult {
  * The folder's owner must be the user: the exact `O:` of `(Get-Acl).Sddl`, which PowerShell's read-back has and `icacls /save` has not. A folder another account owns keeps an owner's implicit
  * WRITE_DAC whatever its DACL says now, so it is refused before any secret is written ("belongs to another account"; the native owner read can only say "not known" for a long account name).
  */
-export function ownerProblems(sddl: string, owner: string, path = "the folder"): string[] {
+export function ownerProblems(sddl: string, owner: string, path = "the folder", kind = "folder"): string[] {
 	let found: string | undefined;
 	try {
 		found = parseSddl(sddl).owner;
@@ -210,11 +216,15 @@ export function ownerProblems(sddl: string, owner: string, path = "the folder"):
 		return []; // folderProblems says the SDDL cannot be read
 	}
 	if (!found) return [`${path}: the SDDL names no owner`];
-	return canon(found, owner) === owner.toUpperCase() ? [] : [`${path === "the folder" ? path : `the folder ${path}`} belongs to another account (${found}), not to ${owner}`];
+	return canon(found, owner) === owner.toUpperCase() ? [] : [`${path === "the folder" ? path : `the ${kind} ${path}`} belongs to another account (${found}), not to ${owner}`];
 }
 /** Every problem in a result: the folder's owner, its DACL, and each secret file's. */
 export const aclProblems = ({ sid, dir, files, folders = [] }: AclResult) => [
-	...ownerProblems(dir, sid), ...folderProblems(dir, sid), ...folders.flatMap((f) => ownerProblems(f.sddl, sid, f.path)), ...files.flatMap((f) => fileProblems(f.sddl, sid, f.path)),
+	...ownerProblems(dir, sid), ...folderProblems(dir, sid),
+	// Every folder and file below: the user's, with allow ACEs for the user and SYSTEM only (inherited ones allowed). An owner that was not taken (`/setowner` refused) or a DACL that was not reset
+	// (`/reset` refused, `/C` going on) is refused here, whichever of the two the other call fixed (R8-F001, R8-F002).
+	...folders.flatMap((f) => [...ownerProblems(f.sddl, sid, f.path), ...fileProblems(f.sddl, sid, f.path)]),
+	...files.flatMap((f) => [...ownerProblems(f.sddl, sid, f.path, "file"), ...fileProblems(f.sddl, sid, f.path)]),
 ];
 
 const START_TEXT = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
@@ -237,6 +247,7 @@ export function execFailure(error: Error & { code?: unknown; status?: unknown },
 	// Where stderr has no message (progress records only, or nothing) the last line of stdout stands; the exit code always follows.
 	let last = messageLine(stderr) || asciiLine(stdout);
 	// Constrained Language Mode: the script's own word, or the English text of the engine's refusal (a localized one is `?`s, which is why the script says it first).
+	if (last.startsWith(REPARSE_WORD)) last = `a link or junction was found inside the state folder, which is refused (${last.slice(REPARSE_WORD.length).trim()})`;
 	if (last.includes(CLM_WORD) || /only core types are supported in this language mode|supported only on core types in this language mode|constrained language mode/i.test(last)) last = CLM_TEXT;
 	const code = typeof error.code === "number" ? error.code : typeof error.status === "number" ? error.status : undefined;
 	const first = error.message.split(/\r?\n/)[0] ?? "";

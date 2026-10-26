@@ -258,10 +258,18 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
           another account (<SID>), not to <SID>" (exit 3), with no plain-spawn fallback, whose own check would refuse it as well;
         - in the server's own check (`serve`, the plain spawn) and when it reads the marker, before any secret is written.
         An alias of the user's own built-in account (`LA`, `LG`, `DA`, `DU`) and `SY` for a SYSTEM user are accepted.
-      - **Everything below is the user's too** (R7-F002): `/reset` and `/inheritance` replace DACLs and never owners, so after the reset one
+      - **What is below is listed without following links** (R8-F003): Windows PowerShell 5.1's `Get-ChildItem` follows junctions, so the
+        scripts walk the folder with `[IO.Directory]::EnumerateFileSystemEntries` and refuse any entry with the `ReparsePoint` attribute
+        (`sb-reparse-point <path>`, told as "a link or junction was found inside the state folder, which is refused"), before any `icacls`
+        call below runs and again when the SDDLs are read back. The `/reset` carries `/L` too.
+      - **Everything below is the user's too** (R7-F002, R8-F001, R8-F002): `/reset` and `/inheritance` replace DACLs and never owners, so after the reset one
         call, `icacls "<dir>\*" /setowner *<sid> /T /C /L /Q`, makes the folders below (`servers\<hash>`, `link\…`) the user's, and the
-        read-back lists every folder below with its `O:`, which must be the user's (`folders` in the answer; a folder that another
-        account owns would keep an owner's implicit WRITE_DAC over what is written in it later).
+        read-back lists every folder and file below, and each must be the user's (`O:`) with allow ACEs for the user and SYSTEM only,
+        inherited ones allowed (`folders` and `files` in the answer; a folder that another account owns would keep an owner's implicit
+        WRITE_DAC over what is written in it later). The owner is taken BEFORE the reset, so the reset can use the owner's WRITE_DAC; an
+        owner or a DACL that one call could not fix is refused by the read-back whichever of the two the other call fixed. A temporary file
+        that is renamed into place (`writeJson`, the pairing file) is created new (`wx`) under a name with a random part, so one that was
+        already there, with another account's owner, is never written to.
       - Every `icacls` call carries `/L`, so a link is acted on itself and never its target, and `secure` looks for a link first.
       - The rename is tried again on `EPERM`, `EBUSY` and `EACCES` (a scanner or the indexer holding the temporary folder): waits of 10, 20,
         40, 80, 160, 320, then 500 ms three times, 2.1 s in all. A handle that stays is told as that ("something is holding the new folder …
@@ -451,13 +459,19 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
     - **`stop` on a folder that is not the caller's** (F8) cannot take the lock; its message says that a server in it was started by
       another account, to stop it from that account (an elevated shell for an elevated run), or end its process; the sentence is added only
       to the owner and protect refusals (exit 5, 1307, 1314), other acl failures keep their own words.
+    - **The hello answer proves the secret** (R8-F004). The client sends a fresh nonce with `hello`; the server answers with `proof` =
+      HMAC-SHA256(secret, `<nonce>:<pid>`) and the client refuses an answer with no proof or a wrong one (`refused`): a pipe's name is free
+      when its server is gone, and something else could answer or refuse there. A server of the format before this (no proof) is not live
+      to this client; the format is the branch's first, so none runs in the wild.
     - **A server that runs and refused this process is alive, never gone** (VM pass 5, F11). An elevated server's pipe has a default DACL
       that a filtered token of the same user cannot open: the control connection fails with `EACCES` or `EPERM` (`ControlError` `denied`,
       told apart from `ENOENT` and `ECONNREFUSED`, which are "no server"), while the process itself is alive (a refused process query,
       `EPERM`, already counts as alive). `probe` then returns `denied` with `runs` true: `status` says `live` with `reachable: false` and a
       warning; the look and `ensure` find it and start no second server (`up` adds the warning `server_unreachable`); `stop` and `restart`
       refuse with `unreachable` ("… runs but this process may not reach it: it was probably started from an elevated pi or shell … stop or
-      restart it from an elevated shell") and never mark the record stopped; the scope stays pinned. Only a hello that answers with the
+      restart it from an elevated shell") and never mark the record stopped; the scope stays pinned. The refusal counts only when the process
+      under the pid started when the record says (its start time is waited for, 3 s at most): a different or unknown start time, or a
+      record with none, is gone and pins nothing. Only a hello that answers with the
       secret makes a server `live`.
     - **The hello comes before any start-time lookup** (F13). A server that answers hello with the secret and its pid is that server, so
       `probe` (and with it `stop`, `status` and a second `up`) asks for no start time, which on Windows was a PowerShell start of its own.

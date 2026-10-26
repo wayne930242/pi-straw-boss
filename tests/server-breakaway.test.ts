@@ -7,7 +7,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { BEFORE_CREATE, commandLine, LAUNCH_SCRIPT, launchCommand, type LaunchExec, parseLaunchOutput, spawnBreakaway, winQuote } from "../src/server/breakaway.ts";
 import { detachWarning, describe, launch, makeCtx, ServerError, type SpawnSpec, spawnDetached, type Started } from "../src/server/client.ts";
 import { run } from "../src/server/cli.ts";
-import { fileOf, writeRecord } from "../src/server/record.ts";
+import { fileOf, readStartError, writeRecord } from "../src/server/record.ts";
 import { ServerWorld, sleep, until } from "./server-world.ts";
 
 // docs/specs/2026-10-26-sb-backend.md, Process model and lifecycle: the detached server on Windows starts outside the starter's job object (WMI Win32_Process.Create), because Node's
@@ -498,6 +498,8 @@ test("R7-F001: the launch script checks the folder's exact owner before the crea
 	const sddl = at(/Get-Acl -LiteralPath \$env:SB_ACL_DIR/), refuse = at(/rc = -2/), exit = at(/^\s+exit 0$/), line = at(/Write-Output 'sb-before-create'/), create = at(/\$wmi\.Create\(\$env:SB_LAUNCH_CMD, /);
 	assert.ok(sddl > 0 && sddl < refuse && refuse < exit && exit < line && line < create, `${sddl} ${refuse} ${exit} ${line} ${create}`);
 	assert.match(LAUNCH_SCRIPT, /\^O:\(S-\[0-9-\]\+\|\[A-Za-z\]\{2\}\)/, "the owner is the O: of the SDDL");
+	assert.ok(lines.includes("    $c = $o.ToUpperInvariant()") && lines.indexOf("    $c = $o.ToUpperInvariant()") > sddl, "the owner that is compared is the one read from the folder's SDDL");
+	assert.ok(lines.some((l) => /\$sd = \(Get-Acl -LiteralPath \$env:SB_ACL_DIR\)\.Sddl/.test(l)) && lines.some((l) => l.includes("$o = ''; if ($sd -match '^O:")), "$o comes from $sd, $sd from the folder");
 	assert.match(LAUNCH_SCRIPT, /\$c -eq 'SY'\) \{ \$c = 'S-1-5-18' \}/);
 	assert.match(LAUNCH_SCRIPT, /LA = '-500'; LG = '-501'; DA = '-512'; DU = '-513'/, "the aliases of ownerProblems");
 	assert.match(LAUNCH_SCRIPT, /if \(\$env:SB_ACL_DIR\) \{\n\s+\$me = /, "only when a check is asked for");
@@ -524,6 +526,8 @@ test("R7-F001: launch turns a refusal into ServerError start-failed with an acl 
 		const began = Date.now();
 		await assert.rejects(launch(ctx, {}), (e: unknown) => e instanceof ServerError && e.code === "start-failed" && e.startError?.code === "acl" && e.startError.text === text && e.message === `acl: ${text}`);
 		assert.ok(Date.now() - began < 2000);
+		assert.equal(readStartError(w.slot)?.code, "acl", "start-error.json is written, so status shows why");
+		assert.equal(readStartError(w.slot)?.text, text);
 	} finally {
 		await w.close();
 	}

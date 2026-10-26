@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import type { Identity } from "./remote.ts";
 
@@ -41,8 +42,15 @@ export function createDevices(file?: string) {
 		try {
 			if (!identity || !(devices.size || wanted)) rmSync(file, { force: true });
 			else {
-				writeFileSync(`${file}.tmp`, JSON.stringify({ ...identity, wanted, devices: Object.fromEntries(devices) }), { mode: 0o600 });
-				renameSync(`${file}.tmp`, file);
+				// A temporary file of its own name, created new (`wx`): one that was already there (another account's, with its owner) is never written to and renamed into place (R8-F002).
+				const temp = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+				try {
+					writeFileSync(temp, JSON.stringify({ ...identity, wanted, devices: Object.fromEntries(devices) }), { mode: 0o600, flag: "wx" });
+					renameSync(temp, file);
+				} catch (failure) {
+					rmSync(temp, { force: true });
+					throw failure;
+				}
 			}
 			error = undefined;
 		} catch (e) {

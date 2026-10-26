@@ -37,8 +37,6 @@ test("a server is live when its pid runs, started when the record says, and answ
 	world.live.add(s.pid);
 	plant({ pid: s.pid, socket: world.record()!.socket, secret: "0".repeat(64), started: `T-${s.pid}` });
 	assert.equal((await probe(world.ctx())).live, false, "alive pid whose socket refuses its secret");
-	assert.equal((await probe(world.ctx({ startOf: () => "T-other" }))).live, false, "and one that started at another time is not it either");
-	assert.equal((await probe(world.ctx({ startOf: () => "T-other" }))).runs, false);
 });
 
 test("stateOf gives each state a shell sees: live, restarting, stopped, gone", async () => {
@@ -736,4 +734,27 @@ test("F13: probe asks for no start time when the server answers hello (no PowerS
 	assert.deepEqual(asked, [], "the hello is the proof");
 	assert.equal((await stop(ctx)).outcome, "stopped");
 	assert.deepEqual(asked, [], "and stop asks for none either");
+});
+
+test("R8-F004: a refusal for lack of permission pins and shows `live` only when the process under the pid started when the record says; a different, unknown or slow start time is gone and pins nothing", async () => {
+	const s = await deniedServer();
+	try {
+		for (const [name, startedLater, runs] of [
+			["matches", async () => "T-RUN", true],
+			["differs", async () => "T-OTHER", false],
+			["unknown", async () => undefined, false],
+			["never arrives", () => new Promise<string | undefined>(() => {}), false],
+		] as const) {
+			const seen = await probe(world.ctx({ alive: () => true, startOf: () => undefined, startedLater, sleep: (ms) => sleep(Math.min(ms, 30)) }));
+			assert.deepEqual([seen.runs, seen.denied === true, seen.live], [runs, runs, false], name);
+			assert.equal(stateOf(world.ctx(), seen), runs ? "live" : "gone", name);
+		}
+		// A record with no start time cannot be confirmed: not pinned, not live.
+		const rec = readRecord(world.slot)!;
+		writeRecord(world.slot, { ...rec, started: undefined });
+		const bare = await probe(world.ctx({ alive: () => true, startOf: () => undefined, startedLater: async () => "T-RUN" }));
+		assert.deepEqual([bare.runs, bare.denied === true], [false, false]);
+	} finally {
+		await s.close();
+	}
 });

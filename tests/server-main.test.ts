@@ -39,6 +39,7 @@ test("a started server writes server.json (mode 600) with its identity, answers 
 	assert.equal(record.restarting, undefined, "ready clears restarting");
 	assert.equal(statSync(fileOf(world.slot, "record")).mode & 0o777, 0o600);
 	const hello = await helloOf(record.socket, record.secret);
+	delete hello?.proof;
 	assert.deepEqual(hello, { ok: true, pid: s.pid, started: `T-${s.pid}`, version: "0.44.0", mode: "detached", desk: true, phase: "ready", ready: true });
 	assert.equal(s.client.connected, true);
 	assert.equal(s.client.sessionId, record.intercomId, "the server registered its own intercom id");

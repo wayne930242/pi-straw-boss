@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import {
-	clearStartError, clearStopped, defaultHerdr, fileOf, FRESH_MS, holderAlive, LOCK_MAX_MS, LockBusy, type LockInfo, LockUnreadable, readLock, readRecord, readStartError, restartingFresh,
+	clearStartError, clearStopped, defaultHerdr, fileOf, FRESH_MS, holderAlive, LOCK_MAX_MS, LockBusy, type LockInfo, writeJson, LockUnreadable, readLock, readRecord, readStartError, restartingFresh,
 	restartingNow, type ServerRecord, serverId, slotOf, takeLock, touchRestarting, towerId, towerName, updateRecord, writeRecord, writeStartError,
 } from "../src/server/record.ts";
 
@@ -331,5 +331,29 @@ test("R7-F005: a lock that reads as denied and as gone at once (delete-pending) 
 		got.release();
 	} finally {
 		rmSync(lock, { force: true });
+	}
+});
+
+test("R8-F002: writeJson creates its temporary file new, under a name of its own each time, and never writes into one that is there", () => {
+	const file = join(root, "x.json");
+	for (let i = 0; i < 4; i++) {
+		writeJson(file, { i });
+		assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), { i });
+	}
+	// A planted file of the name a predictable writer would use stays untouched and unused.
+	const plant = `${file}.${process.pid}.0.tmp`;
+	writeFileSync(plant, "planted");
+	writeJson(file, { ok: true });
+	assert.equal(readFileSync(plant, "utf8"), "planted");
+	assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), { ok: true });
+	assert.deepEqual(readdirSync(root).filter((n) => n.endsWith(".tmp")), [`x.json.${process.pid}.0.tmp`], "no temporary file is left");
+});
+
+test("R8-F002: every temporary file that is renamed into place under the state folder is created new (`wx`) with a random part in its name: writeJson and the pairing file", () => {
+	for (const file of ["../src/server/record.ts", "../src/devices.ts"]) {
+		const text = readFileSync(new URL(file, import.meta.url), "utf8");
+		const write = text.split("\n").find((l) => /writeFileSync\(temp, JSON\.stringify/.test(l)) ?? "";
+		assert.match(write, /flag: "wx"/, file);
+		assert.match(text.split("\n").find((l) => /const temp = `\$\{file\}/.test(l)) ?? "", /randomBytes\(4\)\.toString\("hex"\)/, file);
 	}
 });

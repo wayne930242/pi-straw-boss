@@ -68,7 +68,7 @@ test("the folder is protected first and without /T, then everything already in i
 	// One call for every item below: reset to the default inherited ACL (the protected folder's owner and SYSTEM grant, which (OI)(CI) hands to files and folders alike), recursive, past an item that goes meanwhile, quiet.
 	const reset = lines.filter((l) => l.includes("/reset"));
 	assert.equal(reset.length, 1, "one reset call");
-	assert.match(reset[0]!, /^& \$icacls "\$dir\\\*" \/reset \/T \/C \/Q \| Out-Null$/);
+	assert.match(reset[0]!, /^& \$icacls "\$dir\\\*" \/reset \/T \/C \/L \/Q \| Out-Null$/);
 	assert.ok(lines.indexOf(reset[0]!) > folder, "after the folder");
 	assert.ok(lines.findIndex((l) => l.includes("Get-Acl -LiteralPath $p")) > lines.indexOf(reset[0]!), "the SDDLs are read back after the repair");
 	assert.equal(ACL_SCRIPT.match(/& \$icacls/g)!.length, 3, "icacls is started three times, whatever the number of items: the folder, the reset, and the owner of what is below (R7-F002)");
@@ -88,8 +88,8 @@ test("R-F001 timing guard: no process is started per item, so the script's cost 
 
 test("R-F001: the read-back covers secondary slots' server.json (it holds that slot's secret), the files at the top, and link/ below", () => {
 	assert.match(ACL_SCRIPT, /Join-Path \$dir 'servers'/);
-	assert.match(ACL_SCRIPT, /Get-ChildItem -LiteralPath \$servers -Directory/);
-	assert.match(ACL_SCRIPT, /Join-Path \$slotDir\.FullName 'server\.json'/);
+	assert.match(ACL_SCRIPT, /\$tree\.files \| Where-Object \{ \$_\.StartsWith\(\$servers \+ '\\'\) -and \[IO\.Path\]::GetFileName\(\$_\) -eq 'server\.json' \}/);
+	assert.match(ACL_SCRIPT, /\$tree\.files \| Where-Object \{ \$_\.StartsWith\(\$link \+ '\\'\) \}/);
 });
 
 test("a file that is gone while the script runs (a temp file renamed into place) is not a failure, any other read error is", () => {
@@ -293,11 +293,11 @@ test("R6-F006: a CLIXML character reference past U+10FFFF is kept as written and
 
 // --- R7-F002: the folders below are the user's too ---
 
-test("R7-F002: both scripts make everything below the folder the user's in one call after the reset, and read back every folder below with its owner", () => {
+test("R7-F002/R8-F001: both scripts make everything below the folder the user's in one call BEFORE the reset, and read back every folder below", () => {
 	const lines = ACL_SCRIPT.split("\n");
-	const reset = lines.findIndex((l) => /\/reset \/T \/C \/Q/.test(l)), owner = lines.findIndex((l) => /\/setowner "\*\$\{sid\}" \/T \/C \/L \/Q/.test(l)), folders = lines.findIndex((l) => /Get-ChildItem -LiteralPath \$dir -Directory -Recurse -Force/.test(l));
-	assert.ok(reset > 0 && owner > reset, `${reset} ${owner}`);
-	assert.ok(folders > owner, "read back after the owner is set");
+	const reset = lines.findIndex((l) => /\/reset \/T \/C \/L \/Q/.test(l)), owner = lines.findIndex((l) => /\/setowner "\*\$\{sid\}" \/T \/C \/L \/Q/.test(l)), folders = lines.findIndex((l) => /foreach \(\$p in \$tree\.folders\)/.test(l));
+	assert.ok(owner > 0 && reset > owner, `the owner is taken first (R8-F001): ${owner} ${reset}`);
+	assert.ok(folders > reset, "read back after both");
 	assert.equal(lines.filter((l) => /\/setowner/.test(l)).length, 1, "one call, not one per item");
 	assert.match(ACL_SCRIPT, /folders = \$readFolders/);
 	assert.ok(!/foreach[^\n]*icacls/.test(ACL_SCRIPT), "no per-item icacls");
@@ -321,4 +321,36 @@ test("R7-F002: a folder below that another account owns is a problem (named by p
 test("F12: applyAcl under Constrained Language Mode fails with the sentence, not `?`s", async () => {
 	const exec: Exec = (_f, _a, _o, done) => done(Object.assign(new Error("Command failed: x"), { code: 1 }), "", "sb-constrained-language\r\n");
 	await assert.rejects(applyAcl("C:\\s", exec), (e: unknown) => e instanceof AclError && /Constrained Language Mode \(likely a policy\).*exit code 1/.test((e as Error).message));
+});
+
+// --- R8-F001, R8-F002, R8-F003 ---
+
+test("R8-F003: the script lists what is below WITHOUT following links, refuses a reparse point before any icacls call below runs and again at the read-back, and never uses Get-ChildItem", () => {
+	for (const script of [ACL_SCRIPT, LAUNCH_SCRIPT]) {
+		assert.ok(!/Get-ChildItem/.test(script), "Windows PowerShell 5.1 follows junctions with it");
+		assert.match(script, /\[IO\.Directory\]::EnumerateFileSystemEntries\(\$here\)/);
+		assert.match(script, /\(\$a -band \[IO\.FileAttributes\]::ReparsePoint\) -ne 0\) \{ throw \('sb-reparse-point ' \+ \$e\) \}/);
+		const lines = script.split("\n").map((l) => l.trim());
+		const first = lines.findIndex((l) => l.startsWith("$null = Walk $dir")), owner = lines.findIndex((l) => /\/setowner/.test(l)), again = lines.findIndex((l) => l.startsWith("$tree = Walk $dir"));
+		assert.ok(first > 0 && first < owner && owner < again, `${first} ${owner} ${again}`);
+		assert.ok(!/Descend|\$todo\.Push\(\$e\)[^}]*ReparsePoint/.test(script), "a reparse point is never pushed to the walk");
+	}
+	const err = Object.assign(new Error("Command failed: x"), { code: 1 });
+	assert.equal(execFailure(err, "sb-reparse-point C:\\s\\link\\x\r\nAt line:1"), "a link or junction was found inside the state folder, which is refused (C:\\s\\link\\x), exit code 1");
+});
+
+test("R8-F001: a folder below with the right owner and a DACL that was not reset (a foreign ACE, an empty DACL) is a problem; inherited ACEs for the user and SYSTEM are not", () => {
+	const inherited = `O:${OWNER}G:DUD:AI${ACE(OWNER, "ID")}${ACE("SY", "ID")}`;
+	const folder = (sddl: string) => ({ sid: OWNER, dir: good, files: [], folders: [{ path: "C:\\s\\servers\\ab", sddl }] });
+	assert.deepEqual(aclProblems(folder(inherited)), []);
+	assert.match(aclProblems(folder(`O:${OWNER}G:DUD:P${ACE(OWNER)}${ACE("SY")}${ACE("BU")}`)).join(";"), /C:\\s\\servers\\ab: grants BU, who is neither the owner nor SYSTEM/);
+	assert.match(aclProblems(folder(`O:${OWNER}G:DUD:AI${ACE(OWNER, "ID")}`)).join(";"), /grants nothing to S-1-5-18/);
+	assert.match(aclProblems(folder(`O:${OWNER}G:DUD:AI`)).join(";"), /grants nothing to/);
+});
+
+test("R8-F002: a file below with another account's owner is a problem even when its DACL is right; the file's own path is named", () => {
+	const mine = `O:${OWNER}G:DUD:AI${ACE(OWNER, "ID")}${ACE("SY", "ID")}`, theirs = `O:${OTHER}G:DUD:AI${ACE(OWNER, "ID")}${ACE("SY", "ID")}`;
+	assert.deepEqual(aclProblems({ sid: OWNER, dir: good, files: [{ path: "C:\\s\\server.json", sddl: mine }] }), []);
+	assert.deepEqual(aclProblems({ sid: OWNER, dir: good, files: [{ path: "C:\\s\\server.json", sddl: theirs }] }), [`the file C:\\s\\server.json belongs to another account (${OTHER}), not to ${OWNER}`]);
+	assert.throws(() => readMarker(marker({ files: [{ path: "C:\\s\\server.json", sddl: theirs }] }), "C:\\s", 4321), /file C:\\s\\server\.json belongs to another account/);
 });
