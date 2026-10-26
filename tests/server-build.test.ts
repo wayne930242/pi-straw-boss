@@ -26,7 +26,7 @@ test("the real entries build to main.mjs and cli.mjs with no import of pi's pack
 			const text = readFileSync(join(outdir, file), "utf8");
 			for (const name of FORBIDDEN) assert.ok(!text.includes(`"${name}"`), `${file} imports ${name}`);
 		}
-		// A shell with nothing of pi's around it: no dependency of pi is on the bundle's path.
+		// A shell with nothing of pi's in its environment. (This folder sits in the checkout, whose node_modules is on the resolution path: the packaged test, tests/server-packaged.test.ts, runs the install layout.)
 		const env = { PATH: process.env.PATH ?? "", HOME: scratch, PI_CODING_AGENT_DIR: join(scratch, "agent") };
 		const status = JSON.parse(execFileSync(process.execPath, [join(outdir, "cli.mjs"), "status"], { env, encoding: "utf8" })) as { state: string; package: string };
 		assert.equal(status.state, "gone");
@@ -49,6 +49,11 @@ test("the build fails when a module the server loads imports pi-tui, typebox, or
 	await assert.rejects(fixture("bad2", `import { Type } from "typebox/value";\nexport const x = Type;\n`), /src\/bad2\.ts imports typebox\/value/);
 	await assert.rejects(fixture("bad3", `export const load = () => import("typebox");\n`), /src\/bad3\.ts imports typebox/);
 	assert.deepEqual(readdirSync(scratch).filter((f) => f === "out"), [], "a failed build leaves no bundle behind");
+});
+
+test("sbr-F006: an inline type import (import { type X } from \"typebox\") leaves a side-effect import of the package behind, so the build fails on it; the fix is `import type`", async () => {
+	await assert.rejects(fixture("inline", `import { type TSchema } from "typebox";\nexport const x = (s: TSchema) => s;\n`), /src\/inline\.ts imports typebox/);
+	await assert.rejects(fixture("inline2", `import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";\nexport const x = (a: ExtensionAPI) => a;\n`), /src\/inline2\.ts imports @earendil-works\/pi-coding-agent/);
 });
 
 test("type imports of those packages are fine: they leave no import behind", async () => {
