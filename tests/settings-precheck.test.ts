@@ -34,7 +34,7 @@ test("no .pi costs one lstat and no child", async () => {
 	const dir = join(scratch, "dotfile");
 	mkdirSync(dir);
 	writeFileSync(join(dir, ".pi"), "");
-	const file = answering(says({ r: "open", code: "ENOTDIR" }));
+	const file = answering(says({ r: "absent" }));
 	assert.equal(await settingsRefusal(dir, file), undefined, ".pi that is a file holds no settings");
 	assert.equal(run.calls, 0);
 	const empty = join(scratch, "empty");
@@ -46,14 +46,14 @@ test("no .pi costs one lstat and no child", async () => {
 test("the child's answers, read as they come (fake outputs)", async () => {
 	const dir = folder();
 	const refusal = (ran: Ran) => settingsRefusal(dir, answering(ran));
-	for (const r of [{ r: "ok" }, { r: "dir" }, { r: "open", code: "ENOENT" }, { r: "open", code: "ENOTDIR" }, { r: "open", code: "EACCES" }]) assert.equal(await refusal(says(r)), undefined, JSON.stringify(r));
+	for (const r of [{ r: "ok" }, { r: "dir" }, { r: "absent" }, { r: "absent", code: "EACCES" }]) assert.equal(await refusal(says(r)), undefined, JSON.stringify(r));
 	assert.equal((await refusal(says({ r: "special" })))?.why, "special");
 	const large = (await refusal(says({ r: "large", size: MAX_READ + 5 })))!;
 	assert.deepEqual([large.why, large.size, large.limit], ["large", MAX_READ + 5, MAX_READ]);
 	assert.equal((await refusal(says({ r: "large" })))?.size, MAX_READ + 1, "no size given: the least it can be");
-	const loop = (await refusal(says({ r: "open", code: "ELOOP" })))!;
+	const loop = (await refusal(says({ r: "unreadable", code: "ELOOP" })))!;
 	assert.deepEqual([loop.why, loop.code], ["unreadable", "ELOOP"]);
-	assert.equal((await refusal(says({ r: "open", code: "EIO" })))?.code, "EIO");
+	assert.equal((await refusal(says({ r: "unreadable", code: "EIO" })))?.code, "EIO");
 	assert.match(refusalText(loop), /cannot be read \(ELOOP\)/);
 });
 
@@ -69,19 +69,23 @@ test("a child that times out, crashes, or answers with rubbish refuses as unchec
 	const timed = (await settingsRefusal(dir, answering({ failed: "timeout" })))!;
 	assert.equal(timed.code, "ETIMEDOUT");
 	assert.match(refusalText(timed), /could not be checked in time \(ETIMEDOUT\)/);
-	assert.equal(await settingsRefusal(dir, answering({ failed: "crash", code: "ENOENT" })), undefined, "a folder the child cannot start in is one pi cannot start in");
+	for (const code of ["ENOENT", "EACCES", "ENOTDIR", "E2BIG"]) assert.deepEqual(await settingsRefusal(dir, answering({ failed: "crash", code })), { path: join(dir, ".pi", "settings.json"), why: "unchecked", code }, `spawn error ${code} fails closed`);
+	const gone = (await settingsRefusal(dir, (d) => runChild(d, 5000, join(scratch, "no-such-node"))))!;
+	assert.deepEqual([gone.why, gone.code], ["unchecked", "ENOENT"], "a missing execPath is unchecked, not absent");
 });
 
 test("the real runner: a hard timeout, a folder that is gone, and a clean run", async () => {
 	assert.deepEqual(await runChild(folder(), 1), { failed: "timeout" });
 	assert.deepEqual(await runChild(join(scratch, "gone")), { failed: "crash", code: "ENOENT" });
 	const ran = await runChild(folder());
-	assert.deepEqual(ran, { out: '{"r":"open","code":"ENOENT"}\n' });
+	assert.deepEqual(ran, { out: '{"r":"absent","code":"ENOENT"}\n' });
 });
 
-test("a missing file, a dangling link, and a plain file under the cap are fine", async () => {
+test("a missing file and a plain file under the cap are fine; a dangling link is refused", async () => {
 	assert.equal(await settingsRefusal(folder()), undefined);
-	assert.equal(await settingsRefusal(folder((f) => symlinkSync(join(scratch, "gone.json"), f))), undefined, "pi's existsSync is false for a dangling link");
+	// pi itself would skip a dangling link, but a link the child cannot follow may be one only pi can (/proc/self/fd/N), so any such link is refused
+	const dangling = (await settingsRefusal(folder((f) => symlinkSync(join(scratch, "gone.json"), f))))!;
+	assert.deepEqual([dangling.why, dangling.code], ["unreadable", "ENOENT"]);
 	assert.equal(await settingsRefusal(folder((f) => writeFileSync(f, "{}"))), undefined);
 	assert.equal(await settingsRefusal(folder((f) => writeFileSync(f, "x".repeat(MAX_READ)))), undefined, "exactly the cap");
 	assert.equal(await settingsRefusal(folder((f) => writeFileSync(f, ""))), undefined, "an empty file");
@@ -106,6 +110,16 @@ test("devices and pipes are refused: /dev/zero, /dev/null, /dev/stdin, a FIFO, a
 	const pipe = join(scratch, "pipe");
 	execFileSync("mkfifo", [pipe]);
 	assert.equal((await settingsRefusal(folder((f) => symlinkSync(pipe, f))))?.why, "special");
+});
+
+test("per-process magic links the child cannot open are refused (Linux only)", { skip: !linux }, async () => {
+	for (const t of ["/proc/self/fd/40", "/dev/fd/40", "/proc/self/fd/17", "/dev/fd/19"]) {
+		assert.equal((await settingsRefusal(folder((f) => symlinkSync(t, f))))?.why, "unreadable", t);
+		const d = join(scratch, `d${++n}`);
+		mkdirSync(d);
+		symlinkSync(t.replace(/\/fd\/\d+$/, "/fd/40"), join(d, ".pi"));
+		assert.equal((await settingsRefusal(d))?.why, "unreadable", `.pi -> ${t}`);
+	}
 });
 
 test("a directory at the path, or a .pi that cannot be searched, is no file for pi either", async () => {
@@ -148,7 +162,7 @@ test("real links in .pi: to a folder with a plain file, a large one, a dangling 
 	const dangling = join(scratch, `d${++n}`);
 	mkdirSync(dangling);
 	symlinkSync(join(scratch, "nowhere"), join(dangling, ".pi"));
-	assert.equal(await settingsRefusal(dangling), undefined);
+	assert.equal((await settingsRefusal(dangling))?.why, "unreadable", "a .pi link that leads nowhere is refused");
 	const via = join(scratch, "via");
 	symlinkSync(realpathSync(rel), via);
 	assert.equal((await settingsRefusal(via))?.why, "large", "a link in the folder's own path");

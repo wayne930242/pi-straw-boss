@@ -163,13 +163,13 @@ test("a refusal over the folder's .pi/settings.json is worded by the page, in bo
 	const path = "/home/me/proj/.pi/settings.json";
 	const special = { path, why: "special" }, large = { path, why: "large", size: 300_000, limit: 262_144 }, locked = { path, why: "unreadable", code: "EACCES" };
 	assert.match(reasonOf("server words", special as never)!, /^Not started: \/home\/me\/proj\/\.pi\/settings\.json is not a plain file/);
-	assert.match(reasonOf("server words", large as never)!, /is 293 KB, over the 256 KB limit/);
+	assert.match(reasonOf("server words", large as never)!, /is over the 256 KB limit/);
 	assert.match(reasonOf("server words", locked as never)!, /cannot be read \(EACCES\)/);
 	assert.match(reasonOf("server words", { path, why: "unchecked", code: "ETIMEDOUT" } as never)!, /could not be checked in time \(ETIMEDOUT\)/);
 	assert.match(m.deploy_settings_unchecked({ path: "/a", code: " (ETIMEDOUT)" }, { locale: "zh-TW" }), /^沒有啟動：\/a 在時限內沒能檢查完 \(ETIMEDOUT\)/);
 	assert.equal(reasonOf("server words", undefined), "server words", "without facts, the server's own words");
 	assert.match(m.deploy_settings_special({ path: "/a/.pi/settings.json → /dev/zero" }, { locale: "zh-TW" }), /^沒有啟動：\/a\/\.pi\/settings\.json → \/dev\/zero 不是一般檔案/);
-	assert.match(m.deploy_settings_large({ path: "/a", size: "293", limit: "256" }, { locale: "zh-TW" }), /有 293 KB，超過 256 KB 的上限/);
+	assert.match(m.deploy_settings_large({ path: "/a", limit: "256" }, { locale: "zh-TW" }), /超過 256 KB 的上限/);
 	assert.match(m.deploy_settings_unreadable({ path: "/a", code: " (EACCES)" }, { locale: "zh-TW" }), /^沒有啟動：讀不到 \/a \(EACCES\)/);
 	const p = setup({ kind: "base" });
 	p.serve({ steps: [step("create", "active", 0), step("start", "pending"), step("join", "pending")], finished: false });

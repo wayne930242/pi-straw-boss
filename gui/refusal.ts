@@ -10,6 +10,6 @@ export const reasonOf = (reason: string | undefined, facts: unknown) => {
 	if (!r) return reason;
 	const path = clean(r.path);
 	return r.why === "special" ? m.deploy_settings_special({ path })
-		: r.why === "large" ? m.deploy_settings_large({ path, size: String(Math.ceil((r.size ?? 0) / 1024)), limit: String(Math.floor((r.limit ?? 0) / 1024)) })
+		: r.why === "large" ? m.deploy_settings_large({ path, limit: String(Math.floor((r.limit ?? 0) / 1024)) })
 		: (r.why === "unchecked" ? m.deploy_settings_unchecked : m.deploy_settings_unreadable)({ path, code: r.code ? ` (${r.code})` : "" });
 };

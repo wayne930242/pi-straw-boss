@@ -25,14 +25,25 @@ export type RunProbe = (dir: string) => Promise<Ran>;
 export const PROBE_TIMEOUT_MS = 5_000;
 const MAX_OUT = 4_096;
 
-// The child's whole program. It opens the same relative path pi resolves (pi: resolve(process.cwd(), ".pi", "settings.json")) without blocking (O_NONBLOCK: a FIFO opens), and
-// says what the descriptor is. A regular file is read through the descriptor with a fixed buffer, never trusting st_size. What pi's own read would throw on and catch
-// (the file or a folder before it is missing or cannot be searched, a directory) is "absent"; a link loop and every other error are refused by the parent.
+// The child's whole program. It looks at the same relative path pi resolves (pi: resolve(process.cwd(), ".pi", "settings.json")) and says what is there. "Absent" is
+// only ever said when no link is involved that the child failed to follow: a per-process magic link (/proc/self/fd/N) is ENOENT for the child but is pi's own descriptor for pi,
+// so a link that cannot be followed, or opened, for any reason is refused. Otherwise what pi's own read would throw on and catch (a missing file, a folder that cannot be searched) is
+// "absent". The target is stat'ed before it is opened (a FIFO or device is never opened), opened without blocking, checked again through the descriptor, and a regular file is
+// read with a fixed buffer, never trusting st_size.
 const PROBE = `
 const fs = require("node:fs"), C = fs.constants, LIMIT = ${MAX_READ};
 const say = (o) => { process.stdout.write(JSON.stringify(o) + "\\n"); process.exit(0); };
+const ABSENT = ["ENOENT", "ENOTDIR", "EACCES"], code = (e) => (e && e.code) || "UNKNOWN";
+const look = (p) => { try { return fs.lstatSync(p); } catch (e) { say({ r: ABSENT.includes(code(e)) ? "absent" : "unreadable", code: code(e) }); } };
+const follow = (p, link) => { try { return fs.statSync(p); } catch (e) { say(link || !ABSENT.includes(code(e)) ? { r: "unreadable", code: code(e) } : { r: "absent" }); } };
+const pi = look(".pi");
+if (pi.isSymbolicLink()) follow(".pi", true);
+const f = look(".pi/settings.json"), link = f.isSymbolicLink();
+const st0 = follow(".pi/settings.json", link);
+if (st0.isDirectory()) say({ r: "dir" });
+if (!st0.isFile()) say({ r: "special" });
 let fd;
-try { fd = fs.openSync(".pi/settings.json", C.O_RDONLY | (C.O_NONBLOCK || 0)); } catch (e) { say({ r: "open", code: e.code || "UNKNOWN" }); }
+try { fd = fs.openSync(".pi/settings.json", C.O_RDONLY | (C.O_NONBLOCK || 0)); } catch (e) { say({ r: link || !ABSENT.includes(code(e)) ? "unreadable" : "absent", code: code(e) }); }
 try {
   const st = fs.fstatSync(fd);
   if (st.isDirectory()) say({ r: "dir" });
@@ -46,7 +57,7 @@ try {
     if (total > LIMIT) say({ r: "large", size: total });
   }
   say({ r: "ok" });
-} catch (e) { say({ r: "open", code: e.code || "UNKNOWN" }); }
+} catch (e) { say({ r: link ? "unreadable" : "absent", code: code(e) }); }
 `;
 
 const decode = (text: string): { r: string; code?: string; size?: number } | undefined => {
@@ -60,7 +71,7 @@ const decode = (text: string): { r: string; code?: string; size?: number } | und
 };
 
 /** The real runner: `process.execPath` with a small heap, no input, a hard timeout that kills the child, and its output cut at 4 KB. */
-export const runChild = (dir: string, timeoutMs = PROBE_TIMEOUT_MS): Promise<Ran> =>
+export const runChild = (dir: string, timeoutMs = PROBE_TIMEOUT_MS, node = process.execPath): Promise<Ran> =>
 	new Promise((resolve) => {
 		const { NODE_OPTIONS: _skip, ...env } = process.env;
 		let settled = false, out = "";
@@ -73,7 +84,7 @@ export const runChild = (dir: string, timeoutMs = PROBE_TIMEOUT_MS): Promise<Ran
 		};
 		const child = (() => {
 			try {
-				return spawn(process.execPath, ["--max-old-space-size=32", "-e", PROBE], { cwd: dir, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+				return spawn(node, ["--max-old-space-size=32", "-e", PROBE], { cwd: dir, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
 			} catch (error) {
 				queueMicrotask(() => done({ failed: "crash", code: (error as NodeJS.ErrnoException).code }));
 			}
@@ -89,9 +100,6 @@ export const runChild = (dir: string, timeoutMs = PROBE_TIMEOUT_MS): Promise<Ran
 		child.on("close", (status) => done(status === 0 ? { out } : { failed: "crash" }));
 	});
 
-/** Codes that mean pi's own read finds no file or throws and carries on: its existsSync is false, or the read error is caught. */
-const ABSENT = new Set(["ENOENT", "ENOTDIR", "EACCES"]);
-
 /** Why pi must not start in `dir`, or undefined when it may. One lstat when `.pi` is not there; otherwise one short child process. `run` is for tests. */
 export async function settingsRefusal(dir: string, run: RunProbe = runChild): Promise<SettingsRefusal | undefined> {
 	const path = join(dir, ".pi", "settings.json");
@@ -103,22 +111,20 @@ export async function settingsRefusal(dir: string, run: RunProbe = runChild): Pr
 	}
 	const ran = await run(dir);
 	if ("failed" in ran) {
-		// A folder the child cannot start in is one pi cannot start in either.
-		if (ran.failed === "crash" && ran.code && ABSENT.has(ran.code)) return;
 		return { path, why: "unchecked", code: ran.failed === "timeout" ? "ETIMEDOUT" : ran.failed === "output" ? "EPROBE" : (ran.code ?? "EPROBE") };
 	}
 	const seen = decode(ran.out.trim());
 	if (!seen) return { path, why: "unchecked", code: "EPROBE" };
 	switch (seen.r) {
 		case "ok":
+		case "absent": // nothing there, with no link the child failed to follow
 		case "dir": // pi's read fails with EISDIR and it carries on
 			return;
 		case "special":
 			return { path, why: "special" };
 		case "large":
 			return { path, why: "large", size: typeof seen.size === "number" ? seen.size : MAX_READ + 1, limit: MAX_READ };
-		case "open":
-			if (seen.code && ABSENT.has(seen.code)) return;
+		case "unreadable":
 			return { path, why: "unreadable", ...(typeof seen.code === "string" && { code: seen.code }) };
 		default:
 			return { path, why: "unchecked", code: "EPROBE" };

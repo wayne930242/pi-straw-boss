@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readdirSync, readFileSync, realpathSync, type Stats } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import type { TrustGroup } from "./types.ts";
@@ -20,35 +20,18 @@ export const MAX_READ = 262_144;
 /** Text for the page: control characters are removed and Unicode format characters (bidi overrides, zero-width marks) drawn as U+FFFD. */
 export const clean = (text: string) => text.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").replace(/\p{Cf}/gu, "\ufffd");
 export const cleanGroup = (g: TrustGroup): TrustGroup => ({ ...g, kind: clean(g.kind), path: clean(g.path), items: g.items.map(clean) });
-/** Why a folder's own file is not one to read: it is no plain file (a device, pipe, or socket could block or never end) or it is over the cap. */
-export class UnsafeFile extends Error {
-	readonly why: "special" | "large";
-	readonly size?: number;
-	constructor(why: "special" | "large", message: string, size?: number) {
-		super(message);
-		this.why = why;
-		this.size = size;
-	}
-}
-/**
- * Runs `use` on a folder's own file opened with care: a plain file (no link, no device or pipe) of at most 256 KB, checked through the descriptor that is used and closed on every path.
- * `seen` is the file's lstat when the caller already took it (so the common path is one lstat). `follow` lets a link lead to the file (pi itself follows links): `seen` is then the
- * stat of what it leads to, and the descriptor is still checked, so a link to a device, a pipe, or a file that grew past the cap is refused all the same.
- */
-export function withPlain<T>(file: string, use: (fd: number) => T, seen: Stats = lstatSync(file), follow = false): T {
-	if (!seen.isFile()) throw new UnsafeFile("special", "not a plain file");
-	const fd = openSync(file, constants.O_RDONLY | (follow ? 0 : (constants.O_NOFOLLOW ?? 0)) | (constants.O_NONBLOCK ?? 0));
+/** A folder's own file, read with care: a plain file (no link, no device or pipe, which could block or never end) of at most 256 KB, read through the descriptor that was checked. */
+function readSmall(file: string): string {
+	if (!lstatSync(file).isFile()) throw new Error("not a plain file");
+	const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
 	try {
 		const st = fstatSync(fd);
-		if (!st.isFile()) throw new UnsafeFile("special", "not a plain file");
-		if (st.size > MAX_READ) throw new UnsafeFile("large", "not a plain small file", st.size);
-		return use(fd);
+		if (!st.isFile() || st.size > MAX_READ) throw new Error("not a plain small file");
+		return readFileSync(fd, "utf8").replace(/^\uFEFF/, "");
 	} finally {
 		closeSync(fd);
 	}
 }
-/** A folder's own file, read with care (withPlain). */
-const readSmall = (file: string) => withPlain(file, (fd) => readFileSync(fd, "utf8").replace(/^\uFEFF/, ""));
 
 /** .pi/settings.json: the packages pi would install, the paths it adds, and a count of its other keys. */
 function settings(file: string): TrustGroup {
