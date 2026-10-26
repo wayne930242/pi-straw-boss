@@ -132,7 +132,7 @@ export interface Ctx {
 	spawn(spec: SpawnSpec): Launched;
 	kill(pid: number, signal: NodeJS.Signals): void;
 	lock: LockDeps;
-	/** Makes the slot's folder ready before the first file is created in it (on Windows, protects it); `ms` is the time its native calls may take. */
+	/** Makes the slot's folder ready before the first file is created in it (on Windows, protects it); `ms` is the time its native calls may take. `gate`, when given, is called right after the state folder is protected and before anything else is made in it (a secondary slot's `servers\\<hash>` folders), so a folder that landed foreign gets nothing. */
 	prepare(slot: Slot, ms?: number, gate?: () => void): void;
 	/**
 	 * The gate before the first file is created in an existing state folder: on Windows one owner read (`ownerGate`), refusing another account's folder with nothing written in it. Returns whether it read.

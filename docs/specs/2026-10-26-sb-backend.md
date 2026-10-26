@@ -295,7 +295,7 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
         placeholder (a server that went away between the look and the lock). The refusal goes to stderr and the JSON output of `up`
         (`startError.code` `acl`), never into the folder. The read is remembered by the folder's file identity (volume and file index), so a
         long-lived pi session reads it once, `protectFolder` does not read it again for a wrong DACL, and a folder made again under its name is
-        read again. **Cost:** one PowerShell on a cold `up` (one more beside the launch PowerShell; log phase `owner-gate ms=…`, to be measured on
+        read again. **Cost:** one PowerShell on a cold `up` unless this process has already read this folder's owner (one more beside the launch PowerShell; log phase `owner-gate ms=…`, to be measured on
         the VM), and on a `stop` of a server that is down (it writes `stopped`). **A request that finds a server running** (`up` again, `stop`
         of a live server, `status`, a session's look) reads no owner and starts no PowerShell: it looks first (a read only), and takes the
         lock without the gate. The owner read for a folder is made once per folder identity; in a `secondary` slot it is passed between the
