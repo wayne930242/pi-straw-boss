@@ -38,7 +38,7 @@ export function trustPanel(send: TrustPost, accepted?: () => void) {
 	const note = h("p", { class: "ask-note", role: "status", "aria-live": "polite" }), found = h("div", { class: "trust-found" }), folder = h("p", { class: "trust-folder" });
 	const buttons = CHOICES.map(([choice, label]) => Object.assign(h("button", { type: "button", class: choice === "trust" ? "ask-send" : "cmp-alt", "data-choice": choice }, label()), { choice }));
 	const root = h("section", { class: "ask trust" }, folder, h("p", { class: "ask-why" }, m.trust_body()), h("h4", null, m.trust_found()), found, h("div", { class: "ask-acts" }, ...buttons), h("p", { class: "ask-term" }, m.trust_terminal()), note);
-	let current: Question | undefined, ready = true, done = false, sending = false;
+	let current: Question | undefined, ready = true, done = false, sending = false, changed = false;
 	const draw = () => buttons.forEach((b) => (b.disabled = !current || !ready || done || sending));
 	const say = (tone: string, text: string, ...kids: HTMLElement[]) => ((note.dataset.tone = tone), note.replaceChildren(text, ...kids));
 	async function answer(choice: TrustChoice, answerId: string) {
@@ -51,6 +51,7 @@ export function trustPanel(send: TrustPost, accepted?: () => void) {
 		done = o.done;
 		const again = h("button", { type: "button", class: "cmp-link" }, m.check_again());
 		again.onclick = () => void answer(choice, answerId); // the same answer, by the same id: never a second one
+		changed = r?.body.by === "changed";
 		say(o.tone, o.text, ...(o.again ? [again] : []));
 		draw();
 		if (accepted && r?.body.outcome === "accepted") setTimeout(accepted, 1200);
@@ -64,7 +65,7 @@ export function trustPanel(send: TrustPost, accepted?: () => void) {
 	return Object.assign(root, {
 		update(q: Question | undefined, live = true) {
 			ready = live;
-			if (q && (q.id !== current?.id || q.digest !== current.digest)) (folder.replaceChildren(q.folder), drawFound(q), (done = false), say("", ""));
+			if (q && (q.id !== current?.id || q.digest !== current.digest)) (folder.replaceChildren(q.folder), drawFound(q), (done = false), changed ? (changed = false) : say("", "")); // the notice that the folder changed stays beside the new question
 			current = q ?? current;
 			if (!q && !done) (say("error", m.trust_closed()), (done = true));
 			draw();

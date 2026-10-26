@@ -18,7 +18,8 @@ export async function waitPastTrust<T>(sleep: Sleep, check: () => T | Promise<T>
 		const value = await check();
 		const ask = trust && listRequests(trust.dir).find((r) => r.pane === trust.pane);
 		if (value) return (seen && trust?.on?.(undefined), value);
-		if (ask?.id !== seen) trust?.on?.(ask), (seen = ask?.id);
+		const key = ask && `${ask.id}/${ask.digest}`; // a rewritten request (the folder changed) keeps its id and has a new digest
+		if (key !== seen) trust?.on?.(ask), (seen = key);
 		if (ask) {
 			if ((asking += step) > TRUST_MAX_MS) throw new Error(`No trust decision for ${clean(ask.cwd)} within ${TRUST_MAX_MS / 60_000} minutes`);
 		} else if ((waited += step) > ms) return undefined;

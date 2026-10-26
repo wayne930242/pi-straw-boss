@@ -228,3 +228,23 @@ test("the snapshot carries `trust` only while a question is open, and every serv
 	writeRecord(state, { port: 1, remotePort: 2, token: "t", csrf: "c" } as Gui, ["owner", "session"], "0.44.0", HERDR);
 	assert.equal(readRecord(state)?.trust, 1);
 });
+
+test("an answer the pi set aside because the folder changed frees the question: the next answer, for the new digest, is taken", async () => {
+	const dir = dirOf(), r = put(dir, 1), s = serve(dir), other = "b".repeat(20);
+	const timer = setInterval(() => {
+		if (!existsSync(join(dir, answerFile(r.id)))) return;
+		const a = JSON.parse(readFileSync(join(dir, answerFile(r.id)), "utf8")) as { answerId: string };
+		rmSync(join(dir, answerFile(r.id)));
+		writeAtomic(dir, resultFile(r.id), { version: 1, id: r.id, by: "changed", answerId: a.answerId, at: Date.now() });
+		clearInterval(timer);
+	}, 2);
+	const first = await s.answer({ id: r.id, digest: r.digest, choice: "trust", answerId: ANSWER });
+	assert.deepEqual(first.body, { outcome: "stale", by: "changed" });
+	const found = [{ kind: "extensions", path: ".pi/extensions", items: ["a.ts"], more: 0 }];
+	rmSync(join(dir, resultFile(r.id)));
+	put(dir, 1, { found }); // the pi rewrote the request under a new digest
+	const stop = pi(dir, { ...r, found, digest: digestOf(r.cwd, found) });
+	const second = await s.answer({ id: r.id, digest: digestOf(r.cwd, found), choice: "trust", answerId: other });
+	stop();
+	assert.deepEqual(second.body, { outcome: "accepted" });
+});

@@ -5,8 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { type AskDeps, createAsk } from "../src/trust/ask.ts";
-import { answerFile, ensureDir, lives } from "../src/trust/files.ts";
+import { requestFile, writeAtomic, answerFile, ensureDir, lives } from "../src/trust/files.ts";
 import { clean, cleanGroup, foundIn, MAX_READ } from "../src/trust/found.ts";
+import { digestOf } from "../src/trust/found.ts";
+import { waitPastTrust } from "../src/trust/wait.ts";
+import type { TrustRequest } from "../src/trust/types.ts";
 import { outcome } from "../gui/trust.ts";
 
 // Fixes from the security review of project trust (R-F001 to R-F009).
@@ -108,4 +111,17 @@ test("R-F009: without user ids a trust folder must lie in the profile; the confi
 
 test("R-F002: the GUI's pop hands the trust directory on", () => {
 	assert.match(readFileSync(new URL("../src/host.ts", import.meta.url), "utf8"), /popBase\(\{[^}]*trustDir: trustDir\(guiDir\)/);
+});
+
+test("R-F004 (live): a request rewritten under the same id and a new digest is told to the opening again", async () => {
+	const dir = join(root, "wait", "trust"), id = "22222222-2222-4333-8444-555555555555", seen: (string | undefined)[] = [];
+	mkdirSync(dir, { recursive: true });
+	const put = (items: string[]) => {
+		const found = [{ kind: "extensions", path: ".pi/extensions", items, more: 0 }], cwd = "/work/x";
+		writeAtomic(dir, requestFile(id), { version: 1, id, pid: process.pid, herdr: "/h", pane: "w1:p1", role: "member", cwd, at: 1, found, digest: digestOf(cwd, found) } satisfies TrustRequest);
+	};
+	put(["a.ts"]);
+	let step = 0;
+	await waitPastTrust(async () => { step++ === 1 && put(["a.ts", "b.ts"]); }, () => (step > 3 ? "ok" : undefined), 10_000, 1, { dir, pane: "w1:p1", on: (r) => void seen.push(r?.found[0]?.items.join()) });
+	assert.deepEqual(seen, ["a.ts", "a.ts,b.ts", undefined]);
 });

@@ -67,6 +67,7 @@ export function createTrustServe(d: ServeDeps) {
 			if (ended.length === ids.length) break;
 			await sleep(STEP_MS);
 		}
+		if (by === "changed") ids.forEach((i) => taken.delete(i)); // the pi asks again under a new digest: the next answer is a new one
 		return by ? { status: 200, body: { outcome: "stale", by } } : { status: 200, body: { outcome: "unknown" } };
 	}
 
