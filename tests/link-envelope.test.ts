@@ -78,6 +78,12 @@ test("tower: the fifth field is written only when given, a 4-field tower stays 4
 	assert.throws(() => encodePlaintext("tower", { ...SAMPLE.tower, awaitsReply: "" }), /ask id/);
 });
 
+test("tower-reply: sending refuses an inReplyTo that is not an ask id, receiving only cuts it", () => {
+	assert.throws(() => encodePlaintext("tower-reply", { inReplyTo: "nope", text: "ok" }), /ask id/);
+	assert.throws(() => encodePlaintext("tower-reply", { inReplyTo: ASK_ID.toUpperCase(), text: "ok" }), /ask id/);
+	assert.deepEqual(decodePlaintext("tower-reply", encodePlaintext("tower-reply", { inReplyTo: ASK_ID, text: "ok" })), { inReplyTo: ASK_ID, text: "ok" });
+});
+
 test("caps and tower-reply: rules, round trips, limits, and refusals", () => {
 	assert.deepEqual(KINDS.caps, { ephemeral: true, wholeTeam: true, sender: "any" });
 	assert.deepEqual(KINDS["tower-reply"], { ephemeral: false, wholeTeam: false, sender: "any" });

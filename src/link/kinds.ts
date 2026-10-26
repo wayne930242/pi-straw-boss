@@ -111,7 +111,11 @@ const encoders: { [K in Kind]: (p: Plaintexts[K]) => Buffer } = {
 	"unit-status": (p) => enc(list(p.units.map((u) => enc(str(short(u.unit)), str(short(u.state)), list(u.monitors.map((m) => str(short(m)))), str(cutBytes(u.report, LIMITS.report)))))),
 	notice: (p) => enc(str(short(p.kind)), str(short(p.unit)), str(cutBytes(p.text, LIMITS.noticeText))),
 	caps: (p) => enc(list(p.features.slice(0, LIMITS.capsFeatures).map((f) => str(short(f))))),
-	"tower-reply": (p) => enc(str(short(p.inReplyTo)), str(cutBytes(p.text, LIMITS.towerText))),
+	// Sending holds `inReplyTo` to an ask id; decoding only cuts it, since a malformed one just matches no ask and the reply is a plain tower.
+	"tower-reply": (p) => {
+		if (!askIdOk(p.inReplyTo)) throw new RangeError("an ask id is 32 lowercase hex digits");
+		return enc(str(p.inReplyTo), str(cutBytes(p.text, LIMITS.towerText)));
+	},
 };
 
 // Decoding cuts again, so a sender that skipped its own limits is held to them. A structure that is malformed throws CanonError.
