@@ -547,6 +547,35 @@ A Herdr launched from a macOS app has a short PATH; `run.sh` finds node the way 
 The plugin needs Herdr 0.9.3 or newer, git, node 18 or newer, and a Unix shell, so it runs on macOS and Linux only.
 `tests/reaper.test.ts` drives the decisions and the sweeps against a fake Herdr and git.
 
+## The sb server
+
+The sb server is the Straw Boss backend as a process of its own, so that the towers, the link holder, and the page do not depend on which pi session happens to run them ([spec](specs/2026-10-26-sb-backend.md)). This release carries its skeleton only: the process, its record, its control socket, its log, its start and restart rules, and its connection to the intercom broker. The GUI server, the link holder, and the towers still run in the pi sessions as described above, and move into the server in later steps.
+
+**What it is.** One server per slot: a (state directory, Herdr socket) pair. The slot of the default Herdr is the primary and keeps its files in `<pi agent dir>/straw-boss/`; a pi on another Herdr socket uses a secondary slot under `servers/<first 16 hex of sha256 of the socket>/`, whose server holds no link; the first 8 hex of that hash (`slot8`) will name its tower identities (`sb-tower-<slot8>-w1`) once the towers move in. The server is `dist/server/cli.mjs` and `main.mjs`, built from `src/server/` by `npm run build:server` (esbuild, run by `prepack`). The build fails on a value import of `@earendil-works/pi-tui`, `typebox`, or `@earendil-works/pi-coding-agent`, which are peer dependencies that are not on disk where the server runs; type imports are erased. The one runtime dependency, `tsx`, is resolved from this package and used only through its scoped `tsImport()` to load pi-intercom's TypeScript client (pi-intercom 0.18.1 or newer, checked at start), so the server's own code is never transformed. The server connects to the broker as `sb-server-<8 hex>` through the headless kit and leaves 60 s after its Herdr stops answering.
+
+**Files** in the slot's folder, all mode 600 in a 700 folder: `server.json` (the record: pid and start time, version, mode `detached` or `serve`, whether the desk switch is on, the control socket or Windows named pipe and its hello secret, the PI_INTERCOM scope and transport the server was started with, `stopped`, `restarting {began, since, reason, by}`, `lastRestart`, `lastError`), `server.lock` (holder pid and start time; a dead holder loses it at the next look, and a lock older than 120 s is taken even from a live holder), `start-error.json` (why the last start failed: `loader`, `intercom`, or `acl`; cleared when a start attempt begins and after `hello`), `server.log` (5 MB, 3 files; events and errors only, never message text or secrets), and `server.sock`. The control socket answers only a connection that opens with the secret (compared in constant time); any other is closed with no answer. On Windows the state folder's ACL is set to the owner and SYSTEM, protected, and checked by SID in one PowerShell call before the server starts (a failure is `acl` in `start-error.json`).
+
+**Starting.** A pi session with a screen in Herdr looks at session start and every 2 s: when no live server runs for its slot, it starts one detached (`detached: true`, `stdio: "ignore"`, `windowsHide: true`) from its own package, under `server.lock`, and holds the lock until the server's `hello`. The environment it builds drops the session's identity (`PI_INTERCOM_SESSION_ID`, `PI_INTERCOM_STABLE_ID`, `PI_SUBAGENT_*`, `STRAW_BOSS_ROLE`) and keeps `PI_INTERCOM_SCOPE_ID`, `PI_INTERCOM_TRANSPORT`, and `PI_INTERCOM_TCP`, which the record keeps; a session on another scope or transport uses no server and says so once. A failed start is told once with its reason and tried again after a minute. A subagent and a session without a screen start nothing.
+
+**Versions.** A session never starts a server from an older package than the one that runs; it says so once. A session on a newer package asks the live server to upgrade, which restarts it from the newer package (`restart reason=upgrade` in the log). Going back to an older package happens only through `/boss server restart --downgrade` (or `cli.mjs restart --downgrade`), after a confirm that says it is older.
+
+**Restarting.** Every restart keeps the server's port and token. The requester writes `restarting {began, since, reason, by}` into `server.json`, touches `since` every 2 s until the new server's `hello` (the starting server touches it too), and holds `server.lock` meanwhile; a `restarting` record not touched for 10 s counts as gone.
+
+**`cli.mjs`** (`node dist/server/cli.mjs …`, or `npm run server -- …` in a checkout):
+
+| Command | Effect |
+|---|---|
+| `up [--timeout SECONDS] [--exact]` | Make sure a server runs; print one JSON line (`url`, `pid`, `started`, `version`, `package`, `mode`, `desk`, `server` = `found`, `started`, `restarted`, or `upgraded`, `log`, `steps`, `warnings`). A running newer server is `server_newer` in `warnings`, or exit 1 at step `version` with `--exact`. `--dir` and `--label` (the desk) come with a later step and are refused. |
+| `serve` | Run the server in the foreground, for a supervisor (systemd, launchd). It takes over a detached server on the same port and token; another live `serve` makes it exit 4. |
+| `stop` | Stop the server on purpose (`stopped` in `server.json`); only a boss command (`up`, `serve`, `/boss server`) clears it. Refused for a `serve` server, exit 5: stop its supervisor. |
+| `status` | Print one JSON line: `state` (`live`, `restarting`, `stopped`, or `gone`), the record's facts (never the secret), the live server's uptime, and the last start error when it is gone. Works with the server down. |
+| `restart [--reason TEXT] [--downgrade]` | Restart on the same port and token. |
+| `logs [--lines N] [--follow]` | Print the log's tail (200 lines by default). |
+
+Exit codes: 0 done; 1 a step failed (one JSON line on stderr); 2 usage; 3 the server cannot run (`start-error.json` says why); 4 `serve` found a live `serve`; 5 `stop` found a `serve` server.
+
+**In a session.** `/boss server` shows the state and starts the server when it is down, also when it was stopped on purpose. `/boss server stop` stops it on purpose after a confirm that says every workspace then loses its live tower and mains are demoted 15 s later. `/boss server restart [--downgrade] [reason]` restarts it after a confirm. The `boss_server` tool gives an agent `status` (works with the server down), `logs` (`lines`, at most 200), and `restart` with a reason of 1 to 200 characters on one line, which goes into the log with the asking session. A restart through the tool is refused while the boss stopped the server on purpose, is taken once a minute for the whole machine, and starts a server that is down. A remote turn cannot call `boss_server` at any level, dispatch included.
+
 ## Tools
 
 | Tool | Available to | What it does |
@@ -563,6 +592,7 @@ The plugin needs Herdr 0.9.3 or newer, git, node 18 or newer, and a Unix shell, 
 | `call_tower` | joined sessions and towers | Send a message to this workspace's tower, or another workspace's by id or exact label, under a header. Opens the tower tab when none runs. `reply` (default true) says whether the tower is expected to answer. |
 | `boss_rename` | joined sessions, not towers | Sets the session's name (`pi.setSessionName`) to a short phrase for its current work, trimmed, at most 40 characters (16 fit a tab label). The net and the GUI show the session by its name, and a main agent labels its Herdr tab with it (cut at 16 characters as pi-auto-tab-name cuts it, so that extension, when loaded, takes the label as its own and keeps it through compactions as a chosen name). The main renames the tab itself because pi-auto-tab-name leaves alone a tab someone else labelled, such as a tab the boss named or a tower opened with a label; a member leaves its main's tab alone. A main agent's prompt has it call this when its work turns to another task. A tower has no such tool: the net recognises it by its name. |
 | `boss_broadcast` | joined sessions and towers | One message to every other session in a scope, under a header naming every recipient. `tab`, `workspace` and `towers` reach only sessions that joined the net (nearly every pi in Herdr, not sub workspace sessions; `towers` reaches a workspace without a tower through its mains, else its members); `all` reaches every pi session on the machine, joined or not (for notices such as going to sleep). Default `workspace`. Towers use `tower_send` for other towers. |
+| `boss_server` | every session with a screen in Herdr | `status` of the sb server (also with it down), `logs`, or `restart` with a reason (see [The sb server](#the-sb-server)). Not in a remote turn. |
 
 | Command | Effect |
 |---|---|
@@ -570,6 +600,7 @@ The plugin needs Herdr 0.9.3 or newer, git, node 18 or newer, and a Unix shell, 
 | `/boss status` | Show `boss_status`. |
 | `/boss tower` | Open this workspace's tower if none runs, then focus its tab. |
 | `/boss gui` | Open the whole net in the browser (any session; joins nothing). `/boss gui stop` stops the server, from any session, and it stays stopped until the next `/boss gui` (`/boss stash` and `/boss close all` do not start it). |
+| `/boss server [stop\|restart [--downgrade] [reason]]` | Show the sb server and start it when it is down; stop it on purpose; restart it. See [The sb server](#the-sb-server). |
 | `/boss close all` | Quit this base's tower, mains, and members and close it, or nothing; see **Stash and pop**. |
 | `/boss stash [name]` | Put this base away under `name` (the workspace label by default) and close it; see **Stash and pop**. |
 | `/boss pop [name]` | Open a stashed base again (any session; with no name, the only stash or one picked from the list). |
@@ -584,6 +615,7 @@ The plugin needs Herdr 0.9.3 or newer, git, node 18 or newer, and a Unix shell, 
 
 ## What it writes
 
+- The sb server's files (`server.json`, `server.lock`, `start-error.json`, `server.log`, `server.sock`) in the state directory, or `servers/<hash>/` for another Herdr's slot, and its intercom identity `sb-server-<8 hex>` ([The sb server](#the-sb-server)).
 - Herdr pane token `sb_role` (`main`, `member` or `tower`; a tower tab is also marked right after it is created; a tab opened for a request is created with the environment variable `STRAW_BOSS_ROLE=main`, which makes its pi promote itself) and workspace token `tower` (the tower's intercom session id), both refreshed every 4 minutes with a 10 minute TTL, written again at once when a new Herdr server takes over (see [A new Herdr server](#sidebar-net-view)), and cleared at shutdown (a tower that quits then closes its own tab if it holds only that pane).
 - Herdr pane tokens `sb_opened_by` (the sender's intercom session id, on a pane a tower opened for a request; refreshed by its main and cleared at shutdown, so the open limits count only live opened mains) and `sb_open_main` (a one-time mark the opener sets, consumed by the first pi that promotes itself from it).
 - Pane tokens `sb_order` (a sort key), `sb_mark` (a role label) and, on subagents, `sb_indent` (a tree branch) and `sb_name` (the subagent's name) next to `sb_role`, and the subagent ones on the panes of the subagents the session launched, with the same refresh, TTL and takeover rewrite; they feed the sidebar net view and the optional rows below (see [Sidebar net view](#sidebar-net-view)).
@@ -682,6 +714,8 @@ The worktree reaper stays macOS and Linux only. It closes a pane only when the p
 npm install
 npm run check      # tsc --noEmit for the extension and for the page
 npm run gui:build  # builds the page into dist/gui (npm test and npm pack do this first)
+npm run build:server # bundles the sb server into dist/server (npm pack does this; the build fails on a value import of pi's packages)
+npm run server -- status # runs src/server/cli.ts from the checkout through tsx
 npm test           # node --test, against a fake Herdr and a fake intercom broker
 npm run gui:dev    # the page with hot reload against a demo net; see below
 ```

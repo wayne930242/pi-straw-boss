@@ -50,7 +50,7 @@ pi install npm:pi-straw-boss
 ### Requirements
 
 - pi running inside [Herdr](https://herdr.dev) 0.9.4 or newer.
-- [pi-intercom](https://www.npmjs.com/package/pi-intercom) 0.17.1 or newer: the net's channels, messages, and the GUI's dialog relay run over it.
+- [pi-intercom](https://www.npmjs.com/package/pi-intercom) 0.18.1 or newer: the net's channels, messages, and the GUI's dialog relay run over it, and so does the sb server's connection (it checks the version at start and says so in `start-error.json` and `boss_server status` when pi-intercom is older or missing).
 - Windows support is experimental: the extension reaches Herdr over its named pipe there, the sidebar plugin runs with the `node` on `PATH`, and the worktree reaper is macOS and Linux only ([what differs](docs/how-it-works.md#windows)).
 
 ### Works with
@@ -92,9 +92,11 @@ The tower only routes and coordinates, so it can run a lighter model: set `tower
 | `board_read` | Tower only: the work board: what each main is doing and how far it is, here and on teammates' computers. |
 | `board_set` | A tab's main: replace its own board entry (one line of current work, up to 8 checklist items). |
 | `boss_broadcast` | Message a tab, a workspace, all towers, or every session (under a header). |
+| `boss_server` | See the sb server (status works with the server down), read its log (up to 200 lines), or restart it with a reason. Refused while the boss stopped the server, once a minute at most, and never in a remote turn. |
 | `boss_rename` | Name this session with a short phrase for its current work; the net and the GUI show it, and a main agent's tab takes it as its label. Main agents call it when their work changes. |
 | `/boss` | Take over as this tab's main agent. |
 | `/boss status`, `/boss tower` | Show the status; open and focus the tower. |
+| `/boss server`, `/boss server stop`, `/boss server restart [reason]` | Show the sb server and start it when it is down; stop it on purpose (after a confirm; nothing but a boss command starts it again); restart it (after a confirm) on the same port and token. See [The sb server](docs/how-it-works.md#the-sb-server). |
 | `/boss close` | Quit this session and close its pane. |
 | `/boss close all` | Quit this base's tower, mains, and members and close it with its shells, without stashing. It is checked first as a stash checks it; anything running that would be lost (a turn, a queued message, a dialog, a monitor, a subagent, a busy shell) closes nothing, and every reason is listed. Other bases are never touched. |
 | Stash, Stashed, Pop on the page | A base's Stash puts it away under its label; the HUD's Stashed list opens each one again with Pop. A base's Quit is checked first, as `/boss close all` is. |
