@@ -571,5 +571,6 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 71.75 KB / 15.65 KB gzipped: the trust question (its groups, folded items, and the deploy step's inline copy).
 	// Unreleased to 72 KB / 15.7 KB gzipped: the trust question names its folder whole, in the panel and in the deploy step.
 	// Merged with the queue's Edit: 77.5 KB / 16.8 KB gzipped in all.
-	assert.ok(total(css, (n) => size(n).length) <= 77_500 && total(css, gz) <= 16_800, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// Unreleased to 80.2 KB / 17.4 KB gzipped: the phone's tap targets (one media block: 44 px boxes, chips drawn inside them, the queue and trust rows, the composer's 48 px keys; +2.7 KB / 0.6 KB).
+	assert.ok(total(css, (n) => size(n).length) <= 80_200 && total(css, gz) <= 17_400, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });
