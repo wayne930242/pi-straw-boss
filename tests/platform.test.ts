@@ -133,6 +133,20 @@ test("S7: another process's start time is told, not earlier than this process's,
 	}
 });
 
+test("S7 (R1-F003): a protected process's (services.exe, lsass.exe) start time is told without elevation", { skip: process.platform !== "win32" }, async () => {
+	const told: string[] = [];
+	for (const image of ["services.exe", "lsass.exe"]) {
+		const csv = spawnSync("tasklist", ["/FI", `IMAGENAME eq ${image}`, "/FO", "CSV", "/NH"], { encoding: "utf8" }).stdout, pid = Number(/^"[^"]*","(\d+)"/m.exec(csv)?.[1]);
+		if (!pid) continue; // not listed to this user
+		const started = await startedLater(pid);
+		assert.ok(started, `${image} (${pid}) has a start time`);
+		assert.match(started!, ISO);
+		assert.equal(startOf(pid), started, "answered from the cache");
+		told.push(image);
+	}
+	assert.ok(told.length > 0, "tasklist listed at least one of services.exe and lsass.exe");
+});
+
 test("S7: a gui.json written by this process carries `started` once the background read is in, and survives the writes of a stop mark and a reload mark", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "psb-platform-gui-"));
 	try {

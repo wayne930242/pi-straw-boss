@@ -21,8 +21,8 @@ import { startedLater, startOf } from "./startof.ts";
 export interface GuiRecord { pid: number; started?: string; port: number; remotePort?: number; token: string; csrf?: string; owner: string; ownerSession?: string; version?: string; herdr?: string; reload?: boolean; stopped?: boolean; remote?: boolean }
 /**
  * `stale`: the running server is older and could not be taken over. `from`: the owner whose end a survivor took the server over from. `moved`: the recorded port was taken, so the URL changed.
- * `stopped`: it was stopped on purpose and `keep.stopped` left it so. `late`: this process's start time was not known when the record was written (on Windows it is read in the background), so the record has no `started`
- * yet; it settles to true when the record was written again with it, and to false when the time cannot be read, so no survivor adopts that server.
+ * `stopped`: it was stopped on purpose and `keep.stopped` left it so. `late` (never rejects): this process's start time was not known when the record was written (on Windows it is read in the background), so the record has no `started`
+ * yet; it settles to true when the record was written again with it, and to false when the time cannot be read or the record cannot be written, so no survivor adopts that server.
  */
 export interface Shared { url: string; owner: string; mine?: Gui; stale?: boolean; from?: string; moved?: boolean; stopped?: boolean; late?: Promise<boolean> }
 /** What a start under gui.lock leaves alone: a server stopped on purpose, a server that is down. Only `/boss gui` starts either. */
@@ -203,7 +203,7 @@ export const writeRecord = (dir: string, gui: Gui, [owner, ownerSession]: [strin
 			const now = readRecord(dir);
 			if (now?.pid === record.pid && now.port === record.port && now.token === record.token && !now.started) writeRecordFile(dir, { ...now, started: known });
 			return true;
-		}),
+		}).catch(() => false), // the record could not be written again (EPERM, a full disk): told as "not written", never as a rejection
 	};
 };
 type Start = (prefer: { port?: number; remotePort?: number; token?: string; csrf?: string }) => Promise<Gui>;

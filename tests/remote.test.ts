@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { get, type IncomingMessage, request } from "node:http";
 import { tmpdir } from "node:os";
@@ -8,7 +9,8 @@ import { after, mock, test } from "node:test";
 import { startGui, type Gui } from "../src/gui.ts";
 import type { Found } from "../src/net.ts";
 import { labelOf } from "../src/devices.ts";
-import { createAccess, identity, PORT, type Run, runs, serveOff, serveOn, switchRemote } from "../src/remote.ts";
+import { writeRecord } from "../src/handover.ts";
+import { alive, createAccess, identity, PORT, type Run, runs, serveOff, serveOn, switchRemote } from "../src/remote.ts";
 import { createStartOf, startCommand, startOf } from "../src/startof.ts";
 import { copyText } from "../src/pairing.ts";
 import { until } from "./fakes.ts";
@@ -581,7 +583,7 @@ test("S7: on win32 a start time comes from a PowerShell call that is asynchronou
 	assert.equal(calls.length, 1, "one call in flight per PID");
 	assert.equal(calls[0]!.file, "powershell.exe");
 	assert.deepEqual(calls[0]!.args.slice(0, 3), ["-NoProfile", "-NonInteractive", "-Command"]);
-	assert.equal(calls[0]!.args[3], "(Get-Process -Id 4242 -ErrorAction Stop).StartTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')");
+	assert.equal(calls[0]!.args[3], "$ErrorActionPreference='Stop'; (Get-CimInstance Win32_Process -Filter 'ProcessId=4242').CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ', [cultureinfo]::InvariantCulture)");
 	assert.equal(calls[0]!.options.windowsHide, true);
 	assert.equal(calls[0]!.options.timeout, 5000);
 	assert.deepEqual(startCommand(4242).args, calls[0]!.args);
@@ -606,7 +608,7 @@ test("S7: a PowerShell failure, a timeout, or text that is not an ISO time is un
 	assert.equal(await startedLater(9), undefined, "not an ISO time");
 	assert.equal(calls, 2);
 	reply = [null, "2026-10-26T04:21:53.000Z"];
-	clock += 5001;
+	clock += 10_001; // the second failure in a row waits 10 s
 	assert.equal(await startedLater(9), "2026-10-26T04:21:53.000Z");
 	clock += 9 * 60_000;
 	assert.equal(start(9), "2026-10-26T04:21:53.000Z");
@@ -618,6 +620,79 @@ test("S7: a PowerShell failure, a timeout, or text that is not an ISO time is un
 	clock += 24 * 3600_000;
 	assert.equal(start(process.pid), "2026-10-26T04:21:53.000Z", "this process's own start time is kept for its life");
 	assert.equal(calls, 5);
+});
+
+test("S7 (R1-F003): a PID PowerShell keeps failing for is asked again after 5 s, 10 s, 20 s, up to 60 s, and a good answer starts the count over", async () => {
+	let clock = 0, calls = 0, reply: [Error | null, string] = [new Error("access denied"), ""];
+	const { startOf: start, startedLater } = createStartOf({ platform: "win32", now: () => clock, launch: (_f, _a, _o, done) => (calls++, queueMicrotask(() => done(...reply))) });
+	await startedLater(77);
+	const gaps: number[] = [];
+	for (let round = 0; round < 6; round++) {
+		let waited = 0;
+		for (; waited < 70_000; waited += 1000) {
+			clock += 1000;
+			const before = calls;
+			start(77);
+			if (calls > before) break;
+		}
+		gaps.push(waited + 1000);
+		await startedLater(77);
+	}
+	assert.deepEqual(gaps, [5000, 10_000, 20_000, 40_000, 60_000, 60_000]);
+	reply = [null, "2026-10-26T04:21:53.000Z"];
+	clock += 60_000;
+	start(77);
+	assert.equal(await startedLater(77), "2026-10-26T04:21:53.000Z");
+});
+
+test("S7 (R1-F001): this process's own start time is read with a long timeout and tried again after a timeout, with a growing wait, until it arrives", async () => {
+	const waits: number[] = [], timeouts: number[] = [];
+	let attempts = 0;
+	const { startOf: start, startedLater } = createStartOf({
+		platform: "win32", wait: async (ms) => void waits.push(ms),
+		launch: (_f, _a, options, done) => (timeouts.push(options.timeout), attempts++, queueMicrotask(() => (attempts < 4 ? done(new Error("timed out"), "") : done(null, "2026-10-26T04:21:53.000Z")))),
+	});
+	assert.equal(start(process.pid), undefined);
+	assert.equal(await startedLater(process.pid), "2026-10-26T04:21:53.000Z", "the fourth try gets it");
+	assert.equal(attempts, 4, "the call in flight was shared, not repeated");
+	assert.deepEqual(waits, [1000, 2000, 4000]);
+	assert.ok(timeouts.every((t) => t === 15_000), "longer than another PID's 5 s");
+	assert.equal(start(process.pid), "2026-10-26T04:21:53.000Z");
+});
+
+test("S7 (R1-F001): the own-PID read gives up after a bounded number of tries and says undefined", async () => {
+	let attempts = 0;
+	const { startedLater } = createStartOf({ platform: "win32", wait: async () => {}, launch: (_f, _a, _o, done) => (attempts++, queueMicrotask(() => done(new Error("timed out"), ""))) });
+	assert.equal(await startedLater(process.pid), undefined);
+	assert.equal(attempts, 6);
+});
+
+test("S7 (R1-F004, R1-F006): alive() drops a dead PID's cached time; an invalid PID is never put on a command line and a pending read never holds the process", async () => {
+	let clock = 0, calls = 0;
+	const { startOf: start, startedLater, forget } = createStartOf({ platform: "win32", now: () => clock, launch: (_f, _a, _o, done) => (calls++, queueMicrotask(() => done(null, "2026-10-26T04:21:53.000Z"))) });
+	assert.equal(await startedLater(31), "2026-10-26T04:21:53.000Z");
+	forget(31);
+	assert.equal(start(31), undefined, "forgotten: read afresh");
+	assert.equal(calls, 2);
+	for (const bad of [0, -5, 1.5, NaN, Infinity, 2 ** 60]) {
+		assert.equal(start(bad), undefined);
+		assert.equal(await startedLater(bad), undefined);
+	}
+	assert.equal(calls, 2, "no command for any of them");
+	const dead = spawnSync(process.execPath, ["-e", ""]).pid!;
+	assert.equal(alive(dead), false);
+});
+
+test("S7 (R1-F002): a record that cannot be written again settles `late` to false, not to a rejection", { skip: process.platform === "win32" }, async () => {
+	const dir = mkdtempSync(join(tmpdir(), "psb-late-"));
+	try {
+		const gui = { port: 5000, remotePort: 5001, token: "t".repeat(32), csrf: "c".repeat(32) } as never;
+		const { late } = writeRecord(dir, gui, ["o", "s"], "0.43.0", "/h.sock", { at: () => undefined, later: async () => (chmodSync(dir, 0o500), "2026-10-26T04:21:53.000Z") }) as { late: Promise<boolean> };
+		assert.equal(await late, false);
+	} finally {
+		chmodSync(dir, 0o700);
+		rmSync(dir, { recursive: true, force: true });
+	}
 });
 
 test("S7: runs reads the ISO form as it is, with and without a recorded start", () => {

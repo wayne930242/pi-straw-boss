@@ -5,7 +5,7 @@ import type { IncomingMessage } from "node:http";
 import { join } from "node:path";
 import { createDevices, SESSION_MS, labelOf } from "./devices.ts";
 import { qr, qrLines } from "./qr.ts";
-import { startedLater, startOf } from "./startof.ts";
+import { forgetStart, startedLater, startOf } from "./startof.ts";
 
 // Remote access over Tailscale, tailnet only (never Funnel). `/boss gui remote` adds one `tailscale serve` entry, HTTPS on 8443 to the server's
 // remote listener (a second loopback port, see gui.ts), only when 8443 is free or already ours (remote.json in the state directory remembers our target, the server's PID, and when that
@@ -166,7 +166,7 @@ export const alive = (pid: unknown) => {
 	try {
 		return typeof pid === "number" && pid > 0 && process.kill(pid, 0);
 	} catch (error) {
-		return (error as NodeJS.ErrnoException).code === "EPERM";
+		return (error as NodeJS.ErrnoException).code === "EPERM" || (forgetStart(pid as number), false); // gone: a process that takes the number later is read afresh
 	}
 };
 /**
