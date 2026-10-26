@@ -1,6 +1,7 @@
 import type { Reply } from "./control.ts";
 import { type HerdrRun, panes, type Session, type Sleep } from "./herdr.ts";
 import { closeAll, nameOk, stashBase } from "./stash.ts";
+import { SettingsRefused } from "./trust/settings.ts";
 
 // What the page's close buttons ask for. Closing is each session's own (index.ts): its bridge is asked to quit it as /boss close does, and its
 // shutdown clears its tokens (a tower's clears the base's mains). One unit closes its own pane afterwards; for a squad or a base every agent
@@ -54,6 +55,8 @@ export function createCloser({ run, sleep, me, sessions, ask, check, stateDir, p
 			try {
 				return { status: 200, body: await pop(json.name) };
 			} catch (error) {
+				// A folder pi must not start in (trust/settings.ts): nothing was opened, and the page words it from `settings`.
+				if (error instanceof SettingsRefused) return { status: 409, body: { error: "settings_unsafe", reason: error.message, settings: error.refusal } };
 				return no(409, "pop_failed", (error as Error).message);
 			} finally {
 				busy = false;
