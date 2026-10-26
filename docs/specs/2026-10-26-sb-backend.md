@@ -172,8 +172,15 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
   - A lock older than 120 s is taken over even from a live holder, since no start or restart may take that long (a start waits 20 s for
     `hello`, 60 s on Windows; a restart waits up to 15 s for the old server to go first, so about 80 s at most); the taker logs it.
   - A request that finds the lock busy waits for it as long as a start can hold it: the start wait plus the exit wait of the same timers
-    (30 s, and 70 s on Windows), for `/boss server`, `restart`, `stop`, and `serve`; `up` waits `--timeout` (60 s by default). So `up`
-    can take its lock wait plus the start wait (60 s) on Windows, and none of them turns a cold Windows start into `busy`.
+    (30 s, and 70 s on Windows), for `/boss server`, `restart`, `stop`, and `serve`; `up` has one time for the whole call (below). None
+    of them turns a cold Windows start into `busy`.
+  - **`up --timeout`** bounds the whole `up`: the lock wait, the old server's exit wait (for a restart), and the start wait together, from one
+    deadline, so `up` never takes longer than `--timeout` (and the waits inside it are cut to what is left). The default is 90 s on
+    Windows (a lock wait of up to 30 s ahead of the 60 s start wait) and 30 s elsewhere (10 s ahead of the 20 s start wait). A larger
+    `--timeout` does not lengthen the start wait, which is the platform's. When a wait runs out, the JSON line on stderr names it
+    beside `step`, as `"wait": "lock"` (`server.lock` held by another start or restart), `"start"` (this `up` started the server and it
+    did not answer `hello`), `"hello"` (another requester's start was under way, the lock free, and no `hello` came), or `"exit"` (the
+    old server did not leave for a restart). A failure that is not a wait has no `wait` field.
   - Why not the `gui.lock` rule (taken over after 10 s by mtime) with a refresh every 2 s: a refresh depends on the holder's timers
     firing, and a holder blocked on a synchronous call loses the lock while alive. Death is what makes a lock stale, and a start time
     tells it apart from a reused PID.
@@ -213,6 +220,16 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
     - Each secret file (`server.json` of the slot and of every secondary slot in `servers/<hash>/`, `gui.json`, `paired.json`, everything under `link/`) must hold allow ACEs for the owner SID and
       `SY` only, explicit or inherited. A file written by rename after the `icacls` run inherits exactly those two from the protected
       folder, which is just as safe, so an inherited ACE is accepted on files.
+  - **The folder is protected before the first file is created in it.** The second Windows pass found `server.lock`, the placeholder
+    `server.json`, and `server.log` with the parent's inherited ACEs (Users read, Authenticated Users modify outside the profile) for the
+    first 4 to 7 s of a cold start, until the server's PowerShell call. So every process that is about to create a file in the slot (the
+    requester before it takes `server.lock`, `markStarting` before it writes the placeholder, the server before its log) first makes
+    `straw-boss/` and protects it, once per process, with two native calls and no PowerShell (whose start costs 2 to 5 s): `whoami /user
+    /fo csv /nh` for the owner's SID, and `icacls <dir> /inheritance:r /grant:r *<owner SID>:(OI)(CI)F *S-1-5-18:(OI)(CI)F`, the same
+    grant as below, without `/T`. A secondary slot's `servers/<hash>/` is made after that and inherits it. Nothing is written into an
+    unprotected folder: a requester whose call fails stops with `acl` (exit 3, in the JSON's `startError`, not written to a file), and a
+    server whose call fails exits 3 and writes nothing. The PowerShell step that follows stays as it is: it resets what is below the
+    folder and reads every SDDL back.
   - Reading the SID, the server's own start time, setting the ACL, and checking every SDDL run in one PowerShell invocation, which
     answers one JSON line, so the check costs one PowerShell start against the 15 s cold-start budget. (A PowerShell start took 1.7 to
     3.1 s in the Windows VM; the server makes no other, because its start time comes with this answer.)
@@ -273,8 +290,25 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
     an upgrade from being undone;
   - its broker scope and transport are the ones `server.json` records, or there is no record. A session on another scope or transport
     uses no server and says so once.
-- It takes `server.lock` and checks those again under it. It then starts `node <cli.mjs> run --detached`, spawned with `{ detached: true,
-  stdio: "ignore", windowsHide: true }` and unref'd, so Windows opens no console window.
+- It takes `server.lock` and checks those again under it. It then starts `node <cli.mjs> run --detached`.
+  - **Elsewhere** it is spawned with `{ detached: true, stdio: "ignore", windowsHide: true }` and unref'd: the server is the leader of
+    a session of its own, so killing its starter's process group (a pane closing, an ssh session ending) does not take it down (a test
+    kills the group and checks).
+  - **On Windows** `detached: true` is not enough: Node does not break away from the starter's job object (libuv never sets
+    `CREATE_BREAKAWAY_FROM_JOB`, which fails where the job does not allow it), and a Herdr pane, an ssh session, or the desk's Electron may
+    hold its children in a kill-on-close job, so the shared server died with whichever pane started it (the second Windows pass: the
+    detached server died when the ssh session that started it closed). The server is created through WMI instead,
+    `Win32_Process.Create` in one PowerShell start, which makes it a child of the WMI service and in no job of the starter's. It is
+    created hidden and with no console (`ShowWindow` 0, `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP`). The command line and folder go
+    in the PowerShell's environment, never in its script. WMI gives the process the user's default environment, not the starter's, so the
+    starter writes the environment it would have given it (the identity variables already removed, and any variable whose name holds
+    `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `CREDENTIAL`, `COOKIE`, or `AUTH`) to `server.env.<pid>.<rand>.tmp` in the protected folder, and
+    `run --detached --env-file <file>` reads it into its environment and deletes it before anything else; a file that cannot be read is
+    exit 1, so a server never starts in the wrong environment. The pid comes with PowerShell's answer; until then the starter keeps
+    `restarting` fresh as for any start, and watches the pid afterwards (a gone process is "the server exited before it answered"). The
+    cost is one more PowerShell start in the starter, logged as the phase `breakaway` (`ms`, `via=wmi`, `pid`) in `server.log`; the
+    server's own PowerShell call (the ACL read-back and its start time) is unchanged. When PowerShell or WMI fails, the start falls back
+    to the plain spawn and says so (`breakaway-failed` in the log), since a server that dies with its pane is better than none.
 - The process gets a constructed environment: the session's environment minus `PI_INTERCOM_SESSION_ID`, `PI_INTERCOM_STABLE_ID`,
   `PI_SUBAGENT_*`, `STRAW_BOSS_ROLE`, and `HERDR_PANE_ID`/`HERDR_TAB_ID`/`HERDR_WORKSPACE_ID`. `PI_INTERCOM_SCOPE_ID`,
   `PI_INTERCOM_TRANSPORT`, and `PI_INTERCOM_TCP` stay, so the server registers in the same broker scope as the sessions; it records them
