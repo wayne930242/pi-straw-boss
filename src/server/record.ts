@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { herdrSocket } from "../endpoint.ts";
 import { alive as pidAlive } from "../remote.ts";
 import { startedLater, startOf } from "../startof.ts";
+import { protectFolder, type RunNative } from "./winprep.ts";
 
 // What the sb server leaves on disk (docs/specs/2026-10-26-sb-backend.md, Process model and lifecycle): `server.json`, the record of the running server;
 // `server.lock`, which makes check-and-start atomic; `start-error.json`, why the last start attempt failed. One server serves one (state directory, Herdr socket)
@@ -77,6 +78,14 @@ export function secretDir(dir: string) {
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	chmodSync(dir, 0o700);
 }
+/**
+ * Makes the slot's folder ready for the first file in it. On Windows the state folder is protected (owner and SYSTEM, no inheritance) first, before the lock, the placeholder record, or
+ * the log is created, by two native calls and once per process; the slot's own folder (below it, for a secondary slot) then inherits that. Elsewhere it is the 700 folder.
+ */
+export function prepareSlot(slot: Slot, platform: NodeJS.Platform = process.platform, run?: RunNative): void {
+	if (platform === "win32") protectFolder(slot.stateDir, run);
+	secretDir(slot.dir);
+}
 
 let temps = 0;
 /** Writes a JSON file by rename, mode 600: a reader never sees half a file. On Windows a rename onto a file a reader has open fails for a moment, so it is tried a few times. */
@@ -147,9 +156,9 @@ export function touchRestarting(slot: Slot, now: number, began?: string, expect?
  * everything it holds and gets the `restarting`; with none, a placeholder holds the place, with no socket and no secret, so nothing connects to it. Returns the `began` of the
  * start, and the pid and secret of the record the starter keeps fresh (`touchRestarting`'s `expect`).
  */
-export function markStarting(slot: Slot, now: number, who: { pid: number; version: string; desk: boolean; intercom: IntercomScope; mode: ServerRecord["mode"]; by: string }): { began: string; expect: { pid: number; secret: string } } {
+export function markStarting(slot: Slot, now: number, who: { pid: number; version: string; desk: boolean; intercom: IntercomScope; mode: ServerRecord["mode"]; by: string; prepare?: (slot: Slot) => void }): { began: string; expect: { pid: number; secret: string } } {
 	const fresh = { reason: "starting", by: who.by };
-	secretDir(slot.dir);
+	(who.prepare ?? prepareSlot)(slot);
 	const found = readRecord(slot);
 	if (found) {
 		const restarting = restartingNow(found.restarting, now, fresh);
@@ -215,6 +224,8 @@ export interface LockDeps {
 	sleep?: (ms: number) => Promise<void>;
 	/** Told when a lock is taken over from a holder that is dead, or past LOCK_MAX_MS. */
 	note?: (event: string, fields: Record<string, string | number>) => void;
+	/** Makes the slot's folder ready before the lock is written into it (the Windows ACL, before any file); `prepareSlot` by default. */
+	prepare?: (slot: Slot) => void;
 }
 export class LockBusy extends Error {
 	holder: LockInfo | undefined;
@@ -251,7 +262,7 @@ export async function takeLock(slot: Slot, by: string, deps: LockDeps = {}, wait
 	const first = settled ? known : undefined;
 	const info: LockInfo = { pid: self.pid, ...(first ? { started: first } : {}), by, since: at(now()) };
 	let body = JSON.stringify(info);
-	secretDir(slot.dir);
+	(deps.prepare ?? prepareSlot)(slot);
 	const temp = `${lock}.${self.pid}.${randomBytes(4).toString("hex")}.tmp`;
 	writeFileSync(temp, body, { flag: "wx", mode: 0o600 });
 	const end = now() + waitMs;

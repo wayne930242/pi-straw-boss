@@ -9,7 +9,7 @@ import { herdrListens, intercomOf, runsAs } from "./client.ts";
 import { type IntercomModule, loadIntercom, LoaderError } from "./intercom.ts";
 import { createLog } from "./log.ts";
 import {
-	clearStartError, fileOf, readRecord, restartingNow, type ServerRecord, secretDir, serverId, type Slot, TOUCH_MS, updateRecord, writeRecord, writeStartError,
+	clearStartError, fileOf, prepareSlot, readRecord, restartingNow, type ServerRecord, serverId, type Slot, TOUCH_MS, updateRecord, writeRecord, writeStartError,
 } from "./record.ts";
 import { AFTER, endpointFor, helloOf, listenControl, newSecret, type Reply, type Request } from "./socket.ts";
 import { packageRoot, VERSION } from "./version.ts";
@@ -44,6 +44,8 @@ export interface ServerOptions {
 	intercom?: () => Promise<IntercomModule>;
 	/** Sets and checks the Windows ACL of the state directory; the same PowerShell start tells this process's start time (the second argument is its pid). */
 	acl?: (dir: string, pid: number) => Promise<{ started?: string } | void>;
+	/** Makes the slot's folder ready before the first file is created in it (on Windows, protects the state folder); `prepareSlot` by default. */
+	prepare?: (slot: Slot) => void;
 	herdrUp?: () => Promise<boolean>;
 	watch?: HerdrWatch;
 	herdr?: HeadlessDeps;
@@ -81,7 +83,19 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	let leave: (code: number) => Promise<void> = async (code) => finish(code);
 	const handle: ServerHandle = { ready, done, get endpoint() { return endpoint; }, shutdown: (code = 0) => leave(code) };
 
-	secretDir(slot.dir);
+	// The folder is ready (on Windows protected) before the log or any file is created in it. A folder that cannot be protected is a server that cannot run here: it leaves with 3 and writes
+	// nothing into it, since an unprotected folder is what it could not fix (a starter that asked for it reads the same reason from its own call, and from the exit code).
+	let unprepared: Error | undefined;
+	try {
+		(o.prepare ?? ((s: Slot) => prepareSlot(s, platform)))(slot);
+	} catch (error) {
+		unprepared = error as Error;
+	}
+	if (unprepared) {
+		markReady(false);
+		finish(EXIT_CANNOT_RUN);
+		return handle;
+	}
 	// `boot`: how long this process had run when it got here (its own start and the load of the server's code), which a cold start on Windows spends before any line is logged.
 	log.line("start", { pid, mode, version, by, herdr: slot.herdr, desk, ...(o.pid === undefined ? { boot: Math.round(process.uptime() * 1000) } : {}) });
 	/** One line per phase of the start: how long it took, and when it ended counted from the start of this server. */

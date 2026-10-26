@@ -5,7 +5,7 @@ import type { IntercomLike } from "../src/agent/kit.ts";
 import { type Ctx, makeCtx, type SpawnSpec, type Timers } from "../src/server/client.ts";
 import type { IntercomModule } from "../src/server/intercom.ts";
 import { runServer, type ServerHandle, type ServerOptions } from "../src/server/main.ts";
-import { readRecord, type ServerRecord, slotOf } from "../src/server/record.ts";
+import { readRecord, type ServerRecord, secretDir, slotOf } from "../src/server/record.ts";
 import { StubClient } from "./agent-fakes.ts";
 
 // A world for the sb server's tests: one state directory, servers that run in this process under fake pids (each with a fake pi-intercom client, no Herdr, no ACL), and
@@ -56,6 +56,8 @@ export class ServerWorld {
 			slot: this.slot, env: this.env, mode: "detached", by: "test", version: "0.44.0", pid, alive: (p) => this.live.has(p), startOf: () => undefined, started: async () => `T-${pid}`,
 			intercom: async () => { if (this.intercomError) throw this.intercomError; return this.intercom(client); },
 			acl: async (dir) => { this.acls.push(dir); if (this.aclError) throw this.aclError; },
+			// The folder's own ACL step is not run here (it needs Windows); its order is pinned in server-winprep.test.ts.
+			prepare: (slot) => secretDir(slot.dir),
 			herdrUp: async () => true, watch: () => () => {}, touchMs: 30, brokerMs: 1500, herdrPollMs: 30, herdrGoneMs: 200, sleep, ...over,
 		};
 		return { options, client, pid };
@@ -74,7 +76,7 @@ export class ServerWorld {
 		const version = over.version ?? "0.44.0";
 		return makeCtx({
 			slot: this.slot, cli: "/fake/cli.mjs", by: "test requester", env: this.env, platform: "linux", node: "node", timers: FAST, alive: (p) => this.live.has(p), startOf: () => undefined,
-			kill: (pid) => void this.running.find((r) => r.pid === pid)?.handle.shutdown(0),
+			kill: (pid) => void this.running.find((r) => r.pid === pid)?.handle.shutdown(0), prepare: (slot) => secretDir(slot.dir),
 			spawn: (spec) => {
 				this.spawned.push(spec);
 				const by = spec.args[spec.args.indexOf("--by") + 1] ?? "?";
