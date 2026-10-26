@@ -16,7 +16,7 @@ const ISO_START = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
 type Launch = (file: string, args: string[], options: ReturnType<typeof startCommand>["options"], done: (error: Error | null, stdout: string) => void) => unknown;
 type Unrefable = { unref?: () => void };
 /** `execFile` whose child, pipes, and timeout timer never hold this process open: a read still pending when pi exits is dropped with it. */
-const spawnQuietly: Launch = (file, args, { timeout, ...options }, done) => {
+export const spawnQuietly: Launch = (file, args, { timeout, ...options }, done) => {
 	const child = execFile(file, args, options, (error, stdout) => done(error, String(stdout)));
 	const timer = setTimeout(() => child.kill(), timeout);
 	timer.unref();
@@ -80,20 +80,35 @@ export function createStartOf({ platform = process.platform, ps = (pid: number) 
 			return undefined;
 		}
 	};
-	const startedLater = (pid: number): Promise<string | undefined> => {
+	const startedLater = (pid: number, { hold = true }: { hold?: boolean } = {}): Promise<string | undefined> => {
 		if (platform !== "win32") return Promise.resolve(startOf(pid));
 		const seen = fresh(pid);
-		return seen ? Promise.resolve(seen.value) : ask(pid);
+		if (seen) return Promise.resolve(seen.value);
+		const pending = ask(pid);
+		if (!hold) return pending;
+		// The read's child, pipes, and timers are unref'd, so a process that only awaits the answer would run out of work and end with its await unsettled (exit 13): a timer that
+		// is not unref'd stays until the answer is in.
+		const keep = setInterval(() => {}, 2 ** 30);
+		return pending.finally(() => clearInterval(keep));
+	};
+	/** Remembers a start time that was read some other way (the server's ACL call tells it), so no second PowerShell start is made for it. */
+	const remember = (pid: number, value: string | undefined) => {
+		if (valid(pid) && value && ISO_START.test(value)) known.set(pid, { value, at: now(), fails: 0 });
 	};
 	const forget = (pid: number) => void known.delete(pid);
-	return { startOf, startedLater, forget };
+	return { startOf, startedLater, forget, remember };
 }
 const shared = createStartOf();
 /** When a process started; undefined when it cannot be told (yet, on Windows). A PID reused after a crash belongs to a process that started later. */
 export const startOf = shared.startOf;
-/** This process's, or another's, start time once it is known: for a record that was written before it was. */
+/**
+ * This process's, or another's, start time once it is known: for a record that was written before it was. The returned promise keeps the process alive until the answer is in
+ * (an `await` on it cannot end the process), unless `hold` is false, for a read made in the background that a leaving process may drop.
+ */
 export const startedLater = shared.startedLater;
+/** Remembers a start time read some other way, so it is not read again. */
+export const rememberStart = shared.remember;
 /** Drops what is cached for a PID that is seen dead, so a process that takes the number later is read afresh. */
 export const forgetStart = shared.forget;
 /** Starts reading this process's own start time in the background (Windows; `ps` is instant elsewhere), so the first record it writes already has it. */
-export const warmStart = () => void startedLater(process.pid);
+export const warmStart = () => void startedLater(process.pid, { hold: false });

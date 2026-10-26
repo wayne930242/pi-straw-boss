@@ -189,7 +189,7 @@ const unlockGui = (dir: string) => rmSync(join(dir, "gui.lock"), { force: true }
  * Records the server this process started. Without this process's start time yet (Windows reads it in the background), the record is written without `started` and again with it when it arrives, unless
  * another server has been recorded since; `late` tells the caller how that ended.
  */
-export const writeRecord = (dir: string, gui: Gui, [owner, ownerSession]: [string, string], version: string, herdr: string, own = { at: startOf, later: startedLater }) => {
+export const writeRecord = (dir: string, gui: Gui, [owner, ownerSession]: [string, string], version: string, herdr: string, own = { at: startOf, later: (pid: number) => startedLater(pid, { hold: false }) }) => {
 	const started = own.at(process.pid), record: GuiRecord = { pid: process.pid, started, port: gui.port, remotePort: gui.remotePort, token: gui.token, csrf: gui.csrf, owner, ownerSession, version, herdr, trust: 1 };
 	writeRecordFile(dir, record);
 	if (started) return {};

@@ -212,7 +212,7 @@ export async function switchRemote(gui: { port: number; remotePort: number; toke
 	await serveOn(run, id.host, target, [stale, old]);
 	const started = startOf(process.pid);
 	writeFileSync(file, JSON.stringify({ target, pid: process.pid, started }), { mode: 0o600 });
-	if (!started) void startedLater(process.pid).then((known) => { // Windows reads its own start time in the background: the entry is written again with it, if it is still this one
+	if (!started) void startedLater(process.pid, { hold: false }).then((known) => { // Windows reads its own start time in the background: the entry is written again with it, if it is still this one
 		try {
 			const now = JSON.parse(readFileSync(file, "utf8")) as { target?: string; pid?: number; started?: string };
 			if (known && now.pid === process.pid && now.target === target && !now.started) writeFileSync(file, JSON.stringify({ ...now, started: known }), { mode: 0o600 });
