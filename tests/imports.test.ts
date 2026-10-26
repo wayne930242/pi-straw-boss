@@ -270,7 +270,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased raised scene.ts to 38 for `closed` (a channel is closed when its session left the net or a finished subagent's pi exited) and composer.ts to 191 (a closed channel's box is disabled).
 	// Unreleased raised scene.ts to 41 and session.ts to 121: a tower's comms head carries "+ Main", the map's opening button aimed at the tower's base.
 	// Unreleased raised layer.ts to 250: fit() watches a gauge of the work's width, not the work, whose height changes inside the map's packing report.
-	for (const [name, max] of [["router.ts", 80], ["chat.ts", 275], ["markdown.ts", 180], ["views.ts", 90], ["scene.ts", 41], ["tokens.ts", 24], ["nav.ts", 43], ["workspace.ts", 60], ["dossier.ts", 49], ["session.ts", 121], ["bars.ts", 50], ["lightbox.ts", 34], ["layer.ts", 250], ["askkeys.ts", 75], ["composer.ts", 192], ["ask.ts", 185], ["mirror.ts", 175], ["keypad.ts", 124], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
+	for (const [name, max] of [["router.ts", 80], ["chat.ts", 277], ["markdown.ts", 180], ["views.ts", 90], ["scene.ts", 41], ["tokens.ts", 24], ["nav.ts", 43], ["workspace.ts", 60], ["dossier.ts", 49], ["session.ts", 122], ["bars.ts", 50], ["lightbox.ts", 34], ["layer.ts", 250], ["askkeys.ts", 75], ["composer.ts", 192], ["ask.ts", 185], ["mirror.ts", 175], ["keypad.ts", 124], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
 	// 0.28.0 to 185 with the answer keys' hooks into gui/ask.ts (the focus on the first option, the textarea). 0.28.0 raised gui/ask.ts from 156 to 175 for the secret panel: the masked field with Show and Hide, Submit, the way back to the terminal, the unsupported-remote notice, and a value that leaves with its one request.
 	// 0.10.0: the page's text comes from Paraglide's messages (gui/messages), which raised chat.ts, views.ts, layer.ts, ask.ts, mirror.ts, and doc.ts by one
 	// line each for the messages import; the strings replaced in place. gui/i18n.ts picks the locale (the menu's choice, the browser's languages with
@@ -371,7 +371,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased to 888 for stash and pop on the map (quit.ts: aimStash, showStashed and its Pop buttons, Stash and Pop in the click handler; render.ts and main.ts wire them, and hang the Stashed list under its button).
 	// Unreleased (net sidecar) to 891: render.ts holds the agent labels and the badge on the card.
 	// Unreleased (comfort) to 901: render.ts packs the bases like masonry (a ResizeObserver spanning each card's rows) and publishes the header's height (--hud) for what sits under it; main.ts names the view on the stage.
-	assert.ok(page <= 901, `the page's TypeScript has ${page} lines`);
+	// Unreleased to 906: quit.ts aimSession, the Quit in a unit's comms header (leave exported for its test).
+	assert.ok(page <= 906, `the page's TypeScript has ${page} lines`);
 });
 
 test("the built page is small, self-contained (no remote URLs, fonts, or imports), and carries no demo fixture", { skip: !existsSync(join(root, "dist/gui/index.html")) && "run npm run gui:build first" }, () => {
@@ -435,7 +436,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 47.35 KB / 17.31 KB: the comms' Back steps back through the page's own history (router.ts depthOf, data-back).
 	// Unreleased to 47.4 KB / 17.33 KB: quit.ts's dismiss shared with the drawer's swipe.
 	// Unreleased to 47.45 KB / 17.36 KB: Notifier.chime, the unit-ready sound of the deploy panel (the panel and its messages are in the opening tile's lazy chunk).
-	assert.ok(size(entry).length <= 47_450 && gz(entry) <= 17_360, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// Unreleased to 47.65 KB / 17.45 KB: the session view's Quit (quit.ts aimSession, the map's own Quit aimed at the unit in view); chat.ts 275 to 277 and session.ts 121 to 122 lines for the role label on a message and the Quit.
+	assert.ok(size(entry).length <= 47_650 && gz(entry) <= 17_450, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).
@@ -526,5 +528,6 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 64.45 KB / 14.3 KB: the drawer's map link and Dismiss finished row.
 	// Unreleased to 71 KB / 15.45 KB: the folder picker (toolbar and breadcrumb, shortcuts, the columns, the one column of a narrow window); and
 	// Unreleased to 68 KB / 14.95 KB: the deploy panel (bar, step list, running pulse, finish and failure tints, its keyframes).
-	assert.ok(total(css, (n) => size(n).length) <= 71_100 && total(css, gz) <= 15_500, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// Unreleased to 71.2 KB / 15.55 KB: the session view's Quit in the comms header (desktop and phone grid).
+	assert.ok(total(css, (n) => size(n).length) <= 71_200 && total(css, gz) <= 15_550, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });
