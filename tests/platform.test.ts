@@ -147,6 +147,8 @@ test("the cmd reader takes a folder named with cmd's own syntax literally, and f
 		await assert.rejects(cmdHidden(join(root, "missing")), /could not say/);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
+	}
+});
 
 // S7: Windows has no `ps`, so a start time comes from PowerShell, in the background (one call took 2 to 3 s on the Windows 11 ARM VM). The ISO form is Windows-only; the rest holds on every platform.
 const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
