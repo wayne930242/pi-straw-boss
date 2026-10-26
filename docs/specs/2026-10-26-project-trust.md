@@ -1,6 +1,6 @@
 # Project trust from the GUI
 
-Status: draft for the author's review; not built.
+Status: approved by the author 2026-10-26 with every recommendation in **Decisions** except D3, where the author chose the alternative (paired devices answer too); no upstream pi issue (D2). Not built.
 Base: pi-straw-boss `main` at `8351041` (desk mode R1 merged), pi 1.4.0, Herdr 0.9.5, pi-intercom 0.17.1.
 Asked for by the author (2026-10-26): an agent that must confirm project trust before it starts has no place in the GUI to confirm it; the question should reach the user as an alert, with the trust options to choose from.
 
@@ -158,9 +158,9 @@ Strings go into the paraglide messages in English and Traditional Chinese.
 ### Who may answer
 
 `POST /<token>/api/trust/answer {id, digest, choice: "trust" | "once" | "no", answerId}` under the page's usual checks (origin, `Sec-Fetch-Site`, CSRF, 64 KB).
-Recommended (D3): this computer's page only; a request on the remote listener gets 403 `local_only`, and a paired device shows the alert read-only with "Answer this on the computer".
+Decided (D3): this computer's page and a paired device may answer, as they may answer a relayed confirm; the remote listener takes the answer only from a paired device's authenticated session, under the same checks as its other writes.
 A Straw Link peer never answers: trust requests are not in presence, and no link message can reach this route.
-Why stricter than a relayed confirm, which a paired device may answer: trust runs the folder's extensions at load, before any gate of this extension (the Straw Link gate, a hook's confirmation) exists, and a remembered `yes` holds for every later agent in that folder.
+The author weighed the risk: trust runs the folder's extensions at load, before any gate of this extension exists, and a remembered `yes` holds for every later agent in that folder; the alert therefore names the folder and the resources plainly on every device.
 
 The server takes one answer per request (in memory, since one server runs per machine), writes the answer file for every listed request of that folder and digest, and waits up to 5 s for their results:
 
@@ -204,10 +204,10 @@ Unit (`node --test`, fakes for the store, settings, `gui.json`, stdin, the clock
 - An answer with another digest, an unknown choice, or another id is ignored and the wait goes on.
 - `found`: a fixture folder for each protected resource gives its group, and `hasTrustRequiringProjectResources` is true for it, which pins the list against pi's own; `.agents/skills` in an ancestor is found, `~/.agents/skills` is not; the caps and `more`; an unparsable `settings.json` is listed as unreadable.
 - The server lists a request only for its own Herdr, a live PID, and a listed pane; removes one whose process is gone; groups two requests of one folder and digest; cleans text; adds `trust: 1` to `gui.json`.
-- The route: 403 `local_only` on the remote listener; CSRF and origin as every write; `busy` for a second answer; 409 for a stale digest; `accepted`, `stale`, `unknown` from the results; one answer writes the answer file of every request in the group.
+- The route: answered from this computer's page and from a paired device, refused (403) from the remote listener without a paired device's session; CSRF and origin as every write; `busy` for a second answer; 409 for a stale digest; `accepted`, `stale`, `unknown` from the results; one answer writes the answer file of every request in the group.
 - `waitPastTrust`: a pane with a request does not use the 60 s; the request going away resumes the budget; 10 minutes on trust fails with the message and the opening closes its tab.
 - Deploy: the `trust` step appears only when a request appears, between `start` and `join`; the page's give-up does not fire during it.
-- Page (pure render, as the existing GUI tests): the alert's title, folder, groups, three buttons; read-only with the note on a paired device; the deploy panel's inline choices; the HUD counts it; the reminder and sound kinds.
+- Page (pure render, as the existing GUI tests): the alert's title, folder, groups, three buttons; the deploy panel's inline choices; the HUD counts it; the reminder and sound kinds; the same answerable alert on a paired device.
 
 Windows CI (`tests/platform.test.ts`): the request and answer by rename under a concurrent reader, `fs.watch` or the stat fallback sees an answer within 1 s, and the PID-only liveness check when `started` is absent.
 
@@ -225,7 +225,7 @@ macOS (the desk `spike/mac` kit with the packed release, and a plain Herdr):
 5. `/boss gui stop` while a pi waits: within 17 s the terminal says the window is not running and shows pi's prompt.
 6. A Herdr restart with three panes in the fixture (decided "this time" before): one alert lists three agents, one **Trust** starts all three.
 7. A tower opened by a promotion in the fixture asks in the GUI and opens once answered; an answer after 3 minutes still opens the agent; no answer for 10 minutes fails the opening and closes its tab.
-8. A paired phone shows the alert read-only; a forced POST from it gets 403.
+8. A paired phone answers the alert and the agent starts; a POST on the remote listener without a paired session gets 403.
 
 Windows 11 VM (desk shell or `spike/win/start.ps1`): 1, 3, 4, 5, and 7, plus no console window appears and raw mode leaves the pane's input working.
 
@@ -245,11 +245,13 @@ It touches dialog relays and a security decision, so it gets one fresh-context r
 
 ## Decisions
 
+The author accepted every recommendation on 2026-10-26 except D3, where the alternative was chosen: paired devices answer too. D2's upstream issue is not opened.
+
 | # | Decision | Recommendation |
 |---|---|---|
 | D1 | How a pi that has not joined reaches the GUI | Files in `<state>/trust/` (request, answer, result), not an HTTP call to the server and not intercom, which is not up until `session_start`. |
 | D2 | What the terminal shows while the GUI asks | A three-line notice and "press any key to answer here", which hands over to pi's own prompt; pi's startup selector cannot be dismissed, so it is not shown at the same time. Not an own TUI copy of pi's selector, and no keys sent into the pane through Herdr. Optional and outward-facing, so the author's call: open an upstream pi issue asking the startup `select` to honor `opts.signal`, which would let both prompts show at once later. |
-| D3 | Who may answer | This computer's page only (403 `local_only` elsewhere, read-only alert on a paired device); never a Straw Link peer. Alternative: paired devices too, as for relayed confirms. |
+| D3 | Who may answer | **Decided: this computer's page and paired devices**, as for relayed confirms (the recommendation was this computer only); never a Straw Link peer. |
 | D4 | The GUI's choices | Trust (remembered), Trust this time, Don't trust (this time only, so a misclick has nothing to undo and the next agent asks again). No parent-folder choice in the GUI; the terminal keeps it. |
 | D5 | Subagents | Relayed too (the handler is registered before the subagent return): a pi-herdr-agents worker in a new worktree folder otherwise stalls unseen. |
 | D6 | How long an opening waits on trust | 10 minutes of trust waiting, then the opening fails at the `trust` step and closes what it created; the decision itself has no timeout. |
