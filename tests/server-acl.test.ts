@@ -30,24 +30,57 @@ test("the script reads the owner's SID, grants the owner and SYSTEM by SID, inhe
 	assert.ok(!/\$sid:/.test(ACL_SCRIPT), "$sid: would be read as a variable in a scope named sid");
 });
 
-test("the folder is protected first and without /T, then each file that is already in it is made to inherit again and is granted the owner and SYSTEM itself (the VM found server.log and server.lock with an empty DACL)", () => {
+/** The text of every loop body in the script (`foreach (...) { ... }`, `ForEach-Object { ... }`, `while`, `for`), braces matched. */
+function loopBodies(script: string): string[] {
+	const bodies: string[] = [];
+	for (const m of script.matchAll(/\b(?:foreach|for|while|ForEach-Object)\b[^{\n]*\{/g)) {
+		let depth = 0, i = m.index! + m[0].length - 1;
+		const start = i;
+		for (; i < script.length; i++) {
+			if (script[i] === "{") depth++;
+			else if (script[i] === "}" && --depth === 0) break;
+		}
+		bodies.push(script.slice(start, i + 1));
+	}
+	return bodies;
+}
+const SPAWNS = /icacls|&\s|Start-Process|Invoke-Expression|Get-CimInstance|powershell|cmd(\.exe)?\b/i;
+
+test("the folder is protected first and without /T, then everything already in it is reset to inherit from it in ONE icacls call (R-F001: no process per item; the VM found server.log and server.lock with an empty DACL)", () => {
 	const lines = ACL_SCRIPT.split("\n");
 	const folder = lines.findIndex((l) => l.includes("icacls.exe $dir /inheritance:r"));
 	assert.ok(folder > 0);
-	assert.ok(!/\/T\b/.test(ACL_SCRIPT), "icacls /T strips the inherited ACEs of the files that are there, and an (OI)(CI) grant does not land on a file");
-	// The files come after the folder, one icacls call each: inheritance back on, and an explicit grant of full control to the owner and SYSTEM by SID, without the container flags.
-	const files = lines.findIndex((l) => l.includes("icacls.exe $item.FullName /inheritance:e"));
-	assert.ok(files > folder, "after the folder");
-	assert.match(lines[files]!, /\/inheritance:e \/grant:r "\*\$\{sid\}:\$grant" "\*S-1-5-18:\$grant"/);
-	assert.ok(lines.some((l) => l.includes("$grant = if ($item.PSIsContainer) { '(OI)(CI)F' } else { 'F' }")), "a file gets F, a folder (OI)(CI)F");
-	assert.ok(lines.findIndex((l) => l.includes("Get-Acl -LiteralPath $p")) > files, "the SDDLs are read back after the repair");
+	assert.ok(!/icacls[^\n]*\/T\b/.test(lines[folder]!), "the folder step has no /T: that would strip the inherited ACEs of the files that are there, and an (OI)(CI) grant does not land on a file");
+	// One call for every item below: reset to the default inherited ACL (the protected folder's owner and SYSTEM grant, which (OI)(CI) hands to files and folders alike), recursive, past an item that goes meanwhile, quiet.
+	const reset = lines.filter((l) => l.includes("/reset"));
+	assert.equal(reset.length, 1, "one reset call");
+	assert.match(reset[0]!, /^& icacls\.exe "\$dir\\\*" \/reset \/T \/C \/Q \| Out-Null$/);
+	assert.ok(lines.indexOf(reset[0]!) > folder, "after the folder");
+	assert.ok(lines.findIndex((l) => l.includes("Get-Acl -LiteralPath $p")) > lines.indexOf(reset[0]!), "the SDDLs are read back after the repair");
+	assert.equal(ACL_SCRIPT.match(/icacls\.exe/g)!.length, 2, "icacls.exe is started twice: the folder and the reset");
 	// The files the check reads include the ones that existed before the ACL: the lock the starter took and the log.
 	assert.match(ACL_SCRIPT, /'server\.json', 'server\.lock', 'server\.log'/);
 });
 
+test("R-F001 timing guard: no process is started per item, so the script's cost does not grow with the number of files (a loop body runs in-process: Get-Acl, Test-Path, Join-Path)", () => {
+	const bodies = loopBodies(ACL_SCRIPT);
+	assert.ok(bodies.length >= 2, "the loops are found (the file list and the read-back)");
+	for (const body of bodies) assert.ok(!SPAWNS.test(body), `a loop body spawns a process: ${body}`);
+	// The matcher catches what it must: the old script's per-item call is a spawn in a loop.
+	const old = 'foreach ($item in @(Get-ChildItem -LiteralPath $dir -Recurse -Force)) {\n  try { & icacls.exe $item.FullName /inheritance:e } catch { }\n}';
+	assert.ok(loopBodies(old).some((body) => SPAWNS.test(body)));
+});
+
+test("R-F001: the read-back covers secondary slots' server.json (it holds that slot's secret), the files at the top, and link/ below", () => {
+	assert.match(ACL_SCRIPT, /Join-Path \$dir 'servers'/);
+	assert.match(ACL_SCRIPT, /Get-ChildItem -LiteralPath \$servers -Directory/);
+	assert.match(ACL_SCRIPT, /Join-Path \$slotDir\.FullName 'server\.json'/);
+});
+
 test("a file that is gone while the script runs (a temp file renamed into place) is not a failure, any other read error is", () => {
-	assert.match(ACL_SCRIPT, /try \{ & icacls\.exe \$item\.FullName[^\n]*\} catch \{ \}/);
 	assert.match(ACL_SCRIPT, /catch \{ if \(Test-Path -LiteralPath \$p\) \{ throw \} \}/);
+	// The reset's own exit code is not the check (an item gone meanwhile, an empty folder): the read-back is.
+	assert.ok(!ACL_SCRIPT.split("\n").some((l, i, all) => all[i - 1]?.includes("/reset") && l.includes("$LASTEXITCODE")));
 });
 
 test("the same PowerShell start tells the server's start time (Win32_Process.CreationDate in the form startof.ts uses), from its pid in the environment, and a failure there leaves it null", () => {

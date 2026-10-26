@@ -12,9 +12,10 @@ const ACL_MS = 20_000;
 /**
  * The PowerShell script: the folder and the server's pid come in the environment (SB_ACL_DIR, SB_ACL_PID), so no path is ever quoted into the script.
  *
- * The folder is protected first, without `/T`. `/T` would also strip the inherited ACEs of the files already in it (server.lock is taken by the starter, server.log is opened by the
- * server itself, both before this runs), and a `(OI)(CI)` grant does not land on a file, so they ended with an empty DACL that not even their owner could read. Each file that is
- * there is instead made to inherit from the folder again and granted the owner and SYSTEM explicitly; a file created later inherits the two from the folder.
+ * The folder is protected first, without `/T`. `/T` there would strip the inherited ACEs of the files already in it (server.lock is taken by the starter, server.log is opened by the
+ * server itself, both before this runs) and a `(OI)(CI)` grant does not land on a file, so they ended with an empty DACL that not even their owner could read. What is there is then
+ * reset to inherit from the folder by one `icacls <dir>\* /reset /T /C /Q`, whatever the number of items (a call per item took a process each, link/inbox alone holds up to 500); a file
+ * created later inherits the owner and SYSTEM from the folder.
  */
 export const ACL_SCRIPT = [
 	// Windows PowerShell 5.1 writes redirected output in the OEM code page (CP950, CP932, …) and Node reads UTF-8. The answer is also pure ASCII (below), because in those code pages
@@ -29,15 +30,17 @@ export const ACL_SCRIPT = [
 	// `${sid}:` and not `$sid:`: PowerShell reads the latter as a variable in a scope named sid.
 	"& icacls.exe $dir /inheritance:r /grant:r \"*${sid}:(OI)(CI)F\" '*S-1-5-18:(OI)(CI)F' | Out-Null",
 	"if ($LASTEXITCODE -ne 0) { throw \"icacls failed with exit code $LASTEXITCODE\" }",
-	"foreach ($item in @(Get-ChildItem -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue)) {",
-	"  $grant = if ($item.PSIsContainer) { '(OI)(CI)F' } else { 'F' }",
-	// A file that goes while this runs (a temp file renamed into place) is not a failure.
-	"  try { & icacls.exe $item.FullName /inheritance:e /grant:r \"*${sid}:$grant\" \"*S-1-5-18:$grant\" | Out-Null } catch { }",
-	"}",
+	// Everything already below the folder (server.lock the starter took, server.log, the link and stash folders, a secondary slot's files) is reset in ONE call: its explicit ACEs go and it
+	// inherits the folder's owner and SYSTEM grant again, which an (OI)(CI) grant hands to files and folders alike. `/C` goes on past an item that vanishes meanwhile (a temp file renamed into
+	// place), and the exit code is not the check, since an empty folder has nothing to match: the read-back below is. A call per item would start a process for each of them (link/inbox holds up to 500).
+	"& icacls.exe \"$dir\\*\" /reset /T /C /Q | Out-Null",
 	"$files = @()",
 	"foreach ($name in 'server.json', 'server.lock', 'server.log', 'gui.json', 'paired.json') { $p = Join-Path $dir $name; if (Test-Path -LiteralPath $p) { $files += $p } }",
 	"$link = Join-Path $dir 'link'",
 	"if (Test-Path -LiteralPath $link) { $files += @(Get-ChildItem -LiteralPath $link -Recurse -File | ForEach-Object { $_.FullName }) }",
+	// A secondary slot's folder holds that slot's secret in its server.json.
+	"$servers = Join-Path $dir 'servers'",
+	"if (Test-Path -LiteralPath $servers) { foreach ($slotDir in @(Get-ChildItem -LiteralPath $servers -Directory)) { $p = Join-Path $slotDir.FullName 'server.json'; if (Test-Path -LiteralPath $p) { $files += $p } } }",
 	"$read = @(foreach ($p in $files) { try { [ordered]@{ path = $p; sddl = (Get-Acl -LiteralPath $p).Sddl } } catch { if (Test-Path -LiteralPath $p) { throw } } })",
 	"$out = [ordered]@{ sid = $sid; started = $started; dir = (Get-Acl -LiteralPath $dir).Sddl; files = $read }",
 	"$json = $out | ConvertTo-Json -Compress -Depth 4",
