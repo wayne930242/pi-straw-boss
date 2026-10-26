@@ -213,6 +213,8 @@ export async function launch(ctx: Ctx, { began, old }: { began?: string; old?: R
 	const outcome = await waitReady(ctx, ctx.timers.start, { exited: child.exited, began: began ?? mine?.began, old, keeps });
 	if (outcome && "pid" in outcome) {
 		ctx.log.line("start-answered", { pid: outcome.pid, ms: ctx.now() - t0 });
+		// A server that was live all along answered (the look missed its hello, and the child found it and left): it does not clear the mark this start put on its record, so this start does.
+		if (mine && outcome.pid !== child.pid) endStarting(ctx.slot, mine.began, mine.expect);
 		return outcome;
 	}
 	if (mine) endStarting(ctx.slot, mine.began, mine.expect);

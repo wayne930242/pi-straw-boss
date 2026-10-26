@@ -159,6 +159,17 @@ test("a server that never answers fails the start after the budget", async () =>
 	await assert.rejects(launch(ctx), (e: unknown) => e instanceof ServerError && /did not answer hello within 0\.3 s/.test(e.message));
 });
 
+test("R-F002: a start that finds a live server (the look missed its hello) leaves no restarting on that server's record", async () => {
+	const s = await world.start();
+	await s.handle.ready;
+	const done = await launch(world.ctx({ by: "late starter" }));
+	assert.equal(done.pid, s.pid, "the live server is the one the start returns");
+	assert.equal(world.spawned.length, 1, "a child was started, found the server, and left");
+	assert.equal(world.record()?.pid, s.pid);
+	assert.equal(world.record()?.restarting, undefined, "the mark the starter put on the live record is gone");
+	assert.equal(stateOf(world.ctx(), await probe(world.ctx())), "live");
+});
+
 test("a stopped server is not started by an automatic start; the boss's own start clears the mark in server.json and gui.json and starts it", async () => {
 	plant({ stopped: true, gui: { port: 5000, token: "t", stopped: true } });
 	writeFileSync(`${world.stateDir}/gui.json`, JSON.stringify({ pid: 1, port: 5000, token: "t", owner: "o", stopped: true }));
