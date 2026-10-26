@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { LAUNCH_SCRIPT } from "../src/server/breakaway.ts";
-import { ACL_SCRIPT, ACL_TOKEN, aclCommand, ownerProblems, plainStderr, aclMarkerPath, AclError, aclProblems, applyAcl, asciiLine, awaitAclMarker, execFailure, messageLine, type Exec, fileProblems, folderProblems, parseAclOutput, parseSddl, readMarker, SYSTEM_SID } from "../src/server/acl.ts";
+import { ACL_SCRIPT, ACL_TOKEN, aclCommand, ownerProblems, plainStderr, aclMarkerPath, AclError, aclProblems, applyAcl, asciiLine, awaitAclMarker, execFailure, messageLine, type Exec, fileProblems, folderProblems, parseAclOutput, parseSddl, readMarker, scriptWords, CLM_TEXT, SYSTEM_SID } from "../src/server/acl.ts";
 
 // docs/specs/2026-10-26-sb-backend.md, The control socket: on Windows the state directory gets an owner-and-SYSTEM ACL, set and checked by SID in one PowerShell start.
 // Windows is not run here: these pin the command and the SDDL reading.
@@ -328,8 +328,11 @@ test("F12: applyAcl under Constrained Language Mode fails with the sentence, not
 test("R8-F003: the script lists what is below WITHOUT following links, refuses a reparse point before any icacls call below runs and again at the read-back, and never uses Get-ChildItem", () => {
 	for (const script of [ACL_SCRIPT, LAUNCH_SCRIPT]) {
 		assert.ok(!/Get-ChildItem/.test(script), "Windows PowerShell 5.1 follows junctions with it");
-		assert.match(script, /\[IO\.Directory\]::EnumerateFileSystemEntries\(\$here\)/);
-		assert.match(script, /\(\$a -band \[IO\.FileAttributes\]::ReparsePoint\) -ne 0\) \{ throw \('sb-reparse-point ' \+ \$e\) \}/);
+		assert.match(script, /\[IO\.Directory\]::GetFileSystemEntries\(\$here\)/);
+		// R9: only a name-surrogate link (junction, symbolic link) is refused; a cloud placeholder (OneDrive) is a reparse point that is walked as an ordinary file or folder.
+		assert.match(script, /if \(\(\$a -band \[IO\.FileAttributes\]::ReparsePoint\) -ne 0\) \{ \$kind = \$null; try \{ \$kind = \(Get-Item -LiteralPath \$e -Force -ErrorAction Stop\)\.LinkType \} catch \{ throw \('sb-reparse-point ' \+ \$e\) \}; if \(\$kind -eq 'Junction' -or \$kind -eq 'SymbolicLink'\) \{ throw \('sb-reparse-point ' \+ \$e\) \} \}/);
+		// R9-F004: a folder that vanished is skipped, one that is there and cannot be listed is thrown.
+		assert.match(script, /catch \{ if \(Test-Path -LiteralPath \$here\) \{ throw \}; continue \}/);
 		const lines = script.split("\n").map((l) => l.trim());
 		const first = lines.findIndex((l) => l.startsWith("$null = Walk $dir")), owner = lines.findIndex((l) => /\/setowner/.test(l)), again = lines.findIndex((l) => l.startsWith("$tree = Walk $dir"));
 		assert.ok(first > 0 && first < owner && owner < again, `${first} ${owner} ${again}`);
@@ -337,6 +340,24 @@ test("R8-F003: the script lists what is below WITHOUT following links, refuses a
 	}
 	const err = Object.assign(new Error("Command failed: x"), { code: 1 });
 	assert.equal(execFailure(err, "sb-reparse-point C:\\s\\link\\x\r\nAt line:1"), "a link or junction was found inside the state folder, which is refused (C:\\s\\link\\x), exit code 1");
+});
+
+test("R9-F003: the launch path (an error marker) tells the scripts' words as sentences too, through the same helper as execFailure", () => {
+	assert.equal(scriptWords("sb-reparse-point C:\\s\\link\\x"), "a link or junction was found inside the state folder, which is refused (C:\\s\\link\\x)");
+	assert.equal(scriptWords("sb-constrained-language"), CLM_TEXT);
+	assert.equal(scriptWords("icacls failed"), "icacls failed");
+	assert.throws(() => readMarker(JSON.stringify({ pid: 4321, error: "sb-reparse-point C:\\s\\link\\x" }), "C:\\s", 4321), (e: unknown) => e instanceof AclError && /could not set the ACL of C:\\s: a link or junction was found inside the state folder, which is refused \(C:\\s\\link\\x\)/.test((e as Error).message) && !/sb-reparse-point/.test((e as Error).message));
+	assert.throws(() => readMarker(JSON.stringify({ pid: 4321, error: "sb-constrained-language" }), "C:\\s", 4321), (e: unknown) => e instanceof AclError && /Constrained Language Mode/.test((e as Error).message));
+});
+
+test("R9-F006: a refusal names the first five problems and how many more, and says how to put a foreign owner right, once", async () => {
+	const files = Array.from({ length: 40 }, (_, i) => ({ path: `C:\\s\\link\\inbox\\m${i}.json`, sddl: `O:${OTHER}G:DUD:AI${ACE(OWNER, "ID")}${ACE("SY", "ID")}` }));
+	const ok = `O:${OWNER}G:DUD:P${ACE(OWNER)}${ACE("SY")}`;
+	const exec: Exec = (_f, _a, _o, done) => done(null, JSON.stringify({ sid: OWNER, dir: ok, files }));
+	await assert.rejects(applyAcl("C:\\s", exec), (e: unknown) => {
+		const text = (e as Error).message;
+		return e instanceof AclError && text.includes("m4.json") && !text.includes("m5.json") && /and 35 more/.test(text) && text.length < 1200 && (text.match(/Run pi as that account/g) ?? []).length === 1 && /elevated shell/.test(text);
+	});
 });
 
 test("R8-F001: a folder below with the right owner and a DACL that was not reset (a foreign ACE, an empty DACL) is a problem; inherited ACEs for the user and SYSTEM are not", () => {

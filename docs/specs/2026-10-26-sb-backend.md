@@ -267,12 +267,16 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
         DACL rule (allow ACEs for the owner/user and SYSTEM only) is unchanged. A filtered token that cannot protect a BA-owned folder still
         gets the protect step's refusal ("run pi once as administrator, or delete the folder"): the owner gate comes after it.
       - **What is below is listed without following links** (R8-F003): Windows PowerShell 5.1's `Get-ChildItem` follows junctions, so the
-        scripts walk the folder with `[IO.Directory]::EnumerateFileSystemEntries` and refuse any entry with the `ReparsePoint` attribute
+        scripts walk the folder with `[IO.Directory]::GetFileSystemEntries` and refuse any entry with the `ReparsePoint` attribute
+        that is a name-surrogate link (`Get-Item -Force` gives it `LinkType` `Junction` or `SymbolicLink`; one whose type cannot be read is refused too)
         (`sb-reparse-point <path>`, told as "a link or junction was found inside the state folder, which is refused"), before any `icacls`
-        call below runs and again when the SDDLs are read back. The `/reset` carries `/L` too.
+        call below runs and again when the SDDLs are read back. The `/reset` carries `/L` too. Other reparse points (OneDrive and other cloud placeholders, dedup)
+        are ordinary files and folders and are walked as such, so an agent folder in OneDrive is not refused. A folder that vanishes between being listed and
+        being walked (the link stale-lock guard, `outbox\<team>`) is skipped; one that is there and cannot be listed is thrown.
       - **Everything below is the user's too** (R7-F002, R8-F001, R8-F002): `/reset` and `/inheritance` replace DACLs and never owners, so after the reset one
         call, `icacls "<dir>\*" /setowner *<sid> /T /C /L /Q`, makes the folders below (`servers\<hash>`, `link\…`) the user's, and the
-        read-back lists every folder and file below, and each must be the user's (`O:`) with allow ACEs for the user and SYSTEM only,
+        read-back lists every folder below and the files it names (`server.json`, `server.lock`, `server.log`, `gui.json`, `paired.json`, every file under `link\`,
+        and each `servers\<hash>\server.json`; not the files in `board\`, `stash\`, `agents\` or the other files of a secondary slot), and each must be the user's (`O:`) with allow ACEs for the user and SYSTEM only,
         inherited ones allowed (`folders` and `files` in the answer; a folder that another account owns would keep an owner's implicit
         WRITE_DAC over what is written in it later). The owner is taken BEFORE the reset, so the reset can use the owner's WRITE_DAC; an
         owner or a DACL that one call could not fix is refused by the read-back whichever of the two the other call fixed. A temporary file
@@ -478,8 +482,9 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
       warning; the look and `ensure` find it and start no second server (`up` adds the warning `server_unreachable`); `stop` and `restart`
       refuse with `unreachable` ("… runs but this process may not reach it: it was probably started from an elevated pi or shell … stop or
       restart it from an elevated shell") and never mark the record stopped; the scope stays pinned. The refusal counts only when the process
-      under the pid started when the record says (its start time is waited for, 3 s at most): a different or unknown start time, or a
-      record with none, is gone and pins nothing. Only a hello that answers with the
+      under the pid has not been shown to be another one (R9-F001): its start time is waited for, 3 s at most, and only a start time that is
+      known and differs from the record's makes the record gone and pins nothing. One that is unknown (the CIM read takes 3.5 s and more on Windows,
+      it failed, or the record has none) stays denied and pinned: stopping or starting over a running server is worse than a refusal. Only a hello that answers with the
       secret makes a server `live`.
     - **The hello comes before any start-time lookup** (F13). A server that answers hello with the secret and its pid is that server, so
       `probe` (and with it `stop`, `status` and a second `up`) asks for no start time, which on Windows was a PowerShell start of its own.

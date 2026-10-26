@@ -188,11 +188,12 @@ export async function probe(ctx: Ctx, deadline?: number, startKnownElsewhere = f
 	// reused after a crash, or a record with no start time, pins nothing. A refusal for lack of permission is a running server that cannot be reached: it is told as that, never as gone.
 	const confirmed = Boolean(record.started) && ctx.startOf(record.pid) === record.started;
 	if (!denied) return { record, live: false, runs: confirmed, hello: undefined };
-	// Refused for lack of permission: that is "alive and unreachable" only when the process under the pid is the one the record names (R8-F004: a pipe name is free when its server is gone, and something
-	// else can refuse there). Its start time is waited for, a few seconds at most; no match, or none known, is gone: nothing is pinned.
-	const when = confirmed ? record.started : await Promise.race([ctx.startedLater(record.pid).catch(() => undefined), ctx.sleep(within(ctx, deadline, DENIED_START_MS)).then(() => undefined)]);
-	const mine = Boolean(record.started) && when === record.started;
-	return mine ? { record, live: false, runs: true, denied: true, hello: undefined } : { record, live: false, runs: false, hello: undefined };
+	// Refused for lack of permission: a running server that cannot be reached, told as that and never as gone (F11). Only POSITIVE evidence that the process under the pid is not the one the record names
+	// makes it gone (R8-F004: a pipe name is free when its server is gone, and something else can refuse there): a start time that is known and different. The time is waited for, a few seconds at most;
+	// one that is unknown (the read is slower than the wait, which on Windows it is: the CIM read takes 3.5 s and more; it failed; the record has none) stays denied (R9-F001).
+	const when = confirmed || !record.started ? record.started : await Promise.race([ctx.startedLater(record.pid).catch(() => undefined), ctx.sleep(within(ctx, deadline, DENIED_START_MS)).then(() => undefined)]);
+	const other = Boolean(record.started) && when !== undefined && when !== record.started;
+	return other ? { record, live: false, runs: false, hello: undefined } : { record, live: false, runs: true, denied: true, hello: undefined };
 }
 
 /** Whether Herdr listens at the slot's socket. */
@@ -316,7 +317,7 @@ export async function launch(ctx: Ctx, { began, old, deadline }: { began?: strin
 		if (refusal) {
 			ctx.log.line("start-failed", { code: "acl", text: refusal });
 			const startError = { at: new Date(ctx.now()).toISOString(), code: "acl" as const, text: refusal };
-			// Written too, so that a later `status` shows why there is no server (the folder is the user's own protected one by now).
+			// Written too, so that a later `status` shows why there is no server. The folder may be another account's (that is the refusal), so the write is best effort; it carries no secret.
 			try {
 				writeStartError(ctx.slot, startError, ctx.now());
 			} catch { /* the error is thrown all the same */ }

@@ -34,8 +34,11 @@ test("a server is live when its pid runs, started when the record says, and answ
 	assert.equal((await probe(world.ctx({ startOf: () => undefined }))).live, true, "when ps cannot say the record stands");
 	world.live.delete(s.pid);
 	assert.equal((await probe(world.ctx())).live, false, "dead pid");
+	// The record is planted under ANOTHER pid that runs, so the server's own record-restore timer leaves it alone (R9-F007); the socket is the live server's, which does not know this secret.
+	const other = s.pid + 1000;
 	world.live.add(s.pid);
-	plant({ pid: s.pid, socket: world.record()!.socket, secret: "0".repeat(64), started: `T-${s.pid}` });
+	world.live.add(other);
+	plant({ pid: other, socket: world.record()!.socket, secret: "0".repeat(64), started: `T-${other}` });
 	assert.equal((await probe(world.ctx())).live, false, "alive pid whose socket refuses its secret");
 });
 
@@ -712,6 +715,25 @@ test("F11: stop and restart of a server that refused this process say so (`unrea
 	}
 });
 
+test("R9-F001: a fresh CLI whose start-time read takes longer than the wait (3.5 s on Windows) still sees the denied server as live and unreachable: stop refuses, the record is not stopped, ensure starts no second server", async () => {
+	const s = await deniedServer();
+	try {
+		// The read resolves (to the right time) after 3500 ms of fake time; the wait gives up at the bound first.
+		const slow = (_ms: number) => new Promise<void>((resolve) => setTimeout(resolve, 5));
+		const ctx = world.ctx({ alive: () => true, startOf: () => undefined, startedLater: () => new Promise<string>((resolve) => setTimeout(() => resolve("T-RUN"), 200)), sleep: (ms) => slow(Math.min(ms, 3000)) });
+		const seen = await probe(ctx);
+		assert.deepEqual([seen.live, seen.denied, seen.runs], [false, true, true]);
+		assert.equal(stateOf(ctx, seen), "live");
+		await assert.rejects(stop(ctx), (e: unknown) => e instanceof ServerError && e.code === "unreachable");
+		assert.equal(readRecord(world.slot)?.stopped, undefined, "not marked stopped");
+		const done = await ensure(ctx, { boss: true });
+		assert.ok("server" in done && done.server === "found");
+		assert.equal(world.spawned.length, 0, "no second server");
+	} finally {
+		await s.close();
+	}
+});
+
 test("F11: a process query that is refused (EPERM) counts as alive, one that finds no process as gone", () => {
 	const kill = process.kill;
 	try {
@@ -736,24 +758,25 @@ test("F13: probe asks for no start time when the server answers hello (no PowerS
 	assert.deepEqual(asked, [], "and stop asks for none either");
 });
 
-test("R8-F004: a refusal for lack of permission pins and shows `live` only when the process under the pid started when the record says; a different, unknown or slow start time is gone and pins nothing", async () => {
+test("R8-F004, R9-F001: a refusal for lack of permission is a running server that cannot be reached, unless the process under the pid is known to have started at another time than the record says; an unknown or slow start time stays denied", async () => {
 	const s = await deniedServer();
 	try {
 		for (const [name, startedLater, runs] of [
 			["matches", async () => "T-RUN", true],
 			["differs", async () => "T-OTHER", false],
-			["unknown", async () => undefined, false],
-			["never arrives", () => new Promise<string | undefined>(() => {}), false],
+			["unknown", async () => undefined, true],
+			["failed read", async () => { throw new Error("no"); }, true],
+			["never arrives", () => new Promise<string | undefined>(() => {}), true],
 		] as const) {
 			const seen = await probe(world.ctx({ alive: () => true, startOf: () => undefined, startedLater, sleep: (ms) => sleep(Math.min(ms, 30)) }));
 			assert.deepEqual([seen.runs, seen.denied === true, seen.live], [runs, runs, false], name);
 			assert.equal(stateOf(world.ctx(), seen), runs ? "live" : "gone", name);
 		}
-		// A record with no start time cannot be confirmed: not pinned, not live.
+		// A record with no start time cannot be told from another process: it stays denied, as it did before the start time was asked for.
 		const rec = readRecord(world.slot)!;
 		writeRecord(world.slot, { ...rec, started: undefined });
 		const bare = await probe(world.ctx({ alive: () => true, startOf: () => undefined, startedLater: async () => "T-RUN" }));
-		assert.deepEqual([bare.runs, bare.denied === true], [false, false]);
+		assert.deepEqual([bare.runs, bare.denied === true], [true, true]);
 	} finally {
 		await s.close();
 	}

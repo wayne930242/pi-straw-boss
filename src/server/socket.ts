@@ -24,12 +24,12 @@ const SOCKET_MAX = 100;
 
 export const newSecret = () => randomBytes(32).toString("hex");
 const digest = (text: string) => createHash("sha256").update(text).digest();
-/** Whether `given` is the secret, compared in constant time (both are hashed first, so the length leaks nothing either). */
 /**
  * What a server answers a hello's nonce with: HMAC-SHA256 keyed by the secret over the nonce and its pid. A pipe on Windows has a name that is free when its server is gone, so something else
  * could answer or refuse there; only a process that knows the secret can make this (R8-F004). The client sends a fresh nonce, so an answer cannot be replayed.
  */
 export const proofOf = (secret: string, nonce: string, pid: unknown) => createHmac("sha256", secret).update(`${nonce}:${String(pid)}`).digest("hex");
+/** Whether `given` is the secret, compared in constant time (both are hashed first, so the length leaks nothing either). */
 export const secretMatches = (given: unknown, secret: string) => typeof given === "string" && secret.length > 0 && timingSafeEqual(digest(given), digest(secret));
 
 /** Where the slot's server listens: `server.sock` in its folder, a short folder of the user's own when that path is too long, and on Windows a pipe with a random name. */

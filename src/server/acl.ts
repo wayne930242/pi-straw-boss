@@ -25,12 +25,12 @@ export const asciiJson = (variable: string) => `[regex]::Replace(${variable}, '[
  */
 export const POWERSHELL_FLAGS = ["-NoProfile", "-NonInteractive", "-OutputFormat", "Text"];
 export const PROGRESS_OFF = "$ProgressPreference = 'SilentlyContinue'";
+/** What the walk below the state folder throws for a link or junction: the word and the path. */
+export const REPARSE_WORD = "sb-reparse-point";
 /**
  * Under Constrained Language Mode (a machine policy: AppLocker, WDAC, `__PSLockdownPolicy`) the scripts' .NET calls fail with a localized text that comes out as `?`s. A script says so first, in ASCII:
  * a fixed word that `execFailure` turns into one clear sentence (VM pass 5, F12).
  */
-/** What the walk below the state folder throws for a link or junction: the word and the path. */
-export const REPARSE_WORD = "sb-reparse-point";
 export const CLM_WORD = "sb-constrained-language";
 export const CLM_CHECK = `if ($ExecutionContext.SessionState.LanguageMode -ne 'FullLanguage') { throw '${CLM_WORD}' }`;
 export const CLM_TEXT = "PowerShell runs in Constrained Language Mode (likely a policy); pi-straw-boss needs FullLanguage for its permission check";
@@ -48,9 +48,11 @@ export const ACL_STEPS = [
 	"$icacls = Join-Path ([Environment]::SystemDirectory) 'icacls.exe'",
 	"& $icacls $dir /inheritance:r /grant:r \"*${sid}:(OI)(CI)F\" '*S-1-5-18:(OI)(CI)F' | Out-Null",
 	"if ($LASTEXITCODE -ne 0) { throw \"icacls failed with exit code $LASTEXITCODE\" }",
+	// Only name-surrogate links (junction, mount point, symbolic link: `LinkType`) are refused; other reparse points (OneDrive and other cloud placeholders, dedup) are ordinary files and folders, walked as such (R9). A folder that
+	// vanishes between being listed and being walked (the link stale-lock guard, `outbox/<team>`) is skipped; one that is there and cannot be listed is thrown.
 	// The entries below are listed WITHOUT following links (Windows PowerShell 5.1's Get-ChildItem follows junctions): a link or junction anywhere below the folder is refused, before any icacls call
 	// acts below it and again when the SDDLs are read back (R8-F003). `Walk` returns every file and every folder below.
-	"function Walk($root) { $f = New-Object System.Collections.Generic.List[string]; $d = New-Object System.Collections.Generic.List[string]; $todo = New-Object System.Collections.Generic.Stack[string]; $todo.Push($root); while ($todo.Count -gt 0) { $here = $todo.Pop(); foreach ($e in [IO.Directory]::EnumerateFileSystemEntries($here)) { try { $a = [IO.File]::GetAttributes($e) } catch { continue }; if (($a -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw ('sb-reparse-point ' + $e) }; if (($a -band [IO.FileAttributes]::Directory) -ne 0) { $d.Add($e); $todo.Push($e) } else { $f.Add($e) } } }; return @{ files = $f; folders = $d } }",
+	"function Walk($root) { $f = New-Object System.Collections.Generic.List[string]; $d = New-Object System.Collections.Generic.List[string]; $todo = New-Object System.Collections.Generic.Stack[string]; $todo.Push($root); while ($todo.Count -gt 0) { $here = $todo.Pop(); try { $names = [IO.Directory]::GetFileSystemEntries($here) } catch { if (Test-Path -LiteralPath $here) { throw }; continue }; foreach ($e in $names) { try { $a = [IO.File]::GetAttributes($e) } catch { continue }; if (($a -band [IO.FileAttributes]::ReparsePoint) -ne 0) { $kind = $null; try { $kind = (Get-Item -LiteralPath $e -Force -ErrorAction Stop).LinkType } catch { throw ('sb-reparse-point ' + $e) }; if ($kind -eq 'Junction' -or $kind -eq 'SymbolicLink') { throw ('sb-reparse-point ' + $e) } }; if (($a -band [IO.FileAttributes]::Directory) -ne 0) { $d.Add($e); $todo.Push($e) } else { $f.Add($e) } } }; return @{ files = $f; folders = $d } }",
 	"$null = Walk $dir",
 	// Everything below the folder is made the user's FIRST, in ONE call (`/C` goes on past an item it may not change; the read-back below is the check): /reset and /inheritance replace DACLs and
 	// never owners, so a folder another account created (a secondary slot's `servers\<hash>`, `link\…`) would keep that account's implicit WRITE_DAC; as the owner the user can then reset it.
@@ -245,6 +247,13 @@ export class AclError extends Error {
 export type Exec = (file: string, args: string[], options: ReturnType<typeof aclCommand>["options"], done: (error: Error | null, stdout: string, stderr?: string) => void) => unknown;
 const run: Exec = (file, args, options, done) => execFile(file, args, options, (error, stdout, stderr) => done(error, String(stdout), String(stderr)));
 
+/** The scripts' own words (a link or junction found, Constrained Language Mode) as sentences; any other text as it is. Used for what a script prints on stderr and for what the launch script writes in the marker. */
+export function scriptWords(text: string): string {
+	if (text.startsWith(REPARSE_WORD)) return `a link or junction was found inside the state folder, which is refused (${text.slice(REPARSE_WORD.length).trim()})`;
+	// Constrained Language Mode: the script's own word, or the English text of the engine's refusal (a localized one is `?`s, which is why the script says it first).
+	if (text.includes(CLM_WORD) || /only core types are supported in this language mode|supported only on core types in this language mode|constrained language mode/i.test(text)) return CLM_TEXT;
+	return text;
+}
 /**
  * Why a program failed, for a person: its stderr's message line (see `messageLine`), else the last line of its stdout, and its exit code. Never `error.message`, which for a failed
  * child process begins with the whole command line (an `-EncodedCommand` of 2 KB of base64) and so fills any short cut of it.
@@ -252,9 +261,7 @@ const run: Exec = (file, args, options, done) => execFile(file, args, options, (
 export function execFailure(error: Error & { code?: unknown; status?: unknown }, stderr?: unknown, stdout?: unknown): string {
 	// Where stderr has no message (progress records only, or nothing) the last line of stdout stands; the exit code always follows.
 	let last = messageLine(stderr) || asciiLine(stdout);
-	// Constrained Language Mode: the script's own word, or the English text of the engine's refusal (a localized one is `?`s, which is why the script says it first).
-	if (last.startsWith(REPARSE_WORD)) last = `a link or junction was found inside the state folder, which is refused (${last.slice(REPARSE_WORD.length).trim()})`;
-	if (last.includes(CLM_WORD) || /only core types are supported in this language mode|supported only on core types in this language mode|constrained language mode/i.test(last)) last = CLM_TEXT;
+	last = scriptWords(last);
 	const code = typeof error.code === "number" ? error.code : typeof error.status === "number" ? error.status : undefined;
 	const first = error.message.split(/\r?\n/)[0] ?? "";
 	const text = last || (/^Command failed:/.test(first) ? "" : asciiLine(first));
@@ -299,9 +306,13 @@ export function asciiLine(text: unknown): string {
 }
 
 /** The answer of the script as a verified result: throws an AclError (with the SDDL it read) when the folder or a secret file is not owner and SYSTEM only. */
+const PROBLEMS_SHOWN = 5;
 function verified(result: AclResult, dir: string): { sid: string; started?: string } {
 	const problems = aclProblems(result);
-	if (problems.length) throw new AclError(`the ACL of ${dir} is not owner and SYSTEM only: ${problems.join("; ")}`, [result.dir, ...(result.folders ?? []).map((f) => `${f.path}: ${f.sddl}`), ...result.files.map((f) => `${f.path}: ${f.sddl}`)].join("\n"));
+	// A check that fails on hundreds of files (an inbox no call could fix) names the first few; the remedy follows once.
+	const shown = problems.length > PROBLEMS_SHOWN ? [...problems.slice(0, PROBLEMS_SHOWN), `and ${problems.length - PROBLEMS_SHOWN} more`] : problems;
+	const remedy = problems.some((p) => /belongs to another account/.test(p)) ? ` (Run pi as that account, an elevated shell for an administrator's, or delete ${dir}.)` : "";
+	if (problems.length) throw new AclError(`the ACL of ${dir} is not owner and SYSTEM only: ${shown.join("; ")}${remedy}`, [result.dir, ...(result.folders ?? []).map((f) => `${f.path}: ${f.sddl}`), ...result.files.map((f) => `${f.path}: ${f.sddl}`)].join("\n"));
 	return { sid: result.sid, ...(result.started ? { started: result.started } : {}) };
 }
 
@@ -338,7 +349,7 @@ export function readMarker(text: string, dir: string, pid: number): { sid: strin
 	} catch {
 		throw new AclError(`the ACL check of ${dir} left by the process that started this server cannot be read`);
 	}
-	if (typeof parsed.error === "string" && parsed.error) throw new AclError(`could not set the ACL of ${dir}: ${asciiLine(parsed.error)}`);
+	if (typeof parsed.error === "string" && parsed.error) throw new AclError(`could not set the ACL of ${dir}: ${scriptWords(asciiLine(parsed.error))}`);
 	if (parsed.pid !== pid) throw new AclError(`the ACL check of ${dir} was made for pid ${String(parsed.pid)}, not for this server (pid ${pid})`);
 	try {
 		return verified(parseAclOutput(text), dir);
