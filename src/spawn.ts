@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, realpath, rmdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { checkText, type Reply } from "./control.ts";
 import { createDeploys, type Deploy, type StepId } from "./deploy.ts";
+import { type Hidden, HiddenError, hasHidden, platformHidden } from "./hidden.ts";
 import { createTab, type HerdrCall, type HerdrRun, isSub, type Pane, panes, report, result, type Sleep, startPi, waitFor, type Workspace, workspaces } from "./herdr.ts";
 
 // What the page opens by itself, each pi started in a folder picked from the home folder. A base starts with no tower: it opens with one member
@@ -22,27 +23,35 @@ import { createTab, type HerdrCall, type HerdrRun, isSub, type Pane, panes, repo
 const MAX_DIRS = 500, JOIN_WAIT_MS = 60_000, MAX_LABEL = 64;
 
 /** `live` says whether a session is still on the net, so a tower token its tower left behind does not count; `sessionAt` names the session in a pane, so the page can go to it. */
-export interface SpawnDeps { run: HerdrRun; sleep: Sleep; call?: HerdrCall; live(sessionId: string): Promise<boolean>; sessionAt?(paneId: string): Promise<string | undefined>; home?: string }
+export interface SpawnDeps { run: HerdrRun; sleep: Sleep; call?: HerdrCall; live(sessionId: string): Promise<boolean>; sessionAt?(paneId: string): Promise<string | undefined>; home?: string; hidden?: Hidden }
 
 const no = (status: number, error: string, reason: string): Reply => ({ status, body: { error, reason } });
 const OUTSIDE = no(400, "not_allowed", "Only folders in your home folder, outside hidden folders, can be picked.");
 
-/** The real path of a directory the page may pick: at or under home, with no hidden part once symlinks are resolved. */
-export async function pickable(path: unknown, home = homedir()): Promise<string | undefined> {
+/**
+ * The real path of a directory the page may pick: at or under home, with no hidden part once symlinks are resolved. Where `hidden` reads attributes (Windows, hidden.ts)
+ * no part may carry one, in the path as given too: "My Documents" is a hidden junction to Documents, and leads there only for the Explorer that never shows it.
+ */
+export async function pickable(path: unknown, home = homedir(), hidden = platformHidden): Promise<string | undefined> {
 	if (typeof path !== "string" || !isAbsolute(path) || path.length > 4096) return;
 	const [real, root] = await Promise.all([realpath(path).catch(() => undefined), realpath(home).catch(() => home)]);
 	if (!real) return;
 	const rel = relative(root, real);
 	if (rel.startsWith("..") || isAbsolute(rel) || rel.split(sep).some((part) => part.startsWith("."))) return;
+	if (hidden) {
+		const given = relative(root, resolve(path));
+		if (given !== rel && !given.startsWith("..") && !isAbsolute(given) && (await hasHidden(root, given.split(sep).filter(Boolean), hidden))) return;
+		if (rel && (await hasHidden(root, rel.split(sep), hidden))) return;
+	}
 	return (await stat(real).catch(() => undefined))?.isDirectory() ? real : undefined;
 }
 
 /** The visible folders in `dir` (a symlink counts when it leads to a pickable folder), sorted, at most MAX_DIRS of them. */
-export async function listDirs(dir: string, home = homedir()) {
-	const root = await realpath(home).catch(() => home), names: string[] = [];
+export async function listDirs(dir: string, home = homedir(), hidden = platformHidden) {
+	const root = await realpath(home).catch(() => home), names: string[] = [], marked = await hidden?.(dir);
 	for (const e of await readdir(dir, { withFileTypes: true })) {
-		if (e.name.startsWith(".")) continue;
-		if (e.isDirectory() || (e.isSymbolicLink() && (await pickable(join(dir, e.name), home)))) names.push(e.name);
+		if (e.name.startsWith(".") || marked?.has(e.name.toLowerCase())) continue;
+		if (e.isDirectory() || (e.isSymbolicLink() && (await pickable(join(dir, e.name), home, hidden)))) names.push(e.name);
 	}
 	names.sort((a, b) => a.localeCompare(b));
 	return { path: dir, home: root, sep, parent: dir === root ? null : dirname(dir), dirs: names.slice(0, MAX_DIRS), truncated: names.length > MAX_DIRS };
@@ -51,19 +60,20 @@ export async function listDirs(dir: string, home = homedir()) {
 const BAD_NAME = /[\p{Cc}\p{Cf}\\/<>:"|?*]/u, RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
 const BAD = () => no(400, "bad_name", "A folder name is at most 255 characters, with no / \\ : * ? \" < > | and no leading or trailing dot.");
 /** A new folder `name` in the pickable `parent`: a plain visible name, no path in it, which Windows also takes. A folder already there is answered as it is. */
-export async function makeDir(parent: unknown, name: unknown, home = homedir()): Promise<Reply> {
-	const dir = await pickable(parent, home);
+export async function makeDir(parent: unknown, name: unknown, home = homedir(), hidden = platformHidden): Promise<Reply> {
+	const dir = await pickable(parent, home, hidden);
 	if (!dir) return OUTSIDE;
 	const clean = typeof name === "string" ? name.trim() : "";
 	if (!clean || Buffer.byteLength(clean) > 255 || RESERVED.test(clean) || clean.startsWith(".") || /[. ]$/.test(clean) || BAD_NAME.test(clean)) return BAD();
 	const path = join(dir, clean), made = await mkdir(path).then(() => true, (error: NodeJS.ErrnoException) => (error.code === "EEXIST" ? false : error));
 	if (made instanceof Error) return made.code === "ENAMETOOLONG" ? BAD() : no(403, "unwritable", `The folder could not be made: ${made.message}`);
-	const real = await pickable(path, home);
+	const real = await pickable(path, home, hidden);
 	if (!real && made) await rmdir(path).catch(() => {}); // a link swapped in after the check: take back the folder this call made
 	return real ? { status: 200, body: { path: real, created: made } } : no(409, "not_a_folder", `${clean} exists here and is not a folder you can pick.`);
 }
 
-export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir() }: SpawnDeps) {
+export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(), hidden = platformHidden }: SpawnDeps) {
+	const pick = (path: unknown) => pickable(path, home, hidden);
 	let busy = false;
 	const deploys = createDeploys();
 	const opened = async (workspace: string, tab: string, pane: string): Promise<Reply> => ({ status: 200, body: { workspace, tab, pane, ...(sessionAt && { session: await sessionAt(pane) }) } });
@@ -73,13 +83,13 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 		if (!ws) return home;
 		const here = await panes(run, ws.workspace_id);
 		const own = ws.worktree?.checkout_path ?? here.find((p) => p.tokens?.sb_role === "tower")?.cwd ?? here[0]?.cwd;
-		return (await pickable(own, home)) ?? (await realpath(home).catch(() => home));
+		return (await pick(own)) ?? (await realpath(home).catch(() => home));
 	};
 	/** Where a person starts from: home, its Desktop and Documents when they are pickable, and the folders the open bases (and the panes in them) work in. */
 	const places = async () => {
 		const root = await realpath(home).catch(() => home), seen = new Set<string>(), recent: string[] = [];
 		const keep = async (path: unknown) => {
-			const dir = await pickable(path, home);
+			const dir = await pick(path);
 			if (dir && dir !== root && !seen.has(dir)) (seen.add(dir), recent.push(dir));
 		};
 		for (const ws of await workspaces(run).catch(() => [])) {
@@ -87,7 +97,7 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 			await keep(ws.worktree?.checkout_path);
 			for (const pane of await panes(run, ws.workspace_id).catch(() => [])) await keep(pane.cwd);
 		}
-		const named = await Promise.all(["Desktop", "Documents"].map(async (name) => [name, await pickable(join(root, name), home)] as const));
+		const named = await Promise.all(["Desktop", "Documents"].map(async (name) => [name, await pick(join(root, name))] as const));
 		return { home: root, sep, places: named.flatMap(([name, path]) => (path ? [{ name, path }] : [])), recent: recent.slice(0, 10) };
 	};
 	const leadOf = async (workspaceId: string, tabId: unknown): Promise<Pane | undefined> => {
@@ -156,7 +166,7 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 			// The new member sits beside the tab's main, or its first pane, in the picked folder, else in that pane's.
 			const lead = await leadOf(ws.workspace_id, tabId);
 			if (!lead) return no(404, "not_found", "That tab is not open any more.");
-			const cwd = dir ?? (await pickable(lead.cwd, home)) ?? (await baseDir(ws.workspace_id));
+			const cwd = dir ?? (await pick(lead.cwd)) ?? (await baseDir(ws.workspace_id));
 			const split = await result(run, ["pane", "split", lead.pane_id, "--direction", "right", "--cwd", cwd, "--no-focus", "--env", "STRAW_BOSS_ROLE=member"]);
 			const paneId: string = split.pane.pane_id;
 			created = { tabId: lead.tab_id, paneId, close: ["pane", "close", paneId] };
@@ -183,14 +193,14 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 		return { status: reply.status, body: { ...(reply.body as object), step: d.failed!.step } };
 	};
 
-	return async function handle([scope, kind = ""]: string[], json: Record<string, unknown>): Promise<Reply> {
+	const route = async ([scope, kind = ""]: string[], json: Record<string, unknown>): Promise<Reply> => {
 		if (scope === "dirs" && !kind) {
 			const lead = json.path === undefined && typeof json.workspace === "string" && json.tab !== undefined ? await leadOf(json.workspace, json.tab) : undefined;
-			const dir = json.path !== undefined ? await pickable(json.path, home) : ((lead && (await pickable(lead.cwd, home))) ?? (await baseDir(json.workspace)));
+			const dir = json.path !== undefined ? await pick(json.path) : ((lead && (await pick(lead.cwd))) ?? (await baseDir(json.workspace)));
 			if (!dir) return OUTSIDE;
-			return listDirs(dir, home).then((body) => ({ status: 200, body }), () => no(403, "unreadable", "This folder cannot be read."));
+			return listDirs(dir, home, hidden).then((body) => ({ status: 200, body }), (error) => (error instanceof HiddenError ? Promise.reject(error) : no(403, "unreadable", "This folder cannot be read.")));
 		}
-		if (scope === "dirs" && kind === "new") return makeDir(json.path, json.name, home);
+		if (scope === "dirs" && kind === "new") return makeDir(json.path, json.name, home, hidden);
 		if (scope === "dirs" && kind === "places") return { status: 200, body: await places() };
 		if (scope === "open" && kind === "progress") {
 			const seen = deploys.get(json.id);
@@ -200,7 +210,7 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 		if (json.deploy !== undefined && !deploys.valid(json.deploy)) return no(400, "bad_request", "The opening's id is 8 to 64 letters, digits, - or _.");
 		const split = kind === "member" && json.tab !== undefined;
 		if (split && typeof json.tab !== "string") return no(400, "bad_request", "A tab is named by its id.");
-		const dir = split && json.dir === undefined ? undefined : await pickable(json.dir, home);
+		const dir = split && json.dir === undefined ? undefined : await pick(json.dir);
 		if (!dir && !(split && json.dir === undefined)) return OUTSIDE;
 		let prompt: string | undefined, label = "";
 		if (typeof json.prompt === "string" && json.prompt.trim()) {
@@ -224,4 +234,6 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 			busy = false;
 		}
 	};
+	// Windows could not say which folders are hidden: nothing is listed or opened on a guess.
+	return (parts: string[], json: Record<string, unknown>): Promise<Reply> => route(parts, json).catch((error) => (error instanceof HiddenError ? no(503, "unreadable", error.message) : Promise.reject(error)));
 }
