@@ -74,6 +74,11 @@ test("every kind's plaintext encodes to the vector's bytes and decodes back", ()
 	}
 });
 
+test("board plaintexts: the caps cut as the vectors say, and a truncated entry, trailing bytes, or a wrong field count is refused", () => {
+	assert.ok(V.boardCases.length >= 9);
+	for (const c of V.boardCases) assert.deepEqual(decodePlaintext("board", h(c.plaintext)), c.expect, c.name);
+});
+
 test("envelopes: built from the inputs they reproduce the bytes, and an independent reading with plain Node crypto agrees", () => {
 	for (const e of V.envelopes) {
 		const built = buildEnvelope({ team: h(e.team), epoch: e.epoch, teamKey: h(e.teamKey), head: { seq: e.head.seq, hash: h(e.head.hash) }, from: dev(e.from), seq: e.seq, ts: e.ts, kind: e.kind, to: e.to, plaintext: h(e.plaintext), id: h(e.id), nonce: h(e.nonce) });

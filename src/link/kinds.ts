@@ -4,7 +4,7 @@ import { bool, cutBytes, cutChars, dec, enc, int, list, readBool, readInt, readL
 // whole team, and its plaintext as a canonical structure. Every text field is cut to its limit, on the way out and on the way in, and a
 // plaintext never becomes a header.
 
-export type Kind = "tower" | "presence" | "confirm-request" | "confirm-answer" | "dialog-open" | "dialog-answer" | "dialog-close" | "unit-status" | "notice";
+export type Kind = "tower" | "presence" | "board" | "confirm-request" | "confirm-answer" | "dialog-open" | "dialog-answer" | "dialog-close" | "unit-status" | "notice";
 /** Which devices may send a kind: any member, only an attended one, or only an unattended one. */
 export type Sender = "any" | "attended" | "unattended";
 export interface KindRule { ephemeral: boolean; wholeTeam: boolean; sender: Sender }
@@ -16,6 +16,7 @@ export interface KindRule { ephemeral: boolean; wholeTeam: boolean; sender: Send
 export const KINDS: Record<Kind, KindRule> = {
 	tower: { ephemeral: false, wholeTeam: false, sender: "any" },
 	presence: { ephemeral: true, wholeTeam: true, sender: "any" },
+	board: { ephemeral: true, wholeTeam: true, sender: "any" },
 	"confirm-request": { ephemeral: false, wholeTeam: false, sender: "any" },
 	"confirm-answer": { ephemeral: false, wholeTeam: false, sender: "any" },
 	"dialog-open": { ephemeral: false, wholeTeam: false, sender: "unattended" },
@@ -39,6 +40,12 @@ export const LIMITS = {
 	/** Not in the spec: a presence names at most this many workspaces, and each at most this many tabs; the rest is cut when it is decoded. */
 	presenceWorkspaces: 32,
 	presenceTabs: 64,
+	/** A board (spec, Work board): entries, characters of a label or name, of `now`, items per entry, characters of an item. */
+	boardEntries: 24,
+	boardLabel: 40,
+	boardNow: 120,
+	boardItems: 8,
+	boardItem: 80,
 } as const;
 const short = (s: string) => cutBytes(s, LIMITS.short);
 
@@ -46,6 +53,9 @@ export interface TowerMessage { fromWorkspace: string; toWorkspace: string; repl
 export interface TabState { label: string; state: string }
 export interface WorkspaceState { label: string; tower: string; tabs: TabState[] }
 export interface Presence { label: string; headSeq: number; headHash: Buffer; workspaces: WorkspaceState[] }
+/** One main's work board entry as it crosses the wire: `id` is the first 8 bytes of sha256(device id ‖ session id), hex, so no local session id leaves the computer. */
+export interface BoardWireEntry { id: string; workspace: string; tab: string; name: string; now: string; updated: number; items: { t: string; done: boolean }[] }
+export interface Board { entries: BoardWireEntry[] }
 export interface ConfirmRequest { dialogId: string; digest: string; tool: string; args: string; tower: string }
 export interface ConfirmAnswer { dialogId: string; digest: string; allow: boolean; answerId: string }
 export interface DialogOpen { dialogId: string; digest: string; owner: string; dialog: string }
@@ -57,6 +67,7 @@ export interface Notice { kind: string; unit: string; text: string }
 export interface Plaintexts {
 	tower: TowerMessage;
 	presence: Presence;
+	board: Board;
 	"confirm-request": ConfirmRequest;
 	"confirm-answer": ConfirmAnswer;
 	"dialog-open": DialogOpen;
@@ -70,6 +81,10 @@ export interface Plaintexts {
 const encoders: { [K in Kind]: (p: Plaintexts[K]) => Buffer } = {
 	tower: (p) => enc(str(short(p.fromWorkspace)), str(short(p.toWorkspace)), bool(p.replyExpected), str(cutBytes(p.text, LIMITS.towerText))),
 	presence: (p) => enc(str(short(p.label)), int(p.headSeq), p.headHash, list(p.workspaces.map((w) => enc(str(short(w.label)), str(short(w.tower)), list(w.tabs.map((t) => enc(str(short(t.label)), str(short(t.state))))))))),
+	board: (p) => enc(list(p.entries.slice(0, LIMITS.boardEntries).map((e) => enc(
+		str(short(e.id)), str(cutChars(e.workspace, LIMITS.boardLabel)), str(cutChars(e.tab, LIMITS.boardLabel)), str(cutChars(e.name, LIMITS.boardLabel)), str(cutChars(e.now, LIMITS.boardNow)), int(e.updated),
+		list(e.items.slice(0, LIMITS.boardItems).map((i) => enc(str(cutChars(i.t, LIMITS.boardItem)), bool(i.done)))),
+	)))),
 	"confirm-request": (p) => enc(str(short(p.dialogId)), str(short(p.digest)), str(short(p.tool)), str(cutChars(p.args, LIMITS.toolArguments)), str(short(p.tower))),
 	"confirm-answer": (p) => enc(str(short(p.dialogId)), str(short(p.digest)), bool(p.allow), str(short(p.answerId))),
 	"dialog-open": (p) => enc(str(short(p.dialogId)), str(short(p.digest)), str(short(p.owner)), str(cutBytes(p.dialog, LIMITS.dialog))),
@@ -96,6 +111,16 @@ const decoders: { [K in Kind]: (b: Buffer) => Plaintexts[K] } = {
 				return { label: s(wl), tower: s(tower), tabs: readList(tabs).slice(0, LIMITS.presenceTabs).map((t) => { const [tl, st] = dec(t, 2) as [Buffer, Buffer]; return { label: s(tl), state: s(st) }; }) };
 			}),
 		};
+	},
+	board: (b) => {
+		const [entries] = dec(b, 1) as [Buffer];
+		return { entries: readList(entries).slice(0, LIMITS.boardEntries).map((e) => {
+			const [id, workspace, tab, name, now, updated, items] = dec(e, 7) as [Buffer, Buffer, Buffer, Buffer, Buffer, Buffer, Buffer];
+			return {
+				id: s(id), workspace: cutChars(readStr(workspace), LIMITS.boardLabel), tab: cutChars(readStr(tab), LIMITS.boardLabel), name: cutChars(readStr(name), LIMITS.boardLabel), now: cutChars(readStr(now), LIMITS.boardNow), updated: readInt(updated),
+				items: readList(items).slice(0, LIMITS.boardItems).map((i) => { const [t, done] = dec(i, 2) as [Buffer, Buffer]; return { t: cutChars(readStr(t), LIMITS.boardItem), done: readBool(done) }; }),
+			};
+		}) };
 	},
 	"confirm-request": (b) => {
 		const [id, digest, tool, args, tower] = dec(b, 5) as [Buffer, Buffer, Buffer, Buffer, Buffer];

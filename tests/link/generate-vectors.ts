@@ -44,6 +44,28 @@ function plainJson(kind: Kind): unknown {
 	return kind === "presence" ? { ...SAMPLE.presence, headHash: hex(SAMPLE.presence.headHash) } : p;
 }
 
+const boardEntry = (n: number) => ({ id: `${n}`.padStart(16, "0"), workspace: "w", tab: "t", name: "n", now: "x", updated: NOW + n, items: [] as { t: string; done: boolean }[] });
+/** The limits of a board's plaintext, as another implementation has to cut them: plaintext in, what a decoder gives back out (null for a structure it refuses). */
+function boardCases() {
+	const long = (n: number, c = "あ") => c.repeat(n);
+	const full = { entries: [{ id: "0123456789abcdef", workspace: long(45), tab: long(45), name: long(45), now: long(130), updated: NOW, items: Array.from({ length: 10 }, (_, i) => ({ t: long(90), done: i % 2 === 0 })) }] };
+	const cut = { entries: [{ ...full.entries[0]!, workspace: long(40), tab: long(40), name: long(40), now: long(120), items: full.entries[0]!.items.slice(0, 8).map((i) => ({ ...i, t: long(80) })) }] };
+	const mk = (name: string, plaintext: Buffer, expect: unknown) => ({ name, plaintext: hex(plaintext), expect });
+	const good = encodePlaintext("board", SAMPLE.board);
+	const entryFields = (...extra: Buffer[]) => enc(str("0123456789abcdef"), str("w"), str("t"), str("n"), str("x"), int(NOW), list([]), ...extra);
+	return [
+		mk("an empty board", encodePlaintext("board", { entries: [] }), { entries: [] }),
+		mk("a sample board", good, SAMPLE.board),
+		mk("long labels, a long now, and too many items are cut", encodePlaintext("board", full), cut),
+		mk("26 entries are cut to 24", encodePlaintext("board", { entries: Array.from({ length: 26 }, (_, i) => boardEntry(i)) }), { entries: Array.from({ length: 24 }, (_, i) => boardEntry(i)) }),
+		mk("a truncated entry", good.subarray(0, good.length - 3), null),
+		mk("trailing bytes", Buffer.concat([good, Buffer.from([0])]), null),
+		mk("an entry with a field too many", enc(list([entryFields(str("extra"))])), null),
+		mk("an entry with a field missing", enc(list([enc(str("0123456789abcdef"), str("w"), str("t"), str("n"), str("x"), int(NOW))])), null),
+		mk("an item whose done flag is 2", enc(list([enc(str("0123456789abcdef"), str("w"), str("t"), str("n"), str("x"), int(NOW), list([enc(str("a"), Buffer.from([2]))]))])), null),
+	];
+}
+
 export function generateVectors() {
 	const devices = Object.fromEntries(WHO.map((w) => {
 		const d = DEVICES[w];
@@ -113,13 +135,19 @@ export function generateVectors() {
 		seals: [sealCase("bob", 1, teamKey(1), "seal-1"), sealCase("carol", 3, teamKey(3), "seal-2")],
 		request: { team: hex(TEAM), method: requestOf.method, path: requestOf.path, time: requestOf.time, body: hex(requestOf.body), signed: hex(requestBytes(requestOf)), signer: "alice", sig: hex(signBytes(DEVICES.alice.signKey, requestBytes(requestOf))) },
 		kinds: (Object.keys(KINDS) as Kind[]).map((kind) => ({ kind, rule: KINDS[kind], value: plainJson(kind), plaintext: hex(encodePlaintext(kind, SAMPLE[kind] as never)) })),
+		boardCases: boardCases(),
 		limits: [
 			{ kind: "tower", field: "text", unit: "bytes", max: 192 * 1024 },
 			{ kind: "confirm-request", field: "args", unit: "characters", max: 12_000 },
 			{ kind: "unit-status", field: "report", unit: "bytes", max: 4096 },
 			{ kind: "notice", field: "text", unit: "bytes", max: 1024 },
+			{ kind: "board", field: "entries", unit: "entries", max: 24 },
+			{ kind: "board", field: "workspace, tab, name", unit: "characters", max: 40 },
+			{ kind: "board", field: "now", unit: "characters", max: 120 },
+			{ kind: "board", field: "items", unit: "items", max: 8 },
+			{ kind: "board", field: "item text", unit: "characters", max: 80 },
 		],
-		envelopes: [built("tower", "alice", [DEVICES.bob.id], 1, "tower"), built("presence", "alice", [], 0, "presence"), built("dialog-open", "dave", [DEVICES.alice.id, DEVICES.bob.id], 4, "dialog")],
+		envelopes: [built("tower", "alice", [DEVICES.bob.id], 1, "tower"), built("presence", "alice", [], 0, "presence"), built("board", "alice", [], 0, "board"), built("dialog-open", "dave", [DEVICES.alice.id, DEVICES.bob.id], 4, "dialog")],
 		receive: envelopeCases().map((c) => ({ name: c.name, envelope: hex(c.envelope), state: c.state, expect: c.expect })),
 		roster: {
 			log: logHex,
