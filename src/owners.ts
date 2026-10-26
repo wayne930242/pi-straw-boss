@@ -145,4 +145,7 @@ export const uiPrompt = contract("pi-ui", UI_PREFIX, undefined, true, SELECT_SHA
 /** The gate of a Straw Link remote turn (src/link/gate.ts): its confirmation before a tool call the allowlist does not cover. A gate and not a twin: it names the call it asks about by toolCallId, and it is the only dialog of that call. */
 export const GATE_PREFIX = "straw-link:gate";
 export const linkGate = contract("straw-link-gate", GATE_PREFIX, undefined, true);
-export const OWNERS: OwnerAdapter[] = [robotHand, secretDrop, rpiv, mcpAdapter, piCode, uiPrompt, linkGate];
+/** The approval dialog of a `link_request` (src/link/approval.ts): owned by the tool whose call it asks about, so only that call in flight can open it. */
+export const REQUEST_PREFIX = "straw-link:request";
+export const linkRequest = contract("straw-link-request", REQUEST_PREFIX, "link_request");
+export const OWNERS: OwnerAdapter[] = [robotHand, secretDrop, rpiv, mcpAdapter, piCode, uiPrompt, linkGate, linkRequest];

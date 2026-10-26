@@ -8,6 +8,7 @@ import { PayloadTooLargeError, RelayError, UnauthorizedError } from "./errors.ts
 import { type ConfirmAnswer, type ConfirmRequest, encodePlaintext, LIMITS, type Presence, type TowerMessage, type WorkspaceState } from "./kinds.ts";
 import { type AdminRun, type InviteView, type JoinRequestView, type JoinView, type Prefill, TeamAdmin, type TeamView } from "./admin.ts";
 import { Outbox, type QueuedEnvelope } from "./outbox.ts";
+import { Requests } from "./request.ts";
 import type { RelayClient } from "./relay.ts";
 import { decodeEntry, encodeEntry, replayEncoded, type RosterEntry, type RosterState } from "./roster.ts";
 import { inside, nearestTeams, oneTeamEach, resolveDevice, towersFor, type MemberRef, type NetView } from "./routing.ts";
@@ -33,6 +34,8 @@ export interface HolderOptions {
 	stateDir?: string;
 	home?: string;
 	agentDir?: string;
+	/** Whether this computer is attended (no policy file makes it unattended): `link_request` and the GUI's team changes are refused otherwise. Default true. */
+	attended?: () => boolean;
 	/** One reading of Herdr and pi-intercom; `withTabs` adds every workspace's tabs (a presence needs them, a delivery does not). */
 	net: (withTabs?: boolean) => Promise<NetView>;
 	relay: (url: string, device: DeviceKeys) => RelayPort;
@@ -146,6 +149,8 @@ export class LinkHolder {
 	private waiting = new Map<string, { team: string; from: string; since: number; offered: boolean }>();
 	/** What the GUI does to teams (admin.ts). */
 	readonly admin: TeamAdmin;
+	/** The link actions agents ask for, waiting for the boss (request.ts). */
+	readonly requests: Requests;
 
 	constructor(o: HolderOptions) {
 		this.o = o;
@@ -163,6 +168,7 @@ export class LinkHolder {
 			},
 			notify: (text, level) => o.notify(text, level), log: (entry) => o.store.log(entry),
 		});
+		this.requests = new Requests({ admin: this.admin, teams: () => this.admin.teamViews(), now: () => this.now(), attended: o.attended ?? (() => true), home: o.home ?? "" });
 	}
 
 	get active(): boolean {
