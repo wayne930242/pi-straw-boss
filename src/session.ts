@@ -1,3 +1,5 @@
+import { join } from "node:path";
+import { removeEntry } from "./board.ts";
 import type { Briefing } from "./briefing.ts";
 import type { Control } from "./closemain.ts";
 import type { Digest } from "./digest.ts";
@@ -172,6 +174,9 @@ export function registerSession(kit: Kit, { briefing, roles, presence, membershi
 	});
 
 	pi.on("session_shutdown", async (event) => {
+		// This session's board entry goes with the session on quit, new, resume, and fork (its id is done in this process); a reload keeps it.
+		if (event.reason !== "reload" && s.boardId) removeEntry(join(guiDir, "board"), s.boardId);
+		s.boardId = undefined;
 		if (s.closing) roles.forget(); // closed on purpose: a Herdr restore does not bring it back (roles.ts)
 		// A closed session, and a tower that quits however it was asked, take their pane with them (and an emptied tab); a /reload, /new, resume or fork keeps it.
 		if ((s.closing ? !s.closing.keepPane : s.isTower) && event.reason === "quit" && env.HERDR_PANE_ID) cfg.later(process.pid, ["pane", "close", env.HERDR_PANE_ID]);

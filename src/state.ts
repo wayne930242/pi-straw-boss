@@ -77,6 +77,8 @@ export interface State {
 	viewer: Channel | undefined;
 	/** `remote:<sender device id>` while the run is a Straw Link remote turn: what a message to a local session carries in its header as `origin=`. */
 	remoteOrigin: string | undefined;
+	/** The session id this session wrote its board entry under (board_set): pi-intercom clears the id from the environment before the shutdown hook runs, so it is remembered when written. */
+	boardId: string | undefined;
 	// Closing: `quit` is pi's shutdown for this session, `closing` says it was asked for (and whether the pane stays).
 	quit: (() => void) | undefined;
 	closing: { keepPane: boolean } | undefined;
@@ -102,7 +104,7 @@ export function createKit(pi: ExtensionAPI, cfg: Config): Kit {
 		// SAFETY: as `c` above.
 		at: undefined as unknown as Place,
 		mainId: undefined, pinned: undefined, info: {}, ownName: "", openedBy: undefined, restoredOpener: undefined, kids: new Set(),
-		ui: undefined, hasUI: false, saved: {}, file: undefined, restored: false, queue: Promise.resolve(), dashboard: undefined, headWatch: undefined, hub: undefined, gui: undefined, viewer: undefined, quit: undefined, closing: undefined, remoteOrigin: undefined,
+		ui: undefined, hasUI: false, saved: {}, file: undefined, restored: false, queue: Promise.resolve(), dashboard: undefined, headWatch: undefined, hub: undefined, gui: undefined, viewer: undefined, quit: undefined, closing: undefined, remoteOrigin: undefined, boardId: undefined,
 	};
 	const me = () => env.PI_INTERCOM_SESSION_ID ?? "";
 	const role = (): Role | undefined => {

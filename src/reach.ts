@@ -3,6 +3,7 @@ import { sessionMark } from "./dashboard.ts";
 import { type Kind, type Party, stamp } from "./header.ts";
 import { headOf, isSub, type Pane, panes, parentOf, type Session, towerModel, workspaces, type Workspace } from "./herdr.ts";
 import type { Kit, Scope, SendResult } from "./state.ts";
+import { inside } from "./link/routing.ts";
 import { ensureTower } from "./towertab.ts";
 
 const OUTBOX = "intercom:outbox-request";
@@ -156,10 +157,12 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit) {
 	};
 
 	/** Every workspace's tower for a tower to choose from: who hears a message for it, what that session is doing, and what each tab is working on. */
-	const towerList = async () => {
+	const towerList = async (within?: { project: string | undefined }) => {
 		const net = await read(), mark = (x: Session) => ({ id: x.id, name: nameOf(x), state: sessionMark(x, net.ps.find((p) => p.pane_id === x.herdrLocation?.paneId)) });
 		const mine = net.all.find((w) => w.workspace_id === s.at.workspaceId);
-		const towers = stationsOf(net).map((st) => {
+		// In a remote turn only the workspaces inside the project the senders' teams bind (none when they bind several).
+		const bound = (workspaceId: string) => !within || (within.project !== undefined && net.ps.some((p) => p.workspace_id === workspaceId && p.cwd && inside(p.cwd, within.project!)));
+		const towers = stationsOf(net).filter((st) => bound(st.workspace.workspace_id)).map((st) => {
 			const tabs = Object.values(Object.groupBy(st.members, (m) => m.tab.id)).map((group = []) => ({ label: group[0]!.tab.label, main: nameOf(group.find((m) => m.role === "main")?.s) || null, members: group.filter((m) => m.role === "member").map((m) => nameOf(m.s)) }));
 			return { workspace: { id: st.workspace.workspace_id, label: st.workspace.label }, head: st.head, self: st.self, reach: st.via, sessions: st.sessions.map(mark), tabs };
 		});
@@ -184,6 +187,6 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit) {
 		const targets = chosen.flatMap((st) => st.sessions.map((x) => (noTower(st) && notes.set(x.id, noTower(st)!), x)));
 		return report(await deliver(targets, message, "tower_send", workspace === undefined ? "towers" : "tower", reply, net), notes, workspace === undefined ? "towers" : "tower");
 	};
-	return { send, post, callTower, openTower, status, broadcast, towerList, towerSend };
+	return { send, post, callTower, openTower, status, broadcast, towerList, towerSend, read };
 }
 export type Reach = ReturnType<typeof createReach>;
