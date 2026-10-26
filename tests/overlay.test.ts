@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Mark } from "../src/dashboard.ts";
+import type { Mark } from "../src/netdata.ts";
 import type { Net, Unit } from "../src/net.ts";
 import { type Alert, alertsOf, arrivals, rankOf, unitOf } from "../gui/alerts.ts";
 import type { Monitor } from "../src/monitors.ts";

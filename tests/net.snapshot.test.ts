@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { said } from "../gui/log.ts";
-import type { Row } from "../src/dashboard.ts";
+import type { Row } from "../src/netdata.ts";
 import type { Pane, Session, Workspace } from "../src/herdr.ts";
 import { buildNet, type Net, netSource, type Ref } from "../src/net.ts";
 

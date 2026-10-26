@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { sessionMark } from "./dashboard.ts";
+import { sessionMark } from "./netdata.ts";
 import { type Kind, type Party, stamp } from "./header.ts";
 import { headOf, isSub, type Pane, panes, parentOf, type Session, towerModel, workspaces, type Workspace } from "./herdr.ts";
 import type { Kit, Scope, SendResult } from "./state.ts";

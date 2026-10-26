@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { GAP_MS, TICKS, trackActivity, WINDOW_MS } from "../src/activity.ts";
 import { todoOfBranch, todoOk } from "../src/todo.ts";
-import type { Mark } from "../src/dashboard.ts";
+import type { Mark } from "../src/netdata.ts";
 import type { Net, Unit } from "../src/net.ts";
 
 const unit = (key: string, mark: Mark, note?: string, subs: Unit[] = []): Unit => ({ id: key, key, control: true, name: `${key}-name`, role: "main", mark, ...(note && { note }), subs });

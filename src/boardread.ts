@@ -1,5 +1,5 @@
 import { clean, joinLocal, type LiveMain, purge, readEntries } from "./board.ts";
-import { sessionMark } from "./dashboard.ts";
+import { sessionMark } from "./netdata.ts";
 import type { Pane, Session } from "./herdr.ts";
 import { inside } from "./link/routing.ts";
 import type { Link } from "./link/runtime.ts";

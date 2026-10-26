@@ -1,4 +1,4 @@
-import type { Mark } from "../src/dashboard.ts";
+import type { Mark } from "../src/netdata.ts";
 import type { Unit } from "../src/net.ts";
 import { m } from "./paraglide/messages.js";
 import { aim, aimOpening, html, LABEL, mark, PLATE, sync, text, urgent } from "./render.ts";

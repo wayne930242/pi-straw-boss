@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { afterEach, mock, test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { collectNet } from "../src/net.ts";
-import { collect, ownFile, type Row, render, SAFETY_MS, type Snapshot, startDashboard, subagents, type Tone } from "../src/dashboard.ts";
+import { collect, render, SAFETY_MS, type Snapshot, startDashboard, type Tone } from "../src/dashboard.ts";
+import { ownFile, type Row, subagents } from "../src/netdata.ts";
 import { ARROW, herdrWorld, MARK, TOWER_LABEL } from "../src/herdr.ts";
 import { type FakeTui, settle, until, World } from "./fakes.ts";
 

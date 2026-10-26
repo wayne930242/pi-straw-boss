@@ -1,5 +1,5 @@
 import type { Pending } from "../src/ask.ts";
-import type { Mark } from "../src/dashboard.ts";
+import type { Mark } from "../src/netdata.ts";
 import type { Shelf } from "../src/documents.ts";
 import type { Item, Todo } from "../src/items.ts";
 import type { Queued } from "../src/net.ts";
