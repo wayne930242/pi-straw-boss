@@ -16,7 +16,7 @@ import { mountSlash } from "./slash.ts";
 export const MAX_TEXT = 16_384;
 type Note = [tone: string, text: string];
 export const ENDING = /^\s*\/(quit|exit|new|resume|fork|clone|import|reload)(?=\s|$)/;
-export type Post = (action: "input" | "keys" | "focus" | "answer" | "mirror" | "commands", body: Record<string, unknown>) => Promise<Answer>;
+export type Post = (action: "input" | "keys" | "focus" | "answer" | "mirror" | "commands" | "dequeue", body: Record<string, unknown>) => Promise<Answer>;
 type Flight = { sent?: string; answer: Promise<Answer> };
 // Sends on their way, by session key. They outlive a composer replaced meanwhile (the route left and came back), whose successor waits for
 // them before it sends again and settles its own box, so text is neither shown as unsent after it went nor sent twice.
@@ -45,6 +45,8 @@ export const recall = (raw: string | null): Note | undefined => {
 export const confirmed = (box: string, sent: string) => (box !== "" && !box.startsWith(sent) ? m.sent_edited() : "");
 /** What stays in the box once `sent` was accepted: what was typed after it, or everything when the sent part was edited meanwhile. */
 export const settle = (now: string, sent: string) => (now.startsWith(sent) ? now.slice(sent.length).replace(/^\n/, "") : now);
+/** The box after the queue is taken back: the pulled messages in front of what was already typed, a blank line between, as pi puts them in its own editor. */
+export const withPulled = (pulled: string, draft: string) => (draft.trim() ? `${pulled}\n\n${draft}` : pulled);
 /** Why nothing can be sent right now, or undefined. */
 export function blocked(u: Unit): string | undefined {
 	if (!u.online) return m.blocked_offline();
@@ -134,6 +136,26 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 		follow.hidden = stop.hidden = !working || Boolean(why);
 		[follow.disabled, stop.disabled] = [send.disabled, busy]; // a follow-up needs a message too
 	}
+	/** The queue's Edit: asks the server to take the session's queued messages back (pi's Alt+Up, src/pull.ts); what comes back is one text, put in front of what is already in the box. Nothing is cleared on any refusal. */
+	async function takeQueue() {
+		if (busy || asking) return;
+		const why = blocked(unit);
+		if (why) return say(why, "error");
+		(busy = true), draw(), say(m.edit_taking());
+		try {
+			const r = await post("dequeue", {});
+			if (!form.isConnected) return;
+			if (!r.ok) return say(r.status === 504 ? m.unsure() : (r.body.reason ?? m.refused({ status: r.status })), "error");
+			if (typeof r.body.text !== "string") return say(m.edit_none());
+			box.value = withPulled(r.body.text, box.value);
+			save(), grow(), box.focus(), (box.selectionStart = box.selectionEnd = box.value.length);
+			say(m.edit_taken(), "ok");
+		} catch {
+			say(m.unsure(), "error");
+		} finally {
+			(busy = false), draw();
+		}
+	}
 	/** Uploads the files one by one and puts each stored path where the cursor is, as a word of its own. */
 	async function attachAll(files: File[]) {
 		if (!files.length || busy) return;
@@ -188,5 +210,5 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 		sessionStorage.removeItem(noteKey);
 		if (kept) say(kept[1], kept[0]);
 	});
-	return { box, update: (next: Unit) => ((unit = next), draw()), ready: () => !blocked(unit) };
+	return { box, update: (next: Unit) => ((unit = next), draw()), ready: () => !blocked(unit), takeQueue };
 }

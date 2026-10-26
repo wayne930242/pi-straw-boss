@@ -1,12 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Doc, type Fields, fieldsOk, listenDocs, submitForm } from "./documents.ts";
 import { type Answer, type Bus, type Dialog, OWNERS, type OwnerAdapter, type Verdict } from "./owners.ts";
 import { type Cmd, listCommands, MAX_PREFIX } from "./commands.ts";
 import type { Queued } from "./net.ts";
 import { type Editor, probeEditor } from "./probe.ts";
+import { MAX_PULL, type Pull, pulled } from "./pull.ts";
 import { type Monitor, trackMonitors } from "./monitors.ts";
 import { todoOfBranch, type TodoSum } from "./todo.ts";
 
@@ -27,12 +28,16 @@ import { todoOfBranch, type TodoSum } from "./todo.ts";
 // typed while the agent works (`input` with a streaming behavior) and drops one when its user message starts; a queue pi emptied another
 // way (Esc, Alt+Up) clears at the next check. And it relays the session's background monitors (monitors.ts) and its todo list in short (todo.ts), read
 // from the branch after each tool call and turn, and after a move in the tree.
+// A queue the page takes back (`pull`, pull.ts) is pi's own Alt+Up: the server presses it between a `begin` and a `finish`, and the bridge reads the pulled
+// messages off the editor, leaves the draft that was there, and hands over only the messages.
 // A secret_drop is answered in the terminal only (SB-F001: intercom identities are self-reported, so a relayed secret dialog could be answered
 // into an impostor's hands): the bridge never relays a secret dialog, and refuses any answer to one.
 
 export const REGISTER = "intercom:extension-register";
 // pi-intercom has no unregister: every host the session joins stays one of its channels, and the broker takes at most 32 per session (the tab, the viewer, and the hub's own take a few).
 const VERDICT_MS = 2000, POLL_MS = 2000, KEEP_MS = 120_000, KEEP = 16, MAX_GUIS = 16, MAX_MESSAGE = 15 * 1024;
+/** `finish` waits this long (in 50 ms steps) for pi to take its queue back after the key; a `begin` ticket is good for the same time and more. */
+const PULL_WAIT_MS = 1500, PULL_STEP_MS = 50, TICKET_MS = 10_000;
 /** At most this many queued messages go to the GUI (the oldest, which are delivered first), each cut to this many characters. */
 export const MAX_QUEUED = 5, QUEUED_TEXT = 200;
 const clipQueued = (text: string) => (text.length > QUEUED_TEXT ? `${text.slice(0, QUEUED_TEXT - 1)}…` : text);
@@ -49,14 +54,15 @@ export interface FormReply { version: 1; type: "form-result"; bridgeId: string; 
 export interface CloseResult { version: 1; type: "close-result"; bridgeId: string; reqId: string; accepted: boolean; reason?: string }
 /** `reason`: why the session cannot be stashed now; none when it can. */
 export interface StashCheckResult { version: 1; type: "stash-check-result"; bridgeId: string; reqId: string; reason?: string }
-export type ToHub = Dialogs | Ack | ProbeResult | FormReply | CommandsResult | CloseResult | StashCheckResult;
+export interface PullResult extends Pull { version: 1; type: "pull-result"; bridgeId: string; reqId: string }
+export type ToHub = Dialogs | Ack | ProbeResult | FormReply | CommandsResult | CloseResult | StashCheckResult | PullResult;
 export interface FormMessage { version: 1; type: "form"; to: string; id: string; answerId: string; fields: Fields }
 /** An answer on the wire: never a secret's `value`. */
 export interface AnswerMessage extends Omit<Answer, "value"> { version: 1; type: "answer"; to: string }
 /** The hub when it runs in this session: it takes what a remote bridge would publish, from this session's id. */
 export interface LocalHub { receive(from: string, msg: ToHub): void }
 /** What the hub calls on the bridge of its own session. */
-export interface Bridge { deliver(msg: AnswerMessage, reply: (ack: Ack) => void): void; sync(): void; probe(): Editor; commands(prefix: string): Cmd[]; form(msg: FormMessage, reply: (r: FormReply) => void): void; close(keepPane: boolean, ifStashable?: boolean): { accepted: boolean; reason?: string }; stashCheck(): string | undefined }
+export interface Bridge { deliver(msg: AnswerMessage, reply: (ack: Ack) => void): void; sync(): void; probe(): Editor; commands(prefix: string): Cmd[]; form(msg: FormMessage, reply: (r: FormReply) => void): void; close(keepPane: boolean, ifStashable?: boolean): { accepted: boolean; reason?: string }; stashCheck(): string | undefined; pull(step: "begin" | "finish", ticket?: string): Pull | Promise<Pull> }
 interface Channel { snapshot(): { connected: boolean; owner?: { sessionId: string; epoch: string } }; publish(payload: unknown, options?: { audience?: "owner" | "capable" }): void }
 interface Rec { adapter: OwnerAdapter; d: Dialog; state: "open" | "settling" | "unknown" | "closed"; answerId?: string; accepted?: boolean; by?: string; at?: number; last?: Ack; waiting: ((ack: Ack) => void)[] }
 type Event = { type: string; fromSessionId?: string; owner?: { sessionId: string; epoch: string }; payload?: Record<string, unknown> };
@@ -67,6 +73,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 	const chans = new Map<string, Channel>(), me = () => env.PI_INTERCOM_SESSION_ID ?? "";
 	let g: string | undefined, gpid = 0, seen: number | undefined, poll: ReturnType<typeof setInterval> | undefined, offs: (() => void)[] = [], warned = false;
 	let file: () => string | undefined = () => undefined, tell = (_text: string) => {}, editor = (): Editor => ({ editor: "unknown" }), docs: Doc[] = [];
+	let ticket: { id: string; before: string; at: number } | undefined, ui: Pick<ExtensionContext, "hasUI" | "ui"> | undefined;
 	let queued: Queued[] = [], waits = () => false, idle = () => true, todo: TodoSum | undefined, branch = (): readonly unknown[] => [];
 	const open = () => [...recs.values()].filter((r) => r.state !== "closed");
 	const alive = () => { try { return gpid > 0 && (process.kill(gpid, 0), true); } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; } }; // a server that died without removing gui.json gets no probe answers
@@ -127,7 +134,31 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 		if (p.type === "probe" && p.to === bridgeId && from === g && alive() && typeof p.probeId === "string" && p.probeId.length <= 64) send(from, { version: 1, type: "probe-result", bridgeId, probeId: p.probeId, ...editor() });
 		if (p.type === "close" && p.to === bridgeId && from === g && alive() && typeof p.reqId === "string" && p.reqId.length <= 64 && typeof p.keepPane === "boolean") send(from, { version: 1, type: "close-result", bridgeId, reqId: p.reqId, ...shut(p.keepPane, p.ifStashable === true) });
 		if (p.type === "stash-check" && p.to === bridgeId && from === g && alive() && typeof p.reqId === "string" && p.reqId.length <= 64) send(from, { version: 1, type: "stash-check-result", bridgeId, reqId: p.reqId, ...((r) => (r ? { reason: r } : {}))(stashCheck()) });
+		if (p.type === "pull" && p.to === bridgeId && from === g && alive() && typeof p.reqId === "string" && p.reqId.length <= 64 && (p.step === "begin" || (p.step === "finish" && typeof p.ticket === "string" && p.ticket.length <= 64))) void pull(p.step, p.ticket as string | undefined).then((r) => send(from, { version: 1, type: "pull-result", bridgeId, reqId: p.reqId as string, ...r }));
 		if (p.type === "commands" && p.to === bridgeId && from === g && alive() && typeof p.reqId === "string" && p.reqId.length <= 64 && typeof p.prefix === "string" && p.prefix.length <= MAX_PREFIX) send(from, { version: 1, type: "commands-result", bridgeId, reqId: p.reqId, commands: listCommands(pi, p.prefix) });
+	};
+	/** One step of taking the queue back (pull.ts). The editor's text is read and set through ctx.ui, which a session without a UI (print mode) lacks. */
+	const text = (): string | undefined => { try { const t = ui?.hasUI ? ui.ui.getEditorText() : undefined; return typeof t === "string" ? t : undefined; } catch { return undefined; } };
+	const pull = async (step: "begin" | "finish", id?: string): Promise<Pull> => {
+		if (step === "begin") {
+			const before = text();
+			if (before === undefined) return { reason: "no_editor" };
+			if (!waits()) return { pending: false };
+			ticket = { id: randomUUID(), before, at: Date.now() };
+			return { pending: true, ticket: ticket.id };
+		}
+		const t = ticket;
+		if (!t || t.id !== id || Date.now() - t.at > TICKET_MS) return { reason: "stale" };
+		ticket = undefined;
+		for (let waited = 0; waits() && waited < PULL_WAIT_MS; waited += PULL_STEP_MS) await new Promise((r) => setTimeout(r, PULL_STEP_MS));
+		if (waits()) return { reason: "not_taken" }; // the key did not reach pi's dequeue (another binding?), or pi was busy
+		if (queued.length) requeue([]); // the page's queue line goes now, not at the next 2 s check
+		const now = text(), got = now === undefined ? undefined : pulled(t.before, now);
+		if (!got) return { reason: "no_editor" };
+		if ("reason" in got || "empty" in got) return got;
+		if (Buffer.byteLength(JSON.stringify(got.text)) > MAX_PULL) return { reason: "too_large" }; // stays in pi's editor
+		try { ui!.ui.setEditorText(t.before); } catch { return { reason: "not_cleared" }; } // handing it over while it stays in the editor would send it twice
+		return { text: got.text };
 	};
 	/** Why this session cannot be stashed and resumed as it is now: a turn or a queue, a dialog, or a monitor that a resume would not bring back. */
 	const stashCheck = () => {
@@ -241,6 +272,8 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 		todo = todoOfBranch(branch());
 		tell = (text) => ctx.hasUI && ctx.ui.notify(text, "warning");
 		editor = () => probeEditor(ctx);
+		ui = ctx;
+		ticket = undefined;
 		monitors = trackMonitors(bus, () => push());
 		offs = [...OWNERS.map((o) => o.listen(bus, report)), listenDocs(bus, (d) => ((docs = d), changed())), () => monitors?.off()];
 		seen = -1; // a new session file (/new, /resume) is told to the server at once
@@ -271,5 +304,5 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close }: { env:
 		offs.splice(0).forEach((off) => off());
 		(clearInterval(poll), (poll = undefined));
 	});
-	return { deliver, sync: () => ((seen = -1), follow()), probe: () => editor(), commands: (prefix) => listCommands(pi, prefix), form, close: shut, stashCheck };
+	return { deliver, sync: () => ((seen = -1), follow()), probe: () => editor(), commands: (prefix) => listCommands(pi, prefix), form, close: shut, stashCheck, pull };
 }

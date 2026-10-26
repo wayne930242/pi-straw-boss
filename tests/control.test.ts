@@ -232,6 +232,7 @@ async function answering({ reply = { status: 200, body: { outcome: "accepted" } 
 		ended: (key: string, dialog: string) => (key === "sess-1" && dialog === "d-closed" ? { status: 200, body: { outcome: "stale", by: "local" } } : undefined),
 		send: async (_key: string, t: Target, a: { answerId: string }) => (sent.push({ to: t.bridgeId, ...a }), stored.set(a.answerId, await reply), reply),
 		commands: async (_key: string, prefix: string) => (prefix === "silent" ? undefined : [{ name: `${prefix}x`, source: "skill" }]),
+		pull: async (_key: string, step: string) => (step === "begin" ? { pending: true, ticket: "T" } : { text: "queued text" }),
 	};
 	const lookup = (key: string): Found | undefined => (key === "sess-1" ? { key, base: "wA", name: "billing", role: "main", file: FILE, pane: "wA:p1", live: true } : undefined);
 	const gui = await startGui({ read: async () => ({ bases: [] }), net: { lookup, workspace: () => [] }, call, hub: { ...hub, target: () => hub.target } as unknown as Hub, dir: join(scratch, "bundle"), pollMs: 50 });
@@ -397,6 +398,15 @@ test("the pad from a paired device follows the local page's rule: any pad key go
 	assert.equal((await phone.post("sessions/sess-1/keys", { key: "1", stream: p.stream })).body.error, "blocked", "a dialog the page answers takes only Escape, here too");
 	assert.deepEqual((await phone.post("sessions/sess-1/keys", { key: "esc", stream: p.stream })).body, { accepted: true });
 	p.close();
+});
+
+test("dequeue: this computer's page and a paired device take the queue back alike, as they type alike; Alt+Up reaches the pane without a mirror", async () => {
+	const { gui, hub, typed } = await answering({ pane: { agent_status: "working" } });
+	hub.target = undefined; // no dialog waits
+	assert.deepEqual(await send(gui, "sessions/sess-1/dequeue", {}), { status: 200, body: { text: "queued text" } } as never);
+	const phone = await paired(gui);
+	assert.deepEqual((await phone.post("sessions/sess-1/dequeue", {})).body, { text: "queued text" });
+	assert.deepEqual(typed().map(([m, p]) => [m, p.keys]), [["pane.send_input", ["alt+up"]], ["pane.send_input", ["alt+up"]]]);
 });
 
 test("dismiss: one key hides that subagent, all:true hides every finished one through the net, from this computer's page and a paired device alike; anything else is refused", async () => {

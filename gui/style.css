@@ -151,7 +151,10 @@ svg { display: block; }
 .queue-list p[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .queue-list p[data-open] > span { display: block; overflow: visible; }
 .queue-list b { margin-right: 8px; color: var(--accent); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; }
-.in-term .queue-list { display: none; }
+.queue-act { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4px 10px; margin: 0 16px 6px; color: var(--dim); font-size: 12px; line-height: 1.4; }
+.queue-act[hidden] { display: none; }
+.queue-act span { flex: 0 1 auto; max-width: 64ch; text-align: right; }
+.in-term .queue-list, .in-term .queue-act { display: none; }
 /* The todo list above the composer, as pi's widget shows it in the terminal: ○ waiting, ◐ in progress, ✓ done. */
 .todos { margin: 0 16px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); font-size: 13px; }
 .todos summary { display: flex; gap: 10px; align-items: baseline; min-width: 0; list-style: none; cursor: pointer; } .todos summary::-webkit-details-marker { display: none; }

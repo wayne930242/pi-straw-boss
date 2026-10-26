@@ -39,7 +39,7 @@ class El {
 	}
 }
 Object.assign(globalThis, { document: { createElement: (tag: string) => new El(tag), createTextNode: (s: string) => s } });
-const { drawQueued } = await import("../gui/bars.ts");
+const { drawQueued, mountQueueEdit } = await import("../gui/bars.ts");
 
 const draw = (list: Queued[] | undefined) => {
 	const box = new El("div");
@@ -120,4 +120,31 @@ test("a click or Enter/Space toggles a cut row; a row that fits has no toggle", 
 	assert.equal(lp2.getAttribute("aria-expanded"), "true");
 	lp2.on.get("keydown")!({ key: "a", preventDefault() { assert.fail(); } });
 	assert.equal(lp2.getAttribute("aria-expanded"), "true");
+});
+
+test("the queue's Edit line shows with the queue and goes with it; the button runs the take-back once at a time, disabled while it runs", async () => {
+	const rows = new El("div"), act = new El("div"), button = Object.assign(new El("button"), { disabled: false, onclick: undefined as undefined | (() => void) });
+	const view = { querySelector: (sel: string) => (sel === ".queue-list" ? rows : sel === ".queue-act" ? act : sel === ".queue-act button" ? button : null) } as unknown as HTMLElement;
+	drawQueued(view, [{ text: "a", as: "steer" }]);
+	assert.equal(act.hidden, false);
+	drawQueued(view, []);
+	assert.equal(act.hidden, true, "no queue, no Edit");
+	let release!: () => void, runs = 0;
+	mountQueueEdit(view, () => (runs++, new Promise<void>((r) => (release = r))));
+	button.onclick!();
+	assert.equal(button.disabled, true);
+	release();
+	await new Promise((r) => setImmediate(r));
+	assert.equal(button.disabled, false);
+	assert.equal(runs, 1);
+	assert.equal(declared(".queue-act[hidden]", "display"), "none", "the author style would otherwise show a hidden line");
+});
+
+test("the Edit line and its hint have words in both languages, and the hint says what comes back and what cannot", async () => {
+	const { readFileSync } = await import("node:fs");
+	for (const [file, mustSay] of [["en.json", [/together/, /one text/, /delivered/]], ["zh-TW.json", [/全部/, /一段文字/, /送達/]]] as const) {
+		const messages = JSON.parse(readFileSync(new URL(`../gui/messages/${file}`, import.meta.url), "utf8")) as Record<string, string>;
+		for (const key of ["queue_edit", "queue_edit_hint", "edit_taking", "edit_taken", "edit_none"]) assert.ok(messages[key], `${file} ${key}`);
+		for (const re of mustSay) assert.match(messages.queue_edit_hint!, re, file);
+	}
 });

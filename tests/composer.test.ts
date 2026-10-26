@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { aftermath, blocked, confirmed, recall } from "../gui/composer.ts";
+import { aftermath, blocked, confirmed, recall, withPulled } from "../gui/composer.ts";
 import { m } from "../gui/paraglide/messages.js";
 import { closed } from "../gui/scene.ts";
 import type { Answer } from "../gui/post.ts";
@@ -47,4 +47,10 @@ test("a finished subagent whose pi has exited has a closed channel and a compose
 	const gone = { name: "kid", control: false, live: !closed({ control: false, ended: true }, "live"), mark: "done" as const, online: true };
 	assert.equal(blocked(gone), m.blocked_ended(), "the existing ended reason, not the pane one");
 	assert.equal(blocked({ ...gone, control: true, live: !closed({ control: true, ended: true }, "live") }), undefined, "and an interactive finished subagent can be typed to");
+});
+
+test("the queue taken back goes in front of what is already in the box, a blank line between; an empty or blank box takes it as it is", () => {
+	assert.equal(withPulled("one\n\ntwo", ""), "one\n\ntwo");
+	assert.equal(withPulled("one", "  \n"), "one");
+	assert.equal(withPulled("one", "my draft"), "one\n\nmy draft");
 });

@@ -13,6 +13,8 @@ export function drawQueued(view: HTMLElement, list: Queued[] | undefined) {
 	const box = view.querySelector<HTMLElement>(".queue-list");
 	if (!box) return;
 	box.hidden = !list?.length;
+	const act = view.querySelector<HTMLElement>(".queue-act");
+	if (act) act.hidden = !list?.length;
 	const tag = (q: Queued) => Object.assign(document.createElement("b"), { textContent: q.as === "steer" ? m.queued_steer() : m.queued_follow() });
 	const live = new Set<string>();
 	box.replaceChildren(...(list ?? []).map((q) => {
@@ -39,6 +41,14 @@ export function drawQueued(view: HTMLElement, list: Queued[] | undefined) {
 		return p;
 	}));
 	for (const key of opened) if (!live.has(key)) opened.delete(key);
+}
+/** The queue's Edit: pressing it runs `take` (the composer's take-back, composer.ts) once at a time; the button is disabled while it runs. The hint and button live in the session view's markup (`.queue-act`), shown with the queue. */
+export function mountQueueEdit(view: HTMLElement, take: () => Promise<unknown>) {
+	const button = view.querySelector<HTMLButtonElement>(".queue-act button");
+	if (button) button.onclick = () => {
+		button.disabled = true;
+		void take().finally(() => (button.disabled = false));
+	};
 }
 /** The session's todo list above the composer: folded to the count and the task in progress, unfolded to every task. */
 export function drawTodos(view: HTMLElement, list: Todo[] | null | undefined) {

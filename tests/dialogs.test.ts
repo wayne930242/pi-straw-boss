@@ -11,6 +11,7 @@ import { checkAnswer, createHub } from "../src/dialogs.ts";
 import { canonical } from "../src/history.ts";
 import type { Net, Ref } from "../src/net.ts";
 import { type Dialog, secretDigest, selectDigest } from "../src/owners.ts";
+import type { Pull } from "../src/pull.ts";
 import { newKeys } from "../src/seal.ts";
 import type { Editor } from "../src/probe.ts";
 import { assistant, call, header, lines, user } from "./sessions.ts";
@@ -33,13 +34,14 @@ function hub({ me = "G", owner = "G" } = {}) {
 	const published: { payload: unknown; options: unknown }[] = [], delivered: AnswerMessage[] = [], changes: number[] = [];
 	let reg: { onEvent(e: Record<string, unknown>): void } | undefined, reply: ((a: AnswerMessage) => Ack | undefined) | undefined, editor: Editor = { editor: "empty" };
 	const forms: FormMessage[] = [];
+	let pullReply: (step: "begin" | "finish", ticket?: string) => Pull | Promise<Pull> = () => ({ reason: "no_editor" });
 	let formReply: ((m: FormMessage) => FormReply | undefined) | undefined;
 	const events = { emit: (ch: string, r: never) => ch === REGISTER && ((reg = r), (r as { onReady(c: unknown): void }).onReady({ snapshot: () => ({ connected: true, owner: { sessionId: owner, epoch: "e1" } }), publish: (payload: unknown, options: unknown) => void published.push({ payload, options }) })), on: () => () => {} };
-	const local = { deliver: (m: AnswerMessage, r: (a: Ack) => void) => { delivered.push(m); const a = reply?.(m); if (a) r(a); }, sync: () => {}, probe: () => editor, commands: () => [], close: () => ({ accepted: true }), stashCheck: () => undefined, form: (m: FormMessage, r: (x: FormReply) => void) => { forms.push(m); const x = formReply?.(m); if (x) r(x); } };
+	const local = { deliver: (m: AnswerMessage, r: (a: Ack) => void) => { delivered.push(m); const a = reply?.(m); if (a) r(a); }, sync: () => {}, probe: () => editor, commands: () => [], close: () => ({ accepted: true }), stashCheck: () => undefined, pull: (step: "begin" | "finish", ticket?: string) => pullReply(step, ticket), form: (m: FormMessage, r: (x: FormReply) => void) => { forms.push(m); const x = formReply?.(m); if (x) r(x); } };
 	const h = createHub({ events } as unknown as ExtensionAPI, me, local);
 	h.start(() => changes.push(1));
 	const list = (dialogs: Dialog[], extra: Partial<Dialogs> = {}): Dialogs => ({ version: 1, type: "dialogs", bridgeId: "B", pane: "wA:p1", file: null, dialogs, closed: [], ...extra });
-	return { h, published, delivered, changes, list, forms, event: (e: Record<string, unknown>) => reg?.onEvent(e), answerWith: (f: typeof reply) => (reply = f), editorIs: (e: Editor) => (editor = e), formWith: (f: typeof formReply) => (formReply = f) };
+	return { h, published, delivered, changes, list, forms, event: (e: Record<string, unknown>) => reg?.onEvent(e), answerWith: (f: typeof reply) => (reply = f), editorIs: (e: Editor) => (editor = e), formWith: (f: typeof formReply) => (formReply = f), pullWith: (f: typeof pullReply) => (pullReply = f) };
 }
 /** The snapshot as the server reads it: S is the unit on pane wA:p1 with session file `path`. */
 async function read(x: ReturnType<typeof hub>, path: string | undefined, { pane = "wA:p1", from = "S" } = {}) {
@@ -326,6 +328,40 @@ test("probe: no bound bridge, another pane or file, a hub that does not own the 
 	assert.deepEqual(await own.h.probe("S"), { editor: "command" });
 	own.h.stop();
 	assert.equal(await own.h.probe("S"), undefined, "a stopped hub asks nobody");
+});
+
+test("pull: the hub asks the bound bridge in two steps and takes only its matching, well-formed answer; in its own session it asks in-process; `finish` waits longer than `begin`", async () => {
+	const x = hub(), path = file([]);
+	assert.equal(await x.h.pull("S", "begin"), undefined, "no bridge at all");
+	x.h.receive("S", x.list([], { file: path }) as never);
+	await read(x, path);
+	const asked = x.h.pull("S", "begin"), sent = x.published.at(-1)!, req = sent.payload as { type: string; to: string; reqId: string; step: string };
+	assert.deepEqual([req.type, req.to, req.step, sent.options], ["pull", "B", "begin", { audience: "capable", ownerOnly: true }]);
+	const result = (extra: Record<string, unknown>, id = req.reqId) => ({ version: 1, type: "pull-result", bridgeId: "B", reqId: id, ...extra }) as Record<string, unknown>;
+	x.h.receive("X", result({ pending: false }) as never);
+	x.h.receive("S", { ...result({ pending: false }), bridgeId: "B2" } as never);
+	x.h.receive("S", result({ pending: false }, "other") as never);
+	x.h.receive("S", result({ pending: true, ticket: "T1", extra: 1 }) as never);
+	assert.deepEqual(await asked, { pending: true, ticket: "T1" });
+	const finish = x.h.pull("S", "finish", "T1"), fin = x.published.at(-1)!.payload as { reqId: string; step: string; ticket: string };
+	assert.deepEqual([fin.step, fin.ticket], ["finish", "T1"]);
+	x.h.receive("S", result({ text: "one\n\ntwo" }, fin.reqId) as never);
+	assert.deepEqual(await finish, { text: "one\n\ntwo" });
+	for (const bad of [{ text: 3 }, { reason: "rm -rf" }, { empty: false }, { ticket: "x".repeat(65) }]) {
+		const again = x.h.pull("S", "begin"), id = (x.published.at(-1)!.payload as { reqId: string }).reqId;
+		x.h.receive("S", result(bad, id) as never);
+		assert.equal(await again, undefined, JSON.stringify(bad));
+	}
+	const own = hub({ me: "S", owner: "S" });
+	own.h.receive("S", own.list([], { file: path }));
+	await read(own, path);
+	own.pullWith(async (step, ticket) => (step === "begin" ? { pending: true, ticket: "L" } : { text: `got ${ticket}` }));
+	assert.deepEqual(await own.h.pull("S", "begin"), { pending: true, ticket: "L" });
+	assert.deepEqual(await own.h.pull("S", "finish", "L"), { text: "got L" }, "this session's bridge is asked in-process, and may take time");
+	const other = hub({ owner: "Z" });
+	other.h.receive("S", other.list([], { file: path }));
+	await read(other, path);
+	assert.equal(await other.h.pull("S", "begin"), undefined, "not the channel's owner: nothing can be asked");
 });
 
 /** A document as pi-herdr-doc-review 0.4.x lists it (its README's "Browser viewers"). */
