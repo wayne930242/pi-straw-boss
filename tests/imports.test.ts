@@ -256,8 +256,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased to 273 (desk mode R1): index.ts (66), startof.ts imported and warmStart called at the session's start.
 	// Unreleased to 275 (project trust): index.ts (68), the relay's import and its registration before the subagent return.
 	assert.ok(rest <= 275, `the rest of src has ${rest} lines`);
-	// Unreleased (settings check): found.ts 103 to 120 (the bounded read shared as withPlain, with the error that says why a file is refused), settings.ts 92 (new: the look before pi starts in a folder).
-	for (const [name, max] of [["found.ts", 120], ["settings.ts", 92], ["files.ts", 160], ["ask.ts", 182], ["serve.ts", 110], ["wait.ts", 28], ["types.ts", 15]] as const) assert.ok(count(`src/trust/${name}`) <= max, `src/trust/${name} has ${count(`src/trust/${name}`)} lines`);
+	// Unreleased (settings check): found.ts 103 to 120 (the bounded read shared as withPlain, with the error that says why a file is refused), settings.ts 92 (new: the look before pi starts in a folder), raised 92 to 135 for the link walk (every hop of .pi and settings.json, refusing /proc, /dev, /sys; review SP-R001).
+	for (const [name, max] of [["found.ts", 120], ["settings.ts", 135], ["files.ts", 160], ["ask.ts", 182], ["serve.ts", 110], ["wait.ts", 28], ["types.ts", 15]] as const) assert.ok(count(`src/trust/${name}`) <= max, `src/trust/${name} has ${count(`src/trust/${name}`)} lines`);
 	// The page: the files the spec budgets one by one, then this round's own figures (no figure in the spec): the focus views, the overlay
 	// layer (alert spotting and the stack model in the map's chunk, the layer's DOM and tiles in a chunk of their own), the dev-only demo, and everything else.
 	// 0.18.1 raised mirror.ts to 154 for embed, a terminal shown inside the session view instead of a tile.
