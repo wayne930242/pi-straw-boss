@@ -1,4 +1,4 @@
-import type { Mark } from "../src/dashboard.ts";
+import type { Mark } from "../src/netdata.ts";
 import type { AllyBase, LinkAlert, LinkSummary } from "../src/link/holder.ts";
 import { m } from "./paraglide/messages.js";
 

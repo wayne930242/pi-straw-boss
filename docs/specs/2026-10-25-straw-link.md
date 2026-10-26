@@ -228,8 +228,8 @@ receiver or the relay lacks it (amended 2026-10-26 with [2026-10-26-sb-backend.m
 | `unit-status` | Unattended device → its controllers | each unit's state, its running monitors, its last report (at most 4 KB) | Ephemeral, like presence. |
 | `notice` | Unattended device → its controllers | kind (failure, waiting more than 30 minutes), unit, text (at most 1 KB) | Raises a notice in the controller's GUI. |
 | `board` | Any member → whole team | the device's work board entries bound to the team's project (**Work board**) | Ephemeral, like presence; read only by towers, as remote content. |
-| `caps` | Any member → whole team | the features this device takes (`tower.awaitsReply`, `tower-reply`) | Ephemeral, like presence; sent at each stream start, on a build change, and hourly; one older than 2 h counts as none. |
-| `tower-reply` | Any member → the device that asked | inReplyTo (an ask id the asker sent), text (at most 192 KB) | Queued and addressed, like `tower`. Sent only to a device whose `caps` list it, else a plain `tower`; taken as a reply only for an open ask from that device, once, and goes to the main that asked (sb server D4). |
+| `caps` | Any member → whole team | the features this device takes (`tower.awaitsReply`, `tower-reply`), at most 16, cut on decode | Ephemeral, like presence; sent at each stream start, on a build change, and hourly; one older than 2 h counts as none. |
+| `tower-reply` | Any member → the device that asked | inReplyTo (an ask id the asker sent), text (at most 192 KB) | Queued and addressed, like `tower`. Sent only to a device whose `caps` list it, else a plain `tower`; taken as a reply only for an open ask from that device, once, and goes to the main that asked (sb server D4). A sender refuses an `inReplyTo` that is not an ask id; a receiver only cuts it, so a malformed one decodes, matches no ask, and is handled as a plain `tower`. |
 
 Read acknowledgements go to the relay as relay requests, not as envelopes.
 

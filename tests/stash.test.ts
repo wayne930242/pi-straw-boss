@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -356,4 +356,21 @@ test("a pop does not count the time a resumed pi waits on a trust question, and 
 	await assert.rejects(never.pop(), /No trust decision for \/work\/demo within 10 minutes/);
 	assert.ok(never.ran.some((a) => a.join(" ") === "workspace close wN"), "what the pop opened is closed again, and the stash is kept");
 	assert.deepEqual(listStashes(plain.dir), ["A"]);
+});
+
+test("a pop into a folder whose .pi/settings.json pi must not read opens nothing, keeps the stash, and the closer answers it for the page", async () => {
+	const w = world();
+	await stasher(w).go();
+	mkdirSync(join(w.dir, ".pi"));
+	symlinkSync("/dev/zero", join(w.dir, ".pi", "settings.json"));
+	const p = popper(w);
+	await assert.rejects(p.pop(), (error: Error) => error.message.startsWith("The stash was not started: ") && error.message.includes(join(w.dir, ".pi", "settings.json")));
+	assert.deepEqual(p.ran, [], "no workspace, tab, pane, or pi was made");
+	assert.deepEqual(listStashes(w.dir), ["A"], "the stash is back under its name");
+	const close = createCloser({ run: w.run, sleep: async () => {}, me: () => "gui", sessions: async () => w.live, ask: async () => ({ accepted: true }), stateDir: w.dir, pop: (name) => p.pop(name) });
+	const reply = await close("pop", { name: "A" });
+	assert.deepEqual([reply.status, (reply.body as { error: string }).error, (reply.body as { settings: { why: string } }).settings.why], [409, "settings_unsafe", "special"]);
+	rmSync(join(w.dir, ".pi", "settings.json"));
+	writeFileSync(join(w.dir, ".pi", "settings.json"), "{}");
+	assert.equal((await popper(w).pop()).sessions, 3, "fixed, it pops");
 });

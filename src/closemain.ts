@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { subagents } from "./dashboard.ts";
+import { subagents } from "./netdata.ts";
 import { panes, waitFor, workspaces } from "./herdr.ts";
 import { type Kit, REGISTER } from "./state.ts";
 

@@ -1,4 +1,4 @@
-import { subagents } from "./dashboard.ts";
+import { subagents } from "./netdata.ts";
 import { ARROW, type HerdrRun, type HerdrTab, type HerdrWorld, isSub, MARK, type Pane, type Place, report, type Workspace, worldOf } from "./herdr.ts";
 
 // Five display tokens for the sidebar plugin and for Herdr's own Agents rows, written next to `sb_role`:

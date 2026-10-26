@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
@@ -224,4 +225,60 @@ test("the places a picker starts from are home, its Desktop and Documents when t
 	assert.deepEqual(some.body.places, [{ name: "Desktop", path: join(home, "Desktop") }, { name: "Documents", path: join(home, "Documents") }]);
 	assert.ok((some.body.recent as string[]).includes(join(home, "projects", "alpha")), "a base's own folder is recent");
 	assert.ok((some.body.recent as string[]).every((dir) => dir !== home && dir.startsWith(`${home}${sep}`)), "only pickable folders under home");
+});
+
+// pi reads <folder>/.pi/settings.json whole at startup, before any extension can stop it (trust/settings.ts): every opening looks first, and a refusal creates nothing.
+test("an opening in a folder whose .pi/settings.json pi must not read is refused before anything is created, on every path, and names the file and the reason", async () => {
+	world.autoMains();
+	const { post, calls } = await gui();
+	tower();
+	const folderWith = (name: string, make?: (file: string) => void) => {
+		const dir = join(home, "unsafe", name);
+		mkdirSync(join(dir, ".pi"), { recursive: true });
+		make?.(join(dir, ".pi", "settings.json"));
+		return dir;
+	};
+	const small = join(home, "unsafe", "small.json"), big = join(home, "unsafe", "big.json"), pipe = join(home, "unsafe", "pipe");
+	mkdirSync(join(home, "unsafe"), { recursive: true });
+	writeFileSync(small, "{}");
+	writeFileSync(big, "x".repeat(262_145));
+	execFileSync("mkfifo", [pipe]);
+	const refused: [string, string, (file: string) => void][] = [
+		["zero", "special", (f) => symlinkSync("/dev/zero", f)],
+		["stdin", "special", (f) => symlinkSync("/dev/stdin", f)],
+		["fifo", "special", (f) => execFileSync("mkfifo", [f])],
+		["pipe-link", "special", (f) => symlinkSync(pipe, f)],
+		["oversize", "large", (f) => writeFileSync(f, "x".repeat(262_145))],
+		["oversize-link", "large", (f) => symlinkSync(big, f)],
+	];
+	const bare = () => [world.herdr.commands("workspace", "create"), world.herdr.commands("tab", "create"), world.herdr.commands("pane", "split"), world.herdr.commands("agent", "start")].flat().length;
+	world.herdr.addPane("wA:p7", "wA:t2", "shell");
+	world.herdr.addPane("wA:p8", "wA:t2");
+	Object.assign(world.herdr.pane("wA:p8"), { cwd: join(home, "beta"), tokens: { sb_role: "main" } });
+	let id = 0;
+	for (const [name, why, make] of refused) {
+		const dir = folderWith(name, make), before = bare();
+		for (const [path, body] of [
+			["open/base", { dir, label: "X" }],
+			["open/main", { workspace: "wA", dir }],
+			["open/member", { workspace: "wA", dir }],
+			["open/member", { workspace: "wA", tab: "wA:t2", dir }],
+		] as const) {
+			if (path === "open/main") tower();
+			else world.herdr.workspace("wA").tokens.tower = "gone-tower"; // a member needs a base without a tower
+			const deploy = `deploy-unsafe-${++id}`, answer = await post(path, { ...body, deploy });
+			assert.deepEqual([answer.status, answer.body.error, answer.body.step], [409, "settings_unsafe", "create"], `${name} ${path}: ${JSON.stringify(answer.body)}`);
+			assert.match(String(answer.body.reason), /^pi was not started: .*\.pi\/settings\.json .* try again\.$/, name);
+			assert.equal((answer.body.settings as { why: string }).why, why, name);
+			const seen = (await post("open/progress", { id: deploy })).body as { failed: { step: string; settings: { path: string } } };
+			assert.deepEqual([seen.failed.step, seen.failed.settings.path], ["create", join(dir, ".pi", "settings.json")], "the progress carries the refusal for the page to word");
+		}
+		assert.equal(bare(), before, `${name}: no workspace, tab, pane, or pi was made`);
+	}
+	assert.equal(calls.some((c) => c.method === "agent.prompt"), false, "nothing was typed");
+	// What is fine still opens: no file, a plain small file, and a link to one.
+	for (const make of [undefined, (f: string) => writeFileSync(f, "{}"), (f: string) => symlinkSync(small, f)]) {
+		tower();
+		assert.equal((await post("open/main", { workspace: "wA", dir: folderWith(`ok${++id}`, make) })).status, 200);
+	}
 });

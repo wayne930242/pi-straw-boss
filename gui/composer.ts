@@ -1,4 +1,4 @@
-import type { Mark } from "../src/dashboard.ts";
+import type { Mark } from "../src/netdata.ts";
 import { h } from "./dom.ts";
 import { m } from "./paraglide/messages.js";
 import { type Answer, post, sendFile } from "./post.ts";

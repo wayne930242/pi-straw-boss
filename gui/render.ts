@@ -1,4 +1,4 @@
-import type { Mark } from "../src/dashboard.ts";
+import type { Mark } from "../src/netdata.ts";
 import type { AllyBase } from "../src/link/holder.ts";
 import type { Base, Net, Unit } from "../src/net.ts";
 import { mountCalm } from "./calm.ts";

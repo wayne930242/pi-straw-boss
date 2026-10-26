@@ -1,5 +1,5 @@
 import { trackActivity } from "../src/activity.ts";
-import type { Mark } from "../src/dashboard.ts";
+import type { Mark } from "../src/netdata.ts";
 import type { Net, Unit } from "../src/net.ts";
 import type { Data, Page } from "./chat.ts";
 import { demoOpen } from "./demo-open.ts";
