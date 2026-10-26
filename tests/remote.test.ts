@@ -585,7 +585,7 @@ test("S7: on win32 a start time comes from a PowerShell call that is asynchronou
 	assert.deepEqual(calls[0]!.args.slice(0, 3), ["-NoProfile", "-NonInteractive", "-Command"]);
 	assert.equal(calls[0]!.args[3], "$ErrorActionPreference='Stop'; (Get-CimInstance Win32_Process -Filter 'ProcessId=4242').CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ', [cultureinfo]::InvariantCulture)");
 	assert.equal(calls[0]!.options.windowsHide, true);
-	assert.equal(calls[0]!.options.timeout, 5000);
+	assert.equal(calls[0]!.options.timeout, 15_000);
 	assert.deepEqual(startCommand(4242).args, calls[0]!.args);
 	const later = startedLater(4242);
 	finish(null, "2026-10-26T04:21:53.123Z\r\n");

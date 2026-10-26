@@ -2,7 +2,7 @@
 // What differs on Windows: Herdr's socket is a named pipe behind a marker file, and a sidecar's control socket is a named pipe. The pure parts are
 // checked for every platform here; the live parts run on the platform the suite runs on (the Windows CI job runs this file).
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";

@@ -2,12 +2,12 @@ import { execFile, execFileSync } from "node:child_process";
 
 // A process's start time, which tells a PID another process now holds from the process that wrote a record (remote.ts `runs`, the GUI and link records).
 
-const OWN_MS = 15_000, OTHERS_MS = 10 * 60_000, FIRST_FAIL_MS = 5000, MAX_FAIL_MS = 60_000, OWN_RETRY_MS = [1000, 2000, 4000, 8000, 15_000];
+const READ_MS = 15_000, OTHERS_MS = 10 * 60_000, FIRST_FAIL_MS = 5000, MAX_FAIL_MS = 60_000, OWN_RETRY_MS = [1000, 2000, 4000, 8000, 15_000];
 /**
  * The command that tells a Windows process's start time as stable text (UTC, ISO 8601, milliseconds); `windowsHide` keeps its console off the desktop.
  * `Win32_Process.CreationDate` answers for a service or an elevated process, whose `Get-Process` StartTime needs elevation.
  */
-export const startCommand = (pid: number, timeout = 5000) => ({
+export const startCommand = (pid: number, timeout = READ_MS) => ({
 	file: "powershell.exe",
 	args: ["-NoProfile", "-NonInteractive", "-Command", `$ErrorActionPreference='Stop'; (Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ', [cultureinfo]::InvariantCulture)`],
 	options: { encoding: "utf8" as const, timeout, windowsHide: true },
@@ -28,7 +28,7 @@ const laterBy = (ms: number) => new Promise<void>((done) => setTimeout(done, ms)
 
 /**
  * Process start times. On macOS and Linux `ps` answers at once, in the C locale and UTC (so two pi processes with other LANG or TZ write and read the same text).
- * Windows has no `ps`: one PowerShell call took 2 to 3 s, so there the answer comes from a cache that a background call fills, and nothing waits on PowerShell. `startOf`
+ * Windows has no `ps`: one PowerShell call took 2 to 3 s, and the CIM query 3.5 to 4 s (5 s and more under load) in a Windows 11 ARM VM, so there the answer comes from a cache that a background call fills, and nothing waits on PowerShell. `startOf`
  * is undefined until the answer is in (callers already treat undefined as "cannot be told"); `startedLater` is the same answer as a promise, for a caller that
  * wrote a record meanwhile and writes it again when it arrives. This process's own start time is kept for its life and read patiently (a long timeout, retried with
  * a growing wait, because session start is when the machine is busiest); another PID's answer is kept for ten minutes, a failed one for 5 s, then 10 s, 20 s, up to 60 s
@@ -51,9 +51,9 @@ export function createStartOf({ platform = process.platform, ps = (pid: number) 
 		}
 	});
 	const read = async (pid: number) => {
-		if (pid !== process.pid) return once(pid, 5000);
+		if (pid !== process.pid) return once(pid, READ_MS);
 		for (let attempt = 0; ; attempt++) {
-			const value = await once(pid, OWN_MS);
+			const value = await once(pid, READ_MS);
 			if (value || attempt === OWN_RETRY_MS.length) return value;
 			await wait(OWN_RETRY_MS[attempt]!);
 		}
