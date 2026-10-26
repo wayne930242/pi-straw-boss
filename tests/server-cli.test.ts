@@ -19,9 +19,9 @@ async function cli(argv: string[], over: Partial<CliDeps> & { version?: string; 
 	const version = over.version ?? "0.44.0";
 	const { by: _by, ...requester } = world.ctx({ version });
 	let out = "", err = "";
-	const { herdr = true, ...rest } = over;
+	const { herdr = true, ctx: more, ...rest } = over;
 	const code = await run(argv, {
-		env: world.env, stateDir: world.stateDir, version, cli: "/fake/cli.mjs", ctx: { ...requester, env: over.env ?? world.env, ...over.ctx }, herdrListens: async () => herdr,
+		env: world.env, stateDir: world.stateDir, version, cli: "/fake/cli.mjs", ctx: { ...requester, env: over.env ?? world.env, ...more }, herdrListens: async () => herdr,
 		out: (t) => void (out += t), err: (t) => void (err += t), ...rest,
 	});
 	const parse = (text: string) => { try { return JSON.parse(text.trim().split("\n").filter((l) => l.startsWith("{")).at(-1) ?? "") as Record<string, unknown>; } catch { return undefined; } };
@@ -211,6 +211,43 @@ test("up gives up on a lock that stays held past --timeout, as a failure at step
 	assert.equal(r.code, 1);
 	assert.equal(r.errJson?.step, "server");
 	assert.match(String(r.errJson?.reason), /another start or restart is under way/);
+});
+
+test("--timeout bounds the whole up, and the failure names which wait ran out beside the step: lock, start, or hello", async () => {
+	// lock: another start holds server.lock.
+	const lock = await takeLock(world.slot, "someone else", { alive: () => true }, 0);
+	const locked = await cli(["up", "--timeout", "0.3"]);
+	lock.release();
+	assert.equal(locked.errJson?.wait, "lock");
+	// start: this up starts the server and it does not answer; the start wait is cut to what --timeout leaves.
+	const began = Date.now();
+	const silent = await cli(["up", "--timeout", "0.5"], { ctx: { spawn: () => ({ pid: 5, exited: new Promise(() => {}) }) } });
+	assert.equal(silent.code, 1);
+	assert.equal(silent.errJson?.step, "server");
+	assert.equal(silent.errJson?.wait, "start");
+	assert.match(String(silent.errJson?.reason), /did not answer hello within 0\.5 s/);
+	assert.ok(Date.now() - began < 2500, "not the 5 s the start timer gives");
+	// hello: another requester's start is under way (a fresh restarting, no lock held) and no hello comes.
+	mkdirSync(world.slot.dir, { recursive: true });
+	writeRecord(world.slot, { pid: 4_000_000, version: "0.44.0", herdr: world.slot.herdr, mode: "detached", desk: false, intercom: { transport: "default" }, log: "/l", socket: "", secret: "", intercomId: "x", restarting: { began: new Date().toISOString(), since: new Date().toISOString(), reason: "starting", by: "someone" } });
+	const waiting = await cli(["up", "--timeout", "0.3"]);
+	assert.equal(waiting.errJson?.step, "server");
+	assert.equal(waiting.errJson?.wait, "hello");
+	// A failure that is not a wait names none.
+	const herdr = await cli(["up"], { herdr: false });
+	assert.equal(herdr.errJson?.wait, undefined);
+});
+
+test("up's default time is 90 s on Windows and 30 s elsewhere, for the lock wait and the start wait together", async () => {
+	for (const [platform, seconds] of [["win32", 90], ["linux", 30], ["darwin", 30]] as const) {
+		const lock = await takeLock(world.slot, "someone else", { alive: () => true }, 0);
+		let t = Date.now();
+		const t0 = t, now = () => t, sleep = async (ms: number) => void (t += ms);
+		const r = await cli(["up"], { ctx: { platform, now, sleep, lock: { now, sleep, alive: () => true, startOf: () => undefined, prepare: () => {} } } });
+		lock.release();
+		assert.equal(r.errJson?.wait, "lock", `${platform}: ${r.err}`);
+		assert.ok(Math.abs(t - t0 - seconds * 1000) <= 100, `${platform}: waited ${(t - t0) / 1000} s, expected ${seconds}`);
+	}
 });
 
 // --- stop, restart, logs ---

@@ -194,6 +194,46 @@ test("R-F004: stop and restart wait for a busy lock as long as lockWaitFor says,
 	}
 });
 
+// --- one deadline for the whole call (`up --timeout`) ---
+
+test("a deadline cuts the lock wait: a lock that stays held is busy, naming the wait `lock`, at the deadline", async () => {
+	const held = await takeLock(world.slot, "a start", world.ctx().lock, 0);
+	const began = Date.now();
+	await assert.rejects(ensure(world.ctx(), { boss: true, deadline: Date.now() + 300 }), (e: unknown) => e instanceof ServerError && e.code === "busy" && e.wait === "lock");
+	held.release();
+	const waited = Date.now() - began;
+	assert.ok(waited >= 250 && waited < 1500, `waited ${waited} ms`);
+});
+
+test("a deadline cuts the start wait too: a server that never answers fails at the deadline, naming the wait `start`, not after the 5 s the timers give", async () => {
+	const ctx = world.ctx({ spawn: () => ({ pid: 5, exited: new Promise(() => {}) }) });
+	const began = Date.now();
+	await assert.rejects(launch(ctx, { deadline: Date.now() + 300 }), (e: unknown) => e instanceof ServerError && e.wait === "start" && /within 0\.3 s/.test(e.message));
+	assert.ok(Date.now() - began < 1500);
+	// With no deadline the wait is the timers', and it names itself the same way.
+	const short = world.ctx({ timers: { start: 200, exit: 100, supervisor: 50, touch: 30 }, spawn: () => ({ pid: 5, exited: new Promise(() => {}) }) });
+	await assert.rejects(launch(short), (e: unknown) => e instanceof ServerError && e.wait === "start");
+});
+
+test("the lock wait and the start wait share the deadline: a lock held for 250 ms leaves the start the rest of 700 ms, so the whole call ends at the deadline", async () => {
+	const held = await takeLock(world.slot, "a start", world.ctx().lock, 0);
+	setTimeout(() => held.release(), 250);
+	const ctx = world.ctx({ spawn: () => ({ pid: 5, exited: new Promise(() => {}) }) });
+	const began = Date.now();
+	await assert.rejects(ensure(ctx, { boss: true, deadline: began + 700 }), (e: unknown) => e instanceof ServerError && e.wait === "start");
+	const total = Date.now() - began;
+	assert.ok(total >= 650 && total < 1500, `the whole call took ${total} ms`);
+});
+
+test("a restart under a deadline stops waiting for the old server to leave at the deadline, naming the wait `exit`", async () => {
+	const s = await world.start();
+	await s.handle.ready;
+	const ctx = world.ctx({ alive: (p) => p === s.pid || world.live.has(p), kill: () => {}, timers: { start: 5000, exit: 5000, supervisor: 400, touch: 40 } });
+	const began = Date.now();
+	await assert.rejects(restart(ctx, { reason: "r", deadline: began + 400 }), (e: unknown) => e instanceof ServerError && e.code === "exit-timeout" && e.wait === "exit");
+	assert.ok(Date.now() - began < 2000);
+});
+
 test("a stopped server is not started by an automatic start; the boss's own start clears the mark in server.json and gui.json and starts it", async () => {
 	plant({ stopped: true, gui: { port: 5000, token: "t", stopped: true } });
 	writeFileSync(`${world.stateDir}/gui.json`, JSON.stringify({ pid: 1, port: 5000, token: "t", owner: "o", stopped: true }));

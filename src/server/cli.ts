@@ -3,10 +3,11 @@ import { fileURLToPath } from "node:url";
 import { stateDirOf } from "../agent/paths.ts";
 import { newer } from "../semver.ts";
 import {
-	type Ctx, describe, ensure, guiUrl, herdrListens, isIdentity, lockWaitFor, makeCtx, probe, restart, ServerError, serverEnv, stop, takeOver, waitReady,
+	type Ctx, describe, ensure, guiUrl, herdrListens, isIdentity, lockFor, lockWaitFor, makeCtx, probe, restart, ServerError, serverEnv, stop, takeOver, type Wait, waitReady,
 } from "./client.ts";
+import { loadEnvFile } from "./breakaway.ts";
 import { logSize, readFrom, tailLog } from "./log.ts";
-import { clearStartError, clearStopped, fileOf, readRecord, readStartError, type ServerRecord, slotOf, takeLock } from "./record.ts";
+import { clearStartError, clearStopped, fileOf, readRecord, readStartError, type ServerRecord, slotOf } from "./record.ts";
 import type { ServerHandle, ServerOptions } from "./main.ts";
 import { VERSION } from "./version.ts";
 
@@ -22,7 +23,7 @@ const USAGE = `usage: cli.mjs up [--timeout SECONDS] [--exact]
 export class UsageError extends Error {}
 const FLAGS: Record<string, { value: string[]; switch: string[] }> = {
 	up: { value: ["timeout"], switch: ["exact"] }, serve: { value: [], switch: [] }, stop: { value: [], switch: [] }, status: { value: [], switch: [] },
-	restart: { value: ["reason"], switch: ["downgrade"] }, logs: { value: ["lines"], switch: ["follow"] }, run: { value: ["by"], switch: ["detached"] },
+	restart: { value: ["reason"], switch: ["downgrade"] }, logs: { value: ["lines"], switch: ["follow"] }, run: { value: ["by", "env-file"], switch: ["detached"] },
 };
 export interface Args { command: string; flags: Record<string, string | true> }
 export function parseArgs(argv: string[]): Args {
@@ -70,12 +71,17 @@ interface Warning { code: string; text: string }
 class StepError extends Error {
 	step: string;
 	exit: number;
-	constructor(step: string, message: string, exit = 1) {
+	/** The wait that ran out, when one did (`lock`, `start`, `hello`, `exit`): the JSON on stderr names it beside `step`. */
+	wait: Wait | undefined;
+	constructor(step: string, message: string, exit = 1, wait?: Wait) {
 		super(message);
 		this.step = step;
 		this.exit = exit;
+		this.wait = wait;
 	}
 }
+/** How long `up` may take in all (the lock wait and the start wait together): the start wait of the platform and the lock wait of a start under way ahead of it (60 + 30 s on Windows, 20 + 10 s elsewhere). */
+export const UP_SECONDS = { win32: 90, other: 30 } as const;
 const CANNOT_RUN = new Set(["acl", "loader", "intercom"]);
 
 /** Runs one command; resolves with its exit code. */
@@ -90,6 +96,15 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 		return 2;
 	}
 	const { command, flags } = args;
+	// A detached server on Windows is started through WMI, which gives it no environment of the starter's: the starter's goes in a file it reads and deletes first of all.
+	if (command === "run" && typeof flags["env-file"] === "string") {
+		try {
+			loadEnvFile(env, flags["env-file"]);
+		} catch (error) {
+			err(`${(error as Error).message}\n`);
+			return 1;
+		}
+	}
 	const slot = slotOf(deps.stateDir ?? stateDirOf(env), env);
 	const version = deps.version ?? VERSION;
 	const by = command === "run" ? String(flags.by ?? "detached start") : `cli ${command}`;
@@ -159,7 +174,8 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 	}
 
 	async function up() {
-		const steps: Step[] = [], warnings: Warning[] = [], timeoutMs = Number(flags.timeout ?? 60) * 1000, desk = env.STRAW_BOSS_DESK === "1";
+		// One time limit for the whole call: the lock wait, the start wait, and the wait for another's start together (the start wait itself is the platform's, 60 s on Windows and 20 s elsewhere, within it).
+		const steps: Step[] = [], warnings: Warning[] = [], timeoutMs = Number(flags.timeout ?? UP_SECONDS[ctx.platform === "win32" ? "win32" : "other"]) * 1000, deadline = ctx.now() + timeoutMs, desk = env.STRAW_BOSS_DESK === "1";
 		const stepOf = async <T>(name: string, body: () => Promise<{ value: T; detail?: string }>): Promise<T> => {
 			const began = ctx.now();
 			try {
@@ -168,7 +184,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 				return value;
 			} catch (error) {
 				steps.push({ name, ok: false, ms: ctx.now() - began });
-				throw error instanceof StepError ? error : new StepError(name, (error as Error).message, error instanceof ServerError && error.startError && CANNOT_RUN.has(error.startError.code) ? 3 : 1);
+				throw error instanceof StepError ? error : new StepError(name, (error as Error).message, error instanceof ServerError && error.startError && CANNOT_RUN.has(error.startError.code) ? 3 : 1, error instanceof ServerError ? error.wait : undefined);
 			}
 		};
 		try {
@@ -192,16 +208,16 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 			});
 			const { server: how, record } = await stepOf<{ server: "found" | "started" | "restarted" | "upgraded"; record: ServerRecord }>("server", async () => {
 				if (plan === "upgrade" || plan === "desk") {
-					const done = await restart(ctx, { reason: plan === "upgrade" ? "upgrade" : "desk switch", upgrade: plan === "upgrade", boss: true, lockWaitMs: timeoutMs, counts: false });
+					const done = await restart(ctx, { reason: plan === "upgrade" ? "upgrade" : "desk switch", upgrade: plan === "upgrade", boss: true, deadline, counts: false });
 					return { value: { server: done.server, record: done.record }, detail: `${done.server}: ${plan === "upgrade" ? "upgrade" : "desk switch"}` };
 				}
-				const done = await ensure(ctx, { boss: true, lockWaitMs: timeoutMs });
+				const done = await ensure(ctx, { boss: true, deadline });
 				if ("record" in done) return { value: { server: done.server, record: done.record } };
 				if (done.skipped.do === "nothing") {
 					// A start or restart is under way (its requester held the lock): wait for it.
-					const ready = await waitReady(ctx, timeoutMs);
+					const ready = await waitReady(ctx, Math.max(0, deadline - ctx.now()));
 					if (ready && "pid" in ready) return { value: { server: "found" as const, record: ready } };
-					throw new StepError("server", "a start of the server is under way and did not finish in time");
+					throw new StepError("server", "a start of the server is under way and did not finish in time", 1, "hello");
 				}
 				throw new StepError("server", done.skipped.do === "refuse" ? done.skipped.text : "the server was not started");
 			});
@@ -211,13 +227,13 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 			return 0;
 		} catch (error) {
 			if (!(error instanceof StepError)) throw error;
-			err(`${JSON.stringify({ step: error.step, reason: error.message, steps, warnings, log: fileOf(slot, "log"), ...(readStartError(slot) ? { startError: readStartError(slot) } : {}) })}\n`);
+			err(`${JSON.stringify({ step: error.step, ...(error.wait ? { wait: error.wait } : {}), reason: error.message, steps, warnings, log: fileOf(slot, "log"), ...(readStartError(slot) ? { startError: readStartError(slot) } : {}) })}\n`);
 			return error.exit;
 		}
 	}
 
 	async function serve() {
-		const lock = await takeLock(slot, ctx.by, ctx.lock, lockWaitFor(ctx)).catch((error) => { throw new ServerError("busy", (error as Error).message); });
+		const lock = await lockFor(ctx, lockWaitFor(ctx));
 		let released = false;
 		const release = () => { if (!released) { released = true; lock.release(); } };
 		try {
