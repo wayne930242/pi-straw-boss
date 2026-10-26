@@ -14,15 +14,15 @@ import { asciiLine, CLM_CHECK, execFailure, folderProblems, OWNER_OK_SIDS, POWER
 // PowerShell call still resets what is below the folder and reads every SDDL and owner back; this closes the window before it.
 
 /** Runs a system program (`whoami.exe`, `icacls.exe`) and returns its output; `timeoutMs` bounds it (the time a caller has left). */
-export type RunNative = (file: string, args: string[], timeoutMs?: number) => string;
+export type RunNative = (file: string, args: string[], timeoutMs?: number, env?: Record<string, string>) => string;
 export const NATIVE_MS = 15_000;
 /** A system program by absolute path, run from System32 (a bare name is looked for in the current folder first, which is a project: nodejs/node#46264). */
-export const nativeCommand = (name: string, args: string[], env: NodeJS.ProcessEnv = process.env, timeout = NATIVE_MS) => ({
+export const nativeCommand = (name: string, args: string[], env: NodeJS.ProcessEnv = process.env, timeout = NATIVE_MS, extraEnv?: Record<string, string>) => ({
 	file: system32Path(name, env), args,
-	options: { encoding: "utf8" as const, windowsHide: true, timeout, cwd: system32(env), stdio: ["ignore", "pipe", "pipe"] as ("ignore" | "pipe")[] },
+	options: { encoding: "utf8" as const, windowsHide: true, timeout, cwd: system32(env), stdio: ["ignore", "pipe", "pipe"] as ("ignore" | "pipe")[], ...(extraEnv ? { env: { ...env, ...extraEnv } } : {}) },
 });
-const runNative: RunNative = (name, args, timeoutMs = NATIVE_MS) => {
-	const { file, args: argv, options } = nativeCommand(name, args, process.env, Math.max(500, Math.min(timeoutMs, NATIVE_MS)));
+const runNative: RunNative = (name, args, timeoutMs = NATIVE_MS, extraEnv) => {
+	const { file, args: argv, options } = nativeCommand(name, args, process.env, Math.max(500, Math.min(timeoutMs, NATIVE_MS)), extraEnv);
 	return execFileSync(file, argv, options);
 };
 
@@ -117,14 +117,15 @@ const stepOf = <T>(step: Step, dir: string, fn: () => T): T => {
 const POWERSHELL = "WindowsPowerShell\\v1.0\\powershell.exe";
 /**
  * The SID that owns a folder, read by one PowerShell start: `GetAccessControl(…Owner).GetOwner([SecurityIdentifier])` prints a SID, never a name that a listing would cut or another account
- * could imitate. The Constrained Language check comes first, so a machine that locks PowerShell down says so (the word is told as a sentence by `execFailure`). Used only where an existing
- * folder's DACL is wrong and a change is about to be made.
+ * could imitate. The Constrained Language check comes first, so a machine that locks PowerShell down says so (the word is told as a sentence by `execFailure`). Read by `ownerGate` before the
+ * first file is created in an existing folder, and by `secure` where a wrong DACL is about to be changed and the folder was not gated yet.
  */
 export function ownerOfFolder(dir: string, run: RunNative, timeoutMs?: number): string {
-	const script = [PROGRESS_OFF, CLM_CHECK, `$d = '${dir.replace(/'/g, "''")}'`, "[IO.Directory]::GetAccessControl($d, [Security.AccessControl.AccessControlSections]::Owner).GetOwner([Security.Principal.SecurityIdentifier]).Value"].join("\n");
+	const script = [PROGRESS_OFF, CLM_CHECK, "$d = $env:SB_OWNER_DIR", "[IO.Directory]::GetAccessControl($d, [Security.AccessControl.AccessControlSections]::Owner).GetOwner([Security.Principal.SecurityIdentifier]).Value"].join("\n");
 	let out: string;
 	try {
-		out = run(POWERSHELL, [...POWERSHELL_FLAGS, "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], timeoutMs);
+		// The folder comes in the environment, never quoted into the script: PowerShell reads U+2018 to U+201B as single quotes too, so a path such as `O’Neil` would break (or inject into) the script.
+		out = run(POWERSHELL, [...POWERSHELL_FLAGS, "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], timeoutMs, { SB_OWNER_DIR: dir });
 	} catch (error) {
 		const failed = error as Error & { stderr?: unknown; stdout?: unknown };
 		throw new Refused(`the owner of ${dir} could not be read (${execFailure(failed, failed.stderr, failed.stdout)})`);
@@ -180,11 +181,10 @@ export function ownerGate(dir: string, run: RunNative = runNative, timeoutMs?: n
  *
  * An EXISTING folder is not touched unless it has to be (R12; VM pass 5b, the decoy). A protect call (`/grant:r user:(OI)(CI)F`) on a folder another account made and granted the user WRITE_DAC
  * gives the user WRITE_OWNER, which is the state any later takeover (a `/setowner`, a repair) needs. So: `/save` first, and a folder whose DACL is already exactly the owner and SYSTEM is left alone
- * (one icacls call fewer on a normal start, and no PowerShell). Only a wrong DACL is acted on, and then only after one PowerShell has read the folder's owner as a SID: the user, BUILTIN\Administrators
- * and SYSTEM go on to the protect call (an elevated run's folder, a folder that was damaged); any other owner, or an owner that cannot be read, is refused with the folder untouched, so nothing
- * of the victim's is added to it and no secret is written. The same owner is gated again by the PowerShell steps before any secret exists. What a
- * start can still write into a foreign folder: when its DACL is already right this function changes nothing and returns, so the callers' lock, placeholder record (no secret), log lines and
- * `start-error.json` are written before the PowerShell gate refuses; a foreign folder with a wrong DACL is refused here, before any of them.
+ * (one icacls call fewer on a normal start, and no PowerShell). Only a wrong DACL is acted on, and then only once the folder's owner is known as a SID (`ownerGate` has read it before this runs on
+ * a start; otherwise one PowerShell reads it here): the user, BUILTIN\Administrators and SYSTEM go on to the protect call (an elevated run's folder, a folder that was damaged); any other owner, or an
+ * owner that cannot be read, is refused with the folder untouched, so nothing of the victim's is added to it and no secret is written. The same owner is gated again by the PowerShell steps before
+ * any secret exists. A start gates a folder BEFORE any file is created in it (`ownerGate`, R13), so a refusal writes nothing there.
  */
 function secure(target: string, run: RunNative, left: () => number | undefined, fresh = false): void {
 	// A junction that took the name since the first look is refused before any call acts on it (`/L` is the second guard).

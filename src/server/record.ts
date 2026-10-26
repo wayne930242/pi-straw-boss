@@ -86,9 +86,11 @@ export function secretDir(dir: string) {
  * Makes the slot's folder ready for the first file in it. On Windows the state folder is protected (owner and SYSTEM, no inheritance) first, before the lock, the placeholder record, or
  * the log is created, by two native calls and once per process; the slot's own folder (below it, for a secondary slot) then inherits that. Elsewhere it is the 700 folder.
  */
-export function prepareSlot(slot: Slot, platform: NodeJS.Platform = process.platform, run?: RunNative, ms?: number): void {
+export function prepareSlot(slot: Slot, platform: NodeJS.Platform = process.platform, run?: RunNative, ms?: number, gate?: () => void): void {
 	if (platform === "win32") {
 		protectFolder(slot.stateDir, run, ms);
+		// The owner gate (R13-F002) comes before anything else is made in the folder, so a folder that landed foreign (a swapped temporary folder) gets not even a secondary slot's empty `servers\` in it.
+		gate?.();
 		// A secondary slot's folders inherit the protected one: none of them may be a link or junction that sends what is written into them elsewhere.
 		if (!slot.primary) for (const dir of [join(slot.stateDir, "servers"), slot.dir]) {
 			mkdirSync(dir, { recursive: true });

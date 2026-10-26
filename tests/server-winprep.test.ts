@@ -29,7 +29,7 @@ interface Fake { owner?: string | Error; icacls?: Error & { status?: number; std
  */
 function native(final: () => string, over: Fake = {}) {
 	const calls: Call[] = [];
-	const run = (file: string, args: string[], timeoutMs?: number) => {
+	const run = (file: string, args: string[], timeoutMs?: number, _env?: Record<string, string>) => {
 		const call: Call = { file, args, target: args[0]!, finalExists: existsSync(final()), timeoutMs };
 		calls.push(call);
 		if (file === "whoami.exe") return over.whoami ?? `"PC\\me","${OWNER}"\r\n`;
@@ -517,19 +517,23 @@ test("R12: an existing folder with a wrong DACL and the user, Administrators or 
 	assert.throws(() => protectFolder(dir, odd), /did not accept its arguments/);
 });
 
-test("R12: the owner read is one -EncodedCommand PowerShell that checks the language mode first and prints the owner as a SID; a quote in the path is doubled", () => {
-	const seen: { file: string; args: string[] }[] = [];
-	const run = (file: string, args: string[]) => { seen.push({ file, args }); return `${FOREIGN}\r\n`; };
-	assert.equal(ownerOfFolder("C:\\Users\\o'brien\\straw-boss", run), FOREIGN);
-	assert.equal(seen.length, 1);
-	assert.match(seen[0]!.file, /WindowsPowerShell\\v1\.0\\powershell\.exe$/);
-	assert.deepEqual(seen[0]!.args.slice(0, 4), ["-NoProfile", "-NonInteractive", "-OutputFormat", "Text"]);
-	const script = Buffer.from(seen[0]!.args[seen[0]!.args.indexOf("-EncodedCommand") + 1]!, "base64").toString("utf16le");
-	const lines = script.split("\n");
-	assert.match(lines[0]!, /ProgressPreference/);
-	assert.match(lines[1]!, /LanguageMode -ne 'FullLanguage'.*sb-constrained-language/, "the language mode is checked before any .NET call");
-	assert.ok(script.includes("$d = 'C:\\Users\\o''brien\\straw-boss'"));
-	assert.match(script, /\[IO\.Directory\]::GetAccessControl\(\$d, \[Security\.AccessControl\.AccessControlSections\]::Owner\)\.GetOwner\(\[Security\.Principal\.SecurityIdentifier\]\)\.Value/);
+test("R12, R13-F001: the owner read is one -EncodedCommand PowerShell that checks the language mode first and prints the owner as a SID; the folder comes in the environment, never quoted into the script, whatever quote characters its name has", () => {
+	for (const dir of ["C:\\Users\\o'brien\\straw-boss", "C:\\Users\\O\u2019Neil\\straw-boss", "C:\\a\u2018b\\c\u201Ad\\e\u201Bf\\straw-boss", "C:\\x\"; Remove-Item *\\straw-boss"]) {
+		const seen: { file: string; args: string[]; env?: Record<string, string> }[] = [];
+		const run = (file: string, args: string[], _ms?: number, env?: Record<string, string>) => { seen.push({ file, args, ...(env ? { env } : {}) }); return `${FOREIGN}\r\n`; };
+		assert.equal(ownerOfFolder(dir, run), FOREIGN);
+		assert.equal(seen.length, 1);
+		assert.match(seen[0]!.file, /WindowsPowerShell\\v1\.0\\powershell\.exe$/);
+		assert.deepEqual(seen[0]!.args.slice(0, 4), ["-NoProfile", "-NonInteractive", "-OutputFormat", "Text"]);
+		const script = Buffer.from(seen[0]!.args[seen[0]!.args.indexOf("-EncodedCommand") + 1]!, "base64").toString("utf16le");
+		const lines = script.split("\n");
+		assert.match(lines[0]!, /ProgressPreference/);
+		assert.match(lines[1]!, /LanguageMode -ne 'FullLanguage'.*sb-constrained-language/, "the language mode is checked before any .NET call");
+		assert.deepEqual(seen[0]!.env, { SB_OWNER_DIR: dir }, "the folder is in the environment");
+		assert.ok(lines.includes("$d = $env:SB_OWNER_DIR"));
+		assert.ok(!script.includes(dir) && !/[\u2018-\u201B]/.test(script) && !script.includes("brien"), "no part of the path is in the script");
+		assert.match(script, /\[IO\.Directory\]::GetAccessControl\(\$d, \[Security\.AccessControl\.AccessControlSections\]::Owner\)\.GetOwner\(\[Security\.Principal\.SecurityIdentifier\]\)\.Value/);
+	}
 });
 
 test("F4: a temporary folder that cannot be removed after a failed rename does not hide why the start failed, and a later start sweeps it", () => {
@@ -696,4 +700,39 @@ test("R13: a folder made by this start (the first ever) is gated right after it 
 	assert.ok(existsSync(world.stateDir), "the folder is in place");
 	assert.deepEqual(tree(world.stateDir), [], "and nothing was written into it");
 	assert.equal(powershells(n), 1);
+});
+
+test("R13-F002: a secondary slot's folder that lands foreign right after the protect step is refused BEFORE its servers\\<hash> folders are made: the tree stays empty", async () => {
+	forgetSid();
+	const w = new ServerWorld();
+	try {
+		const slot = { ...w.slot, primary: false, dir: join(w.stateDir, "servers", "0123456789abcdef") };
+		const n = native(() => w.stateDir, { owner: FOREIGN });
+		// The first gate finds no folder (nothing to read); the folder is made by protectFolder, and the gate inside prepareSlot refuses it before the mkdirs.
+		const ctx = w.ctx({ platform: "win32", slot, prepare: (s, ms, g) => prepareSlot(s, "win32", n.run, ms, g), gate: (s, ms) => ownerGate(s.stateDir, n.run, ms) });
+		await assert.rejects(ensure(ctx, { boss: true }), /belongs to another account/);
+		assert.deepEqual(tree(w.stateDir), [], "no servers\\ and no servers\\<hash>\\ in the foreign folder");
+		assert.equal(powershells(n), 1);
+	} finally {
+		await w.close();
+	}
+});
+
+test("R13-F006: the owner-gate phase times the gate's own reads, not the protect and read-back around them", async () => {
+	forgetSid();
+	let t = 1_000;
+	const n = native(() => world.stateDir);
+	const ctx = world.ctx({
+		platform: "win32", now: () => t,
+		prepare: (s, ms, g) => { t += 5_000; prepareSlot(s, "win32", n.run, ms, g); },
+		gate: (s, ms) => { t += 40; return ownerGate(s.stateDir, (f, a, m, e) => (f.endsWith("powershell.exe") ? (t += 300, n.run(f, a, m, e)) : n.run(f, a, m, e)), ms); },
+	});
+	const lock = await lockFor(ctx, 0);
+	lock.release();
+	const phase = readFileSync(join(world.stateDir, "server.log"), "utf8").split("\n").find((l) => l.includes("phase name=owner-gate"));
+	assert.ok(phase, "logged");
+	assert.match(phase!, /ms=\d+/);
+	const ms = Number(/ms=(\d+)/.exec(phase!)![1]);
+	assert.ok(ms < 5_000, `the 5 s of prepare are not in it (${ms})`);
+	assert.ok(ms >= 40, `the gate's own time is (${ms})`);
 });

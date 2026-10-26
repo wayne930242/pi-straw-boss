@@ -298,9 +298,21 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
         read again. **Cost:** one PowerShell on a cold `up` (one more beside the launch PowerShell; log phase `owner-gate ms=…`, to be measured on
         the VM), and on a `stop` of a server that is down (it writes `stopped`). **A request that finds a server running** (`up` again, `stop`
         of a live server, `status`, a session's look) reads no owner and starts no PowerShell: it looks first (a read only), and takes the
-        lock without the gate. The residual: a folder with a live server record is trusted that far; an attacker's fake server there makes a
-        `stop` take `server.lock` in the attacker's folder. The protect call on a swapped temporary folder (adds the user and SYSTEM where the
-        attacker granted WRITE_DAC; the owner is unchanged) is the one change `protectFolder` makes to a foreign folder.
+        lock without the gate. The owner read for a folder is made once per folder identity; in a `secondary` slot it is passed between the
+        protect call and the `mkdir`s of `servers\<hash>` (R13-F002), so a folder that landed foreign gets not even those empty folders.
+        The folder is passed to the PowerShell in the environment (`SB_OWNER_DIR`), never quoted into the script: PowerShell reads U+2018 to
+        U+201B as single quotes too (R13-F001). A refusal found by the launch script (rc -2) is not written to `start-error.json` either (R13-F004).
+        **Residual (R13-F003), documented, not fixed in B1:** a folder with a live-looking record is trusted without an owner read. An account
+        that can create entries in `PI_CODING_AGENT_DIR` can make `straw-boss\` with a `server.json` of its own (it knows the secret the hello
+        proves), name its own pid, and use any free pipe name (or one whose DACL denies the victim, which reads as `denied`). A victim's `up`,
+        `stop` or `restart` then writes, inside the attacker's folder, `server.lock`, `server.json` (`stopped`, `clearStopped`,
+        `touchRestarting`, an automatic upgrade of an older record), `server.log` lines and, from the plain-spawn fallback's abort,
+        `start-error.json`; and `status` and `up`'s `url` are spoofed. No secret of the victim is exposed in B1. The ceiling: an attacker who
+        can create entries in `PI_CODING_AGENT_DIR` already reaches `auth.json` (mode 600 means nothing on Windows) and can plant files in
+        `extensions/`. **Before B2 to B4 send session content to the server**, an owner check once per process must precede trusting a record.
+        The protect call on a swapped temporary folder, and on an existing user-owned folder swapped between the identity check and the call
+        (the gate refuses it afterwards), adds the user and SYSTEM where the attacker granted WRITE_DAC and leaves the owner as it was: the
+        changes `protectFolder` can make to a foreign folder.
         Both ACL scripts check below the folder the same way: the folder's own owner first, then ONE walk (R13) that reads every entry's
         attributes, link type and owner (a SID, through .NET) once, refusing a junction, a symbolic link or a foreign owner, and only then `/setowner /T /C /L /Q` (PowerShell, which turns BA- and SYSTEM-owned entries
         into the user's, entries already checked) and `/reset /T /C /L`, so a foreign entry is refused with nothing below the folder changed.

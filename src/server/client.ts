@@ -133,7 +133,7 @@ export interface Ctx {
 	kill(pid: number, signal: NodeJS.Signals): void;
 	lock: LockDeps;
 	/** Makes the slot's folder ready before the first file is created in it (on Windows, protects it); `ms` is the time its native calls may take. */
-	prepare(slot: Slot, ms?: number): void;
+	prepare(slot: Slot, ms?: number, gate?: () => void): void;
 	/**
 	 * The gate before the first file is created in an existing state folder: on Windows one owner read (`ownerGate`), refusing another account's folder with nothing written in it. Returns whether it read.
 	 * Called where a file is about to be created and no server is known to run; elsewhere a no-op.
@@ -147,7 +147,7 @@ export function makeCtx(over: Partial<Ctx> & Pick<Ctx, "slot" | "version" | "cli
 	const now = over.now ?? Date.now, alive = over.alive ?? pidAlive, start = over.startOf ?? startOf;
 	const sleep = over.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 	const log = over.log ?? createLog(fileOf(over.slot, "log"), { now });
-	const platform = over.platform ?? process.platform, prepare = over.prepare ?? ((slot: Slot, ms?: number) => prepareSlot(slot, platform, undefined, ms));
+	const platform = over.platform ?? process.platform, prepare = over.prepare ?? ((slot: Slot, ms?: number, gate?: () => void) => prepareSlot(slot, platform, undefined, ms, gate));
 	return {
 		env: process.env, platform: process.platform, node: process.execPath, spawn: platform === "win32" ? (spec) => spawnBreakaway(spec, { fallback: spawnDetached }) : spawnDetached, timers: timersFor(over.platform),
 		kill: (pid, signal) => void process.kill(pid, signal), prepare,
@@ -330,10 +330,7 @@ export async function launch(ctx: Ctx, { began, old, deadline }: { began?: strin
 		if (refusal) {
 			ctx.log.line("start-failed", { code: "acl", text: refusal });
 			const startError = { at: new Date(ctx.now()).toISOString(), code: "acl" as const, text: refusal };
-			// Written too, so that a later `status` shows why there is no server. The folder may be another account's (that is the refusal), so the write is best effort; it carries no secret.
-			try {
-				writeStartError(ctx.slot, startError, ctx.now());
-			} catch { /* the error is thrown all the same */ }
+			// Not written to `start-error.json` (R13-F004): the folder is the one just found to be another account's, and nothing is created in it. The refusal is in the error and the JSON of `up`.
 			throw new ServerError("start-failed", `acl: ${refusal}`, startError);
 		}
 		ctx.log.line("start-unanswered", { ms: ctx.now() - t0, exit: outcome ? String(outcome.exit) : "none" });
@@ -343,23 +340,33 @@ export async function launch(ctx: Ctx, { began, old, deadline }: { began?: strin
 	}
 }
 
-/**
- * Takes `server.lock`, after the slot's folder is ready (on Windows protected: no file is created in an unprotected folder). A folder that cannot be protected is a start that cannot run
- * here (`acl`, told with exit 3, and not written to a file: there is no protected folder to write it in); a busy lock is `busy`, whose `wait` is `lock`.
- */
 /** Whether a request must pass the owner gate before it writes: not when a server is known to run in the folder (it wrote nothing of its own to get there, and a stop or a second `up` runs no PowerShell). */
 export const needsGate = (seen: Probe) => !(seen.live || seen.denied || seen.runs === true);
+/**
+ * Takes `server.lock`, after the slot's folder is ready (on Windows protected: no file is created in an unprotected folder, nor in a folder another account owns: `gate`, R13). A folder that
+ * cannot be protected is a start that cannot run here (`acl`, told with exit 3, and not written to a file: there is no protected folder to write it in); a busy lock is `busy`, whose `wait` is `lock`.
+ */
 export async function lockFor(ctx: Ctx, waitMs: number, deadline?: number, gate = true) {
 	try {
 		const ms = deadline === undefined ? undefined : within(ctx, deadline, 15_000);
 		// R13: nothing is created or changed in a folder that is another account's. An existing folder is gated BEFORE anything is made or changed in it (the owner is read once, and not again by
 		// `prepare` for a wrong DACL); a folder `prepare` has just made (the first start ever) is gated right after it, before the lock, the placeholder, the log or `start-error.json`. Both are
 		// no-ops where the owner was read for this folder already, and where a server is known to run (`gate` false).
-		const t = ctx.now();
-		let read = gate && ctx.gate(ctx.slot, ms);
-		ctx.prepare(ctx.slot, ms);
-		if (gate) read = ctx.gate(ctx.slot, ms) || read;
-		if (read) ctx.log.line("phase", { name: "owner-gate", ms: ctx.now() - t });
+		// The phase times the gate's own reads (R13-F006), not the folder preparation around them.
+		let read = false, gateMs = 0;
+		const gated = () => {
+			const t = ctx.now();
+			try {
+				if (ctx.gate(ctx.slot, ms)) read = true;
+			} finally {
+				gateMs += ctx.now() - t;
+			}
+		};
+		if (gate) gated();
+		// The gate is also passed inside `prepare`, between the protect call and the mkdirs of a secondary slot; a no-op when the folder was read already.
+		ctx.prepare(ctx.slot, ms, gate ? gated : undefined);
+		if (gate) gated();
+		if (read) ctx.log.line("phase", { name: "owner-gate", ms: gateMs });
 	} catch (error) {
 		const text = (error as Error).message;
 		throw new ServerError("start-failed", `acl: ${text}`, { at: new Date(ctx.now()).toISOString(), code: "acl", text });

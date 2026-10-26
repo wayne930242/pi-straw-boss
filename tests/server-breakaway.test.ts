@@ -527,8 +527,7 @@ test("R7-F001: launch turns a refusal into ServerError start-failed with an acl 
 		const began = Date.now();
 		await assert.rejects(launch(ctx, {}), (e: unknown) => e instanceof ServerError && e.code === "start-failed" && e.startError?.code === "acl" && e.startError.text === text && e.message === `acl: ${text}`);
 		assert.ok(Date.now() - began < 2000);
-		assert.equal(readStartError(w.slot)?.code, "acl", "start-error.json is written, so status shows why");
-		assert.equal(readStartError(w.slot)?.text, text);
+		assert.equal(readStartError(w.slot), undefined, "R13-F004: nothing is written into the folder that was just found foreign; the reason is in the error");
 	} finally {
 		await w.close();
 	}
