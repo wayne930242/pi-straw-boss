@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { ACL_SCRIPT, ACL_TOKEN, aclCommand, aclMarkerPath, AclError, aclProblems, applyAcl, asciiLine, awaitAclMarker, execFailure, type Exec, fileProblems, folderProblems, parseAclOutput, parseSddl, readMarker, SYSTEM_SID } from "../src/server/acl.ts";
+import { ACL_SCRIPT, ACL_TOKEN, aclCommand, aclMarkerPath, AclError, aclProblems, applyAcl, asciiLine, awaitAclMarker, execFailure, messageLine, type Exec, fileProblems, folderProblems, parseAclOutput, parseSddl, readMarker, SYSTEM_SID } from "../src/server/acl.ts";
 
 // docs/specs/2026-10-26-sb-backend.md, The control socket: on Windows the state directory gets an owner-and-SYSTEM ACL, set and checked by SID in one PowerShell start.
 // Windows is not run here: these pin the command and the SDDL reading.
@@ -248,4 +248,21 @@ test("asciiLine keeps the last non-empty line as printable ASCII, at most 120 ch
 	assert.equal(asciiLine(undefined), "");
 	assert.equal(asciiLine("x".repeat(500)).length, 120);
 	assert.equal(execFailure(Object.assign(new Error("Command failed: x"), { status: 5 }), "�s���Q�ڡC"), "?s?Q?C, exit code 5");
+});
+
+test("N-F006: a PowerShell 5.1 error is told by its message (the first line before the 'At line' position and the '+' lines), not by its FullyQualifiedErrorId at the end", () => {
+	const clm = [
+		"Cannot create type. Only core types are supported in this language mode.",
+		"At line:3 char:8",
+		"+ $si = ([wmiclass]'Win32_ProcessStartup').CreateInstance()",
+		"+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+		"    + CategoryInfo          : NotImplemented: (:) [], PSNotSupportedException",
+		"    + FullyQualifiedErrorId : CannotCreateTypeConstrainedLanguage",
+		"",
+	].join("\r\n");
+	const thrown = ["icacls failed with exit code 5", "At line:1 char:1", '+ throw "icacls failed with exit code 5"', "+ ~~~~~", "    + CategoryInfo          : OperationStopped: (icacls failed with exit code 5:String) [], RuntimeException", "    + FullyQualifiedErrorId : icacls failed with exit code 5", ""].join("\r\n");
+	assert.equal(execFailure(Object.assign(new Error("Command failed: x"), { code: 1 }), clm), "Cannot create type. Only core types are supported in this language mode., exit code 1");
+	assert.equal(execFailure(Object.assign(new Error("Command failed: x"), { code: 1 }), thrown), "icacls failed with exit code 5, exit code 1");
+	assert.equal(messageLine("\r\n\r\nAt line:1\r\n+ x\r\n"), "+ x", "when nothing else is there, the last line stands");
+	assert.equal(messageLine(["#< CLIXML", "second"].join("\n")), "#< CLIXML", "plain text: the first line");
 });

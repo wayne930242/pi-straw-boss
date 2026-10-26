@@ -240,10 +240,21 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
       secrets were written into it.
     - **A folder that is not there is born protected.** Making `straw-boss/` and then protecting it leaves it with the parent's broad
       ACEs for the time of those calls (443 ms on the VM with an agent folder outside the profile). So the starter and the server make it
-      under an unpredictable name beside it, `straw-boss.<16 hex>.tmp` (a `servers/<hash>` folder the same way), run the three calls
+      under an unpredictable name beside it, `straw-boss.<16 hex>.tmp`, run the three calls
       above on that name, check that nothing was put into it, and only then rename it to its final name. The final name does not exist
       while any call runs. When the final name appeared meanwhile (another process was quicker), the temporary folder is dropped and the
       folder that is there is made the owner's, protected, and read back where it is. A temporary folder that fails a check is removed.
+      `servers/<hash>` of a secondary slot is not made this way: it is made with `mkdir` inside the protected `straw-boss/` after it
+      is in place, and inherits the owner and SYSTEM grant.
+      - Every `icacls` call carries `/L`, so a link is acted on itself and never its target, and `secure` looks for a link first.
+      - The rename is tried again on `EPERM`, `EBUSY` and `EACCES` (a scanner or the indexer holding the temporary folder; twenty tries
+        10 ms apart, as `writeJson` does).
+      - At every start, a `straw-boss.<16 hex>.tmp` folder older than ten minutes (a start that crashed between the make and the
+        rename) is removed, if it is a folder and not a link.
+      - Only a program that failed to start is told as "not found" or "did not finish in time"; a read of the file `icacls /save`
+        wrote, or a `whoami` that gave no SID, keeps its own words.
+      - A PowerShell 5.1 failure is told by its message line: the first line that does not start with `At line`, `+` or `~`, not the
+        `FullyQualifiedErrorId` that ends it.
     - **A failing call is told by a fixed message** for its step and exit code, with what to do, and never by the program's own text,
       which a console prints in its code page (CP950, CP932) and Node reads as UTF-8: half garbled. The program's last line is kept
       only as a detail cut to printable ASCII. For example, exit 5 on the owner step: "the folder <dir> belongs to another account,
@@ -384,6 +395,13 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
     - **A PowerShell that does not answer in time is a failed start with no fallback**: WMI may already have created the server, and a
       second one would race it. The start goes on waiting for a `hello` until its time is out, and its error names the WMI start (the
       requester waits a moment for the word of a PowerShell that timed out with the end of its own wait, so the sentence is there).
+    - **The script's answer line is the source of truth, and once WMI made the process nothing falls back.** The launch script sets
+      `created` the moment `Win32_Process.Create` returns 0, and from then on it always prints its answer line, with rc 0 and the pid,
+      whatever fails after it (the check, the marker's write or move: reported as `markerError`, and the starter then writes the error
+      marker so the waiting server ends with `acl` at once, under a temporary name of its own). A failure before the create prints rc -1
+      and exits 1: that, a return code other than 0, and a PowerShell that could not be started at all (`ENOENT`) fall back to the plain
+      spawn. A PowerShell that ends with no usable answer line (exit 1 with an empty stdout, rc 0 with no pid, garbage) is treated as "may
+      have started": a failed start, no plain spawn.
 - The process gets a constructed environment: the session's environment minus `PI_INTERCOM_SESSION_ID`, `PI_INTERCOM_STABLE_ID`,
   `PI_SUBAGENT_*`, `STRAW_BOSS_ROLE`, and `HERDR_PANE_ID`/`HERDR_TAB_ID`/`HERDR_WORKSPACE_ID`. `PI_INTERCOM_SCOPE_ID`,
   `PI_INTERCOM_TRANSPORT`, and `PI_INTERCOM_TCP` stay, so the server registers in the same broker scope as the sessions; it records them

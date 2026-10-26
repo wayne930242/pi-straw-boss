@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
@@ -51,8 +51,8 @@ test("the owner's SID is read from whoami's CSV by its shape, never by a name; a
 });
 
 test("N1: the owner is set and the folder protected in two calls, each a documented icacls form: /setowner alone, then /inheritance:r /grant:r (owner and SYSTEM by SID, passed on), without /T", () => {
-	assert.deepEqual(ownerArgs("C:\\s", OWNER), ["C:\\s", "/setowner", `*${OWNER}`, "/Q"]);
-	assert.deepEqual(protectArgs("C:\\s", OWNER), ["C:\\s", "/inheritance:r", "/grant:r", `*${OWNER}:(OI)(CI)F`, "*S-1-5-18:(OI)(CI)F"]);
+	assert.deepEqual(ownerArgs("C:\\s", OWNER), ["C:\\s", "/setowner", `*${OWNER}`, "/L", "/Q"]);
+	assert.deepEqual(protectArgs("C:\\s", OWNER), ["C:\\s", "/inheritance:r", "/grant:r", `*${OWNER}:(OI)(CI)F`, "*S-1-5-18:(OI)(CI)F", "/L"]);
 	for (const args of [ownerArgs("C:\\s", OWNER), protectArgs("C:\\s", OWNER)]) assert.ok(!args.includes("/T"));
 	assert.ok(!protectArgs("C:\\s", OWNER).includes("/setowner"), "the grant form never carries /setowner");
 });
@@ -72,6 +72,7 @@ test("a new folder is made under an unpredictable name beside its own, made the 
 	assert.deepEqual(n.calls[1]!.args, ownerArgs(temp, OWNER));
 	assert.deepEqual(n.calls[2]!.args, protectArgs(temp, OWNER));
 	assert.deepEqual(n.calls[3]!.args.slice(0, 2), [temp, "/save"]);
+	assert.deepEqual(n.calls[3]!.args.slice(3), ["/L", "/Q"]);
 	assert.ok(existsSync(dir) && statSync(dir).isDirectory(), "the folder is in place");
 	assert.deepEqual(leftovers(dir), [], "the temporary folder is gone");
 });
@@ -215,9 +216,9 @@ test("a failing call is told by a fixed message for its step and exit code, with
 	assert.match(explainNative("owner", dir, denied(1307)), /belongs to another account/);
 	assert.match(explainNative("protect", dir, denied(5)), /may not change the permissions of the folder .*Run pi once as administrator, or delete the folder/);
 	assert.match(explainNative("protect", dir, denied(87, "Invalid parameter")), /did not accept its arguments.*exit 87.*detail: Invalid parameter.*bug in pi-straw-boss/);
-	assert.match(explainNative("owner", dir, Object.assign(new Error("x"), { code: "ENOENT" })), /icacls\.exe was not found in the Windows System32 folder/);
-	assert.match(explainNative("whoami", dir, Object.assign(new Error("x"), { code: "ENOENT" })), /whoami\.exe was not found/);
-	assert.match(explainNative("read-back", dir, Object.assign(new Error("x"), { code: "ETIMEDOUT", killed: true })), /icacls did not finish in time/);
+	assert.match(explainNative("owner", dir, Object.assign(new Error("x"), { code: "ENOENT", syscall: "spawnSync icacls.exe" })), /icacls\.exe was not found in the Windows System32 folder/);
+	assert.match(explainNative("whoami", dir, Object.assign(new Error("x"), { code: "ENOENT", syscall: "spawnSync whoami.exe" })), /whoami\.exe was not found/);
+	assert.match(explainNative("read-back", dir, Object.assign(new Error("x"), { code: "ETIMEDOUT", killed: true, syscall: "spawnSync icacls.exe" })), /icacls did not finish in time/);
 	assert.match(explainNative("read-back", dir, denied(3, "")), /^icacls failed \(read-back step, exit 3\)\.$/);
 	assert.ok(!/Command failed/.test(explainNative("owner", dir, denied(5))));
 });
@@ -313,5 +314,94 @@ test("elsewhere the folder is the 700 folder and no native call is made", () => 
 		assert.ok(existsSync(join(dir, "x")));
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+// --- review N-F002, N-F003, N-F005 ---
+
+test("N-F002: every icacls call carries /L (a link is acted on itself, never its target), and the folder is looked at for a link before the first call of `secure`", () => {
+	for (const args of [ownerArgs("C:\\s", OWNER), protectArgs("C:\\s", OWNER)]) assert.ok(args.includes("/L"), args.join(" "));
+	const dir = join(world.root, "agent", "straw-boss");
+	const real = mkdtempSync(join(tmpdir(), "psb-final-"));
+	try {
+		// The final name becomes a junction while the three calls on the temporary folder run: the rename fails, and the folder at the final name is a link.
+		const n = native(() => dir, { during: (c) => { if (c.args.includes("/save") && !existsSync(dir)) symlinkSync(real, dir); } });
+		assert.throws(() => protectFolder(dir, n.run), /link or junction/);
+		assert.ok(!n.icacls().some((c) => c.target === dir), "no icacls call was made on the link");
+		assert.ok(existsSync(real));
+	} finally {
+		rmSync(real, { recursive: true, force: true });
+	}
+});
+
+test("N-F003: ENOENT and a timeout are told as a program that was not found or did not finish only when the program failed to start; any other error keeps its own message, as ASCII", () => {
+	const dir = "C:\\s";
+	const local = explainNative("read-back", dir, Object.assign(new Error("ENOENT: no such file or directory, open 'C:\\tmp\\sb-acl-1.txt'"), { code: "ENOENT", syscall: "open" }));
+	assert.ok(!/System32|not found in/.test(local), local);
+	assert.match(local, /read-back step.*no such file/);
+	const timeout = explainNative("owner", dir, Object.assign(new Error("slow"), { killed: true, signal: "SIGTERM" }));
+	assert.ok(!/did not finish in time/.test(timeout), "a killed flag without a spawn error is not a timeout of icacls");
+});
+
+test("N-F003: icacls exits 0 but /save left no file: the message names that, not a missing icacls.exe; and whoami's own text is kept when it gave no SID", () => {
+	const dir = join(world.root, "agent", "straw-boss");
+	mkdirSync(dir, { recursive: true });
+	const silent = (file: string) => (file === "whoami.exe" ? `"PC\\me","${OWNER}"\r\n` : "");
+	assert.throws(() => protectFolder(dir, silent), (e: unknown) => /wrote no file/.test((e as Error).message) && !/System32/.test((e as Error).message));
+	forgetSid();
+	assert.throws(() => protectFolder(dir, () => "ERROR: Access is denied.\r\n"), /whoami did not give a SID: ERROR: Access is denied\./);
+});
+
+test("N-F005: renaming the temporary folder is tried again on EPERM, EBUSY and EACCES (a scanner or the indexer holds it for a moment), not on another error", () => {
+	for (const code of ["EPERM", "EBUSY", "EACCES"]) {
+		forgetSid();
+		const dir = join(world.root, `r-${code}`, "straw-boss");
+		let failures = 3;
+		const rename = (from: string, to: string) => {
+			if (failures-- > 0) throw Object.assign(new Error(`${code}: busy`), { code });
+			renameSync(from, to);
+		};
+		protectFolder(dir, native(() => dir).run, undefined, Date.now, rename);
+		assert.ok(statSync(dir).isDirectory(), code);
+		assert.equal(failures, -1);
+		assert.deepEqual(leftovers(dir), []);
+	}
+	forgetSid();
+	const dir = join(world.root, "r-never", "straw-boss");
+	let calls = 0;
+	assert.throws(() => protectFolder(dir, native(() => dir).run, undefined, Date.now, () => { calls++; throw Object.assign(new Error("EPERM: held"), { code: "EPERM" }); }), /EPERM: held/);
+	assert.equal(calls, 21, "twenty more tries, then the error");
+	assert.deepEqual(readdirSync(dirname(dir)), [], "the temporary folder is removed");
+	forgetSid();
+	const other = join(world.root, "r-exdev", "straw-boss");
+	calls = 0;
+	assert.throws(() => protectFolder(other, native(() => other).run, undefined, Date.now, () => { calls++; throw Object.assign(new Error("EXDEV"), { code: "EXDEV" }); }), /EXDEV/);
+	assert.equal(calls, 1, "no retry");
+});
+
+test("N-F005: a temporary folder a crashed start left beside the state folder is removed once it is older than ten minutes; a younger one, a link, a file, and other names are left", () => {
+	const dir = join(world.root, "agent", "straw-boss");
+	mkdirSync(dir, { recursive: true });
+	const parent = dirname(dir), old = new Date(Date.now() - 11 * 60_000), real = mkdtempSync(join(tmpdir(), "psb-sweep-"));
+	const made = (name: string, kind: "dir" | "file" | "link", date: Date) => {
+		const path = join(parent, name);
+		if (kind === "dir") { mkdirSync(path); writeFileSync(join(path, "x"), "1"); } else if (kind === "file") writeFileSync(path, "1"); else symlinkSync(real, path);
+		if (kind !== "link") utimesSync(path, date, date);
+		return path;
+	};
+	try {
+		const stale = made("straw-boss.0123456789abcdef.tmp", "dir", old);
+		const young = made("straw-boss.fedcba9876543210.tmp", "dir", new Date());
+		const file = made("straw-boss.aaaaaaaaaaaaaaaa.tmp", "file", old);
+		const link = made("straw-boss.bbbbbbbbbbbbbbbb.tmp", "link", old);
+		const other = made("straw-boss.cccccccccccccccc.bak", "dir", old);
+		const foreign = made("other.0123456789abcdef.tmp", "dir", old);
+		protectFolder(dir, native(() => dir).run);
+		assert.equal(existsSync(stale), false);
+		for (const kept of [young, file, other, foreign]) assert.ok(existsSync(kept), kept);
+		assert.ok(lstatSync(link).isSymbolicLink() && existsSync(real), "a link is not followed or removed");
+		assert.ok(statSync(dir).isDirectory());
+	} finally {
+		rmSync(real, { recursive: true, force: true });
 	}
 });

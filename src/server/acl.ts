@@ -194,16 +194,24 @@ export type Exec = (file: string, args: string[], options: ReturnType<typeof acl
 const run: Exec = (file, args, options, done) => execFile(file, args, options, (error, stdout, stderr) => done(error, String(stdout), String(stderr)));
 
 /**
- * Why a program failed, for a person: the last non-empty line of its stderr (where PowerShell and icacls say what went wrong), and its exit code. Never `error.message`, which for a failed
+ * Why a program failed, for a person: its stderr's message line (see `messageLine`), and its exit code. Never `error.message`, which for a failed
  * child process begins with the whole command line (an `-EncodedCommand` of 2 KB of base64) and so fills any short cut of it.
  */
 export function execFailure(error: Error & { code?: unknown; status?: unknown }, stderr?: unknown): string {
-	const last = asciiLine(stderr);
+	const last = messageLine(stderr);
 	const code = typeof error.code === "number" ? error.code : typeof error.status === "number" ? error.status : undefined;
 	const first = error.message.split(/\r?\n/)[0] ?? "";
 	const text = last || (/^Command failed:/.test(first) ? "" : asciiLine(first));
 	const reason = text || (code !== undefined ? "" : typeof error.code === "string" ? error.code : "it failed");
 	return [reason, code !== undefined ? `exit code ${code}` : undefined].filter(Boolean).join(", ").slice(0, 300);
+}
+/**
+ * The message of an error PowerShell 5.1 printed: its first non-empty line that does not start with `At line`, `+` or `~` (the position, the source line, the markers, and the
+ * `+ CategoryInfo` / `+ FullyQualifiedErrorId` lines that follow the message), as `asciiLine` cuts it. Where every line is one of those, the last line stands.
+ */
+export function messageLine(text: unknown): string {
+	const lines = String(text ?? "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+	return asciiLine(lines.find((l) => !/^(At line|[+~])/.test(l)) ?? lines.at(-1));
 }
 /**
  * The last non-empty line of a program's output, cut to printable ASCII (anything else becomes `?`) and to 120 characters. A console prints in its code page (CP950, CP932, …) and Node reads UTF-8,

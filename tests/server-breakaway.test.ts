@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
@@ -116,7 +116,7 @@ test("release stops the watch of the pid", async () => {
 });
 
 test("F002: when PowerShell or WMI fails the start falls back to a plain spawn that is told to the server (--detach direct, with the reason), and `started` and the log say so", async () => {
-	for (const answer of [Object.assign(new Error("powershell.exe ENOENT"), { killed: false, signal: null }), '{"rc":21,"pid":0}', "garbage"]) {
+	for (const answer of [Object.assign(new Error("spawn powershell.exe ENOENT"), { code: "ENOENT", killed: false, signal: null }), '{"rc":21,"pid":0}']) {
 		const ps = fakePowershell(answer);
 		const plain: SpawnSpec[] = [];
 		const launched = spawnBreakaway(spec(), { exec: ps.exec, fallback: (s) => (plain.push(s), { pid: 99, exited: Promise.resolve(0) }) });
@@ -131,21 +131,31 @@ test("F002: when PowerShell or WMI fails the start falls back to a plain spawn t
 	}
 });
 
-test("N3: a failing PowerShell is told by its stderr's last line and exit code, not by Node's message that starts with the command line and its base64", async () => {
+test("N3: a failing PowerShell is told by its own words and exit code, not by Node's message that starts with the command line and its base64", async () => {
 	const b64 = "A".repeat(2400);
 	const failing = Object.assign(new Error(`Command failed: C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -NonInteractive -EncodedCommand ${b64}\nCannot invoke method.`), { code: 1, killed: false, signal: null });
-	const exec: LaunchExec = (_f, _a, _o, done) => setImmediate(() => done(failing, "", "At line:1 char:1\r\n+ [wmiclass]'Win32_Process'\r\nCannot create type. Only core types are supported in this language mode.\r\n"));
+	// The script caught the failure before anything was created and said so: that reason is the one that is recorded, and the plain spawn is told it.
+	const before: LaunchExec = (_f, _a, _o, done) => setImmediate(() => done(failing, '{"rc":-1,"pid":0,"markerError":"Cannot create type. Only core types are supported in this language mode."}\r\n', "At line:1 char:1\r\n+ [wmiclass]'Win32_Process'\r\n"));
 	const plain: SpawnSpec[] = [];
-	const launched = spawnBreakaway(spec(), { exec, fallback: (s) => (plain.push(s), { pid: 9, exited: Promise.resolve(0) }) });
-	const { failure } = await launched.started!;
-	assert.equal(failure, "Cannot create type. Only core types are supported in this language mode., exit code 1");
+	const launched = spawnBreakaway(spec(), { exec: before, fallback: (s) => (plain.push(s), { pid: 9, exited: Promise.resolve(0) }) });
+	const { failure, via } = await launched.started!;
+	assert.equal(via, "direct");
+	assert.equal(failure, "the launch script failed before WMI made the process: Cannot create type. Only core types are supported in this language mode.");
 	assert.ok(!failure!.includes("AAAA") && !/Command failed/.test(failure!));
 	assert.equal(plain[0]!.args.at(-1), failure, "the reason that is recorded is that line");
+	// No answer at all: PowerShell's message line (not its error id) and the exit code, in a failed start with no second server.
+	const none: LaunchExec = (_f, _a, _o, done) => setImmediate(() => done(failing, "", "Cannot create type. Only core types are supported in this language mode.\r\nAt line:1 char:1\r\n+ [wmiclass]'Win32_Process'\r\n    + FullyQualifiedErrorId : CannotCreateTypeConstrainedLanguage\r\n"));
+	const second: SpawnSpec[] = [];
+	const silent = await spawnBreakaway(spec(), { exec: none, fallback: (s) => (second.push(s), { pid: 9, exited: Promise.resolve(0) }) }).started!;
+	assert.equal(silent.via, "failed");
+	assert.match(silent.failure!, /^PowerShell gave no usable answer \(Cannot create type\. Only core types are supported in this language mode\., exit code 1\) \(Win32_Process\.Create may still have started the server\)$/);
+	assert.ok(!silent.failure!.includes("AAAA"));
+	assert.equal(second.length, 0);
 });
 
 test("N4: the second try without breakaway has its own command line, --detach wmi-in-job, so the server records that it is in the WMI provider's job", () => {
 	assert.match(LAUNCH_SCRIPT, /\$wmi\.Create\(\$env:SB_LAUNCH_CMD, \$env:SB_LAUNCH_CWD, \$si\)/);
-	assert.match(LAUNCH_SCRIPT, /\$r\.ReturnValue -ne 0\) \{ \$si\.CreateFlags = \d+; \$r = \$wmi\.Create\(\$env:SB_LAUNCH_CMD_INJOB, \$env:SB_LAUNCH_CWD, \$si\)/);
+	assert.match(LAUNCH_SCRIPT, /-not \$created\) \{ \$si\.CreateFlags = \d+; \$r = \$wmi\.Create\(\$env:SB_LAUNCH_CMD_INJOB, \$env:SB_LAUNCH_CWD, \$si\)/);
 	const { options } = launchCommand(spec(), { SystemRoot: "C:\\Windows" });
 	assert.match(options.env.SB_LAUNCH_CMD!, /--detach wmi$/);
 	assert.match(options.env.SB_LAUNCH_CMD_INJOB!, /--detach wmi-in-job$/);
@@ -320,10 +330,10 @@ test("with an ACL check to make, the command line carries the token, the call's 
 test("the launch script makes the ACL check in the same PowerShell start: after the create, for the new pid, with the same steps the server's script runs, and leaves the marker whole (written beside, then moved)", () => {
 	const at = (needle: RegExp) => LAUNCH_SCRIPT.search(needle);
 	assert.ok(at(/\$wmi\.Create\(\$env:SB_LAUNCH_CMD, /) > 0);
-	assert.ok(at(/\$env:SB_ACL_PID = \[string\]\$r\.ProcessId/) > at(/\$wmi\.Create\(\$env:SB_LAUNCH_CMD, /), "the pid is the new one");
+	assert.ok(at(/\$env:SB_ACL_PID = \[string\]\$newPid/) > at(/\$wmi\.Create\(\$env:SB_LAUNCH_CMD, /), "the pid is the new one");
 	assert.ok(at(/Get-Acl -LiteralPath \$dir/) > at(/SB_ACL_PID = /));
 	assert.ok(at(/icacls\.exe/) > at(/SB_ACL_PID = /) && at(/\/reset/) > 0, "the same reset and read-back as the server's script");
-	assert.match(LAUNCH_SCRIPT, /if \(\$r\.ReturnValue -eq 0 -and \$env:SB_ACL_DIR\)/, "no check when nothing was created, or when no check was asked for");
+	assert.match(LAUNCH_SCRIPT, /if \(\$created -and \$env:SB_ACL_DIR\)/, "no check when nothing was created, or when no check was asked for");
 	assert.match(LAUNCH_SCRIPT, /\$m\['error'\] = \$aclError/, "a failure of the check is left in the marker, for the server to end with");
 	assert.match(LAUNCH_SCRIPT, /\[IO\.File\]::WriteAllText\(\$env:SB_ACL_MARKER \+ '\.tmp'/);
 	assert.match(LAUNCH_SCRIPT, /\[IO\.File\]::Move\(\$env:SB_ACL_MARKER \+ '\.tmp', \$env:SB_ACL_MARKER\)/);
@@ -363,5 +373,69 @@ test("the fallback to a plain spawn is not given a token: the server it starts m
 	const launched = spawnBreakaway(withAcl(), { exec: ps.exec, fallback: (s) => (plain.push(s), { pid: 9, exited: new Promise(() => {}) }) });
 	await launched.started!;
 	assert.ok(!plain[0]!.args.includes("--acl-token"), "the plain spawn's server must not wait for a marker nobody makes");
+	launched.release!();
+});
+
+// --- review N-F001: once WMI made the process, nothing ends the start with a plain spawn ---
+
+const markerFile = () => join(dir, `acl.${TOKEN}.json`);
+const others = (): string[] => readdirSync(dir).filter((f) => f.startsWith("acl."));
+
+test("N-F001 (the reviewer's repro): PowerShell exits 1 after the create (the marker could not be moved) with an empty stdout: no plain spawn, a failed start, and the error marker is written for the server that is waiting", async () => {
+	const move = Object.assign(new Error("Command failed: powershell.exe -EncodedCommand AAAA"), { code: 1, killed: false, signal: null });
+	const exec: LaunchExec = (_f, _a, _o, done) => setImmediate(() => done(move, "", 'Exception calling "Move" with "2" argument(s): "Access to the path is denied."\r\nAt line:49 char:7\r\n+ [IO.File]::Move($env:SB_ACL_MARKER + \'.tmp\', $env:SB_ACL_MARKER)\r\n'));
+	const plain: SpawnSpec[] = [];
+	// PowerShell's own leftover tmp is there, as it is after a failed move: the error marker uses a name of its own.
+	writeFileSync(`${markerFile()}.tmp`, "{}");
+	const launched = spawnBreakaway(withAcl(), { exec, fallback: (s) => (plain.push(s), { pid: 9, exited: new Promise(() => {}) }) });
+	const started = await launched.started!;
+	assert.equal(started.via, "failed");
+	assert.match(started.failure!, /may still have started the server/);
+	assert.equal(plain.length, 0, "a second server is not started");
+	assert.match(JSON.parse(readFileSync(markerFile(), "utf8")).error, /Access to the path is denied/);
+	assert.ok(!others().some((f) => f.endsWith(`.${process.pid}.tmp`)), "its temporary file is gone");
+	launched.release!();
+});
+
+test("N-F001: an answer line is the source of truth whatever the exit code; one that says a marker failed leaves an error marker, keeps the pid, and does not fall back", async () => {
+	for (const [code, exit] of [[null, 0], [1, 1]] as const) {
+		rmSync(markerFile(), { force: true });
+		const error = code === null ? null : Object.assign(new Error("Command failed: x"), { code, killed: false, signal: null });
+		const exec: LaunchExec = (_f, _a, _o, done) => setImmediate(() => done(error, '{"rc":0,"pid":4321,"breakaway":true,"started":"2026-10-26T08:00:00.000Z","createMs":900,"aclMs":0,"markerError":"Access to the path is denied."}\r\n', ""));
+		const plain: SpawnSpec[] = [];
+		const launched = spawnBreakaway(withAcl(), { exec, alive: () => true, pollMs: 1000, fallback: (s) => (plain.push(s), { pid: 9, exited: new Promise(() => {}) }) });
+		const started = await launched.started!;
+		assert.deepEqual([started.via, started.pid, started.markerError, plain.length], ["wmi", 4321, "Access to the path is denied.", 0], `exit ${exit}`);
+		assert.match(JSON.parse(readFileSync(markerFile(), "utf8")).error, /could not leave the ACL check: Access to the path is denied\./);
+		launched.release!();
+	}
+});
+
+test("N-F001: rc 0 with no usable pid, a half answer, and garbage are failed starts with no plain spawn; only a refusal before the create (rc other than 0, or the script's rc -1) and a PowerShell that could not start fall back", async () => {
+	for (const [answer, fellBack] of [['{"rc":0,"pid":0}', false], ['{"rc":0}', false], ["garbage", false], ["", false], ['{"rc":21,"pid":0}', true], ['{"rc":-1,"pid":0,"markerError":"WMI is blocked"}', true]] as const) {
+		const plain: SpawnSpec[] = [];
+		const launched = spawnBreakaway(withAcl(), { exec: fakePowershell(answer).exec, fallback: (s) => (plain.push(s), { pid: 9, exited: new Promise(() => {}) }) });
+		const started = await launched.started!;
+		assert.equal(plain.length, fellBack ? 1 : 0, answer);
+		assert.equal(started.via, fellBack ? "direct" : "failed", answer);
+		launched.release!();
+	}
+});
+
+test("N-F001: the script reports a failure of the marker and any failure after the create in its answer (`created` decides the exit code), and removes its own temporary marker", () => {
+	assert.match(LAUNCH_SCRIPT, /\$created = \(\$r\.ReturnValue -eq 0\)\n/, "set the moment the first create returns, before anything else can fail");
+	assert.match(LAUNCH_SCRIPT, /try \{\n\s+\[IO\.File\]::WriteAllText\(\$env:SB_ACL_MARKER \+ '\.tmp'[^\n]*\n\s+\[IO\.File\]::Move[^\n]*\n\s+\} catch \{\n\s+\$markerError = \$_\.Exception\.Message\n\s+Remove-Item -LiteralPath \(\$env:SB_ACL_MARKER \+ '\.tmp'\)/);
+	assert.match(LAUNCH_SCRIPT, /markerError = \$markerError \}\)/, "the answer line carries it");
+	assert.match(LAUNCH_SCRIPT, /\} catch \{\n\s+Say \(\[ordered\]@\{ rc = \$\(if \(\$created\) \{ 0 \} else \{ -1 \}\)/, "a failure after the create still prints the answer with rc 0 and the pid");
+	assert.match(LAUNCH_SCRIPT, /if \(-not \$created\) \{ exit 1 \}/, "and only a failure before it exits 1");
+	assert.match(LAUNCH_SCRIPT, /function Say\(\$o\)[^\n]*\[regex\]::Replace\(\$j, /, "the answer line is pure ASCII too (sbr-F007)");
+});
+
+test("N-F001: the error marker has a temporary name of its own and does not replace one that is there", async () => {
+	writeFileSync(markerFile(), '{"pid":1}');
+	const launched = spawnBreakaway(withAcl(), { exec: fakePowershell("garbage").exec, fallback: () => ({ pid: 9, exited: new Promise(() => {}) }) });
+	await launched.started!;
+	assert.equal(readFileSync(markerFile(), "utf8"), '{"pid":1}');
+	assert.deepEqual(others().filter((f) => f.endsWith(".tmp")), []);
 	launched.release!();
 });

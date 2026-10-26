@@ -71,6 +71,8 @@ export interface Started {
 	serverStarted?: string;
 	/** Of `ms`, the milliseconds of the create and of the ACL check that followed in the same PowerShell start. */
 	createMs?: number; aclMs?: number;
+	/** The process exists but the ACL check could not be left for it (the marker file); the server was told with an error marker. */
+	markerError?: string;
 }
 export interface Launched {
 	pid?: number;
@@ -260,6 +262,7 @@ export async function launch(ctx: Ctx, { began, old, deadline }: { began?: strin
 		ctx.log.line("phase", { name: "breakaway", ms: s.ms, via: s.via, pid: s.pid, ...(s.breakaway === undefined ? {} : { outsideJob: s.breakaway }), createMs: s.createMs, aclMs: s.aclMs });
 		// The launch PowerShell read the server's start time: this process knows it without a PowerShell of its own when it looks at that server.
 		if (s.serverStarted && s.pid > 0) rememberStart(s.pid, s.serverStarted);
+		if (s.markerError) ctx.log.line("error", { code: "acl-marker", text: s.markerError });
 		if (s.failure) ctx.log.line("breakaway-failed", { via: s.via, text: s.failure });
 		if (s.via === "failed") note = s.failure;
 	});
