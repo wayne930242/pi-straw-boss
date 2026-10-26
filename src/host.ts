@@ -74,9 +74,9 @@ export function createHost({ pi, cfg, s, guiDir, me, tell }: Kit, { bridge, conn
 	// One server per machine: a second /boss gui, here or in another session, opens the one that runs, unless `take` (or a newer version) takes it
 	// over. Two calls in flight in this session share one start. `manual`: the caller turns remote on or off itself, so a new server does not resume it.
 	let adopting: Promise<void> | undefined, leaving = false;
-	// A server whose start time `ps` could not tell has no `started` in its record, so no survivor adopts it: said once.
+	// A server whose owner's start time could not be told (`ps` failed; on Windows, PowerShell) has no `started` in its record, so no survivor adopts it: said once.
 	let blind = false;
-	const noticed = (shared?: Shared) => void (shared?.blind && !blind && ((blind = true), tell("This session could not read its own start time (ps failed), so no other session takes the straw net GUI over if this session ends; /boss gui starts it again", "warning")));
+	const noticed = (shared?: Shared) => void shared?.late?.then((written) => !written && !blind && ((blind = true), tell("This session could not record its own start time, so no other session takes the straw net GUI over if this session ends; /boss gui starts it again", "warning")));
 	// `keep` (handover.ts): a call that leaves a stopped or down server as it is does not hand its answer to one that starts it, so a /boss gui that finds such a call in flight waits for it.
 	const share = async (take = false, manual = false, was = false, keep?: Keep): Promise<Shared> => {
 		while (opening && leaving && !keep) await opening.then(() => {}, () => {});

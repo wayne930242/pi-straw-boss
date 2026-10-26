@@ -9,9 +9,9 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const HELPER = fileURLToPath(new URL("./balance.mjs", import.meta.url));
 
-/** Runs the helper outside this process: `now <pane>` or `after-close <pane> <tab>`. */
+/** Runs the helper outside this process: `now <pane>` or `after-close <pane> <tab>`. `windowsHide`: a detached console child on Windows would get a console window of its own. */
 export function runHelper(args: string[], launch = spawn): void {
-	const child = launch(process.execPath, [HELPER, ...args], { detached: true, stdio: "ignore" });
+	const child = launch(process.execPath, [HELPER, ...args], { detached: true, stdio: "ignore", windowsHide: true });
 	child.on("error", () => {});
 	child.unref();
 }

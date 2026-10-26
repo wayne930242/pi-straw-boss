@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Party, stamp } from "../header.ts";
 import type { Session } from "../herdr.ts";
-import { startOf } from "../remote.ts";
+import { startOf } from "../startof.ts";
 import { type Channel, type Kit, REGISTER } from "../state.ts";
 import { createApproval } from "./approval.ts";
 import { readLinkConfig } from "./config.ts";
