@@ -195,6 +195,12 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 		follow.hidden = stop.hidden = !working || Boolean(why);
 		[follow.disabled, stop.disabled] = [send.disabled, busy]; // a follow-up needs a message too
 	}
+	/** The note of a take-back that may have taken the messages: it carries the button that asks for them again, since the queue (and its Edit line) is gone once the session took it back. */
+	const unsure = () => {
+		const fetchIt = h("button", { type: "button", class: "cmp-yes" }, m.edit_fetch());
+		fetchIt.onclick = () => void takeQueue();
+		say(m.edit_unsure(), "error", fetchIt);
+	};
 	/** One take-back on its way: the reply is stored whether this composer is still there or not (the successor reads it). */
 	function askTake(): Promise<Answer | undefined> {
 		const id = recallTake(key) ?? startTake(key);
@@ -215,7 +221,7 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 		try {
 			const r = await flight;
 			if (!form.isConnected) return;
-			if (!r || r.status === 504) return say(m.edit_unsure(), "error");
+			if (!r || r.status === 504) return unsure();
 			if (!r.ok) return say(r.body.reason ?? m.refused({ status: r.status }), "error");
 			if (typeof r.body.text !== "string") return say(m.edit_none());
 			const kept = read(); // a composer that was replaced meanwhile left the messages in the stored draft
@@ -282,7 +288,7 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 		const kept = recall(sessionStorage.getItem(noteKey));
 		sessionStorage.removeItem(noteKey);
 		if (kept) say(kept[1], kept[0]);
-		else if (recallTake(key)) say(m.edit_unsure(), "error"); // a take-back whose answer never came: Edit asks for it again
+		else if (recallTake(key)) unsure(); // a take-back whose answer never came: its button asks for the messages again
 	});
 	return { box, update: (next: Unit) => ((unit = next), draw()), ready: () => !blocked(unit), takeQueue };
 }
