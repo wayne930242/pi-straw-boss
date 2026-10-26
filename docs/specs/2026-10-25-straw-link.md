@@ -73,7 +73,13 @@ GUI: ally bases ◄── presence (ephemeral) ────┘                �
 - A team's `project` may not be the home folder or contain `~/.pi`; the GUI and the policy check refuse it.
 - With no such tower, the message waits in the local inbox (`link/inbox/`, 7 days) with a GUI notice. The first tower that opens on the
   project gets it, after its sender's membership and trust are checked again at that moment. An attended device never opens a tab or a
-  session for a remote message; an unattended device opens one for a controller (**Unattended devices**).
+  workspace for a remote message; an unattended device opens one for a controller (**Unattended devices**).
+- **Amended 2026-10-26 by the sb server spec** ([2026-10-26-sb-backend.md](2026-10-26-sb-backend.md), **Ally runs**; to land with its
+  build step B6). This rule said an attended device never opens a *session* for a remote message either. The boss decided otherwise
+  (sb server D1: "every ally message gets a fresh session, never mixed with local context"). Once the tower is not resident, a remote
+  message is worked in an **ally run**: a fresh pi session in a pane of the tower tab of a workspace that already has a tower service,
+  at the sender's trust level, with no local context. An attended device still opens no tab and no workspace for it. A message for a
+  project with no such workspace waits in the inbox as above.
 - `tower_list` adds the ally towers with `remote: true`, the device id and label, and the state from the last presence.
 
 ### Link holder
