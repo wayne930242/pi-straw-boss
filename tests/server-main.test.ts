@@ -273,6 +273,29 @@ test("the record heals: a deleted or overwritten server.json is written again; a
 	await until(() => world.record()?.pid === s.pid, "the dead record to be replaced");
 });
 
+test("sbr-F002: with the real liveness checks (none injected, as in production) a record overwritten by a dead pid is healed", async () => {
+	const s = await world.start({ alive: undefined, startOf: undefined });
+	await s.handle.ready;
+	const before = world.record()!;
+	writeRecord(world.slot, { ...before, pid: 4_000_000, secret: "o".repeat(64) });
+	await until(() => world.record()?.pid === s.pid && world.record()?.secret === before.secret, "the record to be healed");
+});
+
+test("sbr-F002, sbr-F009: a second server never takes over the socket of a server that answers, even when its record was overwritten; it fails with code start", async () => {
+	const first = await world.start();
+	await first.handle.ready;
+	const secret = world.record()!.secret, endpoint = first.handle.endpoint;
+	// A requester's stale write: a record of a dead pid with another secret, so the newcomer's check of the prior record finds no server.
+	writeRecord(world.slot, { ...world.record()!, pid: 4_000_000, secret: "o".repeat(64) });
+	const second = await world.start();
+	assert.equal(await second.handle.ready, false);
+	assert.equal(await second.handle.done, 1);
+	assert.equal(readStartError(world.slot)?.code, "start");
+	assert.match(readStartError(world.slot)!.text, /live/);
+	assert.equal((await helloOf(endpoint, secret))?.pid, first.pid, "the first server still answers at its socket");
+	assert.match(logText(), /start-failed code=start/);
+});
+
 test("a second start for a slot whose server runs and answers does not become another server", async () => {
 	const first = await world.start();
 	await first.handle.ready;

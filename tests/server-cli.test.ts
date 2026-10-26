@@ -327,6 +327,30 @@ test("serve takes over a live detached server: it asks it to hand over by the re
 	assert.equal(readRecord(world.slot)?.restarting?.reason, "serve takes over");
 });
 
+test("sbr-F003: restarting a serve server under a supervisor: the requester lets go of the lock while it waits, so the supervisor's serve takes it and the new server is the supervisor's, with no fallback launch", async () => {
+	const s = await world.start({ mode: "serve" });
+	await s.handle.ready;
+	const { restart } = await import("../src/server/client.ts");
+	const asked = restart(world.ctx({ timers: { start: 5000, exit: 2000, supervisor: 3000, touch: 40 } }), { reason: "r" });
+	await until(() => world.exitCodes.get(s.pid) === 75, "the old serve server to leave with 75");
+	// The supervisor starts `serve` again: it takes server.lock, which the requester no longer holds.
+	let back: Awaited<ReturnType<ServerWorld["start"]>> | undefined;
+	const supervised = cli(["serve"], { signals: () => {}, server: async () => (back = await world.start({ mode: "serve" })).handle });
+	const done = await asked;
+	assert.equal(done.record.pid, back?.pid, "the supervisor's server is the one the restart reports");
+	assert.equal(done.record.mode, "serve");
+	assert.equal(world.spawned.length, 0, "the requester started nothing");
+	assert.notEqual(world.record()?.lastRestart?.reason, "serve takes over");
+	await back!.handle.shutdown(0);
+	assert.equal((await supervised).code, 0);
+});
+
+test("sbr-F008: restart --reason with nothing in it is a usage error", async () => {
+	const r = await cli(["restart", "--reason", "  "]);
+	assert.equal(r.code, 2);
+	assert.match(r.err, /--reason is one line of 1 to 200 characters/);
+});
+
 test("serve against a live serve server prints that server's record and exits 4", async () => {
 	const s = await world.start({ mode: "serve" });
 	await s.handle.ready;

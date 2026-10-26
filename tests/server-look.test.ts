@@ -247,6 +247,17 @@ test("boss_server restart is taken once a minute, for the whole machine", async 
 	assert.match(text(await a.tool("boss_server", { action: "restart", reason: "a minute on" })), /restarted/);
 });
 
+test("sbr-F011: two sessions asking for a restart at once get one restart between them: the limit is judged under the lock", async () => {
+	const a = session(), b = session("a2");
+	await a.start();
+	await until(() => sw.record()?.pid, "the server");
+	await b.start();
+	const results = await Promise.allSettled([a.tool("boss_server", { action: "restart", reason: "from a1" }), b.tool("boss_server", { action: "restart", reason: "from a2" })]);
+	assert.deepEqual(results.map((r) => r.status).sort(), ["fulfilled", "rejected"]);
+	assert.match(String((results.find((r) => r.status === "rejected") as PromiseRejectedResult).reason), /once a minute at most/);
+	assert.equal(sw.spawned.length, 2, "the first start and one restart");
+});
+
 test("boss_server restart is refused while the server is stopped on purpose, and starts a server that is down", async () => {
 	plant({ stopped: true });
 	const a = session();

@@ -2,7 +2,8 @@ import { herdrApi, herdrCall, herdrRun, socketRun } from "../herdr.ts";
 import { type HeadlessDeps, headlessConfig } from "../agent/config.ts";
 import { createHeadlessKit, type IntercomLike } from "../agent/kit.ts";
 import { herdrEvents, herdrWatch, type HerdrWatch } from "../server-watch.ts";
-import { startedLater } from "../startof.ts";
+import { alive as pidAlive } from "../remote.ts";
+import { startedLater, startOf as processStartOf } from "../startof.ts";
 import { AclError, applyAcl } from "./acl.ts";
 import { herdrListens, intercomOf, runsAs } from "./client.ts";
 import { type IntercomModule, loadIntercom, LoaderError } from "./intercom.ts";
@@ -67,7 +68,8 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	const { slot, env, mode, by } = o;
 	const now = o.now ?? Date.now, sleep = o.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 	const platform = o.platform ?? process.platform, pid = o.pid ?? process.pid, version = o.version ?? VERSION;
-	const touchMs = o.touchMs ?? TOUCH_MS, alive = o.alive, startOf = o.startOf;
+	// Liveness is judged the way requesters judge it: an injected check is for tests, and a server never takes a record of another pid for a live one by default.
+	const touchMs = o.touchMs ?? TOUCH_MS, alive = o.alive ?? pidAlive, startOf = o.startOf ?? processStartOf;
 	const log = createLog(fileOf(slot, "log"), { now });
 	let finish!: (code: number) => void, markReady!: (ok: boolean) => void;
 	const done = new Promise<number>((resolve) => (finish = resolve));
@@ -83,12 +85,13 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	log.line("start", { pid, mode, version, by, herdr: slot.herdr, desk });
 
 	/** The start cannot go on: told in start-error.json (which `up` and the session looks read) and in the record, and the process leaves with the code. */
-	const abort = (code: "acl" | "loader" | "intercom", text: string, sddl?: string): ServerHandle => {
+	const abort = (code: "acl" | "loader" | "intercom" | "start", text: string, sddl?: string): ServerHandle => {
 		log.line("start-failed", { code, text });
 		writeStartError(slot, { code, text, ...(sddl ? { sddl } : {}) }, now());
 		updateRecord(slot, (r) => ({ ...r, lastError: { at: new Date(now()).toISOString(), code, text } }));
 		markReady(false);
-		finish(EXIT_CANNOT_RUN);
+		// 3 is for a server that cannot run here (tsx, pi-intercom, the ACL); a start that failed for another reason is a plain failure.
+		finish(code === "start" ? 1 : EXIT_CANNOT_RUN);
 		return handle;
 	};
 
@@ -109,7 +112,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 
 	// One server per slot: a record whose process runs and answers is the server. (A requester holds server.lock, so this is a guard against a start that no one asked for.)
 	const prior = readRecord(slot);
-	if (prior && prior.pid !== pid && runsAs({ alive: alive ?? (() => true), startOf: startOf ?? (() => undefined) }, prior) && (await helloOf(prior.socket, prior.secret, 1000))) {
+	if (prior && prior.pid !== pid && runsAs({ alive, startOf }, prior) && (await helloOf(prior.socket, prior.secret, 1000))) {
 		log.line("already-running", { pid: prior.pid });
 		markReady(true);
 		finish(0);
@@ -174,7 +177,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		if (request.cmd === "restart") {
 			const reason = phrase(request.reason, 200) || "restart", who = phrase(request.by, 120) || "unknown";
 			log.line("restart", { reason, by: who });
-			updateRecord(slot, (r) => (r.pid === pid ? { ...r, restarting: { began: at(), since: at(), reason, by: who }, lastRestart: { at: at(), reason, by: who } } : undefined));
+			updateRecord(slot, (r) => (r.pid === pid ? { ...r, restarting: { began: at(), since: at(), reason, by: who }, ...(request.counts === false ? {} : { lastRestart: { at: at(), reason, by: who } }) } : undefined));
 			return leaveAfterReply("restarting", mode === "serve" ? SERVE_RESTART_CODE : 0);
 		}
 		return { ok: false, error: `unknown command ${String(request.cmd)}` };
@@ -186,7 +189,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			refused: (why) => log.line("refused", { why }),
 		});
 	} catch (error) {
-		return abort("loader", `the control socket cannot listen at ${endpoint}: ${(error as Error).message}`);
+		return abort("start", `the control socket cannot listen at ${endpoint}: ${(error as Error).message}`);
 	}
 	writeOwn();
 	timers.push(setInterval(() => {
@@ -196,7 +199,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			if (phase === "starting") return writeOwn();
 			if (current?.pid === pid && current.secret === secret && current.socket === endpoint) return;
 			// Another server that runs wrote it (a takeover is under way): not ours to fight over.
-			if (current && current.pid !== pid && runsAs({ alive: alive ?? (() => true), startOf: startOf ?? (() => undefined) }, current)) return;
+			if (current && current.pid !== pid && runsAs({ alive, startOf }, current)) return;
 			log.line("record-restored");
 			writeOwn();
 		} catch (error) {

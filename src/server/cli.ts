@@ -152,7 +152,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 
 	async function restartCommand() {
 		const reason = String(flags.reason ?? "restart from the command line");
-		if (reason.length > 200 || reason.includes("\n")) throw new UsageError("--reason is one line of 1 to 200 characters");
+		if (!reason.trim() || reason.length > 200 || /[\r\n]/.test(reason)) throw new UsageError("--reason is one line of 1 to 200 characters");
 		const done = await restart(ctx, { reason, downgrade: flags.downgrade === true });
 		json({ server: done.server, pid: done.record.pid, version: done.record.version, url: guiUrl(done.record) });
 		return 0;
@@ -192,7 +192,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 			});
 			const { server: how, record } = await stepOf<{ server: "found" | "started" | "restarted" | "upgraded"; record: ServerRecord }>("server", async () => {
 				if (plan === "upgrade" || plan === "desk") {
-					const done = await restart(ctx, { reason: plan === "upgrade" ? "upgrade" : "desk switch", upgrade: plan === "upgrade", boss: true, lockWaitMs: timeoutMs });
+					const done = await restart(ctx, { reason: plan === "upgrade" ? "upgrade" : "desk switch", upgrade: plan === "upgrade", boss: true, lockWaitMs: timeoutMs, counts: false });
 					return { value: { server: done.server, record: done.record }, detail: `${done.server}: ${plan === "upgrade" ? "upgrade" : "desk switch"}` };
 				}
 				const done = await ensure(ctx, { boss: true, lockWaitMs: timeoutMs });

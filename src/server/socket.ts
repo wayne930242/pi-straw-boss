@@ -16,6 +16,9 @@ export type Request = { cmd: string } & Record<string, unknown>;
 /** The longest frame a connection may carry; a longer one is refused. */
 export const MAX_FRAME = 1024 * 1024;
 const HELLO_MS = 5000, IDLE_MS = 60_000, REFUSED_LOG_MS = 60_000;
+/** The most a connection may send before its hello is complete: on Windows any local account can open the pipe, and the hello is a line of about 100 bytes. */
+const PRE_HELLO_MAX = 4096;
+const PROBE_MS = 1000;
 /** `sun_path` is 104 bytes on macOS and 108 on Linux: a longer socket path is moved to a short folder of the user's own. */
 const SOCKET_MAX = 100;
 
@@ -75,6 +78,7 @@ export function listenControl({ endpoint, secret, hello, handle, refused, platfo
 		conn.on("data", (chunk: string) => {
 			buffer += chunk;
 			if (buffer.length > MAX_FRAME) return refuse(conn, "frame too long");
+			if (!authed && buffer.length > PRE_HELLO_MAX && !buffer.includes("\n")) return refuse(conn, "no hello within a few KB");
 			for (let at = buffer.indexOf("\n"); at >= 0; at = buffer.indexOf("\n")) {
 				const line = buffer.slice(0, at);
 				buffer = buffer.slice(at + 1);
@@ -107,8 +111,10 @@ export function listenControl({ endpoint, secret, hello, handle, refused, platfo
 			}
 		});
 	});
-	return new Promise((resolve, reject) => {
-		if (platform !== "win32") rmSync(endpoint, { force: true }); // what a server that died left; the slot's lock and liveness check say none runs
+	return acceptsConnections(endpoint, platform).then((live) => new Promise<Control>((resolve, reject) => {
+		// A socket file that accepts a connection is a server that runs, whatever server.json says: it is never unlinked from under it. What nobody listens at is what a server that died left.
+		if (live) return reject(new Error(`a live server already listens at ${endpoint}`));
+		if (platform !== "win32") rmSync(endpoint, { force: true });
 		server.once("error", reject);
 		server.listen(endpoint, () => {
 			server.off("error", reject);
@@ -122,6 +128,17 @@ export function listenControl({ endpoint, secret, hello, handle, refused, platfo
 				}),
 			});
 		});
+	}));
+}
+
+/** Whether something accepts a connection at the endpoint (a pipe on Windows has a random name that nothing else holds, so it is not asked). */
+function acceptsConnections(endpoint: string, platform: NodeJS.Platform): Promise<boolean> {
+	if (platform === "win32") return Promise.resolve(false);
+	return new Promise((resolve) => {
+		const conn = createConnection(endpoint).setTimeout(PROBE_MS);
+		conn.on("connect", () => (conn.destroy(), resolve(true)));
+		conn.on("timeout", () => (conn.destroy(), resolve(true)));
+		conn.on("error", () => resolve(false));
 	});
 }
 

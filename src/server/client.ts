@@ -19,7 +19,9 @@ export interface Timers { start: number; exit: number; supervisor: number; touch
 export const TIMERS: Timers = { start: 20_000, exit: 10_000, supervisor: 10_000, touch: TOUCH_MS };
 const HELLO_MS = 2000;
 
-export type Refusal = "stopped" | "older" | "scope" | "herdr" | "busy" | "serve" | "start-failed" | "exit-timeout" | "restarting" | "unreachable";
+export type Refusal = "stopped" | "older" | "scope" | "herdr" | "busy" | "serve" | "start-failed" | "exit-timeout" | "restarting" | "unreachable" | "rate";
+/** An agent's restarts are taken once a minute at most, for the whole machine (the server records the last one that counts). */
+export const RESTART_EVERY_MS = 60_000;
 /** A request the server's state turns down, or a start that failed; `startError` is what the new server wrote when it could not run. */
 export class ServerError extends Error {
 	code: Refusal;
@@ -151,20 +153,22 @@ export function decide(ctx: Pick<Ctx, "version" | "env" | "platform" | "now" | "
 
 const specOf = (ctx: Ctx): SpawnSpec => ({ command: ctx.node, args: [ctx.cli, "run", "--detached", "--by", ctx.by], env: serverEnv(ctx.env), cwd: ctx.slot.dir, options: SPAWN_OPTIONS });
 
-/** Waits until a new server (not `not`) answers hello and is ready, touching `restarting.since` while it waits, or the child exits, or `ms` pass. */
-export async function waitReady(ctx: Ctx, ms: number, { not, exited, began }: { not?: number; exited?: Promise<number | null>; began?: string } = {}): Promise<ServerRecord | { exit: number | null } | undefined> {
+/** The server a restart replaces: its record is the one the requester keeps fresh until the new server writes its own. */
+export interface Replaced { pid: number; secret: string }
+/** Waits until a new server (not `old`) answers hello and is ready, touching `restarting.since` while it waits, or the child exits, or `ms` pass. */
+export async function waitReady(ctx: Ctx, ms: number, { old, exited, began }: { old?: Replaced; exited?: Promise<number | null>; began?: string } = {}): Promise<ServerRecord | { exit: number | null } | undefined> {
 	const end = ctx.now() + ms;
 	let gone: number | null | undefined, touched = ctx.now();
 	void exited?.then((code) => (gone = code));
 	for (;;) {
 		const found = await probe(ctx);
-		if (found.live && found.hello?.ready === true && found.record && found.record.pid !== not) return found.record;
+		if (found.live && found.hello?.ready === true && found.record && found.record.pid !== old?.pid) return found.record;
 		// A child that exited is told once the probe has had a last look at the record it may have written.
 		if (gone !== undefined) return { exit: gone };
 		if (ctx.now() >= end) return undefined;
 		if (began && ctx.now() - touched >= ctx.timers.touch) {
 			touched = ctx.now();
-			touchRestarting(ctx.slot, ctx.now(), began);
+			touchRestarting(ctx.slot, ctx.now(), began, old);
 		}
 		await ctx.sleep(100);
 	}
@@ -177,11 +181,11 @@ function failed(ctx: Ctx, outcome: { exit: number | null } | undefined): ServerE
 }
 
 /** Starts a detached server from this package and waits for it. The caller holds `server.lock`. `start-error.json` of an earlier attempt is deleted first. */
-export async function launch(ctx: Ctx, { began, not }: { began?: string; not?: number } = {}): Promise<ServerRecord> {
+export async function launch(ctx: Ctx, { began, old }: { began?: string; old?: Replaced } = {}): Promise<ServerRecord> {
 	clearStartError(ctx.slot);
 	const child = ctx.spawn(specOf(ctx));
 	ctx.log.line("start-requested", { by: ctx.by, version: ctx.version, pid: child.pid });
-	const outcome = await waitReady(ctx, ctx.timers.start, { exited: child.exited, began, not });
+	const outcome = await waitReady(ctx, ctx.timers.start, { exited: child.exited, began, old });
 	if (outcome && "pid" in outcome) return outcome;
 	throw failed(ctx, outcome);
 }
@@ -210,10 +214,11 @@ export async function ensure(ctx: Ctx, { boss = false, lockWaitMs = 0 }: { boss?
 }
 
 /** Asks the live server to restart, touches `restarting.since` while it goes, and waits for it to exit. The caller holds `server.lock`. Returns the `began` of the restart. */
-async function retire(ctx: Ctx, old: ServerRecord, reason: string): Promise<string> {
+async function retire(ctx: Ctx, old: ServerRecord, reason: string, counts: boolean): Promise<string> {
 	let reply: Reply | undefined;
 	try {
-		reply = (await callControl(old.socket, old.secret, { cmd: "restart", reason, by: ctx.by }, 5000)).reply;
+		// `counts`: whether this restart is one the once-a-minute limit counts (an agent's, the boss's, a shell's; not an upgrade or a serve takeover).
+		reply = (await callControl(old.socket, old.secret, { cmd: "restart", reason, by: ctx.by, counts }, 5000)).reply;
 	} catch (error) {
 		throw new ServerError("unreachable", `the sb server did not take the restart: ${(error as Error).message}`);
 	}
@@ -224,7 +229,7 @@ async function retire(ctx: Ctx, old: ServerRecord, reason: string): Promise<stri
 	while (ctx.alive(old.pid)) {
 		if (ctx.now() - touched >= ctx.timers.touch) {
 			touched = ctx.now();
-			touchRestarting(ctx.slot, ctx.now(), began);
+			touchRestarting(ctx.slot, ctx.now(), began, old);
 		}
 		if (ctx.now() >= end) {
 			// It said it would exit within 10 s: a server that does not is stuck, and a signal is the way a supervisor would stop it too.
@@ -241,34 +246,63 @@ async function retire(ctx: Ctx, old: ServerRecord, reason: string): Promise<stri
 }
 
 export interface Restarted { server: "started" | "restarted" | "upgraded"; record: ServerRecord }
+/** What a restart holds `server.lock` with: it lets go while it waits for a supervisor, and takes the lock again for the launch that follows. */
+interface Hold { release(): void; retake(): Promise<void> }
+export interface RestartOptions {
+	reason: string;
+	downgrade?: boolean;
+	upgrade?: boolean;
+	lockWaitMs?: number;
+	boss?: boolean;
+	/** An agent's restart: refused under the lock when the last restart that counts was less than a minute ago. */
+	limit?: boolean;
+	/** Whether this restart counts for that limit; an upgrade does not by default. */
+	counts?: boolean;
+}
 /**
  * Every restart goes the same way (`restart`, `upgrade`, `up`'s desk restart): the requester takes `server.lock` and holds it until the new server answers hello; asks the old
  * server to restart with a reason; touches `restarting.since` every 2 s; and starts the new server from its own package, never from one older than the recorded `version`
  * (unless `downgrade`). A server that is down is started instead. The new one keeps the GUI port and token of the record (B2), registers its identities, and clears `restarting`.
  */
-export async function restart(ctx: Ctx, { reason, downgrade = false, upgrade = false, lockWaitMs = 20_000, boss = false }: { reason: string; downgrade?: boolean; upgrade?: boolean; lockWaitMs?: number; boss?: boolean }): Promise<Restarted> {
-	const lock = await lockFor(ctx, lockWaitMs);
+export async function restart(ctx: Ctx, { reason, downgrade = false, upgrade = false, lockWaitMs = 20_000, boss = false, limit = false, counts = !upgrade }: RestartOptions): Promise<Restarted> {
+	let lock = await lockFor(ctx, lockWaitMs);
+	const hold: Hold = { release: () => lock.release(), retake: async () => void (lock = await lockFor(ctx, ctx.timers.start)) };
 	try {
-		return await restartLocked(ctx, { reason, downgrade, upgrade, boss });
+		return await restartLocked(ctx, { reason, downgrade, upgrade, boss, limit, counts }, hold);
 	} finally {
 		lock.release();
 	}
 }
 /** The restart itself; the caller holds `server.lock`. */
-export async function restartLocked(ctx: Ctx, { reason, downgrade, upgrade, boss }: { reason: string; downgrade: boolean; upgrade: boolean; boss: boolean }): Promise<Restarted> {
+async function restartLocked(ctx: Ctx, { reason, downgrade, upgrade, boss, limit, counts }: Required<Omit<RestartOptions, "lockWaitMs">>, hold: Hold): Promise<Restarted> {
 	const seen = await probe(ctx), record = seen.record;
 	if (record && record.herdr !== ctx.slot.herdr) throw new ServerError("herdr", `the sb server record names another Herdr socket (${record.herdr}), not ${ctx.slot.herdr}`);
+	// The server runs in the broker scope it was started in, and a requester in another one would move it there: it uses none, and restarts none.
+	if (record && !sameBroker(record.intercom, intercomOf(ctx.env, ctx.platform))) throw new ServerError("scope", "the sb server runs in another pi-intercom scope or transport than this process, so this process does not restart it");
 	if (record?.stopped && !seen.live && !boss) throw new ServerError("stopped", "the sb server was stopped on purpose; /boss server or `cli.mjs up` starts it again");
+	if (limit && !boss && record?.lastRestart) {
+		const last = Date.parse(record.lastRestart.at);
+		if (Number.isFinite(last) && ctx.now() - last < RESTART_EVERY_MS) throw new ServerError("rate", `The sb server was restarted ${Math.round((ctx.now() - last) / 1000)} s ago (${record.lastRestart.reason}, by ${record.lastRestart.by}); restarts are taken once a minute at most.`);
+	}
 	if (record && newer(record.version, ctx.version) && !downgrade) throw new ServerError("older", `the sb server runs pi-straw-boss ${record.version}, newer than this package's ${ctx.version}; a restart from an older package needs --downgrade`);
 	if (boss) clearStopped(ctx.slot);
 	if (!seen.live || !record) return { server: "started", record: await launch(ctx) };
-	const began = await retire(ctx, record, reason);
+	const began = await retire(ctx, record, reason, counts), old = { pid: record.pid, secret: record.secret };
 	if (record.mode === "serve") {
-		// A supervisor starts a `serve` server again (it exited with the code it restarts on); only when none does, within a moment, does this requester start one.
-		const back = await waitReady(ctx, ctx.timers.supervisor, { not: record.pid, began });
+		// A supervisor starts a `serve` server again (it exited with the code it restarts on), and that `serve` takes `server.lock` to run: this requester lets go of the lock for
+		// the wait, keeps `restarting` fresh, and takes the lock again only to start a server itself when none came.
+		hold.release();
+		const back = await waitReady(ctx, ctx.timers.supervisor, { old, began });
 		if (back && "pid" in back) return { server: upgrade ? "upgraded" : "restarted", record: back };
+		await hold.retake();
+		const again = await probe(ctx);
+		if (again.live && again.record && again.record.pid !== old.pid) {
+			// A `serve` that took the lock in the gap is starting: wait for it as for any new server.
+			const started = await waitReady(ctx, ctx.timers.start, { old, began });
+			if (started && "pid" in started) return { server: upgrade ? "upgraded" : "restarted", record: started };
+		}
 	}
-	return { server: upgrade ? "upgraded" : "restarted", record: await launch(ctx, { began, not: record.pid }) };
+	return { server: upgrade ? "upgraded" : "restarted", record: await launch(ctx, { began, old }) };
 }
 
 export interface Stopped { outcome: "stopped" | "already-down" }
@@ -303,9 +337,14 @@ export async function stop(ctx: Ctx): Promise<Stopped> {
 	}
 }
 
-/** What `serve` does with a live detached server: hands over by the restart path and waits for it to leave. The caller holds `server.lock` and goes on to run as the server. */
+/**
+ * What `serve` does with a live detached server: hands over by the restart path and waits for it to leave. The caller holds `server.lock` and goes on to run as the server.
+ * It never replaces a server of a newer package, nor one in another broker scope, as no other restart does.
+ */
 export async function takeOver(ctx: Ctx, old: ServerRecord): Promise<void> {
-	await retire(ctx, old, "serve takes over");
+	if (!sameBroker(old.intercom, intercomOf(ctx.env, ctx.platform))) throw new ServerError("scope", "the sb server runs in another pi-intercom scope or transport than this serve, so serve does not take it over");
+	if (newer(old.version, ctx.version)) throw new ServerError("older", `the sb server runs pi-straw-boss ${old.version}, newer than this serve's ${ctx.version}; serve never replaces a newer server`);
+	await retire(ctx, old, "serve takes over", false);
 }
 
 /** The state of the server for a shell, from the files and a hello (docs/specs/2026-10-26-sb-backend.md, States for a shell). */

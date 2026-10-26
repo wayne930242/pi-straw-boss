@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
 import {
-	type Ctx, describe, ensure, makeCtx, probe, restart, ServerError, stop, decide,
+	type Ctx, decide, describe, ensure, makeCtx, probe, restart, RESTART_EVERY_MS, ServerError, stop,
 } from "./server/client.ts";
 import { tailLog } from "./server/log.ts";
 import { fileOf, readRecord, slotOf } from "./server/record.ts";
@@ -14,7 +14,7 @@ import type { Kit } from "./state.ts";
 // looks whether a live server runs for its Herdr and starts one when none does and the rules allow; it asks the live server to upgrade when this session's package is newer;
 // and it carries `/boss server` and the `boss_server` tool. The server itself lives in src/server/ and runs as its own process.
 
-export const RESTART_EVERY_MS = 60_000;
+export { RESTART_EVERY_MS };
 const RETRY_FAILED_MS = 60_000;
 const MAX_LOG_LINES = 200;
 const STOP_WARNING = "Every workspace then loses its live tower, and mains are demoted 15 s later. The server stays down until /boss server or `cli.mjs up` starts it again.";
@@ -128,14 +128,11 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 		async restart(reason: string, { boss = false, downgrade = false } = {}) {
 			const why = reason.trim();
 			if (!why || why.length > 200 || /[\r\n]/.test(why)) throw new Error("A restart needs a reason: 1 to 200 characters on one line.");
-			const ctx = ctxFor(), record = readRecord(ctx.slot);
-			if (!boss) {
-				if (record?.stopped) throw new Error("The sb server was stopped on purpose; an agent cannot restart it. The boss starts it again with /boss server.");
-				const last = record?.lastRestart ? Date.parse(record.lastRestart.at) : NaN;
-				if (Number.isFinite(last) && cfg.now() - last < RESTART_EVERY_MS) throw new Error(`The sb server was restarted ${Math.round((cfg.now() - last) / 1000)} s ago (${record!.lastRestart!.reason}, by ${record!.lastRestart!.by}); restarts are taken once a minute at most.`);
-			}
+			const ctx = ctxFor();
+			// The once-a-minute limit is judged under server.lock (client.ts), so two asks at once cannot both pass it.
+			if (!boss && readRecord(ctx.slot)?.stopped) throw new Error("The sb server was stopped on purpose; an agent cannot restart it. The boss starts it again with /boss server.");
 			try {
-				const done = await restart(ctx, { reason: why, downgrade, boss });
+				const done = await restart(ctx, { reason: why, downgrade, boss, limit: !boss });
 				return { server: done.server, pid: done.record.pid, version: done.record.version };
 			} catch (error) {
 				return refuse(error);

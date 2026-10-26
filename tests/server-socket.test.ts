@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -46,6 +46,32 @@ test("a connection with the secret gets the server's facts, then an answer per r
 	assert.deepEqual(reply, { ok: true, echo: "status", n: 1 });
 	const two = await raw(control.endpoint, [JSON.stringify({ cmd: "hello", secret: SECRET }), JSON.stringify({ cmd: "a", n: 1 }), JSON.stringify({ cmd: "b", n: 2 })]);
 	assert.deepEqual(two.got.map((l) => JSON.parse(l).echo), [undefined, "a", "b"]);
+});
+
+test("sbr-F010: a connection that sends a few KB without a newline before hello is closed; a request after hello may be longer", async () => {
+	const { control, refused } = await serve();
+	const big = await new Promise<{ closed: boolean }>((resolve) => {
+		const conn = createConnection(control.endpoint);
+		conn.on("connect", () => conn.write("x".repeat(8192)));
+		conn.on("close", () => resolve({ closed: true }));
+		conn.on("error", () => {});
+		setTimeout(() => (conn.destroy(), resolve({ closed: false })), 300);
+	});
+	assert.equal(big.closed, true);
+	assert.ok(refused.length >= 1);
+	const ok = await raw(control.endpoint, [JSON.stringify({ cmd: "hello", secret: SECRET }), JSON.stringify({ cmd: "a", pad: "y".repeat(10_000) })]);
+	assert.deepEqual(ok.got.map((l) => JSON.parse(l).echo), [undefined, "a"]);
+});
+
+test("sbr-F002: listening at a socket that accepts a connection fails and leaves it be; a socket file nobody listens at is replaced", async () => {
+	const { control } = await serve();
+	await assert.rejects(listenControl({ endpoint: control.endpoint, secret: SECRET, hello: () => ({ pid: 8 }), handle: () => ({ ok: true }) }), /live|already/);
+	assert.equal((await helloOf(control.endpoint, SECRET))?.pid, 7);
+	await control.close();
+	writeFileSync(control.endpoint, "left by a server that died");
+	const again = await listenControl({ endpoint: control.endpoint, secret: SECRET, hello: () => ({ pid: 9 }), handle: () => ({ ok: true }) });
+	open.push(again);
+	assert.equal((await helloOf(again.endpoint, SECRET))?.pid, 9);
 });
 
 test("a wrong secret, or a first frame that is not hello, is closed with no answer", async () => {

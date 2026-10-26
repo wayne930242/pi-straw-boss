@@ -297,6 +297,39 @@ test("restarting a serve server: its supervisor starts it again; when none does 
 	assert.equal(world.spawned.length, 1);
 });
 
+test("sbr-F005: a restart from another broker scope or transport is refused, and the record keeps its scope; so is a serve takeover", async () => {
+	const s = await world.start();
+	await s.handle.ready;
+	const scope = { env: { ...world.env, PI_INTERCOM_SCOPE_ID: "other" } };
+	await assert.rejects(restart(world.ctx(scope), { reason: "r" }), (e: unknown) => e instanceof ServerError && e.code === "scope");
+	assert.equal(world.live.has(s.pid), true, "the server was not asked to restart");
+	assert.deepEqual(world.record()?.intercom, { transport: "default" });
+	await assert.rejects(takeOver(world.ctx({ ...scope, by: "cli serve" }), world.record()!), (e: unknown) => e instanceof ServerError && e.code === "scope");
+	assert.equal(world.live.has(s.pid), true);
+	// Another transport is another broker as well.
+	await assert.rejects(restart(world.ctx({ platform: "win32", env: { ...world.env, PI_INTERCOM_TRANSPORT: "tcp" } }), { reason: "r" }), (e: unknown) => e instanceof ServerError && e.code === "scope");
+});
+
+test("sbr-F012: serve never replaces a server of a newer package", async () => {
+	const s = await world.start({ version: "0.45.0" });
+	await s.handle.ready;
+	await assert.rejects(takeOver(world.ctx({ version: "0.44.0", by: "cli serve" }), world.record()!), (e: unknown) => e instanceof ServerError && e.code === "older");
+	assert.equal(world.live.has(s.pid), true);
+});
+
+test("sbr-F011: only restarts someone asked for count for the once-a-minute limit, not an upgrade or a serve takeover; the limit is judged under the lock", async () => {
+	const s = await world.start({ version: "0.43.0" });
+	await s.handle.ready;
+	await restart(world.ctx({ version: "0.44.0" }), { reason: "upgrade", upgrade: true });
+	assert.equal(world.record()?.lastRestart, undefined, "an upgrade does not count");
+	await restart(world.ctx(), { reason: "first", limit: true });
+	assert.equal(world.record()?.lastRestart?.reason, "first");
+	await assert.rejects(restart(world.ctx(), { reason: "second", limit: true }), (e: unknown) => e instanceof ServerError && e.code === ("rate") && /once a minute at most/.test(e.message));
+	await restart(world.ctx(), { reason: "the boss", boss: true, limit: true });
+	await takeOver(world.ctx({ by: "cli serve" }), world.record()!);
+	assert.equal(world.record()?.lastRestart?.reason, "the boss", "a takeover does not count either");
+});
+
 test("an old server that does not exit after it took the restart is sent SIGTERM, and a stuck one fails the restart", async () => {
 	const s = await world.start();
 	await s.handle.ready;

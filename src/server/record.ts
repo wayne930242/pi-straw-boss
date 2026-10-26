@@ -125,11 +125,16 @@ export function restartingNow(found: Restarting | undefined, now: number, fresh:
 	const stale = !found || !Number.isFinite(Date.parse(found.since)) || now - Date.parse(found.since) > FRESH_MS;
 	return stale ? { began: at(now), since: at(now), ...fresh } : { ...found, since: at(now) };
 }
-/** Moves `restarting.since` of the record, only while a `restarting` is there (and `began`, when given, is the one asked for). Returns whether it was touched. */
-export function touchRestarting(slot: Slot, now: number, began?: string): boolean {
+/**
+ * Moves `restarting.since` of the record, only while a `restarting` is there (and `began`, when given, is the one asked for). `expect`: the server whose record the requester
+ * keeps fresh (the old one, until the new server writes its own); a record of another pid or secret is a newer server's, and a requester's write of what it read earlier would
+ * overwrite it. Returns whether it was touched.
+ */
+export function touchRestarting(slot: Slot, now: number, began?: string, expect?: { pid: number; secret?: string }): boolean {
 	let touched = false;
 	updateRecord(slot, (record) => {
 		if (!record.restarting || (began && record.restarting.began !== began)) return undefined;
+		if (expect && (record.pid !== expect.pid || (expect.secret !== undefined && record.secret !== expect.secret))) return undefined;
 		touched = true;
 		return { ...record, restarting: { ...record.restarting, since: at(now) } };
 	});

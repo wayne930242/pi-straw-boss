@@ -96,6 +96,19 @@ test("touchRestarting moves only since, only while a restarting is there, and on
 	assert.equal(readRecord(slot)?.pid, 4242);
 });
 
+test("sbr-F002: touchRestarting writes only when the record is the one the requester expects (pid and secret), so a stale read never overwrites a newer server's record", () => {
+	const slot = slotOf(root, env(), "linux");
+	const under = { began: "2026-10-26T08:00:00.000Z", since: "2026-10-26T08:00:00.000Z", reason: "r", by: "b" };
+	writeRecord(slot, record({ restarting: under }));
+	const t = Date.parse("2026-10-26T08:00:02.000Z");
+	assert.equal(touchRestarting(slot, t, under.began, { pid: 4242, secret: "s".repeat(64) }), true, "the old server's record");
+	// The new server wrote its own record meanwhile (another pid and secret): the requester's touch is not applied.
+	writeRecord(slot, record({ pid: 5151, secret: "n".repeat(64), restarting: under }));
+	assert.equal(touchRestarting(slot, t + 2000, under.began, { pid: 4242, secret: "s".repeat(64) }), false);
+	assert.equal(readRecord(slot)?.pid, 5151);
+	assert.equal(readRecord(slot)?.restarting?.since, under.since);
+});
+
 test("start-error.json belongs to one attempt: written, read, and cleared", () => {
 	const slot = slotOf(root, env(), "linux");
 	assert.equal(readStartError(slot), undefined);
