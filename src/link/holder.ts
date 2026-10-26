@@ -6,7 +6,9 @@ import { shortId, type DeviceKeys } from "./device.ts";
 import { buildEnvelope, openEnvelope, parseEnvelope, recordTaken, type Header, type ReceiveState } from "./envelope.ts";
 import { PayloadTooLargeError, RelayError, UnauthorizedError } from "./errors.ts";
 import { type ConfirmAnswer, type ConfirmRequest, encodePlaintext, LIMITS, type Presence, type TowerMessage, type WorkspaceState } from "./kinds.ts";
+import { type AdminRun, type InviteView, type JoinRequestView, type JoinView, type Prefill, TeamAdmin, type TeamView } from "./admin.ts";
 import { Outbox, type QueuedEnvelope } from "./outbox.ts";
+import { Requests } from "./request.ts";
 import type { RelayClient } from "./relay.ts";
 import { decodeEntry, encodeEntry, replayEncoded, type RosterEntry, type RosterState } from "./roster.ts";
 import { inside, nearestTeams, oneTeamEach, resolveDevice, towersFor, type MemberRef, type NetView } from "./routing.ts";
@@ -20,7 +22,7 @@ import { TeamFileError, type InboxItem, type LinkStore, type TeamFile } from "./
 // delivers it again rather than losing it, and the receive checks drop the second copy. A tower takes it from the inbox when it is idle.
 
 /** The part of the relay client the holder uses; tests swap in the same client over a fake `fetch`, and the live test uses the real one. */
-export type RelayPort = Pick<RelayClient, "stream" | "postEnvelope" | "getRoster">;
+export type RelayPort = Pick<RelayClient, "stream" | "postEnvelope" | "getRoster" | "createTeam" | "appendRoster" | "createInvite" | "join">;
 
 export interface HolderOptions {
 	store: LinkStore;
@@ -28,6 +30,12 @@ export interface HolderOptions {
 	isHolder: () => boolean;
 	/** The user's teams and projects, read fresh. */
 	config: () => LinkConfig;
+	/** The state directory (config.json lives there), the home folder, and the pi agent folder: the GUI's team changes write config.json and check a project against the last two. */
+	stateDir?: string;
+	home?: string;
+	agentDir?: string;
+	/** Whether this computer is attended (no policy file makes it unattended): `link_request` and the GUI's team changes are refused otherwise. Default true. */
+	attended?: () => boolean;
 	/** One reading of Herdr and pi-intercom; `withTabs` adds every workspace's tabs (a presence needs them, a delivery does not). */
 	net: (withTabs?: boolean) => Promise<NetView>;
 	relay: (url: string, device: DeviceKeys) => RelayPort;
@@ -63,6 +71,27 @@ const CONFIRM_MAX_MS = 10 * 60_000;
 const CONFIRM_MAX = 20;
 export interface SendRequest { fromSession: string; device: string; workspace?: string; text: string; reply: boolean }
 export type SendResult = { ok: true; text: string; details: Record<string, unknown> } | { ok: false; error: string };
+/** What the GUI shows as a notice. `data` is plain text and numbers: the page puts them in text nodes. */
+export type AlertKind = "join-request" | "confirm" | "fork" | "mismatch" | "unreachable" | "inbox" | "held";
+export interface LinkAlert { id: string; kind: AlertKind; level: "info" | "warning" | "error"; team: string; teamName: string; data: Record<string, string | number> }
+/** A teammate's workspace as the map shows it beside the local bases (spec, GUI). */
+export interface AllyBase { id: string; team: string; teamName: string; device: string; short: string; label: string; online: boolean; workspace: string | null; tower: string; tabs: { label: string; state: string }[] }
+/** The compact reading the net snapshot carries: it changes only when something worth redrawing does. */
+export interface LinkSummary { allies: AllyBase[]; alerts: LinkAlert[]; confirms: ConfirmView[] }
+/** The whole state the team settings page draws. */
+export interface LinkView extends LinkSummary {
+	deviceId: string;
+	short: string;
+	label: string;
+	relay: string | undefined;
+	teams: TeamView[];
+	invites: InviteView[];
+	joinRequests: JoinRequestView[];
+	join: JoinView | undefined;
+	prefill: Prefill | undefined;
+}
+const HEAD_DIFF_MS = 2 * 60_000, DOWN_MS = 2 * 60_000, HELD_MS = 10 * 60_000;
+
 export interface AllyDevice { id: string; short: string; label: string; online: boolean; ageMs: number | null; roster: number | null; workspaces: WorkspaceState[] }
 export interface AllyTeam { team: string; name: string; devices: AllyDevice[] }
 
@@ -93,6 +122,10 @@ interface TeamRun {
 	/** Sends that stopped waiting (they answered "queued") and messages restored from disk, by id, with how to name them: a later refusal is told to the boss, and no outcome is kept for them. */
 	gone: Map<string, string>;
 	waiters: Map<string, () => void>;
+	/** Since when the relay stream has been failing (undefined while it is open): a notice after 2 minutes. */
+	downSince: number | undefined;
+	/** Teammates seen on another roster head than ours, and since when: a notice after 2 minutes (spec, Presence). */
+	headDiff: Map<string, number>;
 }
 
 export class LinkHolder {
@@ -112,10 +145,30 @@ export class LinkHolder {
 	private confirms = new Map<string, ConfirmView>();
 	private draining: Promise<void> | undefined;
 	private again = false;
+	/** Inbox messages no tower has taken yet: no tower open, or offered and not taken. For the GUI's notices. */
+	private waiting = new Map<string, { team: string; from: string; since: number; offered: boolean }>();
+	/** What the GUI does to teams (admin.ts). */
+	readonly admin: TeamAdmin;
+	/** The link actions agents ask for, waiting for the boss (request.ts). */
+	readonly requests: Requests;
 
 	constructor(o: HolderOptions) {
 		this.o = o;
 		this.now = o.now ?? Date.now;
+		const stateDir = o.stateDir ?? "", me = this;
+		this.admin = new TeamAdmin({
+			store: o.store, stateDir, home: o.home ?? "", agentDir: o.agentDir ?? "", now: () => this.now(),
+			device: () => this.device!, config: o.config, relayFor: (url, keys) => o.relay(url, keys),
+			runs: () => [...this.runs.values()], load: (team) => this.loadTeam(team),
+			takeEntries: (run, entries) => this.takeEntries(run as TeamRun, entries), syncRoster: (run) => this.syncRoster(run as TeamRun),
+			refresh: () => this.refresh(), stopTeam: async (team) => {
+				const run = me.runs.get(team);
+				me.runs.delete(team);
+				if (run) await me.stopRun(run);
+			},
+			notify: (text, level) => o.notify(text, level), log: (entry) => o.store.log(entry),
+		});
+		this.requests = new Requests({ admin: this.admin, teams: () => this.admin.teamViews(), now: () => this.now(), attended: o.attended ?? (() => true), home: o.home ?? "", agentDir: o.agentDir ?? "" });
 	}
 
 	get active(): boolean {
@@ -187,6 +240,7 @@ export class LinkHolder {
 			if (this.runs.has(team) || !this.running) continue;
 			if (config.teams.has(team) && (await this.stillStopped(team))) continue;
 			if (!config.teams.has(team)) {
+				if (this.admin.joiningTeam() === team) continue; // a join waiting for its project folder
 				this.tellOnce(`noconfig/${team}`, `Straw Link: team ${team.slice(0, 6)} has no entry under link.teams in config.json, so it takes no messages`, "info");
 				continue;
 			}
@@ -264,7 +318,7 @@ export class LinkHolder {
 			},
 			onRetry: (_item, error) => store.log({ event: "send-retry", team, error: String(error) }),
 		});
-		const run: TeamRun = { team, teamId, client, outbox, stream: undefined, presences: new Map(), lastEphemeral: new Map(), presenceTimer: undefined, dead: undefined, settled, haltTimer: undefined, gone, waiters };
+		const run: TeamRun = { team, teamId, client, outbox, stream: undefined, presences: new Map(), lastEphemeral: new Map(), presenceTimer: undefined, dead: undefined, settled, haltTimer: undefined, gone, waiters, downSince: undefined, headDiff: new Map() };
 		this.runs.set(team, run);
 		// What an earlier holder (or this one before a restart) built and did not see land goes first, in order, before anything new is accepted.
 		for (const item of store.outboxPending(team)) {
@@ -281,6 +335,7 @@ export class LinkHolder {
 			lastEventId: tf.lastEventId || undefined,
 			backoff: this.o.backoff, sleep: this.o.sleep,
 			onAckError: (error) => store.log({ event: "ack-failed", team, error: String(error) }),
+			onState: (st) => void (run.downSince = st.state === "open" ? undefined : st.state === "retrying" ? (run.downSince ?? this.now()) : run.downSince),
 		});
 		void run.stream.start();
 		void run.stream.done.then((end) => {
@@ -321,7 +376,10 @@ export class LinkHolder {
 				case "malformed":
 					this.o.store.log({ event: "malformed", team: run.team, name: event.name, reason: event.reason });
 					return "ack";
-				default: return; // join requests: the GUI's join flow handles them, not this step
+				case "join":
+					await this.admin.onJoin(run, event);
+					return;
+				default: return;
 			}
 		} catch (error) {
 			// A handler that throws ends the stream for good; a failure here is told and kept for the next stream instead.
@@ -344,7 +402,11 @@ export class LinkHolder {
 			return "ack";
 		}
 		run.lastEphemeral = recordTaken(this.state(run, tf, roster), opened.header).lastEphemeral;
-		if (opened.header.kind === "presence") run.presences.set(opened.header.from, { at: this.now(), presence: opened.message as Presence });
+		if (opened.header.kind === "presence") {
+			const presence = opened.message as Presence;
+			run.presences.set(opened.header.from, { at: this.now(), presence });
+			this.compareHead(run, opened.header.from, presence, roster);
+		}
 		return "ack";
 	}
 
@@ -464,8 +526,9 @@ export class LinkHolder {
 	private async drainOnce(): Promise<void> {
 		const { store } = this.o;
 		if (!this.running) return;
-		await store.withLock(() => void store.purgeInbox(INBOX_MAX_AGE_MS, this.now()));
+		await store.withLock(() => void (store.purgeInbox(INBOX_MAX_AGE_MS, this.now()), this.admin.purgeInvites()));
 		const ids = store.inboxIds();
+		for (const id of this.waiting.keys()) if (!ids.includes(id)) this.waiting.delete(id);
 		if (ids.length === 0) return;
 		const config = this.o.config(), net = await this.o.net();
 		for (const id of ids) {
@@ -478,6 +541,7 @@ export class LinkHolder {
 			}
 			const policy = config.teams.get(item.team), run = this.runs.get(item.team);
 			if (!policy || !run || run.dead) continue;
+			this.waiting.set(id, this.waiting.get(id) ?? { team: item.team, from: item.fromLabel, since: item.received, offered: false });
 			// The sender's membership is checked again at the moment a tower would get the message.
 			let roster: RosterState;
 			try {
@@ -492,6 +556,7 @@ export class LinkHolder {
 			}
 			const picks = towersFor(net, policy.project, item.toWorkspace), first = picks[0];
 			if (!first) {
+				this.waiting.get(id)!.offered = false;
 				this.tellOnce(`inbox/${id}`, `Straw Link: a message from ${item.fromLabel} waits in the inbox; no tower is open on ${policy.project}${item.toWorkspace ? ` in workspace ${item.toWorkspace}` : ""}`, "info");
 				continue;
 			}
@@ -500,6 +565,7 @@ export class LinkHolder {
 			const was = this.offered.get(id), pick = (was && picks.find((p) => p.session.id === was.tower)) || first;
 			if (was && was.tower === pick.session.id && this.now() - was.at < (this.o.offerAgainMs ?? 30_000)) continue;
 			this.offered.set(id, { tower: pick.session.id, at: this.now() });
+			this.waiting.get(id)!.offered = true;
 			await this.o.offer(pick.session, id);
 		}
 	}
@@ -509,6 +575,7 @@ export class LinkHolder {
 		const was = this.offered.get(id);
 		if (was && was.tower !== tower) return;
 		this.offered.delete(id);
+		this.waiting.delete(id);
 		await this.o.store.withLock(() => this.o.store.removeInbox(id));
 	}
 
@@ -688,6 +755,65 @@ export class LinkHolder {
 			});
 			return [{ team: run.team, name: policies.get(run.team)?.name ?? run.team.slice(0, 6), devices }];
 		});
+	}
+
+	/** A teammate on another roster head than ours is noted; the notice comes only if it stays so for 2 minutes (Presence). */
+	private compareHead(run: TeamRun, from: string, presence: Presence, roster: RosterState): void {
+		const same = presence.headSeq === roster.head.seq && Buffer.from(presence.headHash).equals(roster.head.hash);
+		if (same) run.headDiff.delete(from);
+		else if (!run.headDiff.has(from)) run.headDiff.set(from, this.now());
+	}
+
+	private alerts(): LinkAlert[] {
+		const now = this.now(), name = (team: string) => this.o.config().teams.get(team)?.name ?? team.slice(0, 6), out: LinkAlert[] = [];
+		for (const r of this.admin.joinRequests()) out.push({ id: `join/${r.id}`, kind: "join-request", level: "warning", team: r.team, teamName: r.teamName, data: { label: r.label, short: r.short, unattended: r.unattended ? 1 : 0 } });
+		for (const c of this.confirmRequests()) out.push({ id: `confirm/${c.dialogId}`, kind: "confirm", level: "warning", team: c.team, teamName: name(c.team), data: { label: c.fromLabel, short: c.fromShort, tool: c.tool } });
+		for (const team of this.o.store.teamIds()) {
+			const why = this.stopped.has(team) ? (this.o.store.readStopped(team)?.reason ?? "stopped") : this.o.store.readStopped(team)?.reason;
+			const run = this.runs.get(team);
+			const reason = run?.dead ?? why;
+			if (reason) out.push({ id: `fork/${team}`, kind: "fork", level: "error", team, teamName: name(team), data: { reason } });
+		}
+		for (const run of this.runs.values()) {
+			if (run.dead) continue;
+			if (run.downSince !== undefined && now - run.downSince > DOWN_MS) out.push({ id: `down/${run.team}`, kind: "unreachable", level: "warning", team: run.team, teamName: name(run.team), data: { minutes: Math.floor((now - run.downSince) / 60_000) } });
+			for (const [device, since] of run.headDiff) {
+				const seen = run.presences.get(device);
+				if (now - since > HEAD_DIFF_MS && seen && now - seen.at <= PRESENCE_ONLINE_MS) out.push({ id: `heads/${run.team}/${device}`, kind: "mismatch", level: "error", team: run.team, teamName: name(run.team), data: { label: seen.presence.label, short: shortId(device) } });
+			}
+		}
+		const waits = new Map<string, { kind: "inbox" | "held"; team: string; n: number }>();
+		for (const w of this.waiting.values()) {
+			const kind = w.offered ? (now - w.since > HELD_MS ? "held" : undefined) : "inbox";
+			if (!kind) continue;
+			const key = `${kind}/${w.team}`, hit = waits.get(key);
+			waits.set(key, { kind, team: w.team, n: (hit?.n ?? 0) + 1 });
+		}
+		for (const [key, w] of waits) out.push({ id: key, kind: w.kind, level: "info", team: w.team, teamName: name(w.team), data: { count: w.n } });
+		return out;
+	}
+
+	/** The compact reading for the net snapshot: ally bases from presence, the notices, and the confirms waiting. */
+	summary(): LinkSummary {
+		const allies = this.list().flatMap((t) => t.devices.flatMap((d): AllyBase[] => {
+			const base = { team: t.team, teamName: t.name, device: d.id, short: d.short, label: d.label, online: d.online };
+			if (d.workspaces.length === 0) return [{ ...base, id: `${t.team}/${d.id}`, workspace: null, tower: "unknown", tabs: [] }];
+			return d.workspaces.map((w) => ({ ...base, id: `${t.team}/${d.id}/${w.label}`, workspace: w.label, tower: w.tower, tabs: w.tabs.map((x) => ({ label: x.label, state: x.state })) }));
+		}));
+		return { allies, alerts: this.alerts(), confirms: this.confirmRequests() };
+	}
+
+	/** Everything the team settings page draws. */
+	view(): LinkView {
+		const d = this.device!, config = this.o.config();
+		const teams = this.admin.teamViews();
+		for (const team of this.o.store.teamIds()) {
+			if (teams.some((t) => t.team === team)) continue;
+			const reason = this.o.store.readStopped(team)?.reason ?? this.runs.get(team)?.dead ?? "not running";
+			const policy = config.teams.get(team);
+			teams.push({ team, name: policy?.name ?? team.slice(0, 6), project: policy?.project ?? "", share: policy?.share ?? "status", relay: "", epoch: 0, headSeq: 0, self: { role: "member", attended: true }, members: [], status: "stopped", stoppedWhy: reason, relayDown: false, secondAdmin: [], onlyAdmin: false });
+		}
+		return { ...this.summary(), deviceId: d.keys.id, short: d.keys.shortId, label: d.label, relay: config.relay, teams, invites: this.admin.invites(), joinRequests: this.admin.joinRequests(), join: this.admin.joinView(), prefill: this.admin.prefill && { ...this.admin.prefill } };
 	}
 
 	/** This device's id, once the holder runs. */

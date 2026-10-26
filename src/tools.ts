@@ -40,6 +40,23 @@ export function createTools({ pi, cfg, s, me, role }: Kit, { post, callTower, st
 					reply: Type.Optional(Type.Boolean({ description: "Whether you wait for answers. Default false." })),
 				}),
 				({ message, scope, reply }) => broadcast(message, scope ?? "workspace", reply ?? false));
+			const arg = (description: string) => Type.Optional(Type.String({ description }));
+			pi.registerTool({
+				name: "link_request", label: "link_request",
+				description: "Ask for a Straw Link action (teams across computers). It never runs unasked: the boss gets an approval dialog that shows the action, every argument, your reason, and this session, and the action runs only when they approve it (in the GUI, from a paired device, or in the terminal); no answer in 10 minutes refuses it. Actions: create (relay, project; opens the Create team screen, where the boss types the relay's token), invite (team; returns an invite text), invite-unattended (team, device id of the unattended computer), join (text; opens the Join screen with the invite filled in, the boss compares the safety words), trust (device, level reply|forward|dispatch), leave (team), and for an admin remove (team, device), role (team, device, role admin|member), rotate (team). Refused on an unattended device.",
+				parameters: Type.Object({
+					action: Type.Union(["create", "invite", "invite-unattended", "join", "trust", "leave", "remove", "role", "rotate"].map((a) => Type.Literal(a))),
+					args: Type.Optional(Type.Object({
+						team: arg("A team's id, an id prefix of 6 or more characters, or its name (the project folder's name)."), relay: arg("The relay's origin, e.g. https://relay.example."), project: arg("An absolute project folder."), share: arg("presence or status."),
+						device: arg("A device's id, short id, or label; for invite-unattended its 26-character id."), level: arg("reply, forward, or dispatch."), role: arg("admin or member."), text: arg("The invite text, strawlink1:…"), label: arg("This computer's label in the team."),
+					})),
+					reason: Type.String({ description: "One line: why you ask. The boss reads it in the dialog." }),
+				}),
+				execute: async (toolCallId, params, signal, _update, ctx) => {
+					const text = await link.request({ action: params.action, args: Object.fromEntries(Object.entries(params.args ?? {}).filter((e): e is [string, string] => typeof e[1] === "string")), reason: params.reason, toolCallId, asker: s.ownName || pi.getSessionName() || me(), ...(ctx.hasUI ? { ui: ctx.ui } : {}), ...(signal ? { signal } : {}) });
+					return { content: [{ type: "text", text }], details: { action: params.action } };
+				},
+			});
 			// The session's name is what the net and the GUI show for it. A main agent names its tab too: the tab is its squad, and pi-auto-tab-name
 			// leaves a tab alone once anyone else labelled it. A tower keeps its own name.
 			if (!s.isTower) tool("boss_rename", "Name this session with a short phrase for the work it is doing now, at most 16 characters (e.g. \"MP-3584 cost mask\", \"重構通知模組\"). The net and the GUI show it, and a main agent's Herdr tab takes it as its label.",

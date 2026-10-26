@@ -1,8 +1,10 @@
 import type { Mark } from "../src/dashboard.ts";
+import type { AllyBase } from "../src/link/holder.ts";
 import type { Base, Net, Unit } from "../src/net.ts";
 import { mountCalm } from "./calm.ts";
 import { replay } from "./dom.ts";
 import { m } from "./paraglide/messages.js";
+import { allyMark, stateName } from "./linkmodel.ts";
 import { mountMinimap } from "./minimap.ts";
 import { packets } from "./packets.ts";
 import { aimBase, aimSquad, aimStash, aimTower, aimUnit } from "./quit.ts";
@@ -178,9 +180,27 @@ function fillBase(el: HTMLElement, b: Base) {
 	sync(el.querySelector(".outposts")!, b.outposts.map((o) => ({ id: o.id, name: o.label, role: "outpost" as const, mark: o.mark, note: o.mark === "unknown" ? m.no_agent() : undefined, since: o.since, ticks: o.ticks })), unitEl, fillUnit);
 }
 
+// A teammate's workspace on a bound project (Straw Link, from its last presence), beside the local bases: a card of its own, not openable (its units are
+// another computer's), with the device's label and short id, the team, whether it is online, its tower's state, and its tabs' states. No wire reaches it.
+const allyEl = () => html(`<section class="base ally"><header><div class="tower"><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></div><div class="title"><span class="crown"><svg><use href="#i-main"/></svg><em class="ally-tag"></em></span><h2></h2><p><span class="tstate"></span></p></div></header><ul class="ally-tabs"></ul></section>`);
+function fillAlly(el: HTMLElement, a: AllyBase) {
+	const state = allyMark(a);
+	mark(el, state);
+	el.classList.toggle("offline", !a.online);
+	mark(el.querySelector<HTMLElement>(".tower")!, state);
+	text(el, ".ally-tag", m.ally_tag({ team: a.teamName }));
+	text(el, "h2", a.workspace ?? a.label);
+	text(el, ".tstate", `${a.workspace ? `${a.label} · ` : ""}${a.short} · ${a.online ? stateName(a.tower) : m.link_offline()}`);
+	sync(el.querySelector(".ally-tabs")!, a.tabs.map((t, i) => ({ id: `${i}`, ...t })), () => html(`<li class="ally-tab"><b></b><span></span></li>`), (li, t) => {
+		text(li, "b", t.label);
+		text(li, "span", a.online ? stateName(t.state) : "");
+		li.dataset.state = t.state;
+	});
+}
+
 /** Draws the head tower's wires to every other tower, with a packet travelling along each while one end of it works, in the map's own coordinates. */
 function wire(map: HTMLElement, svg: SVGSVGElement, dots: HTMLElement, still: boolean) {
-	const towers = [...map.querySelectorAll<HTMLElement>(".base:not(.leaving) .tower")];
+	const towers = [...map.querySelectorAll<HTMLElement>(".base:not(.leaving):not(.ally) .tower")];
 	const head = map.querySelector<HTMLElement>(".base.head:not(.leaving) .tower");
 	const box = map.getBoundingClientRect();
 	const centre = (el: HTMLElement) => {
@@ -232,7 +252,8 @@ export function mountPage(): Page {
 			for (const [id, value] of [["s-bases", String(net.bases.length)], ["s-agents", count()], ["s-working", count("working")], ["s-commanding", count("commanding")], ["s-waiting", count("waiting")]] as const) byId(id, HTMLElement).textContent = value;
 		},
 		show(net) {
-			sync(bases, net.bases, baseEl, fillBase);
+			const allies = (net.link?.allies ?? []).map((a) => ({ ...a, id: `ally/${a.id}`, ally: true as const }));
+			sync(bases, [...net.bases, ...allies], (item) => ("ally" in item ? allyEl() : baseEl()), (el, item) => ("ally" in item ? fillAlly(el, item) : fillBase(el, item)));
 			for (const el of bases.children) if (!packed.has(el)) (packed.add(el), pack.observe(el));
 			for (const el of packed) if (!el.isConnected) (packed.delete(el), pack.unobserve(el));
 			requestAnimationFrame(layout);

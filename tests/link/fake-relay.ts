@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { entryHash, type RosterEntry, encodeEntry } from "../../src/link/roster.ts";
+import { decodeEntry, entryHash, type RosterEntry, encodeEntry } from "../../src/link/roster.ts";
 import { encodeEnvelope, parseEnvelope, type Envelope } from "../../src/link/envelope.ts";
 
 // An in-memory relay behind a `fetch`: the endpoints the link holder uses (envelopes, events, acks, roster), with the delivery rules that matter to
@@ -30,6 +30,12 @@ export class FakeRelay {
 	/** A POST of an envelope waits for this to settle before it is answered (to look at the sender's state meanwhile). */
 	holdPosts: Promise<void> | undefined;
 	failPosts = 0;
+	/** Invites by hash: who made it, the team, and whether a join request was taken. */
+	invites = new Map<string, { team: string; by: string; expires: number; used: boolean }>();
+	/** Team tokens `POST /v1/teams` accepts (each once). */
+	tokens = new Set<string>();
+	/** The join requests the relay took, in order (hash and request bytes). */
+	joined: { hash: string; request: Buffer }[] = [];
 	private eid = 0;
 	private timestamps = new Map<string, number>();
 
@@ -69,17 +75,59 @@ export class FakeRelay {
 	fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
 		const url = new URL(String(input)), headers = new Headers(init?.headers), device = headers.get("x-straw-device") ?? "";
 		const body = init?.body == null ? undefined : (JSON.parse(Buffer.from(init.body as Uint8Array).toString("utf8")) as Record<string, unknown>);
+		if (url.pathname === "/v1/teams" && init?.method === "POST") return this.createTeam(body!);
+		if (url.pathname === "/v1/invites" && init?.method === "POST") return this.createInvite(device, body!);
+		const joining = /^\/v1\/invites\/([0-9a-f]{64})\/join$/.exec(url.pathname);
+		if (joining) return this.join(joining[1]!, body!);
 		const m = /^\/v1\/teams\/([0-9a-f]{32})\/(envelopes|events|acks|roster)$/.exec(url.pathname);
 		if (!m) return json(404, { error: "not-found" });
 		const [, team, what] = m as unknown as [string, string, string];
 		if (what === "events") return this.events(team, device, init?.signal ?? undefined, headers.get("last-event-id"));
 		if (what === "envelopes") return this.post(team, body!);
 		if (what === "acks") return this.ack(device, body!);
+		if (what === "roster" && init?.method === "POST") return this.appendRoster(team, device, body!);
+		if (!(this.members.get(team) ?? []).includes(device)) return json(401, { error: "not-member" });
 		const after = url.searchParams.has("after") ? Number(url.searchParams.get("after")) : -1;
 		const entries = (this.rosters.get(team) ?? []).filter((e) => e.seq > after);
 		const all = this.rosters.get(team) ?? [], head = all.at(-1)!;
 		return json(200, { head: { seq: head.seq, hash: hex(entryHash(head)) }, entries: entries.map((e) => ({ seq: e.seq, hash: hex(entryHash(e)), entry: Buffer.from(encodeEntry(e)).toString("base64url") })) });
 	};
+
+	private createTeam(body: Record<string, unknown>): Response {
+		const team = String(body.team), token = String(body.token);
+		if (!this.tokens.delete(token)) return json(401, { error: "bad-token" });
+		if (this.rosters.has(team)) return json(409, { error: "team-exists" });
+		const entry = decodeEntry(Buffer.from(String(body.entry), "base64url"));
+		this.members.set(team, [entry.subject!.record.id]);
+		this.rosters.set(team, [entry]);
+		return json(201, { team, head: { seq: 0, hash: hex(entryHash(entry)) } });
+	}
+	private appendRoster(team: string, device: string, body: Record<string, unknown>): Response {
+		const log = this.rosters.get(team)!, entry = decodeEntry(Buffer.from(String(body.entry), "base64url")), head = log.at(-1)!;
+		if (!(this.members.get(team) ?? []).includes(device)) return json(401, { error: "not-member" });
+		if (!Buffer.from(entry.prev).equals(entryHash(head))) return json(409, { error: "conflict", head: { seq: head.seq, hash: hex(entryHash(head)) } });
+		const members = this.members.get(team)!;
+		if (entry.op === "add") members.push(entry.subject!.record.id);
+		if (entry.op === "remove") members.splice(members.indexOf(entry.subject!.record.id), 1);
+		this.pushRoster(Buffer.from(team, "hex"), entry);
+		return json(201, { seq: entry.seq, hash: hex(entryHash(entry)) });
+	}
+	private createInvite(device: string, body: Record<string, unknown>): Response {
+		const hash = String(body.h);
+		if (this.invites.has(hash)) return json(409, { error: "invite-exists" });
+		this.invites.set(hash, { team: String(body.team), by: device, expires: Number(body.expires), used: false });
+		return json(201, { expires: Number(body.expires) });
+	}
+	private join(hash: string, body: Record<string, unknown>): Response {
+		const inv = this.invites.get(hash);
+		if (!inv || inv.expires < Date.now()) return json(404, { error: "no-invite" });
+		if (inv.used) return json(409, { error: "invite-used" });
+		inv.used = true;
+		const request = Buffer.from(String(body.request), "base64url");
+		this.joined.push({ hash, request });
+		for (const s of this.streams.filter((x) => x.team === inv.team && x.device === inv.by && !x.closed)) this.send(s, "join", { hash, request: request.toString("base64url") });
+		return json(202, { queued: true });
+	}
 
 	private async post(team: string, body: Record<string, unknown>): Promise<Response> {
 		if (this.holdPosts) await this.holdPosts;

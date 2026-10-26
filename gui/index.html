@@ -45,12 +45,15 @@
     <div class="alert-row">
       <button class="alerts" id="alerts" type="button" data-mark="unknown" aria-label="Alerts" data-m-label="alerts" disabled><span class="faces" id="alert-faces"></span><span class="count"><b id="alert-count">0</b><small id="alert-text" data-m="no_alerts">no alerts</small></span></button>
       <button class="pair-btn tog done-btn" id="done" type="button" data-state="done" popovertarget="done-pop" aria-haspopup="dialog" hidden></button>
+      <button class="pair-btn tog done-btn" id="link-alerts" type="button" data-state="error" popovertarget="link-alerts-pop" aria-haspopup="dialog" hidden></button>
     </div>
     <div class="hud-pop done-pop" id="done-pop" popover><ul id="done-list"></ul><button class="pair-btn" id="done-clear" type="button"></button></div>
+    <div class="hud-pop done-pop link-pop" id="link-alerts-pop" popover><ul id="link-alerts-list"></ul></div>
     <button class="pair-btn prefs-btn" id="prefs" type="button" popovertarget="prefs-pop" aria-haspopup="dialog" aria-label="Settings" data-m-label="settings" data-m-title="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.4 7.4 0 0 0-1.7-1L15 3.3h-4l-.4 2.6a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.4 7.4 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7.4 7.4 0 0 0 1.7-1l2.5 1 2-3.5zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></svg></button>
     <!-- Settings a person sets once: the reminder and sound switches, pairing a phone, the language. The sound panel hangs under the last row. -->
     <div class="hud-pop prefs-pop" id="prefs-pop" popover>
       <button class="pair-btn tog" id="remind" type="button" aria-pressed="true"></button>
+      <button class="pair-btn" id="teams" type="button" title="Straw Link: teams across computers" data-m="link_button" data-m-title="link_button_title">Teams</button>
       <button class="pair-btn" id="pair" type="button" title="Pair a phone over Tailscale (/boss gui remote turns remote access on)" data-m="pair_button" data-m-title="pair_title">Phone</button>
       <select class="pair-btn lang" id="lang" aria-label="Language" data-m-label="language"></select>
       <button class="pair-btn tog" id="sound" type="button" popovertarget="sound-pop" aria-haspopup="dialog"></button>

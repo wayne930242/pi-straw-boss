@@ -8,7 +8,7 @@ import { encodePlaintext } from "../src/link/kinds.ts";
 import { RelayClient } from "../src/link/relay.ts";
 import { type InboxItem, LinkStore, LOCK_WAIT_MS } from "../src/link/store.ts";
 import { POST_WAIT_MS } from "../src/link/holder.ts";
-import { ASK_MS, MESSAGE_TYPE, remoteTowers } from "../src/link/runtime.ts";
+import { ASK_MS, type Link, MESSAGE_TYPE, remoteTowers } from "../src/link/runtime.ts";
 import { FakeRelay } from "./link/fake-relay.ts";
 import { alice, bob, clientFor, rosterOf, stateOf, TEAM_HEX, writeDevice, writeTeam } from "./link/holder-world.ts";
 import { Agent, type Registration, until, World } from "./fakes.ts";
@@ -305,4 +305,25 @@ test("SLH-F014: a message already in the session as a straw-link message (the se
 	await tb.fire("session_start", { reason: "resume" });
 	await until(() => store.inboxIds().length === 0, "the message in the transcript confirmed and removed without being sent");
 	assert.equal(linkMessages(tb).length, 0);
+});
+
+test("R5-F003: the GUI's summary read gives up on a holder that stops answering after its own short wait and serves the last reading", async () => {
+	const a = computer("a");
+	let link: Link | undefined;
+	const deps = { link: { ...a.deps.link, summaryMs: 150, created: (l: Link) => void (link = l) } };
+	const holder = a.tower("tower-1", "wA");
+	const other = a.world.tower("tower-2", "wB:t7", "wB:p7", false, deps);
+	a.world.herdr.pane("wB:p7").cwd = a.project;
+	writeFileSync(join(a.world.stateDir, "gui.json"), JSON.stringify({ ownerSession: "tower-2" }));
+	await holder.start();
+	await until(() => holderOf(a)?.session === "tower-1", "tower-1 as holder");
+	await other.start();
+	const first = await link!.summary();
+	assert.ok(first, "the holder answers");
+	const broker = a.world.broker as unknown as { deliver: (id: string, ...rest: unknown[]) => void };
+	const deliver = broker.deliver.bind(broker);
+	broker.deliver = (id, ...rest) => (id === "tower-1" ? undefined : deliver(id, ...rest)); // the holder is alive but hears nothing
+	const t0 = Date.now();
+	assert.deepEqual(await link!.summary(), first, "the last reading");
+	assert.ok(Date.now() - t0 < ASK_MS / 4, `gave up after ${Date.now() - t0} ms`);
 });

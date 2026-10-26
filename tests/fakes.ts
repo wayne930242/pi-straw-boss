@@ -504,10 +504,10 @@ export class Agent {
 		for (const handler of this.handlers.get("before_agent_start") ?? []) await handler(event, this.ctx);
 		return event.systemPromptOptions.sections;
 	}
-	async tool(name: string, params: Record<string, unknown> = {}) {
+	async tool(name: string, params: Record<string, unknown> = {}, call: { id?: string; signal?: AbortSignal } = {}) {
 		const tool = this.tools.get(name);
 		if (!tool) throw new Error(`${this.id} has no tool ${name}`);
-		return tool.execute("call", params as never, undefined, undefined, this.ctx as never);
+		return tool.execute(call.id ?? "call", params as never, call.signal, undefined, this.ctx as never);
 	}
 	async command(args = ""): Promise<void> {
 		await this.commands.get("boss")!.handler(args, this.ctx);

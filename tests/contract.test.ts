@@ -57,7 +57,7 @@ test("robot_hand: pending and closed reach the bridge; an answer goes out as one
 	stop();
 	off();
 	assert.equal(b.count(), 1, "only the test's own owner listener is left");
-	assert.deepEqual(OWNERS.map((o) => o.name), ["robot-hand", "robot-hand-secret", "rpiv", "pi-mcp-adapter", "pi-code", "pi-ui", "straw-link-gate"]);
+	assert.deepEqual(OWNERS.map((o) => o.name), ["robot-hand", "robot-hand-secret", "rpiv", "pi-mcp-adapter", "pi-code", "pi-ui", "straw-link-gate", "straw-link-request"]);
 	assert.equal(mcpAdapter.tool, undefined, "MCP approvals belong to no tool call");
 });
 

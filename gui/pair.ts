@@ -9,7 +9,7 @@ import { post } from "./post.ts";
 // shows the code it answers with. The code works once, within ten minutes; New code asks for another. Under it, the paired devices (devices.ts).
 
 const NS = "http://www.w3.org/2000/svg";
-function square(rows: string[]) {
+export function square(rows: string[]) {
 	const n = rows.length, svg = document.createElementNS(NS, "svg"), bg = document.createElementNS(NS, "rect"), dots = document.createElementNS(NS, "path");
 	svg.setAttribute("viewBox", `-4 -4 ${n + 8} ${n + 8}`);
 	svg.setAttribute("class", "qr");
