@@ -99,7 +99,7 @@ export async function startSidecar({ pane, kind, session, record, cli = "straw-n
 	const reach = createReach(kit), election = createElection(kit), presence = createPresence(kit), digest = createDigest(run, now);
 	const roles = createRoles(kit);
 	const guard = createGuard(kit, { ...election, openTower: reach.openTower, roles });
-	const membership = createMembership(kit, { presence, election, guard, briefing: { rebrief() {} } as unknown as Briefing, roles, openTower: reach.openTower, register() {} });
+	const membership = createMembership(kit, { presence, election, guard, briefing: { rebrief() {} } as unknown as Briefing, roles, openTower: reach.openTower, register() {}, control: () => ({ register() {} }) });
 
 	// Leaving: what a pi session does at its shutdown, minus the tower's part. The tokens go before the broker hears the session leave.
 	let client: IntercomLike | undefined, leaving: Promise<void> | undefined, finish!: () => void;

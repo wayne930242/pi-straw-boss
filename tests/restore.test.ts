@@ -350,6 +350,32 @@ test("a main the tower opened is closable by the restored tower after a Herdr re
 	await until(() => back.stopped, "the restored main quit");
 });
 
+test("a restored opened main whose claim times out is closable by the restored tower once the owner confirms late", async () => {
+	const fast = { autoTower: true, couple: false, sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, Math.min(ms, 2))) };
+	const { tower } = await net();
+	asOpened();
+	await tower.tool("boss_open_main", { request: "Fix the export button.", sender: "member-1" });
+	await until(() => world.herdr.pane(OPENED.pane).tokens.sb_role === "main", "the opened main is main");
+	world.herdr.onAgentStart = undefined;
+	const tab = world.herdr.pane(OPENED.pane).tab_id as string;
+	world.herdr.addPane("wA:p102", tab);
+	world.broker.dropClaims = true;
+	const [tower2, , owner, back] = await restore([
+		{ id: "tower-2", pane: "wA:p7", file: FILES.tower },
+		{ id: "main-2", pane: "wA:p1", file: FILES.main, deps: fast },
+		{ id: "member-3", pane: "wA:p102", file: "/s/member3.jsonl", deps: fast }, // the owner of the opened main's tab channel
+		{ id: "opened-2", pane: OPENED.pane, file: OPENED.file, deps: fast },
+	]) as [Agent, Agent, Agent, Agent];
+	await until(() => back.notices.some((n) => /did not confirm/.test(n.text)), "the claim timed out");
+	assert.equal(tokens(OPENED.pane).sb_opened_by, undefined, "not marked while it is no main");
+	world.broker.dropClaims = false;
+	assert.match(await back.promote(), /the main agent of tab/);
+	await until(() => Boolean(tokens(OPENED.pane).sb_opened_by), "marked as opened once the owner confirms");
+	assert.ok((records() as { pane: string; openedBy?: string }[]).some((r) => r.pane === OPENED.pane && r.openedBy), "and the record keeps the opener");
+	assert.equal(owner.tokens.sb_role, "member");
+	assert.equal(await closeable(tower2, "opened-2"), "closed");
+});
+
 test("a restored main restored in another workspace than the one that opened it has no opener", async () => {
 	const { tower } = await net();
 	asOpened();

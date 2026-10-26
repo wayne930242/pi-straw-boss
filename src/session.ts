@@ -100,7 +100,7 @@ export function registerSession(kit: Kit, { briefing, roles, presence, membershi
 				// A main a Herdr restore resumed in its own pane and tab takes the role back; a tab that has a live main already keeps it.
 				const resumed = Boolean(placed) && roles.held(placed!) === "main";
 				// The tower that opened it may close it again, as before the restore; the record names the opener, and the promotion below writes it into the new record.
-				const opener = roles.openerOf(resumed ? placed : undefined);
+				s.restoredOpener = roles.openerOf(resumed ? placed : undefined);
 				// A pi started in the shell of a main that quit is no restore, and the record must not claim the next one.
 				if (!resumed && event.reason === "startup" && placed && roles.sameShell(placed)) roles.forget();
 				s.restored = resumed; // consumed by the promotion that makes this session the tab's main (membership.ts), also when the guard makes it
@@ -121,15 +121,9 @@ export function registerSession(kit: Kit, { briefing, roles, presence, membershi
 				if (!taken.promoted) {
 					tell(taken.text, claimed ? "warning" : "info");
 					if (resumed) roles.forget(); // another main holds the tab, and this session stays a member: its record would claim the next restore
-				} else if (opener && !claimed) {
-					s.openedBy = opener;
-					pi.appendEntry(ENTRY, { openedBy: opener, openedPane: s.at.paneId }); // a later /reload in this pane restores it as it does for an opened main
-					control.register();
-					await presence.publish();
-				}
+				} else if (!claimed) await membership.adoptOpener(); // a no-op when the refresh that made it the main did so already (membership.ts)
 			}).finally(() => {
-				roles.openerOf();
-				if (start === started && !keepRestored) s.restored = false; // the promotion consumes it when it makes this session the main; one found main already, or a join that failed, does not
+				if (start === started && !keepRestored) [s.restored, s.restoredOpener] = [false, undefined]; // the promotion consumes it when it makes this session the main; one found main already, or a join that failed, does not
 			});
 		}
 		starting?.catch((error: Error) => tell(`Straw Boss: ${error.message}`, "error"));

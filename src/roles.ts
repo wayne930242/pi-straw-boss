@@ -56,7 +56,6 @@ export function createRoles({ cfg, s, guiDir, tell }: Kit) {
 		const mains = names.flatMap((name) => load(join(dir, name), true) ?? []).filter((r) => r.role === "main" && r.tab === tab && r.workspace === workspace);
 		return mains.sort((a, b) => b.at - a.at)[0];
 	};
-	let restoredOpener: string | undefined; // what openerOf found for the main being restored, which its new record keeps until the start ends
 	const forget = () => {
 		if (s.file) rmSync(path(s.file), { force: true });
 	};
@@ -84,12 +83,12 @@ export function createRoles({ cfg, s, guiDir, tell }: Kit) {
 		 */
 		openerOf(here?: Here): string | undefined {
 			const record = here && within(here);
-			return (restoredOpener = record && record.role === "main" ? record.openedBy : undefined);
+			return record && record.role === "main" ? record.openedBy : undefined;
 		},
 		/** The main record of a tab, whichever session left it: the main a Herdr restore may be bringing back there. */
 		mainOf,
 		remember(role: RoleRecord["role"]) {
-			const openedBy = role === "main" ? s.openedBy ?? restoredOpener : undefined;
+			const openedBy = role === "main" ? s.openedBy ?? s.restoredOpener : undefined;
 			if (s.file) {
 				try {
 					mkdirSync(dir, { recursive: true, mode: 0o700 });

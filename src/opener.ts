@@ -53,7 +53,7 @@ export function opener(env: OpenerEnv) {
 		const workspace = (await workspaces(run)).find((w) => w.workspace_id === env.workspaceId);
 		if (!workspace) throw new Error(`Workspace ${env.workspaceId} is not open any more`);
 		// Limits come from live Herdr panes carrying the marker below, so they hold across a tower restart: a closed tab takes its marker with it, and
-		// a main that died leaves one that expires with its token TTL. Opens are serialised, so the count and the marker cannot race.
+		// a main that died leaves one that expires with its token TTL. A restored main keeps its old marker (the asking session, now another id), so it counts toward the workspace cap only. Opens are serialised, so the count and the marker cannot race.
 		const marked = (await panes(run, workspace.workspace_id)).filter((p) => p.tokens?.sb_opened_by);
 		const ofSender = marked.filter((p) => p.tokens!.sb_opened_by === sender.id).length;
 		if (ofSender) throw new OpenLimitError(`Sender ${sender.name ?? sender.id} already has ${ofSender === 1 ? "an opened main" : `${ofSender} opened mains`} running in workspace ${workspace.label}; a sender gets one at a time. Wait for it to finish, or send the request to it.`);
