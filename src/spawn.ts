@@ -31,6 +31,8 @@ const OUTSIDE = no(400, "not_allowed", "Only folders in your home folder, outsid
 /**
  * The real path of a directory the page may pick: at or under home, with no hidden part once symlinks are resolved. Where `hidden` reads attributes (Windows, hidden.ts)
  * no part may carry one, in the path as given too: "My Documents" is a hidden junction to Documents, and leads there only for the Explorer that never shows it.
+ * The path as given is read from home as the caller spelled it as well as from the real root: realpath rewrites a spelling such as an 8.3 short name
+ * (`C:\Users\RUNNER~1`), after which the path given in the old spelling no longer lies under the real root and would go unchecked.
  */
 export async function pickable(path: unknown, home = homedir(), hidden = platformHidden): Promise<string | undefined> {
 	if (typeof path !== "string" || !isAbsolute(path) || path.length > 4096) return;
@@ -39,8 +41,12 @@ export async function pickable(path: unknown, home = homedir(), hidden = platfor
 	const rel = relative(root, real);
 	if (rel.startsWith("..") || isAbsolute(rel) || rel.split(sep).some((part) => part.startsWith("."))) return;
 	if (hidden) {
-		const given = relative(root, resolve(path));
-		if (given !== rel && !given.startsWith("..") && !isAbsolute(given) && (await hasHidden(root, given.split(sep).filter(Boolean), hidden))) return;
+		for (const base of [root, resolve(home)]) {
+			const given = relative(base, resolve(path));
+			if (given.startsWith("..") || isAbsolute(given)) continue;
+			if (given !== rel && (await hasHidden(base, given.split(sep).filter(Boolean), hidden))) return;
+			break;
+		}
 		if (rel && (await hasHidden(root, rel.split(sep), hidden))) return;
 	}
 	return (await stat(real).catch(() => undefined))?.isDirectory() ? real : undefined;

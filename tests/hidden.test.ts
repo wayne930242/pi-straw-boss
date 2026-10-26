@@ -40,6 +40,19 @@ test("a hidden folder, one inside it, and a link that leads through one are not 
 	assert.equal(await pickable(home, home, hidden), home, "home itself is the root");
 });
 
+// realpath rewrites a spelling of home such as an 8.3 short name (C:\Users\RUNNER~1, which the GitHub Windows runner's temp folder has), and a path given in the
+// old spelling then lies outside the real root. A link stands for the alias here; either spelling reads the same folder, as cmd.exe does.
+test("a path given through another spelling of home is still judged as given", async () => {
+	const alias = join(scratch, "home-alias");
+	symlinkSync(home, alias, "junction");
+	const sameFolder: Hidden = (dir) => hidden(realpathSync(dir));
+	for (const refused of ["My Documents", "My Documents/Work", "Documents/Hidden Inside", "AppData"])
+		assert.equal(await pickable(join(alias, refused), alias, sameFolder), undefined, refused);
+	for (const ok of ["Documents", "Documents/Work", "Shortcut to Documents"])
+		assert.equal(await pickable(join(alias, ok), alias, sameFolder), join(home, ok.replace("Shortcut to ", "")), ok);
+	assert.equal(await pickable(alias, alias, sameFolder), home, "home itself is the root");
+});
+
 test("nothing is made inside a hidden folder, nor under the name of an entry Windows hides", async () => {
 	assert.equal((await makeDir(join(home, "AppData"), "x", home, hidden)).status, 400);
 	assert.equal((await makeDir(join(home, "Documents", "Hidden Inside"), "x", home, hidden)).status, 400);
