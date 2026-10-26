@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFileExe } from "./exe.mjs";
 import { system32, system32Path } from "./winpath.ts";
 import { createHash, randomBytes } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -222,5 +222,5 @@ export const browserCommand = (url: string, platform: NodeJS.Platform = process.
 export const openBrowser = (url: string) =>
 	new Promise<void>((done, fail) => {
 		const [cmd, args, options] = browserCommand(url);
-		execFile(cmd, args, options, (error) => (error ? fail(error) : done()));
+		execFileExe(cmd, args, options, (error) => (error ? fail(error) : done()));
 	});

@@ -179,7 +179,10 @@ export function registerSession(kit: Kit, { briefing, roles, presence, membershi
 		s.boardId = undefined;
 		if (s.closing) roles.forget(); // closed on purpose: a Herdr restore does not bring it back (roles.ts)
 		// A closed session, and a tower that quits however it was asked, take their pane with them (and an emptied tab); a /reload, /new, resume or fork keeps it.
-		if ((s.closing ? !s.closing.keepPane : s.isTower) && event.reason === "quit" && env.HERDR_PANE_ID) cfg.later(process.pid, ["pane", "close", env.HERDR_PANE_ID]);
+		if ((s.closing ? !s.closing.keepPane : s.isTower) && event.reason === "quit" && env.HERDR_PANE_ID) {
+			// A herdr or sh that is not found throws; the shutdown goes on (the GUI is released below), and the pane is left open with the reason on stderr.
+			try { cfg.later(process.pid, ["pane", "close", env.HERDR_PANE_ID]); } catch (error) { process.stderr.write(`straw-boss: the pane was not closed: ${(error as Error).message}\n`); }
+		}
 		await host.release(event.reason !== "quit"); // a /reload, /new, or /resume starts the GUI again in this process
 		s.dashboard?.stop();
 		s.dashboard = undefined;

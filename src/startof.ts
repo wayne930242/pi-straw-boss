@@ -1,4 +1,5 @@
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { execFileSyncExe } from "./exe.mjs";
 import { powershellPath, system32 } from "./winpath.ts";
 
 // A process's start time, which tells a PID another process now holds from the process that wrote a record (remote.ts `runs`, the GUI and link records).
@@ -36,7 +37,7 @@ const laterBy = (ms: number) => new Promise<void>((done) => setTimeout(done, ms)
  * a growing wait, because session start is when the machine is busiest); another PID's answer is kept for ten minutes, a failed one for 5 s, then 10 s, 20 s, up to 60 s
  * while it keeps failing (a PID that PowerShell cannot answer for is not asked every few seconds). A PID known to be dead is forgotten (`forget`).
  */
-export function createStartOf({ platform = process.platform, ps = (pid: number) => execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", timeout: 2000, stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, LC_ALL: "C", TZ: "UTC" } }), launch = spawnQuietly, now = Date.now, wait = laterBy } = {}) {
+export function createStartOf({ platform = process.platform, ps = (pid: number) => String(execFileSyncExe("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", timeout: 2000, stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, LC_ALL: "C", TZ: "UTC" } })), launch = spawnQuietly, now = Date.now, wait = laterBy } = {}) {
 	const known = new Map<number, { value: string | undefined; at: number; fails: number }>(), asking = new Map<number, Promise<string | undefined>>();
 	const valid = (pid: number) => Number.isSafeInteger(pid) && pid > 0;
 	const failedFor = (pid: number, fails: number) => (pid === process.pid ? MAX_FAIL_MS : Math.min(FIRST_FAIL_MS * 2 ** (fails - 1), MAX_FAIL_MS));

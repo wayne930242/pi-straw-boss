@@ -1,7 +1,7 @@
 // Equalises the panes of one Herdr tab. The extension (balance.ts) runs it detached: `balance.mjs now <pane>` when its pi
 // starts, and `balance.mjs after-close <pane> <tab>` when its pi quits, because the pane closes only after the pi process is gone.
 // Plain JavaScript on purpose: Node will not strip types from a .ts file inside node_modules, where this package is installed.
-import { execFile } from "node:child_process";
+import { execFileExe } from "./exe.mjs";
 import { mkdir, rmdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -95,7 +95,7 @@ export function planBalance(layout) {
 /** @type {Run} */
 export const herdr = (args) =>
 	new Promise((resolve, reject) => {
-		execFile(process.env.HERDR_BIN_PATH || "herdr", args, { encoding: "utf8" }, (error, stdout, stderr) =>
+		execFileExe(process.env.HERDR_BIN_PATH || "herdr", args, { encoding: "utf8" }, (error, stdout, stderr) =>
 			error ? reject(Object.assign(error, { stderr })) : resolve(stdout));
 	});
 

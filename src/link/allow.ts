@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSyncExe } from "../exe.mjs";
 import { readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
@@ -87,8 +87,8 @@ export function inProject(abs: string, s: Scope): string | undefined {
 export function readTracked(project: string): Tracked {
 	const files = new Set<string>(), dirs = new Set<string>([""]);
 	try {
-		const out = execFileSync("git", ["-c", "core.fsmonitor=false", "-C", project, "ls-files", "-z"], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" }, timeout: 20_000 });
-		for (const f of out.split("\0")) {
+		const out = execFileSyncExe("git", ["-c", "core.fsmonitor=false", "-C", project, "ls-files", "-z"], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" }, timeout: 20_000 });
+		for (const f of String(out).split("\0")) {
 			if (!f) continue;
 			files.add(f);
 			for (let d = dirname(f); d !== "." && !dirs.has(d); d = dirname(d)) dirs.add(d);

@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFileExe } from "./exe.mjs";
 import { system32, system32Path } from "./winpath.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { matchesKey } from "@earendil-works/pi-tui";
@@ -19,9 +19,9 @@ const CLIPBOARD = clipboardCommand();
 /** Puts text on the system clipboard (`command` is for tests). */
 export const copyText = (text: string, [cmd, ...args] = CLIPBOARD) =>
 	new Promise<void>((done, fail) => {
-		const child = execFile(cmd!, args, { timeout: 5_000, ...(process.platform === "win32" && cmd === CLIPBOARD[0] ? { cwd: system32() } : {}) }, (error) => (error ? fail(new Error(`Could not copy with ${cmd}: ${error.message}`)) : done()));
+		const child = execFileExe(cmd!, args, { timeout: 5_000, ...(process.platform === "win32" && cmd === CLIPBOARD[0] ? { cwd: system32() } : {}) }, (error) => (error ? fail(new Error(`Could not copy with ${cmd}: ${error.message}`)) : done()));
 		// A missing command fails the child; its stdin then errors too (EPIPE), which unhandled would take the host pi down.
-		child.stdin?.on("error", () => {}).end(text);
+		child?.stdin?.on("error", () => {}).end(text);
 	});
 
 /**
