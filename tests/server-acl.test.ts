@@ -276,7 +276,7 @@ test("R6-F001: the folder's owner (O: of Get-Acl) must be the user; another acco
 	assert.deepEqual(ownerProblems(good, OWNER), []);
 	assert.deepEqual(ownerProblems(`O:LAG:DUD:P${ACE(OWNER)}${ACE("SY")}`, OWNER.replace(/-\d+$/, "-500")), [], "an alias of the owner's own built-in account");
 	assert.match(ownerProblems(foreign, OWNER)[0]!, /belongs to another account \(S-1-5-21-9-9-9-1002\)/);
-	assert.match(ownerProblems(`O:BAG:DUD:P${ACE(OWNER)}${ACE("SY")}`, OWNER)[0]!, /belongs to another account \(BA\)/);
+	assert.match(ownerProblems(`O:SYG:DUD:P${ACE(OWNER)}${ACE("SY")}`, OWNER)[0]!, /belongs to another account \(SY\)/);
 	assert.match(ownerProblems(`D:P${ACE(OWNER)}${ACE("SY")}`, OWNER)[0]!, /names no owner/);
 	assert.ok(aclProblems({ sid: OWNER, dir: foreign, files: [] }).some((p) => /belongs to another account/.test(p)));
 	const exec: Exec = (_f, _a, _o, done) => done(null, JSON.stringify({ sid: OWNER, dir: foreign, files: [] }));
@@ -353,4 +353,18 @@ test("R8-F002: a file below with another account's owner is a problem even when 
 	assert.deepEqual(aclProblems({ sid: OWNER, dir: good, files: [{ path: "C:\\s\\server.json", sddl: mine }] }), []);
 	assert.deepEqual(aclProblems({ sid: OWNER, dir: good, files: [{ path: "C:\\s\\server.json", sddl: theirs }] }), [`the file C:\\s\\server.json belongs to another account (${OTHER}), not to ${OWNER}`]);
 	assert.throws(() => readMarker(marker({ files: [{ path: "C:\\s\\server.json", sddl: theirs }] }), "C:\\s", 4321), /file C:\\s\\server\.json belongs to another account/);
+});
+
+test("VM pass 5b: BUILTIN\\Administrators owns an entry acceptably (an elevated token's default owner), as BA or S-1-5-32-544, for the folder, a folder below and a file; another standard SID is still refused; BA as an ACE is still refused", () => {
+	for (const ba of ["BA", "S-1-5-32-544"]) {
+		const owned = `O:${ba}G:DUD:AI${ACE(OWNER, "ID")}${ACE("SY", "ID")}`, top = `O:${ba}G:DUD:P${ACE(OWNER)}${ACE("SY")}`;
+		assert.deepEqual(ownerProblems(top, OWNER), [], ba);
+		assert.deepEqual(aclProblems({ sid: OWNER, dir: top, files: [{ path: "C:\\s\\servers\\ab\\server.json", sddl: owned }], folders: [{ path: "C:\\s\\servers\\ab", sddl: owned }] }), [], ba);
+	}
+	const owned = (who: string) => `O:${who}G:DUD:AI${ACE(OWNER, "ID")}${ACE("SY", "ID")}`;
+	assert.match(aclProblems({ sid: OWNER, dir: good, files: [{ path: "C:\\s\\server.json", sddl: owned(OTHER) }] }).join(";"), /file C:\\s\\server\.json belongs to another account/);
+	assert.match(aclProblems({ sid: OWNER, dir: good, files: [], folders: [{ path: "C:\\s\\link", sddl: owned("BU") }] }).join(";"), /folder C:\\s\\link belongs to another account \(BU\)/);
+	// BA as an owner is fine, BA as an allow ACE is not: nothing about the DACL rule changed.
+	assert.match(aclProblems({ sid: OWNER, dir: `O:BAG:DUD:P${ACE(OWNER)}${ACE("SY")}${ACE("BA")}`, files: [] }).join(";"), /grants BA, who is neither the owner nor SYSTEM/);
+	assert.match(aclProblems({ sid: OWNER, dir: good, files: [{ path: "C:\\s\\server.json", sddl: `O:BAG:DUD:AI${ACE(OWNER, "ID")}${ACE("SY", "ID")}${ACE("BA", "ID")}` }] }).join(";"), /server\.json: grants BA, who is neither/);
 });

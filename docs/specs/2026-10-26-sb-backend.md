@@ -257,7 +257,15 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
           marker file can): a different owner is rc -2, nothing is created, and the starter fails with `acl` "the folder belongs to
           another account (<SID>), not to <SID>" (exit 3), with no plain-spawn fallback, whose own check would refuse it as well;
         - in the server's own check (`serve`, the plain spawn) and when it reads the marker, before any secret is written.
-        An alias of the user's own built-in account (`LA`, `LG`, `DA`, `DU`) and `SY` for a SYSTEM user are accepted.
+        An alias of the user's own built-in account (`LA`, `LG`, `DA`, `DU`) and `SY` for a SYSTEM user are accepted, and so is
+        **BUILTIN\Administrators (`BA`, `S-1-5-32-544`) as an owner, for every entry including `straw-boss\` itself** (VM pass 5b): an
+        elevated token's default owner is BA, and the server an elevated `up` starts writes `server.json` and `start-error.json` while the
+        launch PowerShell is still running, after the `/setowner /T` pass and before the read-back, so ~50% of elevated cold starts failed
+        with "belongs to another account (BA)". Only an administrator can create a BA-owned object, and an administrator can read the folder
+        whatever its owner or DACL, so BA ownership gives no account anything it lacks; the threat the owner gate stops is another
+        standard account owning an entry. The launch script and `ownerProblems` use the same rule. **BA is not accepted as an ACE**: the
+        DACL rule (allow ACEs for the owner/user and SYSTEM only) is unchanged. A filtered token that cannot protect a BA-owned folder still
+        gets the protect step's refusal ("run pi once as administrator, or delete the folder"): the owner gate comes after it.
       - **What is below is listed without following links** (R8-F003): Windows PowerShell 5.1's `Get-ChildItem` follows junctions, so the
         scripts walk the folder with `[IO.Directory]::EnumerateFileSystemEntries` and refuse any entry with the `ReparsePoint` attribute
         (`sb-reparse-point <path>`, told as "a link or junction was found inside the state folder, which is refused"), before any `icacls`

@@ -139,6 +139,8 @@ export function parseSddl(text: string): Sddl {
 }
 
 /** A SID as `S-1-…`: SYSTEM's alias, and the aliases SDDL gives the built-in accounts (local Administrator and Guest, domain Admins and Users) when they are this owner's. */
+/** BUILTIN\Administrators: the default owner of what an elevated token creates. */
+export const ADMINS_SID = "S-1-5-32-544";
 function canon(sid: string, owner: string): string {
 	const s = sid.toUpperCase();
 	if (s === "SY") return SYSTEM_SID;
@@ -216,7 +218,11 @@ export function ownerProblems(sddl: string, owner: string, path = "the folder", 
 		return []; // folderProblems says the SDDL cannot be read
 	}
 	if (!found) return [`${path}: the SDDL names no owner`];
-	return canon(found, owner) === owner.toUpperCase() ? [] : [`${path === "the folder" ? path : `the ${kind} ${path}`} belongs to another account (${found}), not to ${owner}`];
+	// BUILTIN\Administrators is accepted as an owner as well as the user (VM pass 5b): an elevated token's default owner is BA, and the server it starts writes `server.json` while the launch script
+	// is still running. Only an administrator can create a BA-owned object, and an administrator can read the folder whatever its owner or DACL, so BA ownership gives no account anything it lacks; the
+	// threat this gate stops is another standard account owning an entry. BA is NOT accepted as an ACE (`folderProblems` and `fileProblems` still allow the owner and SYSTEM only).
+	const who = canon(found, owner);
+	return who === owner.toUpperCase() || who === ADMINS_SID || who === "BA" ? [] : [`${path === "the folder" ? path : `the ${kind} ${path}`} belongs to another account (${found}), not to ${owner}`];
 }
 /** Every problem in a result: the folder's owner, its DACL, and each secret file's. */
 export const aclProblems = ({ sid, dir, files, folders = [] }: AclResult) => [

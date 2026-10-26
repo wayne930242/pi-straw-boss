@@ -75,8 +75,9 @@ export const LAUNCH_SCRIPT = [
 	"    $sd = (Get-Acl -LiteralPath $env:SB_ACL_DIR).Sddl",
 	"    $o = ''; if ($sd -match '^O:(S-[0-9-]+|[A-Za-z]{2})') { $o = $Matches[1] }",
 	"    $c = $o.ToUpperInvariant()",
-	"    if ($c -eq 'SY') { $c = 'S-1-5-18' } else { $rid = @{ LA = '-500'; LG = '-501'; DA = '-512'; DU = '-513' }[$c]; if ($rid -and $me.EndsWith($rid)) { $c = $me } }",
-	"    if ($c -ne $me) {",
+	"    if ($c -eq 'SY') { $c = 'S-1-5-18' } elseif ($c -eq 'BA') { $c = 'S-1-5-32-544' } else { $rid = @{ LA = '-500'; LG = '-501'; DA = '-512'; DU = '-513' }[$c]; if ($rid -and $me.EndsWith($rid)) { $c = $me } }",
+	// The same rule as `ownerProblems`: the user, or BUILTIN\Administrators (an elevated token's default owner; only an administrator can create such an object and one can read the folder anyway).
+	"    if ($c -ne $me -and $c -ne 'S-1-5-32-544') {",
 	"      Say ([ordered]@{ rc = -2; pid = 0; markerError = ('the folder belongs to another account (' + $o + '), not to ' + $me) })",
 	"      exit 0",
 	"    }",
