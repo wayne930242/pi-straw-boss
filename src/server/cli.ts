@@ -3,11 +3,10 @@ import { fileURLToPath } from "node:url";
 import { stateDirOf } from "../agent/paths.ts";
 import { newer } from "../semver.ts";
 import {
-	type Ctx, describe, ensure, guiUrl, herdrListens, isIdentity, lockFor, lockWaitFor, makeCtx, probe, restart, ServerError, serverEnv, stop, takeOver, type Wait, waitReady,
+	type Ctx, describe, ensure, guiUrl, herdrListens, isIdentity, detachWarning, lockFor, lockWaitFor, makeCtx, probe, restart, ServerError, serverEnv, stop, takeOver, type Wait, waitReady, within,
 } from "./client.ts";
-import { loadEnvFile } from "./breakaway.ts";
 import { logSize, readFrom, tailLog } from "./log.ts";
-import { clearStartError, clearStopped, fileOf, readRecord, readStartError, type ServerRecord, slotOf } from "./record.ts";
+import { clearStartError, clearStopped, fileOf, readRecord, readStartError, type ServerRecord, slotOf, type StartError } from "./record.ts";
 import type { ServerHandle, ServerOptions } from "./main.ts";
 import { VERSION } from "./version.ts";
 
@@ -23,7 +22,7 @@ const USAGE = `usage: cli.mjs up [--timeout SECONDS] [--exact]
 export class UsageError extends Error {}
 const FLAGS: Record<string, { value: string[]; switch: string[] }> = {
 	up: { value: ["timeout"], switch: ["exact"] }, serve: { value: [], switch: [] }, stop: { value: [], switch: [] }, status: { value: [], switch: [] },
-	restart: { value: ["reason"], switch: ["downgrade"] }, logs: { value: ["lines"], switch: ["follow"] }, run: { value: ["by", "env-file"], switch: ["detached"] },
+	restart: { value: ["reason"], switch: ["downgrade"] }, logs: { value: ["lines"], switch: ["follow"] }, run: { value: ["by", "detach", "detach-reason"], switch: ["detached"] },
 };
 export interface Args { command: string; flags: Record<string, string | true> }
 export function parseArgs(argv: string[]): Args {
@@ -63,7 +62,7 @@ export interface CliDeps {
 	signal?: AbortSignal;
 	/** Where the server in this process hears that it is asked to end (SIGTERM, SIGINT, SIGHUP); a kill or a reboot is not a stop, so it only leaves. */
 	signals?: (leave: () => void) => void;
-	herdrListens?: (ctx: Ctx) => Promise<boolean>;
+	herdrListens?: (ctx: Ctx, ms?: number) => Promise<boolean>;
 }
 
 interface Step { name: string; ok: boolean; ms: number; detail?: string }
@@ -71,13 +70,16 @@ interface Warning { code: string; text: string }
 class StepError extends Error {
 	step: string;
 	exit: number;
+	/** Why a start failed, when a start did (`start-error.json`'s shape): also when the failure left no file, as when the state folder could not be protected. */
+	startError: StartError | undefined;
 	/** The wait that ran out, when one did (`lock`, `start`, `hello`, `exit`): the JSON on stderr names it beside `step`. */
 	wait: Wait | undefined;
-	constructor(step: string, message: string, exit = 1, wait?: Wait) {
+	constructor(step: string, message: string, exit = 1, wait?: Wait, startError?: StartError) {
 		super(message);
 		this.step = step;
 		this.exit = exit;
 		this.wait = wait;
+		this.startError = startError;
 	}
 }
 /** How long `up` may take in all (the lock wait and the start wait together): the start wait of the platform and the lock wait of a start under way ahead of it (60 + 30 s on Windows, 20 + 10 s elsewhere). */
@@ -96,14 +98,9 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 		return 2;
 	}
 	const { command, flags } = args;
-	// A detached server on Windows is started through WMI, which gives it no environment of the starter's: the starter's goes in a file it reads and deletes first of all.
-	if (command === "run" && typeof flags["env-file"] === "string") {
-		try {
-			loadEnvFile(env, flags["env-file"]);
-		} catch (error) {
-			err(`${(error as Error).message}\n`);
-			return 1;
-		}
+	if (command === "run" && flags.detach !== undefined && flags.detach !== "wmi" && flags.detach !== "direct") {
+		err(`--detach is wmi or direct\n${USAGE}\n`);
+		return 2;
 	}
 	const slot = slotOf(deps.stateDir ?? stateDirOf(env), env);
 	const version = deps.version ?? VERSION;
@@ -184,18 +181,18 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 				return value;
 			} catch (error) {
 				steps.push({ name, ok: false, ms: ctx.now() - began });
-				throw error instanceof StepError ? error : new StepError(name, (error as Error).message, error instanceof ServerError && error.startError && CANNOT_RUN.has(error.startError.code) ? 3 : 1, error instanceof ServerError ? error.wait : undefined);
+				throw error instanceof StepError ? error : new StepError(name, (error as Error).message, error instanceof ServerError && error.startError && CANNOT_RUN.has(error.startError.code) ? 3 : 1, error instanceof ServerError ? error.wait : undefined, error instanceof ServerError ? error.startError : undefined);
 			}
 		};
 		try {
 			await stepOf("herdr", async () => {
-				if (!(await (deps.herdrListens ?? herdrListens)(ctx))) throw new StepError("herdr", `no Herdr server answers at ${slot.herdr}`);
+				if (!(await (deps.herdrListens ?? herdrListens)(ctx, within(ctx, deadline, 2000)))) throw new StepError("herdr", `no Herdr server answers at ${slot.herdr}`);
 				const found = readRecord(slot);
 				if (found && found.herdr !== slot.herdr) throw new StepError("herdr", `the record in ${slot.dir} serves ${found.herdr}, not ${slot.herdr}`);
 				return { value: undefined };
 			});
 			const plan = await stepOf("version", async () => {
-				const seen = await probe(ctx), record = seen.record;
+				const seen = await probe(ctx, deadline), record = seen.record;
 				if (!seen.live || !record) return { value: "ensure" as const, detail: "no server runs" };
 				if (newer(version, record.version)) return { value: "upgrade" as const, detail: `server ${record.version}, package ${version}` };
 				if (newer(record.version, version)) {
@@ -221,13 +218,15 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 				}
 				throw new StepError("server", done.skipped.do === "refuse" ? done.skipped.text : "the server was not started");
 			});
+			const loud = detachWarning(record);
+			if (loud) warnings.push({ code: "breakaway_failed", text: loud });
 			json({
 				url: guiUrl(record), pid: record.pid, started: record.started, version: record.version, package: version, mode: record.mode, desk: record.desk, server: how, log: record.log, steps, warnings,
 			});
 			return 0;
 		} catch (error) {
 			if (!(error instanceof StepError)) throw error;
-			err(`${JSON.stringify({ step: error.step, ...(error.wait ? { wait: error.wait } : {}), reason: error.message, steps, warnings, log: fileOf(slot, "log"), ...(readStartError(slot) ? { startError: readStartError(slot) } : {}) })}\n`);
+			err(`${JSON.stringify({ step: error.step, ...(error.wait ? { wait: error.wait } : {}), reason: error.message, steps, warnings, log: fileOf(slot, "log"), ...(readStartError(slot) ?? error.startError ? { startError: readStartError(slot) ?? error.startError } : {}) })}\n`);
 			return error.exit;
 		}
 	}
@@ -263,7 +262,9 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 	async function runDetached() {
 		if (flags.detached !== true) throw new UsageError("run is the server's own start: use `up`, or `serve` in the foreground");
 		scrubIdentity();
-		const handle = await server({ slot, env: serverEnv(env), mode: "detached", by: ctx.by, version });
+		const via = flags.detach === "wmi" ? "wmi" as const : flags.detach === "direct" ? "direct" as const : undefined;
+		const detach = via ? { via, ...(typeof flags["detach-reason"] === "string" ? { failure: flags["detach-reason"] } : {}) } : undefined;
+		const handle = await server({ slot, env: serverEnv(env), mode: "detached", by: ctx.by, version, ...(detach ? { detach } : {}) });
 		return foreground(handle, () => {});
 	}
 	/** The server in this process: signals end it without marking a stop (a kill or a reboot is not a stop), and the exit code is its own. */

@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { system32, system32Path } from "./winpath.ts";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -25,6 +26,12 @@ const COMMAND = '/d /v:off /u /c "dir /b /a:h "%SB_DIR%" 2>nul & dir /b /a:s "%S
 /** The names `cmd /u` printed (UTF-16LE, one per line), lower case and without repeats. */
 export const parseNames = (stdout: Buffer): Set<string> => new Set(stdout.toString("utf16le").split(/\r?\n/).map((line) => line.trim().toLowerCase()).filter(Boolean));
 
+/** The call that lists a folder's hidden and system entries: cmd by absolute path, from System32 (a bare `cmd.exe` is looked for in the current folder first). */
+export const hiddenCommand = (dir: string, env: NodeJS.ProcessEnv = process.env) => ({
+	file: system32Path("cmd.exe", env), args: [COMMAND],
+	options: { env: { ...env, SB_DIR: dir }, encoding: "buffer" as const, windowsHide: true, windowsVerbatimArguments: true, timeout: 20_000, maxBuffer: 8 << 20, cwd: system32(env) },
+});
+
 export const cmdHidden: Hidden = async (dir) => {
 	try {
 		await readdir(dir);
@@ -32,7 +39,8 @@ export const cmdHidden: Hidden = async (dir) => {
 		throw new HiddenError(`Windows could not say which folders in ${dir} are hidden: ${(error as Error).message}`);
 	}
 	return new Promise((done, fail) => {
-		execFile("cmd.exe", [COMMAND], { env: { ...process.env, SB_DIR: dir }, encoding: "buffer", windowsHide: true, windowsVerbatimArguments: true, timeout: 20_000, maxBuffer: 8 << 20 }, (error, stdout) =>
+		const { file, args, options } = hiddenCommand(dir);
+		execFile(file, args, options, (error, stdout) =>
 			error ? fail(new HiddenError(`Windows could not say which folders in ${dir} are hidden: ${error.message}`)) : done(parseNames(stdout)));
 	});
 };

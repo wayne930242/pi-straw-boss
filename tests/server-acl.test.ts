@@ -12,7 +12,8 @@ const good = `O:${OWNER}G:DUD:P${ACE(OWNER)}${ACE("SY")}`;
 test("the command is one PowerShell start with the folder in the environment, never quoted into the script, and no console window", () => {
 	const dir = "C:\\Users\\測試PM\\.pi\\agent\\straw-boss";
 	const { file, args, options } = aclCommand(dir, { PATH: "p" });
-	assert.equal(file, "powershell.exe");
+	assert.equal(file, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+	assert.equal(options.cwd, "C:\\Windows\\System32");
 	assert.deepEqual(args.slice(0, 3), ["-NoProfile", "-NonInteractive", "-EncodedCommand"]);
 	assert.equal(Buffer.from(args[3]!, "base64").toString("utf16le"), ACL_SCRIPT);
 	assert.ok(!ACL_SCRIPT.includes("測試PM") && !ACL_SCRIPT.includes("straw-boss"));
@@ -23,7 +24,7 @@ test("the command is one PowerShell start with the folder in the environment, ne
 
 test("the script reads the owner's SID, grants the owner and SYSTEM by SID, inherits nothing, and reads every SDDL back", () => {
 	assert.match(ACL_SCRIPT, /WindowsIdentity\]::GetCurrent\(\)\.User\.Value/);
-	assert.match(ACL_SCRIPT, /& icacls\.exe \$dir \/inheritance:r \/grant:r "\*\$\{sid\}:\(OI\)\(CI\)F" '\*S-1-5-18:\(OI\)\(CI\)F' \| Out-Null/);
+	assert.match(ACL_SCRIPT, /& \$icacls \$dir \/inheritance:r \/grant:r "\*\$\{sid\}:\(OI\)\(CI\)F" '\*S-1-5-18:\(OI\)\(CI\)F' \| Out-Null/);
 	assert.match(ACL_SCRIPT, /Get-Acl -LiteralPath \$dir\)\.Sddl/);
 	for (const name of ["server.json", "server.lock", "server.log", "gui.json", "paired.json", "link"]) assert.ok(ACL_SCRIPT.includes(name), name);
 	assert.match(ACL_SCRIPT, /ConvertTo-Json -Compress/);
@@ -48,16 +49,17 @@ const SPAWNS = /icacls|&\s|Start-Process|Invoke-Expression|Get-CimInstance|power
 
 test("the folder is protected first and without /T, then everything already in it is reset to inherit from it in ONE icacls call (R-F001: no process per item; the VM found server.log and server.lock with an empty DACL)", () => {
 	const lines = ACL_SCRIPT.split("\n");
-	const folder = lines.findIndex((l) => l.includes("icacls.exe $dir /inheritance:r"));
+	const folder = lines.findIndex((l) => l.includes("& $icacls $dir /inheritance:r"));
 	assert.ok(folder > 0);
 	assert.ok(!/icacls[^\n]*\/T\b/.test(lines[folder]!), "the folder step has no /T: that would strip the inherited ACEs of the files that are there, and an (OI)(CI) grant does not land on a file");
 	// One call for every item below: reset to the default inherited ACL (the protected folder's owner and SYSTEM grant, which (OI)(CI) hands to files and folders alike), recursive, past an item that goes meanwhile, quiet.
 	const reset = lines.filter((l) => l.includes("/reset"));
 	assert.equal(reset.length, 1, "one reset call");
-	assert.match(reset[0]!, /^& icacls\.exe "\$dir\\\*" \/reset \/T \/C \/Q \| Out-Null$/);
+	assert.match(reset[0]!, /^& \$icacls "\$dir\\\*" \/reset \/T \/C \/Q \| Out-Null$/);
 	assert.ok(lines.indexOf(reset[0]!) > folder, "after the folder");
 	assert.ok(lines.findIndex((l) => l.includes("Get-Acl -LiteralPath $p")) > lines.indexOf(reset[0]!), "the SDDLs are read back after the repair");
-	assert.equal(ACL_SCRIPT.match(/icacls\.exe/g)!.length, 2, "icacls.exe is started twice: the folder and the reset");
+	assert.equal(ACL_SCRIPT.match(/& \$icacls/g)!.length, 2, "icacls is started twice: the folder and the reset");
+	assert.equal(ACL_SCRIPT.match(/icacls\.exe/g)!.length, 1, "named once, by the system folder's path");
 	// The files the check reads include the ones that existed before the ACL: the lock the starter took and the log.
 	assert.match(ACL_SCRIPT, /'server\.json', 'server\.lock', 'server\.log'/);
 });

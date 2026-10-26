@@ -15,7 +15,8 @@ const READER = `
 import { createStartOf, spawnQuietly } from ${JSON.stringify(startof)};
 const answer = "2026-10-26T04:21:53.000Z";
 // The real reader (spawnQuietly: the child, its pipes, and its timeout timer never hold the process open), pointed at a node child that answers after 300 ms instead of PowerShell.
-const launch = (_file, _args, options, done) => spawnQuietly(process.execPath, ["-e", "setTimeout(() => console.log('" + answer + "'), 300)"], options, done);
+// (The real call runs from System32 by its absolute path; the stand-in child has neither.)
+const launch = (_file, _args, { cwd: _cwd, ...options }, done) => spawnQuietly(process.execPath, ["-e", "setTimeout(() => console.log('" + answer + "'), 300)"], options, done);
 const { startedLater, startOf } = createStartOf({ platform: "win32", launch, wait: async () => {} });
 `;
 const run = (body: string) => spawnSync(process.execPath, ["--input-type=module", "-e", `${READER}\n${body}`], { encoding: "utf8", timeout: 20_000 });

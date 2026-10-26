@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { system32, system32Path } from "./winpath.ts";
 import { createHash, randomBytes } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -215,8 +216,11 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 }
 
 /** Opens the default browser; rejects when the platform command fails, so the caller can show the URL instead. */
+/** The command that opens a URL: on Windows `cmd` by absolute path, run from System32 (a bare name is looked for in the current folder first). */
+export const browserCommand = (url: string, platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env): [string, string[], { cwd?: string }] =>
+	platform === "darwin" ? ["open", [url], {}] : platform === "win32" ? [system32Path("cmd.exe", env), ["/c", "start", "", url], { cwd: system32(env) }] : ["xdg-open", [url], {}];
 export const openBrowser = (url: string) =>
 	new Promise<void>((done, fail) => {
-		const [cmd, args] = process.platform === "darwin" ? ["open", [url]] : process.platform === "win32" ? ["cmd", ["/c", "start", "", url]] : ["xdg-open", [url]];
-		execFile(cmd!, args as string[], (error) => (error ? fail(error) : done()));
+		const [cmd, args, options] = browserCommand(url);
+		execFile(cmd, args, options, (error) => (error ? fail(error) : done()));
 	});

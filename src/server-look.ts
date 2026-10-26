@@ -115,7 +115,7 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 	const summary = (st: Record<string, unknown>) => {
 		const parts = [`state ${String(st.state)}`, ...(st.pid ? [`pid ${String(st.pid)}`] : []), ...(st.version ? [`pi-straw-boss ${String(st.version)}`] : []), ...(st.mode ? [String(st.mode)] : []), ...(typeof st.uptimeMs === "number" ? [`up ${Math.round(st.uptimeMs / 1000)} s`] : [])];
 		const error = st.lastError as { code: string; text: string } | undefined, start = st.startError as { code: string; text: string } | undefined, restarting = st.restarting as { reason: string; by: string } | undefined;
-		return `sb server: ${parts.join(", ")}${restarting ? `; restarting (${restarting.reason}, by ${restarting.by})` : ""}${start ? `; the last start failed: ${start.code}: ${start.text}` : ""}${error ? `; last error: ${error.code}: ${error.text}` : ""}; log ${String(st.log)}`;
+		return `sb server: ${parts.join(", ")}${restarting ? `; restarting (${restarting.reason}, by ${restarting.by})` : ""}${start ? `; the last start failed: ${start.code}: ${start.text}` : ""}${error ? `; last error: ${error.code}: ${error.text}` : ""}${st.warning ? `; warning: ${String(st.warning)}` : ""}; log ${String(st.log)}`;
 	};
 	const api = {
 		look,

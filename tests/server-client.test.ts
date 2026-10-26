@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
+import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { decide, ensure, intercomOf, launch, lockWaitFor, probe, restart, sameBroker, serverEnv, ServerError, SPAWN_OPTIONS, stateOf, stop, takeOver, timersFor } from "../src/server/client.ts";
-import { fileOf, readLock, readRecord, readStartError, type ServerRecord, takeLock, writeRecord, writeStartError } from "../src/server/record.ts";
-import { callControl } from "../src/server/socket.ts";
+import { fileOf, readLock, readRecord, readStartError, secretDir, type ServerRecord, takeLock, writeRecord, writeStartError } from "../src/server/record.ts";
+import { callControl, listenControl } from "../src/server/socket.ts";
 import { ServerWorld, sleep, until } from "./server-world.ts";
 
 // What reaches the server from outside (docs/specs/2026-10-26-sb-backend.md, Starting, Stopping, Restarts and upgrades): liveness, the session look's rules, the start, the
@@ -232,6 +234,71 @@ test("a restart under a deadline stops waiting for the old server to leave at th
 	const began = Date.now();
 	await assert.rejects(restart(ctx, { reason: "r", deadline: began + 400 }), (e: unknown) => e instanceof ServerError && e.code === "exit-timeout" && e.wait === "exit");
 	assert.ok(Date.now() - began < 2000);
+});
+
+test("F004: a restart of a serve server whose supervisor never returns ends at the deadline (it was 4.2 s past 300 ms), without a spawn, naming the wait `start`", async () => {
+	const s = await world.start({ mode: "serve" });
+	await s.handle.ready;
+	const ctx = world.ctx({ timers: { start: 3000, exit: 3000, supervisor: 3000, touch: 40 } });
+	const began = Date.now();
+	await assert.rejects(restart(ctx, { reason: "r", deadline: began + 300 }), (e: unknown) => e instanceof ServerError && e.wait === "start");
+	const took = Date.now() - began;
+	assert.ok(took < 1500, `ended after ${took} ms, not at the supervisor's or the start's wait`);
+	assert.equal(world.spawned.length, 0, "no server is started with nothing left of the time");
+	assert.equal(readLock(world.slot), undefined, "the lock is let go");
+});
+
+test("F004: a launch with nothing left of the time starts nothing and marks nothing: no spawn, no placeholder, wait `start`", async () => {
+	const began = Date.now();
+	await assert.rejects(launch(world.ctx(), { deadline: began - 5 }), (e: unknown) => e instanceof ServerError && e.wait === "start" && /ran out before the server was started/.test(e.message));
+	assert.equal(world.spawned.length, 0);
+	assert.equal(world.record(), undefined);
+});
+
+test("F004: a hello probe is cut to the time left: a socket that accepts and never answers costs the deadline, not 2 s", async () => {
+	const hang = createServer(() => {});
+	const sock = join(world.root, "hang.sock");
+	mkdirSync(world.root, { recursive: true });
+	await new Promise<void>((resolve) => hang.listen(sock, resolve));
+	try {
+		world.live.add(7);
+		plant({ pid: 7, socket: sock });
+		let began = Date.now();
+		const quick = await probe(world.ctx(), Date.now() + 200);
+		assert.equal(quick.live, false);
+		assert.ok(Date.now() - began < 900, `took ${Date.now() - began} ms with 200 ms left`);
+		began = Date.now();
+		await probe(world.ctx());
+		assert.ok(Date.now() - began >= 1800, "without a deadline it waits the 2 s of hello");
+	} finally {
+		hang.close();
+	}
+});
+
+test("F004: the old server's answer to a restart is waited for no longer than the time left", async () => {
+	const secret = "r".repeat(64), endpoint = join(world.root, "mute.sock");
+	mkdirSync(world.slot.dir, { recursive: true });
+	world.live.add(8);
+	const control = await listenControl({ endpoint, secret, hello: () => ({ pid: 8, version: "0.44.0", mode: "detached", desk: false, phase: "ready", ready: true }), handle: () => new Promise(() => {}), refused: () => {} });
+	try {
+		plant({ pid: 8, socket: endpoint, secret, started: undefined });
+		const began = Date.now();
+		await assert.rejects(restart(world.ctx(), { reason: "r", deadline: began + 400 }), (e: unknown) => e instanceof ServerError && e.code === "unreachable");
+		assert.ok(Date.now() - began < 1500, `took ${Date.now() - began} ms, not the 5 s of the control call`);
+	} finally {
+		await control.close();
+	}
+});
+
+test("F004: the native calls that protect the folder get what is left of the time (never more than 15 s), and none is run for a plain lock wait", async () => {
+	const seen: (number | undefined)[] = [];
+	const ctx = world.ctx({ prepare: (slot, ms) => (seen.push(ms), secretDir(slot.dir)) });
+	await ensure(ctx, { boss: true, deadline: Date.now() + 3000 });
+	assert.ok(seen[0] !== undefined && seen[0] > 0 && seen[0] <= 3000, String(seen[0]));
+	await ensure(world.ctx({ prepare: (slot, ms) => (seen.push(ms), secretDir(slot.dir)) }), { lockWaitMs: 0 });
+	assert.equal(seen.at(-1), undefined);
+	await ensure(world.ctx({ prepare: (slot, ms) => (seen.push(ms), secretDir(slot.dir)) }), { deadline: Date.now() + 120_000 });
+	assert.equal(seen.at(-1), 15_000);
 });
 
 test("a stopped server is not started by an automatic start; the boss's own start clears the mark in server.json and gui.json and starts it", async () => {

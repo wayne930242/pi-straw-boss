@@ -45,7 +45,9 @@ export interface ServerOptions {
 	/** Sets and checks the Windows ACL of the state directory; the same PowerShell start tells this process's start time (the second argument is its pid). */
 	acl?: (dir: string, pid: number) => Promise<{ started?: string } | void>;
 	/** Makes the slot's folder ready before the first file is created in it (on Windows, protects the state folder); `prepareSlot` by default. */
-	prepare?: (slot: Slot) => void;
+	prepare?: (slot: Slot, ms?: number) => void;
+	/** How the starter started this process (Windows): through WMI, or by a plain spawn after a failure; kept in the record, so `status` and `up` can say so. */
+	detach?: { via: "wmi" | "direct"; failure?: string };
 	herdrUp?: () => Promise<boolean>;
 	watch?: HerdrWatch;
 	herdr?: HeadlessDeps;
@@ -87,7 +89,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	// nothing into it, since an unprotected folder is what it could not fix (a starter that asked for it reads the same reason from its own call, and from the exit code).
 	let unprepared: Error | undefined;
 	try {
-		(o.prepare ?? ((s: Slot) => prepareSlot(s, platform)))(slot);
+		(o.prepare ?? ((s: Slot, ms?: number) => prepareSlot(s, platform, undefined, ms)))(slot);
 	} catch (error) {
 		unprepared = error as Error;
 	}
@@ -108,7 +110,8 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		log.line("start-failed", { code, text });
 		writeStartError(slot, { code, text, ...(sddl ? { sddl } : {}) }, now());
 		// The start is over: `restarting` goes with it, so the record counts as gone at once and not when its last touch is 10 s old.
-		updateRecord(slot, ({ restarting: _restarting, ...r }) => ({ ...(r.pid === pid ? r : { ...r, restarting: _restarting }), lastError: { at: new Date(now()).toISOString(), code, text } }));
+		// Only this server's own record: another server's keeps its state and its own last error.
+		updateRecord(slot, ({ restarting: _restarting, ...r }) => (r.pid === pid ? { ...r, lastError: { at: new Date(now()).toISOString(), code, text } } : undefined));
 		markReady(false);
 		// 3 is for a server that cannot run here (tsx, pi-intercom, the ACL); a start that failed for another reason is a plain failure.
 		finish(code === "start" ? 1 : EXIT_CANNOT_RUN);
@@ -124,21 +127,26 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		return handle;
 	}
 
-	/** The record, when it is another running process's with a socket. */
+	// Another server's record is left alone only on positive evidence that it is a server: its hello answers, or its start time is known and is the one the record names. A process that merely
+	// runs under the recorded pid is not enough (a pid a crashed server left is reused by an unrelated process, and `startOf` cannot tell on Windows until a background read is in).
+	const changed = (found: ServerRecord) => found.pid !== prior?.pid || found.secret !== prior?.secret || found.socket !== prior?.socket;
+	const knownRunning = (found: ServerRecord) => alive(found.pid) && Boolean(found.started) && startOf(found.pid) === found.started;
+	/** The record, when it is another server's that is known to run (without a hello): it changed since the first look, and its start time is known and equal. */
 	const rival = () => {
 		const found = readRecord(slot);
-		return found && found.pid !== pid && found.socket && runsAs({ alive, startOf }, found) ? found : undefined;
+		return found && found.pid !== pid && found.socket && changed(found) && knownRunning(found) ? found : undefined;
 	};
 
 	// From the first moment the record says this server is starting, and its `since` moves every touchMs: the ACL call and the code load below take seconds on Windows, and a look
 	// in that time must see a start under way, not a server that is gone. The record holds no secret yet (and no socket), and keeps what a restart carries over.
+	const detachOf = o.detach ? { detach: o.detach.via, ...(o.detach.failure ? { detachFailure: phrase(o.detach.failure, 200) } : {}) } : {};
 	const begin = () => {
 		// A record of another running process with a socket is a server, however slow its hello was a moment ago: it keeps its record.
 		if (rival()) return;
 		const current = readRecord(slot);
 		writeRecord(slot, {
 			pid, version, herdr: slot.herdr, mode, desk, intercom: intercomOf(env, platform), log: fileOf(slot, "log"), socket: "", secret: "", intercomId: serverId(slot),
-			...(prior?.gui ? { gui: prior.gui } : {}), ...(prior?.lastError ? { lastError: prior.lastError } : {}), ...(prior?.lastRestart ? { lastRestart: prior.lastRestart } : {}),
+			...(prior?.gui ? { gui: prior.gui } : {}), ...(prior?.lastError ? { lastError: prior.lastError } : {}), ...(prior?.lastRestart ? { lastRestart: prior.lastRestart } : {}), ...detachOf,
 			restarting: restartingNow(current?.restarting, now(), { reason: "starting", by }),
 		});
 	};
@@ -188,7 +196,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		pid, version, herdr: slot.herdr, mode, desk, intercom: intercomOf(env, platform),
 		// What the new server keeps from the one before it, so a restart changes nothing a page or a shell holds: the GUI's port and token (B2 fills them in), and the last error.
 		...(prior?.gui ? { gui: prior.gui } : {}), ...(prior?.lastError ? { lastError: prior.lastError } : {}), ...(prior?.lastRestart ? { lastRestart: prior.lastRestart } : {}),
-		...(aclStarted ? { started: aclStarted } : {}), log: fileOf(slot, "log"), socket: endpoint, secret, intercomId: serverId(slot),
+		...(aclStarted ? { started: aclStarted } : {}), ...detachOf, log: fileOf(slot, "log"), socket: endpoint, secret, intercomId: serverId(slot),
 	};
 	let phase: "starting" | "ready" | "restarting" | "stopping" = "starting", client: IntercomLike | undefined, leaving: Promise<void> | undefined;
 	const at = () => new Date(now()).toISOString();
@@ -258,7 +266,8 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	}
 	// The check of the prior record at the top was one look, long ago on a cold start: a server that has taken the record since keeps it, and this one, which listens at an endpoint of its
 	// own on Windows (a pipe with a random name), is not a second server for the slot.
-	const taken = rival();
+	const found = readRecord(slot);
+	const taken = found && found.pid !== pid && found.socket && runsAs({ alive, startOf }, found) && (rival() !== undefined || (await helloOf(found.socket, found.secret, 1000))?.pid === found.pid) ? found : undefined;
 	if (taken) {
 		await control.close();
 		return abort("start", `the sb server of pid ${taken.pid} runs and holds this slot's record`);

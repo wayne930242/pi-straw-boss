@@ -3,7 +3,7 @@ import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { afterEach, beforeEach, test } from "node:test";
 import { type CliDeps, parseArgs, run, UsageError } from "../src/server/cli.ts";
 import { createLog } from "../src/server/log.ts";
-import { fileOf, readLock, readRecord, takeLock, writeRecord, writeStartError } from "../src/server/record.ts";
+import { fileOf, readLock, readRecord, readStartError, takeLock, writeRecord, writeStartError } from "../src/server/record.ts";
 import type { ServerHandle, ServerOptions } from "../src/server/main.ts";
 import { callControl } from "../src/server/socket.ts";
 import { ServerWorld, sleep, until } from "./server-world.ts";
@@ -236,6 +236,26 @@ test("--timeout bounds the whole up, and the failure names which wait ran out be
 	// A failure that is not a wait names none.
 	const herdr = await cli(["up"], { herdr: false });
 	assert.equal(herdr.errJson?.wait, undefined);
+});
+
+test("F005: when the state folder cannot be protected, up exits 3 and its JSON carries the startError (acl and the reason), though no start-error.json could be written", async () => {
+	const prepare = () => { throw new Error("could not protect the folder before writing to it: Access is denied."); };
+	const r = await cli(["up"], { ctx: { prepare } });
+	assert.equal(r.code, 3);
+	assert.equal(r.errJson?.step, "server");
+	assert.equal((r.errJson?.startError as { code: string } | undefined)?.code, "acl");
+	assert.match(String((r.errJson?.startError as { text: string } | undefined)?.text), /Access is denied/);
+	assert.match(String(r.errJson?.reason), /^acl: /);
+	assert.equal(readStartError(world.slot), undefined, "no file: there is no protected folder to write one in");
+	assert.equal(world.spawned.length, 0);
+});
+
+test("F004: the Herdr check of up is cut to the time given (--timeout), at most its 2 s", async () => {
+	const seen: (number | undefined)[] = [];
+	await cli(["up", "--timeout", "1"], { herdrListens: async (_ctx: unknown, ms?: number) => (seen.push(ms), true) });
+	assert.ok(seen[0] !== undefined && seen[0] <= 1000 && seen[0] > 0, String(seen[0]));
+	await cli(["up", "--timeout", "30"], { herdrListens: async (_ctx: unknown, ms?: number) => (seen.push(ms), true) });
+	assert.equal(seen.at(-1), 2000);
 });
 
 test("up's default time is 90 s on Windows and 30 s elsewhere, for the lock wait and the start wait together", async () => {

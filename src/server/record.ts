@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { herdrSocket } from "../endpoint.ts";
 import { alive as pidAlive } from "../remote.ts";
 import { startedLater, startOf } from "../startof.ts";
-import { protectFolder, type RunNative } from "./winprep.ts";
+import { protectFolder, refuseLink, type RunNative } from "./winprep.ts";
 
 // What the sb server leaves on disk (docs/specs/2026-10-26-sb-backend.md, Process model and lifecycle): `server.json`, the record of the running server;
 // `server.lock`, which makes check-and-start atomic; `start-error.json`, why the last start attempt failed. One server serves one (state directory, Herdr socket)
@@ -59,6 +59,9 @@ export interface ServerRecord {
 	mode: "detached" | "serve";
 	desk: boolean;
 	intercom: IntercomScope;
+	/** Windows: how the server was started: `wmi` (outside the starter's job) or `direct` (a plain spawn, after `detachFailure`: it dies with the pane or ssh session that started it). */
+	detach?: "wmi" | "direct";
+	detachFailure?: string;
 	/** Reserved for the GUI that moves into the server with B2; a restart carries it over untouched. */
 	gui?: { port: number; token: string; stopped?: boolean };
 	stopped?: boolean;
@@ -82,8 +85,15 @@ export function secretDir(dir: string) {
  * Makes the slot's folder ready for the first file in it. On Windows the state folder is protected (owner and SYSTEM, no inheritance) first, before the lock, the placeholder record, or
  * the log is created, by two native calls and once per process; the slot's own folder (below it, for a secondary slot) then inherits that. Elsewhere it is the 700 folder.
  */
-export function prepareSlot(slot: Slot, platform: NodeJS.Platform = process.platform, run?: RunNative): void {
-	if (platform === "win32") protectFolder(slot.stateDir, run);
+export function prepareSlot(slot: Slot, platform: NodeJS.Platform = process.platform, run?: RunNative, ms?: number): void {
+	if (platform === "win32") {
+		protectFolder(slot.stateDir, run, ms);
+		// A secondary slot's folders inherit the protected one: none of them may be a link or junction that sends what is written into them elsewhere.
+		if (!slot.primary) for (const dir of [join(slot.stateDir, "servers"), slot.dir]) {
+			mkdirSync(dir, { recursive: true });
+			refuseLink(dir);
+		}
+	}
 	secretDir(slot.dir);
 }
 
@@ -225,7 +235,7 @@ export interface LockDeps {
 	/** Told when a lock is taken over from a holder that is dead, or past LOCK_MAX_MS. */
 	note?: (event: string, fields: Record<string, string | number>) => void;
 	/** Makes the slot's folder ready before the lock is written into it (the Windows ACL, before any file); `prepareSlot` by default. */
-	prepare?: (slot: Slot) => void;
+	prepare?: (slot: Slot, ms?: number) => void;
 }
 export class LockBusy extends Error {
 	holder: LockInfo | undefined;

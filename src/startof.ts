@@ -1,4 +1,5 @@
 import { execFile, execFileSync } from "node:child_process";
+import { powershellPath, system32 } from "./winpath.ts";
 
 // A process's start time, which tells a PID another process now holds from the process that wrote a record (remote.ts `runs`, the GUI and link records).
 
@@ -7,10 +8,11 @@ const READ_MS = 15_000, OTHERS_MS = 10 * 60_000, FIRST_FAIL_MS = 5000, MAX_FAIL_
  * The command that tells a Windows process's start time as stable text (UTC, ISO 8601, milliseconds); `windowsHide` keeps its console off the desktop.
  * `Win32_Process.CreationDate` answers for a service or an elevated process, whose `Get-Process` StartTime needs elevation.
  */
-export const startCommand = (pid: number, timeout = READ_MS) => ({
-	file: "powershell.exe",
+export const startCommand = (pid: number, timeout = READ_MS, env: NodeJS.ProcessEnv = process.env) => ({
+	file: powershellPath(env),
 	args: ["-NoProfile", "-NonInteractive", "-Command", `$ErrorActionPreference='Stop'; (Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ', [cultureinfo]::InvariantCulture)`],
-	options: { encoding: "utf8" as const, timeout, windowsHide: true },
+	// By absolute path and from System32: a bare name is looked for in the current folder first, which is a project (nodejs/node#46264).
+	options: { encoding: "utf8" as const, timeout, windowsHide: true, cwd: system32(env) },
 });
 const ISO_START = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
 type Launch = (file: string, args: string[], options: ReturnType<typeof startCommand>["options"], done: (error: Error | null, stdout: string) => void) => unknown;

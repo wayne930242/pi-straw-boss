@@ -176,6 +176,18 @@ test("/boss server shows the state of a live server in one line", async () => {
 	assert.match(a.notices.at(-1)!.text, /^sb server: state live, pid \d+, pi-straw-boss 0\.44\.0, detached, up \d+ s; log .*server\.log$/);
 });
 
+test("F002: /boss server and boss_server status show that the server was started without leaving its starter's job", async () => {
+	const direct = await sw.start({ detach: { via: "direct", failure: "Win32_Process.Create returned 21 (pid 0)" } });
+	await direct.handle.ready;
+	const a = session();
+	await a.start();
+	await a.command("server");
+	assert.match(a.notices.at(-1)!.text, /; warning: the sb server was started without leaving its starter's job \(Win32_Process.Create returned 21 \(pid 0\)\), so it ends with the pane or ssh session that started it; log /);
+	const status = JSON.parse(text(await a.tool("boss_server", { action: "status" })));
+	assert.equal(status.detach, "direct");
+	assert.match(status.warning, /without leaving its starter's job/);
+});
+
 test("/boss server stop asks to confirm with the warning, and stops the server on purpose; declined, it leaves it", async () => {
 	const a = session();
 	await a.start();

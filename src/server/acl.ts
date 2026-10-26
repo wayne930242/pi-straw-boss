@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { powershellPath, system32 } from "../winpath.ts";
 
 // The Windows ACL of the state directory (docs/specs/2026-10-26-sb-backend.md, The control socket). A named pipe is not protected by its name or by a file mode, so the
 // secret that opens a connection lives in server.json, and server.json is only as private as the folder it is in. The folder `straw-boss/` (never the agent directory
@@ -28,12 +29,13 @@ export const ACL_SCRIPT = [
 	"$started = $null",
 	"try { $started = (Get-CimInstance Win32_Process -Filter \"ProcessId=$($env:SB_ACL_PID -as [int])\").CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ', [cultureinfo]::InvariantCulture) } catch { }",
 	// `${sid}:` and not `$sid:`: PowerShell reads the latter as a variable in a scope named sid.
-	"& icacls.exe $dir /inheritance:r /grant:r \"*${sid}:(OI)(CI)F\" '*S-1-5-18:(OI)(CI)F' | Out-Null",
+	"$icacls = Join-Path ([Environment]::SystemDirectory) 'icacls.exe'",
+	"& $icacls $dir /inheritance:r /grant:r \"*${sid}:(OI)(CI)F\" '*S-1-5-18:(OI)(CI)F' | Out-Null",
 	"if ($LASTEXITCODE -ne 0) { throw \"icacls failed with exit code $LASTEXITCODE\" }",
 	// Everything already below the folder (server.lock the starter took, server.log, the link and stash folders, a secondary slot's files) is reset in ONE call: its explicit ACEs go and it
 	// inherits the folder's owner and SYSTEM grant again, which an (OI)(CI) grant hands to files and folders alike. `/C` goes on past an item that vanishes meanwhile (a temp file renamed into
 	// place), and the exit code is not the check, since an empty folder has nothing to match: the read-back below is. A call per item would start a process for each of them (link/inbox holds up to 500).
-	"& icacls.exe \"$dir\\*\" /reset /T /C /Q | Out-Null",
+	"& $icacls \"$dir\\*\" /reset /T /C /Q | Out-Null",
 	"$files = @()",
 	"foreach ($name in 'server.json', 'server.lock', 'server.log', 'gui.json', 'paired.json') { $p = Join-Path $dir $name; if (Test-Path -LiteralPath $p) { $files += $p } }",
 	"$link = Join-Path $dir 'link'",
@@ -51,9 +53,9 @@ export const ACL_SCRIPT = [
 /** The PowerShell call: `-EncodedCommand` (UTF-16LE base64) so no quoting of the script can go wrong; `windowsHide` keeps its console off the desktop. */
 export function aclCommand(dir: string, env: NodeJS.ProcessEnv = process.env, timeout = ACL_MS, pid: number = process.pid) {
 	return {
-		file: "powershell.exe",
+		file: powershellPath(env),
 		args: ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(ACL_SCRIPT, "utf16le").toString("base64")],
-		options: { encoding: "utf8" as const, timeout, windowsHide: true, env: { ...env, SB_ACL_DIR: dir, SB_ACL_PID: String(pid) } },
+		options: { encoding: "utf8" as const, timeout, windowsHide: true, cwd: system32(env), env: { ...env, SB_ACL_DIR: dir, SB_ACL_PID: String(pid) } },
 	};
 }
 
