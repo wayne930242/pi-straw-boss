@@ -72,3 +72,38 @@ test("a refusal says the file, the reason, and what was not started, and the ass
 	assert.doesNotThrow(() => assertSettingsSafe([undefined, folder(), folder((f) => writeFileSync(f, "{}"))]));
 	assert.throws(() => assertSettingsSafe([folder(), dir], "The stash"), (error) => error instanceof SettingsRefused && /^The stash was not started: /.test(error.message) && error.refusal.why === "special");
 });
+
+test("the size of a followed file is not trusted: more than the cap arriving through the descriptor refuses it", () => {
+	const target = join(scratch, "liar.json");
+	writeFileSync(target, "{}"); // stat says 2 bytes
+	const endless = (_fd: number, buffer: Buffer) => buffer.length;
+	const r = settingsRefusal(folder((f) => symlinkSync(target, f)), endless)!;
+	assert.deepEqual([r.why, r.limit], ["large", MAX_READ]);
+	assert.ok(r.size! > MAX_READ);
+	assert.equal(settingsRefusal(folder((f) => symlinkSync(target, f)), () => 0), undefined);
+});
+
+test("a link into /proc is refused (Linux only)", { skip: process.platform !== "linux" }, () => {
+	for (const t of ["/proc/self/pagemap", "/proc/self/mem", "/proc/self/status", "/sys/devices/system/cpu/online"]) assert.equal(settingsRefusal(folder((f) => symlinkSync(t, f)))?.why, "special", t);
+});
+
+test("a directory at the path, or a .pi that cannot be searched, is no file for pi either", () => {
+	assert.equal(settingsRefusal(folder((f) => mkdirSync(f))), undefined, "pi catches EISDIR");
+	const aDir = join(scratch, "adir");
+	mkdirSync(aDir);
+	assert.equal(settingsRefusal(folder((f) => symlinkSync(aDir, f))), undefined);
+	if (process.getuid?.() !== 0) {
+		const dir = folder((f) => writeFileSync(f, "{}"));
+		chmodSync(join(dir, ".pi"), 0);
+		try {
+			assert.equal(settingsRefusal(dir), undefined, "pi's existsSync is false");
+		} finally {
+			chmodSync(join(dir, ".pi"), 0o755);
+		}
+	}
+});
+
+test("the refusal's words are cleaned of control and bidi characters", () => {
+	const text = refusalText({ path: "/a/\u202eb\n.json", why: "special", target: "/t\u001b[3G" });
+	assert.doesNotMatch(text, /[\u202e\u001b\n]/);
+});

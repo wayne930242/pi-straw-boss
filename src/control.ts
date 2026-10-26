@@ -5,6 +5,7 @@ import { ANSWER_ID, checkAnswer, CONTROL, type Hub, type Sent, type Target } fro
 import { HerdrError, type HerdrCall, type Pane } from "./herdr.ts";
 import { createKeys } from "./keys.ts";
 import type { Asked } from "./gui.ts";
+import { linkRequest as linkRequestOwner } from "./owners.ts";
 import type { createMirrors } from "./mirror.ts";
 import type { Found } from "./net.ts";
 import { upload } from "./upload.ts";
@@ -46,7 +47,7 @@ export interface LinkPort { call(name: string, args: Record<string, unknown>): P
 const REMOTE_LINK = ["state", "confirm-answer"];
 const LINK_NAMES = ["enable", "state", "create", "invite", "invite-text", "invite-cancel", "decide", "join-start", "join-project", "join-cancel", "prefill-clear", "remove", "role", "rotate", "trust", "leave", "confirm-answer"];
 /** `answers.target` reads the net afresh, so the binding and the dialog are checked again for every answer. */
-export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; remoteOn?(): Promise<void>; remoteOff?(): Promise<void>; paired?: { on(): boolean; list(): unknown; unpair(id: string): boolean; unpairAll(): number; unsaved(): string | undefined }; saveFailed?(reason: string): void; spawn?(parts: string[], json: Record<string, unknown>): Promise<Reply>; close?(kind: string, json: Record<string, unknown>, refresh?: () => Promise<unknown>): Promise<Reply>; dismiss?(key: unknown): Promise<boolean>; dismissAll?(): Promise<number>; stop?(asked: Asked): void; link?: LinkPort; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; answers?: Pick<Hub, "replay" | "ended" | "send" | "probe" | "commands" | "pull"> & { target(key: string): Promise<Target | undefined> }; trust?(json: Record<string, unknown>): Promise<Reply> }
+export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; remoteOn?(): Promise<void>; remoteOff?(): Promise<void>; paired?: { on(): boolean; list(): unknown; unpair(id: string): boolean; unpairAll(): number; unsaved(): string | undefined }; saveFailed?(reason: string): void; spawn?(parts: string[], json: Record<string, unknown>): Promise<Reply>; close?(kind: string, json: Record<string, unknown>, refresh?: () => Promise<unknown>): Promise<Reply>; dismiss?(key: unknown): Promise<boolean>; dismissAll?(): Promise<number>; stop?(asked: Asked): void; link?: LinkPort; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; linkRequest?(file: string): Promise<boolean>; answers?: Pick<Hub, "has" | "replay" | "ended" | "send" | "probe" | "commands" | "pull"> & { target(key: string): Promise<Target | undefined> }; trust?(json: Record<string, unknown>): Promise<Reply> }
 
 const no = (status: number, error: string, reason: string): Reply => ({ status, body: { error, reason } });
 const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -97,14 +98,17 @@ export function checkText(text: unknown): string | Reply {
 	return typed;
 }
 
-export function createControl({ link, lookup, call, csrf, canonical, pair, remoteOn, remoteOff, paired, saveFailed, spawn, close, dismiss, dismissAll, stop, mirrors, secret = async () => true, answers, trust }: ControlDeps) {
+const LINK_LOCAL = "While it waits on a link request, a paired device can only send Escape; approve it on this computer's own page or terminal.";
+export function createControl({ link, lookup, call, csrf, canonical, pair, remoteOn, remoteOff, paired, saveFailed, spawn, close, dismiss, dismissAll, stop, mirrors, secret = async () => true, linkRequest = async () => false, answers, trust }: ControlDeps) {
 	const busy = new Set<string>();
 	// A change to the paired devices or the remote wish that could not be written to paired.json took effect in memory only: say so (500), to the page and the session.
 	const lost = (): Reply | undefined => {
 		const reason = paired?.unsaved();
 		return reason ? (saveFailed?.(reason), no(500, "save_failed", reason)) : undefined;
 	};
-	const pad = createKeys({ fresh: (id, key, pane) => mirrors?.fresh(id, key, pane) ?? false, secret, answerable: async (key) => Boolean(await answers?.target(key)), probe: async (key) => answers?.probe(key) });
+	// A link_request is open when the session file shows its call or the runtime that owns the approval relays its dialog (a call nested in codemode is not in the file).
+	const requested = async (key: string, found: Found) => (await linkRequest(found.file!)) || Boolean(answers?.has(key, linkRequestOwner.name, found));
+	const pad = createKeys({ fresh: (id, key, pane) => mirrors?.fresh(id, key, pane) ?? false, secret, answerable: async (key) => Boolean(await answers?.target(key)), linkRequest: async (file, key) => (await linkRequest(file)) || Boolean(answers?.has(key, linkRequestOwner.name, { pane: lookup(key)?.pane, file })), probe: async (key) => answers?.probe(key) });
 	/** The origin checks, then the session checks, then one Herdr call. `parts` is the path after api/: sessions/<key>/<action>, remote/pair, or server/stop. */
 	return async function handle(req: IncomingMessage, origin: string, [scope, key = "", action = ""]: string[], remote = false): Promise<Reply> {
 		if (req.method !== "POST") return no(405, "method", "Use POST.");
@@ -181,6 +185,7 @@ export function createControl({ link, lookup, call, csrf, canonical, pair, remot
 			if (ENDING.test(text) && json.confirmed !== true) return no(409, "confirm", "This command ends or replaces the session; confirm to send it.");
 			job = async () => {
 				const pane = await live(found);
+				if (remote && (await requested(key, found))) throw no(403, "local_only", LINK_LOCAL); // a prompt's Enter would be taken by its terminal dialog as Yes
 				if (pane.agent_status === "blocked") throw no(409, "blocked", "It is waiting on a dialog; answer it in the terminal.");
 				// Enter sends a prompt when idle and a steering message while it works; Alt+Enter queues a follow-up, which only means something while it works.
 				return json.as === "followUp" && pane.agent_status === "working"
@@ -189,12 +194,17 @@ export function createControl({ link, lookup, call, csrf, canonical, pair, remot
 			};
 		} else if (action === "keys") {
 			if (busy.has(key)) return no(429, "busy", "Another input to this session is still on its way.");
-			const asked = pad.check(key, json);
+			const asked = pad.check(key, json, remote);
 			if ("status" in asked) return asked;
 			job = async () => {
 				const plan = await pad.send(key, found, await live(found), asked);
 				if (asked.key === "enter") await live(found); // the editor check took up to a second: still pi, on this file
-				for (const [i, [method, params]] of plan.calls.entries()) await (i ? new Promise((r) => setTimeout(r, 60)) : Promise.resolve()).then(() => call(method, params, 15_000));
+				// A link_request's call may have opened since the guard looked; its terminal confirm takes Enter as Yes, so look again right before each write.
+				for (const [i, [method, params]] of plan.calls.entries()) {
+					if (i) await new Promise((r) => setTimeout(r, 60));
+					if (remote && asked.key !== "esc" && (await requested(key, found))) throw no(403, "local_only", LINK_LOCAL);
+					await call(method, params, 15_000);
+				}
 				pad.sent(key, plan);
 			};
 		} else if (action === "dequeue") {
@@ -209,9 +219,12 @@ export function createControl({ link, lookup, call, csrf, canonical, pair, remot
 				if (begun.reason) throw no(409, begun.reason, PULL_WHY[begun.reason]!);
 				if (begun.text !== undefined) return void (direct = { status: 200, body: { text: begun.text } }); // this very take-back was done, and its answer got lost on the way: no key goes
 				if (!begun.pending || !begun.ticket) return void (direct = { status: 200, body: { empty: true } }); // nothing is queued: no key goes
-				const plan = await pad.dequeue(key, found, pane);
+				const plan = await pad.dequeue(key, found, pane, remote);
 				await live(found); // the guard took a moment: still pi, on this file
-				for (const [method, params] of plan.calls) await call(method, params, 15_000);
+				for (const [method, params] of plan.calls) {
+					if (remote && (await requested(key, found))) throw no(403, "local_only", LINK_LOCAL); // as in keys: a link_request may have opened since the guard looked
+					await call(method, params, 15_000);
+				}
 				const done = await answers.pull(key, "finish", begun.ticket);
 				if (!done) throw no(504, "unsure", "The session did not answer in time. The messages are in the terminal's editor, or the session keeps them for a few minutes: use Fetch again on the page to get them.");
 				if (done.reason) throw no(409, done.reason, PULL_WHY[done.reason]!);

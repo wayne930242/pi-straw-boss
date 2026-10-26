@@ -141,10 +141,12 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 	};
 	const hub: LocalHub & {
 		readonly running: boolean; readonly me: string; start(onChange: () => void): void; stop(): void; relayed(sessions: Session[], refs: Map<string, Ref>): Relayed; target(key: string): Target | undefined;
-		replay(answerId: string, key: string): Sent | undefined; ended(key: string, dialog: string, answerId: string): Sent | undefined; send(key: string, t: Target, a: Answer): Promise<Sent>;
+		has(key: string, owner: string, at?: { pane?: string; file?: string }): boolean; replay(answerId: string, key: string): Sent | undefined; ended(key: string, dialog: string, answerId: string): Sent | undefined; send(key: string, t: Target, a: Answer): Promise<Sent>;
 		probe(key: string): Promise<Editor | undefined>; pull(key: string, step: "begin" | "finish", ref?: string): Promise<Pull | undefined>; commands(key: string, prefix: string): Promise<Cmd[] | undefined>; close(key: string, keepPane: boolean, ifStashable?: boolean): Promise<{ accepted: boolean; reason?: string } | undefined>; stashCheck(key: string): Promise<{ reason?: string } | undefined>; doc(cap: string): { key: string; doc: Doc } | undefined; form(cap: string, answerId: string, fields: Fields): Promise<FormResult | undefined>;
 	} = {
 		receive,
+		/** Whether the bridge bound to `key` relays an open dialog of `owner` (a signal from the runtime that owns the approval, not from the session file). With `at` (the unit's pane and file) the bridges are read directly too, so a dialog relayed since the last net reading counts at once. */
+		has: (key, owner, at) => Boolean(bound.get(key)?.b.dialogs.some((d) => d.owner === owner)) || Boolean(at?.pane && at.file && [...bridges.values()].some((b) => b.pane === at.pane && canonical(b.file ?? undefined) === canonical(at.file) && b.dialogs.some((d) => d.owner === owner))),
 		get running() { return active; },
 		me,
 		/** The channel is registered at the first start, before gui.json names this session; later starts in this process reuse it. */

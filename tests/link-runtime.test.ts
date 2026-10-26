@@ -327,3 +327,36 @@ test("R5-F003: the GUI's summary read gives up on a holder that stops answering 
 	assert.deepEqual(await link!.summary(), first, "the last reading");
 	assert.ok(Date.now() - t0 < ASK_MS / 4, `gave up after ${Date.now() - t0} ms`);
 });
+
+/** A computer whose tower-2 is the GUI's host, with `summaryKeepMs`, and the broker's way to make the holder (tower-1) deaf. */
+async function summaryRig(keepMs: number) {
+	const a = computer("a");
+	let link: Link | undefined;
+	const deps = { link: { ...a.deps.link, summaryMs: 150, summaryKeepMs: keepMs, created: (l: Link) => void (link = l) } };
+	const holder = a.tower("tower-1", "wA");
+	const other = a.world.tower("tower-2", "wB:t7", "wB:p7", false, deps);
+	a.world.herdr.pane("wB:p7").cwd = a.project;
+	writeFileSync(join(a.world.stateDir, "gui.json"), JSON.stringify({ ownerSession: "tower-2" }));
+	await holder.start();
+	await until(() => holderOf(a)?.session === "tower-1", "tower-1 as holder");
+	await other.start();
+	const first = await link!.summary();
+	assert.ok(first, "the holder answers");
+	const broker = a.world.broker as unknown as { deliver: (id: string, ...rest: unknown[]) => void };
+	const deliver = broker.deliver.bind(broker);
+	return { a, link: link!, first, deaf: () => (broker.deliver = (id, ...rest) => (id === "tower-1" ? undefined : deliver(id, ...rest))) };
+}
+
+test("RC-F003: the last summary stands in for a slow holder only while it is fresh; after that, and when the holder is gone, the GUI shows nothing", async () => {
+	const slow = await summaryRig(1500); // the fresh read waits 150 ms for the deaf holder: the keep time leaves a loaded machine plenty of room
+	slow.deaf();
+	assert.deepEqual(await slow.link.summary(), slow.first, "slow and fresh: the last reading");
+	await new Promise((r) => setTimeout(r, 1400)); // with the 150 ms waits on both sides of it, the reading is older than 1.5 s
+	assert.equal(await slow.link.summary(), undefined, "slow and old: nothing");
+	const gone = await summaryRig(60_000);
+	assert.deepEqual(await gone.link.summary(), gone.first);
+	const store = new LinkStore(gone.a.dir);
+	await store.withLock(() => store.clearHolder(() => true));
+	assert.equal(holderOf(gone.a), undefined, "no holder record");
+	assert.equal(await gone.link.summary(), undefined, "NO_HOLDER is not covered by the last reading");
+});

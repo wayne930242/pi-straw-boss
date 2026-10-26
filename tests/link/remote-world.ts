@@ -27,7 +27,7 @@ export interface Computer {
 }
 
 /** `root` is a scratch folder; `who` picks which device's keys this computer has; `trust` is config.json's link.trust. */
-export function computer(root: string, relay: FakeRelay, who: "a" | "b", o: { trust?: Record<string, string>; ui?: boolean; gateMs?: number; members?: ("bob" | "carol")[]; policy?: PolicyDeps } = {}): Computer {
+export function computer(root: string, relay: FakeRelay, who: "a" | "b", o: { trust?: Record<string, string>; ui?: boolean; gateMs?: number; terminalMs?: number; members?: ("bob" | "carol")[]; policy?: PolicyDeps } = {}): Computer {
 	const world = new World();
 	const keys = who === "a" ? alice : bob, home = join(root, `home-${who}`), raw = join(root, `project-${who}`);
 	mkdirSync(raw, { recursive: true });
@@ -46,7 +46,7 @@ export function computer(root: string, relay: FakeRelay, who: "a" | "b", o: { tr
 	writeFileSync(join(world.stateDir, "config.json"), JSON.stringify({ link: { relay: "http://relay.test", teams: { [TEAM_HEX]: { project, share: "status" } }, trust: o.trust ?? {} } }));
 	relay.addTeam(TEAM, [alice.id, bob.id], entries);
 	let link: Link | undefined;
-	const deps = { link: { ...FAST, home, gateMs: o.gateMs, requestMs: o.gateMs, relay: clientFor(relay), alive: (r: { session: string }) => !world.gone.has(r.session), created: (l: Link) => void (link = l), policy: o.policy ?? { read: () => { throw Object.assign(new Error("none"), { code: "ENOENT" }); } } } };
+	const deps = { link: { ...FAST, home, gateMs: o.gateMs, requestMs: o.gateMs, terminalMs: o.terminalMs, relay: clientFor(relay), alive: (r: { session: string }) => !world.gone.has(r.session), created: (l: Link) => void (link = l), policy: o.policy ?? { read: () => { throw Object.assign(new Error("none"), { code: "ENOENT" }); } } } };
 	const tower = world.tower(`tower-${who}`, "wA:t7", "wA:p7", o.ui ?? false, deps);
 	world.herdr.pane("wA:p7").cwd = project;
 	tower.cwd = project;

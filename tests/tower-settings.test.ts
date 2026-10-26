@@ -35,6 +35,9 @@ test("a tower is not opened in a folder whose .pi/settings.json pi must not read
 		};
 		await assert.rejects(ensureTower({ run: run2, sleep: async () => {}, live: async () => false, moveFirst: async () => {} }, { workspace_id: "wB", label: "B", tokens: {} } as unknown as Workspace, "/elsewhere"), /pi was not started/);
 		assert.deepEqual(adopted.filter((a) => ["start", "report-metadata", "close", "move"].includes(a[1]!)), [], "a leftover tower shell is not started in either");
+		const noCwd = [{ pane_id: "wA:p9", tab_id: "wA:t9", tokens: { sb_role: "tower" } }];
+		const run3: HerdrRun = async (args) => (args[0] === "pane" && args[1] === "list" ? JSON.stringify({ result: { panes: noCwd } }) : args[0] === "workspace" ? JSON.stringify({ result: { workspaces: [{ workspace_id: "wB", label: "B", tokens: {} }] } }) : JSON.stringify({ result: {} }));
+		await assert.rejects(ensureTower({ run: run3, sleep: async () => {}, live: async () => false, moveFirst: async () => {} }, { workspace_id: "wB", label: "B", tokens: {} } as unknown as Workspace, dir), /pi was not started/);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}

@@ -1,6 +1,6 @@
-import { lstatSync, realpathSync, statSync } from "node:fs";
+import { lstatSync, readSync, realpathSync, type Stats, statSync } from "node:fs";
 import { join } from "node:path";
-import { MAX_READ, UnsafeFile, withPlain } from "./found.ts";
+import { clean, MAX_READ, UnsafeFile, withPlain } from "./found.ts";
 
 // Before pi starts in a folder: is the folder's .pi/settings.json one pi can read without harm? pi 1.4.0 reads it at startup, before any extension loads and
 // before the trust question (SettingsManager.create in dist/main.js, upstream issue https://github.com/earendil-works/pi/issues/11421), whole and with no limit: a
@@ -11,8 +11,9 @@ import { MAX_READ, UnsafeFile, withPlain } from "./found.ts";
 /** `special`: no plain file; `large`: over the cap (`size` bytes, `limit` the cap); `unreadable`: it could not be looked at (`code`). `path` is the file, `target` where a link of it ends. */
 export interface SettingsRefusal { path: string; why: "special" | "large" | "unreadable"; target?: string; size?: number; limit?: number; code?: string }
 
-// What pi itself treats as no file: existsSync is false for these, so it reads nothing.
-const ABSENT = new Set(["ENOENT", "ENOTDIR", "ELOOP"]);
+// What pi itself treats as no file: existsSync is false for these, so it reads nothing. Only the lstat and stat answer this; an error from the open refuses.
+// (EACCES: a .pi that cannot be searched. A directory at the path is no file either: pi catches EISDIR.)
+const ABSENT = new Set(["ENOENT", "ENOTDIR", "ELOOP", "EACCES"]);
 /** Where a link ends, for the words only: a /proc or /dev/fd link may not resolve. */
 const endOf = (path: string) => {
 	try {
@@ -22,28 +23,51 @@ const endOf = (path: string) => {
 	}
 };
 const codeOf = (error: unknown) => (error as NodeJS.ErrnoException).code;
+/** Linux pseudo-files report size 0 and are not bounded (/proc/self/pagemap): no link may lead into them. */
+const pseudo = (end: string) => process.platform === "linux" && /^\/(proc|sys)(\/|$)/.test(end);
+type Reader = (fd: number, buffer: Buffer, offset: number, length: number, position: null) => number;
 
-/** Why pi must not start in `dir`, or undefined when it may. One lstat when there is no file (or a plain one is only opened and measured). */
-export function settingsRefusal(dir: string): SettingsRefusal | undefined {
+/** Reads through the descriptor, never trusting its size: more than MAX_READ bytes arriving refuses it as large (the size is then what was read, at least MAX_READ + 1). */
+function bounded(fd: number, read: Reader): void {
+	const buffer = Buffer.allocUnsafe(65_536);
+	let total = 0;
+	for (;;) {
+		const n = read(fd, buffer, 0, buffer.length, null);
+		if (n <= 0) return;
+		total += n;
+		if (total > MAX_READ) throw new UnsafeFile("large", "not a plain small file", total);
+	}
+}
+
+/** Why pi must not start in `dir`, or undefined when it may. One lstat when there is no file (or a plain one is only opened and measured). `read` is for tests. */
+export function settingsRefusal(dir: string, read: Reader = readSync): SettingsRefusal | undefined {
 	const path = join(dir, ".pi", "settings.json");
-	let linked = false;
+	let linked = false, seen: Stats;
 	try {
-		const seen = lstatSync(path);
+		seen = lstatSync(path);
 		linked = seen.isSymbolicLink();
 		// A link is judged by what it leads to (stat follows it, a /proc or /dev/fd link too), and opened the same way: pi follows it as well.
-		withPlain(path, () => undefined, linked ? statSync(path) : seen, linked);
+		if (linked) seen = statSync(path);
 	} catch (error) {
-		const target = linked ? endOf(path) : undefined;
-		if (error instanceof UnsafeFile) return { path, why: error.why, ...(target && { target }), ...(error.size !== undefined && { size: error.size, limit: MAX_READ }) };
 		const code = codeOf(error);
 		if (code && ABSENT.has(code)) return;
+		return { path, why: "unreadable", ...(code && { code }) };
+	}
+	if (seen.isDirectory()) return; // pi's read fails with EISDIR and it carries on
+	const target = linked ? endOf(path) : undefined;
+	try {
+		if (target && pseudo(target)) throw new UnsafeFile("special", "pseudo-file");
+		withPlain(path, (fd) => (linked ? bounded(fd, read) : undefined), seen, linked);
+	} catch (error) {
+		if (error instanceof UnsafeFile) return { path, why: error.why, ...(target && { target }), ...(error.size !== undefined && { size: error.size, limit: MAX_READ }) };
+		const code = codeOf(error);
 		return { path, why: "unreadable", ...(target && { target }), ...(code && { code }) };
 	}
 }
 
 /** The refusal in words for a tool, a log, or a thrown error: the file, the reason, and what was not started. */
 export function refusalText(r: SettingsRefusal, what = "pi"): string {
-	const file = r.target ? `${r.path} (a link to ${r.target})` : r.path;
+	const file = r.target ? `${clean(r.path)} (a link to ${clean(r.target)})` : clean(r.path);
 	const why = r.why === "special" ? "is not a plain file (a device, pipe, or socket, or a link to one), and pi reads it whole when it starts, so it could hang or never finish"
 		: r.why === "large" ? `is ${r.size} bytes, over the ${MAX_READ / 1024} KB limit, and pi reads it whole when it starts`
 		: `cannot be read${r.code ? ` (${r.code})` : ""}`;
