@@ -32,6 +32,8 @@ export function receiveState(spec: StateSpec): ReceiveState {
 	};
 }
 
+/** An ask id: 16 random bytes in hex. */
+export const ASK_ID = "00112233445566778899aabbccddeeff";
 export const SAMPLE: { [K in Kind]: Plaintexts[K] } = {
 	tower: { fromWorkspace: "main", toWorkspace: "", replyExpected: true, text: "Please look at the failing build." },
 	presence: { label: "alice-mac", headSeq: 7, headHash: entryHash(mainLog()[7]!), workspaces: [{ label: "moldplan", tower: "idle", tabs: [{ label: "tower", state: "idle" }, { label: "api", state: "working" }] }] },
@@ -43,6 +45,8 @@ export const SAMPLE: { [K in Kind]: Plaintexts[K] } = {
 	"dialog-close": { dialogId: "d2", by: "alice-mac" },
 	"unit-status": { units: [{ unit: "build", state: "working", monitors: ["npm test"], report: "Compiled 12 files." }] },
 	notice: { kind: "failure", unit: "build", text: "The build turn failed." },
+	caps: { features: ["tower.awaitsReply", "tower-reply"] },
+	"tower-reply": { inReplyTo: ASK_ID, text: "Done: the build is green again." },
 };
 
 interface Forge {
@@ -109,6 +113,11 @@ export function envelopeCases(): EnvelopeCase[] {
 	add("a seq of 0 for a queued kind", forge({ header: { seq: 0 } }), "stale-seq");
 	add("a presence no newer than the last", forge({ kind: "presence" }), "stale-ephemeral", baseState({ lastEphemeral: { [ephemeralKey(D.alice.id, "presence")]: NOW - MIN } }));
 	add("a board no newer than the last", forge({ kind: "board" }), "stale-ephemeral", baseState({ lastEphemeral: { [ephemeralKey(D.alice.id, "board")]: NOW - MIN } }));
+	add("a caps no newer than the last", forge({ kind: "caps" }), "stale-ephemeral", baseState({ lastEphemeral: { [ephemeralKey(D.alice.id, "caps")]: NOW - MIN } }));
+	add("a caps marked queued", forge({ kind: "caps", header: { ephemeral: false, seq: 1 } }), "ephemeral-mismatch");
+	add("a tower-reply marked ephemeral", forge({ kind: "tower-reply", header: { ephemeral: true, seq: 0 } }), "ephemeral-mismatch");
+	add("a tower-reply sent to the whole team", forge({ kind: "tower-reply", header: { to: [] } }), "whole-team-not-allowed");
+	add("a tower-reply with a seq equal to the last one taken", forge({ kind: "tower-reply", header: { seq: 5 } }), "stale-seq", baseState({ lastSeq: { [D.alice.id]: 5 } }));
 	add("a board marked queued", forge({ kind: "board", header: { ephemeral: false, seq: 1 } }), "ephemeral-mismatch");
 	add("a roster head ahead of this device's", forge({ header: { head: { seq: 8, hash: wrongHash } } }), "roster-ahead");
 	add("a roster head this device's copy does not have", forge({ header: { head: { seq: 3, hash: wrongHash } } }), "roster-mismatch");

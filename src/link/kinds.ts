@@ -1,10 +1,10 @@
-import { bool, cutBytes, cutChars, dec, enc, int, list, readBool, readInt, readList, readStr, str } from "./canon.ts";
+import { CanonError, bool, cutBytes, cutChars, dec, enc, int, list, readBool, readInt, readList, readStr, str } from "./canon.ts";
 
 // The message kinds of docs/specs/2026-10-25-straw-link.md (Message kinds): who may send each, whether it is ephemeral or goes to the
 // whole team, and its plaintext as a canonical structure. Every text field is cut to its limit, on the way out and on the way in, and a
 // plaintext never becomes a header.
 
-export type Kind = "tower" | "presence" | "board" | "confirm-request" | "confirm-answer" | "dialog-open" | "dialog-answer" | "dialog-close" | "unit-status" | "notice";
+export type Kind = "tower" | "presence" | "board" | "confirm-request" | "confirm-answer" | "dialog-open" | "dialog-answer" | "dialog-close" | "unit-status" | "notice" | "caps" | "tower-reply";
 /** Which devices may send a kind: any member, only an attended one, or only an unattended one. */
 export type Sender = "any" | "attended" | "unattended";
 export interface KindRule { ephemeral: boolean; wholeTeam: boolean; sender: Sender }
@@ -24,6 +24,8 @@ export const KINDS: Record<Kind, KindRule> = {
 	"dialog-close": { ephemeral: false, wholeTeam: false, sender: "unattended" },
 	"unit-status": { ephemeral: true, wholeTeam: false, sender: "unattended" },
 	notice: { ephemeral: false, wholeTeam: false, sender: "unattended" },
+	caps: { ephemeral: true, wholeTeam: true, sender: "any" },
+	"tower-reply": { ephemeral: false, wholeTeam: false, sender: "any" },
 };
 export const kindOk = (kind: unknown): kind is Kind => typeof kind === "string" && Object.hasOwn(KINDS, kind);
 
@@ -46,10 +48,17 @@ export const LIMITS = {
 	boardNow: 120,
 	boardItems: 8,
 	boardItem: 80,
+	/** Not in the spec: a `caps` lists at most this many features; the rest is cut when it is decoded. */
+	capsFeatures: 16,
 } as const;
 const short = (s: string) => cutBytes(s, LIMITS.short);
 
-export interface TowerMessage { fromWorkspace: string; toWorkspace: string; replyExpected: boolean; text: string }
+/** `awaitsReply` is the optional fifth field: an ask id, 16 random bytes in hex. Written only to a device whose `caps` list `tower.awaitsReply`. */
+export interface TowerMessage { fromWorkspace: string; toWorkspace: string; replyExpected: boolean; text: string; awaitsReply?: string }
+export interface Caps { features: string[] }
+export interface TowerReply { inReplyTo: string; text: string }
+/** An ask id as it travels. */
+export const askIdOk = (id: string): boolean => /^[0-9a-f]{32}$/.test(id);
 export interface TabState { label: string; state: string }
 export interface WorkspaceState { label: string; tower: string; tabs: TabState[] }
 export interface Presence { label: string; headSeq: number; headHash: Buffer; workspaces: WorkspaceState[] }
@@ -75,11 +84,20 @@ export interface Plaintexts {
 	"dialog-close": DialogClose;
 	"unit-status": { units: UnitStatus[] };
 	notice: Notice;
+	caps: Caps;
+	"tower-reply": TowerReply;
 }
 
 // `toWorkspace` is empty when absent: a workspace label is never empty.
 const encoders: { [K in Kind]: (p: Plaintexts[K]) => Buffer } = {
-	tower: (p) => enc(str(short(p.fromWorkspace)), str(short(p.toWorkspace)), bool(p.replyExpected), str(cutBytes(p.text, LIMITS.towerText))),
+	tower: (p) => {
+		const fields = [str(short(p.fromWorkspace)), str(short(p.toWorkspace)), bool(p.replyExpected), str(cutBytes(p.text, LIMITS.towerText))];
+		if (p.awaitsReply !== undefined) {
+			if (!askIdOk(p.awaitsReply)) throw new RangeError("an ask id is 32 lowercase hex digits");
+			fields.push(str(p.awaitsReply));
+		}
+		return enc(...fields);
+	},
 	presence: (p) => enc(str(short(p.label)), int(p.headSeq), p.headHash, list(p.workspaces.map((w) => enc(str(short(w.label)), str(short(w.tower)), list(w.tabs.map((t) => enc(str(short(t.label)), str(short(t.state))))))))),
 	board: (p) => enc(list(p.entries.slice(0, LIMITS.boardEntries).map((e) => enc(
 		str(short(e.id)), str(cutChars(e.workspace, LIMITS.boardLabel)), str(cutChars(e.tab, LIMITS.boardLabel)), str(cutChars(e.name, LIMITS.boardLabel)), str(cutChars(e.now, LIMITS.boardNow)), int(e.updated),
@@ -92,14 +110,28 @@ const encoders: { [K in Kind]: (p: Plaintexts[K]) => Buffer } = {
 	"dialog-close": (p) => enc(str(short(p.dialogId)), str(short(p.by))),
 	"unit-status": (p) => enc(list(p.units.map((u) => enc(str(short(u.unit)), str(short(u.state)), list(u.monitors.map((m) => str(short(m)))), str(cutBytes(u.report, LIMITS.report)))))),
 	notice: (p) => enc(str(short(p.kind)), str(short(p.unit)), str(cutBytes(p.text, LIMITS.noticeText))),
+	caps: (p) => enc(list(p.features.slice(0, LIMITS.capsFeatures).map((f) => str(short(f))))),
+	// Sending holds `inReplyTo` to an ask id; decoding only cuts it, since a malformed one just matches no ask and the reply is a plain tower.
+	"tower-reply": (p) => {
+		if (!askIdOk(p.inReplyTo)) throw new RangeError("an ask id is 32 lowercase hex digits");
+		return enc(str(p.inReplyTo), str(cutBytes(p.text, LIMITS.towerText)));
+	},
 };
 
 // Decoding cuts again, so a sender that skipped its own limits is held to them. A structure that is malformed throws CanonError.
 const s = (f: Buffer, max: number = LIMITS.short) => cutBytes(readStr(f), max);
 const decoders: { [K in Kind]: (b: Buffer) => Plaintexts[K] } = {
 	tower: (b) => {
-		const [from, to, reply, text] = dec(b, 4) as [Buffer, Buffer, Buffer, Buffer];
-		return { fromWorkspace: s(from), toWorkspace: s(to), replyExpected: readBool(reply), text: s(text, LIMITS.towerText) };
+		const fields = dec(b);
+		if (fields.length !== 4 && fields.length !== 5) throw new CanonError(`a tower has 4 or 5 fields, got ${fields.length}`);
+		const [from, to, reply, text, asked] = fields as [Buffer, Buffer, Buffer, Buffer, Buffer | undefined];
+		const out: TowerMessage = { fromWorkspace: s(from), toWorkspace: s(to), replyExpected: readBool(reply), text: s(text, LIMITS.towerText) };
+		if (asked) {
+			const id = readStr(asked);
+			if (!askIdOk(id)) throw new CanonError("an ask id is 32 lowercase hex digits");
+			out.awaitsReply = id;
+		}
+		return out;
 	},
 	presence: (b) => {
 		const [label, seq, hash, spaces] = dec(b, 4) as [Buffer, Buffer, Buffer, Buffer];
@@ -152,6 +184,14 @@ const decoders: { [K in Kind]: (b: Buffer) => Plaintexts[K] } = {
 	notice: (b) => {
 		const [kind, unit, text] = dec(b, 3) as [Buffer, Buffer, Buffer];
 		return { kind: s(kind), unit: s(unit), text: s(text, LIMITS.noticeText) };
+	},
+	caps: (b) => {
+		const [features] = dec(b, 1) as [Buffer];
+		return { features: readList(features).slice(0, LIMITS.capsFeatures).map((f) => s(f)) };
+	},
+	"tower-reply": (b) => {
+		const [inReplyTo, text] = dec(b, 2) as [Buffer, Buffer];
+		return { inReplyTo: s(inReplyTo), text: s(text, LIMITS.towerText) };
 	},
 };
 

@@ -387,3 +387,28 @@ test("a decoder from before the board kind drops a board as an unknown kind whil
 		KINDS.board = saved;
 	}
 });
+
+test("a decoder from before caps and tower-reply drops both as an unknown kind while presence keeps working", async () => {
+	const [a, b] = [rig("a"), rig("b")];
+	await Promise.all([a.holder.start(), b.holder.start()]);
+	await until(() => b.holder.list()[0]?.devices[0]?.online, 3000, "A's presence");
+	const head = stateOf(rosterOf(), alice).head;
+	const ts = Date.now() + 1000, askId = "00112233445566778899aabbccddeeff";
+	const caps = buildEnvelope({ team: TEAM, epoch: 1, teamKey: teamKey(1), head, from: alice, seq: 0, ts, kind: "caps", to: [], plaintext: encodePlaintext("caps", { features: ["tower-reply"] }) });
+	const reply = buildEnvelope({ team: TEAM, epoch: 1, teamKey: teamKey(1), head, from: alice, seq: 1, ts, kind: "tower-reply", to: [bob.id], plaintext: encodePlaintext("tower-reply", { inReplyTo: askId, text: "done" }) });
+	const saved = { caps: KINDS.caps, reply: KINDS["tower-reply"] };
+	delete (KINDS as Partial<typeof KINDS>).caps; // what a build without the kinds knows
+	delete (KINDS as Partial<typeof KINDS>)["tower-reply"];
+	try {
+		const client = new RelayClient({ url: "http://relay.test", device: alice, fetch: relay.fetch });
+		await client.postEnvelope(TEAM, caps);
+		await client.postEnvelope(TEAM, reply);
+		await until(() => events(b).filter((e) => e.event === "drop" && e.reason === "unknown-kind").length >= 2, 3000, "both drops");
+		const before = b.holder.list()[0]!.devices[0]!.ageMs!;
+		await new Promise((r) => setTimeout(r, 250));
+		assert.ok(b.holder.list()[0]!.devices[0]!.online && b.holder.list()[0]!.devices[0]!.ageMs! < before + 250, "presence still arrives");
+	} finally {
+		KINDS.caps = saved.caps;
+		KINDS["tower-reply"] = saved.reply;
+	}
+});

@@ -74,6 +74,12 @@ test("every kind's plaintext encodes to the vector's bytes and decodes back", ()
 	}
 });
 
+test("tower with 4 or 5 fields, caps, and tower-reply: cut as the vectors say, and any other structure is refused", () => {
+	assert.ok(V.towerCases.length >= 7 && V.capsReplyCases.length >= 8);
+	for (const c of V.towerCases) assert.deepEqual(decodePlaintext("tower", h(c.plaintext)), c.expect, c.name);
+	for (const c of V.capsReplyCases) assert.deepEqual(decodePlaintext(c.kind as Kind, h(c.plaintext)), c.expect, c.name);
+});
+
 test("board plaintexts: the caps cut as the vectors say, and a truncated entry, trailing bytes, or a wrong field count is refused", () => {
 	assert.ok(V.boardCases.length >= 9);
 	for (const c of V.boardCases) assert.deepEqual(decodePlaintext("board", h(c.plaintext)), c.expect, c.name);
