@@ -733,6 +733,8 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .tb { font-weight: 700; } .td { opacity: .6; } .ti { font-style: italic; } .tu { text-decoration: underline; } .ts { text-decoration: line-through; } .tu.ts { text-decoration: underline line-through; }
 /* The phone's quick-switch drawer (drawer.ts): a condensed map, hidden everywhere but the phone layout. It slides with --dx (px out of the left edge), follows the finger while `drawer-drag` is on, and rests under prefers-reduced-motion like everything else. */
 .drawer, .drawer-veil { display: none; }
+/* The drawer is swiped and scrolled, so its names are not selectable and a long press opens no callout. */
+.drawer { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .drawer { position: fixed; z-index: 30; inset: 0 auto 0 0; width: min(86vw, 360px); display: flex; flex-direction: column; background: var(--surface-0); border-right: 1px solid var(--line); box-shadow: 8px 0 30px color-mix(in srgb, var(--shadow) 50%, transparent); transform: translateX(calc(var(--dx, 0px) - 100%)); visibility: hidden; transition: transform 0.22s ease-out, visibility 0s 0.22s; }
 .drawer.on { visibility: visible; transition: transform 0.22s ease-out; }
 .drawer-veil { position: fixed; inset: 0; z-index: 29; background: color-mix(in srgb, var(--shadow) 60%, transparent); opacity: 0; pointer-events: none; transition: opacity 0.22s; }
@@ -750,7 +752,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .drawer .card { padding: 6px 8px; gap: 8px; min-height: 44px; } .drawer .plate { --s: 28px; } .drawer .subs { margin-left: 16px; padding-left: 12px; }
 .drawer .trow { display: flex; align-items: center; justify-content: space-between; gap: 8px; } .drawer .tower-go { display: grid; place-items: center; width: 56px; height: 44px; border: 1px solid var(--line); border-radius: 12px; color: var(--c); text-decoration: none; } .drawer .tower-row.current > .trow > .tower-go { border-color: var(--c4); background: var(--c1); } .drawer .tower-go .plate { --s: 34px; }
 .drawer .tower-add { display: grid; place-items: center; min-width: 56px; min-height: 44px; padding: 0; font-size: 22px; font-weight: 400; line-height: 1; letter-spacing: 0; } .drawer .tower-add[hidden] { display: none; }
-.drawer .quit-btn { min-height: 36px; } .drawer .quit-btn[hidden] { display: none; }
+.drawer .quit-btn { min-height: 44px; } .drawer .quit-btn[hidden] { display: none; }
 .drawer .line { gap: 6px; } .drawer .dstate { flex: none; color: var(--c); font-size: 11px; font-weight: 600; } .drawer .unit.current > .card { border-color: var(--c4); box-shadow: inset 3px 0 var(--c), inset -3px 0 var(--c); }
 .drawer .unit[data-dismiss] > .card { transform: translateX(var(--sx, 0px)); opacity: var(--so, 1); transition: transform 0.2s ease-out, opacity 0.2s; } .drawer .unit > .card.swiping { transition: none; } .drawer .unit > .card.gone { --sx: 110%; --so: 0; }
 @media (max-width: 640px) { .drawer { display: flex; } .drawer-veil { display: block; } }
