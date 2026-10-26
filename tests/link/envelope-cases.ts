@@ -35,6 +35,7 @@ export function receiveState(spec: StateSpec): ReceiveState {
 export const SAMPLE: { [K in Kind]: Plaintexts[K] } = {
 	tower: { fromWorkspace: "main", toWorkspace: "", replyExpected: true, text: "Please look at the failing build." },
 	presence: { label: "alice-mac", headSeq: 7, headHash: entryHash(mainLog()[7]!), workspaces: [{ label: "moldplan", tower: "idle", tabs: [{ label: "tower", state: "idle" }, { label: "api", state: "working" }] }] },
+	board: { entries: [{ id: "0123456789abcdef", workspace: "billing", tab: "MP-1 export", name: "MP-1 export", now: "CSV writer, tests next", updated: NOW - 5 * MIN, items: [{ t: "schema", done: true }, { t: "writer 密碼", done: false }] }] },
 	"confirm-request": { dialogId: "d1", digest: "ab".repeat(16), tool: "bash", args: "ls -la", tower: "moldplan" },
 	"confirm-answer": { dialogId: "d1", digest: "ab".repeat(16), allow: false, answerId: "a1" },
 	"dialog-open": { dialogId: "d2", digest: "cd".repeat(16), owner: "pi-7", dialog: '{"type":"select","options":["a","b"]}' },
@@ -107,6 +108,8 @@ export function envelopeCases(): EnvelopeCase[] {
 	add("a seq below the last one taken", forge({ header: { seq: 4 } }), "stale-seq", baseState({ lastSeq: { [D.alice.id]: 5 } }));
 	add("a seq of 0 for a queued kind", forge({ header: { seq: 0 } }), "stale-seq");
 	add("a presence no newer than the last", forge({ kind: "presence" }), "stale-ephemeral", baseState({ lastEphemeral: { [ephemeralKey(D.alice.id, "presence")]: NOW - MIN } }));
+	add("a board no newer than the last", forge({ kind: "board" }), "stale-ephemeral", baseState({ lastEphemeral: { [ephemeralKey(D.alice.id, "board")]: NOW - MIN } }));
+	add("a board marked queued", forge({ kind: "board", header: { ephemeral: false, seq: 1 } }), "ephemeral-mismatch");
 	add("a roster head ahead of this device's", forge({ header: { head: { seq: 8, hash: wrongHash } } }), "roster-ahead");
 	add("a roster head this device's copy does not have", forge({ header: { head: { seq: 3, hash: wrongHash } } }), "roster-mismatch");
 	add("a roster head that is ahead of a device holding a shorter copy", forge({ header: { epoch: 2 }, key: teamKey(2) }), "roster-ahead", baseState({ entries: 7 }));

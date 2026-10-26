@@ -16,23 +16,26 @@ const USAGE = `usage: cli.ts join --pane P --kind claude|codex --session S [--re
        cli.ts call-tower --message M [--workspace W] [--pane P]
        cli.ts broadcast --message M [--scope tab|workspace|towers|all] [--pane P]
        cli.ts send --to ID --message M [--pane P]
-       cli.ts rename --name N [--pane P]`;
-const NEEDS: Record<string, string[]> = { join: ["kind", "session"], serve: ["kind", "session"], status: [], promote: [], stop: [], "call-tower": ["message"], broadcast: ["message"], send: ["to", "message"], rename: ["name"] };
-const FLAGS = ["pane", "kind", "session", "record", "cli", "message", "workspace", "scope", "to", "name"];
+       cli.ts rename --name N [--pane P]
+       cli.ts board --now N [--item '[x] done step'] [--item '[ ] open step']… [--pane P]`;
+const NEEDS: Record<string, string[]> = { join: ["kind", "session"], serve: ["kind", "session"], status: [], promote: [], stop: [], "call-tower": ["message"], broadcast: ["message"], send: ["to", "message"], rename: ["name"], board: ["now"] };
+const FLAGS = ["pane", "kind", "session", "record", "cli", "message", "workspace", "scope", "to", "name", "now", "item"];
 
-export type Args = { command: string; pane: string } & Partial<Record<string, string>>;
+export type Args = { command: string; pane: string; item?: string[] } & Partial<Record<string, string>>;
 /** The command line as options. The pane is `--pane`, else the one the process runs in (HERDR_PANE_ID). */
 export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): Args {
 	const [command, ...rest] = argv;
 	if (!command) throw new UsageError(USAGE);
 	if (!Object.hasOwn(NEEDS, command)) throw new UsageError(`unknown command ${command}\n${USAGE}`);
-	const given: Record<string, string> = {};
+	const given: Record<string, string> = {}, item: string[] = [];
 	for (let i = 0; i < rest.length; i += 2) {
 		const flag = rest[i]!.replace(/^--/, "");
 		if (!rest[i]!.startsWith("--") || !FLAGS.includes(flag)) throw new UsageError(`unknown option ${rest[i]}`);
 		if (rest[i + 1] === undefined) throw new UsageError(`--${flag} needs a value`);
-		given[flag] = rest[i + 1]!;
+		if (flag === "item") item.push(rest[i + 1]!);
+		else given[flag] = rest[i + 1]!;
 	}
+	if (item.length && command !== "board") throw new UsageError("--item belongs to the board command");
 	const pane = given.pane ?? env.HERDR_PANE_ID;
 	if (!pane) throw new UsageError("--pane or HERDR_PANE_ID is required");
 	for (const need of NEEDS[command]!) {
@@ -41,8 +44,8 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
 	if (given.kind && given.kind !== "claude" && given.kind !== "codex") throw new UsageError("--kind must be claude or codex");
 	if (given.scope && !["tab", "workspace", "towers", "all"].includes(given.scope)) throw new UsageError("--scope must be tab, workspace, towers, or all");
 	const { pane: _pane, ...options } = given;
-	const wanted = { join: ["kind", "session", "record", "cli"], serve: ["kind", "session", "record", "cli"], "call-tower": ["message", "workspace"], broadcast: ["message", "scope"], send: ["to", "message"], rename: ["name"] }[command] ?? [];
-	return { command, pane, ...Object.fromEntries(wanted.map((key) => [key, options[key]]).filter(([, value]) => value !== undefined)) };
+	const wanted = { join: ["kind", "session", "record", "cli"], serve: ["kind", "session", "record", "cli"], "call-tower": ["message", "workspace"], broadcast: ["message", "scope"], send: ["to", "message"], rename: ["name"], board: ["now"] }[command] ?? [];
+	return { command, pane, ...Object.fromEntries(wanted.map((key) => [key, options[key]]).filter(([, value]) => value !== undefined)), ...(item.length ? { item } : {}) };
 }
 
 /** What `join` runs: the Node that runs this file with the tsx loader (the sidecar is TypeScript under node_modules, which Node alone refuses), the pane in its environment, its output in the pane's log. */

@@ -11,6 +11,12 @@ import { basename, join } from "node:path";
 const RELAY_DIR = process.env.STRAW_RELAY_DIR ?? join(homedir(), "projects", "straw-relay");
 export const relaySkip: string | false = spawnSync("go", ["version"], { encoding: "utf8" }).status !== 0 ? "skipped: `go` is not installed" : !existsSync(join(RELAY_DIR, ".git")) ? `skipped: no straw-relay checkout at ${RELAY_DIR} (set STRAW_RELAY_DIR)` : false;
 
+/** Whether the relay checkout's HEAD knows the message kind (its `internal/link/kinds.go` names it): a live test of a newer kind skips against an older checkout. */
+export const relayHasKind = (kind: string): boolean => {
+	const shown = spawnSync("git", ["-C", RELAY_DIR, "show", "HEAD:internal/link/kinds.go"], { encoding: "utf8" });
+	return shown.status === 0 && shown.stdout.includes(`"${kind}":`);
+};
+
 const freePort = () =>
 	new Promise<number>((resolve, reject) => {
 		const s = createServer();

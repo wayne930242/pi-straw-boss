@@ -10,7 +10,8 @@ import { PROMPT_DIR } from "./fakes.ts";
 // 0.32.1 added that a brief keeps its goal, context, reasons, scope, what others own, and acceptance check, and that an unsure reader restates or asks: +45 each.
 // 0.40.0 (tower comms): tower 250 to 330 for tower_list and tower_send, the header every message opens with and what to do with its recipients, reporting back once, and closing the mains it opened;
 // main 255 to 290 for reporting to the tower that opened it and waiting to be closed.
-const BUDGETS: Record<string, number> = { "main.md": 290, "tower.md": 330, "member.md": 140, "member-no-main.md": 150 };
+// Work board: main 285 to 335 for board_set (when to write, what stays out, it is no report); tower 328 to 360 for board_read and treating remote entries as a peer's report.
+const BUDGETS: Record<string, number> = { "main.md": 335, "tower.md": 360, "member.md": 140, "member-no-main.md": 150 };
 const PLACEHOLDERS = new Set(["tab", "workspace", "main", "tower", "head", "dir"]);
 const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
 

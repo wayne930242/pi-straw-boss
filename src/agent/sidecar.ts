@@ -1,6 +1,9 @@
 import { chmodSync, existsSync, mkdirSync, rmSync, statSync, unlinkSync } from "node:fs";
 import { createServer } from "node:net";
 import { pathToFileURL } from "node:url";
+import { join } from "node:path";
+import { removeEntry } from "../board.ts";
+import { setBoard } from "../boardset.ts";
 import { createDigest } from "../digest.ts";
 import { createElection } from "../election.ts";
 import { createGuard, GUARD_MS, RESTORE_WAIT_MS } from "../guard.ts";
@@ -117,6 +120,7 @@ export async function startSidecar({ pane, kind, session, record, cli = "straw-n
 	};
 	const leave = (why: string) => (leaving ??= (async () => {
 		log(`left: ${why}`);
+		removeEntry(join(cfg.stateDir ?? stateDirOf(env), "board"), id); // its session is done: so is its board entry
 		s.stopped = true;
 		timers.forEach(clearInterval);
 		stops.forEach((stop) => stop());
@@ -282,6 +286,16 @@ export async function startSidecar({ pane, kind, session, record, cli = "straw-n
 			const to = text(r.to, "to"), result = await reach.send(to, text(r.message, "message"));
 			if (result.status !== "sent") throw new Error(`The message to ${to} was not sent: ${result.status} ${result.code ?? ""} ${result.detail ?? ""}`.trim());
 			return { text: `Sent to ${to}.` };
+		},
+		// The work board: this main's whole entry, `--item '[x] text'` for a done step and `--item '[ ] text'` for an open one.
+		board: async (r) => {
+			const items = (Array.isArray(r.item) ? r.item : []).map((raw) => {
+				const m = /^\[( |x|X)\]\s*([\s\S]*)$/.exec(String(raw));
+				return { t: m ? m[2]! : String(raw), done: m ? m[1] !== " " : false };
+			});
+			const stateDir = cfg.stateDir ?? stateDirOf(env), cwd = (await world()).panes.find((p) => p.pane_id === pane)?.cwd ?? process.cwd();
+			const done = setBoard({ dir: join(stateDir, "board"), stateDir, session: me(), isMain: kit.role() === "main", now: now(), cwd, input: { now: r.now, items }, ...(env.HOME ? { home: env.HOME } : {}), ...(env.PI_CODING_AGENT_DIR ? { agentDir: env.PI_CODING_AGENT_DIR } : {}) });
+			return { text: done.text, ...done.details };
 		},
 		rename: async (r) => {
 			const phrase = String(r.name ?? "").replace(/\s+/g, " ").trim();

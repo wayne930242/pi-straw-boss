@@ -16,7 +16,7 @@ export const TEAM_HEX = TEAM.toString("hex");
 export const alice = DEVICES.alice, bob = DEVICES.bob, carol = DEVICES.carol;
 
 /** The roster of alice (founder), with bob and, when asked, carol added by alice. */
-export function rosterOf(members: ("bob" | "carol")[] = ["bob"]): RosterEntry[] {
+export function rosterOf(members: ("bob" | "carol" | "dave" | "eve" | "mallory")[] = ["bob"]): RosterEntry[] {
 	const log: RosterEntry[] = [createEntry({ team: TEAM, founder: alice, label: LABELS.alice, teamKey: teamKey(1), ...det("create") })];
 	for (const who of members) log.push(addEntry({ state: view(log), signer: alice, record: DEVICES[who], label: LABELS[who], attended: true, ...det(`add-${who}`) }));
 	return log;

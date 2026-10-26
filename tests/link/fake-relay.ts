@@ -30,6 +30,8 @@ export class FakeRelay {
 	/** A POST of an envelope waits for this to settle before it is answered (to look at the sender's state meanwhile). */
 	holdPosts: Promise<void> | undefined;
 	failPosts = 0;
+	/** Kinds this relay does not know (a relay older than a kind): a POST of one is refused with 422 `unknown-kind`. */
+	rejectKinds = new Set<string>();
 	/** Invites by hash: who made it, the team, and whether a join request was taken. */
 	invites = new Map<string, { team: string; by: string; expires: number; used: boolean }>();
 	/** Team tokens `POST /v1/teams` accepts (each once). */
@@ -134,6 +136,7 @@ export class FakeRelay {
 		if (this.failPosts > 0) return (this.failPosts--, json(503, { error: "unavailable" }));
 		const envelope = parseEnvelope(Buffer.from(String(body.envelope), "base64url"));
 		if (!envelope) return json(422, { error: "bad-envelope" });
+		if (this.rejectKinds.has(envelope.header.kind)) return json(422, { error: "unknown-kind" });
 		const id = hex(envelope.header.id);
 		if (this.stored.some((s) => s.id === id)) return json(200, { id, duplicate: true, stale: false });
 		const h = envelope.header, members = this.members.get(team) ?? [];

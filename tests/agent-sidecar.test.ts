@@ -205,6 +205,28 @@ test("a pane that closes, a pane whose agent is another one, and an agent that i
 	await early.sidecar.done;
 });
 
+test("board: a sidecar main writes its entry as its own session id, a member is refused, and leaving deletes the entry", async () => {
+	const a = world.agent({ id: "a", name: "Pi One", pane: "wA:p1", tab: "wA:t1" });
+	await a.start();
+	await a.promote();
+	const { sidecar } = await claude();
+	const refused = (await sidecar.request({ cmd: "board", now: "I am a member" })) as { ok: boolean; error: string };
+	assert.equal(refused.ok, false);
+	assert.match(refused.error, /Only the main agent of a tab writes/);
+	await a.stop("quit");
+	await world.quiet();
+	assert.equal((await sidecar.request({ cmd: "promote" })).ok, true);
+	const done = (await sidecar.request({ cmd: "board", now: "MP-1 export", item: ["[x] schema", "[ ] writer", "plain step"] })) as { ok: boolean; text: string };
+	assert.equal(done.ok, true);
+	assert.match(done.text, /It goes to: local towers\./);
+	const file = join(world.stateDir, "board", `${sidecar.id}.json`);
+	assert.deepEqual(JSON.parse(readFileSync(file, "utf8")).items, [{ t: "schema", done: true }, { t: "writer", done: false }, { t: "plain step", done: false }]);
+	assert.equal(((await sidecar.request({ cmd: "board", now: "bad\u001b[31m" })) as { error: string }).error.includes("control or format"), true);
+	assert.equal((await sidecar.request({ cmd: "stop" })).ok, true);
+	await sidecar.done;
+	assert.equal(existsSync(file), false, "the session is done, so is its entry");
+});
+
 test("control: status, promote, rename, send, and stop reach the sidecar's modules", async () => {
 	const a = world.agent({ id: "a", name: "Pi One", pane: "wA:p1", tab: "wA:t1" });
 	await a.start();
