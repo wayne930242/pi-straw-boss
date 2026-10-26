@@ -135,6 +135,41 @@ test("holderAlive: the process lives and is the one that wrote the record (same 
 	assert.equal(holderAlive(() => true, () => "anything")({ ...rec, started: undefined }), true);
 });
 
+test("S7: a start time that is not in yet (Windows reads it in the background) is asked again after 2 s, not 30 s, and the record stands meanwhile", () => {
+	const rec = { session: "s", version: "1", pid: 7, started: "2026-10-26T00:00:00.000Z", tower: true, since: 1 };
+	let answer: string | undefined, asked = 0, clock = 0;
+	const up = holderAlive(() => true, () => (asked++, answer), () => clock);
+	assert.equal(up(rec), true, "unknown: the record stands");
+	clock += 1000;
+	assert.equal(up(rec), true);
+	assert.equal(asked, 1, "not asked again within 2 s");
+	answer = "2026-10-27T00:00:00.000Z";
+	clock += 1500;
+	assert.equal(up(rec), false, "the answer arrived: the PID was reused");
+	assert.equal(asked, 2);
+	clock += 5000;
+	assert.equal(up(rec), false);
+	assert.equal(asked, 2, "a known answer is kept for 30 s");
+});
+
+test("S7: a holder record written before the process's start time was known is written again with it, and only if it is still this session's", async () => {
+	const store = new LinkStore(join(root, "link"), { alive: () => true });
+	store.ensure();
+	let started: string | undefined;
+	const election = new LinkElection({
+		store, alive: () => true, now: () => 1000, self: () => ({ session: "tower", version: "0.43.0", tower: true, pid: process.pid, started }),
+		onGain: () => {}, onLose: () => {},
+	});
+	assert.equal(await election.tick(), "holder");
+	assert.equal(store.readHolder()?.started, undefined, "taken before the start time arrived");
+	assert.equal(await election.tick(), "holder");
+	assert.equal(store.readHolder()?.started, undefined, "still unknown: nothing to add");
+	started = "2026-10-26T00:00:00.000Z";
+	assert.equal(await election.tick(), "holder");
+	assert.equal(store.readHolder()?.started, started, "the record carries it now");
+	assert.equal(store.readHolder()?.session, "tower");
+});
+
 test("SLH-F002: a holder that fails to start gives the record back, so the next look takes it again and the failure is thrown to the caller", async () => {
 	const store = new LinkStore(join(root, "link"), { alive: () => true });
 	store.ensure();

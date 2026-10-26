@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { createServer, get } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { clearStale, markStopped, ownerGone, readRecord, sharedGui, stopRecorded } from "../src/handover.ts";
+import { clearStale, markReload, markStopped, ownerGone, readRecord, sharedGui, stopRecorded, writeRecord } from "../src/handover.ts";
+import type { Gui } from "../src/gui.ts";
 import { type Agent, until, World } from "./fakes.ts";
 
 // One GUI server per machine, whichever session hosts it: when the session that runs it ends without a stop, a survivor starts it again on the same URL.
@@ -516,4 +517,85 @@ test("sessions that find the same dead session's lock start one server at a time
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
+});
+
+// S4: gui.json is the contract the desk shell reads, so it is written by rename and a reader never sees half a file.
+const gui = (port: number) => ({ port, remotePort: port + 1, token: "t".repeat(32), csrf: "c".repeat(32) }) as unknown as Gui;
+test("S4: a reader racing 1000 writes of gui.json (writeRecord, markReload, markStopped) never fails to parse, and the file keeps mode 600", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "psb-atomic-test-"));
+	try {
+		const own = { at: () => "Mon Oct 26 04:21:53 2026", later: async () => "Mon Oct 26 04:21:53 2026" }; // `ps` costs 13 ms a call
+		writeRecord(dir, gui(5000), ["owner", "session"], "0.43.0", "/h.sock", own);
+		const reader = spawn(process.execPath, ["-e", `
+			const { readFileSync } = require("node:fs"), file = process.argv[1];
+			let reads = 0, bad = 0, stop = false;
+			process.stdin.on("data", () => (stop = true));
+			process.stdout.write("ready\\n");
+			const loop = () => {
+				for (let i = 0; i < 200; i++) { reads++; try { JSON.parse(readFileSync(file, "utf8")); } catch { bad++; } }
+				if (stop) return process.stdout.write(JSON.stringify({ reads, bad }) + "\\n", () => process.exit(0));
+				setImmediate(loop);
+			};
+			loop();
+		`, join(dir, "gui.json")], { stdio: ["pipe", "pipe", "inherit"] });
+		let out = "";
+		reader.stdout.on("data", (chunk) => (out += chunk));
+		await until(async () => out.includes("ready"), "the reader to start");
+		for (let i = 0; i < 1000; i++) {
+			if (i % 3 === 0) writeRecord(dir, gui(5000 + (i % 7)), ["owner", "session"], "0.43.0", "/h.sock", own);
+			else if (i % 3 === 1) markReload(dir);
+			else markStopped(dir, readRecord(dir)!);
+		}
+		const done = new Promise<void>((resolve) => reader.on("exit", () => resolve()));
+		reader.stdin.end("stop");
+		await done;
+		const { reads, bad } = JSON.parse(out.split("\n").find((line) => line.startsWith("{"))!) as { reads: number; bad: number };
+		assert.ok(reads > 0, "the reader read");
+		assert.equal(bad, 0, `${bad} of ${reads} reads saw a file that did not parse`);
+		assert.deepEqual(readdirSync(dir), ["gui.json"], "no temporary file is left");
+		if (process.platform !== "win32") assert.equal(statSync(join(dir, "gui.json")).mode & 0o777, 0o600);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("S7: a record written before this process's start time is known is written again with it when it arrives, and only if it is still this server's", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "psb-late-test-"));
+	try {
+		let release: (started: string | undefined) => void = () => {};
+		const own = { at: () => undefined, later: () => new Promise<string | undefined>((resolve) => (release = resolve)) };
+		const { late } = writeRecord(dir, gui(5000), ["owner", "session"], "0.43.0", "/h.sock", own) as { late: Promise<boolean> };
+		assert.equal(readRecord(dir)!.started, undefined);
+		markReload(dir);
+		release("2026-10-26T04:21:53.123Z");
+		assert.equal(await late, true);
+		assert.deepEqual([readRecord(dir)!.started, readRecord(dir)!.reload], ["2026-10-26T04:21:53.123Z", true], "the rest of the record is kept");
+
+		const other = writeRecord(dir, gui(5000), ["owner", "session"], "0.43.0", "/h.sock", own) as { late: Promise<boolean> };
+		writeRecord(dir, { ...gui(5000), port: 5100 }, ["x", "y"], "0.43.0", "/h.sock", { at: () => "later", later: async () => "later" });
+		release("2026-10-26T04:22:00.000Z");
+		await other.late;
+		assert.deepEqual([readRecord(dir)!.port, readRecord(dir)!.started], [5100, "later"], "another server's record is left alone");
+
+		const blind = writeRecord(dir, gui(5200), ["owner", "session"], "0.43.0", "/h.sock", { at: () => undefined, later: async () => undefined }) as { late: Promise<boolean> };
+		assert.equal(await blind.late, false, "a start time that cannot be read is told");
+		assert.equal(readRecord(dir)!.started, undefined);
+		assert.deepEqual(writeRecord(dir, gui(5300), ["owner", "session"], "0.43.0", "/h.sock", { at: () => "known", later: async () => "known" }), {}, "a known start time needs nothing later");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("S7: ownerGone confirms the recorder only on a start time it was told; while the answer is not in yet it asks again, so a reused PID is still noticed", () => {
+	let now: string | undefined, asked = 0;
+	const gone = ownerGone(() => (asked++, now)), record = { pid: process.pid, started: "2026-10-26T04:21:53.123Z", port: 1, token: "t", owner: "o" };
+	assert.equal(gone(record, 0), false, "unknown: the owner counts as living");
+	assert.equal(gone(record, 0), false);
+	assert.equal(asked, 2, "an unconfirmed owner is asked about again");
+	now = "2026-10-26T05:00:00.000Z";
+	assert.equal(gone(record, 0), true, "the answer arrived: the PID belongs to a process that started later");
+	now = "2026-10-26T04:21:53.123Z";
+	assert.equal(gone(record, 0), false);
+	assert.equal(gone(record, 0), false);
+	assert.equal(asked, 4, "a confirmed owner is looked at by signal alone");
 });

@@ -1,5 +1,5 @@
 import { createInterface } from "node:readline";
-import { startOf } from "../../src/remote.ts";
+import { startOf } from "../../src/startof.ts";
 import { LinkElection } from "../../src/link/election.ts";
 import { LinkHolder } from "../../src/link/holder.ts";
 import { RelayClient } from "../../src/link/relay.ts";

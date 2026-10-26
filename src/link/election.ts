@@ -1,5 +1,6 @@
 import { newer } from "../handover.ts";
-import { alive as pidAlive, startOf } from "../remote.ts";
+import { alive as pidAlive } from "../remote.ts";
+import { startOf } from "../startof.ts";
 import type { HolderRecord, LinkStore } from "./store.ts";
 
 // The link holder's election (docs/specs/2026-10-25-straw-link.md, Link holder; review R-F026). It has its own record, `link/holder.json`, under
@@ -25,16 +26,17 @@ export function outranks(a: Pick<Candidate, "version" | "tower">, b: Pick<Candid
 /** Whether the process that wrote a record still runs: its PID is alive and started when the record says (a PID reused after a crash started later). When `ps` cannot say, the record stands. */
 export const holderAlive = (alive: (pid: number) => boolean = pidAlive as (pid: number) => boolean, start: (pid: number) => string | undefined = startOf, now: () => number = Date.now) => {
 	// `ps` blocks the event loop while it runs, and every candidate looks every 2 s: a start time is asked again only after START_TTL_MS (the PID check, which is cheap, runs every time).
+	// An answer that is not in yet (Windows reads it in the background) is asked again after UNKNOWN_TTL_MS, and meanwhile the record stands.
 	const known = new Map<number, { at: number; start: string | undefined }>();
 	return (record: HolderRecord): boolean => {
 		if (!alive(record.pid)) return false;
 		if (!record.started) return true;
 		let seen = known.get(record.pid);
-		if (!seen || now() - seen.at > START_TTL_MS) known.set(record.pid, (seen = { at: now(), start: start(record.pid) }));
+		if (!seen || now() - seen.at > (seen.start === undefined ? UNKNOWN_TTL_MS : START_TTL_MS)) known.set(record.pid, (seen = { at: now(), start: start(record.pid) }));
 		return seen.start === undefined || seen.start === record.started;
 	};
 };
-const START_TTL_MS = 30_000;
+const START_TTL_MS = 30_000, UNKNOWN_TTL_MS = 2000;
 
 export interface ElectionOptions {
 	store: LinkStore;
@@ -76,7 +78,10 @@ export class LinkElection {
 	/** One look: holder if the record names this session (after taking it when it may), else candidate. */
 	async tick(): Promise<"holder" | "candidate"> {
 		const me = this.o.self(), seen = this.o.store.readHolder();
-		if (this.isMine(seen, me)) return (await this.gain(), "holder");
+		if (this.isMine(seen, me)) {
+			if (!seen.started && me.started) await this.complete(me); // the record was written before this process's start time was known (Windows reads it in the background)
+			return (await this.gain(), "holder");
+		}
 		await this.lose();
 		const contest = !seen || !this.alive(seen);
 		if (!contest && !outranks(me, seen)) return (this.vacant = 0, "candidate");
@@ -97,6 +102,13 @@ export class LinkElection {
 		if (!taken) return false;
 		await this.gain();
 		return true;
+	}
+	/** Writes the holder record again with this process's start time, if the record is still this session's and still lacks it. */
+	private async complete(me: Candidate): Promise<void> {
+		await this.o.store.withLock(() => {
+			const record = this.o.store.readHolder();
+			if (this.isMine(record, me) && !record.started && me.started) this.o.store.writeHolder({ ...record, started: me.started });
+		}).catch(() => undefined); // the next look tries again
 	}
 	private async gain(): Promise<void> {
 		if (this.had) return;
