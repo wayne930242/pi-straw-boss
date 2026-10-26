@@ -1,6 +1,7 @@
-import { chmodSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { runs } from "../remote.ts";
+import { chmodSync, lstatSync, realpathSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, relative, isAbsolute } from "node:path";
+import { alive as signalled, runs } from "../remote.ts";
 import { digestOf, MAX_FOUND, MAX_ITEM, MAX_ITEMS } from "./found.ts";
 import { CHOICES, type TrustAnswer, type TrustGroup, type TrustRequest, type TrustResult } from "./types.ts";
 
@@ -11,14 +12,31 @@ export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 export const RESULT_KEEP_MS = 120_000, STALE_MS = 60_000, MAX_FILE = MAX_FOUND + 4096;
 export const trustDir = (state: string) => join(state, "trust");
 const uid = () => process.getuid?.();
+const CONFIRM_MS = 30_000, confirmed = new Map<string, number>();
+/**
+ * `runs`, but a process once confirmed as the one that wrote a request is afterwards looked at by signal alone for 30 s, not by a `ps` per request on every reading
+ * (the server reads twice per request on each tick). After that it is confirmed again, so a number the system gives to another process is not taken for long.
+ */
+export const lives: typeof runs = (r, wrote, start) => {
+	const key = `${r.pid}/${r.started}`, at = confirmed.get(key);
+	if (at !== undefined && Date.now() - at < CONFIRM_MS) return signalled(r.pid) || (confirmed.delete(key), false);
+	const ok = runs(r, wrote, start);
+	ok ? confirmed.set(key, Date.now()) : confirmed.delete(key);
+	return ok;
+};
 
-/** Makes the directory (700) and says whether it is safe to use: a real directory of this user, not a link, not open to others. */
-export function ensureDir(dir: string): boolean {
+/**
+ * Makes the directory (700) and says whether it is safe to use: a real directory of this user, not a link, not open to others. Where the system has no user ids (Windows)
+ * ownership cannot be told, so the directory must lie in the user's own profile, whose folders are private to the user; anywhere else a pi asks in its terminal as before.
+ */
+export function ensureDir(dir: string, ids = process.getuid !== undefined, home: string = homedir()): boolean {
 	try {
 		mkdirSync(join(dir, ".."), { recursive: true, mode: 0o700 });
 		mkdirSync(dir, { recursive: true, mode: 0o700 });
 		const st = lstatSync(dir);
-		if (!st.isDirectory() || st.isSymbolicLink() || (uid() !== undefined && st.uid !== uid())) return false;
+		if (!st.isDirectory() || st.isSymbolicLink() || (ids && st.uid !== uid())) return false;
+		const inside = relative(realpathSync(home), realpathSync(dir));
+		if (!ids && (inside.startsWith("..") || isAbsolute(inside))) return false;
 		if (process.platform !== "win32" && (st.mode & 0o077) !== 0) chmodSync(dir, 0o700);
 		return true;
 	} catch {
@@ -77,7 +95,7 @@ export function answerOf(value: unknown, request: Pick<TrustRequest, "id" | "dig
 }
 export function resultOf(value: unknown, id: string): TrustResult | undefined {
 	const r = value as TrustResult | null;
-	return r !== null && typeof r === "object" && r.version === 1 && r.id === id && ["remote", "terminal", "gone"].includes(r.by) && (r.answerId === undefined || (typeof r.answerId === "string" && ANSWER_ID.test(r.answerId))) ? r : undefined;
+	return r !== null && typeof r === "object" && r.version === 1 && r.id === id && ["remote", "terminal", "gone", "changed"].includes(r.by) && (r.answerId === undefined || (typeof r.answerId === "string" && ANSWER_ID.test(r.answerId))) ? r : undefined;
 }
 
 export const requestFile = (id: string) => `${id}.json`, answerFile = (id: string) => `${id}.answer.json`, resultFile = (id: string) => `${id}.result.json`;
@@ -86,7 +104,7 @@ export const readResult = (dir: string, id: string) => ((f) => (f ? resultOf(f.v
 export const remove = (dir: string, ...names: string[]) => names.forEach((n) => rmSync(join(dir, n), { force: true }));
 
 /** Every valid request in the directory whose process still runs (`runs`, with its start time when it has one), oldest first. */
-export function listRequests(dir: string, alive: typeof runs = runs): TrustRequest[] {
+export function listRequests(dir: string, alive: typeof runs = lives): TrustRequest[] {
 	let names: string[];
 	try {
 		names = readdirSync(dir);
@@ -107,7 +125,7 @@ export function listRequests(dir: string, alive: typeof runs = runs): TrustReque
  * Removes what nobody will read: a request whose process is gone or that is not valid (a minute old), an answer for no request, a result two minutes old, and a temporary file a crash left.
  * A request of a live process is never touched.
  */
-export function sweep(dir: string, now = Date.now(), alive: typeof runs = runs) {
+export function sweep(dir: string, now = Date.now(), alive: typeof runs = lives) {
 	let names: string[];
 	try {
 		names = readdirSync(dir);

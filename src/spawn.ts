@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { checkText, type Reply } from "./control.ts";
 import { createDeploys, type Deploy, type StepId } from "./deploy.ts";
+import { clean, cleanGroup } from "./trust/found.ts";
 import { waitPastTrust } from "./trust/wait.ts";
 import { type Hidden, HiddenError, hasHidden, platformHidden } from "./hidden.ts";
 import { createTab, type HerdrCall, type HerdrRun, isSub, type Pane, panes, report, result, type Sleep, startPi, type Workspace, workspaces } from "./herdr.ts";
@@ -127,7 +128,7 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 		const joined = await waitPastTrust(sleep, async () => {
 			const r = (await panes(run)).find((p) => p.pane_id === paneId)?.tokens?.sb_role;
 			return role ? r === role : r === "member" || r === "main";
-		}, JOIN_WAIT_MS, 500, trustDir ? { dir: trustDir, pane: paneId, on: (r) => d.hold(r && { id: r.id, digest: r.digest, folder: r.cwd, found: r.found }) } : undefined);
+		}, JOIN_WAIT_MS, 500, trustDir ? { dir: trustDir, pane: paneId, on: (r) => d.hold(r && { id: r.id, digest: r.digest, folder: clean(r.cwd), found: r.found.map(cleanGroup) }) } : undefined);
 		if (!joined) throw new Error(`The pi in pane ${paneId} did not join the net${role ? ` as the ${role} of its tab` : ""} within ${JOIN_WAIT_MS / 1000} s`);
 		if (!prompt) return;
 		d.go("deliver");

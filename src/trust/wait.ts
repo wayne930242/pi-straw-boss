@@ -1,5 +1,5 @@
 import type { Sleep } from "../herdr.ts";
-import { alive, runs } from "../remote.ts";
+import { clean } from "./found.ts";
 import { listRequests } from "./files.ts";
 import type { TrustRequest } from "./types.ts";
 
@@ -14,15 +14,13 @@ export interface TrustWatch { dir: string; pane: string; on?(request: TrustReque
 /** `waitFor` (herdr.ts) that does not count the time a trust question for `trust.pane` is open, and fails after ten minutes of it. */
 export async function waitPastTrust<T>(sleep: Sleep, check: () => T | Promise<T>, ms: number, step = 100, trust?: TrustWatch): Promise<Awaited<T> | undefined> {
 	let waited = 0, asking = 0, seen: string | undefined;
-	// A request whose process has been confirmed as the one that wrote it is afterwards looked at by signal alone, not by `ps` (as handover.ts ownerGone does).
-	const confirmed = new Set<string>(), lives: typeof runs = (r, wrote, start) => (r.pid !== undefined && confirmed.has(`${r.pid}/${r.started}`) ? alive(r.pid) : runs(r, wrote, start) && (confirmed.add(`${r.pid}/${r.started}`), true));
 	for (;;) {
 		const value = await check();
-		const ask = trust && listRequests(trust.dir, lives).find((r) => r.pane === trust.pane);
+		const ask = trust && listRequests(trust.dir).find((r) => r.pane === trust.pane);
 		if (value) return (seen && trust?.on?.(undefined), value);
 		if (ask?.id !== seen) trust?.on?.(ask), (seen = ask?.id);
 		if (ask) {
-			if ((asking += step) > TRUST_MAX_MS) throw new Error(`No trust decision for ${ask.cwd} within ${TRUST_MAX_MS / 60_000} minutes`);
+			if ((asking += step) > TRUST_MAX_MS) throw new Error(`No trust decision for ${clean(ask.cwd)} within ${TRUST_MAX_MS / 60_000} minutes`);
 		} else if ((waited += step) > ms) return undefined;
 		await sleep(step);
 	}

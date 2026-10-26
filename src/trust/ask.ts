@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { watch as fsWatch } from "node:fs";
+import { lstatSync, watch as fsWatch } from "node:fs";
 import { join } from "node:path";
 import { getAgentDir, type ExtensionAPI, ProjectTrustStore, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { herdrSocket } from "../endpoint.ts";
 import { answers, readRecord } from "../handover.ts";
 import { startOf } from "../startof.ts";
 import type { Kit } from "../state.ts";
-import { answerFile, answerOf, ensureDir, readJson, remove, requestFile, resultFile, sweep, trustDir, writeAtomic } from "./files.ts";
+import { answerFile, answerOf, ensureDir, MAX_FILE, readJson, remove, requestFile, resultFile, sweep, trustDir, writeAtomic } from "./files.ts";
 import { canonical, digestOf, foundIn } from "./found.ts";
 import type { TrustChoice, TrustRequest, TrustResult } from "./types.ts";
 
@@ -64,19 +64,23 @@ export function createAsk(d: AskDeps) {
 	return async function decide(cwd: string, ctx: { mode: string; hasUI: boolean }): Promise<Decision> {
 		try {
 			if (!(await relays(cwd, ctx)) || !ensureDir(d.dir)) return UNDECIDED;
-			return await ask(canonical(cwd));
+			return await ask(cwd);
 		} catch {
 			return UNDECIDED; // whatever fails here, pi asks as it would have
 		}
 	};
 
-	async function ask(cwd: string): Promise<Decision> {
+	async function ask(from: string): Promise<Decision> {
 		sweep(d.dir, d.now());
-		const id = d.uuid(), found = foundIn(cwd), started = d.startOf(d.proc.pid);
+		const cwd = canonical(from), id = d.uuid(), started = d.startOf(d.proc.pid);
 		const role = d.env.PI_SUBAGENT_ID ? "subagent" : ["member", "main", "tower"].find((r) => r === d.env.STRAW_BOSS_ROLE) ?? "none";
-		const request: TrustRequest = { version: 1, id, pid: d.proc.pid, ...(started && { started }), herdr: herdrSocket(d.env), pane: d.env.HERDR_PANE_ID!, role, cwd, at: d.now(), found, digest: digestOf(cwd, found) };
+		const head = { version: 1, id, pid: d.proc.pid, ...(started && { started }), herdr: herdrSocket(d.env), pane: d.env.HERDR_PANE_ID!, role, cwd, at: d.now() } as const;
+		// What is found is capped against the whole request, so the file stays within what a reader accepts.
+		const read = (): TrustRequest => { const found = foundIn(cwd, undefined, { from, max: MAX_FILE - Buffer.byteLength(JSON.stringify({ ...head, found: [], digest: "0".repeat(64) })) - 64 }); return { ...head, found, digest: digestOf(cwd, found) }; };
+		let request = read();
 		const gone = () => remove(d.dir, requestFile(id), answerFile(id));
 		const result = (by: TrustResult["by"], answerId?: string) => writeAtomic(d.dir, resultFile(id), { version: 1, id, by, ...(answerId && { answerId }), at: d.now() });
+		const missing = () => { try { return !lstatSync(join(d.dir, requestFile(id))).isFile(); } catch { return true; } };
 		writeAtomic(d.dir, requestFile(id), request);
 		const { stdin } = d, wasRaw = stdin.isRaw ?? false;
 		let keyed = false, wake = () => {};
@@ -109,11 +113,25 @@ export function createAsk(d: AskDeps) {
 				const file = keyed ? undefined : readJson(join(d.dir, answerFile(id))), answer = file && answerOf(file.value, request); // a key that came first wins, whatever is on disk
 				if (keyed) return (leave(), result("terminal"), gone(), UNDECIDED);
 				if (answer) {
+					const now = read(); // the folder may have changed since the question was shown: an answer is for what was shown
+					if (now.digest !== request.digest) {
+						request = now;
+						remove(d.dir, answerFile(id));
+						result("changed", answer.answerId);
+						writeAtomic(d.dir, requestFile(id), request);
+						continue;
+					}
 					leave();
 					d.write(`Answered in the Straw Boss window: ${MAP[answer.choice].said}.\n`);
 					result("remote", answer.answerId);
 					gone();
 					return MAP[answer.choice].decision;
+				}
+				if (missing()) { // swept or removed by a signal path that did not end this pi: nobody can answer it any more
+					leave();
+					d.write("The question was withdrawn; answer here.\n");
+					result("gone");
+					return UNDECIDED;
 				}
 				if (d.now() >= nextUp) {
 					nextUp = d.now() + UP_EVERY_MS;

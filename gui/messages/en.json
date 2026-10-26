@@ -453,6 +453,8 @@
 	"trust_no": "Don't trust",
 	"trust_terminal": "The agent's terminal can answer too; the first answer counts.",
 	"trust_stale": "Answered in the terminal.",
+	"trust_gone": "The agent ended before the answer arrived; nothing was decided.",
+	"trust_folder_changed": "The folder changed after the question was shown, so your answer was not used. Read the new question and answer again.",
 	"trust_changed": "The question changed or is closed; read it again.",
 	"trust_closed": "This question is closed.",
 	"trust_reminder": "An agent needs your OK to load a folder's settings",

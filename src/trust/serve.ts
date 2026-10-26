@@ -2,16 +2,14 @@ import { watch as fsWatch } from "node:fs";
 import type { Reply } from "../control.ts";
 import type { Pane, Workspace, World } from "../herdr.ts";
 import { ANSWER_ID, answerFile, ensureDir, listRequests, readResult, sweep, UUID, writeAtomic } from "./files.ts";
-import { CHOICES, type TrustAnswer, type TrustAsk, type TrustChoice, type TrustGroup, type TrustRequest } from "./types.ts";
+import { clean, cleanGroup } from "./found.ts";
+import { CHOICES, type TrustAnswer, type TrustAsk, type TrustChoice, type TrustRequest } from "./types.ts";
 
 // The server's side of the trust question (docs/specs/2026-10-26-project-trust.md): lists the requests the asking pis left in <state>/trust/, one entry per folder and digest, and
 // writes their answers. A request is listed only while its Herdr is this server's, its process lives, and Herdr lists its pane; one whose process is gone is removed (sweep).
 
 const SETTLE_MS = 5000, STEP_MS = 100, KEEP_MS = 120_000;
 const no = (status: number, error: string, reason: string, extra: Record<string, unknown> = {}): Reply => ({ status, body: { error, reason, ...extra } });
-/** Text for the page: control characters are removed and Unicode format characters (bidi overrides, zero-width marks) drawn as U+FFFD. */
-export const clean = (text: string) => text.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").replace(/\p{Cf}/gu, "\ufffd");
-const group = (g: TrustGroup): TrustGroup => ({ ...g, kind: clean(g.kind), path: clean(g.path), items: g.items.map(clean) });
 
 export interface ServeDeps {
 	/** <state>/trust */
@@ -50,7 +48,7 @@ export function createTrustServe(d: ServeDeps) {
 		return groupsOf(listed(panes, workspaces)).map((g): TrustAsk => {
 			const first = g[0]!, opening = g.map((r) => d.opening?.(r.pane)).find(Boolean);
 			return {
-				id: first.id, digest: first.digest, folder: clean(first.cwd), found: first.found.map(group),
+				id: first.id, digest: first.digest, folder: clean(first.cwd), found: first.found.map(cleanGroup),
 				agents: g.map((r) => ({ pane: r.pane, base: clean(workspaces.find((w) => w.workspace_id === panes.find((p) => p.pane_id === r.pane)?.workspace_id)?.label ?? ""), role: r.role, at: r.at })),
 				...(opening && { opening }),
 			};
@@ -61,7 +59,8 @@ export function createTrustServe(d: ServeDeps) {
 	async function settle(ids: string[], answerId: string): Promise<Reply> {
 		let by: string | undefined;
 		for (let waited = 0; waited <= SETTLE_MS; waited += STEP_MS) {
-			const results = ids.map((id) => readResult(d.dir, id)), live = listRequests(d.dir);
+			// A `changed` result belongs to the answer it names; one for an earlier answer is not this one's.
+			const results = ids.map((id) => readResult(d.dir, id)).map((r) => (r?.by === "changed" && r.answerId !== answerId ? undefined : r)), live = listRequests(d.dir);
 			if (results.some((r) => r?.by === "remote" && r.answerId === answerId)) return { status: 200, body: { outcome: "accepted" } };
 			const ended = ids.filter((id, i) => results[i] || !live.some((r) => r.id === id)); // a request that is gone without a result: its pi ended
 			by = ended.length ? (results.find((r) => r)?.by ?? "gone") : by;

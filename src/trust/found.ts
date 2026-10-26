@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import type { TrustGroup } from "./types.ts";
@@ -16,10 +16,26 @@ const unreadable = (kind: string, path: string): TrustGroup => ({ kind, path, it
 const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 const object = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
 const names = (dir: string) => readdirSync(dir).sort();
+export const MAX_READ = 262_144;
+/** Text for the page: control characters are removed and Unicode format characters (bidi overrides, zero-width marks) drawn as U+FFFD. */
+export const clean = (text: string) => text.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").replace(/\p{Cf}/gu, "\ufffd");
+export const cleanGroup = (g: TrustGroup): TrustGroup => ({ ...g, kind: clean(g.kind), path: clean(g.path), items: g.items.map(clean) });
+/** A folder's own file, read with care: a plain file (no link, no device or pipe, which could block or never end) of at most 256 KB, read through the descriptor that was checked. */
+function readSmall(file: string): string {
+	if (!lstatSync(file).isFile()) throw new Error("not a plain file");
+	const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+	try {
+		const st = fstatSync(fd);
+		if (!st.isFile() || st.size > MAX_READ) throw new Error("not a plain small file");
+		return readFileSync(fd, "utf8").replace(/^\uFEFF/, "");
+	} finally {
+		closeSync(fd);
+	}
+}
 
 /** .pi/settings.json: the packages pi would install, the paths it adds, and a count of its other keys. */
 function settings(file: string): TrustGroup {
-	const parsed: unknown = JSON.parse(readFileSync(file, "utf8").replace(/^\uFEFF/, ""));
+	const parsed: unknown = JSON.parse(readSmall(file));
 	if (!object(parsed)) throw new Error("not an object");
 	const items: string[] = [];
 	for (const p of Array.isArray(parsed.packages) ? parsed.packages : []) {
@@ -33,7 +49,7 @@ function settings(file: string): TrustGroup {
 }
 /** .pi/mcp.json: each server as `name: command args` or `name: url`. */
 function mcp(file: string): TrustGroup {
-	const parsed: unknown = JSON.parse(readFileSync(file, "utf8").replace(/^\uFEFF/, ""));
+	const parsed: unknown = JSON.parse(readSmall(file));
 	const servers = object(parsed) && object(parsed.mcpServers) ? parsed.mcpServers : {};
 	const items = Object.entries(servers).map(([name, s]) => {
 		const c = object(s) ? s : {};
@@ -51,24 +67,25 @@ const tryRead = (kind: string, path: string, read: () => TrustGroup) => {
 
 /**
  * The folder's resources as groups, in the order pi lists them. `cwd` is the canonical folder; `home` is where ~/.agents/skills lives.
- * The result is capped at 32 KB: when it is larger, the last groups give up their items (counted in `more`) until it fits.
+ * The result is capped at `max` bytes (32 KB, or less when the whole request must fit its file): when it is larger, the last groups give up their items (counted in `more`) until it fits.
+ * pi looks for ancestors' .agents/skills from its working directory as it was given, so `from` (that path, when it is not the canonical one) is where the walk starts.
  */
-export function foundIn(cwd: string, home: string = canonical(process.env.HOME || homedir())): TrustGroup[] {
+export function foundIn(cwd: string, home: string = canonical(homedir()), { max = MAX_FOUND, from = cwd }: { max?: number; from?: string } = {}): TrustGroup[] {
 	const out: TrustGroup[] = [], pi = join(cwd, ".pi");
 	if (existsSync(join(pi, "settings.json"))) out.push(tryRead("settings", ".pi/settings.json", () => settings(join(pi, "settings.json"))));
 	if (existsSync(join(pi, "mcp.json"))) out.push(tryRead("mcp", ".pi/mcp.json", () => mcp(join(pi, "mcp.json"))));
 	for (const dir of DIRS) if (existsSync(join(pi, dir))) out.push(tryRead(dir, `.pi/${dir}`, () => group(dir, `.pi/${dir}`, names(join(pi, dir)))));
 	for (const [file, kind] of FILES) if (existsSync(join(pi, file))) out.push({ kind, path: `.pi/${file}`, items: [], more: 0 });
 	const user = join(home, ".agents", "skills");
-	for (let dir = cwd; ; dir = dirname(dir)) {
+	for (let dir = from; ; dir = dirname(dir)) {
 		const skills = join(dir, ".agents", "skills");
-		if (skills !== user && existsSync(skills)) {
-			const path = relative(cwd, skills).split(sep).join("/");
+		if (existsSync(skills) && canonical(skills) !== canonical(user)) {
+			const path = relative(from, skills).split(sep).join("/");
 			out.push(tryRead("agents-skills", path, () => group("agents-skills", path, names(skills))));
 		}
 		if (dirname(dir) === dir) break;
 	}
-	for (let i = out.length - 1; i >= 0 && Buffer.byteLength(JSON.stringify(out)) > MAX_FOUND; i--) {
+	for (let i = out.length - 1; i >= 0 && Buffer.byteLength(JSON.stringify(out)) > max; i--) {
 		const g = out[i]!;
 		out[i] = { ...g, items: [], more: g.more + g.items.length };
 	}

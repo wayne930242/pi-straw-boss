@@ -60,8 +60,10 @@ export function deployPanel(o: DeployOpts): HTMLElement & { close(): void } {
 	ownOpenings.add(id); // this page shows the opening's trust question here, so its alert queue does not
 	const ask = (q: Progress["trust"]) => {
 		if (!q) return void (question && (holder.replaceChildren(), (question = undefined)));
+		const fresh = !question;
 		if (!question) holder.replaceChildren((question = trustPanel((body) => o.trust?.(body) ?? Promise.reject(new Error("no route")))));
 		question.update(q);
+		if (fresh) holder.scrollIntoView?.({ block: "end", behavior: "smooth" }); // on a phone the choices are below the fold: bring them up
 	};
 	back.onclick = () => o.back();
 	const items = new Map<StepId, { li: HTMLElement; at: HTMLElement }>();

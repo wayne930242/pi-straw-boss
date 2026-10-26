@@ -397,6 +397,8 @@
 	"trust_no": "不信任",
 	"trust_terminal": "智慧體的終端機也可以回答，以先到的答案為準。",
 	"trust_stale": "已在終端機回答。",
+	"trust_gone": "代理在答案送達前已結束，沒有做任何決定。",
+	"trust_folder_changed": "問題顯示後資料夾又變了，所以沒有採用你的答案。請看新的問題再回答一次。",
 	"trust_changed": "問題已變動或已關閉，請重新閱讀。",
 	"trust_closed": "這個問題已關閉。",
 	"trust_reminder": "有智慧體等你同意，才能載入資料夾的設定",

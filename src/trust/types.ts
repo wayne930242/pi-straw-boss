@@ -9,7 +9,7 @@ export type TrustChoice = "trust" | "once" | "no";
 export const CHOICES: readonly TrustChoice[] = ["trust", "once", "no"];
 /** The server's answer file (`<id>.answer.json`). */
 export interface TrustAnswer { version: 1; id: string; digest: string; choice: TrustChoice; answerId: string }
-/** The asking pi's result file (`<id>.result.json`), written just before it returns: which side answered. */
-export interface TrustResult { version: 1; id: string; by: "remote" | "terminal" | "gone"; answerId?: string; at: number }
+/** The asking pi's result file (`<id>.result.json`), written just before it returns: which side answered (`changed`: the folder changed after the answer, whose `answerId` it names, so the question was asked again). */
+export interface TrustResult { version: 1; id: string; by: "remote" | "terminal" | "gone" | "changed"; answerId?: string; at: number }
 /** One entry of the snapshot's `trust`: a folder and digest with the agents waiting on it (D8). `opening` names the page's opening that waits on it. */
 export interface TrustAsk { id: string; digest: string; folder: string; found: TrustGroup[]; agents: { pane: string; base?: string; tab?: string; role: string; at: number }[]; opening?: string }

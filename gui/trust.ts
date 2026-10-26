@@ -23,7 +23,7 @@ export const whereOf = (ask: TrustAsk) => ask.agents.length === 1
 export function outcome(r: Answer | undefined): { tone: "ok" | "error"; text: string; done: boolean; again: boolean } {
 	const o = r?.body.outcome;
 	if (o === "accepted") return { tone: "ok", text: m.answered(), done: true, again: false };
-	if (o === "stale") return { tone: "error", text: m.trust_stale(), done: true, again: false };
+	if (o === "stale") return { tone: "error", text: r?.body.by === "gone" ? m.trust_gone() : r?.body.by === "changed" ? m.trust_folder_changed() : m.trust_stale(), done: true, again: false };
 	if (o === "busy") return { tone: "error", text: m.answer_busy(), done: true, again: false };
 	if (o === "unknown" || r?.status === 504 || !r) return { tone: "error", text: m.not_confirmed(), done: true, again: true };
 	if (r.status === 409) return { tone: "error", text: m.trust_changed(), done: true, again: false };
