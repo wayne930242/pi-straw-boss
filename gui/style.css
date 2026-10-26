@@ -803,6 +803,41 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 @media (pointer: coarse) { .composer textarea, .ask input, .ask textarea { font-size: 16px; } .composer button, .go, .later, .x, .chat-pill, .pair-btn, .alerts, .ask button, .term-bar button, .doc-acts > .cmp-link, .quit-btn, .d-doc { min-height: 40px; } }
 /* A phone's keys are as big as a thumb needs, a narrow window with a mouse included. */
 @media (max-width: 640px), (pointer: coarse) { .pad-key, .pad-yes { min-height: 44px; } .pad-digits summary { padding: 14px 0; } }
+/* A phone's tap targets (touch or a narrow window with a mouse): every control is at least 44 × 44 px, the composer's own row 48. A dense row keeps its look and
+   gets the room instead: a chip draws its pill in ::before inside a 44 px box, and a disclosure row is 44 px tall, so neighbours never share a hit area. The
+   timeline's marks (10 px, placed by time, many within a few px of each other) are the one exception: the units they point to are the cards above. */
+@media (max-width: 640px) {
+	/* The HUD, the settings, and the location bar. */
+	.brand { min-height: 44px; } .prefs-btn { width: 44px; height: 44px; } .prefs-pop > * { min-height: 44px; }
+	.crumbs { align-items: center; } .crumbs > * { padding-block: 14px; line-height: 16px; }
+	:is(.pair-btn, .alerts, .done-btn, .quit-btn, .later, .go, .x, .d-doc, .ask-send, .ask-opt, .sheet-yes, .cmp-yes, .chat-pill, .drawer-map) { min-height: 44px; }
+	:is(.pair-btn, .quit-btn, .later, .x, .tab-add, .ask-send, .sheet-yes, .cmp-yes) { min-width: 44px; }
+	/* The map: a quit button, then its row. */
+	.tab h3 { min-height: 44px; }
+	/* Chips and the small pills: the pill is a 22 px drawing in a 44 px box. */
+	:is(.tab-add, .thought, .more, .tab-btn) { position: relative; isolation: isolate; min-height: 44px; border: 0; background: none; }
+	:is(.tab-add, .thought, .more, .tab-btn)::before { content: ""; position: absolute; inset: 11px 0; z-index: -1; border: 1px solid var(--line); border-radius: 999px; pointer-events: none; }
+	.tab-add::before { border-radius: 10px; } .tab-btn.active::before, .more.open::before { border-color: color-mix(in srgb, var(--gold) 40%, transparent); }
+	/* Disclosure rows: the log's tool calls and notices, the todos and monitors above the composer, the timeline, and a dialog's folds. */
+	:is(.act > summary, .notice > summary, .rule summary, .todos summary, .monitors summary, .timeline summary) { align-items: center; min-height: 44px; padding-block: 0; box-sizing: border-box; }
+	.todos, .monitors { padding-block: 0; } :is(.todos ol, .monitors ul) { margin: 0 0 10px; }
+	.link-form summary { padding-block: 12px; }
+	/* Links that stand alone, apart from running text. */
+	.specs a, .d-squad a { display: inline-block; padding-block: 12px; line-height: 20px; }
+	.dbase h3 { align-items: center; } .dbase h3 a { padding-block: 12px; line-height: 20px; }
+	.cmp-link { display: inline-flex; align-items: center; padding-inline: 8px; } :is(.ask, .term-bar, .doc-acts, .composer) :is(button, .cmp-link) { min-height: 44px; } /* above the touch rule's .ask button and the like */
+	.slash li { align-items: center; min-height: 44px; }
+	/* Boxes and rows in a dialog: the folder picker, the questions, the spawn form. */
+	:is(.spawn input, .spawn textarea, .picker input, .ask-own) { min-height: 44px; }
+	.picker-crumbs button, .picker-places button, .pitem { min-height: 44px; }
+	.drawer-top .pair-btn { min-height: 44px; }
+	/* The session header and the composer: the row of keys is 48 px, the box above it two lines. */
+	.head-back { width: 44px; height: 44px; } .modes button { min-height: 44px; }
+	:is(.head-info, .head-main:not([hidden]), .head-quit:not([hidden])) { min-height: 44px; min-width: 44px; }
+	.composer textarea { min-height: 56px; } .cmp-row { gap: 8px 10px; }
+	.comms-in .ask-acts { position: sticky; bottom: -12px; margin: 0 -14px -12px; padding: 8px 14px 12px; background: color-mix(in srgb, var(--amber) 6%, var(--bg)); } /* Send answer stays in view while a long question scrolls */
+	.composer :is(.cmp-alt, .cmp-send) { min-height: 48px; } .composer .cmp-alt { min-width: 48px; } .composer .cmp-send { min-width: 64px; }
+}
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 
 /* Straw Link (src/link, gui/link.ts, gui/linkbar.ts): a teammate's bases beside ours, the Link notices under the header, and the team settings tile. Cards keep one border all round. */
