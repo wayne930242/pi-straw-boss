@@ -287,15 +287,22 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
         (`CheckOwner $dir`, before its `/inheritance:r`; `serve` and the server's own script), and the read-back. **One rule for the
         accepted owners in every check: the user, BA, SYSTEM** (`OWNER_OK_SIDS`: `ownerProblems`, the launch script's check, the native
         owner read, the scripts' owner walks).
-        **What a start can still write into a foreign folder** (documented trade-off): when the foreign folder's DACL is already right
-        (the attacker made it exactly owner-and-SYSTEM, which gives the attacker nothing it lacked) `protectFolder` changes nothing and
-        returns, so the starter's lock (`server.lock`), the placeholder record (no secret), `server.log` lines and `start-error.json` (the
-        refusal text) are written before the PowerShell gate refuses; none holds a secret, and the owner is unchanged. When its DACL is
-        wrong and the owner foreign, nothing is written: `protectFolder` throws first. A swapped temporary folder gets the protect call
-        (adds the user and SYSTEM where the attacker granted WRITE_DAC; the owner is unchanged), which is the one change made to a
-        foreign folder.
-        Both ACL scripts check below the folder the same way: the folder's own owner first, then (after the link-free walk) every
-        entry's owner (a SID, through .NET), and only then `/setowner /T /C /L /Q` (PowerShell, which turns BA- and SYSTEM-owned entries
+        **Nothing is created or written under a foreign-owned folder** (R13; VM pass on f72b184, where a refused start had left
+        `servers\<hash>\{server.json, server.log, start-error.json}` and `server.lock` in the attacker's folder). The **owner gate**
+        (`ownerGate`: one PowerShell reads the folder's owner as a SID) runs in `lockFor` BEFORE anything is made or changed in an existing
+        folder, and again right after `prepare` for a folder that start has just made (the first start ever, or a swapped temporary folder
+        that landed there), so before the lock, the placeholder record, the log or `start-error.json`; `launch` passes it too before its
+        placeholder (a server that went away between the look and the lock). The refusal goes to stderr and the JSON output of `up`
+        (`startError.code` `acl`), never into the folder. The read is remembered by the folder's file identity (volume and file index), so a
+        long-lived pi session reads it once, `protectFolder` does not read it again for a wrong DACL, and a folder made again under its name is
+        read again. **Cost:** one PowerShell on a cold `up` (one more beside the launch PowerShell; log phase `owner-gate ms=…`, to be measured on
+        the VM), and on a `stop` of a server that is down (it writes `stopped`). **A request that finds a server running** (`up` again, `stop`
+        of a live server, `status`, a session's look) reads no owner and starts no PowerShell: it looks first (a read only), and takes the
+        lock without the gate. The residual: a folder with a live server record is trusted that far; an attacker's fake server there makes a
+        `stop` take `server.lock` in the attacker's folder. The protect call on a swapped temporary folder (adds the user and SYSTEM where the
+        attacker granted WRITE_DAC; the owner is unchanged) is the one change `protectFolder` makes to a foreign folder.
+        Both ACL scripts check below the folder the same way: the folder's own owner first, then ONE walk (R13) that reads every entry's
+        attributes, link type and owner (a SID, through .NET) once, refusing a junction, a symbolic link or a foreign owner, and only then `/setowner /T /C /L /Q` (PowerShell, which turns BA- and SYSTEM-owned entries
         into the user's, entries already checked) and `/reset /T /C /L`, so a foreign entry is refused with nothing below the folder changed.
         **Residual (R11-F003):** the walk and the calls are not atomic; an account that can already create entries below the folder (only
         through the known plain-`mkdir` windows of other modules, before the folder was protected) can plant one in between, which `/reset`

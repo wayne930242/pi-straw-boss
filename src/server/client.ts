@@ -11,7 +11,7 @@ import {
 	adoptStarting, clearStartError, clearStopped, endStarting, fileOf, type IntercomScope, type LockDeps, LockUnreadable, markStarting, prepareSlot, readRecord, secretDir, readStartError, restartingFresh, type ServerRecord,
 	type Slot, type StartError, takeLock, TOUCH_MS, touchRestarting, updateRecord, writeStartError,
 } from "./record.ts";
-import { resetFileAcl } from "./winprep.ts";
+import { ownerGate, resetFileAcl } from "./winprep.ts";
 import { callControl, ControlError, helloWhy, type Reply } from "./socket.ts";
 
 // What reaches the server from outside it (docs/specs/2026-10-26-sb-backend.md, Starting, Stopping, Restarts and upgrades): a pi session's look, the shell's `cli.mjs`, a
@@ -134,6 +134,11 @@ export interface Ctx {
 	lock: LockDeps;
 	/** Makes the slot's folder ready before the first file is created in it (on Windows, protects it); `ms` is the time its native calls may take. */
 	prepare(slot: Slot, ms?: number): void;
+	/**
+	 * The gate before the first file is created in an existing state folder: on Windows one owner read (`ownerGate`), refusing another account's folder with nothing written in it. Returns whether it read.
+	 * Called where a file is about to be created and no server is known to run; elsewhere a no-op.
+	 */
+	gate(slot: Slot, ms?: number): boolean;
 	log: Log;
 	node: string;
 	timers: Timers;
@@ -146,6 +151,7 @@ export function makeCtx(over: Partial<Ctx> & Pick<Ctx, "slot" | "version" | "cli
 	return {
 		env: process.env, platform: process.platform, node: process.execPath, spawn: platform === "win32" ? (spec) => spawnBreakaway(spec, { fallback: spawnDetached }) : spawnDetached, timers: timersFor(over.platform),
 		kill: (pid, signal) => void process.kill(pid, signal), prepare,
+		gate: over.gate ?? (over.prepare || platform !== "win32" ? () => false : (slot: Slot, ms?: number) => ownerGate(slot.stateDir, undefined, ms)),
 		// This process holds the locks it takes: it is alive however the liveness check is replaced.
 		lock: { now, alive: (pid) => pid === process.pid || alive(pid), startOf: start, sleep, note: (event, fields) => log.line(event, fields), prepare, ...(platform === "win32" ? { repair: (file: string) => resetFileAcl(file, undefined, 15_000) } : {}) },
 		startedLater: over.startedLater ?? (over.startOf ? async (pid: number) => over.startOf!(pid) : (pid: number) => startedLater(pid, { hold: false })),
@@ -275,6 +281,13 @@ export async function launch(ctx: Ctx, { began, old, deadline }: { began?: strin
 	const t0 = ctx.now(), waitMs = deadline === undefined ? ctx.timers.start : Math.max(0, Math.min(ctx.timers.start, deadline - t0));
 	// Nothing left of the time given: no server is started, since the call would report a failure while the server it started kept starting.
 	if (waitMs <= 0) throw new ServerError("start-failed", "the time given ran out before the server was started", undefined, "start");
+	// A start that is not a restart creates files (the placeholder, the log): where `lockFor` was told a server runs and it has gone since, the gate is passed here, before the first of them.
+	if (!began) try {
+		ctx.gate(ctx.slot, waitMs);
+	} catch (error) {
+		const text = (error as Error).message;
+		throw new ServerError("start-failed", `acl: ${text}`, { at: new Date(ctx.now()).toISOString(), code: "acl", text });
+	}
 	clearStartError(ctx.slot);
 	let keeps = old, mine: { began: string; expect: Replaced } | undefined;
 	if (!began) {
@@ -334,9 +347,19 @@ export async function launch(ctx: Ctx, { began, old, deadline }: { began?: strin
  * Takes `server.lock`, after the slot's folder is ready (on Windows protected: no file is created in an unprotected folder). A folder that cannot be protected is a start that cannot run
  * here (`acl`, told with exit 3, and not written to a file: there is no protected folder to write it in); a busy lock is `busy`, whose `wait` is `lock`.
  */
-export async function lockFor(ctx: Ctx, waitMs: number, deadline?: number) {
+/** Whether a request must pass the owner gate before it writes: not when a server is known to run in the folder (it wrote nothing of its own to get there, and a stop or a second `up` runs no PowerShell). */
+export const needsGate = (seen: Probe) => !(seen.live || seen.denied || seen.runs === true);
+export async function lockFor(ctx: Ctx, waitMs: number, deadline?: number, gate = true) {
 	try {
-		ctx.prepare(ctx.slot, deadline === undefined ? undefined : within(ctx, deadline, 15_000));
+		const ms = deadline === undefined ? undefined : within(ctx, deadline, 15_000);
+		// R13: nothing is created or changed in a folder that is another account's. An existing folder is gated BEFORE anything is made or changed in it (the owner is read once, and not again by
+		// `prepare` for a wrong DACL); a folder `prepare` has just made (the first start ever) is gated right after it, before the lock, the placeholder, the log or `start-error.json`. Both are
+		// no-ops where the owner was read for this folder already, and where a server is known to run (`gate` false).
+		const t = ctx.now();
+		let read = gate && ctx.gate(ctx.slot, ms);
+		ctx.prepare(ctx.slot, ms);
+		if (gate) read = ctx.gate(ctx.slot, ms) || read;
+		if (read) ctx.log.line("phase", { name: "owner-gate", ms: ctx.now() - t });
 	} catch (error) {
 		const text = (error as Error).message;
 		throw new ServerError("start-failed", `acl: ${text}`, { at: new Date(ctx.now()).toISOString(), code: "acl", text });
@@ -349,8 +372,8 @@ export async function lockFor(ctx: Ctx, waitMs: number, deadline?: number) {
 	});
 }
 /** The wait for a lock that ends at `deadline`, and the error when the deadline came while the lock was being taken. */
-const lockUntil = async (ctx: Ctx, deadline: number) => {
-	const lock = await lockFor(ctx, Math.max(0, deadline - ctx.now()), deadline);
+const lockUntil = async (ctx: Ctx, deadline: number, gate = true) => {
+	const lock = await lockFor(ctx, Math.max(0, deadline - ctx.now()), deadline, gate);
 	if (ctx.now() >= deadline) {
 		lock.release();
 		throw new ServerError("busy", "the time given ran out while another start or restart held server.lock", undefined, "lock");
@@ -364,7 +387,9 @@ export interface Ensured { server: "found" | "started"; record: ServerRecord }
  * (`up`), which clears `stopped` first; a start that no one asked for leaves a stopped server alone.
  */
 export async function ensure(ctx: Ctx, { boss = false, lockWaitMs = 0, deadline }: { boss?: boolean; lockWaitMs?: number; /** One time limit for the lock wait and the start wait together (`up --timeout`). */ deadline?: number } = {}): Promise<Ensured | { skipped: Verdict }> {
-	const lock = await (deadline === undefined ? lockFor(ctx, lockWaitMs) : lockUntil(ctx, deadline));
+	// A server that is live is looked at without writing anything or reading an owner: the lock below needs no gate then, and a second `up` runs no PowerShell.
+	const gate = needsGate(await probe(ctx, deadline));
+	const lock = await (deadline === undefined ? lockFor(ctx, lockWaitMs, undefined, gate) : lockUntil(ctx, deadline, gate));
 	try {
 		let seen = await probe(ctx, deadline);
 		if (boss && seen.record?.stopped && !seen.live && !seen.denied && clearStopped(ctx.slot)) seen = { ...seen, record: readRecord(ctx.slot) };
@@ -432,7 +457,8 @@ export interface RestartOptions {
  * (unless `downgrade`). A server that is down is started instead. The new one keeps the GUI port and token of the record (B2), registers its identities, and clears `restarting`.
  */
 export async function restart(ctx: Ctx, { reason, downgrade = false, upgrade = false, lockWaitMs = lockWaitFor(ctx), deadline, boss = false, limit = false, counts = !upgrade }: RestartOptions): Promise<Restarted> {
-	let lock = await (deadline === undefined ? lockFor(ctx, lockWaitMs) : lockUntil(ctx, deadline));
+	const gate = needsGate(await probe(ctx, deadline));
+	let lock = await (deadline === undefined ? lockFor(ctx, lockWaitMs, undefined, gate) : lockUntil(ctx, deadline, gate));
 	const hold: Hold = { release: () => lock.release(), retake: async () => void (lock = await lockFor(ctx, deadline === undefined ? ctx.timers.start : Math.max(0, Math.min(ctx.timers.start, deadline - ctx.now())), deadline)) };
 	try {
 		return await restartLocked(ctx, { reason, downgrade, upgrade, boss, limit, counts, deadline }, hold);
@@ -508,7 +534,9 @@ export async function stop(ctx: Ctx): Promise<Stopped> {
 	const t0 = ctx.now();
 	// A state folder that is not the caller's (made by an elevated run, say) cannot be protected or locked from here, and a stop cannot be made without the lock: it says so, and where the server can be
 	// stopped from, instead of leaving only the ACL text (VM pass 4, F8).
-	const lock = await lockFor(ctx, lockWaitFor(ctx)).catch((error: unknown) => {
+	// A server that is down is marked stopped, which writes into the folder: the owner gate comes first. A live one is stopped with no PowerShell.
+	const gate = needsGate(await probe(ctx));
+	const lock = await lockFor(ctx, lockWaitFor(ctx), undefined, gate).catch((error: unknown) => {
 		// Only for the refusals that say the folder is another account's (the owner read, or the protect step's exit 5); a link, a foreign ACE, an unreadable lock or a timeout keep their own words.
 		if (error instanceof ServerError && error.code === "start-failed" && error.startError?.code === "acl" && /\(protect step, exit (?:5|1307|1314)\b|belongs to another account/.test(error.startError.text)) {
 			throw new ServerError("start-failed", `${error.message} (the stop needs the folder: a server that runs in it was started by another account, so stop it from that account, an elevated shell for an elevated run, or end its process)`, error.startError);

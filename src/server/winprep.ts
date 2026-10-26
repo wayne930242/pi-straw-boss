@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { system32, system32Path } from "../winpath.ts";
@@ -133,6 +133,48 @@ export function ownerOfFolder(dir: string, run: RunNative, timeoutMs?: number): 
 	if (!found) throw new Refused(`the owner of ${dir} could not be read (PowerShell gave no SID: ${asciiLine(out).slice(0, 80) || "nothing"})`);
 	return found;
 }
+/** A folder as the file system knows it, so that one made again under the same name is not taken for the one that was checked (the volume and the file index). */
+const identityOf = (dir: string): string | undefined => {
+	try {
+		const info = statSync(dir, { bigint: true });
+		return `${info.dev}:${info.ino}`;
+	} catch {
+		return undefined;
+	}
+};
+/** The folders whose owner this process has read and found acceptable, by identity: a long-lived pi session reads it once, not at every start. */
+const verified = new Map<string, string>();
+const isVerified = (dir: string) => {
+	const id = identityOf(dir);
+	return id !== undefined && verified.get(dir.toLowerCase()) === id;
+};
+const remember = (dir: string) => {
+	const id = identityOf(dir);
+	if (id) verified.set(dir.toLowerCase(), id);
+};
+const acceptableOwner = (owner: string) => owner.toUpperCase() === sid!.toUpperCase() || OWNER_OK_SIDS.includes(owner);
+const foreignOwner = (dir: string, owner: string, tail: string) => `the folder ${dir} belongs to another account (${owner}), not to ${sid}. Run pi as that account (an elevated shell for an administrator's), or delete the folder ${dir}, then start again. (${tail})`;
+/**
+ * The gate before the FIRST write into an existing state folder (VM pass on f72b184: a refused start left the lock, the placeholder record, the log and `start-error.json` inside the attacker's folder):
+ * one PowerShell reads the folder's owner as a SID, and another account's folder is refused with nothing created in it. It reads only where nothing has been read for this very folder yet
+ * (`remember`, by file identity), so `protectFolder`'s owner read for a wrong DACL and a session's earlier start are not repeated. A folder that is not there is left to \`protectFolder\`, which makes it.
+ * Called by every path that is about to create a file where no server is known to run (a cold start, a stop of a server that is down); a request that finds a live server writes nothing of its own
+ * and runs no PowerShell. Returns whether the owner was read.
+ */
+export function ownerGate(dir: string, run: RunNative = runNative, timeoutMs?: number): boolean {
+	if (!existsSync(dir)) return false;
+	refuseLink(dir);
+	if (isVerified(dir)) return false;
+	try {
+		if (!sid) sid = stepOf("whoami", dir, () => ownerSid(run, timeoutMs));
+		const owner = ownerOfFolder(dir, run, timeoutMs);
+		if (!acceptableOwner(owner)) throw new Refused(foreignOwner(dir, owner, "owner read before the first write; nothing was written into the folder"));
+		remember(dir);
+		return true;
+	} catch (error) {
+		throw new Error(`could not check ${dir} before writing to it: ${(error as Error).message}`);
+	}
+}
 /**
  * Protects a folder and reads its DACL back. `fresh` is a folder this process has just made under an unpredictable name: its DACL is the parent's, wrong by construction, and it is protected at once.
  *
@@ -157,9 +199,11 @@ function secure(target: string, run: RunNative, left: () => number | undefined, 
 			wrong = true;
 		}
 		if (!wrong) return;
-		const owner = ownerOfFolder(target, run, left());
-		if (owner.toUpperCase() !== sid!.toUpperCase() && !OWNER_OK_SIDS.includes(owner)) {
-			throw new Refused(`the folder ${target} belongs to another account (${owner}), not to ${sid}, and its permissions are not the owner's and SYSTEM's. Run pi as that account (an elevated shell for an administrator's), or delete the folder ${target}, then start again. (owner read; nothing in the folder was changed)`);
+		// Read already by the gate that runs before `protectFolder` (this start, or an earlier one of this process for this very folder): not asked twice.
+		if (!isVerified(target)) {
+			const owner = ownerOfFolder(target, run, left());
+			if (!acceptableOwner(owner)) throw new Refused(foreignOwner(target, owner, "owner read; its permissions are not the owner's and SYSTEM's; nothing in the folder was changed"));
+			remember(target);
 		}
 	}
 	stepOf("protect", target, () => run("icacls.exe", protectArgs(target, sid!), left()));
@@ -250,4 +294,4 @@ export function protectFolder(dir: string, run: RunNative = runNative, timeoutMs
 	}
 }
 /** For tests: forgets the owner's SID. */
-export const forgetSid = () => { sid = undefined; };
+export const forgetSid = () => { sid = undefined; verified.clear(); };

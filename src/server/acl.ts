@@ -65,16 +65,18 @@ export const ACL_STEPS = [
 	"CheckOwner $dir",
 	"& $icacls $dir /inheritance:r /grant:r \"*${sid}:(OI)(CI)F\" '*S-1-5-18:(OI)(CI)F' | Out-Null",
 	"if ($LASTEXITCODE -ne 0) { throw \"icacls failed with exit code $LASTEXITCODE\" }",
-	// Only name-surrogate links (junction, mount point, symbolic link: `LinkType`) are refused; other reparse points (OneDrive and other cloud placeholders, dedup) are ordinary files and folders, walked as such (R9). A folder that
-	// vanishes between being listed and being walked (the link stale-lock guard, `outbox/<team>`) is skipped; one that is there and cannot be listed is thrown.
-	// The entries below are listed WITHOUT following links (Windows PowerShell 5.1's Get-ChildItem follows junctions): a link or junction anywhere below the folder is refused, before any icacls call
-	// acts below it and again when the SDDLs are read back (R8-F003). `Walk` returns every file and every folder below.
-	"function Walk($root) { $f = New-Object System.Collections.Generic.List[string]; $d = New-Object System.Collections.Generic.List[string]; $todo = New-Object System.Collections.Generic.Stack[string]; $todo.Push($root); while ($todo.Count -gt 0) { $here = $todo.Pop(); try { $names = [IO.Directory]::GetFileSystemEntries($here) } catch { if (Test-Path -LiteralPath $here) { throw }; continue }; foreach ($e in $names) { try { $a = [IO.File]::GetAttributes($e) } catch { continue }; if (($a -band [IO.FileAttributes]::ReparsePoint) -ne 0) { $kind = $null; try { $kind = (Get-Item -LiteralPath $e -Force -ErrorAction Stop).LinkType } catch { throw ('sb-reparse-point ' + $e) }; if ($kind -eq 'Junction' -or $kind -eq 'SymbolicLink') { throw ('sb-reparse-point ' + $e) } }; if (($a -band [IO.FileAttributes]::Directory) -ne 0) { $d.Add($e); $todo.Push($e) } else { $f.Add($e) } } }; return @{ files = $f; folders = $d } }",
-	// Every entry's owner is read and a foreign one refused BEFORE `/setowner` and `/reset` (R11-F001; VM pass 5b): `/setowner /C` would take an entry another account made and granted the user WRITE_OWNER on
-	// (and a reset, WRITE_DAC through a grant that account made, would rewrite the DACL of an entry it still owns). A foreign entry is refused with nothing below the folder changed.
-	// The gap between this walk and the calls below (an entry planted in it) is known and bounded by the folder's own protection (R11-F003).
-	"$pre = Walk $dir",
-	"foreach ($p in @($pre.folders) + @($pre.files)) { try { CheckOwner $p } catch { if (Test-Path -LiteralPath $p) { throw }; continue } }",
+	// ONE walk reads everything about an entry once (R13, the perf of 3,000 files in link\inbox): its attributes, whether it is a junction or symbolic link (`LinkType`; other reparse points, OneDrive and other
+	// cloud placeholders, dedup, are ordinary files and folders), and its OWNER as a SID. A link or junction, or an owner that is not the user, BUILTIN\Administrators or SYSTEM, is thrown BEFORE any call
+	// below changes anything (R11-F001; VM pass 5b): `/setowner /C` would take an entry another account made and granted the user WRITE_OWNER on, and a reset would rewrite the DACL of an entry it still owns.
+	// The entries are listed WITHOUT following links (Windows PowerShell 5.1's Get-ChildItem follows junctions). A folder that vanishes between being listed and being walked (the link stale-lock guard,
+	// `outbox/<team>`) is skipped; one that is there and cannot be listed is thrown. `Walk` returns every file and every folder below; the read-back reuses that list instead of walking again, and reads each
+	// SDDL through .NET (`Sddl`: no provider cmdlet per entry). What is created after the walk (the server's own files by name are read back explicitly; an entry planted in the gap) is the known, bounded
+	// residual of R11-F003.
+	"$own = [Security.AccessControl.AccessControlSections]::Owner",
+	"$all = [Security.AccessControl.AccessControlSections]'Owner,Group,Access'",
+	"function Sddl($p) { if ([IO.Directory]::Exists($p)) { $a = [IO.Directory]::GetAccessControl($p, $all) } else { $a = [IO.File]::GetAccessControl($p, $all) }; return $a.GetSecurityDescriptorSddlForm($all) }",
+	"function Walk($root) { $f = New-Object System.Collections.Generic.List[string]; $d = New-Object System.Collections.Generic.List[string]; $todo = New-Object System.Collections.Generic.Stack[string]; $todo.Push($root); while ($todo.Count -gt 0) { $here = $todo.Pop(); try { $names = [IO.Directory]::GetFileSystemEntries($here) } catch { if (Test-Path -LiteralPath $here) { throw }; continue }; foreach ($e in $names) { try { $a = [IO.File]::GetAttributes($e) } catch { continue }; $isDir = ($a -band [IO.FileAttributes]::Directory) -ne 0; if (($a -band [IO.FileAttributes]::ReparsePoint) -ne 0) { $kind = $null; try { $kind = (Get-Item -LiteralPath $e -Force -ErrorAction Stop).LinkType } catch { throw ('sb-reparse-point ' + $e) }; if ($kind -eq 'Junction' -or $kind -eq 'SymbolicLink') { throw ('sb-reparse-point ' + $e) } }; try { if ($isDir) { $sec = [IO.Directory]::GetAccessControl($e, $own) } else { $sec = [IO.File]::GetAccessControl($e, $own) }; $who = $sec.GetOwner([Security.Principal.SecurityIdentifier]).Value } catch { if (Test-Path -LiteralPath $e) { throw }; continue }; if ($who -ne $sid -and $okOwners -notcontains $who) { throw ('the ' + $e + ' belongs to another account (' + $who + '), not to ' + $sid + ' (nothing was changed)') }; if ($isDir) { $d.Add($e); $todo.Push($e) } else { $f.Add($e) } } }; return @{ files = $f; folders = $d } }",
+	"$tree = Walk $dir",
 	// Everything below the folder is then made the user's, in ONE call (`/C` goes on past an item it may not change; the read-back below is the check): /reset and /inheritance replace DACLs and
 	// never owners, so what an elevated run made (BUILTIN\Administrators) or SYSTEM made would keep that implicit WRITE_DAC; as the owner the user can then reset it.
 	"& $icacls \"$dir\\*\" /setowner \"*${sid}\" /T /C /L /Q | Out-Null",
@@ -82,7 +84,6 @@ export const ACL_STEPS = [
 	// inherits the folder's owner and SYSTEM grant again, which an (OI)(CI) grant hands to files and folders alike. `/C` goes on past an item that vanishes meanwhile (a temp file renamed into
 	// place), and the exit code is not the check, since an empty folder has nothing to match: the read-back below is. A call per item would start a process for each of them (link/inbox holds up to 500).
 	"& $icacls \"$dir\\*\" /reset /T /C /L /Q | Out-Null",
-	"$tree = Walk $dir",
 	"$files = @()",
 	"foreach ($name in 'server.json', 'server.lock', 'server.log', 'gui.json', 'paired.json') { $p = Join-Path $dir $name; if (Test-Path -LiteralPath $p) { $files += $p } }",
 	"$link = Join-Path $dir 'link'",
@@ -90,9 +91,9 @@ export const ACL_STEPS = [
 	// A secondary slot's folder holds that slot's secret in its server.json.
 	"$servers = Join-Path $dir 'servers'",
 	"$files += @($tree.files | Where-Object { $_.StartsWith($servers + '\\') -and [IO.Path]::GetFileName($_) -eq 'server.json' })",
-	"$read = @(foreach ($p in $files) { try { [ordered]@{ path = $p; sddl = (Get-Acl -LiteralPath $p).Sddl } } catch { if (Test-Path -LiteralPath $p) { throw } } })",
+	"$read = @(foreach ($p in $files) { try { [ordered]@{ path = $p; sddl = (Sddl $p) } } catch { if (Test-Path -LiteralPath $p) { throw } } })",
 	// Every folder below, with its SDDL read back: each must be the user's with allow ACEs for the user and SYSTEM only (`aclProblems`).
-	"$readFolders = @(foreach ($p in $tree.folders) { try { [ordered]@{ path = $p; sddl = (Get-Acl -LiteralPath $p).Sddl } } catch { if (Test-Path -LiteralPath $p) { throw } } })",
+	"$readFolders = @(foreach ($p in $tree.folders) { try { [ordered]@{ path = $p; sddl = (Sddl $p) } } catch { if (Test-Path -LiteralPath $p) { throw } } })",
 	"$out = [ordered]@{ sid = $sid; started = $started; dir = (Get-Acl -LiteralPath $dir).Sddl; files = $read; folders = $readFolders }",
 ];
 /**

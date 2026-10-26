@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import { ensure, lockFor, ServerError, stop } from "../src/server/client.ts";
+import { ensure, launch, lockFor, restart, ServerError, stop } from "../src/server/client.ts";
 import { markStarting, prepareSlot, takeLock } from "../src/server/record.ts";
-import { explainNative, forgetSid, RENAME_WAITS_MS, ownerOfFolder, ownerSid, protectArgs, protectFolder, readDacl, refuseLink, resetFileAcl } from "../src/server/winprep.ts";
+import { explainNative, forgetSid, RENAME_WAITS_MS, ownerGate, ownerOfFolder, ownerSid, protectArgs, protectFolder, readDacl, refuseLink, resetFileAcl } from "../src/server/winprep.ts";
 import { ServerWorld } from "./server-world.ts";
 
 // docs/specs/2026-10-26-sb-backend.md, The control socket: on Windows the state folder is protected before the first file is created in it (the VM's second pass found the lock, the
@@ -607,3 +607,93 @@ test("R6-F005: the stop message about another account's server is added only to 
 	}
 });
 
+
+// --- R13: nothing is created or written under a foreign-owned state folder; the gate costs one owner read only where a file is about to be created ---
+
+const tree = (dir: string) => readdirSync(dir, { recursive: true, withFileTypes: false }).map(String).sort();
+const gated = (n: ReturnType<typeof native>) => ({
+	prepare: (slot: typeof world.slot, ms?: number) => prepareSlot(slot, "win32", n.run, ms),
+	gate: (slot: typeof world.slot, ms?: number) => ownerGate(slot.stateDir, n.run, ms),
+});
+const powershells = (n: ReturnType<typeof native>) => n.calls.filter((c) => c.file.endsWith("powershell.exe")).length;
+
+test("R13: a start (up, restart, a launch) or a stop of a server that is down, in a folder another account owns whose DACL is already exactly owner+SYSTEM, is refused with NO file or folder created or written anywhere under it", async () => {
+	for (const what of ["ensure", "restart", "stop", "launch"] as const) {
+		forgetSid();
+		const w = new ServerWorld();
+		try {
+			mkdirSync(w.stateDir, { recursive: true });
+			const before = statSync(w.stateDir).mtimeMs;
+			const n = native(() => w.stateDir, { owner: FOREIGN });
+			const ctx = w.ctx({ platform: "win32", ...gated(n) });
+			const run = what === "ensure" ? () => ensure(ctx, { boss: true }) : what === "restart" ? () => restart(ctx, { reason: "r", boss: true }) : what === "stop" ? () => stop(ctx) : () => launch(ctx);
+			await assert.rejects(run(), (e: unknown) => e instanceof ServerError && e.code === "start-failed" && e.startError?.code === "acl" && /belongs to another account \(S-1-5-21-9-9-9-1002\)/.test(e.message) && /Run pi as that account/.test(e.message), what);
+			assert.deepEqual(tree(w.stateDir), [], `${what}: the tree is unchanged`);
+			assert.equal(statSync(w.stateDir).mtimeMs, before, `${what}: not even a timestamp moved`);
+			assert.equal(w.spawned.length, 0);
+			assert.deepEqual(changing(n), [], `${what}: nothing was changed natively either`);
+			assert.equal(powershells(n), 1, `${what}: one owner read`);
+		} finally {
+			await w.close();
+		}
+	}
+});
+
+test("R13: a foreign folder with a WRONG DACL is refused by the gate before protectFolder changes anything (one owner read, not two)", async () => {
+	forgetSid();
+	mkdirSync(world.stateDir, { recursive: true });
+	const n = native(() => world.stateDir, { owner: FOREIGN, dacl: WRONG });
+	await assert.rejects(ensure(world.ctx({ platform: "win32", ...gated(n) }), { boss: true }), /belongs to another account/);
+	assert.deepEqual(called(n), ["whoami", "powershell"], "no /save, no protect: the gate came first");
+	assert.deepEqual(tree(world.stateDir), []);
+});
+
+test("R13: a start in a folder the user owns reads the owner ONCE (the gate before prepare), not again for a wrong DACL, and writes after it; the next start of the same process reads none", async () => {
+	forgetSid();
+	mkdirSync(world.stateDir, { recursive: true });
+	let healed = false;
+	const n = native(() => world.stateDir, { owner: OWNER, dacl: WRONG, during: (c) => { if (c.args.includes("/inheritance:r")) healed = true; } });
+	const run = (file: string, args: string[], ms?: number) => {
+		const out = n.run(file, args, ms);
+		if (healed && args.includes("/save")) writeFileSync(args[args.indexOf("/save") + 1]!, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(`straw-boss\r\n${GOOD}\r\n`, "utf16le")]));
+		return out;
+	};
+	const ctx = world.ctx({ platform: "win32", prepare: (slot, ms) => prepareSlot(slot, "win32", run, ms), gate: (slot, ms) => ownerGate(slot.stateDir, run, ms) });
+	const done = await ensure(ctx, { boss: true });
+	assert.ok("server" in done && done.server === "started");
+	assert.equal(powershells(n), 1, "one owner read for the whole start");
+	assert.deepEqual(called(n).slice(0, 4), ["whoami", "powershell", "/save", "/inheritance:r"]);
+	assert.ok(readFileSync(join(world.stateDir, "server.log"), "utf8").includes("phase name=owner-gate"), "the cost is a phase in the log (written after the gate passed)");
+	const again = powershells(n);
+	assert.equal(ownerGate(world.stateDir, run), false, "the same folder, the same process: no read");
+	assert.equal(powershells(n), again);
+	// The folder made again under its name is another folder: read again.
+	rmSync(world.stateDir, { recursive: true });
+	mkdirSync(world.stateDir, { recursive: true });
+	assert.equal(ownerGate(world.stateDir, run), true);
+	assert.equal(powershells(n), again + 1);
+});
+
+test("R13: a request that finds a server running runs no PowerShell and calls no gate (a second up, a stop of a live server); a stop of one that is down does", async () => {
+	forgetSid();
+	const s = await world.start();
+	await s.handle.ready;
+	let gates = 0;
+	const ctx = world.ctx({ gate: () => (gates++, false) });
+	const found = await ensure(ctx, { boss: true });
+	assert.ok("server" in found && found.server === "found");
+	assert.equal(gates, 0, "a second up");
+	assert.equal((await stop(ctx)).outcome, "stopped");
+	assert.equal(gates, 0, "a stop of a live server");
+	assert.equal((await stop(ctx)).outcome, "already-down");
+	assert.ok(gates >= 1, "a stop of a server that is down writes `stopped`, so it passes the gate first");
+});
+
+test("R13: a folder made by this start (the first ever) is gated right after it is made, before the lock and the placeholder; a swapped one that lands foreign is refused with no file written", async () => {
+	forgetSid();
+	const n = native(() => world.stateDir, { owner: FOREIGN });
+	await assert.rejects(ensure(world.ctx({ platform: "win32", ...gated(n) }), { boss: true }), /belongs to another account/);
+	assert.ok(existsSync(world.stateDir), "the folder is in place");
+	assert.deepEqual(tree(world.stateDir), [], "and nothing was written into it");
+	assert.equal(powershells(n), 1);
+});

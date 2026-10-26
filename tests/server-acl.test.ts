@@ -70,7 +70,7 @@ test("the folder is protected first and without /T, then everything already in i
 	assert.equal(reset.length, 1, "one reset call");
 	assert.match(reset[0]!, /^& \$icacls "\$dir\\\*" \/reset \/T \/C \/L \/Q \| Out-Null$/);
 	assert.ok(lines.indexOf(reset[0]!) > folder, "after the folder");
-	assert.ok(lines.findIndex((l) => l.includes("Get-Acl -LiteralPath $p")) > lines.indexOf(reset[0]!), "the SDDLs are read back after the repair");
+	assert.ok(lines.findIndex((l) => l.includes("(Sddl $p)")) > lines.indexOf(reset[0]!), "the SDDLs are read back after the repair");
 	assert.equal(ACL_SCRIPT.match(/& \$icacls/g)!.length, 3, "icacls is started three times, whatever the number of items: the folder, the reset, and the owner of what is below (R7-F002)");
 	assert.equal(ACL_SCRIPT.match(/icacls\.exe/g)!.length, 1, "named once, by the system folder's path");
 	// The files the check reads include the ones that existed before the ACL: the lock the starter took and the log.
@@ -335,8 +335,8 @@ test("R8-F003: the script lists what is below WITHOUT following links, refuses a
 		// R9-F004: a folder that vanished is skipped, one that is there and cannot be listed is thrown.
 		assert.match(script, /catch \{ if \(Test-Path -LiteralPath \$here\) \{ throw \}; continue \}/);
 		const lines = script.split("\n").map((l) => l.trim());
-		const first = lines.findIndex((l) => l.startsWith("$pre = Walk $dir")), owner = lines.findIndex((l) => /\/setowner/.test(l)), again = lines.findIndex((l) => l.startsWith("$tree = Walk $dir"));
-		assert.ok(first > 0 && first < owner && owner < again, `${first} ${owner} ${again}`);
+		const walk = lines.findIndex((l) => l.startsWith("$tree = Walk $dir")), owner = lines.findIndex((l) => /\/setowner/.test(l)), reset = lines.findIndex((l) => /\/reset/.test(l));
+		assert.ok(walk > 0 && walk < owner && owner < reset, `${walk} ${owner} ${reset}`);
 		assert.ok(!/Descend|\$todo\.Push\(\$e\)[^}]*ReparsePoint/.test(script), "a reparse point is never pushed to the walk");
 	}
 	const err = Object.assign(new Error("Command failed: x"), { code: 1 });
@@ -391,20 +391,31 @@ test("VM pass 5b: BUILTIN\\Administrators owns an entry acceptably (an elevated 
 	assert.match(aclProblems({ sid: OWNER, dir: good, files: [{ path: "C:\\s\\server.json", sddl: `O:BAG:DUD:AI${ACE(OWNER, "ID")}${ACE("SY", "ID")}${ACE("BA", "ID")}` }] }).join(";"), /server\.json: grants BA, who is neither/);
 });
 
-test("R11-F001, VM pass 5b: both ACL scripts check the folder's own owner before /inheritance:r, and every entry's owner before /setowner /T and /reset, and refuse a foreign owner with nothing changed", () => {
+test("R11-F001, R13: both ACL scripts check the folder's own owner before /inheritance:r, and ONE walk reads each entry's attributes, link type and owner before /setowner /T and /reset; a foreign owner is thrown with nothing changed", () => {
 	for (const script of [ACL_SCRIPT, LAUNCH_SCRIPT]) {
 		const lines = script.split("\n").map((l) => l.trim());
 		const at = (re: RegExp) => lines.findIndex((l) => re.test(l));
-		const dirCheck = at(/^CheckOwner \$dir$/), protect = at(/\$dir \/inheritance:r \/grant:r/), pre = at(/^\$pre = Walk \$dir/), entries = at(/^foreach \(\$p in @\(\$pre\.folders\)/);
+		const dirCheck = at(/^CheckOwner \$dir$/), protect = at(/\$dir \/inheritance:r \/grant:r/), walk = at(/^\$tree = Walk \$dir/);
 		const setowner = at(/\/setowner .*\/T \/C \/L \/Q/), reset = at(/\/reset \/T \/C \/L \/Q/);
-		assert.ok(dirCheck > 0 && dirCheck < protect && protect < pre && pre < entries && entries < setowner && setowner < reset, `${dirCheck} ${protect} ${pre} ${entries} ${setowner} ${reset}`);
+		assert.ok(dirCheck > 0 && dirCheck < protect && protect < walk && walk < setowner && setowner < reset, `${dirCheck} ${protect} ${walk} ${setowner} ${reset}`);
+		// R13: a single walk: one call, no second enumeration, and the read-back reuses its lists.
+		assert.equal(lines.filter((l) => /^\$\w+ = Walk \$/.test(l)).length, 1, "one walk of the folder");
+		assert.ok(!/Walk \$dir/.test(lines.slice(reset).join("\n")), "the read-back does not walk again");
+		assert.ok(lines.slice(reset).some((l) => /\$tree\.files/.test(l)) && lines.slice(reset).some((l) => /\$tree\.folders/.test(l)), "it reuses the list");
 		const fn = lines[at(/^function CheckOwner/)]!;
 		assert.match(fn, /\$who -ne \$sid -and \$okOwners -notcontains \$who\) \{ throw /, "the user and the accepted owners pass; anything else is thrown");
-		assert.match(fn, /belongs to another account \(' \+ \$who \+ '\), not to ' \+ \$sid \+ ' \(nothing was changed\)/);
 		assert.ok(lines.some((l) => l === "$okOwners = @('S-1-5-18','S-1-5-32-544')"), "the accepted owners: SYSTEM and BUILTIN\\Administrators (the one list, shared with the launch script and ownerProblems)");
-		assert.match(lines[at(/^function OwnerOf/)]!, /GetOwner\(\[Security\.Principal\.SecurityIdentifier\]\)\.Value/);
-		assert.match(lines[entries]!, /@\(\$pre\.folders\) \+ @\(\$pre\.files\)/, "folders and files alike");
-		assert.match(lines[entries]!, /catch \{ if \(Test-Path -LiteralPath \$p\) \{ throw \}; continue \}/, "an entry that vanished is skipped");
-		assert.ok(!/Get-Acl/.test(`${fn}${lines[entries]}${lines[at(/^function OwnerOf/)]}`), "owners come from .NET as SIDs (no name translation per file)");
+		const w = lines[at(/^function Walk/)]!;
+		// The walk reads, once per entry: attributes, the link type (a junction or symbolic link is thrown), and the owner (a foreign one is thrown), for folders and files alike.
+		assert.match(w, /\[IO\.File\]::GetAttributes\(\$e\)/);
+		assert.match(w, /\.LinkType/);
+		assert.match(w, /\[IO\.Directory\]::GetAccessControl\(\$e, \$own\)/);
+		assert.match(w, /\[IO\.File\]::GetAccessControl\(\$e, \$own\)/);
+		assert.match(w, /GetOwner\(\[Security\.Principal\.SecurityIdentifier\]\)\.Value/);
+		assert.match(w, /\$who -ne \$sid -and \$okOwners -notcontains \$who\) \{ throw \('the ' \+ \$e \+ ' belongs to another account \(' \+ \$who \+ '\), not to ' \+ \$sid \+ ' \(nothing was changed\)'\)/);
+		assert.match(w, /catch \{ if \(Test-Path -LiteralPath \$e\) \{ throw \}; continue \}/, "an entry that vanished is skipped");
+		assert.ok(!/Get-Acl/.test(w), "no provider cmdlet per entry");
+		assert.ok(lines.some((l) => /^function Sddl/.test(l) && /GetSecurityDescriptorSddlForm/.test(l)), "the read-back reads each SDDL through .NET, not Get-Acl per entry");
 	}
+	assert.equal((ACL_SCRIPT.match(/Get-Acl/g) ?? []).length, 1, "Get-Acl is left for the folder itself");
 });
