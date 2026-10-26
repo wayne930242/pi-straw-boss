@@ -1,4 +1,4 @@
-import type { Mark } from "./dashboard.ts";
+import type { Mark } from "./netdata.ts";
 import type { Base, Net } from "./net.ts";
 
 // What the net did lately, for the map's cards and the page's timeline. The server keeps it across its reads, so a page that reloads sees it too

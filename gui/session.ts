@@ -1,4 +1,4 @@
-import type { Mark } from "../src/dashboard.ts";
+import type { Mark } from "../src/netdata.ts";
 import type { Chat, Data, Who } from "./chat.ts";
 import { mountAsk } from "./ask.ts";
 import { drawMonitors, drawQueued, drawTodos, mountQueueEdit } from "./bars.ts";

@@ -1,4 +1,4 @@
-import type { Mark } from "../src/dashboard.ts";
+import type { Mark } from "../src/netdata.ts";
 import type { Route } from "./router.ts";
 import { aim, AGENT, fillPlate, html, mark, PLATE, roleName, say, text, urgent } from "./render.ts";
 

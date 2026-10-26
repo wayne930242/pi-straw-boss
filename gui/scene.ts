@@ -1,4 +1,4 @@
-import type { Mark } from "../src/dashboard.ts";
+import type { Mark } from "../src/netdata.ts";
 import type { Base, Net, Unit } from "../src/net.ts";
 import type { HistoryEvent, Who } from "./chat.ts";
 import type { Route } from "./router.ts";
