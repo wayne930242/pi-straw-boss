@@ -249,7 +249,13 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
     are called from `%SystemRoot%\System32` by absolute path (`%SystemRoot%` from the environment, `C:\Windows` only when it is unset) and
     run with that folder as their working directory, in the start-time reader, the ACL call, the folder's native calls, the launch,
     the hidden-folder reader, the browser opener, and the clipboard; the ACL script names `icacls.exe` by `[Environment]::SystemDirectory`.
-    (`herdr`, `git`, and `tailscale` are not system programs and stay by name.)
+    - **Every other program is found by a PATH search that never looks in the current folder** (`src/exe.mjs`): `herdr` (or
+      `HERDR_BIN_PATH`, which must then be absolute), `git`, `tailscale`, `ps`, `sh`, and the opener and clipboard commands. Empty, `.`,
+      and relative PATH entries are skipped (an empty entry means the current folder on POSIX), on Windows only `.com` and `.exe` of PATHEXT are
+      taken, in PATHEXT's order (`.cmd` and `.bat` cannot be started without a shell), and the program is spawned by the path found. A program
+      given as a path must be absolute. One that is not found is an `ExeNotFound` (code `ENOENT`) that says where it looked. The answer
+      is kept per process while PATH is the same, and searched again once when the program is gone at its start (ENOENT). The `shutdown`
+      handler reports a pane that could not be closed on stderr and goes on. `process.execPath` is already absolute.
   - Reading the SID, the server's own start time, setting the ACL, and checking every SDDL run in one PowerShell invocation, which
     answers one JSON line, so the check costs one PowerShell start against the 15 s cold-start budget. (A PowerShell start took 1.7 to
     3.1 s in the Windows VM; the server makes no other, because its start time comes with this answer.)
