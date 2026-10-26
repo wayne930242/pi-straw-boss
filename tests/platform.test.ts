@@ -2,7 +2,8 @@
 // What differs on Windows: Herdr's socket is a named pipe behind a marker file, and a sidecar's control socket is a named pipe. The pure parts are
 // checked for every platform here; the live parts run on the platform the suite runs on (the Windows CI job runs this file).
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +12,8 @@ import { instanceOf, localEndpoint as pluginEndpoint, socketCall } from "../herd
 import { agentFiles, ask, newPipe, NoSidecar, socketIsFile, socketOf } from "../src/agent/paths.ts";
 import { herdrSocket, localEndpoint } from "../src/endpoint.ts";
 import { herdrCall } from "../src/herdr.ts";
+import { cmdHidden } from "../src/hidden.ts";
+import { listDirs, pickable } from "../src/spawn.ts";
 import { herdrEvents } from "../src/server-watch.ts";
 
 test("herdrSocket resolves the socket as Herdr does: HERDR_SOCKET_PATH, then HERDR_SESSION, in the config directory of the platform", () => {
@@ -101,4 +104,46 @@ test("a sidecar's control socket answers on this platform, and a closed one read
 
 test("every module a Windows session or sidecar loads links on this platform (a named import Windows lacks fails before any code runs)", async () => {
 	for (const path of ["../src/index.ts", "../src/closing.ts", "../src/agent/sidecar.ts", "../src/agent/cli.ts", "../herdr-plugin/net-view.mjs"]) await import(path);
+});
+
+// The folder picker on a real Windows profile layout (src/hidden.ts): attributes set with attrib, junctions made as the old profile layout has them, and the
+// default reader (cmd.exe) in between. The names are not the localised ones of a real profile, but a Chinese one is there to check the encoding.
+test("the folder picker leaves out what Windows hides (Hidden or System, junctions among them) and keeps the other folders", { skip: process.platform !== "win32" }, async () => {
+	const home = realpathSync(mkdtempSync(join(tmpdir(), "psb-platform-home-")));
+	try {
+		for (const name of ["Desktop", "Documents", "AppData", "HiddenOnly", "SystemOnly", "\u9801\u9762", "\u300c\u958b\u59cb\u300d\u529f\u80fd\u8868"]) mkdirSync(join(home, name));
+		symlinkSync(join(home, "Documents"), join(home, "My Documents"), "junction");
+		symlinkSync(join(home, "Documents"), join(home, "Plain Link"), "junction");
+		execFileSync("attrib", ["+h", join(home, "AppData")]);
+		execFileSync("attrib", ["+h", join(home, "HiddenOnly")]);
+		execFileSync("attrib", ["+s", join(home, "SystemOnly")]);
+		execFileSync("attrib", ["+h", "+s", join(home, "\u300c\u958b\u59cb\u300d\u529f\u80fd\u8868")]);
+		execFileSync("attrib", ["+h", "+s", "/L", join(home, "My Documents")]); // the junction itself, as the profile's compatibility links have it
+		assert.deepEqual((await listDirs(home, home)).dirs.sort(), ["Desktop", "Documents", "Plain Link", "\u9801\u9762"].sort());
+		for (const refused of ["AppData", "HiddenOnly", "SystemOnly", "My Documents", "\u300c\u958b\u59cb\u300d\u529f\u80fd\u8868"]) assert.equal(await pickable(join(home, refused), home), undefined, refused);
+		for (const ok of ["Desktop", "Documents", "Plain Link", "\u9801\u9762"]) assert.ok(await pickable(join(home, ok), home), ok);
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+	}
+});
+
+// The folder name reaches cmd.exe through an environment variable inside quotes: the characters cmd treats as syntax must stay text, and a folder that cannot be
+// read must fail instead of reading as "nothing hidden".
+test("the cmd reader takes a folder named with cmd's own syntax literally, and fails on one it cannot read", { skip: process.platform !== "win32" }, async () => {
+	const root = realpathSync(mkdtempSync(join(tmpdir(), "psb-platform-cmd-")));
+	try {
+		for (const name of ["a & b", "c ^ d", "100%", "%PATH%", "wow!", "paren)", "(open", "x & echo pwned & y"]) {
+			const dir = join(root, name);
+			mkdirSync(join(dir, "Hid"), { recursive: true });
+			mkdirSync(join(dir, "Sys"));
+			mkdirSync(join(dir, "Plain"));
+			execFileSync("attrib", ["+h", join(dir, "Hid")]);
+			execFileSync("attrib", ["+s", join(dir, "Sys")]);
+			assert.deepEqual([...await cmdHidden(dir)].sort(), ["hid", "sys"], name);
+		}
+		assert.deepEqual([...await cmdHidden(root)], [], "no match is an empty answer");
+		await assert.rejects(cmdHidden(join(root, "missing")), /could not say/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
 });

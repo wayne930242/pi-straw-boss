@@ -99,6 +99,8 @@ export function registerSession(kit: Kit, { briefing, roles, presence, membershi
 				// What the record says is read before joining: the guard may promote this session at once, which writes its record anew (roles.ts).
 				// A main a Herdr restore resumed in its own pane and tab takes the role back; a tab that has a live main already keeps it.
 				const resumed = Boolean(placed) && roles.held(placed!) === "main";
+				// The tower that opened it may close it again, as before the restore; the record names the opener, and the promotion below writes it into the new record.
+				s.restoredOpener = roles.openerOf(resumed ? placed : undefined);
 				// A pi started in the shell of a main that quit is no restore, and the record must not claim the next one.
 				if (!resumed && event.reason === "startup" && placed && roles.sameShell(placed)) roles.forget();
 				s.restored = resumed; // consumed by the promotion that makes this session the tab's main (membership.ts), also when the guard makes it
@@ -108,6 +110,7 @@ export function registerSession(kit: Kit, { briefing, roles, presence, membershi
 				if (!claimed && event.reason !== "startup" && s.saved.openedBy && s.saved.openedPane === s.at.paneId) s.openedBy = s.saved.openedBy; // only the same pi in the tower's pane (/reload, /fork): `pi --session` anywhere is the boss's main
 				if (s.openedBy) {
 					control.register(); // the tower that opened this main may ask it to close (closemain.ts), also after a reload
+					if (s.isMain) roles.remember("main"); // the guard may have crowned it during the join, before the opener was known: the record names it for a Herdr restore (roles.ts)
 					await presence.publish(); // sb_opened_by was cleared at shutdown
 				}
 				if (!claimed && !resumed) return;
@@ -118,9 +121,9 @@ export function registerSession(kit: Kit, { briefing, roles, presence, membershi
 				if (!taken.promoted) {
 					tell(taken.text, claimed ? "warning" : "info");
 					if (resumed) roles.forget(); // another main holds the tab, and this session stays a member: its record would claim the next restore
-				}
+				} else if (!claimed) await membership.adoptOpener(); // a no-op when the refresh that made it the main did so already (membership.ts)
 			}).finally(() => {
-				if (start === started && !keepRestored) s.restored = false; // the promotion consumes it when it makes this session the main; one found main already, or a join that failed, does not
+				if (start === started && !keepRestored) [s.restored, s.restoredOpener] = [false, undefined]; // the promotion consumes it when it makes this session the main; one found main already, or a join that failed, does not
 			});
 		}
 		starting?.catch((error: Error) => tell(`Straw Boss: ${error.message}`, "error"));

@@ -56,7 +56,7 @@ export interface State {
 	info: Record<string, string>;
 	/** This session's intercom name, which the subagents it launched show as their launcher, and the subagent panes it has marked. */
 	ownName: string;
-	openedBy: string | undefined;
+	openedBy: string | undefined; restoredOpener: string | undefined; // the latter: what a restored main had (roles.ts), held until the promotion or the owner's late confirmation consumes it
 	kids: Set<string>;
 	// The pi session.
 	ui: ExtensionContext["ui"] | undefined;
@@ -101,7 +101,7 @@ export function createKit(pi: ExtensionAPI, cfg: Config): Kit {
 		c: undefined as unknown as Channel,
 		// SAFETY: as `c` above.
 		at: undefined as unknown as Place,
-		mainId: undefined, pinned: undefined, info: {}, ownName: "", openedBy: undefined, kids: new Set(),
+		mainId: undefined, pinned: undefined, info: {}, ownName: "", openedBy: undefined, restoredOpener: undefined, kids: new Set(),
 		ui: undefined, hasUI: false, saved: {}, file: undefined, restored: false, queue: Promise.resolve(), dashboard: undefined, headWatch: undefined, hub: undefined, gui: undefined, viewer: undefined, quit: undefined, closing: undefined, remoteOrigin: undefined,
 	};
 	const me = () => env.PI_INTERCOM_SESSION_ID ?? "";
