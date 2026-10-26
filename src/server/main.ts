@@ -110,9 +110,17 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		return handle;
 	}
 
+	/** The record, when it is another running process's with a socket. */
+	const rival = () => {
+		const found = readRecord(slot);
+		return found && found.pid !== pid && found.socket && runsAs({ alive, startOf }, found) ? found : undefined;
+	};
+
 	// From the first moment the record says this server is starting, and its `since` moves every touchMs: the ACL call and the code load below take seconds on Windows, and a look
 	// in that time must see a start under way, not a server that is gone. The record holds no secret yet (and no socket), and keeps what a restart carries over.
 	const begin = () => {
+		// A record of another running process with a socket is a server, however slow its hello was a moment ago: it keeps its record.
+		if (rival()) return;
 		const current = readRecord(slot);
 		writeRecord(slot, {
 			pid, version, herdr: slot.herdr, mode, desk, intercom: intercomOf(env, platform), log: fileOf(slot, "log"), socket: "", secret: "", intercomId: serverId(slot),
@@ -173,6 +181,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 
 	// Written whole by rename, with `restarting` kept from the record (a restart began it) and only its `since` moved.
 	const writeOwn = () => {
+		if (rival()) return;
 		const current = readRecord(slot);
 		writeRecord(slot, { ...own, ...(phase === "starting" ? { restarting: restartingNow(current?.restarting, now(), { reason: "starting", by }) } : {}) });
 	};
@@ -232,6 +241,13 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		});
 	} catch (error) {
 		return abort("start", `the control socket cannot listen at ${endpoint}: ${(error as Error).message}`);
+	}
+	// The check of the prior record at the top was one look, long ago on a cold start: a server that has taken the record since keeps it, and this one, which listens at an endpoint of its
+	// own on Windows (a pipe with a random name), is not a second server for the slot.
+	const taken = rival();
+	if (taken) {
+		await control.close();
+		return abort("start", `the sb server of pid ${taken.pid} runs and holds this slot's record`);
 	}
 	// From here the full record is written (by `writeOwn`, which keeps `restarting`) and the placeholder's touches stop.
 	clearInterval(early);

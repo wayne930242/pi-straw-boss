@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { createConnection } from "node:net";
 import { afterEach, beforeEach, test } from "node:test";
 import { StubClient } from "./agent-fakes.ts";
@@ -297,6 +298,44 @@ test("sbr-F002, sbr-F009: a second server never takes over the socket of a serve
 	assert.match(readStartError(world.slot)!.text, /live/);
 	assert.equal((await helloOf(endpoint, secret))?.pid, first.pid, "the first server still answers at its socket");
 	assert.match(logText(), /start-failed code=start/);
+});
+
+test("R-F003: a start whose first look missed a live server's hello does not overwrite that server's record with its placeholder, and gives up before it writes its own", async () => {
+	// A record of a running process whose socket does not answer (here: nobody listens), so the newcomer's check of the prior record finds no server that answers.
+	const other = 7777;
+	world.live.add(other);
+	const live = { pid: other, version: "0.44.0", herdr: world.slot.herdr, mode: "detached" as const, desk: false, intercom: { transport: "default" }, log: "/l", socket: join(world.root, "nobody.sock"), secret: "s".repeat(64), intercomId: "sb-server-00000000" };
+	mkdirSync(world.slot.dir, { recursive: true });
+	writeRecord(world.slot, live);
+	const seen = new Set<number>();
+	const sampler = setInterval(() => seen.add(world.record()?.pid ?? 0), 5);
+	// The load of the code takes a while (a cold start), so the 2 s placeholder rewrite would run several times.
+	const second = await world.start({ intercom: async () => (await sleep(150), world.intercom(new StubClient())) });
+	const ended = await Promise.race([second.handle.done, sleep(1500).then(() => "still running")]);
+	clearInterval(sampler);
+	assert.equal(ended, 1);
+	assert.deepEqual([...seen], [other], "the record was never another process's");
+	assert.equal(world.record()?.pid, other);
+	assert.equal(world.record()?.socket, live.socket);
+	assert.equal(world.record()?.secret, live.secret);
+	assert.equal(world.record()?.restarting, undefined);
+	assert.equal(readStartError(world.slot)?.code, "start");
+	assert.match(readStartError(world.slot)!.text, /7777/);
+});
+
+test("R-F003: a record of another running process with a socket that appears while the code loads is not written over by the full record either", async () => {
+	const other = 7778;
+	const second = await world.start({
+		intercom: async () => {
+			world.live.add(other);
+			writeRecord(world.slot, { pid: other, version: "0.44.0", herdr: world.slot.herdr, mode: "detached", desk: false, intercom: { transport: "default" }, log: "/l", socket: join(world.root, "nobody.sock"), secret: "t".repeat(64), intercomId: "sb-server-00000000" });
+			return world.intercom(new StubClient());
+		},
+	});
+	assert.equal(await Promise.race([second.handle.done, sleep(1500).then(() => "still running")]), 1);
+	assert.equal(world.record()?.pid, other, "the other server's record stands");
+	assert.equal(world.record()?.secret, "t".repeat(64));
+	assert.equal(readStartError(world.slot)?.code, "start");
 });
 
 test("sbr-F015: the server does not wait for its own start time (seconds in PowerShell on Windows) to answer hello and be ready; the time is filled into the record when it arrives", async () => {
