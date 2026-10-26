@@ -813,12 +813,12 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 @media (max-width: 640px), (pointer: coarse) { .pad-key, .pad-yes { min-height: 44px; } .pad-digits summary { padding: 14px 0; } }
 /* A phone's tap targets (touch or a narrow window with a mouse): every control is at least 44 × 44 px, the composer's own row 48. A dense row keeps its look and
    gets the room instead: a chip draws its pill in ::before inside a 44 px box, and a disclosure row is 44 px tall, so neighbours never share a hit area. The
-   timeline's marks (10 px, placed by time, many within a few px of each other) are the one exception: the units they point to are the cards above. */
+   timeline's marks (10 px, placed by time, many within a few px of each other) cannot be made 44 px, so they stop taking taps: the units they point to are the cards. */
 @media (max-width: 640px) {
 	/* The HUD, the settings, and the location bar. */
 	.brand { min-height: 44px; } .prefs-btn { width: 44px; height: 44px; } .prefs-pop > * { min-height: 44px; }
 	.crumbs { align-items: center; } .crumbs > * { padding-block: 14px; line-height: 16px; }
-	:is(.pair-btn, .alerts, .done-btn, .quit-btn, .later, .go, .x, .d-doc, .ask-send, .ask-opt, .sheet-yes, .cmp-yes, .chat-pill, .drawer-map) { min-height: 44px; }
+	:is(.pair-btn, .alerts, .done-btn, .quit-btn, .later, .go, .x, .d-doc, .ask-send, .ask-opt, .sheet-yes, .cmp-yes, .chat-pill) { min-height: 44px; }
 	:is(.pair-btn, .quit-btn, .later, .x, .tab-add, .ask-send, .sheet-yes, .cmp-yes) { min-width: 44px; }
 	/* The map: a quit button, then its row. */
 	.tab h3 { min-height: 44px; }
@@ -830,13 +830,17 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 	:is(.act > summary, .notice > summary, .rule summary, .todos summary, .monitors summary, .timeline summary) { align-items: center; min-height: 44px; padding-block: 0; box-sizing: border-box; }
 	.todos, .monitors { padding-block: 0; } :is(.todos ol, .monitors ul) { margin: 0 0 10px; }
 	.link-form summary { padding-block: 12px; }
+	.tl-mark { pointer-events: none; } /* 10 px and a few px apart: a finger would hit the wrong event; each unit is one tap away on its card or in the drawer */
+	.picker-body { height: clamp(180px, calc(100dvh - 412px), 360px); } /* the folder list gives way so the name and Open stay on the screen */
+	.tile:has(.spawn, .pair) { max-height: calc(var(--vvh, 100dvh) - 16px); } /* a short form's cap was the desktop's (under the HUD); on a phone the tile is the screen, and the 44 px rows need all of it */
+	.teams-tile { grid-template-columns: minmax(0, 1fr); } .teams-tile b { white-space: normal; overflow-wrap: anywhere; } /* a request's headline wraps (.tile b is one line, which widened the whole tile past a 360 px screen) */
 	/* Links that stand alone, apart from running text. */
 	.specs a, .d-squad a { display: inline-block; padding-block: 12px; line-height: 20px; }
 	.dbase h3 { align-items: center; } .dbase h3 a { padding-block: 12px; line-height: 20px; }
 	.cmp-link { display: inline-flex; align-items: center; padding-inline: 8px; } :is(.ask, .term-bar, .doc-acts, .composer) :is(button, .cmp-link) { min-height: 44px; } /* above the touch rule's .ask button and the like */
 	.slash li { align-items: center; min-height: 44px; }
 	/* Boxes and rows in a dialog: the folder picker, the questions, the spawn form. */
-	:is(.spawn input, .spawn textarea, .picker input, .ask-own) { min-height: 44px; }
+	:where(input:not([type="checkbox"], [type="radio"], [type="file"], [type="hidden"]), select, textarea) { min-height: 44px; box-sizing: border-box; } /* every box and menu, the ones above them in specificity aside */
 	.picker-crumbs button, .picker-places button, .pitem { min-height: 44px; }
 	.drawer-top .pair-btn { min-height: 44px; }
 	/* The session header and the composer: the row of keys is 48 px, the box above it two lines. */
