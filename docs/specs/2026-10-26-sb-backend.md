@@ -1041,12 +1041,17 @@ removed, with the release that carries B6.
    - `assertSettingsSafe` before every run (it needs `fix/settings-precheck` merged).
    - The GUI's tower states, queue, and composer wake.
    - A proposed pi-intercom change: a mailbox flush waits for receipts (**Queueing and concurrency**).
+   - `boss_server` over the run tokens (B1 has none, so its block is a session-level hook only): the server itself refuses `restart`,
+     `status`, and `logs` for an ally-run token and enforces the one-a-minute restart limit server-side (today it is checked under the
+     lock by the requester); `boss_server` is registered in local runs over the socket and never in ally runs.
    - Link messages are not routed yet: with the flag on, they wait in `link/inbox/` with the GUI notice "a Straw Link message waits; ally
      runs come with the next step" until B6.
 6. **B6, ally runs (behind `towerRuns.enabled`).**
    - Routing link events into ally runs, session-level remote turns for towers, the guards of **Security**, server-side token
      enforcement, and the gate's Allow check.
    - The ally brief, its asks, and the thread store.
+   - `boss_server` for ally runs: kept out of ally runs, with the remote-turn hooks kept in ally runs and in mains taking a D4 reply;
+     the GUI's Restart and Show log endpoints are `local_only` (that part is B2).
    - Replies for a main (D4): `caps`, the 5-field `tower`, `tower-reply`, and `inReplyTo` in this client, `tests/link/vectors.json`,
      straw-relay's kind table, `testdata/vectors.json`, and README pointer, the relay redeployed first, the fallbacks, stale `caps`
      ignored, and the offer to the main (**In lockstep with the relay and the Straw Link spec**).
@@ -1131,6 +1136,9 @@ trials), unchanged otherwise.
      default Herdr of that `HOME`, so nothing binds to the user's real Herdr or broker.
   4. `node <agent dir>/npm/node_modules/pi-straw-boss/dist/server/cli.mjs status` and `up` must work, and the GUI URL must answer 200.
   5. It stops the scratch server and Herdr by the PIDs it started, and removes the temp `HOME`.
+  B1 implements this as `tests/server-packaged.test.ts`: `npm pack` and `npm install <tarball> pi-intercom@0.18.1 --prefix <agent dir>/npm --legacy-peer-deps` (the flags
+  `package-manager.js` runs for a managed npm install), then `status`, `up`, `stop`, and the server's connection to the broker. It needs the npm registry and the `herdr`
+  binary, so it runs with `SB_PACKAGED=1`; the GUI URL check (step 4) comes with B2.
 - **Integration (fake Herdr and a real pi-intercom broker, as `tests/link/remote-world.ts` builds them).**
   - `call_tower` to a workspace with no run wakes one, the event arrives, and the reply leaves with `id=sb-tower-<ws>`. A main's later
     reply wakes a second run.
