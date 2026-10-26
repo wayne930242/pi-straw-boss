@@ -52,7 +52,7 @@ async function setup({ pane = {}, found = {}, fail, link }: { pane?: Partial<Pan
 function send(gui: Gui, path: string, body: unknown, headers: Record<string, string | undefined> = {}, method = "POST") {
 	const data = typeof body === "string" ? body : JSON.stringify(body);
 	const all: Record<string, string> = Object.fromEntries(Object.entries({ host: `127.0.0.1:${gui.port}`, origin: `http://127.0.0.1:${gui.port}`, "sec-fetch-site": "same-origin", "content-type": "application/json", "x-sb-csrf": gui.csrf, "content-length": String(Buffer.byteLength(data)), ...headers }).filter((e): e is [string, string] => e[1] !== undefined));
-	return new Promise<{ status: number; body: { accepted?: boolean; error?: string; reason?: string; url?: string; rows?: string[] } }>((resolve, reject) => {
+	return new Promise<{ status: number; body: { accepted?: boolean; error?: string; reason?: string; url?: string; rows?: string[]; text?: string } }>((resolve, reject) => {
 		const req = request({ host: "127.0.0.1", port: gui.port, path: `/${gui.token}/api/${path}`, method, headers: all, agent: false }, (res) => {
 			let text = "";
 			// A refusal before the API (token, Host) is plain text.
@@ -68,7 +68,7 @@ const HOST = "box.tail1.ts.net:8443", LOGIN = "me@example.com";
 async function paired(gui: Gui) {
 	const tailnet = { host: HOST, "tailscale-user-login": LOGIN, "x-forwarded-for": "100.87.7.97" };
 	gui.access.enable({ host: HOST, login: LOGIN });
-	const ask = (path: string, headers: Record<string, string>, method: string, payload?: unknown) => new Promise<{ status: number; headers: Record<string, unknown>; body: { error?: string; reason?: string; outcome?: string; accepted?: boolean } }>((resolve, reject) => {
+	const ask = (path: string, headers: Record<string, string>, method: string, payload?: unknown) => new Promise<{ status: number; headers: Record<string, unknown>; body: { error?: string; reason?: string; outcome?: string; text?: string; accepted?: boolean } }>((resolve, reject) => {
 		const data = payload === undefined ? "{}" : JSON.stringify(payload);
 		const req = request({ host: "127.0.0.1", port: gui.remotePort, path, method, headers: { ...headers, ...(method === "POST" ? { "content-length": String(Buffer.byteLength(data)) } : {}) }, agent: false }, (res) => {
 			let text = "";
@@ -122,7 +122,7 @@ test("Stop sends Escape alone with no mirror, never Ctrl+C or Ctrl+D; any other 
 async function padded({ entries = [header(), user("u1", null, "go")] as unknown[], editor = { editor: "empty" } as Editor | undefined, answerable = false } = {}) {
 	const path = join(scratch, `pad-${Math.random().toString(36).slice(2)}_sess-1.jsonl`);
 	writeFileSync(path, lines(entries));
-	const file = canonical(path)!, calls: [string, Record<string, unknown>][] = [], w = { editor, answerable, status: "idle", probes: 0, moveDuringProbe: false, moved: false, armed: false, afterProbe: false, opens: undefined as (() => void) | undefined, relayedRequest: false };
+	const file = canonical(path)!, calls: [string, Record<string, unknown>][] = [], w = { editor, answerable, status: "idle", probes: 0, moveDuringProbe: false, moved: false, armed: false, afterProbe: false, opens: undefined as (() => void) | undefined, relayedRequest: false, pulls: [] as string[], onBegin: undefined as (() => void) | undefined };
 	const call = async (method: string, params: Record<string, unknown>) => {
 		calls.push([method, { ...params, ...(method === "pane.send_input" && { at: Date.now() }) }]);
 		if (method === "pane.get" && w.armed) {
@@ -134,7 +134,7 @@ async function padded({ entries = [header(), user("u1", null, "go")] as unknown[
 		return method === "pane.read" ? { read: { text: "pi\r\n> " } } : {};
 	};
 	const target = { from: "S", bridgeId: "B", answer: { dialog: "d1", digest: "a".repeat(64), select: { title: "T", choices: [{ label: "A" }] } } } as Target;
-	const hub = { running: true, me: "G", start() {}, stop() {}, receive() {}, relayed: () => ({ dialogsOf: () => undefined, merge: () => ({ callId: "", tool: "" }) }), has: (_key: string, owner: string) => w.relayedRequest && owner === "straw-link-request", replay: () => undefined, ended: () => undefined, send: async () => ({ status: 200, body: {} }), target: () => (w.answerable ? target : undefined), probe: async () => (w.probes++, (w.moved = w.moveDuringProbe), (w.armed = w.afterProbe), w.editor) };
+	const hub = { running: true, me: "G", start() {}, stop() {}, receive() {}, relayed: () => ({ dialogsOf: () => undefined, merge: () => ({ callId: "", tool: "" }) }), has: (_key: string, owner: string) => w.relayedRequest && owner === "straw-link-request", replay: () => undefined, ended: () => undefined, send: async () => ({ status: 200, body: {} }), target: () => (w.answerable ? target : undefined), probe: async () => (w.probes++, (w.moved = w.moveDuringProbe), (w.armed = w.afterProbe), w.editor), pull: async (_key: string, step: string) => (w.pulls.push(step), step === "begin" ? (w.onBegin?.(), { pending: true, ticket: "T" }) : { text: "queued text" }) };
 	const lookup = (key: string): Found | undefined => (key === "sess-1" ? { key, base: "wA", name: "billing", role: "main", file, pane: "wA:p1", live: true } : undefined);
 	const gui = await startGui({ read: async () => ({ bases: [] }), net: { lookup, workspace: () => [] }, call, hub: hub as unknown as Hub, dir: join(scratch, "bundle"), pollMs: 50 });
 	running.push(gui);
@@ -237,6 +237,7 @@ async function answering({ reply = { status: 200, body: { outcome: "accepted" } 
 	const hub = {
 		target: { from: "S", bridgeId: "B", answer } as Target | undefined,
 		running: true, me: "G", start() {}, stop() {}, receive() {}, relayed: () => ({ dialogsOf: () => undefined, merge: () => ({ callId: "", tool: "" }) }),
+		has: () => false,
 		replay: (id: string, key: string) => (key === "sess-1" ? stored.get(id) : undefined),
 		ended: (key: string, dialog: string) => (key === "sess-1" && dialog === "d-closed" ? { status: 200, body: { outcome: "stale", by: "local" } } : undefined),
 		send: async (_key: string, t: Target, a: { answerId: string }) => (sent.push({ to: t.bridgeId, ...a }), stored.set(a.answerId, await reply), reply),
@@ -541,6 +542,44 @@ test("RC-F004: a link_request approval a bridge relays (the owner's listener, th
 	assert.deepEqual([remote.status, remote.body.error, delivered.length], [403, "local_only", 0], "a paired device cannot approve, and nothing reached the bridge");
 	assert.deepEqual([(await post(phone, 1, "b")).status, delivered.length], [200, 1], "it can deny");
 	assert.deepEqual([(await post(undefined, 0, "c")).status, delivered.length], [200, 2], "this computer's page approves");
+});
+
+test("dequeue: while a link_request call is open or the owner relays its dialog, a paired device's take-back is refused and Alt+Up does not go; this computer's page and a session with none open are not limited", async () => {
+	const open = [header(), user("u1", null, "go"), assistant("a1", "u1", [toolCall("c1", "link_request", { action: "trust" })])], plain = [header(), user("u1", null, "go")];
+	const p = await padded({ entries: open });
+	const phone = await paired(p.gui), take = (n: number) => ({ take: `take-0123456789abcde${n}` }), dequeue = (n: number) => phone.post("sessions/sess-1/dequeue", take(n));
+	p.w.status = "working"; // something is queued
+	const refused = await dequeue(0);
+	assert.deepEqual([refused.status, refused.body.error, p.sentKeys()], [403, "local_only", []], "the session file's open link_request call");
+	const here = await send(p.gui, "sessions/sess-1/dequeue", take(1));
+	assert.deepEqual([here.status, here.body.text, p.sentKeys()], [200, "queued text", [["alt+up"]]], "this computer's page takes it back");
+	writeFileSync(p.path, lines(plain));
+	await new Promise((r) => setTimeout(r, 1100));
+	p.w.relayedRequest = true;
+	const relayed = await dequeue(2);
+	assert.deepEqual([relayed.status, relayed.body.error, p.sentKeys().length], [403, "local_only", 1], "the owner relays an open link_request dialog (a call nested in codemode is not in the file)");
+	assert.equal((await send(p.gui, "sessions/sess-1/dequeue", take(3))).status, 200, "this computer's page again");
+	p.w.relayedRequest = false;
+	await new Promise((r) => setTimeout(r, 1100));
+	const free = await dequeue(4);
+	assert.deepEqual([free.status, free.body.text, p.sentKeys().length], [200, "queued text", 3], "none open: a paired device takes it back as before");
+	p.close();
+});
+
+test("dequeue: a link_request call that opens after the guard looked still stops a paired device's Alt+Up before it is written; this computer's page is not limited", async () => {
+	const opened = [header(), user("u1", null, "go"), assistant("a1", "u1", [toolCall("c1", "link_request", { action: "trust" })])];
+	const p = await padded();
+	const phone = await paired(p.gui);
+	p.w.status = "working";
+	p.w.opens = () => writeFileSync(p.path, lines(opened));
+	p.w.onBegin = () => void (p.w.armed = true); // the pane look that follows the guard is where the call opens
+	const refused = await phone.post("sessions/sess-1/dequeue", { take: "take-0123456789abcde0" });
+	assert.deepEqual([refused.status, refused.body.error, p.sentKeys()], [403, "local_only", []]);
+	writeFileSync(p.path, lines([header(), user("u1", null, "go")]));
+	await new Promise((r) => setTimeout(r, 1100));
+	const here = await send(p.gui, "sessions/sess-1/dequeue", { take: "take-0123456789abcde1" });
+	assert.deepEqual([here.status, here.body.text, p.sentKeys()], [200, "queued text", [["alt+up"]]], "this computer's page");
+	p.close();
 });
 
 test("the pad from a paired device follows the local page's rule: any pad key goes while a dialog the page cannot answer is open, and only Escape while one it can answer is", async () => {

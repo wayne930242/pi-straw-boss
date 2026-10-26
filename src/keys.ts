@@ -14,7 +14,7 @@ import type { Editor } from "./probe.ts";
 // along and Enter still comes alone and probed; a paste (`{paste, stream}`), up to 4,000 characters with line breaks and tabs but no other
 // control character, inside the bracketed-paste markers so pi takes it as one paste and a line break submits nothing; Delete; and Ctrl or
 // Alt chords (COMBOS) as Herdr names them. Ctrl+Z never goes (pi would stop in the background, where nothing here brings it back), Ctrl+D
-// asks first (it leaves pi on an empty editor), and so does a second Ctrl+C within a second (pi leaves on the second). The composer's Edit sends pi's Alt+Up (`dequeue`), under the guard and the rate and with no mirror, as typing needs none. Stop (`{keys: ["esc"]}`, the composer's) needs no mirror. Herdr 0.9 has no
+// asks first (it leaves pi on an empty editor), and so does a second Ctrl+C within a second (pi leaves on the second). The composer's Edit sends pi's Alt+Up (`dequeue`), under the guard (a paired device's too: no link_request open) and the rate and with no mirror, as typing needs none. Stop (`{keys: ["esc"]}`, the composer's) needs no mirror. Herdr 0.9 has no
 // names for Home, End, Page Up, and Page Down: those go as the fixed sequences pi reads (pane.send_text writes them raw), and only they.
 
 /** What the pad can send, as Herdr names the keys. */
@@ -63,10 +63,10 @@ export function createKeys({ fresh, secret, answerable, linkRequest = async () =
 	};
 	return {
 		/** The composer's Edit (`dequeue` in control.ts): pi's own Alt+Up, which takes back the queue. Like typing it needs no mirror, and like any key but Escape it is not sent while a secret or a question waits; it counts toward the rate. */
-		async dequeue(session: string, found: Found, pane: Pane): Promise<Plan> {
+		async dequeue(session: string, found: Found, pane: Pane, remote = false): Promise<Plan> {
 			const limited = counted(session);
 			if (limited) throw limited;
-			await guard(session, found, pane, { key: "alt+up" });
+			await guard(session, found, pane, { key: "alt+up", remote });
 			return { keys: ["alt+up"], double: false, calls: [["pane.send_input", { pane_id: pane.pane_id, keys: ["alt+up"] }]] };
 		},
 		/** The body as one pad key (or Stop's Escape), or why not, before Herdr is asked; a request that passes counts toward the rate. */

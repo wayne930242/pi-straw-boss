@@ -217,9 +217,12 @@ export function createControl({ link, lookup, call, csrf, canonical, pair, remot
 				if (begun.reason) throw no(409, begun.reason, PULL_WHY[begun.reason]!);
 				if (begun.text !== undefined) return void (direct = { status: 200, body: { text: begun.text } }); // this very take-back was done, and its answer got lost on the way: no key goes
 				if (!begun.pending || !begun.ticket) return void (direct = { status: 200, body: { empty: true } }); // nothing is queued: no key goes
-				const plan = await pad.dequeue(key, found, pane);
+				const plan = await pad.dequeue(key, found, pane, remote);
 				await live(found); // the guard took a moment: still pi, on this file
-				for (const [method, params] of plan.calls) await call(method, params, 15_000);
+				for (const [method, params] of plan.calls) {
+					if (remote && (await requested(key, found))) throw no(403, "local_only", LINK_LOCAL); // as in keys: a link_request may have opened since the guard looked
+					await call(method, params, 15_000);
+				}
 				const done = await answers.pull(key, "finish", begun.ticket);
 				if (!done) throw no(504, "unsure", "The session did not answer in time. The messages are in the terminal's editor, or the session keeps them for a few minutes: use Fetch again on the page to get them.");
 				if (done.reason) throw no(409, done.reason, PULL_WHY[done.reason]!);
