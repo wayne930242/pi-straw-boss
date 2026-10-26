@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { existsSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { alive as pidAlive } from "../remote.ts";
 import { powershellPath, system32 } from "../winpath.ts";
-import { ACL_STEPS, aclMarkerPath, asciiJson, asciiLine, CLM_CHECK, execFailure, POWERSHELL_FLAGS, PROGRESS_OFF, UTF8_OUT } from "./acl.ts";
+import { ACL_STEPS, OWNER_OK_PS, aclMarkerPath, asciiJson, asciiLine, CLM_CHECK, execFailure, POWERSHELL_FLAGS, PROGRESS_OFF, UTF8_OUT } from "./acl.ts";
 import type { Launched, SpawnSpec, Started } from "./client.ts";
 
 // The detached server on Windows, started outside the starter's job object (docs/specs/2026-10-26-sb-backend.md, Process model and lifecycle). Node's `detached: true` does not break away from
@@ -76,8 +76,8 @@ export const LAUNCH_SCRIPT = [
 	"    $o = ''; if ($sd -match '^O:(S-[0-9-]+|[A-Za-z]{2})') { $o = $Matches[1] }",
 	"    $c = $o.ToUpperInvariant()",
 	"    if ($c -eq 'SY') { $c = 'S-1-5-18' } elseif ($c -eq 'BA') { $c = 'S-1-5-32-544' } else { $rid = @{ LA = '-500'; LG = '-501'; DA = '-512'; DU = '-513' }[$c]; if ($rid -and $me.EndsWith($rid)) { $c = $me } }",
-	// The same rule as `ownerProblems`: the user, or BUILTIN\Administrators (an elevated token's default owner; only an administrator can create such an object and one can read the folder anyway).
-	"    if ($c -ne $me -and $c -ne 'S-1-5-32-544') {",
+	// The same rule as `ownerProblems` and the scripts' owner walks (`OWNER_OK_SIDS`): the user, BUILTIN\Administrators and SYSTEM.
+	`    if ($c -ne $me -and @(${OWNER_OK_PS}) -notcontains $c) {`,
 	"      Say ([ordered]@{ rc = -2; pid = 0; markerError = ('the folder belongs to another account (' + $o + '), not to ' + $me) })",
 	"      exit 0",
 	"    }",

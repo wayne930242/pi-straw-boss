@@ -132,6 +132,18 @@ test("a serve server refuses to stop and goes on running", async () => {
 	assert.equal((await helloOf(world.record()!.socket, world.record()!.secret))?.ready, true);
 });
 
+test("R11-F002: a restart reads the clock once: began, since and lastRestart.at are one moment even when the clock moves with every read", async () => {
+	let ticks = 0;
+	const base = Date.now();
+	const s = await world.start({ now: () => base + ticks++ });
+	await s.handle.ready;
+	const { reply } = await callControl(world.record()!.socket, world.record()!.secret, { cmd: "restart", reason: "tick", by: "t" });
+	assert.deepEqual(reply, { ok: true });
+	await s.handle.done;
+	const record = world.record()!;
+	assert.ok(record.restarting?.began && record.restarting.began === record.restarting.since && record.restarting.began === record.lastRestart?.at, JSON.stringify([record.restarting, record.lastRestart]));
+});
+
 test("restart: the server writes restarting with the reason and the requester, answers, then refuses requests but status, and exits 0 (75 for serve)", async () => {
 	const s = await world.start();
 	await s.handle.ready;

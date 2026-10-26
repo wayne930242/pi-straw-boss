@@ -276,7 +276,8 @@ test("R6-F001: the folder's owner (O: of Get-Acl) must be the user; another acco
 	assert.deepEqual(ownerProblems(good, OWNER), []);
 	assert.deepEqual(ownerProblems(`O:LAG:DUD:P${ACE(OWNER)}${ACE("SY")}`, OWNER.replace(/-\d+$/, "-500")), [], "an alias of the owner's own built-in account");
 	assert.match(ownerProblems(foreign, OWNER)[0]!, /belongs to another account \(S-1-5-21-9-9-9-1002\)/);
-	assert.match(ownerProblems(`O:SYG:DUD:P${ACE(OWNER)}${ACE("SY")}`, OWNER)[0]!, /belongs to another account \(SY\)/);
+	assert.match(ownerProblems(`O:BUG:DUD:P${ACE(OWNER)}${ACE("SY")}`, OWNER)[0]!, /belongs to another account \(BU\)/);
+	assert.deepEqual(ownerProblems(`O:SYG:DUD:P${ACE(OWNER)}${ACE("SY")}`, OWNER), [], "SYSTEM is an accepted owner (R11-F004: one rule in every check)");
 	assert.match(ownerProblems(`D:P${ACE(OWNER)}${ACE("SY")}`, OWNER)[0]!, /names no owner/);
 	assert.ok(aclProblems({ sid: OWNER, dir: foreign, files: [] }).some((p) => /belongs to another account/.test(p)));
 	const exec: Exec = (_f, _a, _o, done) => done(null, JSON.stringify({ sid: OWNER, dir: foreign, files: [] }));
@@ -334,7 +335,7 @@ test("R8-F003: the script lists what is below WITHOUT following links, refuses a
 		// R9-F004: a folder that vanished is skipped, one that is there and cannot be listed is thrown.
 		assert.match(script, /catch \{ if \(Test-Path -LiteralPath \$here\) \{ throw \}; continue \}/);
 		const lines = script.split("\n").map((l) => l.trim());
-		const first = lines.findIndex((l) => l.startsWith("$null = Walk $dir")), owner = lines.findIndex((l) => /\/setowner/.test(l)), again = lines.findIndex((l) => l.startsWith("$tree = Walk $dir"));
+		const first = lines.findIndex((l) => l.startsWith("$pre = Walk $dir")), owner = lines.findIndex((l) => /\/setowner/.test(l)), again = lines.findIndex((l) => l.startsWith("$tree = Walk $dir"));
 		assert.ok(first > 0 && first < owner && owner < again, `${first} ${owner} ${again}`);
 		assert.ok(!/Descend|\$todo\.Push\(\$e\)[^}]*ReparsePoint/.test(script), "a reparse point is never pushed to the walk");
 	}
@@ -390,17 +391,20 @@ test("VM pass 5b: BUILTIN\\Administrators owns an entry acceptably (an elevated 
 	assert.match(aclProblems({ sid: OWNER, dir: good, files: [{ path: "C:\\s\\server.json", sddl: `O:BAG:DUD:AI${ACE(OWNER, "ID")}${ACE("SY", "ID")}${ACE("BA", "ID")}` }] }).join(";"), /server\.json: grants BA, who is neither/);
 });
 
-test("VM pass 5b: both ACL scripts read every entry's owner after /setowner /T and BEFORE /reset, and refuse a foreign owner with nothing below it reset", () => {
+test("R11-F001, VM pass 5b: both ACL scripts check the folder's own owner before /inheritance:r, and every entry's owner before /setowner /T and /reset, and refuse a foreign owner with nothing changed", () => {
 	for (const script of [ACL_SCRIPT, LAUNCH_SCRIPT]) {
 		const lines = script.split("\n").map((l) => l.trim());
-		const setowner = lines.findIndex((l) => /\/setowner .*\/T \/C \/L \/Q/.test(l)), pre = lines.findIndex((l) => l.startsWith("$pre = Walk $dir"));
-		const check = lines.findIndex((l) => /GetOwner\(\[Security\.Principal\.SecurityIdentifier\]\)\.Value/.test(l)), reset = lines.findIndex((l) => /\/reset \/T \/C \/L \/Q/.test(l));
-		assert.ok(setowner > 0 && setowner < pre && pre < check && check < reset, `${setowner} ${pre} ${check} ${reset}`);
-		const line = lines[check]!;
-		assert.match(line, /\$who -ne \$sid -and \$who -ne 'S-1-5-18' -and \$who -ne 'S-1-5-32-544'\) \{ throw /, "the user, SYSTEM and BUILTIN\\Administrators pass; anything else is thrown");
-		assert.match(line, /belongs to another account \(' \+ \$who \+ '\), not to ' \+ \$sid \+ ' \(nothing below it was reset\)/);
-		assert.match(line, /@\(\$pre\.folders\) \+ @\(\$pre\.files\)/, "folders and files alike");
-		assert.match(line, /catch \{ if \(Test-Path -LiteralPath \$p\) \{ throw \}; continue \}/, "an entry that vanished is skipped");
-		assert.ok(!/Get-Acl/.test(line), "owners come from .NET as SIDs (no name translation per file)");
+		const at = (re: RegExp) => lines.findIndex((l) => re.test(l));
+		const dirCheck = at(/^CheckOwner \$dir$/), protect = at(/\$dir \/inheritance:r \/grant:r/), pre = at(/^\$pre = Walk \$dir/), entries = at(/^foreach \(\$p in @\(\$pre\.folders\)/);
+		const setowner = at(/\/setowner .*\/T \/C \/L \/Q/), reset = at(/\/reset \/T \/C \/L \/Q/);
+		assert.ok(dirCheck > 0 && dirCheck < protect && protect < pre && pre < entries && entries < setowner && setowner < reset, `${dirCheck} ${protect} ${pre} ${entries} ${setowner} ${reset}`);
+		const fn = lines[at(/^function CheckOwner/)]!;
+		assert.match(fn, /\$who -ne \$sid -and \$okOwners -notcontains \$who\) \{ throw /, "the user and the accepted owners pass; anything else is thrown");
+		assert.match(fn, /belongs to another account \(' \+ \$who \+ '\), not to ' \+ \$sid \+ ' \(nothing was changed\)/);
+		assert.ok(lines.some((l) => l === "$okOwners = @('S-1-5-18','S-1-5-32-544')"), "the accepted owners: SYSTEM and BUILTIN\\Administrators (the one list, shared with the launch script and ownerProblems)");
+		assert.match(lines[at(/^function OwnerOf/)]!, /GetOwner\(\[Security\.Principal\.SecurityIdentifier\]\)\.Value/);
+		assert.match(lines[entries]!, /@\(\$pre\.folders\) \+ @\(\$pre\.files\)/, "folders and files alike");
+		assert.match(lines[entries]!, /catch \{ if \(Test-Path -LiteralPath \$p\) \{ throw \}; continue \}/, "an entry that vanished is skipped");
+		assert.ok(!/Get-Acl/.test(`${fn}${lines[entries]}${lines[at(/^function OwnerOf/)]}`), "owners come from .NET as SIDs (no name translation per file)");
 	}
 });

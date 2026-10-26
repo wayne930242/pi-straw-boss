@@ -262,7 +262,9 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		if (request.cmd === "restart") {
 			const reason = phrase(request.reason, 200) || "restart", who = phrase(request.by, 120) || "unknown";
 			log.line("restart", { reason, by: who });
-			updateRecord(slot, (r) => (r.pid === pid ? { ...r, restarting: { began: at(), since: at(), reason, by: who }, ...(request.counts === false ? {} : { lastRestart: { at: at(), reason, by: who } }) } : undefined));
+			// One read of the clock: `began`, `since` and `lastRestart.at` are the same moment (two reads can fall in different milliseconds).
+			const when = at();
+			updateRecord(slot, (r) => (r.pid === pid ? { ...r, restarting: { began: when, since: when, reason, by: who }, ...(request.counts === false ? {} : { lastRestart: { at: when, reason, by: who } }) } : undefined));
 			return leaveAfterReply("restarting", mode === "serve" ? SERVE_RESTART_CODE : 0);
 		}
 		return { ok: false, error: `unknown command ${String(request.cmd)}` };

@@ -503,7 +503,7 @@ test("R7-F001: the launch script checks the folder's exact owner before the crea
 	assert.match(LAUNCH_SCRIPT, /\$c -eq 'SY'\) \{ \$c = 'S-1-5-18' \}/);
 	assert.match(LAUNCH_SCRIPT, /LA = '-500'; LG = '-501'; DA = '-512'; DU = '-513'/, "the aliases of ownerProblems");
 	assert.match(LAUNCH_SCRIPT, /if \(\$env:SB_ACL_DIR\) \{\n\s+\$me = /, "only when a check is asked for");
-	assert.match(LAUNCH_SCRIPT, /if \(\$c -ne \$me -and \$c -ne 'S-1-5-32-544'\) \{\n\s+Say \(\[ordered\]@\{ rc = -2;/, "a different owner is the refusal, unless it is BUILTIN\\Administrators (the same rule as ownerProblems)");
+	assert.match(LAUNCH_SCRIPT, /if \(\$c -ne \$me -and @\('S-1-5-18','S-1-5-32-544'\) -notcontains \$c\) \{\n\s+Say \(\[ordered\]@\{ rc = -2;/, "a different owner is the refusal, unless it is SYSTEM or BUILTIN\\Administrators (the one rule of ownerProblems and the scripts' owner walks, R11-F004)");
 	assert.match(LAUNCH_SCRIPT, /elseif \(\$c -eq 'BA'\) \{ \$c = 'S-1-5-32-544' \}/);
 });
 

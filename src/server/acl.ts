@@ -37,6 +37,15 @@ export const CLM_TEXT = "PowerShell runs in Constrained Language Mode (likely a 
 /** The first line of every script that prints an answer: the console's output encoding, which may fail where no console is attached. */
 export const UTF8_OUT = "try { [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false) } catch { }";
 
+/** BUILTIN\Administrators: the default owner of what an elevated token creates. */
+export const ADMINS_SID = "S-1-5-32-544";
+/**
+ * The owners that are accepted besides the user, by ONE rule in every check (`ownerProblems`, both scripts' owner walks, the launch script's check before the create): BUILTIN\Administrators and SYSTEM.
+ * Both are made by an administrator's elevated token or by SYSTEM, which can read the folder whatever its owner or DACL; no account gains anything from them owning an entry.
+ */
+const OWNER_OK_SIDS = [SYSTEM_SID, ADMINS_SID];
+/** The same list as a PowerShell array body: `'S-1-5-18','S-1-5-32-544'`. */
+export const OWNER_OK_PS = OWNER_OK_SIDS.map((sid) => `'${sid}'`).join(",");
 /** The steps of the check, from the folder to `$out` (sid, start time of `$env:SB_ACL_PID`, the folder's SDDL, each secret file's): the server's own script and the starter's launch script both run them. */
 export const ACL_STEPS = [
 	"$dir = $env:SB_ACL_DIR",
@@ -46,6 +55,14 @@ export const ACL_STEPS = [
 	"try { $started = (Get-CimInstance Win32_Process -Filter \"ProcessId=$($env:SB_ACL_PID -as [int])\").CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ', [cultureinfo]::InvariantCulture) } catch { }",
 	// `${sid}:` and not `$sid:`: PowerShell reads the latter as a variable in a scope named sid.
 	"$icacls = Join-Path ([Environment]::SystemDirectory) 'icacls.exe'",
+	// ONE owner rule everywhere (R11-F004): the user, BUILTIN\Administrators and SYSTEM (`OWNER_OK_SIDS`, as `ownerProblems`, the launch script's check before the create, and `takeOwnership`). Owners are read as SIDs through .NET.
+	`$okOwners = @(${OWNER_OK_PS})`,
+	"function OwnerOf($p) { $s = [Security.AccessControl.AccessControlSections]::Owner; if ([IO.Directory]::Exists($p)) { $a = [IO.Directory]::GetAccessControl($p, $s) } else { $a = [IO.File]::GetAccessControl($p, $s) }; return $a.GetOwner([Security.Principal.SecurityIdentifier]).Value }",
+	"function CheckOwner($p) { $who = OwnerOf $p; if ($who -ne $sid -and $okOwners -notcontains $who) { throw ('the ' + $p + ' belongs to another account (' + $who + '), not to ' + $sid + ' (nothing was changed)') } }",
+	// The folder's own owner is read BEFORE anything changes it (R11-F001): the native step that comes before this script never takes the ownership of an existing folder (an attacker's folder that
+	// grants the user WRITE_OWNER would be taken over, and its secret-bearing files written by the user), so this is the gate for a folder that was already there. `/setowner` below only turns
+	// BUILTIN\Administrators- and SYSTEM-owned entries into the user's.
+	"CheckOwner $dir",
 	"& $icacls $dir /inheritance:r /grant:r \"*${sid}:(OI)(CI)F\" '*S-1-5-18:(OI)(CI)F' | Out-Null",
 	"if ($LASTEXITCODE -ne 0) { throw \"icacls failed with exit code $LASTEXITCODE\" }",
 	// Only name-surrogate links (junction, mount point, symbolic link: `LinkType`) are refused; other reparse points (OneDrive and other cloud placeholders, dedup) are ordinary files and folders, walked as such (R9). A folder that
@@ -53,14 +70,14 @@ export const ACL_STEPS = [
 	// The entries below are listed WITHOUT following links (Windows PowerShell 5.1's Get-ChildItem follows junctions): a link or junction anywhere below the folder is refused, before any icacls call
 	// acts below it and again when the SDDLs are read back (R8-F003). `Walk` returns every file and every folder below.
 	"function Walk($root) { $f = New-Object System.Collections.Generic.List[string]; $d = New-Object System.Collections.Generic.List[string]; $todo = New-Object System.Collections.Generic.Stack[string]; $todo.Push($root); while ($todo.Count -gt 0) { $here = $todo.Pop(); try { $names = [IO.Directory]::GetFileSystemEntries($here) } catch { if (Test-Path -LiteralPath $here) { throw }; continue }; foreach ($e in $names) { try { $a = [IO.File]::GetAttributes($e) } catch { continue }; if (($a -band [IO.FileAttributes]::ReparsePoint) -ne 0) { $kind = $null; try { $kind = (Get-Item -LiteralPath $e -Force -ErrorAction Stop).LinkType } catch { throw ('sb-reparse-point ' + $e) }; if ($kind -eq 'Junction' -or $kind -eq 'SymbolicLink') { throw ('sb-reparse-point ' + $e) } }; if (($a -band [IO.FileAttributes]::Directory) -ne 0) { $d.Add($e); $todo.Push($e) } else { $f.Add($e) } } }; return @{ files = $f; folders = $d } }",
-	"$null = Walk $dir",
-	// Everything below the folder is made the user's FIRST, in ONE call (`/C` goes on past an item it may not change; the read-back below is the check): /reset and /inheritance replace DACLs and
-	// never owners, so a folder another account created (a secondary slot's `servers\<hash>`, `link\…`) would keep that account's implicit WRITE_DAC; as the owner the user can then reset it.
-	"& $icacls \"$dir\\*\" /setowner \"*${sid}\" /T /C /L /Q | Out-Null",
-	// Then every entry's owner is read and a foreign one refused BEFORE the reset (VM pass 5b): `/setowner /C` goes on past an entry it may not change, and a reset (WRITE_DAC through a grant the
-	// foreign owner made) would rewrite the DACL of an entry another account still owns. Owners are read as SIDs through .NET (cheap: no name translation), and the user, BUILTIN\Administrators and SYSTEM pass.
+	// Every entry's owner is read and a foreign one refused BEFORE `/setowner` and `/reset` (R11-F001; VM pass 5b): `/setowner /C` would take an entry another account made and granted the user WRITE_OWNER on
+	// (and a reset, WRITE_DAC through a grant that account made, would rewrite the DACL of an entry it still owns). A foreign entry is refused with nothing below the folder changed.
+	// The gap between this walk and the calls below (an entry planted in it) is known and bounded by the folder's own protection (R11-F003).
 	"$pre = Walk $dir",
-	"foreach ($p in @($pre.folders) + @($pre.files)) { try { $acl = if ([IO.Directory]::Exists($p)) { [IO.Directory]::GetAccessControl($p, [Security.AccessControl.AccessControlSections]::Owner) } else { [IO.File]::GetAccessControl($p, [Security.AccessControl.AccessControlSections]::Owner) }; $who = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value } catch { if (Test-Path -LiteralPath $p) { throw }; continue }; if ($who -ne $sid -and $who -ne 'S-1-5-18' -and $who -ne 'S-1-5-32-544') { throw ('the ' + $p + ' belongs to another account (' + $who + '), not to ' + $sid + ' (nothing below it was reset)') } }",
+	"foreach ($p in @($pre.folders) + @($pre.files)) { try { CheckOwner $p } catch { if (Test-Path -LiteralPath $p) { throw }; continue } }",
+	// Everything below the folder is then made the user's, in ONE call (`/C` goes on past an item it may not change; the read-back below is the check): /reset and /inheritance replace DACLs and
+	// never owners, so what an elevated run made (BUILTIN\Administrators) or SYSTEM made would keep that implicit WRITE_DAC; as the owner the user can then reset it.
+	"& $icacls \"$dir\\*\" /setowner \"*${sid}\" /T /C /L /Q | Out-Null",
 	// Then everything already below the folder (server.lock the starter took, server.log, the link and stash folders, a secondary slot's files) is reset in ONE call: its explicit ACEs go and it
 	// inherits the folder's owner and SYSTEM grant again, which an (OI)(CI) grant hands to files and folders alike. `/C` goes on past an item that vanishes meanwhile (a temp file renamed into
 	// place), and the exit code is not the check, since an empty folder has nothing to match: the read-back below is. A call per item would start a process for each of them (link/inbox holds up to 500).
@@ -144,8 +161,6 @@ export function parseSddl(text: string): Sddl {
 	return out;
 }
 
-/** BUILTIN\Administrators: the default owner of what an elevated token creates. */
-export const ADMINS_SID = "S-1-5-32-544";
 /** A SID as `S-1-…`: SYSTEM's alias, and the aliases SDDL gives the built-in accounts (local Administrator and Guest, domain Admins and Users) when they are this owner's. */
 function canon(sid: string, owner: string): string {
 	const s = sid.toUpperCase();
@@ -229,7 +244,7 @@ export function ownerProblems(sddl: string, owner: string, path = "the folder", 
 	// SYSTEM can read the folder whatever its owner or DACL, and a backup operator can read and write any file, so BA ownership gives no account anything it lacks; the
 	// threat this gate stops is another standard account owning an entry. BA is NOT accepted as an ACE (`folderProblems` and `fileProblems` still allow the owner and SYSTEM only).
 	const who = canon(found, owner);
-	return who === owner.toUpperCase() || who === ADMINS_SID || who === "BA" ? [] : [`${path === "the folder" ? path : `the ${kind} ${path}`} belongs to another account (${found}), not to ${owner}`];
+	return who === owner.toUpperCase() || OWNER_OK_SIDS.includes(who) || who === "BA" ? [] : [`${path === "the folder" ? path : `the ${kind} ${path}`} belongs to another account (${found}), not to ${owner}`];
 }
 /** Every problem in a result: the folder's owner, its DACL, and each secret file's. */
 export const aclProblems = ({ sid, dir, files, folders = [] }: AclResult) => [

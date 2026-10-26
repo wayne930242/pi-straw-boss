@@ -4,7 +4,7 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { system32, system32Path } from "../winpath.ts";
-import { ADMINS_SID, asciiLine, CLM_CHECK, execFailure, folderProblems, POWERSHELL_FLAGS, PROGRESS_OFF, SYSTEM_SID } from "./acl.ts";
+import { asciiLine, folderProblems, SYSTEM_SID } from "./acl.ts";
 
 // The state folder is protected before the first file is created in it (docs/specs/2026-10-26-sb-backend.md, The control socket): a cold start used to leave server.lock, the
 // placeholder record, and server.log with the parent's inherited ACEs (Users read, Authenticated Users modify outside the profile) until the server's PowerShell call, 4 to 7 s later.
@@ -119,33 +119,16 @@ const stepOf = <T>(step: Step, dir: string, fn: () => T): T => {
 		throw new NativeFailed(explainNative(step, dir, error as never));
 	}
 };
-/** Makes the folder the owner's, protects it, and reads its DACL back; the folder is `target`, which holds nothing yet. */
-/** Windows PowerShell 5.1, relative to System32 (`nativeCommand` joins it there). */
-const POWERSHELL = "WindowsPowerShell\\v1.0\\powershell.exe";
 /**
- * The SID that owns a folder, read by one PowerShell start: `GetAccessControl(…Owner).GetOwner([SecurityIdentifier])` prints a SID, never a name that a listing would cut or another account
- * could imitate. The Constrained Language check comes first, so a machine that locks PowerShell down says so (the word is told as a sentence by `execFailure`). Used only when `/setowner` was refused.
- */
-export function ownerOfFolder(dir: string, run: RunNative, timeoutMs?: number): string {
-	const script = [PROGRESS_OFF, CLM_CHECK, `$d = '${dir.replace(/'/g, "''")}'`, "[IO.Directory]::GetAccessControl($d, [Security.AccessControl.AccessControlSections]::Owner).GetOwner([Security.Principal.SecurityIdentifier]).Value"].join("\n");
-	let out: string;
-	try {
-		out = run(POWERSHELL, [...POWERSHELL_FLAGS, "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], timeoutMs);
-	} catch (error) {
-		const failed = error as Error & { stderr?: unknown; stdout?: unknown };
-		throw new Refused(`the owner of ${dir} could not be read (${execFailure(failed, failed.stderr, failed.stdout)})`);
-	}
-	const found = out.split(/\r?\n/).map((line) => line.trim()).filter((line) => /^S-1-[0-9-]+$/i.test(line)).pop();
-	if (!found) throw new Refused(`the owner of ${dir} could not be read (PowerShell gave no SID: ${asciiLine(out).slice(0, 80) || "nothing"})`);
-	return found;
-}
-/**
- * Makes the folder the owner's. `/setowner` needs WRITE_OWNER, which a filtered (UAC) token of an administrator does not have outside its profile unless the parent grants it, even on a folder
- * the user owns (it made every start there fail with exit 5). So a refusal (5, 1307, 1314) is not final, but nothing is touched until the owner is known (VM pass 5b, the decoy): an attacker's
- * folder that grants the user WRITE_DAC but not WRITE_OWNER would let the protect call below hand the user WRITE_OWNER, and the next start's `/setowner` would then succeed on a folder the
- * attacker made and holds. So on a refusal, and only then (a normal start starts no PowerShell), the owner is read as a SID: the user, `BUILTIN\Administrators` or SYSTEM goes on to the protect call
- * (the owner has WRITE_DAC; a folder an administrator made without a grant for the user fails there with exit 5, told as such); any other owner, or an owner that cannot be read, is refused with no
- * call that changes the folder. The exact owner is checked again by the PowerShell read-back before any secret is written, and by the launch script before the server is created.
+ * Makes a folder this process has just made (`fresh`, under an unpredictable name) the owner's. `/setowner` needs WRITE_OWNER, which a filtered (UAC) token of an administrator does not have outside its
+ * profile even on a folder it made, so a refusal (5, 1307, 1314) is tolerated here: the folder is ours by construction.
+ *
+ * An EXISTING folder never gets a native `/setowner` (R11-F001; VM pass 5b, the decoy): an attacker's folder that grants the user WRITE_OWNER (or WRITE_DAC, which the protect call turns into it) would be
+ * TAKEN OVER by a successful `/setowner`, and the user would then pass the owner check on a folder the attacker's open handles can still change. The owner of an existing folder is not read natively
+ * (a listing cuts long names and shows names others can create; a PowerShell start on every start is too dear), so its exact owner (`O:` as a SID) is gated by PowerShell before any secret is written: the
+ * launch script before the server is created, `ACL_STEPS` before it changes anything, `serve`'s own script, and the read-back. `BUILTIN\Administrators` and SYSTEM are accepted owners, so no
+ * `/setowner` is needed to make an elevated run's folder usable. What this leaves: the protect call below rewrites the DACL of a foreign folder (it adds the user and SYSTEM; the owner is unchanged) and
+ * the lock and the placeholder record (no secret) may be written into it before that gate refuses.
  */
 function takeOwnership(target: string, run: RunNative, left: () => number | undefined): void {
 	try {
@@ -153,16 +136,13 @@ function takeOwnership(target: string, run: RunNative, left: () => number | unde
 	} catch (error) {
 		const status = (error as { status?: unknown }).status;
 		if (typeof status !== "number" || !OWNER_REFUSED.has(status)) throw error;
-		const owner = ownerOfFolder(target, run, left());
-		if (owner.toUpperCase() !== sid!.toUpperCase() && owner !== ADMINS_SID && owner !== SYSTEM_SID) {
-			throw new Refused(`the folder ${target} belongs to another account (${owner}), not to ${sid}, and this process may not take it over. Run pi as that account (an elevated shell for an administrator's), or delete the folder ${target}, then start again. (owner step, exit ${status}; nothing in the folder was changed)`);
-		}
 	}
 }
-function secure(target: string, run: RunNative, left: () => number | undefined): void {
+/** Makes the folder protected and reads its DACL back; the owner is taken only of a folder `fresh` from this process (see `takeOwnership`). */
+function secure(target: string, run: RunNative, left: () => number | undefined, fresh = false): void {
 	// A junction that took the name since the first look is refused before any call acts on it (`/L` is the second guard).
 	refuseLink(target);
-	stepOf("owner", target, () => takeOwnership(target, run, left));
+	if (fresh) stepOf("owner", target, () => takeOwnership(target, run, left));
 	stepOf("protect", target, () => run("icacls.exe", protectArgs(target, sid!), left()));
 	// The folder could have been swapped for a link between the first look and the calls: looked at again before anything is read from it or written into it.
 	refuseLink(target);
@@ -211,7 +191,7 @@ function intoPlace(dir: string, run: RunNative, left: () => number | undefined, 
 	mkdirSync(parent, { recursive: true });
 	mkdirSync(temp);
 	try {
-		secure(temp, run, left);
+		secure(temp, run, left, true);
 		// Something put into it in the moment it was open to the parent's readers would be inside the folder for good.
 		if (readdirSync(temp).length) throw new Refused(`something was put into ${temp} before it was protected`);
 		try {
