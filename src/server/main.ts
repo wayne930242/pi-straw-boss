@@ -9,7 +9,7 @@ import { herdrListens, intercomOf, runsAs } from "./client.ts";
 import { type IntercomModule, loadIntercom, LoaderError } from "./intercom.ts";
 import { createLog } from "./log.ts";
 import {
-	clearStartError, fileOf, prepareSlot, readRecord, restartingNow, type ServerRecord, serverId, type Slot, TOUCH_MS, updateRecord, writeRecord, writeStartError,
+	clearStartError, type Detach, fileOf, prepareSlot, readRecord, restartingNow, type ServerRecord, serverId, type Slot, TOUCH_MS, updateRecord, writeRecord, writeStartError,
 } from "./record.ts";
 import { AFTER, endpointFor, helloOf, listenControl, newSecret, type Reply, type Request } from "./socket.ts";
 import { packageRoot, VERSION } from "./version.ts";
@@ -47,7 +47,7 @@ export interface ServerOptions {
 	/** Makes the slot's folder ready before the first file is created in it (on Windows, protects the state folder); `prepareSlot` by default. */
 	prepare?: (slot: Slot, ms?: number) => void;
 	/** How the starter started this process (Windows): through WMI, or by a plain spawn after a failure; kept in the record, so `status` and `up` can say so. */
-	detach?: { via: "wmi" | "direct"; failure?: string };
+	detach?: { via: Detach; failure?: string };
 	herdrUp?: () => Promise<boolean>;
 	watch?: HerdrWatch;
 	herdr?: HeadlessDeps;
@@ -131,10 +131,13 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	// runs under the recorded pid is not enough (a pid a crashed server left is reused by an unrelated process, and `startOf` cannot tell on Windows until a background read is in).
 	const changed = (found: ServerRecord) => found.pid !== prior?.pid || found.secret !== prior?.secret || found.socket !== prior?.socket;
 	const knownRunning = (found: ServerRecord) => alive(found.pid) && Boolean(found.started) && startOf(found.pid) === found.started;
-	/** The record, when it is another server's that is known to run (without a hello): it changed since the first look, and its start time is known and equal. */
+	/**
+	 * The record, when it is another server's that is known to run (without a hello): its start time is known and equal to the record's (a live server whose hello was slow keeps its record, though
+	 * nothing about it changed), or the record was taken since the first look by a process that runs (its start time cannot be told yet, and its hello may not answer yet either).
+	 */
 	const rival = () => {
 		const found = readRecord(slot);
-		return found && found.pid !== pid && found.socket && changed(found) && knownRunning(found) ? found : undefined;
+		return found && found.pid !== pid && found.socket && (knownRunning(found) || (changed(found) && runsAs({ alive, startOf }, found))) ? found : undefined;
 	};
 
 	// From the first moment the record says this server is starting, and its `since` moves every touchMs: the ACL call and the code load below take seconds on Windows, and a look

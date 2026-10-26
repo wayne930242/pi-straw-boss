@@ -257,6 +257,8 @@ export async function launch(ctx: Ctx, { began, old, deadline }: { began?: strin
 			return outcome;
 		}
 		if (mine) endStarting(ctx.slot, mine.began, mine.expect);
+		// A PowerShell that timed out at the same moment as the wait: its word is in a moment, and the error is not without the sentence that says WMI may still have started the server.
+		if (!outcome && !note && child.started) await Promise.race([child.started, ctx.sleep(100)]);
 		ctx.log.line("start-unanswered", { ms: ctx.now() - t0, exit: outcome ? String(outcome.exit) : "none" });
 		throw failed(ctx, outcome, waitMs, note);
 	} finally {
@@ -515,7 +517,9 @@ export async function describe(ctx: Ctx): Promise<Record<string, unknown>> {
 }
 /** What to tell about a server that was started by a plain spawn after the start outside the starter's job failed: it dies with the pane or ssh session that started it. */
 export function detachWarning(record: Pick<ServerRecord, "detach" | "detachFailure"> | undefined): string | undefined {
-	return record?.detach === "direct" ? `the sb server was started without leaving its starter's job (${record.detachFailure ?? "WMI did not start it"}), so it ends with the pane or ssh session that started it` : undefined;
+	if (record?.detach === "direct") return `the sb server was started without leaving its starter's job (${record.detachFailure ?? "WMI did not start it"}), so it ends with the pane or ssh session that started it`;
+	if (record?.detach === "wmi-in-job") return "the sb server was started through WMI, but the job it is in did not allow it to break away, so it stays in the WMI provider host's job and ends with that job's limits";
+	return undefined;
 }
 /** The GUI's URL, once the server hosts the GUI (B2); null while the pi sessions do. */
 export const guiUrl = (record: ServerRecord | undefined) => (record?.gui ? `http://127.0.0.1:${record.gui.port}/${record.gui.token}/` : null);

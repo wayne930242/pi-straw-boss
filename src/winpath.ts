@@ -4,12 +4,15 @@ import { win32 } from "node:path";
 // pi session's folder is a project, so a `powershell.exe` planted in a repository would run. Every call to a program of the system names it from `%SystemRoot%\System32`, and runs
 // it from that folder, so nothing of the project's is in its way either.
 
-/** `%SystemRoot%`, from the environment (a plain object is searched without regard to case, as Windows does); `C:\Windows` only when none is set. */
+/**
+ * `%SystemRoot%`, from the environment (a plain object is searched without regard to case, as Windows does), taken only when it is a drive-letter absolute path: a relative value would put the
+ * program path and its working directory in the project folder. `C:\Windows` when none is set or none is such a path.
+ */
 export function systemRoot(env: NodeJS.ProcessEnv = process.env): string {
 	for (const name of ["SystemRoot", "windir"]) {
 		const key = Object.keys(env).find((k) => k.toLowerCase() === name.toLowerCase());
 		const value = key && env[key]?.trim();
-		if (value) return value;
+		if (value && /^[A-Za-z]:\\/.test(value)) return value;
 	}
 	return "C:\\Windows";
 }

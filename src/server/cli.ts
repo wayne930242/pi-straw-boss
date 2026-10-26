@@ -98,8 +98,8 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 		return 2;
 	}
 	const { command, flags } = args;
-	if (command === "run" && flags.detach !== undefined && flags.detach !== "wmi" && flags.detach !== "direct") {
-		err(`--detach is wmi or direct\n${USAGE}\n`);
+	if (command === "run" && flags.detach !== undefined && flags.detach !== "wmi" && flags.detach !== "wmi-in-job" && flags.detach !== "direct") {
+		err(`--detach is wmi, wmi-in-job, or direct\n${USAGE}\n`);
 		return 2;
 	}
 	const slot = slotOf(deps.stateDir ?? stateDirOf(env), env);
@@ -262,7 +262,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 	async function runDetached() {
 		if (flags.detached !== true) throw new UsageError("run is the server's own start: use `up`, or `serve` in the foreground");
 		scrubIdentity();
-		const via = flags.detach === "wmi" ? "wmi" as const : flags.detach === "direct" ? "direct" as const : undefined;
+		const via = flags.detach === "wmi" ? "wmi" as const : flags.detach === "wmi-in-job" ? "wmi-in-job" as const : flags.detach === "direct" ? "direct" as const : undefined;
 		const detach = via ? { via, ...(typeof flags["detach-reason"] === "string" ? { failure: flags["detach-reason"] } : {}) } : undefined;
 		const handle = await server({ slot, env: serverEnv(env), mode: "detached", by: ctx.by, version, ...(detach ? { detach } : {}) });
 		return foreground(handle, () => {});

@@ -47,6 +47,7 @@ export const serverId = (slot: Slot) => `sb-server-${slot.slot8}`;
 export const towerId = (slot: Slot, workspace: string) => (slot.primary ? `sb-tower-${workspace.toLowerCase()}` : `sb-tower-${slot.slot8}-${workspace.toLowerCase()}`);
 export const towerName = (slot: Slot, label: string) => (slot.primary ? `tower · ${label}` : `tower · ${label} · ${slot.slot8}`);
 
+export type Detach = "wmi" | "wmi-in-job" | "direct";
 export interface Restarting { began: string; since: string; reason: string; by: string }
 export interface LastError { at: string; code: string; text: string }
 export interface IntercomScope { scope?: string; transport?: string; tcp?: string }
@@ -59,8 +60,8 @@ export interface ServerRecord {
 	mode: "detached" | "serve";
 	desk: boolean;
 	intercom: IntercomScope;
-	/** Windows: how the server was started: `wmi` (outside the starter's job) or `direct` (a plain spawn, after `detachFailure`: it dies with the pane or ssh session that started it). */
-	detach?: "wmi" | "direct";
+	/** Windows: how the server was started: `wmi` (outside the starter's job), `wmi-in-job` (through WMI, but the job did not allow breakaway: it is in the WMI provider host's job), or `direct` (a plain spawn, after `detachFailure`: it dies with the pane or ssh session that started it). */
+	detach?: Detach;
 	detachFailure?: string;
 	/** Reserved for the GUI that moves into the server with B2; a restart carries it over untouched. */
 	gui?: { port: number; token: string; stopped?: boolean };

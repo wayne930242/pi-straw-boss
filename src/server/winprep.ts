@@ -4,7 +4,7 @@ import { lstatSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { system32, system32Path } from "../winpath.ts";
-import { folderProblems, SYSTEM_SID } from "./acl.ts";
+import { execFailure, folderProblems, SYSTEM_SID } from "./acl.ts";
 
 // The state folder is protected before the first file is created in it (docs/specs/2026-10-26-sb-backend.md, The control socket): a cold start used to leave server.lock, the
 // placeholder record, and server.log with the parent's inherited ACEs (Users read, Authenticated Users modify outside the profile) until the server's PowerShell call, 4 to 7 s later.
@@ -32,11 +32,10 @@ export function ownerSid(run: RunNative = runNative, timeoutMs?: number): string
 	if (!sid) throw new Error(`whoami did not give a SID: ${text.trim().slice(0, 120) || "nothing"}`);
 	return sid;
 }
-/**
- * The icacls arguments that make a folder the owner's: the owner set (this fails fast where it is not allowed, on a folder another account owns), no inheritance from above, full control
- * to the owner and SYSTEM by SID, passed on to what is created in it. No `/T`: what is already there is reset later.
- */
-export const protectArgs = (dir: string, sid: string) => [dir, "/setowner", `*${sid}`, "/inheritance:r", "/grant:r", `*${sid}:(OI)(CI)F`, `*${SYSTEM_SID}:(OI)(CI)F`];
+/** The icacls call that makes the owner the folder's owner (it fails fast where that is not allowed, on a folder another account owns). `/setowner` is a form of its own in icacls' syntax: it is not combined with the grant. */
+export const ownerArgs = (dir: string, sid: string) => [dir, "/setowner", `*${sid}`, "/Q"];
+/** The icacls call that protects the folder: no inheritance from above, full control to the owner and SYSTEM by SID, passed on to what is created in it. No `/T`: what is already there is reset later. */
+export const protectArgs = (dir: string, sid: string) => [dir, "/inheritance:r", "/grant:r", `*${sid}:(OI)(CI)F`, `*${SYSTEM_SID}:(OI)(CI)F`];
 
 /** The DACL of a folder as SDDL, through `icacls <dir> /save <file>` (a UTF-16 file: the name, then the SDDL; no localized text is read). */
 export function readDacl(dir: string, run: RunNative, timeoutMs?: number): string {
@@ -53,13 +52,15 @@ export function readDacl(dir: string, run: RunNative, timeoutMs?: number): strin
 	}
 }
 
+/** A folder this module refuses on its own check (a link, a DACL with a foreign ACE), as against a program that failed. */
+class Refused extends Error {}
 /** Refuses a folder that is a link or a junction (`icacls` without `/L` would act on its target, and what is written there would land elsewhere). */
 export function refuseLink(dir: string): void {
 	let link = false;
 	try {
 		link = lstatSync(dir).isSymbolicLink();
 	} catch { /* missing: made next */ }
-	if (link) throw new Error(`${dir} is a link or junction, not a folder of its own`);
+	if (link) throw new Refused(`${dir} is a link or junction, not a folder of its own`);
 }
 
 let sid: string | undefined;
@@ -68,16 +69,22 @@ let sid: string | undefined;
  * was removed and made again by other code, or one another account touched, is protected and checked again (only the SID is kept, a user does not change). Throws with the reason when
  * the folder is a link, cannot be made the owner's, or is not owner and SYSTEM only afterwards.
  */
-export function protectFolder(dir: string, run: RunNative = runNative, timeoutMs?: number): void {
+export function protectFolder(dir: string, run: RunNative = runNative, timeoutMs?: number, now: () => number = Date.now): void {
 	mkdirSync(dir, { recursive: true });
 	refuseLink(dir);
+	// One time for all the calls: each gets what is left of it (at least 100 ms), not the whole of it again.
+	const end = timeoutMs === undefined ? undefined : now() + timeoutMs, left = () => (end === undefined ? undefined : Math.max(100, end - now()));
 	try {
-		sid ??= ownerSid(run, timeoutMs);
-		run("icacls.exe", protectArgs(dir, sid), timeoutMs);
-		const problems = folderProblems(readDacl(dir, run, timeoutMs), sid);
-		if (problems.length) throw new Error(problems.join("; "));
+		sid ??= ownerSid(run, left());
+		run("icacls.exe", ownerArgs(dir, sid), left());
+		run("icacls.exe", protectArgs(dir, sid), left());
+		// The folder could have been swapped for a link between the first look and the calls: looked at again before anything is read from it or written into it.
+		refuseLink(dir);
+		const problems = folderProblems(readDacl(dir, run, left()), sid);
+		if (problems.length) throw new Refused(problems.join("; "));
 	} catch (error) {
-		throw new Error(`could not protect ${dir} before writing to it: ${(error as Error).message}`);
+		const e = error as Error & { stderr?: unknown };
+		throw new Error(`could not protect ${dir} before writing to it: ${error instanceof Refused ? e.message : execFailure(e, e.stderr)}`);
 	}
 }
 /** For tests: forgets the owner's SID. */

@@ -184,15 +184,28 @@ export class AclError extends Error {
 		this.sddl = sddl;
 	}
 }
-export type Exec = (file: string, args: string[], options: ReturnType<typeof aclCommand>["options"], done: (error: Error | null, stdout: string) => void) => unknown;
-const run: Exec = (file, args, options, done) => execFile(file, args, options, (error, stdout) => done(error, String(stdout)));
+export type Exec = (file: string, args: string[], options: ReturnType<typeof aclCommand>["options"], done: (error: Error | null, stdout: string, stderr?: string) => void) => unknown;
+const run: Exec = (file, args, options, done) => execFile(file, args, options, (error, stdout, stderr) => done(error, String(stdout), String(stderr)));
+
+/**
+ * Why a program failed, for a person: the last non-empty line of its stderr (where PowerShell and icacls say what went wrong), and its exit code. Never `error.message`, which for a failed
+ * child process begins with the whole command line (an `-EncodedCommand` of 2 KB of base64) and so fills any short cut of it.
+ */
+export function execFailure(error: Error & { code?: unknown; status?: unknown }, stderr?: unknown): string {
+	const lines = String(stderr ?? "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean), last = lines.at(-1);
+	const code = typeof error.code === "number" ? error.code : typeof error.status === "number" ? error.status : undefined;
+	const first = error.message.split(/\r?\n/)[0] ?? "";
+	const text = last ?? (/^Command failed:/.test(first) ? undefined : first) ?? undefined;
+	const reason = text ?? (code !== undefined ? undefined : typeof error.code === "string" ? error.code : "it failed");
+	return [reason, code !== undefined ? `exit code ${code}` : undefined].filter(Boolean).join(", ").slice(0, 300);
+}
 
 /** Sets the ACL of the state directory and checks it, in one PowerShell start that also tells the start time of `pid`. Throws an AclError (with the SDDL it read) when setting or checking fails. */
 export function applyAcl(dir: string, exec: Exec = run, env: NodeJS.ProcessEnv = process.env, pid: number = process.pid): Promise<{ sid: string; started?: string }> {
 	const { file, args, options } = aclCommand(dir, env, ACL_MS, pid);
 	return new Promise((resolve, reject) => {
-		exec(file, args, options, (error, stdout) => {
-			if (error) return reject(new AclError(`could not set the ACL of ${dir}: ${error.message}`));
+		exec(file, args, options, (error, stdout, stderr) => {
+			if (error) return reject(new AclError(`could not set the ACL of ${dir}: ${execFailure(error, stderr)}`));
 			let result: AclResult;
 			try {
 				result = parseAclOutput(stdout);

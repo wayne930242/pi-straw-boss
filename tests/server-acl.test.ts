@@ -22,6 +22,14 @@ test("the command is one PowerShell start with the folder in the environment, ne
 	assert.ok(options.timeout >= 10_000);
 });
 
+test("N3: applyAcl tells a failed PowerShell by its stderr's last line and exit code, never by the message that begins with the command line", async () => {
+	const failing = Object.assign(new Error("Command failed: C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -EncodedCommand " + "B".repeat(3000)), { code: 1 });
+	const exec: Exec = (_f, _a, _o, done) => done(failing, "", "Get-Acl : Attempted to perform an unauthorized operation.\r\n");
+	await assert.rejects(applyAcl("C:\\s", exec), (e: unknown) => e instanceof AclError && e.message === "could not set the ACL of C:\\s: Get-Acl : Attempted to perform an unauthorized operation., exit code 1");
+	const killed = Object.assign(new Error("Command failed: x"), { code: "ENOENT" });
+	await assert.rejects(applyAcl("C:\\s", (_f, _a, _o, done) => done(killed, "", "")), /: ENOENT$/);
+});
+
 test("the script reads the owner's SID, grants the owner and SYSTEM by SID, inherits nothing, and reads every SDDL back", () => {
 	assert.match(ACL_SCRIPT, /WindowsIdentity\]::GetCurrent\(\)\.User\.Value/);
 	assert.match(ACL_SCRIPT, /& \$icacls \$dir \/inheritance:r \/grant:r "\*\$\{sid\}:\(OI\)\(CI\)F" '\*S-1-5-18:\(OI\)\(CI\)F' \| Out-Null/);

@@ -7,6 +7,7 @@ import { StubClient } from "./agent-fakes.ts";
 import { AclError } from "../src/server/acl.ts";
 import { LoaderError } from "../src/server/intercom.ts";
 import { fileOf, readRecord, readStartError, type ServerRecord, writeRecord, writeStartError } from "../src/server/record.ts";
+import { createServer } from "node:net";
 import { callControl, helloOf, listenControl } from "../src/server/socket.ts";
 import { type Running, ServerWorld, sleep, until } from "./server-world.ts";
 
@@ -320,6 +321,33 @@ test("R-F003, F001: a record of a running pid whose socket nobody answers at is 
 	assert.equal(world.record()?.pid, s.pid);
 	assert.equal(readStartError(world.slot), undefined);
 	assert.doesNotMatch(logText(), /start-failed/);
+});
+
+test("N2, R-F003: a live server whose hello was slow (its start time known and equal, the record unchanged since the first look) keeps its record: our placeholder never replaces it, and the start gives up with nothing written on it", async () => {
+	const other = 7790, started = "T-slow";
+	world.live.add(other);
+	const mute = createServer(() => {});
+	const endpoint = join(world.root, "slow.sock");
+	mkdirSync(world.root, { recursive: true });
+	await new Promise<void>((resolve) => mute.listen(endpoint, resolve));
+	try {
+		mkdirSync(world.slot.dir, { recursive: true });
+		writeRecord(world.slot, recordOf(other, endpoint, { started }));
+		const seen = new Set<number>();
+		const sampler = setInterval(() => seen.add(world.record()?.pid ?? 0), 5);
+		const second = await world.start({ startOf: (p) => (p === other ? started : undefined), intercom: async () => (await sleep(150), world.intercom(new StubClient())) });
+		const ended = await finished(second);
+		clearInterval(sampler);
+		assert.equal(ended, 1);
+		assert.ok(!seen.has(second.pid), "the record was never ours");
+		assert.equal(world.record()?.pid, other);
+		assert.equal(world.record()?.socket, endpoint);
+		assert.equal(world.record()?.restarting, undefined);
+		assert.equal(world.record()?.lastError, undefined);
+		assert.match(readStartError(world.slot)!.text, /7790/);
+	} finally {
+		mute.close();
+	}
 });
 
 test("F001: with the start time known and different the dead server's record is no rival either", async () => {

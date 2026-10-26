@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { win32 } from "node:path";
 import { powershellPath, system32, system32Path, systemRoot } from "../src/winpath.ts";
 import { startCommand } from "../src/startof.ts";
 import { aclCommand } from "../src/server/acl.ts";
@@ -27,6 +28,15 @@ test("SystemRoot comes from the environment (any case), then windir, and C:\\Win
 const ENV = { SystemRoot: "D:\\WINNT", PATH: "p" };
 const ABS = /^D:\\WINNT\\System32\\/;
 
+test("N5: a SystemRoot that is not a drive-letter absolute path is ignored (a relative one would put the program and its folder in the project), then windir, then C:\\Windows", () => {
+	for (const bad of ["Windows", "..\\Windows", ".\\", "\\Windows", "\\\\server\\share", "/usr", "C:Windows", "  "]) {
+		assert.equal(systemRoot({ SystemRoot: bad }), "C:\\Windows", JSON.stringify(bad));
+		assert.equal(systemRoot({ SystemRoot: bad, windir: "E:\\W" }), "E:\\W", `${JSON.stringify(bad)} falls to a good windir`);
+		assert.ok(system32Path("icacls.exe", { SystemRoot: bad }).startsWith("C:\\Windows\\System32\\"));
+	}
+	assert.equal(systemRoot({ SystemRoot: "d:\\winnt" }), "d:\\winnt");
+});
+
 test("every Windows call of the repo names its program by absolute path and runs from System32", () => {
 	const ps = startCommand(4242, 15_000, ENV);
 	assert.equal(ps.file, "D:\\WINNT\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
@@ -51,6 +61,15 @@ test("every Windows call of the repo names its program by absolute path and runs
 	assert.deepEqual(args, ["/c", "start", "", "https://x/"]);
 	assert.equal(options.cwd, "D:\\WINNT\\System32");
 	assert.deepEqual(clipboardCommand("win32", ENV), ["D:\\WINNT\\System32\\clip.exe"]);
+	// N6: not a scan of the source but of what every builder returns: an absolute program path, whatever the environment says.
+	for (const env of [ENV, {}, { SystemRoot: "Windows" }, { SystemRoot: "..\\x" }]) {
+		const files = [
+			startCommand(1, 1, env).file, aclCommand("C:\\s", env).file, launchCommand({ command: "node", args: [], env: {}, cwd: "C:\\s", options: { detached: true, stdio: "ignore", windowsHide: true } }, env).file,
+			nativeCommand("whoami.exe", [], env).file, nativeCommand("icacls.exe", [], env).file, hiddenCommand("C:\\d", env).file, browserCommand("https://x/", "win32", env)[0], clipboardCommand("win32", env)[0]!,
+		];
+		for (const file of files) assert.ok(win32.isAbsolute(file) && /^[A-Za-z]:\\/.test(file), `${file} (${JSON.stringify(env)})`);
+		for (const cwd of [startCommand(1, 1, env).options.cwd, aclCommand("C:\\s", env).options.cwd, nativeCommand("whoami.exe", [], env).options.cwd, hiddenCommand("C:\\d", env).options.cwd]) assert.ok(win32.isAbsolute(cwd!), String(cwd));
+	}
 	assert.deepEqual(clipboardCommand("darwin", ENV), ["pbcopy"]);
 });
 

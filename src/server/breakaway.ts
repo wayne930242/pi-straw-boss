@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { alive as pidAlive } from "../remote.ts";
 import { powershellPath, system32 } from "../winpath.ts";
+import { execFailure } from "./acl.ts";
 import type { Launched, SpawnSpec, Started } from "./client.ts";
 
 // The detached server on Windows, started outside the starter's job object (docs/specs/2026-10-26-sb-backend.md, Process model and lifecycle). Node's `detached: true` does not break away from
@@ -25,8 +26,8 @@ export function winQuote(arg: string): string {
 	}
 	return `${out}${"\\".repeat(slashes * 2)}"`;
 }
-/** How the server is told it was started through WMI (`--detach wmi`), which it records in `server.json`. */
-export const commandLine = (spec: Pick<SpawnSpec, "command" | "args">) => [spec.command, ...spec.args, "--detach", "wmi"].map(winQuote).join(" ");
+/** How the server is told it was started through WMI (`--detach wmi`, or `wmi-in-job` for the second try without breakaway), which it records in `server.json`. */
+export const commandLine = (spec: Pick<SpawnSpec, "command" | "args">, how: "wmi" | "wmi-in-job" = "wmi") => [spec.command, ...spec.args, "--detach", how].map(winQuote).join(" ");
 
 /**
  * The PowerShell script: the command line and the folder come in the environment (SB_LAUNCH_CMD, SB_LAUNCH_CWD), never quoted into the script, and so does the environment the server is
@@ -45,7 +46,8 @@ export const LAUNCH_SCRIPT = [
 	"$r = $wmi.Create($env:SB_LAUNCH_CMD, $env:SB_LAUNCH_CWD, $si)",
 	"$away = $true",
 	// A job that does not allow breakaway fails the creation; the same call is made once more without the flag, in this start, and the answer says so.
-	`if ($r.ReturnValue -ne 0) { $si.CreateFlags = ${BASE_FLAGS}; $r = $wmi.Create($env:SB_LAUNCH_CMD, $env:SB_LAUNCH_CWD, $si); $away = $false }`,
+	// The server of that second try is told (`--detach wmi-in-job`, its own command line), so it records that it is in the WMI provider host's job and every status says so.
+	`if ($r.ReturnValue -ne 0) { $si.CreateFlags = ${BASE_FLAGS}; $r = $wmi.Create($env:SB_LAUNCH_CMD_INJOB, $env:SB_LAUNCH_CWD, $si); $away = $false }`,
 	"[ordered]@{ rc = [int]$r.ReturnValue; pid = [int]$r.ProcessId; breakaway = $away } | ConvertTo-Json -Compress",
 ].join("\n");
 
@@ -54,7 +56,7 @@ export function launchCommand(spec: SpawnSpec, env: NodeJS.ProcessEnv = process.
 	return {
 		file: powershellPath(env),
 		args: ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(LAUNCH_SCRIPT, "utf16le").toString("base64")],
-		options: { encoding: "utf8" as const, timeout, windowsHide: true, cwd: system32(env), env: { ...spec.env, SB_LAUNCH_CMD: commandLine(spec), SB_LAUNCH_CWD: spec.cwd } as NodeJS.ProcessEnv },
+		options: { encoding: "utf8" as const, timeout, windowsHide: true, cwd: system32(env), env: { ...spec.env, SB_LAUNCH_CMD: commandLine(spec), SB_LAUNCH_CMD_INJOB: commandLine(spec, "wmi-in-job"), SB_LAUNCH_CWD: spec.cwd } as NodeJS.ProcessEnv },
 	};
 }
 
@@ -70,8 +72,8 @@ export function parseLaunchOutput(stdout: string): { pid: number; breakaway: boo
 	return { pid: parsed.pid, breakaway: parsed.breakaway !== false };
 }
 
-export type LaunchExec = (file: string, args: string[], options: ReturnType<typeof launchCommand>["options"], done: (error: (Error & { killed?: boolean; signal?: string | null }) | null, stdout: string) => void) => unknown;
-const run: LaunchExec = (file, args, options, done) => execFile(file, args, options, (error, stdout) => done(error, String(stdout)));
+export type LaunchExec = (file: string, args: string[], options: ReturnType<typeof launchCommand>["options"], done: (error: (Error & { killed?: boolean; signal?: string | null }) | null, stdout: string, stderr?: string) => void) => unknown;
+const run: LaunchExec = (file, args, options, done) => execFile(file, args, options, (error, stdout, stderr) => done(error, String(stdout), String(stderr)));
 
 export interface BreakawayDeps {
 	exec?: LaunchExec;
@@ -103,7 +105,7 @@ export function spawnBreakaway(spec: SpawnSpec, deps: BreakawayDeps): Launched {
 		resolveStarted({ pid: plain.pid ?? 0, ms: now() - t0, via: "direct", failure });
 	};
 	const { file, args, options } = launchCommand(spec, deps.env, spec.timeoutMs ?? 30_000);
-	exec(file, args, options, (error, stdout) => {
+	exec(file, args, options, (error, stdout, stderr) => {
 		if (released) return;
 		if (error && (error.killed || error.signal)) {
 			// No answer in time: WMI may have created the server already, so there is no second start.
@@ -112,7 +114,7 @@ export function spawnBreakaway(spec: SpawnSpec, deps: BreakawayDeps): Launched {
 		}
 		let answer: { pid: number; breakaway: boolean };
 		try {
-			if (error) throw error;
+			if (error) throw new Error(execFailure(error, stderr));
 			answer = parseLaunchOutput(stdout);
 		} catch (failure) {
 			return direct((failure as Error).message);

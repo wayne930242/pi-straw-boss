@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { commandLine, LAUNCH_SCRIPT, launchCommand, type LaunchExec, parseLaunchOutput, spawnBreakaway, winQuote } from "../src/server/breakaway.ts";
-import { detachWarning, describe, launch, makeCtx, type SpawnSpec, spawnDetached, ServerError } from "../src/server/client.ts";
+import { detachWarning, describe, launch, makeCtx, ServerError, type SpawnSpec, spawnDetached, type Started } from "../src/server/client.ts";
 import { run } from "../src/server/cli.ts";
 import { fileOf, writeRecord } from "../src/server/record.ts";
 import { ServerWorld, sleep, until } from "./server-world.ts";
@@ -129,6 +129,58 @@ test("F002: when PowerShell or WMI fails the start falls back to a plain spawn t
 		assert.equal(plain[0]!.args.at(-1), started.failure!.slice(0, 200));
 		assert.equal(await launched.exited, 0);
 	}
+});
+
+test("N3: a failing PowerShell is told by its stderr's last line and exit code, not by Node's message that starts with the command line and its base64", async () => {
+	const b64 = "A".repeat(2400);
+	const failing = Object.assign(new Error(`Command failed: C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -NonInteractive -EncodedCommand ${b64}\nCannot invoke method.`), { code: 1, killed: false, signal: null });
+	const exec: LaunchExec = (_f, _a, _o, done) => setImmediate(() => done(failing, "", "At line:1 char:1\r\n+ [wmiclass]'Win32_Process'\r\nCannot create type. Only core types are supported in this language mode.\r\n"));
+	const plain: SpawnSpec[] = [];
+	const launched = spawnBreakaway(spec(), { exec, fallback: (s) => (plain.push(s), { pid: 9, exited: Promise.resolve(0) }) });
+	const { failure } = await launched.started!;
+	assert.equal(failure, "Cannot create type. Only core types are supported in this language mode., exit code 1");
+	assert.ok(!failure!.includes("AAAA") && !/Command failed/.test(failure!));
+	assert.equal(plain[0]!.args.at(-1), failure, "the reason that is recorded is that line");
+});
+
+test("N4: the second try without breakaway has its own command line, --detach wmi-in-job, so the server records that it is in the WMI provider's job", () => {
+	assert.match(LAUNCH_SCRIPT, /\$wmi\.Create\(\$env:SB_LAUNCH_CMD, \$env:SB_LAUNCH_CWD, \$si\)/);
+	assert.match(LAUNCH_SCRIPT, /\$r\.ReturnValue -ne 0\) \{ \$si\.CreateFlags = \d+; \$r = \$wmi\.Create\(\$env:SB_LAUNCH_CMD_INJOB, \$env:SB_LAUNCH_CWD, \$si\)/);
+	const { options } = launchCommand(spec(), { SystemRoot: "C:\\Windows" });
+	assert.match(options.env.SB_LAUNCH_CMD!, /--detach wmi$/);
+	assert.match(options.env.SB_LAUNCH_CMD_INJOB!, /--detach wmi-in-job$/);
+	assert.equal(options.env.SB_LAUNCH_CMD!.replace(/ --detach wmi$/, ""), options.env.SB_LAUNCH_CMD_INJOB!.replace(/ --detach wmi-in-job$/, ""));
+	assert.ok(!Object.keys(options.env).some((k) => k !== "SB_LAUNCH_CMD" && k.startsWith("SB_LAUNCH_CMD") && k !== "SB_LAUNCH_CMD_INJOB"));
+});
+
+test("N4: wmi-in-job is recorded and warned about everywhere a direct fallback is: status, describe, the up warning, and the /boss server line", async () => {
+	const d = await world.start({ detach: { via: "wmi-in-job" } });
+	await d.handle.ready;
+	assert.equal(world.record()?.detach, "wmi-in-job");
+	const text = detachWarning(world.record())!;
+	assert.match(text, /through WMI, but the job it is in did not allow it to break away/);
+	const status = await describe(world.ctx());
+	assert.equal(status.detach, "wmi-in-job");
+	assert.equal(status.warning, text);
+	let out = "";
+	assert.equal(await run(["up"], { env: world.env, stateDir: world.stateDir, version: "0.44.0", cli: "/c", ctx: world.ctx(), herdrListens: async () => true, out: (t) => void (out += t), err: () => {} }), 0);
+	const warnings = (JSON.parse(out.trim().split("\n").at(-1)!) as { warnings: { code: string }[] }).warnings;
+	assert.ok(warnings.some((w) => w.code === "breakaway_failed"));
+	let seen = undefined as { detach?: { via: string } } | undefined;
+	const got = () => seen;
+	const server = async (options: object) => ((seen = options), { ready: Promise.resolve(true), done: Promise.resolve(0), endpoint: "", shutdown: async () => {} });
+	await d.handle.shutdown(0);
+	const env: NodeJS.ProcessEnv = { HOME: world.env.HOME, PI_CODING_AGENT_DIR: world.env.PI_CODING_AGENT_DIR };
+	assert.equal(await run(["run", "--detached", "--detach", "wmi-in-job"], { env, stateDir: world.stateDir, version: "0.44.0", cli: "/c", server: server as never, signals: () => {}, err: () => {}, ctx: world.ctx() }), 0);
+	assert.equal(got()?.detach?.via, "wmi-in-job");
+});
+
+test("cosmetic: a PowerShell timeout that comes with the end of the wait still names the WMI start in the error (the `started` word arrives just after the wait ends)", async () => {
+	const ctx = world.ctx({
+		timers: { start: 200, exit: 100, supervisor: 50, touch: 30 },
+		spawn: () => ({ pid: undefined, exited: new Promise(() => {}), started: new Promise<Started>((resolve) => setTimeout(() => resolve({ pid: 0, ms: 200, via: "failed", failure: "PowerShell did not answer within 0 s (Win32_Process.Create may still have started the server)" }), 230)) }),
+	});
+	await assert.rejects(launch(ctx), (e: unknown) => e instanceof ServerError && /start through WMI: PowerShell did not answer.*may still have started the server/.test(e.message));
 });
 
 test("F002: a PowerShell that does not answer in time is a failed start with no fallback (WMI may already have created the server), and the start goes on waiting for a hello", async () => {

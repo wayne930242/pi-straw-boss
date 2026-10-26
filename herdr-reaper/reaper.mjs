@@ -14,6 +14,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CONFIRM_MS } from "./decide.mjs";
+import { resolveExe } from "./exe.mjs";
 import { createStore, gitClient, herdrClient, loadConfig, managedClient, processClient, sessionLocator, withLock } from "./io.mjs";
 import { runEvent, runPinToggle, runSweep } from "./sweep.mjs";
 
@@ -29,8 +30,20 @@ const pluginId = env.HERDR_PLUGIN_ID ?? "wayne930242.straw-boss-reaper";
 // Herdr sets both directories for every command; the defaults are where it puts them, for a `dry-run` typed in a terminal.
 const stateDir = env.HERDR_PLUGIN_STATE_DIR ?? join(env.XDG_STATE_HOME ?? join(homedir(), ".local/state"), "herdr/plugins", pluginId);
 const configDir = env.HERDR_PLUGIN_CONFIG_DIR ?? join(homedir(), ".config/herdr/plugins/config", pluginId);
+// By name or by the path Herdr gives; found on PATH by exe.mjs (absolute folders only, never the current folder) when each call is made, so a `herdr` planted in a folder is never run.
 const bin = env.HERDR_BIN_PATH ?? "herdr";
 const beatFile = join(stateDir, "ticker.json");
+/** Starts `herdr plugin action invoke <id>.sweep`; undefined (said in the log) when herdr is not found, which counts as a failed sweep. */
+function invokeSweep() {
+	let file;
+	try {
+		file = resolveExe(bin);
+	} catch (error) {
+		console.log(error.message);
+		return undefined;
+	}
+	return spawn(file, ["plugin", "action", "invoke", `${pluginId}.sweep`], { stdio: "ignore", env });
+}
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const log = (line) => console.log(line);
 
@@ -87,13 +100,13 @@ async function ticker() {
 		} catch (error) {
 			// The sweep action reads the state file too and logs the failure where the plugin's other errors are.
 			console.log(`${error.message}; ticker invokes a sweep to surface it, then stops`);
-			spawn(bin, ["plugin", "action", "invoke", `${pluginId}.sweep`], { stdio: "ignore", env }).on("error", () => {});
+			invokeSweep()?.on("error", () => {});
 			return;
 		}
 		if (Date.now() >= state.nextSweepAt) {
 			await store.apply([{ op: "set", path: ["nextSweepAt"], value: Date.now() + 10 * 60_000 }]);
-			const invoke = spawn(bin, ["plugin", "action", "invoke", `${pluginId}.sweep`], { stdio: "ignore", env });
-			const code = await new Promise((resolve) => invoke.on("close", resolve).on("error", () => resolve(1)));
+			const invoke = invokeSweep();
+			const code = invoke ? await new Promise((resolve) => invoke.on("close", resolve).on("error", () => resolve(1))) : 1;
 			failures = code === 0 ? 0 : failures + 1;
 			console.log(`${new Date().toISOString()} sweep invoked, exit ${code}`);
 			if (failures >= MAX_FAILURES) return console.log("herdr did not run the sweep; ticker stops");
