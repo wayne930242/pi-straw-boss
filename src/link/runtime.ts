@@ -11,7 +11,7 @@ import { readLinkConfig } from "./config.ts";
 import type { DeviceKeys } from "./device.ts";
 import { readFileSync } from "node:fs";
 import { holderAlive, LinkElection } from "./election.ts";
-import { type AllyTeam, type ConfirmView, LinkHolder, type LinkSummary, type RelayPort, type SendResult } from "./holder.ts";
+import { type AllyBoard, type AllyTeam, type ConfirmView, LinkHolder, type LinkSummary, type RelayPort, type SendResult } from "./holder.ts";
 import { RelayClient } from "./relay.ts";
 import { HERE_ONLY } from "./request.ts";
 import type { NetView } from "./routing.ts";
@@ -33,6 +33,8 @@ export interface LinkDeps {
 	tickMs?: number;
 	drainMs?: number;
 	presenceMs?: number;
+	/** The least time between two boards to a team (default 15 s). */
+	boardMs?: number;
 	offerAgainMs?: number;
 	/** How soon a held message is looked at again for an idle tower (default 500 ms). */
 	pumpMs?: number;
@@ -147,11 +149,11 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 	};
 	const gained = async () => {
 		const fresh = new LinkHolder({
-			store, isHolder: () => Boolean(election?.isHolder()), config, stateDir: guiDir, home, agentDir, attended, net, offer, notify: tell,
+			store, boardDir: join(guiDir, "board"), isHolder: () => Boolean(election?.isHolder()), config, stateDir: guiDir, home, agentDir, attended, net, offer, notify: tell,
 			relay: opts.relay ?? ((url, device) => new RelayClient({ url, device })),
 			onDisplaced: () => void look().catch(() => undefined),
 			confirmed: (tower, dialogId, allow) => (tower === sid() ? answerForward(dialogId, allow) : publish({ version: 1, type: "confirmed", to: tower, id: dialogId, allow })),
-			drainMs: opts.drainMs, presenceMs: opts.presenceMs, offerAgainMs: opts.offerAgainMs,
+			drainMs: opts.drainMs, presenceMs: opts.presenceMs, boardMinMs: opts.boardMs, offerAgainMs: opts.offerAgainMs,
 		});
 		holder = fresh;
 		await fresh.start();
@@ -257,7 +259,9 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 	const handle = async (body: unknown, from: string): Promise<unknown> => {
 		const op = body as { op?: unknown; device?: unknown; workspace?: unknown; text?: unknown; reply?: unknown; allow?: unknown; team?: unknown; dialogId?: unknown; digest?: unknown; tool?: unknown; args?: unknown; tower?: unknown };
 		if (!holder?.active || !election?.isHolder()) return { ok: false, error: "This session is not the link holder; ask again in a moment" };
-		if (op.op === "list") return { ok: true, teams: holder.list() };
+		const only = Array.isArray((body as { teams?: unknown }).teams) ? ((body as { teams: unknown[] }).teams.filter((t) => typeof t === "string") as string[]) : undefined;
+		if (op.op === "list") return { ok: true, teams: holder.list(only) };
+		if (op.op === "board-read") return holder.boards({ ...(only ? { only } : {}), ...(typeof op.device === "string" ? { device: op.device } : {}) });
 		if (op.op === "send" && typeof op.device === "string" && typeof op.text === "string") return holder.send({ fromSession: from, device: op.device, text: op.text, reply: op.reply === true, ...(typeof op.workspace === "string" && op.workspace ? { workspace: op.workspace } : {}) });
 		if (op.op === "confirm-request" && [op.team, op.device, op.dialogId, op.digest, op.tool, op.args, op.tower].every((v) => typeof v === "string")) {
 			return holder.requestConfirm({ fromSession: from, team: op.team as string, device: op.device as string, dialogId: op.dialogId as string, digest: op.digest as string, tool: op.tool as string, args: op.args as string, tower: op.tower as string });
@@ -402,15 +406,35 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 			if (!answer.ok) throw new Error(answer.error);
 			return { text: String(answer.text), details: answer.details };
 		},
-		/** The ally towers for `tower_list`; undefined when Straw Link is not set up here. */
-		async remote(): Promise<RemoteTower[] | undefined> {
+		/** The ally towers for `tower_list`; undefined when Straw Link is not set up here. `teams` limits them to those teams (a remote turn sees its senders' teams only). */
+		async remote(teams?: readonly string[]): Promise<RemoteTower[] | undefined> {
 			if (!inUse()) return undefined;
 			try {
-				const answer = await ask({ op: "list" });
+				const answer = await ask({ op: "list", ...(teams ? { teams } : {}) });
 				return answer.ok ? remoteTowers(answer.teams as AllyTeam[]) : [];
 			} catch {
 				return [];
 			}
+		},
+		/** The allies' work boards for `board_read`; undefined when Straw Link is not set up here. A device that is not found, or is ambiguous, is an error that says so. */
+		async boards(o: { teams?: readonly string[]; device?: string } = {}): Promise<AllyBoard[] | undefined> {
+			if (!inUse()) return undefined;
+			let answer;
+			try {
+				answer = await ask({ op: "board-read", ...(o.teams ? { teams: o.teams } : {}), ...(o.device !== undefined ? { device: o.device } : {}) });
+			} catch (error) {
+				if (o.device !== undefined) throw error;
+				return [];
+			}
+			if (!answer.ok) {
+				if (o.device !== undefined) throw new Error(answer.error);
+				return [];
+			}
+			return answer.boards as AllyBoard[];
+		},
+		/** The teams of the senders of the current remote turn and the one project they all bind, or undefined outside a remote turn (spec, Reading: `board_read`, in a remote turn). */
+		remoteScope(): { teams: string[]; project: string | undefined } | undefined {
+			return remote.scope();
 		},
 		/** Whether this computer is attended (no unattended policy file). */
 		attended,

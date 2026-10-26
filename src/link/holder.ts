@@ -1,11 +1,12 @@
 import { Buffer } from "node:buffer";
-import { randomBytes } from "node:crypto";
+import { cleanText, clean, BOARD, purge, readEntries, wireId, type Entry } from "../board.ts";
+import { createHash, randomBytes } from "node:crypto";
 import type { Session } from "../herdr.ts";
 import type { LinkConfig } from "./config.ts";
 import { shortId, type DeviceKeys } from "./device.ts";
 import { buildEnvelope, openEnvelope, parseEnvelope, recordTaken, type Header, type ReceiveState } from "./envelope.ts";
 import { PayloadTooLargeError, RelayError, UnauthorizedError } from "./errors.ts";
-import { type ConfirmAnswer, type ConfirmRequest, encodePlaintext, LIMITS, type Presence, type TowerMessage, type WorkspaceState } from "./kinds.ts";
+import { type Board, type BoardWireEntry, type ConfirmAnswer, type ConfirmRequest, encodePlaintext, LIMITS, type Presence, type TowerMessage, type WorkspaceState } from "./kinds.ts";
 import { type AdminRun, type InviteView, type JoinRequestView, type JoinView, type Prefill, TeamAdmin, type TeamView } from "./admin.ts";
 import { Outbox, type QueuedEnvelope } from "./outbox.ts";
 import { Requests } from "./request.ts";
@@ -59,6 +60,10 @@ export interface HolderOptions {
 	postWaitMs?: number;
 	/** How long a team's outbox stays halted by a 401 before the refused envelope is tried again (default 60 s; a 401 can be a clock that was off). */
 	haltRetryMs?: number;
+	/** Where the mains' work board entries are (`<state dir>/board`); without it no board is sent. */
+	boardDir?: string;
+	/** The least time between two boards to one team (default 15 s); a test shortens it. */
+	boardMinMs?: number;
 	/** The most messages kept in the inbox from one sender (default 100) and in all (default 500); past that the relay keeps the envelope. */
 	inboxPerSender?: number;
 	inboxMax?: number;
@@ -94,6 +99,15 @@ const HEAD_DIFF_MS = 2 * 60_000, DOWN_MS = 2 * 60_000, HELD_MS = 10 * 60_000;
 
 export interface AllyDevice { id: string; short: string; label: string; online: boolean; ageMs: number | null; roster: number | null; workspaces: WorkspaceState[] }
 export interface AllyTeam { team: string; name: string; devices: AllyDevice[] }
+/** An ally's board as a tower reads it: text from the sender, cut and cleaned again; the device's label is the roster's. */
+export interface AllyBoardEntry { id: string; workspace: string; tab: string; main: string; now: string; items: { t: string; done: boolean }[]; updatedSecondsAgo: number }
+export interface AllyBoard { origin: "remote"; team: string; teamId: string; device: { id: string; short: string; label: string }; online: boolean; boardSecondsAgo: number; entries: AllyBoardEntry[] }
+/** A board from a device that has been offline longer than this, or is older than 7 days, is not shown (spec, Holding allies' boards). */
+const BOARD_OFFLINE_MS = 2 * 3600_000, BOARD_MAX_AGE_MS = 7 * 24 * 3600_000;
+/** The board is sent at most this often per team, and once an hour unchanged; a relay without the kind is left alone for an hour. */
+const BOARD_MIN_MS = 15_000, BOARD_REFRESH_MS = 3600_000, BOARD_OFF_MS = 3600_000;
+/** What `board-read` answers with at most: the answer has to fit the channel's request size. */
+const BOARD_ANSWER_MAX = 300_000;
 
 /** The default wait for the relay in `send`; the tower waits for the holder's answer longer than this plus the lock wait (runtime.ts `ASK_MS`), or it would give up on a message that was sent. */
 export const POST_WAIT_MS = 10_000;
@@ -113,6 +127,10 @@ interface TeamRun {
 	outbox: Outbox;
 	stream: ReturnType<RelayPort["stream"]> | undefined;
 	presences: Map<string, { at: number; presence: Presence }>;
+	/** The last board of each ally device, in memory only: the relay gives it back on the next stream. */
+	boards: Map<string, { at: number; ts: number; board: Board }>;
+	/** What this holder last sent as a board to the team: the hash (without `ts`), when, the `ts` used, the epoch it was built for, and until when a relay that refused the kind is left alone. */
+	boardSent: { hash: string | undefined; looked: number; at: number; ts: number; epoch: number; offUntil: number; wasEmpty: boolean };
 	lastEphemeral: Map<string, number>;
 	presenceTimer: ReturnType<typeof setInterval> | undefined;
 	/** Set when the team can no longer be used (removed, forked, file lost); nothing more is taken from it. */
@@ -224,6 +242,7 @@ export class LinkHolder {
 		if (!this.running) return;
 		await this.refresh();
 		await this.drain();
+		await this.sendBoards();
 	}
 
 	/** Starts the teams that have a team file and a config entry, stops the ones that lost either, and tells about the rest once. */
@@ -318,7 +337,7 @@ export class LinkHolder {
 			},
 			onRetry: (_item, error) => store.log({ event: "send-retry", team, error: String(error) }),
 		});
-		const run: TeamRun = { team, teamId, client, outbox, stream: undefined, presences: new Map(), lastEphemeral: new Map(), presenceTimer: undefined, dead: undefined, settled, haltTimer: undefined, gone, waiters, downSince: undefined, headDiff: new Map() };
+		const run: TeamRun = { team, teamId, client, outbox, stream: undefined, presences: new Map(), boards: new Map(), boardSent: { hash: undefined, looked: 0, at: 0, ts: 0, epoch: 0, offUntil: 0, wasEmpty: true }, lastEphemeral: new Map(), presenceTimer: undefined, dead: undefined, settled, haltTimer: undefined, gone, waiters, downSince: undefined, headDiff: new Map() };
 		this.runs.set(team, run);
 		// What an earlier holder (or this one before a restart) built and did not see land goes first, in order, before anything new is accepted.
 		for (const item of store.outboxPending(team)) {
@@ -335,7 +354,11 @@ export class LinkHolder {
 			lastEventId: tf.lastEventId || undefined,
 			backoff: this.o.backoff, sleep: this.o.sleep,
 			onAckError: (error) => store.log({ event: "ack-failed", team, error: String(error) }),
-			onState: (st) => void (run.downSince = st.state === "open" ? undefined : st.state === "retrying" ? (run.downSince ?? this.now()) : run.downSince),
+			onState: (st) => {
+				run.downSince = st.state === "open" ? undefined : st.state === "retrying" ? (run.downSince ?? this.now()) : run.downSince;
+				// A stream that (re)starts is a reason to send the board once more (the 15 second spacing still holds).
+				if (st.state === "open") Object.assign(run.boardSent, { hash: undefined, looked: 0 });
+			},
 		});
 		void run.stream.start();
 		void run.stream.done.then((end) => {
@@ -402,6 +425,7 @@ export class LinkHolder {
 			return "ack";
 		}
 		run.lastEphemeral = recordTaken(this.state(run, tf, roster), opened.header).lastEphemeral;
+		if (opened.header.kind === "board") run.boards.set(opened.header.from, { at: this.now(), ts: opened.header.ts, board: opened.message as Board });
 		if (opened.header.kind === "presence") {
 			const presence = opened.message as Presence;
 			run.presences.set(opened.header.from, { at: this.now(), presence });
@@ -739,10 +763,10 @@ export class LinkHolder {
 	}
 
 	/** The devices of every team this holder runs, with what their last presence said. */
-	list(): AllyTeam[] {
+	list(only?: readonly string[]): AllyTeam[] {
 		const policies = this.o.config().teams;
 		return [...this.runs.values()].flatMap((run): AllyTeam[] => {
-			if (run.dead) return [];
+			if (run.dead || (only && !only.includes(run.team))) return [];
 			let roster: RosterState;
 			try {
 				roster = this.loadTeam(run.team).state;
@@ -755,6 +779,118 @@ export class LinkHolder {
 			});
 			return [{ team: run.team, name: policies.get(run.team)?.name ?? run.team.slice(0, 6), devices }];
 		});
+	}
+
+	// ---- The work board -----------------------------------------------------------------------------------------------------------------
+
+	/** The entries this team gets: live mains whose pane's directory is inside the team's project, joined with the entries they wrote (newest first, at most 24). */
+	private async boardFor(project: string, device: string, net: NetView, entries: Entry[]): Promise<BoardWireEntry[]> {
+		const panes = new Map(net.panes.map((p) => [p.pane_id, p]));
+		const byId = new Map(entries.map((e) => [e.session, e]));
+		return net.sessions.flatMap((x): BoardWireEntry[] => {
+			const pane = panes.get(x.herdrLocation?.paneId ?? "");
+			if (pane?.tokens?.sb_role !== "main" || !pane.cwd || !inside(pane.cwd, project)) return [];
+			const e = byId.get(x.id);
+			return [{ id: wireId(device, x.id), workspace: x.herdrLocation?.workspace?.label ?? "", tab: x.herdrLocation?.tab?.label ?? "", name: x.name ?? x.id, now: e?.now ?? "", updated: e?.updated ?? 0, items: e?.items ?? [] }];
+		}).sort((a, b) => b.updated - a.updated).slice(0, LIMITS.boardEntries);
+	}
+
+	/** One look at the board folder per tick: each team gets its own board when it changed (at most once per 15 s), once at a stream start, and once an hour unchanged. */
+	private async sendBoards(): Promise<void> {
+		const dir = this.o.boardDir;
+		if (!dir || !this.running || !this.device) return;
+		const now = this.now();
+		// A team is looked at once per 15 s: a change inside the window goes out at its end, and a quiet computer does not read Herdr on every tick.
+		const due = [...this.runs.values()].filter((run) => !run.dead && now >= run.boardSent.offUntil && now - run.boardSent.looked >= (this.o.boardMinMs ?? BOARD_MIN_MS));
+		if (due.length === 0) return;
+		const config = this.o.config(), entries = readEntries(dir), net = await this.o.net();
+		purge(dir, new Set(net.sessions.map((x) => x.id)), now);
+		for (const run of due) {
+			run.boardSent.looked = now;
+			try {
+				await this.sendBoard(run, config.teams.get(run.team), net, entries);
+			} catch (error) {
+				this.o.store.log({ event: "board-failed", team: run.team, error: String(error) });
+			}
+		}
+	}
+	private async sendBoard(run: TeamRun, policy: { project: string; share: string } | undefined, net: NetView, entries: Entry[]): Promise<void> {
+		if (!policy) return;
+		const sent = run.boardSent, now = this.now(), device = this.device!.keys.id;
+		// With `presence` a team gets no board; one that had a board and was then set to `presence` gets one empty board, so its allies' copy clears.
+		const wanted = policy.share === "status" ? await this.boardFor(policy.project, device, net, entries) : [];
+		if (policy.share !== "status" && sent.wasEmpty) return;
+		const { state } = this.loadTeam(run.team), key = state.keys.get(state.epoch);
+		if (!key) return;
+		const hash = createHash("sha256").update(JSON.stringify(wanted)).digest("hex");
+		const changed = hash !== sent.hash || state.epoch !== sent.epoch;
+		if (!(changed ? now - sent.at >= (this.o.boardMinMs ?? BOARD_MIN_MS) : now - sent.at >= BOARD_REFRESH_MS)) return;
+		// `ts` rises by at least 1 per board, so a receiver's per-sender guard never drops a board for an equal clock reading.
+		const ts = Math.max(now, sent.ts + 1);
+		sent.at = now; // a failed post is tried again after the spacing, not on every tick
+		const envelope = buildEnvelope({ team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device!.keys, seq: 0, ts, kind: "board", to: [], plaintext: encodePlaintext("board", { entries: wanted }) });
+		try {
+			await run.client.postEnvelope(run.teamId, envelope);
+		} catch (error) {
+			if (error instanceof RelayError && error.code === "unknown-kind") {
+				// A relay older than the board kind: told once in the log, no board to this team for an hour, nobody else told.
+				sent.offUntil = now + BOARD_OFF_MS;
+				this.o.store.log({ event: "board-unsupported", team: run.team });
+				return;
+			}
+			throw error;
+		}
+		Object.assign(sent, { hash, ts, epoch: state.epoch, wasEmpty: wanted.length === 0 });
+	}
+
+	/** The boards of the allies of `only` teams (all when omitted), or of one device (an id, short id, or label as `tower_send` takes it). Text is cut and cleaned again; labels are the roster's. */
+	boards(o: { only?: readonly string[]; device?: string } = {}): { ok: true; boards: AllyBoard[] } | { ok: false; error: string } {
+		const policies = this.o.config().teams, now = this.now();
+		const rows: AllyBoard[] = [], members: MemberRef[] = [];
+		const eligible = [...this.runs.values()].filter((run) => !run.dead && (!o.only || o.only.includes(run.team)));
+		const rosters = new Map<string, RosterState>();
+		for (const run of eligible) {
+			try {
+				const { state } = this.loadTeam(run.team);
+				rosters.set(run.team, state);
+				for (const [id, m] of state.members) members.push({ team: run.team, id, label: m.label ?? shortId(id) });
+			} catch { /* a team file that cannot be read has no board to show */ }
+		}
+		let only: { team: string; id: string } | undefined;
+		if (o.device !== undefined) {
+			const picked = resolveDevice(o.device, oneTeamEach(members), this.device?.keys.id ?? "");
+			if (!picked.ok) return { ok: false, error: picked.error };
+			only = picked;
+		}
+		for (const run of eligible) {
+			const roster = rosters.get(run.team);
+			if (!roster) continue;
+			// A device that left the roster loses its board at once.
+			for (const id of [...run.boards.keys()]) if (!roster.members.has(id)) run.boards.delete(id);
+			for (const [id, seen] of run.boards) {
+				if (only && (only.team !== run.team || only.id !== id)) continue;
+				const presence = run.presences.get(id), lastSeen = presence?.at ?? seen.at;
+				if (now - lastSeen > BOARD_OFFLINE_MS || now - seen.ts > BOARD_MAX_AGE_MS) continue;
+				const label = roster.members.get(id)?.label ?? shortId(id);
+				rows.push({
+					origin: "remote", team: policies.get(run.team)?.name ?? run.team.slice(0, 6), teamId: run.team, device: { id, short: shortId(id), label },
+					online: presence !== undefined && now - presence.at <= PRESENCE_ONLINE_MS, boardSecondsAgo: Math.max(0, Math.round((now - seen.at) / 1000)),
+					entries: seen.board.entries.slice(0, LIMITS.boardEntries).map((e): AllyBoardEntry => ({
+						id: clean(e.id, 16), workspace: clean(e.workspace, BOARD.label), tab: clean(e.tab, BOARD.label), main: clean(e.name, BOARD.label), ...cleanText(e),
+						updatedSecondsAgo: Math.max(0, Math.round((now - e.updated) / 1000)),
+					})),
+				});
+			}
+		}
+		// The answer has to fit the channel: devices are kept while their JSON fits.
+		const out: AllyBoard[] = [];
+		let size = 0;
+		for (const row of rows) {
+			size += JSON.stringify(row).length;
+			if (size > BOARD_ANSWER_MAX) break;
+			out.push(row);
+		}
+		return { ok: true, boards: out };
 	}
 
 	/** A teammate on another roster head than ours is noted; the notice comes only if it stays so for 2 minutes (Presence). */

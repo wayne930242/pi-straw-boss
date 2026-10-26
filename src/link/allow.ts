@@ -30,7 +30,7 @@ const NAMES = [/^\.env/i, /\.pem$/i, /\.key$/i, /^id_/i, /\.p12$/i];
 const HOME_DIRS = [".pi", ".ssh", ".aws", ".config", ".gnupg"];
 /** The tools that look at paths and are allowed inside the project, and the ones allowed whatever their arguments. */
 const SEARCH = new Set(["grep", "find", "ls"]);
-const FREE = new Set(["tower_list", "boss_status", "todo"]);
+const FREE = new Set(["tower_list", "board_read", "boss_status", "todo"]);
 /** Argument names that hold a path in pi's tools and in the tools of the extensions around it. */
 const PATH_KEYS = ["path", "file_path", "filePath", "file", "directory", "dir", "cwd", "paths", "files"];
 

@@ -42,11 +42,14 @@ export function createRemoteTurns({ pi, now, config, policy: policyDeps, home, a
 	};
 	const turns = new Turns(levelOf, () => void (setOrigin(turns.lowest ? `remote:${turns.lowest.id}` : undefined)));
 	const trackedFor = new Map<string, { at: number; value: Tracked }>();
-	const scopeFor = (cwd: string): Scope | undefined => {
-		// Every sender's team must bind the same project: a run that carries senders of several teams reads only where all of them may, and with different
-		// projects there is no such place, so every call goes to the gate.
+	/** The project every sender's team binds: a run that carries senders of several teams reads only where all of them may, and with different projects there is no such place. */
+	const commonProject = (): string | undefined => {
 		const projects = new Set(turns.list.map((s) => config().teams.get(s.team)?.project));
-		const project = projects.size === 1 ? [...projects][0] : undefined;
+		return projects.size === 1 ? [...projects][0] : undefined;
+	};
+	const scopeFor = (cwd: string): Scope | undefined => {
+		// With different projects there is no such place, so every call goes to the gate.
+		const project = commonProject();
 		if (!project) return undefined;
 		return {
 			project, cwd, home, agentDir, linkDir,
@@ -131,5 +134,7 @@ export function createRemoteTurns({ pi, now, config, policy: policyDeps, home, a
 		}
 	});
 
-	return { turns, answerForward };
+	/** What a tool that answers a remote turn may show: the senders' teams, and the project they all bind. Undefined when the run is not remote. */
+	const scope = () => (turns.active ? { teams: [...new Set(turns.list.map((s) => s.team))], project: commonProject() } : undefined);
+	return { turns, answerForward, scope };
 }
