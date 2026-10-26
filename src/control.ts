@@ -17,6 +17,7 @@ import { qr } from "./qr.ts";
 //   POST /<token>/api/sessions/<key>/keys  {key, stream, confirmed?}                     one key pad key under its mirror (keys.ts), or Stop's {keys: ["esc"]}
 //   POST /<token>/api/sessions/<key>/focus                                               brings the session's pane forward in Herdr
 //   POST /<token>/api/sessions/<key>/commands {prefix}                                   its commands that match a typed `/prefix`, from its bridge (commands.ts); null when it did not say
+//   POST /<token>/api/sessions/<key>/dequeue {take}                                      takes the queue back: pi's Alt+Up, then the pulled messages' text for the composer (pull.ts); {empty: true} when nothing was queued; the same `take` asked again gets the text the session kept
 //   POST /<token>/api/sessions/<key>/answer {dialog, digest, answerId, choice | answers}  answers its dialog through its bridge (dialogs.ts); no keys; a `value` (a secret) is refused from every page (SB-F001)
 //   POST /<token>/api/sessions/<key>/upload (the file's bytes)                            stores a pasted, dropped, or picked file, answers its path (upload.ts)
 //   POST /<token>/api/sessions/<key>/mirror {stream, on}                                  shows the pane's screen on that page's stream (mirror.ts), or stops
@@ -45,7 +46,7 @@ export interface LinkPort { call(name: string, args: Record<string, unknown>): P
 const REMOTE_LINK = ["state", "confirm-answer"];
 const LINK_NAMES = ["enable", "state", "create", "invite", "invite-text", "invite-cancel", "decide", "join-start", "join-project", "join-cancel", "prefill-clear", "remove", "role", "rotate", "trust", "leave", "confirm-answer"];
 /** `answers.target` reads the net afresh, so the binding and the dialog are checked again for every answer. */
-export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; remoteOn?(): Promise<void>; remoteOff?(): Promise<void>; paired?: { on(): boolean; list(): unknown; unpair(id: string): boolean; unpairAll(): number; unsaved(): string | undefined }; saveFailed?(reason: string): void; spawn?(parts: string[], json: Record<string, unknown>): Promise<Reply>; close?(kind: string, json: Record<string, unknown>, refresh?: () => Promise<unknown>): Promise<Reply>; dismiss?(key: unknown): Promise<boolean>; dismissAll?(): Promise<number>; stop?(asked: Asked): void; link?: LinkPort; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; linkRequest?(file: string): Promise<boolean>; answers?: Pick<Hub, "has" | "replay" | "ended" | "send" | "probe" | "commands"> & { target(key: string): Promise<Target | undefined> } }
+export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; remoteOn?(): Promise<void>; remoteOff?(): Promise<void>; paired?: { on(): boolean; list(): unknown; unpair(id: string): boolean; unpairAll(): number; unsaved(): string | undefined }; saveFailed?(reason: string): void; spawn?(parts: string[], json: Record<string, unknown>): Promise<Reply>; close?(kind: string, json: Record<string, unknown>, refresh?: () => Promise<unknown>): Promise<Reply>; dismiss?(key: unknown): Promise<boolean>; dismissAll?(): Promise<number>; stop?(asked: Asked): void; link?: LinkPort; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; linkRequest?(file: string): Promise<boolean>; answers?: Pick<Hub, "has" | "replay" | "ended" | "send" | "probe" | "commands" | "pull"> & { target(key: string): Promise<Target | undefined> } }
 
 const no = (status: number, error: string, reason: string): Reply => ({ status, body: { error, reason } });
 const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -76,6 +77,16 @@ function refused(error: unknown): Reply {
 	if (["agent_blocked", "agent_not_found", "agent_not_ready", "pane_not_found"].includes(code)) return no(409, code, code === "agent_blocked" ? "It is waiting on a dialog; answer it in the terminal." : "The pane no longer runs this session.");
 	return no(502, code, (error as Error).message);
 }
+
+/** What the page hears when taking the queue back cannot be done, by the bridge's reason (pull.ts). */
+const PULL_WHY: Record<string, string> = {
+	no_editor: "This session has no editor to take the messages back into.",
+	stale: "The take-back timed out, or the session changed, after the key went: the messages are in the terminal's editor, not here.",
+	not_taken: "pi did not take its queue back; its dequeue key may not be Alt+Up. Check the terminal.",
+	changed: "The terminal's editor holds something other than the queued messages and the draft (typed meanwhile, or a message pi expanded); the messages are in it, check the terminal.",
+	too_large: "The queued messages are too long to bring here; they are in the terminal's editor.",
+	not_cleared: "The messages could not be cleared from the terminal's editor; they are there, not here.",
+};
 
 /** The text as it will be typed, or why it cannot be: CRLF and lone CR become LF, then the size and character checks. */
 export function checkText(text: unknown): string | Reply {
@@ -153,7 +164,7 @@ export function createControl({ link, lookup, call, csrf, canonical, pair, remot
 			return pairing ? { status: 200, body: pairing } : key === "pair" && !action ? no(409, "remote_off", "Remote access is off.") : no(404, "not_found", "No such action.");
 		}
 		if (action === "mirror") return mirrors ? mirrors.toggle(key, read.json) : no(503, "unavailable", "This server shows no terminals.");
-		if (!["input", "keys", "focus", "answer", "commands"].includes(action)) return no(404, "not_found", "No such action.");
+		if (!["input", "keys", "focus", "answer", "commands", "dequeue"].includes(action)) return no(404, "not_found", "No such action.");
 		const found = lookup(key);
 		if (!found) return no(404, "not_found", "No such session.");
 		if (!found.live || !found.pane || !found.file) return no(409, "not_live", "This session is no longer live in a pane.");
@@ -164,7 +175,7 @@ export function createControl({ link, lookup, call, csrf, canonical, pair, remot
 		}
 		if (!call) return no(503, "unavailable", "This server cannot reach Herdr.");
 		const { json } = read;
-		let job: () => Promise<unknown>;
+		let job: () => Promise<unknown>, direct: Reply | undefined;
 		if (action === "input") {
 			const text = checkText(json.text);
 			if (typeof text !== "string") return text;
@@ -194,6 +205,26 @@ export function createControl({ link, lookup, call, csrf, canonical, pair, remot
 				}
 				pad.sent(key, plan);
 			};
+		} else if (action === "dequeue") {
+			const { take } = json;
+			if (typeof take !== "string" || !ANSWER_ID.test(take)) return no(400, "bad_request", "Name this take-back by an id the page made.");
+			if (!answers) return no(503, "unavailable", "This server cannot reach the session's bridge.");
+			job = async () => {
+				const pane = await live(found);
+				if (pane.agent_status === "blocked") throw no(409, "blocked", "It is waiting on a dialog; answer it in the terminal.");
+				const begun = await answers.pull(key, "begin", take);
+				if (!begun) throw no(504, "unsure", "The session did not answer; nothing was taken back. Its pi-straw-boss may be too old for this.");
+				if (begun.reason) throw no(409, begun.reason, PULL_WHY[begun.reason]!);
+				if (begun.text !== undefined) return void (direct = { status: 200, body: { text: begun.text } }); // this very take-back was done, and its answer got lost on the way: no key goes
+				if (!begun.pending || !begun.ticket) return void (direct = { status: 200, body: { empty: true } }); // nothing is queued: no key goes
+				const plan = await pad.dequeue(key, found, pane);
+				await live(found); // the guard took a moment: still pi, on this file
+				for (const [method, params] of plan.calls) await call(method, params, 15_000);
+				const done = await answers.pull(key, "finish", begun.ticket);
+				if (!done) throw no(504, "unsure", "The session did not answer in time. The messages are in the terminal's editor, or the session keeps them for a few minutes: use Fetch again on the page to get them.");
+				if (done.reason) throw no(409, done.reason, PULL_WHY[done.reason]!);
+				direct = done.text !== undefined ? { status: 200, body: { text: done.text } } : { status: 200, body: { empty: true } }; // empty: delivered between the check and the key
+			};
 		} else if (action === "answer") {
 			const { dialog, digest, answerId } = json;
 			if (typeof dialog !== "string" || dialog.length > 64 || typeof digest !== "string" || !/^[0-9a-f]{64}$/.test(digest) || typeof answerId !== "string" || !ANSWER_ID.test(answerId)) return no(400, "bad_request", "The answer does not name its dialog.");
@@ -215,7 +246,7 @@ export function createControl({ link, lookup, call, csrf, canonical, pair, remot
 		busy.add(key);
 		try {
 			const sent = (await job()) as Sent | undefined;
-			return sent?.body?.outcome ? sent : { status: 200, body: { accepted: true } };
+			return direct ?? (sent?.body?.outcome ? sent : { status: 200, body: { accepted: true } });
 		} catch (error) {
 			return (error as Reply).status ? (error as Reply) : refused(error);
 		} finally {

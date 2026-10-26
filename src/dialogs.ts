@@ -9,6 +9,7 @@ import type { Queued, Ref } from "./net.ts";
 import { type Answer, type Answerable, type Dialog, OWNERS, questionsDigest, type Reply, selectDigest } from "./owners.ts";
 import { checkCommands, type Cmd } from "./commands.ts";
 import { checkProbe, type Editor } from "./probe.ts";
+import { checkPull, type Pull } from "./pull.ts";
 import { type Monitor, monitorsOk } from "./monitors.ts";
 import { todoOk, type TodoSum } from "./todo.ts";
 
@@ -20,9 +21,10 @@ import { todoOk, type TodoSum } from "./todo.ts";
 // dialog under its own key, and receive the value sealed to it. A secret dialog, or any other dialog beside a secret_drop, stays in the terminal until
 // intercom can verify who a bridge is; seal.ts keeps the envelope for then, and nothing here takes, seals, or sends a secret's value.
 // The same binding, for every bridge whether it holds a dialog or not, tells where to ask what a session's editor would submit (`probe`) and
-// which of its commands match a `/` typed in the composer (`commands`), and
+// which of its commands match a `/` typed in the composer (`commands`), takes its queue back for the composer (`pull`, in two steps around the key, pull.ts), and
 // gives the unit the documents its bridge lists, each by a capability (documents.ts), and carries a form answer for one to that bridge.
 
+export const PULL_MS = 4000, PULL_BUDGET_MS = 2500;
 const ACK_MS = 5000, PROBE_MS = 1000, FORM_MS = 5000, KEEP_MS = 600_000, KEEP = 256, MAX_TEXT = 8192, MAX_NOTE = 2048, MAX_ALL = 12_288;
 export const ANSWER_ID = /^[A-Za-z0-9_-]{16,64}$/, CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
 interface Channel { snapshot(): { connected: boolean; owner?: { sessionId: string; epoch: string } }; publish(payload: unknown, options?: { audience?: "owner" | "capable"; ownerOnly?: boolean }): void }
@@ -72,7 +74,7 @@ export function checkAnswer(t: Answerable, json: Record<string, unknown>): { cho
 export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 	let channel: Channel | undefined, epoch: string | undefined, active = false, change = () => {};
 	let bound = new Map<string, { from: string; b: Dialogs }>(), targets = new Map<string, Target>(), reach = new Map<string, { from: string; bridgeId: string }>();
-	const bridges = new Map<string, Dialogs>(), waiting = new Map<string, (ack?: Ack) => void>(), done = new Map<string, { key: string; at: number; sent: Sent }>(), probes = new Map<string, (e?: Editor) => void>(), lists = new Map<string, (c?: Cmd[]) => void>();
+	const bridges = new Map<string, Dialogs>(), waiting = new Map<string, (ack?: Ack) => void>(), done = new Map<string, { key: string; at: number; sent: Sent }>(), probes = new Map<string, (e?: Editor) => void>(), lists = new Map<string, (c?: Cmd[]) => void>(), pulls = new Map<string, (p?: Pull) => void>();
 	const closes = new Map<string, (r?: Pick<CloseResult, "accepted" | "reason">) => void>(), checks = new Map<string, (r?: { reason?: string }) => void>();
 	const caps = createCaps(), forms = new Map<string, (r?: FormReply) => void>();
 	let shelves = new Map<string, Shelf>();
@@ -92,6 +94,7 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 		if (closed && str(msg.pane) && (msg.file === null || str(msg.file)) && Array.isArray(msg.dialogs) && msg.dialogs.every(valid)) (bridges.set(from, { ...msg, ...(docs ? { documents: docs } : { documents: [], docsCut: true as const }), queued, monitors, todo }), change());
 		if (msg.type === "ack") waiting.get([from, msg.bridgeId, msg.id, msg.answerId].join("\n"))?.(msg);
 		if (msg.type === "probe-result") probes.get([from, msg.bridgeId, msg.probeId].join("\n"))?.(checkProbe({ ...msg }));
+		if (msg.type === "pull-result" && str(msg.reqId)) pulls.get([from, msg.bridgeId, msg.reqId].join("\n"))?.(checkPull({ ...msg }));
 		if (msg.type === "commands-result" && str(msg.reqId)) lists.get([from, msg.bridgeId, msg.reqId].join("\n"))?.(checkCommands(msg.commands));
 		if (msg.type === "close-result" && str(msg.reqId) && typeof msg.accepted === "boolean" && opt(msg.reason) && (msg.reason?.length ?? 0) <= 512) closes.get([from, msg.bridgeId, msg.reqId].join("\n"))?.({ accepted: msg.accepted, ...(msg.reason ? { reason: msg.reason } : {}) });
 		if (msg.type === "stash-check-result" && str(msg.reqId) && opt(msg.reason) && (msg.reason?.length ?? 0) <= 512) checks.get([from, msg.bridgeId, msg.reqId].join("\n"))?.(msg.reason ? { reason: msg.reason } : {});
@@ -105,11 +108,11 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 		}
 	};
 	/** One question to the bridge bound to `key`'s pane and file (this session's answers in-process): undefined with no such bridge or no answer within 1 s. */
-	const request = async <T>(key: string, map: Map<string, (x?: T) => void>, mine: () => T | undefined, msg: (id: string) => Record<string, unknown>): Promise<T | undefined> => {
+	const request = async <T>(key: string, map: Map<string, (x?: T) => void>, mine: () => T | undefined | Promise<T | undefined>, msg: (id: string) => Record<string, unknown>, ms = PROBE_MS): Promise<T | undefined> => {
 		const t = reach.get(key);
 		if (!t || !active) return undefined;
 		if (t.from === me) return mine();
-		const id = randomUUID(), k = [t.from, t.bridgeId, id].join("\n"), got = wait(map, k, PROBE_MS);
+		const id = randomUUID(), k = [t.from, t.bridgeId, id].join("\n"), got = wait(map, k, ms);
 		try {
 			if (!owner()) throw new Error("not the owner");
 			channel!.publish({ version: 1, to: t.bridgeId, ...msg(id) }, { audience: "capable", ownerOnly: true });
@@ -139,7 +142,7 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 	const hub: LocalHub & {
 		readonly running: boolean; readonly me: string; start(onChange: () => void): void; stop(): void; relayed(sessions: Session[], refs: Map<string, Ref>): Relayed; target(key: string): Target | undefined;
 		has(key: string, owner: string): boolean; replay(answerId: string, key: string): Sent | undefined; ended(key: string, dialog: string, answerId: string): Sent | undefined; send(key: string, t: Target, a: Answer): Promise<Sent>;
-		probe(key: string): Promise<Editor | undefined>; commands(key: string, prefix: string): Promise<Cmd[] | undefined>; close(key: string, keepPane: boolean, ifStashable?: boolean): Promise<{ accepted: boolean; reason?: string } | undefined>; stashCheck(key: string): Promise<{ reason?: string } | undefined>; doc(cap: string): { key: string; doc: Doc } | undefined; form(cap: string, answerId: string, fields: Fields): Promise<FormResult | undefined>;
+		probe(key: string): Promise<Editor | undefined>; pull(key: string, step: "begin" | "finish", ref?: string): Promise<Pull | undefined>; commands(key: string, prefix: string): Promise<Cmd[] | undefined>; close(key: string, keepPane: boolean, ifStashable?: boolean): Promise<{ accepted: boolean; reason?: string } | undefined>; stashCheck(key: string): Promise<{ reason?: string } | undefined>; doc(cap: string): { key: string; doc: Doc } | undefined; form(cap: string, answerId: string, fields: Fields): Promise<FormResult | undefined>;
 	} = {
 		receive,
 		/** Whether the bridge bound to `key` relays an open dialog of `owner` (a signal from the runtime that owns the approval, not from the session file). */
@@ -161,7 +164,7 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 			active = false;
 			[bridges, bound, targets, reach, shelves].forEach((m) => m.clear());
 			caps.clear(); // a capability lives as long as its server
-			[...waiting.values(), ...probes.values(), ...lists.values(), ...forms.values(), ...closes.values(), ...checks.values()].forEach((w) => w());
+			[...waiting.values(), ...probes.values(), ...lists.values(), ...pulls.values(), ...forms.values(), ...closes.values(), ...checks.values()].forEach((w) => w());
 		},
 		/** Binds each relayed list to a unit, from this net reading's sessions and registry. */
 		relayed(sessions, refs) {
@@ -213,6 +216,15 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 		},
 		/** What the session's editor would submit (unknown when undefined). */
 		probe: (key) => request(key, probes, () => checkProbe({ ...local.probe() }), (probeId) => ({ type: "probe", probeId })),
+		/**
+		 * One step of taking the session's queue back (pull.ts): `begin` carries the page's `take` id, `finish` the ticket. The bridge may spend 1.5 s on `finish`
+		 * and is told to answer within `PULL_BUDGET_MS` of now (the clock is this machine's) or clear nothing; the hub waits longer than that, so an answer that
+		 * cleared pi's editor is never one nobody waits for.
+		 */
+		pull: (key, step, ref) => {
+			const deadline = Date.now() + PULL_BUDGET_MS;
+			return request(key, pulls, () => Promise.resolve(local.pull(step, ref, deadline)).then((r) => checkPull({ ...r })), (reqId) => ({ type: "pull", reqId, step, ...(step === "begin" ? (ref ? { take: ref } : {}) : { ticket: ref, deadline }) }), step === "finish" ? PULL_MS : PROBE_MS);
+		},
 		/** The session's commands that match `prefix`, as its bridge lists them. */
 		/** Asks the session to quit as /boss close does (keeping its pane when `keepPane`); undefined when its bridge did not answer. */
 		close: (key, keepPane, ifStashable = false) => request(key, closes, () => local.close(keepPane, ifStashable), (reqId) => ({ type: "close", reqId, keepPane, ...(ifStashable ? { ifStashable } : {}) })),

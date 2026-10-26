@@ -14,7 +14,7 @@ import type { Editor } from "./probe.ts";
 // along and Enter still comes alone and probed; a paste (`{paste, stream}`), up to 4,000 characters with line breaks and tabs but no other
 // control character, inside the bracketed-paste markers so pi takes it as one paste and a line break submits nothing; Delete; and Ctrl or
 // Alt chords (COMBOS) as Herdr names them. Ctrl+Z never goes (pi would stop in the background, where nothing here brings it back), Ctrl+D
-// asks first (it leaves pi on an empty editor), and so does a second Ctrl+C within a second (pi leaves on the second). Stop (`{keys: ["esc"]}`, the composer's) needs no mirror. Herdr 0.9 has no
+// asks first (it leaves pi on an empty editor), and so does a second Ctrl+C within a second (pi leaves on the second). The composer's Edit sends pi's Alt+Up (`dequeue`), under the guard and the rate and with no mirror, as typing needs none. Stop (`{keys: ["esc"]}`, the composer's) needs no mirror. Herdr 0.9 has no
 // names for Home, End, Page Up, and Page Down: those go as the fixed sequences pi reads (pane.send_text writes them raw), and only they.
 
 /** What the pad can send, as Herdr names the keys. */
@@ -53,7 +53,22 @@ export function createKeys({ fresh, secret, answerable, linkRequest = async () =
 		// A link_request's approval dialog in the terminal takes Enter as Yes, and its high-risk actions are approved on this computer only: a paired device sends Escape (No) and nothing else.
 		if (a.key !== "esc" && a.remote && (await linkRequest(found.file!, session))) throw no(403, "local_only", "While it waits on a link request, a paired device can only send Escape; approve it on this computer's own page or terminal.");
 	};
+	/** Counts a key toward the session's rate, or says it is past it. */
+	const counted = (session: string): Reply | undefined => {
+		const t = now(), recent = (sent.get(session) ?? []).filter((at) => t - at < RATE_MS);
+		if (recent.length >= RATE) return no(429, "rate", `At most ${RATE} keys a second reach a session.`);
+		for (const [s, ats] of sent) if (t - ats.at(-1)! >= RATE_MS) sent.delete(s); // sessions gone quiet leave nothing behind
+		for (const [s, at] of escaped) if (t - at >= 60_000) escaped.delete(s);
+		sent.set(session, [...recent, t]);
+	};
 	return {
+		/** The composer's Edit (`dequeue` in control.ts): pi's own Alt+Up, which takes back the queue. Like typing it needs no mirror, and like any key but Escape it is not sent while a secret or a question waits; it counts toward the rate. */
+		async dequeue(session: string, found: Found, pane: Pane): Promise<Plan> {
+			const limited = counted(session);
+			if (limited) throw limited;
+			await guard(session, found, pane, { key: "alt+up" });
+			return { keys: ["alt+up"], double: false, calls: [["pane.send_input", { pane_id: pane.pane_id, keys: ["alt+up"] }]] };
+		},
 		/** The body as one pad key (or Stop's Escape), or why not, before Herdr is asked; a request that passes counts toward the rate. */
 		check(session: string, json: Record<string, unknown>, remote = false): Asked | Reply {
 			const stop = json.key === undefined && Array.isArray(json.keys) && json.keys.length === 1 && json.keys[0] === "esc";
@@ -63,11 +78,8 @@ export function createKeys({ fresh, secret, answerable, linkRequest = async () =
 			if (json.key === "ctrl+z") return no(400, "key", "Ctrl+Z is never sent: it would stop pi in the background, where nothing here can bring it back.");
 			if (!stop && !typed && !pasted && (json.text !== undefined || json.paste !== undefined || typeof json.key !== "string" || !(PAD.includes(json.key) || json.key === "delete" || COMBOS.test(json.key)) || json.keys !== undefined)) return no(400, "key", "One key at a time: a pad key, Delete, or a Ctrl or Alt chord (never a letter alone).");
 			if (!stop && (typeof json.stream !== "string" || !json.stream)) return no(400, "bad_request", "Name this page's stream; reload the page if it reconnected.");
-			const t = now(), recent = (sent.get(session) ?? []).filter((at) => t - at < RATE_MS);
-			if (recent.length >= RATE) return no(429, "rate", `At most ${RATE} keys a second reach a session.`);
-			for (const [s, ats] of sent) if (t - ats.at(-1)! >= RATE_MS) sent.delete(s); // sessions gone quiet leave nothing behind
-			for (const [s, at] of escaped) if (t - at >= 60_000) escaped.delete(s);
-			sent.set(session, [...recent, t]);
+			const limited = counted(session);
+			if (limited) return limited;
 			if (pasted) return { key: "paste", text: `\x1b[200~${json.paste as string}\x1b[201~`, stream: json.stream as string, remote };
 			return stop ? { key: "esc", remote } : typed ? { key: "text", text: json.text as string, stream: json.stream as string, remote } : { key: json.key as string, stream: json.stream as string, confirmed: json.confirmed, remote };
 		},
