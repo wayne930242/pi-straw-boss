@@ -406,11 +406,12 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 			void look().catch(lookFailed);
 		},
 		/** A change or a reading for the GUI, through the holder (this session, or another over the channel); only the GUI's host session is taken. */
-		async gui(name: string, args: Record<string, unknown> = {}): Promise<{ ok: boolean; error?: string; [key: string]: unknown }> {
+		async gui(name: string, args: Record<string, unknown> = {}): Promise<{ ok: boolean; error?: string; code?: string; [key: string]: unknown }> {
 			try {
 				return await ask({ op: "gui", name, args });
 			} catch (error) {
-				return { ok: false, error: (error as Error).message };
+				const message = (error as Error).message;
+				return { ok: false, error: message, ...(message === NO_HOLDER ? { code: "no_holder" } : {}) };
 			}
 		},
 		/** The compact reading the net snapshot carries; undefined when Straw Link is not set up or no holder answers. */

@@ -39,7 +39,7 @@ export { ENDING };
 
 export interface Reply { status: number; body: unknown }
 /** The page's way to Straw Link's holder (runtime.ts `gui`): a named request with arguments, and the setup marker that starts the election before any team exists. */
-export interface LinkPort { call(name: string, args: Record<string, unknown>): Promise<{ ok: boolean; error?: string; [key: string]: unknown }>; enable(): Promise<void> }
+export interface LinkPort { call(name: string, args: Record<string, unknown>): Promise<{ ok: boolean; error?: string; code?: string; [key: string]: unknown }>; enable(): Promise<void> }
 /** What a paired device may ask: read the state, and answer a forwarded confirm. Everything else changes who may command this computer, so only its own page does it. */
 const REMOTE_LINK = ["state", "confirm-answer"];
 const LINK_NAMES = ["enable", "state", "create", "invite", "invite-text", "invite-cancel", "decide", "join-start", "join-project", "join-cancel", "prefill-clear", "remove", "role", "rotate", "trust", "leave", "confirm-answer"];
@@ -115,7 +115,7 @@ export function createControl({ link, lookup, call, csrf, canonical, pair, remot
 			if (remote && !REMOTE_LINK.includes(key)) return no(403, "local_only", "Straw Link's team settings are changed on this computer's own page.");
 			if (key === "enable") return link.enable().then(() => ({ status: 200, body: {} }), (error: Error) => no(502, "link_failed", error.message));
 			const done = await link.call(key, read.json);
-			if (!done.ok) return no(409, "link_failed", done.error ?? "Straw Link refused it.");
+			if (!done.ok) return no(409, done.code ?? "link_failed", done.error ?? "Straw Link refused it.");
 			const { ok: _ok, ...body } = done;
 			// An invite is drawn as a QR on the page: the rows come from the text the holder made, which never travels any other way.
 			if (typeof body.text === "string" && (key === "invite" || key === "invite-text")) body.rows = qr(body.text).map((row) => row.map(Number).join(""));
