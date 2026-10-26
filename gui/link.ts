@@ -29,7 +29,7 @@ export function linkTile(): Tile {
 }
 
 function mount(): HTMLElement {
-	const root = h("div", { class: "link" });
+	const root = h("div", { class: "teams-tile" });
 	const status = h("p", { class: "link-status", role: "status" });
 	const head = h("div", { class: "link-head" }), requests = h("div", { class: "link-requests" }), teams = h("div", { class: "link-teams" }), invites = h("div", { class: "link-invites" });
 	let view: LinkView | undefined, sig = "", prefilled = "";
@@ -113,7 +113,7 @@ function mount(): HTMLElement {
 		}
 		card.append(h("p", null, m.link_words_help({ label: r.label })));
 		const sets = h("div", { class: "link-words" });
-		for (const [i, words] of r.sets.entries()) sets.append(button(words.join(" "), () => act("decide", { id: r.id, pick: i }), "link-set"));
+		for (const [i, words] of r.sets.entries()) sets.append(button(words.join(" "), () => act("decide", { id: r.id, pick: i }), "later link-set"));
 		card.append(sets, h("div", { class: "devices-acts" }, button(m.link_none_match(), () => act("decide", { id: r.id, approve: false }))));
 		return card;
 	};
@@ -122,14 +122,14 @@ function mount(): HTMLElement {
 	const memberRow = (t: TeamView, mem: MemberView) => {
 		const row = h("tr", { "data-self": String(mem.self), "data-online": String(mem.online) });
 		const name = h("td", null, h("b", null, mem.label), " ", h("small", { class: "link-short", title: mem.id }, mem.short), mem.duplicate && h("em", { class: "link-dup" }, m.link_duplicate()), !mem.labelKnown && h("em", { class: "link-dup" }, m.link_label_unknown()), mem.self && h("em", null, m.link_you()));
-		const trust = h("select", { "aria-label": m.link_trust_for({ name: mem.label }) }) as HTMLSelectElement;
+		const trust = h("select", { "aria-label": m.link_trust_for({ name: mem.label }), title: m.link_trust_help() }) as HTMLSelectElement;
 		for (const level of ["reply", "forward", "dispatch"] as const) trust.append(new Option(levelName(level), level, false, level === mem.trust));
 		trust.onchange = () => void act("trust", { device: mem.id, level: trust.value });
 		const admin = t.self.role === "admin" && !mem.self;
 		row.append(
 			name,
-			h("td", null, roleName(mem.role)),
-			h("td", null, mem.attended ? m.link_attended() : m.link_unattended()),
+			h("td", { class: "nw" }, roleName(mem.role)),
+			h("td", { class: "nw" }, mem.attended ? m.link_attended() : m.link_unattended()),
 			h("td", null, mem.self ? "" : lastSeen(mem.seenAgoMs, mem.online)),
 			h("td", null, mem.self ? "" : trust),
 			h("td", { class: "link-acts" }, ...nodes(
@@ -169,7 +169,7 @@ function mount(): HTMLElement {
 	};
 
 	// ---- Create a team ----------------------------------------------------------------------------------------------------------------
-	const relayIn = h("input", { type: "url", placeholder: "https://relay.example", "aria-label": m.link_relay() }) as HTMLInputElement;
+	const relayIn = h("input", { type: "url", "aria-label": m.link_relay() }) as HTMLInputElement;
 	const tokenIn = h("input", { type: "password", autocomplete: "off", "aria-label": m.link_token() }) as HTMLInputElement;
 	const labelIn = h("input", { type: "text", maxlength: "40", "aria-label": m.link_label() }) as HTMLInputElement;
 	const shareIn = h("select", { "aria-label": m.link_share() }) as HTMLSelectElement;
@@ -268,6 +268,8 @@ function mount(): HTMLElement {
 	const draw = (v: LinkView) => {
 		view = v;
 		const next = JSON.stringify([v.label, v.deviceId, v.relay, v.teams.map((t) => [t, t.members.map((x) => [x.id, Math.floor((x.seenAgoMs ?? -1) / 60_000), x.online])]), v.joinRequests, v.invites, v.alerts.map((a) => a.id)]);
+		if (status.textContent === m.link_setup_wait()) status.textContent = "";
+		if (shownHash && !v.invites.some((i) => i.hash === shownHash)) hideInvite(); // the invite was used, lapsed, or cancelled
 		if (v.join) drawJoin(v.join);
 		else joinProgress.replaceChildren();
 		if (v.prefill && prefilled !== JSON.stringify(v.prefill)) {

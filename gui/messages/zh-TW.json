@@ -408,9 +408,9 @@
 	"link_unattended_help": "這台裝置沒有人在操作。邀請裡的裝置 id 取代了單字比對。",
 	"link_role_admin": "管理員",
 	"link_role_member": "成員",
-	"link_level_reply": "reply（讀取並回覆）",
-	"link_level_forward": "forward（問發送者）",
-	"link_level_dispatch": "dispatch（當作本機訊息執行）",
+	"link_level_reply": "reply",
+	"link_level_forward": "forward",
+	"link_level_dispatch": "dispatch",
 	"link_attended": "有人值守",
 	"link_unattended": "無人值守",
 	"link_online": "在線",
@@ -487,5 +487,6 @@
 	"link_setup_help": "Straw Link 尚未在這台電腦啟動。設定後會在其中一個 pi 工作階段（塔台或已加入的工作階段）啟動連線持有者。",
 	"link_setup_wait": "啟動中，需要幾秒鐘。",
 	"link_prefilled": "有 agent 要求開啟這個畫面：{reason}",
-	"ally_tag": "{team} · 隊友"
+	"ally_tag": "{team} · 隊友",
+	"link_trust_help": "這台裝置傳來的訊息能做什麼。reply：允許清單內的唯讀工具直接執行，其餘在這裡問你。forward：同上，但其餘改問對方電腦上的人。dispatch：像你自己送的訊息一樣執行，仍受這台電腦自己的防護限制。"
 }

@@ -821,8 +821,8 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .link-alert[data-level="warning"] { background: color-mix(in srgb, var(--amber) 9%, transparent); }
 .link-args { margin: 0; max-height: 180px; overflow: auto; padding: 8px; border: 1px solid var(--line); border-radius: 8px; font-size: 11px; white-space: pre-wrap; word-break: break-word; }
 .link-note { color: var(--dim); }
-.link { display: grid; gap: 14px; padding: 4px 2px 12px; font-size: 13px; }
-.link h3 { font-size: 15px; } .link h4 { font-size: 13px; margin: 0 0 4px; }
+.teams-tile { display: grid; gap: 14px; padding: 4px 2px 12px; font-size: 13px; }
+.teams-tile h3 { font-size: 15px; } .teams-tile h4 { font-size: 13px; margin: 0 0 4px; }
 .link-status { min-height: 1.2em; color: var(--amber); margin: 0; }
 .link-short { color: var(--dim); font-family: ui-monospace, monospace; }
 .link-meta { color: var(--dim); font-size: 12px; margin: 2px 0 8px; overflow-wrap: anywhere; }
@@ -832,11 +832,13 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .link-warn { margin: 6px 0; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, var(--amber) 10%, transparent); }
 .link-roster { width: 100%; border-collapse: collapse; margin: 6px 0 10px; }
 .link-roster th { text-align: left; color: var(--dim); font-weight: 500; font-size: 11px; padding: 2px 6px; }
+.link-roster .nw { white-space: nowrap; }
+.link-roster select { max-width: 100%; }
 .link-roster td { padding: 5px 6px; vertical-align: middle; overflow-wrap: anywhere; }
 .link-roster tr[data-online="false"] td { color: var(--dim); }
 .link-roster em { margin-left: 6px; font-style: normal; font-size: 11px; color: var(--dim); }
 .link-roster .link-dup { color: var(--amber); }
-.link-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.link-acts { display: flex; gap: 6px; flex-wrap: wrap; } .link-acts button { white-space: nowrap; }
 .link-inline { display: flex; gap: 8px; margin-top: 8px; } .link-inline input { flex: 1; min-width: 0; }
 .link-words { display: grid; gap: 8px; margin: 8px 0; }
 .link-set { padding: 10px 12px; font-size: 15px; letter-spacing: 0.02em; text-align: left; }
@@ -850,5 +852,5 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .link-form label { display: grid; gap: 3px; color: var(--dim); }
 .link-scan video { width: min(320px, 100%); border-radius: 10px; }
 .link-open-invite { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.link [data-armed="true"] { color: var(--amber); }
+.teams-tile [data-armed="true"] { color: var(--amber); }
 @media (max-width: 640px) { .link-roster thead { display: none; } .link-roster tr { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 8px; padding: 6px 0; border-bottom: 1px solid var(--line); } }
