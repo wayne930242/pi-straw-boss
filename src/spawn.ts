@@ -4,8 +4,9 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { checkText, type Reply } from "./control.ts";
 import { createDeploys, type Deploy, type StepId } from "./deploy.ts";
+import { waitPastTrust } from "./trust/wait.ts";
 import { type Hidden, HiddenError, hasHidden, platformHidden } from "./hidden.ts";
-import { createTab, type HerdrCall, type HerdrRun, isSub, type Pane, panes, report, result, type Sleep, startPi, waitFor, type Workspace, workspaces } from "./herdr.ts";
+import { createTab, type HerdrCall, type HerdrRun, isSub, type Pane, panes, report, result, type Sleep, startPi, type Workspace, workspaces } from "./herdr.ts";
 
 // What the page opens by itself, each pi started in a folder picked from the home folder. A base starts with no tower: it opens with one member
 // (a base is never empty), a base without a tower takes more members, and only a member that promotes itself opens the tower (index.ts), so the
@@ -18,12 +19,13 @@ import { createTab, type HerdrCall, type HerdrRun, isSub, type Pane, panes, repo
 //   POST /<token>/api/open/base {dir, label, prompt?}             a new workspace in `dir` whose first tab holds a member
 //   POST /<token>/api/open/member {workspace, tab?, dir?, prompt?} a member split into `tab` (in `dir`, else that tab's folder), or in a new tab in `dir`; no tower
 //   POST /<token>/api/open/main {workspace, dir, prompt?}         a new tab in the base whose pi becomes its main; the base has a tower
+// A new pi that waits on a project trust question (trust/ask.ts) has not joined: the join wait stops counting while its pane has one, the deploy shows a `trust` step with the question, and ten minutes without an answer fail the opening.
 // An open may carry `deploy`, an id the page makes; POST /<token>/api/open/progress {id} then answers how far that open has got (deploy.ts), and a refused open names its failed `step`.
 
 const MAX_DIRS = 500, JOIN_WAIT_MS = 60_000, MAX_LABEL = 64;
 
 /** `live` says whether a session is still on the net, so a tower token its tower left behind does not count; `sessionAt` names the session in a pane, so the page can go to it. */
-export interface SpawnDeps { run: HerdrRun; sleep: Sleep; call?: HerdrCall; live(sessionId: string): Promise<boolean>; sessionAt?(paneId: string): Promise<string | undefined>; home?: string; hidden?: Hidden }
+export interface SpawnDeps { run: HerdrRun; sleep: Sleep; call?: HerdrCall; live(sessionId: string): Promise<boolean>; sessionAt?(paneId: string): Promise<string | undefined>; home?: string; hidden?: Hidden; deploys?: ReturnType<typeof createDeploys>; trustDir?: string }
 
 const no = (status: number, error: string, reason: string): Reply => ({ status, body: { error, reason } });
 const OUTSIDE = no(400, "not_allowed", "Only folders in your home folder, outside hidden folders, can be picked.");
@@ -78,10 +80,9 @@ export async function makeDir(parent: unknown, name: unknown, home = homedir(), 
 	return real ? { status: 200, body: { path: real, created: made } } : no(409, "not_a_folder", `${clean} exists here and is not a folder you can pick.`);
 }
 
-export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(), hidden = platformHidden }: SpawnDeps) {
+export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(), hidden = platformHidden, deploys = createDeploys(), trustDir }: SpawnDeps) {
 	const pick = (path: unknown) => pickable(path, home, hidden);
 	let busy = false;
-	const deploys = createDeploys();
 	const opened = async (workspace: string, tab: string, pane: string): Promise<Reply> => ({ status: 200, body: { workspace, tab, pane, ...(sessionAt && { session: await sessionAt(pane) }) } });
 	/** The base's own folder: its checkout, else where its tower runs, else where its first pane runs; home when that is not pickable. */
 	const baseDir = async (workspaceId: unknown) => {
@@ -122,10 +123,11 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 		d.go("start");
 		await startPi(run, sleep, `${role ?? "member"}-${randomUUID().slice(0, 8)}`, paneId, ["--name", name]);
 		d.go("join");
-		const joined = await waitFor(sleep, async () => {
+		d.pane = paneId;
+		const joined = await waitPastTrust(sleep, async () => {
 			const r = (await panes(run)).find((p) => p.pane_id === paneId)?.tokens?.sb_role;
 			return role ? r === role : r === "member" || r === "main";
-		}, JOIN_WAIT_MS, 500);
+		}, JOIN_WAIT_MS, 500, trustDir ? { dir: trustDir, pane: paneId, on: (r) => d.hold(r && { id: r.id, digest: r.digest, folder: r.cwd, found: r.found }) } : undefined);
 		if (!joined) throw new Error(`The pi in pane ${paneId} did not join the net${role ? ` as the ${role} of its tab` : ""} within ${JOIN_WAIT_MS / 1000} s`);
 		if (!prompt) return;
 		d.go("deliver");

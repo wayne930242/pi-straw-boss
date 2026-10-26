@@ -1,6 +1,7 @@
-import { createTab, type HerdrRun, panes, report, type Sleep, startPi, tabs, TOWER_LABEL, waitFor, type Workspace, workspaces } from "./herdr.ts";
+import { createTab, type HerdrRun, panes, report, type Sleep, startPi, tabs, TOWER_LABEL, type Workspace, workspaces } from "./herdr.ts";
+import { waitPastTrust } from "./trust/wait.ts";
 
-export interface TowerEnv { run: HerdrRun; sleep: Sleep; live(sessionId: string): Promise<boolean>; moveFirst(tabId: string): Promise<void>; model?: string }
+export interface TowerEnv { run: HerdrRun; sleep: Sleep; live(sessionId: string): Promise<boolean>; moveFirst(tabId: string): Promise<void>; model?: string; trustDir?: string }
 
 const TOWER_WAIT_MS = 60_000;
 const opening = new Map<string, Promise<{ id: string; opened: boolean }>>();
@@ -14,7 +15,7 @@ export function ensureTower(env: TowerEnv, workspace: Workspace, cwd: string) {
 	return pending;
 }
 
-async function open({ run, sleep, live, moveFirst, model }: TowerEnv, workspace: Workspace, cwd: string) {
+async function open({ run, sleep, live, moveFirst, model, trustDir }: TowerEnv, workspace: Workspace, cwd: string) {
 	const ws = workspace.workspace_id;
 	const held = async () => {
 		const id = (await workspaces(run)).find((w) => w.workspace_id === ws)?.tokens?.tower;
@@ -59,7 +60,7 @@ async function open({ run, sleep, live, moveFirst, model }: TowerEnv, workspace:
 			throw error;
 		});
 	}
-	const id = await waitFor(sleep, held, TOWER_WAIT_MS, 1000);
+	const id = await waitPastTrust(sleep, held, TOWER_WAIT_MS, 1000, trustDir ? { dir: trustDir, pane: paneId } : undefined); // a trust question the tower waits on is not counted (trust/wait.ts)
 	if (!id) throw new Error(`The tower of ${workspace.label} did not publish its token within ${TOWER_WAIT_MS / 1000} s (pane ${paneId})`);
 	return { id, opened: true };
 }

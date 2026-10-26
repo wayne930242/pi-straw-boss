@@ -27,6 +27,7 @@ import { createStashing } from "./stashing.ts";
 import { type Config, createKit, type Deps } from "./state.ts";
 import { createTools } from "./tools.ts";
 import { createTower } from "./tower.ts";
+import { registerTrust } from "./trust/ask.ts";
 
 export type { Deps } from "./state.ts";
 
@@ -47,6 +48,7 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		// Closing is this session's own: the GUI asks its bridge, /boss close asks here, and only a session that runs this extension can (not a subagent).
 		let closeSelf: ((keepPane: boolean) => string | undefined) | undefined;
 		const bridge = startBridge(pi, { env, dir: guiDir, local: () => (s.hub?.running ? s.hub : undefined), close: (keep) => (closeSelf ? closeSelf(keep) : "A subagent is closed by the session that launched it.") });
+		registerTrust(pi, kit); // pi's startup trust question reaches the GUI too, before any session has joined the net (trust/ask.ts), subagents included
 		interceptUi(pi); // any extension's select and confirm reach the same bridge, subagents included
 		if (env.PI_SUBAGENT_ID) return;
 		warmStart(); // Windows tells a process's start time through PowerShell, 2 to 3 s: read this one's now, in the background, so the records written later carry it

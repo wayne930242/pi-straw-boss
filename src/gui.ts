@@ -44,11 +44,11 @@ export interface Gui { url: string; port: number; remotePort: number; token: str
 /** `net` is the registry behind the net reading (the allow list of session keys); without it no session can be watched. `call` reaches Herdr for input. */
 /** `hub` carries answers to the dialogs bridges relay (dialogs.ts); it runs exactly as long as the server. */
 /** `onRemote` and `onRemoteOff` turn remote access on and off from the page, in the session that runs the server. `onStop` takes another session's stop request (requestStop), so the owner also takes its remote entry down; without it the server stops itself. */
-export interface GuiOptions { read(): Promise<Net>; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[]; dismiss?(key: string): boolean; dismissAll?(): number }; call?: HerdrCall; hub?: Hub; dir?: string; paired?: string; port?: number; remotePort?: number; token?: string; csrf?: string; pollMs?: number; idleMs?: number; pingMs?: number; onStop?(asked: Asked): void; onRemote?(): Promise<void>; onRemoteOff?(): Promise<void>; onSaveFailed?(reason: string): void; spawn?: ControlDeps["spawn"]; close?: ControlDeps["close"] }
+export interface GuiOptions { read(): Promise<Net>; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[]; dismiss?(key: string): boolean; dismissAll?(): number }; call?: HerdrCall; hub?: Hub; dir?: string; paired?: string; port?: number; remotePort?: number; token?: string; csrf?: string; pollMs?: number; idleMs?: number; pingMs?: number; onStop?(asked: Asked): void; onRemote?(): Promise<void>; onRemoteOff?(): Promise<void>; onSaveFailed?(reason: string): void; spawn?: ControlDeps["spawn"]; close?: ControlDeps["close"]; trust?: { answer: NonNullable<ControlDeps["trust"]>; watch(poke: () => void): () => void } }
 export interface Asked { by: string; take: boolean }
 
 /** Starts the server. A preferred `port` and `remotePort` (with the `token` and `csrf`) are reused when free, so a restarted server keeps the URL and the page an open tab already has. */
-export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, port = 0, remotePort = 0, token = randomBytes(16).toString("hex"), csrf = randomBytes(16).toString("hex"), pollMs = 2000, idleMs = 10_000, pingMs = 15_000, onStop, onRemote, onRemoteOff, onSaveFailed, spawn, close }: GuiOptions): Promise<Gui> {
+export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, port = 0, remotePort = 0, token = randomBytes(16).toString("hex"), csrf = randomBytes(16).toString("hex"), pollMs = 2000, idleMs = 10_000, pingMs = 15_000, onStop, onRemote, onRemoteOff, onSaveFailed, spawn, close, trust }: GuiOptions): Promise<Gui> {
 	try {
 		if (!statSync(join(dir, "index.html")).isFile()) throw new Error();
 	} catch {
@@ -70,7 +70,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 		if (n) await tick();
 		return n;
 	};
-	const control = createControl({ lookup: (key) => net?.lookup(key), call, csrf, canonical, pair, remoteOn: onRemote, remoteOff: onRemoteOff, paired: { on: () => Boolean(access.remote), ...access.devices, unsaved: access.unsaved }, saveFailed: onSaveFailed, spawn, close: close && (async (kind, json) => (await tick(), close(kind, json, tick))), dismiss: async (key) => typeof key === "string" && Boolean(net?.dismiss?.(key)) && (await tick(), true), dismissAll, mirrors, stop, secret: waitsForSecret, answers: hub && { replay: hub.replay, ended: hub.ended, send: hub.send, probe: hub.probe, commands: hub.commands, target: async (key) => (await tick(), hub.target(key)) } });
+	const control = createControl({ lookup: (key) => net?.lookup(key), call, csrf, canonical, pair, remoteOn: onRemote, remoteOff: onRemoteOff, paired: { on: () => Boolean(access.remote), ...access.devices, unsaved: access.unsaved }, saveFailed: onSaveFailed, spawn, close: close && (async (kind, json) => (await tick(), close(kind, json, tick))), dismiss: async (key) => typeof key === "string" && Boolean(net?.dismiss?.(key)) && (await tick(), true), dismissAll, mirrors, stop, secret: waitsForSecret, trust: trust?.answer, answers: hub && { replay: hub.replay, ended: hub.ended, send: hub.send, probe: hub.probe, commands: hub.commands, target: async (key) => (await tick(), hub.target(key)) } });
 	let last: string | undefined, problem: string | undefined, inflight: Promise<void> | undefined;
 	let poll: ReturnType<typeof setInterval> | undefined, beat: ReturnType<typeof setInterval> | undefined;
 	const send = (to: ServerResponse, data: string, event?: string) => to.writableEnded || to.write(`${event ? `event: ${event}\n` : ""}data: ${data}\n\n`); // a reading in flight at stop ends after the streams
@@ -146,7 +146,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 				return void fail(404);
 			}
 			if ((parts[0] === "server" || parts[0] === "remote") && who.remote) return void fail(403); // only this machine stops the server, opens it to the tailnet or closes it, and lists or unpairs devices
-			if (["sessions", "remote", "server", "dirs", "open", "close", "dismiss"].includes(parts[0]!)) return void control(req, who.origin, parts).then(answer, () => answer({ status: 500, body: { error: "internal", reason: "The request could not be handled." } }));
+			if (["sessions", "remote", "server", "dirs", "open", "close", "dismiss", "trust"].includes(parts[0]!)) return void control(req, who.origin, parts).then(answer, () => answer({ status: 500, body: { error: "internal", reason: "The request could not be handled." } }));
 			// An entry never changes once written, so its image is cached for a day; the token in the URL keeps it to this page.
 			if (req.method === "GET" && parts[0] === "image") return void image(files, parts.slice(1)).then((p) => (p ? res.writeHead(200, { ...HEADERS, "content-type": p.type, "cache-control": "private, max-age=86400" }).end(p.bytes) : fail(404)), () => fail(404));
 			if (req.method === "GET") return void (parts[0] === "doc" && docs ? answer(docs.text(parts[1] ?? "")) : api(files, parts, url.searchParams).then(answer, () => fail(404)));
@@ -189,12 +189,14 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 		throw error;
 	}
 	hub?.start(() => void (clients.size && tick())); // a relayed dialog shows at once, not at the next poll
+	const unwatch = trust?.watch(() => void (clients.size && tick())); // and so does a trust question
 	// With no page listening the net is still read every `idleMs`, so its activity (activity.ts) is kept for the page that comes next: a phone that sleeps
 	// drops its stream, and without this everything done meanwhile was a fresh start with no events (a gap over activity.ts GAP_MS is one).
 	const idle = setInterval(() => clients.size || void tick(), idleMs).unref();
 	function halt() {
 		return new Promise<void>((done) => {
 			hub?.stop();
+			unwatch?.();
 			mirrors.stop();
 			clearInterval(poll);
 			clearInterval(beat);

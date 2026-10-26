@@ -3,6 +3,7 @@ import { statSync } from "node:fs";
 import { join } from "node:path";
 import type { Bridge } from "./bridge.ts";
 import { createCloser } from "./closer.ts";
+import { createDeploys } from "./deploy.ts";
 import { createHub } from "./dialogs.ts";
 import { type Gui, startGui } from "./gui.ts";
 import { adoptable, adoptGui, downgrades, type Keep, markReload, markStopped, readRecord, type Shared, sharedGui, stopRecorded } from "./handover.ts";
@@ -12,6 +13,8 @@ import { netSource } from "./net.ts";
 import { pairingKeys, showLines } from "./pairing.ts";
 import { identity, switchRemote } from "./remote.ts";
 import { createSpawn } from "./spawn.ts";
+import { trustDir } from "./trust/files.ts";
+import { createTrustServe } from "./trust/serve.ts";
 import { type Channel, type Kit, REGISTER } from "./state.ts";
 
 /** This session hosts the straw net GUI: the one server per machine it starts or hands over, its remote entry, and the `/boss gui` commands. */
@@ -32,6 +35,8 @@ export function createHost({ pi, cfg, s, guiDir, me, tell }: Kit, { bridge, conn
 	const unsaved = (gui: Gui) => ((reason) => reason && tell(reason, "warning"))(gui.access.unsaved()); // a paired.json that could not be saved: what was just changed is lost at a restart
 	const label = () => `${me() || "unknown"} (pane ${cfg.env.HERDR_PANE_ID})`;
 	const herdr = herdrSocket(cfg.env); // the Herdr server this session's net is read from; gui.json names it, and only a session on the same one adopts
+	// The project trust questions the panes of this Herdr leave in <state>/trust (trust/serve.ts), and the openings the page runs, which a question for their pane belongs to.
+	const deploys = createDeploys(), trust = createTrustServe({ dir: trustDir(guiDir), herdr, world: () => world(), opening: deploys.openingOf });
 	// This session's server stops, its remote entry first: /boss gui stop here, or another session's stop or takeover (`asked`). A stop is on purpose and says so in
 	// gui.json, so no survivor starts the server again (adoptGui); a takeover starts its own at once, and the session's end is not a stop (release).
 	const stopOwn = async (asked?: { by: string; take: boolean }) => {
@@ -64,7 +69,7 @@ export function createHost({ pi, cfg, s, guiDir, me, tell }: Kit, { bridge, conn
 			tell(`Remote access stays off: ${(error as Error).message}; it is tried again when the server next starts`, "warning");
 		}
 	};
-	const start = (prefer: { port?: number; remotePort?: number; token?: string; csrf?: string }, net = netSource({ run, world, sessions, stashed: () => stashedList(guiDir), hub: (s.hub = s.hub?.me === me() ? s.hub : createHub(pi, me(), bridge)) })) => startGui({ read: net.read, net, call, hub: s.hub, dir: bundle, paired: join(guiDir, "paired.json"), ...prefer, onStop: (asked) => void stopOwn(asked), onSaveFailed: (reason) => tell(reason, "warning"), onRemote: async () => tell((await switchRemote(s.gui!, true, guiDir, ts)).text), onRemoteOff: async () => tell((await switchRemote(s.gui!, false, guiDir, ts)).text), spawn: createSpawn({ run, sleep, call, live: async (id) => (await sessions()).some((x) => x.id === id), sessionAt: async (pane) => (await sessions()).find((x) => x.herdrLocation?.paneId === pane)?.id }), close: createCloser({ run, sleep, me, sessions, ask: async (key, keepPane, ifStashable) => s.hub?.close(key, keepPane, ifStashable), check: async (key) => s.hub?.stashCheck(key), stateDir: guiDir, pop: (name) => popBase({ run, sleep, stateDir: guiDir, live: async (id) => (await sessions()).some((x) => x.id === id), agentDir: cfg.env.PI_CODING_AGENT_DIR }, name) }) });
+	const start = (prefer: { port?: number; remotePort?: number; token?: string; csrf?: string }, net = netSource({ run, world, sessions, stashed: () => stashedList(guiDir), trust, hub: (s.hub = s.hub?.me === me() ? s.hub : createHub(pi, me(), bridge)) })) => startGui({ read: net.read, net, call, hub: s.hub, trust: { answer: trust.answer, watch: trust.watch }, dir: bundle, paired: join(guiDir, "paired.json"), ...prefer, onStop: (asked) => void stopOwn(asked), onSaveFailed: (reason) => tell(reason, "warning"), onRemote: async () => tell((await switchRemote(s.gui!, true, guiDir, ts)).text), onRemoteOff: async () => tell((await switchRemote(s.gui!, false, guiDir, ts)).text), spawn: createSpawn({ run, sleep, call, deploys, trustDir: trustDir(guiDir), live: async (id) => (await sessions()).some((x) => x.id === id), sessionAt: async (pane) => (await sessions()).find((x) => x.herdrLocation?.paneId === pane)?.id }), close: createCloser({ run, sleep, me, sessions, ask: async (key, keepPane, ifStashable) => s.hub?.close(key, keepPane, ifStashable), check: async (key) => s.hub?.stashCheck(key), stateDir: guiDir, pop: (name) => popBase({ run, sleep, stateDir: guiDir, live: async (id) => (await sessions()).some((x) => x.id === id), agentDir: cfg.env.PI_CODING_AGENT_DIR, trustDir: trustDir(guiDir) }, name) }) });
 	// One server per machine: a second /boss gui, here or in another session, opens the one that runs, unless `take` (or a newer version) takes it
 	// over. Two calls in flight in this session share one start. `manual`: the caller turns remote on or off itself, so a new server does not resume it.
 	let adopting: Promise<void> | undefined, leaving = false;

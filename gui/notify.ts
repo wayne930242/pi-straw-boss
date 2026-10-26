@@ -96,7 +96,7 @@ export function mountNotify(open: (a: Alert) => void): Notifier {
 			if (sound) play((["waiting", "error", "done"] as const).find((k) => due.some((d) => d.k === k))!);
 			if (!remind || !can || Notification.permission !== "granted" || (!document.hidden && document.hasFocus())) return;
 			for (const { a, k } of due) {
-				const n = new Notification(a.name, { body: { waiting: m.notify_waiting, error: m.notify_error, done: m.notify_done }[k]({ note: a.note ?? "" }).trim(), tag: a.key, icon: document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href, silent: k !== "waiting" }); // only a question may make the system beep: a failure or a finish is a quiet notice
+				const n = new Notification(a.name, { body: a.trust ? m.trust_reminder() : { waiting: m.notify_waiting, error: m.notify_error, done: m.notify_done }[k]({ note: a.note ?? "" }).trim(), tag: a.key, icon: document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href, silent: k !== "waiting" }); // only a question may make the system beep: a failure or a finish is a quiet notice
 				n.onclick = () => (window.focus(), n.close(), open(a));
 			}
 		},

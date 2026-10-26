@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { createTab, report, panes, startPi, type HerdrRun, type Session, type Sleep, waitFor, workspaces } from "./herdr.ts";
+import { createTab, report, panes, startPi, type HerdrRun, type Session, type Sleep, workspaces } from "./herdr.ts";
+import { waitPastTrust } from "./trust/wait.ts";
 
 // The one thing a tower does besides routing: when no session owns a request, it opens a main for it (docs/how-it-works.md, "Opening a main").
 // It is narrow on purpose: one new tab in the tower's own workspace, started without focus, in which Straw Boss starts pi. It types into no pane
@@ -23,6 +24,8 @@ export interface OpenerEnv {
 	send(to: string, message: string): Promise<{ status: string; code?: string; detail?: string }>;
 	/** The tower itself: the main reports to it as well as to the sender, and it closes the main afterwards (closemain.ts). */
 	tower(): { id: string; name: string };
+	/** <state>/trust: a trust question the new pi waits on (trust/ask.ts) stops the wait counting, and ten minutes without an answer fail the opening. */
+	trustDir?: string;
 }
 export interface OpenRequest { request: string; sender: string; label?: string }
 export interface Opened { tab: string; pane: string; main: string; sender: string; repeated?: true }
@@ -65,10 +68,10 @@ export function opener(env: OpenerEnv) {
 			// Herdr agent names are unique across workspaces and lowercase only.
 			await startPi(run, sleep, `main-${randomUUID().slice(0, 8)}`, paneId, ["--name", `main · ${label ?? workspace.label}`]);
 			// The pi is the tab's main once it has published its role; only then does it get the request, so its first prompt is the main agent's.
-			const main = await waitFor(sleep, async () => {
+			const main = await waitPastTrust(sleep, async () => {
 				const role = (await panes(run, workspace.workspace_id)).find((p) => p.pane_id === paneId)?.tokens?.sb_role;
 				return role === "main" ? (await env.sessions()).find((s) => s.herdrLocation?.paneId === paneId) : undefined;
-			}, MAIN_WAIT_MS, 500);
+			}, MAIN_WAIT_MS, 500, env.trustDir ? { dir: env.trustDir, pane: paneId } : undefined);
 			if (!main) throw new Error(`The pi in pane ${paneId} did not become the main agent of its tab within ${MAIN_WAIT_MS / 1000} s`);
 			const sent = await env.send(main.id, handoff(workspace.label, sender, request, env.tower()));
 			if (sent.status !== "sent") throw new Error(`The new main ${main.name ?? main.id} did not take the request: ${sent.status} ${sent.code ?? ""} ${sent.detail ?? ""}`.trim());

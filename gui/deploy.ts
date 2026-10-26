@@ -1,11 +1,14 @@
 import type { Progress, StepId, StepState } from "../src/deploy.ts";
+import { ownOpenings } from "./alerts.ts";
 import { h } from "./dom.ts";
 import { m } from "./paraglide/messages.js";
 import type { Answer } from "./post.ts";
+import { trustPanel, type TrustPost } from "./trust.ts";
 
 // The deploy panel: what a tile shows, in place of its form, while a new unit opens (spawn.ts). The steps and how far they have got come from
 // the server (POST open/progress, polled twice a second); a step of its own the page cannot know of is never made up. Only the elapsed time of the
-// running step ticks here. Motion is CSS alone: the bar's fill transitions, the running step pulses, the finish flashes (style.css .deploy).
+// running step ticks here. The `trust` step is the server's (src/deploy.ts) and appears only when the new pi waits on a project trust question: the question is inline then, and the page's
+// give-up does not count that time. Motion is CSS alone: the bar's fill transitions, the running step pulses, the finish flashes (style.css .deploy).
 
 interface Row { id: StepId; state: StepState; ms: number; since: number }
 interface Clock { now(): number; every(run: () => void, ms: number): () => void; after(run: () => void, ms: number): () => void }
@@ -24,6 +27,8 @@ export interface DeployOpts {
 	back(): void;
 	/** Plays the unit-ready sound, when the page's Sound is on. */
 	chime?(): void;
+	/** Answers the trust question the opening waits on (POST trust/answer), shown inline in its `trust` step. */
+	trust?: TrustPost;
 	clock?: Clock;
 }
 
@@ -46,11 +51,18 @@ const planOf = (hasPrompt: boolean): StepId[] => ["create", "start", "join", ...
 
 export function deployPanel(o: DeployOpts): HTMLElement & { close(): void } {
 	const time = o.clock ?? REAL, id = `deploy-${crypto.randomUUID()}`;
-	const label = (step: StepId) => ({ create: o.kind === "base" ? m.deploy_create_base() : o.split ? m.deploy_create_pane() : m.deploy_create_tab(), start: m.deploy_start(), join: m.deploy_join(), deliver: m.deploy_deliver() })[step];
+	const label = (step: StepId) => ({ create: o.kind === "base" ? m.deploy_create_base() : o.split ? m.deploy_create_pane() : m.deploy_create_tab(), start: m.deploy_start(), trust: m.deploy_trust(), join: m.deploy_join(), deliver: m.deploy_deliver() })[step];
 	let rows: Row[] = planOf(o.hasPrompt).map((step) => ({ id: step, state: "pending", ms: 0, since: 0 })), over: "running" | "ready" | "failed" = "running", polling = false, closed = false, timedOut = false, last = "", stopGo = () => {};
 	const bar = h("span", { class: "deploy-fill" }), count = h("span", { class: "deploy-count" }), list = h("ol", { class: "deploy-steps" }), note = h("p", { class: "deploy-note", "aria-live": "polite" }), back = h("button", { type: "button", class: "later" }, m.deploy_back());
 	const title = h("h3", { class: "deploy-title" }, svg(o.kind === "main" ? "main" : "member"), m.deploy_title({ kind: o.kind === "base" ? m.deploy_kind_base() : o.kind === "main" ? m.role_main() : m.role_member(), name: o.name }));
-	const root = h("div", { class: "deploy", role: "status", "aria-label": m.deploy_aria() }, title, h("div", { class: "deploy-bar" }, bar), count, list, note, back);
+	const holder = h("div", { class: "deploy-trust" }), root = h("div", { class: "deploy", role: "status", "aria-label": m.deploy_aria() }, title, h("div", { class: "deploy-bar" }, bar), count, list, holder, note, back);
+	let question: ReturnType<typeof trustPanel> | undefined;
+	ownOpenings.add(id); // this page shows the opening's trust question here, so its alert queue does not
+	const ask = (q: Progress["trust"]) => {
+		if (!q) return void (question && (holder.replaceChildren(), (question = undefined)));
+		if (!question) holder.replaceChildren((question = trustPanel((body) => o.trust?.(body) ?? Promise.reject(new Error("no route")))));
+		question.update(q);
+	};
 	back.onclick = () => o.back();
 	const items = new Map<StepId, { li: HTMLElement; at: HTMLElement }>();
 	const draw = () => {
@@ -73,8 +85,10 @@ export function deployPanel(o: DeployOpts): HTMLElement & { close(): void } {
 			item.at.textContent = r.state === "pending" || (r.state === "done" && ms < 1000) ? "" : clock(ms);
 		}
 	};
-	const timeoutNote = m.deploy_timeout({ seconds: TIMEOUT_MS / 1000 }), giveUp = () => fail(undefined, timeoutNote);
-	const stop = () => (stopTick(), stopWait());
+	const timeoutNote = m.deploy_timeout({ seconds: TIMEOUT_MS / 1000 });
+	// A trust question holds the opening for as long as nobody answers it (the server fails it after ten minutes): the give-up does not count that time.
+	const giveUp = () => (rows.some((r) => r.id === "trust" && r.state === "active") ? (stopWait(), (stopWait = time.after(giveUp, TIMEOUT_MS))) : fail(undefined, timeoutNote));
+	const stop = () => (ownOpenings.delete(id), stopTick(), stopWait());
 	const fail = (step: StepId | undefined, why: string) => {
 		if (over !== "running") return;
 		over = "failed";
@@ -90,6 +104,7 @@ export function deployPanel(o: DeployOpts): HTMLElement & { close(): void } {
 	const apply = (p: Progress) => {
 		if (over !== "running") return;
 		rows = p.steps.map((s) => ({ id: s.id, state: s.state, ms: s.ms, since: time.now() - s.ms }));
+		ask(p.trust);
 		if (p.failed) return fail(p.failed.step, p.failed.reason);
 		draw();
 	};

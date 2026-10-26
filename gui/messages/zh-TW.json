@@ -383,5 +383,21 @@
 	"picker_home": "家目錄",
 	"picker_desktop": "桌面",
 	"picker_documents": "文件",
-	"picker_recent": "最近"
+	"picker_recent": "最近",
+	"deploy_trust": "等你確認是否信任這個資料夾",
+	"trust_title": "要信任這個資料夾嗎？",
+	"trust_where_one": "{base}的{role}",
+	"trust_where_many": "有 {count} 個智慧體在等這個資料夾",
+	"trust_body": "信任後，智慧體會載入這個資料夾的設定、擴充、技能、提示、佈景主題與 MCP 伺服器，並安裝設定裡列出的套件。擴充與 MCP 伺服器會在這台電腦上當成程式執行。不認得來源的資料夾，請不要信任。",
+	"trust_found": "會載入的內容",
+	"trust_more": "還有 {count} 項",
+	"trust_unreadable": "讀不出來",
+	"trust_trust": "信任這個資料夾",
+	"trust_once": "只信任這一次",
+	"trust_no": "不信任",
+	"trust_terminal": "智慧體的終端機也可以回答，以先到的答案為準。",
+	"trust_stale": "已在終端機回答。",
+	"trust_changed": "問題已變動或已關閉，請重新閱讀。",
+	"trust_closed": "這個問題已關閉。",
+	"trust_reminder": "有智慧體等你同意，才能載入資料夾的設定"
 }

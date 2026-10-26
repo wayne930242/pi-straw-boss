@@ -8,6 +8,7 @@ import { type Alert, createStack, tally } from "./overlay.ts";
 import { m } from "./paraglide/messages.js";
 import { type Answer, post } from "./post.ts";
 import { aim, byId, doing, fillPlate, hang, html, mark, PLATE, roleName, say, sync, text } from "./render.ts";
+import { trustPanel, whereOf } from "./trust.ts";
 
 // The overlay layer's DOM, a chunk fetched on the first alert, dialog, or tile: the HUD alert with its queue, the dialogs in the dock (stacked; the
 // rules are in overlay.ts), and the tiles beside the current view. A tile is a document (a demo document in the dev fixture) or a session's terminal (mirror.ts); tiles share the
@@ -121,6 +122,7 @@ export function mountPanels(deps: PanelDeps) {
 		text(el, ".tag", a.gone ? m.tag_gone() : ({ waiting: m.tag_question, error: m.tag_error, done: m.tag_finished }[a.mark as "done"] ?? m.tag_update)());
 		text(el, ".queued", queue.length ? m.also_queued({ tally: tally(queue) }) : "");
 		el.querySelector<HTMLElement>(".later")!.hidden = rankOf(a) !== 0; // a finished one is read once opened: nothing to keep for later
+		if (a.trust) return fillTrust(el, a);
 		if (!intels.has(a.key)) learn(a);
 		tell(el, a);
 		let ask = asks.get(el);
@@ -152,6 +154,18 @@ export function mountPanels(deps: PanelDeps) {
 		if (row) queueMicrotask(() => (stack.resolve([row.dataset.key!]), donePop.hidePopover()));
 	});
 	byId("done-clear", HTMLButtonElement).addEventListener("click", () => (stack.resolve(stack.queue.map((a) => a.key)), donePop.hidePopover()));
+	// A project trust question has no unit: its dialog holds the question's own panel (trust.ts) in place of the last transmission and the comms link.
+	const trusts = new WeakMap<HTMLElement, ReturnType<typeof trustPanel>>();
+	const fillTrust = (el: HTMLElement, a: Alert) => {
+		for (const sel of [".intel", ".go"]) el.querySelector<HTMLElement>(sel)!.hidden = true;
+		text(el, "h3", m.trust_title());
+		text(el, ".role", whereOf(a.trust!));
+		text(el, ".state", a.trust!.folder);
+		let panel = trusts.get(el);
+		if (!panel) trusts.set(el, (panel = trustPanel((body) => post("trust/answer", body), () => el.isConnected && !el.classList.contains("leaving") && (stack.raise(el.dataset.key!), stack.close()))));
+		if (!el.querySelector(".trust")) el.querySelector(".ask-root")!.replaceChildren(panel);
+		panel.update(a.gone ? undefined : a.trust, document.body.dataset.stale !== "true");
+	};
 	const asks = new WeakMap<HTMLElement, ReturnType<typeof mountAsk>>(), to = (key: string): SessionPost => deps.post?.(key) ?? ((action, body) => post(`sessions/${encodeURIComponent(key)}/${action}`, body));
 	const stack = createStack<HTMLElement>({
 		render(open, queue) {
@@ -162,7 +176,7 @@ export function mountPanels(deps: PanelDeps) {
 			button.dataset.mark = head?.mark ?? "unknown";
 			text(button, "#alert-count", String(asking.length));
 			button.title = asking.length ? m.alerts_title({ tally: tally(asking) }) : "";
-			text(button, "#alert-text", head ? `${head.name} · ${doing(head.note, head.mark)}` : m.no_alerts());
+			text(button, "#alert-text", head ? `${head.name} · ${head.trust ? m.trust_title() : doing(head.note, head.mark)}` : m.no_alerts());
 			sync(button.querySelector(".faces")!, asking.slice(0, 3).map((a) => ({ ...a, id: a.key })), () => html(PLATE), (face, a) => fillPlate(face, a.role, a.mark));
 			drawDone(queue);
 		},
@@ -243,7 +257,7 @@ export function mountPanels(deps: PanelDeps) {
 		},
 		/** A snapshot's alerts: the new ones queue, and the queue drops the ones whose unit moved on. */
 		alerts(fresh: Alert[], now: Map<string, Alert>) {
-			for (const alert of fresh) void (learn(alert), stack.arrive(alert));
+			for (const alert of fresh) void (alert.trust || learn(alert), stack.arrive(alert));
 			stack.prune((key) => now.get(key));
 		},
 	};

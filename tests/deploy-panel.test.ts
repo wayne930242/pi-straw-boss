@@ -67,7 +67,7 @@ const ok = (body: Record<string, unknown>) => ({ ok: true, status: 200, body });
 function setup(over: { hasPrompt?: boolean; kind?: "base" | "main" | "member"; split?: boolean } = {}) {
 	const clock = fake();
 	let snapshot: (() => Progress) | undefined, reply!: (a: { ok: boolean; status: number; body: Record<string, unknown> }) => void, ids: string[] = [];
-	const events: string[] = [];
+	const events: string[] = [], trusts: Record<string, unknown>[] = [];
 	let served = 0;
 	const panel = deployPanel({
 		kind: over.kind ?? "member", split: over.split ?? false, hasPrompt: over.hasPrompt ?? true, name: "hello-test2", clock,
@@ -76,12 +76,13 @@ function setup(over: { hasPrompt?: boolean; kind?: "base" | "main" | "member"; s
 		ready: (body) => events.push(`ready:${JSON.stringify(body)}`),
 		back: () => events.push("back"),
 		chime: () => events.push("chime"),
+		trust: async (body) => (trusts.push(body), ok({ outcome: "accepted" }) as never),
 	}) as unknown as El;
-	const rows = () => panel.find((e) => e.tag === "li").map((li) => `${li.dataset.state}~${li.kids.slice(1).map((k) => (typeof k === "string" ? k : k.text)).join("|")}`);
-	return { panel, clock, rows, events, ids, /** What the server answers from now on: a snapshot, or a function of how long the running step has run since this call. */
+	const rows = () => panel.find((e) => e.tag === "li" && e.attrs.has("data-step")).map((li) => `${li.dataset.state}~${li.kids.slice(1).map((k) => (typeof k === "string" ? k : k.text)).join("|")}`);
+	return { panel, clock, rows, events, ids, trusts, /** What the server answers from now on: a snapshot, or a function of how long the running step has run since this call. */
 		serve: (s: Progress | ((since: number) => Progress)) => ((snapshot = () => (typeof s === "function" ? s(clock.now() - served) : s)), (served = clock.now())), answer: (a: Parameters<typeof reply>[0]) => reply(a) };
 }
-const step = (id: "create" | "start" | "join" | "deliver", state: Progress["steps"][number]["state"], ms = 0) => ({ id, state, ms });
+const step = (id: "create" | "start" | "join" | "deliver" | "trust", state: Progress["steps"][number]["state"], ms = 0) => ({ id, state, ms });
 
 test("the panel starts from the steps the open will have and advances them only from the server's progress, with the count and the bar following", async () => {
 	const p = setup();
@@ -212,4 +213,41 @@ test("the server keeps the last 16 openings and forgets the older ones", async (
 	assert.ok(deploys.get(ids[1]) && deploys.get(ids[16]));
 	deploys.begin(undefined, ["create"]);
 	assert.ok(deploys.get(ids[1]), "an open without an id is not kept and evicts nothing");
+});
+
+// The trust step (src/deploy.ts holds the opening while its new pi waits on a project trust question): the question is inline, and the give-up does not count that time.
+const ASK = { id: "00000000-0000-4000-8000-000000000001", digest: "a".repeat(64), folder: "/work/demo", found: [{ kind: "settings", path: ".pi/settings.json", items: ["package: npm:demo"], more: 0 }] };
+const held = (ms = 0): Progress => ({ steps: [step("create", "done", 400), step("start", "done", 900), step("trust", "active", ms), step("join", "pending")], finished: false, trust: ASK });
+
+test("a trust step shows the folder, what it holds, and the three choices inline, and a choice posts the question's id and digest", async () => {
+	const p = setup({ hasPrompt: false });
+	p.serve(held(2000));
+	await p.clock.advance(500);
+	assert.deepEqual(p.rows().map((r) => r.split("~")[1]!.split("|")[0]), ["Open a tab", "Start the agent", "Waiting for your OK to trust this folder", "Join the Straw Net"]);
+	const trust = p.panel.cls("deploy-trust");
+	assert.match(trust.text, /Trusting lets the agent load this folder's settings/);
+	assert.match(trust.text, /\.pi\/settings\.json/);
+	assert.match(trust.text, /package: npm:demo/);
+	const buttons = trust.find((e) => e.tag === "button");
+	assert.deepEqual(buttons.map((b) => b.text), ["Trust", "Trust this time", "Don't trust"]);
+	buttons[1]!.onclick!();
+	for (let i = 0; i < 5; i++) await Promise.resolve();
+	assert.equal(p.trusts.length, 1);
+	assert.deepEqual([p.trusts[0]!.id, p.trusts[0]!.digest, p.trusts[0]!.choice], [ASK.id, ASK.digest, "once"]);
+	assert.match(trust.text, /Answered\./);
+	p.serve({ steps: [step("create", "done"), step("start", "done"), step("trust", "done", 3000), step("join", "active")], finished: false });
+	await p.clock.advance(500);
+	assert.equal(trust.kids.length, 0, "the question goes with its step");
+});
+
+test("a trust question holds the page's give-up for as long as nobody answers it; without one the give-up fires as before", async () => {
+	const p = setup({ hasPrompt: false });
+	p.serve(held());
+	await p.clock.advance(500);
+	await p.clock.advance(400_000);
+	assert.equal(p.panel.dataset.state, "running", "the question is the person's to answer, and the server fails it after ten minutes");
+	p.serve({ steps: [step("create", "done"), step("start", "done"), step("trust", "done", 3000), step("join", "active", 0)], finished: false });
+	await p.clock.advance(500);
+	await p.clock.advance(125_000);
+	assert.equal(p.panel.dataset.state, "failed", "silence after the question is the plain 120 s");
 });
