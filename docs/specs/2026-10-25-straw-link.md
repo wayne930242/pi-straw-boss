@@ -475,7 +475,7 @@ shows as offline. A device that sees a teammate on a different roster head for m
 
 ## Work board
 
-Status: design, not built (build step 5b). Decisions by the boss on 2026-10-26:
+Status: built (build step 5b; see the build record below). Decisions by the boss on 2026-10-26:
 
 | Question | Decision |
 |---|---|
@@ -742,3 +742,17 @@ Built in `src/link/{admin,request}.ts` (the holder's half: team changes, invites
 - **Paired phones** may read `state` (without the prefill text, and without disturbing it) and answer `confirm`; every other link endpoint is local only, decided by the listener. The boss decided ("高風險動作只能在本機核准", "本機 gui 都要可以做喔，不然我的 pm 會被阻塞") that a paired phone approves only the low-risk `link_request` actions: for `trust`, `remove`, `role`, `rotate`, and `leave` the dialog's Approve choice is marked `hereOnly` (`owners.ts` `Choice`; `HERE_ONLY` in `request.ts`), a paired device sees the dialog, its page shows Approve disabled, and `control.ts` refuses its answer with 403 `local_only` (decided by the listener and by the dialog the server stored, never the request body); Deny stays allowed. `create`, `invite`, `invite-unattended`, and `join` stay approvable from a paired device, and this computer's page (the Electron window of the desk included) and terminal approve everything. `hereOnly` is not `localOnly`: a `localOnly` choice (robot_hand's clipboard) is still taken from a paired device.
 - **The GUI's net read never waits on a lost holder**: the summary read has its own 2 s limit and serves the last reading it had.
 - **`config.json` written through a symlink** keeps the link (dotfile setups); the file written is the one it points to.
+
+## Build record: step 5b (work board, 2026-10-26)
+
+Built in `src/board.ts` (entry rules, files, expiry, the local join), `boardset.ts` (`board_set` and `straw-net.py board`, one body), `boardread.ts` (`board_read`), `link/boardtargets.ts` (where an entry goes), the `board` kind in `link/kinds.ts`, the holder's send and hold in `link/holder.ts`, and the remote-turn scope in `link/hooks.ts`; in straw-relay the kind is `internal/link/kinds.go` on branch `feat/board-kind`. `docs/how-it-works.md` (The work board) describes the behavior. Where the spec left a choice, the code took this one:
+
+- **A live main with no entry is also sent to allies**, with an empty `now`, no items, and `updated` 0 (the local board shows it the same way): an ally's tower sees who works there, as presence's tab list already tells it. Mains outside every bound project are never sent.
+- **A main that was reloaded keeps its file, and the session id the file is named by is remembered when `board_set` writes** (pi-intercom clears `PI_INTERCOM_SESSION_ID` before Straw Boss's `session_shutdown` runs). A reload followed by a quit leaves the file, which the 30 minute and 24 hour rules remove.
+- **The 15 second spacing is a look, not a send.** The holder reads Herdr for a team at most once per 15 seconds (`boardMinMs`), so a quiet computer does not read it on every 5 second tick; a change inside the window goes out at the next look after it. A stream that (re)starts clears the last hash, so the next look sends once more; an epoch change is seen at the next look.
+- **A share switched from `status` to `presence` sends one empty board** so the allies' copy clears; a team that never had a board sends nothing at `presence`.
+- **`board_read` with `device` returns only the remote part** (the device is an ally, so the local part has nothing to add); an unknown or ambiguous device is an error that lists the candidates, as `tower_send` does.
+- **In a remote turn the local part needs a directory to prove binding**, so an `ended` entry (its session is gone) never shows; senders of teams that bind different projects see no local entry and no workspace in `tower_list`, only their teams' remote rows.
+- **A holder answers `board-read` with at most about 300 KB** of device rows (the channel's request size); the rest is left out.
+- **Test seams**: `LinkDeps.boardMs` and `HolderOptions.boardMinMs` shorten the 15 second spacing; the live test uses 150 ms and still goes through the real relay.
+
