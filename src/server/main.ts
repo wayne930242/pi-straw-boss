@@ -122,7 +122,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	const own: ServerRecord = {
 		pid, ...(await (o.started ?? (() => startedLater(pid)))().then((started) => (started ? { started } : {}))), version, herdr: slot.herdr, mode, desk, intercom: intercomOf(env, platform),
 		// What the new server keeps from the one before it, so a restart changes nothing a page or a shell holds: the GUI's port and token (B2 fills them in), and the last error.
-		...(prior?.gui ? { gui: prior.gui } : {}), ...(prior?.lastError ? { lastError: prior.lastError } : {}),
+		...(prior?.gui ? { gui: prior.gui } : {}), ...(prior?.lastError ? { lastError: prior.lastError } : {}), ...(prior?.lastRestart ? { lastRestart: prior.lastRestart } : {}),
 		log: fileOf(slot, "log"), socket: endpoint, secret, intercomId: serverId(slot),
 	};
 	let phase: "starting" | "ready" | "restarting" | "stopping" = "starting", client: IntercomLike | undefined, leaving: Promise<void> | undefined;
@@ -174,7 +174,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		if (request.cmd === "restart") {
 			const reason = phrase(request.reason, 200) || "restart", who = phrase(request.by, 120) || "unknown";
 			log.line("restart", { reason, by: who });
-			updateRecord(slot, (r) => (r.pid === pid ? { ...r, restarting: { began: at(), since: at(), reason, by: who } } : undefined));
+			updateRecord(slot, (r) => (r.pid === pid ? { ...r, restarting: { began: at(), since: at(), reason, by: who }, lastRestart: { at: at(), reason, by: who } } : undefined));
 			return leaveAfterReply("restarting", mode === "serve" ? SERVE_RESTART_CODE : 0);
 		}
 		return { ok: false, error: `unknown command ${String(request.cmd)}` };

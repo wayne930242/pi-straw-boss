@@ -146,6 +146,20 @@ test("restart: the server writes restarting with the reason and the requester, a
 	assert.equal(await serve.handle.done, 75, "a supervisor starts a serve server again after this code");
 });
 
+test("the last restart asked for is kept in the record, and the next server carries it over (agents may ask for one a minute)", async () => {
+	const s = await world.start();
+	await s.handle.ready;
+	await callControl(world.record()!.socket, world.record()!.secret, { cmd: "restart", reason: "first", by: "session a (1111aaaa)" });
+	await s.handle.done;
+	const asked = world.record()!.lastRestart!;
+	assert.equal(asked.reason, "first");
+	assert.equal(asked.by, "session a (1111aaaa)");
+	assert.ok(Math.abs(Date.parse(asked.at) - Date.now()) < 5000);
+	const next = await world.start();
+	await next.handle.ready;
+	assert.deepEqual(world.record()!.lastRestart, asked);
+});
+
 test("while a restart is under way every request but status is answered restarting", async () => {
 	const s = await world.start();
 	await s.handle.ready;

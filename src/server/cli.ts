@@ -3,11 +3,10 @@ import { fileURLToPath } from "node:url";
 import { stateDirOf } from "../agent/paths.ts";
 import { newer } from "../semver.ts";
 import {
-	type Ctx, ensure, herdrListens, isIdentity, makeCtx, probe, restart, ServerError, serverEnv, stateOf, stop, takeOver, waitReady,
+	type Ctx, describe, ensure, guiUrl, herdrListens, isIdentity, makeCtx, probe, restart, ServerError, serverEnv, stop, takeOver, waitReady,
 } from "./client.ts";
 import { logSize, readFrom, tailLog } from "./log.ts";
 import { clearStartError, clearStopped, fileOf, readRecord, readStartError, type ServerRecord, slotOf, takeLock } from "./record.ts";
-import { callControl } from "./socket.ts";
 import type { ServerHandle, ServerOptions } from "./main.ts";
 import { VERSION } from "./version.ts";
 
@@ -78,7 +77,6 @@ class StepError extends Error {
 	}
 }
 const CANNOT_RUN = new Set(["acl", "loader", "intercom"]);
-const url = (record: ServerRecord | undefined) => (record?.gui ? `http://127.0.0.1:${record.gui.port}/${record.gui.token}/` : null);
 
 /** Runs one command; resolves with its exit code. */
 export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
@@ -122,24 +120,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 	}
 
 	async function status() {
-		const seen = await probe(ctx), record = seen.record, state = stateOf(ctx, seen), startError = readStartError(slot);
-		let more: Record<string, unknown> = { towers: [], link: null };
-		if (seen.live && record) {
-			// The live server's own account of its work; the files alone say the rest.
-			try {
-				const { reply } = await callControl(record.socket, record.secret, { cmd: "status" }, 3000);
-				if (reply?.ok) more = { uptimeMs: reply.uptimeMs, towers: reply.towers ?? [], link: reply.link ?? null };
-			} catch { /* the server went while it was asked */ }
-		}
-		json({
-			state, package: version, primary: slot.primary, herdr: slot.herdr, log: fileOf(slot, "log"),
-			...(record ? {
-				pid: record.pid, ...(record.started ? { started: record.started } : {}), version: record.version, mode: record.mode, desk: record.desk,
-				...(record.stopped ? { stopped: true } : {}), ...(record.restarting ? { restarting: record.restarting } : {}), ...(record.lastError ? { lastError: record.lastError } : {}),
-				...(record.gui ? { gui: record.gui, url: url(record) } : {}),
-			} : {}),
-			...(state === "gone" && startError ? { startError } : {}), ...more,
-		});
+		json(await describe(ctx));
 		return 0;
 	}
 
@@ -173,7 +154,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 		const reason = String(flags.reason ?? "restart from the command line");
 		if (reason.length > 200 || reason.includes("\n")) throw new UsageError("--reason is one line of 1 to 200 characters");
 		const done = await restart(ctx, { reason, downgrade: flags.downgrade === true });
-		json({ server: done.server, pid: done.record.pid, version: done.record.version, url: url(done.record) });
+		json({ server: done.server, pid: done.record.pid, version: done.record.version, url: guiUrl(done.record) });
 		return 0;
 	}
 
@@ -225,7 +206,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 				throw new StepError("server", done.skipped.do === "refuse" ? done.skipped.text : "the server was not started");
 			});
 			json({
-				url: url(record), pid: record.pid, started: record.started, version: record.version, package: version, mode: record.mode, desk: record.desk, server: how, log: record.log, steps, warnings,
+				url: guiUrl(record), pid: record.pid, started: record.started, version: record.version, package: version, mode: record.mode, desk: record.desk, server: how, log: record.log, steps, warnings,
 			});
 			return 0;
 		} catch (error) {

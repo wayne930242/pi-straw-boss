@@ -317,3 +317,29 @@ export function stateOf(ctx: Pick<Ctx, "now">, seen: Pick<Probe, "record" | "liv
 	if (restartingFresh(record, ctx.now())) return "restarting";
 	return live ? "live" : "gone";
 }
+
+/**
+ * What `cli.mjs status` prints and `boss_server status` answers: the state, the record's facts a shell may read (never the secret or the socket), the live server's own account
+ * of its work, and, for a server that is gone, the start-error of the last attempt. Works with the server down, from the files.
+ */
+export async function describe(ctx: Ctx): Promise<Record<string, unknown>> {
+	const seen = await probe(ctx), record = seen.record, state = stateOf(ctx, seen), startError = readStartError(ctx.slot);
+	let more: Record<string, unknown> = { towers: [], link: null };
+	if (seen.live && record) {
+		try {
+			const { reply } = await callControl(record.socket, record.secret, { cmd: "status" }, 3000);
+			if (reply?.ok) more = { uptimeMs: reply.uptimeMs, towers: reply.towers ?? [], link: reply.link ?? null };
+		} catch { /* the server went while it was asked */ }
+	}
+	return {
+		state, package: ctx.version, primary: ctx.slot.primary, herdr: ctx.slot.herdr, log: fileOf(ctx.slot, "log"),
+		...(record ? {
+			pid: record.pid, ...(record.started ? { started: record.started } : {}), version: record.version, mode: record.mode, desk: record.desk,
+			...(record.stopped ? { stopped: true } : {}), ...(record.restarting ? { restarting: record.restarting } : {}), ...(record.lastError ? { lastError: record.lastError } : {}),
+			...(record.lastRestart ? { lastRestart: record.lastRestart } : {}), ...(record.gui ? { gui: record.gui, url: guiUrl(record) } : {}),
+		} : {}),
+		...(state === "gone" && startError ? { startError } : {}), ...more,
+	};
+}
+/** The GUI's URL, once the server hosts the GUI (B2); null while the pi sessions do. */
+export const guiUrl = (record: ServerRecord | undefined) => (record?.gui ? `http://127.0.0.1:${record.gui.port}/${record.gui.token}/` : null);

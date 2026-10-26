@@ -37,6 +37,9 @@ export class ServerWorld {
 	crashWith: number | undefined;
 	/** How long a spawned process takes to start running the server (a cold Windows start): nothing but the requester touches `restarting` meanwhile. */
 	spawnMs = 0;
+	/** Servers still starting when a test ends are waited for and shut down with the rest: a start in flight must not leave a server's timers behind. */
+	private starting: Promise<unknown>[] = [];
+	private closed = false;
 
 	get stateDir() { return join(this.root, "agent", "straw-boss"); }
 	get slot() { return slotOf(this.stateDir, this.env); }
@@ -75,13 +78,14 @@ export class ServerWorld {
 			spawn: (spec) => {
 				this.spawned.push(spec);
 				const by = spec.args[spec.args.indexOf("--by") + 1] ?? "?";
-				if (this.crashWith !== undefined) return { pid: this.pids++, exited: Promise.resolve(this.crashWith) };
+				if (this.crashWith !== undefined || this.closed) return { pid: this.pids++, exited: Promise.resolve(this.crashWith ?? 1) };
 				const { options, client, pid } = this.options({ env: spec.env, by, version });
 				const started = sleep(this.spawnMs).then(() => runServer(options)).then((handle) => {
 					this.running.push({ pid, handle, options, client });
 					void handle.done.then((code) => (this.live.delete(pid), this.exitCodes.set(pid, code)));
 					return handle;
 				});
+				this.starting.push(started);
 				return { pid, exited: started.then((handle) => handle.done) };
 			},
 			...over,
@@ -89,6 +93,8 @@ export class ServerWorld {
 		});
 	}
 	async close() {
+		this.closed = true;
+		await Promise.allSettled(this.starting);
 		await Promise.all(this.running.map((r) => r.handle.shutdown(0)));
 		rmSync(this.root, { recursive: true, force: true });
 	}

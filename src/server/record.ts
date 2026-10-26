@@ -63,6 +63,8 @@ export interface ServerRecord {
 	stopped?: boolean;
 	restarting?: Restarting;
 	lastError?: LastError;
+	/** The last restart that was asked for, kept across restarts: agents may ask for at most one a minute. */
+	lastRestart?: { at: string; reason: string; by: string };
 	log: string;
 	socket: string;
 	secret: string;

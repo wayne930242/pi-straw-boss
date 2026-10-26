@@ -22,6 +22,7 @@ import { createReach } from "./reach.ts";
 import { createRoles } from "./roles.ts";
 import { tailscale } from "./remote.ts";
 import { herdrEvents, herdrWatch } from "./server-watch.ts";
+import { createServerLook } from "./server-look.ts";
 import { registerSession } from "./session.ts";
 import { createStashing } from "./stashing.ts";
 import { type Config, createKit, type Deps } from "./state.ts";
@@ -36,10 +37,10 @@ const DETECT_MS = 1_000;
 const ADOPT_MS = 2_000;
 
 // The composition root: the concerns live in their own modules (state.ts says what they share), and this wires them for one pi session.
-export function createStrawBoss({ run: given, world: reading, api = herdrApi(), call = herdrCall(), tailscale: ts = tailscale, copy = copyText, env = process.env, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), promptDir = fileURLToPath(new URL("../prompts", import.meta.url)), bundle, openUrl = openBrowser, watch = herdrWatch(), stateDir, autoTower = true, nudgeMs = NUDGE_MS, version = VERSION, guardMs = GUARD_MS, couple = true, events = herdrEvents(), detectMs = DETECT_MS, now = Date.now, later = afterExit, gone = ownerGone(), adoptMs = ADOPT_MS, restoreMs = RESTORE_WAIT_MS, link }: Deps = {}) {
+export function createStrawBoss({ run: given, world: reading, api = herdrApi(), call = herdrCall(), tailscale: ts = tailscale, copy = copyText, env = process.env, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), promptDir = fileURLToPath(new URL("../prompts", import.meta.url)), bundle, openUrl = openBrowser, watch = herdrWatch(), stateDir, autoTower = true, nudgeMs = NUDGE_MS, version = VERSION, guardMs = GUARD_MS, couple = true, events = herdrEvents(), detectMs = DETECT_MS, now = Date.now, later = afterExit, gone = ownerGone(), adoptMs = ADOPT_MS, restoreMs = RESTORE_WAIT_MS, link, server = given ? null : {} }: Deps = {}) {
 	// A run that is not injected is the real CLI, with its listings over the socket; an injected one answers everything itself, listings included.
 	const run = given ?? socketRun(herdrRun, call), world = reading ?? (given ? worldOf(given) : herdrWorld(call));
-	const cfg: Config = { run, world, api, call, tailscale: ts, copy, env, sleep, promptDir, bundle, openUrl, watch, stateDir, autoTower, nudgeMs, version, guardMs, couple, events, detectMs, now, later, gone, adoptMs, restoreMs, link };
+	const cfg: Config = { run, world, api, call, tailscale: ts, copy, env, sleep, promptDir, bundle, openUrl, watch, stateDir, autoTower, nudgeMs, version, guardMs, couple, events, detectMs, now, later, gone, adoptMs, restoreMs, link, server };
 	return function strawBoss(pi: ExtensionAPI): void {
 		// Outside Herdr there is no tab to coordinate. Every session in Herdr relays its dialogs to the GUI (bridge.ts), subagents too: they ask
 		// questions as well. A pi-herdr-agents worker never joins: its parent represents it.
@@ -56,12 +57,13 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		const guard = createGuard(kit, { ...election, openTower: reach.openTower, roles });
 		// A join adds the tools of a joined session, and the tools promote through the membership: each is built with the other's hook.
 		const membership = createMembership(kit, { presence, election, guard, briefing, roles, openTower: reach.openTower, register: () => (tools.addNetTools(), tools.addPromote()), control: () => control });
-		const tools = createTools(kit, { ...reach, promote: membership.promote, digest, closeMain: (query) => control.closeMain(query), link });
+		const look = cfg.server ? createServerLook(kit, cfg.server) : undefined; // starts and upgrades the sb server (src/server/); a session that is no part of that has none
+		const tools = createTools(kit, { ...reach, promote: membership.promote, digest, closeMain: (query) => control.closeMain(query), link, server: look });
 		const host = createHost(kit, { bridge, connected: membership.connected, link });
 		closeSelf = createClosing(kit);
 		const control = createCloseMain(kit, { closeSelf, check: bridge.stashCheck });
 		registerSession(kit, { briefing, roles, presence, membership, guard, host, reach, digest, control, startTower: createTower(kit, { membership, presence, tools, control, digest, roles }) });
-		registerBoss(kit, { host, membership, reach, closeSelf, stashing: createStashing(kit, { host }) });
+		registerBoss(kit, { host, membership, reach, closeSelf, stashing: createStashing(kit, { host }), server: look });
 	};
 }
 

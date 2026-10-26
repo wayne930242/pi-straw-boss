@@ -7,6 +7,7 @@ import type { Gui } from "./gui.ts";
 import type { GuiRecord } from "./handover.ts";
 import type { HerdrApi, HerdrCall, HerdrRun, HerdrWorld, Place, Session, Sleep } from "./herdr.ts";
 import type { LinkDeps } from "./link/runtime.ts";
+import type { ServerLookDeps } from "./server-look.ts";
 import type { Run } from "./remote.ts";
 import type { HerdrEvents, HerdrWatch } from "./server-watch.ts";
 
@@ -32,9 +33,10 @@ export type Scope = "tab" | "workspace" | "towers" | "all";
  * `run` is the CLI for every command; left out, Herdr's listings, `pane current`, and `report-metadata` go over the socket instead (`socketRun`) and `world` is one `session.snapshot`. `world` is the dashboard's and the GUI's reading of panes and workspaces.
  * `gone` says whether the process that recorded a GUI server has ended for good (handover.ts `ownerGone`), which a survivor needs before it takes the server over; `adoptMs` is how often a session looks.
  */
-export interface Deps { run?: HerdrRun; world?: HerdrWorld; api?: HerdrApi; call?: HerdrCall; tailscale?: Run; copy?: (text: string) => Promise<void>; env?: NodeJS.ProcessEnv; sleep?: Sleep; promptDir?: string; bundle?: string; openUrl?: (url: string) => Promise<void>; watch?: HerdrWatch; stateDir?: string; autoTower?: boolean; nudgeMs?: number; version?: string; guardMs?: number; couple?: boolean; events?: HerdrEvents; detectMs?: number; now?: () => number; later?: (pid: number, args: string[]) => void; gone?: (record: GuiRecord, wrote: number) => boolean; adoptMs?: number; restoreMs?: number; link?: LinkDeps }
+export interface Deps { run?: HerdrRun; world?: HerdrWorld; api?: HerdrApi; call?: HerdrCall; tailscale?: Run; copy?: (text: string) => Promise<void>; env?: NodeJS.ProcessEnv; sleep?: Sleep; promptDir?: string; bundle?: string; openUrl?: (url: string) => Promise<void>; watch?: HerdrWatch; stateDir?: string; autoTower?: boolean; nudgeMs?: number; version?: string; guardMs?: number; couple?: boolean; events?: HerdrEvents; detectMs?: number; now?: () => number; later?: (pid: number, args: string[]) => void; gone?: (record: GuiRecord, wrote: number) => boolean; adoptMs?: number; restoreMs?: number; link?: LinkDeps; server?: ServerLookDeps | null }
 /** The dependencies with their defaults filled in. */
-export type Config = Required<Omit<Deps, "bundle" | "stateDir" | "link">> & Pick<Deps, "bundle" | "stateDir" | "link">;
+/** `server`: how a session looks after the sb server (server-look.ts); null in a session that does not (a test world, a net sidecar). */
+export type Config = Required<Omit<Deps, "bundle" | "stateDir" | "link" | "server">> & Pick<Deps, "bundle" | "stateDir" | "link" | "server">;
 
 export interface State {
 	// What this session is.
