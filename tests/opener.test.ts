@@ -200,7 +200,7 @@ test("a workspace folder whose .pi/settings.json pi must not read opens no tab, 
 		mkdirSync(join(dir, ".pi"));
 		symlinkSync("/dev/zero", join(dir, ".pi", "settings.json"));
 		world.herdr.workspace("wA").worktree = { checkout_path: dir };
-		await assert.rejects(tower.tool("boss_open_main", { request: REQUEST, sender: "sender-1" }), (error: Error) => error.message.includes("pi was not started:") && error.message.includes(join(dir, ".pi", "settings.json")) && error.message.includes("/dev/zero"));
+		await assert.rejects(tower.tool("boss_open_main", { request: REQUEST, sender: "sender-1" }), (error: Error) => error.message.includes("pi was not started:") && error.message.includes(join(dir, ".pi", "settings.json")));
 		assert.deepEqual(world.herdr.commands("tab", "create"), [], "no tab was made");
 		assert.deepEqual(world.herdr.commands("agent", "start"), [], "no pi was started");
 		rmSync(join(dir, ".pi", "settings.json"));

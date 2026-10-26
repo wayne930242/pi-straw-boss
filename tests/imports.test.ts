@@ -256,8 +256,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased to 273 (desk mode R1): index.ts (66), startof.ts imported and warmStart called at the session's start.
 	// Unreleased to 275 (project trust): index.ts (68), the relay's import and its registration before the subagent return.
 	assert.ok(rest <= 275, `the rest of src has ${rest} lines`);
-	// Unreleased (settings check): found.ts 103 to 120 (the bounded read shared as withPlain, with the error that says why a file is refused), settings.ts 92 (new: the look before pi starts in a folder), raised 92 to 135 for the link walk (every hop of .pi and settings.json, refusing /proc, /dev, /sys; review SP-R001).
-	for (const [name, max] of [["found.ts", 120], ["settings.ts", 135], ["files.ts", 160], ["ask.ts", 182], ["serve.ts", 110], ["wait.ts", 28], ["types.ts", 15]] as const) assert.ok(count(`src/trust/${name}`) <= max, `src/trust/${name} has ${count(`src/trust/${name}`)} lines`);
+	// Unreleased (settings check, probe): settings.ts is now the lstat gate, the child's program, and its runner (155); it no longer walks links. found.ts 103 to 120 (the bounded read shared as withPlain, with the error that says why a file is refused), settings.ts 92 (new: the look before pi starts in a folder), raised 92 to 135 for the link walk (every hop of .pi and settings.json, refusing /proc, /dev, /sys; review SP-R001).
+	for (const [name, max] of [["found.ts", 120], ["settings.ts", 155], ["files.ts", 160], ["ask.ts", 182], ["serve.ts", 110], ["wait.ts", 28], ["types.ts", 15]] as const) assert.ok(count(`src/trust/${name}`) <= max, `src/trust/${name} has ${count(`src/trust/${name}`)} lines`);
 	// The page: the files the spec budgets one by one, then this round's own figures (no figure in the spec): the focus views, the overlay
 	// layer (alert spotting and the stack model in the map's chunk, the layer's DOM and tiles in a chunk of their own), the dev-only demo, and everything else.
 	// 0.18.1 raised mirror.ts to 154 for embed, a terminal shown inside the session view instead of a tile.
@@ -523,7 +523,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Merged with the queue's Edit: 147.6 KB / 60.35 KB gzipped in all.
 	// Unreleased (settings check): 149.1 KB / 61.25 KB gzipped: the refusal of a folder pi must not start in, worded from the server's facts (gui/refusal.ts, three messages in both languages).
 	// Unreleased (hereOnly, merged with the queue's Edit and project trust; the settings check adds the refusal wording, gui/refusal.ts) to 149.15 KB / 61.3 KB gzipped: the disabled hereOnly choice on a paired device (gui/ask.ts) on top of the queue's Edit.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 149_150 && total(chunks, gz) <= 61_300, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// Unreleased (settings check, probe): 149.55 KB / 61.4 KB gzipped for the fourth refusal message, `unchecked` (could not be checked in time), in both languages.
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 149_550 && total(chunks, gz) <= 61_400, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.

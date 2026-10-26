@@ -23,7 +23,7 @@ test("a tower is not opened in a folder whose .pi/settings.json pi must not read
 			return ok({});
 		};
 		const workspace = { workspace_id: "wA", label: "A", tokens: {} } as unknown as Workspace;
-		await assert.rejects(ensureTower({ run, sleep: async () => {}, live: async () => false, moveFirst: async () => {} }, workspace, dir), /pi was not started: .*settings\.json \(a link to \/dev\/zero\) is not a plain file/);
+		await assert.rejects(ensureTower({ run, sleep: async () => {}, live: async () => false, moveFirst: async () => {} }, workspace, dir), /pi was not started: .*settings\.json is not a plain file/);
 		assert.deepEqual(ran.filter((a) => ["create", "start", "report-metadata", "close"].includes(a[1]!)), [], "nothing was made, written, or started");
 		const shell = [{ pane_id: "wA:p9", tab_id: "wA:t9", cwd: dir, tokens: { sb_role: "tower" } }];
 		const adopted: string[][] = [];

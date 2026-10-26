@@ -154,7 +154,7 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 		if ("status" in ws) return ws;
 		if (!(await towered(ws))) return no(409, "no_tower", "This base has no tower yet: add a member, and the tower opens when a member promotes itself.");
 		const name = basename(dir) || dir;
-		assertSettingsSafe([dir]);
+		await assertSettingsSafe([dir]);
 		const { tabId, paneId } = await createTab(run, ws.workspace_id, dir, ["STRAW_BOSS_ROLE=main"], name);
 		const failed = await orClose(["tab", "close", tabId], async () => {
 			// sb_open_main authorises exactly one pi in this shell to promote itself (index.ts consumes it).
@@ -172,7 +172,7 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 		let created: { tabId: string; paneId: string; close: string[] };
 		if (tabId === undefined) {
 			if (!dir) return OUTSIDE;
-			assertSettingsSafe([dir]);
+			await assertSettingsSafe([dir]);
 			const opened = await createTab(run, ws.workspace_id, dir, ["STRAW_BOSS_ROLE=member"], basename(dir) || dir);
 			created = { ...opened, close: ["tab", "close", opened.tabId] };
 		} else {
@@ -180,7 +180,7 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 			const lead = await leadOf(ws.workspace_id, tabId);
 			if (!lead) return no(404, "not_found", "That tab is not open any more.");
 			const cwd = dir ?? (await pick(lead.cwd)) ?? (await baseDir(ws.workspace_id));
-			assertSettingsSafe([cwd]);
+			await assertSettingsSafe([cwd]);
 			const split = await result(run, ["pane", "split", lead.pane_id, "--direction", "right", "--cwd", cwd, "--no-focus", "--env", "STRAW_BOSS_ROLE=member"]);
 			const paneId: string = split.pane.pane_id;
 			created = { tabId: lead.tab_id, paneId, close: ["pane", "close", paneId] };
@@ -192,7 +192,7 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 
 	async function openBase(d: Deploy, dir: string, label: string, prompt?: string): Promise<Reply> {
 		d.go("create");
-		assertSettingsSafe([dir]);
+		await assertSettingsSafe([dir]);
 		const created = await result(run, ["workspace", "create", "--cwd", dir, "--label", label, "--no-focus", "--env", "STRAW_BOSS_ROLE=member"]);
 		const workspaceId: string = created.workspace.workspace_id, paneId: string = created.root_pane.pane_id;
 		// Created by this request a moment ago, with nothing in it but the member attempt: a base is never left empty.

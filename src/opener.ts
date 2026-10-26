@@ -63,7 +63,7 @@ export function opener(env: OpenerEnv) {
 		if (ofSender) throw new OpenLimitError(`Sender ${sender.name ?? sender.id} already has ${ofSender === 1 ? "an opened main" : `${ofSender} opened mains`} running in workspace ${workspace.label}; a sender gets one at a time. Wait for it to finish, or send the request to it.`);
 		if (marked.length >= MAX_OPENED_MAINS) throw new OpenLimitError(`Workspace ${workspace.label} already has ${marked.length} mains opened by its tower (the limit is ${MAX_OPENED_MAINS}); try again when one has finished.`);
 		const dir = workspace.worktree?.checkout_path ?? env.cwd;
-		assertSettingsSafe([dir]); // before the tab exists: pi reads the folder's .pi/settings.json before any extension can stop it (trust/settings.ts)
+		await assertSettingsSafe([dir]); // before the tab exists: pi reads the folder's .pi/settings.json before any extension can stop it (trust/settings.ts)
 		const { tabId, paneId } = await createTab(run, workspace.workspace_id, dir, ["STRAW_BOSS_ROLE=main"], label);
 		try {
 			// The marker counts toward the limits at once; sb_open_main authorises exactly one pi in this shell to promote itself (it consumes the token).

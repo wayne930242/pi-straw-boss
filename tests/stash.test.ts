@@ -364,7 +364,7 @@ test("a pop into a folder whose .pi/settings.json pi must not read opens nothing
 	mkdirSync(join(w.dir, ".pi"));
 	symlinkSync("/dev/zero", join(w.dir, ".pi", "settings.json"));
 	const p = popper(w);
-	await assert.rejects(p.pop(), (error: Error) => error.message.startsWith("The stash was not started: ") && error.message.includes(join(w.dir, ".pi", "settings.json")) && error.message.includes("/dev/zero"));
+	await assert.rejects(p.pop(), (error: Error) => error.message.startsWith("The stash was not started: ") && error.message.includes(join(w.dir, ".pi", "settings.json")));
 	assert.deepEqual(p.ran, [], "no workspace, tab, pane, or pi was made");
 	assert.deepEqual(listStashes(w.dir), ["A"], "the stash is back under its name");
 	const close = createCloser({ run: w.run, sleep: async () => {}, me: () => "gui", sessions: async () => w.live, ask: async () => ({ accepted: true }), stateDir: w.dir, pop: (name) => p.pop(name) });

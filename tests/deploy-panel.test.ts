@@ -161,10 +161,12 @@ test("a refusal over the folder's .pi/settings.json is worded by the page, in bo
 	const { m } = await import("../gui/paraglide/messages.js");
 	const { reasonOf } = await import("../gui/refusal.ts");
 	const path = "/home/me/proj/.pi/settings.json";
-	const special = { path, why: "special", target: "/dev/zero" }, large = { path, why: "large", size: 300_000, limit: 262_144 }, locked = { path, why: "unreadable", code: "EACCES" };
-	assert.match(reasonOf("server words", special as never)!, /^Not started: \/home\/me\/proj\/\.pi\/settings\.json → \/dev\/zero is not a plain file/);
+	const special = { path, why: "special" }, large = { path, why: "large", size: 300_000, limit: 262_144 }, locked = { path, why: "unreadable", code: "EACCES" };
+	assert.match(reasonOf("server words", special as never)!, /^Not started: \/home\/me\/proj\/\.pi\/settings\.json is not a plain file/);
 	assert.match(reasonOf("server words", large as never)!, /is 293 KB, over the 256 KB limit/);
 	assert.match(reasonOf("server words", locked as never)!, /cannot be read \(EACCES\)/);
+	assert.match(reasonOf("server words", { path, why: "unchecked", code: "ETIMEDOUT" } as never)!, /could not be checked in time \(ETIMEDOUT\)/);
+	assert.match(m.deploy_settings_unchecked({ path: "/a", code: " (ETIMEDOUT)" }, { locale: "zh-TW" }), /^沒有啟動：\/a 在時限內沒能檢查完 \(ETIMEDOUT\)/);
 	assert.equal(reasonOf("server words", undefined), "server words", "without facts, the server's own words");
 	assert.match(m.deploy_settings_special({ path: "/a/.pi/settings.json → /dev/zero" }, { locale: "zh-TW" }), /^沒有啟動：\/a\/\.pi\/settings\.json → \/dev\/zero 不是一般檔案/);
 	assert.match(m.deploy_settings_large({ path: "/a", size: "293", limit: "256" }, { locale: "zh-TW" }), /有 293 KB，超過 256 KB 的上限/);
@@ -177,7 +179,7 @@ test("a refusal over the folder's .pi/settings.json is worded by the page, in bo
 	for (let i = 0; i < 5; i++) await Promise.resolve();
 	assert.equal(p.panel.dataset.state, "failed");
 	assert.deepEqual(p.rows().map((r) => r.split("~")[0]).slice(0, 2), ["failed", "pending"], "the create step failed");
-	assert.match(p.panel.cls("deploy-note").text, /^Failed at “Create the base”\. Not started: .*settings\.json → \/dev\/zero is not a plain file/);
+	assert.match(p.panel.cls("deploy-note").text, /^Failed at “Create the base”\. Not started: .*settings\.json is not a plain file/);
 	assert.doesNotMatch(p.panel.cls("deploy-note").text, /11421/, "the upstream issue is in the docs only");
 });
 

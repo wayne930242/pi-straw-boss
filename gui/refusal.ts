@@ -8,8 +8,8 @@ const clean = (text: string) => text.replace(/[\u0000-\u001f\u007f-\u009f]/g, ""
 export const reasonOf = (reason: string | undefined, facts: unknown) => {
 	const r = facts as SettingsRefusal | undefined;
 	if (!r) return reason;
-	const path = clean(r.target ? `${r.path} → ${r.target}` : r.path);
+	const path = clean(r.path);
 	return r.why === "special" ? m.deploy_settings_special({ path })
 		: r.why === "large" ? m.deploy_settings_large({ path, size: String(Math.ceil((r.size ?? 0) / 1024)), limit: String(Math.floor((r.limit ?? 0) / 1024)) })
-		: m.deploy_settings_unreadable({ path, code: r.code ? ` (${r.code})` : "" });
+		: (r.why === "unchecked" ? m.deploy_settings_unchecked : m.deploy_settings_unreadable)({ path, code: r.code ? ` (${r.code})` : "" });
 };
