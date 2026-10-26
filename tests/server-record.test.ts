@@ -293,3 +293,24 @@ test("F5: a lock that stays unreadable after the repair, or with no repair to ma
 		chmodSync(lock, 0o600);
 	}
 });
+
+test("R6-F004: a lock that is gone by the time it is found unreadable is free, not an error; one still denied after the repair is retried for about 100 ms before it is told", async () => {
+	const slot = slotOf(root, env(), "linux"), { w, deps } = lockWorld();
+	plant(slot, { pid: 1, by: "damaged", since: new Date(0).toISOString() });
+	const lock = fileOf(slot, "lock");
+	chmodSync(lock, 0o000);
+	// The repair fails because the lock vanished (a release while it was being opened): the loop goes on and takes the free lock.
+	const got = await takeLock(slot, "session", { ...deps, repair: (file) => { rmSync(file, { force: true }); throw new Error("icacls: no such file"); } }, 5000);
+	assert.equal(lockOf(slot).by, "session");
+	got.release();
+	// Still denied after the repair: the wait is the short retry (5 x 20 ms on the fake clock), then the error.
+	plant(slot, { pid: 1, by: "damaged", since: new Date().toISOString() });
+	chmodSync(lock, 0o000);
+	const before = w.now;
+	try {
+		await assert.rejects(takeLock(slot, "s", { ...deps, repair: () => {} }, 20_000), LockUnreadable);
+		assert.equal(w.now - before, 100, "about 100 ms, and no lock wait");
+	} finally {
+		chmodSync(lock, 0o600);
+	}
+});

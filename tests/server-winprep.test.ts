@@ -37,7 +37,7 @@ function native(final: () => string, over: Fake = {}) {
 			// `dir /q` of the parent: one line per folder, with its owner in the third field, as the console prints it.
 			if (over.dirOwner === undefined) throw new Error("no listing");
 			const parent = /dir \/q \/a:d "(.*)""$/.exec(args[3]!)![1]!;
-			return readdirSync(parent, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => `10/27/2026  01:00 AM    <DIR>          ${over.dirOwner!.padEnd(23)}${d.name}`).join("\r\n");
+			return readdirSync(parent, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => `10/27/2026  01:00 AM    <DIR>          ${over.dirOwner!.slice(0, 23).padEnd(23)}${d.name}`).join("\r\n");
 		}
 		over.during?.(call);
 		const failing = over.icacls && !args.includes("/save") && (!over.failOn || (over.failOn === "owner" ? args.includes("/setowner") : args.includes("/inheritance:r")));
@@ -436,11 +436,21 @@ test("F1: the owner is read only when /setowner is refused, from the parent's `d
 	protectFolder(dir, n.run);
 	assert.ok(!n.calls.some((c) => c.file === "cmd.exe"), "no owner read when /setowner works");
 	const who = { sid: OWNER, name: "PC\\me" };
-	const list = (owner: string, name = "straw-boss") => (_f: string, args: string[]) => (assert.deepEqual(args.slice(0, 3), ["/d", "/s", "/c"]), `10/27/2026  01:00 AM    <DIR>          ${owner.padEnd(23)} ${name}\r\n10/27/2026  01:00 AM    <DIR>          BUILTIN\\Administrators other\r\n`);
+	const list = (owner: string, name = "straw-boss") => (_f: string, args: string[]) => (assert.deepEqual(args.slice(0, 3), ["/d", "/s", "/c"]), `10/27/2026  01:00 AM    <DIR>          ${owner.slice(0, 23).padEnd(23)}${name}\r\n10/27/2026  01:00 AM    <DIR>          BUILTIN\\Administrators other\r\n`);
 	assert.equal(ownedBy("C:\\a\\straw-boss", who, list("PC\\me")), true);
 	assert.equal(ownedBy("C:\\a\\Straw-Boss", who, list("pc\\ME")), true, "case does not matter");
-	assert.equal(ownedBy("C:\\a\\straw-boss", who, list(OWNER)), true, "an owner shown as a SID");
+	assert.equal(ownedBy("C:\\a\\straw-boss", who, list(OWNER)), undefined, "an owner shown as a SID is cut at 23 characters: cannot tell (R6-F001: no SID branch)");
 	assert.equal(ownedBy("C:\\a\\straw-boss", who, list("BUILTIN\\Administrators")), false);
+	// R6-F001: a folder named after the user's SID, made by someone else, sorts before the real entry and says nothing about it.
+	const decoy = (_f: string, _a: string[]) => `10/27/2026  01:00 AM    <DIR>          PC\\attacker          ${OWNER} straw-boss\r\n10/27/2026  01:00 AM    <DIR>          BUILTIN\\Administrators straw-boss\r\n`;
+	assert.notEqual(ownedBy("C:\\a\\straw-boss", who, decoy), true, "a decoy line is not proof");
+	assert.equal(ownedBy("C:\\a\\straw-boss", { sid: OWNER, name: "" }, decoy), false);
+	// R6-F002: an owner of 23 characters or more is cut and the name follows with no separator: cannot tell, not "owned" and not "another account".
+	const longName = "DESKTOP-ABC1234\\weihung";
+	assert.equal(longName.length, 23);
+	assert.equal(ownedBy("C:\\a\\straw-boss", { sid: OWNER, name: longName }, list(longName)), undefined);
+	assert.equal(ownedBy("C:\\a\\straw-boss", { sid: OWNER, name: longName }, list("DESKTOP-ABC1234\\weihungx")), undefined);
+	assert.equal(ownedBy("C:\\a\\straw-boss", who, (_f, _a, _t, _r, env) => (assert.deepEqual(env, { DIRCMD: "" }), list("PC\\me")(_f, _a))), true, "DIRCMD is cleared for the call");
 	assert.equal(ownedBy("C:\\a\\straw-boss", who, list("XPC\\me")), false, "the name is a whole field");
 	assert.equal(ownedBy("C:\\a\\straw-boss", who, list("PC\\me", "other-folder")), undefined, "no line for the folder: cannot tell");
 	assert.equal(ownedBy("C:\\a\\straw-boss", who, () => { throw new Error("cmd failed"); }), undefined);
@@ -448,15 +458,18 @@ test("F1: the owner is read only when /setowner is refused, from the parent's `d
 	assert.equal(ownedBy("C:\\a\\\u8a31\u529f", who, list("PC\\me", "\u8a31\u529f")), undefined, "a name that is not ASCII is not compared");
 });
 
-test("F1: /setowner refused on a folder another account owns is refused, saying so; refused with the owner unreadable is refused too, and says it could not read the owner; a refusal other than the owner codes is not looked at", () => {
+test("F1/R6-F001/R6-F002: /setowner refused is final only when the listing names another owner; with the owner unreadable or cut it goes on to the protect call, and the PowerShell read-back's exact `O:` decides; a refusal other than the owner codes is not looked at", () => {
 	const dir = join(world.root, "agent", "straw-boss");
 	mkdirSync(dir, { recursive: true });
 	const other = native(() => dir, { icacls: denied(5), failOn: "owner", dirOwner: "BUILTIN\\Administrators" });
 	assert.throws(() => protectFolder(dir, other.run), /belongs to another account/);
 	assert.ok(!other.calls.some((c) => c.args.includes("/inheritance:r")), "nothing is protected after it");
-	forgetSid();
-	const unknown = native(() => dir, { icacls: denied(5), failOn: "owner" });
-	assert.throws(() => protectFolder(dir, unknown.run), (e: unknown) => /could not be made yours, and its owner could not be read/.test((e as Error).message) && !/belongs to another account/.test((e as Error).message));
+	for (const over of [{}, { dirOwner: "PC\\me" }, { dirOwner: "DESKTOP-ABC1234\\weihung-long" }]) {
+		forgetSid();
+		const goes = native(() => dir, { icacls: denied(5), failOn: "owner", ...over });
+		protectFolder(dir, goes.run);
+		assert.ok(goes.icacls().some((c) => c.args.includes("/inheritance:r")) && goes.icacls().some((c) => c.args.includes("/save")), JSON.stringify(over));
+	}
 	forgetSid();
 	const odd = native(() => dir, { icacls: denied(87, "Invalid parameter"), failOn: "owner", dirOwner: "PC\\me" });
 	assert.throws(() => protectFolder(dir, odd.run), /did not accept its arguments/);
@@ -516,4 +529,24 @@ test("F8: a stop that cannot protect or lock the folder (not the caller's) says 
 	const ctx = world.ctx({ platform: "win32", prepare: (slot) => prepareSlot(slot, "win32", bad.run) });
 	await assert.rejects(stop(ctx), (e: unknown) => e instanceof ServerError && e.code === "start-failed" && e.startError?.code === "acl" && /belongs to another account/.test(e.message) && /stop it from that account/.test(e.message));
 	assert.equal(existsSync(world.stateDir), false, "nothing was written");
+});
+
+test("R6-F005: the stop message about another account's server is added only to the owner and protect refusals (exit 5, 1307, 1314); other acl failures keep their own words", async () => {
+	for (const [bad, expected] of [
+		[{ icacls: denied(5), failOn: "owner" as const, dirOwner: "BUILTIN\\Administrators" }, true],
+		[{ icacls: denied(1314), failOn: "owner" as const, dirOwner: "BUILTIN\\Administrators" }, true],
+		[{ icacls: denied(5), failOn: "protect" as const }, true],
+		[{ icacls: denied(3, ""), failOn: "protect" as const }, false],
+		[{ icacls: Object.assign(new Error("timeout"), { code: "ETIMEDOUT", killed: true, syscall: "spawnSync icacls.exe" }), failOn: "protect" as const }, false],
+		[{ dacl: `D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;${OWNER})(A;OICI;FA;;;WD)` }, false],
+	] as const) {
+		forgetSid();
+		const w = new ServerWorld();
+		try {
+			const n = native(() => w.stateDir, bad);
+			await assert.rejects(stop(w.ctx({ platform: "win32", prepare: (slot) => prepareSlot(slot, "win32", n.run) })), (e: unknown) => e instanceof ServerError && e.startError?.code === "acl" && /stop it from that account/.test(e.message) === expected, JSON.stringify(Object.keys(bad)));
+		} finally {
+			await w.close();
+		}
+	}
 });

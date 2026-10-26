@@ -621,3 +621,21 @@ test("F6: decide refuses another scope only while the server is live", () => {
 	assert.equal(look({ env }, { record: { ...rec, stopped: false }, live: false }).do, "start");
 	assert.deepEqual(look({ env }, { record: rec, live: true }), { do: "refuse", why: "scope", text: "the sb server runs in another pi-intercom scope or transport than this session, so this session uses none" });
 });
+
+// --- R6-F003: the scope is pinned while the record's process runs, even when it is slow to answer hello ---
+
+test("R6-F003: a server that runs but did not answer hello in time still pins its scope (look, stop, restart); a stopped or dead record does not", async () => {
+	const rec = { ...({} as ServerRecord), pid: 1, version: "0.44.0", herdr: world.slot.herdr, intercom: { scope: "a", transport: "default" as const } };
+	const env = { PI_INTERCOM_SCOPE_ID: "b" };
+	const slow = look({ env }, { record: rec, live: false, runs: true } as Parameters<typeof decide>[1]);
+	assert.equal(slow.do === "refuse" && slow.why, "scope");
+	assert.deepEqual(look({ env }, { record: { ...rec, stopped: true }, live: false, runs: false } as Parameters<typeof decide>[1]), { do: "nothing", why: "stopped" });
+	assert.equal(look({ env }, { record: rec, live: false, runs: false } as Parameters<typeof decide>[1]).do, "start");
+	// A scope-A server whose hello never answers: its pid runs, so scope B can neither stop nor restart it.
+	secretDir(world.slot.dir); // the socket is not there: the hello fails, and the pid (this process) runs
+	writeRecord(world.slot, { ...rec, pid: process.pid, started: undefined, socket: join(world.slot.dir, "mute.sock"), secret: "s".repeat(64), log: "/l", mode: "detached", desk: false, intercomId: "x" } as ServerRecord);
+	const b = world.ctx({ env: { ...world.env, ...env }, alive: () => true });
+	await assert.rejects(stop(b), (e: unknown) => e instanceof ServerError && e.code === "scope");
+	await assert.rejects(restart(b, { reason: "r" }), (e: unknown) => e instanceof ServerError && e.code === "scope");
+	assert.equal(readRecord(world.slot)?.stopped, undefined, "the record was not marked stopped");
+});

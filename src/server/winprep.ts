@@ -13,17 +13,17 @@ import { asciiLine, folderProblems, SYSTEM_SID } from "./acl.ts";
 // below the folder and reads every SDDL back; this closes the window before it, and refuses a folder it cannot make the owner's.
 
 /** Runs a system program (`whoami.exe`, `icacls.exe`) and returns its output; `timeoutMs` bounds it (the time a caller has left). */
-export type RunNative = (file: string, args: string[], timeoutMs?: number, raw?: boolean) => string;
+export type RunNative = (file: string, args: string[], timeoutMs?: number, raw?: boolean, env?: NodeJS.ProcessEnv) => string;
 export const NATIVE_MS = 15_000;
 /** A system program by absolute path, run from System32 (a bare name is looked for in the current folder first, which is a project: nodejs/node#46264). */
 export const nativeCommand = (name: string, args: string[], env: NodeJS.ProcessEnv = process.env, timeout = NATIVE_MS) => ({
 	file: system32Path(name, env), args,
 	options: { encoding: "utf8" as const, windowsHide: true, timeout, cwd: system32(env), stdio: ["ignore", "pipe", "pipe"] as ("ignore" | "pipe")[] },
 });
-const runNative: RunNative = (name, args, timeoutMs = NATIVE_MS, raw = false) => {
+const runNative: RunNative = (name, args, timeoutMs = NATIVE_MS, raw = false, env) => {
 	const { file, args: argv, options } = nativeCommand(name, args, process.env, Math.max(500, Math.min(timeoutMs, NATIVE_MS)));
 	// `raw`: the console's code page bytes kept one to one (latin1), so two programs' spellings of an account name can be compared byte for byte. `cmd /c` gets its line verbatim.
-	return execFileSync(file, argv, { ...options, ...(raw ? { encoding: "latin1" as const } : {}), ...(name === "cmd.exe" ? { windowsVerbatimArguments: true } : {}) });
+	return execFileSync(file, argv, { ...options, ...(env ? { env: { ...process.env, ...env } } : {}), ...(raw ? { encoding: "latin1" as const } : {}), ...(name === "cmd.exe" ? { windowsVerbatimArguments: true } : {}) });
 };
 
 /** The owner's SID and account name from `whoami /user /fo csv /nh` (`"DOMAIN\name","S-1-5-21-…"`; the CSV layout does not change with the display language). */
@@ -45,7 +45,8 @@ export function ownedBy(dir: string, who: { sid: string; name: string }, run: Ru
 	if (/[%!"^&|<>]/.test(parent)) return undefined;
 	let text: string;
 	try {
-		text = run("cmd.exe", ["/d", "/s", "/c", `"dir /q /a:d "${parent}""`], timeoutMs, true);
+		// DIRCMD (switches `dir` takes from the environment, such as /b or /x) is cleared: the layout this reads is the plain one.
+		text = run("cmd.exe", ["/d", "/s", "/c", `"dir /q /a:d "${parent}""`], timeoutMs, true, { DIRCMD: "" });
 	} catch {
 		return undefined;
 	}
@@ -58,10 +59,8 @@ export function ownedBy(dir: string, who: { sid: string; name: string }, run: Ru
 		const head = trimmed.slice(0, trimmed.length - leaf.length);
 		if (!/\s$/.test(head)) continue; // the name is a field of its own
 		const before = head.trimEnd();
-		for (const id of [who.name, who.sid]) {
-			if (id && before.toLowerCase().endsWith(id.toLowerCase()) && (before.length === id.length || /\s/.test(before[before.length - id.length - 1]!))) return true;
-		}
-		return false;
+		const id = who.name;
+		return Boolean(id) && before.toLowerCase().endsWith(id.toLowerCase()) && (before.length === id.length || /\s/.test(before[before.length - id.length - 1]!));
 	}
 	return undefined;
 }
@@ -163,9 +162,9 @@ function takeOwnership(target: string, run: RunNative, left: () => number | unde
 	} catch (error) {
 		const status = (error as { status?: unknown }).status;
 		if (typeof status !== "number" || !OWNER_REFUSED.has(status)) throw error;
-		const owned = ownedBy(target, { sid: sid!, name: accountName }, run, left());
-		if (owned === true) return;
-		throw Object.assign(error as Error, { ownerKnown: owned !== undefined });
+		// Refused only when the listing positively names another owner. A listing cuts the owner at 23 characters (a long DOMAIN\name cannot be told) and a name other accounts can create is no proof,
+		// so "owned" and "cannot tell" both go on to the protect call; the PowerShell read-back then checks the exact owner (`O:`) before any secret is written.
+		if (ownedBy(target, { sid: sid!, name: accountName }, run, left()) === false) throw Object.assign(error as Error, { ownerKnown: true });
 	}
 }
 function secure(target: string, run: RunNative, left: () => number | undefined): void {

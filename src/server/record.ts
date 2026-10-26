@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { herdrSocket } from "../endpoint.ts";
 import { alive as pidAlive } from "../remote.ts";
@@ -297,7 +297,7 @@ export async function takeLock(slot: Slot, by: string, deps: LockDeps = {}, wait
 	const temp = `${lock}.${self.pid}.${randomBytes(4).toString("hex")}.tmp`;
 	writeFileSync(temp, body, { flag: "wx", mode: 0o600 });
 	const end = now() + waitMs;
-	let repaired = false;
+	let repaired = false, deniedTries = 0, failure: string | undefined;
 	try {
 		for (;;) {
 			try {
@@ -310,14 +310,23 @@ export async function takeLock(slot: Slot, by: string, deps: LockDeps = {}, wait
 			// A lock that is there and cannot be opened was damaged by someone (an empty DACL): its permissions are repaired once, and then it is read; never waited for as "held".
 			const denied = deniedCode(lock);
 			if (denied) {
-				if (repaired || !deps.repair) throw new LockUnreadable(lock, denied);
-				repaired = true;
-				try {
-					deps.repair(lock);
-				} catch (error) {
-					throw new LockUnreadable(lock, denied, (error as Error).message);
+				// A lock that is gone by now (released while it was opened, delete-pending on a file system without POSIX delete) is a free lock; one that is still there gets its permissions repaired
+				// once, and a denial that outlives the repair is retried for about 100 ms before it is told as what it is.
+				if (!existsSync(lock)) continue;
+				if (!repaired && deps.repair) {
+					repaired = true;
+					try {
+						deps.repair(lock);
+						continue;
+					} catch (error) {
+						failure = (error as Error).message;
+					}
 				}
-				continue;
+				if (deniedTries++ < 5) {
+					await sleep(20);
+					continue;
+				}
+				throw new LockUnreadable(lock, denied, failure);
 			}
 			const raw = readRaw(lock), held = parse<LockInfo>(raw);
 			// A lock that cannot be read was caught being written, or is garbage a crash left: it is garbage once it is a few seconds old.

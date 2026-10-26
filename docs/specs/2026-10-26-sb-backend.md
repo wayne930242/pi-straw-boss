@@ -250,9 +250,14 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
         parent, it gets exit 5 on a folder it owns (Administrators is deny-only in that token), and every start there failed with a wrong
         "belongs to another account". So when `/setowner` is refused (5, 1307, 1314) the owner is read natively: `cmd /d /s /c "dir /q /a:d
         <parent>"` names each entry's owner in the console's code page, as `whoami` names the account, so the account name (or the SID, for
-        an owner Windows shows as one) is compared byte for byte, case-insensitively, as a whole field. An owner that is the caller's needs
-        nothing and the protect call decides (an owner has WRITE_DAC). A different owner is refused ("belongs to another account"); an
-        owner that cannot be read is refused too, with its own words ("could not be made yours, and its owner could not be read"). The read
+        an owner Windows shows as one) is compared byte for byte, case-insensitively, as a whole field. **The listing proves little**: the
+        owner column is 23 characters wide and cut there with no separator after it (a `DESKTOP-XXXXXXX\name` of 23 or more cannot be
+        told), and the names in it are ones other accounts can create (a folder named after the user's SID is no proof; there is no SID
+        branch). So `/setowner` refused is final only when the listing positively names another owner ("belongs to another account"; `DIRCMD`
+        is cleared for the call so its layout is the plain one). Otherwise (the owner is the caller's, or cannot be told) the protect call
+        goes on, and **the exact owner is checked in the PowerShell read-back before any secret is written**: the folder's `O:` from
+        `(Get-Acl).Sddl` must be the user's SID (`ownerProblems`, in `aclProblems`, on the marker path and the server's own path); another
+        account's folder is refused with `acl` "the folder belongs to another account (<SID>)", whatever its DACL says. The read
         is made only after a refusal, so the usual start costs no process for it. A path `cmd` treats specially (`% ! " ^ & | < >`) or a
         non-ASCII folder name is not asked about (cannot tell).
       - Every `icacls` call carries `/L`, so a link is acted on itself and never its target, and `secure` looks for a link first.
@@ -434,12 +439,15 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
     - **A lock that cannot be opened is repaired, never waited for** (F5). An empty-DACL `server.lock` (`D:PAI`) read as "held" wedged
       `up` and `stop` (a filtered user cannot even delete it). When `server.lock` exists and cannot be read (`EACCES`, `EPERM`), its
       permissions are reset once (`icacls <file> /reset /L /Q`: the owner can) and it is read and judged as any lock; when that fails,
-      the start ends at once with `acl` (exit 3), naming the file and what to do (`LockUnreadable`).
+      the start ends with `acl` (exit 3), naming the file and what to do (`LockUnreadable`). A lock that is gone by then is free, and a denial
+      that outlives the repair is retried for about 100 ms first (a release in progress on a file system without POSIX delete).
     - **A record of a server that is gone does not pin the broker scope** (F6). After a stop, the stopped record keeps the old scope, and
-      a start in another `PI_INTERCOM_SCOPE_ID` was refused. The scope and transport are compared only while the server is live (the
-      look, `restart`, `stop`); the new server's record carries the new scope.
+      a start in another `PI_INTERCOM_SCOPE_ID` was refused. The scope and transport are compared only while the record's process runs
+      (it answers hello, or its pid is alive and started when the record says: a server that is slow to answer keeps its scope; the look,
+      `restart` and `stop`); a stopped or dead record pins nothing, and the new server's record carries the new scope.
     - **`stop` on a folder that is not the caller's** (F8) cannot take the lock; its message says that a server in it was started by
-      another account, to stop it from that account (an elevated shell for an elevated run), or end its process.
+      another account, to stop it from that account (an elevated shell for an elevated run), or end its process; the sentence is added only
+      to the owner and protect refusals (exit 5, 1307, 1314), other acl failures keep their own words.
     - **No PowerShell failure text is CLIXML.** Windows PowerShell 5.1 started with `-EncodedCommand` and a redirected stderr writes
       `#< CLIXML` + `<Objs …>` to stderr even on success (the progress records of preparing modules the first time). Every PowerShell call
       (`acl.ts`, `breakaway.ts`, `startof.ts`) is started with `-OutputFormat Text`, its script sets `$ProgressPreference =

@@ -154,6 +154,8 @@ export interface Probe {
 	record: ServerRecord | undefined;
 	/** The process of the record runs, started when the record says, and answers hello. */
 	live: boolean;
+	/** The record's process runs (pid alive, started when the record says) whether or not it answered hello in time: a server that is slow to answer still has its broker scope. */
+	runs?: boolean;
 	hello: Reply | undefined;
 }
 /** Whether the process that wrote the record still runs: its pid is alive and started when the record says (a pid reused after a crash started later). */
@@ -169,9 +171,9 @@ export function runsAs(ctx: Pick<Ctx, "alive" | "startOf">, record: Pick<ServerR
 export async function probe(ctx: Ctx, deadline?: number, startKnownElsewhere = false): Promise<Probe> {
 	const record = readRecord(ctx.slot);
 	// A record with no socket is a start that has not got far enough to listen (`markStarting`): there is nothing to ask.
-	if (!record || !record.socket || !runsAs(ctx, record, startKnownElsewhere)) return { record, live: false, hello: undefined };
+	if (!record || !record.socket || !runsAs(ctx, record, startKnownElsewhere)) return { record, live: false, runs: false, hello: undefined };
 	const hello = await helloOf(record.socket, record.secret, within(ctx, deadline, HELLO_MS));
-	return { record, live: Boolean(hello && hello.pid === record.pid), hello };
+	return { record, live: Boolean(hello && hello.pid === record.pid), runs: true, hello };
 }
 
 /** Whether Herdr listens at the slot's socket. */
@@ -193,10 +195,11 @@ export type Verdict =
  * and, while that server is live, its broker scope and transport are the record's: a record of a server that is gone (stopped, or crashed) does not pin the scope, and the next start
  * runs in the scope of whoever starts it (VM pass 4, F6). A live server on an older version than the session's is upgraded.
  */
-export function decide(ctx: Pick<Ctx, "version" | "env" | "platform" | "now" | "slot">, seen: Pick<Probe, "record" | "live">): Verdict {
+export function decide(ctx: Pick<Ctx, "version" | "env" | "platform" | "now" | "slot">, seen: Pick<Probe, "record" | "live" | "runs">): Verdict {
 	const { record, live } = seen;
 	if (record && record.herdr !== ctx.slot.herdr) return { do: "refuse", why: "herdr", text: `the sb server record in ${ctx.slot.dir} names another Herdr socket (${record.herdr}), not ${ctx.slot.herdr}` };
-	if (record && live && !sameBroker(record.intercom, intercomOf(ctx.env, ctx.platform))) return { do: "refuse", why: "scope", text: "the sb server runs in another pi-intercom scope or transport than this session, so this session uses none" };
+	// The scope is pinned while the record's process runs (live, or alive and slow to answer): a stopped or dead record pins nothing.
+	if (record && (live || seen.runs === true) && !sameBroker(record.intercom, intercomOf(ctx.env, ctx.platform))) return { do: "refuse", why: "scope", text: "the sb server runs in another pi-intercom scope or transport than this session, so this session uses none" };
 	if (live) return record && newer(ctx.version, record.version) ? { do: "upgrade" } : { do: "nothing", why: "live" };
 	if (record?.stopped) return { do: "nothing", why: "stopped" };
 	if (restartingFresh(record, ctx.now())) return { do: "nothing", why: "restarting" };
@@ -409,7 +412,7 @@ async function restartLocked(ctx: Ctx, { reason, downgrade, upgrade, boss, limit
 	const seen = await probe(ctx, deadline), record = seen.record;
 	if (record && record.herdr !== ctx.slot.herdr) throw new ServerError("herdr", `the sb server record names another Herdr socket (${record.herdr}), not ${ctx.slot.herdr}`);
 	// The server runs in the broker scope it was started in, and a requester in another one would move it there: it uses none, and restarts none.
-	if (record && seen.live && !sameBroker(record.intercom, intercomOf(ctx.env, ctx.platform))) throw new ServerError("scope", "the sb server runs in another pi-intercom scope or transport than this process, so this process does not restart it");
+	if (record && (seen.live || seen.runs === true) && !sameBroker(record.intercom, intercomOf(ctx.env, ctx.platform))) throw new ServerError("scope", "the sb server runs in another pi-intercom scope or transport than this process, so this process does not restart it");
 	if (record?.stopped && !seen.live && !boss) throw new ServerError("stopped", "the sb server was stopped on purpose; /boss server or `cli.mjs up` starts it again");
 	if (record && newer(record.version, ctx.version) && !downgrade) throw new ServerError("older", `the sb server runs pi-straw-boss ${record.version}, newer than this package's ${ctx.version}; a restart from an older package needs --downgrade`);
 	if (boss) clearStopped(ctx.slot);
@@ -472,7 +475,8 @@ export async function stop(ctx: Ctx): Promise<Stopped> {
 	// A state folder that is not the caller's (made by an elevated run, say) cannot be protected or locked from here, and a stop cannot be made without the lock: it says so, and where the server can be
 	// stopped from, instead of leaving only the ACL text (VM pass 4, F8).
 	const lock = await lockFor(ctx, lockWaitFor(ctx)).catch((error: unknown) => {
-		if (error instanceof ServerError && error.code === "start-failed" && error.startError?.code === "acl") {
+		// Only for the refusals of the owner and protect steps (exit 5, 1307, 1314: the folder is another account's); a link, a foreign ACE, an unreadable lock or a timeout keep their own words.
+		if (error instanceof ServerError && error.code === "start-failed" && error.startError?.code === "acl" && /\((?:owner|protect) step, exit (?:5|1307|1314)\b/.test(error.startError.text)) {
 			throw new ServerError("start-failed", `${error.message} (the stop needs the folder: a server that runs in it was started by another account, so stop it from that account, an elevated shell for an elevated run, or end its process)`, error.startError);
 		}
 		throw error;
@@ -482,7 +486,7 @@ export async function stop(ctx: Ctx): Promise<Stopped> {
 		const seen = await probe(ctx);
 		const probed = ctx.now();
 		// As for a restart: the server runs in the broker scope it was started in, and a stop from another one is not its requester's to give.
-		if (seen.record && seen.live && !sameBroker(seen.record.intercom, intercomOf(ctx.env, ctx.platform))) throw new ServerError("scope", "the sb server runs in another pi-intercom scope or transport than this process, so this process does not stop it");
+		if (seen.record && (seen.live || seen.runs === true) && !sameBroker(seen.record.intercom, intercomOf(ctx.env, ctx.platform))) throw new ServerError("scope", "the sb server runs in another pi-intercom scope or transport than this process, so this process does not stop it");
 		if (!seen.live || !seen.record) {
 			if (seen.record && !seen.record.stopped) updateRecord(ctx.slot, (r) => ({ ...r, stopped: true }));
 			return { outcome: "already-down" };

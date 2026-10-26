@@ -3,12 +3,13 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { ACL_SCRIPT, ACL_TOKEN, aclCommand, aclMarkerPath, AclError, aclProblems, applyAcl, asciiLine, awaitAclMarker, execFailure, messageLine, type Exec, fileProblems, folderProblems, parseAclOutput, parseSddl, readMarker, SYSTEM_SID } from "../src/server/acl.ts";
+import { ACL_SCRIPT, ACL_TOKEN, aclCommand, ownerProblems, plainStderr, aclMarkerPath, AclError, aclProblems, applyAcl, asciiLine, awaitAclMarker, execFailure, messageLine, type Exec, fileProblems, folderProblems, parseAclOutput, parseSddl, readMarker, SYSTEM_SID } from "../src/server/acl.ts";
 
 // docs/specs/2026-10-26-sb-backend.md, The control socket: on Windows the state directory gets an owner-and-SYSTEM ACL, set and checked by SID in one PowerShell start.
 // Windows is not run here: these pin the command and the SDDL reading.
 
 const OWNER = "S-1-5-21-1111111111-2222222222-3333333333-1001";
+const OTHER = "S-1-5-21-9-9-9-1002";
 const ACE = (sid: string, flags = "OICI", type = "A") => `(${type};${flags};FA;;;${sid})`;
 const good = `O:${OWNER}G:DUD:P${ACE(OWNER)}${ACE("SY")}`;
 
@@ -265,4 +266,26 @@ test("N-F006: a PowerShell 5.1 error is told by its message (the first line befo
 	assert.equal(execFailure(Object.assign(new Error("Command failed: x"), { code: 1 }), thrown), "icacls failed with exit code 5, exit code 1");
 	assert.equal(messageLine("\r\n\r\nAt line:1\r\n+ x\r\n"), "+ x", "when nothing else is there, the last line stands");
 	assert.equal(messageLine(["first", "second"].join("\n")), "first", "plain text: the first line");
+});
+
+// --- R6-F001: the exact owner, from the PowerShell read-back, before any secret is written ---
+
+test("R6-F001: the folder's owner (O: of Get-Acl) must be the user; another account's folder is refused with `belongs to another account`, whatever its DACL says, and the SDDL is handed on", async () => {
+	const foreign = `O:${OTHER}G:DUD:P${ACE(OWNER)}${ACE("SY")}`;
+	assert.deepEqual(ownerProblems(good, OWNER), []);
+	assert.deepEqual(ownerProblems(`O:LAG:DUD:P${ACE(OWNER)}${ACE("SY")}`, OWNER.replace(/-\d+$/, "-500")), [], "an alias of the owner's own built-in account");
+	assert.match(ownerProblems(foreign, OWNER)[0]!, /belongs to another account \(S-1-5-21-9-9-9-1002\)/);
+	assert.match(ownerProblems(`O:BAG:DUD:P${ACE(OWNER)}${ACE("SY")}`, OWNER)[0]!, /belongs to another account \(BA\)/);
+	assert.match(ownerProblems(`D:P${ACE(OWNER)}${ACE("SY")}`, OWNER)[0]!, /names no owner/);
+	assert.ok(aclProblems({ sid: OWNER, dir: foreign, files: [] }).some((p) => /belongs to another account/.test(p)));
+	const exec: Exec = (_f, _a, _o, done) => done(null, JSON.stringify({ sid: OWNER, dir: foreign, files: [] }));
+	await assert.rejects(applyAcl("C:\\s", exec), (e: unknown) => e instanceof AclError && /belongs to another account/.test((e as Error).message) && /S-1-5-21-9-9-9-1002/.test((e as AclError).sddl ?? ""));
+	assert.throws(() => readMarker(marker({ dir: foreign }), "C:\\s", 4321), (e: unknown) => e instanceof AclError && /belongs to another account/.test((e as Error).message));
+});
+
+test("R6-F006: a CLIXML character reference past U+10FFFF is kept as written and the decode never throws", () => {
+	const text = (ref: string) => `#< CLIXML\n<Objs xmlns="http://schemas.microsoft.com/powershell/2004/04"><S S="Error">a${ref}b</S></Objs>`;
+	for (const ref of ["&#x110000;", "&#1114112;", "&#xFFFFFFFFFFFF;", "&#99999999999999999999;"]) assert.equal(plainStderr(text(ref)), `a${ref}b`);
+	assert.equal(plainStderr(text("&#x41;&#128512;")), "aA\u{1F600}b");
+	assert.doesNotThrow(() => execFailure(Object.assign(new Error("x"), { code: 1 }), text("&#x110000;")));
 });

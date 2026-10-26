@@ -185,8 +185,22 @@ export function parseAclOutput(stdout: string): AclResult {
 	// The start time is kept only in the one form startof.ts writes, so a record never carries text the other readers would not compare equal.
 	return { sid, dir, files: list.filter((f): f is { path: string; sddl: string } => typeof f?.path === "string" && typeof f?.sddl === "string"), ...(typeof started === "string" && START_TEXT.test(started) ? { started } : {}) };
 }
-/** Every problem in a result: the folder's, and each secret file's. */
-export const aclProblems = ({ sid, dir, files }: AclResult) => [...folderProblems(dir, sid), ...files.flatMap((f) => fileProblems(f.sddl, sid, f.path))];
+/**
+ * The folder's owner must be the user: the exact `O:` of `(Get-Acl).Sddl`, which PowerShell's read-back has and `icacls /save` has not. A folder another account owns keeps an owner's implicit
+ * WRITE_DAC whatever its DACL says now, so it is refused before any secret is written ("belongs to another account"; the native owner read can only say "not known" for a long account name).
+ */
+export function ownerProblems(sddl: string, owner: string): string[] {
+	let found: string | undefined;
+	try {
+		found = parseSddl(sddl).owner;
+	} catch {
+		return []; // folderProblems says the SDDL cannot be read
+	}
+	if (!found) return ["the folder's SDDL names no owner"];
+	return canon(found, owner) === owner.toUpperCase() ? [] : [`the folder belongs to another account (${found}), not to ${owner}`];
+}
+/** Every problem in a result: the folder's owner, its DACL, and each secret file's. */
+export const aclProblems = ({ sid, dir, files }: AclResult) => [...ownerProblems(dir, sid), ...folderProblems(dir, sid), ...files.flatMap((f) => fileProblems(f.sddl, sid, f.path))];
 
 const START_TEXT = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
 
@@ -217,7 +231,12 @@ const XML_ENTITIES: Record<string, string> = { lt: "<", gt: ">", quot: '"', apos
 /** One CLIXML string as text: XML entities, then the `_xHHHH_` escapes (`_x000D__x000A_` is a line break, `_x005F_` an underscore). */
 const clixmlString = (raw: string) =>
 	raw
-		.replace(/&(?:#x([0-9a-fA-F]+)|#(\d+)|(lt|gt|quot|apos|amp));/g, (_m, hex?: string, dec?: string, name?: string) => (name ? XML_ENTITIES[name]! : String.fromCodePoint(Number.parseInt(hex ?? dec!, hex ? 16 : 10))))
+		.replace(/&(?:#x([0-9a-fA-F]+)|#(\d+)|(lt|gt|quot|apos|amp));/g, (match, hex?: string, dec?: string, name?: string) => {
+			if (name) return XML_ENTITIES[name]!;
+			const code = Number.parseInt(hex ?? dec!, hex ? 16 : 10);
+			// A reference past U+10FFFF (or a surrogate) is no character: kept as written, and the decode never throws inside an exec callback.
+			return Number.isInteger(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match;
+		})
 		.replace(/_x([0-9a-fA-F]{4})_/g, (_m, code: string) => String.fromCharCode(Number.parseInt(code, 16)));
 /**
  * The text of a PowerShell stderr. When it is CLIXML (it starts with `#< CLIXML`) the text is the `<S S="Error">` strings, decoded and joined; progress records and the rest of the XML are
