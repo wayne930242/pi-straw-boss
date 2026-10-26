@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { linkRequest, OWNERS, selectDigest } from "../src/owners.ts";
+import { createApproval, TERMINAL_DELAY_MS } from "../src/link/approval.ts";
 import { encodeInvite } from "../src/link/join.ts";
 import { ACTIONS, HERE_ONLY, shapeProblem } from "../src/link/request.ts";
 import { LinkStore } from "../src/link/store.ts";
@@ -30,7 +31,7 @@ afterEach(async () => {
 type Pending = { version: number; id: string; toolCallId: string; digest: string; select: { title: string; choices: { label: string; hereOnly?: true; note?: string }[] } };
 
 async function rig(o: { requestMs?: number; policy?: Parameters<typeof computer>[3] extends infer T ? (T extends { policy?: infer P } ? P : never) : never } = {}) {
-	const c = computer(root, relay, "a", { ui: true, gateMs: o.requestMs ?? 5000, ...(o.policy ? { policy: o.policy } : {}) });
+	const c = computer(root, relay, "a", { ui: true, gateMs: o.requestMs ?? 5000, terminalMs: 20, ...(o.policy ? { policy: o.policy } : {}) });
 	computers.push(c);
 	await c.tower.start();
 	await until(() => new LinkStore(c.dir).readHolder()?.session === "tower-a", "the holder");
@@ -57,6 +58,17 @@ test("an action and its arguments are checked for shape before anything is asked
 	assert.deepEqual([...ACTIONS], ["create", "invite", "invite-unattended", "join", "trust", "leave", "remove", "role", "rotate"]);
 });
 
+test("RC-F002: a label is tested whole, so a leading or trailing line break, a Unicode line separator, or a bidi control is refused, and the screen is prefilled only with a label create or join would accept", async () => {
+	const base = { relay: "http://127.0.0.1:9", project: "/p" };
+	for (const label of ["\nAsked by session: tower (12345678)", "name\n", "a\u2028b", "a\u2029b", "a\u200eb", "a\u200fb", "a\u202ab", "a\u202eb", "a\u2066b", "a\u2069b", "a\u061cb"]) {
+		assert.match(shapeProblem("create", { ...base, label }) ?? "", /label may not contain/, JSON.stringify(label));
+	}
+	assert.equal(shapeProblem("create", { ...base, label: "Mac mini" }), undefined);
+	const { c, ask } = await rig();
+	await assert.rejects(ask({ action: "create", args: { relay: "http://127.0.0.1:9", project: c.project, label: "bad/label" }, reason: "x" }), /label is 1 to 40/);
+	await assert.rejects(ask({ action: "create", args: { relay: "http://127.0.0.1:9", project: c.project, label: "x".repeat(41) }, reason: "x" }), /label is 1 to 40/);
+});
+
 test("a request never runs unasked: the dialog shows the action, every argument, the reason, and the asking session; only Approve runs it, and an invite returns its text", async () => {
 	const { c, pending, closed, ask, answer } = await rig();
 	const run = ask({ action: "invite", args: { team: "project-a" }, reason: "Carol wants in" });
@@ -67,7 +79,7 @@ test("a request never runs unasked: the dialog shows the action, every argument,
 	assert.equal(p.digest, selectDigest(p.select as never));
 	for (const part of ["Link request from tower · tower-a", "Action: invite", "Team: project-a", "Relay: http://relay.test", `Project folder: ${c.project}`, "Reason: Carol wants in", "Asked by session: tower · tower-a (tower-a)"]) assert.ok(p.select.title.includes(part), `${part}\n${p.select.title}`);
 	assert.equal(relay.invites.size, 0, "nothing happened while the boss had not answered");
-	assert.equal(c.tower.dialogs.length, 1, "the terminal shows the same confirm");
+	await until(() => c.tower.dialogs.length === 1, "the terminal shows the same confirm");
 	await new Promise((r) => setTimeout(r, 50));
 	assert.equal(relay.invites.size, 0, "and still not");
 	answer(p, 0);
@@ -84,8 +96,8 @@ test("Deny and the terminal's No refuse the request, and nothing is done", async
 	answer(pending[0]!, 1);
 	await assert.rejects(first, /the boss declined the link request/);
 	const second = ask({ action: "invite", args: { team: "project-a" }, reason: "x" }, "tc-2");
-	await until(() => pending.length === 2 && c.tower.dialogs.length === 2, "the second dialog");
-	c.tower.dialogs[1]!.settle(false);
+	await until(() => pending.length === 2 && c.tower.dialogs.length === 1, "the second dialog (the first was answered before its terminal confirm came up)");
+	c.tower.dialogs[0]!.settle(false);
 	await assert.rejects(second, /declined/);
 	assert.equal(relay.invites.size, 0);
 });
@@ -228,4 +240,35 @@ test("only trust, remove, role, rotate, and leave mark Approve here-only; Deny n
 	}
 	await Promise.all(runs);
 	assert.deepEqual(marks, { invite: ["Approve", false, "Deny", false], trust: ["Approve", true, "Deny", false], rotate: ["Approve", true, "Deny", false], leave: ["Approve", true, "Deny", false] });
+});
+
+test("RR-F002: a reason's bidi marks and overrides become spaces, so they cannot reorder the lines of the dialog", async () => {
+	const { pending, ask } = await rig();
+	const run = ask({ action: "invite", args: { team: "project-a" }, reason: "ok\u061c\u202eevil\u200f\u2066x\u2069y\u200ez\u202a" });
+	run.catch(() => undefined);
+	await until(() => pending.length === 1, "the dialog");
+	assert.match(pending[0]!.select.title, /Reason: ok evil x y z$/);
+	assert.doesNotMatch(pending[0]!.select.title, /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/);
+});
+
+test("RR-F001: the terminal confirm is shown only after a delay (1.5 s by default); the page sees the dialog at once, and an answer before the delay means the terminal never shows it", async () => {
+	assert.equal(TERMINAL_DELAY_MS, 1500);
+	const handlers = new Map<string, (d: unknown) => void>(), published: { id: string; digest: string }[] = [];
+	const bus = { emit: (channel: string, data: unknown) => (channel.endsWith(":pending") && published.push(data as (typeof published)[number]), undefined), on: (channel: string, h: (d: unknown) => void) => (handlers.set(channel, h), () => handlers.delete(channel)) };
+	let shown = 0;
+	const ui = { confirm: (_t: string, _m: string, o?: { signal?: AbortSignal }) => (shown++, new Promise<boolean>((resolve) => o?.signal?.addEventListener("abort", () => resolve(false)))) };
+	const started = Date.now();
+	const first = createApproval({ bus }).approve({ toolCallId: "c1", lines: ["Action: trust"], asker: "s", hereOnly: true, ui, signal: AbortSignal.timeout(5000) });
+	assert.equal(published.length, 1, "the page's dialog is published at once");
+	await new Promise((r) => setTimeout(r, 300));
+	assert.equal(shown, 0, "no terminal confirm yet");
+	await until(() => shown === 1, "the terminal confirm", 3000);
+	assert.ok(Date.now() - started >= 1400, `shown after ${Date.now() - started} ms`);
+	handlers.get("straw-link:request:answer")!({ version: 1, id: published[0]!.id, answerId: "answer-1-".padEnd(16, "x"), digest: published[0]!.digest, selections: [1] });
+	assert.equal((await first).approved, false);
+	const second = createApproval({ bus }).approve({ toolCallId: "c2", lines: ["Action: trust"], asker: "s", hereOnly: true, ui, signal: AbortSignal.timeout(5000) });
+	handlers.get("straw-link:request:answer")!({ version: 1, id: published[1]!.id, answerId: "answer-1-".padEnd(16, "y"), digest: published[1]!.digest, selections: [1] });
+	assert.equal((await second).approved, false);
+	await new Promise((r) => setTimeout(r, TERMINAL_DELAY_MS + 200));
+	assert.equal(shown, 1, "answered before the delay: the terminal never showed it");
 });
