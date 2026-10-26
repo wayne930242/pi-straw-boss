@@ -9,7 +9,9 @@ import { fileOf, type Slot } from "./record.ts";
 // name nor a file mode protects it. The secret is 32 random bytes in hex, made new at each server start and written to server.json; it is compared in constant time,
 // and a connection whose first frame is not a matching hello is closed with no answer.
 
-export interface Reply { ok: boolean; error?: string; [key: string]: unknown }
+/** Set on a reply, `[AFTER]` runs once the reply has been written: a server that answers a stop or a restart leaves after it, not before. It is not part of what is sent. */
+export const AFTER = Symbol("after");
+export interface Reply { ok: boolean; error?: string; [AFTER]?: () => void; [key: string]: unknown }
 export type Request = { cmd: string } & Record<string, unknown>;
 /** The longest frame a connection may carry; a longer one is refused. */
 export const MAX_FRAME = 1024 * 1024;
@@ -99,7 +101,8 @@ export function listenControl({ endpoint, secret, hello, handle, refused, platfo
 					} catch (error) {
 						reply = { ok: false, error: (error as Error).message };
 					}
-					if (!conn.destroyed) conn.write(`${JSON.stringify(reply)}\n`);
+					if (!conn.destroyed) conn.write(`${JSON.stringify(reply)}\n`, () => reply[AFTER]?.());
+					else reply[AFTER]?.();
 				});
 			}
 		});

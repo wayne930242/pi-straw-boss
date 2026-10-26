@@ -1,0 +1,273 @@
+import { herdrApi, herdrCall, herdrRun, socketRun } from "../herdr.ts";
+import { type HeadlessDeps, headlessConfig } from "../agent/config.ts";
+import { createHeadlessKit, type IntercomLike } from "../agent/kit.ts";
+import { herdrEvents, herdrWatch, type HerdrWatch } from "../server-watch.ts";
+import { startedLater } from "../startof.ts";
+import { AclError, applyAcl } from "./acl.ts";
+import { herdrListens, intercomOf, runsAs } from "./client.ts";
+import { type IntercomModule, loadIntercom, LoaderError } from "./intercom.ts";
+import { createLog } from "./log.ts";
+import {
+	clearStartError, fileOf, readRecord, restartingNow, type ServerRecord, secretDir, serverId, type Slot, TOUCH_MS, updateRecord, writeRecord, writeStartError,
+} from "./record.ts";
+import { AFTER, endpointFor, helloOf, listenControl, newSecret, type Reply, type Request } from "./socket.ts";
+import { packageRoot, VERSION } from "./version.ts";
+
+// The sb server process (docs/specs/2026-10-26-sb-backend.md). B1 is the skeleton: it owns the control socket and `server.json`, holds an intercom session of its own through
+// the headless kit, and takes the stop and restart requests. The GUI, the link holder, and the tower service move in with the later steps; nothing else moves yet.
+
+/** The exit code of a `serve` server that was asked to restart: a supervisor (launchd `KeepAlive`, systemd `Restart=on-failure`) starts it again. */
+export const SERVE_RESTART_CODE = 75;
+/** Exit codes: 0 done, 3 the server cannot run (tsx or pi-intercom missing, the Windows ACL). */
+export const EXIT_CANNOT_RUN = 3;
+const RETRY_MS = [1000, 2000, 5000, 10_000, 30_000];
+const BROKER_MS = 5000, HERDR_GONE_MS = 60_000, HERDR_POLL_MS = 5000, LEAVE_MS = 2000;
+
+export interface ServerOptions {
+	slot: Slot;
+	env: NodeJS.ProcessEnv;
+	mode: "detached" | "serve";
+	/** Who started it, for `restarting.by` and the log. */
+	by: string;
+	version?: string;
+	root?: string;
+	platform?: NodeJS.Platform;
+	pid?: number;
+	now?: () => number;
+	sleep?: (ms: number) => Promise<void>;
+	alive?: (pid: number) => boolean;
+	startOf?: (pid: number) => string | undefined;
+	/** This process's start time, as the record carries it. */
+	started?: () => Promise<string | undefined>;
+	/** Checks that tsx and pi-intercom are there and returns the way to the broker; throws a LoaderError. */
+	intercom?: () => Promise<IntercomModule>;
+	/** Sets and checks the Windows ACL of the state directory. */
+	acl?: (dir: string) => Promise<unknown>;
+	herdrUp?: () => Promise<boolean>;
+	watch?: HerdrWatch;
+	herdr?: HeadlessDeps;
+	touchMs?: number;
+	brokerMs?: number;
+	herdrGoneMs?: number;
+	herdrPollMs?: number;
+}
+export interface ServerHandle {
+	/** True once the server answers as ready (the broker is connected or has been tried, and `restarting` is cleared); false when it could not start. */
+	ready: Promise<boolean>;
+	/** The exit code, once the server has left. */
+	done: Promise<number>;
+	endpoint: string;
+	/** Ends the server without marking a stop: what a signal does. */
+	shutdown(code?: number): Promise<void>;
+}
+
+const phrase = (value: unknown, max: number) => (typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max) : "");
+
+export async function runServer(o: ServerOptions): Promise<ServerHandle> {
+	const { slot, env, mode, by } = o;
+	const now = o.now ?? Date.now, sleep = o.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+	const platform = o.platform ?? process.platform, pid = o.pid ?? process.pid, version = o.version ?? VERSION;
+	const touchMs = o.touchMs ?? TOUCH_MS, alive = o.alive, startOf = o.startOf;
+	const log = createLog(fileOf(slot, "log"), { now });
+	let finish!: (code: number) => void, markReady!: (ok: boolean) => void;
+	const done = new Promise<number>((resolve) => (finish = resolve));
+	const ready = new Promise<boolean>((resolve) => (markReady = resolve));
+	const startedAt = now();
+	const desk = env.STRAW_BOSS_DESK === "1";
+	let endpoint = "";
+	// Until the server is up there is nothing to take down: a start that failed has only its exit code to give.
+	let leave: (code: number) => Promise<void> = async (code) => finish(code);
+	const handle: ServerHandle = { ready, done, get endpoint() { return endpoint; }, shutdown: (code = 0) => leave(code) };
+
+	secretDir(slot.dir);
+	log.line("start", { pid, mode, version, by, herdr: slot.herdr, desk });
+
+	/** The start cannot go on: told in start-error.json (which `up` and the session looks read) and in the record, and the process leaves with the code. */
+	const abort = (code: "acl" | "loader" | "intercom", text: string, sddl?: string): ServerHandle => {
+		log.line("start-failed", { code, text });
+		writeStartError(slot, { code, text, ...(sddl ? { sddl } : {}) }, now());
+		updateRecord(slot, (r) => ({ ...r, lastError: { at: new Date(now()).toISOString(), code, text } }));
+		markReady(false);
+		finish(EXIT_CANNOT_RUN);
+		return handle;
+	};
+
+	// The Windows ACL comes before the secret is written anywhere.
+	if (platform === "win32") {
+		try {
+			await (o.acl ?? ((dir) => applyAcl(dir)))(slot.stateDir);
+		} catch (error) {
+			return abort("acl", (error as Error).message, error instanceof AclError ? error.sddl : undefined);
+		}
+	}
+	let mod: IntercomModule;
+	try {
+		mod = await (o.intercom ?? (() => loadIntercom({ env, root: o.root ?? packageRoot() })))();
+	} catch (error) {
+		return abort(error instanceof LoaderError ? error.code : "loader", (error as Error).message);
+	}
+
+	// One server per slot: a record whose process runs and answers is the server. (A requester holds server.lock, so this is a guard against a start that no one asked for.)
+	const prior = readRecord(slot);
+	if (prior && prior.pid !== pid && runsAs({ alive: alive ?? (() => true), startOf: startOf ?? (() => undefined) }, prior) && (await helloOf(prior.socket, prior.secret, 1000))) {
+		log.line("already-running", { pid: prior.pid });
+		markReady(true);
+		finish(0);
+		return handle;
+	}
+
+	const secret = newSecret();
+	endpoint = endpointFor(slot, platform);
+	log.hide(secret);
+	const own: ServerRecord = {
+		pid, ...(await (o.started ?? (() => startedLater(pid)))().then((started) => (started ? { started } : {}))), version, herdr: slot.herdr, mode, desk, intercom: intercomOf(env, platform),
+		// What the new server keeps from the one before it, so a restart changes nothing a page or a shell holds: the GUI's port and token (B2 fills them in), and the last error.
+		...(prior?.gui ? { gui: prior.gui } : {}), ...(prior?.lastError ? { lastError: prior.lastError } : {}),
+		log: fileOf(slot, "log"), socket: endpoint, secret, intercomId: serverId(slot),
+	};
+	let phase: "starting" | "ready" | "restarting" | "stopping" = "starting", client: IntercomLike | undefined, leaving: Promise<void> | undefined;
+	const timers: ReturnType<typeof setInterval>[] = [], stops: (() => void)[] = [];
+	const at = () => new Date(now()).toISOString();
+
+	// Written whole by rename, with `restarting` kept from the record (a restart began it) and only its `since` moved.
+	const writeOwn = () => {
+		const current = readRecord(slot);
+		writeRecord(slot, { ...own, ...(phase === "starting" ? { restarting: restartingNow(current?.restarting, now(), { reason: "starting", by }) } : {}) });
+	};
+	const recordError = (code: string, text: string) => {
+		own.lastError = { at: at(), code, text: phrase(text, 300) };
+		log.line("error", { code, text: own.lastError.text });
+		if (phase !== "stopping") updateRecord(slot, (r) => (r.pid === pid ? { ...r, lastError: own.lastError } : undefined));
+	};
+	const facts = () => ({ pid, ...(own.started ? { started: own.started } : {}), version, mode, desk, phase, ready: phase === "ready" });
+
+	const shutdown = (code: number): Promise<void> => (leaving ??= (async () => {
+		timers.forEach(clearInterval);
+		stops.forEach((stop) => stop());
+		await Promise.race([client?.disconnect().catch(() => {}), sleep(LEAVE_MS)]);
+		await control?.close();
+		log.line("exit", { code });
+		markReady(false);
+		finish(code);
+	})());
+	leave = shutdown;
+	/** From now on the server only answers `status`: its timers stop, and it leaves once the reply that told the requester is written. */
+	const leaveAfterReply = (next: "restarting" | "stopping", code: number): Reply => {
+		phase = next;
+		timers.forEach(clearInterval);
+		timers.length = 0;
+		return { ok: true, [AFTER]: () => void shutdown(code) };
+	};
+
+	let control: Awaited<ReturnType<typeof listenControl>> | undefined;
+	const handleRequest = async (request: Request): Promise<Reply> => {
+		if (request.cmd === "status") return { ok: true, ...facts(), uptimeMs: now() - startedAt, ...(own.lastError ? { lastError: own.lastError } : {}), towers: [], link: null };
+		if (phase === "restarting" || phase === "stopping") return { ok: false, error: "restarting" };
+		if (request.cmd === "stop") {
+			// A `serve` server is never stopped from here: its supervisor would start it again at once, and hide from the infra that its service is off.
+			if (mode === "serve") return { ok: false, error: "serve" };
+			const who = phrase(request.by, 120) || "unknown";
+			log.line("stop", { by: who });
+			updateRecord(slot, (r) => (r.pid === pid ? (({ restarting: _restarting, ...rest }) => ({ ...rest, stopped: true }))(r) : undefined));
+			return leaveAfterReply("stopping", 0);
+		}
+		if (request.cmd === "restart") {
+			const reason = phrase(request.reason, 200) || "restart", who = phrase(request.by, 120) || "unknown";
+			log.line("restart", { reason, by: who });
+			updateRecord(slot, (r) => (r.pid === pid ? { ...r, restarting: { began: at(), since: at(), reason, by: who } } : undefined));
+			return leaveAfterReply("restarting", mode === "serve" ? SERVE_RESTART_CODE : 0);
+		}
+		return { ok: false, error: `unknown command ${String(request.cmd)}` };
+	};
+
+	try {
+		control = await listenControl({
+			endpoint, secret, platform, now, hello: facts, handle: handleRequest,
+			refused: (why) => log.line("refused", { why }),
+		});
+	} catch (error) {
+		return abort("loader", `the control socket cannot listen at ${endpoint}: ${(error as Error).message}`);
+	}
+	writeOwn();
+	timers.push(setInterval(() => {
+		try {
+			if (phase === "restarting" || phase === "stopping") return;
+			const current = readRecord(slot);
+			if (phase === "starting") return writeOwn();
+			if (current?.pid === pid && current.secret === secret && current.socket === endpoint) return;
+			// Another server that runs wrote it (a takeover is under way): not ours to fight over.
+			if (current && current.pid !== pid && runsAs({ alive: alive ?? (() => true), startOf: startOf ?? (() => undefined) }, current)) return;
+			log.line("record-restored");
+			writeOwn();
+		} catch (error) {
+			recordError("record", (error as Error).message);
+		}
+	}, touchMs));
+
+	// Herdr: a new server taking over the socket is noticed (B4 finds the tower tabs again then); a detached server leaves 60 s after its Herdr is gone.
+	const herdrCfg = { ...o.herdr, call: o.herdr?.call ?? herdrCall(slot.herdr), api: o.herdr?.api ?? herdrApi(slot.herdr), watch: o.herdr?.watch ?? o.watch ?? herdrWatch(slot.herdr), events: o.herdr?.events ?? herdrEvents(slot.herdr), stateDir: slot.stateDir };
+	const kitEnv = { ...env, PI_INTERCOM_SESSION_ID: serverId(slot) };
+	const cfg = headlessConfig({ ...herdrCfg, run: o.herdr?.run ?? socketRun(herdrRun, herdrCfg.call, undefined) }, kitEnv);
+	// SAFETY: the kit hands a client to the modules that run the net; it is attached at the first connection, before any of them is built (none is in B1).
+	const kit = createHeadlessKit({ client: undefined as unknown as IntercomLike, env: kitEnv, cfg, log: () => {} });
+	stops.push(cfg.watch(() => log.line("herdr-takeover")));
+	let downSince: number | undefined;
+	const herdrUp = o.herdrUp ?? (() => herdrListens({ slot, platform }));
+	timers.push(setInterval(() => void herdrUp().then((up) => {
+		if (up) return void (downSince = undefined);
+		downSince ??= now();
+		if (mode === "detached" && phase !== "restarting" && phase !== "stopping" && now() - downSince >= (o.herdrGoneMs ?? HERDR_GONE_MS)) {
+			recordError("herdr", `Herdr at ${slot.herdr} has not answered for ${Math.round((now() - downSince) / 1000)} s, so this server leaves`);
+			void shutdown(0);
+		}
+	}), o.herdrPollMs ?? HERDR_POLL_MS));
+
+	// pi-intercom: the server's own session, reconnecting with the sidecar's backoff (1, 2, 5, 10, then 30 s). While it is disconnected its identities are not live.
+	let connecting = false, resolveFirst!: (ok: boolean) => void;
+	const first = new Promise<boolean>((resolve) => (resolveFirst = resolve));
+	const connectLoop = async () => {
+		if (connecting) return;
+		connecting = true;
+		for (let attempt = 0; !leaving && phase !== "restarting" && phase !== "stopping"; attempt++) {
+			try {
+				const next = await mod.connect();
+				kit.attach(next);
+				client = next;
+				next.on("message", () => {});
+				next.on("disconnected", () => {
+					if (client === next) {
+						log.line("intercom-lost");
+						connecting = false;
+						void connectLoop();
+					}
+				});
+				next.on("error", () => {});
+				await next.connect({ name: "sb server", cwd: slot.dir, model: "straw-boss-server", pid, startedAt, lastActivity: now() }, serverId(slot));
+				log.line("intercom-connected", { id: serverId(slot), intercom: mod.version });
+				resolveFirst(true);
+				break;
+			} catch (error) {
+				recordError("intercom", (error as Error).message);
+				resolveFirst(false);
+				await sleep(RETRY_MS[Math.min(attempt, RETRY_MS.length - 1)]!);
+			}
+		}
+		connecting = false;
+	};
+	void connectLoop();
+	await Promise.race([first, sleep(o.brokerMs ?? BROKER_MS).then(() => false)]);
+
+	// Ready: the identities are as registered as they can be, `restarting` goes, and the start-error of this attempt (and any before it) with it.
+	if (phase === "starting") {
+		phase = "ready";
+		updateRecord(slot, (r) => {
+			if (r.pid !== pid) return undefined;
+			const { restarting: _restarting, ...rest } = r;
+			return rest;
+		});
+		clearStartError(slot);
+		log.line("ready", { ms: now() - startedAt });
+		markReady(true);
+	}
+	return handle;
+}

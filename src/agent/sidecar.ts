@@ -6,17 +6,17 @@ import { removeEntry } from "../board.ts";
 import { setBoard } from "../boardset.ts";
 import { createDigest } from "../digest.ts";
 import { createElection } from "../election.ts";
-import { createGuard, GUARD_MS, RESTORE_WAIT_MS } from "../guard.ts";
-import { herdrApi, herdrCall, herdrRun, herdrWorld, isSub, place, socketRun, worldOf, panes, workspaces } from "../herdr.ts";
+import { createGuard } from "../guard.ts";
+import { isSub, place, panes, workspaces } from "../herdr.ts";
 import type { Briefing } from "../briefing.ts";
 import { createMembership } from "../membership.ts";
 import { createPresence } from "../presence.ts";
 import { createReach } from "../reach.ts";
 import { createRoles } from "../roles.ts";
-import { herdrEvents, herdrWatch } from "../server-watch.ts";
-import type { Config, Deps, Scope } from "../state.ts";
+import type { Scope } from "../state.ts";
 import { type Incoming, type IntercomLike, createHeadlessKit } from "./kit.ts";
 import { claim } from "./claim.ts";
+import { type HeadlessDeps, headlessConfig } from "./config.ts";
 import { agentFiles, findIntercom, type Held, newPipe, readHeld, type Reply, socketIsFile, stateDirOf } from "./paths.ts";
 
 // The net presence of one Claude Code or Codex pane (docs/specs/2026-10-23-claude-codex-net): it registers with the pi-intercom broker as a session, joins the tab's
@@ -25,7 +25,7 @@ import { agentFiles, findIntercom, type Held, newPipe, readHeld, type Reply, soc
 
 export type Kind = "claude" | "codex";
 /** `connect` hands a new client of the broker (started when none runs); the rest are the dependencies of a pi session, replaceable the same way. */
-export interface AgentDeps extends Pick<Deps, "run" | "world" | "api" | "call" | "sleep" | "now" | "events" | "watch" | "guardMs" | "couple" | "autoTower" | "detectMs" | "stateDir" | "restoreMs"> {
+export interface AgentDeps extends HeadlessDeps {
 	env?: NodeJS.ProcessEnv;
 	connect?: () => IntercomLike | Promise<IntercomLike>;
 	/** How often the pane is read when Herdr's events say nothing, how often the record file is looked at, and how long an agent Herdr has not detected yet is waited for. */
@@ -49,7 +49,6 @@ export interface Sidecar {
 const RETRY_MS = [1000, 2000, 5000, 10_000, 30_000];
 const CONFIRM_MS = 1500, GATE_MS = 8000, SEEN_MAX = 200;
 const PANE_EVENTS = ["pane.closed", "pane.exited", "pane.updated", "pane.agent_detected", "pane.agent_status_changed"];
-const unavailable = (what: string) => (() => { throw new Error(`${what} is not available in a net sidecar`); }) as never;
 const clean = (text: string) => text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").replace(/\s+/g, " ").trim();
 const quote = (value: string) => (/[\s"\]=]/.test(value) ? `"${value.replace(/"/g, "'")}"` : value);
 /** One shell word for the reply hint: plain text as is, anything else in single quotes, and a double quote or a control character as an escape in $'…' (the hint sits inside double quotes). */
@@ -58,18 +57,6 @@ const shell = (value: string) => /^[\w@%+=:,./-]+$/.test(value) ? value
 	: `'${value.replace(/'/g, `'\\''`)}'`;
 /** What a pi session's own environment sets and an agent that merely runs in its shell must not carry over: its intercom identity and pool, its subagent role, and the tower role. */
 const piOwn = (key: string) => /^PI_(INTERCOM|SUBAGENT)_/.test(key) || key === "STRAW_BOSS_ROLE";
-
-/** The configuration of a pi session, with what only the GUI and the tower's host use left unavailable. */
-function agentConfig(d: AgentDeps, env: NodeJS.ProcessEnv): Config {
-	const call = d.call ?? herdrCall(), run = d.run ?? socketRun(herdrRun, call);
-	return {
-		run, world: d.world ?? (d.run ? worldOf(run) : herdrWorld(call)), api: d.api ?? herdrApi(), call, env, stateDir: d.stateDir,
-		sleep: d.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))), now: d.now ?? Date.now,
-		watch: d.watch ?? herdrWatch(), events: d.events ?? herdrEvents(), guardMs: d.guardMs ?? GUARD_MS, couple: d.couple ?? true, autoTower: d.autoTower ?? true, detectMs: d.detectMs ?? 1000,
-		tailscale: unavailable("tailscale"), copy: unavailable("copy"), openUrl: unavailable("openUrl"), later: unavailable("later"), gone: unavailable("gone"),
-		promptDir: "", bundle: undefined, nudgeMs: 0, version: "", adoptMs: 0, restoreMs: d.restoreMs ?? RESTORE_WAIT_MS,
-	};
-}
 
 /** pi-intercom's client, its broker started when none runs, from the directory pi-intercom is installed in. */
 async function intercomClient(env: NodeJS.ProcessEnv): Promise<IntercomLike> {
@@ -87,7 +74,7 @@ export async function startSidecar({ pane, kind, session, record, cli = "straw-n
 	// The inherited environment is the agent's: whatever a pi session set in it (its intercom id, its subagent or tower role) is not this process's.
 	const inherited = Object.fromEntries(Object.entries(deps.env ?? process.env).filter(([key]) => !piOwn(key)));
 	const env: NodeJS.ProcessEnv = { ...inherited, HERDR_PANE_ID: pane, PI_INTERCOM_SESSION_ID: id };
-	const cfg = agentConfig(deps, env), { run, world, sleep, now } = cfg;
+	const cfg = headlessConfig(deps, env), { run, world, sleep, now } = cfg;
 	const log = (line: string) => (deps.log ?? ((text) => console.error(`${new Date().toISOString()} ${text}`)))(line);
 	const files = agentFiles(cfg.stateDir ?? stateDirOf(env), pane);
 	// One sidecar per pane: the state file is claimed exclusively. A holder is a process that answers on the pane's socket (a pid alone is not one), or one that is young and has not opened it yet.
