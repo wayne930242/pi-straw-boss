@@ -141,6 +141,40 @@ export function touchRestarting(slot: Slot, now: number, began?: string, expect?
 	return touched;
 }
 
+/**
+ * The record of a server that is about to start, written by whoever starts it before it spawns anything (a cold Windows start takes seconds before the new process can write its
+ * own): `restarting` with reason `starting`, so a look at the state sees a start under way and not a server that is gone. A record that is there (a dead server's, a restart's) keeps
+ * everything it holds and gets the `restarting`; with none, a placeholder holds the place, with no socket and no secret, so nothing connects to it. Returns the `began` of the
+ * start, and the pid and secret of the record the starter keeps fresh (`touchRestarting`'s `expect`).
+ */
+export function markStarting(slot: Slot, now: number, who: { pid: number; version: string; desk: boolean; intercom: IntercomScope; mode: ServerRecord["mode"]; by: string }): { began: string; expect: { pid: number; secret: string } } {
+	const fresh = { reason: "starting", by: who.by };
+	secretDir(slot.dir);
+	const found = readRecord(slot);
+	if (found) {
+		const restarting = restartingNow(found.restarting, now, fresh);
+		writeRecord(slot, { ...found, restarting });
+		return { began: restarting.began, expect: { pid: found.pid, secret: found.secret } };
+	}
+	const restarting = restartingNow(undefined, now, fresh);
+	writeRecord(slot, { pid: who.pid, version: who.version, herdr: slot.herdr, mode: who.mode, desk: who.desk, intercom: who.intercom, log: fileOf(slot, "log"), socket: "", secret: "", intercomId: serverId(slot), restarting });
+	return { began: restarting.began, expect: { pid: who.pid, secret: "" } };
+}
+/** Moves the placeholder `markStarting` wrote to the pid of the process that was started for it. Returns the record the starter keeps fresh from now on. */
+export function adoptStarting(slot: Slot, from: { pid: number; secret: string }, pid: number): { pid: number; secret: string } {
+	if (from.secret !== "") return from;
+	const adopted = updateRecord(slot, (record) => (record.pid === from.pid && record.secret === "" ? { ...record, pid } : undefined));
+	return adopted?.pid === pid ? { pid, secret: "" } : from;
+}
+/** A start that failed no longer counts as under way: its `restarting` goes, if the record is still the starter's (a server that took it over keeps its own). */
+export function endStarting(slot: Slot, began: string, expect: { pid: number; secret: string }): void {
+	updateRecord(slot, (record) => {
+		if (!record.restarting || record.restarting.began !== began || record.pid !== expect.pid || record.secret !== expect.secret) return undefined;
+		const { restarting: _restarting, ...rest } = record;
+		return rest;
+	});
+}
+
 export const readStartError = (slot: Slot) => parse<StartError>(readRaw(fileOf(slot, "startError")));
 export const writeStartError = (slot: Slot, error: Omit<StartError, "at"> & { at?: string }, now: number) => writeJson(fileOf(slot, "startError"), { at: at(now), ...error });
 /** Deleted at each start attempt (under the lock, before it spawns) and by the new server once it answers `hello`. */
@@ -209,8 +243,14 @@ const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 export async function takeLock(slot: Slot, by: string, deps: LockDeps = {}, waitMs = 0): Promise<Lock> {
 	const now = deps.now ?? Date.now, sleep = deps.sleep ?? pause, lock = fileOf(slot, "lock"), marker = fileOf(slot, "stale");
 	const self = deps.self ?? { pid: process.pid, started: () => startedLater(process.pid) };
-	const info: LockInfo = { pid: self.pid, ...((started) => (started ? { started } : {}))(await self.started()), by, since: at(now()) };
-	const body = JSON.stringify(info);
+	// The start time is taken if it is known now (macOS and Linux: always); on Windows it takes seconds (a PowerShell start), and a cold start does not wait for it: the lock is
+	// taken without it and written again with it when it arrives. Until then the lock is judged by its pid alone, as one whose start time `ps` cannot tell is.
+	let known: string | undefined, settled = false;
+	const startedSoon = Promise.resolve(self.started()).then((started) => ((settled = true), (known = started)), () => ((settled = true), undefined));
+	await undefined; // one turn of the microtask queue: an answer that is already in has been taken by then
+	const first = settled ? known : undefined;
+	const info: LockInfo = { pid: self.pid, ...(first ? { started: first } : {}), by, since: at(now()) };
+	let body = JSON.stringify(info);
 	secretDir(slot.dir);
 	const temp = `${lock}.${self.pid}.${randomBytes(4).toString("hex")}.tmp`;
 	writeFileSync(temp, body, { flag: "wx", mode: 0o600 });
@@ -219,6 +259,7 @@ export async function takeLock(slot: Slot, by: string, deps: LockDeps = {}, wait
 		for (;;) {
 			try {
 				linkSync(temp, lock);
+				if (!first) void startedSoon.then((started) => (body = completeLock(lock, body, started) ?? body));
 				return { info, release: () => (readRaw(lock) === body ? rmSync(lock, { force: true }) : undefined) };
 			} catch (error) {
 				if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -235,6 +276,23 @@ export async function takeLock(slot: Slot, by: string, deps: LockDeps = {}, wait
 			if (now() >= end) throw new LockBusy(held);
 			await sleep(Math.min(50, Math.max(1, end - now())));
 		}
+	} finally {
+		rmSync(temp, { force: true });
+	}
+}
+/** Writes the lock again with the holder's start time, by rename, only while the lock still holds `body` (the text this process wrote). Returns the new text, or undefined when it was left as it is. */
+function completeLock(lock: string, body: string, started: string | undefined): string | undefined {
+	if (!started || readRaw(lock) !== body) return undefined;
+	const info = parse<LockInfo>(body);
+	if (!info || info.started) return undefined;
+	const next = JSON.stringify({ ...info, started }), temp = `${lock}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+	try {
+		writeFileSync(temp, next, { flag: "wx", mode: 0o600 });
+		if (readRaw(lock) !== body) return undefined;
+		renameSync(temp, lock);
+		return next;
+	} catch {
+		return undefined; // best effort: the lock stands as it was
 	} finally {
 		rmSync(temp, { force: true });
 	}

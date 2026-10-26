@@ -270,6 +270,9 @@ const selfPath = () => fileURLToPath(import.meta.url.split("?")[0]!);
 // Run as a script (the path to this file may reach it through a symlink).
 const realpath = (path: string) => { try { return realpathSync(path); } catch { return path; } };
 if (process.argv[1] && realpath(selfPath()) === realpath(process.argv[1])) {
+	// On Windows the reads this process waits on (a PowerShell child for a start time) are unref'd so that pi may leave with one pending, and a process that only waits on them
+	// runs out of work and ends with its top-level await unsettled (exit 13, seen in the VM). A timer that is not unref'd holds it until `run` has an answer; `process.exit` ends it.
+	setInterval(() => {}, 2 ** 30);
 	const code = await run(process.argv.slice(2));
 	await new Promise<void>((resolve) => process.stdout.write("", () => resolve()));
 	process.exit(code);

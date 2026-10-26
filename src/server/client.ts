@@ -6,8 +6,8 @@ import { newer } from "../semver.ts";
 import { startOf } from "../startof.ts";
 import { createLog, type Log } from "./log.ts";
 import {
-	clearStartError, clearStopped, fileOf, type IntercomScope, type LockDeps, readRecord, readStartError, restartingFresh, type ServerRecord, type Slot,
-	type StartError, takeLock, TOUCH_MS, touchRestarting, updateRecord,
+	adoptStarting, clearStartError, clearStopped, endStarting, fileOf, type IntercomScope, type LockDeps, markStarting, readRecord, readStartError, restartingFresh, type ServerRecord,
+	type Slot, type StartError, takeLock, TOUCH_MS, touchRestarting, updateRecord,
 } from "./record.ts";
 import { callControl, ControlError, helloOf, type Reply } from "./socket.ts";
 
@@ -16,7 +16,13 @@ import { callControl, ControlError, helloOf, type Reply } from "./socket.ts";
 
 /** How long a start waits for the new server to answer hello, a restart's old server to exit, and a supervisor to start a `serve` server again (the budgets the guard's 30 s rule is built on). */
 export interface Timers { start: number; exit: number; supervisor: number; touch: number }
-export const TIMERS: Timers = { start: 20_000, exit: 10_000, supervisor: 10_000, touch: TOUCH_MS };
+/**
+ * A cold start on Windows (a Windows 11 ARM VM, x64 emulation) took 7.4 to 22.9 s to answer hello, three starts in a row went past 20 s, and every PowerShell start in it takes 2 to 3 s:
+ * the wait there is 60 s (the requester touches `restarting` the whole time, so nothing counts it as gone), 20 s elsewhere.
+ */
+export const START_MS = { win32: 60_000, other: 20_000 } as const;
+export const timersFor = (platform: NodeJS.Platform = process.platform): Timers => ({ start: platform === "win32" ? START_MS.win32 : START_MS.other, exit: 10_000, supervisor: 10_000, touch: TOUCH_MS });
+export const TIMERS: Timers = timersFor();
 const HELLO_MS = 2000;
 
 export type Refusal = "stopped" | "older" | "scope" | "herdr" | "busy" | "serve" | "start-failed" | "exit-timeout" | "restarting" | "unreachable" | "rate";
@@ -93,7 +99,7 @@ export function makeCtx(over: Partial<Ctx> & Pick<Ctx, "slot" | "version" | "cli
 	const sleep = over.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 	const log = over.log ?? createLog(fileOf(over.slot, "log"), { now });
 	return {
-		env: process.env, platform: process.platform, node: process.execPath, spawn: spawnDetached, timers: TIMERS,
+		env: process.env, platform: process.platform, node: process.execPath, spawn: spawnDetached, timers: timersFor(over.platform),
 		kill: (pid, signal) => void process.kill(pid, signal),
 		// This process holds the locks it takes: it is alive however the liveness check is replaced.
 		lock: { now, alive: (pid) => pid === process.pid || alive(pid), startOf: start, sleep, note: (event, fields) => log.line(event, fields) },
@@ -117,7 +123,8 @@ export function runsAs(ctx: Pick<Ctx, "alive" | "startOf">, record: Pick<ServerR
 /** A server counts as live when its PID is alive, started at the recorded time, and answers hello on the control socket within 2 s: a PID alone is not enough. */
 export async function probe(ctx: Ctx): Promise<Probe> {
 	const record = readRecord(ctx.slot);
-	if (!record || !runsAs(ctx, record)) return { record, live: false, hello: undefined };
+	// A record with no socket is a start that has not got far enough to listen (`markStarting`): there is nothing to ask.
+	if (!record || !record.socket || !runsAs(ctx, record)) return { record, live: false, hello: undefined };
 	const hello = await helloOf(record.socket, record.secret, HELLO_MS);
 	return { record, live: Boolean(hello && hello.pid === record.pid), hello };
 }
@@ -155,8 +162,11 @@ const specOf = (ctx: Ctx): SpawnSpec => ({ command: ctx.node, args: [ctx.cli, "r
 
 /** The server a restart replaces: its record is the one the requester keeps fresh until the new server writes its own. */
 export interface Replaced { pid: number; secret: string }
-/** Waits until a new server (not `old`) answers hello and is ready, touching `restarting.since` while it waits, or the child exits, or `ms` pass. */
-export async function waitReady(ctx: Ctx, ms: number, { old, exited, began }: { old?: Replaced; exited?: Promise<number | null>; began?: string } = {}): Promise<ServerRecord | { exit: number | null } | undefined> {
+/**
+ * Waits until a new server (not `old`) answers hello and is ready, touching `restarting.since` while it waits (`keeps`: the record whose `restarting` it touches, `old` by default),
+ * or the child exits, or `ms` pass.
+ */
+export async function waitReady(ctx: Ctx, ms: number, { old, keeps = old, exited, began }: { old?: Replaced; keeps?: Replaced; exited?: Promise<number | null>; began?: string } = {}): Promise<ServerRecord | { exit: number | null } | undefined> {
 	const end = ctx.now() + ms;
 	let gone: number | null | undefined, touched = ctx.now();
 	void exited?.then((code) => (gone = code));
@@ -168,7 +178,7 @@ export async function waitReady(ctx: Ctx, ms: number, { old, exited, began }: { 
 		if (ctx.now() >= end) return undefined;
 		if (began && ctx.now() - touched >= ctx.timers.touch) {
 			touched = ctx.now();
-			touchRestarting(ctx.slot, ctx.now(), began, old);
+			touchRestarting(ctx.slot, ctx.now(), began, keeps);
 		}
 		await ctx.sleep(100);
 	}
@@ -180,13 +190,33 @@ function failed(ctx: Ctx, outcome: { exit: number | null } | undefined): ServerE
 	return new ServerError("start-failed", why, startError);
 }
 
-/** Starts a detached server from this package and waits for it. The caller holds `server.lock`. `start-error.json` of an earlier attempt is deleted first. */
+/**
+ * Starts a detached server from this package and waits for it. The caller holds `server.lock`. `start-error.json` of an earlier attempt is deleted first. A start that is not a
+ * restart (`began` is the restart's) writes `restarting` before it spawns anything and keeps it fresh until the server answers or the start fails, so a cold start is never taken for a
+ * server that is gone.
+ */
 export async function launch(ctx: Ctx, { began, old }: { began?: string; old?: Replaced } = {}): Promise<ServerRecord> {
 	clearStartError(ctx.slot);
+	const t0 = ctx.now();
+	let keeps = old, mine: { began: string; expect: Replaced } | undefined;
+	if (!began) {
+		const marked = markStarting(ctx.slot, ctx.now(), { pid: process.pid, version: ctx.version, desk: ctx.env.STRAW_BOSS_DESK === "1", intercom: intercomOf(ctx.env, ctx.platform), mode: "detached", by: ctx.by });
+		mine = { began: marked.began, expect: marked.expect };
+		keeps = marked.expect;
+	}
 	const child = ctx.spawn(specOf(ctx));
-	ctx.log.line("start-requested", { by: ctx.by, version: ctx.version, pid: child.pid });
-	const outcome = await waitReady(ctx, ctx.timers.start, { exited: child.exited, began, old });
-	if (outcome && "pid" in outcome) return outcome;
+	if (mine && child.pid !== undefined) {
+		mine.expect = adoptStarting(ctx.slot, mine.expect, child.pid);
+		keeps = mine.expect;
+	}
+	ctx.log.line("start-requested", { by: ctx.by, version: ctx.version, pid: child.pid, spawnMs: ctx.now() - t0 });
+	const outcome = await waitReady(ctx, ctx.timers.start, { exited: child.exited, began: began ?? mine?.began, old, keeps });
+	if (outcome && "pid" in outcome) {
+		ctx.log.line("start-answered", { pid: outcome.pid, ms: ctx.now() - t0 });
+		return outcome;
+	}
+	if (mine) endStarting(ctx.slot, mine.began, mine.expect);
+	ctx.log.line("start-unanswered", { ms: ctx.now() - t0, exit: outcome ? String(outcome.exit) : "none" });
 	throw failed(ctx, outcome);
 }
 
@@ -337,9 +367,12 @@ export interface Stopped { outcome: "stopped" | "already-down" }
  * running, a record that is not yet marked is marked, so no session starts the server again unasked.
  */
 export async function stop(ctx: Ctx): Promise<Stopped> {
+	const t0 = ctx.now();
 	const lock = await lockFor(ctx, 10_000);
+	const locked = ctx.now();
 	try {
 		const seen = await probe(ctx);
+		const probed = ctx.now();
 		// As for a restart: the server runs in the broker scope it was started in, and a stop from another one is not its requester's to give.
 		if (seen.record && !sameBroker(seen.record.intercom, intercomOf(ctx.env, ctx.platform))) throw new ServerError("scope", "the sb server runs in another pi-intercom scope or transport than this process, so this process does not stop it");
 		if (!seen.live || !seen.record) {
@@ -354,11 +387,13 @@ export async function stop(ctx: Ctx): Promise<Stopped> {
 			throw new ServerError("unreachable", `the sb server did not take the stop: ${(error as Error).message}`);
 		}
 		if (reply && !reply.ok) throw new ServerError(reply.error === "serve" ? "serve" : "unreachable", `the sb server refused the stop: ${String(reply.error)}`);
-		const end = ctx.now() + ctx.timers.exit;
+		const replied = ctx.now(), end = replied + ctx.timers.exit;
 		while (ctx.alive(seen.record.pid) && ctx.now() < end) await ctx.sleep(50);
 		if (ctx.alive(seen.record.pid)) throw new ServerError("exit-timeout", `the sb server (pid ${seen.record.pid}) did not exit after the stop was asked`);
 		// The server marks it itself on its way out; a server that died first leaves the mark to this requester.
 		updateRecord(ctx.slot, (r) => (r.stopped ? undefined : { ...r, stopped: true }));
+		// Where a stop spends its time (a slow one on Windows was 7 to 12 s): the lock, the look at the server, the request, and the wait for the process to be gone.
+		ctx.log.line("stop-done", { lockMs: locked - t0, probeMs: probed - locked, replyMs: replied - probed, exitMs: ctx.now() - replied });
 		return { outcome: "stopped" };
 	} finally {
 		lock.release();

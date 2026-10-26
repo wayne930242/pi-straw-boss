@@ -23,11 +23,39 @@ test("the command is one PowerShell start with the folder in the environment, ne
 
 test("the script reads the owner's SID, grants the owner and SYSTEM by SID, inherits nothing, and reads every SDDL back", () => {
 	assert.match(ACL_SCRIPT, /WindowsIdentity\]::GetCurrent\(\)\.User\.Value/);
-	assert.match(ACL_SCRIPT, /icacls\.exe \$dir \/inheritance:r \/grant:r "\*\$\{sid\}:\(OI\)\(CI\)F" '\*S-1-5-18:\(OI\)\(CI\)F' \/T/);
+	assert.match(ACL_SCRIPT, /& icacls\.exe \$dir \/inheritance:r \/grant:r "\*\$\{sid\}:\(OI\)\(CI\)F" '\*S-1-5-18:\(OI\)\(CI\)F' \| Out-Null/);
 	assert.match(ACL_SCRIPT, /Get-Acl -LiteralPath \$dir\)\.Sddl/);
-	for (const name of ["server.json", "gui.json", "paired.json", "link"]) assert.ok(ACL_SCRIPT.includes(name), name);
+	for (const name of ["server.json", "server.lock", "server.log", "gui.json", "paired.json", "link"]) assert.ok(ACL_SCRIPT.includes(name), name);
 	assert.match(ACL_SCRIPT, /ConvertTo-Json -Compress/);
 	assert.ok(!/\$sid:/.test(ACL_SCRIPT), "$sid: would be read as a variable in a scope named sid");
+});
+
+test("the folder is protected first and without /T, then each file that is already in it is made to inherit again and is granted the owner and SYSTEM itself (the VM found server.log and server.lock with an empty DACL)", () => {
+	const lines = ACL_SCRIPT.split("\n");
+	const folder = lines.findIndex((l) => l.includes("icacls.exe $dir /inheritance:r"));
+	assert.ok(folder > 0);
+	assert.ok(!/\/T\b/.test(ACL_SCRIPT), "icacls /T strips the inherited ACEs of the files that are there, and an (OI)(CI) grant does not land on a file");
+	// The files come after the folder, one icacls call each: inheritance back on, and an explicit grant of full control to the owner and SYSTEM by SID, without the container flags.
+	const files = lines.findIndex((l) => l.includes("icacls.exe $item.FullName /inheritance:e"));
+	assert.ok(files > folder, "after the folder");
+	assert.match(lines[files]!, /\/inheritance:e \/grant:r "\*\$\{sid\}:\$grant" "\*S-1-5-18:\$grant"/);
+	assert.ok(lines.some((l) => l.includes("$grant = if ($item.PSIsContainer) { '(OI)(CI)F' } else { 'F' }")), "a file gets F, a folder (OI)(CI)F");
+	assert.ok(lines.findIndex((l) => l.includes("Get-Acl -LiteralPath $p")) > files, "the SDDLs are read back after the repair");
+	// The files the check reads include the ones that existed before the ACL: the lock the starter took and the log.
+	assert.match(ACL_SCRIPT, /'server\.json', 'server\.lock', 'server\.log'/);
+});
+
+test("a file that is gone while the script runs (a temp file renamed into place) is not a failure, any other read error is", () => {
+	assert.match(ACL_SCRIPT, /try \{ & icacls\.exe \$item\.FullName[^\n]*\} catch \{ \}/);
+	assert.match(ACL_SCRIPT, /catch \{ if \(Test-Path -LiteralPath \$p\) \{ throw \} \}/);
+});
+
+test("the same PowerShell start tells the server's start time (Win32_Process.CreationDate in the form startof.ts uses), from its pid in the environment, and a failure there leaves it null", () => {
+	assert.match(ACL_SCRIPT, /Get-CimInstance Win32_Process -Filter "ProcessId=\$\(\$env:SB_ACL_PID -as \[int\]\)"\)\.CreationDate\.ToUniversalTime\(\)\.ToString\('yyyy-MM-ddTHH:mm:ss\.fffZ', \[cultureinfo\]::InvariantCulture\)/);
+	assert.match(ACL_SCRIPT, /\$started = \$null\ntry \{ \$started = .*\} catch \{ \}/);
+	assert.match(ACL_SCRIPT, /started = \$started/);
+	assert.equal(aclCommand("C:\\s", { PATH: "p" }, 5000, 4321).options.env.SB_ACL_PID, "4321");
+	assert.equal(aclCommand("C:\\s", { PATH: "p" }).options.env.SB_ACL_PID, String(process.pid));
 });
 
 test("sbr-F007: the script sets UTF-8 output on its first line and prints its answer as ASCII only, so no OEM code page can put a backslash inside a JSON string", () => {
@@ -106,8 +134,16 @@ test("the script's answer: one JSON line (the last line of the output), a one-it
 const exec = (error: Error | null, stdout: string): Exec => (_f, _a, _o, done) => void done(error, stdout);
 const answer = (over: object = {}) => JSON.stringify({ sid: OWNER, dir: good, files: [{ path: "server.json", sddl: `O:${OWNER}D:AI${ACE(OWNER, "ID")}${ACE("SY", "ID")}` }], ...over });
 
+test("the answer's start time is kept only in the form startof.ts writes", () => {
+	const base = { sid: OWNER, dir: good, files: [] };
+	assert.equal(parseAclOutput(JSON.stringify({ ...base, started: "2026-10-26T04:21:53.000Z" })).started, "2026-10-26T04:21:53.000Z");
+	for (const bad of [null, "", "yesterday", "2026-10-26T04:21:53Z", 5]) assert.equal(parseAclOutput(JSON.stringify({ ...base, started: bad })).started, undefined, String(bad));
+	assert.equal(parseAclOutput(JSON.stringify(base)).started, undefined);
+});
+
 test("applyAcl passes when the SDDL is right and fails the start, with the SDDL it read, when it is not", async () => {
 	assert.deepEqual(await applyAcl("C:\\s", exec(null, answer())), { sid: OWNER });
+	assert.deepEqual(await applyAcl("C:\\s", exec(null, answer({ started: "2026-10-26T04:21:53.000Z" }))), { sid: OWNER, started: "2026-10-26T04:21:53.000Z" });
 	await assert.rejects(applyAcl("C:\\s", exec(new Error("Access is denied"), "")), (e: unknown) => e instanceof AclError && /Access is denied/.test(e.message) && e.sddl === undefined);
 	await assert.rejects(applyAcl("C:\\s", exec(null, "oops")), /could not read the ACL/);
 	await assert.rejects(applyAcl("C:\\s", exec(null, answer({ dir: `O:${OWNER}G:DUD:${ACE(OWNER)}${ACE("SY")}` }))), (e: unknown) => e instanceof AclError && /not protected/.test(e.message) && Boolean(e.sddl?.includes(OWNER)));

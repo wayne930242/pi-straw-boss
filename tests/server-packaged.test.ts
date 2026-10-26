@@ -51,7 +51,9 @@ test("packaged: the packed package installs with pi's npm flags (no pi packages 
 		const cli = join(modules, "pi-straw-boss", "dist", "server", "cli.mjs"), env = { ...clean, PI_CODING_AGENT_DIR: agent };
 		const sb = (...args: string[]) => JSON.parse(run(process.execPath, [cli, ...args], { env, timeout: 60_000 }).trim().split("\n").at(-1)!) as Record<string, unknown>;
 		assert.equal(sb("status").state, "gone");
+		const upping = Date.now();
 		const up = sb("up");
+		const upMs = Date.now() - upping;
 		started.push(up.pid as number);
 		assert.equal(up.server, "started");
 		assert.equal(up.package, JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version);
@@ -64,7 +66,12 @@ test("packaged: the packed package installs with pi's npm flags (no pi packages 
 		assert.equal(sb("up").server, "found", "a second up finds it");
 		const broker = join(agent, "intercom", "broker.pid");
 		if (existsSync(broker)) started.push(Number(readFileSync(broker, "utf8").trim()));
+		const stopping = Date.now();
 		assert.deepEqual(sb("stop"), { outcome: "stopped" });
+		const stopMs = Date.now() - stopping;
+		console.log(`packaged: up ${upMs} ms, stop ${stopMs} ms`);
+		// The VM found a stop taking 7 to 12 s on Windows (it was waiting on PowerShell reads); here the whole command, node's start included, is well under 2 s.
+		assert.ok(stopMs < 2000, `stop took ${stopMs} ms: ${readFileSync(join(agent, "straw-boss", "server.log"), "utf8").split("\n").filter((l) => /stop-done|phase|exit/.test(l)).join(" | ")}`);
 		await until(() => !alive(up.pid as number), "the server to leave");
 	} finally {
 		for (const pid of started.reverse()) if (Number.isInteger(pid) && pid > 1 && alive(pid)) process.kill(pid, "SIGTERM");

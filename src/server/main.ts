@@ -3,7 +3,7 @@ import { type HeadlessDeps, headlessConfig } from "../agent/config.ts";
 import { createHeadlessKit, type IntercomLike } from "../agent/kit.ts";
 import { herdrEvents, herdrWatch, type HerdrWatch } from "../server-watch.ts";
 import { alive as pidAlive } from "../remote.ts";
-import { startedLater, startOf as processStartOf } from "../startof.ts";
+import { rememberStart, startedLater, startOf as processStartOf } from "../startof.ts";
 import { AclError, applyAcl } from "./acl.ts";
 import { herdrListens, intercomOf, runsAs } from "./client.ts";
 import { type IntercomModule, loadIntercom, LoaderError } from "./intercom.ts";
@@ -42,8 +42,8 @@ export interface ServerOptions {
 	started?: () => Promise<string | undefined>;
 	/** Checks that tsx and pi-intercom are there and returns the way to the broker; throws a LoaderError. */
 	intercom?: () => Promise<IntercomModule>;
-	/** Sets and checks the Windows ACL of the state directory. */
-	acl?: (dir: string) => Promise<unknown>;
+	/** Sets and checks the Windows ACL of the state directory; the same PowerShell start tells this process's start time (the second argument is its pid). */
+	acl?: (dir: string, pid: number) => Promise<{ started?: string } | void>;
 	herdrUp?: () => Promise<boolean>;
 	watch?: HerdrWatch;
 	herdr?: HeadlessDeps;
@@ -82,44 +82,81 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	const handle: ServerHandle = { ready, done, get endpoint() { return endpoint; }, shutdown: (code = 0) => leave(code) };
 
 	secretDir(slot.dir);
-	log.line("start", { pid, mode, version, by, herdr: slot.herdr, desk });
-	// This process's start time takes seconds on Windows (a PowerShell call), so it is asked for now, alongside the ACL call, and filled into the record when it arrives: the
-	// server does not wait for it to listen (a cold start must answer hello inside the requester's 20 s).
-	const startedAtLast = (o.started ?? (() => startedLater(pid)))().catch(() => undefined);
+	// `boot`: how long this process had run when it got here (its own start and the load of the server's code), which a cold start on Windows spends before any line is logged.
+	log.line("start", { pid, mode, version, by, herdr: slot.herdr, desk, ...(o.pid === undefined ? { boot: Math.round(process.uptime() * 1000) } : {}) });
+	/** One line per phase of the start: how long it took, and when it ended counted from the start of this server. */
+	const trace = (name: string, began: number) => log.line("phase", { name, ms: now() - began, at: now() - startedAt });
+	const timers: ReturnType<typeof setInterval>[] = [], stops: (() => void)[] = [];
 
 	/** The start cannot go on: told in start-error.json (which `up` and the session looks read) and in the record, and the process leaves with the code. */
 	const abort = (code: "acl" | "loader" | "intercom" | "start", text: string, sddl?: string): ServerHandle => {
+		timers.forEach(clearInterval);
 		log.line("start-failed", { code, text });
 		writeStartError(slot, { code, text, ...(sddl ? { sddl } : {}) }, now());
-		updateRecord(slot, (r) => ({ ...r, lastError: { at: new Date(now()).toISOString(), code, text } }));
+		// The start is over: `restarting` goes with it, so the record counts as gone at once and not when its last touch is 10 s old.
+		updateRecord(slot, ({ restarting: _restarting, ...r }) => ({ ...(r.pid === pid ? r : { ...r, restarting: _restarting }), lastError: { at: new Date(now()).toISOString(), code, text } }));
 		markReady(false);
 		// 3 is for a server that cannot run here (tsx, pi-intercom, the ACL); a start that failed for another reason is a plain failure.
 		finish(code === "start" ? 1 : EXIT_CANNOT_RUN);
 		return handle;
 	};
 
-	// The Windows ACL comes before the secret is written anywhere.
-	if (platform === "win32") {
-		try {
-			await (o.acl ?? ((dir) => applyAcl(dir)))(slot.stateDir);
-		} catch (error) {
-			return abort("acl", (error as Error).message, error instanceof AclError ? error.sddl : undefined);
-		}
-	}
-	let mod: IntercomModule;
-	try {
-		mod = await (o.intercom ?? (() => loadIntercom({ env, root: o.root ?? packageRoot() })))();
-	} catch (error) {
-		return abort(error instanceof LoaderError ? error.code : "loader", (error as Error).message);
-	}
-
 	// One server per slot: a record whose process runs and answers is the server. (A requester holds server.lock, so this is a guard against a start that no one asked for.)
 	const prior = readRecord(slot);
-	if (prior && prior.pid !== pid && runsAs({ alive, startOf }, prior) && (await helloOf(prior.socket, prior.secret, 1000))) {
+	if (prior && prior.pid !== pid && prior.socket && runsAs({ alive, startOf }, prior) && (await helloOf(prior.socket, prior.secret, 1000))) {
 		log.line("already-running", { pid: prior.pid });
 		markReady(true);
 		finish(0);
 		return handle;
+	}
+
+	// From the first moment the record says this server is starting, and its `since` moves every touchMs: the ACL call and the code load below take seconds on Windows, and a look
+	// in that time must see a start under way, not a server that is gone. The record holds no secret yet (and no socket), and keeps what a restart carries over.
+	const begin = () => {
+		const current = readRecord(slot);
+		writeRecord(slot, {
+			pid, version, herdr: slot.herdr, mode, desk, intercom: intercomOf(env, platform), log: fileOf(slot, "log"), socket: "", secret: "", intercomId: serverId(slot),
+			...(prior?.gui ? { gui: prior.gui } : {}), ...(prior?.lastError ? { lastError: prior.lastError } : {}), ...(prior?.lastRestart ? { lastRestart: prior.lastRestart } : {}),
+			restarting: restartingNow(current?.restarting, now(), { reason: "starting", by }),
+		});
+	};
+	let early: ReturnType<typeof setInterval> | undefined;
+	try {
+		begin();
+	} catch (error) {
+		return abort("start", `the record cannot be written: ${(error as Error).message}`);
+	}
+	early = setInterval(() => { try { begin(); } catch (error) { log.line("error", { code: "record", text: phrase((error as Error).message, 300) }); } }, touchMs);
+	timers.push(early);
+
+	// The code the server runs from does not depend on the ACL, so it loads while the ACL call runs. The ACL still comes before the secret is written anywhere.
+	const loading = (async () => {
+		const began = now();
+		try {
+			return await (o.intercom ?? (() => loadIntercom({ env, root: o.root ?? packageRoot() })))();
+		} finally {
+			trace("loader", began);
+		}
+	})();
+	loading.catch(() => {});
+	let aclStarted: string | undefined;
+	if (platform === "win32") {
+		const began = now();
+		try {
+			aclStarted = (await (o.acl ?? ((dir, who) => applyAcl(dir, undefined, undefined, who)))(slot.stateDir, pid))?.started;
+		} catch (error) {
+			return abort("acl", (error as Error).message, error instanceof AclError ? error.sddl : undefined);
+		}
+		trace("acl", began);
+		if (aclStarted) rememberStart(pid, aclStarted);
+	}
+	// This process's start time came with the ACL call on Windows; elsewhere it is read at once. The server does not wait for it to listen: it is filled into the record when it is in.
+	const startedAtLast = aclStarted ? Promise.resolve(aclStarted) : (o.started ?? (() => startedLater(pid, { hold: false })))().catch(() => undefined);
+	let mod: IntercomModule;
+	try {
+		mod = await loading;
+	} catch (error) {
+		return abort(error instanceof LoaderError ? error.code : "loader", (error as Error).message);
 	}
 
 	const secret = newSecret();
@@ -129,10 +166,9 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		pid, version, herdr: slot.herdr, mode, desk, intercom: intercomOf(env, platform),
 		// What the new server keeps from the one before it, so a restart changes nothing a page or a shell holds: the GUI's port and token (B2 fills them in), and the last error.
 		...(prior?.gui ? { gui: prior.gui } : {}), ...(prior?.lastError ? { lastError: prior.lastError } : {}), ...(prior?.lastRestart ? { lastRestart: prior.lastRestart } : {}),
-		log: fileOf(slot, "log"), socket: endpoint, secret, intercomId: serverId(slot),
+		...(aclStarted ? { started: aclStarted } : {}), log: fileOf(slot, "log"), socket: endpoint, secret, intercomId: serverId(slot),
 	};
 	let phase: "starting" | "ready" | "restarting" | "stopping" = "starting", client: IntercomLike | undefined, leaving: Promise<void> | undefined;
-	const timers: ReturnType<typeof setInterval>[] = [], stops: (() => void)[] = [];
 	const at = () => new Date(now()).toISOString();
 
 	// Written whole by rename, with `restarting` kept from the record (a restart began it) and only its `since` moved.
@@ -148,11 +184,13 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	const facts = () => ({ pid, ...(own.started ? { started: own.started } : {}), version, mode, desk, phase, ready: phase === "ready" });
 
 	const shutdown = (code: number): Promise<void> => (leaving ??= (async () => {
+		const began = now();
 		timers.forEach(clearInterval);
 		stops.forEach((stop) => stop());
 		await Promise.race([client?.disconnect().catch(() => {}), sleep(LEAVE_MS)]);
+		const disconnected = now();
 		await control?.close();
-		log.line("exit", { code });
+		log.line("exit", { code, disconnectMs: disconnected - began, closeMs: now() - disconnected });
 		markReady(false);
 		finish(code);
 	})());
@@ -186,6 +224,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		return { ok: false, error: `unknown command ${String(request.cmd)}` };
 	};
 
+	const listening = now();
 	try {
 		control = await listenControl({
 			endpoint, secret, platform, now, hello: facts, handle: handleRequest,
@@ -194,7 +233,11 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	} catch (error) {
 		return abort("start", `the control socket cannot listen at ${endpoint}: ${(error as Error).message}`);
 	}
+	// From here the full record is written (by `writeOwn`, which keeps `restarting`) and the placeholder's touches stop.
+	clearInterval(early);
+	timers.splice(timers.indexOf(early!), 1);
 	writeOwn();
+	trace("listen", listening);
 	void startedAtLast.then((started) => {
 		if (!started || phase === "stopping") return;
 		own.started = started;
@@ -236,9 +279,11 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	// pi-intercom: the server's own session, reconnecting with the sidecar's backoff (1, 2, 5, 10, then 30 s). While it is disconnected its identities are not live.
 	let connecting = false, resolveFirst!: (ok: boolean) => void;
 	const first = new Promise<boolean>((resolve) => (resolveFirst = resolve));
+	let connectBegan = now();
 	const connectLoop = async () => {
 		if (connecting) return;
 		connecting = true;
+		connectBegan = now();
 		for (let attempt = 0; !leaving && phase !== "restarting" && phase !== "stopping"; attempt++) {
 			try {
 				const next = await mod.connect();
@@ -254,7 +299,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 				});
 				next.on("error", () => {});
 				await next.connect({ name: "sb server", cwd: slot.dir, model: "straw-boss-server", pid, startedAt, lastActivity: now() }, serverId(slot));
-				log.line("intercom-connected", { id: serverId(slot), intercom: mod.version });
+				log.line("intercom-connected", { id: serverId(slot), intercom: mod.version, ms: now() - connectBegan });
 				resolveFirst(true);
 				break;
 			} catch (error) {

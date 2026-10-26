@@ -47,9 +47,12 @@ test("while it starts the record says restarting (reason starting, the starter a
 	world.connectMs = 400;
 	const pending = world.start({ by: "session main (3f2a1b9c)" });
 	await until(() => world.record()?.restarting, "the starting record");
+	const placeholder = world.record()!;
+	assert.equal(placeholder.restarting?.reason, "starting");
+	assert.equal(placeholder.restarting?.by, "session main (3f2a1b9c)");
+	await until(() => world.record()?.secret, "the full record, once the server listens");
 	const first = world.record()!;
-	assert.equal(first.restarting?.reason, "starting");
-	assert.equal(first.restarting?.by, "session main (3f2a1b9c)");
+	assert.equal(first.restarting?.began, placeholder.restarting?.began, "the full record keeps the placeholder's began");
 	const hello = await helloOf(first.socket, first.secret);
 	assert.equal(hello?.ready, false);
 	assert.equal(hello?.phase, "starting");
@@ -203,7 +206,7 @@ test("tsx or pi-intercom missing: the server exits 3, writes start-error.json wi
 	assert.equal(await s.handle.ready, false);
 	assert.equal(readStartError(world.slot)?.code, "loader");
 	assert.match(readStartError(world.slot)!.text, /tsx was not found from \/x\/dist\/server/);
-	assert.equal(world.record(), undefined);
+	assert.deepEqual([world.record()?.secret, world.record()?.socket], ["", ""], "only the placeholder of the start is there: no secret, no socket");
 	world.intercomError = new LoaderError("intercom", "pi-intercom 0.17.1 is older than 0.18.1");
 	const t = await world.start();
 	assert.equal(await t.handle.done, 3);
@@ -212,10 +215,10 @@ test("tsx or pi-intercom missing: the server exits 3, writes start-error.json wi
 
 test("on Windows the ACL is set and checked on the state directory before the secret is written; a failure exits 3 with the SDDL it read", async () => {
 	let seen: string | undefined;
-	const a = await world.start({ platform: "win32", acl: async (dir) => { world.acls.push(dir); seen = existsSync(fileOf(world.slot, "record")) ? "record existed" : "no record yet"; } });
+	const a = await world.start({ platform: "win32", acl: async (dir) => { world.acls.push(dir); seen = world.record()?.secret ? "secret written" : "no secret yet"; } });
 	assert.equal(await a.handle.ready, true);
 	assert.deepEqual(world.acls, [world.stateDir], "the state directory, never the agent directory above it");
-	assert.equal(seen, "no record yet");
+	assert.equal(seen, "no secret yet");
 	await a.handle.shutdown(0);
 	rmSync(fileOf(world.slot, "record"), { force: true });
 	const b = await world.start({ platform: "win32", acl: async () => { throw new AclError("the ACL of x is not owner and SYSTEM only: BU", "O:S-1-5-21D:(A;;FA;;;BU)"); } });
@@ -224,7 +227,7 @@ test("on Windows the ACL is set and checked on the state directory before the se
 	assert.equal(error.code, "acl");
 	assert.match(error.text, /not owner and SYSTEM only/);
 	assert.equal(error.sddl, "O:S-1-5-21D:(A;;FA;;;BU)");
-	assert.equal(world.record(), undefined, "no secret was written");
+	assert.equal(world.record()?.secret, "", "no secret was written");
 	await world.start({ platform: "linux" }).then((r) => r.handle.shutdown(0));
 	assert.equal(world.acls.length, 1, "nothing is set off Windows");
 });

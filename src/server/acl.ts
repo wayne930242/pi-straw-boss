@@ -3,12 +3,19 @@ import { execFile } from "node:child_process";
 // The Windows ACL of the state directory (docs/specs/2026-10-26-sb-backend.md, The control socket). A named pipe is not protected by its name or by a file mode, so the
 // secret that opens a connection lives in server.json, and server.json is only as private as the folder it is in. The folder `straw-boss/` (never the agent directory
 // above it) gets a protected DACL with the owner and SYSTEM only. Accounts are named by SID, never by a localized name, and the check reads the SDDL
-// (`(Get-Acl).Sddl`), never icacls' localized text. Reading the owner's SID, setting the ACL, and reading every SDDL back run in one PowerShell start, which answers one JSON line.
+// (`(Get-Acl).Sddl`), never icacls' localized text. Reading the owner's SID, this process's start time, setting the ACL, and reading every SDDL back run in one PowerShell start, which
+// answers one JSON line (a PowerShell start costs 2 to 3 s on a slow machine, and the server asks for nothing else of it).
 
 export const SYSTEM_SID = "S-1-5-18";
 const ACL_MS = 20_000;
 
-/** The PowerShell script: the folder comes in the environment (SB_ACL_DIR), so no path is ever quoted into the script. */
+/**
+ * The PowerShell script: the folder and the server's pid come in the environment (SB_ACL_DIR, SB_ACL_PID), so no path is ever quoted into the script.
+ *
+ * The folder is protected first, without `/T`. `/T` would also strip the inherited ACEs of the files already in it (server.lock is taken by the starter, server.log is opened by the
+ * server itself, both before this runs), and a `(OI)(CI)` grant does not land on a file, so they ended with an empty DACL that not even their owner could read. Each file that is
+ * there is instead made to inherit from the folder again and granted the owner and SYSTEM explicitly; a file created later inherits the two from the folder.
+ */
 export const ACL_SCRIPT = [
 	// Windows PowerShell 5.1 writes redirected output in the OEM code page (CP950, CP932, …) and Node reads UTF-8. The answer is also pure ASCII (below), because in those code pages
 	// the second byte of some characters (Big5 許 and 功, Shift-JIS ソ and 表) is 0x5C, a backslash that would land inside a JSON string. The setting may fail where no console is attached.
@@ -16,25 +23,34 @@ export const ACL_SCRIPT = [
 	"$ErrorActionPreference = 'Stop'",
 	"$dir = $env:SB_ACL_DIR",
 	"$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
+	// The start time of the server (Win32_Process.CreationDate, as startof.ts reads every process's), so its own PowerShell start is not made; a failure leaves it null.
+	"$started = $null",
+	"try { $started = (Get-CimInstance Win32_Process -Filter \"ProcessId=$($env:SB_ACL_PID -as [int])\").CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ', [cultureinfo]::InvariantCulture) } catch { }",
 	// `${sid}:` and not `$sid:`: PowerShell reads the latter as a variable in a scope named sid.
-	"& icacls.exe $dir /inheritance:r /grant:r \"*${sid}:(OI)(CI)F\" '*S-1-5-18:(OI)(CI)F' /T | Out-Null",
+	"& icacls.exe $dir /inheritance:r /grant:r \"*${sid}:(OI)(CI)F\" '*S-1-5-18:(OI)(CI)F' | Out-Null",
 	"if ($LASTEXITCODE -ne 0) { throw \"icacls failed with exit code $LASTEXITCODE\" }",
+	"foreach ($item in @(Get-ChildItem -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue)) {",
+	"  $grant = if ($item.PSIsContainer) { '(OI)(CI)F' } else { 'F' }",
+	// A file that goes while this runs (a temp file renamed into place) is not a failure.
+	"  try { & icacls.exe $item.FullName /inheritance:e /grant:r \"*${sid}:$grant\" \"*S-1-5-18:$grant\" | Out-Null } catch { }",
+	"}",
 	"$files = @()",
-	"foreach ($name in 'server.json', 'gui.json', 'paired.json') { $p = Join-Path $dir $name; if (Test-Path -LiteralPath $p) { $files += $p } }",
+	"foreach ($name in 'server.json', 'server.lock', 'server.log', 'gui.json', 'paired.json') { $p = Join-Path $dir $name; if (Test-Path -LiteralPath $p) { $files += $p } }",
 	"$link = Join-Path $dir 'link'",
 	"if (Test-Path -LiteralPath $link) { $files += @(Get-ChildItem -LiteralPath $link -Recurse -File | ForEach-Object { $_.FullName }) }",
-	"$out = [ordered]@{ sid = $sid; dir = (Get-Acl -LiteralPath $dir).Sddl; files = @($files | ForEach-Object { [ordered]@{ path = $_; sddl = (Get-Acl -LiteralPath $_).Sddl } }) }",
+	"$read = @(foreach ($p in $files) { try { [ordered]@{ path = $p; sddl = (Get-Acl -LiteralPath $p).Sddl } } catch { if (Test-Path -LiteralPath $p) { throw } } })",
+	"$out = [ordered]@{ sid = $sid; started = $started; dir = (Get-Acl -LiteralPath $dir).Sddl; files = $read }",
 	"$json = $out | ConvertTo-Json -Compress -Depth 4",
 	// Every character above 0x7F becomes \uXXXX (a UTF-16 unit at a time), which JSON.parse reads back as it was.
 	"[regex]::Replace($json, '[^\\x00-\\x7F]', [System.Text.RegularExpressions.MatchEvaluator]{ param($m) ('\\u{0:x4}' -f [int][char]$m.Value) })",
 ].join("\n");
 
 /** The PowerShell call: `-EncodedCommand` (UTF-16LE base64) so no quoting of the script can go wrong; `windowsHide` keeps its console off the desktop. */
-export function aclCommand(dir: string, env: NodeJS.ProcessEnv = process.env, timeout = ACL_MS) {
+export function aclCommand(dir: string, env: NodeJS.ProcessEnv = process.env, timeout = ACL_MS, pid: number = process.pid) {
 	return {
 		file: "powershell.exe",
 		args: ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(ACL_SCRIPT, "utf16le").toString("base64")],
-		options: { encoding: "utf8" as const, timeout, windowsHide: true, env: { ...env, SB_ACL_DIR: dir } },
+		options: { encoding: "utf8" as const, timeout, windowsHide: true, env: { ...env, SB_ACL_DIR: dir, SB_ACL_PID: String(pid) } },
 	};
 }
 
@@ -134,7 +150,7 @@ export function fileProblems(sddl: string, owner: string, path = "a file"): stri
 	return problems;
 }
 
-export interface AclResult { sid: string; dir: string; files: { path: string; sddl: string }[] }
+export interface AclResult { sid: string; dir: string; files: { path: string; sddl: string }[]; started?: string }
 /** The answer line of the script, as a value; throws when it is not what the script prints. */
 export function parseAclOutput(stdout: string): AclResult {
 	const line = stdout.trim().split(/\r?\n/).filter(Boolean).at(-1) ?? "";
@@ -144,14 +160,17 @@ export function parseAclOutput(stdout: string): AclResult {
 	} catch {
 		throw new Error(`PowerShell answered ${line.slice(0, 120) || "nothing"}`);
 	}
-	const { sid, dir, files } = (parsed ?? {}) as Partial<AclResult> & { files?: unknown };
+	const { sid, dir, files, started } = (parsed ?? {}) as Partial<AclResult> & { files?: unknown };
 	if (typeof sid !== "string" || !/^S-1-[0-9-]+$/.test(sid) || typeof dir !== "string") throw new Error(`PowerShell's answer has no SID and SDDL: ${line.slice(0, 120)}`);
 	// PowerShell turns a one-item array into the item itself in some versions.
 	const list = Array.isArray(files) ? files : files && typeof files === "object" ? [files] : [];
-	return { sid, dir, files: list.filter((f): f is { path: string; sddl: string } => typeof f?.path === "string" && typeof f?.sddl === "string") };
+	// The start time is kept only in the one form startof.ts writes, so a record never carries text the other readers would not compare equal.
+	return { sid, dir, files: list.filter((f): f is { path: string; sddl: string } => typeof f?.path === "string" && typeof f?.sddl === "string"), ...(typeof started === "string" && START_TEXT.test(started) ? { started } : {}) };
 }
 /** Every problem in a result: the folder's, and each secret file's. */
 export const aclProblems = ({ sid, dir, files }: AclResult) => [...folderProblems(dir, sid), ...files.flatMap((f) => fileProblems(f.sddl, sid, f.path))];
+
+const START_TEXT = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
 
 export class AclError extends Error {
 	sddl: string | undefined;
@@ -163,9 +182,9 @@ export class AclError extends Error {
 export type Exec = (file: string, args: string[], options: ReturnType<typeof aclCommand>["options"], done: (error: Error | null, stdout: string) => void) => unknown;
 const run: Exec = (file, args, options, done) => execFile(file, args, options, (error, stdout) => done(error, String(stdout)));
 
-/** Sets the ACL of the state directory and checks it, in one PowerShell start. Throws an AclError (with the SDDL it read) when setting or checking fails. */
-export function applyAcl(dir: string, exec: Exec = run, env: NodeJS.ProcessEnv = process.env): Promise<{ sid: string }> {
-	const { file, args, options } = aclCommand(dir, env);
+/** Sets the ACL of the state directory and checks it, in one PowerShell start that also tells the start time of `pid`. Throws an AclError (with the SDDL it read) when setting or checking fails. */
+export function applyAcl(dir: string, exec: Exec = run, env: NodeJS.ProcessEnv = process.env, pid: number = process.pid): Promise<{ sid: string; started?: string }> {
+	const { file, args, options } = aclCommand(dir, env, ACL_MS, pid);
 	return new Promise((resolve, reject) => {
 		exec(file, args, options, (error, stdout) => {
 			if (error) return reject(new AclError(`could not set the ACL of ${dir}: ${error.message}`));
@@ -177,7 +196,7 @@ export function applyAcl(dir: string, exec: Exec = run, env: NodeJS.ProcessEnv =
 			}
 			const problems = aclProblems(result);
 			if (problems.length) return reject(new AclError(`the ACL of ${dir} is not owner and SYSTEM only: ${problems.join("; ")}`, [result.dir, ...result.files.map((f) => `${f.path}: ${f.sddl}`)].join("\n")));
-			resolve({ sid: result.sid });
+			resolve({ sid: result.sid, ...(result.started ? { started: result.started } : {}) });
 		});
 	});
 }
