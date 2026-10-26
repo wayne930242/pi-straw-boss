@@ -832,7 +832,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 	.brand { min-height: 44px; } .prefs-btn { width: 44px; height: 44px; } .prefs-pop > * { min-height: 44px; }
 	.crumbs { align-items: center; } .crumbs > * { padding-block: 14px; line-height: 16px; }
 	:is(.pair-btn, .alerts, .done-btn, .quit-btn, .later, .go, .x, .d-doc, .ask-send, .ask-opt, .sheet-yes, .cmp-yes, .chat-pill) { min-height: 44px; }
-	:is(.pair-btn, .quit-btn, .later, .x, .tab-add, .ask-send, .sheet-yes, .cmp-yes) { min-width: 44px; }
+	:is(.pair-btn, .quit-btn, .later, .go, .x, .tab-add, .ask-send, .sheet-yes, .cmp-yes) { min-width: 44px; }
 	/* The map: a quit button, then its row. */
 	.tab h3 { min-height: 44px; }
 	/* Chips and the small pills: the pill is a 22 px drawing in a 44 px box. */
@@ -860,7 +860,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 	.picker-crumbs button, .picker-places button, .pitem { min-height: 44px; }
 	.drawer-top .pair-btn { min-height: 44px; }
 	/* The session header and the composer: the row of keys is 48 px, the box above it two lines. */
-	.head-back { width: 44px; height: 44px; } .modes button { min-height: 44px; }
+	.head-back { width: 44px; height: 44px; min-width: 44px; } .modes button { min-height: 44px; }
 	:is(.head-info, .head-main:not([hidden]), .head-quit:not([hidden])) { min-height: 44px; min-width: 44px; }
 	.composer textarea { min-height: 56px; } .cmp-row { gap: 8px 10px; }
 	.comms-in .ask-acts { position: sticky; bottom: -12px; margin: 0 -14px -12px; padding: 8px 14px 12px; background: color-mix(in srgb, var(--amber) 6%, var(--bg)); } /* Send answer stays in view while a long question scrolls */

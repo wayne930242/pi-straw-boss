@@ -5,11 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { KeybindingsManager, setKeybindings, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import { guiNamespace, REGISTER, startBridge, type ToHub } from "../src/bridge.ts";
 import type { Hub, Target } from "../src/dialogs.ts";
 import { startGui, type Gui } from "../src/gui.ts";
 import type { Found } from "../src/net.ts";
-import { defaultDequeue, dequeueKey, keyLabel, windowsKeys } from "../src/dequeuekey.ts";
+import { defaultDequeue, dequeueKey, keyLabel, validKeyId, windowsKeys } from "../src/dequeuekey.ts";
 import { checkPull, joined, MAX_PULL, type Pull, pulled } from "../src/pull.ts";
 
 // Taking the queue back (pull.ts): the server presses pi's Alt+Up between a `begin` and a `finish` at the bridge, and the page gets only the
@@ -62,7 +63,8 @@ test("checkPull takes only the fields of the protocol, in shape", () => {
 	assert.deepEqual(checkPull({ reason: "not_taken" }), { reason: "not_taken" });
 	assert.deepEqual(checkPull({ reason: "no_key" }), { reason: "no_key" });
 	assert.deepEqual(checkPull({ pending: true, ticket: "t", key: "alt+q" }), { pending: true, ticket: "t", key: "alt+q" });
-	for (const key of ["ctrl+d", "ctrl+c", "ctrl+z", "escape", "alt+shift+q", "q", "", 3, "alt+q\n"]) assert.equal(checkPull({ pending: true, ticket: "t", key } as never), undefined, `key ${JSON.stringify(key)}`);
+	for (const key of ["ctrl+d", "ctrl+c", "ctrl+z", "escape", "alt+shift+q", "q", "", 3, "alt+q\n"]) assert.deepEqual(checkPull({ pending: true, ticket: "t", key } as never), { reason: "no_key" }, `key ${JSON.stringify(key)}`);
+	assert.equal(checkPull({ text: "a", key: "ctrl+d" } as never), undefined, "a key on a reply that is not a begin stays out of shape");
 	for (const bad of [undefined, { pending: "yes" }, { ticket: 3 }, { ticket: "x".repeat(65) }, { text: 3 }, { text: "x".repeat(MAX_PULL + 1) }, { empty: false }, { reason: "whatever" }]) assert.equal(checkPull(bad as never), undefined, JSON.stringify(bad));
 });
 
@@ -141,7 +143,9 @@ test("pull: begin names the key pi binds to dequeue: Alt+Up, Alt+Q on Windows an
 	// a remap, whatever the platform
 	assert.equal(await keyOf({ keybindings: { "app.message.dequeue": "alt+q" } }), "alt+q");
 	assert.equal(await keyOf({ platform: "win32", keybindings: { "app.message.dequeue": "alt+up" } }), "alt+up");
-	assert.equal(await keyOf({ keybindings: { "app.message.dequeue": "Ctrl+X" } }), "ctrl+x", "key ids are not case-sensitive");
+	// pi's KeyIdSchema is case-sensitive and strict: a value with any invalid id is dropped whole, and pi's default stands
+	for (const value of ["Alt+Q", " alt+q", "alt+K", ["alt+x", "Alt+Q"], ["alt+x", " alt+q"], "alt+q ", "alt+\u212a", "ctrl+ctrl+x", "alt+nosuchkey", 7, ["alt+x", 7]]) assert.equal(await keyOf({ keybindings: { "app.message.dequeue": value } }), "alt+up", `invalid ${JSON.stringify(value)}: the default`);
+	assert.equal(await keyOf({ keybindings: { "app.message.dequeue": "ctrl+x" } }), "ctrl+x");
 	assert.equal(await keyOf({ keybindings: { "app.message.dequeue": ["ctrl+shift+x", "alt+d"] } }), "alt+d", "the first of several the server can press");
 	assert.equal(await keyOf({ keybindings: { dequeue: "alt+e" } }), "alt+e", "pi's old name for it");
 	assert.equal(await keyOf({ keybindings: { dequeue: "alt+e", "app.message.dequeue": "alt+f" } }), "alt+f", "the new name wins, as in pi's migration");
@@ -150,6 +154,29 @@ test("pull: begin names the key pi binds to dequeue: Alt+Up, Alt+Q on Windows an
 	assert.deepEqual(await keyOf({ keybindings: { "app.message.dequeue": 7 } }), "alt+up", "a value pi drops (wrong shape) leaves the default");
 	const idle = session({ keybindings: { "app.message.dequeue": [] } });
 	assert.deepEqual(await idle.bridge.pull("begin"), { pending: false }, "nothing queued: nothing to complain about");
+});
+
+test("dequeuekey: pi's live bindings win over the file; a manager that lacks the id leaves the file to speak", () => {
+	const manager = (defs: Record<string, string[]>) => ({ getDefinition: (id: string) => (id in defs ? {} : undefined), getKeys: (id: string) => defs[id] ?? [] });
+	const dir = join(scratch, "live-dir");
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(join(dir, "keybindings.json"), JSON.stringify({ "app.message.dequeue": "alt+f" }));
+	const env = { PI_CODING_AGENT_DIR: dir };
+	const withLive = (defs: Record<string, string[]>) => { setKeybindings(manager(defs) as never); try { return dequeueKey({ platform: "darwin", env }); } finally { setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS)); } };
+	assert.equal(dequeueKey({ platform: "darwin", env }), "alt+f", "pi-tui's own default manager lacks the id: the file");
+	assert.equal(withLive({ "app.message.dequeue": ["alt+q"] }), "alt+q", "the live binding, not the file");
+	assert.equal(withLive({ "app.message.dequeue": ["ctrl+shift+x", "alt+d"] }), "alt+d", "the first the server can press");
+	assert.equal(withLive({ "app.message.dequeue": ["Alt+Q"] }), undefined, "no case folding of a live key");
+	assert.equal(withLive({ "app.message.dequeue": [] }), undefined, "unbound live: no key, the file is not consulted");
+	assert.equal(withLive({ "app.message.dequeue": ["ctrl+d", "escape"] }), undefined);
+	assert.equal(dequeueKey({ platform: "darwin", env, bindings: () => ["alt+z"] }), "alt+z");
+	assert.equal(dequeueKey({ platform: "darwin", env, bindings: () => undefined }), "alt+f");
+	assert.deepEqual(["alt+q", "ctrl+shift+x", "alt+k", "super+alt+x", "alt+Q", " alt+q", "alt+alt+q", "ctrl+f5", "up", "alt+nope"].map(validKeyId), [true, true, true, true, false, false, false, true, true, false]);
+});
+
+test("pull: a bridge's key outside the server's allowlist answers no_key through checkPull, not an unusable reply", () => {
+	assert.deepEqual(checkPull({ pending: true, ticket: "t", key: "ctrl+shift+x" }), { reason: "no_key" });
+	assert.deepEqual(checkPull({ pending: true, ticket: "t", key: "alt+Q" }), { reason: "no_key" });
 });
 
 test("dequeuekey: pi's Windows key set is Windows and WSL; the label is how a person writes the key", () => {

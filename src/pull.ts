@@ -33,7 +33,8 @@ export function pulled(before: string, now: string, expected: string): { text: s
 export function checkPull(p: Record<string, unknown> | undefined): Pull | undefined {
 	if (!p) return undefined;
 	const { pending, ticket, key, text, empty, reason } = p;
-	if ((pending !== undefined && typeof pending !== "boolean") || (ticket !== undefined && (typeof ticket !== "string" || ticket.length > 64)) || (key !== undefined && (typeof key !== "string" || !DEQUEUE_KEY.test(key))) || (text !== undefined && (typeof text !== "string" || Buffer.byteLength(text) > MAX_PULL))) return undefined;
+	if (key !== undefined && (typeof key !== "string" || !DEQUEUE_KEY.test(key))) return pending === true ? { reason: "no_key" } : undefined; // a key the server will not press: no key goes, and the page is told
+	if ((pending !== undefined && typeof pending !== "boolean") || (ticket !== undefined && (typeof ticket !== "string" || ticket.length > 64)) || (text !== undefined && (typeof text !== "string" || Buffer.byteLength(text) > MAX_PULL))) return undefined;
 	if ((empty !== undefined && empty !== true) || (reason !== undefined && !WHYS.includes(reason as string))) return undefined;
 	return { ...(pending !== undefined ? { pending } : {}), ...(ticket !== undefined ? { ticket } : {}), ...(key !== undefined ? { key } : {}), ...(text !== undefined ? { text } : {}), ...(empty ? { empty: true as const } : {}), ...(reason !== undefined ? { reason: reason as string } : {}) };
 }
