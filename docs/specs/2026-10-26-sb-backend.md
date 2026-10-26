@@ -230,24 +230,32 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
     start, under the lock) first makes `straw-boss/` and checks it, with native calls and no PowerShell (whose start costs 2 to 5 s):
     - `whoami /user /fo csv /nh` for the owner's SID, once per process (only the SID is kept, a user does not change; the folder is
       checked again at every start, since other code can delete and make `straw-boss/` again, and a session lives for days);
-    - only for a folder this process has just made (under the temporary name below): `icacls <dir> /setowner *<owner SID> /Q`, which makes
-      it the owner's (an elevated token's folders are BA-owned by default). **An existing folder never gets a native `/setowner`**
-      (R11-F001, below); then `icacls <dir> /inheritance:r /grant:r *<owner SID>:(OI)(CI)F *S-1-5-18:(OI)(CI)F`, the
-      grant of the PowerShell step below, without `/T`: protected, and passed on to what is created in it. They are two calls because
-      `/setowner` is a form of its own in icacls' syntax and is not combined with the grant;
-    - `icacls <dir> /save <tmp>`, whose UTF-16 file holds the folder's DACL as SDDL (no localized text is read): it must be protected
+    - **No native call ever changes an owner** (R12-F001): `icacls /setowner` is not used at all. A successful `/setowner` takes over a folder
+      another account made (and granted the user WRITE_OWNER, or WRITE_DAC, which the protect call turns into it), after which the owner
+      checks pass on a folder whose maker still holds handles opened while it owned it. An elevated token's folders are BA-owned by default,
+      and BA is an accepted owner (below), so none is needed.
+    - **An existing folder is read first and touched only when it has to be**: `icacls <dir> /save <tmp>` (UTF-16 SDDL, no localized
+      text), and a DACL that is already exactly the owner and SYSTEM (`folderProblems`) changes nothing: one icacls call, no PowerShell, on
+      a normal start. Only a wrong DACL is acted on, and then only after **one PowerShell reads the folder's owner as a SID**
+      (`GetAccessControl(…Owner).GetOwner([SecurityIdentifier])`, after the Constrained Language check): the user, BA and SYSTEM go on to
+      `icacls <dir> /inheritance:r /grant:r *<owner SID>:(OI)(CI)F *S-1-5-18:(OI)(CI)F`, without `/T`, passed on to what is created in it;
+      any other owner, or an owner that cannot be read, is refused untouched ("belongs to another account (<SID>)", the remedy, exit 3):
+      the protect call on a foreign folder would give the user WRITE_OWNER, the state any later takeover or repair needs. A DACL that
+      `/save` is not allowed to read (exit 5) counts as wrong. A folder made by this process under the temporary name (below) is wrong by
+      construction (the parent's DACL) and gets the protect call at once, with no owner read;
+    - The DACL that is read back (after a protect call, and for a new folder) must be protected
       with exactly the owner and SYSTEM as allow ACEs and none inherited (`folderProblems`), or nothing is written. A foreign ACE
       another account left, which `/grant:r` does not remove, is refused here and not after the lock, the placeholder, and the
       secrets were written into it.
     - **A folder that is not there is born protected.** Making `straw-boss/` and then protecting it leaves it with the parent's broad
       ACEs for the time of those calls (443 ms on the VM with an agent folder outside the profile). So the starter and the server make it
-      under an unpredictable name beside it, `straw-boss.<16 hex>.tmp`, run the three calls
-      above on that name, check that nothing was put into it, and only then rename it to its final name. The final name does not exist
+      under an unpredictable name beside it, `straw-boss.<16 hex>.tmp`, run the two calls
+      above (protect, read-back) on that name, check that nothing was put into it, and only then rename it to its final name. The final name does not exist
       while any call runs. When the final name appeared meanwhile (another process was quicker), the temporary folder is dropped and the
-      folder that is there is made the owner's, protected, and read back where it is. A temporary folder that fails a check is removed.
+      folder that is there is handled as an existing one (read first, touched only when its DACL is wrong and its owner is acceptable). A temporary folder that fails a check is removed.
       `servers/<hash>` of a secondary slot is not made this way: it is made with `mkdir` inside the protected `straw-boss/` after it
       is in place, and inherits the owner and SYSTEM grant.
-      - **A filtered (UAC) token cannot always `/setowner`** (VM pass 4, F1; since R11-F001 an existing folder gets no `/setowner` at all, so this now concerns only a refusal on a folder this process just made, which is tolerated as ours): outside its profile, without a WRITE_OWNER grant from the
+      - **A filtered (UAC) token cannot always `/setowner`** (VM pass 4, F1; history: since R12-F001 no `/setowner` is called at all, so a refusal can no longer happen and this is kept as the reason none is needed): outside its profile, without a WRITE_OWNER grant from the
         parent, it gets exit 5 on a folder it owns (Administrators is deny-only in that token), and every start there failed with a wrong
         "belongs to another account". So a `/setowner` refusal (5, 1307, 1314) is **never final**: the protect call that follows decides (the
         owner has WRITE_DAC; a folder another account owns that grants the user nothing fails there with exit 5, told as such). Nothing
@@ -269,27 +277,30 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
         control of what it made. The launch script and `ownerProblems` use the same rule. **BA is not accepted as an ACE**: the DACL rule
         (allow ACEs for the owner/user and SYSTEM only) is unchanged. A filtered token that cannot protect a BA-owned folder still gets the
         protect step's refusal ("run pi once as administrator, or delete the folder"): the owner gate comes after it.
-      - **The ownership of an existing folder is never taken natively** (R11-F001; VM pass 5b, the decoy). Where another standard account
+      - **The ownership of a folder is never taken natively** (R11-F001, R12-F001; VM pass 5b, the decoy). Where another standard account
         made `straw-boss\` first and granted the user WRITE_DAC or WRITE_OWNER, a `/setowner` that succeeds would make the user its owner
-        (and `/inheritance:r /grant:r` through WRITE_DAC hands the user WRITE_OWNER for the next start's `/setowner`): the owner check would then
-        pass on a folder whose attacker still holds handles that were opened while they owned it, and could change its DACL through them later.
-        So only a folder this process has just made gets `/setowner`; an existing one gets the protect call and the read-back only, with no
-        owner read (a listing cuts long names and shows names others can create; a PowerShell start on every start is too dear: the
-        alternative of reading the owner natively first is not available and one PowerShell per start is the cost this avoids). Its owner is
-        gated in PowerShell BEFORE any secret exists: the launch script before the server is created (rc -2), `ACL_STEPS` (`CheckOwner $dir`,
-        before its `/inheritance:r`; `serve` and the server's own script), and the read-back. BA and SYSTEM are accepted owners, so no
-        `/setowner` is needed to use a folder an elevated run made, and a UAC-filtered token (which may not `/setowner` there, exit 5) needs
-        no special case any more. **One rule for the accepted owners in every check: the user, BA, SYSTEM** (`OWNER_OK_SIDS`:
-        `ownerProblems`, the launch script's check, the scripts' owner walks). What this leaves, documented: the protect call rewrites the
-        DACL of a foreign folder (adds the user and SYSTEM; the owner is unchanged), and the lock and the placeholder record (no secret) can
-        be written into it before the gate refuses.
+        and the owner check would pass on a folder whose attacker still holds handles that were opened while they owned it, and could
+        change its DACL through them later (add an inheritable read ACE, let a file inherit it, remove it). The same holds for the temporary
+        folder a start makes, which another account with Modify on the parent could delete and re-create under the same name during the
+        protect call: that folder lands in place still owned by the attacker, and the PowerShell gates refuse it with no secret written.
+        The owner is gated in PowerShell BEFORE any secret exists: the launch script before the server is created (rc -2), `ACL_STEPS`
+        (`CheckOwner $dir`, before its `/inheritance:r`; `serve` and the server's own script), and the read-back. **One rule for the
+        accepted owners in every check: the user, BA, SYSTEM** (`OWNER_OK_SIDS`: `ownerProblems`, the launch script's check, the native
+        owner read, the scripts' owner walks).
+        **What a start can still write into a foreign folder** (documented trade-off): when the foreign folder's DACL is already right
+        (the attacker made it exactly owner-and-SYSTEM, which gives the attacker nothing it lacked) `protectFolder` changes nothing and
+        returns, so the starter's lock (`server.lock`), the placeholder record (no secret), `server.log` lines and `start-error.json` (the
+        refusal text) are written before the PowerShell gate refuses; none holds a secret, and the owner is unchanged. When its DACL is
+        wrong and the owner foreign, nothing is written: `protectFolder` throws first. A swapped temporary folder gets the protect call
+        (adds the user and SYSTEM where the attacker granted WRITE_DAC; the owner is unchanged), which is the one change made to a
+        foreign folder.
         Both ACL scripts check below the folder the same way: the folder's own owner first, then (after the link-free walk) every
-        entry's owner (a SID, through .NET), and only then `/setowner /T /C /L /Q` (which turns BA- and SYSTEM-owned entries into the
-        user's) and `/reset /T /C /L`, so a foreign entry is refused with nothing below the folder changed. **Residual (R11-F003):** the
-        walk and the calls are not atomic; an account that can already create entries below the folder (only through the known plain-`mkdir`
-        windows of other modules, before the folder was protected) can plant one in between, which `/reset` then gives the user's
-        inherited full control and a later start's `/setowner` could take. The folder's own protection bounds it; the read-back checks the
-        owner of everything it lists.
+        entry's owner (a SID, through .NET), and only then `/setowner /T /C /L /Q` (PowerShell, which turns BA- and SYSTEM-owned entries
+        into the user's, entries already checked) and `/reset /T /C /L`, so a foreign entry is refused with nothing below the folder changed.
+        **Residual (R11-F003):** the walk and the calls are not atomic; an account that can already create entries below the folder (only
+        through the known plain-`mkdir` windows of other modules, before the folder was protected) can plant one in between, which `/reset`
+        then gives the user's inherited full control and a later start's `/setowner /T` could take. The folder's own protection bounds it;
+        the read-back checks the owner of everything it lists.
       - **What is below is listed without following links** (R8-F003): Windows PowerShell 5.1's `Get-ChildItem` follows junctions, so the
         scripts walk the folder with `[IO.Directory]::GetFileSystemEntries` and refuse any entry with the `ReparsePoint` attribute
         that is a name-surrogate link (`Get-Item -Force` gives it `LinkType` `Junction` or `SymbolicLink`; one whose type cannot be read is refused too)
@@ -332,7 +343,7 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
     what is left of it (at least 100 ms) and at most 15 s. A failed call is told by the last non-empty line of its stderr and its exit
     code, never by the message of Node's error, which begins with the whole command line (the same for the ACL PowerShell and the
     WMI start). The PowerShell step that follows stays as it is: it resets what is below the folder and reads every SDDL back.
-    The owner is not read back (the DACL file has none): `/setowner` succeeding is the check.
+    The DACL file has no owner: the owner is read by the PowerShell steps (above), natively only as a SID where a change is about to be made.
   - **System programs by absolute path.** A bare program name is looked for in the current folder before `PATH` on Windows
     (nodejs/node#46264), and a pi session's folder is a project. `powershell.exe`, `whoami.exe`, `icacls.exe`, `cmd.exe`, and `clip.exe`
     are called from `%SystemRoot%\System32` by absolute path (`%SystemRoot%` from the environment when it is a drive-letter absolute path, else `windir` likewise, else `C:\Windows`: a relative value would put the program and its working folder in the project) and

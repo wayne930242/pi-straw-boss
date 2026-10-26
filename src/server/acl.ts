@@ -43,7 +43,7 @@ export const ADMINS_SID = "S-1-5-32-544";
  * The owners that are accepted besides the user, by ONE rule in every check (`ownerProblems`, both scripts' owner walks, the launch script's check before the create): BUILTIN\Administrators and SYSTEM.
  * Both are made by an administrator's elevated token or by SYSTEM, which can read the folder whatever its owner or DACL; no account gains anything from them owning an entry.
  */
-const OWNER_OK_SIDS = [SYSTEM_SID, ADMINS_SID];
+export const OWNER_OK_SIDS = [SYSTEM_SID, ADMINS_SID];
 /** The same list as a PowerShell array body: `'S-1-5-18','S-1-5-32-544'`. */
 export const OWNER_OK_PS = OWNER_OK_SIDS.map((sid) => `'${sid}'`).join(",");
 /** The steps of the check, from the folder to `$out` (sid, start time of `$env:SB_ACL_PID`, the folder's SDDL, each secret file's): the server's own script and the starter's launch script both run them. */
@@ -55,11 +55,11 @@ export const ACL_STEPS = [
 	"try { $started = (Get-CimInstance Win32_Process -Filter \"ProcessId=$($env:SB_ACL_PID -as [int])\").CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ', [cultureinfo]::InvariantCulture) } catch { }",
 	// `${sid}:` and not `$sid:`: PowerShell reads the latter as a variable in a scope named sid.
 	"$icacls = Join-Path ([Environment]::SystemDirectory) 'icacls.exe'",
-	// ONE owner rule everywhere (R11-F004): the user, BUILTIN\Administrators and SYSTEM (`OWNER_OK_SIDS`, as `ownerProblems`, the launch script's check before the create, and `takeOwnership`). Owners are read as SIDs through .NET.
+	// ONE owner rule everywhere (R11-F004): the user, BUILTIN\Administrators and SYSTEM (`OWNER_OK_SIDS`, as `ownerProblems`, the launch script's check before the create, and the native owner read in `winprep.ts`). Owners are read as SIDs through .NET.
 	`$okOwners = @(${OWNER_OK_PS})`,
 	"function OwnerOf($p) { $s = [Security.AccessControl.AccessControlSections]::Owner; if ([IO.Directory]::Exists($p)) { $a = [IO.Directory]::GetAccessControl($p, $s) } else { $a = [IO.File]::GetAccessControl($p, $s) }; return $a.GetOwner([Security.Principal.SecurityIdentifier]).Value }",
 	"function CheckOwner($p) { $who = OwnerOf $p; if ($who -ne $sid -and $okOwners -notcontains $who) { throw ('the ' + $p + ' belongs to another account (' + $who + '), not to ' + $sid + ' (nothing was changed)') } }",
-	// The folder's own owner is read BEFORE anything changes it (R11-F001): the native step that comes before this script never takes the ownership of an existing folder (an attacker's folder that
+	// The folder's own owner is read BEFORE anything changes it (R11-F001): the native step that comes before this script never changes an owner (an attacker's folder that
 	// grants the user WRITE_OWNER would be taken over, and its secret-bearing files written by the user), so this is the gate for a folder that was already there. `/setowner` below only turns
 	// BUILTIN\Administrators- and SYSTEM-owned entries into the user's.
 	"CheckOwner $dir",

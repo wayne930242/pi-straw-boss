@@ -4,13 +4,14 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { system32, system32Path } from "../winpath.ts";
-import { asciiLine, folderProblems, SYSTEM_SID } from "./acl.ts";
+import { asciiLine, CLM_CHECK, execFailure, folderProblems, OWNER_OK_SIDS, POWERSHELL_FLAGS, PROGRESS_OFF, SYSTEM_SID } from "./acl.ts";
 
 // The state folder is protected before the first file is created in it (docs/specs/2026-10-26-sb-backend.md, The control socket): a cold start used to leave server.lock, the
 // placeholder record, and server.log with the parent's inherited ACEs (Users read, Authenticated Users modify outside the profile) until the server's PowerShell call, 4 to 7 s later.
-// Native calls do it, no PowerShell (whose start costs 2 to 5 s on a slow machine): `whoami /user` for the owner's SID (once per process: a user does not change), then at every
-// start `icacls <dir> /setowner … /inheritance:r /grant:r …` and `icacls <dir> /save` to read the DACL back and check it. The server's own PowerShell call still resets what is
-// below the folder and reads every SDDL back; this closes the window before it, and refuses a folder it cannot make the owner's.
+// Native calls do it, no PowerShell (whose start costs 2 to 5 s on a slow machine): `whoami /user` for the owner's SID (once per process: a user does not change), then `icacls <dir> /save`
+// to read the DACL, and `icacls <dir> /inheritance:r /grant:r …` only where it is wrong (a folder that was just made is wrong by construction), and `/save` again to check it. No native call ever
+// changes an OWNER (R12-F001): taking the ownership of a folder another account made would make the owner checks pass on a folder whose maker still holds handles to it. The server's own
+// PowerShell call still resets what is below the folder and reads every SDDL and owner back; this closes the window before it.
 
 /** Runs a system program (`whoami.exe`, `icacls.exe`) and returns its output; `timeoutMs` bounds it (the time a caller has left). */
 export type RunNative = (file: string, args: string[], timeoutMs?: number) => string;
@@ -34,8 +35,6 @@ export function ownerSid(run: RunNative = runNative, timeoutMs?: number): string
 }
 
 /** Every call carries `/L`: on a link icacls then acts on the link itself, never on its target (the folder is also looked at for a link before the calls). */
-/** The icacls call that makes the owner the folder's owner (it fails fast where that is not allowed, on a folder another account owns). `/setowner` is a form of its own in icacls' syntax: it is not combined with the grant. */
-export const ownerArgs = (dir: string, sid: string) => [dir, "/setowner", `*${sid}`, "/L", "/Q"];
 /** The icacls call that protects the folder: no inheritance from above, full control to the owner and SYSTEM by SID, passed on to what is created in it. No `/T`: what is already there is reset later. */
 export const protectArgs = (dir: string, sid: string) => [dir, "/inheritance:r", "/grant:r", `*${sid}:(OI)(CI)F`, `*${SYSTEM_SID}:(OI)(CI)F`, "/L"];
 
@@ -83,15 +82,14 @@ export function refuseLink(dir: string): void {
 	if (link) throw new Refused(`${dir} is a link or junction, not a folder of its own`);
 }
 
-type Step = "whoami" | "owner" | "protect" | "read-back";
+type Step = "whoami" | "protect" | "read-back";
 /** A native call that failed, told by a fixed message for the step and the exit code, and the program's own words only as a sanitized ASCII detail. */
 class NativeFailed extends Error {}
-const OWNER_REFUSED = new Set([5, 1307, 1314]);
 /**
  * What to tell and what to do when an icacls or whoami call fails. Keyed on the step and the exit code, since the program's text is in the console's code page (CP950, CP932, …), which
  * Node reads as UTF-8: half of it comes out garbled. That text stays as a detail, cut to printable ASCII.
  */
-export function explainNative(step: Step, dir: string, error: Error & { stderr?: unknown; stdout?: unknown; status?: unknown; code?: unknown; syscall?: unknown; killed?: boolean; signal?: unknown; ownerKnown?: boolean }): string {
+export function explainNative(step: Step, dir: string, error: Error & { stderr?: unknown; stdout?: unknown; status?: unknown; code?: unknown; syscall?: unknown; killed?: boolean; signal?: unknown }): string {
 	const status = typeof error.status === "number" ? error.status : undefined;
 	const detail = asciiLine(error.stderr) || asciiLine(error.stdout);
 	const tail = `${step} step${status !== undefined ? `, exit ${status}` : ""}${detail ? `; detail: ${detail}` : ""}`;
@@ -101,10 +99,6 @@ export function explainNative(step: Step, dir: string, error: Error & { stderr?:
 	if (!spawned && status === undefined && !detail && error.message) return `${step === "whoami" ? "whoami" : "icacls"} failed (${tail}; ${asciiLine(error.message)}).`;
 	if (spawned && error.code === "ENOENT") return `${step === "whoami" ? "whoami.exe" : "icacls.exe"} was not found in the Windows System32 folder (${tail}).`;
 	if (spawned && (error.code === "ETIMEDOUT" || error.killed || error.signal)) return `${step === "whoami" ? "whoami" : "icacls"} did not finish in time (${tail}). Start again; if it keeps happening, the machine is too busy or a security tool is holding it.`;
-	if (step === "owner" && status !== undefined && OWNER_REFUSED.has(status)) {
-		const whose = error.ownerKnown === true ? "belongs to another account, usually Administrators from a run of pi as administrator," : "could not be made yours, and its owner could not be read (it is probably another account's, usually Administrators from a run of pi as administrator),";
-		return `the folder ${dir} ${whose} and this process may not take it over. ${advice} (${tail}).`;
-	}
 	if (step === "protect" && status === 5) return `this process may not change the permissions of the folder ${dir}, which belongs to another account or was made by an administrator's run. ${advice} (${tail}).`;
 	if (status === 87) return `icacls did not accept its arguments on this Windows (${tail}). This is a bug in pi-straw-boss: please report it with this text.`;
 	return `${step === "whoami" ? "whoami" : "icacls"} failed (${tail}).`;
@@ -119,30 +113,55 @@ const stepOf = <T>(step: Step, dir: string, fn: () => T): T => {
 		throw new NativeFailed(explainNative(step, dir, error as never));
 	}
 };
+/** Windows PowerShell 5.1, relative to System32 (`nativeCommand` joins it there). */
+const POWERSHELL = "WindowsPowerShell\\v1.0\\powershell.exe";
 /**
- * Makes a folder this process has just made (`fresh`, under an unpredictable name) the owner's. `/setowner` needs WRITE_OWNER, which a filtered (UAC) token of an administrator does not have outside its
- * profile even on a folder it made, so a refusal (5, 1307, 1314) is tolerated here: the folder is ours by construction.
- *
- * An EXISTING folder never gets a native `/setowner` (R11-F001; VM pass 5b, the decoy): an attacker's folder that grants the user WRITE_OWNER (or WRITE_DAC, which the protect call turns into it) would be
- * TAKEN OVER by a successful `/setowner`, and the user would then pass the owner check on a folder the attacker's open handles can still change. The owner of an existing folder is not read natively
- * (a listing cuts long names and shows names others can create; a PowerShell start on every start is too dear), so its exact owner (`O:` as a SID) is gated by PowerShell before any secret is written: the
- * launch script before the server is created, `ACL_STEPS` before it changes anything, `serve`'s own script, and the read-back. `BUILTIN\Administrators` and SYSTEM are accepted owners, so no
- * `/setowner` is needed to make an elevated run's folder usable. What this leaves: the protect call below rewrites the DACL of a foreign folder (it adds the user and SYSTEM; the owner is unchanged) and
- * the lock and the placeholder record (no secret) may be written into it before that gate refuses.
+ * The SID that owns a folder, read by one PowerShell start: `GetAccessControl(…Owner).GetOwner([SecurityIdentifier])` prints a SID, never a name that a listing would cut or another account
+ * could imitate. The Constrained Language check comes first, so a machine that locks PowerShell down says so (the word is told as a sentence by `execFailure`). Used only where an existing
+ * folder's DACL is wrong and a change is about to be made.
  */
-function takeOwnership(target: string, run: RunNative, left: () => number | undefined): void {
+export function ownerOfFolder(dir: string, run: RunNative, timeoutMs?: number): string {
+	const script = [PROGRESS_OFF, CLM_CHECK, `$d = '${dir.replace(/'/g, "''")}'`, "[IO.Directory]::GetAccessControl($d, [Security.AccessControl.AccessControlSections]::Owner).GetOwner([Security.Principal.SecurityIdentifier]).Value"].join("\n");
+	let out: string;
 	try {
-		run("icacls.exe", ownerArgs(target, sid!), left());
+		out = run(POWERSHELL, [...POWERSHELL_FLAGS, "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], timeoutMs);
 	} catch (error) {
-		const status = (error as { status?: unknown }).status;
-		if (typeof status !== "number" || !OWNER_REFUSED.has(status)) throw error;
+		const failed = error as Error & { stderr?: unknown; stdout?: unknown };
+		throw new Refused(`the owner of ${dir} could not be read (${execFailure(failed, failed.stderr, failed.stdout)})`);
 	}
+	const found = out.split(/\r?\n/).map((line) => line.trim()).filter((line) => /^S-1-[0-9-]+$/i.test(line)).pop();
+	if (!found) throw new Refused(`the owner of ${dir} could not be read (PowerShell gave no SID: ${asciiLine(out).slice(0, 80) || "nothing"})`);
+	return found;
 }
-/** Makes the folder protected and reads its DACL back; the owner is taken only of a folder `fresh` from this process (see `takeOwnership`). */
+/**
+ * Protects a folder and reads its DACL back. `fresh` is a folder this process has just made under an unpredictable name: its DACL is the parent's, wrong by construction, and it is protected at once.
+ *
+ * An EXISTING folder is not touched unless it has to be (R12; VM pass 5b, the decoy). A protect call (`/grant:r user:(OI)(CI)F`) on a folder another account made and granted the user WRITE_DAC
+ * gives the user WRITE_OWNER, which is the state any later takeover (a `/setowner`, a repair) needs. So: `/save` first, and a folder whose DACL is already exactly the owner and SYSTEM is left alone
+ * (one icacls call fewer on a normal start, and no PowerShell). Only a wrong DACL is acted on, and then only after one PowerShell has read the folder's owner as a SID: the user, BUILTIN\Administrators
+ * and SYSTEM go on to the protect call (an elevated run's folder, a folder that was damaged); any other owner, or an owner that cannot be read, is refused with the folder untouched, so nothing
+ * of the victim's is added to it and no secret is written. The same owner is gated again by the PowerShell steps before any secret exists. What a
+ * start can still write into a foreign folder: when its DACL is already right this function changes nothing and returns, so the callers' lock, placeholder record (no secret), log lines and
+ * `start-error.json` are written before the PowerShell gate refuses; a foreign folder with a wrong DACL is refused here, before any of them.
+ */
 function secure(target: string, run: RunNative, left: () => number | undefined, fresh = false): void {
 	// A junction that took the name since the first look is refused before any call acts on it (`/L` is the second guard).
 	refuseLink(target);
-	if (fresh) stepOf("owner", target, () => takeOwnership(target, run, left));
+	if (!fresh) {
+		let wrong: boolean;
+		try {
+			wrong = folderProblems(readDacl(target, run, left()), sid!).length > 0;
+		} catch (error) {
+			// A folder whose DACL cannot be read by the owner of the process is not the owner's own: it goes to the owner gate like a wrong one; any other failure is told.
+			if ((error as { status?: unknown }).status !== 5) throw new NativeFailed(error instanceof Refused ? error.message : explainNative("read-back", target, error as never));
+			wrong = true;
+		}
+		if (!wrong) return;
+		const owner = ownerOfFolder(target, run, left());
+		if (owner.toUpperCase() !== sid!.toUpperCase() && !OWNER_OK_SIDS.includes(owner)) {
+			throw new Refused(`the folder ${target} belongs to another account (${owner}), not to ${sid}, and its permissions are not the owner's and SYSTEM's. Run pi as that account (an elevated shell for an administrator's), or delete the folder ${target}, then start again. (owner read; nothing in the folder was changed)`);
+		}
+	}
 	stepOf("protect", target, () => run("icacls.exe", protectArgs(target, sid!), left()));
 	// The folder could have been swapped for a link between the first look and the calls: looked at again before anything is read from it or written into it.
 	refuseLink(target);
@@ -150,7 +169,7 @@ function secure(target: string, run: RunNative, left: () => number | undefined, 
 	if (problems.length) throw new Refused(problems.join("; "));
 }
 /**
- * Makes a folder that does not exist yet, protected from its first moment on: it is made under an unpredictable name beside its final one, made the owner's and protected, checked to be
+ * Makes a folder that does not exist yet, protected from its first moment on: it is made under an unpredictable name beside its final one and protected, checked to be
  * empty and to have exactly the owner and SYSTEM, and only then renamed to its name. The name it has until then is not one anyone looks for, and the folder that appears at the final name already
  * has its ACL: the 443 ms in which `straw-boss\` carried the parent's Users and Authenticated Users ACEs (an agent folder outside the profile) are gone. When the final name appeared meanwhile
  * (another process made it), the temporary folder is dropped and false is returned: that folder is protected where it is.
@@ -211,9 +230,9 @@ function intoPlace(dir: string, run: RunNative, left: () => number | undefined, 
 	}
 }
 /**
- * Makes the folder (and what is above it, as `mkdir -p` does), makes it the owner's and protected, and reads its DACL back before anything is written into it. A folder that is not there is
+ * Makes the folder (and what is above it, as `mkdir -p` does), protects it and reads its DACL back before anything is written into it. A folder that is not there is
  * made protected from its first moment (`intoPlace`). At every start: a folder that was removed and made again by other code, or one another account touched, is protected and checked again
- * (only the SID is kept, a user does not change). Throws with the reason when the folder is a link, cannot be made the owner's, or is not owner and SYSTEM only afterwards.
+ * (only the SID is kept, a user does not change). Throws with the reason when the folder is a link, is another account's and has to be changed, or is not owner and SYSTEM only afterwards.
  */
 export function protectFolder(dir: string, run: RunNative = runNative, timeoutMs?: number, now: () => number = Date.now, rename: Rename = renameSync): void {
 	refuseLink(dir);

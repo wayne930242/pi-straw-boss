@@ -509,8 +509,8 @@ export async function stop(ctx: Ctx): Promise<Stopped> {
 	// A state folder that is not the caller's (made by an elevated run, say) cannot be protected or locked from here, and a stop cannot be made without the lock: it says so, and where the server can be
 	// stopped from, instead of leaving only the ACL text (VM pass 4, F8).
 	const lock = await lockFor(ctx, lockWaitFor(ctx)).catch((error: unknown) => {
-		// Only for the refusals of the owner and protect steps (exit 5, 1307, 1314: the folder is another account's); a link, a foreign ACE, an unreadable lock or a timeout keep their own words.
-		if (error instanceof ServerError && error.code === "start-failed" && error.startError?.code === "acl" && /\((?:owner|protect) step, exit (?:5|1307|1314)\b/.test(error.startError.text)) {
+		// Only for the refusals that say the folder is another account's (the owner read, or the protect step's exit 5); a link, a foreign ACE, an unreadable lock or a timeout keep their own words.
+		if (error instanceof ServerError && error.code === "start-failed" && error.startError?.code === "acl" && /\(protect step, exit (?:5|1307|1314)\b|belongs to another account/.test(error.startError.text)) {
 			throw new ServerError("start-failed", `${error.message} (the stop needs the folder: a server that runs in it was started by another account, so stop it from that account, an elevated shell for an elevated run, or end its process)`, error.startError);
 		}
 		throw error;

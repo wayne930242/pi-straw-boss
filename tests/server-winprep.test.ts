@@ -5,7 +5,7 @@ import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { ensure, lockFor, ServerError, stop } from "../src/server/client.ts";
 import { markStarting, prepareSlot, takeLock } from "../src/server/record.ts";
-import { explainNative, forgetSid, RENAME_WAITS_MS, ownerArgs, ownerSid, protectArgs, protectFolder, readDacl, refuseLink, resetFileAcl } from "../src/server/winprep.ts";
+import { explainNative, forgetSid, RENAME_WAITS_MS, ownerOfFolder, ownerSid, protectArgs, protectFolder, readDacl, refuseLink, resetFileAcl } from "../src/server/winprep.ts";
 import { ServerWorld } from "./server-world.ts";
 
 // docs/specs/2026-10-26-sb-backend.md, The control socket: on Windows the state folder is protected before the first file is created in it (the VM's second pass found the lock, the
@@ -55,29 +55,29 @@ test("the owner's SID is read from whoami's CSV by its shape, never by a name; a
 	assert.throws(() => ownerSid(() => ""), /nothing/);
 });
 
-test("N1: the owner is set and the folder protected in two calls, each a documented icacls form: /setowner alone, then /inheritance:r /grant:r (owner and SYSTEM by SID, passed on), without /T", () => {
-	assert.deepEqual(ownerArgs("C:\\s", OWNER), ["C:\\s", "/setowner", `*${OWNER}`, "/L", "/Q"]);
+test("N1, R12-F001: the folder is protected by one documented icacls form, /inheritance:r /grant:r (owner and SYSTEM by SID, passed on), without /T; no native call sets an owner", () => {
 	assert.deepEqual(protectArgs("C:\\s", OWNER), ["C:\\s", "/inheritance:r", "/grant:r", `*${OWNER}:(OI)(CI)F`, "*S-1-5-18:(OI)(CI)F", "/L"]);
-	for (const args of [ownerArgs("C:\\s", OWNER), protectArgs("C:\\s", OWNER)]) assert.ok(!args.includes("/T"));
-	assert.ok(!protectArgs("C:\\s", OWNER).includes("/setowner"), "the grant form never carries /setowner");
+	assert.ok(!protectArgs("C:\\s", OWNER).includes("/T"));
+	assert.ok(!protectArgs("C:\\s", OWNER).includes("/setowner"));
+	assert.ok(!existsSync("/nonexistent") && !("ownerArgs" in (globalThis as object)), "there is no owner call to build");
 });
 
 // --- a folder that is not there is born protected ---
 
-test("a new folder is made under an unpredictable name beside its own, made the owner's, protected, and read back there; it takes its name only then, and the final name does not exist while any call runs", () => {
+test("a new folder is made under an unpredictable name beside its own, protected, and read back there; it takes its name only then, and the final name does not exist while any call runs", () => {
 	const dir = join(world.root, "agent", "straw-boss");
 	const n = native(() => dir);
 	protectFolder(dir, n.run);
-	assert.deepEqual(n.files(), ["whoami.exe", "icacls.exe", "icacls.exe", "icacls.exe"]);
+	assert.deepEqual(n.files(), ["whoami.exe", "icacls.exe", "icacls.exe"]);
 	const temp = n.calls[1]!.target;
 	assert.equal(dirname(temp), dirname(dir), "beside the final name, so the rename stays on one volume");
 	assert.match(basename(temp), /^straw-boss\.[0-9a-f]{16}\.tmp$/);
-	assert.deepEqual(n.icacls().map((c) => c.target), [temp, temp, temp]);
-	assert.deepEqual(n.calls.map((c) => c.finalExists), [false, false, false, false], "nothing stood at the final name until the folder was ready");
-	assert.deepEqual(n.calls[1]!.args, ownerArgs(temp, OWNER));
-	assert.deepEqual(n.calls[2]!.args, protectArgs(temp, OWNER));
-	assert.deepEqual(n.calls[3]!.args.slice(0, 2), [temp, "/save"]);
-	assert.deepEqual(n.calls[3]!.args.slice(3), ["/L", "/Q"]);
+	assert.deepEqual(n.icacls().map((c) => c.target), [temp, temp]);
+	assert.deepEqual(n.calls.map((c) => c.finalExists), [false, false, false], "nothing stood at the final name until the folder was ready");
+	assert.deepEqual(n.calls[1]!.args, protectArgs(temp, OWNER));
+	assert.deepEqual(n.calls[2]!.args.slice(0, 2), [temp, "/save"]);
+	assert.deepEqual(n.calls[2]!.args.slice(3), ["/L", "/Q"]);
+	assert.ok(!n.icacls().some((c) => c.args.includes("/setowner")), "R12-F001: not even on a folder this process just made");
 	assert.ok(existsSync(dir) && statSync(dir).isDirectory(), "the folder is in place");
 	assert.deepEqual(leftovers(dir), [], "the temporary folder is gone");
 });
@@ -106,7 +106,7 @@ test("when the final name appeared meanwhile, the temporary folder is dropped an
 	const dir = join(world.root, "agent", "straw-boss");
 	const n = native(() => dir, { during: (c) => { if (c.args.includes("/save") && !existsSync(dir)) { mkdirSync(dir); writeFileSync(join(dir, "other.txt"), "x"); } } });
 	protectFolder(dir, n.run);
-	assert.deepEqual(n.icacls().map((c) => basename(c.target)).map((t) => (t === "straw-boss" ? "final" : "temp")), ["temp", "temp", "temp", "final", "final"]);
+	assert.deepEqual(n.icacls().map((c) => basename(c.target)).map((t) => (t === "straw-boss" ? "final" : "temp")), ["temp", "temp", "final"]);
 	assert.deepEqual(readdirSync(dir), ["other.txt"], "the folder that was there is kept");
 	assert.deepEqual(leftovers(dir), [], "the temporary folder is gone");
 });
@@ -143,20 +143,25 @@ test("a folder whose DACL has a foreign ACE, is not protected, or is not readabl
 
 // --- a folder that is there ---
 
-test("a folder that is there is protected and read back where it is, and its ownership is never taken (R11-F001); only the SID is kept between starts, and the folder is looked at again at every start", () => {
+test("an existing folder whose DACL is already right is left alone (one /save per start, no PowerShell); one whose DACL is wrong and whose owner is the user is protected and read back; none is ever given an owner (R11-F001, R12)", () => {
 	const dir = join(world.root, "again", "straw-boss");
 	mkdirSync(dir, { recursive: true });
 	const n = native(() => dir);
 	protectFolder(dir, n.run);
 	protectFolder(dir, n.run);
-	assert.deepEqual(n.files(), ["whoami.exe", "icacls.exe", "icacls.exe", "icacls.exe", "icacls.exe"], "whoami once, then icacls twice per start: the protect and the read-back, no /setowner");
-	assert.ok(!n.icacls().some((c) => c.args.includes("/setowner")), "an existing folder is never taken over");
-	assert.ok(n.icacls().every((c) => c.target === dir));
+	assert.deepEqual(n.files(), ["whoami.exe", "icacls.exe", "icacls.exe"], "whoami once, then one /save per start and nothing else");
+	assert.ok(n.icacls().every((c) => c.args.includes("/save") && c.target === dir));
+	// A DACL that is wrong (the parent's inherited ACE came back): one PowerShell reads the owner, then protect and read-back.
+	forgetSid();
+	const damaged = native(() => dir, { dacl: "D:PAI(A;OICIID;FA;;;WD)" });
+	assert.throws(() => protectFolder(dir, damaged.run), /not owner and SYSTEM only|inherit|ACE/, "the fake keeps the DACL wrong after the protect call, so the read-back refuses");
+	assert.deepEqual(damaged.calls.map((c) => c.file.endsWith("powershell.exe") ? "powershell" : c.file === "whoami.exe" ? "whoami" : c.args[1]!), ["whoami", "/save", "powershell", "/inheritance:r", "/save"]);
 	rmSync(dir, { recursive: true });
-	protectFolder(dir, n.run);
-	assert.equal(n.icacls().length, 7, "removed and made again: protected again, at birth this time, with the owner taken (it is ours)");
-	assert.ok(n.icacls().slice(4).every((c) => c.target !== dir), "the new one was born under a temporary name");
-	assert.ok(n.icacls().slice(4).some((c) => c.args.includes("/setowner")));
+	const born = native(() => dir);
+	protectFolder(dir, born.run);
+	assert.equal(born.icacls().length, 2, "removed and made again: born protected under a temporary name (protect and read-back)");
+	assert.ok(born.icacls().every((c) => c.target !== dir));
+	assert.ok(![...n.icacls(), ...damaged.icacls(), ...born.icacls()].some((c) => c.args.includes("/setowner")));
 });
 
 test("a folder that is there and a foreign DACL on it is refused (nothing is written into it)", () => {
@@ -203,42 +208,39 @@ test("F004: the native calls share one time: each gets what is left of it (at le
 	const n = native(() => dir);
 	const slow = (file: string, args: string[], ms?: number) => { const out = n.run(file, args, ms); t += 400; return out; };
 	protectFolder(dir, slow, 1000, () => t);
-	assert.deepEqual(n.calls.map((c) => c.timeoutMs), [1000, 600, 200, 100]);
+	assert.deepEqual(n.calls.map((c) => c.timeoutMs), [1000, 600, 200]);
 	forgetSid();
 	const plain = native(() => dir);
 	protectFolder(dir, plain.run, undefined, () => t);
-	assert.deepEqual(plain.calls.map((c) => c.timeoutMs), [undefined, undefined, undefined], "no time given, no bound (the folder is there now: no /setowner)");
+	assert.deepEqual(plain.calls.map((c) => c.timeoutMs), [undefined, undefined], "no time given, no bound (the folder is there now: whoami and one /save)");
 });
 
 // --- what a failure says (P2) ---
 
 test("a failing call is told by a fixed message for its step and exit code, with what to do, and the program's own words only as printable ASCII", () => {
 	const dir = "C:\\Users\\許功\\.pi\\agent\\straw-boss";
-	const garbled = denied(5);
-	const owner = explainNative("owner", dir, Object.assign(garbled, { ownerKnown: true }));
 	const quoted = dir.replace(/[\\.]/g, "\\$&");
-	assert.match(owner, new RegExp(`^the folder ${quoted} belongs to another account, usually Administrators from a run of pi as administrator, and this process may not take it over\\. Run pi once as administrator, or delete the folder ${quoted}, then start again\\. \\(owner step, exit 5; detail: \\?s\\?Q\\?C\\)\\.$`));
-	for (const text of [owner]) assert.ok(/^[\x20-\x7E]*$/.test(text.replaceAll(dir, "")), "ASCII apart from the path");
-	assert.match(explainNative("owner", dir, Object.assign(denied(1314), { ownerKnown: true })), /belongs to another account/);
-	assert.match(explainNative("owner", dir, Object.assign(denied(1307), { ownerKnown: true })), /belongs to another account/);
+	const protect = explainNative("protect", dir, denied(5));
+	assert.match(protect, new RegExp(`^this process may not change the permissions of the folder ${quoted}, which belongs to another account or was made by an administrator's run\\. Run pi once as administrator, or delete the folder ${quoted}, then start again\\. \\(protect step, exit 5; detail: `));
+	for (const text of [protect]) assert.ok(/^[\x20-\x7E]*$/.test(text.replaceAll(dir, "")), "ASCII apart from the path");
 	assert.match(explainNative("protect", dir, denied(5)), /may not change the permissions of the folder .*Run pi once as administrator, or delete the folder/);
 	assert.match(explainNative("protect", dir, denied(87, "Invalid parameter")), /did not accept its arguments.*exit 87.*detail: Invalid parameter.*bug in pi-straw-boss/);
-	assert.match(explainNative("owner", dir, Object.assign(new Error("x"), { code: "ENOENT", syscall: "spawnSync icacls.exe" })), /icacls\.exe was not found in the Windows System32 folder/);
+	assert.match(explainNative("protect", dir, Object.assign(new Error("x"), { code: "ENOENT", syscall: "spawnSync icacls.exe" })), /icacls\.exe was not found in the Windows System32 folder/);
 	assert.match(explainNative("whoami", dir, Object.assign(new Error("x"), { code: "ENOENT", syscall: "spawnSync whoami.exe" })), /whoami\.exe was not found/);
 	assert.match(explainNative("read-back", dir, Object.assign(new Error("x"), { code: "ETIMEDOUT", killed: true, syscall: "spawnSync icacls.exe" })), /icacls did not finish in time/);
 	assert.match(explainNative("read-back", dir, denied(3, "")), /^icacls failed \(read-back step, exit 3\)\.$/);
-	assert.ok(!/Command failed/.test(explainNative("owner", dir, denied(5))));
+	assert.ok(!/Command failed/.test(explainNative("protect", dir, denied(5))));
 });
 
 test("a folder an elevated run made (every icacls call refused with exit 5) is the actionable message end to end, from the protect step, and nothing was written", () => {
 	const dir = join(world.root, "agent", "straw-boss");
 	mkdirSync(dir, { recursive: true });
-	const bad = native(() => dir, { icacls: denied(5) });
+	const bad = native(() => dir, { icacls: denied(5), dacl: 'D:PAI(A;OICIID;FA;;;WD)' });
 	assert.throws(() => protectFolder(dir, bad.run), (e: unknown) => {
 		const text = (e as Error).message;
 		return text.startsWith(`could not protect ${dir} before writing to it: this process may not change the permissions of the folder ${dir}`) && text.includes("Run pi once as administrator, or delete the folder") && /protect step, exit 5; detail: \?s\?Q\?C\)\.$/.test(text);
 	});
-	assert.ok(bad.calls.some((c) => c.args.includes("/inheritance:r")), "the owner step does not stop the protect call");
+	assert.ok(bad.calls.some((c) => c.args.includes("/inheritance:r")), "the owner (the user) is read, then the protect call is tried");
 	assert.deepEqual(readdirSync(dir), []);
 });
 
@@ -256,7 +258,7 @@ test("the lock is written only after the state folder is protected and in place:
 	const n = native(() => world.stateDir);
 	const prepare = (slot: typeof world.slot) => prepareSlot(slot, "win32", n.run);
 	const lock = await takeLock(world.slot, "test", { ...world.ctx().lock, prepare }, 0);
-	assert.deepEqual(n.calls.map((c) => c.finalExists), [false, false, false, false]);
+	assert.deepEqual(n.calls.map((c) => c.finalExists), [false, false, false]);
 	assert.ok(readdirSync(world.stateDir).includes("server.lock"));
 	lock.release();
 });
@@ -264,7 +266,7 @@ test("the lock is written only after the state folder is protected and in place:
 test("the placeholder record is written only after the state folder is protected and in place", () => {
 	const n = native(() => world.stateDir);
 	markStarting(world.slot, Date.now(), { pid: 1, version: "0.44.0", desk: false, intercom: { transport: "default" }, mode: "detached", by: "test", prepare: (slot) => prepareSlot(slot, "win32", n.run) });
-	assert.deepEqual(n.calls.map((c) => c.finalExists), [false, false, false, false]);
+	assert.deepEqual(n.calls.map((c) => c.finalExists), [false, false, false]);
 	assert.ok(readdirSync(world.stateDir).includes("server.json"));
 });
 
@@ -280,7 +282,8 @@ test("a start (ensure) on Windows protects the folder before the lock, the place
 	const n = native(() => world.stateDir);
 	const done = await ensure(world.ctx({ prepare: (slot, ms) => prepareSlot(slot, "win32", n.run, ms) }), { boss: true });
 	assert.ok("server" in done && done.server === "started");
-	assert.equal(n.calls.filter((c) => c.args.includes("/setowner")).length, 1, "the lock's call; the placeholder inside the same start does not run the native calls again");
+	assert.equal(n.calls.filter((c) => c.args.includes("/inheritance:r")).length, 1, "the lock's call; the placeholder inside the same start does not run the native calls again");
+	assert.ok(!n.calls.some((c) => c.args.includes("/setowner")));
 	assert.ok(n.calls.every((c) => !c.finalExists));
 });
 
@@ -327,7 +330,7 @@ test("elsewhere the folder is the 700 folder and no native call is made", () => 
 // --- review N-F002, N-F003, N-F005 ---
 
 test("N-F002: every icacls call carries /L (a link is acted on itself, never its target), and the folder is looked at for a link before the first call of `secure`", () => {
-	for (const args of [ownerArgs("C:\\s", OWNER), protectArgs("C:\\s", OWNER)]) assert.ok(args.includes("/L"), args.join(" "));
+	assert.ok(protectArgs("C:\\s", OWNER).includes("/L"));
 	const dir = join(world.root, "agent", "straw-boss");
 	const real = mkdtempSync(join(tmpdir(), "psb-final-"));
 	try {
@@ -346,7 +349,7 @@ test("N-F003: ENOENT and a timeout are told as a program that was not found or d
 	const local = explainNative("read-back", dir, Object.assign(new Error("ENOENT: no such file or directory, open 'C:\\tmp\\sb-acl-1.txt'"), { code: "ENOENT", syscall: "open" }));
 	assert.ok(!/System32|not found in/.test(local), local);
 	assert.match(local, /read-back step.*no such file/);
-	const timeout = explainNative("owner", dir, Object.assign(new Error("slow"), { killed: true, signal: "SIGTERM" }));
+	const timeout = explainNative("protect", dir, Object.assign(new Error("slow"), { killed: true, signal: "SIGTERM" }));
 	assert.ok(!/did not finish in time/.test(timeout), "a killed flag without a spawn error is not a timeout of icacls");
 });
 
@@ -414,53 +417,119 @@ test("N-F005: a temporary folder a crashed start left beside the state folder is
 	}
 });
 
-// --- VM pass 4, F1: a filtered (UAC) token cannot /setowner outside its profile, on a folder it already owns ---
+// --- R12: no native call changes an owner; an existing folder is touched only when its DACL is wrong, and only after its owner is read ---
 
-test("R7-F003, R11-F001: a fresh folder tolerates a refused /setowner (5, 1307, 1314: it is ours by construction); an existing folder gets no /setowner at all; another exit code is raised", () => {
-	for (const existing of [false, true]) for (const code of [5, 1307, 1314]) {
+const FOREIGN = "S-1-5-21-9-9-9-1002";
+const BA = "S-1-5-32-544";
+const WRONG = "D:PAI(A;OICIID;FA;;;WD)";
+const called = (n: ReturnType<typeof native>) => n.calls.map((c) => (c.file.endsWith("powershell.exe") ? "powershell" : c.file === "whoami.exe" ? "whoami" : c.args[1]!));
+const changing = (n: ReturnType<typeof native>) => n.icacls().filter((c) => c.args.includes("/inheritance:r") || c.args.includes("/grant:r") || c.args.includes("/setowner") || c.args.includes("/reset"));
+
+test("R12-F001: no start ever calls /setowner, on a new folder (born under a temporary name), an existing one, or after any refusal; the temp folder's protect and read-back are all it gets", () => {
+	for (const code of [5, 1307, 1314, 87]) {
 		forgetSid();
-		const dir = join(world.root, `${existing ? "own-there" : "own-new"}-${code}`, "straw-boss");
-		if (existing) mkdirSync(dir, { recursive: true });
-		const n = native(() => dir, { icacls: denied(code), failOn: "owner" });
-		protectFolder(dir, n.run);
-		assert.ok(statSync(dir).isDirectory());
-		assert.ok(!n.calls.some((c) => c.file === "cmd.exe" || c.file.endsWith("powershell.exe")), "no owner listing, no PowerShell");
-		assert.ok(n.icacls().some((c) => c.args.includes("/inheritance:r")) && n.icacls().some((c) => c.args.includes("/save")), `${code} ${existing}`);
-		assert.equal(n.icacls().some((c) => c.args.includes("/setowner")), !existing, `${code} ${existing}: /setowner only of a folder this process made`);
-		assert.deepEqual(leftovers(dir), []);
+		const dir = join(world.root, `fresh-${code}`, "straw-boss");
+		const n = native(() => dir, { icacls: denied(code), failOn: "protect" });
+		assert.throws(() => protectFolder(dir, n.run));
+		assert.ok(!n.icacls().some((c) => c.args.includes("/setowner")), String(code));
+		assert.deepEqual(readdirSync(dirname(dir)), [], "the temporary folder is removed");
 	}
-	const dir = join(world.root, "agent", "straw-boss");
-	// A fresh folder with another exit code on /setowner is a real failure.
-	forgetSid();
-	const odd = native(() => dir, { icacls: denied(87, "Invalid parameter"), failOn: "owner" });
-	assert.throws(() => protectFolder(dir, odd.run), /did not accept its arguments/);
-	// An existing folder that is another account's and grants nothing to the user fails at the protect call, told as that.
-	mkdirSync(dir, { recursive: true });
-	forgetSid();
-	const foreign = native(() => dir, { icacls: denied(5) });
-	assert.throws(() => protectFolder(dir, foreign.run), /\(protect step, exit 5/);
-});
-
-// --- R11-F001: the ownership of an existing folder is never taken natively ---
-
-test("R11-F001: where /setowner WOULD succeed on an existing folder (an attacker's that grants the user WRITE_OWNER) it is not called: the start changes no owner, and the gates in PowerShell decide before any secret", () => {
-	for (const label of ["attacker-owned", "user-owned", "BA-owned"]) {
-		forgetSid();
-		const dir = join(world.root, label, "straw-boss");
-		mkdirSync(dir, { recursive: true });
-		const n = native(() => dir); // every call succeeds, /setowner included: the fake cannot tell whose folder it is, which is the point
-		protectFolder(dir, n.run);
-		assert.deepEqual(n.icacls().map((c) => c.args[1]), ["/inheritance:r", "/save"], label);
-		assert.ok(!n.icacls().some((c) => c.args.includes("/setowner")), label);
-		assert.ok(!n.calls.some((c) => c.file.endsWith("powershell.exe")), "zero extra PowerShell on a normal start");
-	}
-	// A folder this process made is ours: its owner is set, then it is protected and read back, all under the temporary name.
 	forgetSid();
 	const fresh = join(world.root, "fresh", "straw-boss");
 	const n = native(() => fresh);
 	protectFolder(fresh, n.run);
-	assert.deepEqual(n.icacls().map((c) => c.args[1]), ["/setowner", "/inheritance:r", "/save"]);
+	assert.deepEqual(called(n), ["whoami", "/inheritance:r", "/save"]);
 	assert.ok(n.icacls().every((c) => c.target !== fresh));
+});
+
+test("R12-F001: a temporary folder swapped for another account's is never taken over: it lands in place still theirs, protect and read-back touch no owner, and the PowerShell gates are what refuse it", () => {
+	const dir = join(world.root, "swap", "straw-boss");
+	forgetSid();
+	// The swap happens during the protect call; nothing in this module reads or changes an owner on the temporary folder.
+	const n = native(() => dir, { during: (c) => { if (c.args.includes("/inheritance:r")) { rmSync(c.target, { recursive: true }); mkdirSync(c.target); } } });
+	protectFolder(dir, n.run);
+	assert.ok(existsSync(dir));
+	assert.ok(!n.icacls().some((c) => c.args.includes("/setowner")) && !n.calls.some((c) => c.file.endsWith("powershell.exe")));
+});
+
+test("R12: an existing folder whose DACL is right is left alone: one /save, nothing changed, no PowerShell, whoever owns it (the PowerShell gates read the owner before any secret)", () => {
+	for (const label of ["attacker-owned", "user-owned", "BA-owned"]) {
+		forgetSid();
+		const dir = join(world.root, label, "straw-boss");
+		mkdirSync(dir, { recursive: true });
+		const n = native(() => dir, { owner: label === "attacker-owned" ? FOREIGN : label === "BA-owned" ? BA : OWNER });
+		protectFolder(dir, n.run);
+		assert.deepEqual(called(n), ["whoami", "/save"], label);
+		assert.deepEqual(changing(n), [], label);
+	}
+});
+
+test("R12: an existing folder with a wrong DACL and a FOREIGN owner is refused with one PowerShell read and no protect, no grant, no reset: nothing in the folder changes", () => {
+	for (const code of [0, 5]) {
+		forgetSid();
+		const dir = join(world.root, `decoy-${code}`, "straw-boss");
+		mkdirSync(dir, { recursive: true });
+		// code 5: the user cannot even read the DACL of the attacker's folder, which counts as a wrong one.
+		const n = native(() => dir, { owner: FOREIGN, dacl: WRONG, ...(code === 5 ? { icacls: denied(5) } : {}) });
+		const run = code === 5 ? (file: string, args: string[], ms?: number) => { if (args.includes("/save")) { n.calls.push({ file, args, target: args[0]!, finalExists: true, timeoutMs: ms }); throw denied(5); } return n.run(file, args, ms); } : n.run;
+		assert.throws(() => protectFolder(dir, run), (e: unknown) => /belongs to another account \(S-1-5-21-9-9-9-1002\)/.test((e as Error).message) && /Run pi as that account/.test((e as Error).message) && /nothing in the folder was changed/.test((e as Error).message));
+		assert.deepEqual(changing(n), [], `${code}: no change`);
+		assert.equal(n.calls.filter((c) => c.file.endsWith("powershell.exe")).length, 1);
+		assert.ok(existsSync(dir), "the folder is not removed");
+	}
+});
+
+test("R12: an existing folder with a wrong DACL and the user, Administrators or SYSTEM as owner is protected and read back (one PowerShell for the owner); an unreadable owner is refused untouched; Constrained Language Mode is told as that", () => {
+	for (const owner of [OWNER, OWNER.toLowerCase(), BA, "S-1-5-18"]) {
+		forgetSid();
+		const dir = join(world.root, `repair-${owner}`, "straw-boss");
+		mkdirSync(dir, { recursive: true });
+		let healed = false;
+		const n = native(() => dir, { owner, dacl: WRONG, during: (c) => { if (c.args.includes("/inheritance:r")) healed = true; } });
+		const run = (file: string, args: string[], ms?: number) => {
+			const out = n.run(file, args, ms);
+			if (healed && args.includes("/save")) writeFileSync(args[args.indexOf("/save") + 1]!, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(`straw-boss\r\n${GOOD}\r\n`, "utf16le")]));
+			return out;
+		};
+		protectFolder(dir, run);
+		assert.deepEqual(called(n), ["whoami", "/save", "powershell", "/inheritance:r", "/save"], owner);
+		assert.equal(changing(n).length, 1, "only the protect call changes anything");
+	}
+	const clm = Object.assign(new Error("Command failed: powershell"), { status: 1, stderr: "sb-constrained-language\r\nAt line:1" });
+	for (const [owner, expected] of [
+		[clm, /Constrained Language Mode \(likely a policy\)/],
+		[Object.assign(new Error("Command failed: powershell"), { status: 1, stderr: "boom" }), /owner of .* could not be read \(boom, exit code 1\)/],
+		["\r\n", /gave no SID/],
+	] as const) {
+		forgetSid();
+		const dir = join(world.root, "unreadable", "straw-boss");
+		mkdirSync(dir, { recursive: true });
+		const n = native(() => dir, { owner: owner as string | Error, dacl: WRONG });
+		assert.throws(() => protectFolder(dir, n.run), expected);
+		assert.deepEqual(changing(n), []);
+		rmSync(dir, { recursive: true, force: true });
+	}
+	// Another exit code from the first /save is a failure of that call, told as such.
+	forgetSid();
+	const dir = join(world.root, "odd", "straw-boss");
+	mkdirSync(dir, { recursive: true });
+	const odd = (file: string, args: string[]) => { if (file === "whoami.exe") return `"PC\\me","${OWNER}"\r\n`; throw denied(87, "Invalid parameter"); };
+	assert.throws(() => protectFolder(dir, odd), /did not accept its arguments/);
+});
+
+test("R12: the owner read is one -EncodedCommand PowerShell that checks the language mode first and prints the owner as a SID; a quote in the path is doubled", () => {
+	const seen: { file: string; args: string[] }[] = [];
+	const run = (file: string, args: string[]) => { seen.push({ file, args }); return `${FOREIGN}\r\n`; };
+	assert.equal(ownerOfFolder("C:\\Users\\o'brien\\straw-boss", run), FOREIGN);
+	assert.equal(seen.length, 1);
+	assert.match(seen[0]!.file, /WindowsPowerShell\\v1\.0\\powershell\.exe$/);
+	assert.deepEqual(seen[0]!.args.slice(0, 4), ["-NoProfile", "-NonInteractive", "-OutputFormat", "Text"]);
+	const script = Buffer.from(seen[0]!.args[seen[0]!.args.indexOf("-EncodedCommand") + 1]!, "base64").toString("utf16le");
+	const lines = script.split("\n");
+	assert.match(lines[0]!, /ProgressPreference/);
+	assert.match(lines[1]!, /LanguageMode -ne 'FullLanguage'.*sb-constrained-language/, "the language mode is checked before any .NET call");
+	assert.ok(script.includes("$d = 'C:\\Users\\o''brien\\straw-boss'"));
+	assert.match(script, /\[IO\.Directory\]::GetAccessControl\(\$d, \[Security\.AccessControl\.AccessControlSections\]::Owner\)\.GetOwner\(\[Security\.Principal\.SecurityIdentifier\]\)\.Value/);
 });
 
 test("F4: a temporary folder that cannot be removed after a failed rename does not hide why the start failed, and a later start sweeps it", () => {
