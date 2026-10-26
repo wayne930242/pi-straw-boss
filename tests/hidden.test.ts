@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { cached, decodeNames, type Hidden, HiddenError } from "../src/hidden.ts";
+import { cached, parseNames, type Hidden, HiddenError } from "../src/hidden.ts";
 import { createSpawn, listDirs, makeDir, pickable } from "../src/spawn.ts";
 
 // Windows marks a folder hidden with the Hidden or System attribute, not a dot (hidden.ts). The attribute reader is injected, so a macOS or Linux run drives
@@ -20,14 +20,14 @@ symlinkSync(join(home, "Documents"), join(home, "My Documents"), "junction");
 symlinkSync(join(home, "Documents"), join(home, "Shortcut to Documents"), "junction"); // a link the user made: visible, so it stays
 
 const marked: Record<string, string[]> = {
-	[home]: ["AppData", "Application Data", "Cookies", "My Documents", "「開始」功能表"], // as PowerShell reports them: Hidden or System
+	[home]: ["AppData", "Application Data", "Cookies", "My Documents", "「開始」功能表"], // as the reader reports them: Hidden or System
 	[join(home, "Documents")]: ["Hidden Inside"],
 };
 const hidden: Hidden = async (dir) => new Set((marked[dir] ?? []).map((name) => name.toLowerCase()));
 
 test("a listing leaves out the entries Windows hides, whatever they are named, and keeps the folders a person made", async () => {
 	const list = await listDirs(home, home, hidden);
-	assert.deepEqual(list.dirs, ["Desktop", "Documents", "Downloads", "OneDrive", "Pictures", "sbd-playground", "Shortcut to Documents", "中文專案"]);
+	assert.deepEqual([...list.dirs].sort(), ["Desktop", "Documents", "Downloads", "OneDrive", "Pictures", "sbd-playground", "Shortcut to Documents", "中文專案"].sort(), "the order is the locale's");
 	assert.deepEqual((await listDirs(join(home, "Documents"), home, hidden)).dirs, ["Work"], "also below home");
 });
 
@@ -70,10 +70,10 @@ test("a platform without attributes lists as before: only a dot hides", async ()
 	assert.ok(!(await listDirs(home, home, undefined)).dirs.includes(".dot"));
 });
 
-test("PowerShell's names are base64 of UTF-8 and compared in lower case; the answer for a folder is kept briefly and a failure is not", async () => {
-	const lines = ["AppData", "「開始」功能表", "Cookies"].map((name) => Buffer.from(name).toString("base64"));
-	assert.deepEqual([...decodeNames(`${lines.join("\r\n")}\r\n`)], ["appdata", "「開始」功能表", "cookies"]);
-	assert.deepEqual([...decodeNames("")], []);
+test("cmd's names are UTF-16LE lines and compared in lower case; the answer for a folder is kept briefly and a failure is not", async () => {
+	const out = Buffer.from("AppData\r\n「開始」功能表\r\nCookies\r\nappdata\r\n", "utf16le"); // a name that is both Hidden and System comes twice
+	assert.deepEqual([...parseNames(out)], ["appdata", "「開始」功能表", "cookies"]);
+	assert.deepEqual([...parseNames(Buffer.alloc(0))], []);
 	let reads = 0, clock = 0, fail = false;
 	const read = cached(async (dir) => (reads++, fail ? Promise.reject(new Error("no")) : new Set([dir])), 1000, () => clock);
 	await read("C:\\Users\\x"); await read("c:\\users\\X");

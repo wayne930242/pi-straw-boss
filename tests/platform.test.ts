@@ -12,6 +12,7 @@ import { instanceOf, localEndpoint as pluginEndpoint, socketCall } from "../herd
 import { agentFiles, ask, newPipe, NoSidecar, socketIsFile, socketOf } from "../src/agent/paths.ts";
 import { herdrSocket, localEndpoint } from "../src/endpoint.ts";
 import { herdrCall } from "../src/herdr.ts";
+import { cmdHidden } from "../src/hidden.ts";
 import { listDirs, pickable } from "../src/spawn.ts";
 import { herdrEvents } from "../src/server-watch.ts";
 
@@ -106,7 +107,7 @@ test("every module a Windows session or sidecar loads links on this platform (a 
 });
 
 // The folder picker on a real Windows profile layout (src/hidden.ts): attributes set with attrib, junctions made as the old profile layout has them, and the
-// default reader (PowerShell) in between. The names are not the localised ones of a real profile, but a Chinese one is there to check the encoding.
+// default reader (cmd.exe) in between. The names are not the localised ones of a real profile, but a Chinese one is there to check the encoding.
 test("the folder picker leaves out what Windows hides (Hidden or System, junctions among them) and keeps the other folders", { skip: process.platform !== "win32" }, async () => {
 	const home = realpathSync(mkdtempSync(join(tmpdir(), "psb-platform-home-")));
 	try {
@@ -123,5 +124,26 @@ test("the folder picker leaves out what Windows hides (Hidden or System, junctio
 		for (const ok of ["Desktop", "Documents", "Plain Link", "\u9801\u9762"]) assert.ok(await pickable(join(home, ok), home), ok);
 	} finally {
 		rmSync(home, { recursive: true, force: true });
+	}
+});
+
+// The folder name reaches cmd.exe through an environment variable inside quotes: the characters cmd treats as syntax must stay text, and a folder that cannot be
+// read must fail instead of reading as "nothing hidden".
+test("the cmd reader takes a folder named with cmd's own syntax literally, and fails on one it cannot read", { skip: process.platform !== "win32" }, async () => {
+	const root = realpathSync(mkdtempSync(join(tmpdir(), "psb-platform-cmd-")));
+	try {
+		for (const name of ["a & b", "c ^ d", "100%", "%PATH%", "wow!", "paren)", "(open", "x & echo pwned & y"]) {
+			const dir = join(root, name);
+			mkdirSync(join(dir, "Hid"), { recursive: true });
+			mkdirSync(join(dir, "Sys"));
+			mkdirSync(join(dir, "Plain"));
+			execFileSync("attrib", ["+h", join(dir, "Hid")]);
+			execFileSync("attrib", ["+s", join(dir, "Sys")]);
+			assert.deepEqual([...await cmdHidden(dir)].sort(), ["hid", "sys"], name);
+		}
+		assert.deepEqual([...await cmdHidden(root)], [], "no match is an empty answer");
+		await assert.rejects(cmdHidden(join(root, "missing")), /could not say/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
 	}
 });
