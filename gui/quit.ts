@@ -18,6 +18,13 @@ export const aimUnit = (button: HTMLElement, u: { key?: string; name: string; ro
 		: aim(button, { close: "unit", key: u.key ?? "", name: u.name, role: u.role }, m.quit(), m.close_unit({ name: u.name }), !(u.control && u.key) || u.role === "subagent");
 /** The base's tower alone, its mains back to members. */
 export const aimTower = (button: HTMLElement, tower: Base["tower"]) => aim(button, { key: tower?.key ?? "", name: tower?.name ?? "", role: "tower" }, m.quit_tower(), undefined, !tower?.control);
+/** The Quit in a unit's own session view is the map's for that unit (a tower's as Quit tower), shown only where the map shows one: a finished subagent's Dismiss and a subagent's launcher are the map's alone. */
+export function aimSession(button: HTMLElement, hit: { u: { key: string; name: string; role: string; control?: boolean; ended?: boolean }; base: Base } | undefined) {
+	button.dataset.close = "unit";
+	if (hit?.u.role === "tower" && hit.base.tower?.key === hit.u.key) aimTower(button, hit.base.tower);
+	else if (hit) aimUnit(button, hit.u);
+	button.hidden = !hit || button.dataset.close !== "unit" || button.hidden;
+}
 export const aimBase = (button: HTMLElement, b: Base) => aim(button, { ws: b.id, name: b.label }, m.quit(), m.close_base({ name: b.label }));
 /** The base's Stash: its tower, mains, and members quit, to come back with Pop (the server names the stash after the base). */
 export const aimStash = (button: HTMLElement, b: Base) => aim(button, { ws: b.id, name: b.label }, m.stash(), m.stash_base({ name: b.label }));
@@ -69,7 +76,7 @@ export const dismiss = (body: { key: string } | { all: true }) => import("./post
 export interface QuitDeps { route(): Route; net(): Net | undefined; go(route: Route): void }
 
 /** A view of what was just closed goes up to what is left: a closed base to the map, a closed squad or unit to its base. */
-function leave(d: DOMStringMap, { route, net, go }: QuitDeps) {
+export function leave(d: DOMStringMap, { route, net, go }: QuitDeps) {
 	const current = route();
 	if (current.view === "map") return;
 	if (d.close === "base" || d.close === "stash") return void (current.ws === d.ws && go({ view: "map" }));
