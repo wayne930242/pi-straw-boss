@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { aftermath, blocked, confirmed, recall, withPulled } from "../gui/composer.ts";
+import { aftermath, blocked, confirmed, deposit, endTake, recall, recallTake, rescue, settleTake, startTake, withPulled } from "../gui/composer.ts";
 import { m } from "../gui/paraglide/messages.js";
 import { closed } from "../gui/scene.ts";
 import type { Answer } from "../gui/post.ts";
@@ -53,4 +53,76 @@ test("the queue taken back goes in front of what is already in the box, a blank 
 	assert.equal(withPulled("one\n\ntwo", ""), "one\n\ntwo");
 	assert.equal(withPulled("one", "  \n"), "one");
 	assert.equal(withPulled("one", "my draft"), "one\n\nmy draft");
+});
+
+/** A sessionStorage the test can make refuse, installed for the module under test. */
+const storage = (() => {
+	const map = new Map<string, string>();
+	const refuse = { on: false };
+	Object.defineProperty(globalThis, "sessionStorage", {
+		configurable: true,
+		value: {
+			getItem: (k: string) => { if (refuse.on) throw new Error("denied"); return map.get(k) ?? null; },
+			setItem: (k: string, v: string) => { if (refuse.on) throw new Error("denied"); map.set(k, v); },
+			removeItem: (k: string) => { if (refuse.on) throw new Error("denied"); map.delete(k); },
+		},
+	});
+	return { map, refuse };
+})();
+
+test("a take-back's reply is stored in the draft of a session whose composer is gone (R-F001), in front of the draft, with a note for the composer that comes back", () => {
+	storage.map.clear();
+	const key = "sess-gone";
+	storage.map.set(`sb-draft:${key}`, "typed meanwhile");
+	const id = startTake(key);
+	settleTake(key, { ok: true, status: 200, body: { text: "one\n\ntwo" } }); // no composer on the page: `into` is not given
+	assert.equal(storage.map.get(`sb-draft:${key}`), "one\n\ntwo\n\ntyped meanwhile", "nothing is lost with the composer");
+	assert.deepEqual(recall(storage.map.get(`sb-draft:${key}:note`) ?? null), ["ok", m.edit_taken()]);
+	assert.equal(recallTake(key), undefined, "an answer settles the take-back: its id is dropped");
+	assert.ok(id.length >= 16 && id.length <= 64 && /^[A-Za-z0-9_-]+$/.test(id), "an id the server accepts");
+});
+
+test("a take-back's reply goes into the box of the composer still on the page, and is saved", () => {
+	storage.map.clear();
+	const box = { value: "draft" };
+	let saved = 0;
+	startTake("sess-here");
+	settleTake("sess-here", { ok: true, status: 200, body: { text: "queued" } }, { box, save: () => saved++ });
+	assert.equal(box.value, "queued\n\ndraft");
+	assert.equal(saved, 1);
+	assert.equal(storage.map.has("sb-draft:sess-here"), false, "stored by the composer's own save, not twice");
+});
+
+test("a storage that refuses still keeps the reply for the next composer of the session", () => {
+	storage.map.clear();
+	storage.refuse.on = true;
+	try {
+		deposit("sess-deny", "lost?");
+		deposit("sess-deny", "also");
+	} finally {
+		storage.refuse.on = false;
+	}
+	assert.equal(rescue("sess-deny", "draft"), "also\n\nlost?\n\ndraft");
+	assert.equal(rescue("sess-deny", "draft"), "draft", "handed over once");
+});
+
+test("the take-back's id outlives the answer that is unsure (504, busy, no answer) and is dropped by any other; the same id comes back until then, and for ten minutes", () => {
+	storage.map.clear();
+	const key = "sess-id", id = startTake(key);
+	assert.equal(recallTake(key), id);
+	for (const status of [504, 429]) {
+		settleTake(key, { ok: false, status, body: {} });
+		assert.equal(recallTake(key), id, `${status} keeps it: the session may still hold the messages`);
+	}
+	assert.equal(storage.map.get(`sb-draft:${key}:take`)?.endsWith(`:${id}`), true, "and it survives a reload of the page");
+	assert.equal(recallTake(key, Date.now() + 541_000), undefined, "past the time the session keeps them it is no use");
+	assert.equal(storage.map.has(`sb-draft:${key}:take`), false);
+	const next = startTake(key);
+	assert.notEqual(next, id);
+	settleTake(key, { ok: false, status: 409, body: { reason: "no" } });
+	assert.equal(recallTake(key), undefined, "a refusal settles it");
+	startTake(key);
+	settleTake(key, { ok: true, status: 200, body: { empty: true } });
+	assert.equal(recallTake(key), undefined);
+	endTake(key);
 });

@@ -8,6 +8,8 @@ import { ENDING as SERVER_ENDING, MAX_TEXT } from "../src/control.ts";
 import type { Hub, Target } from "../src/dialogs.ts";
 import { startGui, type Gui } from "../src/gui.ts";
 import { HerdrError } from "../src/herdr.ts";
+import { createApproval } from "../src/link/approval.ts";
+import { ACTIONS, HERE_ONLY } from "../src/link/request.ts";
 import { canonical } from "../src/history.ts";
 import type { Editor } from "../src/probe.ts";
 import type { Found } from "../src/net.ts";
@@ -26,7 +28,7 @@ after(async () => {
 const FILE = "/s/2026_sess-1.jsonl";
 interface Pane { pane_id: string; agent?: string; agent_status?: string; agent_session?: { value: string } }
 /** A server with one live session (sess-1 in pane wA:p1) and a fake Herdr socket that records every call. */
-async function setup({ pane = {}, found = {}, fail }: { pane?: Partial<Pane>; found?: Partial<Found>; fail?: (method: string) => Error | undefined } = {}) {
+async function setup({ pane = {}, found = {}, fail, link }: { pane?: Partial<Pane>; found?: Partial<Found>; fail?: (method: string) => Error | undefined; link?: import("../src/control.ts").LinkPort } = {}) {
 	const calls: [string, Record<string, unknown>][] = [];
 	let hold: Promise<void> | undefined;
 	const state: Pane = { pane_id: "wA:p1", agent: "pi", agent_status: "idle", agent_session: { value: FILE }, ...pane };
@@ -39,7 +41,7 @@ async function setup({ pane = {}, found = {}, fail }: { pane?: Partial<Pane>; fo
 		return {};
 	};
 	const lookup = (key: string): Found | undefined => (key === "sess-1" ? { key, base: "wA", name: "billing", role: "main", file: FILE, pane: "wA:p1", live: true, ...found } : undefined);
-	const gui = await startGui({ read: async () => ({ bases: [] }), net: { lookup, workspace: () => [] }, call, dir: join(scratch, "bundle"), pollMs: 50 });
+	const gui = await startGui({ read: async () => ({ bases: [] }), net: { lookup, workspace: () => [] }, call, link, dir: join(scratch, "bundle"), pollMs: 50 });
 	running.push(gui);
 	return { gui, calls, state, typed: () => calls.filter(([m]) => m !== "pane.get"), holdWith: (p: Promise<void>) => (hold = p) };
 }
@@ -387,6 +389,34 @@ test("answer: a paired device answers a confirmation and a local-only choice as 
 	assert.equal(sent.length, 3);
 });
 
+test("answer: a link_request approval of trust, remove, role, rotate, or leave is refused from a paired device and given from this computer's page; Deny and every other action's Approve are taken from both", async () => {
+	const { gui, sent, hub } = await answering();
+	const phone = await paired(gui);
+	let n = 0;
+	const answerId = () => String(++n).padStart(16, "0");
+	for (const action of ACTIONS) {
+		// the real dialog the approval publishes for this action, as the bridge would hand it to the page
+		const handlers = new Map<string, (d: unknown) => void>(), published: { digest: string; select: Target["answer"]["select"] }[] = [];
+		const bus = { emit: (channel: string, data: unknown) => (channel.endsWith(":pending") && published.push(data as (typeof published)[number]), undefined), on: (channel: string, h: (d: unknown) => void) => (handlers.set(channel, h), () => handlers.delete(channel)) };
+		const approval = createApproval({ bus });
+		const verdict = approval.approve({ toolCallId: "tc", lines: [`Action: ${action}`], asker: "s", hereOnly: (HERE_ONLY as readonly string[]).includes(action), signal: AbortSignal.timeout(2000) });
+		verdict.catch(() => undefined);
+		const { digest, select } = published[0]!;
+		hub.target = { from: "S", bridgeId: "B", answer: { dialog: "d1", digest, select } } as Target;
+		type Out = { status: number; body: { error?: string; outcome?: string } };
+		const post = async (who: typeof phone | undefined, choice: number) => (await (who ? who.post("sessions/sess-1/answer", body({ digest, answerId: answerId(), choice })) : send(gui, "sessions/sess-1/answer", body({ digest, answerId: answerId(), choice })))) as Out;
+		const before = sent.length, here = (HERE_ONLY as readonly string[]).includes(action);
+		const remoteApprove = await post(phone, 0);
+		if (here) assert.deepEqual([remoteApprove.status, remoteApprove.body.error, sent.length], [403, "local_only", before], `${action}: a paired device cannot approve`);
+		else assert.deepEqual([remoteApprove.status, remoteApprove.body.outcome, sent.length], [200, "accepted", before + 1], `${action}: a paired device approves`);
+		const remoteDeny = await post(phone, 1);
+		assert.deepEqual([remoteDeny.status, remoteDeny.body.outcome], [200, "accepted"], `${action}: a paired device can deny`);
+		const localApprove = await post(undefined, 0);
+		assert.deepEqual([localApprove.status, localApprove.body.outcome], [200, "accepted"], `${action}: this computer's page approves`);
+		assert.equal(sent.length, before + (here ? 2 : 3), `${action}: what reached the bridge`);
+	}
+});
+
 test("the pad from a paired device follows the local page's rule: any pad key goes while a dialog the page cannot answer is open, and only Escape while one it can answer is", async () => {
 	const p = await padded();
 	await p.attach();
@@ -403,9 +433,9 @@ test("the pad from a paired device follows the local page's rule: any pad key go
 test("dequeue: this computer's page and a paired device take the queue back alike, as they type alike; Alt+Up reaches the pane without a mirror", async () => {
 	const { gui, hub, typed } = await answering({ pane: { agent_status: "working" } });
 	hub.target = undefined; // no dialog waits
-	assert.deepEqual(await send(gui, "sessions/sess-1/dequeue", {}), { status: 200, body: { text: "queued text" } } as never);
+	assert.deepEqual(await send(gui, "sessions/sess-1/dequeue", { take: "take-0123456789abcdef" }), { status: 200, body: { text: "queued text" } } as never);
 	const phone = await paired(gui);
-	assert.deepEqual((await phone.post("sessions/sess-1/dequeue", {})).body, { text: "queued text" });
+	assert.deepEqual((await phone.post("sessions/sess-1/dequeue", { take: "take-0123456789abcdef" })).body, { text: "queued text" });
 	assert.deepEqual(typed().map(([m, p]) => [m, p.keys]), [["pane.send_input", ["alt+up"]], ["pane.send_input", ["alt+up"]]]);
 });
 
@@ -437,4 +467,40 @@ test("a finished subagent whose pi exited (no pane backs it) is refused input an
 	const alive = await setup({ found: { role: "subagent" } });
 	assert.equal((await send(alive.gui, "sessions/sess-1/input", { text: "hi", as: "send" })).status, 200, "pi still runs in its pane");
 	assert.equal(alive.typed().length, 1);
+});
+
+test("Straw Link's team settings: this computer's page asks the holder by name (an invite comes back as QR rows); a paired device reads the state and answers a confirm, and does nothing else", async () => {
+	const seen: [string, Record<string, unknown>][] = [];
+	let enabled = 0;
+	const link = {
+		enable: async () => void enabled++,
+		call: async (name: string, args: Record<string, unknown>) => {
+			seen.push([name, args]);
+			if (name === "invite") return { ok: true, text: "strawlink1:abc", expires: 1, hash: "h" };
+			if (name === "state") return { ok: true, view: { teams: [], prefill: { kind: "join", text: "strawlink1:secret", reason: "r", session: "s" } } };
+			return name === "trust" ? { ok: false, error: "That device is in none of this computer's teams" } : { ok: true };
+		},
+	};
+	const { gui } = await setup({ link });
+	const invite = await send(gui, "link/invite", { team: "t1" });
+	assert.equal(invite.status, 200);
+	assert.equal((invite.body as { text?: string }).text, "strawlink1:abc");
+	assert.ok(Array.isArray(invite.body.rows) && invite.body.rows.length > 20 && invite.body.rows.every((r) => /^[01]+$/.test(r)), "drawn as QR rows from the text");
+	const refused = await send(gui, "link/trust", { device: "x", level: "dispatch" });
+	assert.deepEqual([refused.status, refused.body.error, refused.body.reason], [409, "link_failed", "That device is in none of this computer's teams"]);
+	assert.equal((await send(gui, "link/enable", {})).status, 200);
+	assert.equal(enabled, 1);
+	assert.equal((await send(gui, "link/explode", {})).status, 404);
+	assert.equal((await send(gui, "link/invite", { team: "t1" }, { "x-sb-csrf": "wrong" })).status, 403, "the page's secret is needed");
+	assert.deepEqual(seen.map(([n]) => n), ["invite", "trust"]);
+	const phone = await paired(gui);
+	const state = await phone.post("link/state", {});
+	assert.equal(state.status, 200);
+	assert.deepEqual((state.body as { view: { prefill: Record<string, unknown> } }).view.prefill, { kind: "join", reason: "r", session: "s" }, "a pending invite text is not shown to a paired device");
+	assert.equal((await phone.post("link/confirm-answer", { dialogId: "d", allow: true })).status, 200);
+	for (const name of ["create", "invite", "decide", "join-start", "trust", "remove", "role", "rotate", "leave", "enable", "invite-text"]) {
+		const r = await phone.post(`link/${name}`, {});
+		assert.deepEqual([name, r.status, r.body.error], [name, 403, "local_only"], `${name} is this computer's own page's`);
+	}
+	assert.deepEqual(seen.map(([n]) => n), ["invite", "trust", "state", "confirm-answer"], "the holder heard nothing from the paired device but those two");
 });

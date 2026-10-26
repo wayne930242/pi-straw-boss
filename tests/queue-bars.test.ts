@@ -144,7 +144,39 @@ test("the Edit line and its hint have words in both languages, and the hint says
 	const { readFileSync } = await import("node:fs");
 	for (const [file, mustSay] of [["en.json", [/together/, /one text/, /delivered/]], ["zh-TW.json", [/全部/, /一段文字/, /送達/]]] as const) {
 		const messages = JSON.parse(readFileSync(new URL(`../gui/messages/${file}`, import.meta.url), "utf8")) as Record<string, string>;
-		for (const key of ["queue_edit", "queue_edit_hint", "edit_taking", "edit_taken", "edit_none"]) assert.ok(messages[key], `${file} ${key}`);
+		for (const key of ["queue_edit", "queue_edit_hint", "edit_taking", "edit_taken", "edit_none", "edit_unsure"]) assert.ok(messages[key], `${file} ${key}`);
 		for (const re of mustSay) assert.match(messages.queue_edit_hint!, re, file);
 	}
+});
+
+test("an open row is keyed by its session and, among identical rows, by its place: opening one opens no other (R-F007)", () => {
+	class ElB extends El {
+		attrs = new Map<string, string>();
+		on = new Map<string, (e: unknown) => void>();
+		setAttribute(k: string, v: string) { this.attrs.set(k, v); }
+		removeAttribute(k: string) { this.attrs.delete(k); }
+		getAttribute(k: string) { return this.attrs.get(k) ?? null; }
+		addEventListener(t: string, f: (e: unknown) => void) { this.on.set(t, f); }
+		scrollHeight = 90;
+		clientHeight = 60;
+	}
+	const frames: (() => void)[] = [];
+	Object.assign(globalThis, { document: { createElement: (t: string) => new ElB(t) }, requestAnimationFrame: (f: () => void) => frames.push(f) });
+	const run = (box: ElB, list: Queued[], session: string) => {
+		drawQueued({ querySelector: () => box } as unknown as HTMLElement, list, session);
+		frames.splice(0).forEach((f) => f());
+		return box.kids as ElB[];
+	};
+	const same: Queued[] = [{ text: "same words", as: "steer" }, { text: "same words", as: "steer" }, { text: "same words", as: "followUp" }];
+	const [a, b] = [new ElB("div"), new ElB("div")];
+	const [a1, a2, a3] = run(a, same, "alpha");
+	for (const row of [a1!, a2!, a3!]) (row.kids[0] as ElB).scrollHeight = 90, (row.kids[0] as ElB).clientHeight = 60;
+	run(a, same, "alpha").forEach((row) => assert.equal(row.getAttribute("aria-expanded"), "false"));
+	const rows = run(a, same, "alpha");
+	rows[1]!.on.get("click")!({});
+	assert.deepEqual(rows.map((r) => r.getAttribute("aria-expanded")), ["false", "true", "false"], "only the second of two identical rows opens");
+	assert.deepEqual(run(a, same, "alpha").map((r) => r.getAttribute("aria-expanded")), ["false", "true", "false"], "and stays open across a redraw");
+	assert.deepEqual(run(b, same, "beta").map((r) => r.getAttribute("aria-expanded")), ["false", "false", "false"], "another session's identical queue is not opened with it");
+	run(a, same.slice(0, 1), "alpha");
+	assert.deepEqual(run(a, same, "alpha").map((r) => r.getAttribute("aria-expanded")), ["false", "false", "false"], "a row that left the queue does not come back open");
 });

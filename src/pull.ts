@@ -10,11 +10,21 @@ export interface Pull { pending?: boolean; ticket?: string; text?: string; empty
 export const MAX_PULL = 12_000;
 export const WHYS = ["no_editor", "stale", "not_taken", "changed", "too_large", "not_cleared"];
 
-/** The pulled messages out of the editor `now`, given what it held `before` the press; pi puts them in front of a non-blank draft, `\n\n` between. */
-export function pulled(before: string, now: string): { text: string } | { empty: true } | { reason: "changed" } {
+const PASTE = /\[paste #\d+(?: (?:\+\d+ lines|\d+ chars))?\]/;
+/** What pi's Alt+Up pulls out of a queue, as the bridge's mirror has it: steering messages first, then follow-ups, each in the order they came, `\n\n` between. */
+export const joined = (queued: { text: string; as: string }[]) => [...queued.filter((q) => q.as === "steer"), ...queued.filter((q) => q.as !== "steer")].map((q) => q.text).join("\n\n");
+
+/**
+ * The pulled messages out of the editor `now`, given what it held `before` the press and the messages the bridge's own mirror says were queued (`expected`, the
+ * full texts): pi puts them in front of a non-blank draft, `\n\n` between. Anything else is `changed`, and nothing leaves the session: a draft typed in the terminal
+ * between begin and the key, a message pi expanded or an extension rewrote, a queue that moved. pi's setText forgets the content of a pasted block in the draft
+ * (only its marker stays, and `before` holds the content): then `restore` is the editor as it should be, the messages and the whole draft.
+ */
+export function pulled(before: string, now: string, expected: string): { text: string } | { empty: true } | { reason: "changed"; restore?: string } {
 	if (now === before) return { empty: true };
 	const tail = before.trim() ? `\n\n${before}` : "";
-	return now.length > tail.length && now.endsWith(tail) && now.slice(0, now.length - tail.length).trim() ? { text: now.slice(0, now.length - tail.length) } : { reason: "changed" };
+	if (expected && now === expected + tail) return { text: expected };
+	return { reason: "changed", ...(expected && before.trim() && now.startsWith(`${expected}\n\n`) && PASTE.test(now.slice(expected.length + 2)) ? { restore: `${expected}\n\n${before}` } : {}) };
 }
 
 /** A bridge's answer as the server takes it, or undefined when it is out of shape. */

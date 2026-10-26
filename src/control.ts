@@ -9,13 +9,14 @@ import type { createMirrors } from "./mirror.ts";
 import type { Found } from "./net.ts";
 import { upload } from "./upload.ts";
 import { ENDING } from "./probe.ts";
+import { qr } from "./qr.ts";
 
 // Typing into a session from the page, through Herdr's own input path only, as if typed in the terminal:
 //   POST /<token>/api/sessions/<key>/input {text, as: "send" | "followUp", confirmed?}   the text, then Enter (or Alt+Enter while it works)
 //   POST /<token>/api/sessions/<key>/keys  {key, stream, confirmed?}                     one key pad key under its mirror (keys.ts), or Stop's {keys: ["esc"]}
 //   POST /<token>/api/sessions/<key>/focus                                               brings the session's pane forward in Herdr
 //   POST /<token>/api/sessions/<key>/commands {prefix}                                   its commands that match a typed `/prefix`, from its bridge (commands.ts); null when it did not say
-//   POST /<token>/api/sessions/<key>/dequeue {}                                          takes the queue back: pi's Alt+Up, then the pulled messages' text for the composer (pull.ts); {empty: true} when nothing was queued
+//   POST /<token>/api/sessions/<key>/dequeue {take}                                      takes the queue back: pi's Alt+Up, then the pulled messages' text for the composer (pull.ts); {empty: true} when nothing was queued; the same `take` asked again gets the text the session kept
 //   POST /<token>/api/sessions/<key>/answer {dialog, digest, answerId, choice | answers}  answers its dialog through its bridge (dialogs.ts); no keys; a `value` (a secret) is refused from every page (SB-F001)
 //   POST /<token>/api/sessions/<key>/upload (the file's bytes)                            stores a pasted, dropped, or picked file, answers its path (upload.ts)
 //   POST /<token>/api/sessions/<key>/mirror {stream, on}                                  shows the pane's screen on that page's stream (mirror.ts), or stops
@@ -26,6 +27,8 @@ import { ENDING } from "./probe.ts";
 //   POST /<token>/api/close/unit, close/tab, close/base                                   quits a session, or every agent of a squad or base, then closes it (closer.ts)
 //   POST /<token>/api/close/stash {workspace, name}                                       checks and records a base, then closes it as close/base does (stash.ts); a paired device may, as it may close/base
 //   POST /<token>/api/dirs, open/base, open/member, open/main                            a folder picker, a new base with a member, a new member, a new main (spawn.ts)
+//   POST /<token>/api/link/<name> {…}                                                    Straw Link's team settings, through the link holder (link.ts of the page): state, create, invite, decide, join-start, trust, …
+//                                                                                        This computer's page only, except `state` (without a pending invite's text) and `confirm-answer`, which a paired device may do like it answers any confirm
 //   POST /<token>/api/server/stop {by, take}                                             stops the server: another session's /boss gui stop or takeover (never remote)
 // Every write needs the page's own origin (Origin, Sec-Fetch-Site), a JSON body of at most 64 KB, and the CSRF secret the server wrote into
 // the page; the custom header forces a CORS preflight that is never approved. The key is resolved in the registry (paths and panes never come
@@ -36,8 +39,13 @@ export const MAX_TEXT = 16_384, MAX_BODY = 65_536;
 export { ENDING };
 
 export interface Reply { status: number; body: unknown }
+/** The page's way to Straw Link's holder (runtime.ts `gui`): a named request with arguments, and the setup marker that starts the election before any team exists. */
+export interface LinkPort { call(name: string, args: Record<string, unknown>): Promise<{ ok: boolean; error?: string; code?: string; [key: string]: unknown }>; enable(): Promise<void> }
+/** What a paired device may ask: read the state, and answer a forwarded confirm. Everything else changes who may command this computer, so only its own page does it. */
+const REMOTE_LINK = ["state", "confirm-answer"];
+const LINK_NAMES = ["enable", "state", "create", "invite", "invite-text", "invite-cancel", "decide", "join-start", "join-project", "join-cancel", "prefill-clear", "remove", "role", "rotate", "trust", "leave", "confirm-answer"];
 /** `answers.target` reads the net afresh, so the binding and the dialog are checked again for every answer. */
-export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; remoteOn?(): Promise<void>; remoteOff?(): Promise<void>; paired?: { on(): boolean; list(): unknown; unpair(id: string): boolean; unpairAll(): number; unsaved(): string | undefined }; saveFailed?(reason: string): void; spawn?(parts: string[], json: Record<string, unknown>): Promise<Reply>; close?(kind: string, json: Record<string, unknown>, refresh?: () => Promise<unknown>): Promise<Reply>; dismiss?(key: unknown): Promise<boolean>; dismissAll?(): Promise<number>; stop?(asked: Asked): void; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; answers?: Pick<Hub, "replay" | "ended" | "send" | "probe" | "commands" | "pull"> & { target(key: string): Promise<Target | undefined> } }
+export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; remoteOn?(): Promise<void>; remoteOff?(): Promise<void>; paired?: { on(): boolean; list(): unknown; unpair(id: string): boolean; unpairAll(): number; unsaved(): string | undefined }; saveFailed?(reason: string): void; spawn?(parts: string[], json: Record<string, unknown>): Promise<Reply>; close?(kind: string, json: Record<string, unknown>, refresh?: () => Promise<unknown>): Promise<Reply>; dismiss?(key: unknown): Promise<boolean>; dismissAll?(): Promise<number>; stop?(asked: Asked): void; link?: LinkPort; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; answers?: Pick<Hub, "replay" | "ended" | "send" | "probe" | "commands" | "pull"> & { target(key: string): Promise<Target | undefined> } }
 
 const no = (status: number, error: string, reason: string): Reply => ({ status, body: { error, reason } });
 const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -72,9 +80,9 @@ function refused(error: unknown): Reply {
 /** What the page hears when taking the queue back cannot be done, by the bridge's reason (pull.ts). */
 const PULL_WHY: Record<string, string> = {
 	no_editor: "This session has no editor to take the messages back into.",
-	stale: "The take-back took too long; try again.",
+	stale: "The take-back timed out, or the session changed, after the key went: the messages are in the terminal's editor, not here.",
 	not_taken: "pi did not take its queue back; its dequeue key may not be Alt+Up. Check the terminal.",
-	changed: "The terminal's editor changed meanwhile; check it for the messages.",
+	changed: "The terminal's editor holds something other than the queued messages and the draft (typed meanwhile, or a message pi expanded); the messages are in it, check the terminal.",
 	too_large: "The queued messages are too long to bring here; they are in the terminal's editor.",
 	not_cleared: "The messages could not be cleared from the terminal's editor; they are there, not here.",
 };
@@ -88,7 +96,7 @@ export function checkText(text: unknown): string | Reply {
 	return typed;
 }
 
-export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, remoteOff, paired, saveFailed, spawn, close, dismiss, dismissAll, stop, mirrors, secret = async () => true, answers }: ControlDeps) {
+export function createControl({ link, lookup, call, csrf, canonical, pair, remoteOn, remoteOff, paired, saveFailed, spawn, close, dismiss, dismissAll, stop, mirrors, secret = async () => true, answers }: ControlDeps) {
 	const busy = new Set<string>();
 	// A change to the paired devices or the remote wish that could not be written to paired.json took effect in memory only: say so (500), to the page and the session.
 	const lost = (): Reply | undefined => {
@@ -97,7 +105,7 @@ export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, r
 	};
 	const pad = createKeys({ fresh: (id, key, pane) => mirrors?.fresh(id, key, pane) ?? false, secret, answerable: async (key) => Boolean(await answers?.target(key)), probe: async (key) => answers?.probe(key) });
 	/** The origin checks, then the session checks, then one Herdr call. `parts` is the path after api/: sessions/<key>/<action>, remote/pair, or server/stop. */
-	return async function handle(req: IncomingMessage, origin: string, [scope, key = "", action = ""]: string[]): Promise<Reply> {
+	return async function handle(req: IncomingMessage, origin: string, [scope, key = "", action = ""]: string[], remote = false): Promise<Reply> {
 		if (req.method !== "POST") return no(405, "method", "Use POST.");
 		const site = req.headers["sec-fetch-site"], type = String(req.headers["content-type"] ?? "").split(";")[0]!.trim().toLowerCase();
 		if (req.headers.origin !== origin || (site !== undefined && site !== "same-origin")) return no(403, "origin", "Only the page itself may send input.");
@@ -111,6 +119,21 @@ export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, r
 			const { by, take } = read.json;
 			if (key !== "stop" || action || !stop) return no(404, "not_found", "No such action.");
 			return typeof by === "string" && by.length <= 200 && typeof take === "boolean" ? (stop({ by, take }), { status: 202, body: { stopping: true } }) : no(400, "bad_request", "A stop names who asks.");
+		}
+		if (scope === "link") {
+			if (!link) return no(503, "unavailable", "This server has no Straw Link.");
+			if (!LINK_NAMES.includes(key) || action) return no(404, "not_found", "No such action.");
+			if (remote && !REMOTE_LINK.includes(key)) return no(403, "local_only", "Straw Link's team settings are changed on this computer's own page.");
+			if (key === "enable") return link.enable().then(() => ({ status: 200, body: {} }), (error: Error) => no(502, "link_failed", error.message));
+			const done = await link.call(key, read.json);
+			if (!done.ok) return no(409, done.code ?? "link_failed", done.error ?? "Straw Link refused it.");
+			const { ok: _ok, ...body } = done;
+			// An invite is drawn as a QR on the page: the rows come from the text the holder made, which never travels any other way.
+			if (typeof body.text === "string" && (key === "invite" || key === "invite-text")) body.rows = qr(body.text).map((row) => row.map(Number).join(""));
+			// A paired device reads the state without what an agent's request put in the join or create screen (an invite text is a credential).
+			const view = body.view as { prefill?: { text?: string } } | undefined;
+			if (remote && view?.prefill) delete view.prefill.text;
+			return { status: 200, body };
 		}
 		if (scope === "dismiss" && !key && read.json.all === true) return dismissAll ? { status: 200, body: { dismissed: await dismissAll() } } : no(503, "unavailable", "This server dismisses nothing.");
 		if (scope === "dismiss" && !key) return (await dismiss?.(read.json.key)) ? { status: 200, body: {} } : no(404, "not_found", "Only a finished subagent on the net can be dismissed.");
@@ -173,18 +196,22 @@ export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, r
 				pad.sent(key, plan);
 			};
 		} else if (action === "dequeue") {
+			const { take } = json;
+			if (typeof take !== "string" || !ANSWER_ID.test(take)) return no(400, "bad_request", "Name this take-back by an id the page made.");
 			if (!answers) return no(503, "unavailable", "This server cannot reach the session's bridge.");
 			job = async () => {
 				const pane = await live(found);
 				if (pane.agent_status === "blocked") throw no(409, "blocked", "It is waiting on a dialog; answer it in the terminal.");
-				const begun = await answers.pull(key, "begin");
+				const begun = await answers.pull(key, "begin", take);
 				if (!begun) throw no(504, "unsure", "The session did not answer; nothing was taken back. Its pi-straw-boss may be too old for this.");
 				if (begun.reason) throw no(409, begun.reason, PULL_WHY[begun.reason]!);
+				if (begun.text !== undefined) return void (direct = { status: 200, body: { text: begun.text } }); // this very take-back was done, and its answer got lost on the way: no key goes
 				if (!begun.pending || !begun.ticket) return void (direct = { status: 200, body: { empty: true } }); // nothing is queued: no key goes
 				const plan = await pad.dequeue(key, found, pane);
+				await live(found); // the guard took a moment: still pi, on this file
 				for (const [method, params] of plan.calls) await call(method, params, 15_000);
 				const done = await answers.pull(key, "finish", begun.ticket);
-				if (!done) throw no(504, "unsure", "The session did not answer. pi may have put the messages in its editor; check the terminal.");
+				if (!done) throw no(504, "unsure", "The session did not answer in time. The messages are in the terminal's editor, or the session keeps them for a few minutes: press Edit again to fetch them.");
 				if (done.reason) throw no(409, done.reason, PULL_WHY[done.reason]!);
 				direct = done.text !== undefined ? { status: 200, body: { text: done.text } } : { status: 200, body: { empty: true } }; // empty: delivered between the check and the key
 			};
@@ -201,6 +228,7 @@ export function createControl({ lookup, call, csrf, canonical, pair, remoteOn, r
 				if (target?.answer.dialog !== dialog || target.answer.digest !== digest) throw ended ?? no(409, "changed", "The question changed or is no longer open here; read it again.");
 				const checked = checkAnswer(target.answer, json);
 				if (typeof checked === "string") throw no(400, "bad_answer", checked);
+				if (remote && "choice" in checked && target.answer.select?.choices[checked.choice]?.hereOnly) throw no(403, "local_only", "This choice is approved on this computer's own page or terminal; a paired device can only deny."); // decided by the listener and the stored dialog, never the body
 				return answers.send(key, target, { id: dialog, answerId, digest, ...checked });
 			};
 		} else job = async () => call("agent.focus", { target: (await live(found)).pane_id });

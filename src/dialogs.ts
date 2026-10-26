@@ -24,7 +24,8 @@ import { todoOk, type TodoSum } from "./todo.ts";
 // which of its commands match a `/` typed in the composer (`commands`), takes its queue back for the composer (`pull`, in two steps around the key, pull.ts), and
 // gives the unit the documents its bridge lists, each by a capability (documents.ts), and carries a form answer for one to that bridge.
 
-const ACK_MS = 5000, PROBE_MS = 1000, PULL_MS = 3000, FORM_MS = 5000, KEEP_MS = 600_000, KEEP = 256, MAX_TEXT = 8192, MAX_NOTE = 2048, MAX_ALL = 12_288;
+export const PULL_MS = 4000, PULL_BUDGET_MS = 2500;
+const ACK_MS = 5000, PROBE_MS = 1000, FORM_MS = 5000, KEEP_MS = 600_000, KEEP = 256, MAX_TEXT = 8192, MAX_NOTE = 2048, MAX_ALL = 12_288;
 export const ANSWER_ID = /^[A-Za-z0-9_-]{16,64}$/, CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
 interface Channel { snapshot(): { connected: boolean; owner?: { sessionId: string; epoch: string } }; publish(payload: unknown, options?: { audience?: "owner" | "capable"; ownerOnly?: boolean }): void }
 type Event = { type: string; fromSessionId?: string; sessionId?: string; owner?: { sessionId: string; epoch: string }; payload?: unknown };
@@ -141,7 +142,7 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 	const hub: LocalHub & {
 		readonly running: boolean; readonly me: string; start(onChange: () => void): void; stop(): void; relayed(sessions: Session[], refs: Map<string, Ref>): Relayed; target(key: string): Target | undefined;
 		replay(answerId: string, key: string): Sent | undefined; ended(key: string, dialog: string, answerId: string): Sent | undefined; send(key: string, t: Target, a: Answer): Promise<Sent>;
-		probe(key: string): Promise<Editor | undefined>; pull(key: string, step: "begin" | "finish", ticket?: string): Promise<Pull | undefined>; commands(key: string, prefix: string): Promise<Cmd[] | undefined>; close(key: string, keepPane: boolean, ifStashable?: boolean): Promise<{ accepted: boolean; reason?: string } | undefined>; stashCheck(key: string): Promise<{ reason?: string } | undefined>; doc(cap: string): { key: string; doc: Doc } | undefined; form(cap: string, answerId: string, fields: Fields): Promise<FormResult | undefined>;
+		probe(key: string): Promise<Editor | undefined>; pull(key: string, step: "begin" | "finish", ref?: string): Promise<Pull | undefined>; commands(key: string, prefix: string): Promise<Cmd[] | undefined>; close(key: string, keepPane: boolean, ifStashable?: boolean): Promise<{ accepted: boolean; reason?: string } | undefined>; stashCheck(key: string): Promise<{ reason?: string } | undefined>; doc(cap: string): { key: string; doc: Doc } | undefined; form(cap: string, answerId: string, fields: Fields): Promise<FormResult | undefined>;
 	} = {
 		receive,
 		get running() { return active; },
@@ -213,8 +214,15 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 		},
 		/** What the session's editor would submit (unknown when undefined). */
 		probe: (key) => request(key, probes, () => checkProbe({ ...local.probe() }), (probeId) => ({ type: "probe", probeId })),
-		/** One step of taking the session's queue back (pull.ts): `finish` waits up to 1.5 s for pi to hand its queue over, so it gets 3 s. */
-		pull: (key, step, ticket) => request(key, pulls, () => Promise.resolve(local.pull(step, ticket)).then((r) => checkPull({ ...r })), (reqId) => ({ type: "pull", reqId, step, ...(ticket ? { ticket } : {}) }), step === "finish" ? PULL_MS : PROBE_MS),
+		/**
+		 * One step of taking the session's queue back (pull.ts): `begin` carries the page's `take` id, `finish` the ticket. The bridge may spend 1.5 s on `finish`
+		 * and is told to answer within `PULL_BUDGET_MS` of now (the clock is this machine's) or clear nothing; the hub waits longer than that, so an answer that
+		 * cleared pi's editor is never one nobody waits for.
+		 */
+		pull: (key, step, ref) => {
+			const deadline = Date.now() + PULL_BUDGET_MS;
+			return request(key, pulls, () => Promise.resolve(local.pull(step, ref, deadline)).then((r) => checkPull({ ...r })), (reqId) => ({ type: "pull", reqId, step, ...(step === "begin" ? (ref ? { take: ref } : {}) : { ticket: ref, deadline }) }), step === "finish" ? PULL_MS : PROBE_MS);
+		},
 		/** The session's commands that match `prefix`, as its bridge lists them. */
 		/** Asks the session to quit as /boss close does (keeping its pane when `keepPane`); undefined when its bridge did not answer. */
 		close: (key, keepPane, ifStashable = false) => request(key, closes, () => local.close(keepPane, ifStashable), (reqId) => ({ type: "close", reqId, keepPane, ...(ifStashable ? { ifStashable } : {}) })),

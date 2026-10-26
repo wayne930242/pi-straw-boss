@@ -9,7 +9,7 @@ import { guiNamespace, REGISTER, startBridge, type ToHub } from "../src/bridge.t
 import type { Hub, Target } from "../src/dialogs.ts";
 import { startGui, type Gui } from "../src/gui.ts";
 import type { Found } from "../src/net.ts";
-import { checkPull, MAX_PULL, type Pull, pulled } from "../src/pull.ts";
+import { checkPull, joined, MAX_PULL, type Pull, pulled } from "../src/pull.ts";
 
 // Taking the queue back (pull.ts): the server presses pi's Alt+Up between a `begin` and a `finish` at the bridge, and the page gets only the
 // pulled messages; what pi's editor held before stays there.
@@ -17,21 +17,41 @@ import { checkPull, MAX_PULL, type Pull, pulled } from "../src/pull.ts";
 const scratch = mkdtempSync(join(tmpdir(), "psb-dequeue-test-"));
 mkdirSync(join(scratch, "bundle"));
 writeFileSync(join(scratch, "bundle", "index.html"), "<!doctype html><html><head><title>Straw Net</title></head><body></body></html>");
-const running: Gui[] = [];
+const running: Gui[] = [], bridgeDirs: string[] = [];
 after(async () => {
 	await Promise.all(running.map((g) => g.stop()));
-	rmSync(scratch, { recursive: true, force: true });
+	for (const dir of [scratch, ...bridgeDirs]) rmSync(dir, { recursive: true, force: true });
 });
 
-test("pulled: pi puts the queued messages in front of a non-blank draft with a blank line; the draft is cut off, and anything else is refused", () => {
-	assert.deepEqual(pulled("", "one\n\ntwo"), { text: "one\n\ntwo" });
-	assert.deepEqual(pulled("my draft", "one\n\ntwo\n\nmy draft"), { text: "one\n\ntwo" });
-	assert.deepEqual(pulled("   ", "one"), { text: "one" }, "a blank draft is dropped by pi");
-	assert.deepEqual(pulled("draft", "draft"), { empty: true }, "nothing was pulled");
-	assert.deepEqual(pulled("", ""), { empty: true });
-	assert.deepEqual(pulled("draft", "other"), { reason: "changed" });
-	assert.deepEqual(pulled("draft", "\n\ndraft"), { reason: "changed" }, "no messages in front");
-	assert.deepEqual(pulled("draft", "one\n\nsomething else"), { reason: "changed" });
+test("pulled: pi puts the queued messages in front of a non-blank draft with a blank line; the draft is cut off, and anything but exactly the mirror's messages in front of it is refused", () => {
+	assert.deepEqual(pulled("", "one\n\ntwo", "one\n\ntwo"), { text: "one\n\ntwo" });
+	assert.deepEqual(pulled("my draft", "one\n\ntwo\n\nmy draft", "one\n\ntwo"), { text: "one\n\ntwo" });
+	assert.deepEqual(pulled("   ", "one", "one"), { text: "one" }, "a blank draft is dropped by pi");
+	assert.deepEqual(pulled("draft", "draft", "one"), { empty: true }, "nothing was pulled");
+	assert.deepEqual(pulled("", "", "one"), { empty: true });
+	assert.deepEqual(pulled("draft", "other", "one"), { reason: "changed" });
+	assert.deepEqual(pulled("draft", "\n\ndraft", "one"), { reason: "changed" }, "no messages in front");
+	assert.deepEqual(pulled("draft", "one\n\nsomething else", "one"), { reason: "changed" });
+	assert.deepEqual(pulled("draft", "one\n\ndraft", ""), { reason: "changed" }, "a queue the mirror does not know is not handed over");
+});
+
+test("pulled (R-F003): with a blank draft at begin, what was typed in the terminal before the key is not taken for a queued message", () => {
+	assert.deepEqual(pulled("", "queued\n\ntyped in terminal", "queued"), { reason: "changed" });
+	assert.deepEqual(pulled("", "typed", "queued"), { reason: "changed" });
+	assert.deepEqual(pulled("", "queued\n\nmore", "queued\n\nmore"), { text: "queued\n\nmore" }, "the mirror's own blank line is part of a message");
+	assert.deepEqual(pulled("draft", "one\n\ndraft and more", "one"), { reason: "changed" }, "typing after the draft too");
+});
+
+test("joined: steering messages first, then follow-ups, each in the order they came, as pi's Alt+Up joins them", () => {
+	assert.equal(joined([{ text: "f1", as: "followUp" }, { text: "s1", as: "steer" }, { text: "f2", as: "followUp" }, { text: "s2", as: "steer" }]), "s1\n\ns2\n\nf1\n\nf2");
+	assert.equal(joined([]), "");
+});
+
+test("pulled (R-F004): pi's setText forgets a pasted block's content; the editor is given back whole, the messages then the draft with the content", () => {
+	assert.deepEqual(pulled("see\nline one\nline two", "q\n\nsee [paste #1 +2 lines]", "q"), { reason: "changed", restore: "q\n\nsee\nline one\nline two" });
+	assert.deepEqual(pulled("see 12345", "q\n\nsee [paste #2 5 chars]", "q"), { reason: "changed", restore: "q\n\nsee 12345" });
+	assert.deepEqual(pulled("typed", "q\n\ntyped more", "q"), { reason: "changed" }, "an edit without a paste marker restores nothing");
+	assert.deepEqual(pulled("x", "other [paste #1 +2 lines]", "q"), { reason: "changed" }, "nor when the messages are not in front");
 });
 
 test("checkPull takes only the fields of the protocol, in shape", () => {
@@ -45,6 +65,7 @@ test("checkPull takes only the fields of the protocol, in shape", () => {
 /** One session's bridge with an editor and a queue the test drives; `press` is what pi does on Alt+Up. */
 function session() {
 	const dir = mkdtempSync(join(tmpdir(), "psb-dequeue-bridge-"));
+	bridgeDirs.push(dir);
 	writeFileSync(join(dir, "gui.json"), JSON.stringify({ pid: process.pid, port: 1, token: "t", owner: "x", ownerSession: "G" }));
 	const handlers = new Map<string, ((e: unknown, ctx: unknown) => void)[]>(), regs: { namespace: string; onEvent(e: Record<string, unknown>): void }[] = [], published: ToHub[] = [];
 	const bus = new Map<string, ((d: unknown) => void)[]>();
@@ -73,14 +94,20 @@ function session() {
 }
 const after_ = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** Messages queued while the agent works: pi's queue count and the `input` events the bridge mirrors. */
+const queue = (s: ReturnType<typeof session>, ...messages: [text: string, as: "steer" | "followUp"][]) => {
+	s.st.queued += messages.length;
+	for (const [text, as] of messages) s.fire("input", { text, streamingBehavior: as });
+};
+
 test("pull: begin says whether anything waits and remembers the editor; finish hands over the messages, leaves the draft in the editor, and never carries the draft", async () => {
 	const s = session();
 	s.st.editor = "private draft sk-123";
 	assert.deepEqual(await s.bridge.pull("begin"), { pending: false }, "nothing queued: no key should go");
-	s.st.queued = 2;
+	queue(s, ["then follow", "followUp"], ["steer me", "steer"]);
 	const begun = await s.bridge.pull("begin");
 	assert.equal(begun.pending, true);
-	s.press(["steer me", "then follow"]);
+	s.press(["steer me", "then follow"]); // pi joins the steering messages first, then the follow-ups
 	const done = await s.bridge.pull("finish", begun.ticket);
 	assert.deepEqual(done, { text: "steer me\n\nthen follow" });
 	assert.equal(s.st.editor, "private draft sk-123", "the draft stays, the messages are gone from pi's editor");
@@ -89,8 +116,7 @@ test("pull: begin says whether anything waits and remembers the editor; finish h
 
 test("pull: the queue the bridge mirrors is gone from what it relays as soon as pi has taken it back", async () => {
 	const s = session();
-	s.st.queued = 1;
-	s.fire("input", { text: "queued one", streamingBehavior: "steer" });
+	queue(s, ["queued one", "steer"]);
 	const lastQueue = () => (s.published.filter((p) => p.type === "dialogs").at(-1) as { queued?: unknown[] }).queued;
 	assert.equal(lastQueue()?.length, 1);
 	const begun = await s.bridge.pull("begin");
@@ -102,7 +128,7 @@ test("pull: the queue the bridge mirrors is gone from what it relays as soon as 
 test("pull: the queue delivered between begin and the key gives empty, and nothing changes in the editor", async () => {
 	const s = session();
 	s.st.editor = "draft";
-	s.st.queued = 1;
+	queue(s, ["a", "steer"]);
 	const begun = await s.bridge.pull("begin");
 	s.st.queued = 0; // delivered meanwhile; pi's Alt+Up then restores nothing
 	assert.deepEqual(await s.bridge.pull("finish", begun.ticket), { empty: true });
@@ -111,24 +137,27 @@ test("pull: the queue delivered between begin and the key gives empty, and nothi
 
 test("pull: a queue pi did not take back, an editor that changed, a text too long, and an editor that will not clear leave the editor as pi has it", async () => {
 	const s = session();
-	s.st.queued = 1;
+	queue(s, ["q", "steer"]);
 	let begun = await s.bridge.pull("begin");
 	assert.deepEqual(await s.bridge.pull("finish", begun.ticket), { reason: "not_taken" }, "the key did nothing: the queue is still there");
 	s.st.editor = "draft";
-	s.st.queued = 1;
+	s.st.queued = 0;
+	queue(s, ["a", "steer"]);
 	begun = await s.bridge.pull("begin");
 	s.press(["a"]);
 	s.st.editor = "a\n\ndraft, edited in the terminal meanwhile";
 	assert.deepEqual(await s.bridge.pull("finish", begun.ticket), { reason: "changed" });
 	assert.equal(s.st.editor, "a\n\ndraft, edited in the terminal meanwhile");
 	s.st.editor = "";
-	s.st.queued = 1;
+	s.st.queued = 0;
+	queue(s, ["x".repeat(MAX_PULL + 10), "steer"]);
 	begun = await s.bridge.pull("begin");
 	s.press(["x".repeat(MAX_PULL + 10)]);
 	assert.deepEqual(await s.bridge.pull("finish", begun.ticket), { reason: "too_large" });
 	assert.equal(s.st.editor.length, MAX_PULL + 10, "it stays in the terminal's editor");
 	s.st.editor = "";
-	s.st.queued = 1;
+	s.st.queued = 0;
+	queue(s, ["keep", "steer"]);
 	begun = await s.bridge.pull("begin");
 	s.press(["keep"]);
 	s.st.failSet = true;
@@ -136,12 +165,88 @@ test("pull: a queue pi did not take back, an editor that changed, a text too lon
 	assert.equal(s.st.editor, "keep");
 });
 
+test("pull (R-F003): a blank draft at begin and terminal typing before the key: nothing leaves the session, and the terminal's text stays in its editor", async () => {
+	const s = session();
+	queue(s, ["queued", "steer"]);
+	const begun = await s.bridge.pull("begin");
+	s.st.editor = "xyz sk-secret"; // typed in the terminal after begin, before the key
+	s.press(["queued"]);
+	assert.deepEqual(await s.bridge.pull("finish", begun.ticket), { reason: "changed" });
+	assert.equal(s.st.editor, "queued\n\nxyz sk-secret", "pi's editor is left as it is: the messages and the typing, both still in the terminal");
+});
+
+test("pull (R-F004): a draft with a pasted block comes out of a refused take-back whole, the paste's content back in place of its marker", async () => {
+	const s = session();
+	s.st.editor = "see\nline one\nline two"; // getEditorText expands the paste marker
+	queue(s, ["q", "steer"]);
+	const begun = await s.bridge.pull("begin");
+	s.st.queued = 0;
+	s.st.editor = "q\n\nsee [paste #1 +2 lines]"; // pi's own restore: its setText forgot the content
+	assert.deepEqual(await s.bridge.pull("finish", begun.ticket), { reason: "changed" });
+	assert.equal(s.st.editor, "q\n\nsee\nline one\nline two");
+});
+
+test("pull (R-F002): past the deadline the editor is not cleared, and a deadline shortens the wait for pi", async () => {
+	const s = session();
+	s.st.editor = "draft";
+	queue(s, ["m", "steer"]);
+	let begun = await s.bridge.pull("begin");
+	s.press(["m"]);
+	assert.deepEqual(await s.bridge.pull("finish", begun.ticket, Date.now() + 100), { reason: "not_cleared" }, "the answer would reach nobody: the messages stay where pi put them");
+	assert.equal(s.st.editor, "m\n\ndraft");
+	s.st.editor = "draft";
+	s.st.queued = 0;
+	queue(s, ["m2", "steer"]);
+	begun = await s.bridge.pull("begin");
+	const t0 = Date.now();
+	assert.deepEqual(await s.bridge.pull("finish", begun.ticket, t0 + 450), { reason: "not_taken" });
+	assert.ok(Date.now() - t0 < 450, `it gave up before the deadline, after ${Date.now() - t0} ms`);
+	s.st.editor = "draft";
+	s.st.queued = 0;
+	s.fire("agent_settled"); // pi emptied its queue another way: the mirror follows
+	queue(s, ["m3", "steer"]);
+	begun = await s.bridge.pull("begin");
+	s.press(["m3"]);
+	assert.deepEqual(await s.bridge.pull("finish", begun.ticket, Date.now() + 2500), { text: "m3" }, "in time: handed over as before");
+	assert.equal(s.st.editor, "draft");
+});
+
+test("pull (R-F001): the messages handed over are kept for the same take-back asked again, until ten minutes pass or the session changes; another take-back gets none of them", async () => {
+	const s = session();
+	s.st.editor = "draft";
+	queue(s, ["gone from pi", "steer"]);
+	const begun = await s.bridge.pull("begin", "take-one-aaaaaaaaaa");
+	s.press(["gone from pi"]);
+	assert.deepEqual(await s.bridge.pull("finish", begun.ticket), { text: "gone from pi" });
+	assert.equal(s.st.editor, "draft");
+	assert.deepEqual(await s.bridge.pull("begin", "take-one-aaaaaaaaaa"), { text: "gone from pi" }, "the answer got lost: asked again, it is still there");
+	assert.deepEqual(await s.bridge.pull("begin", "take-one-aaaaaaaaaa"), { text: "gone from pi" }, "and again");
+	assert.equal(s.st.editor, "draft", "no key is needed for it and the editor is untouched");
+	assert.deepEqual(await s.bridge.pull("begin", "take-two-bbbbbbbbbb"), { pending: false }, "another take-back is a new question");
+	const now = Date.now, realNow = now.bind(Date);
+	Date.now = () => realNow() + 601_000;
+	try {
+		assert.deepEqual(await s.bridge.pull("begin", "take-one-aaaaaaaaaa"), { pending: false }, "after ten minutes the session no longer keeps them");
+	} finally {
+		Date.now = now;
+	}
+	s.fire("session_start");
+	assert.deepEqual(await s.bridge.pull("begin", "take-one-aaaaaaaaaa"), { pending: false });
+	queue(s, ["not cleared one", "steer"]);
+	const b2 = await s.bridge.pull("begin", "take-three-cccccccc");
+	s.press(["not cleared one"]);
+	s.st.failSet = true;
+	assert.deepEqual(await s.bridge.pull("finish", b2.ticket), { reason: "not_cleared" });
+	s.st.failSet = false;
+	assert.deepEqual(await s.bridge.pull("begin", "take-three-cccccccc"), { pending: false }, "what stayed in pi's editor is not also kept: it would come twice");
+});
+
 test("pull: a session without a UI has no editor; an old ticket is stale", async () => {
 	const s = session();
 	s.st.hasUI = false;
 	assert.deepEqual(await s.bridge.pull("begin"), { reason: "no_editor" });
 	s.st.hasUI = true;
-	s.st.queued = 1;
+	queue(s, ["q", "steer"]);
 	const begun = await s.bridge.pull("begin");
 	assert.deepEqual(await s.bridge.pull("finish", "other"), { reason: "stale" });
 	assert.deepEqual(await s.bridge.pull("finish", begun.ticket), { reason: "not_taken" }, "a wrong ticket spends nothing");
@@ -149,21 +254,27 @@ test("pull: a session without a UI has no editor; an old ticket is stale", async
 
 test("pull over the channel: only G for this bridge is answered, with the result under the request's id", async () => {
 	const s = session();
-	s.st.queued = 1;
-	s.message({ version: 1, type: "pull", to: s.to, reqId: "r1", step: "begin" });
+	queue(s, ["hi", "steer"]);
+	s.message({ version: 1, type: "pull", to: s.to, reqId: "r1", step: "begin", take: "take-chan-aaaaaaaaaa" });
 	await after_(10);
 	const [first] = s.results();
 	assert.equal(first!.reqId, "r1");
 	assert.equal(first!.pending, true);
 	s.press(["hi"]);
-	s.message({ version: 1, type: "pull", to: s.to, reqId: "r2", step: "finish", ticket: first!.ticket });
+	s.message({ version: 1, type: "pull", to: s.to, reqId: "r2", step: "finish", ticket: first!.ticket, deadline: Date.now() + 2500 });
 	await after_(20);
 	assert.deepEqual(s.results().at(-1), { version: 1, type: "pull-result", bridgeId: s.to, reqId: "r2", text: "hi" });
+	s.message({ version: 1, type: "pull", to: s.to, reqId: "r3", step: "begin", take: "take-chan-aaaaaaaaaa" });
+	await after_(10);
+	assert.deepEqual(s.results().at(-1), { version: 1, type: "pull-result", bridgeId: s.to, reqId: "r3", text: "hi" }, "the take id travels with begin");
 	const n = s.results().length;
 	s.message({ version: 1, type: "pull", to: s.to, reqId: "x", step: "begin" }, "X");
 	s.message({ version: 1, type: "pull", to: "someone", reqId: "y", step: "begin" });
 	s.message({ version: 1, type: "pull", to: s.to, reqId: "z".repeat(65), step: "begin" });
-	s.message({ version: 1, type: "pull", to: s.to, reqId: "w", step: "finish" });
+	s.message({ version: 1, type: "pull", to: s.to, reqId: "w", step: "finish", deadline: Date.now() + 1000 });
+	s.message({ version: 1, type: "pull", to: s.to, reqId: "w2", step: "finish", ticket: "t" });
+	s.message({ version: 1, type: "pull", to: s.to, reqId: "w3", step: "finish", ticket: "t", deadline: "soon" });
+	s.message({ version: 1, type: "pull", to: s.to, reqId: "w4", step: "begin", take: 3 });
 	s.message({ version: 1, type: "pull", to: s.to, reqId: "v", step: "nope" });
 	await after_(20);
 	assert.equal(s.results().length, n);
@@ -171,7 +282,7 @@ test("pull over the channel: only G for this bridge is answered, with the result
 
 // ---- the server's dequeue action ----
 
-const FILE = "/s/2026_sess-1.jsonl";
+const FILE = "/s/2026_sess-1.jsonl", TAKE = { take: "take-0123456789abcdef" };
 function send(gui: Gui, path: string, body: unknown = {}) {
 	const data = JSON.stringify(body);
 	return new Promise<{ status: number; body: { text?: string; empty?: boolean; error?: string; reason?: string } }>((resolve, reject) => {
@@ -182,11 +293,11 @@ function send(gui: Gui, path: string, body: unknown = {}) {
 		req.on("error", reject).end(data);
 	});
 }
-async function served({ pull, status = "working", dialog = false, secret = false }: { pull: (step: string, ticket?: string) => Pull | undefined | Promise<Pull | undefined>; status?: string; dialog?: boolean; secret?: boolean }) {
+async function served({ pull, status = "working", dialog = false, secret = false }: { pull: (step: string, ref?: string) => Pull | undefined | Promise<Pull | undefined>; status?: string; dialog?: boolean; secret?: boolean }) {
 	const calls: [string, Record<string, unknown>][] = [], steps: [string, string | undefined][] = [], state = { pane_id: "wA:p1", agent: "pi", agent_status: status, agent_session: { value: FILE } };
 	const call = async (method: string, params: Record<string, unknown>) => (calls.push([method, params]), steps.push(["call:" + method, undefined]), method === "pane.get" ? { pane: state } : {});
 	const target = { from: "S", bridgeId: "B", answer: { dialog: "d1", digest: "a".repeat(64), select: { title: "T", choices: [{ label: "A" }] } } } as Target;
-	const hub = { running: true, me: "G", start() {}, stop() {}, receive() {}, relayed: () => ({ dialogsOf: () => undefined, merge: () => ({ callId: "", tool: "" }) }), replay: () => undefined, ended: () => undefined, send: async () => ({ status: 200, body: {} }), target: () => (dialog ? target : undefined), probe: async () => ({ editor: "empty" as const }), pull: async (_k: string, step: string, ticket?: string) => (steps.push([step, ticket]), pull(step, ticket)) };
+	const hub = { running: true, me: "G", start() {}, stop() {}, receive() {}, relayed: () => ({ dialogsOf: () => undefined, merge: () => ({ callId: "", tool: "" }) }), replay: () => undefined, ended: () => undefined, send: async () => ({ status: 200, body: {} }), target: () => (dialog ? target : undefined), probe: async () => ({ editor: "empty" as const }), pull: async (_k: string, step: string, ref?: string) => (steps.push([step, ref]), pull(step, ref)) };
 	const lookup = (key: string): Found | undefined => (key === "sess-1" ? { key, base: "wA", name: "billing", role: "main", file: FILE, pane: "wA:p1", live: true } : undefined);
 	const gui = await startGui({ read: async () => ({ bases: [] }), net: { lookup, workspace: () => [] }, call, hub: hub as unknown as Hub, dir: join(scratch, "bundle"), pollMs: 50, ...(secret ? { secret: undefined } : {}) } as never);
 	running.push(gui);
@@ -195,46 +306,55 @@ async function served({ pull, status = "working", dialog = false, secret = false
 
 test("dequeue: begin, then Alt+Up on the pane, then finish with the ticket; the page gets the pulled text", async () => {
 	const x = await served({ pull: (step) => (step === "begin" ? { pending: true, ticket: "T1" } : { text: "one\n\ntwo" }) });
-	assert.deepEqual(await send(x.gui, "sessions/sess-1/dequeue"), { status: 200, body: { text: "one\n\ntwo" } });
-	assert.deepEqual(x.steps, [["call:pane.get", undefined], ["begin", undefined], ["call:pane.send_input", undefined], ["finish", "T1"]].filter(Boolean), "begin before the key, finish after it");
+	assert.deepEqual(await send(x.gui, "sessions/sess-1/dequeue", TAKE), { status: 200, body: { text: "one\n\ntwo" } });
+	assert.deepEqual(x.steps, [["call:pane.get", undefined], ["begin", TAKE.take], ["call:pane.get", undefined], ["call:pane.send_input", undefined], ["finish", "T1"]], "begin (with the page's take id) before the key, the pane looked at again, finish after it");
 	assert.deepEqual(x.keys(), [["alt+up"]]);
 });
 
 test("dequeue: an empty queue sends no key; one delivered between begin and the key says empty", async () => {
 	const none = await served({ pull: () => ({ pending: false }) });
-	assert.deepEqual(await send(none.gui, "sessions/sess-1/dequeue"), { status: 200, body: { empty: true } });
+	assert.deepEqual(await send(none.gui, "sessions/sess-1/dequeue", TAKE), { status: 200, body: { empty: true } });
 	assert.deepEqual(none.keys(), [], "no Alt+Up when nothing waits");
 	const late = await served({ pull: (step) => (step === "begin" ? { pending: true, ticket: "T" } : { empty: true }) });
-	assert.deepEqual(await send(late.gui, "sessions/sess-1/dequeue"), { status: 200, body: { empty: true } });
+	assert.deepEqual(await send(late.gui, "sessions/sess-1/dequeue", TAKE), { status: 200, body: { empty: true } });
 	assert.deepEqual(late.keys(), [["alt+up"]]);
 });
 
 test("dequeue: refusals keep the editor and the key from going when they come before it, and say why after it", async () => {
 	for (const [why, status] of [["no_editor", 409], ["stale", 409]] as const) {
 		const x = await served({ pull: () => ({ reason: why }) });
-		const r = await send(x.gui, "sessions/sess-1/dequeue");
+		const r = await send(x.gui, "sessions/sess-1/dequeue", TAKE);
 		assert.deepEqual([r.status, r.body.error], [status, why]);
 		assert.deepEqual(x.keys(), []);
 	}
 	const silent = await served({ pull: () => undefined });
-	assert.equal((await send(silent.gui, "sessions/sess-1/dequeue")).status, 504, "a bridge that never answers");
+	assert.equal((await send(silent.gui, "sessions/sess-1/dequeue", TAKE)).status, 504, "a bridge that never answers");
 	assert.deepEqual(silent.keys(), []);
 	const stuck = await served({ pull: (step) => (step === "begin" ? { pending: true, ticket: "T" } : { reason: "not_taken" }) });
-	const r = await send(stuck.gui, "sessions/sess-1/dequeue");
+	const r = await send(stuck.gui, "sessions/sess-1/dequeue", TAKE);
 	assert.deepEqual([r.status, r.body.error], [409, "not_taken"]);
 	assert.match(r.body.reason!, /Alt\+Up/);
 	const lost = await served({ pull: (step) => (step === "begin" ? { pending: true, ticket: "T" } : undefined) });
-	assert.equal((await send(lost.gui, "sessions/sess-1/dequeue")).status, 504, "unsure: pi may have taken the messages");
+	const unsure = await send(lost.gui, "sessions/sess-1/dequeue", TAKE);
+	assert.equal(unsure.status, 504, "unsure: pi may have taken the messages");
+	assert.match(unsure.body.reason!, /terminal's editor/);
+	assert.match(unsure.body.reason!, /press Edit again/, "R-F002: the 504 tells the truth, where the messages are and how to get them");
+	assert.doesNotMatch(unsure.body.reason!, /nothing was taken/i);
+	const late = await served({ pull: (step) => (step === "begin" ? { pending: true, ticket: "T" } : { reason: "stale" }) });
+	const aged = await send(late.gui, "sessions/sess-1/dequeue", TAKE);
+	assert.deepEqual([aged.status, aged.body.error], [409, "stale"]);
+	assert.match(aged.body.reason!, /terminal's editor/, "R-F005: after the key went the messages are in the terminal, not for a retry");
+	assert.doesNotMatch(aged.body.reason!, /try again/);
 	const big = await served({ pull: (step) => (step === "begin" ? { pending: true, ticket: "T" } : { reason: "too_large" }) });
-	assert.equal((await send(big.gui, "sessions/sess-1/dequeue")).body.error, "too_large");
+	assert.equal((await send(big.gui, "sessions/sess-1/dequeue", TAKE)).body.error, "too_large");
 });
 
 test("dequeue: nothing is asked or pressed while the session waits on a dialog or a question the page answers", async () => {
 	const waiting = await served({ pull: () => ({ pending: true, ticket: "T" }), status: "blocked" });
-	assert.equal((await send(waiting.gui, "sessions/sess-1/dequeue")).body.error, "blocked");
+	assert.equal((await send(waiting.gui, "sessions/sess-1/dequeue", TAKE)).body.error, "blocked");
 	assert.deepEqual(waiting.steps.map(([s]) => s), ["call:pane.get"], "the bridge was not asked and no key went");
 	const asking = await served({ pull: (step) => (step === "begin" ? { pending: true, ticket: "T" } : { text: "x" }), dialog: true });
-	assert.equal((await send(asking.gui, "sessions/sess-1/dequeue")).body.error, "blocked", "like any key but Escape");
+	assert.equal((await send(asking.gui, "sessions/sess-1/dequeue", TAKE)).body.error, "blocked", "like any key but Escape");
 	assert.deepEqual(asking.keys(), []);
 });
 
@@ -242,12 +362,30 @@ test("dequeue: one at a time per session, the session and the pane are checked a
 	let release!: () => void;
 	const gate = new Promise<void>((r) => (release = r));
 	const x = await served({ pull: async (step) => (step === "begin" ? (await gate, { pending: true, ticket: "T" }) : { text: "t" }) });
-	const first = send(x.gui, "sessions/sess-1/dequeue");
+	const first = send(x.gui, "sessions/sess-1/dequeue", TAKE);
 	await after_(30);
-	assert.equal((await send(x.gui, "sessions/sess-1/dequeue")).status, 429);
+	assert.equal((await send(x.gui, "sessions/sess-1/dequeue", TAKE)).status, 429);
 	release();
 	assert.equal((await first).status, 200);
 	assert.equal((await send(x.gui, "sessions/nope/dequeue")).status, 404);
 	x.state.agent = "zsh";
-	assert.equal((await send(x.gui, "sessions/sess-1/dequeue")).body.error, "not_pi");
+	assert.equal((await send(x.gui, "sessions/sess-1/dequeue", TAKE)).body.error, "not_pi");
+});
+
+test("dequeue (R-F001): the same take id asked again gets the text the session kept, and no key goes; a take id is required and well-formed", async () => {
+	const kept = await served({ pull: (step) => (step === "begin" ? { text: "kept text" } : { reason: "stale" }) });
+	assert.deepEqual(await send(kept.gui, "sessions/sess-1/dequeue", TAKE), { status: 200, body: { text: "kept text" } });
+	assert.deepEqual(kept.keys(), [], "pi's Alt+Up is not pressed again for a take-back that was done");
+	assert.deepEqual(kept.steps.filter(([s]) => s === "finish"), [], "and there is no finish");
+	for (const bad of [{}, { take: 3 }, { take: "short" }, { take: "x".repeat(65) }, { take: "has space in the id 123" }]) {
+		const r = await send(kept.gui, "sessions/sess-1/dequeue", bad);
+		assert.deepEqual([r.status, r.body.error], [400, "bad_request"], JSON.stringify(bad));
+	}
+});
+
+test("dequeue (R-F006): the pane is looked at again right before the key; a session that changed while the guard ran gets none", async () => {
+	const x = await served({ pull: (step) => (step === "begin" ? ((x.state.agent = "zsh"), { pending: true, ticket: "T" }) : { text: "t" }) });
+	const r = await send(x.gui, "sessions/sess-1/dequeue", TAKE);
+	assert.equal(r.body.error, "not_pi");
+	assert.deepEqual(x.keys(), [], "no Alt+Up into another program");
 });

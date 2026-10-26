@@ -6,13 +6,16 @@ import { type Party, stamp } from "../header.ts";
 import type { Session } from "../herdr.ts";
 import { startOf } from "../startof.ts";
 import { type Channel, type Kit, REGISTER } from "../state.ts";
+import { createApproval } from "./approval.ts";
 import { readLinkConfig } from "./config.ts";
 import type { DeviceKeys } from "./device.ts";
+import { readFileSync } from "node:fs";
 import { holderAlive, LinkElection } from "./election.ts";
-import { type AllyTeam, type ConfirmView, LinkHolder, type RelayPort, type SendResult } from "./holder.ts";
+import { type AllyTeam, type ConfirmView, LinkHolder, type LinkSummary, type RelayPort, type SendResult } from "./holder.ts";
 import { RelayClient } from "./relay.ts";
+import { HERE_ONLY } from "./request.ts";
 import type { NetView } from "./routing.ts";
-import { type PolicyDeps } from "./policy.ts";
+import { type PolicyDeps, readPolicy } from "./policy.ts";
 import { createRemoteTurns } from "./hooks.ts";
 import { type HolderRecord, type InboxItem, LinkStore } from "./store.ts";
 import { restrictLabel } from "./text.ts";
@@ -38,8 +41,11 @@ export interface LinkDeps {
 	home?: string;
 	/** Where the unattended policy file is and who owns what (policy.ts); the real device reads the fixed path. */
 	policy?: PolicyDeps;
-	/** How long the gate waits for an answer (default 10 minutes). */
+	/** How long the gate waits for an answer (default 10 minutes), and how long an approval dialog of a `link_request` does. */
 	gateMs?: number;
+	requestMs?: number;
+	/** How long the GUI's summary read waits for the holder (default `SUMMARY_MS`). */
+	summaryMs?: number;
 	/** Hands the module to a test as soon as it is built. */
 	created?: (link: Link) => void;
 }
@@ -50,7 +56,9 @@ export const SEEN = "straw-link-seen";
 const LONG_WAIT_MS = 10 * 60_000;
 /** Longer than the holder's worst case for a send: the lock wait, a reading of Herdr, and the wait for the relay; a tower that gave up earlier would invite a resend of a message that went out. */
 export const ASK_MS = 60_000;
-const NO_HOLDER = "No link holder is running on this computer yet. Straw Link starts within a few seconds of a team being set up; if it stays so, a team file or its config.json entry is missing";
+/** The GUI's net read waits this long for the holder's summary: a holder that is lost must not freeze the map. */
+const SUMMARY_MS = 2000;
+const NO_HOLDER = "No link holder is running on this computer yet. If Straw Link is not set up here, open Teams in the GUI and press Set up; otherwise it starts within a few seconds, and if it stays so a team file or its config.json entry is missing";
 
 type ChannelEvent = { type: string; fromSessionId?: string; payload?: unknown };
 interface Held { id: string; item: InboxItem; at: number; noticed: boolean }
@@ -79,7 +87,18 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 	const store = new LinkStore(join(guiDir, "link"));
 	const home = opts.home ?? homedir(), agentDir = cfg.env.PI_CODING_AGENT_DIR ?? join(home, ".pi", "agent");
 	const config = () => readLinkConfig(guiDir, { home, agentDir });
-	const inUse = () => config().teams.size > 0 || store.teamIds().length > 0;
+	const inUse = () => config().teams.size > 0 || store.teamIds().length > 0 || store.enabled;
+	/** Whether this computer's policy leaves it attended: the GUI's team changes and `link_request` are for an attended computer only. */
+	const attended = () => readPolicy(opts.policy).mode === "attended";
+	/** The session that hosts the GUI server (gui.json): the only one whose GUI requests the holder takes. */
+	const guiOwner = (): string | undefined => {
+		try {
+			return (JSON.parse(readFileSync(join(guiDir, "gui.json"), "utf8")) as { ownerSession?: string }).ownerSession || undefined;
+		} catch {
+			return undefined;
+		}
+	};
+	const approval = createApproval({ bus: pi.events, timeoutMs: opts.requestMs, onError: (what, error) => store.log({ event: "approval-failed", what, error: error.message }) });
 	const nonce = randomUUID().slice(0, 8);
 	let channel: Channel | undefined, election: LinkElection | undefined, holder: LinkHolder | undefined;
 	let mySession = "", stopped = false, told = false, started: string | undefined;
@@ -88,6 +107,7 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 	const sid = () => me() || mySession;
 	const holderUp = opts.alive ?? holderAlive();
 	let lookError = "";
+	let lastSummary: LinkSummary | undefined;
 	/** A look that failed (the holder could not start, the lock was not free, a disk error): in the log, and once per message to the boss. */
 	const lookFailed = (error: Error) => {
 		store.log({ event: "look-failed", error: error.message });
@@ -127,7 +147,7 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 	};
 	const gained = async () => {
 		const fresh = new LinkHolder({
-			store, isHolder: () => Boolean(election?.isHolder()), config, net, offer, notify: tell,
+			store, isHolder: () => Boolean(election?.isHolder()), config, stateDir: guiDir, home, agentDir, attended, net, offer, notify: tell,
 			relay: opts.relay ?? ((url, device) => new RelayClient({ url, device })),
 			onDisplaced: () => void look().catch(() => undefined),
 			confirmed: (tower, dialogId, allow) => (tower === sid() ? answerForward(dialogId, allow) : publish({ version: 1, type: "confirmed", to: tower, id: dialogId, allow })),
@@ -243,18 +263,61 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 			return holder.requestConfirm({ fromSession: from, team: op.team as string, device: op.device as string, dialogId: op.dialogId as string, digest: op.digest as string, tool: op.tool as string, args: op.args as string, tower: op.tower as string });
 		}
 		if (op.op === "confirms") return { ok: true, confirms: holder.confirmRequests() };
+		if (op.op === "gui") return gui(holder, (body as { name?: unknown }).name, (body as { args?: unknown }).args, from);
+		if (op.op === "request-open") return holder.requests.open(from, (body as { action?: unknown }).action, (body as { args?: unknown }).args ?? {}, String((body as { reason?: unknown }).reason ?? ""));
+		if (op.op === "request-run" && typeof (body as { id?: unknown }).id === "string") return holder.requests.run((body as { id: string }).id, from);
+		if (op.op === "request-drop" && typeof (body as { id?: unknown }).id === "string") return (holder.requests.drop((body as { id: string }).id, from), { ok: true });
 		if (op.op === "answer-confirm" && typeof op.dialogId === "string" && typeof op.allow === "boolean") return holder.answerConfirm(op.dialogId, op.allow);
 		if (op.op === "forget-confirm" && typeof op.dialogId === "string") return (holder.forgetConfirm(op.dialogId), { ok: true });
 		return { ok: false, error: "unknown request" };
 	};
-	const ask = async (op: Record<string, unknown>): Promise<{ ok: boolean; error?: string; [key: string]: unknown }> => {
+	/**
+	 * What the GUI asks of the holder (gui.ts reaches it through control.ts). Only the session that hosts the GUI server may: pi-intercom identities are
+	 * self-reported, so this is the same trust the dialog bridges place in gui.json's owner. Reads work on any computer; every change needs an attended one.
+	 */
+	const gui = async (h: LinkHolder, name: unknown, raw: unknown, from: string): Promise<unknown> => {
+		if (!from || from !== guiOwner()) return { ok: false, error: "Only the session that hosts the GUI may change Straw Link teams" };
+		const a = (typeof raw === "object" && raw !== null && !Array.isArray(raw) ? raw : {}) as Record<string, unknown>;
+		const text = (k: string) => (typeof a[k] === "string" ? (a[k] as string) : "");
+		const maybe = (k: string) => (typeof a[k] === "string" && a[k] ? { [k]: a[k] as string } : {});
+		if (name === "state") return { ok: true, view: h.view() };
+		if (name === "summary") return { ok: true, summary: h.summary() };
+		if (!attended()) return { ok: false, error: "This computer is unattended: its teams and trust come from its infra's policy file" };
+		switch (name) {
+			case "create": return h.admin.createTeam({ relay: text("relay"), token: text("token"), project: text("project"), ...(a.share === "presence" || a.share === "status" ? { share: a.share } : {}), ...maybe("label") });
+			case "invite": return h.admin.invite({ team: text("team"), ...maybe("forDevice") });
+			case "invite-text": return h.admin.inviteText(text("hash"));
+			case "invite-cancel": return h.admin.cancelInvite(text("hash"));
+			case "decide": return h.admin.decide({ id: text("id"), ...(typeof a.pick === "number" ? { pick: a.pick } : {}), ...(typeof a.approve === "boolean" ? { approve: a.approve } : {}) });
+			case "join-start": return h.admin.joinStart({ text: text("text"), ...maybe("label") });
+			case "join-project": return h.admin.joinProject({ project: text("project"), ...(a.share === "presence" || a.share === "status" ? { share: a.share } : {}) });
+			case "join-cancel": return (h.admin.cancelJoin(), { ok: true });
+			case "prefill-clear": return (h.admin.setPrefill(undefined), { ok: true });
+			case "remove": return h.admin.remove({ team: text("team"), device: text("device") });
+			case "role": return h.admin.role({ team: text("team"), device: text("device"), role: text("role") === "admin" ? "admin" : "member" });
+			case "rotate": return h.admin.rotate({ team: text("team") });
+			case "trust": return h.admin.trust({ device: text("device"), level: text("level") as "reply" });
+			case "leave": return h.admin.leave({ team: text("team"), force: a.force === true });
+			case "confirm-answer": return typeof a.allow === "boolean" ? h.answerConfirm(text("dialogId"), a.allow) : { ok: false, error: "Allow or deny" };
+			default: return { ok: false, error: "unknown request" };
+		}
+	};
+	const ask = async (op: Record<string, unknown>, ms = ASK_MS): Promise<{ ok: boolean; error?: string; [key: string]: unknown }> => {
 		const record = store.readHolder();
 		if (!record || !holderUp(record)) throw new Error(NO_HOLDER);
-		if (holder && election?.isHolder()) return (await handle(op, sid())) as { ok: boolean };
-		if (!channel) throw new Error(NO_HOLDER);
+		if (holder && election?.isHolder()) {
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			const late = new Promise<never>((_, reject) => void (timer = setTimeout(() => reject(new Error(`The link holder did not answer within ${ms / 1000} s`)), ms)));
+			try {
+				return (await Promise.race([handle(op, sid()), late])) as { ok: boolean };
+			} finally {
+				clearTimeout(timer);
+			}
+		}
+		if (!channel && !connect()) throw new Error(NO_HOLDER);
 		const reqId = `${sid()}-${nonce}-${pending.size}-${Date.now()}`;
 		const answered = new Promise<unknown>((resolve, reject) => {
-			const timer = setTimeout(() => (pending.delete(reqId), reject(new Error(`The link holder did not answer within ${ASK_MS / 1000} s`))), ASK_MS);
+			const timer = setTimeout(() => (pending.delete(reqId), reject(new Error(`The link holder did not answer within ${ms / 1000} s`))), ms);
 			pending.set(reqId, { resolve, reject, holder: record.session, timer });
 		});
 		for (const c of chunks("req", record.session, reqId, op)) publish(c);
@@ -315,6 +378,7 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 		pumpTimer = undefined;
 		held.length = 0;
 		for (const [id, wait] of pending) (clearTimeout(wait.timer), wait.reject(new Error("The session ended")), pending.delete(id));
+		approval.dispose();
 		await looking?.catch(() => undefined);
 		await election?.release().catch(() => undefined);
 		await lost();
@@ -347,6 +411,50 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 			} catch {
 				return [];
 			}
+		},
+		/** Whether this computer is attended (no unattended policy file). */
+		attended,
+		/** Sets Straw Link up on this computer without a team yet (the GUI's Team settings): the election starts within a few seconds. */
+		async enable(): Promise<void> {
+			await store.withLock(() => store.enable());
+			void look().catch(lookFailed);
+		},
+		/** A change or a reading for the GUI, through the holder (this session, or another over the channel); only the GUI's host session is taken. */
+		async gui(name: string, args: Record<string, unknown> = {}): Promise<{ ok: boolean; error?: string; code?: string; [key: string]: unknown }> {
+			try {
+				return await ask({ op: "gui", name, args });
+			} catch (error) {
+				const message = (error as Error).message;
+				return { ok: false, error: message, ...(message === NO_HOLDER ? { code: "no_holder" } : {}) };
+			}
+		},
+		/** The compact reading the net snapshot carries; undefined when Straw Link is not set up or no holder answers. */
+		async summary(): Promise<LinkSummary | undefined> {
+			if (!inUse()) return (lastSummary = undefined);
+			try {
+				const answer = await ask({ op: "gui", name: "summary", args: {} }, opts.summaryMs ?? SUMMARY_MS);
+				return (lastSummary = answer.ok ? (answer.summary as LinkSummary) : undefined);
+			} catch {
+				return lastSummary; // a holder that is slow or lost: the last reading, so the map does not freeze waiting
+			}
+		},
+		/**
+		 * `link_request`: the holder checks the request and says what it does, the boss approves it in the GUI, a paired device, or the terminal, and only
+		 * then does the holder carry it out. Never runs unasked: no approval, no action. Throws with the reason when it does not run.
+		 */
+		async request(r: { action: string; args: Record<string, string>; reason: string; toolCallId: string; asker: string; ui?: Parameters<typeof approval.approve>[0]["ui"]; signal?: AbortSignal }): Promise<string> {
+			if (!attended()) throw new Error("link_request is refused on an unattended device: its teams and trust come from its infra's policy file and join.txt only");
+			const opened = await ask({ op: "request-open", action: r.action, args: r.args, reason: r.reason });
+			if (!opened.ok) throw new Error(opened.error);
+			const id = String(opened.id), lines = [...(opened.lines as string[]), `Asked by session: ${r.asker} (${sid().slice(0, 8)})`, `Reason: ${String(opened.reason)}`];
+			const verdict = await approval.approve({ hereOnly: (HERE_ONLY as readonly string[]).includes(r.action), toolCallId: r.toolCallId, lines, asker: r.asker, ui: r.ui, signal: r.signal });
+			if (!verdict.approved) {
+				await ask({ op: "request-drop", id }).catch(() => undefined);
+				throw new Error(verdict.reason);
+			}
+			const ran = await ask({ op: "request-run", id });
+			if (!ran.ok) throw new Error(ran.error);
+			return String(ran.text);
 		},
 		/** Whether the election and the stream run in this session. */
 		get holding(): boolean {

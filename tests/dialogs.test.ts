@@ -7,7 +7,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { withPending } from "../src/ask.ts";
 import { type Ack, type AnswerMessage, type Dialogs, type FormMessage, type FormReply, guiNamespace, REGISTER } from "../src/bridge.ts";
 import type { Doc } from "../src/documents.ts";
-import { checkAnswer, createHub } from "../src/dialogs.ts";
+import { checkAnswer, createHub, PULL_BUDGET_MS, PULL_MS } from "../src/dialogs.ts";
 import { canonical } from "../src/history.ts";
 import type { Net, Ref } from "../src/net.ts";
 import { type Dialog, secretDigest, selectDigest } from "../src/owners.ts";
@@ -34,10 +34,10 @@ function hub({ me = "G", owner = "G" } = {}) {
 	const published: { payload: unknown; options: unknown }[] = [], delivered: AnswerMessage[] = [], changes: number[] = [];
 	let reg: { onEvent(e: Record<string, unknown>): void } | undefined, reply: ((a: AnswerMessage) => Ack | undefined) | undefined, editor: Editor = { editor: "empty" };
 	const forms: FormMessage[] = [];
-	let pullReply: (step: "begin" | "finish", ticket?: string) => Pull | Promise<Pull> = () => ({ reason: "no_editor" });
+	let pullReply: (step: "begin" | "finish", ref?: string, deadline?: number) => Pull | Promise<Pull> = () => ({ reason: "no_editor" });
 	let formReply: ((m: FormMessage) => FormReply | undefined) | undefined;
 	const events = { emit: (ch: string, r: never) => ch === REGISTER && ((reg = r), (r as { onReady(c: unknown): void }).onReady({ snapshot: () => ({ connected: true, owner: { sessionId: owner, epoch: "e1" } }), publish: (payload: unknown, options: unknown) => void published.push({ payload, options }) })), on: () => () => {} };
-	const local = { deliver: (m: AnswerMessage, r: (a: Ack) => void) => { delivered.push(m); const a = reply?.(m); if (a) r(a); }, sync: () => {}, probe: () => editor, commands: () => [], close: () => ({ accepted: true }), stashCheck: () => undefined, pull: (step: "begin" | "finish", ticket?: string) => pullReply(step, ticket), form: (m: FormMessage, r: (x: FormReply) => void) => { forms.push(m); const x = formReply?.(m); if (x) r(x); } };
+	const local = { deliver: (m: AnswerMessage, r: (a: Ack) => void) => { delivered.push(m); const a = reply?.(m); if (a) r(a); }, sync: () => {}, probe: () => editor, commands: () => [], close: () => ({ accepted: true }), stashCheck: () => undefined, pull: (step: "begin" | "finish", ref?: string, deadline?: number) => pullReply(step, ref, deadline), form: (m: FormMessage, r: (x: FormReply) => void) => { forms.push(m); const x = formReply?.(m); if (x) r(x); } };
 	const h = createHub({ events } as unknown as ExtensionAPI, me, local);
 	h.start(() => changes.push(1));
 	const list = (dialogs: Dialog[], extra: Partial<Dialogs> = {}): Dialogs => ({ version: 1, type: "dialogs", bridgeId: "B", pane: "wA:p1", file: null, dialogs, closed: [], ...extra });
@@ -335,16 +335,18 @@ test("pull: the hub asks the bound bridge in two steps and takes only its matchi
 	assert.equal(await x.h.pull("S", "begin"), undefined, "no bridge at all");
 	x.h.receive("S", x.list([], { file: path }) as never);
 	await read(x, path);
-	const asked = x.h.pull("S", "begin"), sent = x.published.at(-1)!, req = sent.payload as { type: string; to: string; reqId: string; step: string };
-	assert.deepEqual([req.type, req.to, req.step, sent.options], ["pull", "B", "begin", { audience: "capable", ownerOnly: true }]);
+	const asked = x.h.pull("S", "begin", "take-1"), sent = x.published.at(-1)!, req = sent.payload as { type: string; to: string; reqId: string; step: string; take?: string; ticket?: string; deadline?: number };
+	assert.deepEqual([req.type, req.to, req.step, req.take, sent.options], ["pull", "B", "begin", "take-1", { audience: "capable", ownerOnly: true }]);
+	assert.equal("deadline" in req, false, "begin changes nothing, so it has no deadline");
 	const result = (extra: Record<string, unknown>, id = req.reqId) => ({ version: 1, type: "pull-result", bridgeId: "B", reqId: id, ...extra }) as Record<string, unknown>;
 	x.h.receive("X", result({ pending: false }) as never);
 	x.h.receive("S", { ...result({ pending: false }), bridgeId: "B2" } as never);
 	x.h.receive("S", result({ pending: false }, "other") as never);
 	x.h.receive("S", result({ pending: true, ticket: "T1", extra: 1 }) as never);
 	assert.deepEqual(await asked, { pending: true, ticket: "T1" });
-	const finish = x.h.pull("S", "finish", "T1"), fin = x.published.at(-1)!.payload as { reqId: string; step: string; ticket: string };
+	const t0 = Date.now(), finish = x.h.pull("S", "finish", "T1"), fin = x.published.at(-1)!.payload as { reqId: string; step: string; ticket: string; deadline: number };
 	assert.deepEqual([fin.step, fin.ticket], ["finish", "T1"]);
+	assert.ok(fin.deadline >= t0 + 2000 && fin.deadline <= Date.now() + 3000, `R-F002: the bridge is told when the hub stops waiting for it (${fin.deadline - t0} ms from the request)`);
 	x.h.receive("S", result({ text: "one\n\ntwo" }, fin.reqId) as never);
 	assert.deepEqual(await finish, { text: "one\n\ntwo" });
 	for (const bad of [{ text: 3 }, { reason: "rm -rf" }, { empty: false }, { ticket: "x".repeat(65) }]) {
@@ -355,13 +357,16 @@ test("pull: the hub asks the bound bridge in two steps and takes only its matchi
 	const own = hub({ me: "S", owner: "S" });
 	own.h.receive("S", own.list([], { file: path }));
 	await read(own, path);
-	own.pullWith(async (step, ticket) => (step === "begin" ? { pending: true, ticket: "L" } : { text: `got ${ticket}` }));
+	let seen: number | undefined;
+	own.pullWith(async (step, ref, deadline) => (step === "begin" ? { pending: true, ticket: "L" } : ((seen = deadline), { text: `got ${ref}` })));
 	assert.deepEqual(await own.h.pull("S", "begin"), { pending: true, ticket: "L" });
 	assert.deepEqual(await own.h.pull("S", "finish", "L"), { text: "got L" }, "this session's bridge is asked in-process, and may take time");
+	assert.ok(seen !== undefined && seen > Date.now(), "and gets the same deadline");
 	const other = hub({ owner: "Z" });
 	other.h.receive("S", other.list([], { file: path }));
 	await read(other, path);
 	assert.equal(await other.h.pull("S", "begin"), undefined, "not the channel's owner: nothing can be asked");
+	assert.ok(PULL_MS >= PULL_BUDGET_MS + 1000, "R-F002: the hub waits for `finish` longer than the deadline it gives the bridge, with time for the answer to travel");
 });
 
 /** A document as pi-herdr-doc-review 0.4.x lists it (its README's "Browser viewers"). */

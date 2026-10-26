@@ -7,15 +7,16 @@ import { createHub } from "./dialogs.ts";
 import { type Gui, startGui } from "./gui.ts";
 import { adoptable, adoptGui, downgrades, type Keep, markReload, markStopped, readRecord, type Shared, sharedGui, stopRecorded } from "./handover.ts";
 import { herdrSocket } from "./endpoint.ts";
+import type { Link } from "./link/runtime.ts";
 import type { Membership } from "./membership.ts";
-import { netSource } from "./net.ts";
+import { type Net, netSource } from "./net.ts";
 import { pairingKeys, showLines } from "./pairing.ts";
 import { identity, switchRemote } from "./remote.ts";
 import { createSpawn } from "./spawn.ts";
 import { type Channel, type Kit, REGISTER } from "./state.ts";
 
 /** This session hosts the straw net GUI: the one server per machine it starts or hands over, its remote entry, and the `/boss gui` commands. */
-export function createHost({ pi, cfg, s, guiDir, me, tell }: Kit, { bridge, connected }: { bridge: Bridge; connected: Membership["connected"] }) {
+export function createHost({ pi, cfg, s, guiDir, me, tell }: Kit, { bridge, connected, link }: { bridge: Bridge; connected: Membership["connected"]; link: Link }) {
 	const { run, world, sleep, call, tailscale: ts, copy, openUrl, version, bundle } = cfg;
 	let opening: Promise<Shared> | undefined;
 	// /boss gui is a read-only viewer: any session may open it, and it joins nothing and writes no token. A session outside the net
@@ -64,7 +65,12 @@ export function createHost({ pi, cfg, s, guiDir, me, tell }: Kit, { bridge, conn
 			tell(`Remote access stays off: ${(error as Error).message}; it is tried again when the server next starts`, "warning");
 		}
 	};
-	const start = (prefer: { port?: number; remotePort?: number; token?: string; csrf?: string }, net = netSource({ run, world, sessions, stashed: () => stashedList(guiDir), hub: (s.hub = s.hub?.me === me() ? s.hub : createHub(pi, me(), bridge)) })) => startGui({ read: net.read, net, call, hub: s.hub, dir: bundle, paired: join(guiDir, "paired.json"), ...prefer, onStop: (asked) => void stopOwn(asked), onSaveFailed: (reason) => tell(reason, "warning"), onRemote: async () => tell((await switchRemote(s.gui!, true, guiDir, ts)).text), onRemoteOff: async () => tell((await switchRemote(s.gui!, false, guiDir, ts)).text), spawn: createSpawn({ run, sleep, call, live: async (id) => (await sessions()).some((x) => x.id === id), sessionAt: async (pane) => (await sessions()).find((x) => x.herdrLocation?.paneId === pane)?.id }), close: createCloser({ run, sleep, me, sessions, ask: async (key, keepPane, ifStashable) => s.hub?.close(key, keepPane, ifStashable), check: async (key) => s.hub?.stashCheck(key), stateDir: guiDir, pop: (name) => popBase({ run, sleep, stateDir: guiDir, live: async (id) => (await sessions()).some((x) => x.id === id), agentDir: cfg.env.PI_CODING_AGENT_DIR }, name) }) });
+	/** Straw Link's teammates, notices, and waiting confirms ride on the net snapshot (net.ts `Net.link`); a holder that says nothing leaves the net as it was. */
+	const linked = async (net: Net): Promise<Net> => {
+		const summary = await link.summary();
+		return summary && (summary.allies.length || summary.alerts.length || summary.confirms.length) ? { ...net, link: summary } : net;
+	};
+	const start = (prefer: { port?: number; remotePort?: number; token?: string; csrf?: string }, net = netSource({ run, world, sessions, stashed: () => stashedList(guiDir), hub: (s.hub = s.hub?.me === me() ? s.hub : createHub(pi, me(), bridge)) })) => startGui({ read: async () => linked(await net.read()), net, call, link: { call: (name, args) => link.gui(name, args), enable: () => link.enable() }, hub: s.hub, dir: bundle, paired: join(guiDir, "paired.json"), ...prefer, onStop: (asked) => void stopOwn(asked), onSaveFailed: (reason) => tell(reason, "warning"), onRemote: async () => tell((await switchRemote(s.gui!, true, guiDir, ts)).text), onRemoteOff: async () => tell((await switchRemote(s.gui!, false, guiDir, ts)).text), spawn: createSpawn({ run, sleep, call, live: async (id) => (await sessions()).some((x) => x.id === id), sessionAt: async (pane) => (await sessions()).find((x) => x.herdrLocation?.paneId === pane)?.id }), close: createCloser({ run, sleep, me, sessions, ask: async (key, keepPane, ifStashable) => s.hub?.close(key, keepPane, ifStashable), check: async (key) => s.hub?.stashCheck(key), stateDir: guiDir, pop: (name) => popBase({ run, sleep, stateDir: guiDir, live: async (id) => (await sessions()).some((x) => x.id === id), agentDir: cfg.env.PI_CODING_AGENT_DIR }, name) }) });
 	// One server per machine: a second /boss gui, here or in another session, opens the one that runs, unless `take` (or a newer version) takes it
 	// over. Two calls in flight in this session share one start. `manual`: the caller turns remote on or off itself, so a new server does not resume it.
 	let adopting: Promise<void> | undefined, leaving = false;
