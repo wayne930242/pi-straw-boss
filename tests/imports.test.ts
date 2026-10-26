@@ -338,7 +338,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	assert.ok(count("gui/swipe.ts") <= 40, `gui/swipe.ts has ${count("gui/swipe.ts")} lines`);
 	// Unreleased to 167: a finished subagent's card swiped to the right is dismissed (the card's drag, its release, and quit.ts's dismiss).
 	// Unreleased to 172: the drawer's way back to the map and its Dismiss finished button.
-	assert.ok(count("gui/drawer.ts") <= 172, `gui/drawer.ts has ${count("gui/drawer.ts")} lines`);
+	// Unreleased to 194: the tower as a row of two buttons (icon, +), Quit on an idle main, and the way back to the map in the drawer's foot.
+	assert.ok(count("gui/drawer.ts") <= 194, `gui/drawer.ts has ${count("gui/drawer.ts")} lines`);
 	// Unreleased (comfort): the timeline under the stage (gui/timeline.ts: a mark per event of the net's last 30 minutes, placed by its time, named on hover, a link to its unit)
 	// and the map's overview in a corner (gui/minimap.ts: shown while the map runs past the window, its frame moved on a scroll) have a figure each.
 	assert.ok(count("gui/timeline.ts") <= 42, `gui/timeline.ts has ${count("gui/timeline.ts")} lines`);
@@ -488,7 +489,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 113 KB / 46.3 KB gzipped: the folder picker (gui/picker.ts, folders.ts), nine more messages in both languages; and
 	// Unreleased to 107.7 KB / 44.4 KB gzipped: the deploy panel (gui/deploy.ts: steps, bar, clock, finish, failure), its demo server, and its twelve messages in both languages.
 	// Unreleased to 113.6 KB / 46.6 KB gzipped: the deploy panel measures silence, and closes with its tile; the picker lands on a column edge.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 113_600 && total(chunks, gz) <= 46_600, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// Unreleased to 114.7 KB / 47 KB gzipped: the drawer's tower row (icon and +), Quit on an idle main, and the map link in its foot (gui/drawer.ts).
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 114_700 && total(chunks, gz) <= 47_000, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
@@ -534,5 +536,6 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 71 KB / 15.45 KB: the folder picker (toolbar and breadcrumb, shortcuts, the columns, the one column of a narrow window); and
 	// Unreleased to 68 KB / 14.95 KB: the deploy panel (bar, step list, running pulse, finish and failure tints, its keyframes).
 	// Unreleased to 71.2 KB / 15.55 KB: the session view's Quit in the comms header (desktop and phone grid).
-	assert.ok(total(css, (n) => size(n).length) <= 71_200 && total(css, gz) <= 15_550, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// Unreleased to 72.2 KB / 15.7 KB: the phone drawer's tower row, its Quit, and the map link's foot.
+	assert.ok(total(css, (n) => size(n).length) <= 72_200 && total(css, gz) <= 15_700, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });

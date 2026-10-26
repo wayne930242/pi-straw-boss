@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import type { Net, Unit } from "../src/net.ts";
-import { groupUnits, shortState } from "../gui/drawer.ts";
+import { groupUnits, quitable, shortState } from "../gui/drawer.ts";
 import { m } from "../gui/paraglide/messages.js";
+import { aimUnit } from "../gui/quit.ts";
+import { aimOpening } from "../gui/render.ts";
 import { FLICK, HALF, ignored, intent, type Probe, settles, SLOP } from "../gui/swipe.ts";
 
 // The phone drawer: when a swipe is a drag (direction, threshold, and what it must not start on), when a released drawer stays, and the list it shows.
@@ -73,4 +76,60 @@ test("the drawer's way back to the map and its Dismiss finished button are worde
 		assert.match(m.dismiss_all({ count: 2 }, { locale }), /2/, locale);
 	}
 	assert.equal(m.drawer_map({}, { locale: "zh-TW" }), "回到主地圖");
+});
+
+// The left pane on a phone: the tower as a row of two buttons, the way back to the map stuck to the bottom, and a Quit on a main that is idle.
+const harbor = (): Net["bases"][number] => ({ id: "w1", label: "Harbor", mark: "idle", head: true, tower: { name: "tower · Harbor", mark: "idle", key: "t1", control: true, subs: [] }, tabs: [{ id: "w1:t1", label: "billing", units: [] }], outposts: [], outside: [] });
+type Fake = HTMLElement & { attrs: Record<string, string> };
+const fake = (): Fake => {
+	const attrs: Record<string, string> = {};
+	return { dataset: {} as Record<string, string>, hidden: false, textContent: "", attrs, setAttribute: (k: string, v: string) => void (attrs[k] = v) } as unknown as Fake;
+};
+const css = readFileSync(new URL("../gui/style.css", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+const rule = (selector: string) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter(([, list]) => list!.split(",").some((s) => s.trim() === selector)).map(([, , body]) => body).join(";");
+
+test("only a main that is idle is offered Quit in the list: not while it is commanding or working, and not a tower, a member, or a subagent", () => {
+	for (const mark of ["commanding", "working", "waiting", "done", "error", "unknown"] as const) assert.equal(quitable({ role: "main", mark }), false, `a ${mark} main`);
+	assert.equal(quitable({ role: "main", mark: "idle" }), true);
+	for (const role of ["tower", "member", "subagent", "outside"]) assert.equal(quitable({ role, mark: "idle" }), false, role);
+});
+
+test("the list's Quit is the map's own: the same request data, the same labels, and hidden from a main this session cannot control", () => {
+	const net: Net = { bases: [{ ...harbor(), tabs: [{ id: "w1:t1", label: "billing", units: [unit("a1", "billing-main", "main", "idle"), unit("a2", "ops-main", "main", "idle", [], { control: false }), unit("a3", "tests-main", "main", "commanding")] }] }] };
+	const rows = groupUnits(net)[0]!.groups[1]!.rows;
+	assert.deepEqual(rows.map((r) => [r.key, r.control]), [["a1", true], ["a2", false], ["a3", true]], "a row says whether this session can control it");
+	const button = fake();
+	aimUnit(button, rows[0]!);
+	assert.equal(button.hidden, false);
+	assert.deepEqual({ ...button.dataset }, { close: "unit", key: "a1", name: "billing-main", role: "main" });
+	assert.equal(button.textContent, m.quit());
+	assert.equal(button.attrs["aria-label"], m.close_unit({ name: "billing-main" }));
+	aimUnit(button, rows[1]!);
+	assert.equal(button.hidden, true, "a main it cannot control cannot be quit");
+});
+
+test("the tower's + is the map's + Main aimed at the tower's base: it opens a main there, and a base with no tower takes no main", () => {
+	const b = harbor(), button = fake();
+	aimOpening(button, b);
+	assert.deepEqual({ ...button.dataset }, { open: "main", ws: "w1" });
+	assert.equal(button.hidden, false);
+	assert.equal(m.open_main_title({ base: "Harbor" }, { locale: "zh-TW" }), "在 Harbor 開新的主智慧體");
+	const bare = fake();
+	aimOpening(bare, { ...b, tower: null });
+	assert.equal(bare.dataset.open, "member", "the rule is the map's; the drawer has a + only on a tower's row, so it never gets here");
+	const source = readFileSync(new URL("../gui/drawer.ts", import.meta.url), "utf8");
+	assert.match(source, /aria-label", m\.open_main_title\(\{ base: base\.label \}\)/, "the + is named by the same title the tower's comms use");
+	assert.match(source, /closest\("a\[data-route\], button\[data-open\], \.x"\) && settle\(false\)/, "a tap on the + shuts the drawer, so the tile that opens is not behind it");
+	assert.match(source, /group\.id === "tower"\) sync\([^;]*towerEl, fillTower\)/, "only the tower group is drawn as the row");
+});
+
+test("the way back to the map is the drawer's foot, outside the list that scrolls, above the home indicator", () => {
+	assert.match(rule(".drawer-foot"), /flex:\s*none/);
+	assert.match(rule(".drawer-foot"), /padding:[^;]*env\(safe-area-inset-bottom\)/, "clear of the home indicator");
+	assert.match(rule(".drawer-body"), /flex:\s*1/);
+	assert.match(rule(".drawer-body"), /min-height:\s*0/, "the list scrolls inside its own box, so the foot never covers its last unit");
+	assert.doesNotMatch(rule(".drawer-map"), /position:\s*(sticky|fixed|absolute)/, "it stays in the flow of the foot");
+	const source = readFileSync(new URL("../gui/drawer.ts", import.meta.url), "utf8");
+	assert.match(source, /h\("footer", \{ class: "drawer-foot" \}, home\)/, "the link is in the foot");
+	assert.doesNotMatch(source, /drawer-top"[^)]*home/, "and not above the list");
 });
