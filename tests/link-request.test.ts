@@ -57,6 +57,17 @@ test("an action and its arguments are checked for shape before anything is asked
 	assert.deepEqual([...ACTIONS], ["create", "invite", "invite-unattended", "join", "trust", "leave", "remove", "role", "rotate"]);
 });
 
+test("RC-F002: a label is tested whole, so a leading or trailing line break, a Unicode line separator, or a bidi control is refused, and the screen is prefilled only with a label create or join would accept", async () => {
+	const base = { relay: "http://127.0.0.1:9", project: "/p" };
+	for (const label of ["\nAsked by session: tower (12345678)", "name\n", "a\u2028b", "a\u2029b", "a\u200eb", "a\u200fb", "a\u202ab", "a\u202eb", "a\u2066b", "a\u2069b"]) {
+		assert.match(shapeProblem("create", { ...base, label }) ?? "", /label may not contain/, JSON.stringify(label));
+	}
+	assert.equal(shapeProblem("create", { ...base, label: "Mac mini" }), undefined);
+	const { c, ask } = await rig();
+	await assert.rejects(ask({ action: "create", args: { relay: "http://127.0.0.1:9", project: c.project, label: "bad/label" }, reason: "x" }), /label is 1 to 40/);
+	await assert.rejects(ask({ action: "create", args: { relay: "http://127.0.0.1:9", project: c.project, label: "x".repeat(41) }, reason: "x" }), /label is 1 to 40/);
+});
+
 test("a request never runs unasked: the dialog shows the action, every argument, the reason, and the asking session; only Approve runs it, and an invite returns its text", async () => {
 	const { c, pending, closed, ask, answer } = await rig();
 	const run = ask({ action: "invite", args: { team: "project-a" }, reason: "Carol wants in" });

@@ -5,14 +5,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { ENDING as SERVER_ENDING, MAX_TEXT } from "../src/control.ts";
-import type { Hub, Target } from "../src/dialogs.ts";
+import { withPending } from "../src/ask.ts";
+import { createHub, type Hub, type Target } from "../src/dialogs.ts";
 import { startGui, type Gui } from "../src/gui.ts";
 import { HerdrError } from "../src/herdr.ts";
 import { createApproval } from "../src/link/approval.ts";
 import { ACTIONS, HERE_ONLY } from "../src/link/request.ts";
 import { canonical } from "../src/history.ts";
 import type { Editor } from "../src/probe.ts";
-import type { Found } from "../src/net.ts";
+import type { Found, Net, Ref } from "../src/net.ts";
+import { type Dialog, linkRequest } from "../src/owners.ts";
+import { REGISTER } from "../src/bridge.ts";
 import { blocked, ENDING as PAGE_ENDING, MAX_TEXT as PAGE_MAX, settle } from "../gui/composer.ts";
 import { assistant, call as toolCall, header, lines, user } from "./sessions.ts";
 
@@ -414,6 +417,79 @@ test("answer: a link_request approval of trust, remove, role, rotate, or leave i
 		assert.deepEqual([localApprove.status, localApprove.body.outcome], [200, "accepted"], `${action}: this computer's page approves`);
 		assert.equal(sent.length, before + (here ? 2 : 3), `${action}: what reached the bridge`);
 	}
+});
+
+test("while a link_request call is open (two dialogs, so none is answerable), a paired device's keys, typed text, paste, and prompts are refused except Escape; this computer's page and a session with no link_request open are not limited", async () => {
+	const open = [header(), user("u1", null, "go"), assistant("a1", "u1", [toolCall("c1", "link_request", { action: "trust" }), toolCall("c2", "ask_user", { question: "Also?" })])];
+	const p = await padded({ entries: open });
+	await p.attach();
+	const phone = await paired(p.gui), keys = (payload: Record<string, unknown>) => phone.post("sessions/sess-1/keys", { stream: p.stream, ...payload });
+	p.w.status = "blocked"; // pi shows its terminal confirm: Enter there is Yes
+	for (const k of ["enter", "1", "up", "tab", "space"]) {
+		const r = await keys({ key: k });
+		assert.deepEqual([r.status, r.body.error], [403, "local_only"], `remote ${k}`);
+	}
+	assert.deepEqual([(await keys({ key: "enter", confirmed: "unread" })).status, (await keys({ text: "y" })).status, (await keys({ paste: "yes" })).status], [403, 403, 403], "confirming the probe, typing, and pasting do not get past it");
+	assert.equal(p.w.probes, 0, "the editor was never probed for a remote Enter");
+	assert.deepEqual(p.sentKeys(), [], "nothing reached Herdr");
+	p.w.status = "idle";
+	const prompt = await phone.post("sessions/sess-1/input", { text: "go", as: "send" });
+	assert.deepEqual([prompt.status, prompt.body.error], [403, "local_only"], "a prompt ends in Enter too");
+	assert.equal(p.calls.filter(([m]) => m === "agent.prompt").length, 0);
+	p.w.status = "blocked";
+	await new Promise((r) => setTimeout(r, 1100)); // a fresh second for the rate
+	assert.deepEqual((await keys({ key: "esc" })).body, { accepted: true }, "Escape (No) is allowed");
+	assert.deepEqual((await phone.post("sessions/sess-1/keys", { keys: ["esc"] })).body, { accepted: true }, "and Stop's");
+	assert.deepEqual((await p.key("enter")).body, { accepted: true }, "this computer's page may press Enter");
+	assert.deepEqual((await p.key("1")).body, { accepted: true });
+	assert.deepEqual(p.sentKeys(), [["esc"], ["esc"], ["enter"], ["1"]]);
+	p.close();
+	const q = await padded({ entries: [header(), user("u1", null, "go"), assistant("a1", "u1", [toolCall("c1", "ask_user", { question: "A?" }), toolCall("c2", "ask_user", { question: "B?" })])] });
+	await q.attach();
+	const other = await paired(q.gui);
+	q.w.status = "blocked";
+	for (const k of ["enter", "1"]) assert.deepEqual((await other.post("sessions/sess-1/keys", { key: k, stream: q.stream })).body, { accepted: true }, `no link_request open: remote ${k}`);
+	q.close();
+});
+
+test("RC-F004: a link_request approval a bridge relays (the owner's listener, the hub's checks, the net's binding) keeps hereOnly end to end: a paired device's Approve gets 403 and never reaches the bridge, Deny and this computer's Approve do", async () => {
+	const path = join(scratch, `relay-${Math.random().toString(36).slice(2)}_sess-1.jsonl`);
+	writeFileSync(path, lines([header(), user("u1", null, "go"), assistant("a1", "u1", [toolCall("c1", "link_request", { action: "trust" })])]));
+	const file = canonical(path)!;
+	// the real approval dialog of a trust request, as the owner's adapter reads it off the bus into the dialog the bridge relays
+	const handlers = new Map<string, (d: unknown) => void>(), published: unknown[] = [];
+	const bus = { emit: (channel: string, data: unknown) => (channel.endsWith(":pending") && published.push(data), undefined), on: (channel: string, h: (d: unknown) => void) => (handlers.set(channel, h), () => handlers.delete(channel)) };
+	const verdict = createApproval({ bus }).approve({ toolCallId: "c1", lines: ["Action: trust"], asker: "s", hereOnly: true, signal: AbortSignal.timeout(3000) });
+	verdict.catch(() => undefined);
+	const dialogs: Dialog[] = [];
+	linkRequest.listen({ emit() {}, on: (channel: string, h: (d: unknown) => void) => (channel.endsWith(":pending") && h(published[0]), () => {}) } as never, { open: (_o, d) => void dialogs.push(d), closed() {} });
+	assert.equal(dialogs.length, 1, "the owner's adapter read the dialog");
+	assert.deepEqual(dialogs[0]!.select!.choices.map((c) => [c.label, c.hereOnly]), [["Approve", true], ["Deny", undefined]], "the adapter kept the flag");
+	// the hub, with this session as the bridge's own (answers are delivered in-process)
+	const delivered: unknown[] = [];
+	const events = { emit: (ch: string, r: never) => ch === REGISTER && (r as { onReady(c: unknown): void }).onReady({ snapshot: () => ({ connected: true, owner: { sessionId: "S", epoch: "e1" } }), publish() {} }), on: () => () => {} };
+	let hub: Hub;
+	const local = { deliver: (m: { id: string; answerId: string; to: string }, r: (a: unknown) => void) => { delivered.push(m); r({ version: 1, type: "ack", bridgeId: m.to, id: m.id, answerId: m.answerId, outcome: "accepted" }); }, sync() {}, probe: () => ({ editor: "empty" }), commands: () => [], close: () => ({ accepted: true }), stashCheck: () => undefined, form() {} };
+	hub = createHub({ events } as never, "S", local as never);
+	const refs = new Map<string, Ref>([["sess-1", { key: "sess-1", base: "wA", name: "billing", role: "main", file, pane: "wA:p1" }]]);
+	const read = async (): Promise<Net> => {
+		const net: Net = { bases: [{ id: "wA", label: "Alpha", mark: "working", head: true, tower: null, outposts: [], outside: [], tabs: [{ id: "wA:t1", label: "work", units: [{ id: "sess-1", key: "sess-1", control: true, name: "billing", role: "main", mark: "working", subs: [] }] }] }] };
+		await withPending(net, (key) => refs.get(key)?.file, hub.relayed([{ id: "S", herdrLocation: { status: "current", paneId: "wA:p1" } }] as never, refs));
+		return net;
+	};
+	const call = async (method: string) => (method === "pane.get" ? { pane: { pane_id: "wA:p1", agent: "pi", agent_status: "blocked", agent_session: { value: file } } } : {});
+	const lookup = (key: string): Found | undefined => (key === "sess-1" ? { key, base: "wA", name: "billing", role: "main", file, pane: "wA:p1", live: true } : undefined);
+	const gui = await startGui({ read, net: { lookup, workspace: () => [] }, call, hub, dir: join(scratch, "bundle"), pollMs: 50 });
+	running.push(gui);
+	hub.receive("S", { version: 1, type: "dialogs", bridgeId: "B", pane: "wA:p1", file, dialogs, closed: [] } as never);
+	const unit = (await read()).bases[0]!.tabs[0]!.units[0]!;
+	assert.deepEqual([unit.pending?.answer?.select?.choices.map((c) => c.hereOnly)], [[true, undefined]], "the flag reached the page's unit");
+	const answer = unit.pending!.answer!, phone = await paired(gui);
+	const post = (who: typeof phone | undefined, choice: number, id: string) => (who ? who.post("sessions/sess-1/answer", { dialog: answer.dialog, digest: answer.digest, answerId: id.repeat(16), choice }) : send(gui, "sessions/sess-1/answer", { dialog: answer.dialog, digest: answer.digest, answerId: id.repeat(16), choice }));
+	const remote = await post(phone, 0, "a");
+	assert.deepEqual([remote.status, remote.body.error, delivered.length], [403, "local_only", 0], "a paired device cannot approve, and nothing reached the bridge");
+	assert.deepEqual([(await post(phone, 1, "b")).status, delivered.length], [200, 1], "it can deny");
+	assert.deepEqual([(await post(undefined, 0, "c")).status, delivered.length], [200, 2], "this computer's page approves");
 });
 
 test("the pad from a paired device follows the local page's rule: any pad key goes while a dialog the page cannot answer is open, and only Escape while one it can answer is", async () => {

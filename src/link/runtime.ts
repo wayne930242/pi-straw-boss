@@ -46,6 +46,8 @@ export interface LinkDeps {
 	requestMs?: number;
 	/** How long the GUI's summary read waits for the holder (default `SUMMARY_MS`). */
 	summaryMs?: number;
+	/** How long after it was read the last summary may still be served when the holder is slow (default `SUMMARY_KEEP_MS`). */
+	summaryKeepMs?: number;
 	/** Hands the module to a test as soon as it is built. */
 	created?: (link: Link) => void;
 }
@@ -58,6 +60,10 @@ const LONG_WAIT_MS = 10 * 60_000;
 export const ASK_MS = 60_000;
 /** The GUI's net read waits this long for the holder's summary: a holder that is lost must not freeze the map. */
 const SUMMARY_MS = 2000;
+/** A slow holder's last summary is served for this long; after that the map shows nothing rather than stale allies, alerts, and forwarded confirms. */
+const SUMMARY_KEEP_MS = 30_000;
+/** The holder is there but did not answer in time: the one failure for which the last summary may stand in. */
+class HolderSlow extends Error {}
 const NO_HOLDER = "No link holder is running on this computer yet. If Straw Link is not set up here, open Teams in the GUI and press Set up; otherwise it starts within a few seconds, and if it stays so a team file or its config.json entry is missing";
 
 type ChannelEvent = { type: string; fromSessionId?: string; payload?: unknown };
@@ -107,7 +113,7 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 	const sid = () => me() || mySession;
 	const holderUp = opts.alive ?? holderAlive();
 	let lookError = "";
-	let lastSummary: LinkSummary | undefined;
+	let lastSummary: { at: number; summary: LinkSummary } | undefined;
 	/** A look that failed (the holder could not start, the lock was not free, a disk error): in the log, and once per message to the boss. */
 	const lookFailed = (error: Error) => {
 		store.log({ event: "look-failed", error: error.message });
@@ -307,7 +313,7 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 		if (!record || !holderUp(record)) throw new Error(NO_HOLDER);
 		if (holder && election?.isHolder()) {
 			let timer: ReturnType<typeof setTimeout> | undefined;
-			const late = new Promise<never>((_, reject) => void (timer = setTimeout(() => reject(new Error(`The link holder did not answer within ${ms / 1000} s`)), ms)));
+			const late = new Promise<never>((_, reject) => void (timer = setTimeout(() => reject(new HolderSlow(`The link holder did not answer within ${ms / 1000} s`)), ms)));
 			try {
 				return (await Promise.race([handle(op, sid()), late])) as { ok: boolean };
 			} finally {
@@ -317,7 +323,7 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 		if (!channel && !connect()) throw new Error(NO_HOLDER);
 		const reqId = `${sid()}-${nonce}-${pending.size}-${Date.now()}`;
 		const answered = new Promise<unknown>((resolve, reject) => {
-			const timer = setTimeout(() => (pending.delete(reqId), reject(new Error(`The link holder did not answer within ${ms / 1000} s`))), ms);
+			const timer = setTimeout(() => (pending.delete(reqId), reject(new HolderSlow(`The link holder did not answer within ${ms / 1000} s`))), ms);
 			pending.set(reqId, { resolve, reject, holder: record.session, timer });
 		});
 		for (const c of chunks("req", record.session, reqId, op)) publish(c);
@@ -430,12 +436,15 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 		},
 		/** The compact reading the net snapshot carries; undefined when Straw Link is not set up or no holder answers. */
 		async summary(): Promise<LinkSummary | undefined> {
-			if (!inUse()) return (lastSummary = undefined);
+			if (!inUse()) return (lastSummary = undefined), undefined;
 			try {
 				const answer = await ask({ op: "gui", name: "summary", args: {} }, opts.summaryMs ?? SUMMARY_MS);
-				return (lastSummary = answer.ok ? (answer.summary as LinkSummary) : undefined);
-			} catch {
-				return lastSummary; // a holder that is slow or lost: the last reading, so the map does not freeze waiting
+				lastSummary = answer.ok ? { at: cfg.now(), summary: answer.summary as LinkSummary } : undefined;
+				return lastSummary?.summary;
+			} catch (error) {
+				// A holder that is slow: the last reading while it is fresh, so the map does not flicker. One that is gone or refuses shows nothing.
+				if (!(error instanceof HolderSlow) || !lastSummary || cfg.now() - lastSummary.at > (opts.summaryKeepMs ?? SUMMARY_KEEP_MS)) lastSummary = undefined;
+				return lastSummary?.summary;
 			}
 		},
 		/**
