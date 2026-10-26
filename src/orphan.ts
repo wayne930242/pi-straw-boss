@@ -1,6 +1,6 @@
 import { readdirSync } from "node:fs";
 import { basename, join } from "node:path";
-import { artifacts, ownFile, readJson } from "./dashboard.ts";
+import { artifacts, ownFile, readJson } from "./netdata.ts";
 import { type HerdrRun, panes, type Session } from "./herdr.ts";
 
 // A subagent that has finished, while the session that launched it can no longer receive its result, is asked once to report over intercom.

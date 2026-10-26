@@ -2,7 +2,7 @@ import type { Stashed } from "./stash.ts";
 import type { LinkSummary } from "./link/holder.ts";
 import { homedir } from "node:os";
 import { basename, join, sep } from "node:path";
-import { commanding, type Mark, markOf, type Row, sessionMark, subagents } from "./dashboard.ts";
+import { commanding, type Mark, markOf, type Row, sessionMark, subagents } from "./netdata.ts";
 import { headOf, type HerdrRun, type HerdrWorld, isSub, type Pane, parentOf, type Session, type Workspace, worldOf } from "./herdr.ts";
 import { type Pending, type Relayed, withPending } from "./ask.ts";
 import type { Shelf } from "./documents.ts";

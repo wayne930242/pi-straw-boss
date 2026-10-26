@@ -1,4 +1,4 @@
-import type { Mark } from "../src/dashboard.ts";
+import type { Mark } from "../src/netdata.ts";
 import type { Net } from "../src/net.ts";
 import { h } from "./dom.ts";
 import { MODAL } from "./hotkeys.ts";

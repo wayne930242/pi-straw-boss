@@ -1,4 +1,4 @@
-import type { Mark } from "../src/dashboard.ts";
+import type { Mark } from "../src/netdata.ts";
 import type { Pending } from "../src/ask.ts";
 import type { Net, Unit } from "../src/net.ts";
 import type { TrustAsk } from "../src/trust/types.ts";

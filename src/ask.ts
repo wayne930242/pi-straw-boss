@@ -1,5 +1,5 @@
 import { open, stat } from "node:fs/promises";
-import { commanding } from "./dashboard.ts";
+import { commanding } from "./netdata.ts";
 import { type Json, parse } from "./items.ts";
 import type { Net, Queued, Unit } from "./net.ts";
 import type { Answerable, Dialog } from "./owners.ts";
