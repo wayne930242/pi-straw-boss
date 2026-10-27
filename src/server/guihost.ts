@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import type { Bridge } from "../bridge.ts";
 import { createCloser } from "../closer.ts";
@@ -41,6 +42,8 @@ import type { Reply, Request } from "./socket.ts";
 export const BIND_WAIT_MS = 5000;
 /** How long a start waits for a live older host to let go of the GUI it was asked to hand over. */
 const RECLAIM_WAIT_MS = 5000;
+/** How long the hand-over waits for the start time of the process gui.json names (Windows: the CIM read takes 3.5 s and more, and the reclaim runs once, after the broker wait). */
+const RECLAIM_START_WAIT_MS = 6000;
 /** How long a start waits for remote access to come back before it goes on. */
 const RESUME_WAIT_MS = 3000;
 
@@ -56,6 +59,10 @@ export interface GuiHostOptions {
 	sessions(): Promise<Session[]>;
 	/** Whether the process a gui.json names still runs as that process (pid alive, started when the record says): only then is it asked for anything. */
 	runs?(record: Pick<GuiRecord, "pid" | "started">): boolean;
+	/** A process's start time once it is known (Windows: a background read; `startOf` is undefined until it is in); undefined when it cannot be told. */
+	startedLater?(pid: number): Promise<string | undefined>;
+	/** How long the hand-over waits for it; `RECLAIM_START_WAIT_MS` by default. */
+	startWaitMs?: number;
 	/** The GUI's way to the link holder. */
 	link: GuiLink;
 	/** What the page's server panel shows. */
@@ -133,6 +140,11 @@ export function createGuiHost(o: GuiHostOptions) {
 		}
 	};
 
+	/** `pid`'s start time, waited for up to the bound; undefined when it is not told in time. */
+	const startOfLater = (pid: number): Promise<string | undefined> => {
+		if (!o.startedLater) return Promise.resolve(undefined);
+		return Promise.race([o.startedLater(pid).catch(() => undefined), delay<undefined>(o.startWaitMs ?? RECLAIM_START_WAIT_MS, undefined, { ref: false })]);
+	};
 	/**
 	 * A GUI that a live older host still serves (a pi session before 0.46.0, which the first start after an upgrade finds beside it): the host is asked to hand over as an older build's takeover does
 	 * (`server/stop` with `take`; its serve entry goes with it), and waited for until its page stops answering, so this server binds the same port and the open page reconnects. A host that refuses
@@ -142,7 +154,16 @@ export function createGuiHost(o: GuiHostOptions) {
 		const seen = readGuiJson(dir);
 		if (!seen || (seen.pid === pid && (!seen.started || !o.started() || seen.started === o.started()))) return false;
 		// Nothing is sent to a port whose recorded process is gone: another process that took it has not earned the token and CSRF secret (B2 re-check N1).
-		if (!(o.runs ?? ((r) => alive(r.pid)))(seen) || !(await answers(seen))) return false;
+		if (!(o.runs ?? ((r) => alive(r.pid)))(seen)) return false;
+		// An alive pid is not the process: on Windows another account's process may hold the number a crashed host left, and it may have bound the recorded port first. The token and the CSRF secret go
+		// only to a process whose start time is KNOWN and the record's own, so an unknown time (the Windows cache is cold, the read is slow or failed) or a record without one skips the hand-over; the cost is a moved
+		// port, or a second GUI beside a 0.45 host, and no secret is sent (sec-F001).
+		const told = seen.started ? await startOfLater(seen.pid) : undefined;
+		if (!seen.started || told !== seen.started) {
+			log.line("gui-reclaim-skipped", { pid: seen.pid, why: !seen.started ? "no-start-recorded" : told === undefined ? "start-unknown" : "start-differs" });
+			return false;
+		}
+		if (!(await answers(seen))) return false;
 		log.line("gui-reclaim", { from: phrase(seen.owner, 120), pid: seen.pid });
 		if ((await postServer(seen, "server/stop", { by: owner, take: true }, 2000)).status !== 202) return false;
 		for (const end = Date.now() + RECLAIM_WAIT_MS; Date.now() < end; await new Promise((r) => setTimeout(r, 100))) if (!(await answers(seen))) return true;

@@ -276,7 +276,7 @@ test("the first server after an upgrade takes the GUI from the 0.45 session that
 	const { before, old, stops } = await olderHost(h, ts);
 	assert.equal(await status(`http://127.0.0.1:${before.port}/${before.token}/`), 200, "the older host answers");
 	assert.equal(JSON.parse(JSON.stringify(ts.config())).Web["box.tail1.ts.net:8443"].Handlers["/"].Proxy, `http://127.0.0.1:${old.remotePort}`);
-	const next = await host({ tailscale: ts.run });
+	const next = await host({ tailscale: ts.run, options: { startOf: (p) => (p === 4242 ? "T-old" : undefined) } });
 	assert.deepEqual(stops, [{ by: `sb server (pid ${next.pid})`, take: true }]);
 	const after = next.gui();
 	assert.deepEqual([after.port, after.remotePort, after.token, after.csrf, after.pid], [before.port, before.remotePort, before.token, before.csrf, next.pid], "the URL is kept");
@@ -299,7 +299,7 @@ test("a live host that does not hand over is left alone: the server's GUI moves 
 	cleanups.push(() => stubborn.stop());
 	writeRecordFile(dir, { ...before, pid: 4243, started: "T-other", owner: "sb server (pid 4243)", version: "0.46.0" });
 	{
-		const next = await host({ tailscale: ts.run });
+		const next = await host({ tailscale: ts.run, options: { startOf: (p) => (p === 4243 ? "T-other" : undefined) } });
 		assert.equal(await status(`http://127.0.0.1:${before.port}/${before.token}/`), 200, "the other GUI still answers");
 		assert.notEqual(next.gui().port, before.port);
 		assert.equal(next.gui().token, before.token);
@@ -345,6 +345,65 @@ test("a process that took the port of a server that is gone is sent nothing: a r
 	const reused = await host({ options: { startOf: (p) => (p === 4244 ? "T-other" : undefined) } });
 	assert.deepEqual(seen, [], "a reused pid");
 	assert.equal(reused.gui().pid, reused.pid);
+});
+
+/**
+ * sec-F001: on Windows another pid's start time is unknown until a background read answers (3.5 s and more), and a pid that a crashed host left is often another process's by then. The page's token and its CSRF secret
+ * go only to a process whose start time is KNOWN and equal to gui.json's: an alive pid is not enough.
+ */
+async function crashedHost(over: { started?: string; pid?: number } = {}) {
+	const h = await host(), before = h.gui(), pid = over.pid ?? 4246;
+	await h.ask("restart", { reason: "test", by: "test" });
+	await h.handle.done;
+	const seen = await squatter(before.port);
+	markAlive(pid);
+	cleanups.push(() => markGone(pid));
+	const plant = (started: string | undefined) => writeRecordFile(h.slot.dir, { ...before, pid, started, owner: `pi session (pid ${pid})`, ownerSession: "pi-old", version: "0.45.0" });
+	plant("started" in over ? over.started : "T-recorded");
+	return { before, seen, plant, dir: h.slot.dir };
+}
+
+test("sec-F001: a squatter on the recorded port is sent nothing while the recorded pid's start time is not known (a cold cache), never comes within the wait, or was not recorded", async () => {
+	const cold = await crashedHost();
+	const a = await host({ gui: { startedLater: async () => undefined } });
+	assert.deepEqual(cold.seen, [], "a start time that cannot be told");
+	assert.equal(a.gui().pid, a.pid);
+	await a.ask("restart", { reason: "test", by: "test" });
+	await a.handle.done;
+	cold.plant("T-recorded");
+	const slow = await host({ gui: { startedLater: () => new Promise<string | undefined>(() => {}), startWaitMs: 150 } });
+	assert.deepEqual(cold.seen, [], "a start time that does not arrive within the wait");
+	assert.equal(slow.gui().pid, slow.pid);
+	await slow.ask("restart", { reason: "test", by: "test" });
+	await slow.handle.done;
+	cold.plant(undefined);
+	const bare = await host({ options: { startOf: (p) => (p === 4246 ? "T-recorded" : undefined) } });
+	assert.deepEqual(cold.seen, [], "a record without a start time, though the process answers one");
+	assert.ok(readFileSync(fileOf(bare.slot, "log"), "utf8").includes("gui-reclaim-skipped"), "and the skip is logged");
+});
+
+test("sec-F001: a start time that arrives late is waited for, and one that equals the record's lets the hand-over go ahead", async () => {
+	const ts = fakeTailscale(), h = await host({ tailscale: ts.run });
+	const { before, old, stops } = await olderHost(h, ts);
+	const next = await host({ tailscale: ts.run, gui: { startedLater: async (p) => (await new Promise((r) => setTimeout(r, 250)), p === 4242 ? "T-old" : undefined) } });
+	assert.deepEqual(stops, [{ by: `sb server (pid ${next.pid})`, take: true }], "the older host was asked once the time came");
+	assert.equal(next.gui().port, before.port);
+	assert.equal(await status(next.url), 200);
+	void old;
+});
+
+test("sec-F003: the GUI of a secondary server answers Straw Link calls with the no_link text (the holder is the default Herdr's server's), not the refusal of a holder session that is not its host", async () => {
+	const h = await host({ env: { HERDR_SOCKET_PATH: join(world.stateDir, "other-herdr.sock") }, gui: { link: undefined } });
+	assert.equal(h.options.slot.primary, false);
+	const state = await h.post("link/state");
+	assert.deepEqual([state.status, state.body.error], [409, "no_link"]);
+	assert.match(String(state.body.reason), /runs in the sb server of the default Herdr only/);
+	const create = await h.post("link/create", { name: "x" });
+	assert.deepEqual([create.status, create.body.error], [409, "no_link"]);
+	const enable = await h.post("link/enable");
+	assert.equal(enable.status, 502);
+	assert.match(String(enable.body.reason), /default Herdr only/);
+	assert.equal(existsSync(join(world.stateDir, "link")), false, "and nothing is written to the primary's link folder");
 });
 
 test("a takeover asked of the server is refused with 409 and the GUI stays; an older build's plain stop still stops it, on purpose", async () => {

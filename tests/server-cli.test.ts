@@ -273,7 +273,8 @@ test("--timeout bounds the whole up, and the failure names which wait ran out be
 	assert.equal(silent.code, 1);
 	assert.equal(silent.errJson?.step, "server");
 	assert.equal(silent.errJson?.wait, "start");
-	assert.match(String(silent.errJson?.reason), /did not answer hello within 0\.5 s/);
+	// The start wait is what --timeout leaves after the lock and the folder check: 0.5 s on an idle machine, 0.4 s or less when those took 100 ms (a loaded one).
+	assert.match(String(silent.errJson?.reason), /did not answer hello within 0\.[2-5] s/);
 	assert.ok(Date.now() - began < 2500, "not the 5 s the start timer gives");
 	// hello: another requester's start is under way (a fresh restarting, no lock held) and no hello comes.
 	mkdirSync(world.slot.dir, { recursive: true });
@@ -521,7 +522,8 @@ test("status drops lastError once the server is ready: a failure of an earlier a
 	await s.handle.ready.catch(() => {});
 	world.intercomError = undefined;
 	const first = await cli(["status"]);
-	assert.ok(first.json?.lastError || world.record()?.lastError || true);
+	assert.ok(world.record()?.lastError, "the first server's failure is in the record before the second starts");
+	assert.ok(first.json?.lastError, "and status tells it");
 	const again = await world.start();
 	await again.handle.ready;
 	await until(() => world.record()?.pid === again.pid, "the second server's record");

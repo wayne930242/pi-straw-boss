@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { spawnDetached } from "../src/server/client.ts";
-import { consumeRefusals, guardHome, guardSpawn, inside, inTestRun, noteStarted, PIDS_DIR, stateDirFor, TEST_ROOT } from "../src/server/testguard.ts";
+import { consumeRefusals, guarded, guardHome, guardSpawn, inside, inTestRun, noteStarted, PIDS_DIR, stateDirFor, TEST_ROOT } from "../src/server/testguard.ts";
 import { startOf } from "../src/startof.ts";
 import { until, World } from "./fakes.ts";
 import { goEnv, INHERITED, installIsolation, leftover, reap } from "./isolation.ts";
@@ -87,6 +87,52 @@ test("a server a test run starts is noted by pid, and reap kills what still runs
 	assert.deepEqual(reap(dir), [child.pid]);
 	await until(() => leftover(dir).length === 0, "the process to be gone");
 	assert.deepEqual(reap(dir), []);
+});
+
+/** A launch as the Windows breakaway gives it: no pid at first, `started` answering with the pid (and the server's own start time, when WMI told it), `release` called when the start no longer needs it. */
+const breakaway = (child: { pid?: number }, told: { serverStarted?: string }) => {
+	let released = 0;
+	const launch = () => ({ exited: new Promise<number | null>(() => {}), started: Promise.resolve({ pid: child.pid!, ...told }), release: () => void released++ });
+	return { launch, released: () => released };
+};
+
+test("SBIR-F002: a server started through WMI is noted with the start time WMI told, and a note with no start time to check goes when the start lets go of it", async () => {
+	const dir = isolate(mkdtempSync(join(tmpdir(), "psb-iso-")));
+	const child = spawn("sleep", ["60"], { detached: true, stdio: "ignore" });
+	child.unref();
+	cleanup.push(() => void child.kill("SIGKILL"));
+	const proc = { [TEST_ROOT]: dir, SB_TEST_REAL_SERVER: "1" }, spec = { cwd: join(dir, "h"), env: { PI_CODING_AGENT_DIR: join(dir, "h", ".pi", "agent") } };
+	// The time WMI told is the one noted: a pid that has another start time now is another process's, and is left alone.
+	const told = breakaway(child, { serverStarted: "a time this pid has not got" });
+	const launched = guarded(told.launch, { proc, argv: ["node", "cli.mjs"] })(spec);
+	await launched.started;
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(readFileSync(join(dir, PIDS_DIR, String(child.pid)), "utf8").split("\n")[1], "a time this pid has not got");
+	assert.deepEqual(leftover(dir), [], "the pid's process started at another time than the one noted");
+	launched.release?.();
+	assert.equal(told.released(), 1, "release still reaches the launch");
+	// With the time of the process itself, the note stands after release and the server is still seen.
+	const own = breakaway(child, { serverStarted: startOf(child.pid!)! });
+	const kept = guarded(own.launch, { proc, argv: ["node", "cli.mjs"] })(spec);
+	await kept.started;
+	await new Promise((resolve) => setImmediate(resolve));
+	kept.release?.();
+	assert.deepEqual(leftover(dir), [child.pid]);
+	// No time told and none to read (Windows, a cold cache): nothing can tell the process from another that takes the pid, so release forgets the note.
+	rmSync(join(dir, PIDS_DIR), { recursive: true, force: true });
+	const unknown = breakaway(child, {});
+	const blind = guarded(unknown.launch, { proc, argv: ["node", "cli.mjs"], startOf: () => undefined })(spec);
+	await blind.started;
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.ok(existsSync(join(dir, PIDS_DIR, String(child.pid))), "noted while the start runs");
+	blind.release?.();
+	assert.ok(!existsSync(join(dir, PIDS_DIR, String(child.pid))), "forgotten at release: no pid is killed on a guess");
+});
+
+test("a pid that is no process's (0, a failed start) is never noted: reaping it would signal this process's own group", () => {
+	const dir = isolate(mkdtempSync(join(tmpdir(), "psb-iso-")));
+	noteStarted(0, { [TEST_ROOT]: dir });
+	assert.ok(!existsSync(join(dir, PIDS_DIR, "0")));
 });
 
 test("a process that leaves a noted server running fails when it ends, and the server is killed", () => {
@@ -204,6 +250,20 @@ test("the go toolchain is run with the home the run started from, and the inheri
 	assert.equal(goEnv(env).HOME, "/Users/someone", "go writes its telemetry where it always did, not into the root that is removed at the end");
 	assert.equal(goEnv(env).PATH, "/usr/bin");
 	assert.ok(INHERITED.test("SB_TEST_REAL_SERVER"));
+});
+
+test("SBIR-F002: installIsolation starts no process: every test process runs it before its first test, and a synchronous `go env` in each held the machine (100 ms to 1.6 s on a loaded one, 150 times in a full run)", () => {
+	const bin = isolate(mkdtempSync(join(tmpdir(), "psb-iso-"))), asked = join(bin, "asked");
+	writeFileSync(join(bin, "go"), `#!/bin/sh\necho "$@" >> ${JSON.stringify(asked)}\n`, { mode: 0o755 });
+	const real = process.env.PATH;
+	process.env.PATH = `${bin}:${real}`;
+	cleanup.push(() => void (process.env.PATH = real));
+	const env: NodeJS.ProcessEnv = { HOME: "/Users/someone", PATH: process.env.PATH };
+	const made = installIsolation(env);
+	cleanup.push(() => rmSync(made.root, { recursive: true, force: true }));
+	assert.ok(!existsSync(asked), "go was not run");
+	assert.equal(env.GOCACHE, undefined);
+	assert.equal(goEnv(env).HOME, "/Users/someone", "go still finds its own caches and telemetry under the home the run started from");
 });
 
 test("ServerWorld.server() gives a session the world's requester when no context is given", async () => {

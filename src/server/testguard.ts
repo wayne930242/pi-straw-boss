@@ -79,12 +79,15 @@ export function guardSpawn(spec: { cwd: string; env: NodeJS.ProcessEnv }, proc: 
 
 /**
  * Records the pid of a server a test run started, for the check at the end of the run that nothing it started remains. The file holds the pid of the process that started it and, on the next line,
- * the start time of the server (empty when it is not known yet): the check kills a pid only while it is still that process.
+ * the start time of the server (empty when it is not known yet): the check kills a pid only while it is still that process. `read` tells the start time (the process's own by default); it returns
+ * what was noted, undefined when nothing is known. A pid that is no process's (0: a start that failed) is never noted: reaping it would signal this process's own group.
  */
-export function noteStarted(pid: number | undefined, proc: NodeJS.ProcessEnv = process.env, argv: string[] = process.argv): void {
-	if (pid === undefined || !inTestRun(proc, argv) || !proc[TEST_ROOT]) return;
+export function noteStarted(pid: number | undefined, proc: NodeJS.ProcessEnv = process.env, argv: string[] = process.argv, read: (pid: number) => string | undefined = startOf): string | undefined {
+	if (pid === undefined || pid <= 0 || !inTestRun(proc, argv) || !proc[TEST_ROOT]) return undefined;
+	const time = read(pid);
 	mkdirSync(join(proc[TEST_ROOT], PIDS_DIR), { recursive: true });
-	writeFileSync(join(proc[TEST_ROOT], PIDS_DIR, String(pid)), `${process.pid}\n${startOf(pid) ?? ""}\n`);
+	writeFileSync(join(proc[TEST_ROOT], PIDS_DIR, String(pid)), `${process.pid}\n${time ?? ""}\n`);
+	return time;
 }
 
 /** Drops the note of a server that has ended: its pid may be another process's by the end of the run. */
@@ -92,12 +95,21 @@ export function forgetStarted(pid: number | undefined, proc: NodeJS.ProcessEnv =
 	if (pid !== undefined && proc[TEST_ROOT]) rmSync(join(proc[TEST_ROOT], PIDS_DIR, String(pid)), { force: true });
 }
 
-/** A spawn that is checked before it starts and noted after, also when the pid is told late (Windows: through WMI). */
-export const guarded = <S extends { cwd: string; env: NodeJS.ProcessEnv }, L extends { pid?: number; exited: Promise<unknown>; started?: Promise<{ pid: number }> }>(base: (spec: S) => L) => (spec: S): L => {
-	guardSpawn(spec);
+/**
+ * A spawn that is checked before it starts and noted after, also when the pid is told late (Windows: through WMI, whose answer carries the server's own start time, `serverStarted`, which is what
+ * is noted: a read of the pid's start time is a PowerShell start that has not answered yet). A launch that is let go (`release`: the start no longer needs it, and its watch for the exit stops, so
+ * `exited` never comes) leaves the note only when it has a start time to check against; one without could be another process's by the end of the run, and is forgotten.
+ */
+export const guarded = <S extends { cwd: string; env: NodeJS.ProcessEnv }, L extends { pid?: number; exited: Promise<unknown>; started?: Promise<{ pid: number; serverStarted?: string }>; release?(): void }>(base: (spec: S) => L, { proc = process.env, argv = process.argv, startOf: read = startOf }: { proc?: NodeJS.ProcessEnv; argv?: string[]; startOf?: (pid: number) => string | undefined } = {}) => (spec: S): L => {
+	guardSpawn(spec, proc, argv);
 	const launched = base(spec);
-	noteStarted(launched.pid);
-	void launched.exited.then(() => forgetStarted(launched.pid));
-	void launched.started?.then((started) => (noteStarted(started.pid), void launched.exited.then(() => forgetStarted(started.pid))), () => {});
-	return launched;
+	let unchecked: number | undefined;
+	const note = (pid: number | undefined, told?: string) => {
+		const time = noteStarted(pid, proc, argv, (p) => told ?? read(p));
+		unchecked = time === undefined ? pid : unchecked === pid ? undefined : unchecked;
+		void launched.exited.then(() => forgetStarted(pid, proc));
+	};
+	note(launched.pid);
+	void launched.started?.then((started) => note(started.pid, started.serverStarted), () => {});
+	return { ...launched, release: () => (launched.release?.(), unchecked === undefined ? undefined : forgetStarted(unchecked, proc)) };
 };

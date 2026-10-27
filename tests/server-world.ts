@@ -19,6 +19,20 @@ export async function until(check: () => unknown, what: string, ms = 5000): Prom
 	for (const end = Date.now() + ms; Date.now() < end; await sleep(5)) if (await check()) return;
 	throw new Error(`Timed out waiting for ${what}`);
 }
+/**
+ * How long this process's own event loop stood still (beyond the tick), while a test ran. A test that measures the gap between two things the process does itself (a touch of `restarting.since`, a sampler
+ * of the record) cannot get a better gap than the loop gave it: on a loaded machine (a full run, other agents' work) the process is descheduled for hundreds of ms, and a bound on the wall-clock gap fails for
+ * that and for nothing in the code. The test allows its bound plus the worst stall seen, which a touch that never came would still exceed.
+ */
+export function stallWatch(tickMs = 5) {
+	let last = Date.now(), worst = 0;
+	const timer = setInterval(() => {
+		const now = Date.now();
+		worst = Math.max(worst, now - last - tickMs);
+		last = now;
+	}, tickMs);
+	return { worst: () => worst, stop: () => clearInterval(timer) };
+}
 export const FAST: Timers = { start: 5000, exit: 2000, supervisor: 400, touch: 40 };
 
 export interface Running { pid: number; handle: ServerHandle; options: ServerOptions; client: StubClient }
@@ -81,13 +95,16 @@ export class ServerWorld {
 	}
 	/** The server deps of a session whose look reaches this world: `ctx` (the requester of `ctx()` by default) and a fake cli, with its looks tracked for `close()`. */
 	server(ctx: Partial<Ctx> = {}, over: object = {}) {
-		const { spawn, kill, prepare, alive, startOf, timers, platform, node } = this.ctx();
-		return { ctx: { spawn, kill, prepare, alive, startOf, timers, platform, node, ...ctx }, cli: "/fake/cli.mjs", track: (done: Promise<unknown>) => void this.looks.push(done), ...over };
+		const { spawn, kill, prepare, alive, startOf, timers, platform, node, lock } = this.ctx();
+		return { ctx: { spawn, kill, prepare, alive, startOf, timers, platform, node, lock, ...ctx }, cli: "/fake/cli.mjs", track: (done: Promise<unknown>) => void this.looks.push(done), ...over };
 	}
-	/** A requester: its spawn starts a server in this process from "its package" (`version`). */
+	/**
+	 * A requester: its spawn starts a server in this process from "its package" (`version`). Its lock states this process's start time itself: left to the default, every `takeLock` reads it with a synchronous `ps`
+	 * (10 to 300 ms and more on a loaded machine, 80 times in server-client.test.ts), which holds the event loop still in the middle of the tests that time touches and gaps.
+	 */
 	ctx(over: Partial<Ctx> = {}): Ctx {
 		const version = over.version ?? "0.44.0";
-		return makeCtx({
+		const made = makeCtx({
 			slot: this.slot, cli: "/fake/cli.mjs", by: "test requester", env: this.env, platform: "linux", node: "node", timers: FAST, alive: (p) => this.live.has(p), startOf: () => undefined,
 			kill: (pid) => void this.running.find((r) => r.pid === pid)?.handle.shutdown(0), prepare: (slot) => secretDir(slot.dir),
 			spawn: (spec) => {
@@ -106,6 +123,7 @@ export class ServerWorld {
 			...over,
 			version,
 		});
+		return over.lock ? made : { ...made, lock: { ...made.lock, self: { pid: process.pid, started: async () => `T-${process.pid}` } } };
 	}
 	async close() {
 		this.closed = true;

@@ -7,7 +7,7 @@ import { herdrEvents, herdrWatch, type HerdrWatch } from "../server-watch.ts";
 import { alive as pidAlive } from "../remote.ts";
 import { rememberStart, startedLater, startOf as processStartOf } from "../startof.ts";
 import { AclError, applyAcl, awaitAclMarker } from "./acl.ts";
-import { createGuiLink, type GuiLink, inProcessLink } from "../link/guiport.ts";
+import { createGuiLink, elsewhereLink, type GuiLink, inProcessLink, NO_LINK } from "../link/guiport.ts";
 import type { Run } from "../remote.ts";
 import { herdrListens, intercomOf, runsAs, serverEnv } from "./client.ts";
 import { cliBeside, createGuiHost, spawnRestart } from "./guihost.ts";
@@ -68,7 +68,7 @@ export interface ServerOptions {
 	/** How the starter started this process (Windows): through WMI, or by a plain spawn after a failure; kept in the record, so `status` and `up` can say so. */
 	detach?: { via: Detach; failure?: string };
 	/** The GUI the server serves (guihost.ts); `false` serves none (the tests of the process itself). `link`, `bundle`, `tailscale`, and `bindWaitMs` replace the machine's. */
-	gui?: false | { link?: GuiLink; bundle?: string; tailscale?: Run; bindWaitMs?: number; /** Asks for a restart as the page's button does; the real one starts `cli.mjs restart`. */ restart?: (reason: string) => { status: number; body: unknown } | Promise<{ status: number; body: unknown }> };
+	gui?: false | { link?: GuiLink; bundle?: string; tailscale?: Run; bindWaitMs?: number; /** Another process's start time as the hand-over of the GUI asks for it, and how long it waits (tests; the process's own `startedLater` and 6 s by default). */ startedLater?: (pid: number) => Promise<string | undefined>; startWaitMs?: number; /** Asks for a restart as the page's button does; the real one starts `cli.mjs restart`. */ restart?: (reason: string) => { status: number; body: unknown } | Promise<{ status: number; body: unknown }> };
 	herdrUp?: () => Promise<boolean>;
 	watch?: HerdrWatch;
 	herdr?: HeadlessDeps;
@@ -285,7 +285,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			// A request of a session to the link holder (service.ts): the answer is the holder's own, in `answer`; `ok` is only whether the server took the request. Only the primary server holds the link.
 			const from = phrase(request.from, 200);
 			if (!from || typeof request.body !== "object" || request.body === null) return { ok: false, error: "a link request needs from and body" };
-			if (!slot.primary) return { ok: true, answer: { ok: false, code: "no_link", error: "Straw Link runs in the sb server of the default Herdr only, and this session's Herdr is another one" } };
+			if (!slot.primary) return { ok: true, answer: { ok: false, code: "no_link", error: NO_LINK } };
 			if (!link) return { ok: true, answer: { ok: false, code: "no_holder", error: "The link holder is not running in the sb server yet; ask again in a moment" } };
 			return { ok: true, answer: await link.request(request.body, from) };
 		}
@@ -392,10 +392,10 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	const kit = createHeadlessKit({ client: OFFLINE, env: kitEnv, cfg, log: () => {} });
 	const gui = o.gui === false ? undefined : o.gui ?? {};
 	guiHost = gui && createGuiHost({
-		slot, kit, log, pid, version, started: () => own.started, runs: (record) => runsAs({ alive, startOf }, record),
+		slot, kit, log, pid, version, started: () => own.started, runs: (record) => runsAs({ alive, startOf }, record), startedLater: gui.startedLater ?? (o.startOf ? async (other) => o.startOf!(other) : (other) => startedLater(other, { hold: false })), startWaitMs: gui.startWaitMs,
 		sessions: async () => (client?.isConnected() ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))),
-		// The primary server holds the link itself (B3), so the GUI asks the holder in this process as the server, which the holder takes GUI requests from; before it runs, and on a secondary server, the channel reaches the holder's session.
-		link: gui.link ?? inProcessLink(createGuiLink({ events: kit.pi.events, id: () => serverId(slot), stateDir: slot.stateDir, agentDir: env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), log: (text) => log.line("link", { text }) }), () => link, () => serverId(slot)),
+		// The primary server holds the link itself (B3), so the GUI asks the holder in this process as the server, which the holder takes GUI requests from; before it runs, the channel reaches the holder's session. A secondary server holds none and its GUI says so (`no_link`, as its `link` request does): the channel would ask the primary's holder as a session that is not the GUI's host.
+		link: gui.link ?? (!slot.primary ? elsewhereLink() : inProcessLink(createGuiLink({ events: kit.pi.events, id: () => serverId(slot), stateDir: slot.stateDir, agentDir: env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), log: (text) => log.line("link", { text }) }), () => link, () => serverId(slot))),
 		status: () => ({ state: phase === "ready" ? "live" : phase, version, pid, mode, desk, uptimeMs: now() - startedAt, log: fileOf(slot, "log"), ...(own.lastError ? { lastError: own.lastError } : {}) }),
 		restart: gui.restart ?? ((reason) => spawnRestart(cliBeside(), reason, "the GUI", serverEnv(env), slot.dir)),
 		failed: (code, text) => recordError(code, text), tailscale: gui.tailscale, bundle: gui.bundle, bindWaitMs: gui.bindWaitMs,

@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,14 +17,10 @@ export interface Isolation { root: string; owner: boolean }
 export function installIsolation(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): Isolation {
 	const given = env[TEST_ROOT];
 	if (given && existsSync(given)) return { root: given, owner: false };
-	// Read before HOME changes: a checkout and a Go toolchain that the account has and a test uses (link-relay-live.test.ts) stay where they are.
+	// Read before HOME changes: a checkout that the account has and a test uses (link-relay-live.test.ts) stays where it is. The Go toolchain is not asked for its folders: `goEnv` runs it with the real home, and a
+	// synchronous `go env` in every test process (150 in a run, 100 ms to 1.6 s each on a loaded machine) held the machine for nothing.
 	const home = env.HOME ?? homedir(), relay = join(home, "projects", "straw-relay");
 	if (!env.STRAW_RELAY_DIR && existsSync(join(relay, ".git"))) env.STRAW_RELAY_DIR = relay;
-	if (!env.GOCACHE && !env.GOMODCACHE && !env.GOPATH) {
-		const go = spawnSync("go", ["env", "GOCACHE", "GOMODCACHE", "GOPATH"], { encoding: "utf8", timeout: 10_000, env: { ...process.env, HOME: home } });
-		const [cache, mods, path] = go.status === 0 ? go.stdout.split("\n") : [];
-		if (cache && mods && path) Object.assign(env, { GOCACHE: cache, GOMODCACHE: mods, GOPATH: path });
-	}
 	env.SB_TEST_REAL_HOME = home;
 	const root = mkdtempSync(join(platform === "win32" ? tmpdir() : "/tmp", "sbt-")), fake = join(root, "h");
 	for (const key of Object.keys(env)) if (INHERITED.test(key)) delete env[key];

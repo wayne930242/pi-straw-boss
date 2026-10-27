@@ -20,6 +20,8 @@ export const SUMMARY_MS = 2000;
 export const SUMMARY_KEEP_MS = 30_000;
 /** The holder is there but did not answer in time: the one failure for which the last summary may stand in. */
 export class HolderSlow extends Error {}
+/** The answer where the holder is not (a secondary sb server: only the default Herdr's server holds the link); a session's request and the GUI's get the same text. */
+export const NO_LINK = "Straw Link runs in the sb server of the default Herdr only, and this session's Herdr is another one";
 export const NO_HOLDER = "No link holder is running on this computer yet: it runs in the sb server, which starts within a few seconds. If Straw Link is not set up here, open Teams in the GUI and press Set up; otherwise, if it stays so, a team file or its config.json entry is missing";
 
 export interface GuiLinkOptions {
@@ -126,5 +128,15 @@ export function inProcessLink(channel: GuiLink, holder: () => LocalHolder | unde
 			const answer = (await here.request({ op: "gui", name: "summary", args: {} }, id())) as GuiAnswer;
 			return answer.ok ? (answer.summary as LinkSummary) : undefined;
 		},
+	};
+}
+
+/** The GUI's link on a server that holds none (a secondary one): every call answers `no_link`, and nothing is asked of a holder session or written to the link folder. */
+export function elsewhereLink(): GuiLink {
+	return {
+		call: async () => ({ ok: false, code: "no_link", error: NO_LINK }),
+		enable: async () => { throw new Error(NO_LINK); },
+		summary: async () => undefined,
+		close() {},
 	};
 }

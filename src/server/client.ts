@@ -395,14 +395,14 @@ export const needsGate = (seen: Probe) => !(seen.live || seen.denied || seen.run
  */
 export async function lockFor(ctx: Ctx, waitMs: number, deadline?: number, gate = true) {
 	try {
-		const ms = deadline === undefined ? undefined : within(ctx, deadline, 15_000);
+		const left = () => (deadline === undefined ? undefined : within(ctx, deadline, 15_000)); // what is left when a native call starts, not when the check began: each runs after the one before used its share (SBIR-F001)
 		// R13: nothing is created or changed in a folder that is another account's. An existing folder is gated BEFORE anything is made or changed in it (the owner is read once, and not again by
 		// `prepare` for a wrong DACL); a folder `prepare` has just made (the first start ever) is gated right after it, before the lock, the placeholder, the log or `start-error.json`. Both are
 		// no-ops where the owner was read for this folder already, and where a server is known to run (`gate` false).
 		// The phase times the gate's own reads (R13-F006), not the folder preparation around them.
 		let read = false, gateMs = 0;
 		const gated = async () => {
-			const t = ctx.now();
+			const t = ctx.now(), ms = left();
 			try {
 				if (await raced(Promise.resolve(ctx.gate(ctx.slot, ms)), ms)) read = true;
 			} finally {
@@ -411,7 +411,7 @@ export async function lockFor(ctx: Ctx, waitMs: number, deadline?: number, gate 
 		};
 		if (gate) await gated();
 		// The gate is also passed inside `prepare`, between the protect call and the mkdirs of a secondary slot; a no-op when the folder was read already.
-		await ctx.prepare(ctx.slot, ms, gate ? gated : undefined);
+		await ctx.prepare(ctx.slot, left(), gate ? gated : undefined);
 		if (gate) await gated();
 		if (read) ctx.log.line("phase", { name: "owner-gate", ms: gateMs });
 	} catch (error) {
