@@ -34,6 +34,8 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 		(ui ?? s.ui)?.notify(text, level);
 	};
 	// Only a session with a screen looks: a print run is short-lived, and a subagent never gets here (index.ts).
+	// A tower run (runmode.ts) looks at nothing: it could start or upgrade a server that was stopped, and a run of a server that is gone has nothing to run for.
+	let quiet: () => boolean = () => false;
 	let timer: ReturnType<typeof setInterval> | undefined, looking = false, failedAt: number | undefined, failedUpgrade: string | undefined, stopped = false, interactive = false;
 
 	const slot = () => slotOf(cfg.stateDir ?? guiDir, cfg.env);
@@ -66,7 +68,7 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 		return done;
 	};
 	async function lookOnce() {
-		if (looking || stopped || !interactive) return;
+		if (looking || stopped || !interactive || quiet()) return;
 		looking = true;
 		let verdictWas: string | undefined, upgradePair: string | undefined;
 		try {
@@ -206,6 +208,8 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 	return {
 		...api,
 		ask,
+		/** From now on the periodic look is skipped while `when` holds (a tower run). */
+		holdWhile: (when: () => boolean) => void (quiet = when),
 		/** The `/boss server [stop|restart [--downgrade] [reason]]` command: the boss's own, so it asks to confirm what costs something and clears a stop on purpose. */
 		async command(sub: "" | "stop" | "restart", rest: string) {
 			const ask = async (title: string, message: string) => (await s.ui?.confirm(title, message)) === true;

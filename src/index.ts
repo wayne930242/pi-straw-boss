@@ -56,6 +56,7 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		// A pi the sb server started for a tower run (runmode.ts) decides first, at session_start: when it is a run, nothing of the net starts.
 		warmStart(); // Windows tells a process's start time through PowerShell, 2 to 3 s: read this one's now, in the background, so the records written later carry it
 		const link = createLink(kit), briefing = createBriefing(kit), roles = createRoles(kit), look = cfg.server ? createServerLook(kit, cfg.server) : undefined, runMode = createRunMode(kit, look, cfg.runSide), reach = createReach(kit, look), election = createElection(kit), presence = createPresence(kit), digest = createDigest(run, now);
+		look?.holdWhile(() => runMode.mode === "run" || Boolean(pi.getFlag("sb-run")));
 		const guard = createGuard(kit, { ...election, openTower: reach.openTower, roles });
 		// A join adds the tools of a joined session, and the tools promote through the membership: each is built with the other's hook.
 		const membership = createMembership(kit, { presence, election, guard, briefing, roles, openTower: reach.openTower, register: () => (tools.addNetTools(), tools.addPromote()), control: () => control });
@@ -65,7 +66,7 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		closeSelf = createClosing(kit);
 		const control = createCloseMain(kit, { closeSelf, check: bridge.stashCheck });
 		registerSession(kit, { runMode, briefing, roles, presence, membership, guard, host, reach, digest, control, startTower: createTower(kit, { membership, presence, tools, control, digest, roles, reach }) });
-		registerBoss(kit, { host, membership, reach, closeSelf, stashing: createStashing(kit, { host }), server: look });
+		registerBoss(kit, { runMode, host, membership, reach, closeSelf, stashing: createStashing(kit, { host }), server: look });
 	};
 }
 

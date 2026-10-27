@@ -206,7 +206,10 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit, server:
 		} else {
 			const inScope = (m: Member) => ({ tab: m.tab.id === s.at.tabId, workspace: m.workspace.id === s.at.workspaceId })[scope as "tab" | "workspace"];
 			// tab and workspace reach the net only; all reaches every other pi session on the machine.
-			targets = scope === "all" ? others : netMembers(others, net.ps).filter(inScope).map((m) => m.s);
+			// With the tower runs on, the pi in a standing pane is a run's: it hears the tower's messages as events from the queue, so the identity is the recipient and the pi is not (it would hear twice).
+			const runsOn = towerRunsEnabled(guiDir), members = netMembers(others, net.ps), runPis = new Set(runsOn ? members.filter((m) => m.role === "tower").map((m) => m.s.id) : []);
+			const identity = (m: Member) => net.sessions.find((x) => x.id === net.all.find((w) => w.workspace_id === m.workspace.id)?.tokens?.tower);
+			targets = scope === "all" ? others.filter((x) => !runPis.has(x.id)) : [...new Set(members.filter(inScope).flatMap((m) => (runPis.has(m.s.id) ? [identity(m)] : [m.s])).filter((x): x is Session => x !== undefined))];
 		}
 		return report(await deliver(targets, message, "broadcast", scope, reply, net), notes, scope);
 	};

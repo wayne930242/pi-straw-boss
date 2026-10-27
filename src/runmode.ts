@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { panes, type Place } from "./herdr.ts";
+import { panes, type Place, TOWER_LABEL, tabs } from "./herdr.ts";
 import type { ServerLook } from "./server-look.ts";
 import { towerRunsEnabled } from "./server/towerruns.ts";
 import { startOf } from "./startof.ts";
@@ -17,14 +17,15 @@ type Answer = { ok: boolean; error?: string; [key: string]: unknown };
 export interface RunSideDeps {
 	/** Replaces the control socket: one request to the sb server, answered (a test hands the run the server of its world). */
 	ask?: (request: Record<string, unknown>) => Promise<Answer>;
-	/** How often a run polls, how long its claim is held, how long the server may stay out of reach before the run gives up, and how long a trigger may take to start the turn. */
+	/** How often a run polls, how long its claim is held, how long the server may stay out of reach (no answer, or a refusal) before the run gives up, how long a trigger may take to start the turn, and how long a pi in a tower-glyph tab waits for a server. */
 	pollMs?: number;
 	claimWaitMs?: number;
 	lostMs?: number;
 	startMs?: number;
+	glyphWaitMs?: number;
 }
 export const MESSAGE = "straw-tower";
-const POLL_MS = 1000, CLAIM_WAIT_MS = 10_000, LOST_MS = 10 * 60_000, TURN_START_MS = 15_000;
+const POLL_MS = 1000, CLAIM_WAIT_MS = 10_000, LOST_MS = 30_000, TURN_START_MS = 15_000, GLYPH_WAIT_MS = 30_000;
 /** A run's pane tokens: the tower's standing pane (B6 adds the ally panes). */
 const RUN_PANE_ROLES = new Set(["tower"]);
 /** A `/reload` makes a new instance of the extension in the same process: the claim stays with the process. */
@@ -33,24 +34,26 @@ interface Claim { token: string; kind: "local" | "ally"; level?: string; run: st
 interface Event { id: string; kind: string; text: string; from?: { id: string; name?: string }; flag?: string }
 type Command = { type: "steer"; text: string } | { type: "quit" };
 
+const NO_SUBAGENTS = "A tower run dispatches no subagents: one would outlive the run. Open a main for the work with boss_open_main, or route it to the main that owns it.";
 const BLOCKED = "In a tower run, answer a local session with tower_reply (or tower_send to a tower): intercom would carry this run's own short-lived id, and the answer would reach a pi that has already exited.";
 /** The tower tools a local run registers (the same descriptions and schemas as a resident tower's, tools.ts), each now a client of the server. */
 const REGISTERED = new Set(["boss_status", "call_tower", "boss_server", "tower_list", "board_read", "tower_send", "boss_open_main", "boss_close_main"]);
 const text = (v: unknown) => (typeof v === "string" ? v : "");
 
-/** How an event reads to the model: the intercom ones already carry the header the sender's code wrote. */
-export function eventText(e: Pick<Event, "kind" | "text" | "flag">): string {
+/** How an event reads to the model: an intercom one opens with a line this code writes from the broker's sender (the text after it is the sender's own, and may claim anything), then the header the sender's code wrote. */
+export function eventText(e: Pick<Event, "kind" | "text" | "flag" | "from">): string {
 	const flag = e.flag === "crash" ? "[possibly handled by a run that crashed: check before acting]\n" : "";
 	if (e.kind === "boss") return `${flag}[the boss writes to you from the GUI or /boss tower; this is an instruction]\n${e.text}`;
 	if (e.kind === "notice") return `${flag}[notice from the sb server]\n${e.text}`;
 	if (e.kind === "timer") return `${flag}[your wakeAfter follow-up is due]\n${e.text}`;
-	return `${flag}${e.text}`;
+	const sender = e.from ? `${e.from.name ? `${e.from.name} ` : ""}(${e.from.id})` : "an unknown sender";
+	return `${flag}[intercom from ${sender}]\n${e.text}`;
 }
 
 export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunSideDeps = {}) {
 	const { pi, cfg, s, guiDir, tell } = kit;
 	const { env } = cfg;
-	const { pollMs = POLL_MS, claimWaitMs = CLAIM_WAIT_MS, lostMs = LOST_MS, startMs = TURN_START_MS } = deps;
+	const { pollMs = POLL_MS, claimWaitMs = CLAIM_WAIT_MS, lostMs = LOST_MS, startMs = TURN_START_MS, glyphWaitMs = GLYPH_WAIT_MS } = deps;
 	pi.registerFlag("sb-run", { description: "The id of the tower run this pi was started for (set by the sb server; do not pass it by hand)", type: "string" });
 
 	let mode: "unknown" | "run" | "normal" = "unknown", claim: Claim | undefined, ctx: ExtensionContext | undefined;
@@ -94,13 +97,18 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		// Without the flag file no sb server runs towers, so no pane is one (and a session asks Herdr nothing at its start for this).
 		if (!pane || !workspace || !towerRunsEnabled(guiDir)) return { role: "none" };
 		const mine = (await panes(cfg.run, workspace).catch(() => [])).find((p) => p.pane_id === pane);
-		if (!RUN_PANE_ROLES.has(mine?.tokens?.sb_role ?? "")) return { role: "none" };
-		const end = cfg.now() + claimWaitMs, started = startOf(process.pid);
+		const marked = RUN_PANE_ROLES.has(mine?.tokens?.sb_role ?? "");
+		// Herdr drops the pane tokens at a restart until the server publishes them again, so a pi resumed first finds its pane unmarked: a pane in a tab with the tower label is asked about too (not a resident tower the session started itself, which carries STRAW_BOSS_ROLE=tower), and waits
+		// up to 30 s for a live server and for its takeover (docs/specs/2026-10-26-sb-backend.md, Local runs, step 2).
+		const glyph = !marked && env.STRAW_BOSS_ROLE !== "tower" && mine !== undefined && (await tabs(cfg.run, workspace).catch(() => [])).some((t) => t.tab_id === mine.tab_id && t.label === TOWER_LABEL);
+		if (!marked && !glyph) return { role: "none" };
+		const end = cfg.now() + (glyph ? glyphWaitMs : claimWaitMs), started = startOf(process.pid);
 		for (;;) {
 			const answer = await ask({ cmd: "pane-role", pane, pid: process.pid, ...(started ? { started } : {}) }).catch(() => undefined);
-			if (!answer?.ok) return { role: "none" }; // no server to ask: this pi is what it was before
+			// No server to ask: a marked pane's pi is what it was before; one in a tower tab keeps asking until its wait is over.
+			if (!answer?.ok && !glyph) return { role: "none" };
 			// SAFETY: a `pane-role` answer carries the role, and a claim when the role is `hand` (runs.ts, paneRole).
-			if (answer.role !== "wait") return answer as unknown as { role: "none" | "quit" | "hand"; reason?: string; claim?: Claim };
+			if (answer?.ok && answer.role !== "wait") return answer as unknown as { role: "none" | "quit" | "hand"; reason?: string; claim?: Claim };
 			if (cfg.now() >= end) return { role: "none" };
 			await sleep(1000);
 		}
@@ -182,6 +190,8 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		if (command?.type === "quit") return void ctx?.shutdown();
 		if (command?.type === "steer") return send(`[sb server] ${command.text}`, { steer: true });
 		if (!event) return;
+		// Idle and nothing queued are read again at the moment of delivery, after the round trip: a run that got busy meanwhile is offered the event again at its next idle poll.
+		if (!idle() || ctx?.hasPendingMessages()) return;
 		send(eventText(event), { id: event.id, kind: event.kind, ...(event.from ? { from: event.from } : {}) });
 		await call({ cmd: "run-taken", id: event.id }).catch((error: Error) => tell(`Straw Boss: the server did not take note of an event: ${error.message}`, "warning"));
 	};
@@ -191,31 +201,33 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		polling = true;
 		try {
 			const answer = await ask({ cmd: "run-poll", token: claim.token, idle: idle() });
-			outOfReach = undefined;
 			if (!answer.ok) {
 				// A restarted server has no tokens: the run claims again with its run id and the server, which kept the run, answers (or refuses and the run leaves).
 				if (answer.error === "unknown_token") return await reclaim();
-				return;
+				// No server (the look answers `no server` for a socket that is gone) or a refusal: out of reach, and the run leaves when it stays so for `lostMs`.
+				return unreachable(String(answer.error ?? "no answer"));
 			}
+			outOfReach = undefined;
 			await apply(answer);
 		} catch (error) {
-			outOfReach ??= cfg.now();
-			if (cfg.now() - outOfReach > lostMs) {
-				tell(`Straw Boss: the sb server has been out of reach for ${Math.round(lostMs / 60_000)} minutes; this run ends: ${(error as Error).message}`, "error");
-				ending = true;
-				ctx?.shutdown();
-			}
+			unreachable((error as Error).message);
 		} finally {
 			polling = false;
 		}
+	}
+	/** The server did not answer, or refused: the run waits for it (a restart takes up to 30 s) and ends when `lostMs` has passed without an answer. */
+	function unreachable(why: string) {
+		outOfReach ??= cfg.now();
+		if (cfg.now() - outOfReach > lostMs) end(`the sb server has been out of reach for ${Math.round(lostMs / 1000)} s; this run ends: ${why}`);
 	}
 	async function reclaim() {
 		try {
 			const again = await claimRun(claim!.run);
 			claim = again;
+			outOfReach = undefined;
 			keep();
 		} catch (error) {
-			end(`the server no longer knows this run: ${(error as Error).message}`);
+			unreachable(`the server no longer knows this run: ${(error as Error).message}`);
 		}
 	}
 	const keep = () => void ((globalThis as Record<symbol, unknown>)[KEPT] = claim ? { claim } : undefined);
@@ -223,14 +235,21 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		if (ending) return;
 		ending = true;
 		tell(`Straw Boss: ${reason}`, "warning");
-		ctx?.shutdown();
+		try {
+			ctx?.shutdown();
+		} catch { /* the session is already gone (a stale ctx after a reload or dispose) */ }
 	}
 
 	// --- the session's events --------------------------------------------------------------------------------------------------------------------------------------------
 
 	pi.on("agent_start", () => void ((inTurn = true), (triggered = undefined)));
 	pi.on("agent_settled", () => void (inTurn = false));
-	pi.on("tool_call", (event) => (mode === "run" && event.toolName === "intercom" ? { block: true, reason: BLOCKED } : undefined));
+	pi.on("tool_call", (event) => {
+		if (mode !== "run") return;
+		if (event.toolName === "intercom") return { block: true, reason: BLOCKED };
+		// A subagent would outlive the run (a pane and a process left behind after tower_done): a run routes work through the mains it opens.
+		if (event.toolName === "subagent" || event.toolName === "subagent_resume") return { block: true, reason: NO_SUBAGENTS };
+	});
 	pi.on("before_agent_start", (event) => {
 		if (mode !== "run" || !claim) return;
 		const sections = event.systemPromptOptions.sections;

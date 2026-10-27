@@ -10,7 +10,7 @@ import type { createStashing } from "./stashing.ts";
 const BOSS_ARGUMENTS = Object.entries({ status: "Show the coordinators", close: "Quit this session and close its pane", "close all": "Quit this base's tower, mains, and members and close it", tower: "Open and focus the workspace tower (tower <prompt> writes to it as the boss, with no focus change)", gui: "Open the net in the browser", "gui stop": "Close the browser GUI", "gui remote": "Open the GUI to your phone over Tailscale", "gui remote off": "Close the Tailscale entry", server: "Show the sb server, and start it when it is down", "server stop": "Stop the sb server on purpose", "server restart": "Restart the sb server", stash: "Put this base away: its tower, mains, and members", pop: "Open a stashed base again" }).map(([value, description]) => ({ value, label: value, description }));
 
 /** The /boss command. */
-export function registerBoss({ pi, cfg, s, guiDir, tell }: Kit, { host, membership, reach, closeSelf, stashing, server }: { host: ReturnType<typeof createHost>; membership: Membership; reach: Reach; closeSelf(keepPane: boolean): string | undefined; stashing: ReturnType<typeof createStashing>; server?: ServerLook }) {
+export function registerBoss({ pi, cfg, s, guiDir, tell }: Kit, { runMode, host, membership, reach, closeSelf, stashing, server }: { runMode?: { active(): boolean }; host: ReturnType<typeof createHost>; membership: Membership; reach: Reach; closeSelf(keepPane: boolean): string | undefined; stashing: ReturnType<typeof createStashing>; server?: ServerLook }) {
 	// D15: `/boss tower <prompt>` ensures the tower as a bare `/boss tower` does, then posts the prompt as a `boss` event, the way the GUI's composer does. Nothing is typed anywhere and focus stays.
 	const handToTower = async (prompt: string) => {
 		if (!server || !towerRunsEnabled(guiDir)) return tell("/boss tower <prompt> needs the tower runs (towerRuns.enabled in the state directory's config.json): the tower is a resident session now, so open it with /boss tower and write to it there.", "warning");
@@ -31,6 +31,8 @@ export function registerBoss({ pi, cfg, s, guiDir, tell }: Kit, { host, membersh
 		},
 		handler: async (args, ctx) => {
 			s.ui = ctx.ui;
+			// A tower run is no part of the net: a bare /boss would promote it to a main in the tower tab.
+			if (runMode?.active()) return tell("A tower run takes no /boss command: it is the server's, and it ends with tower_done.", "warning");
 			try {
 				if (/^gui( stop| remote( off)?)?$/.test(args.trim())) return await host.command(args.trim().slice(4));
 				const sb = /^server(?:\s+(stop|restart)(?:\s+(.*))?)?$/.exec(args.trim());

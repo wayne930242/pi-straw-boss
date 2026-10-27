@@ -10,7 +10,7 @@ import type { Kind } from "./rungate.ts";
 // The tower tools a run calls (docs/specs/2026-10-26-sb-backend.md, Tower tools in a run). In a run each tool is a thin client of the server: the run's extension sends `run-tool { token, tool, args }`,
 // and the server does the work as the workspace's tower identity (its reach, its opener, its control channel, the link holder), so the header of everything a run sends names the identity and replies
 // come back to the server, not to a pi that has exited. The server also enforces the run's kind here, in addition to the hooks in the run: an ally run gets `boss_status` and nothing else.
-// (`tower_done` is the `run-done` request and `link_request` stays in the run, which asks the boss; neither is here.)
+// (`tower_done` is the `run-done` request and `link_request` is not a run tool in B5: mains still have it, and the spec's table keeps it in a local run, which B6 adds; neither is here.)
 
 export interface ToolResult { text: string; details?: unknown }
 type Answer = { ok: boolean; error?: string; code?: string; [key: string]: unknown };
