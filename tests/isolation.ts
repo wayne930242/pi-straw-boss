@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { PIDS_DIR, TEST_ROOT } from "../src/server/testguard.ts";
+import { consumeRefusals, PIDS_DIR, TEST_ROOT } from "../src/server/testguard.ts";
 import { startOf } from "../src/startof.ts";
 
 // A test process never touches the developer's machine (tests/setup.ts installs this before any module loads; a test file is a process of its own, so each has a root): HOME, USERPROFILE, the agent folder, and the temp folder point into a root made for the
@@ -81,6 +81,11 @@ export function finish({ root, owner }: Isolation): number[] {
 	const left = reap(root, owner ? undefined : process.pid);
 	if (left.length) {
 		process.stderr.write(`test isolation: the run left sb server processes running (${left.join(", ")}); they were killed\n`);
+		process.exitCode = 1;
+	}
+	const refused = consumeRefusals(root, owner ? undefined : process.pid);
+	if (refused.length) {
+		process.stderr.write(`test isolation: the guard refused ${refused.length} start(s) nobody asserted (a test that expects a refusal takes it with consumeRefusals):\n${refused.map((text) => `  ${text}`).join("\n")}\n`);
 		process.exitCode = 1;
 	}
 	if (owner) rmSync(root, { recursive: true, force: true });

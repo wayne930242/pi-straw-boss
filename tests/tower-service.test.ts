@@ -27,6 +27,8 @@ afterEach(async () => {
 const envOf = () => Object.fromEntries(Object.entries(sw.env).filter((e): e is [string, string] => e[1] !== undefined));
 const server = () => ({ ctx: sw.ctx(), cli: "/fake/cli.mjs" });
 const deps = { guardMs: 0, now: () => clock };
+/** The deps of a resident tower that no server takes (the fake spawn fails, so the hand-over fails): it stays the workspace's tower, as the tests that need a live tower want. */
+const resident = () => ({ server: { ctx: sw.ctx({ spawn: () => ({ pid: 99_999, exited: Promise.resolve(1) }) }), cli: "/fake/cli.mjs" } });
 
 test("/boss tower with the flag on asks the server for the tower: the server makes the tab, and the session starts no pi and makes no tab", async () => {
 	const a = world.agent({ id: "a", name: "docs", pane: "wA:p1", tab: "wA:t1", env: envOf(), deps: { server: server() } });
@@ -43,7 +45,7 @@ test("/boss tower with the flag on asks the server for the tower: the server mak
 
 test("a live tower is the tower: a session does not ask the server for it", async () => {
 	world.herdr.workspace("wA").tokens.tower = "tower-wA";
-	await world.tower("tower-wA", "wA:t7", "wA:p7").start();
+	await world.tower("tower-wA", "wA:t7", "wA:p7", false, resident()).start();
 	const a = world.agent({ id: "a", name: "docs", pane: "wA:p1", tab: "wA:t1", env: envOf(), deps: { server: server() } });
 	await a.start();
 	await a.command("tower");
@@ -126,7 +128,8 @@ const restarting = (agentEnv: Record<string, string | undefined>, began: number,
 async function mainUnder(token: string) {
 	const a = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1", deps: { ...deps, guardMs: 50, server: server() } });
 	await a.start();
-	const tower = world.tower("tower-wA", "wA:t7", "wA:p7", false, deps);
+	// A resident tower that no server takes: it stays the workspace's tower, which is what promotes the main.
+	const tower = world.tower("tower-wA", "wA:t7", "wA:p7", false, { ...deps, ...resident() });
 	await tower.start();
 	await until(() => world.herdr.pane("wA:p1").tokens.sb_role === "main", "a promoted");
 	await tower.stop("new");

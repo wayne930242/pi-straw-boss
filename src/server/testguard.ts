@@ -1,4 +1,4 @@
-import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { startOf } from "../startof.ts";
@@ -9,6 +9,7 @@ import { startOf } from "../startof.ts";
 
 export const TEST_ROOT = "SB_TEST_ROOT";
 export const PIDS_DIR = "pids";
+export const REFUSALS_DIR = "refusals";
 
 /**
  * Whether this process is part of a test run: under tests/setup.ts (it names the root) or running a `*.test.ts` file. `NODE_TEST_CONTEXT` is not a sign: `node --test` passes it to everything a test
@@ -37,20 +38,43 @@ export function inside(dir: string, root: string): boolean {
 	}));
 }
 
+let refused = 0;
+/** A refusal of the guard: recorded under the run's root (the process fails when it ends unless a test asserted it and took the record, `consumeRefusals`), then thrown. */
+function refuse(message: string, proc: NodeJS.ProcessEnv): never {
+	if (proc[TEST_ROOT]) {
+		mkdirSync(join(proc[TEST_ROOT], REFUSALS_DIR), { recursive: true });
+		writeFileSync(join(proc[TEST_ROOT], REFUSALS_DIR, `${process.pid}-${refused++}`), message);
+	}
+	throw new Error(message);
+}
+/** The refusals this process recorded (those of any process with `by` undefined), with their records removed: a test that asserts a refusal on purpose takes it. */
+export function consumeRefusals(root = process.env[TEST_ROOT], by: number | undefined = process.pid): string[] {
+	if (!root) return [];
+	const dir = join(root, REFUSALS_DIR), taken: string[] = [];
+	try {
+		for (const name of readdirSync(dir)) {
+			if (by !== undefined && !name.startsWith(`${by}-`)) continue;
+			taken.push(readFileSync(join(dir, name), "utf8"));
+			rmSync(join(dir, name), { force: true });
+		}
+	} catch { /* no refusals */ }
+	return taken;
+}
+
 /** Throws when a test run would work in a folder outside the run's temp root (a session whose real spawn would put a server's lock, record, and log there), or when the run has no root. */
 export function guardHome({ cwd, env }: { cwd: string; env: NodeJS.ProcessEnv }, proc: NodeJS.ProcessEnv = process.env, argv: string[] = process.argv): void {
 	if (!inTestRun(proc, argv)) return;
 	const root = proc[TEST_ROOT];
-	if (!root) throw new Error("a test run started without tests/setup.ts would start a real sb server in the account's real state folder: run the tests with `npm test` or `npm run test:one -- <file>`");
+	if (!root) return refuse("a test run started without tests/setup.ts would start a real sb server in the account's real state folder: run the tests with `npm test` or `npm run test:one -- <file>`", proc);
 	for (const [what, dir] of [["working folder", cwd], ["state folder", stateDirFor(env)]] as const) {
-		if (!inside(dir, root)) throw new Error(`a test run would start an sb server with its ${what} at ${dir}, outside the run's temp root ${root}: give the session an environment with HOME and PI_CODING_AGENT_DIR below the root`);
+		if (!inside(dir, root)) refuse(`a test run would start an sb server with its ${what} at ${dir}, outside the run's temp root ${root}: give the session an environment with HOME and PI_CODING_AGENT_DIR below the root`, proc);
 	}
 }
 
 /** Throws unless the test run said it really starts servers (SB_TEST_REAL_SERVER=1): a test gives the session the fake spawn of tests/server-world.ts, and what it really starts is noted by pid. */
 export function guardSpawn(spec: { cwd: string; env: NodeJS.ProcessEnv }, proc: NodeJS.ProcessEnv = process.env, argv: string[] = process.argv): void {
 	guardHome(spec, proc, argv);
-	if (inTestRun(proc, argv) && proc.SB_TEST_REAL_SERVER !== "1") throw new Error("a test run started a real detached process through the sb server's spawn: give the session a context with the fake spawn (sw.ctx() in tests/server-world.ts), or set SB_TEST_REAL_SERVER=1 in a test that starts a real one on purpose");
+	if (inTestRun(proc, argv) && proc.SB_TEST_REAL_SERVER !== "1") refuse("a test run started a real detached process through the sb server's spawn: give the session a context with the fake spawn (sw.ctx() in tests/server-world.ts), or set SB_TEST_REAL_SERVER=1 in a test that starts a real one on purpose", proc);
 }
 
 /**

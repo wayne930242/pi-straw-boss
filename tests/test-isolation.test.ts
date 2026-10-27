@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { spawnDetached } from "../src/server/client.ts";
-import { guardHome, guardSpawn, inside, inTestRun, noteStarted, PIDS_DIR, stateDirFor, TEST_ROOT } from "../src/server/testguard.ts";
+import { consumeRefusals, guardHome, guardSpawn, inside, inTestRun, noteStarted, PIDS_DIR, stateDirFor, TEST_ROOT } from "../src/server/testguard.ts";
 import { startOf } from "../src/startof.ts";
 import { until, World } from "./fakes.ts";
 import { goEnv, INHERITED, installIsolation, leftover, reap } from "./isolation.ts";
@@ -70,6 +70,7 @@ test("the guard refuses a server whose folders are outside the run's root, one t
 	guardSpawn({ cwd: "/anywhere", env: {} }, {}, ["node", "/usr/bin/cli.mjs"]);
 	assert.ok(inTestRun({}, ["node", "tests/x.test.ts"]), "a test file run by hand counts");
 	assert.ok(!inTestRun({}, ["node", "cli.mjs"]));
+	assert.equal(consumeRefusals().length, 4, "each refusal above was recorded, and this test, which asserted them, took them");
 });
 
 test("a server a test run starts is noted by pid, and reap kills what still runs and says which", async () => {
@@ -135,6 +136,7 @@ test("a session's look in a test run starts no server in a real home, whatever e
 		await Promise.allSettled(looks);
 		assert.deepEqual([existsSync(join(stateDir, "server.json")), existsSync(join(stateDir, "server.log")), existsSync(join(stateDir, "server.lock"))], [false, false, false], "nothing was written in the real home");
 		assert.deepEqual(leftover(root), []);
+		assert.ok(consumeRefusals().length >= 1, "the refusal was recorded; this test asserted it");
 	} finally {
 		await world.stopAll();
 		await Promise.allSettled(looks);
@@ -152,6 +154,7 @@ test("a session's look inside the root with the real spawn is refused too: a tes
 		assert.match(a.notices.find((n) => /could not start|was not looked at/.test(n.text))!.text, /real detached process .* fake spawn/);
 		await Promise.allSettled(looks);
 		assert.deepEqual(leftover(root), []);
+		assert.ok(consumeRefusals().length >= 1, "the refusal was recorded; this test asserted it");
 	} finally {
 		await world.stopAll();
 		await Promise.allSettled(looks);
@@ -211,4 +214,21 @@ test("ServerWorld.server() gives a session the world's requester when no context
 	} finally {
 		await sw.close();
 	}
+});
+
+// A refusal of the guard inside a test process fails the run, unless the test asserted it on purpose and took the record: a session that is refused by accident otherwise "passes" with a notice nobody reads.
+test("a guard refusal a test did not take fails its process when it ends; one it took (consumeRefusals) does not", () => {
+	const script = (take: boolean) => `
+		import { guardSpawn, consumeRefusals } from ${JSON.stringify(fileURLToPath(new URL("../src/server/testguard.ts", import.meta.url)))};
+		import { setup } from ${JSON.stringify(fileURLToPath(new URL("./isolation.ts", import.meta.url)))};
+		setup();
+		try { guardSpawn({ cwd: "/elsewhere", env: {} }); } catch { /* refused */ }
+		${take ? "console.log(consumeRefusals().length);" : ""}`;
+	const run = (take: boolean) => spawnSync(process.execPath, ["--input-type=module", "-e", script(take)], { encoding: "utf8", env: { ...process.env, SB_TEST_ROOT: "" } });
+	const forgotten = run(false);
+	assert.equal(forgotten.status, 1, forgotten.stderr);
+	assert.match(forgotten.stderr, /guard refused 1 .*outside the run's temp root/s);
+	const taken = run(true);
+	assert.equal(taken.status, 0, taken.stderr);
+	assert.equal(taken.stdout.trim(), "1");
 });
