@@ -5,6 +5,7 @@ import {
 	type Ctx, decide, describe, ensure, lockWaitFor, makeCtx, probe, restart, RESTART_EVERY_MS, passGate, ServerError, stop, trusted,
 } from "./server/client.ts";
 import { tailLog } from "./server/log.ts";
+import { setNote } from "./server/winprep.ts";
 import { fileOf, slotOf } from "./server/record.ts";
 import { newer } from "./semver.ts";
 import { packageRoot } from "./server/version.ts";
@@ -99,12 +100,14 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 		stopped = false;
 		interactive = ctx.hasUI;
 		ui = ctx.ui;
+		setNote((text) => tellOnce(`note:${text}`, `Straw Boss: ${text}`));
 		clearInterval(timer);
 		void look();
 		timer = setInterval(() => void look(), cfg.adoptMs).unref();
 	});
 	pi.on("session_shutdown", () => {
 		stopped = true;
+		setNote(undefined);
 		clearInterval(timer);
 	});
 

@@ -4,9 +4,9 @@ import { appendFileSync, existsSync, mkdirSync, renameSync, writeFileSync } from
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { type CliDeps, run } from "../src/server/cli.ts";
-import { describe } from "../src/server/client.ts";
+import { describe, ServerError, trusted } from "../src/server/client.ts";
 import { secretDir } from "../src/server/record.ts";
-import { forgetSid, GateTimeout, OWNER_READ_RETRY_MS, ownerGate, protectFolder } from "../src/server/winprep.ts";
+import { forgetSid, GateTimeout, OWNER_READ_RETRY_MS, ownerGate, protectFolder, setNote } from "../src/server/winprep.ts";
 import { ServerWorld } from "./server-world.ts";
 
 // Re-check of the b1f fixes (R2-F001 to R2-F004, F006's gap): the gate comes before every file of the slot is read, a Windows folder is remembered only when it is closed to others,
@@ -237,10 +237,68 @@ test("R3-F002: when the protect fails, the open folder is re-read no more than e
 	assert.equal(ps, 3, "read again after the window");
 });
 
-test("Windows item 2: the owner script tells a path that is not there from an error it cannot read", async () => {
+test("Windows item 2: a path that is gone is 'not there' by the walk's pattern: catch { if (Test-Path -LiteralPath $p) { throw } }", async () => {
 	forgetSid();
 	mkdirSync(world.stateDir, { recursive: true });
 	const f = fake({ owners: [OWNER] });
 	await ownerGate(world.stateDir, f.run);
-	assert.match(f.calls.scripts[0]!, /catch \[System\.IO\.FileNotFoundException\], \[System\.IO\.DirectoryNotFoundException\]/);
+	assert.match(f.calls.scripts[0]!, /catch \{ if \(Test-Path -LiteralPath \$p\) \{ throw \} \}/);
+	assert.ok(!/FileNotFoundException/.test(f.calls.scripts[0]!));
+});
+
+test("P2: the record's content is bound to the file the gate judged: a file renamed over it during the owner read is a wait, and its content is not returned", async () => {
+	forgetSid();
+	const dir = world.stateDir, rec = join(dir, "server.json"), log = join(dir, "server.log");
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(rec, JSON.stringify({ pid: 4242, socket: "ATTACKER", secret: "ATTACKER-SECRET" }));
+	writeFileSync(log, "own log\n");
+	const run = async (file: string, args: string[], _ms?: number, env?: Record<string, string>) => {
+		if (file === "whoami.exe") return `"PC\\me","${OWNER}"\r\n`;
+		if (file.endsWith("powershell.exe")) { renameSync(log, rec); return env!.SB_OWNER_DIR.split("|").map((_p, i) => `${i}:${OWNER}`).join("\r\n"); }
+		if (args.includes("/save")) savable(args[args.indexOf("/save") + 1]!, GOOD);
+		return "";
+	};
+	const ctx = world.ctx({ platform: "win32", gate: (slot: { stateDir: string }, ms?: number) => ownerGate(slot.stateDir, run, ms, undefined, [rec]) });
+	await assert.rejects(trusted(ctx), (e: unknown) => e instanceof ServerError && e.wait === "start" && e.startError === undefined);
+});
+
+test("R4-F001: secure does not protect a folder other than the one whose owner it read", () => {
+	forgetSid();
+	const dir = world.stateDir, other = join(world.root, "other");
+	mkdirSync(dir, { recursive: true });
+	mkdirSync(other);
+	const protects: string[] = [];
+	const run = (file: string, args: string[]) => {
+		if (file === "whoami.exe") return `"PC\\me","${OWNER}"\r\n`;
+		if (file.endsWith("powershell.exe")) { renameSync(dir, join(world.root, "aside")); renameSync(other, dir); return `0:${OWNER}\r\n`; }
+		if (args.includes("/inheritance:r")) protects.push(args[0]!);
+		if (args.includes("/save")) savable(args[args.indexOf("/save") + 1]!, OPEN);
+		return "";
+	};
+	assert.throws(() => protectFolder(dir, run), /replaced/);
+	assert.deepEqual(protects, []);
+});
+
+test("R4-F003: a folder that stayed open is told through the note hook, once", async () => {
+	forgetSid();
+	mkdirSync(world.stateDir, { recursive: true });
+	const notes: string[] = [];
+	setNote((text) => void notes.push(text));
+	try {
+		let t = 1_000;
+		const run = async (file: string, args: string[], _ms?: number, env?: Record<string, string>) => {
+			if (file === "whoami.exe") return `"PC\\me","${OWNER}"\r\n`;
+			if (file.endsWith("powershell.exe")) return env!.SB_OWNER_DIR.split("|").map((_p, i) => `${i}:${OWNER}`).join("\r\n");
+			if (args.includes("/inheritance:r")) throw Object.assign(new Error("denied"), { status: 5 });
+			if (args.includes("/save")) savable(args[args.indexOf("/save") + 1]!, OPEN);
+			return "";
+		};
+		await ownerGate(world.stateDir, run, undefined, () => t);
+		t += OWNER_READ_RETRY_MS + 1;
+		await ownerGate(world.stateDir, run, undefined, () => t);
+		assert.equal(notes.length, 1);
+		assert.match(notes[0]!, /could not protect/);
+	} finally {
+		setNote(undefined);
+	}
 });

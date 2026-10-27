@@ -87,19 +87,19 @@ export function secretDir(dir: string, own?: string) {
 	}
 }
 /** A folder a `sudo` run made cannot be written or changed by the user afterwards: told as that, with what to do (uid 0 is accepted as an owner, so this is the one place it shows). */
-function rootMade(dir: string, error: unknown, own?: string): unknown {
+function rootMade(dir: string, error: unknown, own?: string): Error {
 	const code = (error as NodeJS.ErrnoException).code;
-	if (own === undefined || (code !== "EPERM" && code !== "EACCES") || !process.getuid || process.getuid() === 0) return error;
+	if (own === undefined || (code !== "EPERM" && code !== "EACCES") || !process.getuid || process.getuid() === 0) return error as Error;
 	// Only the agent folder, the state folder and what is below them are pi's: a system folder above them is not told to be chowned or removed.
 	for (let at = dir; at === own || at.startsWith(own + sep); at = dirname(at)) {
 		try {
 			if (lstatSync(at).uid === 0) return new Error(`${at} belongs to root; it was made by a sudo run: sudo chown -R it to your account, or remove it with sudo, then start again (${code}).`);
-			return error;
+			return error as Error;
 		} catch {
-			if (dirname(at) === at) return error;
+			if (dirname(at) === at) return error as Error;
 		}
 	}
-	return error;
+	return error as Error;
 }
 /**
  * Makes the slot's folder ready for the first file in it. On Windows the state folder is protected (owner and SYSTEM, no inheritance) first, before the lock, the placeholder record, or
@@ -179,14 +179,14 @@ export function writeJson(file: string, value: unknown) {
 	}
 }
 const readRaw = (file: string) => { try { return readFileSync(file, "utf8"); } catch { return undefined; } };
-/** The record's text, read from the file this open handle names: a link is not followed (`O_NOFOLLOW`) and a file another uid owns is not read, so what was stat-ed is what is read (F005c). */
-function readOwned(file: string): string | undefined {
-	if (process.platform === "win32" || !process.getuid) return readRaw(file);
+/** The record's text and the identity (`dev:ino`, as winprep's `identityOf`) of the file this open handle names: a link is not followed (`O_NOFOLLOW`) and a file another uid owns is not read, so what was stat-ed is what is read (F005c). */
+function readOwned(file: string): { text: string; id: string } | undefined {
 	let fd: number | undefined;
 	try {
-		fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
-		const owner = fstatSync(fd).uid;
-		return owner === process.getuid() || owner === 0 ? readFileSync(fd, "utf8") : undefined;
+		fd = openSync(file, process.platform === "win32" ? constants.O_RDONLY : constants.O_RDONLY | constants.O_NOFOLLOW);
+		const info = fstatSync(fd, { bigint: true });
+		if (process.getuid && info.uid !== BigInt(process.getuid()) && info.uid !== 0n) return undefined;
+		return { text: readFileSync(fd, "utf8"), id: `${info.dev}:${info.ino}` };
 	} catch {
 		return undefined;
 	} finally {
@@ -196,10 +196,15 @@ function readOwned(file: string): string | undefined {
 const parse = <T>(raw: string | undefined): T | undefined => { try { return raw === undefined ? undefined : (JSON.parse(raw) as T); } catch { return undefined; } };
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
+/** The identity of the file each record was read from, so a caller can tell that the file the gate judged is the one whose content it holds. */
+const readFrom = new WeakMap<object, string>();
+export const recordFileId = (record: ServerRecord): string | undefined => readFrom.get(record);
 export function readRecord(slot: Slot): ServerRecord | undefined {
-	const record = parse<Partial<ServerRecord>>(readOwned(fileOf(slot, "record")));
+	const owned = readOwned(fileOf(slot, "record")), record = parse<Partial<ServerRecord>>(owned?.text);
 	// SAFETY: a record this code wrote has these fields; the three checked here are the ones every reader needs to reach the server, and a file without them is no record.
-	return isObject(record) && typeof record.pid === "number" && typeof record.socket === "string" && typeof record.secret === "string" ? (record as ServerRecord) : undefined;
+	if (!(isObject(record) && typeof record.pid === "number" && typeof record.socket === "string" && typeof record.secret === "string")) return undefined;
+	if (owned) readFrom.set(record, owned.id);
+	return record as ServerRecord;
 }
 export const writeRecord = (slot: Slot, record: ServerRecord) => writeJson(fileOf(slot, "record"), record);
 /** Read, change, and write the record back; `change` returns the new record, or undefined to leave the file as it is. */

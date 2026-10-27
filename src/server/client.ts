@@ -10,10 +10,10 @@ import { rememberStart, startedLater, startOf } from "../startof.ts";
 import { spawnBreakaway } from "./breakaway.ts";
 import { createLog, type Log } from "./log.ts";
 import {
-	adoptStarting, clearStartError, clearStopped, endStarting, fileOf, type IntercomScope, type LockDeps, LockUnreadable, markStarting, prepareSlot, readRecord, secretDir, readStartError, restartingFresh, type ServerRecord,
+	adoptStarting, clearStartError, clearStopped, endStarting, fileOf, type IntercomScope, type LockDeps, LockUnreadable, markStarting, prepareSlot, readRecord, recordFileId, secretDir, readStartError, restartingFresh, type ServerRecord,
 	type Slot, type StartError, takeLock, TOUCH_MS, touchRestarting, uidGate, updateRecord,
 } from "./record.ts";
-import { GateTimeout, ownerGate, resetFileAcl } from "./winprep.ts";
+import { fileIdentity, GateTimeout, ownerGate, resetFileAcl } from "./winprep.ts";
 import { callControl, helloWhy, type Reply } from "./socket.ts";
 
 // What reaches the server from outside it (docs/specs/2026-10-26-sb-backend.md, Starting, Stopping, Restarts and upgrades): a pi session's look, the shell's `cli.mjs`, a
@@ -217,6 +217,9 @@ export async function trusted(ctx: Ctx, deadline?: number): Promise<ServerRecord
 	const record = readRecord(ctx.slot);
 	// A record file that was not read (another uid's, a link) is judged too: the answer is then "none", and the refusal says why.
 	if (record || existsSync(fileOf(ctx.slot, "record"))) await passGate(ctx, deadline);
+	// The gate judged the file at the path when PowerShell read it, 2 to 5 s after the content was read: a different file there now is not the one that was read (a wait, nothing trusted).
+	const read = record && recordFileId(record);
+	if (read && ctx.platform === "win32" && fileIdentity(fileOf(ctx.slot, "record")) !== read) throw new ServerError("start-failed", "the record changed while the folder was checked; try again", undefined, "start");
 	return record;
 }
 /** The gate with no regard to a record: before any file of the slot is read (a log, `start-error.json`; b1f-F004), which another account's folder can hold as well. */
