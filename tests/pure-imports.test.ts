@@ -108,7 +108,7 @@ test("the walk finds a banned package behind a chain of relative imports, and no
 });
 
 // The data module is what the server loads from the dashboard; net.ts, ask.ts, and reach.ts are the modules that read it.
-for (const entry of ["src/netdata.ts", "src/net.ts", "src/ask.ts", "src/reach.ts"]) {
+for (const entry of ["src/netdata.ts", "src/net.ts", "src/ask.ts", "src/reach.ts", "src/server/towers.ts", "src/server/towerclient.ts"]) {
 	test(`${entry} reaches no value import of pi-tui, typebox, or pi-coding-agent`, () => {
 		assert.deepEqual(bannedFrom(entry), []);
 	});

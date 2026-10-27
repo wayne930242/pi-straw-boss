@@ -12,6 +12,8 @@ import {
 	clearStartError, type Detach, fileOf, prepareSlot, readRecord, restartingNow, type ServerRecord, serverId, type Slot, TOUCH_MS, updateRecord, writeRecord, writeStartError,
 } from "./record.ts";
 import { AFTER, endpointFor, helloOf, listenControl, newSecret, type Reply, type Request } from "./socket.ts";
+import { createTowers, type Towers, type TowersOptions } from "./towers.ts";
+import { readTowerRuns } from "./towerruns.ts";
 import { packageRoot, VERSION } from "./version.ts";
 
 // The sb server process (docs/specs/2026-10-26-sb-backend.md). B1 is the skeleton: it owns the control socket and `server.json`, holds an intercom session of its own through
@@ -55,6 +57,8 @@ export interface ServerOptions {
 	herdrUp?: () => Promise<boolean>;
 	watch?: HerdrWatch;
 	herdr?: HeadlessDeps;
+	/** Replaces the tower service's timers and the like, for tests. */
+	towers?: Partial<TowersOptions>;
 	touchMs?: number;
 	brokerMs?: number;
 	herdrGoneMs?: number;
@@ -211,7 +215,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		...(prior?.gui ? { gui: prior.gui } : {}), ...(prior?.lastError ? { lastError: prior.lastError } : {}), ...(prior?.lastRestart ? { lastRestart: prior.lastRestart } : {}),
 		...(aclStarted ? { started: aclStarted } : {}), ...detachOf, log: fileOf(slot, "log"), socket: endpoint, secret, intercomId: serverId(slot),
 	};
-	let phase: "starting" | "ready" | "restarting" | "stopping" = "starting", client: IntercomLike | undefined, leaving: Promise<void> | undefined;
+	let phase: "starting" | "ready" | "restarting" | "stopping" = "starting", client: IntercomLike | undefined, leaving: Promise<void> | undefined, towers: Towers | undefined;
 	const at = () => new Date(now()).toISOString();
 
 	// Written whole by rename, with `restarting` kept from the record (a restart began it) and only its `since` moved.
@@ -231,7 +235,8 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		const began = now();
 		timers.forEach(clearInterval);
 		stops.forEach((stop) => stop());
-		await Promise.race([client?.disconnect().catch(() => {}), sleep(LEAVE_MS)]);
+		// The tower identities leave the broker with the server's own session; their tokens and files stay for the server that comes next.
+		await Promise.race([Promise.all([towers?.stop(), client?.disconnect().catch(() => {})]), sleep(LEAVE_MS)]);
 		const disconnected = now();
 		await control?.close();
 		log.line("exit", { code, disconnectMs: disconnected - began, closeMs: now() - disconnected });
@@ -249,7 +254,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 
 	let control: Awaited<ReturnType<typeof listenControl>> | undefined;
 	const handleRequest = async (request: Request): Promise<Reply> => {
-		if (request.cmd === "status") return { ok: true, ...facts(), uptimeMs: now() - startedAt, ...(own.lastError ? { lastError: own.lastError } : {}), towers: [], link: null };
+		if (request.cmd === "status") return { ok: true, ...facts(), uptimeMs: now() - startedAt, ...(own.lastError ? { lastError: own.lastError } : {}), towers: towers?.status() ?? [], link: null };
 		if (phase === "restarting" || phase === "stopping") return { ok: false, error: "restarting" };
 		if (request.cmd === "stop") {
 			// A `serve` server is never stopped from here: its supervisor would start it again at once, and hide from the infra that its service is off.
@@ -267,7 +272,38 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			updateRecord(slot, (r) => (r.pid === pid ? { ...r, restarting: { began: when, since: when, reason, by: who }, ...(request.counts === false ? {} : { lastRestart: { at: when, reason, by: who } }) } : undefined));
 			return leaveAfterReply("restarting", mode === "serve" ? SERVE_RESTART_CODE : 0);
 		}
+		const tower = towerCommand(request);
+		if (tower) return tower;
 		return { ok: false, error: `unknown command ${String(request.cmd)}` };
+	};
+	/** The tower service's commands (docs/specs/2026-10-26-sb-backend.md, The tower service): `ensure-tower`, `close-tower`, and the opener's and `close-main`'s asks. Behind `towerRuns.enabled`. */
+	const towerCommand = (request: Request): Promise<Reply> | undefined => {
+		const text = (value: unknown, max = 300) => (typeof value === "string" && value.length > 0 && value.length <= max ? value : undefined);
+		const answer = async (work: (t: Towers) => Promise<Record<string, unknown>>): Promise<Reply> => {
+			if (!towers) return { ok: false, error: "the server is still starting" };
+			try {
+				return { ok: true, ...(await work(towers)) };
+			} catch (error) {
+				return { ok: false, error: (error as Error).message };
+			}
+		};
+		const workspace = text(request.workspace);
+		switch (request.cmd) {
+			case "ensure-tower":
+				return workspace ? answer(async (t) => ({ ...(await t.ensure({ workspace, ...(text(request.pane) ? { pane: text(request.pane)! } : {}), ...(text(request.cwd, 4096) ? { cwd: text(request.cwd, 4096)! } : {}) })) })) : Promise.resolve({ ok: false, error: "ensure-tower needs a workspace" });
+			case "close-tower":
+				return workspace ? answer((t) => t.close(workspace)) : Promise.resolve({ ok: false, error: "close-tower needs a workspace" });
+			case "open-main": {
+				const [what, sender] = [text(request.request, 100_000), text(request.sender)];
+				return workspace && what && sender ? answer(async (t) => ({ opened: await t.openMain({ workspace, request: what, sender, ...(text(request.label) ? { label: text(request.label)! } : {}) }) })) : Promise.resolve({ ok: false, error: "open-main needs a workspace, a request, and a sender" });
+			}
+			case "close-main": {
+				const query = text(request.query);
+				return workspace && query ? answer(async (t) => ({ closed: await t.closeMain({ workspace, query }) })) : Promise.resolve({ ok: false, error: "close-main needs a workspace and a session" });
+			}
+			default:
+				return undefined;
+		}
 	};
 
 	const listening = now();
@@ -318,7 +354,15 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	const cfg = headlessConfig({ ...herdrCfg, run: o.herdr?.run ?? socketRun(herdrRun, herdrCfg.call, undefined) }, kitEnv);
 	// SAFETY: the kit hands a client to the modules that run the net; it is attached at the first connection, before any of them is built (none is in B1).
 	const kit = createHeadlessKit({ client: undefined as unknown as IntercomLike, env: kitEnv, cfg, log: () => {} });
-	stops.push(cfg.watch(() => log.line("herdr-takeover")));
+	// The tower service (behind `towerRuns.enabled`): it stands in for each workspace's tower, and finds the tabs again when a new Herdr server takes over.
+	towers = createTowers({
+		slot, cfg, env, connect: () => mod.connect(), log, pid, startedAt, enabled: () => readTowerRuns(slot.stateDir).enabled,
+		sessions: () => (client ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))), ...o.towers,
+	});
+	stops.push(cfg.watch(() => {
+		log.line("herdr-takeover");
+		void towers?.takeover().catch((error: Error) => recordError("towers", error.message));
+	}));
 	let downSince: number | undefined;
 	const herdrUp = o.herdrUp ?? (() => herdrListens({ slot, platform }));
 	timers.push(setInterval(() => void herdrUp().then((up) => {
@@ -366,6 +410,8 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	};
 	void connectLoop();
 	await Promise.race([first, sleep(o.brokerMs ?? BROKER_MS).then(() => false)]);
+	// Every tower identity registers before the server answers as ready (and before the GUI ports are bound, B2), so the guard sees live towers again as early as it can after a restart.
+	await Promise.race([towers.activate().catch((error: Error) => recordError("towers", error.message)), sleep(o.brokerMs ?? BROKER_MS)]);
 
 	// Ready: the identities are as registered as they can be, `restarting` goes, and the start-error of this attempt (and any before it) with it.
 	if (phase === "starting") {

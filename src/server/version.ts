@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -20,3 +20,9 @@ const fromHere = (from: string) => { try { return fileURLToPath(from); } catch {
 
 /** The version of the package the server runs from. */
 export const VERSION: string = (JSON.parse(readFileSync(join(packageRoot(), "package.json"), "utf8")) as { version: string }).version;
+
+/** The file the server is started from: the built `dist/server/cli.mjs` of this package, or `src/server/cli.ts` in a checkout (Node runs it as it is). */
+export function serverCli(root: string = packageRoot()): string {
+	const built = join(root, "dist", "server", "cli.mjs");
+	return existsSync(built) ? built : join(root, "src", "server", "cli.ts");
+}

@@ -4,6 +4,11 @@ import { type Kind, type Party, stamp } from "./header.ts";
 import { headOf, isSub, type Pane, panes, parentOf, type Session, towerModel, workspaces, type Workspace } from "./herdr.ts";
 import type { Kit, Scope, SendResult } from "./state.ts";
 import { inside } from "./link/routing.ts";
+import { type Ctx, makeCtx } from "./server/client.ts";
+import { slotOf } from "./server/record.ts";
+import { ensureTowerVia, type TowerAnswer } from "./server/towerclient.ts";
+import { towerRunsEnabled } from "./server/towerruns.ts";
+import { serverCli, VERSION } from "./server/version.ts";
 import { ensureTower } from "./towertab.ts";
 import { trustDir } from "./trust/files.ts";
 
@@ -22,8 +27,10 @@ export function netMembers(sessions: Session[], ps: Pane[]) {
 type Member = ReturnType<typeof netMembers>[number];
 export const nameOf = (s?: Session) => (s ? (s.name ?? s.id) : "");
 
-/** How a session reaches the rest of the net: one message, a broadcast, the coordinators' status, and the tower of a workspace. */
-export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit) {
+/** How a session reaches the rest of the net: one message, a broadcast, the coordinators' status, and the tower of a workspace. `server`: the way to the sb server (a pi session's look supplies its own). */
+export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit, server: { ctx(): Ctx } = {
+	ctx: () => makeCtx({ slot: slotOf(cfg.stateDir ?? guiDir, cfg.env), version: VERSION, cli: serverCli(), by: `session "${(s.ownName || me() || "unnamed").replace(/["\n]/g, " ")}" (${me().slice(0, 8) || "no id"})`, env: cfg.env, now: cfg.now }),
+}) {
 	const { run, api, sleep } = cfg;
 	const nonce = randomUUID().slice(0, 8);
 	let requests = 0;
@@ -40,8 +47,11 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit) {
 			const timeout = setTimeout(() => done({ status: "failed", detail: `no result within ${SEND_MS / 1000} s` }), SEND_MS);
 			pi.events.emit(OUTBOX, { version: 1, requestId, extensionId: "pi-straw-boss", extensionName: "Pi Straw Boss", to, message });
 		});
-	/** The tower of this workspace, or of another by id or label. A missing tower is opened only in this workspace: by /boss tower, by a main, or by the guard's rule. */
-	const openTower = async (query?: string, create = s.isMain) => {
+	/**
+	 * The tower of this workspace, or of another by id or label. A missing tower is opened only in this workspace: by /boss tower, by a main, or by the guard's rule. With
+	 * `towerRuns.enabled` the sb server makes it (it starts no pi); `boss` is the boss's own command, which may start a server that was stopped on purpose.
+	 */
+	const openTower = async (query?: string, create = s.isMain, boss = false) => {
 		const all = await workspaces(run);
 		const found = all.filter((w) => (query ? w.workspace_id === query || w.label === query : w.workspace_id === s.at.workspaceId));
 		if (found.length !== 1) {
@@ -57,6 +67,12 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit) {
 		if (!create || target.workspace_id !== s.at.workspaceId) {
 			if (held && (await live(held))) return { target, routed: target !== asked ? asked : undefined, id: held, opened: false };
 			throw new Error(`${target.label} has no tower yet: it opens when a member there promotes itself to main`);
+		}
+		if (towerRunsEnabled(cfg.stateDir ?? guiDir)) {
+			// A live tower is the tower, whoever runs it; otherwise the server stands in for it.
+			if (held && (await live(held))) return { target, routed: target !== asked ? asked : undefined, id: held, opened: false };
+			const got = await ensureTowerVia(server.ctx(), { workspace: target.workspace_id, cwd: process.cwd(), boss });
+			return { target, routed: target !== asked ? asked : undefined, id: got.id, opened: got.opened };
 		}
 		const moveFirst = (tabId: string) => api("tab.move", { tab_id: tabId, insert_index: 0 }).catch((error: Error) => tell(`Straw Boss: could not move the tower tab first: ${error.message}`, "warning"));
 		return { target, routed: target !== asked ? asked : undefined, ...(await ensureTower({ run, sleep, live, moveFirst, model: towerModel(guiDir), trustDir: trustDir(guiDir) }, target, process.cwd())) };
@@ -190,6 +206,8 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit) {
 		const targets = chosen.flatMap((st) => st.sessions.map((x) => (noTower(st) && notes.set(x.id, noTower(st)!), x)));
 		return report(await deliver(targets, message, "tower_send", workspace === undefined ? "towers" : "tower", reply, net), notes, workspace === undefined ? "towers" : "tower");
 	};
-	return { send, post, callTower, openTower, status, broadcast, towerList, towerSend, read };
+	/** A resident tower of this build hands its workspace to the sb server (docs/specs/2026-10-26-sb-backend.md, Migration from resident towers): the server takes this pane as the standing pane. */
+	const handOver = (workspace: string, pane: string): Promise<TowerAnswer> => ensureTowerVia(server.ctx(), { workspace, pane, cwd: process.cwd() });
+	return { send, post, callTower, openTower, handOver, status, broadcast, towerList, towerSend, read };
 }
 export type Reach = ReturnType<typeof createReach>;

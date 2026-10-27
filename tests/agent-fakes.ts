@@ -16,7 +16,10 @@ export class StubClient extends EventEmitter implements IntercomLike {
 	private taps = new Set<(message: Broker) => void>();
 	isConnected = () => this.connected;
 	supportsFeature = (feature: string) => this.connected && this.features.has(feature);
-	async connect(_session: Hello, sessionId?: string) {
+	/** What the last `connect` registered the session as. */
+	registered: Hello | undefined;
+	async connect(session: Hello, sessionId?: string) {
+		this.registered = session;
 		this.sessionId = sessionId ?? "x";
 		this.connected = true;
 		this.broker({ type: "registered", sessionId: this.sessionId, features: [...this.features] });
