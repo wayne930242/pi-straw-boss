@@ -580,6 +580,6 @@ test("RC4-F003: the GUI line is read alongside the sessions and the world, not a
 	const reading = collect({ run: world.herdr.runFor("wA:p1"), workspaceId: "wA", sessions: async () => (await guiCalled, []), gui: async () => (called(), "http://127.0.0.1:5000/t/") });
 	const snap = await Promise.race([reading, sleep(3000).then(() => "hung" as const)]);
 	assert.notEqual(snap, "hung", "the GUI read was started with the other reads");
-	assert.equal((snap as Snapshot).gui, "http://127.0.0.1:5000/t/");
-	assert.equal((await collect({ run: world.herdr.runFor("wA:p1"), workspaceId: "wA", sessions: async () => [], gui: async () => { throw new Error("no"); } })).gui, undefined, "a failed GUI read leaves the line out");
+	assert.equal(await (snap as Snapshot).pending, "http://127.0.0.1:5000/t/");
+	assert.equal(await (await collect({ run: world.herdr.runFor("wA:p1"), workspaceId: "wA", sessions: async () => [], gui: async () => { throw new Error("no"); } })).pending, undefined, "a failed GUI read leaves the line out");
 });

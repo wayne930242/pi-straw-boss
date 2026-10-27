@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { lstatSync, watch as fsWatch } from "node:fs";
 import { join } from "node:path";
-import { getAgentDir, type ExtensionAPI, ProjectTrustStore, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, hasTrustRequiringProjectResources, type ExtensionAPI, ProjectTrustStore, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { herdrSocket } from "../endpoint.ts";
 import { answersLive, readRecord, type GuiRecord, type StartRead } from "../handover.ts";
 import { alive } from "../remote.ts";
@@ -50,17 +50,22 @@ export interface AskDeps {
 	uuid(): string;
 }
 
+/** What can be known without a question: a terminal that can be read raw, no saved decision (a broken trust.json counts as none to relay), and `defaultProjectTrust` "ask". The handler and the early read share it. */
+function asks(d: Pick<AskDeps, "stdin" | "saved" | "defaultTrust">, cwd: string): boolean {
+	if (!d.stdin.isTTY || typeof d.stdin.setRawMode !== "function") return false;
+	try {
+		if (d.saved(cwd) !== null) return false; // a saved decision: pi decides it
+	} catch {
+		return false; // a broken trust.json: pi reports it itself
+	}
+	return d.defaultTrust(cwd) === "ask";
+}
+
 /** The handler, as a function of the folder and pi's context. */
 export function createAsk(d: AskDeps) {
 	const relays = async (cwd: string, ctx: { mode: string; hasUI: boolean }) => {
-		if (ctx.mode !== "tui" || !ctx.hasUI || !d.stdin.isTTY || typeof d.stdin.setRawMode !== "function") return false;
-		if (!d.first()) return false; // a replacement runtime (/new, /resume into another folder) is pi's own prompt (D10)
-		try {
-			if (d.saved(cwd) !== null) return false; // a saved decision: pi decides it
-		} catch {
-			return false; // a broken trust.json: pi reports it itself
-		}
-		return d.defaultTrust(cwd) === "ask" && d.up();
+		if (ctx.mode !== "tui" || !ctx.hasUI || !d.first()) return false; // a replacement runtime (/new, /resume into another folder) is pi's own prompt (D10)
+		return asks(d, cwd) && d.up();
 	};
 	return async function decide(cwd: string, ctx: { mode: string; hasUI: boolean }): Promise<Decision> {
 		try {
@@ -162,9 +167,9 @@ const reads = (record: GuiRecord | undefined, env: NodeJS.ProcessEnv): record is
  * On Windows the read is 3.5 to 5 s, and started here it is under way (and cached) by the time pi asks its question. Nothing is started for a stale gui.json (a dead pid) or a stopped server:
  * that would be a PowerShell at pi's busiest moment for a question that is never relayed (RC3-F002).
  */
-export function warmServerStart(guiDir: string, env: NodeJS.ProcessEnv, read: StartRead = {}) {
+export function warmServerStart(guiDir: string, env: NodeJS.ProcessEnv, read: StartRead = {}, willAsk: () => boolean = () => true) {
 	const record = readRecord(guiDir);
-	if (!reads(record, env) || !record.started || !alive(record.pid)) return;
+	if (!reads(record, env) || !willAsk() || !record.started || !alive(record.pid)) return;
 	void (read.later ?? startedLater)(record.pid, { hold: false }).catch(() => undefined);
 }
 
@@ -175,15 +180,18 @@ export const guiUp = (guiDir: string, env: NodeJS.ProcessEnv, read: StartRead = 
 };
 
 /** Registers the handler (before the subagent return, so every pi in Herdr has it) and marks the process's first session start. `io` is the terminal and process it answers on (tests). */
-export function registerTrust(pi: ExtensionAPI, { cfg, guiDir }: Pick<Kit, "cfg" | "guiDir">, io: Pick<AskDeps, "stdin" | "proc" | "write"> = { stdin: process.stdin, proc: process, write: (text) => void process.stderr.write(text) }) {
+export function registerTrust(pi: ExtensionAPI, { cfg, guiDir }: Pick<Kit, "cfg" | "guiDir">, io: Pick<AskDeps, "stdin" | "proc" | "write"> & Partial<Pick<AskDeps, "saved" | "defaultTrust"> & { resources(cwd: string): boolean }> = { stdin: process.stdin, proc: process, write: (text) => void process.stderr.write(text) }) {
 	const { env, startRead } = cfg;
-	warmServerStart(guiDir, env, startRead); // the server's start time is read now, so it is under way at pi's trust question (RC3-F001)
+	const saved = io.saved ?? ((cwd: string) => new ProjectTrustStore(getAgentDir()).get(cwd));
+	const defaultTrust = io.defaultTrust ?? ((cwd: string) => SettingsManager.create(cwd, getAgentDir(), { projectTrusted: false }).getDefaultProjectTrust());
+	const resources = io.resources ?? hasTrustRequiringProjectResources;
+	// The early read only where pi will ask in this folder: resources that need trust, no saved decision, "ask", and a terminal (not `pi -p` or a subagent).
+	warmServerStart(guiDir, env, startRead, () => resources(process.cwd()) && asks({ stdin: io.stdin, saved, defaultTrust }, process.cwd())); // the server's start time is read now, so it is under way at pi's trust question (RC3-F001)
 	// SAFETY: the process-wide flag is a boolean under a registered symbol that only this module sets.
 	const state = globalThis as unknown as Record<symbol, boolean>;
 	const decide = createAsk({
-		env, dir: trustDir(guiDir), ...io,
-		saved: (cwd) => new ProjectTrustStore(getAgentDir()).get(cwd),
-		defaultTrust: (cwd) => SettingsManager.create(cwd, getAgentDir(), { projectTrusted: false }).getDefaultProjectTrust(),
+		env, dir: trustDir(guiDir), stdin: io.stdin, proc: io.proc, write: io.write,
+		saved, defaultTrust,
 		up: guiUp(guiDir, env, startRead),
 		first: () => !state[STARTED], now: cfg.now, sleep: cfg.sleep, startOf, uuid: randomUUID,
 		watch: (dir, wake) => {

@@ -56,7 +56,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.27.0 to 277: the gap is checked again when a pending read fires, and a listing remembers when it was read.
 	// Unreleased to 286: `commanding`, the mark of a session that is idle while a subagent of it works or waits (or a monitor runs), and the rows built with it.
 	// Unreleased (dashboard split) to 162 and 137: the pi-tui rendering and the widget stay in dashboard.ts (162), the marks, rows, and subagent reading the server loads came out into netdata.ts (137).
-	assert.ok(count("src/dashboard.ts") <= 162, `src/dashboard.ts has ${count("src/dashboard.ts")} lines`);
+	assert.ok(count("src/dashboard.ts") <= 175, `src/dashboard.ts has ${count("src/dashboard.ts")} lines`);
 	assert.ok(count("src/netdata.ts") <= 137, `src/netdata.ts has ${count("src/netdata.ts")} lines`);
 	// 0.5.0 raised the server's figure from 300 to 320 for the CSRF meta, the POST routing into control.ts, and the remote access check (pairing, remote streams);
 	// 0.6.0 to 325 for the hub's start and stop with the server, the answer route's fresh reading, gui.json's ownerSession, and the sessions a reading binds dialogs with;
@@ -278,7 +278,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased (settings check, probe): settings.ts is the lstat gate, the child's program (refuses a link it cannot follow, stats before opening; review SR5), and its runner (160); it no longer walks links. settings.ts 92 (new: the look before pi starts in a folder), raised 92 to 135 for the link walk (every hop of .pi and settings.json, refusing /proc, /dev, /sys; review SP-R001).
 	// Unreleased raised trust/ask.ts from 182 to 183 (RC3-F001): the recorded server's start time is read when the handler registers.
 	// Unreleased raised trust/ask.ts from 183 to 201 (RC4-F001, F002): `warmServerStart` (the early read only for a live server that reads trust requests) and `guiUp` (what the handler's `up` asks) are exported for their tests, and `registerTrust` takes the terminal it answers on.
-	for (const [name, max] of [["found.ts", 103], ["settings.ts", 160], ["files.ts", 160], ["ask.ts", 201], ["serve.ts", 110], ["wait.ts", 28], ["types.ts", 15]] as const) assert.ok(count(`src/trust/${name}`) <= max, `src/trust/${name} has ${count(`src/trust/${name}`)} lines`);
+	// Unreleased raised trust/ask.ts from 201 to 209 (sbir6-F004): the early read asks the same predicate (`asks`) as the handler, plus pi's resource check; dashboard.ts 162 to 175 (sbir6-F005): rows render before the GUI read settles.
+	for (const [name, max] of [["found.ts", 103], ["settings.ts", 160], ["files.ts", 160], ["ask.ts", 209], ["serve.ts", 110], ["wait.ts", 28], ["types.ts", 15]] as const) assert.ok(count(`src/trust/${name}`) <= max, `src/trust/${name} has ${count(`src/trust/${name}`)} lines`);
 	// Unreleased (sb server B1, docs/specs/2026-10-26-sb-backend.md): the server's own directory, src/server/, has no figure in the spec; the files each hold one concern:
 	// record.ts (server.json, server.lock, start-error.json, slots), log.ts (server.log, rotated), version.ts (the version rules), acl.ts (the Windows folder ACL by SID), socket.ts (the control socket or pipe and its hello secret),
 	// After the re-check: log.ts 135 (the stale lock removed under a marker), client.ts 412 (the stop's scope check, the wait for a supervisor's serve as one function).
