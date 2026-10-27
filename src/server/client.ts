@@ -214,13 +214,16 @@ export async function probe(ctx: Ctx, deadline?: number, startKnownElsewhere = f
  * together); elsewhere a stat. Nothing is judged where there is no record. A foreign folder is the `acl` refusal of a start, and nothing was sent or written. Returns the record.
  */
 export async function trusted(ctx: Ctx, deadline?: number): Promise<ServerRecord | undefined> {
-	const record = readRecord(ctx.slot);
-	// A record file that was not read (another uid's, a link) is judged too: the answer is then "none", and the refusal says why.
-	if (record || existsSync(fileOf(ctx.slot, "record"))) await passGate(ctx, deadline);
-	// The gate judged the file at the path when PowerShell read it, 2 to 5 s after the content was read: a different file there now is not the one that was read (a wait, nothing trusted).
-	const read = record && recordFileId(record);
-	if (read && ctx.platform === "win32" && fileIdentity(fileOf(ctx.slot, "record")) !== read) throw new ServerError("start-failed", "the record changed while the folder was checked; try again", undefined, "start");
-	return record;
+	// The server rewrites its own record (temp + rename: a new file identity) while the gate runs, so a mismatch is read again, gate included, up to 3 times before it is a wait (R5-F001).
+	for (let attempt = 0; ; attempt++) {
+		const record = readRecord(ctx.slot);
+		// A record file that was not read (another uid's, a link) is judged too: the answer is then "none", and the refusal says why.
+		if (record || existsSync(fileOf(ctx.slot, "record"))) await passGate(ctx, deadline);
+		// The gate judged the file at the path when PowerShell read it, 2 to 5 s after the content was read: a different file there now is not the one that was read (nothing trusted).
+		const read = record && recordFileId(record);
+		if (!read || ctx.platform !== "win32" || fileIdentity(fileOf(ctx.slot, "record")) === read) return record;
+		if (attempt >= 3) throw new ServerError("start-failed", "the record changed while the folder was checked; try again", undefined, "start");
+	}
 }
 /** The gate with no regard to a record: before any file of the slot is read (a log, `start-error.json`; b1f-F004), which another account's folder can hold as well. */
 export async function passGate(ctx: Ctx, deadline?: number): Promise<void> {

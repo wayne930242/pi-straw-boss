@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { type CliDeps, run } from "../src/server/cli.ts";
 import { describe, ServerError, trusted } from "../src/server/client.ts";
-import { secretDir } from "../src/server/record.ts";
+import { secretDir, writeRecord } from "../src/server/record.ts";
 import { forgetSid, GateTimeout, OWNER_READ_RETRY_MS, ownerGate, protectFolder, setNote } from "../src/server/winprep.ts";
 import { ServerWorld } from "./server-world.ts";
 
@@ -246,7 +246,7 @@ test("Windows item 2: a path that is gone is 'not there' by the walk's pattern: 
 	assert.ok(!/FileNotFoundException/.test(f.calls.scripts[0]!));
 });
 
-test("P2: the record's content is bound to the file the gate judged: a file renamed over it during the owner read is a wait, and its content is not returned", async () => {
+test("P2: the record's content is bound to the file the gate judged: a file renamed over it during the owner read is never returned as the attacker's record", async () => {
 	forgetSid();
 	const dir = world.stateDir, rec = join(dir, "server.json"), log = join(dir, "server.log");
 	mkdirSync(dir, { recursive: true });
@@ -259,7 +259,8 @@ test("P2: the record's content is bound to the file the gate judged: a file rena
 		return "";
 	};
 	const ctx = world.ctx({ platform: "win32", gate: (slot: { stateDir: string }, ms?: number) => ownerGate(slot.stateDir, run, ms, undefined, [rec]) });
-	await assert.rejects(trusted(ctx), (e: unknown) => e instanceof ServerError && e.wait === "start" && e.startError === undefined);
+	// The retry reads again (R5-F001): what is at the path now is the user's own file, which is no record; the attacker's content is never returned.
+	assert.equal(await trusted(ctx), undefined);
 });
 
 test("R4-F001: secure does not protect a folder other than the one whose owner it read", () => {
@@ -301,4 +302,20 @@ test("R4-F003: a folder that stayed open is told through the note hook, once", a
 	} finally {
 		setNote(undefined);
 	}
+});
+
+test("R5-F001: the server rewriting its own record during the gate is retried: trusted returns the new record; a swap that never stops still ends in the wait", async () => {
+	forgetSid();
+	const dir = world.stateDir, rec = join(dir, "server.json");
+	mkdirSync(dir, { recursive: true });
+	const base = { pid: 4242, version: "0.45.0", herdr: "x", mode: "detached", desk: false, intercom: {}, log: "", intercomId: "x", socket: "MINE", secret: "s".repeat(64) };
+	writeFileSync(rec, JSON.stringify(base));
+	const rewrites = (times: number) => {
+		let n = 0;
+		const gate = async () => { if (n++ < times) writeRecord(world.slot, { ...base, started: `w${n}` } as never); return false; };
+		return world.ctx({ platform: "win32", gate });
+	};
+	const once = await trusted(rewrites(1));
+	assert.equal(once?.started, "w1", "one rewrite: the retry reads the new record");
+	await assert.rejects(trusted(rewrites(99)), (e: unknown) => e instanceof ServerError && e.wait === "start");
 });
