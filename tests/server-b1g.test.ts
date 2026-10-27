@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { type CliDeps, run } from "../src/server/cli.ts";
 import { describe } from "../src/server/client.ts";
 import { secretDir } from "../src/server/record.ts";
-import { forgetSid, GateTimeout, ownerGate, protectFolder } from "../src/server/winprep.ts";
+import { forgetSid, GateTimeout, OWNER_READ_RETRY_MS, ownerGate, protectFolder } from "../src/server/winprep.ts";
 import { ServerWorld } from "./server-world.ts";
 
 // Re-check of the b1f fixes (R2-F001 to R2-F004, F006's gap): the gate comes before every file of the slot is read, a Windows folder is remembered only when it is closed to others,
@@ -122,10 +122,13 @@ function fake(over: Fake) {
 test("R2-F003: a folder is remembered as verified only when its DACL lets no other account create entries", async () => {
 	forgetSid();
 	mkdirSync(world.stateDir, { recursive: true });
+	// A folder that stays open (the protect has no effect) is held for OWNER_READ_RETRY_MS, then read again.
+	let t = 1_000;
 	const open = fake({ owners: [OWNER], dacl: OPEN });
-	await ownerGate(world.stateDir, open.run);
-	await ownerGate(world.stateDir, open.run);
-	assert.equal(open.calls.ps, 2, "an open folder is read again at the next request");
+	await ownerGate(world.stateDir, open.run, undefined, () => t);
+	t += OWNER_READ_RETRY_MS + 1;
+	await ownerGate(world.stateDir, open.run, undefined, () => t);
+	assert.equal(open.calls.ps, 2, "an open folder is read again after the window");
 	forgetSid();
 	const closed = fake({ owners: [OWNER], dacl: GOOD });
 	await ownerGate(world.stateDir, closed.run);
@@ -162,4 +165,82 @@ test("F006 gap: protectFolder keeps a GateTimeout of its owner read", () => {
 		return "";
 	};
 	assert.throws(() => protectFolder(world.stateDir, run), GateTimeout);
+});
+
+// --- re-check 3 ---
+
+function savable(file: string, sddl: string) {
+	writeFileSync(file, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(`straw-boss\r\n${sddl}\r\n`, "utf16le")]));
+}
+
+test("R3-F001: a folder swapped in during the DACL read is not remembered as verified", async () => {
+	forgetSid();
+	const dir = world.stateDir, attacker = join(world.root, "evil"), record = join(dir, "server.json");
+	mkdirSync(dir, { recursive: true });
+	mkdirSync(attacker);
+	let ps = 0, saves = 0;
+	const run = async (file: string, args: string[], _ms?: number, env?: Record<string, string>) => {
+		if (file === "whoami.exe") return `"PC\\me","${OWNER}"\r\n`;
+		if (file.endsWith("powershell.exe")) { ps++; return env!.SB_OWNER_DIR.split("|").map((_p, i) => `${i}:${OWNER}`).join("\r\n"); }
+		if (args.includes("/save")) {
+			if (++saves === 1) { renameSync(dir, join(world.root, "orig")); renameSync(attacker, dir); }
+			savable(args[args.indexOf("/save") + 1]!, GOOD);
+		}
+		return "";
+	};
+	await ownerGate(dir, run, undefined, undefined, [record]);
+	await ownerGate(dir, run, undefined, undefined, [record]);
+	assert.equal(ps, 2, "the folder now at the name was never read: it is read by the next request");
+});
+
+test("R3-F002: an open folder is protected where the gate passes it, then remembered: later looks cost no PowerShell", async () => {
+	forgetSid();
+	mkdirSync(world.stateDir, { recursive: true });
+	let ps = 0, protects = 0, dacl = OPEN;
+	const run = async (file: string, args: string[], _ms?: number, env?: Record<string, string>) => {
+		if (file === "whoami.exe") return `"PC\\me","${OWNER}"\r\n`;
+		if (file.endsWith("powershell.exe")) { ps++; return env!.SB_OWNER_DIR.split("|").map((_p, i) => `${i}:${OWNER}`).join("\r\n"); }
+		if (args.includes("/inheritance:r")) { protects++; dacl = GOOD; }
+		if (args.includes("/save")) savable(args[args.indexOf("/save") + 1]!, dacl);
+		return "";
+	};
+	await ownerGate(world.stateDir, run);
+	await ownerGate(world.stateDir, run);
+	await ownerGate(world.stateDir, run);
+	assert.equal(protects, 1);
+	assert.equal(ps, 1);
+});
+
+test("R3-F002: when the protect fails, the open folder is re-read no more than every OWNER_READ_RETRY_MS, and at once when the record changed", async () => {
+	forgetSid();
+	mkdirSync(world.stateDir, { recursive: true });
+	const record = join(world.stateDir, "server.json");
+	writeFileSync(record, "{}");
+	let ps = 0, t = 1_000;
+	const run = async (file: string, args: string[], _ms?: number, env?: Record<string, string>) => {
+		if (file === "whoami.exe") return `"PC\\me","${OWNER}"\r\n`;
+		if (file.endsWith("powershell.exe")) { ps++; return env!.SB_OWNER_DIR.split("|").map((_p, i) => `${i}:${OWNER}`).join("\r\n"); }
+		if (args.includes("/inheritance:r")) throw Object.assign(new Error("denied"), { status: 5 });
+		if (args.includes("/save")) savable(args[args.indexOf("/save") + 1]!, OPEN);
+		return "";
+	};
+	const gate = () => ownerGate(world.stateDir, run, undefined, () => t, [record]);
+	await gate();
+	await gate();
+	assert.equal(ps, 1, "no second read inside the retry window");
+	writeFileSync(record + ".new", "{}");
+	renameSync(record + ".new", record);
+	await gate();
+	assert.equal(ps, 2, "a record that changed identity is judged");
+	t += OWNER_READ_RETRY_MS + 1;
+	await gate();
+	assert.equal(ps, 3, "read again after the window");
+});
+
+test("Windows item 2: the owner script tells a path that is not there from an error it cannot read", async () => {
+	forgetSid();
+	mkdirSync(world.stateDir, { recursive: true });
+	const f = fake({ owners: [OWNER] });
+	await ownerGate(world.stateDir, f.run);
+	assert.match(f.calls.scripts[0]!, /catch \[System\.IO\.FileNotFoundException\], \[System\.IO\.DirectoryNotFoundException\]/);
 });

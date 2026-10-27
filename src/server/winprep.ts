@@ -170,7 +170,8 @@ const POWERSHELL = "WindowsPowerShell\\v1.0\\powershell.exe";
 const ownerCall = (paths: string[]) => {
 	// One line per path: `<index>:<SID>`, or `<index>:-` for a path that is not there. A folder is read with `Directory`, a file with `File`.
 	const script = [PROGRESS_OFF, "$ErrorActionPreference = 'Stop'", CLM_CHECK, "$i = 0", "foreach ($p in ($env:SB_OWNER_DIR -split '\\|')) {",
-		"  $a = if ([IO.Directory]::Exists($p)) { [IO.Directory]::GetAccessControl($p, [Security.AccessControl.AccessControlSections]::Owner) } elseif ([IO.File]::Exists($p)) { [IO.File]::GetAccessControl($p, [Security.AccessControl.AccessControlSections]::Owner) } else { $null }",
+		// A path that went away between the existence check and the read is "not there"; any other error (access denied) stops the script and is a failed read.
+		"  $a = $null", "  try { $a = if ([IO.Directory]::Exists($p)) { [IO.Directory]::GetAccessControl($p, [Security.AccessControl.AccessControlSections]::Owner) } elseif ([IO.File]::Exists($p)) { [IO.File]::GetAccessControl($p, [Security.AccessControl.AccessControlSections]::Owner) } else { $null } } catch [System.IO.FileNotFoundException], [System.IO.DirectoryNotFoundException] { $a = $null }",
 		"  if ($a) { \"$($i):\" + $a.GetOwner([Security.Principal.SecurityIdentifier]).Value } else { \"$($i):-\" }", "  $i++", "}"].join("\n");
 	// The paths come in the environment, never quoted into the script: PowerShell reads U+2018 to U+201B as single quotes too, so a path such as `O’Neil` would break (or inject into) the script. `|` cannot be in a Windows path.
 	return { file: POWERSHELL, args: [...POWERSHELL_FLAGS, "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], env: { SB_OWNER_DIR: paths.join("|") } };
@@ -237,9 +238,9 @@ const isVerified = (dir: string) => {
 	const id = identityOf(dir);
 	return id !== undefined && verified.get(dir.toLowerCase()) === id;
 };
-const remember = (dir: string) => {
-	const id = identityOf(dir);
-	if (id) verified.set(dir.toLowerCase(), id);
+/** Remembers `dir` only if it is still the folder (`id`) that was read: one swapped in meanwhile was never read (R3-F001). */
+const remember = (dir: string, id: string | undefined) => {
+	if (id && identityOf(dir) === id) verified.set(dir.toLowerCase(), id);
 };
 /** The folders whose OWNER this process has read and found acceptable, closed or not: `secure` need not read it again before it fixes a wrong DACL. */
 const ownerRead = new Map<string, string>();
@@ -247,10 +248,12 @@ const isOwnerRead = (dir: string) => {
 	const id = identityOf(dir);
 	return id !== undefined && ownerRead.get(dir.toLowerCase()) === id;
 };
-const rememberOwner = (dir: string) => {
-	const id = identityOf(dir);
-	if (id) ownerRead.set(dir.toLowerCase(), id);
+const rememberOwner = (dir: string, id: string | undefined) => {
+	if (id && identityOf(dir) === id) ownerRead.set(dir.toLowerCase(), id);
 };
+/** An open folder the gate could not close: its identity, the records' identities when it was read, and when it is read again (a record that changed is judged at once). */
+const open = new Map<string, { id: string; seen: string; retryAt: number }>();
+const seenOf = (paths: string[]) => paths.map((p) => identityOf(p) ?? "-").join(",");
 const acceptableOwner = (owner: string) => owner.toUpperCase() === sid!.toUpperCase() || OWNER_OK_SIDS.includes(owner);
 const foreignOwner = (dir: string, owner: string, tail: string) => `the folder ${dir} belongs to another account (${owner}), not to ${sid}. Run pi as that account (an elevated shell for an administrator's), or delete the folder ${dir}, then start again. (${tail})`;
 /** How long a read of the owner that failed (Constrained Language Mode, a timeout) is not tried again: a session looks every 2 s, and a read is a blocking PowerShell start. */
@@ -276,6 +279,8 @@ export async function ownerGate(dir: string, run: RunNativeAsync = runNativeAsyn
 	if (isVerified(dir)) return false;
 	const key = dir.toLowerCase(), id = identityOf(dir), before = refused.get(key);
 	if (before && before.id === id && (before.retryAt === undefined || now() < before.retryAt)) throw before.error;
+	const held = open.get(key);
+	if (held && held.id === id && now() < held.retryAt && held.seen === seenOf(also)) return false;
 	const under = reading.get(key);
 	if (under && under.id === id) {
 		await under.done;
@@ -298,9 +303,25 @@ async function closed(dir: string, run: RunNativeAsync, timeoutMs: number | unde
 		return false;
 	}
 }
+/** Protects an open folder whose owner is acceptable (what `secure` does at a start) and remembers it; when that fails it is told once and read again no more than every `OWNER_READ_RETRY_MS`. */
+async function shut(dir: string, id: string | undefined, key: string, seen: string, run: RunNativeAsync, timeoutMs: number | undefined, now: () => number): Promise<void> {
+	try {
+		if (!id || identityOf(dir) !== id) return;
+		await run("icacls.exe", protectArgs(dir, sid!), timeoutMs);
+		const problems = folderProblems(await readDaclAsync(dir, run, timeoutMs), sid!);
+		if (problems.length) throw new Error(problems.join("; "));
+		open.delete(key);
+		remember(dir, id);
+	} catch (error) {
+		if (id) {
+			if (!open.has(key)) process.emitWarning(`pi-straw-boss could not protect ${dir}: ${asciiLine((error as Error).message).slice(0, 200)}. It is read again at most every ${OWNER_READ_RETRY_MS / 1000} s.`);
+			open.set(key, { id, seen, retryAt: now() + OWNER_READ_RETRY_MS });
+		}
+	}
+}
 async function readOwner(dir: string, also: string[], key: string, id: string | undefined, run: RunNativeAsync, timeoutMs: number | undefined, now: () => number): Promise<void> {
 	let failure: Error, unreadable = false;
-	const existed = new Set(also.filter((path) => existsSync(path)));
+	const existed = new Set(also.filter((path) => existsSync(path))), seen = seenOf(also);
 	try {
 		if (!sid) {
 			try {
@@ -321,9 +342,11 @@ async function readOwner(dir: string, also: string[], key: string, id: string | 
 		const bad = owners.findIndex((owner) => owner !== undefined && !acceptableOwner(owner));
 		if (bad < 0) {
 			refused.delete(key);
-			rememberOwner(dir);
-			// Remembered only for a folder that others cannot add entries to: a record another account puts into an open folder later is still judged (R2-F003).
-			if (await closed(dir, run, timeoutMs)) remember(dir);
+			rememberOwner(dir, id);
+			// Remembered only for a folder that others cannot add entries to: a record another account puts into an open folder later is still judged (R2-F003). An open one is protected here, once,
+			// so a look every 2 s does not start a PowerShell (R3-F002).
+			if (await closed(dir, run, timeoutMs)) remember(dir, id);
+			else await shut(dir, id, key, seen, run, timeoutMs, now);
 			return;
 		}
 		const path = bad === 0 ? dir : also[bad - 1]!;
@@ -351,6 +374,7 @@ async function readOwner(dir: string, also: string[], key: string, id: string | 
 function secure(target: string, run: RunNative, left: () => number | undefined, fresh = false): void {
 	// A junction that took the name since the first look is refused before any call acts on it (`/L` is the second guard).
 	refuseLink(target);
+	const read = identityOf(target);
 	if (!fresh) {
 		let wrong: boolean;
 		try {
@@ -365,7 +389,7 @@ function secure(target: string, run: RunNative, left: () => number | undefined, 
 		if (!isVerified(target) && !isOwnerRead(target)) {
 			const owner = ownerOfFolder(target, run, left());
 			if (!acceptableOwner(owner)) throw new Refused(foreignOwner(target, owner, "owner read; its permissions are not the owner's and SYSTEM's; nothing in the folder was changed"));
-			rememberOwner(target);
+			rememberOwner(target, read);
 		}
 	}
 	stepOf("protect", target, () => run("icacls.exe", protectArgs(target, sid!), left()));
@@ -374,7 +398,7 @@ function secure(target: string, run: RunNative, left: () => number | undefined, 
 	const problems = folderProblems(stepOf("read-back", target, () => readDacl(target, run, left())), sid!);
 	if (problems.length) throw new Refused(problems.join("; "));
 	// The owner was judged above (or by the gate) and the DACL is closed now: the gate need not read this folder again.
-	if (!fresh) remember(target);
+	if (!fresh) remember(target, read);
 }
 /**
  * Makes a folder that does not exist yet, protected from its first moment on: it is made under an unpredictable name beside its final one and protected, checked to be
@@ -460,4 +484,4 @@ export function protectFolder(dir: string, run: RunNative = runNative, timeoutMs
 	}
 }
 /** For tests: forgets the owner's SID. */
-export const forgetSid = () => { sid = undefined; verified.clear(); ownerRead.clear(); refused.clear(); reading.clear(); };
+export const forgetSid = () => { sid = undefined; verified.clear(); ownerRead.clear(); open.clear(); refused.clear(); reading.clear(); };

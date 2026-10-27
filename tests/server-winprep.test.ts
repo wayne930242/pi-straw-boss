@@ -669,7 +669,7 @@ test("R13: a start in a folder the user owns reads the owner ONCE (the gate befo
 	const done = await ensure(ctx, { boss: true });
 	assert.ok("server" in done && done.server === "started");
 	assert.equal(powershells(n), 1, "one owner read for the whole start");
-	assert.deepEqual(called(n).slice(0, 5), ["whoami", "powershell", "/save", "/save", "/inheritance:r"], "the gate's own DACL read follows its owner read");
+	assert.deepEqual(called(n).slice(0, 5), ["whoami", "powershell", "/save", "/inheritance:r", "/save"], "the gate reads the DACL after the owner and protects an open folder right there (R3-F002)");
 	assert.ok(readFileSync(join(world.stateDir, "server.log"), "utf8").includes("phase name=owner-gate"), "the cost is a phase in the log (written after the gate passed)");
 	const again = powershells(n);
 	assert.equal(await ownerGate(world.stateDir, run), false, "the same folder, the same process: no read");
