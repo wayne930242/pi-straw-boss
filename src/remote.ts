@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFileExe } from "./exe.mjs";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
@@ -29,7 +29,7 @@ export interface Identity { host: string; login: string }
 export type Verdict = { origin: string; remote: boolean; device?: string; reissue?: string } | { cookie: string } | { status: 401 | 403 };
 
 export const tailscale: Run = (args) =>
-	new Promise((done, fail) => execFile("tailscale", args, { timeout: 15_000 }, (error, out, err) => (error ? fail(new Error((error as NodeJS.ErrnoException).code === "ENOENT" ? "Tailscale is not installed (no tailscale command on PATH)" : `tailscale ${args.join(" ")} failed: ${err.trim() || error.message}`)) : done(out))));
+	new Promise((done, fail) => execFileExe("tailscale", args, { timeout: 15_000 }, (error, out, err) => (error ? fail(new Error((error as NodeJS.ErrnoException).code === "ENOENT" ? "Tailscale is not installed (no tailscale command on PATH)" : `tailscale ${args.join(" ")} failed: ${err.trim() || error.message}`)) : done(out))));
 interface Status { BackendState?: string; Self?: { DNSName?: string; UserID?: number; Tags?: string[] }; User?: Record<string, { LoginName?: string }> }
 interface Serve { TCP?: Record<string, { HTTPS?: boolean }>; Web?: Record<string, { Handlers?: Record<string, { Proxy?: string }> }>; AllowFunnel?: Record<string, boolean>; Foreground?: Record<string, Serve> }
 function parse<T>(text: string, what: string): T {
@@ -212,7 +212,7 @@ export async function switchRemote(gui: { port: number; remotePort: number; toke
 	await serveOn(run, id.host, target, [stale, old]);
 	const started = startOf(process.pid);
 	writeFileSync(file, JSON.stringify({ target, pid: process.pid, started }), { mode: 0o600 });
-	if (!started) void startedLater(process.pid).then((known) => { // Windows reads its own start time in the background: the entry is written again with it, if it is still this one
+	if (!started) void startedLater(process.pid, { hold: false }).then((known) => { // Windows reads its own start time in the background: the entry is written again with it, if it is still this one
 		try {
 			const now = JSON.parse(readFileSync(file, "utf8")) as { target?: string; pid?: number; started?: string };
 			if (known && now.pid === process.pid && now.target === target && !now.started) writeFileSync(file, JSON.stringify({ ...now, started: known }), { mode: 0o600 });

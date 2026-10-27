@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } 
 import { request } from "node:http";
 import { join } from "node:path";
 import { type Asked, type Gui, VERSION } from "./gui.ts";
+import { newer } from "./semver.ts";
 import { alive, runs } from "./remote.ts";
 import { startedLater, startOf } from "./startof.ts";
 
@@ -28,12 +29,7 @@ export interface Shared { url: string; owner: string; mine?: Gui; stale?: boolea
 /** What a start under gui.lock leaves alone: a server stopped on purpose, a server that is down. Only `/boss gui` starts either. */
 export interface Keep { stopped?: boolean; down?: boolean }
 
-/** Whether version `a` is newer than `b`; a server that recorded none predates the handover. */
-export function newer(a: string, b?: string) {
-	const [x, y] = [a, b ?? "0"].map((v) => [...v.split(/[.-]/).slice(0, 3).map(Number), 0, 0].slice(0, 3)) as [number[], number[]];
-	const i = x.findIndex((n, j) => n !== y[j]);
-	return i >= 0 && x[i]! > y[i]!;
-}
+export { newer };
 export const urlOf = (r: GuiRecord) => `http://127.0.0.1:${r.port}/${r.token}/`;
 
 let temps = 0;
@@ -193,7 +189,7 @@ const unlockGui = (dir: string) => rmSync(join(dir, "gui.lock"), { force: true }
  * Records the server this process started. Without this process's start time yet (Windows reads it in the background), the record is written without `started` and again with it when it arrives, unless
  * another server has been recorded since; `late` tells the caller how that ended.
  */
-export const writeRecord = (dir: string, gui: Gui, [owner, ownerSession]: [string, string], version: string, herdr: string, own = { at: startOf, later: startedLater }) => {
+export const writeRecord = (dir: string, gui: Gui, [owner, ownerSession]: [string, string], version: string, herdr: string, own = { at: startOf, later: (pid: number) => startedLater(pid, { hold: false }) }) => {
 	const started = own.at(process.pid), record: GuiRecord = { pid: process.pid, started, port: gui.port, remotePort: gui.remotePort, token: gui.token, csrf: gui.csrf, owner, ownerSession, version, herdr, trust: 1 };
 	writeRecordFile(dir, record);
 	if (started) return {};

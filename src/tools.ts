@@ -9,6 +9,7 @@ import type { CloseMain } from "./closemain.ts";
 import type { Link } from "./link/runtime.ts";
 import { opener } from "./opener.ts";
 import type { Reach } from "./reach.ts";
+import type { ServerLook } from "./server-look.ts";
 import type { Kit } from "./state.ts";
 import { trustDir } from "./trust/files.ts";
 
@@ -16,7 +17,7 @@ import { trustDir } from "./trust/files.ts";
 export const tabLabel = (name: string): string => Array.from(name).length > 16 ? `${Array.from(name).slice(0, 16).join("").trimEnd()}…` : name;
 
 /** The tools the agent calls: what a joined session has (status, call_tower, broadcast, rename, promote), and the tower's boss_open_main. */
-export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { post, callTower, status, broadcast, towerList, towerSend, read, promote, digest, closeMain, link }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend" | "read"> & Pick<Membership, "promote"> & { digest: Digest; closeMain: CloseMain; link: Link }) {
+export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { post, callTower, status, broadcast, towerList, towerSend, read, promote, digest, closeMain, link, server }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend" | "read"> & Pick<Membership, "promote"> & { digest: Digest; closeMain: CloseMain; link: Link; server?: ServerLook }) {
 	const tool = <P extends TSchema>(name: string, description: string, parameters: P, body: (params: Static<P>) => Promise<{ text: string; details?: unknown }>) =>
 		pi.registerTool({
 			name, label: name, description, parameters,
@@ -45,6 +46,25 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { post, callT
 					reply: Type.Optional(Type.Boolean({ description: "Whether you wait for answers. Default false." })),
 				}),
 				({ message, scope, reply }) => broadcast(message, scope ?? "workspace", reply ?? false));
+			// The sb server's state, its log, and its restart: for the agent that has to debug it. Refused in a remote turn at every level (link/hooks.ts), as link_request is.
+			if (server) tool("boss_server", "See the sb server (the Straw Boss backend process) and restart it. status: its state, pid, version, uptime, last restart, last error, and log path (works with the server down). logs: the last lines of its log, at most 200 (no message text or secrets are in it). restart: restart it with a reason of 1 to 200 characters on one line, which goes into the log with your name; refused while the boss stopped the server on purpose, and taken at most once a minute; a server that is down is started. Pages reconnect on the same URL.",
+				Type.Object({
+					action: Type.Union([Type.Literal("status"), Type.Literal("logs"), Type.Literal("restart")]),
+					lines: Type.Optional(Type.Number({ description: "logs: how many lines, at most 200. Default 200." })),
+					reason: Type.Optional(Type.String({ description: "restart: why you restart it, one line of 1 to 200 characters." })),
+				}),
+				async ({ action, lines, reason }) => {
+					if (action === "status") {
+						const result = await server.status();
+						return { text: JSON.stringify(result, null, 2), details: result };
+					}
+					if (action === "logs") {
+						const text = server.logs(lines ?? 200).join("\n");
+						return { text: text || "(the log is empty)", details: { lines: text ? text.split("\n").length : 0 } };
+					}
+					const done = await server.restart(reason ?? "", { boss: false });
+					return { text: `The sb server ${done.server}: pid ${done.pid}, pi-straw-boss ${done.version}.`, details: done };
+				});
 			const arg = (description: string) => Type.Optional(Type.String({ description }));
 			// A call nested in another tool's (codemode) is written to the session file only when its parent ends, so the key pad's file check would never see it open.
 			pi.on("tool_call", (e) => (e.toolName === "link_request" && (e as { parentToolCallId?: string }).parentToolCallId ? { block: true, reason: "link_request is called directly, not from another tool" } : undefined));

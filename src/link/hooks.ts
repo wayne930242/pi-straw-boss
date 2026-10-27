@@ -105,6 +105,8 @@ export function createRemoteTurns({ pi, now, config, policy: policyDeps, home, a
 	const held = async (e: ToolCallEvent, ctx: ExtensionContext) => {
 		const input = e.input as Record<string, unknown>, level = turns.level!;
 		if (e.toolName === "link_request") return { block: true, reason: "a remote turn cannot ask for a link action, whatever its sender's level" };
+		// A peer could otherwise restart this computer's server: no level, dispatch included, may.
+		if (e.toolName === "boss_server") return { block: true, reason: "a remote turn cannot see or restart this computer's sb server, whatever its sender's level" };
 		if (level === "dispatch") return;
 		const scope = scopeFor((ctx as { cwd?: string }).cwd ?? process.cwd());
 		const verdict = scope ? decide(e.toolName, input, turns.list, scope) : ({ kind: "gate" } as const);

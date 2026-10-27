@@ -1,4 +1,5 @@
-import { execFile } from "node:child_process";
+import { execFileExe } from "./exe.mjs";
+import { system32, system32Path } from "./winpath.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { matchesKey } from "@earendil-works/pi-tui";
 
@@ -11,13 +12,16 @@ export const pairingKeys = (link: () => string, copy: (text: string) => Promise<
 	o: async () => (await open(link()), "Opened a new one-time link in this computer's browser."),
 });
 
-const CLIPBOARD = process.platform === "darwin" ? ["pbcopy"] : process.platform === "win32" ? ["clip"] : process.env.WAYLAND_DISPLAY ? ["wl-copy"] : ["xclip", "-selection", "clipboard"];
+/** The clipboard command: on Windows `clip.exe` by absolute path (a bare name is looked for in the current folder first). */
+export const clipboardCommand = (platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env) =>
+	platform === "darwin" ? ["pbcopy"] : platform === "win32" ? [system32Path("clip.exe", env)] : env.WAYLAND_DISPLAY ? ["wl-copy"] : ["xclip", "-selection", "clipboard"];
+const CLIPBOARD = clipboardCommand();
 /** Puts text on the system clipboard (`command` is for tests). */
 export const copyText = (text: string, [cmd, ...args] = CLIPBOARD) =>
 	new Promise<void>((done, fail) => {
-		const child = execFile(cmd!, args, { timeout: 5_000 }, (error) => (error ? fail(new Error(`Could not copy with ${cmd}: ${error.message}`)) : done()));
+		const child = execFileExe(cmd!, args, { timeout: 5_000, ...(process.platform === "win32" && cmd === CLIPBOARD[0] ? { cwd: system32() } : {}) }, (error) => (error ? fail(new Error(`Could not copy with ${cmd}: ${error.message}`)) : done()));
 		// A missing command fails the child; its stdin then errors too (EPIPE), which unhandled would take the host pi down.
-		child.stdin?.on("error", () => {}).end(text);
+		child?.stdin?.on("error", () => {}).end(text);
 	});
 
 /**

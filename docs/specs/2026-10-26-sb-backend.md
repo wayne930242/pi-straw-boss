@@ -169,8 +169,21 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
   - It is taken over only when its holder is dead: its PID is not alive, or started at another time than recorded (`holderAlive`, as
     the link holder's record is judged). A holder that is alive keeps it however long it takes, and a slow cold start on Windows is
     not mistaken for a dead one. One looker at a time decides that, through `server.lock.stale`.
-  - A lock older than 120 s is taken over even from a live holder, since no start or restart may take that long (its own budgets are
-    20 s and 30 s); the taker logs it.
+  - A lock older than 120 s is taken over even from a live holder, since no start or restart may take that long (a start waits 20 s for
+    `hello`, 60 s on Windows; a restart waits up to 15 s for the old server to go first, so about 80 s at most); the taker logs it.
+  - A request that finds the lock busy waits for it as long as a start can hold it: the start wait plus the exit wait of the same timers
+    (30 s, and 70 s on Windows), for `/boss server`, `restart`, `stop`, and `serve`; `up` has one time for the whole call (below). None
+    of them turns a cold Windows start into `busy`.
+  - **`up --timeout`** bounds the whole `up`: the lock wait, the old server's exit wait (for a restart), and the start wait together, from one
+    deadline, so `up` does not run past `--timeout` (every wait inside it is cut to what is left: the lock, the old server's exit, the
+    supervisor's and the retake's waits for a `serve` server, the start wait, each hello probe, the control call of a restart, the Herdr
+    check, and the native calls that protect the folder; a start with nothing left of the time starts no server). The default is 90 s on
+    Windows (a lock wait of up to 30 s ahead of the 60 s start wait) and 30 s elsewhere (10 s ahead of the 20 s start wait). A larger
+    `--timeout` does not lengthen the start wait, which is the platform's. When a wait runs out, the JSON line on stderr names it
+    beside `step`, as `"wait": "lock"` (`server.lock` held by another start or restart), `"start"` (this `up` started the server and it
+    did not answer `hello`), `"hello"` (another requester's start was under way, the lock free, and no `hello` came), or `"exit"` (the
+    old server did not leave for a restart). A failure that is not a wait has no `wait` field. A failure that left no `start-error.json`
+    because the state folder could not be protected carries its `startError` (`code: "acl"`) in the JSON all the same.
   - Why not the `gui.lock` rule (taken over after 10 s by mtime) with a refresh every 2 s: a refresh depends on the holder's timers
     firing, and a holder blocked on a synchronous call loses the lock while alive. Death is what makes a lock stale, and a start time
     tells it apart from a reused PID.
@@ -203,15 +216,182 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
   agent directory above it, before it writes the secret:
   - The owner's SID comes from `[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value`, read through PowerShell with
     `execFile`, no shell.
-  - The ACL is set with `icacls <dir> /inheritance:r /grant:r *<owner SID>:(OI)(CI)F *S-1-5-18:(OI)(CI)F /T`. Accounts are named by SID
-    only, never by a localized account or group name. SYSTEM is `S-1-5-18`. `/T` reaches files that are already there.
+  - The folder's ACL is set with `icacls <dir> /inheritance:r /grant:r *<owner SID>:(OI)(CI)F *S-1-5-18:(OI)(CI)F`, without `/T`.
+    Accounts are named by SID only, never by a localized account or group name. SYSTEM is `S-1-5-18`.
   - It is checked by SID through `(Get-Acl <path>).Sddl`. No localized text is parsed.
     - The folder's DACL must be protected (`D:P`), with exactly two allow ACEs, the owner SID and `SY`, and no inherited ACE.
-    - Each secret file (`server.json`, `gui.json`, `paired.json`, everything under `link/`) must hold allow ACEs for the owner SID and
+    - Each secret file (`server.json` of the slot and of every secondary slot in `servers/<hash>/`, `gui.json`, `paired.json`, everything under `link/`) must hold allow ACEs for the owner SID and
       `SY` only, explicit or inherited. A file written by rename after the `icacls` run inherits exactly those two from the protected
       folder, which is just as safe, so an inherited ACE is accepted on files.
-  - Reading the SID, setting the ACL, and checking every SDDL run in one PowerShell invocation, which answers one JSON line, so the check
-    costs one PowerShell start against the 15 s cold-start budget.
+  - **The folder is protected before the first file is created in it, at every start.** The second Windows pass found `server.lock`, the
+    placeholder `server.json`, and `server.log` with the parent's inherited ACEs (Users read, Authenticated Users modify outside the
+    profile) for the first 4 to 7 s of a cold start, until the server's PowerShell call. So every process that is about to create a file in
+    the slot (the requester before it takes `server.lock`, the server before its log; the placeholder is written inside the requester's
+    start, under the lock) first makes `straw-boss/` and checks it, with native calls and no PowerShell (whose start costs 2 to 5 s):
+    - `whoami /user /fo csv /nh` for the owner's SID, once per process (only the SID is kept, a user does not change; the folder is
+      checked again at every start, since other code can delete and make `straw-boss/` again, and a session lives for days);
+    - **No native call ever changes an owner** (R12-F001): `icacls /setowner` is not used at all. A successful `/setowner` takes over a folder
+      another account made (and granted the user WRITE_OWNER, or WRITE_DAC, which the protect call turns into it), after which the owner
+      checks pass on a folder whose maker still holds handles opened while it owned it. An elevated token's folders are BA-owned by default,
+      and BA is an accepted owner (below), so none is needed.
+    - **An existing folder is read first and touched only when it has to be**: `icacls <dir> /save <tmp>` (UTF-16 SDDL, no localized
+      text), and a DACL that is already exactly the owner and SYSTEM (`folderProblems`) changes nothing: one icacls call, no PowerShell, on
+      a normal start. Only a wrong DACL is acted on, and then only after **one PowerShell reads the folder's owner as a SID**
+      (`GetAccessControl(…Owner).GetOwner([SecurityIdentifier])`, after the Constrained Language check): the user, BA and SYSTEM go on to
+      `icacls <dir> /inheritance:r /grant:r *<owner SID>:(OI)(CI)F *S-1-5-18:(OI)(CI)F`, without `/T`, passed on to what is created in it;
+      any other owner, or an owner that cannot be read, is refused untouched ("belongs to another account (<SID>)", the remedy, exit 3):
+      the protect call on a foreign folder would give the user WRITE_OWNER, the state any later takeover or repair needs. A DACL that
+      `/save` is not allowed to read (exit 5) counts as wrong. A folder made by this process under the temporary name (below) is wrong by
+      construction (the parent's DACL) and gets the protect call at once, with no owner read;
+    - The DACL that is read back (after a protect call, and for a new folder) must be protected
+      with exactly the owner and SYSTEM as allow ACEs and none inherited (`folderProblems`), or nothing is written. A foreign ACE
+      another account left, which `/grant:r` does not remove, is refused here and not after the lock, the placeholder, and the
+      secrets were written into it.
+    - **A folder that is not there is born protected.** Making `straw-boss/` and then protecting it leaves it with the parent's broad
+      ACEs for the time of those calls (443 ms on the VM with an agent folder outside the profile). So the starter and the server make it
+      under an unpredictable name beside it, `straw-boss.<16 hex>.tmp`, run the two calls
+      above (protect, read-back) on that name, check that nothing was put into it, and only then rename it to its final name. The final name does not exist
+      while any call runs. When the final name appeared meanwhile (another process was quicker), the temporary folder is dropped and the
+      folder that is there is handled as an existing one (read first, touched only when its DACL is wrong and its owner is acceptable). A temporary folder that fails a check is removed.
+      `servers/<hash>` of a secondary slot is not made this way: it is made with `mkdir` inside the protected `straw-boss/` after it
+      is in place, and inherits the owner and SYSTEM grant.
+      - **A filtered (UAC) token cannot always `/setowner`** (VM pass 4, F1; history: since R12-F001 no `/setowner` is called at all, so a refusal can no longer happen and this is kept as the reason none is needed): outside its profile, without a WRITE_OWNER grant from the
+        parent, it gets exit 5 on a folder it owns (Administrators is deny-only in that token), and every start there failed with a wrong
+        "belongs to another account". So a `/setowner` refusal (5, 1307, 1314) is **never final**: the protect call that follows decides (the
+        owner has WRITE_DAC; a folder another account owns that grants the user nothing fails there with exit 5, told as such). Nothing
+        native can tell whose folder it is: `dir /q` cuts the owner column at 23 characters, and the names in a listing are ones other
+        accounts can create (a folder named after the user's SID is no proof), so no listing is read. **The exact owner is checked
+        where it cannot be forged**: the folder's `O:` from `(Get-Acl).Sddl` must be the user's SID (`ownerProblems`, in `aclProblems`):
+        - in the **launch PowerShell before `Win32_Process.Create`** (the answer line of a script cannot be forged by the folder's owner, a
+          marker file can): a different owner is rc -2, nothing is created, and the starter fails with `acl` "the folder belongs to
+          another account (<SID>), not to <SID>" (exit 3), with no plain-spawn fallback, whose own check would refuse it as well;
+        - in the server's own check (`serve`, the plain spawn) and when it reads the marker, before any secret is written.
+        An alias of the user's own built-in account (`LA`, `LG`, `DA`, `DU`) is accepted, and so are SYSTEM (`SY`, R11-F004) and
+        **BUILTIN\Administrators (`BA`, `S-1-5-32-544`) as an owner, for every entry including `straw-boss\` itself** (VM pass 5b): an
+        elevated token's default owner is BA, and the server an elevated `up` starts writes `server.json` and `start-error.json` while the
+        launch PowerShell is still running, after the `/setowner /T` pass and before the read-back, so ~50% of elevated cold starts failed
+        with "belongs to another account (BA)". BA-owned objects are made by an elevated token, by SYSTEM, and by holders of
+        `SeRestorePrivilege` (Backup Operators). An administrator and SYSTEM can read the folder whatever its owner or DACL, and a backup
+        operator can read and write any file, so BA ownership gives no account anything it lacks; the threat the owner gate stops is another
+        standard account owning an entry. A filtered token passes the gate with a BA owner when an elevated run granted the user full
+        control of what it made. The launch script and `ownerProblems` use the same rule. **BA is not accepted as an ACE**: the DACL rule
+        (allow ACEs for the owner/user and SYSTEM only) is unchanged. A filtered token that cannot protect a BA-owned folder still gets the
+        protect step's refusal ("run pi once as administrator, or delete the folder"): the owner gate comes after it.
+      - **The ownership of a folder is never taken natively** (R11-F001, R12-F001; VM pass 5b, the decoy). Where another standard account
+        made `straw-boss\` first and granted the user WRITE_DAC or WRITE_OWNER, a `/setowner` that succeeds would make the user its owner
+        and the owner check would pass on a folder whose attacker still holds handles that were opened while they owned it, and could
+        change its DACL through them later (add an inheritable read ACE, let a file inherit it, remove it). The same holds for the temporary
+        folder a start makes, which another account with Modify on the parent could delete and re-create under the same name during the
+        protect call: that folder lands in place still owned by the attacker, and the PowerShell gates refuse it with no secret written.
+        The owner is gated in PowerShell BEFORE any secret exists: the launch script before the server is created (rc -2), `ACL_STEPS`
+        (`CheckOwner $dir`, before its `/inheritance:r`; `serve` and the server's own script), and the read-back. **One rule for the
+        accepted owners in every check: the user, BA, SYSTEM** (`OWNER_OK_SIDS`: `ownerProblems`, the launch script's check, the native
+        owner read, the scripts' owner walks).
+        **Nothing is created or written under a foreign-owned folder** (R13; VM pass on f72b184, where a refused start had left
+        `servers\<hash>\{server.json, server.log, start-error.json}` and `server.lock` in the attacker's folder). The **owner gate**
+        (`ownerGate`: one PowerShell reads the folder's owner as a SID) runs in `lockFor` BEFORE anything is made or changed in an existing
+        folder, and again right after `prepare` for a folder that start has just made (the first start ever, or a swapped temporary folder
+        that landed there), so before the lock, the placeholder record, the log or `start-error.json`; `launch` passes it too before its
+        placeholder (a server that went away between the look and the lock). The refusal goes to stderr and the JSON output of `up`
+        (`startError.code` `acl`), never into the folder. The read is remembered by the folder's file identity (volume and file index), so a
+        long-lived pi session reads it once, `protectFolder` does not read it again for a wrong DACL, and a folder made again under its name is
+        read again. **Cost:** one PowerShell on a cold `up` unless this process has already read this folder's owner (one more beside the launch PowerShell; log phase `owner-gate ms=…`, to be measured on
+        the VM), and on a `stop` of a server that is down (it writes `stopped`). **A request that finds a server running** (`up` again, `stop`
+        of a live server, `status`, a session's look) reads no owner and starts no PowerShell: it looks first (a read only), and takes the
+        lock without the gate. The owner read for a folder is made once per folder identity; in a `secondary` slot it is passed between the
+        protect call and the `mkdir`s of `servers\<hash>` (R13-F002), so a folder that landed foreign gets not even those empty folders.
+        The folder is passed to the PowerShell in the environment (`SB_OWNER_DIR`), never quoted into the script: PowerShell reads U+2018 to
+        U+201B as single quotes too (R13-F001). A refusal found by the launch script (rc -2) is not written to `start-error.json` either (R13-F004).
+        **Residual (R13-F003), documented, not fixed in B1:** a folder with a live-looking record is trusted without an owner read. An account
+        that can create entries in `PI_CODING_AGENT_DIR` can make `straw-boss\` with a `server.json` of its own (it knows the secret the hello
+        proves), name its own pid, and use any free pipe name (or one whose DACL denies the victim, which reads as `denied`). A victim's `up`,
+        `stop` or `restart` then writes, inside the attacker's folder, `server.lock`, `server.json` (`stopped`, `clearStopped`,
+        `touchRestarting`, an automatic upgrade of an older record), `server.log` lines and, from the plain-spawn fallback's abort,
+        `start-error.json`; and `status` and `up`'s `url` are spoofed. No secret of the victim is exposed in B1. The ceiling: an attacker who
+        can create entries in `PI_CODING_AGENT_DIR` already reaches `auth.json` (mode 600 means nothing on Windows) and can plant files in
+        `extensions/`. **Before B2 to B4 send session content to the server**, an owner check once per process must precede trusting a record.
+        The protect call on a swapped temporary folder, and on an existing user-owned folder swapped between the identity check and the call
+        (the gate refuses it afterwards), adds the user and SYSTEM where the attacker granted WRITE_DAC and leaves the owner as it was: the
+        changes `protectFolder` can make to a foreign folder.
+        Both ACL scripts check below the folder the same way: the folder's own owner first, then ONE walk (R13) that reads every entry's
+        attributes, link type and owner (a SID, through .NET) once, refusing a junction, a symbolic link or a foreign owner, and only then `/setowner /T /C /L /Q` (PowerShell, which turns BA- and SYSTEM-owned entries
+        into the user's, entries already checked) and `/reset /T /C /L`, so a foreign entry is refused with nothing below the folder changed.
+        **Residual (R11-F003):** the walk and the calls are not atomic; an account that can already create entries below the folder (only
+        through the known plain-`mkdir` windows of other modules, before the folder was protected) can plant one in between, which `/reset`
+        then gives the user's inherited full control and a later start's `/setowner /T` could take. The folder's own protection bounds it;
+        the read-back checks the owner of everything it lists.
+      - **What is below is listed without following links** (R8-F003): Windows PowerShell 5.1's `Get-ChildItem` follows junctions, so the
+        scripts walk the folder with `[IO.Directory]::GetFileSystemEntries` and refuse any entry with the `ReparsePoint` attribute
+        that is a name-surrogate link (`Get-Item -Force` gives it `LinkType` `Junction` or `SymbolicLink`; one whose type cannot be read is refused too)
+        (`sb-reparse-point <path>`, told as "a link or junction was found inside the state folder, which is refused"), before any `icacls`
+        call below runs and again when the SDDLs are read back. The `/reset` carries `/L` too. Other reparse points (OneDrive and other cloud placeholders, dedup)
+        are ordinary files and folders and are walked as such, so an agent folder in OneDrive is not refused. A folder that vanishes between being listed and
+        being walked (the link stale-lock guard, `outbox\<team>`) is skipped; one that is there and cannot be listed is thrown.
+      - **Everything below is the user's too** (R7-F002, R8-F001, R8-F002): `/reset` and `/inheritance` replace DACLs and never owners, so after the reset one
+        call, `icacls "<dir>\*" /setowner *<sid> /T /C /L /Q`, makes the folders below (`servers\<hash>`, `link\…`) the user's, and the
+        read-back lists every folder below and the files it names (`server.json`, `server.lock`, `server.log`, `gui.json`, `paired.json`, every file under `link\`,
+        and each `servers\<hash>\server.json`; not the files in `board\`, `stash\`, `agents\` or the other files of a secondary slot), and each must be the user's (`O:`) with allow ACEs for the user and SYSTEM only,
+        inherited ones allowed (`folders` and `files` in the answer; a folder that another account owns would keep an owner's implicit
+        WRITE_DAC over what is written in it later). The owner is taken BEFORE the reset, so the reset can use the owner's WRITE_DAC; an
+        owner or a DACL that one call could not fix is refused by the read-back whichever of the two the other call fixed. A temporary file
+        that is renamed into place (`writeJson`, the pairing file) is created new (`wx`) under a name with a random part, so one that was
+        already there, with another account's owner, is never written to.
+      - Every `icacls` call carries `/L`, so a link is acted on itself and never its target, and `secure` looks for a link first.
+      - The rename is tried again on `EPERM`, `EBUSY` and `EACCES` (a scanner or the indexer holding the temporary folder): waits of 10, 20,
+        40, 80, 160, 320, then 500 ms three times, 2.1 s in all. A handle that stays is told as that ("something is holding the new folder …
+        Start again in a moment"); a temporary folder that cannot be removed then is left to the next start's sweep.
+      - At every start, a `straw-boss.<16 hex>.tmp` folder older than a minute (a start that crashed or was held between the make and
+        the rename; a start's own is there for well under that) is removed, if it is a folder and not a link.
+      - The temporary folder lives 35 to 130 ms with the parent's inherited ACEs (outside the profile: Users read, Authenticated Users
+        modify), under a name nobody looks for; the final name never carries a broad ACE (VM pass 4, F9; accepted).
+      - Only a program that failed to start is told as "not found" or "did not finish in time"; a read of the file `icacls /save`
+        wrote, or a `whoami` that gave no SID, keeps its own words.
+      - A PowerShell 5.1 failure is told by its message line: the first line that does not start with `At line`, `+` or `~`, not the
+        `FullyQualifiedErrorId` that ends it.
+    - **A failing call is told by a fixed message** for its step and exit code, with what to do, and never by the program's own text,
+      which a console prints in its code page (CP950, CP932) and Node reads as UTF-8: half garbled. The program's last line is kept
+      only as a detail cut to printable ASCII. For example, exit 5 on the owner step: "the folder <dir> belongs to another account,
+      usually Administrators from a run of pi as administrator, and this process may not take it over. Run pi once as administrator, or
+      delete the folder <dir>, then start again. (owner step, exit 5; detail: …)". Exit 87 says icacls did not accept its arguments
+      (a bug in pi-straw-boss, to be reported); a missing program, a timeout, and any other exit have a sentence of their own.
+    - a folder that is a link or junction (`lstat`) is refused, for `straw-boss/` and for a secondary slot's `servers/` and
+      `servers/<hash>/`, before any of this and again after the icacls calls, before the DACL is read: `icacls` without `/L` would act on its target, and the files would land there.
+    A secondary slot's `servers/<hash>/` is made after the state folder is protected and inherits it. Nothing is written into an
+    unprotected folder: a requester whose calls fail stops with `acl` (exit 3, in the JSON's `startError`, not written to a file), and a
+    server whose calls fail exits 3 and writes nothing. The native calls share the time the call has left (`up --timeout`): each gets
+    what is left of it (at least 100 ms) and at most 15 s. A failed call is told by the last non-empty line of its stderr and its exit
+    code, never by the message of Node's error, which begins with the whole command line (the same for the ACL PowerShell and the
+    WMI start). The PowerShell step that follows stays as it is: it resets what is below the folder and reads every SDDL back.
+    The DACL file has no owner: the owner is read by the PowerShell steps (above), natively only as a SID where a change is about to be made.
+  - **System programs by absolute path.** A bare program name is looked for in the current folder before `PATH` on Windows
+    (nodejs/node#46264), and a pi session's folder is a project. `powershell.exe`, `whoami.exe`, `icacls.exe`, `cmd.exe`, and `clip.exe`
+    are called from `%SystemRoot%\System32` by absolute path (`%SystemRoot%` from the environment when it is a drive-letter absolute path, else `windir` likewise, else `C:\Windows`: a relative value would put the program and its working folder in the project) and
+    run with that folder as their working directory, in the start-time reader, the ACL call, the folder's native calls, the launch,
+    the hidden-folder reader, the browser opener, and the clipboard; the ACL script names `icacls.exe` by `[Environment]::SystemDirectory`.
+    - **The reaper plugin** (`herdr-reaper/`, macOS and Linux) finds `herdr`, `git`, and `lsof` the same way, through its own copy of
+      `exe.mjs` (the plugin may be installed from its folder alone; a test keeps the copy byte for byte equal), and a herdr that is not found
+      is a failed sweep in its log.
+    - **Every other program is found by a PATH search that never looks in the current folder** (`src/exe.mjs`): `herdr` (or
+      `HERDR_BIN_PATH`, which must then be absolute), `git`, `tailscale`, `ps`, `sh`, and the opener and clipboard commands. Empty, `.`,
+      and relative PATH entries are skipped (an empty entry means the current folder on POSIX), on Windows only `.com` and `.exe` of PATHEXT are
+      taken, in PATHEXT's order (`.cmd` and `.bat` cannot be started without a shell), and the program is spawned by the path found. A program
+      given as a path must be absolute. One that is not found is an `ExeNotFound` (code `ENOENT`) that says where it looked. The answer
+      is kept per process while PATH is the same, and searched again once when the program is gone at its start (ENOENT). The `shutdown`
+      handler reports a pane that could not be closed on stderr and goes on. `process.execPath` is already absolute.
+  - Reading the SID, the server's own start time, setting the ACL, and checking every SDDL run in one PowerShell invocation, which
+    answers one JSON line. **A cold start makes only one PowerShell start, the starter's.** The VM measured the launch PowerShell at
+    3.8 to 16 s and the server's ACL PowerShell at 6 to 15 s, so the check is folded into the launch script (below): the starter knows the
+    new pid when `Win32_Process.Create` returns, reads its start time and makes the reset and read-back in the same PowerShell, and the
+    server makes none. A server of `serve`, or one the starter started by the plain spawn, has no starter's check and makes its own with
+    this script.
+  - Files that are already in the folder when the ACL is set (`server.lock` the starter took, `server.log` the server opened) are not
+    given the folder's ACL with `/T` on the folder: that strips their inherited ACEs, and an `(OI)(CI)` grant does not land on a file, so
+    they ended with an empty DACL that even their owner could not read (the VM's P2). The folder is protected first, without `/T`, and
+    everything below it is then reset in one call, `icacls "<dir>\*" /reset /T /C /Q`: its explicit ACEs go and it inherits the owner and
+    SYSTEM grant of the folder again, files and folders alike. It is one process whatever the number of items (a call per item took a
+    process each, and `link/inbox/` alone holds up to 500 files); `/C` goes on past an item that vanishes meanwhile, and the call's exit
+    code is not the check, the read-back is. The check reads `server.json` (of every slot), `server.lock`, `server.log`, `gui.json`,
+    `paired.json`, and everything under `link/`.
   - If setting or checking fails, the server does not start. It writes `start-error.json` (`code: "acl"`, the reason, the SDDL it read)
     and exits 3. `up` and the session looks read that file (**Starting**).
   - macOS and Linux keep the 700 directory and 600 files they have today.
@@ -239,7 +419,11 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
   Without it the server exits 3 and names the path it looked from. If pi-intercom publishes a JavaScript build, `tsx` becomes a
   dev-only dependency. B1 asks pi-intercom upstream for one.
 - B1 measures a cold `up` on the Windows VM: from `up`'s start to the URL answering 200, with the server not running and the file cache
-  cold. The budget is 15 s, and B1 records the time and the share `tsx` takes.
+  cold. The budget is 15 s, and B1 records the time and the share `tsx` takes. The first measurement (B1 at 271971e) found `tsx` at about
+  0.2 s of 7.4 to 25.6 s and every PowerShell start at 1.7 to 3.1 s, so the cold start folds its PowerShell work into one call (**The
+  control socket**), does not make the requester wait for its own start time (below), and logs each phase in `server.log`
+  (`start-requested … spawnMs`, `start … boot`, `phase name=loader|acl|listen`, `intercom-connected … ms`, `ready ms`,
+  `start-answered ms`, `stop-done`), so a next run shows where the time goes.
 - The command is `<agent dir>/npm/node_modules/pi-straw-boss/dist/server/cli.mjs`, where `<agent dir>` is `$PI_CODING_AGENT_DIR`,
   else `~/.pi/agent` (`%USERPROFILE%\.pi\agent` on Windows). That is where `pi install npm:pi-straw-boss` puts the package, so a shell
   that installs pi-straw-boss into its own agent directory knows the path without asking anything. It runs under plain `node` 22 or newer
@@ -257,14 +441,127 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
     an upgrade from being undone;
   - its broker scope and transport are the ones `server.json` records, or there is no record. A session on another scope or transport
     uses no server and says so once.
-- It takes `server.lock` and checks those again under it. It then starts `node <cli.mjs> run --detached`, spawned with `{ detached: true,
-  stdio: "ignore", windowsHide: true }` and unref'd, so Windows opens no console window.
+- It takes `server.lock` and checks those again under it. It then starts `node <cli.mjs> run --detached`.
+  - **Elsewhere** it is spawned with `{ detached: true, stdio: "ignore", windowsHide: true }` and unref'd: the server is the leader of
+    a session of its own, so killing its starter's process group (a pane closing, an ssh session ending) does not take it down (a test
+    kills the group and checks).
+  - **On Windows** `detached: true` is not enough: Node does not break away from the starter's job object (libuv never sets
+    `CREATE_BREAKAWAY_FROM_JOB`, which fails where the job does not allow it), and a Herdr pane, an ssh session, or the desk's Electron may
+    hold its children in a kill-on-close job, so the shared server died with whichever pane started it (the second Windows pass: the
+    detached server died when the ssh session that started it closed). The server is created through WMI instead,
+    `Win32_Process.Create` in one PowerShell start, a child of the WMI service. Microsoft's documentation of the method says that "unless
+    the `CREATE_BREAKAWAY_FROM_JOB` flag is specified, processes created with the `Win32_Process.Create` method are limited by the job
+    object", so `Win32_ProcessStartup.CreateFlags` is `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_UNICODE_ENVIRONMENT |
+    CREATE_BREAKAWAY_FROM_JOB`, the values its list documents; `CREATE_NO_WINDOW` is not in that list, so the window is hidden with
+    `ShowWindow = 0` and the process has no console (`DETACHED_PROCESS`). A job that does not allow breakaway fails the creation, so the
+    script makes the same call once more without that flag, in the same PowerShell start, and the answer says whether the process is
+    outside the job (`outsideJob` in the `breakaway` phase), and the second try has a command line of its own, `--detach wmi-in-job`,
+    so that server records it (`detach: "wmi-in-job"`) and `up`, `status`, `boss_server status`, and `/boss server` warn that it stays
+    in the WMI provider host's job. The command line and folder go in the PowerShell's environment, never in
+    its script, and so does the server's environment: `Win32_ProcessStartup.EnvironmentVariables` is set from the PowerShell's own
+    environment (the starter's, minus its identity variables, plus `SB_LAUNCH_CMD` and `SB_LAUNCH_CWD`, which are not passed on, and
+    minus `PSModulePath`, which PowerShell sets itself, and the per-drive `=C:` entries). That property replaces the default block, so the
+    server has the starter's whole environment from its first instruction (`NODE_OPTIONS`, `NODE_EXTRA_CA_CERTS`, `UV_THREADPOOL_SIZE`,
+    which node reads at process start), and nothing of it is written to disk. The server is told how it was started: the command line ends
+    in `--detach wmi`, which it records in `server.json`. The pid comes with PowerShell's answer; until then the starter keeps
+    `restarting` fresh as for any start, and watches the pid afterwards (a gone process is "the server exited before it answered"). The
+    cost is one PowerShell start in the starter, logged as the phase `breakaway` (`ms`, `via`, `pid`, `outsideJob`, and `createMs` and
+    `aclMs`, the parts of it the create and the check took) in `server.log`.
+    - **The ACL check is made in that PowerShell start.** After the create, with the new pid, the script runs the steps of the server's own
+      script (the start time of that pid, the `/reset` of what is in the state folder, every SDDL read back; sbr-F007: its output is pure
+      ASCII, `\uXXXX` for the rest) and leaves the answer, or its error, in `acl.<token>.json` in the protected state folder: a file written
+      beside its name and moved, so it appears whole. The token is 32 random hex digits that only the server's command line carries
+      (`--acl-token`). The server waits for that file (at most 70 s), deletes it, and **checks every SDDL itself** (`aclProblems`, the same
+      rules as its own check, for the pid it is) before it writes its secret anywhere: the ACL is set before the secret is written, and the
+      read-back is made by someone before then, with the verdict taken by the server. An error marker, a marker for another pid, or none
+      in time ends the server with `acl` (exit 3) as its own failing check does. When the start fails (PowerShell, WMI, or its timeout)
+      the starter leaves an error marker so the server that may still come up does not wait for nothing; the plain-spawn fallback starts
+      a server without a token. The answer also carries the server's start time, which the starter remembers (`rememberStart`), so it
+      does not read it again.
+    - **A failure is not silent.** When PowerShell or WMI fails (WMI blocked by the Defender rule against process creation from WMI,
+      PowerShell in constrained language mode, a rejected flag), the start falls back to the plain spawn, since a server that ends with its
+      pane is better than none on a machine where WMI is blocked, and says so: the starter passes `--detach direct --detach-reason <text>`,
+      and the server records `detach: "direct"` and `detachFailure` in `server.json`. `up` then warns `breakaway_failed` in its JSON, and
+      `status`, `describe`, `boss_server status`, and the `/boss server` line show the same warning ("started without leaving its
+      starter's job … so it ends with the pane or ssh session that started it"), for as long as that server runs. `breakaway-failed` is
+      also in the log.
+    - **A PowerShell that does not answer in time is a failed start with no fallback**: WMI may already have created the server, and a
+      second one would race it. The start goes on waiting for a `hello` until its time is out, and its error names the WMI start (the
+      requester waits a moment for the word of a PowerShell that timed out with the end of its own wait, so the sentence is there).
+    - **The script's answer line is the source of truth, and once WMI made the process nothing falls back.** The launch script sets
+      `created` the moment `Win32_Process.Create` returns 0, and from then on it always prints its answer line, with rc 0 and the pid,
+      whatever fails after it (the check, the marker's write or move: reported as `markerError`, and the starter then writes the error
+      marker so the waiting server ends with `acl` at once, under a temporary name of its own). A failure before the create prints rc -1
+      and exits 1: that, a return code other than 0, and a PowerShell that could not be started at all (`ENOENT`) fall back to the plain
+      spawn. A PowerShell that ends with no usable answer line (exit 1 with an empty stdout, rc 0 with no pid, garbage) is treated as "may
+      have started": a failed start, no plain spawn.
+    - **A script that died before the create falls back; one that died after it does not.** The script prints the fixed line
+      `sb-before-create` right before the first `Win32_Process.Create` (its stopwatch and every other statement are inside the `try`, so a
+      method a language mode refuses is caught before it). A PowerShell that exits non-zero with no answer line and without that line in its
+      stdout never reached the create (constrained language mode, an AMSI or EDR block, a parse error): the plain spawn, visibly
+      (`breakaway_failed`). With the line and no answer, a server may exist: a failed start. **Residual:** if `$wmi.Create` itself throws
+      after WMI made the process (an RPC drop on the way back), the line is there but the script's catch prints rc -1, which falls back
+      to the plain spawn and may leave two servers (the second ends on the lock); the VM should check it.
+    - **A cold start makes one PowerShell start** (VM pass 4, F2). Besides the server's start time, the launch script reads the
+      starter's own (`SB_STARTER_PID`, after the marker is left, so the server is not kept waiting) and the answer carries it
+      (`starterStarted`); the starter remembers both (`rememberStart`). The lock's holder start time waits for that (`startedOrWait`, 20 s
+      grace, then a PowerShell start of its own, as for any other process) instead of asking for it at once, so a CLI `up` starts no
+      PowerShell for itself. While the pid of a start through WMI is not told yet, the record's start time is not asked for either
+      (`runsAs(…, startKnownElsewhere)`): the hello still has to answer, with the pid the record names.
+    - **A server that cannot protect the folder says so in `start-error.json`** (F3). A server started through WMI has no exit code for its
+      starter to read: a foreign ACE planted after the starter protected the folder ended `up` with "exited before it answered". The
+      server writes no log, record, or secret into a folder it could not fix, only `start-error.json` (`acl`, the reason: nothing
+      secret), best effort, and `up` reads it, so it exits 3 with `startError.code` `acl`.
+    - **A lock that cannot be opened is repaired, never waited for** (F5). An empty-DACL `server.lock` (`D:PAI`) read as "held" wedged
+      `up` and `stop` (a filtered user cannot even delete it). When `server.lock` exists and cannot be read (`EACCES`, `EPERM`), its
+      permissions are reset once (`icacls <file> /reset /L /Q`: the owner can) and it is read and judged as any lock; when that fails,
+      the start ends with `acl` (exit 3), naming the file and what to do (`LockUnreadable`). A lock that is gone by then is free, and a denial
+      that outlives the repair is retried for about 100 ms first (a release in progress on a file system without POSIX delete); a lock that reads
+      as both denied and gone is paused on 20 ms at a time, at most five times, then busy.
+    - **A record of a server that is gone does not pin the broker scope** (F6). After a stop, the stopped record keeps the old scope, and
+      a start in another `PI_INTERCOM_SCOPE_ID` was refused. The scope and transport are compared only while the record's process runs
+      (it answers hello, or the record has a start time and the pid has it now: a server that is slow to answer keeps its scope, a pid reused after a crash does not; the look,
+      `restart` and `stop`); a stopped or dead record pins nothing, and the new server's record carries the new scope.
+    - **`stop` on a folder that is not the caller's** (F8) cannot take the lock; its message says that a server in it was started by
+      another account, to stop it from that account (an elevated shell for an elevated run), or end its process; the sentence is added only
+      to the owner and protect refusals (exit 5, 1307, 1314), other acl failures keep their own words.
+    - **The hello answer proves the secret** (R8-F004). The client sends a fresh nonce with `hello`; the server answers with `proof` =
+      HMAC-SHA256(secret, `<nonce>:<pid>`) and the client refuses an answer with no proof or a wrong one (`refused`): a pipe's name is free
+      when its server is gone, and something else could answer or refuse there. A server of the format before this (no proof) is not live
+      to this client; the format is the branch's first, so none runs in the wild.
+    - **A server that runs and refused this process is alive, never gone** (VM pass 5, F11). An elevated server's pipe has a default DACL
+      that a filtered token of the same user cannot open: the control connection fails with `EACCES` or `EPERM` (`ControlError` `denied`,
+      told apart from `ENOENT` and `ECONNREFUSED`, which are "no server"), while the process itself is alive (a refused process query,
+      `EPERM`, already counts as alive). `probe` then returns `denied` with `runs` true: `status` says `live` with `reachable: false` and a
+      warning; the look and `ensure` find it and start no second server (`up` adds the warning `server_unreachable`); `stop` and `restart`
+      refuse with `unreachable` ("… runs but this process may not reach it: it was probably started from an elevated pi or shell … stop or
+      restart it from an elevated shell") and never mark the record stopped; the scope stays pinned. The refusal counts only when the process
+      under the pid has not been shown to be another one (R9-F001): its start time is waited for, 3 s at most, and only a start time that is
+      known and differs from the record's makes the record gone and pins nothing. One that is unknown (the CIM read takes 3.5 s and more on Windows,
+      it failed, or the record has none) stays denied and pinned: stopping or starting over a running server is worse than a refusal. Only a hello that answers with the
+      secret makes a server `live`.
+    - **The hello comes before any start-time lookup** (F13). A server that answers hello with the secret and its pid is that server, so
+      `probe` (and with it `stop`, `status` and a second `up`) asks for no start time, which on Windows was a PowerShell start of its own.
+      The start time is asked for only when the hello fails (a server slow to answer, a reused pid).
+    - **Constrained Language Mode is told as that** (F12). Both PowerShell scripts check `$ExecutionContext.SessionState.LanguageMode` first
+      and throw the ASCII word `sb-constrained-language`; `execFailure` turns that word, and the engine's English refusals ("only core types
+      are supported in this language mode"), into one sentence: "PowerShell runs in Constrained Language Mode (likely a policy);
+      pi-straw-boss needs FullLanguage for its permission check", with the exit code, instead of the localized text that came out as `?`s.
+    - **No PowerShell failure text is CLIXML.** Windows PowerShell 5.1 started with `-EncodedCommand` and a redirected stderr writes
+      `#< CLIXML` + `<Objs …>` to stderr even on success (the progress records of preparing modules the first time). Every PowerShell call
+      (`acl.ts`, `breakaway.ts`, `startof.ts`) is started with `-OutputFormat Text`, its script sets `$ProgressPreference =
+      'SilentlyContinue'`, and a failure text read from stderr goes through `plainStderr`: when stderr starts with `#< CLIXML` its text is
+      the `<S S="Error">` strings (XML-unescaped, `_x000D__x000A_` a newline); progress records are not text, so a successful run's
+      progress is no error, and with no error record the last line of stdout and the exit code stand. The detail stays ASCII-only.
 - The process gets a constructed environment: the session's environment minus `PI_INTERCOM_SESSION_ID`, `PI_INTERCOM_STABLE_ID`,
   `PI_SUBAGENT_*`, `STRAW_BOSS_ROLE`, and `HERDR_PANE_ID`/`HERDR_TAB_ID`/`HERDR_WORKSPACE_ID`. `PI_INTERCOM_SCOPE_ID`,
   `PI_INTERCOM_TRANSPORT`, and `PI_INTERCOM_TCP` stay, so the server registers in the same broker scope as the sessions; it records them
   in `server.json`.
-- The session holds `server.lock` until the new server answers `hello` or 20 s pass. Then it returns, and says nothing unless the start
-  failed. If it failed, the session reads `start-error.json` and tells the reason once.
+- The session holds `server.lock` until the new server answers `hello` or the start budget passes: 20 s, and 60 s on Windows, where a
+  cold start took 7.4 to 22.9 s in the VM and three starts in a row went past 20 s. Then it returns, and says nothing unless the start
+  failed. If it failed, the session reads `start-error.json` and tells the reason once. The lock does not wait for its holder's own start
+  time (a PowerShell start on Windows): it is taken at once without `started`, judged by the holder's pid alone until the time arrives,
+  and written again with it by rename, only while it still holds the text it wrote.
 - **`start-error.json`** belongs to one start attempt. Whoever starts a server (a session, `up`, `serve`, a restart's requester) deletes it
   under `server.lock` before it spawns, and the new server deletes it again once it answers `hello`. So `status` and `up` never report an
   earlier attempt's failure as the current one.
@@ -274,6 +571,23 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
   `restarting` (a fresh start, not a restart), it writes `{ began, since, reason: "starting", by: <starter> }` first; when it finds one,
   it keeps its `began`, `reason`, and `by` and only moves `since`. A start that dies leaves a `since` that goes stale within 10 s, and
   the record then counts as gone.
+  - **From before the spawn.** On a cold Windows start the new process needs seconds before it can write anything (the VM's `status` said
+    `gone` for the first 18 s). So whoever starts a server (a session, `up`, `serve`'s requester, a restart's requester) writes the
+    `restarting` first, under the lock and before it spawns: into the record that is there (a dead server's, with its GUI, last restart,
+    and last error kept), or, with none, into a placeholder with no socket and no secret, which moves to the new process's pid once it is
+    spawned. The requester touches it every 2 s until the server answers `hello` or the start fails; a start that fails ends the
+    `restarting` at once, so the state is `gone` and not `restarting` for another 10 s. The server rewrites the record as its own, with
+    `restarting` kept, at its first line (before the ACL call and the code load, whose touches it makes itself every 2 s), and the full
+    record, with the secret, after the ACL and when it listens. A shell sees this as `state: "restarting"` with `restarting.reason`
+    `"starting"`; there is no fifth state.
+  - **Another server's record is not touched without proof.** The server's own placeholder and full record are not written over the record
+    of another process when that process is positively a server: its start time is known and is the one the record names (a live server
+    whose `hello` was slow keeps its record), or the record changed since the server's first look (a server took it meanwhile) and its
+    process runs, or its `hello` answers. A pid that merely runs is not proof: a
+    crashed server's pid is reused by an unrelated process, and on Windows the start time cannot be told until a background read is in, so
+    a record of a running pid whose socket nobody answers at is a dead server's, and the new server takes the record. A server that finds
+    a live one after it listens closes its endpoint and ends with `start` (exit 1), writing nothing on the other's record (neither its
+    `restarting` nor a `lastError`).
 - **`cli.mjs up`** makes sure a live server runs for the Herdr in its environment and prints one JSON line (**`up`'s output**). Step by
   step:
   - **A record whose `herdr` is another socket than the slot's** (a copied or damaged state directory): it exits 1 at step `herdr`
@@ -472,6 +786,7 @@ An event wakes a run. Everything else is shown in the GUI or handled by the serv
 | An intercom message to a tower identity: `call_tower`, `tower_send` from another tower, a `boss_broadcast` with scope `towers`, a main's done report, a reply to something the tower sent, a plain `intercom send` | Event `intercom`, with the text as received (its code-written header included) and the broker's sender line | Local |
 | A Straw Link `tower` envelope routed to this workspace (**Delivery**, Straw Link spec) | Event `link`, through the inbox as today | Ally (**Ally runs**) |
 | The boss types into the tower from the GUI while no local run is live | Event `boss`, the text verbatim | Local, queued ahead of the rest |
+| The boss types `/boss tower <prompt>` in any pi session of the workspace (D15) | Event `boss`, the prompt verbatim, through the same server endpoint as the GUI composer | Local, queued ahead of the rest |
 | An outcome of something a local run sent that arrives after that run ended: an intercom delivery that failed, a main opened by the opener that failed to start, a `close-main` that timed out, a relay refusal after "queued" of a send from a local run | Event `notice`, written by the server | Local |
 | An outcome of a send an ally run made (a relay refusal after "queued", a delivery that failed) | Event `notice` in that device's ally queue | That device's next ally run |
 | `tower_done({ wakeAfter })` from a local run asked for a follow-up, 5 to 240 minutes (D3) | Event `timer`, one pending per workspace: a later `wakeAfter` replaces it, since the latest run knows best what is still open | Local |
@@ -963,6 +1278,8 @@ One JSON line on stdout:
 }
 ```
 
+- `url` is `null` until the GUI moves into the server (B2): B1's server serves no page, so `up` and `status` have no URL to print, and the
+  `gui` step is absent. B2 fills `url` in (`status` has it too, from the record's `gui`).
 - `version` is the live server's, and `package` the version of the package `up` ran from.
 - `steps` lists every step that ran, in order: `herdr`, `integration` (with `--dir`), `version`, `server`, then `base`, `tower`, and
   `gui` with `--dir`, or `gui` alone without it.
@@ -1040,13 +1357,20 @@ removed, with the release that carries B6.
    - Tower tools over the socket, `tower_reply`, the `intercom` block, the prompt change.
    - `assertSettingsSafe` before every run (it needs `fix/settings-precheck` merged).
    - The GUI's tower states, queue, and composer wake.
+   - `/boss tower <prompt>` (D15): it ensures the tower like a bare `/boss tower`, clears `stopped`, posts the prompt as a `boss`
+     event, and answers "handed to the tower" with no focus change. A bare `/boss tower` keeps opening and focusing the tower tab.
    - A proposed pi-intercom change: a mailbox flush waits for receipts (**Queueing and concurrency**).
+   - `boss_server` over the run tokens (B1 has none, so its block is a session-level hook only): the server itself refuses `restart`,
+     `status`, and `logs` for an ally-run token and enforces the one-a-minute restart limit server-side (today it is checked under the
+     lock by the requester); `boss_server` is registered in local runs over the socket and never in ally runs.
    - Link messages are not routed yet: with the flag on, they wait in `link/inbox/` with the GUI notice "a Straw Link message waits; ally
      runs come with the next step" until B6.
 6. **B6, ally runs (behind `towerRuns.enabled`).**
    - Routing link events into ally runs, session-level remote turns for towers, the guards of **Security**, server-side token
      enforcement, and the gate's Allow check.
    - The ally brief, its asks, and the thread store.
+   - `boss_server` for ally runs: kept out of ally runs, with the remote-turn hooks kept in ally runs and in mains taking a D4 reply;
+     the GUI's Restart and Show log endpoints are `local_only` (that part is B2).
    - Replies for a main (D4): `caps`, the 5-field `tower`, `tower-reply`, and `inReplyTo` in this client, `tests/link/vectors.json`,
      straw-relay's kind table, `testdata/vectors.json`, and README pointer, the relay redeployed first, the fallbacks, stale `caps`
      ignored, and the offer to the main (**In lockstep with the relay and the Straw Link spec**).
@@ -1131,6 +1455,9 @@ trials), unchanged otherwise.
      default Herdr of that `HOME`, so nothing binds to the user's real Herdr or broker.
   4. `node <agent dir>/npm/node_modules/pi-straw-boss/dist/server/cli.mjs status` and `up` must work, and the GUI URL must answer 200.
   5. It stops the scratch server and Herdr by the PIDs it started, and removes the temp `HOME`.
+  B1 implements this as `tests/server-packaged.test.ts`: `npm pack` and `npm install <tarball> pi-intercom@0.18.1 --prefix <agent dir>/npm --legacy-peer-deps` (the flags
+  `package-manager.js` runs for a managed npm install), then `status`, `up`, `stop`, and the server's connection to the broker. It needs the npm registry and the `herdr`
+  binary, so it runs with `SB_PACKAGED=1`; the GUI URL check (step 4) comes with B2.
 - **Integration (fake Herdr and a real pi-intercom broker, as `tests/link/remote-world.ts` builds them).**
   - `call_tower` to a workspace with no run wakes one, the event arrives, and the reply leaves with `id=sb-tower-<ws>`. A main's later
     reply wakes a second run.
@@ -1165,7 +1492,9 @@ trials), unchanged otherwise.
   7. `boss_server restart` from a main, and Restart server in the GUI, both restart the server on the same URL with their reason in the
      log; the GUI's button is absent on a paired device's page and its endpoint answers 403 there.
 - **Windows VM:**
-  1. `cli.mjs up` brings the page up without a tower pi, and B1 records the cold `up` time against the 15 s budget.
+  1. `cli.mjs up` brings the page up without a tower pi, and B1 records the cold `up` time against the 15 s budget (B1 has no page yet: it
+     records the time to `hello`, and `url` is null). The first run (271971e) found the P0 below and 12.8 to 25.6 s; the log's phases say where
+     the time goes. A `status` polled during the start never says `gone`, and `stop` takes under 2 s on POSIX.
   2. The detached server opens no console window: no window appears, and the node process has no main window handle.
   3. **A run claims:** a `call_tower` wakes a run, and its claim passes, which shows that `herdr pane process-info` reports pi's own node
      PID through the `pi.cmd` wrapper and that `startOf` reads its start time.
@@ -1219,6 +1548,7 @@ straw-boss-desk's owner also agreed to D11.
 | D12 | Run limits | 20 minutes per run. A steer after 60 s idle without `tower_done`, and an end 5 minutes later. The service is held after 3 failed runs in 10 minutes. |
 | D13 | The ally thread for the brief keeps peer text at rest | "存，每台裝置最近 20 則、留 7 天": a per-device store of both directions, the last 20 messages, 7 days (**The brief**). |
 | D14 | Restarting and debugging the server | "server restart 也要讓 agent 或 user 有辦法做，不然很難 debug": `boss_server` for local sessions and local runs, Restart server and Show log in the GUI on this computer's page only, `server.log` with rotation, `cli.mjs logs`, and the reason recorded (**Seeing and restarting the server**). |
+| D15 | Prompting a tower that is not resident | "如果 tower 現在不是常駐，那會需要 /boss tower [prompt] 的指令": `/boss tower <prompt>` posts a `boss` event the way the GUI composer does, so the boss can wake the tower from any pi session; it does not change focus. A bare `/boss tower` still opens and focuses the tab. Built in B5. |
 
 ## Review record
 

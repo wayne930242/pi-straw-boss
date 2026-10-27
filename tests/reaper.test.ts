@@ -1641,3 +1641,13 @@ test("the reaper's docs name every state a held worktree can be in, and what cou
 	for (const state of ["provisioning", "provisioned", "running", "ready_for_review", "needs_help", "failed", "cancelled"]) assert.ok(doc.includes(`\`${state}\``), `how-it-works.md lists ${state}`);
 	assert.ok(doc.includes("`updatedAt`"), "the manifest's own updatedAt is part of the activity time");
 });
+
+test("the reaper plugin's exe.mjs is the package's: the plugin may be installed from its folder alone, so it carries its own copy, kept byte for byte equal (its herdr, git, and lsof are found on absolute PATH folders only)", async () => {
+	const { readFile } = await import("node:fs/promises");
+	assert.equal(await readFile(new URL("../herdr-reaper/exe.mjs", import.meta.url), "utf8"), await readFile(new URL("../src/exe.mjs", import.meta.url), "utf8"));
+	const io = await readFile(new URL("../herdr-reaper/io.mjs", import.meta.url), "utf8"), reaper = await readFile(new URL("../herdr-reaper/reaper.mjs", import.meta.url), "utf8");
+	for (const name of ["git", "lsof"]) assert.match(io, new RegExp(`run\\(resolveExe\\("${name}"\\)`));
+	assert.match(io, /run\(resolveExe\(bin\)/);
+	assert.doesNotMatch(reaper, /spawn\(bin/);
+	assert.match(reaper, /spawn\(file, \["plugin", "action", "invoke"/);
+});

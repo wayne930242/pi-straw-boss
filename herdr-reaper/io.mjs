@@ -1,5 +1,6 @@
 // What the reaper reaches outside itself with: its state file and locks, the herdr CLI, and git.
 import { execFile } from "node:child_process";
+import { resolveExe } from "./exe.mjs";
 import { existsSync, realpathSync } from "node:fs";
 import { mkdir, readdir, readFile, readlink, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
@@ -292,7 +293,7 @@ export function processClient(platform = process.platform, { now = Date.now, max
 		if (platform === "darwin") {
 			let stdout;
 			try {
-				({ stdout } = await run("lsof", ["-n", "-P", "-a", "-u", String(uid), "-d", "cwd", "-Fpcn"], { maxBuffer: 64 * 1024 * 1024, timeout: GIT_TIMEOUT_MS }));
+				({ stdout } = await run(resolveExe("lsof"), ["-n", "-P", "-a", "-u", String(uid), "-d", "cwd", "-Fpcn"], { maxBuffer: 64 * 1024 * 1024, timeout: GIT_TIMEOUT_MS }));
 			} catch (error) {
 				throw new Error(`lsof failed to list processes (${error.killed ? "no answer in time" : `exit ${error.code ?? "unknown"}`})`);
 			}
@@ -336,7 +337,7 @@ export function herdrClient(bin = "herdr") {
 	const call = async (args) => {
 		let stdout;
 		try {
-			({ stdout } = await run(bin, args, { maxBuffer: 16 * 1024 * 1024, timeout: HERDR_TIMEOUT_MS }));
+			({ stdout } = await run(resolveExe(bin), args, { maxBuffer: 16 * 1024 * 1024, timeout: HERDR_TIMEOUT_MS }));
 		} catch (error) {
 			if (error.killed) throw new Error(`herdr ${args.join(" ")} failed: no answer within ${HERDR_TIMEOUT_MS / 1000}s`);
 			throw new Error(`herdr ${args.join(" ")} failed: ${(error.stderr || error.stdout || error.message).toString().trim().slice(0, 300)}`);
@@ -386,7 +387,7 @@ async function hiddenFiles(git, checkout) {
 export function gitClient() {
 	const git = async (args, timeout = GIT_TIMEOUT_MS) => {
 		try {
-			return (await run("git", args, { maxBuffer: 16 * 1024 * 1024, timeout })).stdout;
+			return (await run(resolveExe("git"), args, { maxBuffer: 16 * 1024 * 1024, timeout })).stdout;
 		} catch (error) {
 			if (error.killed) throw Object.assign(new Error(`git ${args.join(" ")} did not finish within ${timeout / 1000}s`), { timedOut: true });
 			throw error;

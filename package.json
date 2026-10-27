@@ -22,6 +22,7 @@
   "files": [
     "src",
     "dist/gui",
+    "dist/server",
     "prompts",
     "README.md",
     "NOTICE.md",
@@ -39,7 +40,9 @@
     "gui:build": "npm run gui:i18n && vite build gui",
     "gui:dev": "npm run gui:i18n && vite gui",
     "gui:demo": "npm run gui:i18n && GUI_DEMO=${GUI_DEMO:-/pi-straw-boss/} vite build gui && cp dist/demo/index.html dist/demo/404.html",
-    "prepack": "npm run gui:build",
+    "build:server": "node scripts/build-server.mjs",
+    "server": "tsx src/server/cli.ts",
+    "prepack": "npm run gui:build && npm run build:server",
     "pretest": "npm run gui:build",
     "test": "node --test tests/*.test.ts",
     "gui:i18n": "paraglide-js compile --project gui/project.inlang --outdir gui/paraglide --strategy baseLocale --emit-ts-declarations --no-emit-readme --no-emit-prettier-ignore --silent"
@@ -56,9 +59,13 @@
     "@inlang/paraglide-js": "2.29.0",
     "@inlang/plugin-message-format": "4.5.4",
     "@types/node": "26.6.5",
+    "esbuild": "0.28.2",
     "jsqr": "1.4.0",
     "typebox": "1.3.27",
     "typescript": "7.0.2",
     "vite": "8.3.4"
+  },
+  "dependencies": {
+    "tsx": "^4.23.15"
   }
 }

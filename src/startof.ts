@@ -1,4 +1,7 @@
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { execFileSyncExe } from "./exe.mjs";
+import { POWERSHELL_FLAGS, PROGRESS_OFF } from "./server/acl.ts";
+import { powershellPath, system32 } from "./winpath.ts";
 
 // A process's start time, which tells a PID another process now holds from the process that wrote a record (remote.ts `runs`, the GUI and link records).
 
@@ -7,16 +10,17 @@ const READ_MS = 15_000, OTHERS_MS = 10 * 60_000, FIRST_FAIL_MS = 5000, MAX_FAIL_
  * The command that tells a Windows process's start time as stable text (UTC, ISO 8601, milliseconds); `windowsHide` keeps its console off the desktop.
  * `Win32_Process.CreationDate` answers for a service or an elevated process, whose `Get-Process` StartTime needs elevation.
  */
-export const startCommand = (pid: number, timeout = READ_MS) => ({
-	file: "powershell.exe",
-	args: ["-NoProfile", "-NonInteractive", "-Command", `$ErrorActionPreference='Stop'; (Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ', [cultureinfo]::InvariantCulture)`],
-	options: { encoding: "utf8" as const, timeout, windowsHide: true },
+export const startCommand = (pid: number, timeout = READ_MS, env: NodeJS.ProcessEnv = process.env) => ({
+	file: powershellPath(env),
+	args: [...POWERSHELL_FLAGS, "-Command", `${PROGRESS_OFF}; $ErrorActionPreference='Stop'; (Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ', [cultureinfo]::InvariantCulture)`],
+	// By absolute path and from System32: a bare name is looked for in the current folder first, which is a project (nodejs/node#46264).
+	options: { encoding: "utf8" as const, timeout, windowsHide: true, cwd: system32(env) },
 });
 const ISO_START = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
 type Launch = (file: string, args: string[], options: ReturnType<typeof startCommand>["options"], done: (error: Error | null, stdout: string) => void) => unknown;
 type Unrefable = { unref?: () => void };
 /** `execFile` whose child, pipes, and timeout timer never hold this process open: a read still pending when pi exits is dropped with it. */
-const spawnQuietly: Launch = (file, args, { timeout, ...options }, done) => {
+export const spawnQuietly: Launch = (file, args, { timeout, ...options }, done) => {
 	const child = execFile(file, args, options, (error, stdout) => done(error, String(stdout)));
 	const timer = setTimeout(() => child.kill(), timeout);
 	timer.unref();
@@ -34,7 +38,7 @@ const laterBy = (ms: number) => new Promise<void>((done) => setTimeout(done, ms)
  * a growing wait, because session start is when the machine is busiest); another PID's answer is kept for ten minutes, a failed one for 5 s, then 10 s, 20 s, up to 60 s
  * while it keeps failing (a PID that PowerShell cannot answer for is not asked every few seconds). A PID known to be dead is forgotten (`forget`).
  */
-export function createStartOf({ platform = process.platform, ps = (pid: number) => execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", timeout: 2000, stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, LC_ALL: "C", TZ: "UTC" } }), launch = spawnQuietly, now = Date.now, wait = laterBy } = {}) {
+export function createStartOf({ platform = process.platform, ps = (pid: number) => String(execFileSyncExe("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", timeout: 2000, stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, LC_ALL: "C", TZ: "UTC" } })), launch = spawnQuietly, now = Date.now, wait = laterBy } = {}) {
 	const known = new Map<number, { value: string | undefined; at: number; fails: number }>(), asking = new Map<number, Promise<string | undefined>>();
 	const valid = (pid: number) => Number.isSafeInteger(pid) && pid > 0;
 	const failedFor = (pid: number, fails: number) => (pid === process.pid ? MAX_FAIL_MS : Math.min(FIRST_FAIL_MS * 2 ** (fails - 1), MAX_FAIL_MS));
@@ -80,20 +84,57 @@ export function createStartOf({ platform = process.platform, ps = (pid: number) 
 			return undefined;
 		}
 	};
-	const startedLater = (pid: number): Promise<string | undefined> => {
+	const startedLater = (pid: number, { hold = true }: { hold?: boolean } = {}): Promise<string | undefined> => {
 		if (platform !== "win32") return Promise.resolve(startOf(pid));
 		const seen = fresh(pid);
-		return seen ? Promise.resolve(seen.value) : ask(pid);
+		if (seen) return Promise.resolve(seen.value);
+		const pending = ask(pid);
+		if (!hold) return pending;
+		// The read's child, pipes, and timers are unref'd, so a process that only awaits the answer would run out of work and end with its await unsettled (exit 13): a timer that
+		// is not unref'd stays until the answer is in.
+		const keep = setInterval(() => {}, 2 ** 30);
+		return pending.finally(() => clearInterval(keep));
+	};
+	const waiting = new Map<number, ((value: string) => void)[]>();
+	/** Remembers a start time that was read some other way (the server's ACL call tells it), so no second PowerShell start is made for it. */
+	const remember = (pid: number, value: string | undefined) => {
+		if (!valid(pid) || !value || !ISO_START.test(value)) return;
+		known.set(pid, { value, at: now(), fails: 0 });
+		for (const resolve of waiting.get(pid) ?? []) resolve(value);
+		waiting.delete(pid);
+	};
+	/**
+	 * `startedLater`, but a start time that is about to be told some other way is waited for first: a Windows start through the launch PowerShell reads the starter's own start time in its one
+	 * PowerShell start (`remember`), and asking for it here at once would be a second PowerShell start (VM pass 4, F2). Only when nothing tells it within `graceMs` is it asked for.
+	 * On macOS and Linux it is `ps`, at once.
+	 */
+	const startedOrWait = (pid: number, graceMs: number): Promise<string | undefined> => {
+		if (platform !== "win32") return Promise.resolve(startOf(pid));
+		const seen = fresh(pid);
+		if (seen) return Promise.resolve(seen.value);
+		return new Promise<string | undefined>((resolve) => {
+			const timer = setTimeout(() => void ask(pid).then(resolve), graceMs);
+			timer.unref();
+			const told = (value: string) => (clearTimeout(timer), resolve(value));
+			waiting.set(pid, [...(waiting.get(pid) ?? []), told]);
+		});
 	};
 	const forget = (pid: number) => void known.delete(pid);
-	return { startOf, startedLater, forget };
+	return { startOf, startedLater, startedOrWait, forget, remember };
 }
 const shared = createStartOf();
 /** When a process started; undefined when it cannot be told (yet, on Windows). A PID reused after a crash belongs to a process that started later. */
 export const startOf = shared.startOf;
-/** This process's, or another's, start time once it is known: for a record that was written before it was. */
+/**
+ * This process's, or another's, start time once it is known: for a record that was written before it was. The returned promise keeps the process alive until the answer is in
+ * (an `await` on it cannot end the process), unless `hold` is false, for a read made in the background that a leaving process may drop.
+ */
 export const startedLater = shared.startedLater;
+/** Remembers a start time read some other way, so it is not read again. */
+export const rememberStart = shared.remember;
+/** This process's (or another's) start time, waiting up to `graceMs` for `rememberStart` to tell it before it is read with a PowerShell start of its own. */
+export const startedOrWait = shared.startedOrWait;
 /** Drops what is cached for a PID that is seen dead, so a process that takes the number later is read afresh. */
 export const forgetStart = shared.forget;
 /** Starts reading this process's own start time in the background (Windows; `ps` is instant elsewhere), so the first record it writes already has it. */
-export const warmStart = () => void startedLater(process.pid);
+export const warmStart = () => void startedLater(process.pid, { hold: false });
