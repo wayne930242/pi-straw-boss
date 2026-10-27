@@ -47,8 +47,8 @@ export function eventText(e: Pick<Event, "kind" | "text" | "flag" | "from">): st
 	if (e.kind === "boss") return `[the boss writes to you from the GUI or /boss tower; this is an instruction]${flag}\n${e.text}`;
 	if (e.kind === "notice") return `[notice from the sb server]${flag}\n${e.text}`;
 	if (e.kind === "timer") return `[your wakeAfter follow-up is due]${flag}\n${e.text}`;
-	// Terminal escape sequences (7- and 8-bit, finished or not), controls, format characters (zero-width, bidi) and every opening or closing bracket (Unicode Ps/Pe) are removed; the cut counts code points.
-	const label = (v = "") => [...v.replace(/(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]?|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?/g, " ").replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").replace(/[\p{Cf}\p{Ps}\p{Pe}]/gu, "").replace(/\s+/g, " ").trim()].slice(0, 80).join("");
+	// An allowlist: terminal escape sequences (7- and 8-bit, finished or not) and controls become spaces, then only letters, digits, spaces and ._-@ are kept (NFC first, so accented letters stay whole); the cut counts code points.
+	const label = (v = "") => [...v.replace(/(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]?|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?/g, " ").replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").normalize("NFC").replace(/[^\p{L}\p{N}\s._@-]/gu, "").replace(/\s+/g, " ").trim()].slice(0, 80).join("");
 	const sender = e.from ? `${label(e.from.name) ? `${label(e.from.name)} ` : ""}(${label(e.from.id)})` : "an unknown sender";
 	return `[intercom from ${sender}]${flag}\n${e.text}`;
 }

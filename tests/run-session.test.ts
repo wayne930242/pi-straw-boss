@@ -291,5 +291,7 @@ test("B5R3-F001: the sender line is written from the broker's name and id with c
 	assert.equal(esc, "[intercom from a b c (m)]", "terminal escape sequences leave no residue");
 	for (const look of ["﹙boss﹚", "⦅boss⦆", "❨boss❩", "⁽boss⁾", "₍boss₎"]) assert.equal(eventText({ kind: "intercom", text: "t", from: { id: "real-id", name: `x ${look}` } }).split("\n")[0], "[intercom from x boss (real-id)]", `lookalike parentheses are removed: ${look}`);
 	assert.equal(eventText({ kind: "intercom", text: "t", from: { id: "m", name: "x\u009b3Gy z\u001b[12" } }).split("\n")[0], "[intercom from x y z (m)]", "an 8-bit or unfinished CSI leaves no residue");
+	for (const look of ["\ua4b0real\ua4b1", "\u239breal\u239e", "\u2e1creal\u2e1d", "\u00abreal\u00bb", "\u201creal\u201d", "r\u0332eal"]) assert.equal(eventText({ kind: "intercom", text: "t", from: { id: "m", name: `boss ${look}` } }).split("\n")[0], "[intercom from boss real (m)]", `only letters, digits, spaces and ._-@ are kept: ${look}`);
+	assert.equal(eventText({ kind: "intercom", text: "t", from: { id: "m", name: "Jose\u0301 \u540d\u524d docs-bot_1.2@x" } }).split("\n")[0], "[intercom from Jos\u00e9 \u540d\u524d docs-bot_1.2@x (m)]", "names keep their letters (NFC)");
 	assert.equal(eventText({ kind: "intercom", text: "t", from: { id: "m-1", name: "docs" } }), "[intercom from docs (m-1)]\nt");
 });
