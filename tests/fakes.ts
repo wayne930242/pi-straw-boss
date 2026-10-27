@@ -1,4 +1,4 @@
-import "./setup.ts"; // a run without --import ./tests/setup.ts is isolated too, as long as a world is built (setup.ts)
+import "./setup.ts"; // a run without --import ./tests/setup.ts is isolated too, once this module is imported (setup.ts)
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

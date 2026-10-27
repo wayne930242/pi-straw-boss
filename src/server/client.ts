@@ -13,7 +13,7 @@ import {
 	adoptStarting, clearStartError, clearStopped, endStarting, fileOf, type IntercomScope, type LockDeps, LockUnreadable, markStarting, prepareSlot, readRecord, recordFileId, secretDir, readStartError, restartingFresh, type ServerRecord,
 	type Slot, type StartError, takeLock, TOUCH_MS, touchRestarting, uidGate, updateRecord,
 } from "./record.ts";
-import { guarded, guardHome, guardSpawn, noteStarted } from "./testguard.ts";
+import { forgetStarted, guarded, guardHome, guardSpawn, noteStarted } from "./testguard.ts";
 import { fileIdentity, GateTimeout, ownerGate, resetFileAcl } from "./winprep.ts";
 import { callControl, helloWhy, type Reply } from "./socket.ts";
 
@@ -97,6 +97,7 @@ export const spawnDetached = (spec: SpawnSpec): Launched => {
 	const child = spawn(spec.command, spec.args, { ...spec.options, env: spec.env, cwd: spec.cwd });
 	child.unref();
 	noteStarted(child.pid);
+	child.once("exit", () => forgetStarted(child.pid));
 	return { pid: child.pid, exited: new Promise<number | null>((resolve) => (child.once("exit", (code) => resolve(code)), child.once("error", () => resolve(-1)))) };
 };
 

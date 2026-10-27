@@ -1,4 +1,4 @@
-import "./setup.ts"; // a run without --import ./tests/setup.ts is isolated too, as long as a world is built (setup.ts)
+import "./setup.ts"; // a run without --import ./tests/setup.ts is isolated too, once this module is imported (setup.ts)
 import { createServer as createNetServer } from "node:net";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -81,7 +81,8 @@ export class ServerWorld {
 	}
 	/** The server deps of a session whose look reaches this world: `ctx` (the requester of `ctx()` by default) and a fake cli, with its looks tracked for `close()`. */
 	server(ctx: Partial<Ctx> = {}, over: object = {}) {
-		return { ctx, cli: "/fake/cli.mjs", track: (done: Promise<unknown>) => void this.looks.push(done), ...over };
+		const { spawn, kill, prepare, alive, startOf, timers, platform, node } = this.ctx();
+		return { ctx: { spawn, kill, prepare, alive, startOf, timers, platform, node, ...ctx }, cli: "/fake/cli.mjs", track: (done: Promise<unknown>) => void this.looks.push(done), ...over };
 	}
 	/** A requester: its spawn starts a server in this process from "its package" (`version`). */
 	ctx(over: Partial<Ctx> = {}): Ctx {

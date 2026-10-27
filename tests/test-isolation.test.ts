@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { spawnDetached } from "../src/server/client.ts";
 import { guardHome, guardSpawn, inside, inTestRun, noteStarted, PIDS_DIR, stateDirFor, TEST_ROOT } from "../src/server/testguard.ts";
+import { startOf } from "../src/startof.ts";
 import { until, World } from "./fakes.ts";
-import { INHERITED, installIsolation, leftover, reap } from "./isolation.ts";
+import { goEnv, INHERITED, installIsolation, leftover, reap } from "./isolation.ts";
+import { ServerWorld } from "./server-world.ts";
 
 // A run of the tests never touches the developer's machine (tests/isolation.ts, src/server/testguard.ts): the home, the agent folder, and the Herdr socket are the run's own, no sb server starts
 // outside the run's root, and nothing the run starts is left running. The scenario at the end is the leak itself: a session of a test, with a screen and a real spawn, and a "real home" of its own.
@@ -48,7 +51,7 @@ test("installIsolation makes the root, points the environment into it, and scrub
 });
 
 test("the guard refuses a server whose folders are outside the run's root, one that would use the account's home, and a run that has no root; a real spawn needs SB_TEST_REAL_SERVER=1", () => {
-	const proc = { NODE_TEST_CONTEXT: "child-v8", [TEST_ROOT]: root }, real = { ...proc, SB_TEST_REAL_SERVER: "1" };
+	const proc = { [TEST_ROOT]: root }, real = { ...proc, SB_TEST_REAL_SERVER: "1" };
 	const inRoot = join(root, "h", ".pi", "agent"), spec = { cwd: join(inRoot, "straw-boss"), env: { PI_CODING_AGENT_DIR: inRoot } };
 	guardHome(spec, proc);
 	guardSpawn(spec, real);
@@ -58,7 +61,11 @@ test("the guard refuses a server whose folders are outside the run's root, one t
 	// An environment with no home: the server would get the account's.
 	assert.equal(stateDirFor({}, "linux"), join(userInfo().homedir, ".pi", "agent", "straw-boss"));
 	assert.throws(() => guardHome({ ...spec, env: {} }, proc), /state folder .* outside/);
-	assert.throws(() => guardHome(spec, { NODE_TEST_CONTEXT: "child-v8" }), /without tests\/setup\.ts/);
+	assert.throws(() => guardHome(spec, {}, ["node", "tests/x.test.ts"]), /without tests\/setup\.ts/);
+	// R-F001: a pi (or `cli.mjs`) started below a `node --test` process inherits NODE_TEST_CONTEXT, and is no test run.
+	assert.ok(!inTestRun({ NODE_TEST_CONTEXT: "child-v8" }, ["node", "/opt/pi/cli.js"]));
+	guardHome({ cwd: "/anywhere", env: {} }, { NODE_TEST_CONTEXT: "child-v8" }, ["node", "/opt/pi/cli.js"]);
+	guardSpawn({ cwd: "/anywhere", env: {} }, { NODE_TEST_CONTEXT: "child-v8" }, ["node", "/opt/pi/cli.js"]);
 	// Not a test run: nothing is checked.
 	guardSpawn({ cwd: "/anywhere", env: {} }, {}, ["node", "/usr/bin/cli.mjs"]);
 	assert.ok(inTestRun({}, ["node", "tests/x.test.ts"]), "a test file run by hand counts");
@@ -70,7 +77,7 @@ test("a server a test run starts is noted by pid, and reap kills what still runs
 	const child = spawn("sleep", ["60"], { detached: true, stdio: "ignore" });
 	child.unref();
 	cleanup.push(() => void child.kill("SIGKILL"));
-	noteStarted(child.pid, { NODE_TEST_CONTEXT: "x" }, []);
+	noteStarted(child.pid, {}, ["node", "cli.mjs"]);
 	assert.ok(!existsSync(join(dir, PIDS_DIR)), "no root: nothing is written");
 	noteStarted(child.pid, { [TEST_ROOT]: dir });
 	assert.deepEqual(leftover(dir), [child.pid]);
@@ -100,7 +107,7 @@ test("a process that leaves a noted server running fails when it ends, and the s
 	assert.throws(() => process.kill(pid, 0), "the server is gone");
 });
 
-test("the test script and the one-file script load the isolation, and the README and AGENTS.md say so", () => {
+test("the test script and the one-file script load the isolation, and AGENTS.md says so", () => {
 	const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { scripts: Record<string, string> };
 	assert.match(manifest.scripts.test!, /^node --import \.\/tests\/setup\.ts --test /);
 	assert.match(manifest.scripts["test:one"]!, /^node --import \.\/tests\/setup\.ts --test$/);
@@ -123,8 +130,8 @@ test("a session's look in a test run starts no server in a real home, whatever e
 	const a = world.agent({ id: "tower-wA", pane: "wA:p1", tab: "wA:t1", ui: true, env: { HOME: realHome, PI_CODING_AGENT_DIR: agentDir }, deps: { stateDir, adoptMs: 20, server: { track: (done) => void looks.push(done) } } });
 	await a.start();
 	try {
-		await until(() => a.notices.some((n) => /sb server could not start/.test(n.text)), "the look to be refused");
-		assert.match(a.notices.find((n) => /could not start/.test(n.text))!.text, /outside the run's temp root/);
+		await until(() => a.notices.some((n) => /sb server (could not start|was not looked at)/.test(n.text)), "the look to be refused");
+		assert.match(a.notices.find((n) => /could not start|was not looked at/.test(n.text))!.text, /outside the run's temp root/);
 		await Promise.allSettled(looks);
 		assert.deepEqual([existsSync(join(stateDir, "server.json")), existsSync(join(stateDir, "server.log")), existsSync(join(stateDir, "server.lock"))], [false, false, false], "nothing was written in the real home");
 		assert.deepEqual(leftover(root), []);
@@ -141,12 +148,67 @@ test("a session's look inside the root with the real spawn is refused too: a tes
 	const a = world.agent({ id: "tower-wA", pane: "wA:p1", tab: "wA:t1", ui: true, env: { HOME: process.env.HOME!, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR! }, deps: { adoptMs: 20, server: { track: (done) => void looks.push(done) } } });
 	await a.start();
 	try {
-		await until(() => a.notices.some((n) => /sb server could not start/.test(n.text)), "the look to be refused");
-		assert.match(a.notices.find((n) => /could not start/.test(n.text))!.text, /real detached process .* fake spawn/);
+		await until(() => a.notices.some((n) => /sb server (could not start|was not looked at)/.test(n.text)), "the look to be refused");
+		assert.match(a.notices.find((n) => /could not start|was not looked at/.test(n.text))!.text, /real detached process .* fake spawn/);
 		await Promise.allSettled(looks);
 		assert.deepEqual(leftover(root), []);
 	} finally {
 		await world.stopAll();
 		await Promise.allSettled(looks);
+	}
+});
+
+// R-F003: the pid list names a process by its start time too, and a process that ended is not listed.
+test("a noted pid is killed only while it is the process that was noted: its start time must match, a pid that ended is forgotten, and EPERM is not alive", async () => {
+	const dir = isolate(mkdtempSync(join(tmpdir(), "psb-iso-")));
+	const child = spawn("sleep", ["60"], { detached: true, stdio: "ignore" });
+	child.unref();
+	cleanup.push(() => void child.kill("SIGKILL"));
+	noteStarted(child.pid, { [TEST_ROOT]: dir });
+	const [by, start] = readFileSync(join(dir, PIDS_DIR, String(child.pid)), "utf8").split("\n");
+	assert.equal(by, String(process.pid));
+	assert.equal(start, startOf(child.pid!), "the start time is stored with the pid");
+	// The pid now belongs to another process (reused): same number, other start time.
+	writeFileSync(join(dir, PIDS_DIR, String(child.pid)), `${process.pid}\nsome other start\n`);
+	assert.deepEqual(leftover(dir), [], "not the noted process");
+	assert.deepEqual(reap(dir), []);
+	process.kill(child.pid!, 0); // and it was not killed
+	// pid 1 answers EPERM to a user process: another account's process is not a server this run started.
+	if (process.getuid?.() !== 0) {
+		writeFileSync(join(dir, PIDS_DIR, "1"), `${process.pid}\n\n`);
+		assert.deepEqual(leftover(dir).filter((pid) => pid === 1), []);
+	}
+});
+
+test("the real spawn forgets a pid when its process ends, so a reused pid is never killed", async () => {
+	const dir = isolate(mkdtempSync(join(tmpdir(), "psb-iso-")));
+	const env = process.env, before = { real: env.SB_TEST_REAL_SERVER };
+	env.SB_TEST_REAL_SERVER = "1";
+	cleanup.push(() => (before.real === undefined ? delete env.SB_TEST_REAL_SERVER : (env.SB_TEST_REAL_SERVER = before.real)));
+	const launched = spawnDetached({ command: process.execPath, args: ["-e", "0"], options: { stdio: "ignore" }, env: { ...env, HOME: join(root, "h"), PI_CODING_AGENT_DIR: join(root, "h", ".pi", "agent") }, cwd: join(root, "h") } as never);
+	assert.ok(existsSync(join(root, PIDS_DIR, String(launched.pid))), "noted at the start");
+	await launched.exited;
+	await until(() => !existsSync(join(root, PIDS_DIR, String(launched.pid))), "the entry to go with the process");
+	assert.deepEqual(leftover(root), []);
+});
+
+test("the go toolchain is run with the home the run started from, and the inherited-variable scrub clears SB_TEST_REAL_SERVER", () => {
+	const env: NodeJS.ProcessEnv = { HOME: "/Users/someone", PATH: "/usr/bin", SB_TEST_REAL_SERVER: "1" };
+	const made = installIsolation(env);
+	cleanup.push(() => rmSync(made.root, { recursive: true, force: true }));
+	assert.equal(env.SB_TEST_REAL_SERVER, undefined, "a shell that exported it does not open every real spawn");
+	assert.notEqual(env.HOME, "/Users/someone");
+	assert.equal(goEnv(env).HOME, "/Users/someone", "go writes its telemetry where it always did, not into the root that is removed at the end");
+	assert.equal(goEnv(env).PATH, "/usr/bin");
+	assert.ok(INHERITED.test("SB_TEST_REAL_SERVER"));
+});
+
+test("ServerWorld.server() gives a session the world's requester when no context is given", async () => {
+	const sw = new ServerWorld();
+	try {
+		const deps = sw.server() as { ctx: { spawn?: unknown } };
+		assert.equal(typeof deps.ctx.spawn, "function", "the world's fake spawn, not the real one the guard refuses");
+	} finally {
+		await sw.close();
 	}
 });

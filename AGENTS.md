@@ -4,7 +4,7 @@
 
 ## Tests
 
-- `npm test` runs the suite and `npm run test:one -- tests/x.test.ts` one file (not a bare `node --test`): both load `tests/setup.ts` first, which gives the run a temp root of its own for HOME, USERPROFILE, and the agent folder, drops the Herdr pane, intercom identity, and subagent role of the shell it runs from, and points `HERDR_SOCKET_PATH` at a path nobody listens on. Without it a session's look in a test could start a real detached sb server in `~/.pi/agent/straw-boss` and leave it running.
+- `npm test` runs the suite and `npm run test:one -- tests/x.test.ts` one file (not a bare `node --test`): both load `tests/setup.ts` first, which gives each test process (a test file runs in its own) a temp root of its own for HOME, USERPROFILE, and the agent folder, drops the Herdr pane, intercom identity, and subagent role of the shell it runs from, and points `HERDR_SOCKET_PATH` at a path nobody listens on. Without it a session's look in a test could start a real detached sb server in `~/.pi/agent/straw-boss` and leave it running.
 - A session of a test gets the fake spawn of `tests/server-world.ts` (`sw.ctx()`). `src/server/testguard.ts` refuses the real detached start in a test run unless `SB_TEST_REAL_SERVER=1` is set, and refuses any start whose working folder or state folder (the session's env, HOME or PI_CODING_AGENT_DIR) is outside the root. What it lets through is noted by pid; at the end of each test process the leftovers are killed and the process fails.
 - A test world that starts sessions with looks (`server-world.ts`) passes `sw.server(...)` as the session's `server` deps, so `close()` waits for the looks in flight before it removes the folder.
 
