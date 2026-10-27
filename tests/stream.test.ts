@@ -31,7 +31,7 @@ const net = (label: string): Net => ({ bases: [{ id: label, label, mark: "idle",
 
 /** A stream under a fake clock: timers fire only when the test advances time, and every connection is recorded. */
 function setup(random = 0.5) {
-	let at = 1_000_000, ids = 0, hidden = false;
+	let at = 1_000_000, ids = 0, hidden = false, looks = 0, answer: () => Promise<boolean> = () => Promise.resolve(false);
 	const timers = new Map<number, { due: number; run: () => void }>();
 	const sources: FakeSource[] = [], nets: string[] = [], statuses: Status[] = [];
 	const stream = createStream({
@@ -43,6 +43,7 @@ function setup(random = 0.5) {
 		hidden: () => hidden,
 		onNet: (n) => nets.push(n.bases[0]!.label),
 		onStatus: (s) => statuses.push(s),
+		replaced: () => (looks++, answer()),
 	});
 	const advance = (ms: number) => {
 		const end = at + ms;
@@ -55,7 +56,7 @@ function setup(random = 0.5) {
 		}
 		at = end;
 	};
-	return { stream, sources, nets, statuses, timers, advance, now: () => at, hide: (value: boolean) => (hidden = value), state: () => statuses.at(-1)! };
+	return { stream, sources, nets, statuses, timers, advance, now: () => at, hide: (value: boolean) => (hidden = value), looks: () => looks, answers: (f: () => Promise<boolean>) => (answer = f), state: () => statuses.at(-1)! };
 }
 
 test("a snapshot makes the stream live, records when the server was last heard, and a ping keeps it live", () => {
@@ -252,4 +253,29 @@ test("a failed first attempt after a restart still backs off like any other", ()
 	s.advance(2000);
 	assert.equal(s.sources.length, 3);
 	s.stream.stop();
+});
+
+test("a stream error looks at the page's address once: a refusal (403) ends the retries as `replaced`, a 503 or a network error stays reconnecting", async () => {
+	const w = setup();
+	w.answers(() => Promise.resolve(true));
+	w.stream.start();
+	w.sources[0]!.error();
+	await Promise.resolve();
+	await Promise.resolve();
+	assert.equal(w.looks(), 1);
+	assert.equal(w.state().state, "replaced");
+	const opened = w.sources.length;
+	w.advance(MAX_MS * 2);
+	w.stream.resume();
+	assert.equal(w.sources.length, opened, "nothing reconnects an address the server refuses");
+
+	const other = setup();
+	other.answers(() => Promise.reject(new Error("network")));
+	other.stream.start();
+	other.sources[0]!.error();
+	await Promise.resolve();
+	await Promise.resolve();
+	assert.equal(other.state().state, "reconnecting");
+	other.advance(2000);
+	assert.equal(other.sources.length, 2, "the retry still runs");
 });

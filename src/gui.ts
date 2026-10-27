@@ -42,6 +42,8 @@ const HEADERS = {
 	"content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; media-src 'self'; manifest-src 'self'; connect-src 'self'; frame-src 'self'; base-uri 'self'; frame-ancestors 'none'",
 };
 
+/** What a page at a dead address says: the same words as the open page's banner. */
+const REPLACED = "This address no longer works (the sb server restarted): on this computer open /boss gui; on a phone scan a new QR code.";
 export interface Gui { url: string; port: number; remotePort: number; token: string; csrf: string; access: Access; stop(): Promise<void> }
 /** `net` is the registry behind the net reading (the allow list of session keys); without it no session can be watched. `call` reaches Herdr for input. */
 /** `hub` carries answers to the dialogs bridges relay (dialogs.ts); it runs exactly as long as the server. */
@@ -165,7 +167,8 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 		const answer = ({ status, body }: Reply) => res.writeHead(status, { ...HEADERS, "content-type": TYPES[".json"] }).end(JSON.stringify(body));
 		const who = access.check(req, kind, (own().address() as AddressInfo).port, given, path);
 		if ("status" in who) {
-			if (who.status === 403) return void fail(403);
+			// A page load at a dead address (the token was replaced by a restart) says so, without a secret in it; a script's request gets the plain refusal.
+			if (who.status === 403) return void (req.method === "GET" && req.headers["sec-fetch-dest"] === "document" ? res.writeHead(403, { ...HEADERS, "content-type": TYPES[".html"] }).end(`<!doctype html><meta charset="utf-8"><p>${REPLACED}</p>`) : fail(403));
 			// The SameSite=Strict cookie stays behind on a navigation from another site, and Android counts launching the installed app as one: such a
 			// page load reloads itself once, a same-origin navigation that carries the cookie when this device has one. Sec-Fetch-Site decides, so the
 			// reload never loops, and a browser that sends no Sec-Fetch-Site gets the plain refusal.

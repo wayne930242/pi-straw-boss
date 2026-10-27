@@ -363,7 +363,8 @@ test("every kind of restart keeps the gui port the old server ran and gives it a
 		const { port, token } = world.record()!.gui!;
 		assert.ok(port > 0 && token, "the server serves the page from its start");
 		const done = await restart(world.ctx({ version: "0.44.0" }), how);
-		assert.equal(done.record.gui?.port, port, how.reason); // `stopped` is written when the new GUI binds, which may be just after hello
+		assert.equal(done.record.gui?.port, port, how.reason);
+		assert.deepEqual(done.record.gui, world.record()?.gui, `${how.reason}: the record restart returns is the ready server's own, read again after its hello (R-F002)`);
 		assert.match(String(done.record.gui?.token), /^[0-9a-f]{32}$/, how.reason);
 		assert.notEqual(done.record.gui?.token, token, `${how.reason}: every listener has a token of its own`);
 		assert.equal(done.server, "upgrade" in how ? "upgraded" : "restarted");

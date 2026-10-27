@@ -101,3 +101,8 @@ export const startBounded = (pid: number, waitMs = START_WAIT_MS, later: NonNull
  * and nothing is sent: another account's process may hold the port a crashed server left (RC2-F001). `read` is where the start time comes from; the callers pass the session's own (`cfg.startRead`), which is the process's cache by default.
  */
 export const answersLive = async (r: GuiRecord, { later, waitMs }: StartRead = {}): Promise<boolean> => Boolean(r.started) && alive(r.pid) && (await startBounded(r.pid, waitMs, later)) === r.started && answers(r);
+/** The page's URL the dashboard shows: a recorded GUI that was not stopped on purpose and is shown to be that process's, answering. A stopped record takes no request (it carries the live server's pid, and its port may be someone else's now). */
+export const liveUrl = async (dir: string, read?: StartRead): Promise<string | undefined> => {
+	const r = readRecord(dir);
+	return r && !r.stopped && (await answersLive(r, read)) ? urlOf(r) : undefined;
+};

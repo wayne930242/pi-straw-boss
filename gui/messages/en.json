@@ -34,6 +34,7 @@
 	"age_h": "{n}h",
 	"age_d": "{n}d",
 	"banner_offline": "Disconnected. Gave up after {tries} tries; it reconnects when you return to this tab.",
+	"banner_replaced": "This address no longer works (the sb server restarted): on this computer open /boss gui; on a phone scan a new QR code.",
 	"banner_reconnecting": "Disconnected from the straw net. Reconnecting… The view shows the last known state.",
 	"banner_reconnecting_try": "Disconnected from the straw net. Reconnecting (try {attempt})… The view shows the last known state.",
 	"banner_problem": "The server is up but cannot read the net: {problem}",

@@ -301,7 +301,7 @@ export async function waitReady(ctx: Ctx, ms: number, { old, keeps = old, exited
 	void exited?.then((code) => (gone = code));
 	for (;;) {
 		const found = await probe(ctx, end, pidUnknown?.() === true);
-		if (found.live && found.hello?.ready === true && found.record && found.record.pid !== old?.pid) return found.record;
+		if (found.live && found.hello?.ready === true && found.record && found.record.pid !== old?.pid) return [readRecord(ctx.slot)].find((again) => again?.pid === found.record!.pid) ?? found.record; // read again: the one before the hello may predate the GUI token (R-F002)
 		// A child that exited is told once the probe has had a last look at the record it may have written.
 		if (gone !== undefined) return { exit: gone };
 		if (ctx.now() >= end) return undefined;

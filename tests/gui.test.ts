@@ -36,9 +36,9 @@ async function serve(read: () => Promise<Net>, options: { pollMs?: number; idleM
 	return gui;
 }
 /** One raw request, so the Host header and method can be chosen. */
-const raw = (gui: Gui, path: string, options: { host?: string; method?: string } = {}) =>
+const raw = (gui: Gui, path: string, options: { host?: string; method?: string; headers?: Record<string, string> } = {}) =>
 	new Promise<{ status: number; headers: IncomingMessage["headers"]; body: string }>((resolve, reject) => {
-		const req = request({ host: "127.0.0.1", port: gui.port, path, method: options.method ?? "GET", headers: { host: options.host ?? `127.0.0.1:${gui.port}` }, agent: false }, (res) => {
+		const req = request({ host: "127.0.0.1", port: gui.port, path, method: options.method ?? "GET", headers: { host: options.host ?? `127.0.0.1:${gui.port}`, ...options.headers }, agent: false }, (res) => {
 			let body = "";
 			res.on("data", (chunk) => (body += chunk)).on("end", () => resolve({ status: res.statusCode!, headers: res.headers, body }));
 		});
@@ -236,6 +236,18 @@ test("stop ends open streams and frees the port, and a start on the same port is
 	assert.notEqual(again.csrf, gui.csrf);
 	assert.equal((await raw(again, `/${again.token}/`)).status, 200);
 	assert.equal((await raw(again, `/${gui.token}/`)).status, 403, "the earlier token opens nothing");
+});
+
+test("a page load at a replaced address gets a short HTML 403 that says so and holds no secret; any other request gets the plain refusal", async () => {
+	const gui = await serve(async () => net("a"));
+	const dead = `/${"0".repeat(gui.token.length)}/`;
+	const page = await raw(gui, dead, { headers: { "sec-fetch-dest": "document" } });
+	assert.equal(page.status, 403);
+	assert.match(String(page.headers["content-type"]), /text\/html/);
+	assert.match(page.body, /This address no longer works .* open \/boss gui; .* scan a new QR code/);
+	assert.ok(!page.body.includes(gui.token) && !page.body.includes(gui.csrf));
+	const script = await raw(gui, dead, { headers: { "sec-fetch-dest": "empty" } });
+	assert.deepEqual([script.status, script.body], [403, "forbidden"]);
 });
 
 test("a taken preferred port falls back to a free one", async () => {

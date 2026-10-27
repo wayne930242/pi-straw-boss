@@ -5,7 +5,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { answersLive, writeRecordFile, type GuiRecord } from "../src/handover.ts";
+import { answersLive, liveUrl, writeRecordFile, type GuiRecord } from "../src/handover.ts";
 import { TOWER_LABEL } from "../src/herdr.ts";
 import { createStartOf } from "../src/startof.ts";
 import { guiUp, registerTrust, warmServerStart } from "../src/trust/ask.ts";
@@ -239,4 +239,12 @@ test("sbir7-F001: with the export surfaces of pi 0.78.1, 0.79.0, 0.79.1 the load
 			assert.match(out.stdout, surface === "pi-0.79.1.mjs" ? /^OK reads=[01] decision=undecided/ : /^OK reads=0 decision=undecided/, `${surface}: ${out.stdout}${out.stderr}`);
 		}
 	}
+});
+
+test("the dashboard's GUI line skips a GUI stopped on purpose and sends nothing to its port", async () => {
+	const { seen, port } = await squatter();
+	const cold = counted(10);
+	assert.equal(await liveUrl(stateWith(port, { stopped: true }), { later: cold.startedLater, waitMs: 3000 }), undefined);
+	assert.deepEqual([cold.reads.length, seen], [0, []]);
+	assert.equal(await liveUrl(stateWith(port), { later: cold.startedLater, waitMs: 3000 }), `http://127.0.0.1:${port}/secret-token/`);
 });

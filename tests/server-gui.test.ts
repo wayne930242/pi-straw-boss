@@ -236,6 +236,21 @@ test("RC3-F002: a restart with remote on re-points the serve entry at the new li
 	assert.equal(await remote(new URL(link).pathname), 200, "the new link pairs");
 });
 
+test("R-F004: a restart that gives the GUI a new token unpairs the devices of the old one (identity and the wish stay), and logs how many", async () => {
+	const ts = fakeTailscale();
+	const h = await host({ tailscale: ts.run });
+	await h.ask("gui-remote", { on: true });
+	const link = new URL(String((await h.ask("gui-pair")).url));
+	const first = await new Promise<number>((resolve, reject) => void get({ host: "127.0.0.1", port: h.gui().remotePort, path: link.pathname, agent: false, headers: { host: "box.tail1.ts.net:8443", "tailscale-user-login": "me@example.com", "x-forwarded-for": "100.87.7.97", "user-agent": "Mozilla/5.0 (iPhone)" } }, (res) => (res.resume(), resolve(res.statusCode!))).on("error", reject));
+	assert.equal(first, 200);
+	const paired = (x: Hosted) => Object.keys((JSON.parse(readFileSync(join(x.slot.dir, "paired.json"), "utf8")) as { devices: object }).devices).length;
+	assert.equal(paired(h), 1, "one device paired");
+	const next = await restart(h, { tailscale: ts.run });
+	assert.equal(paired(next), 0, "the old pairing is dead with the old token, so it is not kept");
+	assert.equal(((await next.ask("status")).gui as { remote: { wanted: boolean } }).remote.wanted, true, "the wish stays");
+	assert.match(readFileSync(fileOf(next.slot, "log"), "utf8"), /devices-cleared n=1/);
+});
+
 test("remote access that cannot resume says why in the server's status and leaves the wish; another Tailscale identity leaves it off and keeps the old devices' wish", async () => {
 	const ts = fakeTailscale();
 	const h = await host({ tailscale: ts.run });
