@@ -22,7 +22,7 @@ export function installIsolation(env: NodeJS.ProcessEnv = process.env, platform:
 	const home = env.HOME ?? homedir(), relay = join(home, "projects", "straw-relay");
 	if (!env.STRAW_RELAY_DIR && existsSync(join(relay, ".git"))) env.STRAW_RELAY_DIR = relay;
 	if (!env.GOCACHE && !env.GOMODCACHE && !env.GOPATH) {
-		const go = spawnSync("go", ["env", "GOCACHE", "GOMODCACHE", "GOPATH"], { encoding: "utf8", timeout: 10_000 });
+		const go = spawnSync("go", ["env", "GOCACHE", "GOMODCACHE", "GOPATH"], { encoding: "utf8", timeout: 10_000, env: { ...process.env, HOME: home } });
 		const [cache, mods, path] = go.status === 0 ? go.stdout.split("\n") : [];
 		if (cache && mods && path) Object.assign(env, { GOCACHE: cache, GOMODCACHE: mods, GOPATH: path });
 	}
