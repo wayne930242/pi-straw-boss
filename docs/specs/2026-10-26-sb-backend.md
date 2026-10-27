@@ -1411,6 +1411,10 @@ removed, with the release that carries B6.
    - `boss_server` over the run tokens (B1 has none, so its block is a session-level hook only): the server itself refuses `restart`,
      `status`, and `logs` for an ally-run token and enforces the one-a-minute restart limit server-side (today it is checked under the
      lock by the requester); `boss_server` is registered in local runs over the socket and never in ally runs.
+   - From the B4 review, what B5 and B6 must do: gate `open-main`, `close-main`, and `close-tower` by the run token (refuse ally runs: today
+     only the hello secret guards them, and `open-main`'s `sender` is unauthenticated); an owner check before a live-looking record is trusted
+     (R13-F003), which must land before tower-tool content is sent; and read the B4 queue with its backlog in mind: B4 writes no `seen.jsonl`, the
+     retry suffix (`~r<n>`) is not stripped from the message ids it wrote, and events may be a day old (at most 1000 per workspace are kept).
    - Link messages are not routed yet: with the flag on, they wait in `link/inbox/` with the GUI notice "a Straw Link message waits; ally
      runs come with the next step" until B6.
 6. **B6, ally runs (behind `towerRuns.enabled`).**

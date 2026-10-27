@@ -130,6 +130,8 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 	};
 	const api = {
 		look,
+		/** The context a request to the server is made in: this session's package, name, and environment (reach.ts asks for a tower with it). */
+		ctx: ctxFor,
 		/** `boss_server status`: works with the server down, from the files. */
 		async status() {
 			return describe(ctxFor());

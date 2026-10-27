@@ -33,7 +33,7 @@ export function registerBoss({ pi, cfg, s, tell }: Kit, { host, membership, reac
 				if (s.isTower) throw new Error("This session is the tower, not a main agent");
 				if (args.trim() !== "tower") return tell((await membership.promote(true)).text);
 				await membership.joinNet();
-				const tower = await reach.openTower(undefined, true); // anyone may open the tower by hand
+				const tower = await reach.openTower(undefined, true, true); // anyone may open the tower by hand; the boss's own command also starts a server that was stopped on purpose
 				const where = (await s.c.listSessions()).find((x) => x.id === tower.id)?.herdrLocation;
 				if (where?.tab) await cfg.run(["tab", "focus", where.tab.id]);
 			} catch (error) {

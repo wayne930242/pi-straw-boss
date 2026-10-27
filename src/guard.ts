@@ -1,4 +1,5 @@
 import { panes, workspaces } from "./herdr.ts";
+import { FRESH_MS, readRecord, restartingFresh, slotOf, towerId } from "./server/record.ts";
 import type { Election } from "./election.ts";
 import type { Reach } from "./reach.ts";
 import type { Roles } from "./roles.ts";
@@ -8,11 +9,13 @@ import type { Kit } from "./state.ts";
 // long a tower may be gone (a /reload) before the mains are cleared, and how long a fresh main's tower may take to open.
 export const GUARD_MS = 4 * 60_000;
 const TOWER_GRACE_MS = 15_000, TOWER_OPEN_MS = 60_000;
+/** A tower identity of the sb server counts as live through a restart of the server that is under way, for this long from the restart's beginning (docs/specs/2026-10-26-sb-backend.md, Restarts and upgrades). */
+const RESTART_COVER_MS = 30_000;
 // How long the guard leaves a tab without a main for the one a Herdr restore is bringing back (roles.ts), before it crowns whoever is there.
 export const RESTORE_WAIT_MS = 30_000;
 
 /** The tab channel owner's check that a base has mains only while it has a tower. */
-export function createGuard({ cfg, s, me }: Kit, { claim, pin, openTower, roles }: Election & Pick<Reach, "openTower"> & { roles: Roles }) {
+export function createGuard({ cfg, s, me, guiDir }: Kit, { claim, pin, openTower, roles }: Election & Pick<Reach, "openTower"> & { roles: Roles }) {
 	const { run, autoTower, couple, guardMs, events, now, restoreMs } = cfg;
 	// A base has mains only while it has a tower. The owner of each tab channel, its earliest member, checks when Herdr says a workspace's tokens
 	// or this workspace's panes changed, and every guardMs: with a live tower and no live main it promotes itself; with no tower for
@@ -44,8 +47,18 @@ export function createGuard({ cfg, s, me }: Kit, { claim, pin, openTower, roles 
 		if (!s.joined || s.isTower || s.stopped || (!owner && !joining)) return void (missing = undefined);
 		const sessions = await s.c.listSessions(), all = await workspaces(run), ws = all.find((w) => w.workspace_id === s.at.workspaceId);
 		const live = (id?: string) => Boolean(id && sessions.some((x) => x.id === id));
+		// The sb server restarting (an upgrade, a restart) has its tower identities off the broker for a moment. The workspace's own slot's identity counts as live while the slot's server.json
+		// has a fresh `restarting` that began less than 30 s ago, so a slow restart demotes no main; a longer one falls back to the grace below. Only this Herdr's server counts.
+		const covered = (id?: string) => {
+			if (!id || !ws || id !== towerId(slotOf(cfg.stateDir ?? guiDir, cfg.env), ws.workspace_id)) return false;
+			const restarting = readRecord(slotOf(cfg.stateDir ?? guiDir, cfg.env))?.restarting, began = restarting ? Date.parse(restarting.began) : NaN;
+			if (!restartingFresh({ restarting }, now()) || !(now() - began < RESTART_COVER_MS)) return false;
+			wake(Math.min(Date.parse(restarting!.since) + FRESH_MS, began + RESTART_COVER_MS) + 100);
+			return true;
+		};
+		const towerLive = (id?: string) => live(id) || covered(id);
 		const state = s.c.snapshot().state?.payload as { main?: string; since?: number } | undefined, main = s.pinned ?? state?.main;
-		if (live(ws?.tokens?.tower)) {
+		if (towerLive(ws?.tokens?.tower)) {
 			missing = undefined;
 			if (owner && !live(main)) {
 				// Whoever joins a restored tab first would be crowned over the main the restore is bringing back.

@@ -27,7 +27,14 @@ export interface OpenerEnv {
 	tower(): { id: string; name: string };
 	/** <state>/trust: a trust question the new pi waits on (trust/ask.ts) stops the wait counting, and ten minutes without an answer fail the opening. */
 	trustDir?: string;
+	/**
+	 * The sb server keeps the ledger of a workspace on disk (docs/specs/2026-10-26-sb-backend.md, State), so a request already tried is not tried again after the server restarts:
+	 * `entries` are the outcomes of the last 24 h, and `put` records one as it ends. Without it (a tower session) the ledger lives for the session.
+	 */
+	ledger?: { entries(): LedgerRow[]; put(row: LedgerRow): void };
 }
+/** A request's outcome as the ledger keeps it: the key is the hash of the sender and the request. */
+export interface LedgerRow { key: string; sender: string; outcome: "opened" | "failed"; at: number; opened?: Opened; error?: string }
 export interface OpenRequest { request: string; sender: string; label?: string }
 export interface Opened { tab: string; pane: string; main: string; sender: string; repeated?: true }
 
@@ -48,6 +55,11 @@ export const handoff = (workspace: string, sender: Session, request: string, tow
  */
 export function opener(env: OpenerEnv) {
 	const seen = new Map<string, Promise<Opened>>();
+	for (const row of env.ledger?.entries() ?? []) {
+		const prior = row.outcome === "opened" && row.opened ? Promise.resolve(row.opened) : Promise.reject(new Error(row.error ?? "the earlier attempt failed"));
+		prior.catch(() => {});
+		seen.set(row.key, prior);
+	}
 	const open = async ({ request, sender: asked, label }: OpenRequest): Promise<Opened> => {
 		const { run, sleep } = env;
 		const sessions = await env.sessions();
@@ -93,7 +105,12 @@ export function opener(env: OpenerEnv) {
 		const pending = queue.then(() => open(input), () => open(input));
 		queue = pending.catch(() => {});
 		seen.set(key, pending);
-		pending.catch((error) => (error instanceof OpenLimitError || error instanceof SettingsRefused) && seen.get(key) === pending && seen.delete(key));
+		// A refused request (a limit, or a folder pi must not start in) created nothing and may be asked again; every other outcome stays in the ledger.
+		const row = (outcome: LedgerRow["outcome"], more: Pick<LedgerRow, "opened" | "error">): LedgerRow => ({ key, sender: input.sender, outcome, at: Date.now(), ...more });
+		pending.then((opened) => env.ledger?.put(row("opened", { opened })), (error: Error) => {
+			if (error instanceof OpenLimitError || error instanceof SettingsRefused) return seen.get(key) === pending && seen.delete(key);
+			env.ledger?.put(row("failed", { error: error.message.slice(0, 300) }));
+		}).catch(() => {});
 		return pending;
 	};
 }

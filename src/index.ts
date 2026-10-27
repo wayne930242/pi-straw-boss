@@ -53,16 +53,16 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		interceptUi(pi); // any extension's select and confirm reach the same bridge, subagents included
 		if (env.PI_SUBAGENT_ID) return;
 		warmStart(); // Windows tells a process's start time through PowerShell, 2 to 3 s: read this one's now, in the background, so the records written later carry it
-		const link = createLink(kit), briefing = createBriefing(kit), roles = createRoles(kit), reach = createReach(kit), election = createElection(kit), presence = createPresence(kit), digest = createDigest(run, now);
+		const link = createLink(kit), briefing = createBriefing(kit), roles = createRoles(kit), look = cfg.server ? createServerLook(kit, cfg.server) : undefined, reach = createReach(kit, look), election = createElection(kit), presence = createPresence(kit), digest = createDigest(run, now);
 		const guard = createGuard(kit, { ...election, openTower: reach.openTower, roles });
 		// A join adds the tools of a joined session, and the tools promote through the membership: each is built with the other's hook.
 		const membership = createMembership(kit, { presence, election, guard, briefing, roles, openTower: reach.openTower, register: () => (tools.addNetTools(), tools.addPromote()), control: () => control });
-		const look = cfg.server ? createServerLook(kit, cfg.server) : undefined; // starts and upgrades the sb server (src/server/); a session that is no part of that has none
+		// `look` (above) starts and upgrades the sb server (src/server/) and is the way to it; a session that is no part of that has none.
 		const tools = createTools(kit, { ...reach, promote: membership.promote, digest, closeMain: (query) => control.closeMain(query), link, server: look });
 		const host = createHost(kit, { connected: membership.connected, ask: cfg.ask ?? look?.ask });
 		closeSelf = createClosing(kit);
 		const control = createCloseMain(kit, { closeSelf, check: bridge.stashCheck });
-		registerSession(kit, { briefing, roles, presence, membership, guard, host, reach, digest, control, startTower: createTower(kit, { membership, presence, tools, control, digest, roles }) });
+		registerSession(kit, { briefing, roles, presence, membership, guard, host, reach, digest, control, startTower: createTower(kit, { membership, presence, tools, control, digest, roles, reach }) });
 		registerBoss(kit, { host, membership, reach, closeSelf, stashing: createStashing(kit, { host }), server: look });
 	};
 }

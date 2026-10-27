@@ -109,7 +109,7 @@ test("the walk finds a banned package behind a chain of relative imports, and no
 
 // The data module is what the server loads from the dashboard; net.ts, ask.ts, and reach.ts are the modules that read it. guihost.ts is the GUI host that moved into the server (it
 // replaces host.ts's server half), main.ts and cli.ts are the server's entries, and guiport.ts is the GUI's way to the link holder: nothing they load imports tools.ts, pairing.ts, or trust/ask.ts.
-for (const entry of ["src/netdata.ts", "src/net.ts", "src/ask.ts", "src/reach.ts", "src/server/guihost.ts", "src/server/main.ts", "src/server/cli.ts", "src/link/guiport.ts"]) {
+for (const entry of ["src/netdata.ts", "src/net.ts", "src/ask.ts", "src/reach.ts", "src/server/guihost.ts", "src/server/main.ts", "src/server/cli.ts", "src/link/guiport.ts", "src/server/towers.ts", "src/server/towerclient.ts"]) {
 	test(`${entry} reaches no value import of pi-tui, typebox, or pi-coding-agent`, () => {
 		assert.deepEqual(bannedFrom(entry), []);
 	});

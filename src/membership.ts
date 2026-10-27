@@ -3,7 +3,7 @@ import type { Election } from "./election.ts";
 import type { Guard } from "./guard.ts";
 import { place, waitFor, workspaces } from "./herdr.ts";
 import type { Presence } from "./presence.ts";
-import { nameOf, type Reach } from "./reach.ts";
+import { nameOf, type Reach, STOPPED } from "./reach.ts";
 import type { Roles } from "./roles.ts";
 import { type Channel, ENTRY, type Kit, REGISTER } from "./state.ts";
 
@@ -79,7 +79,7 @@ export function createMembership({ pi, cfg, s, me, tell }: Kit, { presence, elec
 				if (s.restored) await adoptOpener(); // the late confirmation of a claim that timed out
 				// The workspace's first main opens the tower at once; later mains find it open. A main a Herdr restore gave back finds its tower coming back too.
 				if (s.restored) s.restored = false;
-				else if (autoTower) void openTower(undefined, true).catch((error: Error) => tell(`Straw Boss: could not open the tower: ${error.message}`, "warning"));
+				else if (autoTower) void openTower(undefined, true).catch((error: Error) => error.message !== STOPPED && tell(`Straw Boss: could not open the tower: ${error.message}`, "warning"));
 			}
 		} catch (error) {
 			tell(`Straw Boss: ${(error as Error).message}`, "warning");
