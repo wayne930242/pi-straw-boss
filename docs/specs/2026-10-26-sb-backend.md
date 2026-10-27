@@ -195,7 +195,7 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
   - `stopped` (set only by a stop on purpose) and `restarting: { began, since, reason, by }` (**Restarts and upgrades**): `began` is
     when the restart or start began and never changes, `since` is touched every 2 s while it is under way, and a touch keeps `reason`
     and `by`;
-  - `lastError: { at, code, text }`, the last failure the server recorded (**Seeing and restarting the server**), and `log`, the log's
+  - `lastError: { at, code, text }`, the last failure the server recorded (**Seeing and restarting the server**; a restart carries the one before it over only until the new server is ready), and `log`, the log's
     path;
   - `socket` (the control socket's path or pipe name), `secret` (the connection secret, **The control socket**), and `intercomId` (the
     server's own intercom session, `sb-server-<8 hex>`).

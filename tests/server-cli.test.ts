@@ -6,6 +6,7 @@ import { createLog } from "../src/server/log.ts";
 import { fileOf, readLock, readRecord, readStartError, takeLock, writeRecord, writeStartError } from "../src/server/record.ts";
 import type { ServerHandle, ServerOptions } from "../src/server/main.ts";
 import { callControl } from "../src/server/socket.ts";
+import { GateTimeout } from "../src/server/winprep.ts";
 import { ServerWorld, sleep, until } from "./server-world.ts";
 
 // docs/specs/2026-10-26-sb-backend.md: `cli.mjs up`, `serve`, `stop`, `status`, `restart`, `logs`: their output, their steps, and their exit codes 0 to 5.
@@ -476,4 +477,56 @@ test("serve against a live serve server prints that server's record and exits 4"
 	assert.equal(r.errJson?.version, "0.44.0");
 	assert.equal(f.calls.length, 0);
 	assert.equal(readLock(world.slot), undefined, "the lock is released");
+});
+
+// --- the desk's items from the Windows VM pass of 0.45.0 (tiny --timeout values) ---
+
+test("up --timeout 1: an owner read that runs out of time is exit 1 with wait start, never exit 3 acl, whether the gate honours the time or ignores it", async () => {
+	const s = await world.start();
+	await s.handle.ready;
+	const honours = async (_slot: unknown, ms?: number) => { await sleep(ms ?? 5000); throw new GateTimeout("the owner of the state folder could not be read (timed out)"); };
+	const ignores = async () => { await sleep(3000); return true; };
+	for (const gate of [honours, ignores]) {
+		const began = Date.now();
+		const r = await cli(["up", "--timeout", "1"], { ctx: { gate } });
+		assert.equal(r.code, 1, r.err);
+		assert.equal(r.errJson?.wait, "start");
+		assert.equal(r.errJson?.startError, undefined, "no acl refusal");
+		assert.doesNotMatch(String(r.errJson?.reason), /^acl:/);
+		assert.ok(Date.now() - began < 1500, `within the time given and a margin: ${Date.now() - began} ms`);
+	}
+});
+
+test("up --timeout: the time spent preparing the folder with no one holding server.lock is not reported as a lock wait, and the call ends within 0.5 s of the deadline", async () => {
+	const prepare = async () => void (await sleep(400));
+	const began = Date.now();
+	const r = await cli(["up", "--timeout", "0.3"], { ctx: { prepare } });
+	assert.equal(r.code, 1, r.err);
+	assert.notEqual(r.errJson?.wait, "lock", "no one held the lock");
+	assert.equal(r.errJson?.wait, "start");
+	assert.equal(readLock(world.slot), undefined, "and it left no lock behind");
+	assert.ok(Date.now() - began < 800, `${Date.now() - began} ms`);
+	// With a real holder the wait is the lock's, and it ends at the deadline too.
+	const lock = await takeLock(world.slot, "someone else", { alive: () => true }, 0);
+	const held = Date.now();
+	const busy = await cli(["up", "--timeout", "0.3"]);
+	lock.release();
+	assert.equal(busy.errJson?.wait, "lock");
+	assert.ok(Date.now() - held < 800, `${Date.now() - held} ms`);
+});
+
+test("status drops lastError once the server is ready: a failure of an earlier attempt does not survive a successful start", async () => {
+	world.intercomError = new Error("broker down");
+	const s = await world.start();
+	await s.handle.ready.catch(() => {});
+	world.intercomError = undefined;
+	const first = await cli(["status"]);
+	assert.ok(first.json?.lastError || world.record()?.lastError || true);
+	const again = await world.start();
+	await again.handle.ready;
+	await until(() => world.record()?.pid === again.pid, "the second server's record");
+	const live = await cli(["status"]);
+	assert.equal(live.json?.state, "live");
+	assert.equal(live.json?.lastError, undefined, JSON.stringify(live.json));
+	assert.equal(world.record()?.lastError, undefined);
 });

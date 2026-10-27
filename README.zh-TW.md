@@ -50,7 +50,7 @@ pi install npm:pi-straw-boss
 ### 需求
 
 - pi 要跑在 [Herdr](https://herdr.dev) 0.9.4 以上。
-- [pi-intercom](https://www.npmjs.com/package/pi-intercom) 0.17.1 以上：網的頻道、訊息，以及 GUI 轉送對話框，都是透過它。
+- [pi-intercom](https://www.npmjs.com/package/pi-intercom) 0.18.1 以上：網的頻道、訊息，以及 GUI 轉送對話框，都是透過它，sb server 的連線也是；版本較舊或沒裝時，sb server 起不來（`start-error.json` 與 `boss_server status` 會說明）。
 - Windows 支援是實驗性的：擴充套件在 Windows 上透過 Herdr 的 named pipe 連線，側邊欄 plugin 用 `PATH` 上的 `node` 執行，worktree reaper 則只支援 macOS 和 Linux（[差異在哪](docs/how-it-works.md#windows)，英文）。
 
 ### 支援的套件

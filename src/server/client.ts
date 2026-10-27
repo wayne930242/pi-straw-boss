@@ -231,10 +231,18 @@ export async function trusted(ctx: Ctx, deadline?: number): Promise<ServerRecord
 		if (attempt >= 3) throw new ServerError("start-failed", "the record changed while the folder was checked; try again", undefined, "start");
 	}
 }
+/** A gate read that ignores the time it was given still ends at it: a `GateTimeout`, a wait and not a refusal of the folder. */
+const raced = <T>(read: Promise<T>, ms: number | undefined): Promise<T> => {
+	if (ms === undefined) return read;
+	let timer: ReturnType<typeof setTimeout>;
+	const late = new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new GateTimeout(`the owner of the state folder was not read within ${ms / 1000} s`)), ms + 100)).unref());
+	return Promise.race([read, late]).finally(() => clearTimeout(timer));
+};
 /** The gate with no regard to a record: before any file of the slot is read (a log, `start-error.json`; b1f-F004), which another account's folder can hold as well. */
 export async function passGate(ctx: Ctx, deadline?: number): Promise<void> {
 	try {
-		await ctx.gate(ctx.slot, deadline === undefined ? undefined : within(ctx, deadline, 15_000));
+		const ms = deadline === undefined ? undefined : within(ctx, deadline, 15_000);
+		await raced(Promise.resolve(ctx.gate(ctx.slot, ms)), ms);
 	} catch (error) {
 		throw aclRefusal(ctx, error as Error);
 	}
@@ -396,7 +404,7 @@ export async function lockFor(ctx: Ctx, waitMs: number, deadline?: number, gate 
 		const gated = async () => {
 			const t = ctx.now();
 			try {
-				if (await ctx.gate(ctx.slot, ms)) read = true;
+				if (await raced(Promise.resolve(ctx.gate(ctx.slot, ms)), ms)) read = true;
 			} finally {
 				gateMs += ctx.now() - t;
 			}
@@ -421,7 +429,8 @@ const lockUntil = async (ctx: Ctx, deadline: number, gate = true) => {
 	const lock = await lockFor(ctx, Math.max(0, deadline - ctx.now()), deadline, gate);
 	if (ctx.now() >= deadline) {
 		lock.release();
-		throw new ServerError("busy", "the time given ran out while another start or restart held server.lock", undefined, "lock");
+		// The lock was free and is ours: the time went on the folder (the owner read, its protection), which is the start's wait and not the lock's.
+		throw new ServerError("start-failed", "the time given ran out while the state folder was checked and prepared", undefined, "start");
 	}
 	return lock;
 };

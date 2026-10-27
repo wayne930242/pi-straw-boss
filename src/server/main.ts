@@ -477,10 +477,15 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	// Ready: `restarting` goes, and the start-error of this attempt (and any before it) with it.
 	if (phase === "starting") {
 		phase = "ready";
+		// The last error of the server before this one (kept so a restart changes nothing a page holds) is history once this one is ready; an error of this attempt stays.
+		const stale = own.lastError !== undefined && own.lastError === prior?.lastError;
+		if (stale) delete own.lastError;
 		updateRecord(slot, (r) => {
 			if (r.pid !== pid) return undefined;
 			const { restarting: _restarting, ...rest } = r;
-			return rest;
+			if (!stale) return rest;
+			const { lastError: _history, ...current } = rest;
+			return current;
 		});
 		clearStartError(slot);
 		log.line("ready", { ms: now() - startedAt });

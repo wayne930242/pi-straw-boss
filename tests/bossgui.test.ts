@@ -79,6 +79,17 @@ test("a main agent and a tower can open it too, and a session in a sub workspace
 	assert.deepEqual(sub.tokens, {}, "the sub workspace session joined nothing");
 });
 
+test("with STRAW_BOSS_DESK=1 (a desk shell shows the page) /boss gui tells the URL and opens no browser", async () => {
+	const hosted = await startHosted(world);
+	const before = opened.length;
+	const viewer = world.agent({ id: "viewer", pane: "wA:p1", tab: "wA:t1", env: { STRAW_BOSS_DESK: "1" }, deps });
+	await viewer.start();
+	await viewer.command("gui");
+	assert.equal(urlOf(viewer), hosted.url);
+	assert.equal(opened.length, before, "no browser opened");
+	assert.deepEqual(viewer.notices.filter((n) => n.level === "warning"), []);
+});
+
 test("a browser that cannot be opened leaves the URL in a warning", async () => {
 	await startHosted(world);
 	const viewer = world.agent({ id: "viewer", pane: "wA:p1", tab: "wA:t1", deps: { openUrl: async () => { throw new Error("no display"); } } });

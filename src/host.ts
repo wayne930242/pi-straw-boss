@@ -73,7 +73,8 @@ export function createHost({ pi, cfg, s, guiDir, tell }: Kit, { connected, ask }
 			const url = urlOf({ port: Number(r.port), token: String(r.token) } as GuiRecord);
 			tell(`Straw net GUI: ${url}`);
 			if (typeof r.remoteNote === "string") tell(r.remoteNote, "warning");
-			await openUrl(url).catch((error: Error) => tell(`Could not open a browser (${error.message}); open the URL above yourself`, "warning"));
+			// A desk shell (STRAW_BOSS_DESK=1) shows the page itself; the URL is still told.
+			if (cfg.env.STRAW_BOSS_DESK !== "1") await openUrl(url).catch((error: Error) => tell(`Could not open a browser (${error.message}); open the URL above yourself`, "warning"));
 		},
 	};
 }
