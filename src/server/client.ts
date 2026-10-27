@@ -436,7 +436,7 @@ export async function ensure(ctx: Ctx, { boss = false, lockWaitMs = 0, deadline 
 	const lock = await (deadline === undefined ? lockFor(ctx, lockWaitMs, undefined, gate) : lockUntil(ctx, deadline, gate));
 	try {
 		let seen = await probe(ctx, deadline);
-		if (boss && seen.record?.stopped && !seen.live && !seen.denied && clearStopped(ctx.slot)) seen = { ...seen, record: readRecord(ctx.slot) };
+		if (boss && seen.record?.stopped && !seen.live && !seen.denied && clearStopped(ctx.slot, true)) seen = { ...seen, record: readRecord(ctx.slot) };
 		const verdict = decide(ctx, seen);
 		if (verdict.do === "nothing" && verdict.why === "live") return { server: "found", record: seen.record! };
 		if (verdict.do !== "start") return { skipped: verdict };
@@ -519,7 +519,7 @@ async function restartLocked(ctx: Ctx, { reason, downgrade, upgrade, boss, limit
 	if (seen.denied) throw new ServerError("unreachable", unreachableText(record!));
 	if (record?.stopped && !seen.live && !boss) throw new ServerError("stopped", "the sb server was stopped on purpose; /boss server or `cli.mjs up` starts it again");
 	if (record && newer(record.version, ctx.version) && !downgrade) throw new ServerError("older", `the sb server runs pi-straw-boss ${record.version}, newer than this package's ${ctx.version}; a restart from an older package needs --downgrade`);
-	if (boss) clearStopped(ctx.slot);
+	if (boss) clearStopped(ctx.slot, true); // the server's own stop only: a GUI stopped on purpose stays so until /boss gui or `cli.mjs up`
 	const done = (found: ServerRecord): Restarted => ({ server: upgrade ? "upgraded" : "restarted", record: found });
 	const old = record && { pid: record.pid, secret: record.secret };
 	// A server that is down starts, whatever the limit says. A `serve` server down with a fresh `restarting` is between two lives of a supervisor, which another requester is
@@ -635,13 +635,14 @@ export const unreachableText = (record: Pick<ServerRecord, "pid" | "detach">) =>
 	`the sb server (pid ${record.pid}) runs but this process may not reach it: it was probably started from an elevated pi or shell, and this one is not elevated; stop or restart it from an elevated shell`;
 
 /** The state of the server for a shell, from the files and a hello (docs/specs/2026-10-26-sb-backend.md, States for a shell). */
-export type State = "live" | "restarting" | "stopped" | "gone";
+export type State = "live" | "restarting" | "stopped" | "gui-stopped" | "gone";
 export function stateOf(ctx: Pick<Ctx, "now">, seen: Pick<Probe, "record" | "live" | "denied">): State {
 	const { record } = seen, live = seen.live || seen.denied === true;
 	if (!record) return "gone";
 	if (record.stopped) return "stopped";
 	if (restartingFresh(record, ctx.now())) return "restarting";
-	return live ? "live" : "gone";
+	// A server that runs with its GUI stopped on purpose (`/boss gui stop`) is still live, but its URL does not answer: a shell runs `up`, which starts the GUI again.
+	return live ? (record.gui?.stopped ? "gui-stopped" : "live") : "gone";
 }
 
 /**
@@ -660,7 +661,8 @@ export async function describe(ctx: Ctx): Promise<Record<string, unknown>> {
 	if (seen.live && record) {
 		try {
 			const { reply } = await callControl(record.socket, record.secret, { cmd: "status" }, 3000);
-			if (reply?.ok) more = { uptimeMs: reply.uptimeMs, towers: reply.towers ?? [], link: reply.link ?? null };
+			const remote = (reply?.gui as { remote?: unknown } | undefined)?.remote;
+			if (reply?.ok) more = { uptimeMs: reply.uptimeMs, towers: reply.towers ?? [], link: reply.link ?? null, ...(remote ? { remote } : {}) };
 		} catch { /* the server went while it was asked */ }
 	}
 	return {
@@ -681,5 +683,5 @@ export function detachWarning(record: Pick<ServerRecord, "detach" | "detachFailu
 	if (record?.detach === "wmi-in-job") return "the sb server was started through WMI, but the job it is in did not allow it to break away, so it stays in the WMI provider host's job and ends with that job's limits";
 	return undefined;
 }
-/** The GUI's URL, once the server hosts the GUI (B2); null while the pi sessions do. */
+/** The GUI's URL; null while the server has not started one. */
 export const guiUrl = (record: ServerRecord | undefined) => (record?.gui ? `http://127.0.0.1:${record.gui.port}/${record.gui.token}/` : null);

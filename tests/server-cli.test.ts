@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { afterEach, beforeEach, test } from "node:test";
 import { type CliDeps, parseArgs, run, UsageError } from "../src/server/cli.ts";
 import { createLog } from "../src/server/log.ts";
@@ -65,6 +65,24 @@ test("status says gone with no server, and never prints the secret or the socket
 	assert.ok(!live.out.includes(world.record()!.secret) && !live.out.includes(world.record()!.socket) && !live.out.includes("secret"));
 });
 
+test("status carries the GUI's url from the record; a GUI stopped on purpose is gui-stopped while the server runs, and up starts it again on the same url and it answers 200", async () => {
+	const s = await world.start();
+	await s.handle.ready;
+	const gui = world.record()!.gui!, url = `http://127.0.0.1:${gui.port}/${gui.token}/`;
+	assert.equal((await cli(["status"])).json?.url, url);
+	const record = world.record()!;
+	assert.equal((await callControl(record.socket, record.secret, { cmd: "gui-stop" })).reply?.ok, true);
+	const stopped = await cli(["status"]);
+	assert.deepEqual([stopped.json?.state, stopped.json?.url], ["gui-stopped", url]);
+	await assert.rejects(fetch(url), "the page is down");
+	const up = await cli(["up"]);
+	assert.equal(up.code, 0, up.err);
+	assert.deepEqual([up.json?.server, up.json?.url], ["found", url]);
+	assert.equal((await fetch(url)).status, 200);
+	assert.equal((await cli(["status"])).json?.state, "live");
+	assert.equal(world.record()?.gui?.stopped, false);
+});
+
 test("status gives the other states of the table: restarting (with its reason), stopped, gone with the last error and the start-error", async () => {
 	const base = { pid: 7, started: "T-7", version: "0.44.0", herdr: world.slot.herdr, mode: "detached" as const, desk: false, intercom: {}, log: "/l", socket: "/nowhere", secret: "s".repeat(64), intercomId: "sb-server-00000000" };
 	mkdirSync(world.slot.dir, { recursive: true });
@@ -89,7 +107,8 @@ test("up starts a server and prints one JSON line: url, pid, started, version, p
 	const first = await cli(["up"]);
 	assert.equal(first.code, 0, first.err);
 	const j = first.json!;
-	assert.equal(j.url, null, "no GUI listener in the server yet: the pi sessions host it until the GUI moves in");
+	const gui = world.record()!.gui!;
+	assert.equal(j.url, `http://127.0.0.1:${gui.port}/${gui.token}/`, "the server's own GUI");
 	assert.equal(typeof j.pid, "number");
 	assert.equal(j.pid, world.record()!.pid);
 	assert.equal(typeof j.started, "string");
@@ -99,7 +118,7 @@ test("up starts a server and prints one JSON line: url, pid, started, version, p
 	assert.equal(j.desk, false);
 	assert.equal(j.server, "started");
 	assert.equal(j.log, fileOf(world.slot, "log"));
-	assert.deepEqual((j.steps as { name: string; ok: boolean }[]).map((s) => [s.name, s.ok]), [["herdr", true], ["version", true], ["server", true]]);
+	assert.deepEqual((j.steps as { name: string; ok: boolean }[]).map((s) => [s.name, s.ok]), [["herdr", true], ["version", true], ["server", true], ["gui", true]]);
 	assert.ok((j.steps as { ms: number }[]).every((s) => typeof s.ms === "number"));
 	assert.deepEqual(j.warnings, []);
 	assert.equal(first.out.trim().split("\n").length, 1, "one line");
@@ -170,6 +189,34 @@ test("up is the boss's own start: it clears stopped in server.json and gui.json 
 	assert.equal(r.json?.server, "started");
 	assert.equal(world.record()?.stopped, undefined);
 	assert.equal(JSON.parse(await import("node:fs").then((fs) => fs.readFileSync(`${world.stateDir}/gui.json`, "utf8"))).stopped, undefined);
+});
+
+test("up warns remote_off with the reason when remote access was wanted and cannot come back, and still prints the URL", async () => {
+	mkdirSync(world.slot.dir, { recursive: true });
+	writeFileSync(`${world.slot.dir}/paired.json`, JSON.stringify({ host: "box.tail1.ts.net:8443", login: "me@example.com", wanted: true, sessions: {} }));
+	const up = await cli(["up"]);
+	assert.equal(up.code, 0, up.err);
+	const warning = (up.json?.warnings as { code: string; text: string }[]).find((w) => w.code === "remote_off");
+	assert.match(warning?.text ?? "", /Remote access stays off: Tailscale is not installed/);
+	const gui = world.record()!.gui!;
+	assert.equal(up.json?.url, `http://127.0.0.1:${gui.port}/${gui.token}/`);
+});
+
+test("up waits for the GUI's URL to answer 200 before it prints it, and fails at step gui when it never does", async () => {
+	const s = await world.start();
+	await s.handle.ready;
+	const seen: { port: number; token: string }[] = [];
+	const slow = async (gui: { port: number; token: string }) => (seen.push(gui), seen.length >= 3);
+	const up = await cli(["up"], { pageAnswers: slow });
+	assert.equal(up.code, 0, up.err);
+	assert.equal(seen.length, 3, "asked until it answered");
+	const gui = world.record()!.gui!;
+	assert.deepEqual(seen[0], { port: gui.port, token: gui.token });
+	assert.equal(up.json?.url, `http://127.0.0.1:${gui.port}/${gui.token}/`);
+	const never = await cli(["up", "--timeout", "1"], { pageAnswers: async () => false });
+	assert.equal(never.code, 1);
+	assert.equal(never.errJson?.step, "gui");
+	assert.match(String(never.errJson?.reason), /did not answer/);
 });
 
 test("a start that fails: loader, intercom, or acl in start-error.json is exit 3 with the reason; any other failure is exit 1 at step server", async () => {
@@ -369,6 +416,17 @@ test("serve with nothing running runs a serve server in the foreground, clears a
 	assert.equal(f.calls[0]?.by, "cli serve");
 	assert.equal(readRecord(world.slot)?.stopped, undefined);
 	assert.equal(readLock(world.slot), undefined);
+});
+
+test("serve clears the server's stop but leaves a GUI stopped on purpose stopped", async () => {
+	mkdirSync(world.slot.dir, { recursive: true });
+	writeRecord(world.slot, { pid: 7, version: "0.44.0", herdr: world.slot.herdr, mode: "detached", desk: false, intercom: {}, log: "/l", socket: "/nowhere", secret: "s".repeat(64), intercomId: "sb-server-00000000", stopped: true, gui: { port: 5000, token: "t".repeat(32), stopped: true } });
+	writeFileSync(`${world.slot.dir}/gui.json`, JSON.stringify({ pid: 7, port: 5000, token: "t".repeat(32), owner: "o", stopped: true }));
+	const f = fakeServer();
+	assert.equal((await cli(["serve"], { server: f.server, signals: f.signals })).code, 0);
+	assert.equal(readRecord(world.slot)?.stopped, undefined);
+	assert.equal(readRecord(world.slot)?.gui?.stopped, true);
+	assert.equal(JSON.parse(readFileSync(`${world.slot.dir}/gui.json`, "utf8")).stopped, true);
 });
 
 test("serve takes over a live detached server: it asks it to hand over by the restart path, waits for it to leave, then runs, with the record's port and token still there", async () => {

@@ -1,7 +1,8 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { guiNamespace, MAX_QUEUED, QUEUED_TEXT, REGISTER } from "./bridgewire.ts";
 import { type Doc, type Fields, fieldsOk, listenDocs, submitForm } from "./documents.ts";
 import { type Answer, type Bus, type Dialog, OWNERS, type OwnerAdapter, type Verdict } from "./owners.ts";
 import { type Cmd, listCommands, MAX_PREFIX } from "./commands.ts";
@@ -35,17 +36,14 @@ import { todoOfBranch, type TodoSum } from "./todo.ts";
 // A secret_drop is answered in the terminal only (SB-F001: intercom identities are self-reported, so a relayed secret dialog could be answered
 // into an impostor's hands): the bridge never relays a secret dialog, and refuses any answer to one.
 
-export const REGISTER = "intercom:extension-register";
+export { guiNamespace, MAX_QUEUED, QUEUED_TEXT, REGISTER };
 // pi-intercom has no unregister: every host the session joins stays one of its channels, and the broker takes at most 32 per session (the tab, the viewer, and the hub's own take a few).
 const VERDICT_MS = 2000, POLL_MS = 2000, KEEP_MS = 120_000, KEEP = 16, MAX_GUIS = 16, MAX_MESSAGE = 15 * 1024;
 /** `finish` waits this long (in 50 ms steps) for pi to take its queue back after the key; a `begin` ticket is good for the same time and more. */
 const PULL_WAIT_MS = 1500, PULL_STEP_MS = 50, TICKET_MS = 10_000;
 /** What `finish` leaves alone before the hub's deadline, so an answer still arrives in time; and how long the messages handed over stay kept for the same take-back asked again. */
 const PULL_MARGIN_MS = 300, TAKEN_MS = 600_000;
-/** At most this many queued messages go to the GUI (the oldest, which are delivered first), each cut to this many characters. */
-export const MAX_QUEUED = 5, QUEUED_TEXT = 200;
 const clipQueued = (text: string) => (text.length > QUEUED_TEXT ? `${text.slice(0, QUEUED_TEXT - 1)}…` : text);
-export const guiNamespace = (g: string) => `straw-boss/gui/${createHash("sha256").update(g).digest("hex").slice(0, 32)}`;
 export type Outcome = "accepted" | "rejected" | "stale" | "busy" | "unknown";
 export interface Ack { version: 1; type: "ack"; bridgeId: string; id: string; answerId: string; outcome: Outcome; reason?: string; by?: string }
 /** `closed`: dialogs closed in the last 2 minutes (at most 16), so an answer that comes late hears who closed it, and a resent one that won, that it won. */

@@ -724,7 +724,8 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
   with its run id, pane, and PID. It reads the new secret from `server.json`. The new server knows it from `tower/<ws>/runs/<id>.json`
   and takes it back (**Crash and timeout**).
 - A session older than the server does nothing. A session from before this change does not know the server. It sees `gui.json` owned by
-  a live process and leaves the GUI alone. It sees `holder.json` held by a newer build and does not take it. If it opens a resident
+  a live process and leaves the GUI alone. During a restart `gui.json` has no `started`, which no old build adopts, and a takeover asked of the server is answered 409. The first server after an
+  upgrade asks a live older host to hand over (`server/stop` with `take`) and binds its port and token. It sees `holder.json` held by a newer build and does not take it. If it opens a resident
   tower, the pi in that tab runs the installed (new) code and hands over (**Migration from resident towers**).
 
 ### Seeing and restarting the server

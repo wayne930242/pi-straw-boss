@@ -1,3 +1,5 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { herdrApi, herdrCall, herdrRun, socketRun } from "../herdr.ts";
 import { type HeadlessDeps, headlessConfig } from "../agent/config.ts";
 import { createHeadlessKit, type IntercomLike } from "../agent/kit.ts";
@@ -5,7 +7,10 @@ import { herdrEvents, herdrWatch, type HerdrWatch } from "../server-watch.ts";
 import { alive as pidAlive } from "../remote.ts";
 import { rememberStart, startedLater, startOf as processStartOf } from "../startof.ts";
 import { AclError, applyAcl, awaitAclMarker } from "./acl.ts";
-import { herdrListens, intercomOf, runsAs } from "./client.ts";
+import { createGuiLink, type GuiLink } from "../link/guiport.ts";
+import type { Run } from "../remote.ts";
+import { herdrListens, intercomOf, runsAs, serverEnv } from "./client.ts";
+import { cliBeside, createGuiHost, spawnRestart } from "./guihost.ts";
 import { type IntercomModule, loadIntercom, LoaderError } from "./intercom.ts";
 import { createLog } from "./log.ts";
 import {
@@ -15,14 +20,20 @@ import { AFTER, endpointFor, helloOf, listenControl, newSecret, type Reply, type
 import { packageRoot, VERSION } from "./version.ts";
 
 // The sb server process (docs/specs/2026-10-26-sb-backend.md). B1 is the skeleton: it owns the control socket and `server.json`, holds an intercom session of its own through
-// the headless kit, and takes the stop and restart requests. The GUI, the link holder, and the tower service move in with the later steps; nothing else moves yet.
+// the headless kit, and takes the stop and restart requests. B2 moves the GUI in (guihost.ts). The link holder and the tower service move in with the later steps.
 
 /** The exit code of a `serve` server that was asked to restart: a supervisor (launchd `KeepAlive`, systemd `Restart=on-failure`) starts it again. */
 export const SERVE_RESTART_CODE = 75;
 /** Exit codes: 0 done, 3 the server cannot run (tsx or pi-intercom missing, the Windows ACL). */
 export const EXIT_CANNOT_RUN = 3;
 const RETRY_MS = [1000, 2000, 5000, 10_000, 30_000];
-const BROKER_MS = 5000, HERDR_GONE_MS = 60_000, HERDR_POLL_MS = 5000, LEAVE_MS = 2000;
+const BROKER_MS = 5000, HERDR_GONE_MS = 60_000, HERDR_POLL_MS = 5000, LEAVE_MS = 2000, GUI_LEAVE_MS = 6000;
+/** The client the kit starts with, before the first connection: not connected to anything, so the GUI can be built (and answer its page) while the broker is still starting. */
+const OFFLINE: IntercomLike = {
+	sessionId: null, isConnected: () => false, supportsFeature: () => false, connect: async () => { throw new Error("pi-intercom is not connected"); }, disconnect: async () => {},
+	listSessions: async () => { throw new Error("pi-intercom is not connected"); }, send: async () => { throw new Error("pi-intercom is not connected"); }, updatePresence() {}, updateExtensionCapabilities() {},
+	sendExtensionMessage() { throw new Error("pi-intercom is not connected"); }, onBrokerMessage: () => () => {}, on() { return OFFLINE; },
+};
 
 export interface ServerOptions {
 	slot: Slot;
@@ -52,6 +63,8 @@ export interface ServerOptions {
 	marker?: (dir: string, token: string, pid: number) => Promise<{ started?: string } | void>;
 	/** How the starter started this process (Windows): through WMI, or by a plain spawn after a failure; kept in the record, so `status` and `up` can say so. */
 	detach?: { via: Detach; failure?: string };
+	/** The GUI the server serves (guihost.ts); `false` serves none (the tests of the process itself). `link`, `bundle`, `tailscale`, and `bindWaitMs` replace the machine's. */
+	gui?: false | { link?: GuiLink; bundle?: string; tailscale?: Run; bindWaitMs?: number; /** Asks for a restart as the page's button does; the real one starts `cli.mjs restart`. */ restart?: (reason: string) => { status: number; body: unknown } | Promise<{ status: number; body: unknown }> };
 	herdrUp?: () => Promise<boolean>;
 	watch?: HerdrWatch;
 	herdr?: HeadlessDeps;
@@ -211,14 +224,15 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		...(prior?.gui ? { gui: prior.gui } : {}), ...(prior?.lastError ? { lastError: prior.lastError } : {}), ...(prior?.lastRestart ? { lastRestart: prior.lastRestart } : {}),
 		...(aclStarted ? { started: aclStarted } : {}), ...detachOf, log: fileOf(slot, "log"), socket: endpoint, secret, intercomId: serverId(slot),
 	};
-	let phase: "starting" | "ready" | "restarting" | "stopping" = "starting", client: IntercomLike | undefined, leaving: Promise<void> | undefined;
+	let phase: "starting" | "ready" | "restarting" | "stopping" = "starting", client: IntercomLike | undefined, leaving: Promise<void> | undefined, guiHost: ReturnType<typeof createGuiHost> | undefined;
 	const at = () => new Date(now()).toISOString();
 
 	// Written whole by rename, with `restarting` kept from the record (a restart began it) and only its `since` moved.
 	const writeOwn = () => {
 		if (rival()) return;
 		const current = readRecord(slot);
-		writeRecord(slot, { ...own, ...(phase === "starting" ? { restarting: restartingNow(current?.restarting, now(), { reason: "starting", by }) } : {}) });
+		// The GUI the record already holds is this server's own once it has started (guihost.ts records its port and token as it starts).
+		writeRecord(slot, { ...own, ...(current?.pid === pid && current.gui ? { gui: current.gui } : {}), ...(phase === "starting" ? { restarting: restartingNow(current?.restarting, now(), { reason: "starting", by }) } : {}) });
 	};
 	const recordError = (code: string, text: string) => {
 		own.lastError = { at: at(), code, text: phrase(text, 300) };
@@ -231,6 +245,8 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		const began = now();
 		timers.forEach(clearInterval);
 		stops.forEach((stop) => stop());
+		// The GUI listeners and the remote entry go before the intercom ids are released.
+		await Promise.race([guiHost?.leave(phase === "stopping").catch(() => {}), sleep(GUI_LEAVE_MS)]);
 		await Promise.race([client?.disconnect().catch(() => {}), sleep(LEAVE_MS)]);
 		const disconnected = now();
 		await control?.close();
@@ -249,8 +265,10 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 
 	let control: Awaited<ReturnType<typeof listenControl>> | undefined;
 	const handleRequest = async (request: Request): Promise<Reply> => {
-		if (request.cmd === "status") return { ok: true, ...facts(), uptimeMs: now() - startedAt, ...(own.lastError ? { lastError: own.lastError } : {}), towers: [], link: null };
+		if (request.cmd === "status") return { ok: true, ...facts(), uptimeMs: now() - startedAt, ...(own.lastError ? { lastError: own.lastError } : {}), towers: [], link: null, ...(guiHost ? { gui: guiHost.facts() } : {}) };
 		if (phase === "restarting" || phase === "stopping") return { ok: false, error: "restarting" };
+		const asked = await guiHost?.handle(request);
+		if (asked) return asked;
 		if (request.cmd === "stop") {
 			// A `serve` server is never stopped from here: its supervisor would start it again at once, and hide from the infra that its service is off.
 			if (mode === "serve") return { ok: false, error: "serve" };
@@ -296,6 +314,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		if (!started || phase === "stopping") return;
 		own.started = started;
 		updateRecord(slot, (r) => (r.pid === pid && r.secret === secret ? { ...r, started } : undefined));
+		guiHost?.started();
 	});
 	timers.push(setInterval(() => {
 		try {
@@ -317,7 +336,16 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	const kitEnv = { ...env, PI_INTERCOM_SESSION_ID: serverId(slot) };
 	const cfg = headlessConfig({ ...herdrCfg, run: o.herdr?.run ?? socketRun(herdrRun, herdrCfg.call, undefined) }, kitEnv);
 	// SAFETY: the kit hands a client to the modules that run the net; it is attached at the first connection, before any of them is built (none is in B1).
-	const kit = createHeadlessKit({ client: undefined as unknown as IntercomLike, env: kitEnv, cfg, log: () => {} });
+	const kit = createHeadlessKit({ client: OFFLINE, env: kitEnv, cfg, log: () => {} });
+	const gui = o.gui === false ? undefined : o.gui ?? {};
+	guiHost = gui && createGuiHost({
+		slot, kit, log, pid, version, started: () => own.started, runs: (record) => runsAs({ alive, startOf }, record),
+		sessions: async () => (client?.isConnected() ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))),
+		link: gui.link ?? createGuiLink({ events: kit.pi.events, id: () => serverId(slot), stateDir: slot.stateDir, agentDir: env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), log: (text) => log.line("link", { text }) }),
+		status: () => ({ state: phase === "ready" ? "live" : phase, version, pid, mode, desk, uptimeMs: now() - startedAt, log: fileOf(slot, "log"), ...(own.lastError ? { lastError: own.lastError } : {}) }),
+		restart: gui.restart ?? ((reason) => spawnRestart(cliBeside(), reason, "the GUI", serverEnv(env), slot.dir)),
+		failed: (code, text) => recordError(code, text), tailscale: gui.tailscale, bundle: gui.bundle, bindWaitMs: gui.bindWaitMs,
+	});
 	stops.push(cfg.watch(() => log.line("herdr-takeover")));
 	let downSince: number | undefined;
 	const herdrUp = o.herdrUp ?? (() => herdrListens({ slot, platform }));
@@ -367,7 +395,10 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	void connectLoop();
 	await Promise.race([first, sleep(o.brokerMs ?? BROKER_MS).then(() => false)]);
 
-	// Ready: the identities are as registered as they can be, `restarting` goes, and the start-error of this attempt (and any before it) with it.
+	// The GUI binds the recorded ports last (a restart keeps the URL), after the intercom ids are as registered as they can be and, with the link holder in the server, after that.
+	await guiHost?.start();
+
+	// Ready: `restarting` goes, and the start-error of this attempt (and any before it) with it.
 	if (phase === "starting") {
 		phase = "ready";
 		updateRecord(slot, (r) => {

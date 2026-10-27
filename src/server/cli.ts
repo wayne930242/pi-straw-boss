@@ -1,13 +1,15 @@
 import { existsSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { stateDirOf } from "../agent/paths.ts";
+import { answers as pageAnswers } from "../handover.ts";
 import { newer } from "../semver.ts";
 import {
 	type Ctx, unreachableText, describe, ensure, guiUrl, herdrListens, isIdentity, detachWarning, lockFor, lockWaitFor, makeCtx, passGate, probe, restart, ServerError, serverEnv, stop, takeOver, trusted, type Wait, waitReady, within,
 } from "./client.ts";
 import { ACL_TOKEN } from "./acl.ts";
+import { callControl, ControlError } from "./socket.ts";
 import { logSize, readFrom, tailLog } from "./log.ts";
-import { clearStartError, clearStopped, fileOf, readStartError, type ServerRecord, slotOf, type StartError } from "./record.ts";
+import { clearStartError, clearStopped, fileOf, readRecord, readStartError, type ServerRecord, slotOf, type StartError } from "./record.ts";
 import type { ServerHandle, ServerOptions } from "./main.ts";
 import { VERSION } from "./version.ts";
 
@@ -18,12 +20,12 @@ import { VERSION } from "./version.ts";
 const USAGE = `usage: cli.mjs up [--timeout SECONDS] [--exact]
        cli.mjs serve
        cli.mjs stop | status
-       cli.mjs restart [--reason TEXT] [--downgrade]
+       cli.mjs restart [--reason TEXT] [--by TEXT] [--downgrade]
        cli.mjs logs [--lines N] [--follow]`;
 export class UsageError extends Error {}
 const FLAGS: Record<string, { value: string[]; switch: string[] }> = {
 	up: { value: ["timeout"], switch: ["exact"] }, serve: { value: [], switch: [] }, stop: { value: [], switch: [] }, status: { value: [], switch: [] },
-	restart: { value: ["reason"], switch: ["downgrade"] }, logs: { value: ["lines"], switch: ["follow"] }, run: { value: ["by", "detach", "detach-reason", "acl-token"], switch: ["detached"] },
+	restart: { value: ["reason", "by"], switch: ["downgrade"] }, logs: { value: ["lines"], switch: ["follow"] }, run: { value: ["by", "detach", "detach-reason", "acl-token"], switch: ["detached"] },
 };
 export interface Args { command: string; flags: Record<string, string | true> }
 export function parseArgs(argv: string[]): Args {
@@ -53,17 +55,17 @@ export interface CliDeps {
 	ctx?: Partial<Ctx>;
 	stateDir?: string;
 	version?: string;
-	/** The file the server is started from; this file by default. */
-	cli?: string;
+	cli?: string; // the file the server is started from; this file by default
 	out?: (text: string) => void;
 	err?: (text: string) => void;
 	/** The server process itself, which `run` and `serve` start in this process. */
 	server?: (options: ServerOptions) => Promise<ServerHandle>;
-	/** Ends a `logs --follow`. */
-	signal?: AbortSignal;
+	signal?: AbortSignal; // ends a `logs --follow`
 	/** Where the server in this process hears that it is asked to end (SIGTERM, SIGINT, SIGHUP); a kill or a reboot is not a stop, so it only leaves. */
 	signals?: (leave: () => void) => void;
 	herdrListens?: (ctx: Ctx, ms?: number) => Promise<boolean>;
+	/** Whether the GUI's page answers 200, which `up` waits for. */
+	pageAnswers?: (gui: { port: number; token: string }) => Promise<boolean>;
 }
 
 interface Step { name: string; ok: boolean; ms: number; detail?: string }
@@ -109,7 +111,8 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 	}
 	const slot = slotOf(deps.stateDir ?? stateDirOf(env), env);
 	const version = deps.version ?? VERSION;
-	const by = command === "run" ? String(flags.by ?? "detached start") : `cli ${command}`;
+	// `restart --by` is how the GUI's Restart button names itself (the server starts this CLI as the requester of its own restart).
+	const by = command === "run" ? String(flags.by ?? "detached start") : command === "restart" && typeof flags.by === "string" ? flags.by.replace(/[\r\n]+/g, " ").slice(0, 120) : `cli ${command}`;
 	const ctx = makeCtx({ env, slot, version, cli: deps.cli ?? selfPath(), by, ...deps.ctx });
 	const json = (value: unknown) => out(`${JSON.stringify(value)}\n`);
 	const server = deps.server ?? (async (options) => (await loadMain()).runServer(options));
@@ -251,8 +254,9 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 			});
 			const loud = detachWarning(record);
 			if (loud) warnings.push({ code: "breakaway_failed", text: loud });
+			const url = await stepOf("gui", async () => ({ value: await guiStep(record, warnings, deadline) }));
 			json({
-				url: guiUrl(record), pid: record.pid, started: record.started, version: record.version, package: version, mode: record.mode, desk: record.desk, server: how, log: record.log, steps, warnings,
+				url, pid: record.pid, started: record.started, version: record.version, package: version, mode: record.mode, desk: record.desk, server: how, log: record.log, steps, warnings,
 			});
 			return 0;
 		} catch (error) {
@@ -262,6 +266,33 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 			err(`${JSON.stringify({ step: error.step, ...(error.wait ? { wait: error.wait } : {}), reason: error.message, steps, warnings, log: fileOf(slot, "log"), ...(startError ? { startError } : {}) })}\n`);
 			return error.exit;
 		}
+	}
+
+	/**
+	 * The GUI of the server: `up` is the boss's own start, so it starts a GUI that was stopped on purpose, then waits for the URL to answer 200. The URL comes from the server's own answer
+	 * (it knows the port it bound); a server that cannot be asked (it refused this process) has the one its record names.
+	 */
+	async function guiStep(record: ServerRecord, warnings: Warning[], deadline: number): Promise<string> {
+		let reply: Awaited<ReturnType<typeof callControl>>["reply"];
+		try {
+			reply = (await callControl(record.socket, record.secret, { cmd: "gui", boss: true }, within(ctx, deadline, 15_000))).reply;
+		} catch (error) {
+			const known = guiUrl(readRecord(slot));
+			if (known && error instanceof ControlError && error.failure === "denied") return known;
+			throw new StepError("gui", `the server did not take the request for its GUI: ${(error as Error).message}`);
+		}
+		if (!reply?.ok) {
+			const last = readRecord(slot)?.lastError, tail = tailLog(fileOf(slot, "log"), 20);
+			throw new StepError("gui", `the GUI did not start: ${String(reply?.error ?? "no answer")}${last ? ` (${last.code}: ${last.text})` : ""}\n${tail.join("\n")}`);
+		}
+		const { port, token } = reply as unknown as { port: number; token: string };
+		for (;;) {
+			if (await (deps.pageAnswers ?? ((gui) => pageAnswers(gui as Parameters<typeof pageAnswers>[0])))({ port, token })) break;
+			if (ctx.now() >= deadline) throw new StepError("gui", `the GUI's URL did not answer within the time given`, 1, "start");
+			await ctx.sleep(100);
+		}
+		if (typeof reply.remoteNote === "string") warnings.push({ code: "remote_off", text: reply.remoteNote });
+		return String(reply.url);
 	}
 
 	async function serve() {
@@ -281,7 +312,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 				await takeOver(ctx, seen.record);
 			}
 			// A supervisor's start is the infra's explicit choice, and a stop is never left on a `serve` server, so a `stopped` found here is an earlier detached server's.
-			clearStopped(slot);
+			clearStopped(slot, true); // the server's stop only: a GUI stopped on purpose stays so
 			clearStartError(slot);
 			scrubIdentity();
 			const handle = await server({ slot, env: serverEnv(env), mode: "serve", by: ctx.by, version });

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import jsqr from "jsqr";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { TOWER_LABEL } from "../src/herdr.ts";
+import type { Ask } from "../src/host.ts";
 import { createStrawBoss, type Deps } from "../src/index.ts";
 import type { HerdrWatch } from "../src/server-watch.ts";
 
@@ -458,7 +459,7 @@ export class Agent {
 		if (!options.noIntercom) events.on("intercom:outbox-request", (request) => world.broker.outbox(this, request as { requestId: string; to: string; message: string }));
 		world.broker.connect(this);
 		// The extension's waits are real in production; here they are capped so timeouts take milliseconds.
-		createStrawBoss({ run: world.herdr.runFor(this.pane), api: world.herdr.api, watch: world.watch, env, sleep: (ms) => sleep(Math.min(ms, 2)), promptDir: PROMPT_DIR, stateDir: world.stateDir, autoTower: false, gone: (record) => world.gone.has(record.ownerSession ?? ""), later: (_pid, args) => void world.herdr.runFor(this.pane)(args), events: world.herdr.events, ...options.deps })(pi);
+		createStrawBoss({ run: world.herdr.runFor(this.pane), api: world.herdr.api, watch: world.watch, env, sleep: (ms) => sleep(Math.min(ms, 2)), promptDir: PROMPT_DIR, stateDir: world.stateDir, autoTower: false, ask: (request, options) => world.ask(request, options), later: (_pid, args) => void world.herdr.runFor(this.pane)(args), events: world.herdr.events, ...options.deps })(pi);
 	}
 
 	private dialog(kind: "select" | "confirm", title: string, second: unknown, opts?: { signal?: AbortSignal; timeout?: number }): Promise<unknown> {
@@ -564,8 +565,10 @@ export class World {
 		for (const watcher of [...this.watchers]) watcher.onTakeover();
 		await this.quiet();
 	}
-	/** Sessions whose pi process has ended: the owner check of a GUI record (handover.ts `ownerGone`) answers by this, since every fake session shares the test's own pid. */
+	/** Sessions whose pi process has ended: a link holder record of a session that quit counts as gone (link-runtime.test.ts), since every fake session shares the test's own pid. */
 	gone = new Set<string>();
+	/** How a session reaches the GUI in the sb server (host.ts `Ask`): a test that runs a server (gui-world.ts) points this at its control socket; with none, no server answers. */
+	ask: Ask = async () => ({ ok: false, error: "no server" });
 	/** The state directory of the one-GUI-per-machine record, private to this world. */
 	stateDir = (() => {
 		const dir = mkdtempSync(join(tmpdir(), "psb-state-test-"));

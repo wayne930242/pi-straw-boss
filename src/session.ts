@@ -4,8 +4,7 @@ import type { Briefing } from "./briefing.ts";
 import type { Control } from "./closemain.ts";
 import type { Digest } from "./digest.ts";
 import type { Guard } from "./guard.ts";
-import { answers, newer, readRecord } from "./handover.ts";
-import { herdrSocket, isSub, type Place, panes, place, report, waitFor, workspaces } from "./herdr.ts";
+import { isSub, type Place, panes, place, report, waitFor, workspaces } from "./herdr.ts";
 import type { createHost } from "./host.ts";
 import { CONNECT_MS, type Membership } from "./membership.ts";
 import { orphans } from "./orphan.ts";
@@ -78,7 +77,6 @@ export function registerSession(kit: Kit, { briefing, roles, presence, membershi
 		stopWatching();
 		nudges = orphans({ run, file: () => log.getSessionFile(), entries: () => log.getEntries(), sessions: host.sessions, send: reach.send, type: ENTRY, remember: (key) => pi.appendEntry(ENTRY, { nudged: key }), me, tell });
 		nudgeTimer = setInterval(() => void nudges?.poll().catch(() => {}), cfg.nudgeMs).unref();
-		host.watch(); // the server of a session that ended without a stop is taken over here (host.ts)
 		// Starting runs in the background: pi awaits session_start handlers in turn, and pi-intercom connects in its own, after this one.
 		let starting: Promise<void> | undefined;
 		if (s.isTower) {
@@ -129,15 +127,6 @@ export function registerSession(kit: Kit, { briefing, roles, presence, membershi
 			});
 		}
 		starting?.catch((error: Error) => tell(`Straw Boss: ${error.message}`, "error"));
-		// The GUI this process ran before a /reload, /new, or /resume starts again on its URL, and a session newer than the running server
-		// takes it over (one with a screen: a print run is no host, and one on the Herdr the server serves), once pi-intercom has published this session's id: the server's dialogs are routed by it.
-		// Under gui.lock the restore keeps a stop typed while it waited, and a takeover does not start a server that went down meanwhile: a survivor adopts that.
-		// A /new, /resume, or /fork is another session: it waits for the new id, not the one pi-intercom may still show from before.
-		const record = readRecord(guiDir), back = record?.reload && !record.stopped && record.pid === process.pid && event.reason !== "startup";
-		const ready = () => Boolean(me()) && (!back || event.reason === "reload" || me() !== record!.ownerSession);
-		if (back || (record && ctx.hasUI && newer(version, record.version) && (!record.herdr || record.herdr === herdrSocket(env)))) void (async () => {
-			if ((await waitFor(cfg.sleep, ready, CONNECT_MS)) && (back || (await answers(record!)))) await host.restore(Boolean(back && record!.remote), back ? { stopped: true } : { stopped: true, down: true });
-		})().catch(() => {});
 	});
 
 	// The tower's run starts with what happened in its workspace since its last run, and the digest is cleared as it is read.
@@ -183,7 +172,6 @@ export function registerSession(kit: Kit, { briefing, roles, presence, membershi
 			// A herdr or sh that is not found throws; the shutdown goes on (the GUI is released below), and the pane is left open with the reason on stderr.
 			try { cfg.later(process.pid, ["pane", "close", env.HERDR_PANE_ID]); } catch (error) { process.stderr.write(`straw-boss: the pane was not closed: ${(error as Error).message}\n`); }
 		}
-		await host.release(event.reason !== "quit"); // a /reload, /new, or /resume starts the GUI again in this process
 		s.dashboard?.stop();
 		s.dashboard = undefined;
 		s.headWatch?.();

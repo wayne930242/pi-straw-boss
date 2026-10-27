@@ -1,22 +1,20 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { afterEach, test } from "node:test";
-import { readRecord } from "../src/handover.ts";
 import { listDirs, pickable } from "../src/spawn.ts";
 import { until, World } from "./fakes.ts";
+import { startHosted, stopHosted } from "./gui-world.ts";
 
 // The opening API (spawn.ts): a folder picker held inside home, a new base with its first member, a new member in a base without a tower, and a new
 // main in a base with one, through a GUI a session started. The page never opens a tower: a member that promotes itself does.
 
 const scratch = realpathSync(mkdtempSync(join(tmpdir(), "psb-spawn-test-")));
-const home = join(scratch, "home"), outside = join(scratch, "outside"), bundle = join(scratch, "bundle");
-for (const dir of [join(home, "projects", "alpha"), join(home, "beta"), join(home, ".secret", "keys"), outside, bundle]) mkdirSync(dir, { recursive: true });
+const home = join(scratch, "home"), outside = join(scratch, "outside");
+for (const dir of [join(home, "projects", "alpha"), join(home, "beta"), join(home, ".secret", "keys"), outside]) mkdirSync(dir, { recursive: true });
 writeFileSync(join(home, "notes.txt"), "");
-writeFileSync(join(bundle, "index.html"), "<title>Straw Net</title>");
 symlinkSync(join(home, "projects"), join(home, "work"));
 symlinkSync(join(home, ".secret"), join(home, "hidden-link"));
 symlinkSync(outside, join(home, "out-link"));
@@ -26,6 +24,7 @@ process.on("exit", () => ((process.env.HOME = realHome), rmSync(scratch, { recur
 
 let world = new World();
 afterEach(async () => {
+	await stopHosted();
 	await world.stopAll();
 	world = new World();
 });
@@ -41,18 +40,10 @@ test("the picker lists only visible folders inside home, follows a symlink only 
 async function gui(hook?: (method: string) => Promise<void>) {
 	const calls: { method: string; params: Record<string, unknown> }[] = [];
 	const call = async (method: string, params: Record<string, unknown>) => (calls.push({ method, params }), void (await hook?.(method)));
-	const viewer = world.agent({ id: "viewer-a", pane: "wA:p1", tab: "wA:t1", deps: { bundle, call, openUrl: async () => {} } });
+	const hosted = await startHosted(world, { call: call as never });
+	const viewer = world.agent({ id: "viewer-a", pane: "wA:p1", tab: "wA:t1" });
 	await viewer.start();
-	await viewer.command("gui");
-	const r = readRecord(world.stateDir)!;
-	const post = (path: string, body: Record<string, unknown>) =>
-		new Promise<{ status: number; body: Record<string, unknown> }>((done, fail) => {
-			const req = request({ host: "127.0.0.1", port: r.port, path: `/${r.token}/api/${path}`, method: "POST", agent: false, headers: { host: `127.0.0.1:${r.port}`, origin: `http://127.0.0.1:${r.port}`, "content-type": "application/json", "x-sb-csrf": r.csrf! } }, (res) => {
-				let text = "";
-				res.on("data", (c) => (text += c)).on("end", () => done({ status: res.statusCode!, body: JSON.parse(text) }));
-			});
-			req.on("error", fail).end(JSON.stringify(body));
-		});
+	const post = (path: string, body: Record<string, unknown>) => hosted.post(path, body);
 	return { post, calls };
 }
 

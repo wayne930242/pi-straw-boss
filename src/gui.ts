@@ -5,7 +5,6 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { extname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { waitsForLinkRequest, waitsForSecret } from "./ask.ts";
 import { type ControlDeps, createControl, type Reply } from "./control.ts";
 import type { HerdrCall } from "./herdr.ts";
@@ -16,6 +15,7 @@ import { createMirrors } from "./mirror.ts";
 import type { Found, Net, Ref } from "./net.ts";
 import { qr } from "./qr.ts";
 import { type Access, cookieFor, createAccess } from "./remote.ts";
+import { packageRoot, VERSION as PACKAGE_VERSION } from "./server/version.ts";
 import { api, type Hub as Files, image, watchSession, type Watch, watchWorkspace } from "./watch.ts";
 
 // The browser view's server: serves the built page and one live stream of the net, read-only, on 127.0.0.1 only.
@@ -30,8 +30,9 @@ import { api, type Hub as Files, image, watchSession, type Watch, watchWorkspace
 // so its assets and the stream resolve from any depth. `events?watch=<session key>` adds that session's chat history to the stream,
 // `events?watch=w:<workspace id>` the last line of each session there; /api/history and /api/entry page through a session's file.
 
-export const BUNDLE = fileURLToPath(new URL("../dist/gui", import.meta.url));
-export const VERSION: string = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+// Both come from the package folder, not from this file's place: the sb server bundles this module into dist/server, where "../dist/gui" and "../package.json" are not the package's.
+export const BUNDLE = join(packageRoot(), "dist", "gui");
+export const VERSION: string = PACKAGE_VERSION;
 const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".json": "application/json", ".woff2": "font/woff2", ".mp3": "audio/mpeg", ".png": "image/png", ".webmanifest": "application/manifest+json" };
 const HEADERS = {
 	"cache-control": "no-store",
@@ -45,11 +46,11 @@ export interface Gui { url: string; port: number; remotePort: number; token: str
 /** `net` is the registry behind the net reading (the allow list of session keys); without it no session can be watched. `call` reaches Herdr for input. */
 /** `hub` carries answers to the dialogs bridges relay (dialogs.ts); it runs exactly as long as the server. */
 /** `onRemote` and `onRemoteOff` turn remote access on and off from the page, in the session that runs the server. `onStop` takes another session's stop request (requestStop), so the owner also takes its remote entry down; without it the server stops itself. */
-export interface GuiOptions { read(): Promise<Net>; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[]; dismiss?(key: string): boolean; dismissAll?(): number }; call?: HerdrCall; hub?: Hub; dir?: string; paired?: string; port?: number; remotePort?: number; token?: string; csrf?: string; pollMs?: number; idleMs?: number; pingMs?: number; onStop?(asked: Asked): void; onRemote?(): Promise<void>; onRemoteOff?(): Promise<void>; onSaveFailed?(reason: string): void; spawn?: ControlDeps["spawn"]; close?: ControlDeps["close"]; trust?: { answer: NonNullable<ControlDeps["trust"]>; watch(poke: () => void): () => void }; link?: ControlDeps["link"] }
+export interface GuiOptions { read(): Promise<Net>; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[]; dismiss?(key: string): boolean; dismissAll?(): number }; call?: HerdrCall; hub?: Hub; dir?: string; paired?: string; port?: number; remotePort?: number; token?: string; csrf?: string; pollMs?: number; idleMs?: number; pingMs?: number; onStop?(asked: Asked): void; /** A takeover is refused with 409 (the sb server is never taken over by a session of an older build, which then leaves its GUI alone). */ refuseTake?: boolean; onRemote?(): Promise<void>; onRemoteOff?(): Promise<void>; onSaveFailed?(reason: string): void; spawn?: ControlDeps["spawn"]; close?: ControlDeps["close"]; trust?: { answer: NonNullable<ControlDeps["trust"]>; watch(poke: () => void): () => void }; link?: ControlDeps["link"]; server?: ControlDeps["server"]; /** How long a preferred port that is still held (by the server this one replaces) is retried before another is taken. */ bindWaitMs?: number }
 export interface Asked { by: string; take: boolean }
 
 /** Starts the server. A preferred `port` and `remotePort` (with the `token` and `csrf`) are reused when free, so a restarted server keeps the URL and the page an open tab already has. */
-export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, port = 0, remotePort = 0, token = randomBytes(16).toString("hex"), csrf = randomBytes(16).toString("hex"), pollMs = 2000, idleMs = 10_000, pingMs = 15_000, onStop, onRemote, onRemoteOff, onSaveFailed, spawn, close, trust, link }: GuiOptions): Promise<Gui> {
+export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, port = 0, remotePort = 0, token = randomBytes(16).toString("hex"), csrf = randomBytes(16).toString("hex"), pollMs = 2000, idleMs = 10_000, pingMs = 15_000, onStop, refuseTake, onRemote, onRemoteOff, onSaveFailed, spawn, close, trust, link, server: panel, bindWaitMs = 0 }: GuiOptions): Promise<Gui> {
 	try {
 		if (!statSync(join(dir, "index.html")).isFile()) throw new Error();
 	} catch {
@@ -65,13 +66,13 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 	const clients = new Map<ServerResponse, Watch | undefined>(), remotes = new Map<ServerResponse, string>(), access = createAccess(token, (device) => remotes.forEach((d, c) => (!device || d === device) && c.end()), paired);
 	const pair = (code = access.pair(), host = access.remote?.host, url = `https://${host}/${token}/pair/${code}`) => (code && host ? { url, rows: qr(url).map((row) => row.map(Number).join("")) } : undefined);
 	const mirrors = createMirrors({ call, lookup: (key) => net?.lookup(key), secret: waitsForSecret, canonical }), docs = hub && createDocs(hub, (key) => net?.lookup(key)?.name ?? key);
-	const stop = (asked: Asked) => void setTimeout(() => (onStop ? onStop(asked) : void halt()), 10); // after the reply has gone out
+	const stop = (asked: Asked) => (refuseTake && asked.take ? false : (setTimeout(() => (onStop ? onStop(asked) : void halt()), 10), true)); // after the reply has gone out
 	const dismissAll = async () => {
 		const n = net?.dismissAll?.() ?? 0;
 		if (n) await tick();
 		return n;
 	};
-	const control = createControl({ link, lookup: (key) => net?.lookup(key), call, csrf, canonical, pair, remoteOn: onRemote, remoteOff: onRemoteOff, paired: { on: () => Boolean(access.remote), ...access.devices, unsaved: access.unsaved }, saveFailed: onSaveFailed, spawn, close: close && (async (kind, json) => (await tick(), close(kind, json, tick))), dismiss: async (key) => typeof key === "string" && Boolean(net?.dismiss?.(key)) && (await tick(), true), dismissAll, mirrors, stop, secret: waitsForSecret, linkRequest: waitsForLinkRequest, trust: trust?.answer, answers: hub && { has: hub.has, replay: hub.replay, ended: hub.ended, send: hub.send, probe: hub.probe, commands: hub.commands, pull: hub.pull, target: async (key) => (await tick(), hub.target(key)) } });
+	const control = createControl({ link, server: panel, lookup: (key) => net?.lookup(key), call, csrf, canonical, pair, remoteOn: onRemote, remoteOff: onRemoteOff, paired: { on: () => Boolean(access.remote), ...access.devices, unsaved: access.unsaved }, saveFailed: onSaveFailed, spawn, close: close && (async (kind, json) => (await tick(), close(kind, json, tick))), dismiss: async (key) => typeof key === "string" && Boolean(net?.dismiss?.(key)) && (await tick(), true), dismissAll, mirrors, stop, secret: waitsForSecret, linkRequest: waitsForLinkRequest, trust: trust?.answer, answers: hub && { has: hub.has, replay: hub.replay, ended: hub.ended, send: hub.send, probe: hub.probe, commands: hub.commands, pull: hub.pull, target: async (key) => (await tick(), hub.target(key)) } });
 	let last: string | undefined, problem: string | undefined, inflight: Promise<void> | undefined;
 	let poll: ReturnType<typeof setInterval> | undefined, beat: ReturnType<typeof setInterval> | undefined;
 	const send = (to: ServerResponse, data: string, event?: string) => to.writableEnded || to.write(`${event ? `event: ${event}\n` : ""}data: ${data}\n\n`); // a reading in flight at stop ends after the streams
@@ -146,7 +147,8 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 			} catch {
 				return void fail(404);
 			}
-			if ((parts[0] === "server" || parts[0] === "remote") && who.remote) return void fail(403); // only this machine stops the server, opens it to the tailnet or closes it, and lists or unpairs devices
+			// Only this machine stops, restarts, or reads the log of the server, opens it to the tailnet or closes it, and lists or unpairs devices.
+			if ((parts[0] === "server" || parts[0] === "remote") && who.remote) return void answer({ status: 403, body: { error: "local_only", reason: "This is done on this computer's own page." } });
 			if (["sessions", "remote", "server", "dirs", "open", "close", "dismiss", "trust", "link"].includes(parts[0]!)) return void control(req, who.origin, parts, who.remote).then(answer, () => answer({ status: 500, body: { error: "internal", reason: "The request could not be handled." } }));
 			// An entry never changes once written, so its image is cached for a day; the token in the URL keeps it to this page.
 			if (req.method === "GET" && parts[0] === "image") return void image(files, parts.slice(1)).then((p) => (p ? res.writeHead(200, { ...HEADERS, "content-type": p.type, "cache-control": "private, max-age=86400" }).end(p.bytes) : fail(404)), () => fail(404));
@@ -172,12 +174,21 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 	};
 	const server: Server = createServer(handler("local", () => server)), remoteServer: Server = createServer(handler("remote", () => remoteServer));
 	// A preferred port is kept when free; otherwise any free one. The remote listener is bound second, so it can never share the local port.
+	// A restart's new server asks for the port the old one is still letting go: it is retried for `bindWaitMs` before another is taken.
 	const bind = async (srv: Server, preferred: number) => {
-		try {
-			await listen(srv, preferred);
-		} catch (error) {
-			if (!preferred || (error as NodeJS.ErrnoException).code !== "EADDRINUSE") throw error;
-			await listen(srv, 0);
+		for (const end = Date.now() + bindWaitMs; ; ) {
+			try {
+				await listen(srv, preferred);
+				break;
+			} catch (error) {
+				if (!preferred || (error as NodeJS.ErrnoException).code !== "EADDRINUSE") throw error;
+				if (Date.now() < end) {
+					await new Promise((r) => setTimeout(r, 100));
+					continue;
+				}
+				await listen(srv, 0);
+				break;
+			}
 		}
 		return (srv.address() as AddressInfo).port;
 	};

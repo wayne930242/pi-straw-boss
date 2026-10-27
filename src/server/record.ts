@@ -282,18 +282,18 @@ export const clearStartError = (slot: Slot) => rmSync(fileOf(slot, "startError")
 
 /**
  * Clears `stopped` where the boss's own start does: in `server.json` (and its `gui.stopped`), and in `gui.json` of the primary slot, which straw-boss-desk reads.
- * Returns whether anything changed.
+ * `keepGui`: only the server's own `stopped` goes, and a GUI stopped on purpose stays so (a restart starts the server, not the GUI). Returns whether anything changed.
  */
-export function clearStopped(slot: Slot): boolean {
+export function clearStopped(slot: Slot, keepGui = false): boolean {
 	let changed = false;
 	updateRecord(slot, (record) => {
-		if (!record.stopped && !record.gui?.stopped) return undefined;
+		if (!record.stopped && (keepGui || !record.gui?.stopped)) return undefined;
 		changed = true;
 		const { stopped: _stopped, ...rest } = record;
-		return { ...rest, ...(record.gui ? { gui: { ...record.gui, stopped: undefined } } : {}) } as ServerRecord;
+		return { ...rest, ...(record.gui && !keepGui ? { gui: { ...record.gui, stopped: undefined } } : {}) } as ServerRecord;
 	});
-	if (slot.primary) {
-		const file = join(slot.stateDir, "gui.json"), gui = parse<Record<string, unknown>>(readRaw(file));
+	if (!keepGui) {
+		const file = join(slot.dir, "gui.json"), gui = parse<Record<string, unknown>>(readRaw(file));
 		if (isObject(gui) && gui.stopped) {
 			const { stopped: _stopped, ...rest } = gui;
 			writeJson(file, rest);
