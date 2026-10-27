@@ -457,14 +457,16 @@ export async function ensure(ctx: Ctx, { boss = false, lockWaitMs = 0, deadline 
 }
 
 /** Asks the live server to restart, touches `restarting.since` while it goes, and waits for it to exit. The caller holds `server.lock`. Returns the `began` of the restart. */
-async function retire(ctx: Ctx, old: ServerRecord, reason: string, counts: boolean, deadline?: number): Promise<string> {
+async function retire(ctx: Ctx, old: ServerRecord, reason: string, counts: boolean, deadline?: number, limit = false): Promise<string> {
 	let reply: Reply | undefined;
 	try {
 		// `counts`: whether this restart is one the once-a-minute limit counts (an agent's, the boss's, a shell's; not an upgrade or a serve takeover).
-		reply = (await callControl(old.socket, old.secret, { cmd: "restart", reason, by: ctx.by, counts }, within(ctx, deadline, 5000))).reply;
+		reply = (await callControl(old.socket, old.secret, { cmd: "restart", reason, by: ctx.by, counts, ...(limit ? { limit } : {}) }, within(ctx, deadline, 5000))).reply;
 	} catch (error) {
 		throw new ServerError("unreachable", `the sb server did not take the restart: ${(error as Error).message}`);
 	}
+	// The server enforces the once-a-minute limit itself (B5): the requester's own check under the lock stays as the first line.
+	if (typeof reply?.error === "string" && reply.error.startsWith("rate:")) throw new ServerError("rate", reply.error.slice(5).trim());
 	if (!reply?.ok) throw new ServerError(reply?.error === "restarting" ? "restarting" : "unreachable", `the sb server refused the restart: ${String(reply?.error ?? "no answer")}`);
 	const began = readRecord(ctx.slot)?.restarting?.began ?? new Date(ctx.now()).toISOString();
 	const end = Math.min(ctx.now() + ctx.timers.exit, deadline ?? Infinity);
@@ -545,7 +547,7 @@ async function restartLocked(ctx: Ctx, { reason, downgrade, upgrade, boss, limit
 		const last = Date.parse(record.lastRestart.at);
 		if (Number.isFinite(last) && ctx.now() - last < RESTART_EVERY_MS) throw new ServerError("rate", `The sb server was restarted ${Math.round((ctx.now() - last) / 1000)} s ago (${record.lastRestart.reason}, by ${record.lastRestart.by}); restarts are taken once a minute at most.`);
 	}
-	const began = await retire(ctx, record, reason, counts, deadline);
+	const began = await retire(ctx, record, reason, counts, deadline, limit && !boss);
 	if (record.mode === "serve") {
 		const back = await supervised(ctx, hold, old!, began, deadline);
 		if (back) return done(back);

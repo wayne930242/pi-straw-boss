@@ -16,7 +16,8 @@ import type { Log } from "./log.ts";
 import { secretDir, type Slot, towerId, towerName } from "./record.ts";
 import { ageOf, buildBrief, gatherMains, LOCAL_TOOLS } from "./towerbrief.ts";
 import { createRuns, type Runs, type RunsOptions, type ServiceRef, type ServiceStatus } from "./runs.ts";
-import { lastNote, readTimer } from "./towerrunstore.ts";
+import { addExpect, clearExpect, lastNote, readExpects, readTimer } from "./towerrunstore.ts";
+import { runTool, type ServerTools } from "./runtools.ts";
 import { openSeen, type Seen } from "./towerseen.ts";
 import { readTowerRuns } from "./towerruns.ts";
 import { appendEvent, deleteService, listServices, purgeAll, purgeQueues, putLedger, queueLength, readLedger, readService, type ServiceRecord, towerDir, writeService } from "./towerstore.ts";
@@ -60,6 +61,12 @@ export interface TowersOptions {
 	retryMs?: number[];
 	/** Replaces the runs' seams (timers, starting pi, the settings check, liveness), for tests. */
 	runs?: Partial<RunsOptions>;
+	/** A request to the link holder as a tower identity (main.ts; absent in a world without one). */
+	link?: (body: unknown, from: string) => Promise<unknown>;
+	/** The server's own part of `boss_server` for a run. */
+	server?: ServerTools;
+	/** Hands the service to a test as soon as it is built. */
+	expose?: (towers: Towers) => void;
 }
 export interface Ensured { id: string; workspace: string; label: string; tab?: string; pane?: string; opened: boolean; resident?: true; live: boolean }
 export interface TowerRow { workspace: string; label: string; id: string; state: "waiting" | "registering" | "live"; queue: number; service?: ServiceStatus }
@@ -79,6 +86,8 @@ export interface Towers {
 	status(): TowerRow[];
 	/** The runs of the services (runs.ts): claims, the run's requests, the boss's events. */
 	runs: Runs;
+	/** A tool a run calls (`run-tool`): checked against the token's kind, done as the tower identity. */
+	runTool(request: Record<string, unknown>): Promise<{ text: string; details?: unknown }>;
 	/** The identities leave the broker; tokens and files stay. */
 	stop(): Promise<void>;
 }
@@ -132,7 +141,7 @@ export function createTowers(o: TowersOptions): Towers {
 				digestKeys: lines.map((x) => x.key),
 				text: buildBrief({
 					label: l.record.label, workspace: ws, head: mains.head, woken: `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`, counts, identity: l.record.id,
-					mains: mains.rows, obligations: [...mains.opened, ...(timer && timer.at <= now() ? ["your wakeAfter follow-up is due"] : [])], digest: lines.map((x) => x.line),
+					mains: mains.rows, obligations: [...mains.opened, ...readExpects(slot, ws, now()).map((e) => `waiting for a reply from ${e.name} (asked ${ageOf(now() - e.at)} ago): ${e.first}`), ...(timer && timer.at <= now() ? ["your wakeAfter follow-up is due"] : [])], digest: lines.map((x) => x.line),
 					...(note ? { note: { text: note.note, age: ageOf(now() - Date.parse(note.at)) } } : {}),
 					flags: [
 						...(crashed.length ? [`${crashed.length} event${crashed.length > 1 ? "s were" : " was"} possibly handled by a run that crashed: check before acting.`] : []),
@@ -161,6 +170,7 @@ export function createTowers(o: TowersOptions): Towers {
 				if (verdict === "new") {
 					const written = appendEvent(slot, l.record, { kind: "intercom", from: { id: from.id, ...(from.name ? { name: from.name } : {}) }, text: message.content.text, at: new Date(now()).toISOString(), messageId: message.id });
 					seen.add(from.id, message.id, message.content.text);
+					clearExpect(slot, l.record.workspace, from.id, now());
 					log.line("tower-event", { workspace: l.record.workspace, kind: "intercom", from: from.id, seq: written.seq });
 					runs.poke(l.record.workspace);
 				}
@@ -522,7 +532,29 @@ export function createTowers(o: TowersOptions): Towers {
 		return l;
 	};
 
-	return {
+	/** The tools a run calls, done as the workspace's tower identity (runtools.ts). A failure that comes after the run has gone is told to the next run as a notice. */
+	const runToolFor = async (request: Record<string, unknown>) => {
+		const who = runs.runOf(request.token);
+		if (!who) throw new Error("unknown_token");
+		const name = typeof request.tool === "string" ? request.tool : "", args = (typeof request.args === "object" && request.args !== null ? request.args : {}) as Record<string, unknown>;
+		const l = need(who.workspace), ws = who.workspace;
+		const host = {
+			reach: l.reach!, open: l.open!, closeMain: l.control!.closeMain, now, boardDir: join(slot.stateDir, "board"), label: l.record.label,
+			link: async (body: Record<string, unknown>) => ((await o.link?.(body, l.record.id)) ?? { ok: false, code: "no_holder", error: "The link holder is not running in the sb server" }) as { ok: boolean; error?: string },
+			server: o.server ?? { status: () => ({}), logs: () => [], restart: () => Promise.reject(new Error("The server cannot restart itself here")) },
+			expect: (to: string, who: string, text: string) => { try { addExpect(slot, ws, { to, name: who, at: now(), first: phrase(text, 80) }, now()); } catch (cause) { error("expects", (cause as Error).message); } },
+		};
+		try {
+			return await runTool(host, who.kind, name, args);
+		} catch (cause) {
+			// The run was released while the call was under way (a /new, an end): nobody is left to read the failure, so the next run does.
+			if (!runs.runOf(request.token) && who.kind === "local") runs.notice(ws, `${name} failed after your run ended: ${(cause as Error).message}`, `${name}:${phrase((cause as Error).message, 80)}`);
+			throw cause;
+		}
+	};
+
+	const api: Towers = {
+		runTool: runToolFor,
 		activate,
 		ensure,
 		async close(workspace) {
@@ -559,4 +591,6 @@ export function createTowers(o: TowersOptions): Towers {
 			await Promise.all([...services.values()].map((l) => release(l)));
 		},
 	};
+	o.expose?.(api);
+	return api;
 }

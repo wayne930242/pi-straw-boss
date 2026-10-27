@@ -331,10 +331,10 @@ test("pane-role: a pane the server does not list is none; a standing pane that h
 	assert.equal((await ask(s, { cmd: "pane-role", pane: "wA:p1", pid: 1 })).role, "none");
 	const hand = await ask(s, { cmd: "pane-role", pane: ensured.pane, pid: 5555, started: "T-5555" });
 	assert.equal(hand.role, "hand");
+	world.live.add(5555);
 	const token = String((hand.claim as { token: string }).token);
 	assert.match(String((hand.claim as { brief: string }).brief), /tower of workspace Alpha/);
 	assert.equal((await ask(s, { cmd: "pane-role", pane: ensured.pane, pid: 5556 })).role, "quit", "the pane is taken");
-	world.live.add(5555);
 	assert.equal((await ask(s, { cmd: "run-done", token, note: "by hand" })).ok, true);
 	world.live.delete(5555);
 	await until(() => listRuns(world.slot, "wA").some((r) => r.hand && r.outcome === "done"), "done");

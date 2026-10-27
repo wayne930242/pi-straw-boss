@@ -633,6 +633,18 @@ export function createRuns(o: RunsOptions) {
 			a.rec.file = file;
 			writeRun(slot, a.rec);
 		},
+		/**
+		 * A run token for a run the server did not start through pi: B6 issues an ally run's token this way once it has started its pane, and the tests use it to hold an ally token to its kind. It has no pane
+		 * or PID, so the watcher leaves it alone (`release` ends it).
+		 */
+		mint(workspace: string, who: { kind: "local" | "ally"; device?: string; level?: string }): string {
+			const svc = services.get(workspace);
+			if (!svc) throw new Error(`The sb server stands in for no tower of workspace ${workspace}`);
+			const rec: RunRecord = { id: newId(), workspace, kind: who.kind, ...(who.device ? { device: who.device } : {}), ...(who.level ? { level: who.level } : {}), pane: svc.ref.record().pane, agent: "minted", startedAt: iso(now()), events: [] };
+			const a: Active = { rec, svc, commands: [], lastPoll: now(), started: now(), digestKeys: [], offered: new Map(), token: randomBytes(24).toString("hex") };
+			byToken.set(a.token!, a);
+			return a.token!;
+		},
 		async stop() {
 			stopped = true;
 			clearInterval(watcher);

@@ -9,7 +9,7 @@
 
 import { restrictLabel } from "./link/text.ts";
 
-export type Kind = "call_tower" | "broadcast" | "tower_send" | "handoff";
+export type Kind = "call_tower" | "broadcast" | "tower_send" | "tower_reply" | "handoff";
 /** `session` is a pi session that did not join the net (a scope `all` broadcast reaches it). `head`: the tower of the head workspace. */
 export interface Party { name: string; id: string; role: "tower" | "main" | "member" | "session"; head?: boolean; workspace?: string }
 /** The verified sender of a message that came over Straw Link: its device label and short id from the roster, and the team. */

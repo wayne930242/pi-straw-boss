@@ -102,3 +102,20 @@ export function writeTimer(slot: Slot, workspace: string, value: { at: number; a
 	writeDurable(timerFile(slot, workspace), value);
 }
 export const clearTimer = (slot: Slot, workspace: string) => rmSync(timerFile(slot, workspace), { force: true });
+
+// Replies a run is waiting for: a send with `reply` expected whose answer has not come. The brief lists them as open obligations; a message from the one it was asked of clears it. 24 h, at most 20.
+export interface Expect { to: string; name: string; at: number; first: string }
+const expectsFile = (slot: Slot, workspace: string) => join(towerDir(slot, workspace), "expects.json");
+export const EXPECT_KEEP_MS = 24 * 3600_000;
+export function readExpects(slot: Slot, workspace: string, now: number): Expect[] {
+	const found = readJson<{ entries?: Expect[] }>(expectsFile(slot, workspace));
+	return (Array.isArray(found?.entries) ? found.entries : []).filter((e) => typeof e?.to === "string" && typeof e.at === "number" && now - e.at <= EXPECT_KEEP_MS);
+}
+export function addExpect(slot: Slot, workspace: string, row: Expect, now: number): void {
+	ensureDir(towerDir(slot, workspace));
+	writeDurable(expectsFile(slot, workspace), { entries: [...readExpects(slot, workspace, now).filter((e) => e.to !== row.to), row].slice(-20) });
+}
+export function clearExpect(slot: Slot, workspace: string, from: string, now: number): void {
+	const was = readExpects(slot, workspace, now);
+	if (was.some((e) => e.to === from)) writeDurable(expectsFile(slot, workspace), { entries: was.filter((e) => e.to !== from) });
+}
