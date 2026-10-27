@@ -73,7 +73,7 @@ async function rig(srv: ReturnType<typeof server>, { flag = "RUN" }: { flag?: st
 			pi.registerTool({ name: "intercom", label: "intercom", description: "send", parameters: Type.Object({}), execute: async () => ({ content: [{ type: "text", text: "SENT" }], details: undefined }) });
 			// SAFETY: the run mode reads only these fields of the kit (pi, cfg.env/now/sleep/promptDir/run, s, guiDir, tell).
 			const kit = { pi, cfg: { env: { HERDR_PANE_ID: "wA:p1", HERDR_WORKSPACE_ID: "wA", HERDR_TAB_ID: "wA:t1" }, now: Date.now, sleep: async () => {}, promptDir: join(import.meta.dirname, "..", "prompts"), run: async () => { throw new Error("no herdr"); } }, s: {}, guiDir: join(root, "straw-boss"), me: () => "", role: () => undefined, tell: (text: string) => void notes.push(text) } as unknown as Kit;
-			createRunMode(kit, { ask: (r: Request) => srv.ask(r), pollMs: 20, claimWaitMs: 200, startMs: 500 });
+			createRunMode(kit, undefined, { ask: (r: Request) => srv.ask(r), pollMs: 20, claimWaitMs: 200, startMs: 500 });
 		}],
 	});
 	await loader.reload();

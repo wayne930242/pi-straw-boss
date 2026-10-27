@@ -3,9 +3,8 @@ import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { panes, type Place } from "./herdr.ts";
-import { callControl, ControlError } from "./server/socket.ts";
+import type { ServerLook } from "./server-look.ts";
 import { towerRunsEnabled } from "./server/towerruns.ts";
-import { readRecord, slotOf } from "./server/record.ts";
 import { startOf } from "./startof.ts";
 import { ENTRY, type Kit } from "./state.ts";
 import { createTools } from "./tools.ts";
@@ -48,7 +47,7 @@ export function eventText(e: Pick<Event, "kind" | "text" | "flag">): string {
 	return `${flag}${e.text}`;
 }
 
-export function createRunMode(kit: Kit, deps: RunSideDeps = {}) {
+export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunSideDeps = {}) {
 	const { pi, cfg, s, guiDir, tell } = kit;
 	const { env } = cfg;
 	const { pollMs = POLL_MS, claimWaitMs = CLAIM_WAIT_MS, lostMs = LOST_MS, startMs = TURN_START_MS } = deps;
@@ -60,15 +59,11 @@ export function createRunMode(kit: Kit, deps: RunSideDeps = {}) {
 	let inTurn = false, triggered: number | undefined, outOfReach: number | undefined;
 	let registered = false;
 
+	// Every request goes through the session's look at the server (server-look.ts), which passes the record through the owner gate before it is trusted or a secret is sent to its socket (R13-F003):
+	// a run never reads the record itself. It starts nothing: a run of a server that is gone has nothing to run for.
 	const ask = deps.ask ?? (async (request: Record<string, unknown>): Promise<Answer> => {
-		const record = readRecord(slotOf(guiDir, env));
-		if (!record?.socket || !record.secret) throw new Error("no sb server is running");
-		try {
-			const reply = (await callControl(record.socket, record.secret, request as { cmd: string }, 30_000)).reply;
-			return reply ?? { ok: false, error: "the sb server gave no answer" };
-		} catch (error) {
-			throw error instanceof ControlError ? new Error(error.message) : error;
-		}
+		if (!look) throw new Error("this session has no look at the sb server");
+		return look.ask(request, { start: "never" });
 	});
 	const sleep = (ms: number) => cfg.sleep(ms);
 

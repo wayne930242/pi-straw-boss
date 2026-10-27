@@ -5,7 +5,7 @@ import { TowerWorld } from "./tower-world.ts";
 import { stop } from "../src/server/client.ts";
 import { readRecord, slotOf, writeRecord } from "../src/server/record.ts";
 import { ensureTowerVia, STOPPED } from "../src/server/towerclient.ts";
-import { readService } from "../src/server/towerstore.ts";
+import { readQueue, readService } from "../src/server/towerstore.ts";
 
 // The session side of the tower service (docs/specs/2026-10-26-sb-backend.md, A workspace gets one, Migration from resident towers, Restarts and upgrades): openTower asks the
 // server, a resident tower of this build hands over, and the guard counts a tower identity as live through its own server's restart. The server in these tests is the real one
@@ -41,6 +41,29 @@ test("/boss tower with the flag on asks the server for the tower: the server mak
 	assert.equal(sw.herdr.workspace("wA").tokens.tower, "sb-tower-wa");
 	assert.equal(a.notices.filter((n) => n.level === "error").length, 0, JSON.stringify(a.notices));
 	assert.equal(readService(sw.slot, "wA")?.id, "sb-tower-wa");
+});
+
+test("/boss tower <prompt> (D15) ensures the tower, posts the prompt as a boss event, says it was handed over, and changes no focus; a bare /boss tower still focuses", async () => {
+	const a = world.agent({ id: "a", name: "docs", pane: "wA:p1", tab: "wA:t1", env: envOf(), deps: { server: server() } });
+	await a.start();
+	await a.command("tower check the deploy of mp-3900 and tell me");
+	assert.equal(sw.herdr.commands("tab", "create").length, 1, "the tower was ensured");
+	assert.deepEqual(world.herdr.commands("tab", "focus"), [], "no focus change");
+	const events = readQueue(sw.slot, "wA");
+	assert.equal(events.length, 1);
+	assert.equal(events[0]!.kind, "boss");
+	assert.equal(events[0]!.text, "check the deploy of mp-3900 and tell me");
+	assert.match(a.notices.map((n) => n.text).join("\n"), /Handed to the tower/);
+	assert.equal(a.notices.filter((n) => n.level === "error").length, 0, JSON.stringify(a.notices));
+});
+
+test("/boss tower <prompt> with the flag off says what it needs and writes nothing", async () => {
+	sw.setFlag(undefined);
+	const a = world.agent({ id: "a", name: "docs", pane: "wA:p1", tab: "wA:t1", env: envOf(), deps: { server: server() } });
+	await a.start();
+	await a.command("tower do it");
+	assert.match(a.notices.map((n) => n.text).join("\n"), /needs the tower runs/);
+	assert.deepEqual(sw.running, []);
 });
 
 test("a live tower is the tower: a session does not ask the server for it", async () => {
