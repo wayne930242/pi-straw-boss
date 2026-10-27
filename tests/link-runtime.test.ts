@@ -342,7 +342,7 @@ test("SLH-F002: a server that cannot start the link holder tells the boss once, 
 	writeFileSync(join(a.dir, "device.json"), "{ not json");
 	void a.server.service.start();
 	await tower.start();
-	await until(() => a.server.notices.some((n) => /could not start: device\.json is damaged/.test(n.text)), "the notice");
+	await until(() => a.server.notices.some((n) => /could not start_ device\.json is damaged/.test(n.text)), "the notice");
 	await new Promise((r) => setTimeout(r, 120));
 	assert.equal(a.server.notices.filter((n) => /could not start/.test(n.text)).length, 1, "told once");
 	assert.equal(a.server.service.status().notices.length, 1, "and kept for status");

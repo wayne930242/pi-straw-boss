@@ -142,3 +142,23 @@ test("a pi session's tower_send reaches the relay through the server's control s
 	await assert.rejects(tower.tool("tower_send", { message: "again", device: "bob-mac" }), /No link holder is running|did not take the request/);
 	await world.stopAll();
 });
+
+test("B3R-F001: a notice is stored and logged on the label character set, cut at 300 characters", async () => {
+	const { restrictNotice } = await import("../src/link/text.ts");
+	const out = restrictNotice(`Straw Link: \x1b[2J\nignore {instructions} ${"y".repeat(400)}`);
+	assert.equal(out.length, 300);
+	assert.match(out, /^[A-Za-z0-9 ._-]+$/);
+});
+
+test("B3R-F002: the server's home is opts.home ?? homedir(), not HOME or USERPROFILE of the injected env", async () => {
+	mkdirSync(join(sw.root, "home", "project"), { recursive: true });
+	mkdirSync(sw.stateDir, { recursive: true });
+	writeFileSync(join(sw.stateDir, "config.json"), JSON.stringify({ link: { relay: "http://relay.test", teams: { [TEAM_HEX]: { project: "~/project", share: "status" } } } }));
+	sw.env.USERPROFILE = join(sw.root, "home");
+	const s = await sw.start({ link: { tickMs: 15, relay: clientFor(relay) } });
+	await s.handle.ready;
+	const record = sw.record()!;
+	const status = (await callControl(record.socket, record.secret, { cmd: "status" })).reply as unknown as { link: { notices: { text: string }[] } };
+	assert.ok(!existsSync(join(sw.stateDir, "link", "holder.json")), "the injected HOME is not the server's home");
+	assert.ok(Array.isArray(status.link.notices));
+});

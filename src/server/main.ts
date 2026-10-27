@@ -394,7 +394,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	void connectLoop();
 	await Promise.race([first, sleep(o.brokerMs ?? BROKER_MS).then(() => false)]);
 	// The link holder has looked once (it is bound to the identities, which are registered, and the GUI ports come after it): a first look that is slow does not hold the start.
-	if (linkFirst) await Promise.race([linkFirst, sleep(o.linkMs ?? LINK_MS)]);
+	if (linkFirst) await Promise.race([linkFirst, sleep(o.linkMs ?? LINK_MS)]).then(((began) => () => trace("link", began))(now()));
 
 	// Ready: the identities are as registered as they can be, `restarting` goes, and the start-error of this attempt (and any before it) with it.
 	if (phase === "starting") {

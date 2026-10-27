@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { restrictNotice } from "./text.ts";
 import { join } from "node:path";
 import type { Session } from "../herdr.ts";
 import { startOf } from "../startof.ts";
@@ -64,7 +65,7 @@ type ChannelEvent = { type: string; fromSessionId?: string; payload?: unknown };
 export function createLinkService({ kit, stateDir, version, started, pid = process.pid, notify, deps: opts = {} }: ServiceOptions) {
 	const { pi, cfg } = kit;
 	const store = new LinkStore(join(stateDir, "link"));
-	const home = opts.home ?? cfg.env.HOME ?? cfg.env.USERPROFILE ?? homedir(), agentDir = cfg.env.PI_CODING_AGENT_DIR ?? join(home, ".pi", "agent");
+	const home = opts.home ?? homedir(), agentDir = cfg.env.PI_CODING_AGENT_DIR ?? join(home, ".pi", "agent");
 	const config = () => readLinkConfig(stateDir, { home, agentDir });
 	const inUse = () => config().teams.size > 0 || store.teamIds().length > 0 || store.enabled;
 	/** Whether this computer's policy leaves it attended: the GUI's team changes and `link_request` are for an attended computer only. */
@@ -84,7 +85,8 @@ export function createLinkService({ kit, stateDir, version, started, pid = proce
 	const notices: Notice[] = [];
 	let lookError = "";
 	const sid = () => kit.me();
-	const note = (text: string, level: "info" | "warning" | "error" = "info") => {
+	const note = (raw: string, level: "info" | "warning" | "error" = "info") => {
+		const text = restrictNotice(raw);
 		notices.push({ at: cfg.now(), level, text });
 		if (notices.length > NOTICES) notices.shift();
 		notify(text, level);
