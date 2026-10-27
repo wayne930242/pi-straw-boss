@@ -786,6 +786,7 @@ An event wakes a run. Everything else is shown in the GUI or handled by the serv
 | An intercom message to a tower identity: `call_tower`, `tower_send` from another tower, a `boss_broadcast` with scope `towers`, a main's done report, a reply to something the tower sent, a plain `intercom send` | Event `intercom`, with the text as received (its code-written header included) and the broker's sender line | Local |
 | A Straw Link `tower` envelope routed to this workspace (**Delivery**, Straw Link spec) | Event `link`, through the inbox as today | Ally (**Ally runs**) |
 | The boss types into the tower from the GUI while no local run is live | Event `boss`, the text verbatim | Local, queued ahead of the rest |
+| The boss types `/boss tower <prompt>` in any pi session of the workspace (D15) | Event `boss`, the prompt verbatim, through the same server endpoint as the GUI composer | Local, queued ahead of the rest |
 | An outcome of something a local run sent that arrives after that run ended: an intercom delivery that failed, a main opened by the opener that failed to start, a `close-main` that timed out, a relay refusal after "queued" of a send from a local run | Event `notice`, written by the server | Local |
 | An outcome of a send an ally run made (a relay refusal after "queued", a delivery that failed) | Event `notice` in that device's ally queue | That device's next ally run |
 | `tower_done({ wakeAfter })` from a local run asked for a follow-up, 5 to 240 minutes (D3) | Event `timer`, one pending per workspace: a later `wakeAfter` replaces it, since the latest run knows best what is still open | Local |
@@ -1356,6 +1357,8 @@ removed, with the release that carries B6.
    - Tower tools over the socket, `tower_reply`, the `intercom` block, the prompt change.
    - `assertSettingsSafe` before every run (it needs `fix/settings-precheck` merged).
    - The GUI's tower states, queue, and composer wake.
+   - `/boss tower <prompt>` (D15): it ensures the tower like a bare `/boss tower`, clears `stopped`, posts the prompt as a `boss`
+     event, and answers "handed to the tower" with no focus change. A bare `/boss tower` keeps opening and focusing the tower tab.
    - A proposed pi-intercom change: a mailbox flush waits for receipts (**Queueing and concurrency**).
    - `boss_server` over the run tokens (B1 has none, so its block is a session-level hook only): the server itself refuses `restart`,
      `status`, and `logs` for an ally-run token and enforces the one-a-minute restart limit server-side (today it is checked under the
@@ -1545,6 +1548,7 @@ straw-boss-desk's owner also agreed to D11.
 | D12 | Run limits | 20 minutes per run. A steer after 60 s idle without `tower_done`, and an end 5 minutes later. The service is held after 3 failed runs in 10 minutes. |
 | D13 | The ally thread for the brief keeps peer text at rest | "存，每台裝置最近 20 則、留 7 天": a per-device store of both directions, the last 20 messages, 7 days (**The brief**). |
 | D14 | Restarting and debugging the server | "server restart 也要讓 agent 或 user 有辦法做，不然很難 debug": `boss_server` for local sessions and local runs, Restart server and Show log in the GUI on this computer's page only, `server.log` with rotation, `cli.mjs logs`, and the reason recorded (**Seeing and restarting the server**). |
+| D15 | Prompting a tower that is not resident | "如果 tower 現在不是常駐，那會需要 /boss tower [prompt] 的指令": `/boss tower <prompt>` posts a `boss` event the way the GUI composer does, so the boss can wake the tower from any pi session; it does not change focus. A bare `/boss tower` still opens and focuses the tab. Built in B5. |
 
 ## Review record
 
