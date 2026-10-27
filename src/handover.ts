@@ -9,7 +9,8 @@ import { startedLater } from "./startof.ts";
 
 // gui.json in the state directory records the GUI the sb server serves (src/server/guihost.ts): its pid and start time, the local and remote port, the token, and the server's
 // intercom session. It is the contract straw-boss-desk and the sessions' dialog bridges read (docs/how-it-works.md, `gui.json` is a contract). The server writes it by rename
-// when its GUI starts, and a restart or upgrade writes it again with the same port and token, so a page left open reconnects to its successor. Sessions only read it.
+// when its GUI starts, and a restart or upgrade writes it again with the same port when it is free and a new token and CSRF secret (every listener has its own; RC3-F002), which a reader that
+// watches the file picks up. Sessions only read it.
 /**
  * `pid` and `started` name the sb server, the process that serves the GUI (a pi session before 0.46.0); `owner` is `sb server (pid N)` and `ownerSession` the server's intercom session id: dialog bridges
  * follow it to the server's dialog channel. `herdr` is the socket of the Herdr server the server's net is read from. `stopped` marks a GUI stopped on purpose (`/boss gui stop`) or the whole server stopped on purpose.

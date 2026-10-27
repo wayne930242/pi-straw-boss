@@ -46,11 +46,11 @@ export interface Gui { url: string; port: number; remotePort: number; token: str
 /** `net` is the registry behind the net reading (the allow list of session keys); without it no session can be watched. `call` reaches Herdr for input. */
 /** `hub` carries answers to the dialogs bridges relay (dialogs.ts); it runs exactly as long as the server. */
 /** `onRemote` and `onRemoteOff` turn remote access on and off from the page, in the session that runs the server. `onStop` takes another session's stop request (requestStop), so the owner also takes its remote entry down; without it the server stops itself. */
-export interface GuiOptions { read(): Promise<Net>; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[]; dismiss?(key: string): boolean; dismissAll?(): number }; call?: HerdrCall; hub?: Hub; dir?: string; paired?: string; port?: number; remotePort?: number; token?: string; csrf?: string; pollMs?: number; idleMs?: number; pingMs?: number; onStop?(asked: Asked): void; /** A takeover is refused with 409 (the sb server is never taken over by a session of an older build, which then leaves its GUI alone). */ refuseTake?: boolean; onRemote?(): Promise<void>; onRemoteOff?(): Promise<void>; onSaveFailed?(reason: string): void; spawn?: ControlDeps["spawn"]; close?: ControlDeps["close"]; trust?: { answer: NonNullable<ControlDeps["trust"]>; watch(poke: () => void): () => void }; link?: ControlDeps["link"]; server?: ControlDeps["server"]; /** How long a preferred port that is still held (by the server this one replaces) is retried before another is taken. */ bindWaitMs?: number }
+export interface GuiOptions { read(): Promise<Net>; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[]; dismiss?(key: string): boolean; dismissAll?(): number }; call?: HerdrCall; hub?: Hub; dir?: string; paired?: string; port?: number; remotePort?: number; pollMs?: number; idleMs?: number; pingMs?: number; onStop?(asked: Asked): void; /** A takeover is refused with 409 (the sb server is never taken over by a session of an older build, which then leaves its GUI alone). */ refuseTake?: boolean; onRemote?(): Promise<void>; onRemoteOff?(): Promise<void>; onSaveFailed?(reason: string): void; spawn?: ControlDeps["spawn"]; close?: ControlDeps["close"]; trust?: { answer: NonNullable<ControlDeps["trust"]>; watch(poke: () => void): () => void }; link?: ControlDeps["link"]; server?: ControlDeps["server"]; /** How long a preferred port that is still held (by the server this one replaces) is retried before another is taken. */ bindWaitMs?: number }
 export interface Asked { by: string; take: boolean }
 
-/** Starts the server. A preferred `port` and `remotePort` (with the `token` and `csrf`) are reused when free, so a restarted server keeps the URL and the page an open tab already has. */
-export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, port = 0, remotePort = 0, token: preferredToken, csrf: preferredCsrf, pollMs = 2000, idleMs = 10_000, pingMs = 15_000, onStop, refuseTake, onRemote, onRemoteOff, onSaveFailed, spawn, close, trust, link, server: panel, bindWaitMs = 0 }: GuiOptions): Promise<Gui> {
+/** Starts the server. A preferred `port` and `remotePort` are reused when free. The token and the CSRF secret are drawn anew for every listener that starts: a page an open tab already has, or whatever else holds the old ones, opens nothing here. */
+export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, port = 0, remotePort = 0, pollMs = 2000, idleMs = 10_000, pingMs = 15_000, onStop, refuseTake, onRemote, onRemoteOff, onSaveFailed, spawn, close, trust, link, server: panel, bindWaitMs = 0 }: GuiOptions): Promise<Gui> {
 	try {
 		if (!statSync(join(dir, "index.html")).isFile()) throw new Error();
 	} catch {
@@ -60,9 +60,9 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 	const bundle = new Map(readdirSync(dir, { recursive: true, encoding: "utf8" }).filter((f) => statSync(join(dir, f)).isFile()).map((f) => [f.split("\\").join("/"), readFileSync(join(dir, f))]));
 	// `build` names this bundle in the page and in each stream's hello: a page from another build, reconnecting to this server, reloads itself.
 	const html = bundle.get("index.html")!, build = createHash("sha256").update(html).digest("hex").slice(0, 16);
-	// The listeners are bound before anything that carries the token: a token and CSRF secret from an earlier GUI are kept only when its port (and remote port) were got back. A GUI that moved to another port
-	// (the recorded one is held by another process, which an open page of the old GUI reconnects to with the token in its URL and the CSRF secret in its requests) gets new ones, and the page that was open
-	// cannot follow it. The local listener answers while the remote one binds, and a request is refused until the routes are set.
+	// The token and the CSRF secret belong to this listener alone, whether or not its ports are the earlier GUI's: another account may have bound a port in the gap between two servers, and an open page of the earlier GUI
+	// reconnects to whatever answers there with the token in its URL and the CSRF secret in its requests, so a token that outlived its listener could be one that process holds (RC3-F002). The local listener answers while the remote
+	// one binds, and a request is refused until the routes are set.
 	let routes: { local: RequestListener; remote: RequestListener } | undefined;
 	const refuse: RequestListener = (_req, res) => void res.writeHead(503, { ...HEADERS, "content-type": "text/plain" }).end("starting");
 	const server: Server = createServer((req, res) => (routes?.local ?? refuse)(req, res)), remoteServer: Server = createServer((req, res) => (routes?.remote ?? refuse)(req, res));
@@ -97,8 +97,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 		server.close();
 		throw error;
 	}
-	const kept = (port === 0 || bound === port) && (remotePort === 0 || boundRemote === remotePort);
-	const token = (kept && preferredToken) || randomBytes(16).toString("hex"), csrf = (kept && preferredCsrf) || randomBytes(16).toString("hex");
+	const token = randomBytes(16).toString("hex"), csrf = randomBytes(16).toString("hex");
 	const page = html.toString("utf8").replace("<head>", `<head>\n<base href="/${token}/">\n<meta name="sb-csrf" content="${csrf}">\n<meta name="sb-build" content="${build}">`);
 	const files: Files = { lookup: (key) => net?.lookup(key), workspace: (id) => net?.workspace(id) ?? [], readers: readers() };
 	// Turning remote access off ends the streams of remote pages, and unpairing a device ends that device's (`remotes` names each stream's device); their next request finds the cookie void.

@@ -33,7 +33,7 @@ import { qr } from "./qr.ts";
 //   POST /<token>/api/link/<name> {…}                                                    Straw Link's team settings, through the link holder (link.ts of the page): state, create, invite, decide, join-start, trust, …
 //                                                                                        This computer's page only, except `state` (without a pending invite's text) and `confirm-answer`, which a paired device may do like it answers any confirm
 //   POST /<token>/api/server/stop {by, take}                                             stops the GUI listeners: an older session's /boss gui stop or takeover (never remote)
-//   POST /<token>/api/server/status, server/restart {reason?}, server/log {lines?}       the sb server's state, restarting it (the page reconnects on the same URL), and the last lines of its log (this computer's page only)
+//   POST /<token>/api/server/status, server/restart {reason?}, server/log {lines?}       the sb server's state, restarting it (the new server's GUI has a token of its own, so this page does not reconnect), and the last lines of its log (this computer's page only)
 // Every write needs the page's own origin (Origin, Sec-Fetch-Site), a JSON body of at most 64 KB, and the CSRF secret the server wrote into
 // the page; the custom header forces a CORS preflight that is never approved. The key is resolved in the registry (paths and panes never come
 // from the browser), and Herdr is asked right then that the pane still runs pi on that session's file, so a reused pane id is refused.

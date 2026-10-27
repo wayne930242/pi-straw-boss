@@ -30,7 +30,7 @@ after(async () => {
 });
 
 const net = (label: string): Net => ({ bases: [{ id: "w", label, mark: "idle", head: true, tower: null, tabs: [], outposts: [], outside: [] }] });
-async function serve(read: () => Promise<Net>, options: { pollMs?: number; idleMs?: number; pingMs?: number; port?: number; token?: string; csrf?: string; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] }; call?: (method: string, params: Record<string, unknown>) => Promise<unknown>; onStop?(asked: Asked): void; onRemote?(): Promise<void> } = {}, bundle = dir) {
+async function serve(read: () => Promise<Net>, options: { pollMs?: number; idleMs?: number; pingMs?: number; port?: number; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] }; call?: (method: string, params: Record<string, unknown>) => Promise<unknown>; onStop?(asked: Asked): void; onRemote?(): Promise<void> } = {}, bundle = dir) {
 	const gui = await startGui({ read, dir: bundle, pollMs: 20, pingMs: 50, ...options });
 	running.push(gui);
 	return gui;
@@ -223,24 +223,24 @@ test("what changed while no page listened is on the net the next page gets, as e
 	stream.close();
 });
 
-test("stop ends open streams and frees the port, and a restart with the same port and token keeps the URL", async () => {
+test("stop ends open streams and frees the port, and a start on the same port is a new listener with a token and CSRF secret of its own", async () => {
 	const gui = await serve(async () => net("a"));
 	const stream = listen(gui);
 	await until(() => stream.messages().length === 1, "the snapshot");
 	await gui.stop();
 	await until(() => stream.closed(), "the stream to end");
 	await assert.rejects(raw(gui, `/${gui.token}/`), /ECONNREFUSED/);
-	const again = await serve(async () => net("b"), { port: gui.port, token: gui.token });
-	assert.equal(again.url, gui.url);
-	assert.notEqual(again.csrf, gui.csrf, "without a preferred one, a new CSRF secret");
-	const kept = await serve(async () => net("c"), { token: again.token, csrf: again.csrf });
-	assert.equal(kept.csrf, again.csrf, "a restart can keep the page's CSRF secret, as sharedGui does from gui.json");
+	const again = await serve(async () => net("b"), { port: gui.port });
+	assert.equal(again.port, gui.port, "the preferred port is got back");
+	assert.notEqual(again.token, gui.token);
+	assert.notEqual(again.csrf, gui.csrf);
 	assert.equal((await raw(again, `/${again.token}/`)).status, 200);
+	assert.equal((await raw(again, `/${gui.token}/`)).status, 403, "the earlier token opens nothing");
 });
 
 test("a taken preferred port falls back to a free one", async () => {
 	const first = await serve(async () => net("a"));
-	const second = await serve(async () => net("b"), { port: first.port, token: first.token });
+	const second = await serve(async () => net("b"), { port: first.port });
 	assert.notEqual(second.port, first.port);
 	assert.equal((await raw(second, `/${second.token}/`)).status, 200);
 });

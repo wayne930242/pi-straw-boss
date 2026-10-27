@@ -89,14 +89,18 @@ test("a restart that began keeps its began, reason, and by through the new serve
 	await second;
 });
 
-test("a restart keeps what a page or a shell holds, the record's gui port and token; the last error of the server before is dropped once the new one is ready", async () => {
+test("a restart keeps the record's gui port and gives it a new token; the last error of the server before is dropped once the new one is ready", async () => {
 	const slot = world.slot, port = await freePort();
 	mkdirSync(slot.dir, { recursive: true });
 	writeRecord(slot, { pid: 7, version: "0.43.0", herdr: slot.herdr, mode: "detached", desk: false, intercom: {}, log: "/l", socket: "/nowhere", secret: "s".repeat(64), intercomId: "sb-server-00000000", gui: { port, token: "tok-abc", stopped: false }, lastError: { at: "2026-10-26T00:00:00.000Z", code: "x", text: "earlier" }, stopped: true });
 	const s = await world.start();
 	await s.handle.ready;
 	const record = world.record()!;
-	assert.deepEqual(record.gui, { port, token: "tok-abc", stopped: false });
+	assert.equal(record.gui?.port, port);
+	assert.equal(record.gui?.stopped, false);
+	assert.match(String(record.gui?.token), /^[0-9a-f]{32}$/);
+	assert.notEqual(record.gui?.token, "tok-abc", "the earlier listener's token is not carried over");
+	assert.equal(JSON.parse(readFileSync(join(slot.dir, "gui.json"), "utf8")).token, record.gui?.token, "gui.json carries the same new one");
 	assert.equal(record.lastError, undefined, "an earlier server's failure is history once this one is ready");
 	assert.equal(record.stopped, undefined, "a running server is not stopped: whoever started it was allowed to");
 });

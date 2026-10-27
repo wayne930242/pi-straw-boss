@@ -109,7 +109,7 @@ test("when no server answers, the command says so as an error and opens nothing"
 	assert.equal(opened.length, before);
 });
 
-test("/boss gui stop from any session stops the GUI and says when none runs; /boss gui starts it again on the same URL, and an automatic ask is told it was stopped on purpose", async () => {
+test("/boss gui stop from any session stops the GUI and says when none runs; /boss gui starts it again on the same port under a new token, and an automatic ask is told it was stopped on purpose", async () => {
 	const hosted = await startHosted(world);
 	const a = world.agent({ id: "viewer-a", pane: "wA:p1", tab: "wA:t1", deps });
 	const b = world.agent({ id: "viewer-b", pane: "wB:p1", tab: "wB:t1", deps });
@@ -123,8 +123,11 @@ test("/boss gui stop from any session stops the GUI and says when none runs; /bo
 	assert.equal(b.notices.at(-1)!.text, "The straw net GUI is not running");
 	assert.equal((await hosted.ask("gui", { boss: false })).error, "stopped");
 	await b.command("gui");
-	assert.equal(urlOf(b), url, "same port and token after the stop");
-	assert.equal(await status(url), 200);
+	const again = new URL(urlOf(b));
+	assert.equal(again.port, new URL(url).port, "same port after the stop");
+	assert.notEqual(again.pathname, new URL(url).pathname, "and a new token: the GUI that starts again is a new listener");
+	assert.equal(await status(urlOf(b)), 200);
+	assert.equal(await status(url), 403);
 });
 
 test("/boss gui in a session on a stopped server asks the server to start it only when it is the boss's own ask", async () => {
@@ -154,8 +157,8 @@ test("/boss stash and /boss close all do not start a GUI that was stopped on pur
 	await assert.rejects(status(url), /ECONNREFUSED/, "the GUI stays down");
 	assert.equal(hosted.record().gui?.stopped, true);
 	// A server stopped on purpose: nothing starts it or its GUI either.
-	await hosted.ask("gui", { boss: true });
-	assert.equal(await status(url), 200);
+	const started = await hosted.ask("gui", { boss: true });
+	assert.equal(await status(`http://127.0.0.1:${started.port}/${started.token}/`), 200);
 	await hosted.ask("stop", { by: "test" });
 	await hosted.handle.done;
 	for (const command of ["stash", "close all"]) {
@@ -163,7 +166,7 @@ test("/boss stash and /boss close all do not start a GUI that was stopped on pur
 		await main.command(command);
 		assert.ok(main.notices.slice(before).some((n) => n.level === "error"), `${command} after a server stop is an error`);
 	}
-	await assert.rejects(status(url), /ECONNREFUSED/, "the GUI stays down after a server stop");
+	await assert.rejects(status(`http://127.0.0.1:${started.port}/${started.token}/`), /ECONNREFUSED/, "the GUI stays down after a server stop");
 	assert.equal(hosted.record().stopped, true, "and no server was started");
 });
 

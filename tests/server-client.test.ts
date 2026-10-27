@@ -339,7 +339,7 @@ test("a stopped server is not started by an automatic start; the boss's own star
 
 // --- restarts ---
 
-test("a restart keeps the record's port and token, holds the lock until hello, and the new server is a new process with a new secret", async () => {
+test("a restart holds the lock until hello, and the new server is a new process with a new secret", async () => {
 	const s = await world.start();
 	await s.handle.ready;
 	const before = world.record()!;
@@ -356,14 +356,16 @@ test("a restart keeps the record's port and token, holds the lock until hello, a
 	assert.match(logText(), /restart reason="for testing" by="cli restart"/);
 });
 
-test("every kind of restart keeps the gui port and token the old server ran: restart, upgrade, and the desk switch", async () => {
+test("every kind of restart keeps the gui port the old server ran and gives it a new token: restart, upgrade, and the desk switch", async () => {
 	for (const how of [{ reason: "restart" }, { reason: "upgrade", upgrade: true }, { reason: "desk switch", boss: true }] as const) {
 		const s = await world.start({ version: "0.43.0" });
 		await s.handle.ready;
 		const { port, token } = world.record()!.gui!;
 		assert.ok(port > 0 && token, "the server serves the page from its start");
 		const done = await restart(world.ctx({ version: "0.44.0" }), how);
-		assert.deepEqual({ port: done.record.gui?.port, token: done.record.gui?.token }, { port, token }, how.reason); // `stopped` is written when the new GUI binds, which may be just after hello
+		assert.equal(done.record.gui?.port, port, how.reason); // `stopped` is written when the new GUI binds, which may be just after hello
+		assert.match(String(done.record.gui?.token), /^[0-9a-f]{32}$/, how.reason);
+		assert.notEqual(done.record.gui?.token, token, `${how.reason}: every listener has a token of its own`);
 		assert.equal(done.server, "upgrade" in how ? "upgraded" : "restarted");
 		await world.running.find((r) => r.pid === done.record.pid)!.handle.shutdown(0);
 		rmSync(fileOf(world.slot, "record"), { force: true });
