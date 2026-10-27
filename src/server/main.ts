@@ -336,6 +336,24 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 				const query = text(request.query);
 				return workspace && query ? answer(async (t) => ({ closed: await t.closeMain({ workspace, query }) })) : Promise.resolve({ ok: false, error: "close-main needs a workspace and a session" });
 			}
+			// The runs (runs.ts): a pi started with --sb-run claims its run; a pi in a standing pane asks its role; a run polls for its events, confirms them, and ends with tower_done.
+			case "claim": return answer(async (t) => ({ ...(await t.runs.claim(request)) }));
+			case "pane-role": return answer(async (t) => ({ ...(await t.runs.paneRole(request)) }));
+			case "run-poll": return answer(async (t) => ({ ...t.runs.poll(request) }));
+			case "run-taken": return answer(async (t) => ({ ...t.runs.taken(request) }));
+			case "run-done": return answer(async (t) => ({ ...(await t.runs.done(request)) }));
+			case "run-release": return answer(async (t) => ({ ...(await t.runs.release(request)) }));
+			case "run-file": return answer(async (t) => (t.runs.setFile(request.token, request.file), {}));
+			// The boss writes to the tower (the GUI's composer, `/boss tower <prompt>`): an event ahead of the rest.
+			case "tower-event": {
+				const body = text(request.text, 16_384);
+				return workspace && body ? answer(async (t) => ({ queued: t.runs.boss(workspace, body).id })) : Promise.resolve({ ok: false, error: "tower-event needs a workspace and text" });
+			}
+			case "tower-retry": return workspace ? answer(async (t) => (t.runs.retry(workspace), {})) : Promise.resolve({ ok: false, error: "tower-retry needs a workspace" });
+			case "tower-deliver": case "tower-drop": {
+				const id = text(request.id, 64);
+				return workspace && id ? answer(async (t) => (request.cmd === "tower-drop" ? t.runs.dropParked(workspace, id) : t.runs.deliverAgain(workspace, id), {})) : Promise.resolve({ ok: false, error: `${request.cmd} needs a workspace and an event id` });
+			}
 			default:
 				return undefined;
 		}

@@ -56,7 +56,7 @@ test("ensure-tower makes the tower tab (no env, no pi), marks the standing pane,
 	assert.deepEqual({ id: again.id, opened: again.opened, tab: again.tab }, { id: "sb-tower-wa", opened: false, tab: reply.tab });
 	assert.equal(world.herdr.commands("tab", "create").length, 1);
 	assert.equal(world.clients.length, 2, "the server's own session and the one identity");
-	assert.deepEqual((await ask(s, { cmd: "status" })).towers, [{ workspace: "wA", label: "Alpha", id: "sb-tower-wa", state: "live", queue: 0 }]);
+	assert.deepEqual((await ask(s, { cmd: "status" })).towers, [{ workspace: "wA", label: "Alpha", id: "sb-tower-wa", state: "live", queue: 0, service: { state: "standing", queued: 0, allyRuns: [], notices: [], parked: [] } }]);
 	assert.ok(!logText().includes("sb-tower-wa") || !/token|secret/i.test(logText().split("\n").filter((l) => l.includes("tower-")).join("\n")));
 });
 
@@ -267,7 +267,7 @@ test("a live resident tower of an older build keeps its workspace: the service w
 	await sleep(120);
 	assert.equal(world.client("sb-tower-wa"), undefined, "no identity while the resident lives");
 	assert.equal(tokens().tower, "old-tower");
-	assert.deepEqual((await callControl(world.record()!.socket, world.record()!.secret, { cmd: "status" })).reply?.towers, [{ workspace: "wA", label: "Alpha", id: "sb-tower-wa", state: "waiting", queue: 0 }]);
+	assert.deepEqual((await callControl(world.record()!.socket, world.record()!.secret, { cmd: "status" })).reply?.towers, [{ workspace: "wA", label: "Alpha", id: "sb-tower-wa", state: "waiting", queue: 0, service: { state: "standing", queued: 0, allyRuns: [], notices: [], parked: [] } }]);
 	// An ask for the workspace gets the resident, and creates nothing.
 	const s = world.running[0]!;
 	world.herdr.workspaces.push({ workspace_id: "wC", label: "C", tokens: { tower: "old-tower" } });

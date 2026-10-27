@@ -29,6 +29,14 @@ export function createDigest(run: HerdrRun, now: () => number) {
 			const drop = old.slice(0, Math.min(BATCH - 1, Math.max(0, old.length - (KEEP - 1)))).flatMap(([k]) => ["--clear-token", k]);
 			await report(run, workspaceId, [...drop, "--token", `${key}=${line}`]);
 		},
+		/** The lines as they are now, oldest first, with their keys, and nothing cleared (a run's brief shows them; `drop` clears them when the run calls tower_done). */
+		async peek(workspaceId: string): Promise<{ key: string; line: string }[]> {
+			return (await entries(run, workspaceId)).map(([key, line]) => ({ key, line }));
+		},
+		/** Clears the lines with these keys. */
+		async drop(workspaceId: string, keys: string[]) {
+			for (let i = 0; i < keys.length; i += BATCH) await report(run, workspaceId, keys.slice(i, i + BATCH).flatMap((k) => ["--clear-token", k]));
+		},
 		/** Returns the lines, oldest first, and clears them: the tower reads each one once. */
 		async take(workspaceId: string) {
 			const found = await entries(run, workspaceId);

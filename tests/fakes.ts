@@ -45,7 +45,7 @@ export const settle = async () => {
 };
 
 interface Tokens { [name: string]: string }
-interface FakePane { pane_id: string; tab_id: string; workspace_id: string; terminal_id: string; agent?: string; agent_status?: string; agent_session?: { value: string }; label?: string; tokens: Tokens; env?: string[]; cwd?: string; processes?: { argv?: string[]; argv0?: string; name?: string }[] }
+interface FakePane { pane_id: string; tab_id: string; workspace_id: string; terminal_id: string; agent?: string; agent_status?: string; agent_session?: { value: string }; label?: string; tokens: Tokens; env?: string[]; cwd?: string; processes?: { argv?: string[]; argv0?: string; name?: string; pid?: number; cmdline?: string }[] }
 interface FakeWorkspace { workspace_id: string; label: string; agent_status?: string; focused?: boolean; active_tab_id?: string; tokens: Tokens; worktree?: { checkout_path?: string; is_linked_worktree?: boolean; repo_key?: string } }
 
 /** A tiny Herdr: workspaces, tabs, panes, and the CLI subcommands the extension calls. */
@@ -75,7 +75,10 @@ export class FakeHerdr {
 	/** Pane lists fail while this is set (the workspace and tab lists still answer). */
 	failPanes = false;
 	wsTokenHistory: (string | undefined)[] = [];
-	onAgentStart?: (pane: FakePane) => void;
+	onAgentStart?: (pane: FakePane, args: string[]) => void;
+	/** What `pane send-keys`, `send-text` and `agent start` were asked, and what `pane read` answers. */
+	keys: string[][] = [];
+	screen = "";
 	onTabClose?: (paneIds: string[]) => void;
 	/** Herdr's event stream, as `events.subscribe` delivers it: workspace token changes, closed panes, and agents detected in a pane. */
 	private listeners = new Set<{ types: string[]; on: (e: { event: string; data: Record<string, unknown> } | null) => void }>();
@@ -210,7 +213,7 @@ export class FakeHerdr {
 			const pane = this.pane(flag("--pane")!);
 			pane.agent = "pi";
 			this.emit("pane.agent_detected", "pane_agent_detected", { pane_id: pane.pane_id, workspace_id: pane.workspace_id, agent: "pi" });
-			this.onAgentStart?.(pane);
+			this.onAgentStart?.(pane, args);
 			return out({});
 		}
 		if (cmd === "report-metadata") {
@@ -240,6 +243,8 @@ export class FakeHerdr {
 			return out({});
 		}
 		if (group === "tab" && cmd === "focus") return out({});
+		if (group === "pane" && (cmd === "send-keys" || cmd === "send-text")) return (this.keys.push(args), out({}));
+		if (group === "pane" && cmd === "read") return this.screen;
 		throw new Error(`unexpected herdr call: ${args.join(" ")}`);
 	}
 }
