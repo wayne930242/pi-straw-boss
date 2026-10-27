@@ -10,7 +10,7 @@ A session that registers with `acknowledgesReceipts: true` (the sb server does, 
 **live** delivery: `completeSocketDelivery` (`:1162`) records the delivery as `unknown`, starts a 5 s timer (`RECEIPT_TIMEOUT_MS`, `:49`),
 and tells the sender `delivered` only when the receiver's `message_receipt` arrives (`confirmPendingReceipt`, `:1186`). A receiver that
 disconnects first, or stays silent, makes the broker answer the sender `delivery_failed`, `outcomeKnown: false`, `retryable: true`
-(`failPendingReceipt`, `:1200`; `settlePendingReceiptsForSocket`, `:1212`), and the sender retries under the same message id.
+(`failPendingReceipt`, `:1200`; `settlePendingReceiptsForSocket`, `:1212`), and the sender retries. pi-intercom itself accepts a retry under the same message id (`replayOrReject`); Straw Boss's sender uses a new request id, `<id>~r<n>`, because pi-intercom's outbox refuses a request id it has used, and the tower service's dedupe strips the suffix.
 
 Mail that waited in the mailbox while the receiver was away gets none of that. `flushMailboxForSession` (`:1288`), called when the session
 registers (`:603`), does for each matching entry:
@@ -33,7 +33,7 @@ receipt proves it arrived.
 
 - **Keep the entry until the receipt.** In `flushMailboxForSession`, for a session that acknowledges receipts, do not `splice`. Mark the
   entry `inFlight: { socket, timer }` and write the frame. Entries that are `inFlight` are skipped by later flushes and by
-  `pruneMailboxMessages`' eviction order until they settle, but they still count toward `MAX_MAILBOX_MESSAGES`.
+  the eviction in `queueMailboxMessage` (`:1124-1132`, the 256 cap, with `pruneMailboxMessages` expiring by age) until they settle, but they still count toward `MAX_MAILBOX_MESSAGES`.
 - **Settle on the receipt.** `message_receipt` with a proof status (`RECEIPT_PROOF_STATUSES`, the check at `:906`) for an in-flight entry:
   clear the timer, `splice` the entry, `updateDeliveryRecord(…, "socket_delivered")`, and release the ask edge as `confirmPendingReceipt`
   does. The sender, if still connected, gets `delivered` then.
