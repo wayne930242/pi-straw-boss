@@ -225,7 +225,7 @@ test("a boss event wakes a service the loop held, and Retry does too", async () 
 
 test("a run past the steer time is told to wrap up, past the cap it is told to quit, and a pi that stays gets Escape and /quit, then SIGTERM from a PID read from Herdr", async () => {
 	// A wide window between the steer and the quit: under load (a load average of 70 was seen) a watcher tick can come seconds late, and the steer is skipped when the first tick that sees the run is already past the cap (B5 review F013).
-	world.runTimers = { steerAt: 150, quitAt: 6000, quitGrace: 60, signal: 60 };
+	world.runTimers = { steerAt: 150, quitAt: 3000, quitGrace: 60, signal: 60 };
 	const { s } = await setup();
 	tower().incoming(from, msg("m1", "slow"));
 	const id = await nthRun();
@@ -237,7 +237,7 @@ test("a run past the steer time is told to wrap up, past the cap it is told to q
 		const command = got.command as { type: string; text?: string } | undefined;
 		if (command) seen.push(command.type);
 		return seen.includes("quit");
-	}, "the quit command", 3000);
+	}, "the quit command", 15_000);
 	assert.deepEqual(seen, ["steer", "quit"]);
 	await until(() => world.herdr.keys.some((k) => k.includes("/quit")), "Escape and /quit through Herdr");
 	assert.deepEqual(world.herdr.keys.slice(0, 3).map((k) => k.slice(1)), [["send-keys", ensureedPane(), "esc"], ["send-text", ensureedPane(), "/quit"], ["send-keys", ensureedPane(), "enter"]]);
