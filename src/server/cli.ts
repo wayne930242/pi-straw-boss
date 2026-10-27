@@ -1,13 +1,13 @@
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { stateDirOf } from "../agent/paths.ts";
 import { newer } from "../semver.ts";
 import {
-	type Ctx, unreachableText, describe, ensure, guiUrl, herdrListens, isIdentity, detachWarning, lockFor, lockWaitFor, makeCtx, probe, restart, ServerError, serverEnv, stop, takeOver, type Wait, waitReady, within,
+	type Ctx, unreachableText, describe, ensure, guiUrl, herdrListens, isIdentity, detachWarning, lockFor, lockWaitFor, makeCtx, passGate, probe, restart, ServerError, serverEnv, stop, takeOver, trusted, type Wait, waitReady, within,
 } from "./client.ts";
 import { ACL_TOKEN } from "./acl.ts";
 import { logSize, readFrom, tailLog } from "./log.ts";
-import { clearStartError, clearStopped, fileOf, readRecord, readStartError, type ServerRecord, slotOf, type StartError } from "./record.ts";
+import { clearStartError, clearStopped, fileOf, readStartError, type ServerRecord, slotOf, type StartError } from "./record.ts";
 import type { ServerHandle, ServerOptions } from "./main.ts";
 import { VERSION } from "./version.ts";
 
@@ -141,13 +141,34 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 		return 0;
 	}
 
+	/** The folder's `start-error.json`, read once the folder is judged; nothing where it cannot be judged. */
+	async function filed(): Promise<StartError | undefined> {
+		if (!existsSync(fileOf(slot, "startError"))) return undefined;
+		try {
+			await passGate(ctx);
+		} catch {
+			return undefined;
+		}
+		return readStartError(slot);
+	}
+
 	async function logs() {
 		const file = fileOf(slot, "log"), lines = Number(flags.lines ?? 200);
-		for (const line of tailLog(file, lines)) out(`${line}\n`);
+		// The log (and the rotated ones) are files of the folder: read only once the folder is judged, which is once it exists, not once server.log does (b1f-F004, R2-F001).
+		let gated = false;
+		const gate = async () => {
+			if (gated || !existsSync(slot.dir)) return;
+			await passGate(ctx);
+			gated = true;
+		};
+		await gate();
+		if (gated) for (const line of tailLog(file, lines)) out(`${line}\n`);
 		if (!flags.follow) return 0;
-		let at = logSize(file);
+		let at = gated ? logSize(file) : 0;
 		while (!deps.signal?.aborted) {
 			await ctx.sleep(500);
+			await gate();
+			if (!gated) continue;
 			const more = readFrom(file, at);
 			at = more.size;
 			if (more.text) out(more.text);
@@ -192,7 +213,8 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 		try {
 			await stepOf("herdr", async () => {
 				if (!(await (deps.herdrListens ?? herdrListens)(ctx, within(ctx, deadline, 2000)))) throw new StepError("herdr", `no Herdr server answers at ${slot.herdr}`);
-				const found = readRecord(slot);
+				// The folder's owner is judged before its record is read (R13-F003).
+				const found = await trusted(ctx, deadline);
 				if (found && found.herdr !== slot.herdr) throw new StepError("herdr", `the record in ${slot.dir} serves ${found.herdr}, not ${slot.herdr}`);
 				return { value: undefined };
 			});
@@ -235,7 +257,9 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 			return 0;
 		} catch (error) {
 			if (!(error instanceof StepError)) throw error;
-			err(`${JSON.stringify({ step: error.step, ...(error.wait ? { wait: error.wait } : {}), reason: error.message, steps, warnings, log: fileOf(slot, "log"), ...(readStartError(slot) ?? error.startError ? { startError: readStartError(slot) ?? error.startError } : {}) })}\n`);
+			// A refusal of the folder (`acl`) is the reason; the folder's own `start-error.json` is not read then, and is read otherwise only once the folder is judged (b1f-F004).
+			const startError = error.startError?.code === "acl" ? error.startError : (await filed()) ?? error.startError;
+			err(`${JSON.stringify({ step: error.step, ...(error.wait ? { wait: error.wait } : {}), reason: error.message, steps, warnings, log: fileOf(slot, "log"), ...(startError ? { startError } : {}) })}\n`);
 			return error.exit;
 		}
 	}

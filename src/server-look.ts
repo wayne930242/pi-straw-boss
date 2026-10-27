@@ -2,10 +2,11 @@ import { existsSync, readFileSync } from "node:fs";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
 import {
-	type Ctx, decide, describe, ensure, lockWaitFor, makeCtx, probe, restart, RESTART_EVERY_MS, ServerError, stop,
+	type Ctx, decide, describe, ensure, lockWaitFor, makeCtx, probe, restart, RESTART_EVERY_MS, passGate, ServerError, stop, trusted,
 } from "./server/client.ts";
 import { tailLog } from "./server/log.ts";
-import { fileOf, readRecord, slotOf } from "./server/record.ts";
+import { setNote } from "./server/winprep.ts";
+import { fileOf, slotOf } from "./server/record.ts";
 import { newer } from "./semver.ts";
 import { packageRoot } from "./server/version.ts";
 import type { Kit } from "./state.ts";
@@ -69,11 +70,13 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 		let verdictWas: string | undefined, upgradePair: string | undefined;
 		try {
 			const ctx = ctxFor(), seen = await probe(ctx), verdict = decide(ctx, seen);
+			// A look still in flight when the session shuts down does nothing more: it would make the folder again after the session closed.
+			if (stopped) return;
 			verdictWas = verdict.do;
 			if (verdict.do === "refuse") return tellOnce(verdict.why, `Straw Boss: ${verdict.text}`);
 			if (verdict.do === "start") {
 				if (failedAt !== undefined && cfg.now() - failedAt < RETRY_FAILED_MS) return;
-				await ensure(ctx);
+				await ensure(ctx); if (stopped) return;
 			}
 			if (verdict.do === "upgrade") {
 				// An upgrade that failed is asked for again when the record's version or the package's changes, not as time passes: a package whose dist is older than its
@@ -81,18 +84,18 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 				const pair = `${seen.record!.version}|${ctx.version}`;
 				if (failedUpgrade === pair) return;
 				upgradePair = pair;
-				const before = seen.record!.version, done = await restart(ctx, { reason: "upgrade", upgrade: true, lockWaitMs: 0 });
+				const before = seen.record!.version, done = await restart(ctx, { reason: "upgrade", upgrade: true, lockWaitMs: 0 }); if (stopped) return;
 				// An upgrade that starts a server no newer than the one it replaced would be asked for again at every look.
 				if (!newer(done.record.version, before)) throw new Error(`the upgrade started pi-straw-boss ${done.record.version}, not newer than the ${before} it replaced (this session loaded ${cfg.version}; the package on disk is ${ctx.version})`);
 			}
 			failedAt = undefined;
 			failedUpgrade = undefined;
 		} catch (error) {
-			// Another session holds the lock (it starts or restarts the server); the next look finds the result.
-			if (error instanceof ServerError && error.code === "busy") return;
+			// Another session holds the lock (it starts or restarts the server); the next look finds the result. A session that shut down meanwhile tells nothing.
+			if (stopped || (error instanceof ServerError && error.code === "busy")) return;
 			if (verdictWas === "upgrade") failedUpgrade = upgradePair;
 			else failedAt = cfg.now();
-			tellOnce(`failed:${(error as Error).message}`, `Straw Boss: the sb server could not ${verdictWas === "upgrade" ? "upgrade" : "start"}: ${(error as Error).message}`, "error");
+			tellOnce(`failed:${(error as Error).message}`, `Straw Boss: the sb server ${verdictWas === undefined ? "was not looked at" : `could not ${verdictWas === "upgrade" ? "upgrade" : "start"}`}: ${(error as Error).message}`, "error");
 		} finally {
 			looking = false;
 		}
@@ -102,12 +105,14 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 		stopped = false;
 		interactive = ctx.hasUI;
 		ui = ctx.ui;
+		setNote((text) => tellOnce(`note:${text}`, `Straw Boss: ${text}`));
 		clearInterval(timer);
 		void look();
 		timer = setInterval(() => void look(), cfg.adoptMs).unref();
 	});
 	pi.on("session_shutdown", () => {
 		stopped = true;
+		setNote(undefined);
 		clearInterval(timer);
 	});
 
@@ -129,7 +134,10 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 			return describe(ctxFor());
 		},
 		/** `boss_server logs`: the last lines of the server's log, at most 200. */
-		logs(lines = MAX_LOG_LINES) {
+		async logs(lines = MAX_LOG_LINES) {
+			// The log is a file of the folder: read only once the folder is judged (b1f-F004).
+			const ctx = ctxFor();
+			if (existsSync(ctx.slot.dir)) await passGate(ctx).catch((error: ServerError) => refuse(error));
 			return tailLog(fileOf(slot(), "log"), Math.max(1, Math.min(MAX_LOG_LINES, Math.floor(lines))));
 		},
 		/**
@@ -141,7 +149,8 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 			if (!why || why.length > 200 || /[\r\n]/.test(why)) throw new Error("A restart needs a reason: 1 to 200 characters on one line.");
 			const ctx = ctxFor();
 			// The once-a-minute limit is judged under server.lock (client.ts), so two asks at once cannot both pass it.
-			if (!boss && readRecord(ctx.slot)?.stopped) throw new Error("The sb server was stopped on purpose; an agent cannot restart it. The boss starts it again with /boss server.");
+			const found = await trusted(ctx).catch((error: unknown) => refuse(error));
+			if (!boss && found?.stopped) throw new Error("The sb server was stopped on purpose; an agent cannot restart it. The boss starts it again with /boss server.");
 			try {
 				const done = await restart(ctx, { reason: why, downgrade, boss, limit: !boss });
 				return { server: done.server, pid: done.record.pid, version: done.record.version };

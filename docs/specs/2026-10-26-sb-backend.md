@@ -297,19 +297,50 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
         long-lived pi session reads it once, `protectFolder` does not read it again for a wrong DACL, and a folder made again under its name is
         read again. **Cost:** one PowerShell on a cold `up` unless this process has already read this folder's owner (one more beside the launch PowerShell; log phase `owner-gate ms=…`, to be measured on
         the VM), and on a `stop` of a server that is down (it writes `stopped`). **A request that finds a server running** (`up` again, `stop`
-        of a live server, `status`, a session's look) reads no owner and starts no PowerShell: it looks first (a read only), and takes the
-        lock without the gate. The owner read for a folder is made once per folder identity; in a `secondary` slot it is passed between the
+        of a live server, `status`, a session's look) takes the lock without the gate, but its look at the record passes the **trust gate**
+        (R13-F003, below): the first look of a process at a folder that has a record reads the owner (one PowerShell); every later one in the
+        same process reads none. The owner read for a folder is made once per folder identity; in a `secondary` slot it is passed between the
         protect call and the `mkdir`s of `servers\<hash>` (R13-F002), so a folder that landed foreign gets not even those empty folders.
         The folder is passed to the PowerShell in the environment (`SB_OWNER_DIR`), never quoted into the script: PowerShell reads U+2018 to
         U+201B as single quotes too (R13-F001). A refusal found by the launch script (rc -2) is not written to `start-error.json` either (R13-F004).
-        **Residual (R13-F003), documented, not fixed in B1:** a folder with a live-looking record is trusted without an owner read. An account
-        that can create entries in `PI_CODING_AGENT_DIR` can make `straw-boss\` with a `server.json` of its own (it knows the secret the hello
-        proves), name its own pid, and use any free pipe name (or one whose DACL denies the victim, which reads as `denied`). A victim's `up`,
-        `stop` or `restart` then writes, inside the attacker's folder, `server.lock`, `server.json` (`stopped`, `clearStopped`,
-        `touchRestarting`, an automatic upgrade of an older record), `server.log` lines and, from the plain-spawn fallback's abort,
-        `start-error.json`; and `status` and `up`'s `url` are spoofed. No secret of the victim is exposed in B1. The ceiling: an attacker who
-        can create entries in `PI_CODING_AGENT_DIR` already reaches `auth.json` (mode 600 means nothing on Windows) and can plant files in
-        `extensions/`. **Before B2 to B4 send session content to the server**, an owner check once per process must precede trusting a record.
+        **The trust gate (R13-F003; closed for a folder the owner read refuses, with the residuals below, before B2 to B4 send session content to the server):** a record is what a folder another account made can
+        hold too (an account that can create entries in `PI_CODING_AGENT_DIR` makes `straw-boss\` with a `server.json` of its own, names its own pid, and
+        uses any free pipe name or one whose DACL denies the victim), and the old behavior trusted it: a victim's `up`, `stop` or `restart` wrote
+        `server.lock`, `server.json`, `server.log` lines and `start-error.json` inside the attacker's folder, and `status` and `up`'s `url` were
+        spoofed. Now `probe` (the one look every request makes: a session's look, `status`, `up`, `stop`, `restart`, `serve`, the waits of a
+        start) passes the owner gate (`ownerGate`) as soon as the folder holds a readable record, BEFORE it asks whether the pid lives, sends a hello,
+        or hands the record to any caller. A folder whose owner is not the user, BA or SYSTEM (`OWNER_OK_SIDS`) is refused with the same `acl`
+        error as a start's ("belongs to another account", exit 3 in the shell, told once by a session as "the sb server was not looked at"): nothing
+        is sent to the record's pipe (not even a hello), and nothing is written, because every write path in `client.ts` is behind a probe.
+        The record is read FIRST and a record that was read is used only after the gate has passed (b1f-F001: asking "is there a record?" before reading it was passed by a `server.json` that appears and disappears by rename: 1.4% of 89,538 probes returned the attacker's record unjudged); a record file that could not be read (another uid's, a link) is judged too. No file of the slot is read before the folder is judged: `cli logs` (the rotated logs too, and `--follow` once the log first appears), `boss_server logs` (both gate when the state folder exists, not when `server.log` does), `describe`'s `start-error.json` and `up`'s error JSON (which prefers the `acl` refusal to the folder's own `start-error.json`) pass the gate first (b1f-F004). A folder with no record is not read otherwise (nothing is trusted yet; a start's gate reads it before its first file, as before).
+        **One read judges three paths (b1f-F002):** the state folder, the slot's own folder and the record are read in the same PowerShell (an `index:SID` line each), so a record or folder another account planted inside a folder the user owns (a folder made before B1 by other modules' plain `mkdirSync`, with an inherited broad DACL) is refused too. They are judged at this read only: the record's file identity changes on every write, so it is not remembered. The folder is remembered as verified only when its DACL is exactly the owner's and SYSTEM's (read back by `icacls /save` after the owner read); an open folder is protected at the gate right after the owner read (`icacls /inheritance:r /grant:r`, read back with `/save`) and then remembered; if that protect fails it is told once (a process warning in the CLI, the look's notify-once in a pi session) and the folder is read again at most every 60 s, at once when a record in it changed identity. **Residual (R4-F002):** that 60 s window is keyed on identities taken before the read, so an A-B-A swap of the record (the attacker's record put back after the user's was read) is trusted for up to 60 s. A path that was there when the read began and reads `-` went away meanwhile: that is a failed read (a wait, nothing remembered), and the owner script stops at its first error (`$ErrorActionPreference = 'Stop'`) except for a path that is no longer there (`catch { if (Test-Path -LiteralPath $p) { throw } }`, the walk's pattern). **The record's content is bound to the file judged:** `readRecord` takes the file's identity from `fstat` of the handle it read, and after the gate `trusted` refuses (a wait) a record whose file at the path is not that one (a user-owned file renamed over it during the read).
+        **Residual (b1f-F003):** an A, B, A swap during the read (the attacker's folder X renamed away, a user-owned folder Y put at the name while PowerShell reads it by path, X put back before the identity check) passes the "replaced" check, and X is then remembered as verified for the process. It needs an account that can rename entries in the parent and has a user-owned folder to rename; the identity cannot be read from the PowerShell's own handle without `Add-Type`, which Constrained Language Mode forbids. Documented, not fixed. **Residual (R4-F001):** the protect call (`secure`, the gate's `shut`) opens the folder by path after an identity check; a swap in the one process start between the check and icacls opening the path can have the DACL of a folder that was not judged changed to the owner's and SYSTEM's, which the owner could set alone and which changes no owner. The sentence above about a folder replaced while it is read holds for a one-way swap too: the identity is taken before the reads and `remember` stores it only when the folder at the name still has it (R3-F001).
+        **A read that ran out of time is a wait (b1f-F006):** `execAsync` marks only its own timer's kill as `ETIMEDOUT` (another signal and a `maxBuffer` kill keep their own words), the gate throws it as `GateTimeout`, a request tells it as exit 1 with `wait: "start"` and not as `acl`, and it is NOT remembered: the next request reads again.
+        **Cost, measured on the Mac as a count of PowerShell starts; the Windows time is for the VM:** one PowerShell per process per folder
+        identity, for any process that finds a record: a session at its first look, each `cli.mjs status`, `stop`, second `up` (a shell command
+        is a new process: one read each, where it read none before; counts per command are in `docs/how-it-works.md`). The memos (`verified` and `refused`, by volume and file index) hold a verified folder and a **refusal**: a
+        session looks every 2 s, and a foreign folder costs one PowerShell for the process, not one per look. A read that FAILS (Constrained
+        Language Mode; not a timeout) is remembered for `OWNER_READ_RETRY_MS` (60 s) and told again meanwhile without a new PowerShell. The wrong-owner
+        verdict lasts as long as the folder's identity does; an owner changed on the same folder is seen by the next pi process.
+        **The read is asynchronous (B1 follow-up):** `ownerGate` starts the PowerShell as a child process and awaits it (`execAsync`, with `execFileSync`'s
+        error shape and a closed input), so a pi session's event loop (its screen, its timers, the GUI, the link) is never held for the 2 to 5 s of a
+        PowerShell start. `Ctx.gate` and `Ctx.prepare` may answer with a promise, `lockFor`, `launch` and `probe` await them, and the gate inside
+        `prepareSlot` (between the protect call and the `mkdir`s of a secondary slot) is awaited before they are made. Requests that come while a read
+        runs for a folder (a session's looks, `status`) share it (nothing outside `client.ts` reaches the gate in B1: the link and the GUI do not use the sb record yet, and `gui.json` in `handover.ts` is read with no gate, as before): one `whoami` and one PowerShell between them, one verdict for all,
+        a refusal or a failed read included. A folder replaced while its owner is read (another file index afterwards) is not the folder that was read:
+        the read fails and nothing is remembered, and the next request reads the folder that is there. The remaining synchronous native calls are
+        `whoami`, `icacls /save` and the protect call of `protectFolder` (tens of milliseconds each); the PowerShell of `secure`'s wrong-DACL path
+        is skipped for a folder the gate has read, which is every folder a probe has passed. Shell commands (`status`, `stop`, `up`) use the same
+        asynchronous read; nothing waits on it with the loop held.
+        **POSIX (B1 follow-up):** where there is no ACL the same gate is `uidGate` (`record.ts`): a `stat` of the state folder, the slot's own
+        folder (a secondary slot) and the record file, following links (a link to another account's folder is that folder), each compared
+        with `process.getuid()`. A path that another uid owns is refused with the words of the Windows gate ("could not check … before trusting
+        or writing to it: the folder … belongs to another account (uid N), not to uid M. Run pi as that account, or delete the folder …, then
+        start again."), as the same `acl` error (exit 3 in the shell, "the sb server was not looked at" once in a session), BEFORE the record is
+        read, a hello is sent, or a file is written; the folder is checked before the record, and a refusal stops at the first path. A path that
+        is not there is nothing to refuse; a `stat` that fails for any other reason is a refusal that says so. It starts no process and needs no
+        memo. A link is judged twice (b1f-F005): its own owner (`lstat`), then its target's (`stat`). uid 0 is ACCEPTED as an owner, as BUILTIN\Administrators and SYSTEM are on Windows (root is no adversary to the user); a server a `sudo` run started then shows as live but unreachable, like an elevated one on Windows, and `secretDir`'s EPERM or EACCES on a root-owned folder is told as "made by a sudo run: sudo chown -R it, or remove it with sudo". The record is opened with `O_NOFOLLOW` and its owner read from the open handle (`fstat`), so what was stat-ed is what is read, and `prepareSlot` honors `gate` on POSIX too, before it makes the folder. Volumes that ignore ownership (macOS uid 99) and NFS with all_squash are refused for every folder, with no way around it. `cli.mjs up` and a session's `boss_server restart` run it (`trusted`) before
+        they read the record at all.
         The protect call on a swapped temporary folder, and on an existing user-owned folder swapped between the identity check and the call
         (the gate refuses it afterwards), adds the user and SYSTEM where the attacker granted WRITE_DAC and leaves the owner as it was: the
         changes `protectFolder` can make to a foreign folder.
@@ -318,8 +349,19 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
         into the user's, entries already checked) and `/reset /T /C /L`, so a foreign entry is refused with nothing below the folder changed.
         **Residual (R11-F003):** the walk and the calls are not atomic; an account that can already create entries below the folder (only
         through the known plain-`mkdir` windows of other modules, before the folder was protected) can plant one in between, which `/reset`
-        then gives the user's inherited full control and a later start's `/setowner /T` could take. The folder's own protection bounds it;
-        the read-back checks the owner of everything it lists.
+        then gives the user's inherited full control and a later start's `/setowner /T` could take. **`icacls /T /L` DOES descend a junction**
+        (VM pass 6, 8e: `icacls <dir>\* /grant Everyone:(R) /T /C /L` changed the ACL of a file in the junction's target; `/L` only keeps icacls from
+        following a link given as the top-level argument): the walk's refusal of junctions and symbolic links is what protects the target, and a
+        junction planted in the gap between the walk and the `/setowner` or `/reset` call would be descended, so its target's owner and DACL would
+        be changed. The gap is bounded the way the rest of this residual is (an account that can create entries below the folder before it is
+        protected, and then wins a race of a few hundred milliseconds); the read-back lists only the entries of the walk and does not see the target.
+        The folder's own protection bounds it; the read-back checks the owner of everything it lists.
+        **P3 (VM pass 6, tmp-swap):** an account that can write the PARENT of `straw-boss\` (the agent directory, in a shared place) can always win
+        the swap of the temporary folder (60/60, with a 2 ms poll): it renames `straw-boss.<hex>.tmp` before the start has protected it. The outcome is
+        safe (the gate refuses the planted folder, no secret is written, nothing is taken over) but that account can make every first `up` in the
+        shared parent fail with exit 3. It is not fixed: the parent being writable by another account is what the swap needs, and the same account
+        could delete `straw-boss\` or plant it first. The refusal text for a planted folder that grants the victim nothing ("could not protect … tmp")
+        does not name the swap.
       - **What is below is listed without following links** (R8-F003): Windows PowerShell 5.1's `Get-ChildItem` follows junctions, so the
         scripts walk the folder with `[IO.Directory]::GetFileSystemEntries` and refuse any entry with the `ReparsePoint` attribute
         that is a name-surrogate link (`Get-Item -Force` gives it `LinkType` `Junction` or `SymbolicLink`; one whose type cannot be read is refused too)

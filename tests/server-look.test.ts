@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -7,6 +7,7 @@ import { createRemoteTurns } from "../src/link/hooks.ts";
 import { MESSAGE_TYPE } from "../src/link/turn.ts";
 import { RESTART_EVERY_MS } from "../src/server-look.ts";
 import { fileOf, writeRecord } from "../src/server/record.ts";
+import { forgetSid, ownerGate } from "../src/server/winprep.ts";
 import { type Agent, until, World } from "./fakes.ts";
 import { bob, TEAM_HEX } from "./link/holder-world.ts";
 import { ServerWorld, sleep } from "./server-world.ts";
@@ -104,6 +105,25 @@ test("a failed start is told once with the reason, and not tried again at every 
 	assert.equal(sw.spawned.length, 1, "no new attempt for a minute");
 	assert.equal(a.notices.filter((n) => /could not start/.test(n.text)).length, 1);
 	assert.match(a.notices.find((n) => /could not start/.test(n.text))!.text, /exited with code 7/);
+});
+
+test("R13-F003: a state folder that belongs to another account is not looked at: told once, nothing sent to its record's pipe, nothing started or written, and no owner read at every look", async () => {
+	plant();
+	const before = readFileSync(fileOf(sw.slot, "record"), "utf8");
+	let reads = 0;
+	const gate = () => {
+		reads++;
+		throw new Error(`could not check ${sw.stateDir} before trusting or writing to it: the folder ${sw.stateDir} belongs to another account (S-1-5-21-9-9-9-1002), not to me`);
+	};
+	const a = world.agent({ id: "f1", pane: "wA:p94", tab: "wA:t1", ui: true, env: { HOME: sw.env.HOME! }, deps: { stateDir: sw.stateDir, version: "0.44.0", adoptMs: 30, server: { ctx: { ...reaching(), alive: () => true, gate }, cli: "/fake/cli.mjs" } } });
+	await a.start();
+	await until(() => a.notices.some((n) => /belongs to another account/.test(n.text)), "the notice");
+	await sleep(250);
+	assert.equal(a.notices.filter((n) => /belongs to another account/.test(n.text)).length, 1, "told once");
+	assert.match(a.notices.find((n) => /belongs to another account/.test(n.text))!.text, /was not looked at/);
+	assert.equal(sw.spawned.length, 0);
+	assert.equal(readFileSync(fileOf(sw.slot, "record"), "utf8"), before, "the record is as it was");
+	assert.ok(reads >= 2, "the gate is asked at every look (its memo is what keeps the PowerShell to one)");
 });
 
 test("a session on a newer package asks the live server to upgrade, which starts it from the session's package", async () => {
@@ -321,4 +341,47 @@ test("a remote turn cannot use boss_server at any level, dispatch included; a lo
 	const blocked = (await call()) as { block?: boolean; reason?: string };
 	assert.equal(blocked.block, true);
 	assert.match(String(blocked.reason), /cannot see or restart this computer's sb server/);
+});
+
+test("B1 follow-up: a look whose owner read is slow does not freeze the session: a timer set while it runs fires before it ends, and the looks that come meanwhile and after share the one read", async () => {
+	plant();
+	forgetSid();
+	const owner = "S-1-5-21-1111111111-2222222222-3333333333-1001", calls: string[] = [], order: string[] = [];
+	const slow = async (file: string) => {
+		calls.push(file);
+		if (file === "whoami.exe") return `"PC\\me","${owner}"\r\n`;
+		// Set while the read runs; due long before it ends, so it fires first unless the session's event loop was held still.
+		setTimeout(() => order.push("timer"), 10);
+		await sleep(250);
+		order.push("owner read done");
+		return `${owner}\r\n`;
+	};
+	const gate = (slot: typeof sw.slot, ms?: number) => ownerGate(slot.stateDir, slow, ms);
+	const a = world.agent({ id: "f1", pane: "wA:p95", tab: "wA:t1", ui: true, env: { HOME: sw.env.HOME! }, deps: { stateDir: sw.stateDir, version: "0.44.0", adoptMs: 30, server: { ctx: { ...reaching(), gate }, cli: "/fake/cli.mjs" } } });
+	await a.start();
+	await until(() => order.includes("owner read done"), "the owner read to finish");
+	assert.deepEqual(order, ["timer", "owner read done"]);
+	await sleep(200);
+	assert.equal(calls.filter((c) => c.endsWith("powershell.exe")).length, 1, "the looks every 30 ms during and after the read started one PowerShell");
+	assert.equal(a.notices.filter((n) => /sb server/.test(n.text)).length, 0, "and said nothing");
+});
+
+test("b1f-F008: a look still reading the owner when the session shuts down does nothing more: the folder is not made again", async () => {
+	plant();
+	forgetSid();
+	const owner = "S-1-5-21-1111111111-2222222222-3333333333-1001";
+	let reading = false;
+	const slow = async (file: string) => {
+		if (file === "whoami.exe") return `"PC\\me","${owner}"\r\n`;
+		reading = true;
+		await sleep(150);
+		return `${owner}\r\n`;
+	};
+	const a = session("f2", { server: { ctx: { ...reaching(), gate: (slot: typeof sw.slot, ms?: number) => ownerGate(slot.stateDir, slow, ms) }, cli: "/fake/cli.mjs" } });
+	await a.start();
+	await until(() => reading, "the owner read to start");
+	await a.stop();
+	await sleep(300);
+	assert.equal(sw.spawned.length, 0, "no server was started after the session closed");
+	assert.equal(existsSync(join(sw.slot.dir, "server.lock")), false, "and no lock was taken");
 });
