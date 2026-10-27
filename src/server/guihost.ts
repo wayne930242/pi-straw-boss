@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import type { Bridge } from "../bridge.ts";
 import { createCloser } from "../closer.ts";
@@ -9,7 +8,7 @@ import { createDeploys } from "../deploy.ts";
 import { createHub, type Hub } from "../dialogs.ts";
 import { BUNDLE, type Gui, startGui } from "../gui.ts";
 import { alive } from "../remote.ts";
-import { answers, type GuiRecord, listening, postServer, readRecord as readGuiJson, writeRecordFile } from "../handover.ts";
+import { answers, boundedWait, type GuiRecord, listening, postServer, readRecord as readGuiJson, writeRecordFile } from "../handover.ts";
 import type { Session } from "../herdr.ts";
 import { type GuiLink } from "../link/guiport.ts";
 import { type Net, netSource } from "../net.ts";
@@ -143,7 +142,7 @@ export function createGuiHost(o: GuiHostOptions) {
 	/** `pid`'s start time, waited for up to the bound; undefined when it is not told in time. */
 	const startOfLater = (pid: number): Promise<string | undefined> => {
 		if (!o.startedLater) return Promise.resolve(undefined);
-		return Promise.race([o.startedLater(pid).catch(() => undefined), delay<undefined>(o.startWaitMs ?? RECLAIM_START_WAIT_MS, undefined, { ref: false })]);
+		return boundedWait(o.startedLater(pid), o.startWaitMs ?? RECLAIM_START_WAIT_MS);
 	};
 	/**
 	 * A GUI that a live older host still serves (a pi session before 0.46.0, which the first start after an upgrade finds beside it): the host is asked to hand over as an older build's takeover does

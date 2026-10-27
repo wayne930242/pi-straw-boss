@@ -4,7 +4,6 @@ import { request } from "node:http";
 import { connect } from "node:net";
 import { join } from "node:path";
 import { alive } from "./remote.ts";
-import { setTimeout as delay } from "node:timers/promises";
 import { startedLater } from "./startof.ts";
 
 // gui.json in the state directory records the GUI the sb server serves (src/server/guihost.ts): its pid and start time, the local and remote port, the token, and the server's
@@ -89,11 +88,17 @@ export const listening = (port: number) =>
 		socket.once("connect", () => (socket.destroy(), done(true))).once("error", () => done(false)).once("timeout", () => (socket.destroy(), done(false)));
 	});
 
+/** `read` raced against `ms`, holding the event loop for the bound: the reads are unref'd so that pi may leave with one pending, but an awaiting caller (pi's `project_trust` handler holds nothing else) must not see the loop drain and the process exit at the question. The timer is cleared when the read settles. */
+export const boundedWait = <T>(read: Promise<T>, ms: number): Promise<T | undefined> => {
+	let timer: NodeJS.Timeout | undefined;
+	const bound = new Promise<undefined>((done) => (timer = setTimeout(done, ms, undefined)));
+	return Promise.race([read.catch(() => undefined), bound]).finally(() => clearTimeout(timer));
+};
 const START_WAIT_MS = 6000;
 /** Where a session reads another process's start time and how long it waits: the process's own cache and 6 s unless a test (or a caller) says otherwise. */
 export interface StartRead { later?: (pid: number, o: { hold: false }) => Promise<string | undefined>; waitMs?: number }
 /** Another process's start time, waited for up to 6 s: a Windows read is 3.5 to 5 s on a cold cache, and a new pi asks its trust question once, at its start. Unknown after the bound stays unknown (nothing is sent). */
-export const startBounded = (pid: number, waitMs = START_WAIT_MS, later: NonNullable<StartRead["later"]> = startedLater): Promise<string | undefined> => Promise.race([later(pid, { hold: false }).catch(() => undefined), delay<undefined>(waitMs, undefined, { ref: false })]);
+export const startBounded = (pid: number, waitMs = START_WAIT_MS, later: NonNullable<StartRead["later"]> = startedLater): Promise<string | undefined> => boundedWait(later(pid, { hold: false }), waitMs);
 
 /**
  * Whether the recorded server runs and answers its page, for a session that is not the server (the tower's dashboard, a trust question). The token goes to the port only after the process that
