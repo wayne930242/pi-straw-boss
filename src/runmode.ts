@@ -240,6 +240,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	});
 	pi.on("session_start", async (event, context) => {
 		ctx = context;
+		s.ui = context.ui; // the notices of a run (a refused claim, a lost server) reach the terminal
 		if (mode === "run") return; // a /reload of a run: the claim is kept
 		const kept = (globalThis as Record<symbol, { claim?: Claim } | undefined>)[KEPT]?.claim;
 		const flag = pi.getFlag("sb-run");
