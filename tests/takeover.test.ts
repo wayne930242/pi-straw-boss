@@ -39,7 +39,7 @@ test("a tower writes the workspace token and its own role first, so no session f
 	const tower = world.tower("tower-wA", "wA:t7", "wA:p7");
 	await tower.start();
 	await main("a", "wA:p1", "wA:t1");
-	world.herdr.restart();
+	world.herdr.restart(false);
 	for (const watcher of [...world.watchers]) watcher.onTakeover();
 	await world.quiet();
 	const writes = world.herdr.calls.filter((args) => args[1] === "report-metadata").map((args) => `${args[0]} ${args[2]}`);
