@@ -436,6 +436,14 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		status: () => ({ state: phase === "ready" ? "live" : phase, version, pid, mode, desk, uptimeMs: now() - startedAt, log: fileOf(slot, "log"), ...(own.lastError ? { lastError: own.lastError } : {}) }),
 		restart: gui.restart ?? ((reason) => spawnRestart(cliBeside(), reason, "the GUI", serverEnv(env), slot.dir)),
 		failed: (code, text) => recordError(code, text), tailscale: gui.tailscale, bundle: gui.bundle, bindWaitMs: gui.bindWaitMs,
+		// The page's tower units: the service's state and queue in the net, the composer as a boss event, and the notices' buttons (towers is built below, after the GUI host, and may be absent).
+		tower: {
+			view: (workspace) => towers?.runs.view(workspace),
+			has: (workspace) => towers?.runs.view(workspace) !== undefined,
+			live: (workspace) => Boolean(towers?.runs.status(workspace)?.run),
+			event: async (workspace, text) => { try { return (towers!.runs.boss(workspace, text, "the boss (GUI)"), { ok: true }); } catch (error) { return { ok: false, error: (error as Error).message }; } },
+			act: async (workspace, what, id) => { try { return (what === "retry" ? towers!.runs.retry(workspace) : what === "deliver" ? towers!.runs.deliverAgain(workspace, id!) : towers!.runs.dropParked(workspace, id!), { ok: true }); } catch (error) { return { ok: false, error: (error as Error).message }; } },
+		},
 	});
 	// The tower service (behind `towerRuns.enabled`): it stands in for each workspace's tower, and finds the tabs again when a new Herdr server takes over.
 	// What `boss_server` does for a run (runtools.ts): the server answers it itself, so it can refuse an ally run's token and keep the restart limit.

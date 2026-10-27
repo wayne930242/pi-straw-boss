@@ -47,11 +47,22 @@ export interface Reply { status: number; body: unknown }
 export interface LinkPort { call(name: string, args: Record<string, unknown>): Promise<{ ok: boolean; error?: string; code?: string; [key: string]: unknown }>; enable(): Promise<void> }
 /** The sb server's panel on the page (server.ts of the page): its state, a restart with a reason, and the last lines of its log. */
 export interface ServerPanel { status(): unknown; restart(reason: string): Promise<Reply>; log(lines: number): string[] }
+/**
+ * The tower service the sb server runs for a workspace (docs/specs/2026-10-26-sb-backend.md, GUI): the composer writes to it as the boss (an event, which wakes a run), a run's notices have their buttons
+ * (retry the crash loop, deliver a parked event again or drop it), and a tower with no live run has no terminal for keys or a mirror (409 `standing`).
+ */
+export interface TowerPanel {
+	has(workspace: string): boolean;
+	live(workspace: string): boolean;
+	event(workspace: string, text: string): Promise<{ ok: boolean; error?: string }>;
+	act(workspace: string, what: "retry" | "deliver" | "drop", id?: string): Promise<{ ok: boolean; error?: string }>;
+}
 /** What a paired device may ask: read the state, and answer a forwarded confirm. Everything else changes who may command this computer, so only its own page does it. */
 const REMOTE_LINK = ["state", "confirm-answer"];
 const LINK_NAMES = ["enable", "state", "create", "invite", "invite-text", "invite-cancel", "decide", "join-start", "join-project", "join-cancel", "prefill-clear", "remove", "role", "rotate", "trust", "leave", "confirm-answer"];
+/** `tower`: the sb server's tower service, when it runs one (TowerPanel). */
 /** `answers.target` reads the net afresh, so the binding and the dialog are checked again for every answer. */
-export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; remoteOn?(): Promise<void>; remoteOff?(): Promise<void>; paired?: { on(): boolean; list(): unknown; unpair(id: string): boolean; unpairAll(): number; unsaved(): string | undefined }; saveFailed?(reason: string): void; spawn?(parts: string[], json: Record<string, unknown>): Promise<Reply>; close?(kind: string, json: Record<string, unknown>, refresh?: () => Promise<unknown>): Promise<Reply>; dismiss?(key: unknown): Promise<boolean>; dismissAll?(): Promise<number>; stop?(asked: Asked): boolean | void; link?: LinkPort; server?: ServerPanel; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; linkRequest?(file: string): Promise<boolean>; answers?: Pick<Hub, "has" | "replay" | "ended" | "send" | "probe" | "commands" | "pull"> & { target(key: string): Promise<Target | undefined> }; trust?(json: Record<string, unknown>): Promise<Reply> }
+export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; remoteOn?(): Promise<void>; remoteOff?(): Promise<void>; tower?: TowerPanel; paired?: { on(): boolean; list(): unknown; unpair(id: string): boolean; unpairAll(): number; unsaved(): string | undefined }; saveFailed?(reason: string): void; spawn?(parts: string[], json: Record<string, unknown>): Promise<Reply>; close?(kind: string, json: Record<string, unknown>, refresh?: () => Promise<unknown>): Promise<Reply>; dismiss?(key: unknown): Promise<boolean>; dismissAll?(): Promise<number>; stop?(asked: Asked): boolean | void; link?: LinkPort; server?: ServerPanel; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; linkRequest?(file: string): Promise<boolean>; answers?: Pick<Hub, "has" | "replay" | "ended" | "send" | "probe" | "commands" | "pull"> & { target(key: string): Promise<Target | undefined> }; trust?(json: Record<string, unknown>): Promise<Reply> }
 
 const no = (status: number, error: string, reason: string, extra = {}): Reply => ({ status, body: { error, reason, ...extra } });
 const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -106,7 +117,7 @@ export function checkText(text: unknown): string | Reply {
 }
 
 const LINK_LOCAL = "While it waits on a link request, a paired device can only send Escape; approve it on this computer's own page or terminal.";
-export function createControl({ link, server: panel, lookup, call, csrf, canonical, pair, remoteOn, remoteOff, paired, saveFailed, spawn, close, dismiss, dismissAll, stop, mirrors, secret = async () => true, linkRequest = async () => false, answers, trust }: ControlDeps) {
+export function createControl({ link, server: panel, lookup, call, csrf, canonical, pair, remoteOn, remoteOff, paired, saveFailed, spawn, close, dismiss, dismissAll, stop, mirrors, secret = async () => true, linkRequest = async () => false, answers, trust, tower }: ControlDeps) {
 	const busy = new Set<string>();
 	// A change to the paired devices or the remote wish that could not be written to paired.json took effect in memory only: say so (500), to the page and the session.
 	const lost = (): Reply | undefined => {
@@ -156,6 +167,26 @@ export function createControl({ link, server: panel, lookup, call, csrf, canonic
 			const view = body.view as { prefill?: { text?: string } } | undefined;
 			if (remote && view?.prefill) delete view.prefill.text;
 			return { status: 200, body };
+		}
+		if (scope === "tower") {
+			const what = ["retry", "deliver", "drop"].find((w) => w === action);
+			if (!tower || !what || !tower.has(key)) return no(404, "not_found", "No such tower.");
+			const id = typeof read.json.id === "string" && read.json.id.length <= 64 ? read.json.id : undefined;
+			if (what !== "retry" && !id) return no(400, "bad_request", "Name the parked event.");
+			const done = await tower.act(key, what as "retry" | "deliver" | "drop", id);
+			return done.ok ? { status: 200, body: {} } : no(409, "refused", done.error ?? "The tower refused it.");
+		}
+		// A tower unit of the sb server's service: the composer's Send is a boss event for its next run, and with no run live there is no terminal to key into or show.
+		const unit = tower && scope === "sessions" ? lookup(key) : undefined, ws = unit?.role === "tower" && tower?.has(unit.base) ? unit.base : undefined;
+		if (tower && ws) {
+			if (action === "input") {
+				const text = checkText(read.json.text);
+				if (typeof text !== "string") return text;
+				const done = await tower.event(ws, text);
+				return done.ok ? { status: 200, body: { accepted: true, woke: true } } : no(409, "refused", done.error ?? "The tower did not take it.");
+			}
+			if (action === "dequeue") return no(409, "server_queue", "These messages wait in the sb server's queue for the tower's next run; they are taken when it runs.");
+			if (["keys", "mirror", "focus"].includes(action) && !tower.live(ws)) return no(409, "standing", "The tower is standing by: no run is live, so there is no terminal. Write to it in the composer; that wakes it.");
 		}
 		if (scope === "dismiss" && !key && read.json.all === true) return dismissAll ? { status: 200, body: { dismissed: await dismissAll() } } : no(503, "unavailable", "This server dismisses nothing.");
 		if (scope === "dismiss" && !key) return (await dismiss?.(read.json.key)) ? { status: 200, body: {} } : no(404, "not_found", "Only a finished subagent on the net can be dismissed.");

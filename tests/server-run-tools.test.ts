@@ -179,3 +179,18 @@ test("the server keeps the once-a-minute restart limit itself: a restart that as
 	assert.match(String(refused.error), /^rate: .*once a minute/);
 	assert.equal(world.record()?.restarting, undefined, "nothing began");
 });
+
+test("view: the GUI's reading of a service is its state, its waiting events as queued rows (kind, sender, first line), the run, and the file of the run's comms", async () => {
+	const s = await started();
+	world.client("sb-tower-wa")!.incoming(from, msg("m0", "[straw net from=docs-main] first line\nsecond line"));
+	const before = towers!.runs.view("wA")!;
+	assert.equal(before.queued, 1);
+	assert.deepEqual(before.queue, [{ text: "intercom · docs-main: [straw net from=docs-main] first line", as: "followUp" }]);
+	assert.equal(towers!.runs.view("wZ"), undefined);
+	const token = await localToken(s);
+	await ask(s, { cmd: "run-file", token, file: "/s/run.jsonl" });
+	const during = towers!.runs.view("wA")!;
+	assert.equal(during.state, "running");
+	assert.equal(during.run?.kind, "local");
+	assert.equal(during.file, "/s/run.jsonl");
+});

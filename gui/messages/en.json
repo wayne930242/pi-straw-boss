@@ -601,5 +601,12 @@
 	"link_setup_wait": "Starting. This takes a few seconds.",
 	"link_prefilled": "An agent asked for this screen: {reason}",
 	"ally_tag": "{team} · teammate",
-	"link_trust_help": "What a message from this device may do. reply: the allowed read-only tools run; anything else asks you here. forward: the same, but anything else asks that device's owner on their computer. dispatch: runs as a message from you would, under this computer's own guards."
+	"link_trust_help": "What a message from this device may do. reply: the allowed read-only tools run; anything else asks you here. forward: the same, but anything else asks that device's owner on their computer. dispatch: runs as a message from you would, under this computer's own guards.",
+	"mark_standing": "standing by",
+	"placeholder_wake": "Wakes the tower",
+	"tower_notice_retry": "Retry",
+	"tower_parked": "Parked: {kind} from {from}: {first}",
+	"tower_deliver": "Deliver again",
+	"tower_drop": "Drop",
+	"tower_action_failed": "The tower refused it: {reason}"
 }

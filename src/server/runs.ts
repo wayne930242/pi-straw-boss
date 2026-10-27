@@ -4,6 +4,7 @@ import { alive as pidAlive } from "../remote.ts";
 import { startOf as processStartOf } from "../startof.ts";
 import { assertSettingsSafe } from "../trust/settings.ts";
 import { waitPastTrust } from "../trust/wait.ts";
+import type { TowerView } from "../net.ts";
 import type { Log } from "./log.ts";
 import type { Slot } from "./record.ts";
 import { addNote, clearTimer, listRuns, pruneRuns, readNotes, readTimer, type Outcome, type RunRecord, writeRun, writeTimer } from "./towerrunstore.ts";
@@ -548,7 +549,7 @@ export function createRuns(o: RunsOptions) {
 	}
 	const find = (workspace: string) => services.get(workspace);
 
-	return {
+	const api = {
 		attach, detach, poke: (workspace: string) => { const s = services.get(workspace); if (s) poke(s); },
 		claim, paneRole, poll, taken, done, release: releaseRun,
 		/** The run behind a token, or undefined. */
@@ -655,6 +656,15 @@ export function createRuns(o: RunsOptions) {
 		notes: (workspace: string) => readNotes(slot, workspace),
 		running: () => slots,
 		tick,
+		/** What the GUI shows of a tower the server runs: the service's state, its waiting events as queued rows (kind, sender, first line), and the session file of its comms. */
+		view(workspace: string): TowerView | undefined {
+			const status = api.status(workspace);
+			if (!status) return undefined;
+			const rows = api.queue(workspace).map((e) => ({ text: phrase(`${e.kind}${e.from?.name ?? e.from?.id ? ` · ${e.from?.name ?? e.from?.id}` : ""}: ${e.text.split("\n").find((l) => l.trim()) ?? ""}`, 240), as: "followUp" as const }));
+			const file = api.file(workspace);
+			return { ...status, queue: rows, ...(file ? { file } : {}) };
+		},
 	};
+	return api;
 }
 export type Runs = ReturnType<typeof createRuns>;

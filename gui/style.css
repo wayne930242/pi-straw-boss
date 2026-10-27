@@ -329,6 +329,12 @@ svg { display: block; }
 .subs { position: relative; margin: 6px 0 0 22px; padding-left: 18px; }
 .subs:empty { display: none; }
 .base > .tower-subs { margin: -8px 0 12px 22px; }
+.base > .tower-notices:empty { display: none; }
+.base > .tower-notices { margin: 0 0 12px 22px; display: grid; gap: 6px; }
+.tower-notices .tnote { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 0.85em; }
+.tower-notices .tnote span { flex: 1 1 14em; }
+.tower-notices .tnote.error span { color: var(--bad, #d9534f); }
+.tower-notices .tnote.warning span { color: var(--warn, #c98a00); }
 .subs::before { content: ""; position: absolute; left: 3px; top: -4px; bottom: 22px; width: 1px; background: repeating-linear-gradient(color-mix(in srgb, var(--line-c) 50%, transparent) 0 4px, transparent 4px 8px); }
 .subs > .unit > .card::before { content: ""; position: absolute; left: -15px; top: 50%; width: 15px; height: 1px; background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--line-c) 50%, transparent) 0 4px, transparent 4px 8px); }
 .subs > .unit { position: relative; }

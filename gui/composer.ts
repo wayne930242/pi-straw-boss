@@ -22,7 +22,8 @@ type Flight = { sent?: string; answer: Promise<Answer> };
 // them before it sends again and settles its own box, so text is neither shown as unsent after it went nor sent twice.
 const flights = new Map<string, Flight>();
 /** `live`: its channel is open (scene.ts `closed`). `answerable`: its question panel on the page answers it. */
-export interface Unit { name: string; control: boolean; agent?: keyof typeof AGENT; live: boolean; mark: Mark; online: boolean; answerable?: boolean }
+/** `wakes`: the tower of the sb server's service, which has no pi to type into while it stands by: Send posts a boss event that wakes it (the server's tower route). */
+export interface Unit { wakes?: boolean; name: string; control: boolean; agent?: keyof typeof AGENT; live: boolean; mark: Mark; online: boolean; answerable?: boolean }
 
 /** The server's input API for one session. */
 export const postTo = (key: string): Post => (action, body) => post(`sessions/${encodeURIComponent(key)}/${action}`, body);
@@ -196,10 +197,10 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 	}
 	function draw() {
 		const why = blocked(unit), working = unit.mark === "working";
-		box.placeholder = why ?? m.placeholder({ name: unit.name });
+		box.placeholder = why ?? (unit.wakes ? m.placeholder_wake() : m.placeholder({ name: unit.name }));
 		box.disabled = attach.disabled = !unit.live; // a closed channel (the session left the net, or a finished subagent's pi exited) takes no typing at all, as it takes no sending
 		send.disabled = busy || Boolean(why) || !box.value.trim(); // nothing typed, nothing to send
-		follow.hidden = stop.hidden = !working || Boolean(why);
+		follow.hidden = stop.hidden = !working || Boolean(why) || Boolean(unit.wakes); // a tower's run is woken, not steered or stopped from here
 		[follow.disabled, stop.disabled] = [send.disabled, busy]; // a follow-up needs a message too
 	}
 	/** The note of a take-back that may have taken the messages: it carries the button that asks for them again, since the queue (and its Edit line) is gone once the session took it back. */

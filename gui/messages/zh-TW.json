@@ -545,5 +545,12 @@
 	"link_setup_wait": "啟動中，需要幾秒鐘。",
 	"link_prefilled": "有 agent 要求開啟這個畫面：{reason}",
 	"ally_tag": "{team} · 隊友",
-	"link_trust_help": "這台裝置傳來的訊息能做什麼。reply：允許清單內的唯讀工具直接執行，其餘在這裡問你。forward：同上，但其餘改問對方電腦上的人。dispatch：像你自己送的訊息一樣執行，仍受這台電腦自己的防護限制。"
+	"link_trust_help": "這台裝置傳來的訊息能做什麼。reply：允許清單內的唯讀工具直接執行，其餘在這裡問你。forward：同上，但其餘改問對方電腦上的人。dispatch：像你自己送的訊息一樣執行，仍受這台電腦自己的防護限制。",
+	"mark_standing": "待命",
+	"placeholder_wake": "喚醒 tower",
+	"tower_notice_retry": "重試",
+	"tower_parked": "已擱置：{kind}，來自 {from}：{first}",
+	"tower_deliver": "重新送達",
+	"tower_drop": "捨棄",
+	"tower_action_failed": "tower 拒絕了：{reason}"
 }
