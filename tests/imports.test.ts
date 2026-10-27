@@ -276,7 +276,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased to 317 (GUI in the sb server B2): bridgewire.ts (10, new: what the dialog bridge and the hub agree on, apart from bridge.ts, which imports pi).
 	assert.ok(rest <= 317, `the rest of src has ${rest} lines`);
 	// Unreleased (settings check, probe): settings.ts is the lstat gate, the child's program (refuses a link it cannot follow, stats before opening; review SR5), and its runner (160); it no longer walks links. settings.ts 92 (new: the look before pi starts in a folder), raised 92 to 135 for the link walk (every hop of .pi and settings.json, refusing /proc, /dev, /sys; review SP-R001).
-	for (const [name, max] of [["found.ts", 103], ["settings.ts", 160], ["files.ts", 160], ["ask.ts", 182], ["serve.ts", 110], ["wait.ts", 28], ["types.ts", 15]] as const) assert.ok(count(`src/trust/${name}`) <= max, `src/trust/${name} has ${count(`src/trust/${name}`)} lines`);
+	// Unreleased raised trust/ask.ts from 182 to 183 (RC3-F001): the recorded server's start time is read when the handler registers.
+	for (const [name, max] of [["found.ts", 103], ["settings.ts", 160], ["files.ts", 160], ["ask.ts", 183], ["serve.ts", 110], ["wait.ts", 28], ["types.ts", 15]] as const) assert.ok(count(`src/trust/${name}`) <= max, `src/trust/${name} has ${count(`src/trust/${name}`)} lines`);
 	// Unreleased (sb server B1, docs/specs/2026-10-26-sb-backend.md): the server's own directory, src/server/, has no figure in the spec; the files each hold one concern:
 	// record.ts (server.json, server.lock, start-error.json, slots), log.ts (server.log, rotated), version.ts (the version rules), acl.ts (the Windows folder ACL by SID), socket.ts (the control socket or pipe and its hello secret),
 	// After the re-check: log.ts 135 (the stale lock removed under a marker), client.ts 412 (the stop's scope check, the wait for a supervisor's serve as one function).

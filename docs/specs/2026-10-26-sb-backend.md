@@ -1561,6 +1561,7 @@ trials), unchanged otherwise.
 
 ## Risks
 
+- **A squatter that lets the port go keeps a valid GUI token (RC3-F002, held for the user).** The token is rotated only when a recorded port is not got back. Another account that binds the port during a crash or restart gap receives the open page's reconnect (token in the path), frees the port, and the next server keeps that token; a remote serve entry left pointing at the old remote port has the same gap. Closing it means rotating after every unclean exit or gap, at the cost of the open page on each crash.
 - **The server is now a single point.** While it is down, every workspace lacks a live tower. Mains survive a restart while `restarting`
   is fresh and through the guard's 15 s grace after that, and the broker keeps mail for 24 h, but a server that stays down demotes mains.
   The session looks and the supervisor keep that window short, and `boss_server status` and the log say why it is down.

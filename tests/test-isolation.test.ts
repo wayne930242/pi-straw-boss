@@ -9,7 +9,7 @@ import { spawnDetached } from "../src/server/client.ts";
 import { consumeRefusals, guarded, guardHome, guardSpawn, inside, inTestRun, noteStarted, PIDS_DIR, stateDirFor, TEST_ROOT } from "../src/server/testguard.ts";
 import { startOf } from "../src/startof.ts";
 import { until, World } from "./fakes.ts";
-import { goEnv, INHERITED, installIsolation, leftover, reap } from "./isolation.ts";
+import { goEnv, INHERITED, installIsolation, leftover, reap, unjudged } from "./isolation.ts";
 import { ServerWorld } from "./server-world.ts";
 
 // A run of the tests never touches the developer's machine (tests/isolation.ts, src/server/testguard.ts): the home, the agent folder, and the Herdr socket are the run's own, no sb server starts
@@ -99,6 +99,8 @@ test("RC2-F005: on Windows a timed note is never judged against the cached start
 	noteStarted(child.pid, { [TEST_ROOT]: dir }, ["node", "x.test.ts"], () => time);
 	assert.deepEqual(leftover(dir, undefined, "win32"), [], "the cache would have said the same process");
 	assert.deepEqual(reap(dir, undefined, "win32"), []);
+	assert.deepEqual(unjudged(dir, undefined, "win32"), [child.pid], "RC3-F005: reported, not killed");
+	assert.deepEqual(unjudged(dir, undefined, "darwin"), [], "only Windows cannot judge it");
 	process.kill(child.pid!, 0);
 	assert.deepEqual(reap(dir, undefined, "darwin"), [child.pid], "elsewhere the start time is read at once and matches");
 });

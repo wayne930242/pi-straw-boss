@@ -77,6 +77,23 @@ export function leftover(root: string, by?: number, platform: NodeJS.Platform = 
 	return readdirSync(dir).filter((name) => /^\d+$/.test(name) && (by === undefined || Number(readFileSync(join(dir, name), "utf8").split("\n")[0]) === by)).map(Number).filter((pid) => alive(pid, root, platform));
 }
 
+/** Servers whose note carries a start time, on Windows: the pid answers, but the cache cannot say it is the same process, so they are reported and never killed. */
+export function unjudged(root: string, by?: number, platform: NodeJS.Platform = process.platform): number[] {
+	const dir = join(root, PIDS_DIR);
+	if (platform !== "win32" || !existsSync(dir)) return [];
+	return readdirSync(dir).filter((name) => {
+		if (!/^\d+$/.test(name)) return false;
+		const [owner, noted] = readFileSync(join(dir, name), "utf8").split("\n");
+		if (by !== undefined && Number(owner) !== by) return false;
+		try {
+			process.kill(Number(name), 0);
+		} catch {
+			return false;
+		}
+		return Boolean(noted?.trim());
+	}).map(Number);
+}
+
 /** Kills what `leftover` lists (its process group first: a detached server leads its own) and waits up to a second for it to go. Returns the pids that were running. */
 export function reap(root: string, by?: number, platform: NodeJS.Platform = process.platform): number[] {
 	const found = leftover(root, by, platform);
@@ -96,6 +113,8 @@ export function finish({ root, owner }: Isolation): number[] {
 		process.stderr.write(`test isolation: the run left sb server processes running (${left.join(", ")}); they were killed\n`);
 		process.exitCode = 1;
 	}
+	const unsure = unjudged(root, owner ? undefined : process.pid);
+	if (unsure.length) process.stderr.write(`test isolation: pid(s) ${unsure.join(", ")} answer and carry a start time that Windows cannot judge here: they may be a server this run left (not killed)\n`);
 	const refused = consumeRefusals(root, owner ? undefined : process.pid);
 	if (refused.length) {
 		process.stderr.write(`test isolation: the guard refused ${refused.length} start(s) nobody asserted (a test that expects a refusal takes it with consumeRefusals):\n${refused.map((text) => `  ${text}`).join("\n")}\n`);

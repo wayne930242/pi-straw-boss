@@ -4,7 +4,8 @@ import { request } from "node:http";
 import { connect } from "node:net";
 import { join } from "node:path";
 import { alive } from "./remote.ts";
-import { startOf } from "./startof.ts";
+import { setTimeout as delay } from "node:timers/promises";
+import { startedLater } from "./startof.ts";
 
 // gui.json in the state directory records the GUI the sb server serves (src/server/guihost.ts): its pid and start time, the local and remote port, the token, and the server's
 // intercom session. It is the contract straw-boss-desk and the sessions' dialog bridges read (docs/how-it-works.md, `gui.json` is a contract). The server writes it by rename
@@ -87,9 +88,13 @@ export const listening = (port: number) =>
 		socket.once("connect", () => (socket.destroy(), done(true))).once("error", () => done(false)).once("timeout", () => (socket.destroy(), done(false)));
 	});
 
+const START_WAIT_MS = 6000;
+/** Another process's start time, waited for up to 6 s: a Windows read is 3.5 to 5 s on a cold cache, and a new pi asks its trust question once, at its start. Unknown after the bound stays unknown (nothing is sent). */
+export const startBounded = (pid: number, waitMs = START_WAIT_MS, later: (pid: number, o: { hold: false }) => Promise<string | undefined> = startedLater): Promise<string | undefined> => Promise.race([later(pid, { hold: false }).catch(() => undefined), delay<undefined>(waitMs, undefined, { ref: false })]);
+
 /**
  * Whether the recorded server runs and answers its page, for a session that is not the server (the tower's dashboard, a trust question). The token goes to the port only after the process that
- * recorded it is shown to be alive: its pid runs and its start time is the recorded one. A record without a start time, or one the machine cannot tell yet (the Windows cache is cold), is not verified,
+ * recorded it is shown to be alive: its pid runs and its start time is the recorded one. A record without a start time, or one the machine cannot tell yet (the Windows read is not in within 6 s), is not verified,
  * and nothing is sent: another account's process may hold the port a crashed server left (RC2-F001).
  */
-export const answersLive = async (r: GuiRecord, start: (pid: number) => string | undefined = startOf): Promise<boolean> => Boolean(r.started) && alive(r.pid) && start(r.pid) === r.started && answers(r);
+export const answersLive = async (r: GuiRecord, start: (pid: number) => string | undefined | Promise<string | undefined> = startBounded): Promise<boolean> => Boolean(r.started) && alive(r.pid) && (await start(r.pid)) === r.started && answers(r);

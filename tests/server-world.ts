@@ -32,6 +32,7 @@ export function stallWatch(tickMs = 5) {
 		setInterval(() => { const now = Date.now(); Atomics.store(worst, 0, Math.max(Atomics.load(worst, 0), now - last - tickMs)); last = now; }, tickMs);`,
 		{ eval: true, workerData: { worst, tickMs } },
 	);
+	worker.unref(); // an assert that throws before stop() must not keep the file running to its timeout
 	return { worst: () => Atomics.load(worst, 0), stop: () => void worker.terminate() };
 }
 export const FAST: Timers = { start: 5000, exit: 2000, supervisor: 400, touch: 40 };

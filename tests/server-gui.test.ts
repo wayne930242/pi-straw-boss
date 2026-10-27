@@ -67,6 +67,22 @@ test("a restart keeps the URL an open page has: the new server binds the recorde
 	assert.ok(log.indexOf("intercom-connected") < log.indexOf("gui-start"), "the server's ids first, then the GUI's ports");
 });
 
+test("RC3-F004: a squatter on the remote port alone moves only the remote port, and the token and CSRF secret still change", async () => {
+	const h = await host();
+	const before = h.gui();
+	await h.ask("restart", { reason: "test", by: "test" });
+	await h.handle.done;
+	const seen = await squatter(before.remotePort!);
+	const next = await host();
+	const after = next.gui();
+	assert.equal(after.port, before.port, "the local port is kept");
+	assert.notEqual(after.remotePort, before.remotePort);
+	assert.notEqual(after.token, before.token, "a shell that compares only `port` must also compare `token`");
+	assert.notEqual(after.csrf, before.csrf);
+	assert.equal(next.record().gui?.token, after.token);
+	assert.deepEqual(seen, [], "the squatter was sent nothing by the server");
+});
+
 test("RC2-F001: a port another process took meanwhile moves the GUI to a new token and CSRF secret: what an open page sends to its old origin (the squatter) is no good on the new port, and both records carry the new ones", async () => {
 	const h = await host();
 	const before = h.gui();

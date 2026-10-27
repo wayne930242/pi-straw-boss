@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { getAgentDir, type ExtensionAPI, ProjectTrustStore, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { herdrSocket } from "../endpoint.ts";
 import { answersLive, readRecord } from "../handover.ts";
-import { startOf } from "../startof.ts";
+import { startedLater, startOf } from "../startof.ts";
 import type { Kit } from "../state.ts";
 import { answerFile, answerOf, ensureDir, MAX_FILE, readJson, remove, requestFile, resultFile, sweep, trustDir, writeAtomic } from "./files.ts";
 import { canonical, digestOf, foundIn } from "./found.ts";
@@ -156,6 +156,7 @@ export function createAsk(d: AskDeps) {
 /** Registers the handler (before the subagent return, so every pi in Herdr has it) and marks the process's first session start. */
 export function registerTrust(pi: ExtensionAPI, { cfg, guiDir }: Pick<Kit, "cfg" | "guiDir">) {
 	const { env } = cfg;
+	void startedLater(readRecord(guiDir)?.pid ?? 0, { hold: false }).catch(() => undefined); // the server's start time is read now, so it is under way at pi's trust question (RC3-F001)
 	// SAFETY: the process-wide flag is a boolean under a registered symbol that only this module sets.
 	const state = globalThis as unknown as Record<symbol, boolean>;
 	const decide = createAsk({
