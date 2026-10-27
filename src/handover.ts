@@ -1,35 +1,22 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
+import { connect } from "node:net";
 import { join } from "node:path";
-import { type Asked, type Gui, VERSION } from "./gui.ts";
-import { newer } from "./semver.ts";
-import { alive, runs } from "./remote.ts";
-import { startedLater, startOf } from "./startof.ts";
+import { alive } from "./remote.ts";
+import { startedLater } from "./startof.ts";
 
-// One server per machine. gui.json in the state directory records the running server (pid, local and remote port, token, owner session), and
-// gui.lock makes the check-and-start atomic, so a second /boss gui, from this session or another, opens the running server
-// instead of starting one. A dead server's port and token are reused, so a page left open reconnects to its successor. Any session reaches
-// the running one: it asks it to stop (requestStop), or takes it over, stopping it and starting its own on the same URL. A session whose
-// pi-straw-boss is newer takes it over unasked, so an update reaches every open page once one session has reloaded. When the session that runs it ends without a
-// stop, a survivor adopts it (adoptGui): the same port, token, and secret again, so a page left open reconnects by itself. The record tells the two endings apart.
+// gui.json in the state directory records the GUI the sb server serves (src/server/guihost.ts): its pid and start time, the local and remote port, the token, and the server's
+// intercom session. It is the contract straw-boss-desk and the sessions' dialog bridges read (docs/how-it-works.md, `gui.json` is a contract). The server writes it by rename
+// when its GUI starts, and a restart or upgrade writes it again with the same port when it is free and a new token and CSRF secret (every listener has its own; RC3-F002), which a reader that
+// watches the file picks up. Sessions only read it.
 /**
- * `ownerSession` is the owner's intercom session id: bridges follow it to the server's dialog channel. `started` is when the owner's process started, so a pid another
- * process now holds is not taken for the owner; only a build that marks its stops writes it, so a record without it is never adopted (a server such a build stopped looks
- * like one it quit). `herdr` is the socket of the Herdr server the server's net is read from: a session on another Herdr does not adopt it. `reload` marks a server its owner's
- * /reload stopped. `stopped` marks one stopped on purpose (a stop from any session): no session starts it again until someone runs /boss gui. `remote` is only ever written by a
- * build up to 0.32.1 (remote was on at that /reload); paired.json keeps the wish since. `trust: 1` says the server reads project trust requests (trust/serve.ts): a pi relays its trust question only to a server that has it.
+ * `pid` and `started` name the sb server, the process that serves the GUI (a pi session before 0.46.0); `owner` is `sb server (pid N)` and `ownerSession` the server's intercom session id: dialog bridges
+ * follow it to the server's dialog channel. `herdr` is the socket of the Herdr server the server's net is read from. `stopped` marks a GUI stopped on purpose (`/boss gui stop`) or the whole server stopped on purpose.
+ * `trust: 1` says the server reads project trust requests (trust/serve.ts): a pi relays its trust question only to a server that has it. `reload` and `remote` were written by builds up to 0.45.0 and are no longer.
  */
 export interface GuiRecord { pid: number; started?: string; port: number; remotePort?: number; token: string; csrf?: string; owner: string; ownerSession?: string; version?: string; herdr?: string; reload?: boolean; stopped?: boolean; remote?: boolean; trust?: 1 }
-/**
- * `stale`: the running server is older and could not be taken over. `from`: the owner whose end a survivor took the server over from. `moved`: the recorded port was taken, so the URL changed.
- * `stopped`: it was stopped on purpose and `keep.stopped` left it so. `late` (never rejects): this process's start time was not known when the record was written (on Windows it is read in the background), so the record has no `started`
- * yet; it settles to true when the record was written again with it, and to false when the time cannot be read or the record cannot be written, so no survivor adopts that server.
- */
-export interface Shared { url: string; owner: string; mine?: Gui; stale?: boolean; from?: string; moved?: boolean; stopped?: boolean; late?: Promise<boolean> }
-/** What a start under gui.lock leaves alone: a server stopped on purpose, a server that is down. Only `/boss gui` starts either. */
-export interface Keep { stopped?: boolean; down?: boolean }
 
-export { newer };
 export const urlOf = (r: GuiRecord) => `http://127.0.0.1:${r.port}/${r.token}/`;
 
 let temps = 0;
@@ -38,9 +25,10 @@ let temps = 0;
  * On Windows a rename onto a file that a reader has open can fail for a moment, so it is tried a few times.
  */
 export function writeRecordFile(dir: string, record: GuiRecord) {
-	const file = join(dir, "gui.json"), temp = `${file}.${process.pid}.${temps++}.tmp`;
+	// Created new (`wx`) under a name no earlier file has, as record.ts writeJson does (R8-F002): a temporary file that was already there is never written to and renamed into place.
+	const file = join(dir, "gui.json"), temp = `${file}.${process.pid}.${temps++}.${randomBytes(4).toString("hex")}.tmp`;
 	try {
-		writeFileSync(temp, JSON.stringify(record), { mode: 0o600 });
+		writeFileSync(temp, JSON.stringify(record), { mode: 0o600, flag: "wx" });
 		for (let tries = 0; ; tries++) {
 			try {
 				return renameSync(temp, file);
@@ -61,59 +49,6 @@ export function readRecord(dir: string): GuiRecord | undefined {
 	} catch {
 		return undefined;
 	}
-}
-
-/**
- * Marks the record of the server this process runs, so the extension that loads after its /reload starts it again on the same URL.
- * Matched by pid, not by session id: pi-intercom, loaded first, has already cleared PI_INTERCOM_SESSION_ID when this runs at shutdown.
- */
-export function markReload(dir: string, pid = process.pid) {
-	const record = readRecord(dir);
-	if (record?.pid === pid) writeRecordFile(dir, { ...record, reload: true });
-}
-
-/**
- * Marks the record of the server `seen` names as stopped on purpose, so no survivor starts it again. A record of another server is left alone, and that includes a successor
- * on the same port and token (a restart reuses both): the process and its start time must match too.
- */
-export function markStopped(dir: string, seen: Pick<GuiRecord, "pid" | "started" | "port" | "token">) {
-	const record = readRecord(dir);
-	if (record?.pid === seen.pid && record.started === seen.started && record.port === seen.port && record.token === seen.token) writeRecordFile(dir, { ...record, stopped: true });
-}
-
-/** Whether a survivor may take over `record`'s server: its writer marks stops (`started`), and it serves the survivor's own Herdr. */
-export const adoptable = (record: GuiRecord, { herdr }: { herdr: string }) => Boolean(record.started) && record.herdr === herdr;
-/** Whether the server is a newer build's than the survivor: an older survivor takes it only when no newer one has, and downgrades it until the next newer session takes it back. */
-export const downgrades = (record: GuiRecord, version: string) => Boolean(record.version && newer(record.version, version));
-
-/**
- * A look at whether the process that recorded a server is gone for good, for a survivor to decide on: its pid is dead, or now belongs to another process (one that
- * started at another time, or after an old record was written). A process confirmed as the recorder is afterwards looked at by signal alone, not by `ps`.
- */
-export function ownerGone(start: (pid: number) => string | undefined = startOf): (record: GuiRecord, wrote: number) => boolean {
-	let confirmed: string | undefined;
-	return (record, wrote) => {
-		const key = `${record.pid}/${record.started ?? wrote}`;
-		if (confirmed === key) return !alive(record.pid);
-		if (!alive(record.pid)) return true;
-		const now = start(record.pid);
-		if (!runs(record, wrote, () => now)) return true;
-		if (now) confirmed = key; // a start time that is not in yet (Windows) confirms nothing: the next look asks again
-		return false;
-	};
-}
-
-/** Asks a recorded server to stop, as its own page would, and waits until it is gone; false when it refused (a server from before 0.11.0) or stayed up. */
-export async function requestStop(r: GuiRecord, asked: Asked, sleep: (ms: number) => Promise<void>) {
-	const body = JSON.stringify(asked), origin = `http://127.0.0.1:${r.port}`;
-	const status = await new Promise<number>((done) => {
-		const headers = { host: `127.0.0.1:${r.port}`, origin, "content-type": "application/json", "x-sb-csrf": r.csrf ?? "", "content-length": Buffer.byteLength(body) };
-		const req = request({ host: "127.0.0.1", port: r.port, path: `/${r.token}/api/server/stop`, method: "POST", headers, agent: false, timeout: 2000 }, (res) => (res.resume(), done(res.statusCode ?? 0)));
-		req.on("error", () => done(0)).on("timeout", () => (req.destroy(), done(0)));
-		req.end(body);
-	});
-	for (const end = Date.now() + 5000; status === 202 && Date.now() < end; await sleep(100)) if (!(await answers(r))) return true;
-	return false;
 }
 
 /** One POST to a recorded server's API from this machine, as its own page sends it: the status and the JSON body (status 0 when it did not answer). */
@@ -145,120 +80,34 @@ export const answers = (r: GuiRecord) =>
 		req.end();
 	});
 
-const STALE_MS = 10_000;
-const ageOf = (file: string) => Date.now() - (statSync(file, { throwIfNoEntry: false })?.mtimeMs ?? Date.now());
-/**
- * Removes a gui.lock a session that died left (older than 10 s), once. Of several sessions that find it stale only the one that makes `gui.lock.stale` looks again and removes it, so none
- * removes the fresh lock another has just taken. False when another session is at it (or left its mark: a guard older than 10 s was left by a session that died inside this), for the caller to wait and try again.
- */
-export function clearStale(lock: string) {
-	const guard = `${lock}.stale`;
-	try {
-		mkdirSync(guard);
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-		if (ageOf(guard) > STALE_MS) rmSync(guard, { recursive: true, force: true });
-		return false;
-	}
-	try {
-		if (ageOf(lock) > STALE_MS) rmSync(lock, { force: true });
-		return true;
-	} finally {
-		rmSync(guard, { recursive: true, force: true });
-	}
-}
-/** Takes gui.lock, which makes the check-and-start of a server atomic. Patient: waits for another session's start (a lock older than 10 s was left by a session that died); otherwise false at once when it is held. */
-async function lockGui(dir: string, sleep: (ms: number) => Promise<void>, patient: boolean) {
-	mkdirSync(dir, { recursive: true, mode: 0o700 });
-	const lock = join(dir, "gui.lock");
-	for (let tries = 0; ; tries++) {
-		try {
-			writeFileSync(lock, String(process.pid), { flag: "wx" });
-			return true;
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-			if (ageOf(lock) > STALE_MS && clearStale(lock)) continue; // a dead session's lock is gone: take it
-			if (!patient) return false;
-			if (tries >= 50) throw new Error("Another session is starting the straw net GUI; try again");
-			await sleep(200);
-		}
-	}
-}
-const unlockGui = (dir: string) => rmSync(join(dir, "gui.lock"), { force: true });
-/**
- * Records the server this process started. Without this process's start time yet (Windows reads it in the background), the record is written without `started` and again with it when it arrives, unless
- * another server has been recorded since; `late` tells the caller how that ended.
- */
-export const writeRecord = (dir: string, gui: Gui, [owner, ownerSession]: [string, string], version: string, herdr: string, own = { at: startOf, later: (pid: number) => startedLater(pid, { hold: false }) }) => {
-	const started = own.at(process.pid), record: GuiRecord = { pid: process.pid, started, port: gui.port, remotePort: gui.remotePort, token: gui.token, csrf: gui.csrf, owner, ownerSession, version, herdr, trust: 1 };
-	writeRecordFile(dir, record);
-	if (started) return {};
-	return {
-		late: own.later(process.pid).then((known) => {
-			if (!known) return false;
-			const now = readRecord(dir);
-			if (now?.pid === record.pid && now.port === record.port && now.token === record.token && !now.started) writeRecordFile(dir, { ...now, started: known });
-			return true;
-		}).catch(() => false), // the record could not be written again (EPERM, a full disk): told as "not written", never as a rejection
-	};
+
+/** Whether anything accepts a connection on the port. Nothing is sent: this is how a wait for a server to let go of its port looks, without giving the token to whoever binds the port next. */
+export const listening = (port: number) =>
+	new Promise<boolean>((done) => {
+		const socket = connect({ host: "127.0.0.1", port, timeout: 1000 });
+		socket.once("connect", () => (socket.destroy(), done(true))).once("error", () => done(false)).once("timeout", () => (socket.destroy(), done(false)));
+	});
+
+/** `read` raced against `ms`, holding the event loop for the bound: the reads are unref'd so that pi may leave with one pending, but an awaiting caller (pi's `project_trust` handler holds nothing else) must not see the loop drain and the process exit at the question. The timer is cleared when the read settles. */
+export const boundedWait = <T>(read: Promise<T>, ms: number): Promise<T | undefined> => {
+	let timer: NodeJS.Timeout | undefined;
+	const bound = new Promise<undefined>((done) => (timer = setTimeout(done, ms, undefined)));
+	return Promise.race([read.catch(() => undefined), bound]).finally(() => clearTimeout(timer));
 };
-type Start = (prefer: { port?: number; remotePort?: number; token?: string; csrf?: string }) => Promise<Gui>;
+const START_WAIT_MS = 6000;
+/** Where a session reads another process's start time and how long it waits: the process's own cache and 6 s unless a test (or a caller) says otherwise. */
+export interface StartRead { later?: (pid: number, o: { hold: false }) => Promise<string | undefined>; waitMs?: number }
+/** Another process's start time, waited for up to 6 s: a Windows read is 3.5 to 5 s on a cold cache, and a new pi asks its trust question once, at its start. Unknown after the bound stays unknown (nothing is sent). */
+export const startBounded = (pid: number, waitMs = START_WAIT_MS, later: NonNullable<StartRead["later"]> = startedLater): Promise<string | undefined> => boundedWait(later(pid, { hold: false }), waitMs);
 
 /**
- * A stop typed in a session that does not run the server, under gui.lock: a survivor that is starting it finishes first, so the stop reads and marks the record that start wrote and
- * is not overwritten by it, and a server it started is asked to stop as it answers. `down`: nothing answered, and the record is marked so none is started later.
+ * Whether the recorded server runs and answers its page, for a session that is not the server (the tower's dashboard, a trust question). The token goes to the port only after the process that
+ * recorded it is shown to be alive: its pid runs and its start time is the recorded one. A record without a start time, or one the machine cannot tell yet (the Windows read is not in within 6 s), is not verified,
+ * and nothing is sent: another account's process may hold the port a crashed server left (RC2-F001). `read` is where the start time comes from; the callers pass the session's own (`cfg.startRead`), which is the process's cache by default.
  */
-export async function stopRecorded(dir: string, by: string, sleep: (ms: number) => Promise<void>): Promise<{ state: "down" | "stopped" | "refused"; record?: GuiRecord }> {
-	await lockGui(dir, sleep, true);
-	try {
-		const record = readRecord(dir);
-		if (!record || !(await answers(record))) {
-			if (record && !record.stopped) markStopped(dir, record); // a server that is down may be about to be taken over: a stop is a stop all the same
-			return { state: "down", record };
-		}
-		const stopped = await requestStop(record, { by, take: false }, sleep);
-		if (stopped) markStopped(dir, record); // its owner marks it too, unless it is a build from before this record knew
-		return { state: stopped ? "stopped" : "refused", record };
-	} finally {
-		unlockGui(dir);
-	}
-}
-
-/**
- * `take` takes the running server over whatever its version; a newer `version` takes it over anyway. `herdr` is the socket the server's net is read from. `keep`: a server stopped on purpose, or one
- * that is down, is left as it is (read under the lock, so a stop typed meanwhile counts): the restore after a /reload keeps a stop, the takeover by a newer version also keeps a down server, and
- * `/boss stash` and `/boss close all` keep a stop.
- */
-export async function sharedGui(dir: string, who: [string, string], start: Start, sleep: (ms: number) => Promise<void>, { version = VERSION, take = false, herdr = "", keep = {} as Keep } = {}): Promise<Shared> {
-	await lockGui(dir, sleep, true);
-	try {
-		const record = readRecord(dir);
-		if (record?.stopped && keep.stopped) return { url: urlOf(record), owner: record.owner, stopped: true };
-		const theirs = record && (await answers(record)) && { url: urlOf(record), owner: record.owner };
-		if (record && !theirs && keep.down) return { url: urlOf(record), owner: record.owner };
-		if (theirs && !(take || newer(version, record.version))) return theirs;
-		if (theirs && !(await requestStop(record, { by: who[0], take: true }, sleep))) return { ...theirs, stale: true };
-		const gui = await start(record ? { port: record.port, remotePort: record.remotePort, token: record.token, csrf: record.csrf } : {});
-		return { url: gui.url, owner: who[0], mine: gui, ...writeRecord(dir, gui, who, version, herdr) };
-	} finally {
-		unlockGui(dir);
-	}
-}
-
-/**
- * A survivor's takeover of a server whose session ended: starts it again on the recorded port, token, and secret. It starts nothing when the server answers, when a deliberate stop
- * ended it, when `adoptable` says no (an old build's record, another Herdr), or when the session that ran it still lives (its /reload, /new, or /resume brings it back
- * in that process). Undefined then, and when another session holds gui.lock: that one is starting it, or is about to look. The lock is the arbiter, so of several survivors looking at
- * once exactly one starts it. `moved` is set when the recorded port was taken and the server got another.
- */
-export async function adoptGui(dir: string, who: [string, string], start: Start, sleep: (ms: number) => Promise<void>, gone: (record: GuiRecord, wrote: number) => boolean, { version = VERSION, herdr = "" } = {}): Promise<Shared | undefined> {
-	if (!(await lockGui(dir, sleep, false))) return undefined;
-	try {
-		const record = readRecord(dir), wrote = statSync(join(dir, "gui.json"), { throwIfNoEntry: false })?.mtimeMs ?? 0;
-		if (!record || record.stopped || !adoptable(record, { herdr }) || !gone(record, wrote) || (await answers(record))) return undefined;
-		const gui = await start({ port: record.port, remotePort: record.remotePort, token: record.token, csrf: record.csrf });
-		return { url: gui.url, owner: who[0], mine: gui, from: record.owner, ...writeRecord(dir, gui, who, version, herdr), ...(gui.url === urlOf(record) ? {} : { moved: true }) };
-	} finally {
-		unlockGui(dir);
-	}
-}
+export const answersLive = async (r: GuiRecord, { later, waitMs }: StartRead = {}): Promise<boolean> => Boolean(r.started) && alive(r.pid) && (await startBounded(r.pid, waitMs, later)) === r.started && answers(r);
+/** The page's URL the dashboard shows: a recorded GUI that was not stopped on purpose and is shown to be that process's, answering. A stopped record takes no request (it carries the live server's pid, and its port may be someone else's now). */
+export const liveUrl = async (dir: string, read?: StartRead): Promise<string | undefined> => {
+	const r = readRecord(dir);
+	return r && !r.stopped && (await answersLive(r, read)) ? urlOf(r) : undefined;
+};

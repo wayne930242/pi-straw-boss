@@ -53,3 +53,26 @@ test("cli.ts run as a script holds a timer while `run` is awaited, and still end
 		rmSync(dir, { recursive: true, force: true });
 	}
 });
+
+const handover = pathToFileURL(new URL("../src/handover.ts", import.meta.url).pathname).href;
+// pi's project_trust handler awaits answersLive and nothing else holds the loop: a read that is unref'd and slower than the loop's other work must not let the process exit at the await (VM item 14, exit 0 silently).
+const slow = `const later = (_pid, _o) => new Promise((done) => setTimeout(done, 400, "2026-10-26T04:21:53.000Z").unref());`;
+const runHandover = (body: string) => spawnSync(process.execPath, ["--input-type=module", "-e", `import { answersLive, startBounded } from ${JSON.stringify(handover)};\n${slow}\n${body}`], { encoding: "utf8", timeout: 20_000 });
+
+test("startBounded awaited alone holds the process until the unref'd read answers", () => {
+	const result = runHandover(`console.log("got " + await startBounded(process.pid, 6000, later));`);
+	assert.equal(result.status, 0, `exit ${result.status}: ${result.stderr}`);
+	assert.equal(result.stdout.trim(), "got 2026-10-26T04:21:53.000Z");
+});
+
+test("answersLive awaited alone holds the process while the start time is read", () => {
+	const result = runHandover(`console.log("got " + await answersLive({ port: 1, token: "t", pid: process.pid, started: "2026-10-26T04:21:53.000Z" }, { later, waitMs: 6000 }));`);
+	assert.equal(result.status, 0, `exit ${result.status}: ${result.stderr}`);
+	assert.equal(result.stdout.trim(), "got false");
+});
+
+test("the bound itself holds the process, and ends when the read is slower than it", () => {
+	const result = runHandover(`const never = () => new Promise(() => {}); console.log("got " + await startBounded(process.pid, 300, never));`);
+	assert.equal(result.status, 0, `exit ${result.status}: ${result.stderr}`);
+	assert.equal(result.stdout.trim(), "got undefined");
+});

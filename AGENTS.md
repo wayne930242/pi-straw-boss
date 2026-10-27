@@ -2,6 +2,12 @@
 
 `README.md` describes the extension, `docs/how-it-works.md` its behavior, and `docs/specs/` the design records. Run `npm run check` and `npm test` before handing over a change.
 
+## Tests
+
+- `npm test` runs the suite and `npm run test:one -- tests/x.test.ts` one file (not a bare `node --test`): both load `tests/setup.ts` first, which gives each test process (a test file runs in its own) a temp root of its own for HOME, USERPROFILE, and the agent folder, drops the Herdr pane, intercom identity, and subagent role of the shell it runs from, and points `HERDR_SOCKET_PATH` at a path nobody listens on. Without it a session's look in a test could start a real detached sb server in `~/.pi/agent/straw-boss` and leave it running. A refusal of that guard inside a test process fails the process when it ends, unless the test that asserts it on purpose takes the record (`consumeRefusals()` in `src/server/testguard.ts`); give a session the world's `sw.ctx()` (`sw.server()`) instead of letting it be refused.
+- A session of a test gets the fake spawn of `tests/server-world.ts` (`sw.ctx()`). `src/server/testguard.ts` refuses the real detached start in a test run unless `SB_TEST_REAL_SERVER=1` is set, and refuses any start whose working folder or state folder (the session's env, HOME or PI_CODING_AGENT_DIR) is outside the root. What it lets through is noted by pid; at the end of each test process the leftovers are killed and the process fails.
+- A test world that starts sessions with looks (`server-world.ts`) passes `sw.server(...)` as the session's `server` deps, so `close()` waits for the looks in flight before it removes the folder.
+
 ## Live checks
 
 - Run a live demo in scratch workspaces of the default Herdr, not in a headless named session (`herdr --session X server`): pi-intercom's broker resolves `herdrLocation` only against the default Herdr, so sessions joined there never appear. Move the scratch workspaces first with `workspace.move` over the socket API so the head tower is theirs.

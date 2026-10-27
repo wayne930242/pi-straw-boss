@@ -19,8 +19,8 @@ export interface Source {
 	close(): void;
 }
 export interface Status {
-	/** connecting: first attempt; live: messages arrive; reconnecting: waiting to retry; offline: gave up until the page is used again. */
-	state: "connecting" | "live" | "reconnecting" | "offline";
+	/** connecting: first attempt; live: messages arrive; reconnecting: waiting to retry; offline: gave up until the page is used again; replaced: the server refused this address (it restarted under a new one), so no retry can work. */
+	state: "connecting" | "live" | "reconnecting" | "offline" | "replaced";
 	attempt: number;
 	/** When the server was last heard from (a snapshot or a ping). */
 	lastContact?: number;
@@ -36,6 +36,8 @@ export interface Deps {
 	hidden(): boolean;
 	onNet(net: Net): void;
 	onStatus(status: Status): void;
+	/** One look at the page's own address after a stream error: true when the server refuses it (403, the token was replaced); a 503 or a network error is false. */
+	replaced?(): Promise<boolean>;
 }
 export interface Stream { start(): void; resume(): void; restart(): void; hide(): void; stop(): void }
 
@@ -79,7 +81,16 @@ export function createStream(deps: Deps): Stream {
 		clear();
 		startedAt = deps.now();
 		const mine = (source = deps.open());
-		mine.onError(() => source === mine && lost());
+		mine.onError(() => {
+			if (source !== mine) return;
+			lost();
+			void deps.replaced?.().then((gone) => {
+				if (!gone || status.state === "live" || status.state === "replaced") return;
+				close();
+				clear();
+				set({ state: "replaced" });
+			}, () => {});
+		});
 		mine.listen("message", (data) => {
 			if (source !== mine) return;
 			const net = parse<Net>(data);
@@ -104,6 +115,7 @@ export function createStream(deps: Deps): Stream {
 		// Focus, visible, pageshow, and online all land here, often together. Reconnect at once with a fresh attempt count unless
 		// the stream is healthy (heard from within 20 s) or an attempt only just began.
 		resume() {
+			if (status.state === "replaced") return; // no retry can work: the address is dead until the user opens a new one
 			const fresh = deps.now() - startedAt < 2000 || (status.lastContact !== undefined && deps.now() - status.lastContact <= STALE_MS);
 			if (source && fresh) return;
 			set({ attempt: 0, state: status.state === "live" ? "reconnecting" : status.state });

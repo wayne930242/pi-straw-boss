@@ -47,7 +47,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { post, callT
 				}),
 				({ message, scope, reply }) => broadcast(message, scope ?? "workspace", reply ?? false));
 			// The sb server's state, its log, and its restart: for the agent that has to debug it. Refused in a remote turn at every level (link/hooks.ts), as link_request is.
-			if (server) tool("boss_server", "See the sb server (the Straw Boss backend process) and restart it. status: its state, pid, version, uptime, last restart, last error, and log path (works with the server down). logs: the last lines of its log, at most 200 (no message text or secrets are in it). restart: restart it with a reason of 1 to 200 characters on one line, which goes into the log with your name; refused while the boss stopped the server on purpose, and taken at most once a minute; a server that is down is started. Pages reconnect on the same URL.",
+			if (server) tool("boss_server", "See the sb server (the Straw Boss backend process) and restart it. status: its state, pid, version, uptime, last restart, last error, and log path (works with the server down). logs: the last lines of its log, at most 200 (no message text or secrets are in it). restart: restart it with a reason of 1 to 200 characters on one line, which goes into the log with your name; refused while the boss stopped the server on purpose, and taken at most once a minute; a server that is down is started. The GUI gets a new token: pages on the old URL stop working, and /boss gui gives the new one.",
 				Type.Object({
 					action: Type.Union([Type.Literal("status"), Type.Literal("logs"), Type.Literal("restart")]),
 					lines: Type.Optional(Type.Number({ description: "logs: how many lines, at most 200. Default 200." })),
@@ -59,7 +59,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { post, callT
 						return { text: JSON.stringify(result, null, 2), details: result };
 					}
 					if (action === "logs") {
-						const text = server.logs(lines ?? 200).join("\n");
+						const text = (await server.logs(lines ?? 200)).join("\n");
 						return { text: text || "(the log is empty)", details: { lines: text ? text.split("\n").length : 0 } };
 					}
 					const done = await server.restart(reason ?? "", { boss: false });

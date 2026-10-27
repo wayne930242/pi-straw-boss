@@ -1,3 +1,4 @@
+import "./setup.ts"; // a run without --import ./tests/setup.ts is isolated too, once this module is imported (setup.ts)
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import jsqr from "jsqr";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { TOWER_LABEL } from "../src/herdr.ts";
+import type { Ask } from "../src/host.ts";
 import { createStrawBoss, type Deps } from "../src/index.ts";
 import type { HerdrWatch } from "../src/server-watch.ts";
 
@@ -91,12 +93,14 @@ export class FakeHerdr {
 	}
 	private next = 100;
 	private terminals = 0;
-	/** A new server starts with no tokens: the old one kept them in memory. Panes, tabs and workspaces stay, as after a live handoff. */
-	restart(): void {
+	/** A new server starts with no tokens (`reconnect`: the events connections are acknowledged again; a test of the order of the takeover's own writes turns it off): the old one kept them in memory. Panes, tabs and workspaces stay, as after a live handoff. */
+	restart(reconnect = true): void {
 		for (const holder of [...this.panes, ...this.workspaces]) holder.tokens = {};
 		for (const pane of this.panes) pane.terminal_id = `term_${this.terminals++}`; // a restored pane runs in a new terminal; its id is the same
 		this.wsTokenHistory.length = 0;
 		this.calls.length = 0;
+		// Every events connection reconnects to the new server and is acknowledged again (`on(null)`), as `events.subscribe` does.
+		if (reconnect) for (const l of [...this.listeners]) queueMicrotask(() => this.listeners.has(l) && l.on(null));
 	}
 	private agentNames = new Map<string, string>(); // name → pane: Herdr frees a name with its pane (checked on Herdr itself)
 	/** The next this-many `agent start` calls fail with agent_pane_busy, as a new tab's shell does before its prompt. */
@@ -457,7 +461,7 @@ export class Agent {
 		if (!options.noIntercom) events.on("intercom:outbox-request", (request) => world.broker.outbox(this, request as { requestId: string; to: string; message: string }));
 		world.broker.connect(this);
 		// The extension's waits are real in production; here they are capped so timeouts take milliseconds.
-		createStrawBoss({ run: world.herdr.runFor(this.pane), api: world.herdr.api, watch: world.watch, env, sleep: (ms) => sleep(Math.min(ms, 2)), promptDir: PROMPT_DIR, stateDir: world.stateDir, autoTower: false, gone: (record) => world.gone.has(record.ownerSession ?? ""), later: (_pid, args) => void world.herdr.runFor(this.pane)(args), events: world.herdr.events, ...options.deps })(pi);
+		createStrawBoss({ run: world.herdr.runFor(this.pane), api: world.herdr.api, watch: world.watch, env, sleep: (ms) => sleep(Math.min(ms, 2)), promptDir: PROMPT_DIR, stateDir: world.stateDir, autoTower: false, ask: (request, options) => world.ask(request, options), later: (_pid, args) => void world.herdr.runFor(this.pane)(args), events: world.herdr.events, ...options.deps })(pi);
 	}
 
 	private dialog(kind: "select" | "confirm", title: string, second: unknown, opts?: { signal?: AbortSignal; timeout?: number }): Promise<unknown> {
@@ -563,8 +567,10 @@ export class World {
 		for (const watcher of [...this.watchers]) watcher.onTakeover();
 		await this.quiet();
 	}
-	/** Sessions whose pi process has ended: the owner check of a GUI record (handover.ts `ownerGone`) answers by this, since every fake session shares the test's own pid. */
+	/** Sessions whose pi process has ended: a link holder record of a session that quit counts as gone (link-runtime.test.ts), since every fake session shares the test's own pid. */
 	gone = new Set<string>();
+	/** How a session reaches the GUI in the sb server (host.ts `Ask`): a test that runs a server (gui-world.ts) points this at its control socket; with none, no server answers. */
+	ask: Ask = async () => ({ ok: false, error: "no server" });
 	/** The state directory of the one-GUI-per-machine record, private to this world. */
 	stateDir = (() => {
 		const dir = mkdtempSync(join(tmpdir(), "psb-state-test-"));
@@ -610,8 +616,11 @@ export class World {
 			last = now;
 		}
 	}
+	/** Stand-ins that live beside the sessions (the sb server's link service, tests/link/service-world.ts), ended with them. */
+	stoppers: (() => Promise<void>)[] = [];
 	async stopAll(): Promise<void> {
 		for (const agent of this.agents) await agent.stop();
+		for (const stop of this.stoppers.splice(0)) await stop();
 		rmSync(this.stateDir, { recursive: true, force: true });
 	}
 }

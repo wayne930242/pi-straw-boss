@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type OpenCall, type Pending, type Relayed, SEVERAL } from "./ask.ts";
-import { type Ack, type AnswerMessage, type Bridge, type CloseResult, type Dialogs, type FormMessage, type FormReply, guiNamespace, type LocalHub, MAX_QUEUED, QUEUED_TEXT, REGISTER, type ToHub } from "./bridge.ts";
+import type { Ack, AnswerMessage, Bridge, CloseResult, Dialogs, FormMessage, FormReply, LocalHub, ToHub } from "./bridge.ts";
+import { guiNamespace, MAX_QUEUED, QUEUED_TEXT, REGISTER } from "./bridgewire.ts";
 import { createCaps, type Doc, docsOf, type Fields, fieldsOk, type FormResult, type Shelf } from "./documents.ts";
 import type { Session } from "./herdr.ts";
 import { canonical } from "./history.ts";

@@ -16,7 +16,7 @@ import { forgetStart, startedLater, startOf } from "./startof.ts";
 // local port cannot reach the server at all. A remote request needs Host exactly <MagicDNS name>:8443,
 // no Funnel marker, Tailscale-User-Login equal to this machine's user, and a session cookie (HttpOnly, Secure, SameSite=Strict, scoped to
 // the token path) that only a one-time pairing code from the QR gets: a code works once, within ten minutes. A pairing is durable
-// (devices.ts): it survives remote off and on, a restart, and a takeover, and ends only when the desktop unpairs the device, the Tailscale
+// (devices.ts): it survives remote off and on, and ends when the GUI listener ends (a new listener has a new token, so `guihost` unpairs every device), when the desktop unpairs the device, the Tailscale
 // identity changes, or 90 days pass without a use (each use slides the expiry). Remote access is remembered as wanted until turned off
 // explicitly: stopping the server removes the serve entry but not the wish, so the next server turns it on again.
 

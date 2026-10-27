@@ -3,13 +3,13 @@ import { system32, system32Path } from "./winpath.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { matchesKey } from "@earendil-works/pi-tui";
 
-// The pairing panel `/boss gui remote` shows in the terminal: the QR code, and keys that act on new one-time links (remote.ts mints them).
+// The pairing panel `/boss gui remote` shows in the terminal: the QR code, and keys that act on new one-time links (the sb server mints them: guihost.ts `gui-pair`).
 // It is an overlay, so the QR never enters the conversation the model reads.
 
 /** The pairing overlay's keys. Each mints its own one-time link, so a copied or opened link never spends the QR's code. */
-export const pairingKeys = (link: () => string, copy: (text: string) => Promise<void>, open: (url: string) => Promise<void>): Record<string, () => Promise<string>> => ({
-	c: async () => (await copy(link()), "Copied a new one-time link; it works once, within ten minutes."),
-	o: async () => (await open(link()), "Opened a new one-time link in this computer's browser."),
+export const pairingKeys = (link: () => Promise<string>, copy: (text: string) => Promise<void>, open: (url: string) => Promise<void>): Record<string, () => Promise<string>> => ({
+	c: async () => (await copy(await link()), "Copied a new one-time link; it works once, within ten minutes."),
+	o: async () => (await open(await link()), "Opened a new one-time link in this computer's browser."),
 });
 
 /** The clipboard command: on Windows `clip.exe` by absolute path (a bare name is looked for in the current folder first). */

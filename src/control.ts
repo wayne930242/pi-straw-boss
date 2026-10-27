@@ -32,7 +32,8 @@ import { qr } from "./qr.ts";
 //   POST /<token>/api/trust/answer {id, digest, choice, answerId}                       answers a project trust question (trust/serve.ts); a paired device may, as it may answer a relayed confirm
 //   POST /<token>/api/link/<name> {…}                                                    Straw Link's team settings, through the link holder (link.ts of the page): state, create, invite, decide, join-start, trust, …
 //                                                                                        This computer's page only, except `state` (without a pending invite's text) and `confirm-answer`, which a paired device may do like it answers any confirm
-//   POST /<token>/api/server/stop {by, take}                                             stops the server: another session's /boss gui stop or takeover (never remote)
+//   POST /<token>/api/server/stop {by, take}                                             stops the GUI listeners: an older session's /boss gui stop or takeover (never remote)
+//   POST /<token>/api/server/status, server/restart {reason?}, server/log {lines?}       the sb server's state, restarting it (the new server's GUI has a token of its own, so this page does not reconnect), and the last lines of its log (this computer's page only)
 // Every write needs the page's own origin (Origin, Sec-Fetch-Site), a JSON body of at most 64 KB, and the CSRF secret the server wrote into
 // the page; the custom header forces a CORS preflight that is never approved. The key is resolved in the registry (paths and panes never come
 // from the browser), and Herdr is asked right then that the pane still runs pi on that session's file, so a reused pane id is refused.
@@ -44,11 +45,13 @@ export { ENDING };
 export interface Reply { status: number; body: unknown }
 /** The page's way to Straw Link's holder (runtime.ts `gui`): a named request with arguments, and the setup marker that starts the election before any team exists. */
 export interface LinkPort { call(name: string, args: Record<string, unknown>): Promise<{ ok: boolean; error?: string; code?: string; [key: string]: unknown }>; enable(): Promise<void> }
+/** The sb server's panel on the page (server.ts of the page): its state, a restart with a reason, and the last lines of its log. */
+export interface ServerPanel { status(): unknown; restart(reason: string): Promise<Reply>; log(lines: number): string[] }
 /** What a paired device may ask: read the state, and answer a forwarded confirm. Everything else changes who may command this computer, so only its own page does it. */
 const REMOTE_LINK = ["state", "confirm-answer"];
 const LINK_NAMES = ["enable", "state", "create", "invite", "invite-text", "invite-cancel", "decide", "join-start", "join-project", "join-cancel", "prefill-clear", "remove", "role", "rotate", "trust", "leave", "confirm-answer"];
 /** `answers.target` reads the net afresh, so the binding and the dialog are checked again for every answer. */
-export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; remoteOn?(): Promise<void>; remoteOff?(): Promise<void>; paired?: { on(): boolean; list(): unknown; unpair(id: string): boolean; unpairAll(): number; unsaved(): string | undefined }; saveFailed?(reason: string): void; spawn?(parts: string[], json: Record<string, unknown>): Promise<Reply>; close?(kind: string, json: Record<string, unknown>, refresh?: () => Promise<unknown>): Promise<Reply>; dismiss?(key: unknown): Promise<boolean>; dismissAll?(): Promise<number>; stop?(asked: Asked): void; link?: LinkPort; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; linkRequest?(file: string): Promise<boolean>; answers?: Pick<Hub, "has" | "replay" | "ended" | "send" | "probe" | "commands" | "pull"> & { target(key: string): Promise<Target | undefined> }; trust?(json: Record<string, unknown>): Promise<Reply> }
+export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; remoteOn?(): Promise<void>; remoteOff?(): Promise<void>; paired?: { on(): boolean; list(): unknown; unpair(id: string): boolean; unpairAll(): number; unsaved(): string | undefined }; saveFailed?(reason: string): void; spawn?(parts: string[], json: Record<string, unknown>): Promise<Reply>; close?(kind: string, json: Record<string, unknown>, refresh?: () => Promise<unknown>): Promise<Reply>; dismiss?(key: unknown): Promise<boolean>; dismissAll?(): Promise<number>; stop?(asked: Asked): boolean | void; link?: LinkPort; server?: ServerPanel; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; linkRequest?(file: string): Promise<boolean>; answers?: Pick<Hub, "has" | "replay" | "ended" | "send" | "probe" | "commands" | "pull"> & { target(key: string): Promise<Target | undefined> }; trust?(json: Record<string, unknown>): Promise<Reply> }
 
 const no = (status: number, error: string, reason: string, extra = {}): Reply => ({ status, body: { error, reason, ...extra } });
 const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -103,7 +106,7 @@ export function checkText(text: unknown): string | Reply {
 }
 
 const LINK_LOCAL = "While it waits on a link request, a paired device can only send Escape; approve it on this computer's own page or terminal.";
-export function createControl({ link, lookup, call, csrf, canonical, pair, remoteOn, remoteOff, paired, saveFailed, spawn, close, dismiss, dismissAll, stop, mirrors, secret = async () => true, linkRequest = async () => false, answers, trust }: ControlDeps) {
+export function createControl({ link, server: panel, lookup, call, csrf, canonical, pair, remoteOn, remoteOff, paired, saveFailed, spawn, close, dismiss, dismissAll, stop, mirrors, secret = async () => true, linkRequest = async () => false, answers, trust }: ControlDeps) {
 	const busy = new Set<string>();
 	// A change to the paired devices or the remote wish that could not be written to paired.json took effect in memory only: say so (500), to the page and the session.
 	const lost = (): Reply | undefined => {
@@ -125,9 +128,18 @@ export function createControl({ link, lookup, call, csrf, canonical, pair, remot
 		const read = await body(req);
 		if ("status" in read) return read;
 		if (scope === "server") {
+			if (panel && !action && key === "status") return { status: 200, body: panel.status() };
+			if (panel && !action && key === "log") {
+				const lines = read.json.lines === undefined ? 200 : read.json.lines;
+				return Number.isInteger(lines) && (lines as number) >= 1 && (lines as number) <= 200 ? { status: 200, body: { lines: panel.log(lines as number) } } : no(400, "bad_request", "Ask for 1 to 200 lines.");
+			}
+			if (panel && !action && key === "restart") {
+				const reason = read.json.reason === undefined || read.json.reason === "" ? "from the GUI" : read.json.reason;
+				return typeof reason === "string" && reason.length <= 200 && !/[\r\n]/.test(reason) ? panel.restart(reason) : no(400, "bad_request", "A reason is one line of at most 200 characters.");
+			}
 			const { by, take } = read.json;
 			if (key !== "stop" || action || !stop) return no(404, "not_found", "No such action.");
-			return typeof by === "string" && by.length <= 200 && typeof take === "boolean" ? (stop({ by, take }), { status: 202, body: { stopping: true } }) : no(400, "bad_request", "A stop names who asks.");
+			return typeof by === "string" && by.length <= 200 && typeof take === "boolean" ? (stop({ by, take }) === false ? no(409, "refused", "This server is not taken over.") : { status: 202, body: { stopping: true } }) : no(400, "bad_request", "A stop names who asks.");
 		}
 		if (scope === "trust") return trust && key === "answer" && !action ? trust(read.json) : no(trust ? 404 : 503, trust ? "not_found" : "unavailable", trust ? "No such action." : "This server takes no trust answers.");
 		if (scope === "link") {

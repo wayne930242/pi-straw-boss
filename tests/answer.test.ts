@@ -4,26 +4,25 @@ import { get, request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, afterEach, mock, test } from "node:test";
-import { readRecord } from "../src/handover.ts";
 import type { Net, Unit } from "../src/net.ts";
 import { guiNamespace } from "../src/bridge.ts";
 import { secretDigest, selectDigest } from "../src/owners.ts";
 import { newKeys, seal } from "../src/seal.ts";
 import { type Agent, until, World } from "./fakes.ts";
+import { startHosted, stopHosted } from "./gui-world.ts";
 import { assistant, call, header, lines, user } from "./sessions.ts";
 
-// End to end through the fakes: session B's bridge relays a robot_hand selector over the fake broker to the hub of session A's GUI server,
+// End to end through the fakes: session B's bridge relays a robot_hand selector over the fake broker to the hub of the sb server's GUI,
 // the page's answer goes back to B's owner, and the terminal answering first makes it stale.
 
-const scratch = mkdtempSync(join(tmpdir(), "psb-answer-test-")), bundle = join(scratch, "bundle"), agentDir = join(scratch, "agent");
-mkdirSync(bundle);
+const scratch = mkdtempSync(join(tmpdir(), "psb-answer-test-")), agentDir = join(scratch, "agent");
 mkdirSync(join(agentDir, "sessions"), { recursive: true });
-writeFileSync(join(bundle, "index.html"), "<title>Straw Net</title>");
 const saved = process.env.PI_CODING_AGENT_DIR;
 process.env.PI_CODING_AGENT_DIR = agentDir;
 after(() => ((process.env.PI_CODING_AGENT_DIR = saved), rmSync(scratch, { recursive: true, force: true })));
 let world = new World();
 afterEach(async () => {
+	await stopHosted();
 	await world.stopAll();
 	world = new World();
 });
@@ -53,11 +52,12 @@ const post = (url: string, csrf: string, path: string, body: unknown) =>
 		req.on("error", reject).end(data);
 	});
 
-/** A (the GUI server) and B in tab wA:t1; B's pane runs pi on a session file whose newest message calls robot_hand. */
+/** The sb server with its GUI, session A (which opens the page), and B in tab wA:t1; B's pane runs pi on a session file whose newest message calls robot_hand. */
 async function setup(sub = false, calls: [string, string][] = [["c1", "robot_hand"]], ui = false) {
 	world.herdr.addTab("wA:t1", "work");
 	const herdrCall = async (method: string, params: Record<string, unknown>) => (method === "pane.get" ? { pane: world.herdr.pane(String(params.pane_id)) } : {});
-	const a = world.agent({ id: "A", pane: "wA:p1", tab: "wA:t1", deps: { bundle, openUrl: async () => {}, call: herdrCall } });
+	const hosted = await startHosted(world, { call: herdrCall as never, pid: process.pid });
+	const a = world.agent({ id: "A", pane: "wA:p1", tab: "wA:t1", deps: { openUrl: async () => {} } });
 	const b = world.agent({ id: "B", pane: "wA:p2", tab: "wA:t1", ui, env: sub ? { PI_SUBAGENT_ID: "kid" } : undefined });
 	// A subagent shows under its launcher: A's session file names the artifacts pi-herdr-agents writes, and B's file is named for the child.
 	const file = join(agentDir, "sessions", sub ? "2026-10-18T00-00-00-000Z_kid-1a2b3c4d-5e6f7a8b-9c0d.jsonl" : "2026_B.jsonl");
@@ -75,7 +75,7 @@ async function setup(sub = false, calls: [string, string][] = [["c1", "robot_han
 	await Promise.all([a.start(), b.start()]);
 	await a.command("gui");
 	const url = a.notices.map((n) => /Straw net GUI: (\S+)/.exec(n.text)?.[1]).find(Boolean)!;
-	return { a, b, url, csrf: readRecord(world.stateDir)!.csrf! };
+	return { a, b, url, csrf: hosted.csrf, hosted };
 }
 /** robot_hand in B: the call starts, the selector opens, and the owner settles the first of terminal and answer. */
 function selector(b: Agent) {
@@ -94,8 +94,8 @@ function selector(b: Agent) {
 const unitB = (n: Net) => n.bases.flatMap((x) => x.tabs.flatMap((t) => t.units)).find((u) => u.key === "B") as Unit | undefined;
 
 test("a robot_hand selector in another session is answered from the page, once, through its own owner", async () => {
-	const { b, url, csrf } = await setup();
-	assert.equal(readRecord(world.stateDir)?.ownerSession, "A", "gui.json names the server's session");
+	const { b, url, csrf, hosted } = await setup();
+	assert.equal(hosted.gui().ownerSession, hosted.record().intercomId, "gui.json names the server's intercom id, not a pi session");
 	const hand = selector(b);
 	let seen: Unit | undefined;
 	await until(async () => (seen = unitB(await snapshot(url)))?.pending?.answer, "B's dialog in the snapshot");
@@ -198,10 +198,10 @@ const SECRET = { label: "Deploy token", instructions: ["Open the link.", "Create
 const filesUnder = (dir: string): string[] => readdirSync(dir).flatMap((n) => (statSync(join(dir, n)).isDirectory() ? filesUnder(join(dir, n)) : [readFileSync(join(dir, n), "utf8")]));
 
 test("a secret_drop in another session is answered from no page (SB-F001): a value POSTed from this computer's page is refused, nothing reaches the owner or the channel, and the value lands nowhere", async () => {
-	const { a, b, url, csrf } = await setup(false, [["c1", "secret_drop"]]), value = "tok-e2e-7c1d9a-not-for-logs", digest = secretDigest(SECRET);
+	const { a, b, url, csrf, hosted } = await setup(false, [["c1", "secret_drop"]]), server = hosted.record().intercomId!, value = "tok-e2e-7c1d9a-not-for-logs", digest = secretDigest(SECRET);
 	const c = world.agent({ id: "C", pane: "wA:p3", tab: "wA:t1" });
 	await c.start();
-	const ns = guiNamespace("A"), heard: Record<string, unknown>[] = [];
+	const ns = guiNamespace(server), heard: Record<string, unknown>[] = [];
 	await until(() => c.regs.get(ns), "C on the server's channel");
 	const reg = c.regs.get(ns)!, onEvent = reg.onEvent;
 	reg.onEvent = (e: Record<string, unknown>) => (heard.push(e), onEvent(e));
@@ -236,7 +236,7 @@ test("a secret_drop in another session is answered from no page (SB-F001): a val
 });
 
 test("an answer to a secret dialog sent straight to its bridge, plain or sealed, never reaches the owner: B's bridge refuses it", async () => {
-	const { b, url } = await setup(false, [["c1", "secret_drop"]]), digest = secretDigest(SECRET), value = "tok-forged";
+	const { b, url, hosted } = await setup(false, [["c1", "secret_drop"]]), server = hosted.record().intercomId!, digest = secretDigest(SECRET), value = "tok-forged";
 	const seen: unknown[] = [];
 	Object.assign(world.herdr.pane("wA:p2"), { agent_status: "blocked" });
 	void b.fire("tool_execution_start", { toolCallId: "c1", toolName: "secret_drop", args: {} });
@@ -247,9 +247,9 @@ test("an answer to a secret dialog sent straight to its bridge, plain or sealed,
 	const target = [...world.broker.published].reverse().find((p) => (p.payload as { type?: string }).type === "dialogs" && p.from === "B")!.payload as { bridgeId: string; dialogs: unknown[] };
 	assert.deepEqual(target.dialogs, [], "the secret dialog is not relayed");
 	const forged = { version: 1, type: "answer", to: target.bridgeId, id: "s1", answerId: "f".repeat(20), digest };
-	const reg = b.regs.get(guiNamespace("A"))!, owner = world.broker.ownerOf(guiNamespace("A"));
+	const reg = b.regs.get(guiNamespace(server))!, owner = world.broker.ownerOf(guiNamespace(server));
 	for (const payload of [{ ...forged, value }, { ...forged, sealed: seal(value, newKeys().pub, { id: "s1", digest, answerId: "f".repeat(20), bridgeId: target.bridgeId }) }])
-		reg.onEvent({ type: "message", fromSessionId: "A", owner, payload });
+		reg.onEvent({ type: "message", fromSessionId: server, owner, payload });
 	assert.deepEqual(seen, []);
 	const acks = world.broker.published.filter((p) => p.from === "B" && (p.payload as { type?: string }).type === "ack").map((p) => p.payload as { outcome: string; reason?: string });
 	assert.deepEqual(acks.map((x) => [x.outcome, x.reason]), Array(2).fill(["rejected", "terminal_only"]), "each reached the bridge and was refused there");

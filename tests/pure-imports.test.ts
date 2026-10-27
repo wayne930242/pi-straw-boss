@@ -53,8 +53,8 @@ function valueImports(source: string): string[] {
 }
 
 /** Every banned package a value import reaches from `entry`, with the chain of files that leads to it. */
-function bannedFrom(entry: string, read: (path: string) => string = (path) => readFileSync(join(root, path), "utf8")): string[] {
-	const seen = new Set<string>(), hits: string[] = [];
+function bannedFrom(entry: string, read: (path: string) => string = (path) => readFileSync(join(root, path), "utf8"), seen = new Set<string>()): string[] {
+	const hits: string[] = [];
 	const visit = (path: string, chain: string[]) => {
 		if (seen.has(path)) return;
 		seen.add(path);
@@ -107,9 +107,38 @@ test("the walk finds a banned package behind a chain of relative imports, and no
 	assert.deepEqual(bannedFrom("src/clean.ts", read), []);
 });
 
-// The data module is what the server loads from the dashboard; net.ts, ask.ts, and reach.ts are the modules that read it.
-for (const entry of ["src/netdata.ts", "src/net.ts", "src/ask.ts", "src/reach.ts"]) {
+// The data module is what the server loads from the dashboard; net.ts, ask.ts, and reach.ts are the modules that read it. guihost.ts is the GUI host that moved into the server (it
+// replaces host.ts's server half), main.ts and cli.ts are the server's entries, and guiport.ts is the GUI's way to the link holder: nothing they load imports tools.ts, pairing.ts, or trust/ask.ts.
+for (const entry of ["src/netdata.ts", "src/net.ts", "src/ask.ts", "src/reach.ts", "src/server/guihost.ts", "src/server/main.ts", "src/server/cli.ts", "src/link/guiport.ts", "src/server/towers.ts", "src/server/towerclient.ts"]) {
 	test(`${entry} reaches no value import of pi-tui, typebox, or pi-coding-agent`, () => {
 		assert.deepEqual(bannedFrom(entry), []);
 	});
 }
+
+// Not only the three packages: the modules that import them (the tools and the pairing overlay are the session's, and trust/ask.ts registers pi's trust question) stay out of the server's graph.
+const PI_SIDE = ["src/tools.ts", "src/pairing.ts", "src/trust/ask.ts"];
+/** Every file reachable from `entry` by relative value imports. */
+function reachable(entry: string): Set<string> {
+	const seen = new Set<string>(), visit = (path: string) => {
+		if (seen.has(path)) return;
+		seen.add(path);
+		for (const specifier of valueImports(readFileSync(join(root, path), "utf8"))) if (specifier.startsWith(".")) visit(relative(root, join(root, dirname(path), specifier)));
+	};
+	visit(entry);
+	return seen;
+}
+for (const entry of ["src/server/guihost.ts", "src/server/main.ts", "src/server/cli.ts", "src/link/guiport.ts"]) {
+	test(`${entry} loads none of tools.ts, pairing.ts, and trust/ask.ts`, () => {
+		const found = reachable(entry);
+		assert.deepEqual(PI_SIDE.filter((file) => found.has(file)), []);
+		assert.ok(found.size > 3, "the walk found the server's modules");
+	});
+}
+// B3: the link holder runs in the server, so the server loads the link service and everything under it. It must not load the pi-side modules: the tools (typebox), the pairing
+// overlay (pi-tui), the trust question (pi-coding-agent), or the session half of the link (approval and remote-turn hooks).
+test("src/server/main.ts reaches no value import of pi's packages, and none of the pi-side modules", () => {
+	const reached = new Set<string>();
+	assert.deepEqual(bannedFrom("src/server/main.ts", undefined, reached), []);
+	assert.ok(reached.has("src/link/service.ts") && reached.has("src/link/holder.ts") && reached.has("src/link/election.ts"), "the link holder is in the server's graph");
+	for (const piSide of ["src/tools.ts", "src/pairing.ts", "src/trust/ask.ts", "src/link/runtime.ts", "src/link/hooks.ts", "src/link/approval.ts", "src/index.ts"]) assert.ok(!reached.has(piSide), `${piSide} is loaded by the server`);
+});

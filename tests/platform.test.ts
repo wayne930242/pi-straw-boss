@@ -11,7 +11,7 @@ import { test } from "node:test";
 import { instanceOf, localEndpoint as pluginEndpoint, socketCall } from "../herdr-plugin/net-view.mjs";
 import { agentFiles, ask, newPipe, NoSidecar, socketIsFile, socketOf } from "../src/agent/paths.ts";
 import { herdrSocket, localEndpoint } from "../src/endpoint.ts";
-import { markReload, readRecord, writeRecord, writeRecordFile } from "../src/handover.ts";
+import { writeRecordFile } from "../src/handover.ts";
 import { herdrCall } from "../src/herdr.ts";
 import { cmdHidden } from "../src/hidden.ts";
 import { listDirs, pickable } from "../src/spawn.ts";
@@ -191,22 +191,6 @@ test("S7 (R1-F003): a protected process's (services.exe, lsass.exe) start time i
 		told.push(image);
 	}
 	assert.ok(told.length > 0, "tasklist listed at least one of services.exe and lsass.exe");
-});
-
-test("S7: a gui.json written by this process carries `started` once the background read is in, and survives the writes of a stop mark and a reload mark", async () => {
-	const dir = mkdtempSync(join(tmpdir(), "psb-platform-gui-"));
-	try {
-		const gui = { port: 5000, remotePort: 5001, token: "t".repeat(32), csrf: "c".repeat(32) } as never;
-		const written = writeRecord(dir, gui, ["owner", "session"], "0.43.0", "/h.sock") as { late?: Promise<boolean> };
-		if (written.late) assert.equal(await written.late, true, "the record was written again with the start time");
-		assert.equal(readRecord(dir)!.started, await startedLater(process.pid));
-		assert.ok(readRecord(dir)!.started);
-		markReload(dir);
-		assert.equal(readRecord(dir)!.reload, true);
-		assert.equal(readRecord(dir)!.started, await startedLater(process.pid), "kept");
-	} finally {
-		rmSync(dir, { recursive: true, force: true });
-	}
 });
 
 // S4 on Windows: a rename onto a file that a reader has open can fail for a moment (EPERM, EBUSY); the writer tries again.

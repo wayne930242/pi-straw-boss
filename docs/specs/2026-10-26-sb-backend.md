@@ -195,7 +195,7 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
   - `stopped` (set only by a stop on purpose) and `restarting: { began, since, reason, by }` (**Restarts and upgrades**): `began` is
     when the restart or start began and never changes, `since` is touched every 2 s while it is under way, and a touch keeps `reason`
     and `by`;
-  - `lastError: { at, code, text }`, the last failure the server recorded (**Seeing and restarting the server**), and `log`, the log's
+  - `lastError: { at, code, text }`, the last failure the server recorded (**Seeing and restarting the server**; a restart carries the one before it over only until the new server is ready), and `log`, the log's
     path;
   - `socket` (the control socket's path or pipe name), `secret` (the connection secret, **The control socket**), and `intercomId` (the
     server's own intercom session, `sb-server-<8 hex>`).
@@ -212,6 +212,8 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
   start and written to `server.json`. The server compares it in constant time and closes a connection whose first frame is not a
   matching `hello`, with no answer (logged at most once a minute). A run reconnecting after a restart reads the new secret from
   `server.json`.
+- Known gap (B3R-F003): the hello secret alone gives full `link` admin, since `link` does not check a run token's kind. B5 and B6 must add
+  that check before runs reach the socket.
 - The secret is only as private as `server.json`. On Windows the server sets the ACL of the state directory, `straw-boss/` and never the
   agent directory above it, before it writes the secret:
   - The owner's SID comes from `[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value`, read through PowerShell with
@@ -297,19 +299,50 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
         long-lived pi session reads it once, `protectFolder` does not read it again for a wrong DACL, and a folder made again under its name is
         read again. **Cost:** one PowerShell on a cold `up` unless this process has already read this folder's owner (one more beside the launch PowerShell; log phase `owner-gate ms=…`, to be measured on
         the VM), and on a `stop` of a server that is down (it writes `stopped`). **A request that finds a server running** (`up` again, `stop`
-        of a live server, `status`, a session's look) reads no owner and starts no PowerShell: it looks first (a read only), and takes the
-        lock without the gate. The owner read for a folder is made once per folder identity; in a `secondary` slot it is passed between the
+        of a live server, `status`, a session's look) takes the lock without the gate, but its look at the record passes the **trust gate**
+        (R13-F003, below): the first look of a process at a folder that has a record reads the owner (one PowerShell); every later one in the
+        same process reads none. The owner read for a folder is made once per folder identity; in a `secondary` slot it is passed between the
         protect call and the `mkdir`s of `servers\<hash>` (R13-F002), so a folder that landed foreign gets not even those empty folders.
         The folder is passed to the PowerShell in the environment (`SB_OWNER_DIR`), never quoted into the script: PowerShell reads U+2018 to
         U+201B as single quotes too (R13-F001). A refusal found by the launch script (rc -2) is not written to `start-error.json` either (R13-F004).
-        **Residual (R13-F003), documented, not fixed in B1:** a folder with a live-looking record is trusted without an owner read. An account
-        that can create entries in `PI_CODING_AGENT_DIR` can make `straw-boss\` with a `server.json` of its own (it knows the secret the hello
-        proves), name its own pid, and use any free pipe name (or one whose DACL denies the victim, which reads as `denied`). A victim's `up`,
-        `stop` or `restart` then writes, inside the attacker's folder, `server.lock`, `server.json` (`stopped`, `clearStopped`,
-        `touchRestarting`, an automatic upgrade of an older record), `server.log` lines and, from the plain-spawn fallback's abort,
-        `start-error.json`; and `status` and `up`'s `url` are spoofed. No secret of the victim is exposed in B1. The ceiling: an attacker who
-        can create entries in `PI_CODING_AGENT_DIR` already reaches `auth.json` (mode 600 means nothing on Windows) and can plant files in
-        `extensions/`. **Before B2 to B4 send session content to the server**, an owner check once per process must precede trusting a record.
+        **The trust gate (R13-F003; closed for a folder the owner read refuses, with the residuals below, before B2 to B4 send session content to the server):** a record is what a folder another account made can
+        hold too (an account that can create entries in `PI_CODING_AGENT_DIR` makes `straw-boss\` with a `server.json` of its own, names its own pid, and
+        uses any free pipe name or one whose DACL denies the victim), and the old behavior trusted it: a victim's `up`, `stop` or `restart` wrote
+        `server.lock`, `server.json`, `server.log` lines and `start-error.json` inside the attacker's folder, and `status` and `up`'s `url` were
+        spoofed. Now `probe` (the one look every request makes: a session's look, `status`, `up`, `stop`, `restart`, `serve`, the waits of a
+        start) passes the owner gate (`ownerGate`) as soon as the folder holds a readable record, BEFORE it asks whether the pid lives, sends a hello,
+        or hands the record to any caller. A folder whose owner is not the user, BA or SYSTEM (`OWNER_OK_SIDS`) is refused with the same `acl`
+        error as a start's ("belongs to another account", exit 3 in the shell, told once by a session as "the sb server was not looked at"): nothing
+        is sent to the record's pipe (not even a hello), and nothing is written, because every write path in `client.ts` is behind a probe.
+        The record is read FIRST and a record that was read is used only after the gate has passed (b1f-F001: asking "is there a record?" before reading it was passed by a `server.json` that appears and disappears by rename: 1.4% of 89,538 probes returned the attacker's record unjudged); a record file that could not be read (another uid's, a link) is judged too. No file of the slot is read before the folder is judged: `cli logs` (the rotated logs too, and `--follow` once the log first appears), `boss_server logs` (both gate when the state folder exists, not when `server.log` does), `describe`'s `start-error.json` and `up`'s error JSON (which prefers the `acl` refusal to the folder's own `start-error.json`) pass the gate first (b1f-F004). A folder with no record is not read otherwise (nothing is trusted yet; a start's gate reads it before its first file, as before).
+        **One read judges three paths (b1f-F002):** the state folder, the slot's own folder and the record are read in the same PowerShell (an `index:SID` line each), so a record or folder another account planted inside a folder the user owns (a folder made before B1 by other modules' plain `mkdirSync`, with an inherited broad DACL) is refused too. They are judged at this read only: the record's file identity changes on every write, so it is not remembered. The folder is remembered as verified only when its DACL is exactly the owner's and SYSTEM's (read back by `icacls /save` after the owner read); an open folder is protected at the gate right after the owner read (`icacls /inheritance:r /grant:r`, read back with `/save`) and then remembered; if that protect fails it is told once (a process warning in the CLI, the look's notify-once in a pi session) and the folder is read again at most every 60 s, at once when a record in it changed identity. **Residual (R4-F002):** that 60 s window is keyed on identities taken before the read, so an A-B-A swap of the record (the attacker's record put back after the user's was read) is trusted for up to 60 s. A path that was there when the read began and reads `-` went away meanwhile: that is a failed read (a wait, nothing remembered), and the owner script stops at its first error (`$ErrorActionPreference = 'Stop'`) except for a path that is no longer there (`catch { if (Test-Path -LiteralPath $p) { throw } }`, the walk's pattern). **The record's content is bound to the file judged:** `readRecord` takes the file's identity from `fstat` of the handle it read, and after the gate `trusted` refuses (a wait) a record whose file at the path is not that one (a user-owned file renamed over it during the read).
+        **Residual (b1f-F003):** an A, B, A swap during the read (the attacker's folder X renamed away, a user-owned folder Y put at the name while PowerShell reads it by path, X put back before the identity check) passes the "replaced" check, and X is then remembered as verified for the process. It needs an account that can rename entries in the parent and has a user-owned folder to rename; the identity cannot be read from the PowerShell's own handle without `Add-Type`, which Constrained Language Mode forbids. Documented, not fixed. **Residual (R4-F001):** the protect call (`secure`, the gate's `shut`) opens the folder by path after an identity check; a swap in the one process start between the check and icacls opening the path can have the DACL of a folder that was not judged changed to the owner's and SYSTEM's, which the owner could set alone and which changes no owner. The sentence above about a folder replaced while it is read holds for a one-way swap too: the identity is taken before the reads and `remember` stores it only when the folder at the name still has it (R3-F001).
+        **A read that ran out of time is a wait (b1f-F006):** `execAsync` marks only its own timer's kill as `ETIMEDOUT` (another signal and a `maxBuffer` kill keep their own words), the gate throws it as `GateTimeout`, a request tells it as exit 1 with `wait: "start"` and not as `acl`, and it is NOT remembered: the next request reads again.
+        **Cost, measured on the Mac as a count of PowerShell starts; the Windows time is for the VM:** one PowerShell per process per folder
+        identity, for any process that finds a record: a session at its first look, each `cli.mjs status`, `stop`, second `up` (a shell command
+        is a new process: one read each, where it read none before; counts per command are in `docs/how-it-works.md`). The memos (`verified` and `refused`, by volume and file index) hold a verified folder and a **refusal**: a
+        session looks every 2 s, and a foreign folder costs one PowerShell for the process, not one per look. A read that FAILS (Constrained
+        Language Mode; not a timeout) is remembered for `OWNER_READ_RETRY_MS` (60 s) and told again meanwhile without a new PowerShell. The wrong-owner
+        verdict lasts as long as the folder's identity does; an owner changed on the same folder is seen by the next pi process.
+        **The read is asynchronous (B1 follow-up):** `ownerGate` starts the PowerShell as a child process and awaits it (`execAsync`, with `execFileSync`'s
+        error shape and a closed input), so a pi session's event loop (its screen, its timers, the GUI, the link) is never held for the 2 to 5 s of a
+        PowerShell start. `Ctx.gate` and `Ctx.prepare` may answer with a promise, `lockFor`, `launch` and `probe` await them, and the gate inside
+        `prepareSlot` (between the protect call and the `mkdir`s of a secondary slot) is awaited before they are made. Requests that come while a read
+        runs for a folder (a session's looks, `status`) share it (nothing outside `client.ts` reaches the gate in B1: the link and the GUI do not use the sb record yet, and `gui.json` in `handover.ts` is read with no gate, as before): one `whoami` and one PowerShell between them, one verdict for all,
+        a refusal or a failed read included. A folder replaced while its owner is read (another file index afterwards) is not the folder that was read:
+        the read fails and nothing is remembered, and the next request reads the folder that is there. The remaining synchronous native calls are
+        `whoami`, `icacls /save` and the protect call of `protectFolder` (tens of milliseconds each); the PowerShell of `secure`'s wrong-DACL path
+        is skipped for a folder the gate has read, which is every folder a probe has passed. Shell commands (`status`, `stop`, `up`) use the same
+        asynchronous read; nothing waits on it with the loop held.
+        **POSIX (B1 follow-up):** where there is no ACL the same gate is `uidGate` (`record.ts`): a `stat` of the state folder, the slot's own
+        folder (a secondary slot) and the record file, following links (a link to another account's folder is that folder), each compared
+        with `process.getuid()`. A path that another uid owns is refused with the words of the Windows gate ("could not check … before trusting
+        or writing to it: the folder … belongs to another account (uid N), not to uid M. Run pi as that account, or delete the folder …, then
+        start again."), as the same `acl` error (exit 3 in the shell, "the sb server was not looked at" once in a session), BEFORE the record is
+        read, a hello is sent, or a file is written; the folder is checked before the record, and a refusal stops at the first path. A path that
+        is not there is nothing to refuse; a `stat` that fails for any other reason is a refusal that says so. It starts no process and needs no
+        memo. A link is judged twice (b1f-F005): its own owner (`lstat`), then its target's (`stat`). uid 0 is ACCEPTED as an owner, as BUILTIN\Administrators and SYSTEM are on Windows (root is no adversary to the user); a server a `sudo` run started then shows as live but unreachable, like an elevated one on Windows, and `secretDir`'s EPERM or EACCES on a root-owned folder is told as "made by a sudo run: sudo chown -R it, or remove it with sudo". The record is opened with `O_NOFOLLOW` and its owner read from the open handle (`fstat`), so what was stat-ed is what is read, and `prepareSlot` honors `gate` on POSIX too, before it makes the folder. Volumes that ignore ownership (macOS uid 99) and NFS with all_squash are refused for every folder, with no way around it. `cli.mjs up` and a session's `boss_server restart` run it (`trusted`) before
+        they read the record at all.
         The protect call on a swapped temporary folder, and on an existing user-owned folder swapped between the identity check and the call
         (the gate refuses it afterwards), adds the user and SYSTEM where the attacker granted WRITE_DAC and leaves the owner as it was: the
         changes `protectFolder` can make to a foreign folder.
@@ -318,8 +351,19 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
         into the user's, entries already checked) and `/reset /T /C /L`, so a foreign entry is refused with nothing below the folder changed.
         **Residual (R11-F003):** the walk and the calls are not atomic; an account that can already create entries below the folder (only
         through the known plain-`mkdir` windows of other modules, before the folder was protected) can plant one in between, which `/reset`
-        then gives the user's inherited full control and a later start's `/setowner /T` could take. The folder's own protection bounds it;
-        the read-back checks the owner of everything it lists.
+        then gives the user's inherited full control and a later start's `/setowner /T` could take. **`icacls /T /L` DOES descend a junction**
+        (VM pass 6, 8e: `icacls <dir>\* /grant Everyone:(R) /T /C /L` changed the ACL of a file in the junction's target; `/L` only keeps icacls from
+        following a link given as the top-level argument): the walk's refusal of junctions and symbolic links is what protects the target, and a
+        junction planted in the gap between the walk and the `/setowner` or `/reset` call would be descended, so its target's owner and DACL would
+        be changed. The gap is bounded the way the rest of this residual is (an account that can create entries below the folder before it is
+        protected, and then wins a race of a few hundred milliseconds); the read-back lists only the entries of the walk and does not see the target.
+        The folder's own protection bounds it; the read-back checks the owner of everything it lists.
+        **P3 (VM pass 6, tmp-swap):** an account that can write the PARENT of `straw-boss\` (the agent directory, in a shared place) can always win
+        the swap of the temporary folder (60/60, with a 2 ms poll): it renames `straw-boss.<hex>.tmp` before the start has protected it. The outcome is
+        safe (the gate refuses the planted folder, no secret is written, nothing is taken over) but that account can make every first `up` in the
+        shared parent fail with exit 3. It is not fixed: the parent being writable by another account is what the swap needs, and the same account
+        could delete `straw-boss\` or plant it first. The refusal text for a planted folder that grants the victim nothing ("could not protect … tmp")
+        does not name the swap.
       - **What is below is listed without following links** (R8-F003): Windows PowerShell 5.1's `Get-ChildItem` follows junctions, so the
         scripts walk the folder with `[IO.Directory]::GetFileSystemEntries` and refuse any entry with the `ReparsePoint` attribute
         that is a name-surrogate link (`Get-Item -Force` gives it `LinkType` `Junction` or `SymbolicLink`; one whose type cannot be read is refused too)
@@ -595,7 +639,7 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
   - **None runs:** it starts one detached, as a pi session would, and waits for `hello`.
   - **Stopped on purpose:** `up` is the boss's own start, so it clears `stopped` in `server.json` and in `gui.json` (and `gui.stopped`)
     under the lock, then starts one.
-  - **Live, GUI stopped:** it starts the GUI listener again on the recorded port and token.
+  - **Live, GUI stopped:** it starts the GUI listener again on the recorded port when it is free, under a new token (a listener that starts has a token of its own, **GUI token and CSRF secret**).
   - **Live on an older version than the package `up` runs from:** step `version` asks for `upgrade` and starts the new server from its
     own package.
   - **Live on a newer version:** step `version` leaves the server alone and warns `server_newer` (exit 0), or, with `--exact`, exits 1
@@ -608,7 +652,7 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
 - **`cli.mjs serve`** runs in the foreground with `mode: serve`, for launchd and systemd (unattended devices).
   - **None runs:** it runs. A `stopped` it finds is cleared: a supervisor's start is the infra's explicit choice, and a stop is never
     left on a `serve` server (**Stopping**), so such a mark can only come from an earlier detached server.
-  - **A live `detached` server:** `serve` takes it over. It asks that server to hand over by the restart path (same port and token,
+  - **A live `detached` server:** `serve` takes it over. It asks that server to hand over by the restart path (same port when it is free, a new token,
     ≤ 10 s) and then runs in the foreground. Exiting instead would make launchd's `KeepAlive` or systemd's `Restart=` start it again and
     again, while the server that actually runs is one no supervisor watches.
   - **A live `serve` server:** two supervisors are a configuration error. `serve` prints that server's record and exits 4.
@@ -662,16 +706,29 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
   5. The new server starts in this order:
      - it connects to the broker and registers every tower identity first, so the guard sees live towers again as early as it can;
      - then it starts the link holder;
-     - then it binds the recorded local and remote GUI ports with the same token and CSRF secret, retrying for up to 5 s while the old
-       ports are let go;
-     - then it clears `restarting`.
+     - then it binds the recorded local and remote GUI ports, retrying for up to 5 s while the old
+       ports are let go, under a token and CSRF secret drawn anew (**GUI token and CSRF secret**);
+     - then it writes `gui.json` and `server.json`'s `gui` with that token, and clears `restarting`.
 - **The guard during a restart.** A workspace whose `tower` token names an `sb-tower-*` id counts as having a live tower while
   its own slot's `server.json` has a `restarting` whose `since` is fresh (within 10 s) and whose `began` is less than 30 s ago. A guard
   counts only ids of its own slot (`sb-tower-<ws>` on the primary, `sb-tower-<slot8>-<ws>` on a secondary). So a slow restart, such
   as a cold Windows start, demotes no main. A restart that takes longer than 30 s falls back to the 15 s grace.
-- So the URL does not change: a page or a desk webview only reconnects its stream, and a page from another build reloads itself at the
-  same URL. The URL changes only when another process has taken the port meanwhile (Moved, **States for a shell**). That is the one case
-  in which a shell reads the record again.
+- **GUI token and CSRF secret (RC3-F002, decided by the user: "不正常結束就換 token").** A GUI listener keeps its token and CSRF secret only
+  while it keeps running. A listener that starts after the previous one crashed, exited uncleanly, or restarted (a server restart, a GUI
+  restart, an upgrade, the hand-over from a 0.45 host, or `/boss gui` after `/boss gui stop`) draws a new token and CSRF secret, on the
+  recorded port when it is free and on another port when it is not. Why: another account may bind the port in the gap between two
+  servers; an open page of the old GUI reconnects within about a second to whatever answers there and sends the token in the path and
+  the CSRF secret in its requests, so a token kept across the gap could be one that process holds (a remote serve entry left pointing at
+  the old remote port has the same gap for a paired phone). The new listener answers 403 to the old token and secret. `gui.json` (by
+  rename) and `server.json`'s `gui` carry the new token before `restarting` is cleared, so no reader sees a live server with the old one;
+  the carried-over `gui` block of a starting record still holds the old token and means nothing until then. The costs, accepted:
+  - a page or a desk webview left open stops working at every restart or crash (its stream's reconnects meet 403) and has to load the
+    new URL: the shell reads the record again at every Moved (a changed `port` or `token`), and a session reads `gui.json` at each use;
+  - a paired phone scans a new QR code, because its cookie is scoped to `Path=/<token>/`; the entries stay in `paired.json`, and remote
+    access, when wanted, comes back by itself with the serve entry pointed at the new remote listener and links that carry the new token;
+  - an installed iOS or Android home-screen app keeps its old start URL and is removed and installed again.
+  Asks while the same listener runs give the same URL. The sessions' restart confirms and the page's Restart button say that the page's
+  address is replaced.
 - Upgrades:
   - A pi session on a newer pi-straw-boss than `server.json`'s `version` asks the live server to `upgrade`, then starts the new server
     from its own package.
@@ -682,7 +739,8 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
   with its run id, pane, and PID. It reads the new secret from `server.json`. The new server knows it from `tower/<ws>/runs/<id>.json`
   and takes it back (**Crash and timeout**).
 - A session older than the server does nothing. A session from before this change does not know the server. It sees `gui.json` owned by
-  a live process and leaves the GUI alone. It sees `holder.json` held by a newer build and does not take it. If it opens a resident
+  a live process and leaves the GUI alone. During a restart `gui.json` has no `started`, which no old build adopts, and a takeover asked of the server is answered 409. The first server after an
+  upgrade asks a live older host to hand over (`server/stop` with `take`) and binds its port under a new token. It sees `holder.json` held by a newer build and does not take it. If it opens a resident
   tower, the pi in that tab runs the installed (new) code and hands over (**Migration from resident towers**).
 
 ### Seeing and restarting the server
@@ -707,7 +765,7 @@ The boss asked for it: "server restart 也要讓 agent 或 user 有辦法做，�
     the restart.
 - **The GUI**: the settings panel shows the server's state, version, uptime, and last error, with **Restart server** and **Show log**
   (the last 200 lines). Both are on this computer's page only: the endpoints answer 403 `local_only` on the remote listener, as pairing
-  does. Restart asks for an optional reason, `from the GUI` by default. Its confirm says that the page reconnects on the same URL.
+  does. Restart asks for an optional reason, `from the GUI` by default. Its confirm says that the page's address is replaced (a new token), so the page ends and the boss opens `/boss gui` again.
 - **Pi**: `/boss server restart [reason]` asks to confirm, then restarts.
 
 ## What moves out of pi sessions
@@ -1187,7 +1245,7 @@ This section stands alone, so straw-boss-desk's owner can review it without the 
 
 **What stays.** `gui.json` keeps its path (`$PI_CODING_AGENT_DIR/straw-boss/gui.json`), its write by rename (mode 600), and every field
 the contract names: `port`, `token`, `pid`, `started`, `stopped`, `version`, `herdr`, `owner`. The URL stays
-`http://127.0.0.1:<port>/<token>/`, and **Ready** and **Moved** do not change. One field changes meaning: `pid` and `started` now name
+`http://127.0.0.1:<port>/<token>/`, and **Ready** does not change; **Moved** now includes a changed `token` (**GUI token and CSRF secret**). One field changes meaning: `pid` and `started` now name
 the sb server, the process that serves the GUI, instead of a pi session. `owner` becomes `sb server (pid N)`. `ownerSession` (not in the
 contract) is the server's intercom id. These paths are the primary server's, the one for the default Herdr (**One per state directory
 and Herdr server**); straw-boss-desk runs its Herdr on the default socket of its own `HOME`, or sets `HERDR_SOCKET_PATH` to that path.
@@ -1199,8 +1257,8 @@ and Herdr server**); straw-boss-desk runs its Herdr on the default socket of its
   starts it, which the shell now does itself with `cli.mjs up`.
 - `stopped` in `gui.json` now means that the GUI listener was stopped on purpose (`/boss gui stop`). The server goes on running the
   tower services and the link. The whole server stopped on purpose is `server.json`'s `stopped`. `up` and `serve` clear both.
-- A restart or upgrade keeps the port and token (**Restarts and upgrades**), so the shell's webview reconnects without reading anything.
-  Moved is the only case in which the shell reads a record again.
+- A restart or upgrade keeps the port when it is free and gives the GUI a new token (**GUI token and CSRF secret**), so the shell's webview
+  loads the new URL after every restart: Moved (a changed `port` or `token`) is how the shell reads a record again.
 
 **The successor: `server.json`.** It sits beside `gui.json` and describes the stack, not only the page. The shell may read `pid`,
 `started`, `version`, `herdr`, `mode`, `desk`, `stopped`, `restarting`, `lastError`, `log`, and `gui: { port, token, stopped }`.
@@ -1217,8 +1275,8 @@ touch keeps coming, however long the start takes; there is no fixed overall limi
 | State | How to tell from the files | `cli.mjs status` | What the shell does |
 |---|---|---|---|
 | live | `server.json` has no `stopped` and no `restarting`; its `pid` is alive and started at `started`; a GET of the URL answers 200 | `{"state":"live", …}` | Show the page. |
-| moved | live, but `gui.port` differs from the URL the shell loaded | `live`, with the new `url` | Load the new URL once it answers 200. The token stays. |
-| restarting | `server.json` has `restarting` whose `since` is within the last 10 s | `restarting`, with `reason` | Keep the page; its stream reconnects on the same URL. |
+| moved | live, but `gui.port` or `gui.token` differs from the URL the shell loaded (every restart changes the token) | `live`, with the new `url` | Load the new URL once it answers 200; the old one answers 403. |
+| restarting | `server.json` has `restarting` whose `since` is within the last 10 s | `restarting`, with `reason` | Keep the page until the restart ends, then load the new URL (moved): the old token answers 403. |
 | gui stopped | live, and `gui.stopped` (`gui.json`'s `stopped`) is set | `gui-stopped` | Say the GUI was stopped; `up` starts it again. |
 | server stopped | `server.json` has `stopped` | `stopped` | Run `up` at the next launch (it clears `stopped`). |
 | gone | none of the above: the PID is dead or started at another time, or `restarting.since` is older than 10 s, or the URL has not answered for 10 s while nothing touched `since` | `gone`, with `lastError` and the `start-error.json` reason when there is one | Run `up`. |
@@ -1332,7 +1390,7 @@ removed, with the release that carries B6.
      transport, and the version and `restarting` rules.
    - `serve` (with its take-over), `up` without `--dir` (with `server`, `version`, and desk handling), `stop` (refused for `serve`),
      `status`, `restart`, and `logs`.
-   - The restart path that keeps the port and token, with the requester holding `server.lock`, and `upgrade`.
+   - The restart path that keeps the port and gives the GUI a new token, with the requester holding `server.lock`, and `upgrade`.
    - `server.log` with rotation, `lastError`, and `boss_server` and `/boss server`.
    - The intercom connection through the headless kit. pi-intercom ≥ 0.18.1 is required in `README.md` and checked at start.
    - The Windows VM measure of a cold `up`.
@@ -1360,12 +1418,20 @@ removed, with the release that carries B6.
    - `/boss tower <prompt>` (D15): it ensures the tower like a bare `/boss tower`, clears `stopped`, posts the prompt as a `boss`
      event, and answers "handed to the tower" with no focus change. A bare `/boss tower` keeps opening and focusing the tower tab.
    - A proposed pi-intercom change: a mailbox flush waits for receipts (**Queueing and concurrency**).
+   - The `link` command must require the run-token kind check before any run reaches the socket (B3R-F003): today the hello secret alone
+     gives full link admin (create, join, leave, answer confirms), so a run that holds the secret could administer the team. It also allows
+     sending as any live tower, `taken`, the `gui` ops, and `request-open`/`request-run` without `link_request` approval; B5 and B6 scope the check to all of these.
    - `boss_server` over the run tokens (B1 has none, so its block is a session-level hook only): the server itself refuses `restart`,
      `status`, and `logs` for an ally-run token and enforces the one-a-minute restart limit server-side (today it is checked under the
      lock by the requester); `boss_server` is registered in local runs over the socket and never in ally runs.
+   - From the B4 review, what B5 and B6 must do: gate `open-main`, `close-main`, and `close-tower` by the run token (refuse ally runs: today
+     only the hello secret guards them, and `open-main`'s `sender` is unauthenticated); an owner check before a live-looking record is trusted
+     (R13-F003), which must land before tower-tool content is sent; and read the B4 queue with its backlog in mind: B4 writes no `seen.jsonl`, the
+     retry suffix (`~r<n>`) is not stripped from the message ids it wrote, and events may be a day old (at most 1000 per workspace are kept).
    - Link messages are not routed yet: with the flag on, they wait in `link/inbox/` with the GUI notice "a Straw Link message waits; ally
      runs come with the next step" until B6.
 6. **B6, ally runs (behind `towerRuns.enabled`).**
+   - The `link` command's run-token kind check (B3R-F003): an ally run's token never reaches link admin; see **The control socket**.
    - Routing link events into ally runs, session-level remote turns for towers, the guards of **Security**, server-side token
      enforcement, and the gate's Allow check.
    - The ally brief, its asks, and the thread store.
@@ -1413,9 +1479,10 @@ trials), unchanged otherwise.
     - `desk_on`;
     - the full JSON shape, the step list, and exit codes 0 to 3 (4 is `serve`'s and 5 is `stop`'s, tested with them);
     - a start that fails with `acl` in `start-error.json` gives exit 3 with the reason.
-  - `serve`: it takes over a detached server with the same port and token; a live `serve` exits 4.
-  - Every kind of restart keeps the port and token, registers the tower identities before binding the GUI ports, and a taken port moves
-    only the port. The guard keeps a main while `restarting` is fresh and less than 30 s old.
+  - `serve`: it takes over a detached server on the same port under a new token; a live `serve` exits 4.
+  - Every kind of restart registers the tower identities before binding the GUI ports, binds the recorded port under a new token and CSRF
+    secret (the old ones answer 403; both records carry the new token), and a taken port moves only the port; a crash is followed by the
+    same, and a start after `gui-stop` too (RC3-F002). The guard keeps a main while `restarting` is fresh and less than 30 s old.
   - `status` gives each state of **States for a shell**. `logs` tails the rotated log, and the log holds no message text or secret.
   - `boss_server`: status with the server down, a restart's reason in `restarting.reason` and the log, one a minute, refused while
     stopped, refused for an ally run's token and in a remote turn at every level.
@@ -1483,13 +1550,13 @@ trials), unchanged otherwise.
   1. The first pi of a fresh agent dir starts the server, and the GUI shows each tower standing.
   2. A main's `call_tower` wakes a pane in the existing tower tab, the run answers and exits, and the tab stays.
   3. The GUI composer wakes the tower.
-  4. Killing the server mid-run: the run reconnects to the restarted one and finishes, and the page reconnects on the same URL.
+  4. Killing the server mid-run: the run reconnects to the restarted one and finishes, and the page needs the new URL (`/boss gui`: the old token answers 403).
   5. **Herdr restart:** `herdr server stop`, a new `herdr server`, then a `call_tower`. The server finds the tower tab again, a resumed
      run pi is quit, and the event wakes a fresh run in the restored standing pane, which claims and answers.
   6. Two agent dirs and a local relay: an ally message wakes an ally pane at `reply` while a local run works, and its gate shows in the
      GUI. A `tower_send` with `for` gets its reply into the named main. Against a relay without `tower-reply`, the reply arrives as a
      plain `tower` in an ally run.
-  7. `boss_server restart` from a main, and Restart server in the GUI, both restart the server on the same URL with their reason in the
+  7. `boss_server restart` from a main, and Restart server in the GUI, both restart the server (the GUI under a new token) with their reason in the
      log; the GUI's button is absent on a paired device's page and its endpoint answers 403 there.
 - **Windows VM:**
   1. `cli.mjs up` brings the page up without a tower pi, and B1 records the cold `up` time against the 15 s budget (B1 has no page yet: it
@@ -1502,12 +1569,13 @@ trials), unchanged otherwise.
      exactly that account's SID and `SY`, with no inherited ACE; `server.json` written after it holds only those two, inherited; the
      agent dir's ACL is unchanged; and the whole check is one PowerShell start.
   5. A second local account cannot connect to the pipe (closed with no answer) and cannot read `server.json`.
-  6. `up` after `stop` brings the server back; `up` with the switch against a server started without it restarts it on the same URL.
+  6. `up` after `stop` brings the server back; `up` with the switch against a server started without it restarts it (its GUI under a new token).
 - **Review.** The change touches a shared contract (`gui.json`, `server.json`, the control socket), security (remote turns, the
   reopened main path), and the process model, so B1, B2, B3, B5, and B6 each get a fresh-context reviewer after their anchor passes.
 
 ## Risks
 
+- **A squatter that lets the port go (RC3-F002, closed by rotating the token on every new listener).** Another account that binds the port during a crash or restart gap receives the open page's reconnect (token in the path, CSRF secret in its requests) and can free the port again. The GUI therefore keeps no token across a gap: every listener that starts has a token and CSRF secret of its own (**GUI token and CSRF secret**), the old ones answer 403, and the remote serve entry is pointed at the new remote listener. The cost, decided by the user, is that every crash, restart, or upgrade ends the open pages (reopen `/boss gui`) and a paired phone scans the QR code again.
 - **The server is now a single point.** While it is down, every workspace lacks a live tower. Mains survive a restart while `restarting`
   is fresh and through the guard's 15 s grace after that, and the broker keeps mail for 24 h, but a server that stays down demotes mains.
   The session looks and the supervisor keep that window short, and `boss_server status` and the log say why it is down.
@@ -1567,7 +1635,7 @@ straw-boss-desk's owner also agreed to D11.
 6. **Windows detached start.** It uses `windowsHide`, with a unit test and a VM check.
 7. **Version skew.** `up` reports `version` and `package`; an older server is upgraded; a newer one gets a warning, or exit 1 with
    `--exact`.
-8. **Restart and upgrade keep the port and token.** Moved is the only re-read.
+8. **Restart and upgrade keep the port and give the GUI a new token** (RC3-F002). Moved (a changed `port` or `token`) is how a shell reads the record again.
 9. **`up`'s JSON fields** are listed (**`up`'s output**).
 10. **States for a shell** are in one table, which goes into how-it-works.
 

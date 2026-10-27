@@ -1,30 +1,27 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { createDeploy, createDeploys } from "../src/deploy.ts";
 import { createSpawn } from "../src/spawn.ts";
-import { readRecord } from "../src/handover.ts";
 import { requestFile, trustDir, writeAtomic } from "../src/trust/files.ts";
 import { digestOf } from "../src/trust/found.ts";
 import type { TrustRequest } from "../src/trust/types.ts";
 import { TRUST_MAX_MS, waitPastTrust } from "../src/trust/wait.ts";
 import { until, World } from "./fakes.ts";
+import { startHosted, stopHosted } from "./gui-world.ts";
 import type { TrustRequest as Req } from "../src/trust/types.ts";
 
 // The openings that wait for a new pi (src/trust/wait.ts, spawn.ts, deploy.ts): a pane with a trust question open does not use up the join wait, the deploy shows a `trust` step
 // with the question, and ten minutes without an answer fail the opening and close what it created.
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
-const bundle = mkdtempSync(join(tmpdir(), "psb-trust-wait-"));
-writeFileSync(join(bundle, "index.html"), "<title>Straw Net</title>");
 const home = realpathSync(mkdtempSync(join(tmpdir(), "psb-trust-home-")));
 mkdirSync(join(home, "beta"));
 const realHome = process.env.HOME;
 process.env.HOME = home;
-process.on("exit", () => ((process.env.HOME = realHome), rmSync(bundle, { recursive: true, force: true }), rmSync(home, { recursive: true, force: true })));
+process.on("exit", () => ((process.env.HOME = realHome), rmSync(home, { recursive: true, force: true })));
 
 function put(dir: string, pane: string, n = 1): TrustRequest {
 	const found = [{ kind: "settings", path: ".pi/settings.json", items: ["package: npm:demo"], more: 0 }], cwd = "/work/demo";
@@ -96,21 +93,15 @@ test("deploy: the trust step appears only when a question does, between start an
 // The opening through the page's API, with a fake Herdr whose new pane waits on a trust question until the test answers it.
 let world = new World();
 afterEach(async () => {
+	await stopHosted();
 	await world.stopAll();
 	world = new World();
 });
 async function gui() {
-	const viewer = world.agent({ id: "viewer-a", pane: "wA:p1", tab: "wA:t1", deps: { bundle, openUrl: async () => {}, call: async () => ({}) } });
+	const hosted = await startHosted(world, { call: async () => ({}) as never });
+	const viewer = world.agent({ id: "viewer-a", pane: "wA:p1", tab: "wA:t1" });
 	await viewer.start();
-	await viewer.command("gui");
-	const r = readRecord(world.stateDir)!;
-	const post = (path: string, body: Record<string, unknown>) => new Promise<{ status: number; body: Record<string, unknown> }>((done, fail) => {
-		const req = request({ host: "127.0.0.1", port: r.port, path: `/${r.token}/api/${path}`, method: "POST", agent: false, headers: { host: `127.0.0.1:${r.port}`, origin: `http://127.0.0.1:${r.port}`, "content-type": "application/json", "x-sb-csrf": r.csrf! } }, (res) => {
-			let text = "";
-			res.on("data", (c) => (text += c)).on("end", () => done({ status: res.statusCode!, body: JSON.parse(text) }));
-		});
-		req.on("error", fail).end(JSON.stringify(body));
-	});
+	const post = (path: string, body: Record<string, unknown>) => hosted.post(path, body);
 	return { post, dir: trustDir(world.stateDir) };
 }
 

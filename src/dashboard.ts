@@ -14,7 +14,7 @@ import { commanding, type Mark, markOf, type Row, sessionMark, subagents } from 
 //    subagent-activity/<child id>.json, and its pane's session file is named `<timestamp>_<child id>-<8 hex>-<8 hex>-<4 hex>.jsonl` (pi-herdr-agents makes it so).
 //    The parent pane's own session file names the artifacts directory, so children group under the session that launched them.
 
-export interface Snapshot { title: string; mark: Mark; head: boolean; rows: Row[]; gui?: string; visible?: boolean } // visible: the tower's tab is the active tab of the focused workspace (unknown without a tabId)
+export interface Snapshot { title: string; mark: Mark; head: boolean; rows: Row[]; gui?: string; checking?: boolean; pending?: Promise<string | undefined>; visible?: boolean } // visible: the tower's tab is the active tab of the focused workspace (unknown without a tabId)
 export type Tone = "accent" | "warning" | "muted" | "success" | "dim" | "error" | "border" | "title" | "tower" | "main" | "member";
 export type Paint = (tone: Tone, text: string) => string;
 /** `world` reads the panes and workspaces; without it they are listed through `run`. */
@@ -33,7 +33,7 @@ const MAX_WIDTH = 76;
 const pad = (text: string, width: number) => text + " ".repeat(Math.max(0, width - visibleWidth(text)));
 
 /** The pure half: a snapshot in, a framed tree out. One shared spinner frame animates every working row. */
-export function render({ title, mark, head, rows, gui }: Snapshot, frame: number, width: number, paint: Paint): string[] {
+export function render({ title, mark, head, rows, gui, checking }: Snapshot, frame: number, width: number, paint: Paint): string[] {
 	const total = Math.min(width, MAX_WIDTH), inner = Math.max(8, total - 4);
 	const glyph = (m: Mark) => paint(TONE[m], m === "working" ? SPINNER[frame % SPINNER.length]! : GLYPH[m as Exclude<Mark, "working">]);
 	const shown = rows.slice(0, MAX_ROWS);
@@ -50,7 +50,7 @@ export function render({ title, mark, head, rows, gui }: Snapshot, frame: number
 		return at.length || empty ? [paint("muted", name), ...(at.length ? at.map(line) : [paint("dim", `  ${empty}`)])] : [];
 	};
 	// What this pane is, and where the browser view lives, come before the tree.
-	const intro = [paint("dim", "Control tower: main agents talk here (call_tower)."), gui ? `${paint("muted", "GUI")}  ${paint("accent", gui)}` : paint("dim", "GUI not running; /boss gui opens it"), ""];
+	const intro = [paint("dim", "Control tower: main agents talk here (call_tower)."), gui ? `${paint("muted", "GUI")}  ${paint("accent", gui)}` : paint("dim", checking ? "GUI checking…" : "GUI not running; /boss gui opens it"), ""];
 	const body = [...intro, ...section("net", "this net", "nothing has joined yet"), ...section("towers", "other towers"), ...(rows.length > MAX_ROWS ? [paint("muted", `… ${rows.length - MAX_ROWS} more`)] : [])];
 	const [name, tag] = [` ${glyph(mark)} ${role("tower")}${paint("title", title)} `, head ? ` ${paint("accent", "head tower")} ` : ""];
 	const dashes = "─".repeat(Math.max(1, total - 4 - visibleWidth(name) - visibleWidth(tag)));
@@ -63,6 +63,8 @@ export function render({ title, mark, head, rows, gui }: Snapshot, frame: number
  * sub workspaces), and one summary line for every other tower. Other workspaces' sessions, and sessions that did not join, are not listed.
  */
 export async function collect({ run, world = worldOf(run), sessions, workspaceId, tabId, now = Date.now(), gui }: Sources): Promise<Snapshot> {
+	// The GUI line is read alongside the rest and handed on as `pending`: on Windows its start time can take seconds, and the rows must not wait for it.
+	const pending = gui?.().catch(() => undefined);
 	const [live, { panes: ps, workspaces: all }] = await Promise.all([sessions(), world()]);
 	const head = headOf(all);
 	const mine = all.find((w) => w.workspace_id === workspaceId);
@@ -90,7 +92,7 @@ export async function collect({ run, world = worldOf(run), sessions, workspaceId
 	for (const w of all.filter((x) => x !== mine && !isSub(x) && live.some((s) => s.id === x.tokens?.tower))) rows.push({ group: "towers", depth: 0, mark: markOf(w.agent_status), text: w.label, kind: w === head ? "head tower" : "tower" });
 	// The title shows what needs attention most: a waiting row, then a working one, else the workspace's own status.
 	const attention = (["waiting", "working"] as const).find((m) => rows.some((r) => r.mark === m || (m === "working" && r.mark === "commanding"))); // commanding is active, like working
-	return { title: mine?.label ?? workspaceId, mark: attention ?? markOf(mine?.agent_status), head: Boolean(mine) && mine === head, rows, gui: await gui?.().catch(() => undefined), visible: tabId === undefined ? undefined : Boolean(mine?.focused) && mine?.active_tab_id === tabId };
+	return { title: mine?.label ?? workspaceId, mark: attention ?? markOf(mine?.agent_status), head: Boolean(mine) && mine === head, rows, pending, visible: tabId === undefined ? undefined : Boolean(mine?.focused) && mine?.active_tab_id === tabId };
 }
 
 export interface Dashboard { poke(): void; stop(): void }
@@ -110,7 +112,7 @@ const DEBOUNCE_MS = 500;
 export function startDashboard({ ui, collect: read, watch, frameMs = 1000, pollMs = SAFETY_MS, minGapMs = 500, debounceMs = DEBOUNCE_MS }: { ui: ExtensionContext["ui"]; collect(): Promise<Snapshot> } & Timing): Dashboard {
 	let live: Dashboard | undefined;
 	ui.setWidget(KEY, (tui, theme) => {
-		let snap: Snapshot = { title: "", mark: "unknown", head: false, rows: [] }, frame = 0, busy = false, again = false, stopped = false, last = 0, due = Infinity;
+		let snap: Snapshot = { title: "", mark: "unknown", head: false, rows: [] }, known: { url?: string } | undefined, frame = 0, busy = false, again = false, stopped = false, last = 0, due = Infinity, seq = 0, got = 0;
 		let spinner: ReturnType<typeof setInterval> | undefined, wake: ReturnType<typeof setTimeout> | undefined;
 		// One pending read at a time, at the earliest time anyone asked for (and not inside the gap after the last read).
 		const schedule = (delay: number) => {
@@ -127,6 +129,18 @@ export function startDashboard({ ui, collect: read, watch, frameMs = 1000, pollM
 			busy = true;
 			try {
 				snap = await read();
+				const p = snap.pending;
+				if (p) { // the rows are drawn now with the last known GUI line; the title follows when the read settles
+					snap = { ...snap, gui: known?.url, checking: !known };
+					const mine = ++seq;
+					void p.then((url) => {
+						// An answer older than the one shown is dropped; a newer one is shown even when a later read is still pending, so reads slower than the refreshes cannot keep a dead URL up.
+						if (stopped || mine < got) return;
+						[got, known] = [mine, { url }];
+						snap = { ...snap, gui: url, checking: false, pending: snap.pending === p ? undefined : snap.pending };
+						tui.requestRender();
+					});
+				}
 			} catch (error) {
 				snap = { ...snap, mark: "error", rows: [{ group: "net", depth: 0, mark: "error", text: `dashboard unavailable: ${(error as Error).message}` }] };
 			}

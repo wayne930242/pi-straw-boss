@@ -17,6 +17,7 @@ import { ManagedStream, RelayClient } from "../src/link/relay.ts";
 import { addEntry, createEntry, removeEntry, replayRoster, type RosterEntry, type RosterState } from "../src/link/roster.ts";
 import type { Disposition, RelayEvent } from "../src/link/sse.ts";
 import { until } from "./link/fakes.ts";
+import { goEnv } from "./isolation.ts";
 
 // Two clients against the real relay (docs/specs/2026-10-25-straw-link.md, Build order 2). The test builds the relay from a clean `git archive HEAD`
 // snapshot of STRAW_RELAY_DIR (default ~/projects/straw-relay), runs it on a free port with an operator token, drives devices A and B through
@@ -24,7 +25,7 @@ import { until } from "./link/fakes.ts";
 // It is skipped, with the reason, where `go` or the relay checkout is missing.
 
 const RELAY_DIR = process.env.STRAW_RELAY_DIR ?? join(homedir(), "projects", "straw-relay");
-const goMissing = spawnSync("go", ["version"], { encoding: "utf8" }).status !== 0;
+const goMissing = spawnSync("go", ["version"], { encoding: "utf8", env: goEnv() }).status !== 0;
 const skip = goMissing ? "skipped: `go` is not installed" : !existsSync(join(RELAY_DIR, ".git")) ? `skipped: no straw-relay checkout at ${RELAY_DIR} (set STRAW_RELAY_DIR)` : false;
 if (skip) console.log(`# link-relay-live ${skip}`);
 
@@ -128,7 +129,7 @@ describe("two clients against the real relay", { skip }, () => {
 		assert.equal(archive.status, 0, `git archive failed: ${archive.stderr}`);
 		const tar = spawnSync("tar", ["-x", "-C", src], { input: archive.stdout });
 		assert.equal(tar.status, 0, `tar failed: ${tar.stderr}`);
-		const built = spawnSync("go", ["build", "-o", bin, "./cmd/straw-relay"], { cwd: src, encoding: "utf8", timeout: 900_000 });
+		const built = spawnSync("go", ["build", "-o", bin, "./cmd/straw-relay"], { cwd: src, encoding: "utf8", timeout: 900_000, env: goEnv() });
 		assert.equal(built.status, 0, `go build failed:\n${built.stderr}`);
 		const made = spawnSync(bin, ["token", "create", "--db", db], { encoding: "utf8" });
 		assert.equal(made.status, 0, `token create failed: ${made.stderr}`);

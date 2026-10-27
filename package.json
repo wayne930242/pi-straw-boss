@@ -1,6 +1,6 @@
 {
   "name": "pi-straw-boss",
-  "version": "0.45.0",
+  "version": "0.46.0",
   "description": "Straw Boss coordination for pi in Herdr: sessions join a tab's net by choice, the first joiner is its main agent, a workspace tower opens on demand with a live monitoring dashboard, and boss_broadcast reaches the rest",
   "type": "module",
   "license": "MIT",
@@ -44,7 +44,8 @@
     "server": "tsx src/server/cli.ts",
     "prepack": "npm run gui:build && npm run build:server",
     "pretest": "npm run gui:build",
-    "test": "node --test tests/*.test.ts",
+    "test": "node --import ./tests/setup.ts --test tests/*.test.ts",
+    "test:one": "node --import ./tests/setup.ts --test",
     "gui:i18n": "paraglide-js compile --project gui/project.inlang --outdir gui/paraglide --strategy baseLocale --emit-ts-declarations --no-emit-readme --no-emit-prettier-ignore --silent"
   },
   "peerDependencies": {

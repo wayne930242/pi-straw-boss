@@ -9,7 +9,6 @@ import { after, mock, test } from "node:test";
 import { startGui, type Gui } from "../src/gui.ts";
 import type { Found } from "../src/net.ts";
 import { labelOf } from "../src/devices.ts";
-import { writeRecord } from "../src/handover.ts";
 import { alive, createAccess, identity, PORT, type Run, runs, serveOff, serveOn, switchRemote } from "../src/remote.ts";
 import { createStartOf, startCommand, startOf } from "../src/startof.ts";
 import { copyText } from "../src/pairing.ts";
@@ -682,18 +681,6 @@ test("S7 (R1-F004, R1-F006): alive() drops a dead PID's cached time; an invalid 
 	assert.equal(calls, 2, "no command for any of them");
 	const dead = spawnSync(process.execPath, ["-e", ""]).pid!;
 	assert.equal(alive(dead), false);
-});
-
-test("S7 (R1-F002): a record that cannot be written again settles `late` to false, not to a rejection", { skip: process.platform === "win32" }, async () => {
-	const dir = mkdtempSync(join(tmpdir(), "psb-late-"));
-	try {
-		const gui = { port: 5000, remotePort: 5001, token: "t".repeat(32), csrf: "c".repeat(32) } as never;
-		const { late } = writeRecord(dir, gui, ["o", "s"], "0.43.0", "/h.sock", { at: () => undefined, later: async () => (chmodSync(dir, 0o500), "2026-10-26T04:21:53.000Z") }) as { late: Promise<boolean> };
-		assert.equal(await late, false);
-	} finally {
-		chmodSync(dir, 0o700);
-		rmSync(dir, { recursive: true, force: true });
-	}
 });
 
 test("S7: runs reads the ISO form as it is, with and without a recorded start", () => {

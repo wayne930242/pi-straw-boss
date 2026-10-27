@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { lstatSync, watch as fsWatch } from "node:fs";
 import { join } from "node:path";
-import { getAgentDir, type ExtensionAPI, ProjectTrustStore, SettingsManager } from "@earendil-works/pi-coding-agent";
+import * as pi_ from "@earendil-works/pi-coding-agent"; // a namespace: the trust exports are missing in older pi, and a missing named import would fail the load
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { herdrSocket } from "../endpoint.ts";
-import { answers, readRecord } from "../handover.ts";
-import { startOf } from "../startof.ts";
+import { answersLive, readRecord, type GuiRecord, type StartRead } from "../handover.ts";
+import { alive } from "../remote.ts";
+import { startedLater, startOf } from "../startof.ts";
 import type { Kit } from "../state.ts";
 import { answerFile, answerOf, ensureDir, MAX_FILE, readJson, remove, requestFile, resultFile, sweep, trustDir, writeAtomic } from "./files.ts";
 import { canonical, digestOf, foundIn } from "./found.ts";
@@ -49,17 +51,34 @@ export interface AskDeps {
 	uuid(): string;
 }
 
+/** pi asks only in its interactive mode: not under `-p`/`--print`, `--mode json|rpc`, or an explicit `-a`/`--approve`/`-na`/`--no-approve` (pi's own parser: `--mode text` alone stays interactive, and every word after `--` is the message). */
+function interactive(argv: readonly string[]): boolean {
+	for (let i = 0; i < argv.length; i++) {
+		const a = argv[i]!;
+		if (a === "--") return true;
+		if (a === "-p" || a === "--print" || a === "-a" || a === "--approve" || a === "-na" || a === "--no-approve") return false;
+		if (a === "--mode" && (argv[i + 1] === "json" || argv[i + 1] === "rpc")) return false;
+	}
+	return true;
+}
+
+/** What can be known without a question: a terminal that can be read raw, no saved decision (a broken trust.json counts as none to relay), and `defaultProjectTrust` "ask". The handler and the early read share it. */
+function asks(d: Pick<AskDeps, "stdin" | "saved" | "defaultTrust">, cwd: string, argv: readonly string[] = process.argv): boolean {
+	if (!interactive(argv)) return false;
+	if (!d.stdin.isTTY || typeof d.stdin.setRawMode !== "function") return false;
+	try {
+		if (d.saved(cwd) !== null) return false; // a saved decision: pi decides it
+	} catch {
+		return false; // a broken trust.json: pi reports it itself
+	}
+	return d.defaultTrust(cwd) === "ask";
+}
+
 /** The handler, as a function of the folder and pi's context. */
 export function createAsk(d: AskDeps) {
 	const relays = async (cwd: string, ctx: { mode: string; hasUI: boolean }) => {
-		if (ctx.mode !== "tui" || !ctx.hasUI || !d.stdin.isTTY || typeof d.stdin.setRawMode !== "function") return false;
-		if (!d.first()) return false; // a replacement runtime (/new, /resume into another folder) is pi's own prompt (D10)
-		try {
-			if (d.saved(cwd) !== null) return false; // a saved decision: pi decides it
-		} catch {
-			return false; // a broken trust.json: pi reports it itself
-		}
-		return d.defaultTrust(cwd) === "ask" && d.up();
+		if (ctx.mode !== "tui" || !ctx.hasUI || !d.first()) return false; // a replacement runtime (/new, /resume into another folder) is pi's own prompt (D10)
+		return asks(d, cwd) && d.up();
 	};
 	return async function decide(cwd: string, ctx: { mode: string; hasUI: boolean }): Promise<Decision> {
 		try {
@@ -153,19 +172,53 @@ export function createAsk(d: AskDeps) {
 	}
 }
 
-/** Registers the handler (before the subagent return, so every pi in Herdr has it) and marks the process's first session start. */
-export function registerTrust(pi: ExtensionAPI, { cfg, guiDir }: Pick<Kit, "cfg" | "guiDir">) {
-	const { env } = cfg;
+/** The recorded server is one that reads trust requests for this Herdr: the first thing `up` asks, before anything is read from the machine. */
+const reads = (record: GuiRecord | undefined, env: NodeJS.ProcessEnv): record is GuiRecord => Boolean(record && !record.stopped && record.trust === 1 && record.herdr === herdrSocket(env));
+
+/**
+ * Starts the read of the recorded server's start time when a trust question could reach it: the record is of a live server that reads trust requests, and has a start time to compare.
+ * On Windows the read is 3.5 to 5 s, and started here it is under way (and cached) by the time pi asks its question. Nothing is started for a stale gui.json (a dead pid) or a stopped server:
+ * that would be a PowerShell at pi's busiest moment for a question that is never relayed (RC3-F002).
+ */
+export function warmServerStart(guiDir: string, env: NodeJS.ProcessEnv, read: StartRead = {}, willAsk: () => boolean = () => true) {
+	const record = readRecord(guiDir);
+	try {
+		if (!reads(record, env) || !record.started || !alive(record.pid) || !willAsk()) return; // the cheap checks first; whatever throws here must not break the load
+	} catch {
+		return;
+	}
+	void (read.later ?? startedLater)(record.pid, { hold: false }).catch(() => undefined);
+}
+
+/** Whether a GUI can be asked now: the recorded server reads trust requests, runs as recorded, and answers its page. */
+export const guiUp = (guiDir: string, env: NodeJS.ProcessEnv, read: StartRead = {}) => async (): Promise<boolean> => {
+	const record = readRecord(guiDir);
+	return Boolean(reads(record, env) && (await answersLive(record, read)));
+};
+
+/** Registers the handler (before the subagent return, so every pi in Herdr has it) and marks the process's first session start. `io` is the terminal and process it answers on (tests). */
+export function registerTrust(pi: ExtensionAPI, { cfg, guiDir }: Pick<Kit, "cfg" | "guiDir">, io: Pick<AskDeps, "stdin" | "proc" | "write"> & Partial<Pick<AskDeps, "saved" | "defaultTrust"> & { resources(cwd: string): boolean }> = { stdin: process.stdin, proc: process, write: (text) => void process.stderr.write(text) }) {
+	const { env, startRead } = cfg;
+	// Older pi lacks these (hasTrustRequiringProjectResources < 0.79.2, getDefaultProjectTrust < 0.79.1, ProjectTrustStore < 0.79.0): then whatever needs a missing one is skipped (no early read below 0.79.2; nothing relayed below 0.79.1) and pi asks in the terminal.
+	const api = pi_ as unknown as Record<string, any>;
+	const saved = io.saved ?? ((cwd: string) => {
+		if (typeof api.ProjectTrustStore !== "function") throw new Error("pi has no ProjectTrustStore");
+		return new api.ProjectTrustStore(api.getAgentDir()).get(cwd);
+	});
+	const defaultTrust = io.defaultTrust ?? ((cwd: string) => {
+		if (typeof api.SettingsManager?.create !== "function") return "unsupported";
+		const settings = api.SettingsManager.create(cwd, api.getAgentDir(), { projectTrusted: false });
+		return typeof settings.getDefaultProjectTrust === "function" ? settings.getDefaultProjectTrust() : "unsupported";
+	});
+	const resources = io.resources ?? ((cwd: string) => typeof api.hasTrustRequiringProjectResources === "function" && api.hasTrustRequiringProjectResources(cwd));
+	// The early read only where pi will ask in this folder: resources that need trust, no saved decision, "ask", and a terminal (not `pi -p` or a subagent).
+	warmServerStart(guiDir, env, startRead, () => resources(process.cwd()) && asks({ stdin: io.stdin, saved, defaultTrust }, process.cwd())); // process.cwd(): pi gives no session cwd at load. The server's start time is read now, so it is under way at pi's trust question (RC3-F001)
 	// SAFETY: the process-wide flag is a boolean under a registered symbol that only this module sets.
 	const state = globalThis as unknown as Record<symbol, boolean>;
 	const decide = createAsk({
-		env, dir: trustDir(guiDir), stdin: process.stdin, proc: process, write: (text) => void process.stderr.write(text),
-		saved: (cwd) => new ProjectTrustStore(getAgentDir()).get(cwd),
-		defaultTrust: (cwd) => SettingsManager.create(cwd, getAgentDir(), { projectTrusted: false }).getDefaultProjectTrust(),
-		up: async () => {
-			const record = readRecord(guiDir);
-			return Boolean(record && !record.stopped && record.trust === 1 && record.herdr === herdrSocket(env) && (await answers(record)));
-		},
+		env, dir: trustDir(guiDir), stdin: io.stdin, proc: io.proc, write: io.write,
+		saved, defaultTrust,
+		up: guiUp(guiDir, env, startRead),
 		first: () => !state[STARTED], now: cfg.now, sleep: cfg.sleep, startOf, uuid: randomUUID,
 		watch: (dir, wake) => {
 			try {

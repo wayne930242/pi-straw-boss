@@ -3,13 +3,14 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { goEnv } from "../isolation.ts";
 
 // The real straw-relay for the live tests (docs/specs/2026-10-25-straw-link.md, Build order 2 and 3): built from a clean `git archive HEAD` snapshot
 // of STRAW_RELAY_DIR (default ~/projects/straw-relay), run on a free port with an operator token, and killed with its temp dir when the test ends.
 // Skipped, with the reason, where `go` or the checkout is missing.
 
 const RELAY_DIR = process.env.STRAW_RELAY_DIR ?? join(homedir(), "projects", "straw-relay");
-export const relaySkip: string | false = spawnSync("go", ["version"], { encoding: "utf8" }).status !== 0 ? "skipped: `go` is not installed" : !existsSync(join(RELAY_DIR, ".git")) ? `skipped: no straw-relay checkout at ${RELAY_DIR} (set STRAW_RELAY_DIR)` : false;
+export const relaySkip: string | false = spawnSync("go", ["version"], { encoding: "utf8", env: goEnv() }).status !== 0 ? "skipped: `go` is not installed" : !existsSync(join(RELAY_DIR, ".git")) ? `skipped: no straw-relay checkout at ${RELAY_DIR} (set STRAW_RELAY_DIR)` : false;
 
 /** Whether the relay checkout's HEAD knows the message kind (its `internal/link/kinds.go` names it): a live test of a newer kind skips against an older checkout. */
 export const relayHasKind = (kind: string): boolean => {
@@ -37,7 +38,7 @@ export async function startRelay(): Promise<LiveRelay> {
 	if (archive.status !== 0) throw new Error(`git archive failed: ${archive.stderr}`);
 	const tar = spawnSync("tar", ["-x", "-C", src], { input: archive.stdout });
 	if (tar.status !== 0) throw new Error(`tar failed: ${tar.stderr}`);
-	const built = spawnSync("go", ["build", "-o", bin, "./cmd/straw-relay"], { cwd: src, encoding: "utf8", timeout: 900_000 });
+	const built = spawnSync("go", ["build", "-o", bin, "./cmd/straw-relay"], { cwd: src, encoding: "utf8", timeout: 900_000, env: goEnv() });
 	if (built.status !== 0) throw new Error(`go build failed:\n${built.stderr}`);
 	const made = spawnSync(bin, ["token", "create", "--db", db], { encoding: "utf8" });
 	if (made.status !== 0) throw new Error(`token create failed: ${made.stderr}`);

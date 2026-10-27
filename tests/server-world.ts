@@ -1,5 +1,8 @@
+import "./setup.ts"; // a run without --import ./tests/setup.ts is isolated too, once this module is imported (setup.ts)
+import { createServer as createNetServer } from "node:net";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { Worker } from "node:worker_threads";
 import { join } from "node:path";
 import type { IntercomLike } from "../src/agent/kit.ts";
 import { type Ctx, makeCtx, type SpawnSpec, type Timers } from "../src/server/client.ts";
@@ -7,6 +10,7 @@ import type { IntercomModule } from "../src/server/intercom.ts";
 import { runServer, type ServerHandle, type ServerOptions } from "../src/server/main.ts";
 import { readRecord, type ServerRecord, secretDir, slotOf } from "../src/server/record.ts";
 import { StubClient } from "./agent-fakes.ts";
+import { bundle, noLink, noTailscale } from "./gui-fakes.ts";
 
 // A world for the sb server's tests: one state directory, servers that run in this process under fake pids (each with a fake pi-intercom client, no Herdr, no ACL), and
 // requesters (`Ctx`) whose spawn starts one of those servers, so a start, a restart, and a stop go through the real control socket, record, and lock.
@@ -15,6 +19,21 @@ export const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(r
 export async function until(check: () => unknown, what: string, ms = 5000): Promise<void> {
 	for (const end = Date.now() + ms; Date.now() < end; await sleep(5)) if (await check()) return;
 	throw new Error(`Timed out waiting for ${what}`);
+}
+/**
+ * How long this process stood still (beyond the tick) while a test ran, seen from a worker thread's timer: the thread sees the OS descheduling the whole process (a full run, other agents' work), which a
+ * bound on the wall-clock gap between two things the process does itself cannot get around, but not a block of the main thread, which is what the code under test must never do (a synchronous `ps` or
+ * PowerShell call in a touch loop). The test allows its bound plus the worst stall seen, which a touch that never came, or one held up by the code's own block, still exceeds.
+ */
+export function stallWatch(tickMs = 5) {
+	const worst = new Int32Array(new SharedArrayBuffer(4));
+	const worker = new Worker(
+		`const { workerData: { worst, tickMs } } = require("node:worker_threads"); let last = Date.now();
+		setInterval(() => { const now = Date.now(); Atomics.store(worst, 0, Math.max(Atomics.load(worst, 0), now - last - tickMs)); last = now; }, tickMs);`,
+		{ eval: true, workerData: { worst, tickMs } },
+	);
+	worker.unref(); // an assert that throws before stop() must not keep the file running to its timeout
+	return { worst: () => Atomics.load(worst, 0), stop: () => void worker.terminate() };
 }
 export const FAST: Timers = { start: 5000, exit: 2000, supervisor: 400, touch: 40 };
 
@@ -39,6 +58,8 @@ export class ServerWorld {
 	spawnMs = 0;
 	/** Servers still starting when a test ends are waited for and shut down with the rest: a start in flight must not leave a server's timers behind. */
 	private starting: Promise<unknown>[] = [];
+	/** The looks of the sessions given `server()` below: one in flight when a test ends would make files in the folder again after it is removed. */
+	private looks: Promise<unknown>[] = [];
 	private closed = false;
 
 	get stateDir() { return join(this.root, "agent", "straw-boss"); }
@@ -58,7 +79,10 @@ export class ServerWorld {
 			acl: async (dir) => { this.acls.push(dir); if (this.aclError) throw this.aclError; },
 			// The folder's own ACL step is not run here (it needs Windows); its order is pinned in server-winprep.test.ts.
 			prepare: (slot) => secretDir(slot.dir),
-			herdrUp: async () => true, watch: () => () => {}, touchMs: 30, brokerMs: 1500, herdrPollMs: 30, herdrGoneMs: 200, sleep, ...over,
+			herdrUp: async () => true, watch: () => () => {}, touchMs: 30, brokerMs: 1500, herdrPollMs: 30, herdrGoneMs: 200, sleep,
+			// The GUI the server serves binds ports of its own; the machine's Tailscale and link holder are not asked.
+			gui: { bundle, tailscale: noTailscale, link: noLink, bindWaitMs: 200 },
+			...over,
 		};
 		return { options, client, pid };
 	}
@@ -71,10 +95,18 @@ export class ServerWorld {
 		void handle.done.then((code) => (this.live.delete(pid), this.exitCodes.set(pid, code)));
 		return running;
 	}
-	/** A requester: its spawn starts a server in this process from "its package" (`version`). */
+	/** The server deps of a session whose look reaches this world: `ctx` (the requester of `ctx()` by default) and a fake cli, with its looks tracked for `close()`. */
+	server(ctx: Partial<Ctx> = {}, over: object = {}) {
+		const { spawn, kill, prepare, alive, startOf, timers, platform, node, lock } = this.ctx();
+		return { ctx: { spawn, kill, prepare, alive, startOf, timers, platform, node, lock, ...ctx }, cli: "/fake/cli.mjs", track: (done: Promise<unknown>) => void this.looks.push(done), ...over };
+	}
+	/**
+	 * A requester: its spawn starts a server in this process from "its package" (`version`). Its lock states this process's start time itself: left to the default, every `takeLock` reads it with a synchronous `ps`
+	 * (10 to 300 ms and more on a loaded machine, 80 times in server-client.test.ts), which holds the event loop still in the middle of the tests that time touches and gaps.
+	 */
 	ctx(over: Partial<Ctx> = {}): Ctx {
 		const version = over.version ?? "0.44.0";
-		return makeCtx({
+		const made = makeCtx({
 			slot: this.slot, cli: "/fake/cli.mjs", by: "test requester", env: this.env, platform: "linux", node: "node", timers: FAST, alive: (p) => this.live.has(p), startOf: () => undefined,
 			kill: (pid) => void this.running.find((r) => r.pid === pid)?.handle.shutdown(0), prepare: (slot) => secretDir(slot.dir),
 			spawn: (spec) => {
@@ -93,11 +125,25 @@ export class ServerWorld {
 			...over,
 			version,
 		});
+		return over.lock ? made : { ...made, lock: { ...made.lock, self: { pid: process.pid, started: async () => `T-${process.pid}` } } };
 	}
 	async close() {
 		this.closed = true;
+		// A look that began before the test ended may begin a start; the start is awaited after the looks, then both are done before anything is removed.
+		await Promise.allSettled(this.looks);
 		await Promise.allSettled(this.starting);
 		await Promise.all(this.running.map((r) => r.handle.shutdown(0)));
 		rmSync(this.root, { recursive: true, force: true });
 	}
+}
+
+/** A loopback port nobody listens on now: a test that plants a GUI port in a record must not name one a real GUI of this machine may hold (the server binds the recorded port). */
+export function freePort(): Promise<number> {
+	return new Promise((resolve, reject) => {
+		const probe = createNetServer();
+		probe.on("error", reject).listen(0, "127.0.0.1", () => {
+			const { port } = probe.address() as { port: number };
+			probe.close(() => resolve(port));
+		});
+	});
 }

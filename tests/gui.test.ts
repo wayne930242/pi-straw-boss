@@ -7,7 +7,6 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { trackActivity } from "../src/activity.ts";
 import { type Asked, startGui, type Gui } from "../src/gui.ts";
-import { requestStop } from "../src/handover.ts";
 import { canonical } from "../src/history.ts";
 import type { Found, Ref } from "../src/net.ts";
 import type { Net } from "../src/net.ts";
@@ -31,15 +30,15 @@ after(async () => {
 });
 
 const net = (label: string): Net => ({ bases: [{ id: "w", label, mark: "idle", head: true, tower: null, tabs: [], outposts: [], outside: [] }] });
-async function serve(read: () => Promise<Net>, options: { pollMs?: number; idleMs?: number; pingMs?: number; port?: number; token?: string; csrf?: string; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] }; call?: (method: string, params: Record<string, unknown>) => Promise<unknown>; onStop?(asked: Asked): void; onRemote?(): Promise<void> } = {}, bundle = dir) {
+async function serve(read: () => Promise<Net>, options: { pollMs?: number; idleMs?: number; pingMs?: number; port?: number; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] }; call?: (method: string, params: Record<string, unknown>) => Promise<unknown>; onStop?(asked: Asked): void; onRemote?(): Promise<void> } = {}, bundle = dir) {
 	const gui = await startGui({ read, dir: bundle, pollMs: 20, pingMs: 50, ...options });
 	running.push(gui);
 	return gui;
 }
 /** One raw request, so the Host header and method can be chosen. */
-const raw = (gui: Gui, path: string, options: { host?: string; method?: string } = {}) =>
+const raw = (gui: Gui, path: string, options: { host?: string; method?: string; headers?: Record<string, string> } = {}) =>
 	new Promise<{ status: number; headers: IncomingMessage["headers"]; body: string }>((resolve, reject) => {
-		const req = request({ host: "127.0.0.1", port: gui.port, path, method: options.method ?? "GET", headers: { host: options.host ?? `127.0.0.1:${gui.port}` }, agent: false }, (res) => {
+		const req = request({ host: "127.0.0.1", port: gui.port, path, method: options.method ?? "GET", headers: { host: options.host ?? `127.0.0.1:${gui.port}`, ...options.headers }, agent: false }, (res) => {
 			let body = "";
 			res.on("data", (chunk) => (body += chunk)).on("end", () => resolve({ status: res.statusCode!, headers: res.headers, body }));
 		});
@@ -117,24 +116,6 @@ test("the page and each stream's hello name the bundle's build, so a page from a
 	await until(() => s.events.some((e) => e.event === "hello"), "hello");
 	s.close();
 	assert.equal(JSON.parse(s.events.find((e) => e.event === "hello")!.data).build, build);
-});
-
-test("another session's stop request ends the server through onStop; one without the CSRF secret, or from a paired device, is refused", async () => {
-	const asked: Asked[] = [];
-	const gui: Gui = await serve(async () => net("a"), { onStop: (a) => (asked.push(a), void gui.stop()) });
-	const record = { pid: process.pid, port: gui.port, token: gui.token, csrf: gui.csrf, owner: "x" }, nap = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-	assert.equal(await requestStop({ ...record, csrf: "wrong" }, { by: "s", take: false }, nap), false);
-	const host = "box.tail1.ts.net:8443", tailnet = { host, "tailscale-user-login": "me@example.com", "x-forwarded-for": "100.87.7.97" };
-	gui.access.enable({ host, login: "me@example.com" });
-	const post = (path: string, headers: Record<string, string>, method = "POST") =>
-		new Promise<IncomingMessage>((done, fail) => request({ host: "127.0.0.1", port: gui.remotePort, path, method, headers, agent: false }, (res) => (res.resume(), done(res))).on("error", fail).end(method === "POST" ? "{}" : undefined));
-	const cookie = String((await post(`/${gui.token}/pair/${gui.access.pair()}`, tailnet, "GET")).headers["set-cookie"]).split(";")[0]!;
-	const remote = await post(`/${gui.token}/api/server/stop`, { ...tailnet, cookie, origin: `https://${host}`, "content-type": "application/json", "x-sb-csrf": gui.csrf });
-	assert.equal(remote.statusCode, 403, "a paired device cannot stop the server");
-	assert.deepEqual(asked, []);
-	assert.equal(await requestStop(record, { by: "s", take: true }, nap), true);
-	assert.deepEqual(asked, [{ by: "s", take: true }]);
-	await assert.rejects(raw(gui, `/${gui.token}/`), /ECONNREFUSED/);
 });
 
 test("the page turns remote access on through onRemote and gets a pairing code at once; a failure says why; a paired device cannot ask", async () => {
@@ -242,24 +223,41 @@ test("what changed while no page listened is on the net the next page gets, as e
 	stream.close();
 });
 
-test("stop ends open streams and frees the port, and a restart with the same port and token keeps the URL", async () => {
+test("stop ends open streams and frees the port, and a start on the same port is a new listener with a token and CSRF secret of its own", async () => {
 	const gui = await serve(async () => net("a"));
 	const stream = listen(gui);
 	await until(() => stream.messages().length === 1, "the snapshot");
 	await gui.stop();
 	await until(() => stream.closed(), "the stream to end");
 	await assert.rejects(raw(gui, `/${gui.token}/`), /ECONNREFUSED/);
-	const again = await serve(async () => net("b"), { port: gui.port, token: gui.token });
-	assert.equal(again.url, gui.url);
-	assert.notEqual(again.csrf, gui.csrf, "without a preferred one, a new CSRF secret");
-	const kept = await serve(async () => net("c"), { token: again.token, csrf: again.csrf });
-	assert.equal(kept.csrf, again.csrf, "a restart can keep the page's CSRF secret, as sharedGui does from gui.json");
+	const again = await serve(async () => net("b"), { port: gui.port });
+	assert.equal(again.port, gui.port, "the preferred port is got back");
+	assert.notEqual(again.token, gui.token);
+	assert.notEqual(again.csrf, gui.csrf);
 	assert.equal((await raw(again, `/${again.token}/`)).status, 200);
+	assert.equal((await raw(again, `/${gui.token}/`)).status, 403, "the earlier token opens nothing");
+});
+
+test("a page load at a replaced address gets a short HTML 403 that says so and holds no secret; any other request gets the plain refusal", async () => {
+	const gui = await serve(async () => net("a"));
+	const dead = `/${"0".repeat(gui.token.length)}/`;
+	const page = await raw(gui, dead, { headers: { "sec-fetch-dest": "document" } });
+	assert.equal(page.status, 403);
+	assert.match(String(page.headers["content-type"]), /text\/html/);
+	assert.match(page.body, /This address does not work here .* open \/boss gui; .* scan a new QR code/);
+	assert.ok(!page.body.includes(gui.token) && !page.body.includes(gui.csrf));
+	const zh = await raw(gui, dead, { headers: { "sec-fetch-dest": "document", "accept-language": "zh-TW,zh;q=0.9,en;q=0.8" } });
+	assert.match(zh.body, /這個網址在這裡無法使用/);
+	assert.ok(!zh.body.includes(gui.token) && !zh.body.includes(gui.csrf));
+	for (const lang of ["zh-Hant", "zh-HK,en"]) assert.match((await raw(gui, dead, { headers: { "sec-fetch-dest": "document", "accept-language": lang } })).body, /這個網址在這裡無法使用/, lang);
+	for (const lang of ["zh-CN,zh;q=0.9", "zh-Hans", "en-US,zh-TW;q=0.5"]) assert.match((await raw(gui, dead, { headers: { "sec-fetch-dest": "document", "accept-language": lang } })).body, /This address does not work here/, `only Traditional Chinese as the first language gets the zh-TW note: ${lang}`);
+	const script = await raw(gui, dead, { headers: { "sec-fetch-dest": "empty" } });
+	assert.deepEqual([script.status, script.body], [403, "forbidden"]);
 });
 
 test("a taken preferred port falls back to a free one", async () => {
 	const first = await serve(async () => net("a"));
-	const second = await serve(async () => net("b"), { port: first.port, token: first.token });
+	const second = await serve(async () => net("b"), { port: first.port });
 	assert.notEqual(second.port, first.port);
 	assert.equal((await raw(second, `/${second.token}/`)).status, 200);
 });

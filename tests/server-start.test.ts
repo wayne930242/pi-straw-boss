@@ -5,7 +5,7 @@ import { launch, stateOf, timersFor } from "../src/server/client.ts";
 import { fileOf, readLock, readRecord, takeLock, writeRecord } from "../src/server/record.ts";
 import { helloOf } from "../src/server/socket.ts";
 import { StubClient } from "./agent-fakes.ts";
-import { ServerWorld, sleep, until } from "./server-world.ts";
+import { freePort, ServerWorld, sleep, until } from "./server-world.ts";
 
 // The start of a server on a slow machine (the Windows VM check of B1: a cold `up` took 7 to 26 s, and `status` said `gone` for the first 18 s of it): whoever starts the server
 // writes `restarting` before it spawns anything and keeps it fresh, the server does the same from its first line, and the PowerShell starts a cold Windows start pays for are
@@ -69,10 +69,11 @@ test("a start that fails ends restarting at once: the state is gone, not restart
 	assert.equal(stateOf(ctx, { record, live: false }), "gone");
 });
 
-test("a start over a dead server's record keeps what the record holds (GUI, last restart, last error) and the new server carries it", async () => {
+test("a start over a dead server's record keeps what the record holds (GUI, last restart) and the new server carries it; its last error, until the new server is ready", async () => {
 	const dead = { pid: 4242, version: "0.43.0", herdr: world.slot.herdr, mode: "detached" as const, desk: false, intercom: { transport: "default" }, log: fileOf(world.slot, "log"), socket: "/nowhere.sock", secret: "old", intercomId: "sb-server-x" };
+	const port = await freePort();
 	await world.start().then((s) => s.handle.shutdown(0));
-	writeRecord(world.slot, { ...dead, gui: { port: 5000, token: "t" }, lastRestart: { at: "2026-10-26T01:00:00.000Z", reason: "r", by: "b" }, lastError: { at: "2026-10-26T01:00:00.000Z", code: "x", text: "y" } });
+	writeRecord(world.slot, { ...dead, gui: { port, token: "t" }, lastRestart: { at: "2026-10-26T01:00:00.000Z", reason: "r", by: "b" }, lastError: { at: "2026-10-26T01:00:00.000Z", code: "x", text: "y" } });
 	const ctx = world.ctx({ alive: (pid) => world.live.has(pid) });
 	let atSpawn: ReturnType<typeof readRecord>;
 	const spawn = ctx.spawn;
@@ -80,9 +81,11 @@ test("a start over a dead server's record keeps what the record holds (GUI, last
 	await launch(ctx);
 	assert.equal(atSpawn!.pid, 4242, "the dead server's record, with restarting");
 	assert.equal(atSpawn!.restarting?.reason, "starting");
-	assert.deepEqual(atSpawn!.gui, { port: 5000, token: "t" });
+	assert.deepEqual(atSpawn!.gui, { port, token: "t" });
+	assert.equal(atSpawn!.lastError?.code, "x", "carried while the new server starts");
 	const record = readRecord(world.slot)!;
-	assert.deepEqual([record.gui, record.lastRestart?.reason, record.lastError?.code], [{ port: 5000, token: "t" }, "r", "x"]);
+	assert.deepEqual([record.gui?.port, record.gui?.stopped, record.lastRestart?.reason, record.lastError], [port, false, "r", undefined], "and dropped once it is ready");
+	assert.notEqual(record.gui?.token, "t", "the dead server's token is replaced by the new listener's");
 });
 
 test("the server touches restarting from its first line: during a slow ACL call (a PowerShell start) the record says starting, with since moving and no secret", async () => {

@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { afterEach, beforeEach, test } from "node:test";
 import { type CliDeps, parseArgs, run, UsageError } from "../src/server/cli.ts";
 import { createLog } from "../src/server/log.ts";
 import { fileOf, readLock, readRecord, readStartError, takeLock, writeRecord, writeStartError } from "../src/server/record.ts";
 import type { ServerHandle, ServerOptions } from "../src/server/main.ts";
 import { callControl } from "../src/server/socket.ts";
+import { GateTimeout } from "../src/server/winprep.ts";
 import { ServerWorld, sleep, until } from "./server-world.ts";
 
 // docs/specs/2026-10-26-sb-backend.md: `cli.mjs up`, `serve`, `stop`, `status`, `restart`, `logs`: their output, their steps, and their exit codes 0 to 5.
@@ -65,6 +66,27 @@ test("status says gone with no server, and never prints the secret or the socket
 	assert.ok(!live.out.includes(world.record()!.secret) && !live.out.includes(world.record()!.socket) && !live.out.includes("secret"));
 });
 
+test("status carries the GUI's url from the record; a GUI stopped on purpose is gui-stopped while the server runs, and up starts it again on the same port under a new token and it answers 200", async () => {
+	const s = await world.start();
+	await s.handle.ready;
+	const gui = world.record()!.gui!, url = `http://127.0.0.1:${gui.port}/${gui.token}/`;
+	assert.equal((await cli(["status"])).json?.url, url);
+	const record = world.record()!;
+	assert.equal((await callControl(record.socket, record.secret, { cmd: "gui-stop" })).reply?.ok, true);
+	const stopped = await cli(["status"]);
+	assert.deepEqual([stopped.json?.state, stopped.json?.url], ["gui-stopped", url]);
+	await assert.rejects(fetch(url), "the page is down");
+	const up = await cli(["up"]);
+	assert.equal(up.code, 0, up.err);
+	const again = world.record()!.gui!, fresh = `http://127.0.0.1:${gui.port}/${again.token}/`;
+	assert.deepEqual([up.json?.server, up.json?.url, again.port], ["found", fresh, gui.port]);
+	assert.notEqual(again.token, gui.token);
+	assert.equal((await fetch(fresh)).status, 200);
+	assert.equal((await fetch(url)).status, 403, "the old token opens nothing");
+	assert.equal((await cli(["status"])).json?.state, "live");
+	assert.equal(world.record()?.gui?.stopped, false);
+});
+
 test("status gives the other states of the table: restarting (with its reason), stopped, gone with the last error and the start-error", async () => {
 	const base = { pid: 7, started: "T-7", version: "0.44.0", herdr: world.slot.herdr, mode: "detached" as const, desk: false, intercom: {}, log: "/l", socket: "/nowhere", secret: "s".repeat(64), intercomId: "sb-server-00000000" };
 	mkdirSync(world.slot.dir, { recursive: true });
@@ -89,7 +111,8 @@ test("up starts a server and prints one JSON line: url, pid, started, version, p
 	const first = await cli(["up"]);
 	assert.equal(first.code, 0, first.err);
 	const j = first.json!;
-	assert.equal(j.url, null, "no GUI listener in the server yet: the pi sessions host it until the GUI moves in");
+	const gui = world.record()!.gui!;
+	assert.equal(j.url, `http://127.0.0.1:${gui.port}/${gui.token}/`, "the server's own GUI");
 	assert.equal(typeof j.pid, "number");
 	assert.equal(j.pid, world.record()!.pid);
 	assert.equal(typeof j.started, "string");
@@ -99,7 +122,7 @@ test("up starts a server and prints one JSON line: url, pid, started, version, p
 	assert.equal(j.desk, false);
 	assert.equal(j.server, "started");
 	assert.equal(j.log, fileOf(world.slot, "log"));
-	assert.deepEqual((j.steps as { name: string; ok: boolean }[]).map((s) => [s.name, s.ok]), [["herdr", true], ["version", true], ["server", true]]);
+	assert.deepEqual((j.steps as { name: string; ok: boolean }[]).map((s) => [s.name, s.ok]), [["herdr", true], ["version", true], ["server", true], ["gui", true]]);
 	assert.ok((j.steps as { ms: number }[]).every((s) => typeof s.ms === "number"));
 	assert.deepEqual(j.warnings, []);
 	assert.equal(first.out.trim().split("\n").length, 1, "one line");
@@ -172,6 +195,34 @@ test("up is the boss's own start: it clears stopped in server.json and gui.json 
 	assert.equal(JSON.parse(await import("node:fs").then((fs) => fs.readFileSync(`${world.stateDir}/gui.json`, "utf8"))).stopped, undefined);
 });
 
+test("up warns remote_off with the reason when remote access was wanted and cannot come back, and still prints the URL", async () => {
+	mkdirSync(world.slot.dir, { recursive: true });
+	writeFileSync(`${world.slot.dir}/paired.json`, JSON.stringify({ host: "box.tail1.ts.net:8443", login: "me@example.com", wanted: true, sessions: {} }));
+	const up = await cli(["up"]);
+	assert.equal(up.code, 0, up.err);
+	const warning = (up.json?.warnings as { code: string; text: string }[]).find((w) => w.code === "remote_off");
+	assert.match(warning?.text ?? "", /Remote access stays off: Tailscale is not installed/);
+	const gui = world.record()!.gui!;
+	assert.equal(up.json?.url, `http://127.0.0.1:${gui.port}/${gui.token}/`);
+});
+
+test("up waits for the GUI's URL to answer 200 before it prints it, and fails at step gui when it never does", async () => {
+	const s = await world.start();
+	await s.handle.ready;
+	const seen: { port: number; token: string }[] = [];
+	const slow = async (gui: { port: number; token: string }) => (seen.push(gui), seen.length >= 3);
+	const up = await cli(["up"], { pageAnswers: slow });
+	assert.equal(up.code, 0, up.err);
+	assert.equal(seen.length, 3, "asked until it answered");
+	const gui = world.record()!.gui!;
+	assert.deepEqual(seen[0], { port: gui.port, token: gui.token });
+	assert.equal(up.json?.url, `http://127.0.0.1:${gui.port}/${gui.token}/`);
+	const never = await cli(["up", "--timeout", "1"], { pageAnswers: async () => false });
+	assert.equal(never.code, 1);
+	assert.equal(never.errJson?.step, "gui");
+	assert.match(String(never.errJson?.reason), /did not answer/);
+});
+
 test("a start that fails: loader, intercom, or acl in start-error.json is exit 3 with the reason; any other failure is exit 1 at step server", async () => {
 	world.intercomError = Object.assign(new Error("tsx was not found from /x/dist/server: it is a dependency of pi-straw-boss, so reinstall the package"), { code: "loader" });
 	const loader = await cli(["up"]);
@@ -225,7 +276,8 @@ test("--timeout bounds the whole up, and the failure names which wait ran out be
 	assert.equal(silent.code, 1);
 	assert.equal(silent.errJson?.step, "server");
 	assert.equal(silent.errJson?.wait, "start");
-	assert.match(String(silent.errJson?.reason), /did not answer hello within 0\.5 s/);
+	// The start wait is what --timeout leaves after the lock and the folder check: 0.5 s on an idle machine, 0.4 s or less when those took 100 ms (a loaded one).
+	assert.match(String(silent.errJson?.reason), /did not answer hello within 0\.[2-5] s/);
 	assert.ok(Date.now() - began < 2500, "not the 5 s the start timer gives");
 	// hello: another requester's start is under way (a fresh restarting, no lock held) and no hello comes.
 	mkdirSync(world.slot.dir, { recursive: true });
@@ -371,6 +423,17 @@ test("serve with nothing running runs a serve server in the foreground, clears a
 	assert.equal(readLock(world.slot), undefined);
 });
 
+test("serve clears the server's stop but leaves a GUI stopped on purpose stopped", async () => {
+	mkdirSync(world.slot.dir, { recursive: true });
+	writeRecord(world.slot, { pid: 7, version: "0.44.0", herdr: world.slot.herdr, mode: "detached", desk: false, intercom: {}, log: "/l", socket: "/nowhere", secret: "s".repeat(64), intercomId: "sb-server-00000000", stopped: true, gui: { port: 5000, token: "t".repeat(32), stopped: true } });
+	writeFileSync(`${world.slot.dir}/gui.json`, JSON.stringify({ pid: 7, port: 5000, token: "t".repeat(32), owner: "o", stopped: true }));
+	const f = fakeServer();
+	assert.equal((await cli(["serve"], { server: f.server, signals: f.signals })).code, 0);
+	assert.equal(readRecord(world.slot)?.stopped, undefined);
+	assert.equal(readRecord(world.slot)?.gui?.stopped, true);
+	assert.equal(JSON.parse(readFileSync(`${world.slot.dir}/gui.json`, "utf8")).stopped, true);
+});
+
 test("serve takes over a live detached server: it asks it to hand over by the restart path, waits for it to leave, then runs, with the record's port and token still there", async () => {
 	const s = await world.start();
 	await s.handle.ready;
@@ -418,4 +481,57 @@ test("serve against a live serve server prints that server's record and exits 4"
 	assert.equal(r.errJson?.version, "0.44.0");
 	assert.equal(f.calls.length, 0);
 	assert.equal(readLock(world.slot), undefined, "the lock is released");
+});
+
+// --- the desk's items from the Windows VM pass of 0.45.0 (tiny --timeout values) ---
+
+test("up --timeout 1: an owner read that runs out of time is exit 1 with wait start, never exit 3 acl, whether the gate honours the time or ignores it", async () => {
+	const s = await world.start();
+	await s.handle.ready;
+	const honours = async (_slot: unknown, ms?: number) => { await sleep(ms ?? 5000); throw new GateTimeout("the owner of the state folder could not be read (timed out)"); };
+	const ignores = async () => { await sleep(3000); return true; };
+	for (const gate of [honours, ignores]) {
+		const began = Date.now();
+		const r = await cli(["up", "--timeout", "1"], { ctx: { gate } });
+		assert.equal(r.code, 1, r.err);
+		assert.equal(r.errJson?.wait, "start");
+		assert.equal(r.errJson?.startError, undefined, "no acl refusal");
+		assert.doesNotMatch(String(r.errJson?.reason), /^acl:/);
+		assert.ok(Date.now() - began < 1500, `within the time given and a margin: ${Date.now() - began} ms`);
+	}
+});
+
+test("up --timeout: the time spent preparing the folder with no one holding server.lock is not reported as a lock wait, and the call ends within 0.5 s of the deadline", async () => {
+	const prepare = async () => void (await sleep(400));
+	const began = Date.now();
+	const r = await cli(["up", "--timeout", "0.3"], { ctx: { prepare } });
+	assert.equal(r.code, 1, r.err);
+	assert.notEqual(r.errJson?.wait, "lock", "no one held the lock");
+	assert.equal(r.errJson?.wait, "start");
+	assert.equal(readLock(world.slot), undefined, "and it left no lock behind");
+	assert.ok(Date.now() - began < 800, `${Date.now() - began} ms`);
+	// With a real holder the wait is the lock's, and it ends at the deadline too.
+	const lock = await takeLock(world.slot, "someone else", { alive: () => true }, 0);
+	const held = Date.now();
+	const busy = await cli(["up", "--timeout", "0.3"]);
+	lock.release();
+	assert.equal(busy.errJson?.wait, "lock");
+	assert.ok(Date.now() - held < 800, `${Date.now() - held} ms`);
+});
+
+test("status drops lastError once the server is ready: a failure of an earlier attempt does not survive a successful start", async () => {
+	world.intercomError = new Error("broker down");
+	const s = await world.start();
+	await s.handle.ready.catch(() => {});
+	world.intercomError = undefined;
+	const first = await cli(["status"]);
+	assert.ok(world.record()?.lastError, "the first server's failure is in the record before the second starts");
+	assert.ok(first.json?.lastError, "and status tells it");
+	const again = await world.start();
+	await again.handle.ready;
+	await until(() => world.record()?.pid === again.pid, "the second server's record");
+	const live = await cli(["status"]);
+	assert.equal(live.json?.state, "live");
+	assert.equal(live.json?.lastError, undefined, JSON.stringify(live.json));
+	assert.equal(world.record()?.lastError, undefined);
 });

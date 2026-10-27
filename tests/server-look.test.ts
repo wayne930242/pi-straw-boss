@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -7,6 +7,7 @@ import { createRemoteTurns } from "../src/link/hooks.ts";
 import { MESSAGE_TYPE } from "../src/link/turn.ts";
 import { RESTART_EVERY_MS } from "../src/server-look.ts";
 import { fileOf, writeRecord } from "../src/server/record.ts";
+import { forgetSid, ownerGate } from "../src/server/winprep.ts";
 import { type Agent, until, World } from "./fakes.ts";
 import { bob, TEAM_HEX } from "./link/holder-world.ts";
 import { ServerWorld, sleep } from "./server-world.ts";
@@ -31,7 +32,7 @@ function session(id = "a1", over: { version?: string; server?: object | null; en
 	const version = over.version ?? "0.44.0";
 	return world.agent({
 		id, pane: `wA:p${++panes}`, tab: "wA:t1", ui: true, env: { HOME: sw.env.HOME!, ...over.env },
-		deps: { stateDir: sw.stateDir, version, adoptMs: 30, server: over.server === undefined ? { ctx: reaching(version), cli: "/fake/cli.mjs" } : (over.server as never) },
+		deps: { stateDir: sw.stateDir, version, adoptMs: 30, server: over.server === undefined ? sw.server(reaching(version)) : (over.server as never) },
 	});
 }
 const plant = (over: Record<string, unknown> = {}) => {
@@ -58,8 +59,8 @@ test("an interactive session in Herdr starts the server at session start, and th
 });
 
 test("a session without a screen, a subagent, and a session that has no server deps start nothing", async () => {
-	const quiet = world.agent({ id: "p1", pane: "wA:p91", tab: "wA:t1", env: { HOME: sw.env.HOME! }, deps: { stateDir: sw.stateDir, version: "0.44.0", adoptMs: 30, server: { ctx: reaching(), cli: "/fake/cli.mjs" } } });
-	const sub = world.agent({ id: "s1", pane: "wA:p92", tab: "wA:t1", ui: true, env: { HOME: sw.env.HOME!, PI_SUBAGENT_ID: "run-1" }, deps: { stateDir: sw.stateDir, version: "0.44.0", adoptMs: 30, server: { ctx: reaching(), cli: "/fake/cli.mjs" } } });
+	const quiet = world.agent({ id: "p1", pane: "wA:p91", tab: "wA:t1", env: { HOME: sw.env.HOME! }, deps: { stateDir: sw.stateDir, version: "0.44.0", adoptMs: 30, server: sw.server(reaching()) } });
+	const sub = world.agent({ id: "s1", pane: "wA:p92", tab: "wA:t1", ui: true, env: { HOME: sw.env.HOME!, PI_SUBAGENT_ID: "run-1" }, deps: { stateDir: sw.stateDir, version: "0.44.0", adoptMs: 30, server: sw.server(reaching()) } });
 	const none = session("n1", { server: null });
 	await Promise.all([quiet.start(), sub.start(), none.start()]);
 	await sleep(200);
@@ -76,7 +77,7 @@ test("a session on an older package never starts a server; a record of a gone se
 	assert.equal(old.notices.filter((n) => /older than this session|newer than this session/.test(n.text)).length, 1, "told once, not at every look");
 
 	writeRecord(sw.slot, { pid: 7, started: "T-7", version: "0.44.0", herdr: sw.slot.herdr, mode: "detached", desk: false, intercom: { scope: "team-a", transport: "default" }, log: "/l", socket: "/nowhere", secret: "s".repeat(64), intercomId: "sb-server-00000000" });
-	const other = world.agent({ id: "o1", pane: "wA:p93", tab: "wA:t1", ui: true, env: { HOME: sw.env.HOME!, PI_INTERCOM_SCOPE_ID: "team-b" }, deps: { stateDir: sw.stateDir, version: "0.44.0", adoptMs: 30, server: { ctx: reaching(), cli: "/fake/cli.mjs" } } });
+	const other = world.agent({ id: "o1", pane: "wA:p93", tab: "wA:t1", ui: true, env: { HOME: sw.env.HOME!, PI_INTERCOM_SCOPE_ID: "team-b" }, deps: { stateDir: sw.stateDir, version: "0.44.0", adoptMs: 30, server: sw.server(reaching()) } });
 	await other.start();
 	await sleep(200);
 	await until(() => sw.spawned.length === 1, "the session starts a server: the record's server is gone, so its scope pins nothing");
@@ -106,6 +107,25 @@ test("a failed start is told once with the reason, and not tried again at every 
 	assert.match(a.notices.find((n) => /could not start/.test(n.text))!.text, /exited with code 7/);
 });
 
+test("R13-F003: a state folder that belongs to another account is not looked at: told once, nothing sent to its record's pipe, nothing started or written, and no owner read at every look", async () => {
+	plant();
+	const before = readFileSync(fileOf(sw.slot, "record"), "utf8");
+	let reads = 0;
+	const gate = () => {
+		reads++;
+		throw new Error(`could not check ${sw.stateDir} before trusting or writing to it: the folder ${sw.stateDir} belongs to another account (S-1-5-21-9-9-9-1002), not to me`);
+	};
+	const a = world.agent({ id: "f1", pane: "wA:p94", tab: "wA:t1", ui: true, env: { HOME: sw.env.HOME! }, deps: { stateDir: sw.stateDir, version: "0.44.0", adoptMs: 30, server: { ctx: { ...reaching(), alive: () => true, gate }, cli: "/fake/cli.mjs" } } });
+	await a.start();
+	await until(() => a.notices.some((n) => /belongs to another account/.test(n.text)), "the notice");
+	await sleep(250);
+	assert.equal(a.notices.filter((n) => /belongs to another account/.test(n.text)).length, 1, "told once");
+	assert.match(a.notices.find((n) => /belongs to another account/.test(n.text))!.text, /was not looked at/);
+	assert.equal(sw.spawned.length, 0);
+	assert.equal(readFileSync(fileOf(sw.slot, "record"), "utf8"), before, "the record is as it was");
+	assert.ok(reads >= 2, "the gate is asked at every look (its memo is what keeps the PowerShell to one)");
+});
+
 test("a session on a newer package asks the live server to upgrade, which starts it from the session's package", async () => {
 	const s = await sw.start({ version: "0.43.0" });
 	await s.handle.ready;
@@ -123,7 +143,7 @@ test("sbr-F001: the version a session judges by is the package.json beside the c
 	mkdirSync(root, { recursive: true });
 	writeFileSync(join(root, "package.json"), JSON.stringify({ name: "pi-straw-boss", version: "0.44.0" }));
 	// The session loaded 0.45.0; the package on disk (what its spawn starts) is now 0.44.0.
-	const a = session("a1", { version: "0.45.0", server: { ctx: reaching("0.44.0"), cli: "/fake/cli.mjs", root } });
+	const a = session("a1", { version: "0.45.0", server: sw.server(reaching("0.44.0"), { root }) });
 	await a.start();
 	await until(() => sw.record()?.version === "0.44.0" && !sw.record()?.restarting, "the upgrade");
 	await sleep(300);
@@ -135,7 +155,7 @@ test("sbr-F001: an upgrade that starts a server no newer than the one it replace
 	const s = await sw.start({ version: "0.44.0" });
 	await s.handle.ready;
 	// Nothing tells the session that its spawn starts 0.44.0 (a stale cache of the version): the launched server's version is what refuses the loop.
-	const a = session("a1", { version: "0.45.0", server: { ctx: reaching("0.44.0"), cli: "/fake/cli.mjs" } });
+	const a = session("a1", { version: "0.45.0", server: sw.server(reaching("0.44.0")) });
 	await a.start();
 	await until(() => a.notices.some((n) => /not newer/.test(n.text)), "the notice");
 	await sleep(300);
@@ -154,7 +174,7 @@ test("sbr-NEW-4: a failed upgrade is not asked for again while the record's vers
 	// A stale dist: the package says 0.45.0, but what its spawn starts is 0.44.0.
 	const a = world.agent({
 		id: "a1", pane: "wA:p1", tab: "wA:t1", ui: true, env: { HOME: sw.env.HOME! },
-		deps: { stateDir: sw.stateDir, version: "0.45.0", adoptMs: 30, now: () => clock, server: { ctx: reaching("0.44.0"), cli: "/fake/cli.mjs", root } },
+		deps: { stateDir: sw.stateDir, version: "0.45.0", adoptMs: 30, now: () => clock, server: sw.server(reaching("0.44.0"), { root }) },
 	});
 	await a.start();
 	await until(() => a.notices.some((n) => /not newer/.test(n.text)), "the notice");
@@ -229,7 +249,7 @@ test("/boss server restart [reason] confirms, restarts with the reason and this 
 // --- boss_server ---
 
 test("boss_server status works with the server down, from the files, and shows the last error and start-error", async () => {
-	const a = session("a1", { server: { ctx: { ...reaching(), spawn: () => ({ pid: 1, exited: new Promise(() => {}) }) }, cli: "/fake/cli.mjs" } });
+	const a = session("a1", { server: sw.server({ ...reaching(), spawn: () => ({ pid: 1, exited: new Promise(() => {}) }) }) });
 	await a.start();
 	plant({ lastError: { at: "2026-10-26T00:00:00.000Z", code: "intercom", text: "no broker" } });
 	const result = JSON.parse(text(await a.tool("boss_server", { action: "status" })));
@@ -321,4 +341,47 @@ test("a remote turn cannot use boss_server at any level, dispatch included; a lo
 	const blocked = (await call()) as { block?: boolean; reason?: string };
 	assert.equal(blocked.block, true);
 	assert.match(String(blocked.reason), /cannot see or restart this computer's sb server/);
+});
+
+test("B1 follow-up: a look whose owner read is slow does not freeze the session: a timer set while it runs fires before it ends, and the looks that come meanwhile and after share the one read", async () => {
+	plant();
+	forgetSid();
+	const owner = "S-1-5-21-1111111111-2222222222-3333333333-1001", calls: string[] = [], order: string[] = [];
+	const slow = async (file: string) => {
+		calls.push(file);
+		if (file === "whoami.exe") return `"PC\\me","${owner}"\r\n`;
+		// Set while the read runs; due long before it ends, so it fires first unless the session's event loop was held still.
+		setTimeout(() => order.push("timer"), 10);
+		await sleep(250);
+		order.push("owner read done");
+		return `${owner}\r\n`;
+	};
+	const gate = (slot: typeof sw.slot, ms?: number) => ownerGate(slot.stateDir, slow, ms);
+	const a = world.agent({ id: "f1", pane: "wA:p95", tab: "wA:t1", ui: true, env: { HOME: sw.env.HOME! }, deps: { stateDir: sw.stateDir, version: "0.44.0", adoptMs: 30, server: { ctx: { ...reaching(), gate }, cli: "/fake/cli.mjs" } } });
+	await a.start();
+	await until(() => order.includes("owner read done"), "the owner read to finish");
+	assert.deepEqual(order, ["timer", "owner read done"]);
+	await sleep(200);
+	assert.equal(calls.filter((c) => c.endsWith("powershell.exe")).length, 1, "the looks every 30 ms during and after the read started one PowerShell");
+	assert.equal(a.notices.filter((n) => /sb server/.test(n.text)).length, 0, "and said nothing");
+});
+
+test("b1f-F008: a look still reading the owner when the session shuts down does nothing more: the folder is not made again", async () => {
+	plant();
+	forgetSid();
+	const owner = "S-1-5-21-1111111111-2222222222-3333333333-1001";
+	let reading = false;
+	const slow = async (file: string) => {
+		if (file === "whoami.exe") return `"PC\\me","${owner}"\r\n`;
+		reading = true;
+		await sleep(150);
+		return `${owner}\r\n`;
+	};
+	const a = session("f2", { server: { ctx: { ...reaching(), gate: (slot: typeof sw.slot, ms?: number) => ownerGate(slot.stateDir, slow, ms) }, cli: "/fake/cli.mjs" } });
+	await a.start();
+	await until(() => reading, "the owner read to start");
+	await a.stop();
+	await sleep(300);
+	assert.equal(sw.spawned.length, 0, "no server was started after the session closed");
+	assert.equal(existsSync(join(sw.slot.dir, "server.lock")), false, "and no lock was taken");
 });

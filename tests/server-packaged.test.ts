@@ -64,10 +64,20 @@ test("packaged: the packed package installs with pi's npm flags (no pi packages 
 		assert.equal(live.lastError, undefined, "tsx and pi-intercom loaded from the installed layout");
 		assert.match(readFileSync(join(agent, "straw-boss", "server.log"), "utf8"), /intercom-connected id=sb-server-/);
 		assert.equal(sb("up").server, "found", "a second up finds it");
+		// The GUI (B2): the server serves the page the package ships, at the URL `up` printed, and gui.json names the server.
+		const url = String(up.url);
+		assert.match(url, /^http:\/\/127\.0\.0\.1:\d+\/[0-9a-f]{32}\/$/);
+		const page = await fetch(url);
+		assert.equal(page.status, 200);
+		assert.match(await page.text(), /Straw Net/);
+		const gui = JSON.parse(readFileSync(join(agent, "straw-boss", "gui.json"), "utf8")) as { pid: number; owner: string; port: number };
+		assert.deepEqual([gui.pid, gui.owner, `http://127.0.0.1:${gui.port}/`], [up.pid, `sb server (pid ${up.pid})`, url.replace(/[0-9a-f]{32}\/$/, "")]);
+		assert.equal(sb("status").url, url, "status prints the same URL");
 		const broker = join(agent, "intercom", "broker.pid");
 		if (existsSync(broker)) started.push(Number(readFileSync(broker, "utf8").trim()));
 		const stopping = Date.now();
 		assert.deepEqual(sb("stop"), { outcome: "stopped" });
+		await assert.rejects(fetch(url), "the page goes with the server");
 		const stopMs = Date.now() - stopping;
 		console.log(`packaged: up ${upMs} ms, stop ${stopMs} ms`);
 		// The VM found a stop taking 7 to 12 s on Windows (it was waiting on PowerShell reads); here the whole command, node's start included, is well under 2 s.
