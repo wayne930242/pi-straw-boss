@@ -69,7 +69,7 @@ test("a start that fails ends restarting at once: the state is gone, not restart
 	assert.equal(stateOf(ctx, { record, live: false }), "gone");
 });
 
-test("a start over a dead server's record keeps what the record holds (GUI, last restart, last error) and the new server carries it", async () => {
+test("a start over a dead server's record keeps what the record holds (GUI, last restart) and the new server carries it; its last error, until the new server is ready", async () => {
 	const dead = { pid: 4242, version: "0.43.0", herdr: world.slot.herdr, mode: "detached" as const, desk: false, intercom: { transport: "default" }, log: fileOf(world.slot, "log"), socket: "/nowhere.sock", secret: "old", intercomId: "sb-server-x" };
 	const port = await freePort();
 	await world.start().then((s) => s.handle.shutdown(0));
@@ -82,8 +82,9 @@ test("a start over a dead server's record keeps what the record holds (GUI, last
 	assert.equal(atSpawn!.pid, 4242, "the dead server's record, with restarting");
 	assert.equal(atSpawn!.restarting?.reason, "starting");
 	assert.deepEqual(atSpawn!.gui, { port, token: "t" });
+	assert.equal(atSpawn!.lastError?.code, "x", "carried while the new server starts");
 	const record = readRecord(world.slot)!;
-	assert.deepEqual([record.gui, record.lastRestart?.reason, record.lastError?.code], [{ port, token: "t", stopped: false }, "r", "x"]);
+	assert.deepEqual([record.gui, record.lastRestart?.reason, record.lastError], [{ port, token: "t", stopped: false }, "r", undefined], "and dropped once it is ready");
 });
 
 test("the server touches restarting from its first line: during a slow ACL call (a PowerShell start) the record says starting, with since moving and no secret", async () => {
