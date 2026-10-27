@@ -83,7 +83,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased (GUI in the sb server) to 376: gui.ts answers the server panel (server/status, server/log, server/restart) and the remote and stop options the server passes.
 	// Unreleased (RC2-F001) to 387: gui.ts binds its ports first and keeps the token and CSRF secret only when it got the recorded ports back; on another port both are new.
 	// Unreleased (R-F001) to 389: gui.ts answers a page load at a replaced address with a short HTML 403 and the words of the page's banner.
-	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 389, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
+	// Unreleased (IRQ-F001, F003) to 390: the page-load 403's note in Traditional Chinese when Accept-Language asks for it.
+	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 390, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
 	// Input (the spec's figure), remote access over Tailscale, its terminal pairing panel (QR, c copies, o opens), and the QR encoder each have their own.
 	// What a waiting session waits on (0.5.0, read for display only; answering is deferred) has its own as well.
 	// 0.5.1 raised remote.ts from 165 to 185 (a recorded server counts as running only if its process started when the entry says: a reused PID
@@ -529,7 +530,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased (GUI in the sb server) to 54.35 KB / 19.5 KB gzipped: the header's Server button (this computer's page only) and its two messages in both languages; the panel itself is a lazy chunk (gui/server.ts).
 	// Unreleased (settings check) to 53.85 KB: quit.ts's Pop reads the refusal facts of a folder pi must not start in (the words are in the lazy deploy chunk, gui/refusal.ts).
 	// Unreleased (R-F001) to 54.95 KB / 19.7 KB gzipped: the `replaced` state of the stream (one look at the page's address after an error) and its banner in both languages.
-	assert.ok(size(entry).length <= 54_950 && gz(entry) <= 19_700, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// Unreleased (IRQ-F001) to 55.0 KB / 19.75 KB gzipped: the longer banner words in both languages (and the `replaced` dot's colour in the stylesheet).
+	assert.ok(size(entry).length <= 55_000 && gz(entry) <= 19_750, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).

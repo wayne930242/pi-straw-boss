@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createServer as createHttpServer, get, request } from "node:http";
 import { createServer } from "node:net";
@@ -248,6 +248,25 @@ test("R-F004: a restart that gives the GUI a new token unpairs the devices of th
 	const next = await restart(h, { tailscale: ts.run });
 	assert.equal(paired(next), 0, "the old pairing is dead with the old token, so it is not kept");
 	assert.equal(((await next.ask("status")).gui as { remote: { wanted: boolean } }).remote.wanted, true, "the wish stays");
+	assert.match(readFileSync(fileOf(next.slot, "log"), "utf8"), /devices-cleared n=1/);
+});
+
+test("IRQ-F004: a listener that starts with no GUI record still unpairs the devices paired.json holds", async () => {
+	const ts = fakeTailscale();
+	const h = await host({ tailscale: ts.run });
+	await h.ask("gui-remote", { on: true });
+	const link = new URL(String((await h.ask("gui-pair")).url));
+	await new Promise<number>((resolve, reject) => void get({ host: "127.0.0.1", port: h.gui().remotePort, path: link.pathname, agent: false, headers: { host: "box.tail1.ts.net:8443", "tailscale-user-login": "me@example.com", "x-forwarded-for": "100.87.7.97", "user-agent": "Mozilla/5.0 (iPhone)" } }, (res) => (res.resume(), resolve(res.statusCode!))).on("error", reject));
+	const paired = (x: Hosted) => Object.keys((JSON.parse(readFileSync(join(x.slot.dir, "paired.json"), "utf8")) as { devices: object }).devices).length;
+	assert.equal(paired(h), 1);
+	assert.equal((await h.ask("restart", { reason: "test", by: "test" })).ok, true);
+	await h.handle.done;
+	rmSync(join(h.slot.dir, "gui.json"), { force: true });
+	const record = JSON.parse(readFileSync(fileOf(h.slot, "record"), "utf8")) as Record<string, unknown>;
+	delete record.gui;
+	writeFileSync(fileOf(h.slot, "record"), JSON.stringify(record));
+	const next = await host({ tailscale: ts.run });
+	assert.equal(paired(next), 0, "no record of the last GUI, yet the pairing is not kept");
 	assert.match(readFileSync(fileOf(next.slot, "log"), "utf8"), /devices-cleared n=1/);
 });
 

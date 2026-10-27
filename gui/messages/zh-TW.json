@@ -34,7 +34,7 @@
 	"age_h": "{n} 小時",
 	"age_d": "{n} 天",
 	"banner_offline": "連線中斷。重試 {tries} 次後放棄；回到此分頁時會重新連線。",
-	"banner_replaced": "這個網址已失效（sb server 重新啟動過）：在這台電腦請開啟 /boss gui；在手機請重新掃描新的 QR code。",
+	"banner_replaced": "這個網址在這裡無法使用（sb server 可能重新啟動過，或連結已過期）：在這台電腦請開啟 /boss gui；在手機請重新掃描新的 QR code。",
 	"banner_reconnecting": "與稻草網的連線中斷，正在重新連線…畫面顯示的是最後已知狀態。",
 	"banner_reconnecting_try": "與稻草網的連線中斷，正在重新連線（第 {attempt} 次）…畫面顯示的是最後已知狀態。",
 	"banner_problem": "伺服器正常，但讀不到網：{problem}",

@@ -244,8 +244,11 @@ test("a page load at a replaced address gets a short HTML 403 that says so and h
 	const page = await raw(gui, dead, { headers: { "sec-fetch-dest": "document" } });
 	assert.equal(page.status, 403);
 	assert.match(String(page.headers["content-type"]), /text\/html/);
-	assert.match(page.body, /This address no longer works .* open \/boss gui; .* scan a new QR code/);
+	assert.match(page.body, /This address does not work here .* open \/boss gui; .* scan a new QR code/);
 	assert.ok(!page.body.includes(gui.token) && !page.body.includes(gui.csrf));
+	const zh = await raw(gui, dead, { headers: { "sec-fetch-dest": "document", "accept-language": "zh-TW,zh;q=0.9,en;q=0.8" } });
+	assert.match(zh.body, /這個網址在這裡無法使用/);
+	assert.ok(!zh.body.includes(gui.token) && !zh.body.includes(gui.csrf));
 	const script = await raw(gui, dead, { headers: { "sec-fetch-dest": "empty" } });
 	assert.deepEqual([script.status, script.body], [403, "forbidden"]);
 });

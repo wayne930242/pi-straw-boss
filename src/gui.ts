@@ -43,7 +43,8 @@ const HEADERS = {
 };
 
 /** What a page at a dead address says: the same words as the open page's banner. */
-const REPLACED = "This address no longer works (the sb server restarted): on this computer open /boss gui; on a phone scan a new QR code.";
+const REPLACED = "This address does not work here (the sb server may have restarted, or the link expired): on this computer open /boss gui; on a phone scan a new QR code.";
+const REPLACED_ZH = "這個網址在這裡無法使用（sb server 可能重新啟動過，或連結已過期）：在這台電腦請開啟 /boss gui；在手機請重新掃描新的 QR code。";
 export interface Gui { url: string; port: number; remotePort: number; token: string; csrf: string; access: Access; stop(): Promise<void> }
 /** `net` is the registry behind the net reading (the allow list of session keys); without it no session can be watched. `call` reaches Herdr for input. */
 /** `hub` carries answers to the dialogs bridges relay (dialogs.ts); it runs exactly as long as the server. */
@@ -168,7 +169,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 		const who = access.check(req, kind, (own().address() as AddressInfo).port, given, path);
 		if ("status" in who) {
 			// A page load at a dead address (the token was replaced by a restart) says so, without a secret in it; a script's request gets the plain refusal.
-			if (who.status === 403) return void (req.method === "GET" && req.headers["sec-fetch-dest"] === "document" ? res.writeHead(403, { ...HEADERS, "content-type": TYPES[".html"] }).end(`<!doctype html><meta charset="utf-8"><p>${REPLACED}</p>`) : fail(403));
+			if (who.status === 403) return void (req.method === "GET" && req.headers["sec-fetch-dest"] === "document" ? res.writeHead(403, { ...HEADERS, "content-type": TYPES[".html"] }).end(`<!doctype html><meta charset="utf-8"><p>${/^\s*zh/i.test(String(req.headers["accept-language"] ?? "")) ? REPLACED_ZH : REPLACED}</p>`) : fail(403));
 			// The SameSite=Strict cookie stays behind on a navigation from another site, and Android counts launching the installed app as one: such a
 			// page load reloads itself once, a same-origin navigation that carries the cookie when this device has one. Sec-Fetch-Site decides, so the
 			// reload never loops, and a browser that sends no Sec-Fetch-Site gets the plain refusal.

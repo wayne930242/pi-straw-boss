@@ -206,10 +206,10 @@ export function createGuiHost(o: GuiHostOptions) {
 			const started = await begin(prefer, reclaimed ? Math.max(wait, o.bindWaitMs ?? BIND_WAIT_MS) : wait);
 			gui = started;
 			// A pairing belongs to the listener's token (cookie Path=/<token>/): after a rotation every listed device is dead, so none is kept.
-			if (prefer.had) {
-				const n = started.access.devices.unpairAll();
-				if (n) log.line("devices-cleared", { n });
-			}
+			// Whether or not a record of the last GUI survived: paired.json alone may hold devices.
+			const n = started.access.devices.unpairAll();
+			if (n) log.line("devices-cleared", { n });
+			if (started.access.saveError) log.line("error", { code: "paired", text: phrase(`paired.json could not be saved (${started.access.saveError}); the cleared devices come back after the next restart`, 200) });
 			writeGuiJson(started);
 			updateRecord(slot, (r) => (r.pid === pid ? { ...r, gui: { port: started.port, token: started.token, stopped: false } } : undefined));
 			log.line("gui-start", { port: started.port, remotePort: started.remotePort, moved: prefer.port !== undefined && prefer.port !== started.port, ...(prefer.had ? { newToken: true } : {}) });
