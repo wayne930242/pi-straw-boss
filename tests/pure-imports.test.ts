@@ -53,8 +53,8 @@ function valueImports(source: string): string[] {
 }
 
 /** Every banned package a value import reaches from `entry`, with the chain of files that leads to it. */
-function bannedFrom(entry: string, read: (path: string) => string = (path) => readFileSync(join(root, path), "utf8")): string[] {
-	const seen = new Set<string>(), hits: string[] = [];
+function bannedFrom(entry: string, read: (path: string) => string = (path) => readFileSync(join(root, path), "utf8"), seen = new Set<string>()): string[] {
+	const hits: string[] = [];
 	const visit = (path: string, chain: string[]) => {
 		if (seen.has(path)) return;
 		seen.add(path);
@@ -113,3 +113,12 @@ for (const entry of ["src/netdata.ts", "src/net.ts", "src/ask.ts", "src/reach.ts
 		assert.deepEqual(bannedFrom(entry), []);
 	});
 }
+
+// B3: the link holder runs in the server, so the server loads the link service and everything under it. It must not load the pi-side modules: the tools (typebox), the pairing
+// overlay (pi-tui), the trust question (pi-coding-agent), or the session half of the link (approval and remote-turn hooks).
+test("src/server/main.ts reaches no value import of pi's packages, and none of the pi-side modules", () => {
+	const reached = new Set<string>();
+	assert.deepEqual(bannedFrom("src/server/main.ts", undefined, reached), []);
+	assert.ok(reached.has("src/link/service.ts") && reached.has("src/link/holder.ts") && reached.has("src/link/election.ts"), "the link holder is in the server's graph");
+	for (const piSide of ["src/tools.ts", "src/pairing.ts", "src/trust/ask.ts", "src/link/runtime.ts", "src/link/hooks.ts", "src/link/approval.ts", "src/index.ts"]) assert.ok(!reached.has(piSide), `${piSide} is loaded by the server`);
+});

@@ -134,7 +134,7 @@ async function twoTowers(trust: Record<string, string>) {
 	const b = computer(root, relay, "b", { ui: true });
 	computers.push(a, b);
 	await Promise.all([a.tower.start(), b.tower.start()]);
-	await until(() => a.link.holding && b.link.holding, 3000, "both holders");
+	await until(() => a.server.service.status().active && b.server.service.status().active, 3000, "both holders");
 	const pending: { id: string }[] = [], closed: { by: string }[] = [];
 	a.tower.on("straw-link:gate:pending", (d) => void pending.push(d as { id: string }));
 	a.tower.on("straw-link:gate:closed", (d) => void closed.push(d as { by: string }));

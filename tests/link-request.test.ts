@@ -7,7 +7,6 @@ import { linkRequest, OWNERS, selectDigest } from "../src/owners.ts";
 import { createApproval, TERMINAL_DELAY_MS } from "../src/link/approval.ts";
 import { encodeInvite } from "../src/link/join.ts";
 import { ACTIONS, HERE_ONLY, shapeProblem } from "../src/link/request.ts";
-import { LinkStore } from "../src/link/store.ts";
 import { until } from "./fakes.ts";
 import { FakeRelay } from "./link/fake-relay.ts";
 import { bob, type Computer, computer } from "./link/remote-world.ts";
@@ -34,7 +33,7 @@ async function rig(o: { requestMs?: number; policy?: Parameters<typeof computer>
 	const c = computer(root, relay, "a", { ui: true, gateMs: o.requestMs ?? 5000, terminalMs: 20, ...(o.policy ? { policy: o.policy } : {}) });
 	computers.push(c);
 	await c.tower.start();
-	await until(() => new LinkStore(c.dir).readHolder()?.session === "tower-a", "the holder");
+	await until(() => c.server.service.status().active, "the holder");
 	const pending: Pending[] = [], closed: { id: string; by: string }[] = [];
 	c.tower.on("straw-link:request:pending", (d) => void pending.push(d as Pending));
 	c.tower.on("straw-link:request:closed", (d) => void closed.push(d as (typeof closed)[number]));

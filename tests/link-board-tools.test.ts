@@ -49,7 +49,7 @@ async function setup(name: "a" | "b", mains: { id: string; name: string; inside:
 test("a main on A writes with board_set and B's tower reads it with board_read as a remote row; when the main ends, the entry disappears from B", async () => {
 	const a = await setup("a", [{ id: "main-a", name: "api main", inside: true }]);
 	const b = await setup("b", []);
-	await until(() => a.c.link.holding || b.c.link.holding, "a holder");
+	await until(() => a.c.server.service.status().active && b.c.server.service.status().active, "both holders");
 	const answer = text(await a.agents[0]!.tool("board_set", { now: "MP-1 export: CSV writer", items: [{ t: "schema", done: true }, { t: "writer", done: false }] }));
 	assert.match(answer, /It goes to: local towers; team project-a \(1 device\)\./);
 	// A's own tower sees it locally at once.
