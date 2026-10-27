@@ -399,7 +399,7 @@ export async function ensure(ctx: Ctx, { boss = false, lockWaitMs = 0, deadline 
 	const lock = await (deadline === undefined ? lockFor(ctx, lockWaitMs, undefined, gate) : lockUntil(ctx, deadline, gate));
 	try {
 		let seen = await probe(ctx, deadline);
-		if (boss && seen.record?.stopped && !seen.live && !seen.denied && clearStopped(ctx.slot)) seen = { ...seen, record: readRecord(ctx.slot) };
+		if (boss && seen.record?.stopped && !seen.live && !seen.denied && clearStopped(ctx.slot, true)) seen = { ...seen, record: readRecord(ctx.slot) };
 		const verdict = decide(ctx, seen);
 		if (verdict.do === "nothing" && verdict.why === "live") return { server: "found", record: seen.record! };
 		if (verdict.do !== "start") return { skipped: verdict };

@@ -9,13 +9,17 @@ import { writeRecordFile } from "../src/handover.ts";
 import { switchRemote } from "../src/remote.ts";
 import { fileOf, readRecord, writeRecord } from "../src/server/record.ts";
 import { until, World } from "./fakes.ts";
-import { bundle, fakeTailscale, Hosted, startHosted } from "./gui-world.ts";
+import { bundle, fakeTailscale, Hosted, markAlive, markGone, startHosted } from "./gui-world.ts";
 
 // The GUI in the sb server (docs/specs/2026-10-26-sb-backend.md, GUI, `gui.json` and its successor): where it starts, what it records, what a restart keeps, and what stops it.
 
 let world = new World();
 const hosted: Hosted[] = [];
+/** What a test started besides servers (an older host's GUI, a squatter): stopped after the test, so a failing assertion ends the file instead of leaving a listener open. */
+const cleanups: (() => Promise<unknown> | unknown)[] = [];
 afterEach(async () => {
+	await Promise.all(cleanups.splice(0).map(async (c) => c()));
+	markGone(4242);
 	await Promise.all(hosted.splice(0).map((h) => h.stop()));
 	await world.stopAll();
 	world = new World();
@@ -259,6 +263,8 @@ async function olderHost(h: Hosted, ts: ReturnType<typeof fakeTailscale>, over: 
 		read: async () => ({ bases: [] }), dir: bundle, paired: join(dir, "paired.json"), port: before.port, remotePort: before.remotePort, token: before.token, csrf: before.csrf, bindWaitMs: 2000,
 		onStop: (asked) => { stops.push(asked); void switchRemote(old, false, dir, ts.run, true).then(() => old.stop()); },
 	});
+	cleanups.push(() => old.stop());
+	markAlive(4242);
 	// What 0.45 wrote: gui.json names the session (a live pid that is not the server's), with its start time.
 	writeRecordFile(dir, { ...before, pid: 4242, started: "T-old", owner: "pi session (pid 4242)", ownerSession: "pi-old", version: "0.45.0" });
 	if (!over.refuse) await switchRemote(old, true, dir, ts.run);
@@ -279,7 +285,6 @@ test("the first server after an upgrade takes the GUI from the 0.45 session that
 	assert.deepEqual(((await next.ask("status")).gui as { remote: unknown }).remote, { wanted: true, on: true }, "remote is back");
 	assert.equal((ts.config() as { Web: Record<string, { Handlers: { "/": { Proxy: string } } }> }).Web["box.tail1.ts.net:8443"]!.Handlers["/"].Proxy, `http://127.0.0.1:${next.gui().remotePort}`);
 	assert.ok(readFileSync(fileOf(next.slot, "log"), "utf8").includes("gui-reclaim"));
-	await old.stop();
 });
 
 test("a live host that does not hand over is left alone: the server's GUI moves to another port and keeps the token", async () => {
@@ -288,18 +293,58 @@ test("a live host that does not hand over is left alone: the server's GUI moves 
 	// An older host that is a sb server answers the takeover with 409 (below); a host that gives no 202 is the same here: nothing is waited for.
 	const asked: unknown[] = [];
 	await old.stop();
+	markAlive(4243);
+	cleanups.push(() => markGone(4243));
 	const stubborn = await startGui({ read: async () => ({ bases: [] }), dir: bundle, port: before.port, remotePort: before.remotePort, token: before.token, csrf: before.csrf, refuseTake: true, onStop: (a) => void asked.push(a) });
+	cleanups.push(() => stubborn.stop());
 	writeRecordFile(dir, { ...before, pid: 4243, started: "T-other", owner: "sb server (pid 4243)", version: "0.46.0" });
-	try {
+	{
 		const next = await host({ tailscale: ts.run });
 		assert.equal(await status(`http://127.0.0.1:${before.port}/${before.token}/`), 200, "the other GUI still answers");
 		assert.notEqual(next.gui().port, before.port);
 		assert.equal(next.gui().token, before.token);
 		assert.equal(await status(next.url), 200);
 		assert.deepEqual(asked, [], "nothing stopped it");
-	} finally {
-		await stubborn.stop();
 	}
+});
+
+/** A foreign process that answers 200 to every path on a port, and keeps what it was sent. */
+async function squatter(port: number) {
+	const seen: { method: string; path: string; csrf: boolean }[] = [];
+	const server = createHttpServer((req, res) => {
+		seen.push({ method: req.method!, path: req.url!, csrf: Boolean(req.headers["x-sb-csrf"]) });
+		req.resume();
+		res.writeHead(200, { "content-type": "text/html" }).end("<html>any path 200</html>");
+	});
+	await new Promise<void>((resolve) => server.listen(port, "127.0.0.1", resolve));
+	cleanups.push(() => new Promise<void>((resolve) => (server.closeAllConnections(), server.close(() => resolve()))));
+	return seen;
+}
+
+test("a process that took the port of a server that is gone is sent nothing: a restart and a gui.json that names a dead pid or another process's pid send no request to the recorded port", async () => {
+	const h = await host(), before = h.gui();
+	await h.ask("restart", { reason: "test", by: "test" });
+	await h.handle.done;
+	const seen = await squatter(before.port);
+	const next = await host();
+	assert.deepEqual(seen, [], "restart: the old server is dead, so nothing reaches the port");
+	assert.notEqual(next.gui().port, before.port);
+	assert.equal(next.gui().token, before.token);
+	// A 0.45 session that died: its pid is not alive.
+	await next.ask("restart", { reason: "test", by: "test" });
+	await next.handle.done;
+	writeRecordFile(next.slot.dir, { ...before, pid: 999_991, started: "T-dead", owner: "pi session (pid 999991)", version: "0.45.0" });
+	const dead = await host();
+	assert.deepEqual(seen, [], "a dead 0.45 pid");
+	await dead.ask("restart", { reason: "test", by: "test" });
+	await dead.handle.done;
+	// A pid that runs but started at another time (the number was reused after a crash).
+	markAlive(4244);
+	cleanups.push(() => markGone(4244));
+	writeRecordFile(dead.slot.dir, { ...before, pid: 4244, started: "T-recorded", owner: "pi session (pid 4244)", version: "0.45.0" });
+	const reused = await host({ options: { startOf: (p) => (p === 4244 ? "T-other" : undefined) } });
+	assert.deepEqual(seen, [], "a reused pid");
+	assert.equal(reused.gui().pid, reused.pid);
 });
 
 test("a takeover asked of the server is refused with 409 and the GUI stays; an older build's plain stop still stops it, on purpose", async () => {

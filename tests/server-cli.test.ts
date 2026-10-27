@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { afterEach, beforeEach, test } from "node:test";
 import { type CliDeps, parseArgs, run, UsageError } from "../src/server/cli.ts";
 import { createLog } from "../src/server/log.ts";
@@ -416,6 +416,17 @@ test("serve with nothing running runs a serve server in the foreground, clears a
 	assert.equal(f.calls[0]?.by, "cli serve");
 	assert.equal(readRecord(world.slot)?.stopped, undefined);
 	assert.equal(readLock(world.slot), undefined);
+});
+
+test("serve clears the server's stop but leaves a GUI stopped on purpose stopped", async () => {
+	mkdirSync(world.slot.dir, { recursive: true });
+	writeRecord(world.slot, { pid: 7, version: "0.44.0", herdr: world.slot.herdr, mode: "detached", desk: false, intercom: {}, log: "/l", socket: "/nowhere", secret: "s".repeat(64), intercomId: "sb-server-00000000", stopped: true, gui: { port: 5000, token: "t".repeat(32), stopped: true } });
+	writeFileSync(`${world.slot.dir}/gui.json`, JSON.stringify({ pid: 7, port: 5000, token: "t".repeat(32), owner: "o", stopped: true }));
+	const f = fakeServer();
+	assert.equal((await cli(["serve"], { server: f.server, signals: f.signals })).code, 0);
+	assert.equal(readRecord(world.slot)?.stopped, undefined);
+	assert.equal(readRecord(world.slot)?.gui?.stopped, true);
+	assert.equal(JSON.parse(readFileSync(`${world.slot.dir}/gui.json`, "utf8")).stopped, true);
 });
 
 test("serve takes over a live detached server: it asks it to hand over by the restart path, waits for it to leave, then runs, with the record's port and token still there", async () => {

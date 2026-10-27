@@ -7,6 +7,7 @@ import type { Reply as HttpReply } from "../control.ts";
 import { createDeploys } from "../deploy.ts";
 import { createHub, type Hub } from "../dialogs.ts";
 import { BUNDLE, type Gui, startGui } from "../gui.ts";
+import { alive } from "../remote.ts";
 import { answers, type GuiRecord, postServer, readRecord as readGuiJson, writeRecordFile } from "../handover.ts";
 import type { Session } from "../herdr.ts";
 import { type GuiLink } from "../link/guiport.ts";
@@ -53,6 +54,8 @@ export interface GuiHostOptions {
 	started(): string | undefined;
 	/** The server's intercom session, listed sessions included. */
 	sessions(): Promise<Session[]>;
+	/** Whether the process a gui.json names still runs as that process (pid alive, started when the record says): only then is it asked for anything. */
+	runs?(record: Pick<GuiRecord, "pid" | "started">): boolean;
 	/** The GUI's way to the link holder. */
 	link: GuiLink;
 	/** What the page's server panel shows. */
@@ -138,7 +141,8 @@ export function createGuiHost(o: GuiHostOptions) {
 	const reclaim = async (): Promise<boolean> => {
 		const seen = readGuiJson(dir);
 		if (!seen || (seen.pid === pid && (!seen.started || !o.started() || seen.started === o.started()))) return false;
-		if (!(await answers(seen))) return false;
+		// Nothing is sent to a port whose recorded process is gone: another process that took it has not earned the token and CSRF secret (B2 re-check N1).
+		if (!(o.runs ?? ((r) => alive(r.pid)))(seen) || !(await answers(seen))) return false;
 		log.line("gui-reclaim", { from: phrase(seen.owner, 120), pid: seen.pid });
 		if ((await postServer(seen, "server/stop", { by: owner, take: true }, 2000)).status !== 202) return false;
 		for (const end = Date.now() + RECLAIM_WAIT_MS; Date.now() < end; await new Promise((r) => setTimeout(r, 100))) if (!(await answers(seen))) return true;

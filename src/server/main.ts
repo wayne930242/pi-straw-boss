@@ -339,7 +339,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	const kit = createHeadlessKit({ client: OFFLINE, env: kitEnv, cfg, log: () => {} });
 	const gui = o.gui === false ? undefined : o.gui ?? {};
 	guiHost = gui && createGuiHost({
-		slot, kit, log, pid, version, started: () => own.started,
+		slot, kit, log, pid, version, started: () => own.started, runs: (record) => runsAs({ alive, startOf }, record),
 		sessions: async () => (client?.isConnected() ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))),
 		link: gui.link ?? createGuiLink({ events: kit.pi.events, id: () => serverId(slot), stateDir: slot.stateDir, agentDir: env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), log: (text) => log.line("link", { text }) }),
 		status: () => ({ state: phase === "ready" ? "live" : phase, version, pid, mode, desk, uptimeMs: now() - startedAt, log: fileOf(slot, "log"), ...(own.lastError ? { lastError: own.lastError } : {}) }),

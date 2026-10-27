@@ -35,6 +35,9 @@ export interface HostedOptions {
 let pids = 7000;
 const live = new Set<number>();
 const started: Hosted[] = [];
+/** A pid the fake `alive` counts as running (a pi session of an older build that the test plays); `forget` ends it. */
+export const markAlive = (pid: number) => void live.add(pid);
+export const markGone = (pid: number) => void live.delete(pid);
 /** Stops every server a test started; call it after each test. */
 export const stopHosted = async () => void (await Promise.all(started.splice(0).map((h) => h.stop())));
 

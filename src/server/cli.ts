@@ -288,7 +288,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 				await takeOver(ctx, seen.record);
 			}
 			// A supervisor's start is the infra's explicit choice, and a stop is never left on a `serve` server, so a `stopped` found here is an earlier detached server's.
-			clearStopped(slot);
+			clearStopped(slot, true); // the server's stop only: a GUI stopped on purpose stays so
 			clearStartError(slot);
 			scrubIdentity();
 			const handle = await server({ slot, env: serverEnv(env), mode: "serve", by: ctx.by, version });
