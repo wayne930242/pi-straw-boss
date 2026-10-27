@@ -249,6 +249,8 @@ test("a page load at a replaced address gets a short HTML 403 that says so and h
 	const zh = await raw(gui, dead, { headers: { "sec-fetch-dest": "document", "accept-language": "zh-TW,zh;q=0.9,en;q=0.8" } });
 	assert.match(zh.body, /這個網址在這裡無法使用/);
 	assert.ok(!zh.body.includes(gui.token) && !zh.body.includes(gui.csrf));
+	for (const lang of ["zh-Hant", "zh-HK,en"]) assert.match((await raw(gui, dead, { headers: { "sec-fetch-dest": "document", "accept-language": lang } })).body, /這個網址在這裡無法使用/, lang);
+	for (const lang of ["zh-CN,zh;q=0.9", "zh-Hans", "en-US,zh-TW;q=0.5"]) assert.match((await raw(gui, dead, { headers: { "sec-fetch-dest": "document", "accept-language": lang } })).body, /This address does not work here/, `only Traditional Chinese as the first language gets the zh-TW note: ${lang}`);
 	const script = await raw(gui, dead, { headers: { "sec-fetch-dest": "empty" } });
 	assert.deepEqual([script.status, script.body], [403, "forbidden"]);
 });

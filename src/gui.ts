@@ -169,7 +169,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 		const who = access.check(req, kind, (own().address() as AddressInfo).port, given, path);
 		if ("status" in who) {
 			// A page load at a dead address (the token was replaced by a restart) says so, without a secret in it; a script's request gets the plain refusal.
-			if (who.status === 403) return void (req.method === "GET" && req.headers["sec-fetch-dest"] === "document" ? res.writeHead(403, { ...HEADERS, "content-type": TYPES[".html"] }).end(`<!doctype html><meta charset="utf-8"><p>${/^\s*zh/i.test(String(req.headers["accept-language"] ?? "")) ? REPLACED_ZH : REPLACED}</p>`) : fail(403));
+			if (who.status === 403) return void (req.method === "GET" && req.headers["sec-fetch-dest"] === "document" ? res.writeHead(403, { ...HEADERS, "content-type": TYPES[".html"] }).end(`<!doctype html><meta charset="utf-8"><p>${/^\s*zh-(?:tw|hk|mo|hant)\b/i.test(String(req.headers["accept-language"] ?? "")) ? REPLACED_ZH : REPLACED}</p>`) : fail(403));
 			// The SameSite=Strict cookie stays behind on a navigation from another site, and Android counts launching the installed app as one: such a
 			// page load reloads itself once, a same-origin navigation that carries the cookie when this device has one. Sec-Fetch-Site decides, so the
 			// reload never loops, and a browser that sends no Sec-Fetch-Site gets the plain refusal.
