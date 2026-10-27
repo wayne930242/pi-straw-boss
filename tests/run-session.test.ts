@@ -1,27 +1,23 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rmSync } from "node:fs";
 import { afterEach, beforeEach, test } from "node:test";
-import { createFauxCore, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
-import { type AgentSession, createAgentSession, DefaultResourceLoader, type ExtensionAPI, ModelRuntime, SettingsManager, SessionManager } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { createRunMode, eventText } from "../src/runmode.ts";
-import type { Kit } from "../src/state.ts";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import { eventText } from "../src/runmode.ts";
+import { type Answer, call, type Request, results, rig as makeRig, scratchRoot } from "./run-rig.ts";
 import { until } from "./server-world.ts";
 
 // A local run against the events of a real pi agent session (a faux model, no network, a scripted server): the brief in its role section, its events taken one at a time at idle, the tower tools
 // that are clients of the server, `tower_done` ending it, and the `intercom` tool blocked (docs/specs/2026-10-26-sb-backend.md, Real pi session).
 
-type Request = Record<string, unknown>;
-type Answer = { ok: boolean; [key: string]: unknown };
 let root = "";
 const sessions: AgentSession[] = [];
-beforeEach(() => void (root = realpathSync(mkdtempSync(join(tmpdir(), "psb-run-session-")))));
+beforeEach(() => void (root = scratchRoot()));
 afterEach(() => {
 	for (const s of sessions.splice(0)) s.dispose();
 	rmSync(root, { recursive: true, force: true });
 });
+const rig = (srv: ReturnType<typeof server>, over: { flag?: string | null } = {}) => makeRig(root, (r) => srv.ask(r), sessions, over);
 
 const BRIEF = "You are a run of the tower of workspace Alpha (wA); head tower: Alpha. BRIEF-MARK";
 /** The server a run talks to: scripted answers, and every request kept. */
@@ -56,38 +52,6 @@ function server() {
 	};
 }
 
-async function rig(srv: ReturnType<typeof server>, { flag = "RUN" }: { flag?: string | null } = {}) {
-	const agentDir = join(root, "agent"), project = join(root, "project");
-	mkdirSync(agentDir, { recursive: true });
-	mkdirSync(project);
-	const faux = createFauxCore({ models: [{ id: "faux-1" }] });
-	const runtime = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: null, refreshOnCreate: false });
-	runtime.registerProvider("faux", { api: faux.api as never, baseUrl: "http://faux.invalid", apiKey: "x", streamSimple: faux.streamSimple as never, models: [{ id: "faux-1", name: "faux", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100_000, maxTokens: 4000 }] });
-	const notes: string[] = [], shutdowns: number[] = [];
-	let api!: ExtensionAPI;
-	const loader = new DefaultResourceLoader({
-		cwd: project, agentDir, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
-		extensionFactories: [(pi) => {
-			api = pi;
-			// A stand-in for pi-intercom's tool, which a run must not be able to call.
-			pi.registerTool({ name: "intercom", label: "intercom", description: "send", parameters: Type.Object({}), execute: async () => ({ content: [{ type: "text", text: "SENT" }], details: undefined }) });
-			// SAFETY: the run mode reads only these fields of the kit (pi, cfg.env/now/sleep/promptDir/run, s, guiDir, tell).
-			const kit = { pi, cfg: { env: { HERDR_PANE_ID: "wA:p1", HERDR_WORKSPACE_ID: "wA", HERDR_TAB_ID: "wA:t1" }, now: Date.now, sleep: async () => {}, promptDir: join(import.meta.dirname, "..", "prompts"), run: async () => { throw new Error("no herdr"); } }, s: {}, guiDir: join(root, "straw-boss"), me: () => "", role: () => undefined, tell: (text: string) => void notes.push(text) } as unknown as Kit;
-			createRunMode(kit, undefined, { ask: (r: Request) => srv.ask(r), pollMs: 20, claimWaitMs: 200, startMs: 500 });
-		}],
-	});
-	await loader.reload();
-	if (flag !== null) loader.getExtensions().runtime.flagValues.set("sb-run", flag);
-	const { session } = await createAgentSession({
-		cwd: project, agentDir, modelRuntime: runtime, model: runtime.getModel("faux", "faux-1")!, resourceLoader: loader, sessionManager: SessionManager.inMemory(),
-		settingsManager: SettingsManager.inMemory({}),
-	} as never);
-	sessions.push(session);
-	await session.bindExtensions({ shutdownHandler: () => void shutdowns.push(Date.now()) } as never);
-	return { faux, session, notes, shutdowns, api: () => api };
-}
-const call = (name: string, args: Record<string, string | number>) => fauxAssistantMessage([fauxToolCall(name, args)]);
-const results = (session: AgentSession) => session.messages.filter((m) => (m as { role: string }).role === "toolResult").map((m) => (m as { content: { text?: string }[] }).content.map((c) => c.text ?? "").join(""));
 
 test("a run claims with its run id and PID, puts the brief in its role section, and takes its events one at a time at idle, each confirmed", async () => {
 	const srv = server();

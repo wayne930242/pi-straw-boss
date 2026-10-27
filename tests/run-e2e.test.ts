@@ -1,0 +1,66 @@
+import assert from "node:assert/strict";
+import { rmSync } from "node:fs";
+import { afterEach, beforeEach, test } from "node:test";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import { readQueue } from "../src/server/towerstore.ts";
+import { callControl } from "../src/server/socket.ts";
+import { readRun } from "../src/server/towerrunstore.ts";
+import { bundle, noLink, noTailscale } from "./gui-fakes.ts";
+import { type Answer, call, type Request, rig as makeRig, scratchRoot } from "./run-rig.ts";
+import { type Running, until } from "./server-world.ts";
+import { TowerWorld } from "./tower-world.ts";
+
+// The pi side of a run (src/runmode.ts, a real pi session with a faux model) against the real sb server of a test world (src/server/main.ts, a fake Herdr and fake pi-intercom clients): the two halves
+// of the protocol agree on every request and reply (docs/specs/2026-10-26-sb-backend.md, Real pi session, Integration).
+
+let world: TowerWorld, root = "";
+const sessions: AgentSession[] = [];
+beforeEach(() => {
+	world = new TowerWorld();
+	world.setFlag(true);
+	root = scratchRoot();
+});
+afterEach(async () => {
+	for (const s of sessions.splice(0)) s.dispose();
+	await world.close();
+	rmSync(root, { recursive: true, force: true });
+});
+const from = { id: "main-1", name: "docs-main" };
+
+test("an event wakes a run; the run claims, takes the event, answers with tower_reply under the tower identity, and ends with tower_done: the server records the note and the run as done", async () => {
+	world.sessions = [{ id: "main-1", name: "docs-main", herdrLocation: { status: "ok", workspace: { id: "wA", label: "Alpha" }, tab: { id: "wA:t1", label: "work" }, paneId: "wA:p1" } }];
+	const s: Running = await world.start({ gui: { bundle, tailscale: noTailscale, link: noLink, bindWaitMs: 200 } });
+	await s.handle.ready;
+	const serverAsk = (r: Request): Promise<Answer> => callControl(s.handle.endpoint, world.record()!.secret, r as { cmd: string }).then((x) => x.reply as Answer);
+	await serverAsk({ cmd: "ensure-tower", workspace: "wA" });
+	world.client("sb-tower-wa")!.incoming(from, { id: "m1", content: { text: "[straw net from=docs-main] where does the deploy stand?" } });
+	await until(() => world.pis.size === 1, "the run's pi");
+	const [id, pi] = [...world.pis.entries()][0]!;
+	const received: string[] = [];
+	// The pi of the faux session is not the fake pi the server recorded: its claim carries the recorded pane, pid, and start time.
+	const ask = (r: Request) => (r.cmd === "claim" ? serverAsk({ ...r, pane: pi.pane, pid: pi.pid, started: `T-${pi.pid}` }) : serverAsk(r)).then((a) => (received.push(String(r.cmd)), a));
+	const r = await makeRig(root, ask, sessions, { flag: id });
+	const seen: string[] = [];
+	r.faux.setResponses([
+		((context: { messages: unknown[] }) => (seen.push(JSON.stringify(context.messages)), call("tower_reply", { to: "docs-main", message: "deploy is green", reply: false }))) as never,
+		call("tower_done", { note: "answered docs-main about the deploy" }),
+		fauxAssistantMessage("done"),
+	]);
+	await until(() => r.shutdowns.length === 1, "the run to end itself");
+	assert.match(seen[0]!, /where does the deploy stand/, "the event reached the model");
+	assert.match(seen[0]!, /tower of workspace Alpha/, "with the server's brief in the role section");
+	const sent = world.client("sb-tower-wa")!.sent.at(-1)!;
+	assert.equal(sent.to, "main-1");
+	assert.match(sent.text, /id=sb-tower-wa role=tower/);
+	assert.match(sent.text, /kind=tower_reply/);
+	assert.ok(sent.text.endsWith("] deploy is green"));
+	for (const cmd of ["claim", "run-file", "run-poll", "run-taken", "run-tool", "run-done"]) assert.ok(received.includes(cmd), `the run asked ${cmd}`);
+	// pi is gone: the pane is back at its shell, and the server closes the run.
+	world.live.delete(pi.pid);
+	await until(() => readRun(world.slot, "wA", id)?.outcome === "done", "the run recorded as done");
+	assert.equal(readRun(world.slot, "wA", id)?.events.length, 1);
+	assert.deepEqual(readQueue(world.slot, "wA").filter((e) => !e.taken), [], "nothing is left in the queue");
+	const status = (await serverAsk({ cmd: "status" })).towers as { service: { state: string } }[];
+	assert.equal(status[0]!.service.state, "standing");
+});
