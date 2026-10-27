@@ -1,3 +1,4 @@
+import "./setup.ts"; // a run without --import ./tests/setup.ts is isolated too, as long as a world is built (setup.ts)
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,6 +40,8 @@ export class ServerWorld {
 	spawnMs = 0;
 	/** Servers still starting when a test ends are waited for and shut down with the rest: a start in flight must not leave a server's timers behind. */
 	private starting: Promise<unknown>[] = [];
+	/** The looks of the sessions given `server()` below: one in flight when a test ends would make files in the folder again after it is removed. */
+	private looks: Promise<unknown>[] = [];
 	private closed = false;
 
 	get stateDir() { return join(this.root, "agent", "straw-boss"); }
@@ -71,6 +74,10 @@ export class ServerWorld {
 		void handle.done.then((code) => (this.live.delete(pid), this.exitCodes.set(pid, code)));
 		return running;
 	}
+	/** The server deps of a session whose look reaches this world: `ctx` (the requester of `ctx()` by default) and a fake cli, with its looks tracked for `close()`. */
+	server(ctx: Partial<Ctx> = {}, over: object = {}) {
+		return { ctx, cli: "/fake/cli.mjs", track: (done: Promise<unknown>) => void this.looks.push(done), ...over };
+	}
 	/** A requester: its spawn starts a server in this process from "its package" (`version`). */
 	ctx(over: Partial<Ctx> = {}): Ctx {
 		const version = over.version ?? "0.44.0";
@@ -96,6 +103,8 @@ export class ServerWorld {
 	}
 	async close() {
 		this.closed = true;
+		// A look that began before the test ended may begin a start; the start is awaited after the looks, then both are done before anything is removed.
+		await Promise.allSettled(this.looks);
 		await Promise.allSettled(this.starting);
 		await Promise.all(this.running.map((r) => r.handle.shutdown(0)));
 		rmSync(this.root, { recursive: true, force: true });

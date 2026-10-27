@@ -20,7 +20,7 @@ const MAX_LOG_LINES = 200;
 const STOP_WARNING = "Every workspace then loses its live tower, and mains are demoted 15 s later. The server stays down until /boss server or `cli.mjs up` starts it again.";
 
 /** Replaces what the look reaches the machine with, for tests. */
-export interface ServerLookDeps { ctx?: Partial<Ctx>; cli?: string; /** The package folder whose package.json holds the version of the package on disk. */ root?: string }
+export interface ServerLookDeps { ctx?: Partial<Ctx>; cli?: string; /** The package folder whose package.json holds the version of the package on disk. */ root?: string; /** Told each look as it starts, so a test can wait for the looks in flight before it removes the folder they work in. */ track?: (done: Promise<void>) => void }
 
 export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: ServerLookDeps) {
 	const told = new Set<string>();
@@ -58,7 +58,12 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 	const ctxFor = (): Ctx => makeCtx({ slot: slot(), version: version(), cli: cli(), by: asker(), env: cfg.env, now: cfg.now, ...deps.ctx });
 
 	/** One look: start, upgrade, or leave the server as it is. Anything that cannot be done is told once. */
-	async function look() {
+	const look = () => {
+		const done = lookOnce();
+		deps.track?.(done);
+		return done;
+	};
+	async function lookOnce() {
 		if (looking || stopped || !interactive) return;
 		looking = true;
 		let verdictWas: string | undefined, upgradePair: string | undefined;

@@ -11,6 +11,7 @@ import {
 	adoptStarting, clearStartError, clearStopped, endStarting, fileOf, type IntercomScope, type LockDeps, LockUnreadable, markStarting, prepareSlot, readRecord, secretDir, readStartError, restartingFresh, type ServerRecord,
 	type Slot, type StartError, takeLock, TOUCH_MS, touchRestarting, updateRecord, writeStartError,
 } from "./record.ts";
+import { guarded, guardHome, guardSpawn, noteStarted } from "./testguard.ts";
 import { ownerGate, resetFileAcl } from "./winprep.ts";
 import { callControl, ControlError, helloWhy, type Reply } from "./socket.ts";
 
@@ -90,8 +91,10 @@ export interface Launched {
 }
 export const SPAWN_OPTIONS = { detached: true, stdio: "ignore", windowsHide: true } as const;
 export const spawnDetached = (spec: SpawnSpec): Launched => {
+	guardSpawn(spec);
 	const child = spawn(spec.command, spec.args, { ...spec.options, env: spec.env, cwd: spec.cwd });
 	child.unref();
+	noteStarted(child.pid);
 	return { pid: child.pid, exited: new Promise<number | null>((resolve) => (child.once("exit", (code) => resolve(code)), child.once("error", () => resolve(-1)))) };
 };
 
@@ -147,9 +150,11 @@ export function makeCtx(over: Partial<Ctx> & Pick<Ctx, "slot" | "version" | "cli
 	const now = over.now ?? Date.now, alive = over.alive ?? pidAlive, start = over.startOf ?? startOf;
 	const sleep = over.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 	const log = over.log ?? createLog(fileOf(over.slot, "log"), { now });
+	// A test run is refused here, before a lock or a placeholder record is written, when its real spawn would start a server outside the run's temp root.
+	if (!over.spawn) guardHome({ cwd: over.slot.dir, env: over.env ?? process.env });
 	const platform = over.platform ?? process.platform, prepare = over.prepare ?? ((slot: Slot, ms?: number, gate?: () => void) => prepareSlot(slot, platform, undefined, ms, gate));
 	return {
-		env: process.env, platform: process.platform, node: process.execPath, spawn: platform === "win32" ? (spec) => spawnBreakaway(spec, { fallback: spawnDetached }) : spawnDetached, timers: timersFor(over.platform),
+		env: process.env, platform: process.platform, node: process.execPath, spawn: platform === "win32" ? guarded((spec) => spawnBreakaway(spec, { fallback: spawnDetached })) : spawnDetached, timers: timersFor(over.platform),
 		kill: (pid, signal) => void process.kill(pid, signal), prepare,
 		gate: over.gate ?? (over.prepare || platform !== "win32" ? () => false : (slot: Slot, ms?: number) => ownerGate(slot.stateDir, undefined, ms)),
 		// This process holds the locks it takes: it is alive however the liveness check is replaced.

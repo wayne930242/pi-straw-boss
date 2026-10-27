@@ -288,12 +288,12 @@ test("POSIX: a detached server survives its starter's process group being killed
 	const script = join(dir, "starter.mjs");
 	const client = new URL("../src/server/client.ts", import.meta.url).href;
 	writeFileSync(script, `import { spawnDetached, SPAWN_OPTIONS } from ${JSON.stringify(client)};
-const child = spawnDetached({ command: process.execPath, args: ["-e", "setInterval(() => {}, 1000)"], env: process.env, cwd: process.cwd(), options: SPAWN_OPTIONS });
+const child = spawnDetached({ command: process.execPath, args: ["-e", "setInterval(() => {}, 1000)"], env: process.env, cwd: process.env.SB_TEST_ROOT, options: SPAWN_OPTIONS });
 process.stdout.write(child.pid + "\\n");
 setInterval(() => {}, 1000);
 `);
 	// The starter leads a process group of its own, as a pane's shell does.
-	const starter = spawn(process.execPath, ["--experimental-strip-types", script], { detached: true, stdio: ["ignore", "pipe", "inherit"] });
+	const starter = spawn(process.execPath, ["--experimental-strip-types", script], { detached: true, stdio: ["ignore", "pipe", "inherit"], env: { ...process.env, SB_TEST_REAL_SERVER: "1" } });
 	let child = 0;
 	try {
 		child = await new Promise<number>((resolve, reject) => {
