@@ -124,7 +124,7 @@ const restarting = (agentEnv: Record<string, string | undefined>, began: number,
 	return slot;
 };
 async function mainUnder(token: string) {
-	const a = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1", deps: { ...deps, guardMs: 50 } });
+	const a = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1", deps: { ...deps, guardMs: 50, server: server() } });
 	await a.start();
 	const tower = world.tower("tower-wA", "wA:t7", "wA:p7", false, deps);
 	await tower.start();
