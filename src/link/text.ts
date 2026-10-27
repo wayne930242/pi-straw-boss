@@ -13,7 +13,7 @@ export function restrictLabel(text: string): string {
 	return cut || "?";
 }
 
-/** A notice's text on the label character set (anything else becomes `_`), cut at `max` characters: a notice reaches agents through `boss_server`, so no byte of it is a peer's to choose. */
+/** A notice's text on printable ASCII (anything else becomes `_`), cut at `max` characters: a notice reaches agents through `boss_server`; peer fields in it are already label-restricted, so no byte of it is a peer's to choose. */
 export function restrictNotice(text: string, max = 300): string {
-	return text.replace(OUTSIDE, "_").slice(0, max);
+	return text.replace(/[^\x20-\x7e]+/g, "_").slice(0, max);
 }

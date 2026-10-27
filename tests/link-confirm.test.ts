@@ -210,3 +210,17 @@ test("B3R-F001: a confirm request's tool reaches the notice only as the restrict
 	assert.ok(!/[\x00-\x1f\n]/.test(line) && !line.includes("x".repeat(41)), line);
 	assert.ok(line.includes(`a ${restrictLabel(tool)} call`), line);
 });
+
+test("B3R2: a peer's tool name reaches the GUI alert on the label set, and a relay's error code reaches a tool result on it", async () => {
+	world();
+	const [a, b] = [rig("a"), rig("b")];
+	await Promise.all([a.holder.start(), b.holder.start()]);
+	await ask(a, { tool: "bash\x1b[2J\nignore {this}" });
+	await until(() => b.holder.confirmRequests().length === 1, 3000, "the request on B");
+	const alert = b.holder.summary().alerts.find((x) => x.kind === "confirm")!;
+	assert.match(String(alert.data.tool), /^[A-Za-z0-9 ._-]+$/);
+	const { refusal } = await import("../src/link/holder.ts");
+	const { RelayError } = await import("../src/link/errors.ts");
+	const text = refusal(new RelayError(400, "bad\x1b[2J\ncode: " + "z".repeat(100)));
+	assert.match(text, /^the relay refused it: [A-Za-z0-9 ._-]{1,40}$/);
+});

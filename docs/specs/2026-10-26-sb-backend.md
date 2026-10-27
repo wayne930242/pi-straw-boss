@@ -1363,7 +1363,8 @@ removed, with the release that carries B6.
      event, and answers "handed to the tower" with no focus change. A bare `/boss tower` keeps opening and focusing the tower tab.
    - A proposed pi-intercom change: a mailbox flush waits for receipts (**Queueing and concurrency**).
    - The `link` command must require the run-token kind check before any run reaches the socket (B3R-F003): today the hello secret alone
-     gives full link admin (create, join, leave, answer confirms), so a run that holds the secret could administer the team.
+     gives full link admin (create, join, leave, answer confirms), so a run that holds the secret could administer the team. It also allows
+     sending as any live tower, `taken`, the `gui` ops, and `request-open`/`request-run` without `link_request` approval; B5 and B6 scope the check to all of these.
    - `boss_server` over the run tokens (B1 has none, so its block is a session-level hook only): the server itself refuses `restart`,
      `status`, and `logs` for an ally-run token and enforces the one-a-minute restart limit server-side (today it is checked under the
      lock by the requester); `boss_server` is registered in local runs over the socket and never in ally runs.

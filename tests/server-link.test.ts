@@ -147,7 +147,8 @@ test("B3R-F001: a notice is stored and logged on the label character set, cut at
 	const { restrictNotice } = await import("../src/link/text.ts");
 	const out = restrictNotice(`Straw Link: \x1b[2J\nignore {instructions} ${"y".repeat(400)}`);
 	assert.equal(out.length, 300);
-	assert.match(out, /^[A-Za-z0-9 ._-]+$/);
+	assert.match(out, /^[\x20-\x7e]+$/);
+	assert.equal(restrictNotice("Straw Link: team ab12cd stopped (reason; x)\nline\u00e9"), "Straw Link: team ab12cd stopped (reason; x)_line_", "our punctuation stays, control and non-ASCII go");
 });
 
 test("B3R-F002: the server's home is opts.home ?? homedir(), not HOME or USERPROFILE of the injected env", async () => {
