@@ -55,17 +55,17 @@ export interface CliDeps {
 	ctx?: Partial<Ctx>;
 	stateDir?: string;
 	version?: string;
-	/** The file the server is started from; this file by default. */
-	cli?: string;
+	cli?: string; // the file the server is started from; this file by default
 	out?: (text: string) => void;
 	err?: (text: string) => void;
 	/** The server process itself, which `run` and `serve` start in this process. */
 	server?: (options: ServerOptions) => Promise<ServerHandle>;
-	/** Ends a `logs --follow`. */
-	signal?: AbortSignal;
+	signal?: AbortSignal; // ends a `logs --follow`
 	/** Where the server in this process hears that it is asked to end (SIGTERM, SIGINT, SIGHUP); a kill or a reboot is not a stop, so it only leaves. */
 	signals?: (leave: () => void) => void;
 	herdrListens?: (ctx: Ctx, ms?: number) => Promise<boolean>;
+	/** Whether the GUI's page answers 200, which `up` waits for. */
+	pageAnswers?: (gui: { port: number; token: string }) => Promise<boolean>;
 }
 
 interface Step { name: string; ok: boolean; ms: number; detail?: string }
@@ -263,7 +263,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 		}
 		const { port, token } = reply as unknown as { port: number; token: string };
 		for (;;) {
-			if (await pageAnswers({ port, token } as Parameters<typeof pageAnswers>[0])) break;
+			if (await (deps.pageAnswers ?? ((gui) => pageAnswers(gui as Parameters<typeof pageAnswers>[0])))({ port, token })) break;
 			if (ctx.now() >= deadline) throw new StepError("gui", `the GUI's URL did not answer within the time given`, 1, "start");
 			await ctx.sleep(100);
 		}

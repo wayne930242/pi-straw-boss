@@ -7,7 +7,7 @@ import type { Reply as HttpReply } from "../control.ts";
 import { createDeploys } from "../deploy.ts";
 import { createHub, type Hub } from "../dialogs.ts";
 import { BUNDLE, type Gui, startGui } from "../gui.ts";
-import { type GuiRecord, readRecord as readGuiJson, writeRecordFile } from "../handover.ts";
+import { answers, type GuiRecord, postServer, readRecord as readGuiJson, writeRecordFile } from "../handover.ts";
 import type { Session } from "../herdr.ts";
 import { type GuiLink } from "../link/guiport.ts";
 import { type Net, netSource } from "../net.ts";
@@ -38,6 +38,8 @@ import type { Reply, Request } from "./socket.ts";
 
 /** Binding the recorded ports: a restart's old server is still letting go of them for a moment. */
 export const BIND_WAIT_MS = 5000;
+/** How long a start waits for a live older host to let go of the GUI it was asked to hand over. */
+const RECLAIM_WAIT_MS = 5000;
 /** How long a start waits for remote access to come back before it goes on. */
 const RESUME_WAIT_MS = 3000;
 
@@ -102,6 +104,11 @@ export function createGuiHost(o: GuiHostOptions) {
 		if (seen) writeRecordFile(dir, { ...seen, pid, ...(o.started() ? { started: o.started() } : {}), owner, ownerSession: id, version: o.version, ...(on ? { stopped: true } : { stopped: undefined }) });
 	};
 
+	const unstarted = () => {
+		const seen = readGuiJson(dir);
+		if (seen?.pid === pid && seen.started) writeRecordFile(dir, (({ started: _started, ...rest }) => rest)(seen));
+	};
+
 	const sessions = () => o.sessions();
 	const unsaved = (g: Gui) => g.access.unsaved();
 	/** A server that starts here picks up where the last one left off: remote access comes back when it was wanted on (no QR; a failure is told, and the wish stays for the next start), and a serve entry a crashed server left goes when it was not. */
@@ -123,6 +130,20 @@ export function createGuiHost(o: GuiHostOptions) {
 		}
 	};
 
+	/**
+	 * A GUI that a live older host still serves (a pi session before 0.46.0, which the first start after an upgrade finds beside it): the host is asked to hand over as an older build's takeover does
+	 * (`server/stop` with `take`; its serve entry goes with it), and waited for until its page stops answering, so this server binds the same port and the open page reconnects. A host that refuses
+	 * (another sb server, which answers 409) or stays up is left alone, and the bind falls back to another port. Returns whether a host let go.
+	 */
+	const reclaim = async (): Promise<boolean> => {
+		const seen = readGuiJson(dir);
+		if (!seen || (seen.pid === pid && (!seen.started || !o.started() || seen.started === o.started()))) return false;
+		if (!(await answers(seen))) return false;
+		log.line("gui-reclaim", { from: phrase(seen.owner, 120), pid: seen.pid });
+		if ((await postServer(seen, "server/stop", { by: owner, take: true }, 2000)).status !== 202) return false;
+		for (const end = Date.now() + RECLAIM_WAIT_MS; Date.now() < end; await new Promise((r) => setTimeout(r, 100))) if (!(await answers(seen))) return true;
+		return false;
+	};
 	const begin = async (prefer: ReturnType<typeof recorded>, wait: number): Promise<Gui> => {
 		hub ??= createHub(kit.pi, id, NO_BRIDGE);
 		const net = netSource({ run: cfg.run, world: cfg.world, sessions, stashed: () => stashedList(slot.stateDir), trust, hub });
@@ -136,7 +157,8 @@ export function createGuiHost(o: GuiHostOptions) {
 			net, call: cfg.call, hub, dir: o.bundle ?? BUNDLE, paired: join(dir, "paired.json"), port: prefer.port, remotePort: prefer.remotePort, token: prefer.token, csrf: prefer.csrf, bindWaitMs: wait,
 			link: { call: (name, args) => o.link.call(name, args), enable: () => o.link.enable() }, trust: { answer: trust.answer, watch: trust.watch },
 			server: { status: () => o.status(), log: (lines) => tailLog(fileOf(slot, "log"), lines), restart: async (reason) => (o.restart ? o.restart(reason) : { status: 501, body: { error: "unavailable", reason: "This server cannot restart itself." } }) },
-			// Another build's /boss gui stop, or a takeover by one: the GUI stops, and nothing starts it again but the boss's own command.
+			// An older build's /boss gui stop: the GUI stops, and nothing starts it again but the boss's own command. Its takeover is refused (409): that build reports the GUI as stale and leaves it alone.
+			refuseTake: true,
 			onStop: (asked) => { log.line("gui-stop-asked", { by: phrase(asked.by, 120), take: asked.take }); void stop().catch(() => {}); },
 			onSaveFailed: (reason) => log.line("error", { code: "paired", text: phrase(reason, 200) }),
 			onRemote: async () => void (await switchRemote(running, true, dir, ts), (remoteNote = undefined), log.line("remote-on", { how: "page" })),
@@ -155,7 +177,8 @@ export function createGuiHost(o: GuiHostOptions) {
 		if (gui) return Promise.resolve(gui);
 		return (opening ??= (async () => {
 			const prefer = recorded();
-			const started = await begin(prefer, wait);
+			const reclaimed = await reclaim();
+			const started = await begin(prefer, reclaimed ? Math.max(wait, o.bindWaitMs ?? BIND_WAIT_MS) : wait);
 			gui = started;
 			writeGuiJson(started);
 			updateRecord(slot, (r) => (r.pid === pid ? { ...r, gui: { port: started.port, token: started.token, stopped: false } } : undefined));
@@ -225,6 +248,8 @@ export function createGuiHost(o: GuiHostOptions) {
 				await running.stop();
 				// A stop on purpose is a stopped GUI to anything that reads gui.json (straw-boss-desk): the record says whose it was.
 				if (onPurpose) guiJsonStopped(true);
+				// A restart or a crash is not a stop: gui.json goes without `started`, which no older build adopts, until the next server writes it again (docs/specs/2026-10-26-sb-backend.md, mixed versions).
+				else unstarted();
 			}
 		},
 		/** This server's start time arrived late: gui.json carries it too. */

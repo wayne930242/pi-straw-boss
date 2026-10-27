@@ -482,7 +482,7 @@ async function restartLocked(ctx: Ctx, { reason, downgrade, upgrade, boss, limit
 	if (seen.denied) throw new ServerError("unreachable", unreachableText(record!));
 	if (record?.stopped && !seen.live && !boss) throw new ServerError("stopped", "the sb server was stopped on purpose; /boss server or `cli.mjs up` starts it again");
 	if (record && newer(record.version, ctx.version) && !downgrade) throw new ServerError("older", `the sb server runs pi-straw-boss ${record.version}, newer than this package's ${ctx.version}; a restart from an older package needs --downgrade`);
-	if (boss) clearStopped(ctx.slot);
+	if (boss) clearStopped(ctx.slot, true); // the server's own stop only: a GUI stopped on purpose stays so until /boss gui or `cli.mjs up`
 	const done = (found: ServerRecord): Restarted => ({ server: upgrade ? "upgraded" : "restarted", record: found });
 	const old = record && { pid: record.pid, secret: record.secret };
 	// A server that is down starts, whatever the limit says. A `serve` server down with a fresh `restarting` is between two lives of a supervisor, which another requester is

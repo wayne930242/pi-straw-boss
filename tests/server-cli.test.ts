@@ -191,6 +191,34 @@ test("up is the boss's own start: it clears stopped in server.json and gui.json 
 	assert.equal(JSON.parse(await import("node:fs").then((fs) => fs.readFileSync(`${world.stateDir}/gui.json`, "utf8"))).stopped, undefined);
 });
 
+test("up warns remote_off with the reason when remote access was wanted and cannot come back, and still prints the URL", async () => {
+	mkdirSync(world.slot.dir, { recursive: true });
+	writeFileSync(`${world.slot.dir}/paired.json`, JSON.stringify({ host: "box.tail1.ts.net:8443", login: "me@example.com", wanted: true, sessions: {} }));
+	const up = await cli(["up"]);
+	assert.equal(up.code, 0, up.err);
+	const warning = (up.json?.warnings as { code: string; text: string }[]).find((w) => w.code === "remote_off");
+	assert.match(warning?.text ?? "", /Remote access stays off: Tailscale is not installed/);
+	const gui = world.record()!.gui!;
+	assert.equal(up.json?.url, `http://127.0.0.1:${gui.port}/${gui.token}/`);
+});
+
+test("up waits for the GUI's URL to answer 200 before it prints it, and fails at step gui when it never does", async () => {
+	const s = await world.start();
+	await s.handle.ready;
+	const seen: { port: number; token: string }[] = [];
+	const slow = async (gui: { port: number; token: string }) => (seen.push(gui), seen.length >= 3);
+	const up = await cli(["up"], { pageAnswers: slow });
+	assert.equal(up.code, 0, up.err);
+	assert.equal(seen.length, 3, "asked until it answered");
+	const gui = world.record()!.gui!;
+	assert.deepEqual(seen[0], { port: gui.port, token: gui.token });
+	assert.equal(up.json?.url, `http://127.0.0.1:${gui.port}/${gui.token}/`);
+	const never = await cli(["up", "--timeout", "1"], { pageAnswers: async () => false });
+	assert.equal(never.code, 1);
+	assert.equal(never.errJson?.step, "gui");
+	assert.match(String(never.errJson?.reason), /did not answer/);
+});
+
 test("a start that fails: loader, intercom, or acl in start-error.json is exit 3 with the reason; any other failure is exit 1 at step server", async () => {
 	world.intercomError = Object.assign(new Error("tsx was not found from /x/dist/server: it is a dependency of pi-straw-boss, so reinstall the package"), { code: "loader" });
 	const loader = await cli(["up"]);

@@ -126,6 +126,36 @@ test("/boss gui in a session on a stopped server asks the server to start it onl
 	assert.equal(urlOf(viewer), hosted.url);
 });
 
+test("/boss stash and /boss close all do not start a GUI that was stopped on purpose, or a server that was: they say so and the GUI stays down", async () => {
+	world.autoTowers();
+	const main = world.agent({ id: "main-1", name: "api-main", pane: "wA:p1", tab: "wA:t1", deps });
+	await main.start();
+	await main.promote();
+	const hosted = await startHosted(world);
+	const url = hosted.url;
+	await hosted.ask("gui-stop");
+	for (const command of ["stash", "close all"]) {
+		const before = main.notices.length;
+		await main.command(command);
+		const told = main.notices.slice(before);
+		assert.ok(told.some((n) => n.level === "error" && /stopped on purpose; \/boss gui starts it, then run this again/.test(n.text)), `${command}: ${JSON.stringify(told)}`);
+	}
+	await assert.rejects(status(url), /ECONNREFUSED/, "the GUI stays down");
+	assert.equal(hosted.record().gui?.stopped, true);
+	// A server stopped on purpose: nothing starts it or its GUI either.
+	await hosted.ask("gui", { boss: true });
+	assert.equal(await status(url), 200);
+	await hosted.ask("stop", { by: "test" });
+	await hosted.handle.done;
+	for (const command of ["stash", "close all"]) {
+		const before = main.notices.length;
+		await main.command(command);
+		assert.ok(main.notices.slice(before).some((n) => n.level === "error"), `${command} after a server stop is an error`);
+	}
+	await assert.rejects(status(url), /ECONNREFUSED/, "the GUI stays down after a server stop");
+	assert.equal(hosted.record().stopped, true, "and no server was started");
+});
+
 const proxyOf = (config: unknown) => (config as { Web?: Record<string, { Handlers: { "/": { Proxy: string } } }> }).Web?.["box.tail1.ts.net:8443"]?.Handlers["/"].Proxy;
 
 test("/boss gui remote turns remote access on in the server and draws the pairing QR in an overlay of this session; its keys mint links of their own; stop and the server's end take the entry down", async () => {

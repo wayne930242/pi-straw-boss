@@ -400,6 +400,25 @@ test("a restart of a down server starts it; of a stopped one it refuses unless i
 	assert.equal(boss.server, "started");
 	assert.equal(world.record()?.stopped, undefined);
 });
+test("the boss's restart keeps a GUI stopped on purpose stopped, in both records, and clears only the server's own stop", async () => {
+	const s = await world.start();
+	await s.handle.ready;
+	const first = world.record()!;
+	assert.equal((await callControl(first.socket, first.secret, { cmd: "gui-stop" })).reply?.ok, true);
+	const live = await restart(world.ctx(), { reason: "the boss", boss: true });
+	assert.equal(live.server, "restarted");
+	assert.notEqual(world.record()?.pid, first.pid, "a new server");
+	assert.equal(world.record()?.gui?.stopped, true, "server.json keeps the GUI stopped");
+	assert.equal(JSON.parse(readFileSync(join(world.slot.dir, "gui.json"), "utf8")).stopped, true, "and so does gui.json");
+	await callStop(world.running.at(-1)!);
+	assert.equal(world.record()?.stopped, true);
+	const down = await restart(world.ctx(), { reason: "the boss", boss: true });
+	assert.equal(down.server, "started");
+	assert.equal(world.record()?.stopped, undefined, "the server's own stop is cleared");
+	assert.equal(world.record()?.gui?.stopped, true, "the GUI's is not");
+	const again = world.record()!;
+	await assert.rejects(fetch(`http://127.0.0.1:${again.gui!.port}/${again.gui!.token}/`));
+});
 async function callStop(s: { handle: { endpoint: string; done: Promise<number> } }) {
 	await callControl(s.handle.endpoint, world.record()!.secret, { cmd: "stop", by: "t" });
 	await s.handle.done;

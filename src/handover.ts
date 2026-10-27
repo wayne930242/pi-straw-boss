@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { join } from "node:path";
@@ -20,9 +21,10 @@ let temps = 0;
  * On Windows a rename onto a file that a reader has open can fail for a moment, so it is tried a few times.
  */
 export function writeRecordFile(dir: string, record: GuiRecord) {
-	const file = join(dir, "gui.json"), temp = `${file}.${process.pid}.${temps++}.tmp`;
+	// Created new (`wx`) under a name no earlier file has, as record.ts writeJson does (R8-F002): a temporary file that was already there is never written to and renamed into place.
+	const file = join(dir, "gui.json"), temp = `${file}.${process.pid}.${temps++}.${randomBytes(4).toString("hex")}.tmp`;
 	try {
-		writeFileSync(temp, JSON.stringify(record), { mode: 0o600 });
+		writeFileSync(temp, JSON.stringify(record), { mode: 0o600, flag: "wx" });
 		for (let tries = 0; ; tries++) {
 			try {
 				return renameSync(temp, file);
