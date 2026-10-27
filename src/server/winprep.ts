@@ -155,26 +155,41 @@ const remember = (dir: string) => {
 };
 const acceptableOwner = (owner: string) => owner.toUpperCase() === sid!.toUpperCase() || OWNER_OK_SIDS.includes(owner);
 const foreignOwner = (dir: string, owner: string, tail: string) => `the folder ${dir} belongs to another account (${owner}), not to ${sid}. Run pi as that account (an elevated shell for an administrator's), or delete the folder ${dir}, then start again. (${tail})`;
+/** How long a read of the owner that failed (Constrained Language Mode, a timeout) is not tried again: a session looks every 2 s, and a read is a blocking PowerShell start. */
+export const OWNER_READ_RETRY_MS = 60_000;
+/** What this process found out about a folder's owner when it could not be accepted, by the folder's identity: the refusal, and for a read that failed, the time it may be tried again. */
+const refused = new Map<string, { id: string; error: Error; retryAt?: number }>();
 /**
- * The gate before the FIRST write into an existing state folder (VM pass on f72b184: a refused start left the lock, the placeholder record, the log and `start-error.json` inside the attacker's folder):
- * one PowerShell reads the folder's owner as a SID, and another account's folder is refused with nothing created in it. It reads only where nothing has been read for this very folder yet
- * (`remember`, by file identity), so `protectFolder`'s owner read for a wrong DACL and a session's earlier start are not repeated. A folder that is not there is left to \`protectFolder\`, which makes it.
- * Called by every path that is about to create a file where no server is known to run (a cold start, a stop of a server that is down); a request that finds a live server writes nothing of its own
- * and runs no PowerShell. Returns whether the owner was read.
+ * The owner gate: before the FIRST write into an existing state folder (VM pass on f72b184: a refused start had left the lock, the placeholder record, the log and `start-error.json` inside the
+ * attacker's folder), and before a record in it is trusted (R13-F003: a request that talks to a record's pipe, or writes in its folder, because of a record another account made there).
+ * One PowerShell reads the folder's owner as a SID, and another account's folder is refused with nothing created in it, nothing sent to a pipe. It reads only where nothing has been read for this very
+ * folder yet (`remember`, by file identity), so `protectFolder`'s owner read for a wrong DACL and a session's earlier look or start are not repeated; a refusal is remembered the same way (a session
+ * looks every 2 s: a foreign folder costs one PowerShell, not one per look), and a read that failed is tried again after `OWNER_READ_RETRY_MS`. A folder that is not there is left to
+ * `protectFolder`, which makes it. Called by every path that is about to create a file where no server is known to run, and by `probe` before it trusts a record. Returns whether the owner was read.
  */
-export function ownerGate(dir: string, run: RunNative = runNative, timeoutMs?: number): boolean {
+export function ownerGate(dir: string, run: RunNative = runNative, timeoutMs?: number, now: () => number = Date.now): boolean {
 	if (!existsSync(dir)) return false;
 	refuseLink(dir);
 	if (isVerified(dir)) return false;
+	const key = dir.toLowerCase(), id = identityOf(dir), before = refused.get(key);
+	if (before && before.id === id && (before.retryAt === undefined || now() < before.retryAt)) throw before.error;
+	let failure: Error;
+	let unreadable = false;
 	try {
 		if (!sid) sid = stepOf("whoami", dir, () => ownerSid(run, timeoutMs));
 		const owner = ownerOfFolder(dir, run, timeoutMs);
-		if (!acceptableOwner(owner)) throw new Refused(foreignOwner(dir, owner, "owner read before the first write; nothing was written into the folder"));
-		remember(dir);
-		return true;
+		if (acceptableOwner(owner)) {
+			refused.delete(key);
+			remember(dir);
+			return true;
+		}
+		failure = new Error(`could not check ${dir} before trusting or writing to it: ${foreignOwner(dir, owner, "owner read before the folder or a record in it is trusted; nothing was written into the folder")}`);
 	} catch (error) {
-		throw new Error(`could not check ${dir} before writing to it: ${(error as Error).message}`);
+		failure = new Error(`could not check ${dir} before trusting or writing to it: ${(error as Error).message}`);
+		unreadable = true;
 	}
+	if (id) refused.set(key, { id, error: failure, ...(unreadable ? { retryAt: now() + OWNER_READ_RETRY_MS } : {}) });
+	throw failure;
 }
 /**
  * Protects a folder and reads its DACL back. `fresh` is a folder this process has just made under an unpredictable name: its DACL is the parent's, wrong by construction, and it is protected at once.
@@ -294,4 +309,4 @@ export function protectFolder(dir: string, run: RunNative = runNative, timeoutMs
 	}
 }
 /** For tests: forgets the owner's SID. */
-export const forgetSid = () => { sid = undefined; verified.clear(); };
+export const forgetSid = () => { sid = undefined; verified.clear(); refused.clear(); };

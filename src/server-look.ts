@@ -87,7 +87,7 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 			if (error instanceof ServerError && error.code === "busy") return;
 			if (verdictWas === "upgrade") failedUpgrade = upgradePair;
 			else failedAt = cfg.now();
-			tellOnce(`failed:${(error as Error).message}`, `Straw Boss: the sb server could not ${verdictWas === "upgrade" ? "upgrade" : "start"}: ${(error as Error).message}`, "error");
+			tellOnce(`failed:${(error as Error).message}`, `Straw Boss: the sb server ${verdictWas === undefined ? "was not looked at" : `could not ${verdictWas === "upgrade" ? "upgrade" : "start"}`}: ${(error as Error).message}`, "error");
 		} finally {
 			looking = false;
 		}

@@ -106,6 +106,25 @@ test("a failed start is told once with the reason, and not tried again at every 
 	assert.match(a.notices.find((n) => /could not start/.test(n.text))!.text, /exited with code 7/);
 });
 
+test("R13-F003: a state folder that belongs to another account is not looked at: told once, nothing sent to its record's pipe, nothing started or written, and no owner read at every look", async () => {
+	plant();
+	const before = readFileSync(fileOf(sw.slot, "record"), "utf8");
+	let reads = 0;
+	const gate = () => {
+		reads++;
+		throw new Error(`could not check ${sw.stateDir} before trusting or writing to it: the folder ${sw.stateDir} belongs to another account (S-1-5-21-9-9-9-1002), not to me`);
+	};
+	const a = world.agent({ id: "f1", pane: "wA:p94", tab: "wA:t1", ui: true, env: { HOME: sw.env.HOME! }, deps: { stateDir: sw.stateDir, version: "0.44.0", adoptMs: 30, server: { ctx: { ...reaching(), alive: () => true, gate }, cli: "/fake/cli.mjs" } } });
+	await a.start();
+	await until(() => a.notices.some((n) => /belongs to another account/.test(n.text)), "the notice");
+	await sleep(250);
+	assert.equal(a.notices.filter((n) => /belongs to another account/.test(n.text)).length, 1, "told once");
+	assert.match(a.notices.find((n) => /belongs to another account/.test(n.text))!.text, /was not looked at/);
+	assert.equal(sw.spawned.length, 0);
+	assert.equal(readFileSync(fileOf(sw.slot, "record"), "utf8"), before, "the record is as it was");
+	assert.ok(reads >= 2, "the gate is asked at every look (its memo is what keeps the PowerShell to one)");
+});
+
 test("a session on a newer package asks the live server to upgrade, which starts it from the session's package", async () => {
 	const s = await sw.start({ version: "0.43.0" });
 	await s.handle.ready;

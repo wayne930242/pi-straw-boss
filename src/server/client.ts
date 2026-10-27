@@ -9,10 +9,10 @@ import { spawnBreakaway } from "./breakaway.ts";
 import { createLog, type Log } from "./log.ts";
 import {
 	adoptStarting, clearStartError, clearStopped, endStarting, fileOf, type IntercomScope, type LockDeps, LockUnreadable, markStarting, prepareSlot, readRecord, secretDir, readStartError, restartingFresh, type ServerRecord,
-	type Slot, type StartError, takeLock, TOUCH_MS, touchRestarting, updateRecord, writeStartError,
+	type Slot, type StartError, takeLock, TOUCH_MS, touchRestarting, updateRecord,
 } from "./record.ts";
 import { ownerGate, resetFileAcl } from "./winprep.ts";
-import { callControl, ControlError, helloWhy, type Reply } from "./socket.ts";
+import { callControl, helloWhy, type Reply } from "./socket.ts";
 
 // What reaches the server from outside it (docs/specs/2026-10-26-sb-backend.md, Starting, Stopping, Restarts and upgrades): a pi session's look, the shell's `cli.mjs`, a
 // supervisor's `serve`. All of them judge liveness the same way, take `server.lock` before they start or restart anything, and start the server from their own package.
@@ -182,6 +182,9 @@ export function runsAs(ctx: Pick<Ctx, "alive" | "startOf">, record: Pick<ServerR
 const DENIED_START_MS = 3000;
 export async function probe(ctx: Ctx, deadline?: number, startKnownElsewhere = false): Promise<Probe> {
 	const record = readRecord(ctx.slot);
+	// R13-F003: a record is what another account's folder can hold too, and everything below trusts it (a pipe to talk to, a secret, the state `status` tells, a record to write back). The folder's owner is
+	// read before any of that, once per process for the folder (the memo of the other gates; nothing is read where there is no record). A foreign folder is a refusal, like the start's.
+	if (record) ownerOk(ctx, deadline);
 	// A record with no socket is a start that has not got far enough to listen (`markStarting`): there is nothing to ask.
 	if (!record || !record.socket || !ctx.alive(record.pid)) return { record, live: false, runs: false, hello: undefined };
 	// The hello comes first: a server that answers it with the secret and its pid is that server, and no start time has to be asked for (on Windows that is a PowerShell start for a process that
@@ -201,6 +204,16 @@ export async function probe(ctx: Ctx, deadline?: number, startKnownElsewhere = f
 	const other = Boolean(record.started) && when !== undefined && when !== record.started;
 	return other ? { record, live: false, runs: false, hello: undefined } : { record, live: false, runs: true, denied: true, hello: undefined };
 }
+
+/** Throws the `acl` refusal of a folder that is another account's (or whose owner cannot be read); returns when the gate passes. */
+function ownerOk(ctx: Ctx, deadline?: number): void {
+	try {
+		ctx.gate(ctx.slot, deadline === undefined ? undefined : within(ctx, deadline, 15_000));
+	} catch (error) {
+		throw aclRefusal(ctx, error as Error);
+	}
+}
+const aclRefusal = (ctx: Pick<Ctx, "now">, error: Error) => new ServerError("start-failed", `acl: ${error.message}`, { at: new Date(ctx.now()).toISOString(), code: "acl", text: error.message });
 
 /** Whether Herdr listens at the slot's socket. */
 export const herdrListens = (ctx: Pick<Ctx, "slot" | "platform">, ms = 2000) => new Promise<boolean>((resolve) => {
@@ -285,8 +298,7 @@ export async function launch(ctx: Ctx, { began, old, deadline }: { began?: strin
 	if (!began) try {
 		ctx.gate(ctx.slot, waitMs);
 	} catch (error) {
-		const text = (error as Error).message;
-		throw new ServerError("start-failed", `acl: ${text}`, { at: new Date(ctx.now()).toISOString(), code: "acl", text });
+		throw aclRefusal(ctx, error as Error);
 	}
 	clearStartError(ctx.slot);
 	let keeps = old, mine: { began: string; expect: Replaced } | undefined;
@@ -368,8 +380,7 @@ export async function lockFor(ctx: Ctx, waitMs: number, deadline?: number, gate 
 		if (gate) gated();
 		if (read) ctx.log.line("phase", { name: "owner-gate", ms: gateMs });
 	} catch (error) {
-		const text = (error as Error).message;
-		throw new ServerError("start-failed", `acl: ${text}`, { at: new Date(ctx.now()).toISOString(), code: "acl", text });
+		throw aclRefusal(ctx, error as Error);
 	}
 	// Prepared just above: the lock only makes the folder again, with no second round of native calls.
 	return takeLock(ctx.slot, ctx.by, { ...ctx.lock, prepare: (slot) => secretDir(slot.dir) }, waitMs).catch((error) => {

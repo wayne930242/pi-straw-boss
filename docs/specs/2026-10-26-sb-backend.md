@@ -297,19 +297,34 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
         long-lived pi session reads it once, `protectFolder` does not read it again for a wrong DACL, and a folder made again under its name is
         read again. **Cost:** one PowerShell on a cold `up` unless this process has already read this folder's owner (one more beside the launch PowerShell; log phase `owner-gate ms=…`, to be measured on
         the VM), and on a `stop` of a server that is down (it writes `stopped`). **A request that finds a server running** (`up` again, `stop`
-        of a live server, `status`, a session's look) reads no owner and starts no PowerShell: it looks first (a read only), and takes the
-        lock without the gate. The owner read for a folder is made once per folder identity; in a `secondary` slot it is passed between the
+        of a live server, `status`, a session's look) takes the lock without the gate, but its look at the record passes the **trust gate**
+        (R13-F003, below): the first look of a process at a folder that has a record reads the owner (one PowerShell); every later one in the
+        same process reads none. The owner read for a folder is made once per folder identity; in a `secondary` slot it is passed between the
         protect call and the `mkdir`s of `servers\<hash>` (R13-F002), so a folder that landed foreign gets not even those empty folders.
         The folder is passed to the PowerShell in the environment (`SB_OWNER_DIR`), never quoted into the script: PowerShell reads U+2018 to
         U+201B as single quotes too (R13-F001). A refusal found by the launch script (rc -2) is not written to `start-error.json` either (R13-F004).
-        **Residual (R13-F003), documented, not fixed in B1:** a folder with a live-looking record is trusted without an owner read. An account
-        that can create entries in `PI_CODING_AGENT_DIR` can make `straw-boss\` with a `server.json` of its own (it knows the secret the hello
-        proves), name its own pid, and use any free pipe name (or one whose DACL denies the victim, which reads as `denied`). A victim's `up`,
-        `stop` or `restart` then writes, inside the attacker's folder, `server.lock`, `server.json` (`stopped`, `clearStopped`,
-        `touchRestarting`, an automatic upgrade of an older record), `server.log` lines and, from the plain-spawn fallback's abort,
-        `start-error.json`; and `status` and `up`'s `url` are spoofed. No secret of the victim is exposed in B1. The ceiling: an attacker who
-        can create entries in `PI_CODING_AGENT_DIR` already reaches `auth.json` (mode 600 means nothing on Windows) and can plant files in
-        `extensions/`. **Before B2 to B4 send session content to the server**, an owner check once per process must precede trusting a record.
+        **The trust gate (R13-F003, closed before B2 to B4 send session content to the server):** a record is what a folder another account made can
+        hold too (an account that can create entries in `PI_CODING_AGENT_DIR` makes `straw-boss\` with a `server.json` of its own, names its own pid, and
+        uses any free pipe name or one whose DACL denies the victim), and the old behavior trusted it: a victim's `up`, `stop` or `restart` wrote
+        `server.lock`, `server.json`, `server.log` lines and `start-error.json` inside the attacker's folder, and `status` and `up`'s `url` were
+        spoofed. Now `probe` (the one look every request makes: a session's look, `status`, `up`, `stop`, `restart`, `serve`, the waits of a
+        start) passes the owner gate (`ownerGate`) as soon as the folder holds a readable record, BEFORE it asks whether the pid lives, sends a hello,
+        or hands the record to any caller. A folder whose owner is not the user, BA or SYSTEM (`OWNER_OK_SIDS`) is refused with the same `acl`
+        error as a start's ("belongs to another account", exit 3 in the shell, told once by a session as "the sb server was not looked at"): nothing
+        is sent to the record's pipe (not even a hello), and nothing is written, because every write path in `client.ts` is behind a probe.
+        A folder with no record is not read (nothing is trusted yet; a start's gate reads it before its first file, as before).
+        **Cost, measured on the Mac as a count of PowerShell starts; the Windows time is for the VM:** one PowerShell per process per folder
+        identity, for any process that finds a record: a session at its first look (the sync read blocks that session's event loop for the
+        length of a PowerShell start, 2 to 5 s on the VM, once), each `cli.mjs status`, `stop`, second `up` (a shell command is a new process: one
+        read each, where it read none before). The memo (`verified`, by volume and file index) also holds a **refusal**: a session looks every
+        2 s, and a foreign folder costs one PowerShell for the process, not one per look. A read that FAILS (Constrained Language Mode, a timeout) is
+        remembered for `OWNER_READ_RETRY_MS` (60 s) and told again meanwhile without a new PowerShell. The wrong-owner verdict lasts as long as the
+        folder's identity does; an owner changed on the same folder is seen by the next pi process. POSIX: the gate is a no-op there (below).
+        **POSIX:** the write paths are already behind `secretDir`, whose `chmod 700` fails with EPERM on a folder the user does not own, and the long
+        socket path moves to `/tmp/sb-<uid>` only when that folder is the user's with mode 700. What POSIX does not do is an owner check before a
+        READ of a record: a foreign `straw-boss/` that a process can read would still be looked at (hello to its socket, `status` text). On POSIX an
+        account that could make it needs write access to the agent directory, which is the user's own (mode 755) unless `PI_CODING_AGENT_DIR` points
+        into a shared place; B1 leaves that as it is.
         The protect call on a swapped temporary folder, and on an existing user-owned folder swapped between the identity check and the call
         (the gate refuses it afterwards), adds the user and SYSTEM where the attacker granted WRITE_DAC and leaves the owner as it was: the
         changes `protectFolder` can make to a foreign folder.
@@ -318,8 +333,19 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
         into the user's, entries already checked) and `/reset /T /C /L`, so a foreign entry is refused with nothing below the folder changed.
         **Residual (R11-F003):** the walk and the calls are not atomic; an account that can already create entries below the folder (only
         through the known plain-`mkdir` windows of other modules, before the folder was protected) can plant one in between, which `/reset`
-        then gives the user's inherited full control and a later start's `/setowner /T` could take. The folder's own protection bounds it;
-        the read-back checks the owner of everything it lists.
+        then gives the user's inherited full control and a later start's `/setowner /T` could take. **`icacls /T /L` DOES descend a junction**
+        (VM pass 6, 8e: `icacls <dir>\* /grant Everyone:(R) /T /C /L` changed the ACL of a file in the junction's target; `/L` only keeps icacls from
+        following a link given as the top-level argument): the walk's refusal of junctions and symbolic links is what protects the target, and a
+        junction planted in the gap between the walk and the `/setowner` or `/reset` call would be descended, so its target's owner and DACL would
+        be changed. The gap is bounded the way the rest of this residual is (an account that can create entries below the folder before it is
+        protected, and then wins a race of a few hundred milliseconds); the read-back lists only the entries of the walk and does not see the target.
+        The folder's own protection bounds it; the read-back checks the owner of everything it lists.
+        **P3 (VM pass 6, tmp-swap):** an account that can write the PARENT of `straw-boss\` (the agent directory, in a shared place) can always win
+        the swap of the temporary folder (60/60, with a 2 ms poll): it renames `straw-boss.<hex>.tmp` before the start has protected it. The outcome is
+        safe (the gate refuses the planted folder, no secret is written, nothing is taken over) but that account can make every first `up` in the
+        shared parent fail with exit 3. It is not fixed: the parent being writable by another account is what the swap needs, and the same account
+        could delete `straw-boss\` or plant it first. The refusal text for a planted folder that grants the victim nothing ("could not protect … tmp")
+        does not name the swap.
       - **What is below is listed without following links** (R8-F003): Windows PowerShell 5.1's `Get-ChildItem` follows junctions, so the
         scripts walk the folder with `[IO.Directory]::GetFileSystemEntries` and refuse any entry with the `ReparsePoint` attribute
         that is a name-surrogate link (`Get-Item -Force` gives it `LinkType` `Junction` or `SymbolicLink`; one whose type cannot be read is refused too)

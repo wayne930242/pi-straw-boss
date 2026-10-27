@@ -3,9 +3,10 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, 
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import { ensure, launch, lockFor, restart, ServerError, stop } from "../src/server/client.ts";
+import { createServer } from "node:net";
+import { describe, ensure, launch, lockFor, probe, restart, ServerError, stop } from "../src/server/client.ts";
 import { markStarting, prepareSlot, takeLock } from "../src/server/record.ts";
-import { explainNative, forgetSid, RENAME_WAITS_MS, ownerGate, ownerOfFolder, ownerSid, protectArgs, protectFolder, readDacl, refuseLink, resetFileAcl } from "../src/server/winprep.ts";
+import { explainNative, forgetSid, OWNER_READ_RETRY_MS, RENAME_WAITS_MS, ownerGate, ownerOfFolder, ownerSid, protectArgs, protectFolder, readDacl, refuseLink, resetFileAcl } from "../src/server/winprep.ts";
 import { ServerWorld } from "./server-world.ts";
 
 // docs/specs/2026-10-26-sb-backend.md, The control socket: on Windows the state folder is protected before the first file is created in it (the VM's second pass found the lock, the
@@ -678,7 +679,7 @@ test("R13: a start in a folder the user owns reads the owner ONCE (the gate befo
 	assert.equal(powershells(n), again + 1);
 });
 
-test("R13: a request that finds a server running runs no PowerShell and calls no gate (a second up, a stop of a live server); a stop of one that is down does", async () => {
+test("R13, R13-F003: a request that finds a server running starts no PowerShell once this process has read the folder's owner (a second up, a stop of a live server); a stop of one that is down passes the same gate before it writes", async () => {
 	forgetSid();
 	const s = await world.start();
 	await s.handle.ready;
@@ -686,11 +687,11 @@ test("R13: a request that finds a server running runs no PowerShell and calls no
 	const ctx = world.ctx({ gate: () => (gates++, false) });
 	const found = await ensure(ctx, { boss: true });
 	assert.ok("server" in found && found.server === "found");
-	assert.equal(gates, 0, "a second up");
 	assert.equal((await stop(ctx)).outcome, "stopped");
-	assert.equal(gates, 0, "a stop of a live server");
+	const asked = gates;
+	assert.ok(asked >= 1, "the look of a record asks the gate (a memo in the real one: no second PowerShell)");
 	assert.equal((await stop(ctx)).outcome, "already-down");
-	assert.ok(gates >= 1, "a stop of a server that is down writes `stopped`, so it passes the gate first");
+	assert.ok(gates > asked, "a stop of a server that is down writes `stopped`, so it passes the gate first");
 });
 
 test("R13: a folder made by this start (the first ever) is gated right after it is made, before the lock and the placeholder; a swapped one that lands foreign is refused with no file written", async () => {
@@ -735,4 +736,130 @@ test("R13-F006: the owner-gate phase times the gate's own reads, not the protect
 	const ms = Number(/ms=(\d+)/.exec(phase!)![1]);
 	assert.ok(ms < 5_000, `the 5 s of prepare are not in it (${ms})`);
 	assert.ok(ms >= 40, `the gate's own time is (${ms})`);
+});
+
+// --- R13-F003: a record is not trusted before the folder's owner is read: once per process, by the same memo as the other gates ---
+
+/** An attacker's folder: a live-looking record (this very process as its pid) whose socket is a listener that counts the connections made to it. */
+async function decoy(dir: string, socket: string) {
+	mkdirSync(dir, { recursive: true });
+	let connections = 0;
+	const listener = createServer((conn) => (connections++, conn.destroy()));
+	await new Promise<void>((resolve) => listener.listen(socket, resolve));
+	const record = { pid: process.pid, version: "0.1.0", herdr: world.slot.herdr, mode: "detached", desk: false, intercom: { transport: "default" }, log: join(dir, "server.log"), socket, secret: "a".repeat(64), intercomId: "sb-server-x", stopped: false };
+	writeFileSync(join(dir, "server.json"), JSON.stringify(record));
+	return { connections: () => connections, close: () => new Promise<void>((resolve) => listener.close(() => resolve())) };
+}
+const bytes = (dir: string) => tree(dir).map((name) => `${name}:${statSync(join(dir, name)).isFile() ? readFileSync(join(dir, name), "utf8") : ""}`);
+
+test("R13-F003: every request that looks at a server (a session's look, status, up, stop, restart) refuses a folder another account owns BEFORE it talks to the record's pipe or writes anything, with the 'belongs to another account' text", async () => {
+	for (const what of ["probe", "describe", "ensure", "restart", "stop"] as const) {
+		forgetSid();
+		const w = new ServerWorld();
+		try {
+			const n = native(() => w.stateDir, { owner: FOREIGN });
+			const bait = await decoy(w.stateDir, join(w.root, "decoy.sock"));
+			const before = bytes(w.stateDir), mtime = statSync(w.stateDir).mtimeMs;
+			const ctx = w.ctx({ platform: "win32", alive: () => true, ...gated(n) });
+			const run = what === "probe" ? () => probe(ctx) : what === "describe" ? () => describe(ctx) : what === "ensure" ? () => ensure(ctx, { boss: true }) : what === "restart" ? () => restart(ctx, { reason: "r", boss: true }) : () => stop(ctx);
+			try {
+				await assert.rejects(run(), (e: unknown) => e instanceof ServerError && e.code === "start-failed" && e.startError?.code === "acl" && /belongs to another account \(S-1-5-21-9-9-9-1002\)/.test(e.message), what);
+				assert.equal(bait.connections(), 0, `${what}: nothing was sent to the record's pipe, not even a hello`);
+				assert.deepEqual(bytes(w.stateDir), before, `${what}: no file written or changed`);
+				assert.equal(statSync(w.stateDir).mtimeMs, mtime);
+				assert.equal(w.spawned.length, 0);
+				assert.deepEqual(changing(n), []);
+				assert.equal(powershells(n), 1, `${what}: one owner read`);
+			} finally {
+				await bait.close();
+			}
+		} finally {
+			await w.close();
+		}
+	}
+});
+
+test("R13-F003: the owner is read once per process for a folder: the verdict, foreign included, is remembered by the folder's identity, so a look every 2 s is not a PowerShell every 2 s", async () => {
+	forgetSid();
+	const n = native(() => world.stateDir, { owner: FOREIGN });
+	const bait = await decoy(world.stateDir, join(world.root, "decoy.sock"));
+	const ctx = world.ctx({ platform: "win32", alive: () => true, ...gated(n) });
+	try {
+		for (let i = 0; i < 4; i++) await assert.rejects(probe(ctx), /belongs to another account/);
+		assert.equal(powershells(n), 1);
+		assert.equal(bait.connections(), 0);
+	} finally {
+		await bait.close();
+	}
+	// A folder made again under its name is another folder: read again.
+	rmSync(world.stateDir, { recursive: true, force: true });
+	mkdirSync(world.stateDir, { recursive: true });
+	const bait2 = await decoy(world.stateDir, join(world.root, "decoy2.sock"));
+	try {
+		const again = native(() => world.stateDir, { owner: OWNER });
+		const clean = world.ctx({ platform: "win32", alive: () => true, ...gated(again) });
+		assert.equal((await probe(clean)).record?.pid, process.pid);
+		assert.equal(powershells(again), 1, "read again, and the user's own folder passes");
+	} finally {
+		await bait2.close();
+	}
+});
+
+test("R13-F003: a folder the user owns costs one PowerShell for the whole process: the first look at a live server reads the owner; a second up, a stop, status and the next looks read none", async () => {
+	forgetSid();
+	const s = await world.start();
+	await s.handle.ready;
+	const n = native(() => world.stateDir);
+	const ctx = world.ctx({ platform: "win32", ...gated(n) });
+	const found = await ensure(ctx, { boss: true });
+	assert.ok("server" in found && found.server === "found");
+	assert.equal(powershells(n), 1, "the first look at a live server");
+	assert.equal((await probe(ctx)).live, true);
+	assert.equal((await describe(ctx)).state, "live");
+	assert.ok("server" in (await ensure(ctx, { boss: true })));
+	assert.equal(powershells(n), 1, "the rest of the same process");
+	assert.equal((await stop(ctx)).outcome, "stopped");
+	assert.equal(powershells(n), 1, "a stop of a live server");
+});
+
+test("R13-F003: a folder with no record is not read (nothing to trust yet); the gate of a start still reads it before the first file is written", async () => {
+	forgetSid();
+	mkdirSync(world.stateDir, { recursive: true });
+	const n = native(() => world.stateDir);
+	const ctx = world.ctx({ platform: "win32", ...gated(n) });
+	assert.equal((await probe(ctx)).record, undefined);
+	assert.equal((await describe(ctx)).state, "gone");
+	assert.equal(powershells(n), 0);
+	const done = await ensure(ctx, { boss: true });
+	assert.ok("server" in done && done.server === "started");
+	assert.equal(powershells(n), 1);
+});
+
+test("R13-F003: an owner that cannot be read (Constrained Language Mode, a timeout) refuses the look as well, and is tried again after a pause, not at every look", async () => {
+	forgetSid();
+	const bait = await decoy(world.stateDir, join(world.root, "decoy.sock"));
+	let t = 10_000;
+	const failing = native(() => world.stateDir, { owner: new Error("sb-constrained-language") });
+	const gate = (slot: typeof world.slot, ms?: number) => ownerGate(slot.stateDir, failing.run, ms, () => t);
+	const ctx = world.ctx({ platform: "win32", alive: () => true, gate });
+	try {
+		for (let i = 0; i < 3; i++) await assert.rejects(probe(ctx), (e: unknown) => e instanceof ServerError && e.startError?.code === "acl" && /could not be read/.test(e.message));
+		assert.equal(powershells(failing), 1, "one read for the three looks");
+		t += OWNER_READ_RETRY_MS + 1;
+		await assert.rejects(probe(ctx), /could not be read/);
+		assert.equal(powershells(failing), 2, "tried again after the pause");
+		assert.equal(bait.connections(), 0);
+	} finally {
+		await bait.close();
+	}
+});
+
+test("R13-F003: where the gate is a no-op (every platform but Windows) a look of a live server asks it and reads nothing", async () => {
+	const s = await world.start();
+	await s.handle.ready;
+	let gates = 0;
+	const ctx = world.ctx({ gate: () => (gates++, false) });
+	assert.equal((await probe(ctx)).live, true);
+	assert.ok(gates >= 1, "the look asks the gate");
+	assert.equal(world.ctx().gate(world.slot), false);
 });
