@@ -737,7 +737,8 @@ npm run check      # tsc --noEmit for the extension and for the page
 npm run gui:build  # builds the page into dist/gui (npm test and npm pack do this first)
 npm run build:server # bundles the sb server into dist/server (npm pack does this; the build fails on a value import of pi's packages)
 npm run server -- status # runs src/server/cli.ts from the checkout through tsx
-npm test           # node --test, against a fake Herdr and a fake intercom broker
+npm test           # node --test, against a fake Herdr and a fake intercom broker, in a temp home of its own (tests/setup.ts)
+npm run test:one -- tests/x.test.ts # one file, isolated the same way
 npm run gui:dev    # the page with hot reload against a demo net; see below
 ```
 

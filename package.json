@@ -44,7 +44,8 @@
     "server": "tsx src/server/cli.ts",
     "prepack": "npm run gui:build && npm run build:server",
     "pretest": "npm run gui:build",
-    "test": "node --test tests/*.test.ts",
+    "test": "node --import ./tests/setup.ts --test tests/*.test.ts",
+    "test:one": "node --import ./tests/setup.ts --test",
     "gui:i18n": "paraglide-js compile --project gui/project.inlang --outdir gui/paraglide --strategy baseLocale --emit-ts-declarations --no-emit-readme --no-emit-prettier-ignore --silent"
   },
   "peerDependencies": {

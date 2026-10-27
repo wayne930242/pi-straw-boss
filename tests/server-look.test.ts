@@ -31,7 +31,7 @@ function session(id = "a1", over: { version?: string; server?: object | null; en
 	const version = over.version ?? "0.44.0";
 	return world.agent({
 		id, pane: `wA:p${++panes}`, tab: "wA:t1", ui: true, env: { HOME: sw.env.HOME!, ...over.env },
-		deps: { stateDir: sw.stateDir, version, adoptMs: 30, server: over.server === undefined ? { ctx: reaching(version), cli: "/fake/cli.mjs" } : (over.server as never) },
+		deps: { stateDir: sw.stateDir, version, adoptMs: 30, server: over.server === undefined ? sw.server(reaching(version)) : (over.server as never) },
 	});
 }
 const plant = (over: Record<string, unknown> = {}) => {
@@ -58,8 +58,8 @@ test("an interactive session in Herdr starts the server at session start, and th
 });
 
 test("a session without a screen, a subagent, and a session that has no server deps start nothing", async () => {
-	const quiet = world.agent({ id: "p1", pane: "wA:p91", tab: "wA:t1", env: { HOME: sw.env.HOME! }, deps: { stateDir: sw.stateDir, version: "0.44.0", adoptMs: 30, server: { ctx: reaching(), cli: "/fake/cli.mjs" } } });
-	const sub = world.agent({ id: "s1", pane: "wA:p92", tab: "wA:t1", ui: true, env: { HOME: sw.env.HOME!, PI_SUBAGENT_ID: "run-1" }, deps: { stateDir: sw.stateDir, version: "0.44.0", adoptMs: 30, server: { ctx: reaching(), cli: "/fake/cli.mjs" } } });
+	const quiet = world.agent({ id: "p1", pane: "wA:p91", tab: "wA:t1", env: { HOME: sw.env.HOME! }, deps: { stateDir: sw.stateDir, version: "0.44.0", adoptMs: 30, server: sw.server(reaching()) } });
+	const sub = world.agent({ id: "s1", pane: "wA:p92", tab: "wA:t1", ui: true, env: { HOME: sw.env.HOME!, PI_SUBAGENT_ID: "run-1" }, deps: { stateDir: sw.stateDir, version: "0.44.0", adoptMs: 30, server: sw.server(reaching()) } });
 	const none = session("n1", { server: null });
 	await Promise.all([quiet.start(), sub.start(), none.start()]);
 	await sleep(200);
@@ -76,7 +76,7 @@ test("a session on an older package never starts a server; a record of a gone se
 	assert.equal(old.notices.filter((n) => /older than this session|newer than this session/.test(n.text)).length, 1, "told once, not at every look");
 
 	writeRecord(sw.slot, { pid: 7, started: "T-7", version: "0.44.0", herdr: sw.slot.herdr, mode: "detached", desk: false, intercom: { scope: "team-a", transport: "default" }, log: "/l", socket: "/nowhere", secret: "s".repeat(64), intercomId: "sb-server-00000000" });
-	const other = world.agent({ id: "o1", pane: "wA:p93", tab: "wA:t1", ui: true, env: { HOME: sw.env.HOME!, PI_INTERCOM_SCOPE_ID: "team-b" }, deps: { stateDir: sw.stateDir, version: "0.44.0", adoptMs: 30, server: { ctx: reaching(), cli: "/fake/cli.mjs" } } });
+	const other = world.agent({ id: "o1", pane: "wA:p93", tab: "wA:t1", ui: true, env: { HOME: sw.env.HOME!, PI_INTERCOM_SCOPE_ID: "team-b" }, deps: { stateDir: sw.stateDir, version: "0.44.0", adoptMs: 30, server: sw.server(reaching()) } });
 	await other.start();
 	await sleep(200);
 	await until(() => sw.spawned.length === 1, "the session starts a server: the record's server is gone, so its scope pins nothing");
@@ -123,7 +123,7 @@ test("sbr-F001: the version a session judges by is the package.json beside the c
 	mkdirSync(root, { recursive: true });
 	writeFileSync(join(root, "package.json"), JSON.stringify({ name: "pi-straw-boss", version: "0.44.0" }));
 	// The session loaded 0.45.0; the package on disk (what its spawn starts) is now 0.44.0.
-	const a = session("a1", { version: "0.45.0", server: { ctx: reaching("0.44.0"), cli: "/fake/cli.mjs", root } });
+	const a = session("a1", { version: "0.45.0", server: sw.server(reaching("0.44.0"), { root }) });
 	await a.start();
 	await until(() => sw.record()?.version === "0.44.0" && !sw.record()?.restarting, "the upgrade");
 	await sleep(300);
@@ -135,7 +135,7 @@ test("sbr-F001: an upgrade that starts a server no newer than the one it replace
 	const s = await sw.start({ version: "0.44.0" });
 	await s.handle.ready;
 	// Nothing tells the session that its spawn starts 0.44.0 (a stale cache of the version): the launched server's version is what refuses the loop.
-	const a = session("a1", { version: "0.45.0", server: { ctx: reaching("0.44.0"), cli: "/fake/cli.mjs" } });
+	const a = session("a1", { version: "0.45.0", server: sw.server(reaching("0.44.0")) });
 	await a.start();
 	await until(() => a.notices.some((n) => /not newer/.test(n.text)), "the notice");
 	await sleep(300);
@@ -154,7 +154,7 @@ test("sbr-NEW-4: a failed upgrade is not asked for again while the record's vers
 	// A stale dist: the package says 0.45.0, but what its spawn starts is 0.44.0.
 	const a = world.agent({
 		id: "a1", pane: "wA:p1", tab: "wA:t1", ui: true, env: { HOME: sw.env.HOME! },
-		deps: { stateDir: sw.stateDir, version: "0.45.0", adoptMs: 30, now: () => clock, server: { ctx: reaching("0.44.0"), cli: "/fake/cli.mjs", root } },
+		deps: { stateDir: sw.stateDir, version: "0.45.0", adoptMs: 30, now: () => clock, server: sw.server(reaching("0.44.0"), { root }) },
 	});
 	await a.start();
 	await until(() => a.notices.some((n) => /not newer/.test(n.text)), "the notice");
@@ -229,7 +229,7 @@ test("/boss server restart [reason] confirms, restarts with the reason and this 
 // --- boss_server ---
 
 test("boss_server status works with the server down, from the files, and shows the last error and start-error", async () => {
-	const a = session("a1", { server: { ctx: { ...reaching(), spawn: () => ({ pid: 1, exited: new Promise(() => {}) }) }, cli: "/fake/cli.mjs" } });
+	const a = session("a1", { server: sw.server({ ...reaching(), spawn: () => ({ pid: 1, exited: new Promise(() => {}) }) }) });
 	await a.start();
 	plant({ lastError: { at: "2026-10-26T00:00:00.000Z", code: "intercom", text: "no broker" } });
 	const result = JSON.parse(text(await a.tool("boss_server", { action: "status" })));
