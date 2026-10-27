@@ -8,7 +8,7 @@ import type { Kit } from "../src/state.ts";
 // it already used; the tower service's dedupe makes a retry safe.
 
 interface Scripted { to: string; message: string; requestId: string }
-function world(results: ("sent" | "failed" | "blocked" | "rejected")[], live: (slept: number[]) => boolean = () => false) {
+function world(results: ("sent" | "failed" | "blocked" | "rejected")[], live: (slept: number[]) => boolean = () => false, limits: { retryCapMs?: number } = {}) {
 	const handlers = new Set<(data: unknown) => void>(), sends: Scripted[] = [], slept: number[] = [];
 	const events = {
 		on: (channel: string, handler: (data: unknown) => void) => (channel === "intercom:outbox-result" ? (handlers.add(handler), () => handlers.delete(handler)) : () => {}),
@@ -21,10 +21,10 @@ function world(results: ("sent" | "failed" | "blocked" | "rejected")[], live: (s
 		},
 	};
 	const kit = {
-		pi: { events }, cfg: { run: async () => "{}", api: async () => {}, sleep: async (ms: number) => void slept.push(ms) }, guiDir: "/x", me: () => "main-1", role: () => "main", tell: () => {},
+		pi: { events }, cfg: { run: async () => "{}", api: async () => {}, sleep: async (ms: number) => void slept.push(ms), now: () => slept.reduce((a, b) => a + b, 0) + sends.length * 5000 }, guiDir: "/x", me: () => "main-1", role: () => "main", tell: () => {},
 		s: { c: { listSessions: async () => (live(slept) ? [{ id: "sb-tower-wa" }] : []) }, at: {}, ownName: "m" },
 	} as unknown as Kit;
-	return { reach: createReach(kit), sends, slept };
+	return { reach: createReach(kit, undefined, limits), sends, slept };
 }
 
 test("a failed send to a tower identity is retried under <request id>~r<n>, whatever the reason, and stops at the first that is sent", async () => {
@@ -60,4 +60,11 @@ test("a send to any other target is not retried, and a rejected request is not r
 	const rejected = world(["rejected"]);
 	assert.equal((await rejected.reach.send("sb-tower-wa", "hello")).status, "rejected");
 	assert.equal(rejected.sends.length, 1);
+});
+
+test("B5R-F008: with a retry cap (the server's reach, for a run's tool) the resends stop once the cap has gone, inside a run's 30 s request", async () => {
+	const { reach, sends } = world(["failed"], () => false, { retryCapMs: 25_000 });
+	assert.equal((await reach.send("sb-tower-wa", "hello")).status, "failed");
+	assert.ok(sends.length < 5, `stopped early, not all five (${sends.length})`);
+	assert.ok(sends.length >= 2);
 });

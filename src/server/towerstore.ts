@@ -204,7 +204,7 @@ export function appendEvent(slot: Slot, service: ServiceRecord, event: Omit<Queu
 	writeDurable(join(towerDir(slot, service.workspace), SERVICE), service);
 	return written;
 }
-/** Removes queued events older than KEEP_MS (their files' mtime) from every workspace folder. Returns how many went. */
+/** Removes queued events older than KEEP_MS (their files' mtime) from every workspace folder, `queue/parked/` included (a folder inside `queue/` is never removed as a file). Returns how many went. */
 export function purgeQueues(slot: Slot, now: number): number {
 	let gone = 0, names: string[] = [];
 	try {
@@ -212,35 +212,42 @@ export function purgeQueues(slot: Slot, now: number): number {
 	} catch { /* none */ }
 	for (const name of names) {
 		const queue = join(towersDir(slot), name, "queue");
-		let files: string[] = [];
-		try {
-			files = readdirSync(queue);
-		} catch { continue; }
-		for (const file of files) {
-			const stat = statSync(join(queue, file), { throwIfNoEntry: false });
-			if (!stat || now - stat.mtimeMs <= KEEP_MS) continue;
-			rmSync(join(queue, file), { force: true });
-			known.delete(queue);
-			gone++;
+		for (const dir of [queue, join(queue, "parked")]) {
+			let files: string[] = [];
+			try {
+				files = readdirSync(dir);
+			} catch { continue; }
+			for (const file of files) {
+				const stat = statSync(join(dir, file), { throwIfNoEntry: false });
+				if (!stat || stat.isDirectory() || now - stat.mtimeMs <= KEEP_MS) continue;
+				rmSync(join(dir, file), { force: true });
+				known.delete(queue);
+				gone++;
+			}
 		}
 	}
 	return gone;
 }
-/** The flag is off: every workspace's `service.json`, queue, and ledger go (message text stays on disk with no time limit otherwise). Returns how many files went. */
+const countFiles = (dir: string): number => {
+	let n = 0;
+	for (const e of readdirSync(dir, { withFileTypes: true })) n += e.isDirectory() ? countFiles(join(dir, e.name)) : 1;
+	return n;
+};
+/** The flag is off: every workspace's `service.json`, queue (parked events too), runs, notes, expectations, timer, dedupe ledger and opener's ledger go (message text stays on disk with no time limit otherwise). Returns how many files went. */
 export function purgeAll(slot: Slot): number {
 	let gone = 0, names: string[] = [];
 	try {
 		names = readdirSync(towersDir(slot));
 	} catch { return 0; }
 	for (const name of names) {
-		const dir = join(towersDir(slot), name), queue = join(dir, "queue");
-		let files: string[] = [];
-		try {
-			files = readdirSync(queue);
-		} catch { /* no queue */ }
-		for (const file of files) rmSync(join(queue, file), { force: true }), gone++;
-		known.delete(queue);
-		for (const file of [SERVICE, OPENED]) if (statSync(join(dir, file), { throwIfNoEntry: false })) rmSync(join(dir, file), { force: true }), gone++;
+		const dir = join(towersDir(slot), name);
+		for (const entry of ["queue", "runs", SERVICE, OPENED, "notes.jsonl", "expects.json", "timer.json", "seen.jsonl"]) {
+			const path = join(dir, entry), stat = statSync(path, { throwIfNoEntry: false });
+			if (!stat) continue;
+			gone += stat.isDirectory() ? countFiles(path) : 1;
+			rmSync(path, { recursive: true, force: true });
+		}
+		known.delete(join(dir, "queue"));
 	}
 	return gone;
 }

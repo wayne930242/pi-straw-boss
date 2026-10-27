@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { type HerdrRun, panes, type Sleep, startPi } from "../herdr.ts";
 import { alive as pidAlive } from "../remote.ts";
-import { startOf as processStartOf } from "../startof.ts";
+import { startOf as processStartOf, startedLater as processStartedLater } from "../startof.ts";
 import { assertSettingsSafe } from "../trust/settings.ts";
 import { waitPastTrust } from "../trust/wait.ts";
 import type { TowerView } from "../net.ts";
@@ -40,8 +40,10 @@ export interface Timers {
 	loop: number;
 	/** A pi resumed in a pane that held a live run when Herdr went away is quit for this long after the restart. */
 	restored: number;
+	/** How long a stopping server waits for its runs to quit after telling them. */
+	stopGrace: number;
 }
-export const TIMERS: Timers = { wake: 1000, claim: 60_000, watch: 2000, idleSteer: 60_000, idleEnd: 300_000, steerAt: 18 * 60_000, quitAt: RUN_CAP_MINUTES * 60_000, quitGrace: 10_000, signal: 5000, lost: 30_000, refuse: 60_000, loop: 600_000, restored: 120_000 };
+export const TIMERS: Timers = { wake: 1000, claim: 60_000, watch: 2000, idleSteer: 60_000, idleEnd: 300_000, steerAt: 18 * 60_000, quitAt: RUN_CAP_MINUTES * 60_000, quitGrace: 10_000, signal: 5000, lost: 30_000, refuse: 60_000, loop: 600_000, restored: 120_000, stopGrace: 1500 };
 const LOOP_MAX = 3;
 
 export type ServiceState = "standing" | "waking" | "running" | "closing" | "held";
@@ -88,6 +90,8 @@ interface Active {
 	terminating?: number;
 	escalated?: number;
 	signalled?: boolean;
+	/** When the process start time was last compared with the recorded one (a `ps` call on macOS and Linux): once at first, then every `lost`. */
+	startChecked?: number;
 	digestKeys: string[];
 	/** Events handed to the run and not yet confirmed `taken`. */
 	offered: Map<string, QueuedEvent>;
@@ -126,6 +130,8 @@ export interface RunsOptions {
 	settings?: (dirs: string[]) => Promise<void>;
 	alive?: (pid: number) => boolean;
 	startOf?: (pid: number) => string | undefined;
+	/** The start time of a process once it is known (Windows reads it in the background); defaults to `startOf` when a test supplies that. */
+	startedLater?: (pid: number) => Promise<string | undefined>;
 	kill?: (pid: number, signal: NodeJS.Signals) => void;
 	newId?: () => string;
 	/** Events are appended with this, so a test can watch the store. */
@@ -144,6 +150,7 @@ export function createRuns(o: RunsOptions) {
 	const { slot, log, now } = o;
 	const alive = o.alive ?? pidAlive, startOf = o.startOf ?? processStartOf, kill = o.kill ?? ((pid, signal) => void process.kill(pid, signal));
 	const start = o.startPi ?? startPi, settings = o.settings ?? ((dirs: string[]) => assertSettingsSafe(dirs)), append = o.append ?? appendEvent;
+	const startedLater = o.startedLater ?? (o.startOf ? (pid: number) => Promise.resolve(startOf(pid)) : processStartedLater);
 	const newId = o.newId ?? (() => randomBytes(8).toString("hex"));
 	const services = new Map<string, Svc>(), byToken = new Map<string, Active>(), byRun = new Map<string, Active>(), blocked = new Set<Svc>();
 	let slots = 0, pendingTakeovers = 0, watcher: ReturnType<typeof setInterval> | undefined, stopped = false;
@@ -181,19 +188,23 @@ export function createRuns(o: RunsOptions) {
 		const id = newId(), woken = now();
 		const rec: RunRecord = { id, workspace: svc.ref.workspace, kind: "local", pane: svc.ref.record().pane, agent: agentName(slot, svc.ref.workspace, id), startedAt: iso(woken), events: [] };
 		const active: Active = { rec, svc, commands: [], lastPoll: woken, started: woken, digestKeys: [], offered: new Map() };
+		// The service holds the run before the settings check: a pi the boss starts by hand meanwhile asks `pane-role` and is turned away, not given a run this one overwrites (B5R-F007).
+		svc.run = active;
 		try {
 			await settings([await svc.ref.cwd()]);
 		} catch (cause) {
+			if (active.ended) return;
 			slots--;
+			svc.run = undefined;
 			svc.state = "standing";
 			svc.refusedAt = now();
 			noticeOf(svc, { id: "settings", level: "error", kind: "settings", text: `A run could not start: ${(cause as Error).message}` });
 			log.line("run-refused", { workspace: svc.ref.workspace, why: "settings" });
 			return;
 		}
+		if (active.ended) return; // the service was detached during the check
 		svc.refusedAt = undefined;
 		svc.notices = svc.notices.filter((n) => n.id !== "settings");
-		svc.run = active;
 		byRun.set(id, active);
 		writeRun(slot, rec);
 		log.line("run-start", { workspace: svc.ref.workspace, run: id, kind: "local" });
@@ -203,7 +214,7 @@ export function createRuns(o: RunsOptions) {
 			const found = await procOf(rec.pane, id);
 			if (!found) throw new Error("pi's process was not found in the pane");
 			rec.pid = found;
-			rec.started = startOf(found);
+			rec.started = await startedLater(found);
 			writeRun(slot, rec);
 			const claimed = await waitPastTrust(o.sleep, () => active.token || active.ended, t.claim, 200, o.trustDir ? { dir: o.trustDir, pane: rec.pane } : undefined);
 			if (!claimed) throw new Error(`pi did not claim the run within ${t.claim / 1000} s`);
@@ -218,6 +229,14 @@ export function createRuns(o: RunsOptions) {
 	/** A Herdr agent name is lowercase, up to 32 characters, and unique per run. */
 	const agentName = (s: Slot, workspace: string, id: string) => `tower-${s.primary ? "" : `${s.slot8}-`}${workspace.toLowerCase().replace(/[^a-z0-9_-]/g, "")}-${id.slice(0, 8)}`.slice(0, 32).replace(/[-_]+$/, "");
 	/** pi's PID in the pane: the process whose command line holds the run id, else the one named pi. */
+	const pidsOf = async (pane: string): Promise<number[] | undefined> => {
+		try {
+			const info = JSON.parse(await o.run(["pane", "process-info", "--pane", pane])).result?.process_info?.foreground_processes as { pid?: number }[] | undefined;
+			return info?.flatMap((p) => (typeof p.pid === "number" ? [p.pid] : []));
+		} catch {
+			return undefined;
+		}
+	};
 	const procOf = async (pane: string, runId?: string): Promise<number | undefined> => {
 		try {
 			const info = JSON.parse(await o.run(["pane", "process-info", "--pane", pane])).result?.process_info?.foreground_processes as { pid?: number; argv0?: string; name?: string; cmdline?: string }[] | undefined;
@@ -257,8 +276,14 @@ export function createRuns(o: RunsOptions) {
 		}
 	};
 	const gone = (a: Active) => {
-		if (a.rec.pid !== undefined) return !alive(a.rec.pid) || (a.rec.started !== undefined && startOf(a.rec.pid) !== undefined && startOf(a.rec.pid) !== a.rec.started);
-		return false;
+		const pid = a.rec.pid;
+		if (pid === undefined) return false;
+		if (!alive(pid)) return true;
+		// A PID taken by another process after pi died shows by its start time; asking costs a `ps` call, so it is asked once and then every `lost`, not at every tick (B5R-F006).
+		if (a.rec.started === undefined || (a.startChecked !== undefined && now() - a.startChecked < t.lost)) return false;
+		a.startChecked = now();
+		const current = startOf(pid);
+		return current !== undefined && current !== a.rec.started;
 	};
 
 	/** Ends a run in the records: its events, its note, the crash rules, and the service goes back to standing (the next wake comes 1 s later). */
@@ -330,6 +355,16 @@ export function createRuns(o: RunsOptions) {
 					continue;
 				}
 				if (a.recovering !== undefined) {
+					if (a.rec.pid === undefined) {
+						// The server went away while pi was starting, before the record had its PID: the process is looked for by the run id, and a run that shows no process within `lost` is over (B5R-F003).
+						const found = await procOf(a.rec.pane, a.rec.id);
+						if (found !== undefined) {
+							a.rec.pid = found;
+							a.rec.started = await startedLater(found);
+							writeRun(slot, a.rec);
+						} else if (now() - a.recovering > t.lost) await finish(a, "crashed", "pi was not running after the server restarted");
+						continue;
+					}
 					if (now() - a.recovering > t.lost) (terminate(a, "crashed"), void escalate(a));
 					continue;
 				}
@@ -403,6 +438,8 @@ export function createRuns(o: RunsOptions) {
 		if (a.rec.pid === undefined) return a.rec.claimed ? refuse("this run cannot be matched") : heldReply();
 		if (a.rec.pane !== pane || a.rec.pid !== pid || (a.rec.started !== undefined && started !== undefined && started !== a.rec.started)) return refuse("the pane, PID, or start time are not the ones the server recorded for this run");
 		if (a.token) return refuse("this run was claimed already");
+		// The identity is not registered with pi-intercom yet (a server that has just started): the brief cannot be built, so the run is told to wait, not refused (B5R-F002).
+		if (!a.svc.ref.live()) return heldReply();
 		return issue(a);
 	}
 	/** A pi without the flag in a pane the server lists as a standing pane (or an ally pane): quit, or take the pane as a run of the boss's own. */
@@ -413,7 +450,11 @@ export function createRuns(o: RunsOptions) {
 		if (pendingTakeovers > 0) return { ok: true, role: "wait" };
 		if ((restored.get(pane) ?? 0) > now()) return { ok: true, role: "quit", reason: "Herdr restored this pane after a restart and resumed the old run's pi; the server starts its runs itself" };
 		if (svc.run && !svc.run.ended) return { ok: true, role: "quit", reason: "a run of the tower service holds this pane" };
-		// The boss started pi by hand in the standing pane: a local run with the brief and no events.
+		// The boss started pi by hand in the standing pane: a local run with the brief and no events, under the run cap, and only for a PID Herdr lists in that pane (B5R-F007).
+		if (slots >= o.max()) return { ok: true, role: "quit", reason: "the server's run limit is reached; try again when a run has ended" };
+		const listed = await pidsOf(pane);
+		if (!listed?.includes(pid)) return { ok: true, role: "quit", reason: "the server could not match this pi to the pane" };
+		if (svc.run && !svc.run.ended) return { ok: true, role: "quit", reason: "a run of the tower service holds this pane" };
 		slots++;
 		const woken = now(), id = newId();
 		const rec: RunRecord = { id, workspace: svc.ref.workspace, kind: "local", pane, agent: "hand", pid, ...(typeof req.started === "string" ? { started: req.started } : {}), startedAt: iso(woken), events: [], hand: true };
@@ -646,11 +687,20 @@ export function createRuns(o: RunsOptions) {
 			byToken.set(a.token!, a);
 			return a.token!;
 		},
-		async stop() {
+		/** The server leaves: timers stop. With `quitRuns` (a stop, not a restart) every live run is told to quit and given a moment, then ended by its PID if it stays, and recorded `quit` (B5R / R-F003). */
+		async stop({ quitRuns = false }: { quitRuns?: boolean } = {}) {
 			stopped = true;
 			clearInterval(watcher);
 			watcher = undefined;
 			for (const svc of services.values()) (clearTimeout(svc.wake), clearTimeout(svc.timer));
+			if (!quitRuns) return;
+			const live = [...byRun.values()].filter((a) => !a.ended && a.rec.pid !== undefined);
+			for (const a of live) terminate(a, "quit");
+			for (let waited = 0; waited < t.stopGrace && live.some((a) => !gone(a)); waited += 200) await o.sleep(200);
+			for (const a of live) {
+				if (!gone(a)) try { kill(a.rec.pid!, "SIGTERM"); } catch { /* gone */ }
+				await finish(a, "quit", "the sb server stopped");
+			}
 		},
 		/** The notes of a service, for the brief. */
 		notes: (workspace: string) => readNotes(slot, workspace),

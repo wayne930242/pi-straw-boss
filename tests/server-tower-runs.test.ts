@@ -5,7 +5,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { TowerWorld } from "./tower-world.ts";
 import { type Running, sleep, until } from "./server-world.ts";
 import { callControl } from "../src/server/socket.ts";
-import { listRuns, readNotes, readRun, readTimer } from "../src/server/towerrunstore.ts";
+import { listRuns, readNotes, readRun, readTimer, writeRun } from "../src/server/towerrunstore.ts";
 import { readQueue, readService, towerDir } from "../src/server/towerstore.ts";
 
 // The runs of the tower service (docs/specs/2026-10-26-sb-backend.md, The wake protocol, Crash and timeout; B5) against a fake Herdr, fake pi-intercom clients, and a pi that is a test: `agent start` makes a
@@ -224,7 +224,8 @@ test("a boss event wakes a service the loop held, and Retry does too", async () 
 });
 
 test("a run past the steer time is told to wrap up, past the cap it is told to quit, and a pi that stays gets Escape and /quit, then SIGTERM from a PID read from Herdr", async () => {
-	world.runTimers = { steerAt: 100, quitAt: 250, quitGrace: 60, signal: 60 };
+	// A wide window between the steer and the quit: under load a watcher tick can miss a 150 ms one (B5 review F013).
+	world.runTimers = { steerAt: 150, quitAt: 1500, quitGrace: 60, signal: 60 };
 	const { s } = await setup();
 	tower().incoming(from, msg("m1", "slow"));
 	const id = await nthRun();
@@ -329,9 +330,11 @@ test("a Herdr restart ends the live run (herdr-restart), its events return flagg
 test("pane-role: a pane the server does not list is none; a standing pane that holds a live run is quit; one pi by hand becomes a run that ends on tower_done", async () => {
 	const { s, ensured } = await setup();
 	assert.equal((await ask(s, { cmd: "pane-role", pane: "wA:p1", pid: 1 })).role, "none");
+	assert.equal((await ask(s, { cmd: "pane-role", pane: ensured.pane, pid: 5555 })).role, "quit", "a PID Herdr does not list in the pane is not taken (B5R-F007)");
+	world.herdr.pane(String(ensured.pane)).processes = [{ argv0: "pi", name: "node", pid: 5555 }];
+	world.live.add(5555); // alive before the answer: the watcher ends a run whose PID is gone
 	const hand = await ask(s, { cmd: "pane-role", pane: ensured.pane, pid: 5555, started: "T-5555" });
 	assert.equal(hand.role, "hand");
-	world.live.add(5555);
 	const token = String((hand.claim as { token: string }).token);
 	assert.match(String((hand.claim as { brief: string }).brief), /tower of workspace Alpha/);
 	assert.equal((await ask(s, { cmd: "pane-role", pane: ensured.pane, pid: 5556 })).role, "quit", "the pane is taken");
@@ -446,4 +449,110 @@ test("the brief shows the workspace's mains with their state and board entry and
 	await drain(s, t2);
 	assert.equal((await ask(s, { cmd: "run-done", token: t2, note: "ok" })).ok, true);
 	assert.equal(lines().length, 0, "tower_done clears what the brief showed");
+});
+
+test("B5R-F007: a pi by hand is turned away over the run cap and while a run is being started (the settings check), and the run keeps its service", async () => {
+	world.runMax = 1;
+	const { s, ensured } = await setup();
+	world.herdr.pane(String(ensured.pane)).processes = [{ argv0: "pi", name: "node", pid: 5555 }];
+	let release!: () => void;
+	world.settingsHold = new Promise<void>((resolve) => (release = resolve));
+	tower().incoming(from, msg("m1", "one"));
+	await until(async () => ((await ask(s, { cmd: "status" })).towers as { service: { state: string } }[])[0]!.service.state === "waking", "the run to be waking");
+	const during = await ask(s, { cmd: "pane-role", pane: ensured.pane, pid: 5555 });
+	assert.equal(during.role, "quit");
+	assert.match(String(during.reason), /holds this pane/);
+	release();
+	const id = await nthRun();
+	assert.equal((await claim(s, id)).ok, true);
+	assert.equal(world.pis.size, 1, "no second pi was started in a busy pane");
+});
+
+test("B5R-F007: a pi by hand over the run cap is quit with the reason", async () => {
+	world.runMax = 1;
+	const { s, ensured } = await setup();
+	world.herdr.pane(String(ensured.pane)).processes = [{ argv0: "pi", name: "node", pid: 5555 }];
+	tower().incoming(from, msg("m1", "one"));
+	await nthRun();
+	const got = await ask(s, { cmd: "pane-role", pane: ensured.pane, pid: 5555 });
+	assert.equal(got.role, "quit");
+});
+
+test("B5R-F003: a run recorded before its pid was read ends as crashed after a restart when no process shows, and a new event wakes a run", async () => {
+	const { s, ensured } = await setup();
+	await s.handle.shutdown(0);
+	await s.handle.done;
+	world.clients.length = 0;
+	writeRun(world.slot, { id: "deadbeefdeadbeef", workspace: "wA", kind: "local", pane: String(ensured.pane), agent: "tower-wa-deadbeef", startedAt: new Date().toISOString(), events: [] });
+	world.runTimers = { lost: 200 };
+	const second = await started();
+	await until(() => readRun(world.slot, "wA", "deadbeefdeadbeef")?.outcome === "crashed", "the pid-less run to end");
+	tower().incoming(from, msg("m2", "two"));
+	await nthRun();
+	assert.equal(((await ask(second, { cmd: "status" })).towers as { service: { state: string } }[])[0]!.service.state !== "held", true);
+});
+
+test("B5R-F003: a pid-less run whose process is found by its run id is taken back, and its pi claims it", async () => {
+	const { s, ensured } = await setup();
+	tower().incoming(from, msg("m1", "one"));
+	const id = await nthRun();
+	await s.handle.shutdown(0);
+	await s.handle.done;
+	world.clients.length = 0;
+	const rec = readRun(world.slot, "wA", id)!;
+	const { pid: _pid, started: _started, ...rest } = rec;
+	writeRun(world.slot, rest);
+	const second = await started();
+	await until(() => readRun(world.slot, "wA", id)?.pid, "the pid to be found again");
+	assert.equal((await claim(second, id)).ok, true);
+	assert.equal(String(ensured.pane), rest.pane);
+});
+
+test("B5R-F002: a claim that comes before the server has its tower identity, or has loaded its runs, is told to wait, not refused", async () => {
+	const { s } = await setup();
+	tower().incoming(from, msg("m1", "one"));
+	const id = await nthRun();
+	const got = await claim(s, id);
+	assert.equal(got.ok, true);
+	await s.handle.shutdown(0);
+	await s.handle.done;
+	world.clients.length = 0;
+	const gate = new Promise<void>(() => {});
+	const second = await world.start({ intercom: async () => ({ dir: "/fake/pi-intercom", version: "0.18.1", connect: async () => (await gate, undefined as never) }) });
+	await until(async () => { try { return Boolean(await ask(second, { cmd: "status" })); } catch { return false; } }, "the new server to listen", 3000);
+	const pi = world.pis.get(id)!;
+	const again = await ask(second, { cmd: "claim", runId: id, pane: pi.pane, pid: pi.pid, started: `T-${pi.pid}` });
+	assert.equal(again.ok, true, JSON.stringify(again));
+	assert.equal(again.wait, true);
+	const early = await ask(second, { cmd: "pane-role", pane: pi.pane, pid: 1 });
+	assert.equal(early.role === "wait" || early.role === "quit", true, JSON.stringify(early));
+});
+
+test("R-F003: a stop quits the live runs: the PID gets SIGTERM when it stays, and the run is recorded quit; a restart leaves the run alone", async () => {
+	const { s } = await setup();
+	tower().incoming(from, msg("m1", "one"));
+	const id = await nthRun();
+	await claimed(s, id);
+	const pid = world.pis.get(id)!.pid;
+	assert.equal((await ask(s, { cmd: "restart", reason: "test" })).ok, true);
+	await s.handle.done;
+	assert.equal(readRun(world.slot, "wA", id)?.outcome, undefined, "a restart keeps the claim");
+	assert.deepEqual(world.kills, []);
+	world.clients.length = 0;
+	const second = await started();
+	assert.equal((await ask(second, { cmd: "stop" })).ok, true);
+	await second.handle.done;
+	assert.equal(readRun(world.slot, "wA", id)?.outcome, "quit");
+	assert.deepEqual(world.kills, [[pid, "SIGTERM"]]);
+});
+
+test("B5R-F006: the run's start time is recorded at its start, and the watcher does not ask for it at every tick (a ps call each)", async () => {
+	const { s } = await setup();
+	tower().incoming(from, msg("m1", "one"));
+	const id = await nthRun();
+	await claimed(s, id);
+	assert.equal(readRun(world.slot, "wA", id)?.started, `T-${world.pis.get(id)!.pid}`);
+	const before = world.startCalls;
+	await sleep(400); // 20 watcher ticks
+	assert.ok(world.startCalls - before <= 2, `asked ${world.startCalls - before} times in 20 ticks`);
 });

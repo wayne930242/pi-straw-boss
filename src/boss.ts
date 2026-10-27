@@ -17,7 +17,7 @@ export function registerBoss({ pi, cfg, s, guiDir, tell }: Kit, { host, membersh
 		if (prompt.length > 16_384) return tell("The prompt is longer than 16,384 characters; hand the tower a shorter one and name a file for the rest.", "error");
 		await membership.joinNet();
 		const tower = await reach.openTower(undefined, true, true);
-		const answer = await server.ask({ cmd: "tower-event", workspace: s.at.workspaceId, text: prompt }, { start: "boss" });
+		const answer = await server.ask({ cmd: "tower-event", workspace: tower.target.workspace_id, text: prompt }, { start: "boss" });
 		if (!answer.ok) return tell(`The tower did not take the prompt: ${String(answer.error ?? "no answer")}`, "error");
 		tell(`Handed to the tower${tower.opened ? " (it was opened for this)" : ""}: it reads the prompt as the boss's instruction in its next run.`);
 	};

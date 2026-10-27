@@ -32,6 +32,8 @@ import { appendEvent, deleteService, listServices, purgeAll, purgeQueues, putLed
 
 /** What `residentOf` names when it could not read who holds the workspace. */
 const UNKNOWN = "(unknown)";
+/** A run's request is held 30 s (server-look.ts): the server's resends for a tool stop at about 25 s, so a tool never fails while a copy is still going out. */
+const RUN_SEND_CAP_MS = 25_000;
 const RETRY_MS = [1000, 2000, 5000, 10_000, 30_000];
 const REFRESH_MS = 4 * 60_000, RECOVER_MS = 60_000, RECOVER_POLL_MS = 2000, RESIDENT_MS = 2000, REGISTER_WAIT_MS = 3000, LEAVE_MS = 2000;
 /** What Herdr reports that ends a tower's tab, or moves the head: any of them makes the service look again. */
@@ -73,6 +75,8 @@ export interface TowerRow { workspace: string; label: string; id: string; state:
 export interface Towers {
 	/** Starts the service when the flag is on: converts resident-tower records, adopts every `service.json`, registers the identities, and watches Herdr. Idempotent. */
 	activate(): Promise<void>;
+	/** Whether the runs of the last server are loaded and the identities adopted (true when the tower runs are off: there is nothing to load). */
+	loaded(): boolean;
 	/** Gives a workspace its tower (a promotion, `/boss tower`, a handover from a resident tower of this build). */
 	ensure(request: { workspace: string; pane?: string; cwd?: string }): Promise<Ensured>;
 	/** The boss closed the tower: its tab goes, and the service with it. */
@@ -89,7 +93,7 @@ export interface Towers {
 	/** A tool a run calls (`run-tool`): checked against the token's kind, done as the tower identity. */
 	runTool(request: Record<string, unknown>): Promise<{ text: string; details?: unknown }>;
 	/** The identities leave the broker; tokens and files stay. */
-	stop(): Promise<void>;
+	stop(opts?: { quitRuns?: boolean }): Promise<void>;
 }
 
 interface Live {
@@ -113,7 +117,7 @@ export function createTowers(o: TowersOptions): Towers {
 	const retry = o.retryMs ?? RETRY_MS;
 	const services = new Map<string, Live>();
 	const opening = new Map<string, Promise<Ensured>>();
-	let activation: Promise<void> | undefined, stopped = false, recoverUntil = 0, events: (() => void) | undefined;
+	let activation: Promise<void> | undefined, loadedAll = false, stopped = false, recoverUntil = 0, events: (() => void) | undefined;
 	const timers: ReturnType<typeof setInterval>[] = [];
 	const digest = createDigest(run, now);
 	const readHead = headReader({ run, digest, workspaces: () => [...services.values()].filter((l) => l.state !== "waiting" && !l.stopped).map((l) => l.record.workspace) });
@@ -198,7 +202,7 @@ export function createTowers(o: TowersOptions): Towers {
 					kit.s.at = place(l);
 					kit.s.ownName = l.record.name;
 					l.kit = kit;
-					l.reach = createReach(kit);
+					l.reach = createReach(kit, undefined, { retryCapMs: RUN_SEND_CAP_MS });
 					l.control = createCloseMain(kit, { closeSelf: () => "A tower service closes no mains for itself; ask it to close one.", check: () => undefined });
 					l.control.register();
 					l.open = opener({
@@ -423,13 +427,18 @@ export function createTowers(o: TowersOptions): Towers {
 		timers.push(setInterval(() => {
 			if (!o.enabled()) return void retire().catch((cause: Error) => error("retire", cause.message));
 			for (const l of services.values()) if (l.state === "live") void publish(l);
-			purgeQueues(slot, now());
+			try {
+				purgeQueues(slot, now());
+			} catch (cause) {
+				error("purge", (cause as Error).message);
+			}
 		}, o.refreshMs ?? REFRESH_MS));
 		// A service whose tab is not found yet (Herdr is restoring) is looked for until the minute is over; one waiting for a resident looks at it. Both stop themselves.
 		timers.push(setInterval(() => { if (now() < recoverUntil + RECOVER_POLL_MS) look(); }, RECOVER_POLL_MS));
 		timers.forEach((t) => t.unref());
 		await Promise.race([Promise.all(adopted.map((l) => l.starting)), sleep(o.registerMs ?? REGISTER_WAIT_MS)]);
 		await look();
+		loadedAll = true;
 	};
 	/** Once, however many ask while it runs: a second start would adopt every service twice. */
 	const activate = async () => {
@@ -438,6 +447,7 @@ export function createTowers(o: TowersOptions): Towers {
 		activation ??= begin().catch((cause: Error) => {
 			// A start that failed once is tried again by the next ask, from scratch.
 			activation = undefined;
+			loadedAll = false;
 			timers.splice(0).forEach(clearInterval);
 			events?.();
 			events = undefined;
@@ -556,6 +566,7 @@ export function createTowers(o: TowersOptions): Towers {
 	const api: Towers = {
 		runTool: runToolFor,
 		activate,
+		loaded: () => !o.enabled() || loadedAll,
 		ensure,
 		async close(workspace) {
 			const l = services.get(workspace);
@@ -583,9 +594,9 @@ export function createTowers(o: TowersOptions): Towers {
 		},
 		status: () => [...services.values()].map((l) => ({ workspace: l.record.workspace, label: l.record.label, id: l.record.id, state: l.state, queue: queueLength(slot, l.record.workspace), ...(runs.status(l.record.workspace) ? { service: runs.status(l.record.workspace)! } : {}) })),
 		runs,
-		async stop() {
+		async stop(opts) {
 			stopped = true;
-			await runs.stop();
+			await runs.stop(opts);
 			timers.forEach(clearInterval);
 			events?.();
 			await Promise.all([...services.values()].map((l) => release(l)));

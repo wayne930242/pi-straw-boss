@@ -35,3 +35,24 @@ test("B4R-F007: a reopened service numbers past the events still queued, with th
 	appendEvent(slot, service(), event(2)); // a service record that starts again at 0
 	assert.deepEqual(readQueue(slot, "wA").map((e) => e.seq), [0, 1]);
 });
+
+test("B5R-F001/F004: an old queue/parked folder does not throw; its old files age out; purgeAll removes parked, runs, notes and the rest", async () => {
+	const { mkdirSync, writeFileSync, existsSync } = await import("node:fs");
+	const { purgeAll } = await import("../src/server/towerstore.ts");
+	const slot = slotIn();
+	appendEvent(slot, service(), event(1));
+	const base = join(slot.dir, "tower", "wA"), parked = join(base, "queue", "parked");
+	mkdirSync(parked, { recursive: true });
+	writeFileSync(join(parked, "old.json"), "{}");
+	writeFileSync(join(parked, "new.json"), "{}");
+	const old = new Date(Date.now() - KEEP_MS - 60_000);
+	utimesSync(parked, old, old);
+	utimesSync(join(parked, "old.json"), old, old);
+	assert.equal(purgeQueues(slot, Date.now()), 1);
+	assert.deepEqual(readdirSync(parked), ["new.json"]);
+	mkdirSync(join(base, "runs"), { recursive: true });
+	for (const f of ["runs/r1.json", "notes.jsonl", "expects.json", "timer.json", "seen.jsonl"]) writeFileSync(join(base, f), "x");
+	assert.ok(purgeAll(slot) >= 7);
+	assert.deepEqual(readdirSync(base), []);
+	assert.equal(existsSync(parked), false);
+});

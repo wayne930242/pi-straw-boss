@@ -10,7 +10,7 @@ import type { Timers } from "../src/server/runs.ts";
 // Runs: Herdr's `agent start` makes a pi process (a fake PID in the pane's process list) that the test claims and drives over the control socket (`pi`), and the run timers are short.
 
 /** Short run timers: a wake after 40 ms, the watcher every 20 ms. A test overrides what it is about. */
-export const FAST_RUNS: Partial<Timers> = { wake: 40, claim: 3000, watch: 20, idleSteer: 60_000, idleEnd: 300_000, steerAt: 600_000, quitAt: 1_200_000, quitGrace: 200, signal: 100, lost: 60_000, refuse: 150, loop: 60_000, restored: 400 };
+export const FAST_RUNS: Partial<Timers> = { wake: 40, claim: 3000, watch: 20, idleSteer: 60_000, idleEnd: 300_000, steerAt: 600_000, quitAt: 1_200_000, quitGrace: 200, signal: 100, lost: 60_000, refuse: 150, loop: 60_000, restored: 400, stopGrace: 300 };
 
 export class TowerWorld extends ServerWorld {
 	herdr = new FakeHerdr();
@@ -21,9 +21,13 @@ export class TowerWorld extends ServerWorld {
 	/** The pi processes `agent start` made: run id → PID and pane; and the signals the server sent. */
 	pis = new Map<string, { pid: number; pane: string; args: string[] }>();
 	kills: [number, string][] = [];
+	/** How often the server asked for a process start time. */
+	startCalls = 0;
 	nextPi = 7000;
 	/** Set to make the settings check refuse. */
 	settingsError: Error | undefined;
+	/** While set, the settings check waits for it (a pi started by hand meanwhile). */
+	settingsHold: Promise<void> | undefined;
 	runTimers: Partial<Timers> = {};
 	runMax: number | undefined;
 	setFlag(enabled: boolean | undefined, max?: number) {
@@ -53,8 +57,8 @@ export class TowerWorld extends ServerWorld {
 			towers: {
 				recoverMs: 150, registerMs: 500, residentMs: 20, retryMs: [20],
 				runs: {
-					timers: { ...FAST_RUNS, ...this.runTimers }, alive: (pid) => this.live.has(pid), startOf: (pid) => `T-${pid}`, kill: (pid, signal) => void this.kills.push([pid, signal]),
-					settings: async () => { if (this.settingsError) throw this.settingsError; },
+					timers: { ...FAST_RUNS, ...this.runTimers }, alive: (pid) => this.live.has(pid), startOf: (pid) => (this.startCalls++, `T-${pid}`), kill: (pid, signal) => void this.kills.push([pid, signal]),
+					settings: async () => { await this.settingsHold; if (this.settingsError) throw this.settingsError; },
 					...(this.runMax ? { max: () => this.runMax! } : {}),
 				},
 			},

@@ -34,7 +34,7 @@ export const nameOf = (s?: Session) => (s ? (s.name ?? s.id) : "");
 /** How a session reaches the rest of the net: one message, a broadcast, the coordinators' status, and the tower of a workspace. `server`: the way to the sb server (a pi session's look supplies its own). */
 export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit, server: { ctx(): Ctx } = {
 	ctx: () => makeCtx({ slot: slotOf(cfg.stateDir ?? guiDir, cfg.env), version: VERSION, cli: serverCli(), by: `session "${(s.ownName || me() || "unnamed").replace(/["\n]/g, " ")}" (${me().slice(0, 8) || "no id"})`, env: cfg.env, now: cfg.now }),
-}) {
+}, limits: { retryCapMs?: number } = {}) {
 	const { run, api, sleep } = cfg;
 	const nonce = randomUUID().slice(0, 8);
 	let requests = 0, toldStopped = false;
@@ -64,16 +64,19 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit, server:
 	const send = async (to: string, message: string) => {
 		// pi-intercom keeps a message id per sender session and refuses it again with other content, and a restarted pi keeps its session id: the id carries this process's own nonce.
 		const requestId = `straw-boss-${me()}-${nonce}-${++requests}`;
+		const began = limits.retryCapMs === undefined ? 0 : cfg.now(), capped = () => limits.retryCapMs !== undefined && cfg.now() - began >= limits.retryCapMs;
 		let result = await sendOnce(to, message, requestId);
 		if (!to.startsWith("sb-tower-")) return result;
-		for (let n = 1, waited = 0; n <= TOWER_RETRY_AT.length && (result.status === "failed" || result.status === "blocked"); n++) {
+		// `retryCapMs` (the server's reach, for a run's tool, whose request is held 30 s) stops the retries once that much time has gone, so the tool never fails while a resend is still under way (B5R-F008).
+		for (let n = 1, waited = 0; n <= TOWER_RETRY_AT.length && (result.status === "failed" || result.status === "blocked") && !capped(); n++) {
 			const at = TOWER_RETRY_AT[n - 1]!;
-			while (waited < at) {
+			while (waited < at && !capped()) {
 				const step = Math.min(TOWER_POLL_MS, at - waited);
 				await sleep(step);
 				waited += step;
 				if (await live(to)) break;
 			}
+			if (capped()) break;
 			result = await sendOnce(to, message, `${requestId}~r${n}`);
 		}
 		return result;

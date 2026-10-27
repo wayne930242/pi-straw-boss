@@ -263,7 +263,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		// The GUI listeners and the remote entry go before the intercom ids are released.
 		await Promise.race([guiHost?.leave(phase === "stopping").catch(() => {}), sleep(GUI_LEAVE_MS)]);
 		// The tower identities leave the broker with the server's own session; their tokens and files stay for the server that comes next.
-		await Promise.race([Promise.all([towers?.stop(), client?.disconnect().catch(() => {})]), sleep(LEAVE_MS)]);
+		await Promise.race([Promise.all([towers?.stop({ quitRuns: phase === "stopping" }), client?.disconnect().catch(() => {})]), sleep(LEAVE_MS)]);
 		const disconnected = now();
 		await control?.close();
 		log.line("exit", { code, disconnectMs: disconnected - began, closeMs: now() - disconnected });
@@ -289,6 +289,12 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	const handleRequest = async (request: Request): Promise<Reply> => {
 		// A request that carries a run token is a run's: the token must be one the server issued, and the request is held to the run's kind (rungate.ts). One without a token is a session's or a shell's.
 		let run: RunInfo | undefined;
+		// A run of the server before this one polls and claims while this one is still loading the runs from disk and connecting the tower identities: it is told to wait (a claim `wait`, a poll or other
+		// request a refusal that is not `unknown_token`), so the run keeps its claim through the restart and does not end on the first answer (B5R-F002).
+		if ((phase === "starting" || !towers?.loaded()) && request.cmd !== "status") {
+			if (request.cmd === "claim" || request.cmd === "pane-role") return { ok: true, wait: true, role: "wait" };
+			if (request.token !== undefined) return { ok: false, error: "the server is still starting" };
+		}
 		if (request.token !== undefined) {
 			run = towers?.runs.runOf(request.token);
 			const verdict = run ? gateRun({ cmd: request.cmd, workspace: request.workspace, body: request.body }, run) : { ok: false as const, error: "unknown_token" };
