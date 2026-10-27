@@ -32,8 +32,8 @@ import { appendEvent, deleteService, listServices, purgeAll, purgeQueues, putLed
 
 /** What `residentOf` names when it could not read who holds the workspace. */
 const UNKNOWN = "(unknown)";
-/** A run's request is held 30 s (server-look.ts): the server's resends for a tool stop at about 25 s, so a tool never fails while a copy is still going out. */
-const RUN_SEND_CAP_MS = 25_000;
+/** A run's request is held 30 s (server-look.ts): the server's resends for a tool stop at about 20 s, so a tool never fails while a copy is still going out. */
+export const RUN_SEND_CAP_MS = 20_000;
 const RETRY_MS = [1000, 2000, 5000, 10_000, 30_000];
 const REFRESH_MS = 4 * 60_000, RECOVER_MS = 60_000, RECOVER_POLL_MS = 2000, RESIDENT_MS = 2000, REGISTER_WAIT_MS = 3000, LEAVE_MS = 2000;
 /** What Herdr reports that ends a tower's tab, or moves the head: any of them makes the service look again. */

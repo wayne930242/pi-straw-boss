@@ -301,7 +301,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			if (!verdict.ok) return { ok: false, error: verdict.error };
 		}
 		if (request.cmd === "status") return { ok: true, ...facts(), uptimeMs: now() - startedAt, ...(own.lastError ? { lastError: own.lastError } : {}), towers: towers?.status() ?? [], link: link?.status() ?? null, ...(guiHost ? { gui: guiHost.facts() } : {}) };
-		if (phase === "restarting" || phase === "stopping") return { ok: false, error: "restarting" };
+		if (phase === "restarting" || (phase === "stopping" && request.cmd !== "run-poll")) return { ok: false, error: "restarting" };
 		if (request.cmd === "link") {
 			// A request of a session to the link holder (service.ts): the answer is the holder's own, in `answer`; `ok` is only whether the server took the request. Only the primary server holds the link.
 			// A run's requests go out as its workspace's tower, whatever it says it is.

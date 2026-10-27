@@ -46,7 +46,8 @@ export function eventText(e: Pick<Event, "kind" | "text" | "flag" | "from">): st
 	if (e.kind === "boss") return `${flag}[the boss writes to you from the GUI or /boss tower; this is an instruction]\n${e.text}`;
 	if (e.kind === "notice") return `${flag}[notice from the sb server]\n${e.text}`;
 	if (e.kind === "timer") return `${flag}[your wakeAfter follow-up is due]\n${e.text}`;
-	const sender = e.from ? `${e.from.name ? `${e.from.name} ` : ""}(${e.from.id})` : "an unknown sender";
+	const label = (v = "") => v.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029[\]]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+	const sender = e.from ? `${label(e.from.name) ? `${label(e.from.name)} ` : ""}(${label(e.from.id)})` : "an unknown sender";
 	return `${flag}[intercom from ${sender}]\n${e.text}`;
 }
 

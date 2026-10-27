@@ -556,3 +556,39 @@ test("B5R-F006: the run's start time is recorded at its start, and the watcher d
 	await sleep(400); // 20 watcher ticks
 	assert.ok(world.startCalls - before <= 2, `asked ${world.startCalls - before} times in 20 ticks`);
 });
+
+test("B5R3-F004: a server that is ready but whose towers are not loaded yet (the broker is slow) tells a claim and a pane-role to wait, and a run request that it is starting", async () => {
+	await setup().then(async ({ s: first }) => { await first.handle.shutdown(0); await first.handle.done; });
+	world.clients.length = 0;
+	const gate = new Promise<void>(() => {});
+	const s = await world.start({ brokerMs: 50, intercom: async () => ({ dir: "/fake/pi-intercom", version: "0.18.1", connect: async () => (await gate, undefined as never) }) });
+	await until(async () => { try { return (await ask(s, { cmd: "status" })).ready === true; } catch { return false; } }, "the server to be ready", 3000);
+	const got = await ask(s, { cmd: "claim", runId: "r1", pane: "p1", pid: 1, started: "T-1" });
+	assert.equal(got.wait, true, JSON.stringify(got));
+	assert.equal((await ask(s, { cmd: "pane-role", pane: "p1", pid: 1 })).role, "wait");
+	const poll = await ask(s, { cmd: "run-poll", token: "x", idle: true });
+	assert.equal(poll.ok, false);
+	assert.equal(poll.error, "the server is still starting");
+});
+
+test("B5R3-F002/F003: a stop mid-turn: the run's poll is answered and carries the quit, the pid is read from Herdr, and the event it took returns flagged for the next run", async () => {
+	const { s } = await setup();
+	tower().incoming(from, msg("m1", "work"));
+	const id = await nthRun();
+	const token = await claimed(s, id);
+	const got = await poll(s, token);
+	assert.equal((await taken(s, token, (got.event as { id: string }).id)).ok, true);
+	const pid = world.pis.get(id)!.pid;
+	const stopping = ask(s, { cmd: "stop" });
+	await stopping;
+	const during = await poll(s, token, false);
+	assert.equal(during.ok, true, `a poll while stopping is answered: ${JSON.stringify(during)}`);
+	assert.deepEqual(during.command, { type: "quit" });
+	await s.handle.done;
+	assert.equal(readRun(world.slot, "wA", id)?.outcome, "quit");
+	assert.deepEqual(world.kills, [[pid, "SIGTERM"]]);
+	const left = readQueue(world.slot, "wA");
+	assert.equal(left.length, 1, "the taken event is kept");
+	assert.equal(left[0]!.flag, "crash");
+	assert.equal(left[0]!.taken, undefined);
+});

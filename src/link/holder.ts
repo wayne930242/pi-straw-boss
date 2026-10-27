@@ -18,6 +18,7 @@ import { inside, nearestTeams, oneTeamEach, resolveDevice, towersFor, type Membe
 import type { Backoff, Sleep } from "./retry.ts";
 import type { Disposition, EnvelopeEvent, RelayEvent, RosterEvent } from "./sse.ts";
 import { TeamFileError, type InboxItem, type LinkStore, type TeamFile } from "./store.ts";
+import { towerRunsEnabled } from "../server/towerruns.ts";
 
 // The link holder's work (docs/specs/2026-10-25-straw-link.md, Link holder). Only the session the election names runs this: it reads the device
 // keys, holds the relay stream of each team, and writes the team files; every write is under link/holder.lock. A message the relay delivers is
@@ -588,7 +589,7 @@ export class LinkHolder {
 				this.tellOnce(`inbox/${id}`, `Straw Link: a message from ${item.fromLabel} waits in the inbox; no tower is open on ${policy.project}${item.toWorkspace ? ` in workspace ${restrictLabel(item.toWorkspace)}` : ""}`, "info");
 				continue;
 			}
-			if (SERVED_TOWER.test(first.session.id) || SERVED_RUN.test(first.session.name ?? "")) {
+			if (SERVED_TOWER.test(first.session.id) || (towerRunsEnabled(this.o.stateDir ?? "") && SERVED_RUN.test(first.session.name ?? ""))) {
 				Object.assign(this.waiting.get(id)!, { offered: false, served: true });
 				continue;
 			}

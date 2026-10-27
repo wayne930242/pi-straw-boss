@@ -1,3 +1,4 @@
+import { RUN_SEND_CAP_MS } from "../src/server/towers.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createReach } from "../src/reach.ts";
@@ -62,8 +63,12 @@ test("a send to any other target is not retried, and a rejected request is not r
 	assert.equal(rejected.sends.length, 1);
 });
 
+test("B5R3-F005: the cap and the last send's receipt wait (5 s) fit inside a run's 30 s request", () => {
+	assert.ok(RUN_SEND_CAP_MS + 5_000 < 30_000, `${RUN_SEND_CAP_MS}`);
+});
+
 test("B5R-F008: with a retry cap (the server's reach, for a run's tool) the resends stop once the cap has gone, inside a run's 30 s request", async () => {
-	const { reach, sends } = world(["failed"], () => false, { retryCapMs: 25_000 });
+	const { reach, sends } = world(["failed"], () => false, { retryCapMs: RUN_SEND_CAP_MS });
 	assert.equal((await reach.send("sb-tower-wa", "hello")).status, "failed");
 	assert.ok(sends.length < 5, `stopped early, not all five (${sends.length})`);
 	assert.ok(sends.length >= 2);

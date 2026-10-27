@@ -287,7 +287,7 @@ export function createRuns(o: RunsOptions) {
 	};
 
 	/** Ends a run in the records: its events, its note, the crash rules, and the service goes back to standing (the next wake comes 1 s later). */
-	async function finish(a: Active, outcome: Outcome, detail?: string) {
+	async function finish(a: Active, outcome: Outcome, detail?: string, keepTaken = false) {
 		if (a.ended) return;
 		a.ended = true;
 		const svc = a.svc, ws = svc.ref.workspace;
@@ -303,8 +303,8 @@ export function createRuns(o: RunsOptions) {
 		const failed = outcome === "crashed" || outcome === "timeout";
 		for (const e of taken) {
 			try {
-				if (!failed && outcome !== "herdr-restart") removeEvent(slot, ws, e);
-				else if (outcome === "herdr-restart") updateEvent(slot, ws, { ...withoutTaken(e), flag: "crash" });
+				if (!failed && outcome !== "herdr-restart" && !keepTaken) removeEvent(slot, ws, e);
+				else if (outcome === "herdr-restart" || keepTaken) updateEvent(slot, ws, { ...withoutTaken(e), flag: "crash" });
 				else if ((e.crashes ?? 0) + 1 >= 2) (parkEvent(slot, ws, { ...withoutTaken(e), crashes: (e.crashes ?? 0) + 1, flag: "crash" }), noticeOf(svc, { id: `parked-${e.id}`, level: "warning", kind: "late", text: `An event was parked after two runs crashed with it: ${e.kind} ${e.from?.name ?? e.from?.id ?? ""}`.trim() }));
 				else updateEvent(slot, ws, { ...withoutTaken(e), crashes: (e.crashes ?? 0) + 1, flag: "crash" });
 			} catch (cause) { error("run-events", (cause as Error).message); }
@@ -698,8 +698,13 @@ export function createRuns(o: RunsOptions) {
 			for (const a of live) terminate(a, "quit");
 			for (let waited = 0; waited < t.stopGrace && live.some((a) => !gone(a)); waited += 200) await o.sleep(200);
 			for (const a of live) {
-				if (!gone(a)) try { kill(a.rec.pid!, "SIGTERM"); } catch { /* gone */ }
-				await finish(a, "quit", "the sb server stopped");
+				if (!gone(a)) {
+					// The PID is read from Herdr now, never taken from the record alone.
+					const pid = await procOf(a.rec.pane, a.rec.id);
+					if (pid !== undefined) try { kill(pid, "SIGTERM"); } catch { /* gone */ }
+				}
+				// A run cut off mid-turn may have handled what it took: the events come back flagged, as after a Herdr restart (B5R3-F002).
+				await finish(a, "quit", "the sb server stopped", true);
 			}
 		},
 		/** The notes of a service, for the brief. */
