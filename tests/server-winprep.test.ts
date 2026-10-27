@@ -794,8 +794,8 @@ test("R13-F003: the owner is read once per process for a folder: the verdict, fo
 	} finally {
 		await bait.close();
 	}
-	// A folder made again under its name is another folder: read again.
-	rmSync(world.stateDir, { recursive: true, force: true });
+	// A folder made again under its name is another folder: read again. The old one is moved aside, not deleted, so the new one cannot get its inode back (Linux reuses a freed inode at once).
+	renameSync(world.stateDir, `${world.stateDir}.old`);
 	mkdirSync(world.stateDir, { recursive: true });
 	const bait2 = await decoy(world.stateDir, join(world.root, "decoy2.sock"));
 	try {
