@@ -706,7 +706,7 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
   5. The new server starts in this order:
      - it connects to the broker and registers every tower identity first, so the guard sees live towers again as early as it can;
      - then it starts the link holder;
-     - then it binds the recorded local and remote GUI ports with the same token and CSRF secret, retrying for up to 5 s while the old
+     - then it binds the recorded local and remote GUI ports, retrying for up to 5 s while the old
        ports are let go;
      - then it clears `restarting`.
 - **The guard during a restart.** A workspace whose `tower` token names an `sb-tower-*` id counts as having a live tower while

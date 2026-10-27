@@ -1,7 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
+import { connect } from "node:net";
 import { join } from "node:path";
+import { alive } from "./remote.ts";
+import { startOf } from "./startof.ts";
 
 // gui.json in the state directory records the GUI the sb server serves (src/server/guihost.ts): its pid and start time, the local and remote port, the token, and the server's
 // intercom session. It is the contract straw-boss-desk and the sessions' dialog bridges read (docs/how-it-works.md, `gui.json` is a contract). The server writes it by rename
@@ -76,3 +79,17 @@ export const answers = (r: GuiRecord) =>
 		req.end();
 	});
 
+
+/** Whether anything accepts a connection on the port. Nothing is sent: this is how a wait for a server to let go of its port looks, without giving the token to whoever binds the port next. */
+export const listening = (port: number) =>
+	new Promise<boolean>((done) => {
+		const socket = connect({ host: "127.0.0.1", port, timeout: 1000 });
+		socket.once("connect", () => (socket.destroy(), done(true))).once("error", () => done(false)).once("timeout", () => (socket.destroy(), done(false)));
+	});
+
+/**
+ * Whether the recorded server runs and answers its page, for a session that is not the server (the tower's dashboard, a trust question). The token goes to the port only after the process that
+ * recorded it is shown to be alive: its pid runs and its start time is the recorded one. A record without a start time, or one the machine cannot tell yet (the Windows cache is cold), is not verified,
+ * and nothing is sent: another account's process may hold the port a crashed server left (RC2-F001).
+ */
+export const answersLive = async (r: GuiRecord, start: (pid: number) => string | undefined = startOf): Promise<boolean> => Boolean(r.started) && alive(r.pid) && start(r.pid) === r.started && answers(r);

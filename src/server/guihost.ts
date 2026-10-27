@@ -9,7 +9,7 @@ import { createDeploys } from "../deploy.ts";
 import { createHub, type Hub } from "../dialogs.ts";
 import { BUNDLE, type Gui, startGui } from "../gui.ts";
 import { alive } from "../remote.ts";
-import { answers, type GuiRecord, postServer, readRecord as readGuiJson, writeRecordFile } from "../handover.ts";
+import { answers, type GuiRecord, listening, postServer, readRecord as readGuiJson, writeRecordFile } from "../handover.ts";
 import type { Session } from "../herdr.ts";
 import { type GuiLink } from "../link/guiport.ts";
 import { type Net, netSource } from "../net.ts";
@@ -166,7 +166,8 @@ export function createGuiHost(o: GuiHostOptions) {
 		if (!(await answers(seen))) return false;
 		log.line("gui-reclaim", { from: phrase(seen.owner, 120), pid: seen.pid });
 		if ((await postServer(seen, "server/stop", { by: owner, take: true }, 2000)).status !== 202) return false;
-		for (const end = Date.now() + RECLAIM_WAIT_MS; Date.now() < end; await new Promise((r) => setTimeout(r, 100))) if (!(await answers(seen))) return true;
+		// Whether the old host has let go is asked of the port without the token (a connection, nothing sent): the process that binds the freed port first is not necessarily this one, and has not earned it (RC2-F001).
+		for (const end = Date.now() + RECLAIM_WAIT_MS; Date.now() < end; await new Promise((r) => setTimeout(r, 100))) if (!(await listening(seen.port))) return true;
 		return false;
 	};
 	const begin = async (prefer: ReturnType<typeof recorded>, wait: number): Promise<Gui> => {
@@ -207,7 +208,7 @@ export function createGuiHost(o: GuiHostOptions) {
 			gui = started;
 			writeGuiJson(started);
 			updateRecord(slot, (r) => (r.pid === pid ? { ...r, gui: { port: started.port, token: started.token, stopped: false } } : undefined));
-			log.line("gui-start", { port: started.port, remotePort: started.remotePort, moved: prefer.port !== undefined && prefer.port !== started.port });
+			log.line("gui-start", { port: started.port, remotePort: started.remotePort, moved: prefer.port !== undefined && prefer.port !== started.port, ...(prefer.token !== undefined && prefer.token !== started.token ? { newToken: true } : {}) });
 			// Remote access comes back with it, but a slow Tailscale does not hold the start: what is not settled in a few seconds goes on in the background.
 			const resuming = resume(started);
 			await Promise.race([resuming, cfg.sleep(RESUME_WAIT_MS)]);

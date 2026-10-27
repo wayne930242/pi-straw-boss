@@ -81,7 +81,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased to 355: the server reads the net while no page listens too (gui.ts: the idle reading), for the timeline.
 	// Unreleased (project trust) to 361 (on top of Straw Link's summary and channel): the snapshot's `trust` (net.ts: the type, the asks read with the world, the field), and the server's trust option (gui.ts: the answer route, the directory watch, its stop).
 	// Unreleased (GUI in the sb server) to 376: gui.ts answers the server panel (server/status, server/log, server/restart) and the remote and stop options the server passes.
-	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 376, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
+	// Unreleased (RC2-F001) to 387: gui.ts binds its ports first and keeps the token and CSRF secret only when it got the recorded ports back; on another port both are new.
+	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 387, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
 	// Input (the spec's figure), remote access over Tailscale, its terminal pairing panel (QR, c copies, o opens), and the QR encoder each have their own.
 	// What a waiting session waits on (0.5.0, read for display only; answering is deferred) has its own as well.
 	// 0.5.1 raised remote.ts from 165 to 185 (a recorded server counts as running only if its process started when the entry says: a reused PID

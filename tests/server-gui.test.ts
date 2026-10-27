@@ -67,24 +67,28 @@ test("a restart keeps the URL an open page has: the new server binds the recorde
 	assert.ok(log.indexOf("intercom-connected") < log.indexOf("gui-start"), "the server's ids first, then the GUI's ports");
 });
 
-test("a port another process took meanwhile moves only the port: the token and CSRF secret stay, and both records say where it is", async () => {
+test("RC2-F001: a port another process took meanwhile moves the GUI to a new token and CSRF secret: what an open page sends to its old origin (the squatter) is no good on the new port, and both records carry the new ones", async () => {
 	const h = await host();
 	const before = h.gui();
 	await h.ask("restart", { reason: "test", by: "test" });
 	await h.handle.done;
-	// Not a web server: it takes the connection a look at the recorded GUI makes and says nothing (its socket is read so that the look's hang-up closes it).
-	const thief = createServer((socket) => void socket.on("error", () => {}).resume());
-	await new Promise<void>((resolve) => thief.listen(before.port, "127.0.0.1", resolve));
-	try {
-		const next = await host();
-		const after = next.gui();
-		assert.notEqual(after.port, before.port);
-		assert.deepEqual([after.token, after.csrf], [before.token, before.csrf]);
-		assert.deepEqual(next.record().gui, { port: after.port, token: before.token, stopped: false });
-		assert.equal(await status(next.url), 200);
-	} finally {
-		await new Promise((resolve) => thief.close(resolve));
-	}
+	// A web server of another account: an open page of the old GUI reconnects to it (its event stream with the token in the path, its POSTs with the CSRF secret), and it keeps what it is sent.
+	const seen = await squatter(before.port);
+	const next = await host();
+	const after = next.gui();
+	assert.notEqual(after.port, before.port);
+	assert.notEqual(after.token, before.token);
+	assert.notEqual(after.csrf, before.csrf);
+	assert.equal(next.record().gui?.token, after.token);
+	assert.deepEqual(next.record().gui, { port: after.port, token: after.token, stopped: false });
+	assert.equal(await status(next.url), 200);
+	assert.equal(await status(`http://127.0.0.1:${after.port}/${before.token}/`), 403, "the token the squatter was sent opens nothing on the new port");
+	assert.deepEqual(seen, [], "and the squatter was sent nothing by the server");
+	const posted = await new Promise<number>((resolve) => {
+		const body = "{}", req = request({ host: "127.0.0.1", port: after.port, path: `/${after.token}/api/server/stop`, method: "POST", agent: false, headers: { host: `127.0.0.1:${after.port}`, origin: `http://127.0.0.1:${after.port}`, "content-type": "application/json", "x-sb-csrf": before.csrf!, "content-length": body.length } }, (res) => (res.resume(), resolve(res.statusCode!)));
+		req.end(body);
+	});
+	assert.equal(posted, 403, "nor does the old CSRF secret");
 });
 
 test("gui-stop stops the listeners and marks the GUI stopped on purpose in both records while the server runs on; a restart leaves it stopped; an automatic ask is refused, and the boss's own starts it on the same URL and clears both marks", async () => {
@@ -287,7 +291,7 @@ test("the first server after an upgrade takes the GUI from the 0.45 session that
 	assert.ok(readFileSync(fileOf(next.slot, "log"), "utf8").includes("gui-reclaim"));
 });
 
-test("a live host that does not hand over is left alone: the server's GUI moves to another port and keeps the token", async () => {
+test("a live host that does not hand over is left alone: the server's GUI moves to another port with a new token", async () => {
 	const ts = fakeTailscale(), h = await host({ tailscale: ts.run });
 	const { before, old, dir } = await olderHost(h, ts, { refuse: true });
 	// An older host that is a sb server answers the takeover with 409 (below); a host that gives no 202 is the same here: nothing is waited for.
@@ -302,7 +306,7 @@ test("a live host that does not hand over is left alone: the server's GUI moves 
 		const next = await host({ tailscale: ts.run, options: { startOf: (p) => (p === 4243 ? "T-other" : undefined) } });
 		assert.equal(await status(`http://127.0.0.1:${before.port}/${before.token}/`), 200, "the other GUI still answers");
 		assert.notEqual(next.gui().port, before.port);
-		assert.equal(next.gui().token, before.token);
+		assert.notEqual(next.gui().token, before.token);
 		assert.equal(await status(next.url), 200);
 		assert.deepEqual(asked, [], "nothing stopped it");
 	}
@@ -329,7 +333,7 @@ test("a process that took the port of a server that is gone is sent nothing: a r
 	const next = await host();
 	assert.deepEqual(seen, [], "restart: the old server is dead, so nothing reaches the port");
 	assert.notEqual(next.gui().port, before.port);
-	assert.equal(next.gui().token, before.token);
+	assert.notEqual(next.gui().token, before.token, "a moved port is a new token");
 	// A 0.45 session that died: its pid is not alive.
 	await next.ask("restart", { reason: "test", by: "test" });
 	await next.handle.done;
@@ -390,6 +394,29 @@ test("sec-F001: a start time that arrives late is waited for, and one that equal
 	assert.equal(next.gui().port, before.port);
 	assert.equal(await status(next.url), 200);
 	void old;
+});
+
+test("RC2-F001: a squatter that binds the port the old host just freed is sent nothing during the reclaim wait: the GUI moves to a new token and the squatter is never asked", async () => {
+	const ts = fakeTailscale(), h = await host({ tailscale: ts.run });
+	const before = h.gui(), dir = h.slot.dir;
+	await h.ask("restart", { reason: "test", by: "test" });
+	await h.handle.done;
+	let seen: { method: string; path: string; csrf: boolean }[] = [];
+	let old!: Awaited<ReturnType<typeof startGui>>;
+	// The older host lets go of its port on the take, and a foreign web server binds that port at once.
+	old = await startGui({
+		read: async () => ({ bases: [] }), dir: bundle, paired: join(dir, "paired.json"), port: before.port, remotePort: before.remotePort, token: before.token, csrf: before.csrf, bindWaitMs: 2000,
+		onStop: () => void old.stop().then(async () => void (seen = await squatter(before.port))),
+	});
+	cleanups.push(() => old.stop());
+	markAlive(4242);
+	cleanups.push(() => markGone(4242));
+	writeRecordFile(dir, { ...before, pid: 4242, started: "T-old", owner: "pi session (pid 4242)", ownerSession: "pi-old", version: "0.45.0" });
+	const next = await host({ tailscale: ts.run, options: { startOf: (p) => (p === 4242 ? "T-old" : undefined) } });
+	assert.notEqual(next.gui().port, before.port, "the port is taken, so the GUI moves");
+	assert.notEqual(next.gui().token, before.token);
+	assert.equal(await status(next.url), 200);
+	assert.deepEqual(seen, [], "the squatter received no request, so no token");
 });
 
 test("sec-F003: the GUI of a secondary server answers Straw Link calls with the no_link text (the holder is the default Herdr's server's), not the refusal of a holder session that is not its host", async () => {

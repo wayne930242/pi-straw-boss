@@ -2,7 +2,7 @@ import { execFileExe } from "./exe.mjs";
 import { system32, system32Path } from "./winpath.ts";
 import { createHash, randomBytes } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type RequestListener, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { extname, join } from "node:path";
 import { waitsForLinkRequest, waitsForSecret } from "./ask.ts";
@@ -50,7 +50,7 @@ export interface GuiOptions { read(): Promise<Net>; net?: { lookup(key: string):
 export interface Asked { by: string; take: boolean }
 
 /** Starts the server. A preferred `port` and `remotePort` (with the `token` and `csrf`) are reused when free, so a restarted server keeps the URL and the page an open tab already has. */
-export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, port = 0, remotePort = 0, token = randomBytes(16).toString("hex"), csrf = randomBytes(16).toString("hex"), pollMs = 2000, idleMs = 10_000, pingMs = 15_000, onStop, refuseTake, onRemote, onRemoteOff, onSaveFailed, spawn, close, trust, link, server: panel, bindWaitMs = 0 }: GuiOptions): Promise<Gui> {
+export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, port = 0, remotePort = 0, token: preferredToken, csrf: preferredCsrf, pollMs = 2000, idleMs = 10_000, pingMs = 15_000, onStop, refuseTake, onRemote, onRemoteOff, onSaveFailed, spawn, close, trust, link, server: panel, bindWaitMs = 0 }: GuiOptions): Promise<Gui> {
 	try {
 		if (!statSync(join(dir, "index.html")).isFile()) throw new Error();
 	} catch {
@@ -60,6 +60,45 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 	const bundle = new Map(readdirSync(dir, { recursive: true, encoding: "utf8" }).filter((f) => statSync(join(dir, f)).isFile()).map((f) => [f.split("\\").join("/"), readFileSync(join(dir, f))]));
 	// `build` names this bundle in the page and in each stream's hello: a page from another build, reconnecting to this server, reloads itself.
 	const html = bundle.get("index.html")!, build = createHash("sha256").update(html).digest("hex").slice(0, 16);
+	// The listeners are bound before anything that carries the token: a token and CSRF secret from an earlier GUI are kept only when its port (and remote port) were got back. A GUI that moved to another port
+	// (the recorded one is held by another process, which an open page of the old GUI reconnects to with the token in its URL and the CSRF secret in its requests) gets new ones, and the page that was open
+	// cannot follow it. The local listener answers while the remote one binds, and a request is refused until the routes are set.
+	let routes: { local: RequestListener; remote: RequestListener } | undefined;
+	const refuse: RequestListener = (_req, res) => void res.writeHead(503, { ...HEADERS, "content-type": "text/plain" }).end("starting");
+	const server: Server = createServer((req, res) => (routes?.local ?? refuse)(req, res)), remoteServer: Server = createServer((req, res) => (routes?.remote ?? refuse)(req, res));
+	const listen = (srv: Server, at: number) => new Promise<void>((done, fail) => {
+		srv.once("error", fail);
+		srv.listen(at, "127.0.0.1", () => (srv.off("error", fail), done()));
+	});
+	// A preferred port is kept when free; otherwise any free one. The remote listener is bound second, so it can never share the local port.
+	// A restart's new server asks for the port the old one is still letting go: it is retried for `bindWaitMs` before another is taken.
+	const bind = async (srv: Server, preferred: number) => {
+		for (const end = Date.now() + bindWaitMs; ; ) {
+			try {
+				await listen(srv, preferred);
+				break;
+			} catch (error) {
+				if (!preferred || (error as NodeJS.ErrnoException).code !== "EADDRINUSE") throw error;
+				if (Date.now() < end) {
+					await new Promise((r) => setTimeout(r, 100));
+					continue;
+				}
+				await listen(srv, 0);
+				break;
+			}
+		}
+		return (srv.address() as AddressInfo).port;
+	};
+	let bound: number, boundRemote: number;
+	try {
+		bound = await bind(server, port);
+		boundRemote = await bind(remoteServer, remotePort);
+	} catch (error) {
+		server.close();
+		throw error;
+	}
+	const kept = (port === 0 || bound === port) && (remotePort === 0 || boundRemote === remotePort);
+	const token = (kept && preferredToken) || randomBytes(16).toString("hex"), csrf = (kept && preferredCsrf) || randomBytes(16).toString("hex");
 	const page = html.toString("utf8").replace("<head>", `<head>\n<base href="/${token}/">\n<meta name="sb-csrf" content="${csrf}">\n<meta name="sb-build" content="${build}">`);
 	const files: Files = { lookup: (key) => net?.lookup(key), workspace: (id) => net?.workspace(id) ?? [], readers: readers() };
 	// Turning remote access off ends the streams of remote pages, and unpairing a device ends that device's (`remotes` names each stream's device); their next request finds the cookie void.
@@ -91,10 +130,6 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 			problem = message;
 		}
 	})().finally(() => (inflight = undefined)));
-	const listen = (srv: Server, at: number) => new Promise<void>((done, fail) => {
-		srv.once("error", fail);
-		srv.listen(at, "127.0.0.1", () => (srv.off("error", fail), done()));
-	});
 	const events = (req: IncomingMessage, res: ServerResponse, target: string | null, device?: string) => {
 		res.writeHead(200, { ...HEADERS, "content-type": "text/event-stream", connection: "keep-alive" });
 		if (device !== undefined) remotes.set(res, device);
@@ -117,7 +152,10 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 			remotes.delete(res);
 			mirrors.close(stream);
 			watch?.stop();
-			if (!clients.size) (clearInterval(poll), clearInterval(beat));
+			if (!clients.size) {
+				clearInterval(poll);
+				clearInterval(beat);
+			}
 		});
 	};
 	// One handler per listener: `kind` is the listener a request arrived on, which alone decides whether it may count as local.
@@ -172,34 +210,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 		const keep = /\.(woff2|mp3)$/.test(file) ? { "cache-control": "private, max-age=31536000, immutable" } : {};
 		res.writeHead(200, { ...HEADERS, ...keep, "content-type": TYPES[extname(file)] ?? "application/octet-stream" }).end(body);
 	};
-	const server: Server = createServer(handler("local", () => server)), remoteServer: Server = createServer(handler("remote", () => remoteServer));
-	// A preferred port is kept when free; otherwise any free one. The remote listener is bound second, so it can never share the local port.
-	// A restart's new server asks for the port the old one is still letting go: it is retried for `bindWaitMs` before another is taken.
-	const bind = async (srv: Server, preferred: number) => {
-		for (const end = Date.now() + bindWaitMs; ; ) {
-			try {
-				await listen(srv, preferred);
-				break;
-			} catch (error) {
-				if (!preferred || (error as NodeJS.ErrnoException).code !== "EADDRINUSE") throw error;
-				if (Date.now() < end) {
-					await new Promise((r) => setTimeout(r, 100));
-					continue;
-				}
-				await listen(srv, 0);
-				break;
-			}
-		}
-		return (srv.address() as AddressInfo).port;
-	};
-	let bound: number, boundRemote: number;
-	try {
-		bound = await bind(server, port);
-		boundRemote = await bind(remoteServer, remotePort);
-	} catch (error) {
-		server.close();
-		throw error;
-	}
+	routes = { local: handler("local", () => server), remote: handler("remote", () => remoteServer) };
 	hub?.start(() => void (clients.size && tick())); // a relayed dialog shows at once, not at the next poll
 	const unwatch = trust?.watch(() => void (clients.size && tick())); // and so does a trust question
 	// With no page listening the net is still read every `idleMs`, so its activity (activity.ts) is kept for the page that comes next: a phone that sleeps

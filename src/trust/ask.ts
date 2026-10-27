@@ -3,7 +3,7 @@ import { lstatSync, watch as fsWatch } from "node:fs";
 import { join } from "node:path";
 import { getAgentDir, type ExtensionAPI, ProjectTrustStore, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { herdrSocket } from "../endpoint.ts";
-import { answers, readRecord } from "../handover.ts";
+import { answersLive, readRecord } from "../handover.ts";
 import { startOf } from "../startof.ts";
 import type { Kit } from "../state.ts";
 import { answerFile, answerOf, ensureDir, MAX_FILE, readJson, remove, requestFile, resultFile, sweep, trustDir, writeAtomic } from "./files.ts";
@@ -164,7 +164,7 @@ export function registerTrust(pi: ExtensionAPI, { cfg, guiDir }: Pick<Kit, "cfg"
 		defaultTrust: (cwd) => SettingsManager.create(cwd, getAgentDir(), { projectTrusted: false }).getDefaultProjectTrust(),
 		up: async () => {
 			const record = readRecord(guiDir);
-			return Boolean(record && !record.stopped && record.trust === 1 && record.herdr === herdrSocket(env) && (await answers(record)));
+			return Boolean(record && !record.stopped && record.trust === 1 && record.herdr === herdrSocket(env) && (await answersLive(record)));
 		},
 		first: () => !state[STARTED], now: cfg.now, sleep: cfg.sleep, startOf, uuid: randomUUID,
 		watch: (dir, wake) => {
