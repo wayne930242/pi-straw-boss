@@ -285,5 +285,9 @@ test("B5R3-F001: the sender line is written from the broker's name and id with c
 	assert.equal(odd, "[intercom from xyzwvuok (abcd)]", "invisible format characters and lookalike brackets are removed");
 	const pairs = eventText({ kind: "intercom", text: "t", from: { id: "m", name: "😀".repeat(79) + "😀😀" } }).split("\n")[0]!;
 	assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(pairs), "the cut never splits a surrogate pair");
+	const paren = eventText({ kind: "intercom", text: "t", from: { id: "real-id", name: "x (boss)" } }).split("\n")[0]!;
+	assert.equal(paren, "[intercom from x boss (real-id)]", "a name cannot show a second id in parentheses");
+	const esc = eventText({ kind: "intercom", text: "t", from: { id: "m", name: "a\u001b[3Gb\u001b]0;t\u0007c" } }).split("\n")[0]!;
+	assert.equal(esc, "[intercom from a b c (m)]", "terminal escape sequences leave no residue");
 	assert.equal(eventText({ kind: "intercom", text: "t", from: { id: "m-1", name: "docs" } }), "[intercom from docs (m-1)]\nt");
 });
