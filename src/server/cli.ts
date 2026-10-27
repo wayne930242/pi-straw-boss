@@ -285,6 +285,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 			const last = readRecord(slot)?.lastError, tail = tailLog(fileOf(slot, "log"), 20);
 			throw new StepError("gui", `the GUI did not start: ${String(reply?.error ?? "no answer")}${last ? ` (${last.code}: ${last.text})` : ""}\n${tail.join("\n")}`);
 		}
+		// SAFETY: a reply with ok set and no error is the server's answer to gui-start, which carries the port and token.
 		const { port, token } = reply as unknown as { port: number; token: string };
 		for (;;) {
 			if (await (deps.pageAnswers ?? ((gui) => pageAnswers(gui as Parameters<typeof pageAnswers>[0])))({ port, token })) break;

@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { cleanText, clean, BOARD, purge, readEntries, wireId, type Entry } from "../board.ts";
 import { MAX_BODY_BYTES } from "./wire.ts";
+import { restrictLabel } from "./text.ts";
 import { createHash, randomBytes } from "node:crypto";
 import type { Session } from "../herdr.ts";
 import type { LinkConfig } from "./config.ts";
@@ -115,7 +116,7 @@ const PRESENCE_ONLINE_MS = 90_000;
 const MAX_LISTED_DEVICES = 100;
 const INBOX_MAX_AGE_MS = 7 * 24 * 3600_000;
 /** Why the relay refused an envelope for good. */
-const refusal = (error: Error) => (error instanceof PayloadTooLargeError ? "the relay refuses a message this large" : error instanceof RelayError ? `the relay refused it: ${error.code}` : error.message);
+export const refusal = (error: Error) => (error instanceof PayloadTooLargeError ? "the relay refuses a message this large" : error instanceof RelayError ? `the relay refused it: ${restrictLabel(error.code)}` : error.message);
 const b64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64url");
 
 /** What the holder keeps in memory for one team it runs. */
@@ -580,7 +581,7 @@ export class LinkHolder {
 			const picks = towersFor(net, policy.project, item.toWorkspace), first = picks[0];
 			if (!first) {
 				this.waiting.get(id)!.offered = false;
-				this.tellOnce(`inbox/${id}`, `Straw Link: a message from ${item.fromLabel} waits in the inbox; no tower is open on ${policy.project}${item.toWorkspace ? ` in workspace ${item.toWorkspace}` : ""}`, "info");
+				this.tellOnce(`inbox/${id}`, `Straw Link: a message from ${item.fromLabel} waits in the inbox; no tower is open on ${policy.project}${item.toWorkspace ? ` in workspace ${restrictLabel(item.toWorkspace)}` : ""}`, "info");
 				continue;
 			}
 			// An offer is sticky: the tower that has it keeps it while it is still a tower of the project, so a tower that opens nearer the root,
@@ -625,7 +626,7 @@ export class LinkHolder {
 		const target = resolveDevice(req.device, members, this.device.keys.id);
 		if (!target.ok) return { ok: false, error: target.error };
 		const run = teams.find((r) => r.team === target.team)!;
-		if (run.outbox.haltedBy) return { ok: false, error: `The relay is refusing this device (${run.outbox.haltedBy.code}), so nothing is sent to team ${run.team.slice(0, 6)} right now; it is tried again every ${Math.round((this.o.haltRetryMs ?? 60_000) / 1000)} s` };
+		if (run.outbox.haltedBy) return { ok: false, error: `The relay is refusing this device (${restrictLabel(run.outbox.haltedBy.code)}), so nothing is sent to team ${run.team.slice(0, 6)} right now; it is tried again every ${Math.round((this.o.haltRetryMs ?? 60_000) / 1000)} s` };
 		const workspace = net.workspaces.find((w) => w.workspace_id === pane.workspace_id);
 		const queued = await run.outbox.submit((seq) => {
 			const { state } = this.loadTeam(run.team), key = state.keys.get(state.epoch);
@@ -699,7 +700,7 @@ export class LinkHolder {
 		if (held && held.from !== from) return void this.o.store.log({ event: "drop", team: run.team, reason: "confirm-request-id-taken", from, kind: "confirm-request" });
 		while (this.confirms.size >= CONFIRM_MAX) this.confirms.delete(this.confirms.keys().next().value!);
 		this.confirms.set(p.dialogId, { dialogId: p.dialogId, team: run.team, from, fromLabel: sender?.label ?? shortId(from), fromShort: shortId(from), digest: p.digest, tool: p.tool, args: p.args, tower: p.tower, at: now });
-		this.o.notify(`Straw Link: ${sender?.label ?? shortId(from)} asks you to confirm a ${p.tool} call from its tower`, "warning");
+		this.o.notify(`Straw Link: ${sender?.label ?? shortId(from)} asks you to confirm a ${restrictLabel(p.tool)} call from its tower`, "warning");
 	}
 	private takeConfirmAnswer(run: TeamRun, roster: RosterState, header: Header, p: ConfirmAnswer): void {
 		const ask = this.asked.get(p.dialogId);
@@ -903,7 +904,7 @@ export class LinkHolder {
 	private alerts(): LinkAlert[] {
 		const now = this.now(), name = (team: string) => this.o.config().teams.get(team)?.name ?? team.slice(0, 6), out: LinkAlert[] = [];
 		for (const r of this.admin.joinRequests()) out.push({ id: `join/${r.id}`, kind: "join-request", level: "warning", team: r.team, teamName: r.teamName, data: { label: r.label, short: r.short, unattended: r.unattended ? 1 : 0 } });
-		for (const c of this.confirmRequests()) out.push({ id: `confirm/${c.dialogId}`, kind: "confirm", level: "warning", team: c.team, teamName: name(c.team), data: { label: c.fromLabel, short: c.fromShort, tool: c.tool } });
+		for (const c of this.confirmRequests()) out.push({ id: `confirm/${c.dialogId}`, kind: "confirm", level: "warning", team: c.team, teamName: name(c.team), data: { label: c.fromLabel, short: c.fromShort, tool: restrictLabel(c.tool) } });
 		for (const team of this.o.store.teamIds()) {
 			const why = this.stopped.has(team) ? (this.o.store.readStopped(team)?.reason ?? "stopped") : this.o.store.readStopped(team)?.reason;
 			const run = this.runs.get(team);

@@ -9,6 +9,7 @@ import { MESSAGE_TYPE } from "../../src/link/turn.ts";
 import { type Agent, World } from "../fakes.ts";
 import type { FakeRelay } from "./fake-relay.ts";
 import { alice, bob, carol, clientFor, rosterOf, TEAM_HEX, writeDevice, writeTeam } from "./holder-world.ts";
+import { linkServer, type LinkServer } from "./service-world.ts";
 import { TEAM } from "./scenario.ts";
 
 // A computer with a tower that has a team, a project that is a git repository, and trust levels, for the remote-turn tests: events are fired at the
@@ -22,6 +23,8 @@ export interface Computer {
 	deps: { link: Record<string, unknown> };
 	world: World;
 	tower: Agent;
+	/** The sb server's link holder of this computer. */
+	server: LinkServer;
 	link: Link;
 	project: string;
 	home: string;
@@ -48,11 +51,13 @@ export function computer(root: string, relay: FakeRelay, who: "a" | "b", o: { tr
 	writeFileSync(join(world.stateDir, "config.json"), JSON.stringify({ link: { relay: o.url ?? "http://relay.test", teams: { [TEAM_HEX]: { project, share: "status" } }, trust: o.trust ?? {} } }));
 	relay.addTeam(TEAM, [alice.id, bob.id], entries);
 	let link: Link | undefined;
-	const deps = { link: { ...FAST, home, gateMs: o.gateMs, requestMs: o.gateMs, terminalMs: o.terminalMs, relay: o.client ?? clientFor(relay), alive: (r: { session: string }) => !world.gone.has(r.session), created: (l: Link) => void (link = l), policy: o.policy ?? { read: () => { throw Object.assign(new Error("none"), { code: "ENOENT" }); } } } };
+	const service = { ...FAST, home, relay: o.client ?? clientFor(relay), alive: (r: { session: string }) => !world.gone.has(r.session), policy: o.policy ?? { read: () => { throw Object.assign(new Error("none"), { code: "ENOENT" }); } } };
+	const server = linkServer(world, { deps: service });
+	const deps = { link: { ...service, gateMs: o.gateMs, requestMs: o.gateMs, terminalMs: o.terminalMs, ask: server.ask, created: (l: Link) => void (link = l) } };
 	const tower = world.tower(`tower-${who}`, "wA:t7", "wA:p7", o.ui ?? false, deps);
 	world.herdr.pane("wA:p7").cwd = project;
 	tower.cwd = project;
-	return { world, tower, deps, get link() { return link!; }, project, home, dir: store.dir };
+	return { world, tower, server, deps, get link() { return link!; }, project, home, dir: store.dir };
 }
 
 let counter = 0;

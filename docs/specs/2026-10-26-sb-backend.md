@@ -212,6 +212,8 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
   start and written to `server.json`. The server compares it in constant time and closes a connection whose first frame is not a
   matching `hello`, with no answer (logged at most once a minute). A run reconnecting after a restart reads the new secret from
   `server.json`.
+- Known gap (B3R-F003): the hello secret alone gives full `link` admin, since `link` does not check a run token's kind. B5 and B6 must add
+  that check before runs reach the socket.
 - The secret is only as private as `server.json`. On Windows the server sets the ACL of the state directory, `straw-boss/` and never the
   agent directory above it, before it writes the secret:
   - The owner's SID comes from `[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value`, read through PowerShell with
@@ -1403,12 +1405,16 @@ removed, with the release that carries B6.
    - `/boss tower <prompt>` (D15): it ensures the tower like a bare `/boss tower`, clears `stopped`, posts the prompt as a `boss`
      event, and answers "handed to the tower" with no focus change. A bare `/boss tower` keeps opening and focusing the tower tab.
    - A proposed pi-intercom change: a mailbox flush waits for receipts (**Queueing and concurrency**).
+   - The `link` command must require the run-token kind check before any run reaches the socket (B3R-F003): today the hello secret alone
+     gives full link admin (create, join, leave, answer confirms), so a run that holds the secret could administer the team. It also allows
+     sending as any live tower, `taken`, the `gui` ops, and `request-open`/`request-run` without `link_request` approval; B5 and B6 scope the check to all of these.
    - `boss_server` over the run tokens (B1 has none, so its block is a session-level hook only): the server itself refuses `restart`,
      `status`, and `logs` for an ally-run token and enforces the one-a-minute restart limit server-side (today it is checked under the
      lock by the requester); `boss_server` is registered in local runs over the socket and never in ally runs.
    - Link messages are not routed yet: with the flag on, they wait in `link/inbox/` with the GUI notice "a Straw Link message waits; ally
      runs come with the next step" until B6.
 6. **B6, ally runs (behind `towerRuns.enabled`).**
+   - The `link` command's run-token kind check (B3R-F003): an ally run's token never reaches link admin; see **The control socket**.
    - Routing link events into ally runs, session-level remote turns for towers, the guards of **Security**, server-side token
      enforcement, and the gate's Allow check.
    - The ally brief, its asks, and the thread store.

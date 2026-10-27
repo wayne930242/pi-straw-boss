@@ -20,7 +20,7 @@ export const SUMMARY_MS = 2000;
 export const SUMMARY_KEEP_MS = 30_000;
 /** The holder is there but did not answer in time: the one failure for which the last summary may stand in. */
 export class HolderSlow extends Error {}
-export const NO_HOLDER = "No link holder is running on this computer yet. If Straw Link is not set up here, open Teams in the GUI and press Set up; otherwise it starts within a few seconds, and if it stays so a team file or its config.json entry is missing";
+export const NO_HOLDER = "No link holder is running on this computer yet: it runs in the sb server, which starts within a few seconds. If Straw Link is not set up here, open Teams in the GUI and press Set up; otherwise, if it stays so, a team file or its config.json entry is missing";
 
 export interface GuiLinkOptions {
 	/** The event bus the channel registers on (pi's `pi.events`, or the sb server's kit). */
@@ -109,3 +109,22 @@ export function createGuiLink(o: GuiLinkOptions) {
 	};
 }
 export type GuiLink = ReturnType<typeof createGuiLink>;
+
+/** The link holder that runs in this process (link/service.ts), as far as the GUI needs it. */
+export interface LocalHolder { request(body: unknown, from: string): Promise<unknown> }
+/** The GUI's link once the holder runs in the same process (the primary sb server): requests go to it directly as this server (`id`), not over the channel to a session; with no holder here the channel's way stands. */
+export function inProcessLink(channel: GuiLink, holder: () => LocalHolder | undefined, id: () => string): GuiLink {
+	return {
+		...channel,
+		async call(name, args = {}) {
+			const here = holder();
+			return here ? ((await here.request({ op: "gui", name, args }, id())) as GuiAnswer) : channel.call(name, args);
+		},
+		async summary() {
+			const here = holder();
+			if (!here) return channel.summary();
+			const answer = (await here.request({ op: "gui", name: "summary", args: {} }, id())) as GuiAnswer;
+			return answer.ok ? (answer.summary as LinkSummary) : undefined;
+		},
+	};
+}

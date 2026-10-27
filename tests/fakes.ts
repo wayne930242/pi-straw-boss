@@ -614,8 +614,11 @@ export class World {
 			last = now;
 		}
 	}
+	/** Stand-ins that live beside the sessions (the sb server's link service, tests/link/service-world.ts), ended with them. */
+	stoppers: (() => Promise<void>)[] = [];
 	async stopAll(): Promise<void> {
 		for (const agent of this.agents) await agent.stop();
+		for (const stop of this.stoppers.splice(0)) await stop();
 		rmSync(this.stateDir, { recursive: true, force: true });
 	}
 }

@@ -7,11 +7,12 @@ import { herdrEvents, herdrWatch, type HerdrWatch } from "../server-watch.ts";
 import { alive as pidAlive } from "../remote.ts";
 import { rememberStart, startedLater, startOf as processStartOf } from "../startof.ts";
 import { AclError, applyAcl, awaitAclMarker } from "./acl.ts";
-import { createGuiLink, type GuiLink } from "../link/guiport.ts";
+import { createGuiLink, type GuiLink, inProcessLink } from "../link/guiport.ts";
 import type { Run } from "../remote.ts";
 import { herdrListens, intercomOf, runsAs, serverEnv } from "./client.ts";
 import { cliBeside, createGuiHost, spawnRestart } from "./guihost.ts";
 import { type IntercomModule, loadIntercom, LoaderError } from "./intercom.ts";
+import { createLinkService, type LinkService, type ServiceDeps } from "../link/service.ts";
 import { createLog } from "./log.ts";
 import {
 	clearStartError, type Detach, fileOf, prepareSlot, readRecord, restartingNow, type ServerRecord, serverId, type Slot, TOUCH_MS, updateRecord, writeRecord, writeStartError,
@@ -19,15 +20,16 @@ import {
 import { AFTER, endpointFor, helloOf, listenControl, newSecret, type Reply, type Request } from "./socket.ts";
 import { packageRoot, VERSION } from "./version.ts";
 
-// The sb server process (docs/specs/2026-10-26-sb-backend.md). B1 is the skeleton: it owns the control socket and `server.json`, holds an intercom session of its own through
-// the headless kit, and takes the stop and restart requests. B2 moves the GUI in (guihost.ts). The link holder and the tower service move in with the later steps.
+// The sb server process (docs/specs/2026-10-26-sb-backend.md). It owns the control socket and `server.json`, holds an intercom session of its own through the headless kit, and
+// takes the stop and restart requests. B2 moves the GUI in (guihost.ts). B3: the primary server also runs the Straw Link holder (link/service.ts) and answers its `link` requests; the
+// tower service moves in with the later step.
 
 /** The exit code of a `serve` server that was asked to restart: a supervisor (launchd `KeepAlive`, systemd `Restart=on-failure`) starts it again. */
 export const SERVE_RESTART_CODE = 75;
 /** Exit codes: 0 done, 3 the server cannot run (tsx or pi-intercom missing, the Windows ACL). */
 export const EXIT_CANNOT_RUN = 3;
 const RETRY_MS = [1000, 2000, 5000, 10_000, 30_000];
-const BROKER_MS = 5000, HERDR_GONE_MS = 60_000, HERDR_POLL_MS = 5000, LEAVE_MS = 2000, GUI_LEAVE_MS = 6000;
+const BROKER_MS = 5000, HERDR_GONE_MS = 60_000, HERDR_POLL_MS = 5000, LEAVE_MS = 2000, GUI_LEAVE_MS = 6000, LINK_MS = 3000, LINK_STOP_MS = 4000;
 /** The client the kit starts with, before the first connection: not connected to anything, so the GUI can be built (and answer its page) while the broker is still starting. */
 const OFFLINE: IntercomLike = {
 	sessionId: null, isConnected: () => false, supportsFeature: () => false, connect: async () => { throw new Error("pi-intercom is not connected"); }, disconnect: async () => {},
@@ -72,6 +74,10 @@ export interface ServerOptions {
 	brokerMs?: number;
 	herdrGoneMs?: number;
 	herdrPollMs?: number;
+	/** How long the start waits for the link holder's first look before it reports ready (default 3 s). */
+	linkMs?: number;
+	/** Seams of the link holder (service.ts): shorter timers, a relay behind a fake `fetch`, an isolated home folder. */
+	link?: ServiceDeps;
 }
 export interface ServerHandle {
 	/** True once the server answers as ready (the broker is connected or has been tried, and `restarting` is cleared); false when it could not start. */
@@ -124,6 +130,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	/** One line per phase of the start: how long it took, and when it ended counted from the start of this server. */
 	const trace = (name: string, began: number, facts: Record<string, string> = {}) => log.line("phase", { name, ms: now() - began, at: now() - startedAt, ...facts });
 	const timers: ReturnType<typeof setInterval>[] = [], stops: (() => void)[] = [];
+	let link: LinkService | undefined, linkFirst: Promise<void> | undefined;
 
 	/** The start cannot go on: told in start-error.json (which `up` and the session looks read) and in the record, and the process leaves with the code. */
 	const abort = (code: "acl" | "loader" | "intercom" | "start", text: string, sddl?: string): ServerHandle => {
@@ -245,6 +252,8 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		const began = now();
 		timers.forEach(clearInterval);
 		stops.forEach((stop) => stop());
+		// The link holder's record goes before the server does, so the next server takes it at its first look and no relay stream is left half open.
+		await Promise.race([link?.stop().catch((error: Error) => log.line("error", { code: "link", text: phrase(error.message, 300) })), sleep(LINK_STOP_MS)]);
 		// The GUI listeners and the remote entry go before the intercom ids are released.
 		await Promise.race([guiHost?.leave(phase === "stopping").catch(() => {}), sleep(GUI_LEAVE_MS)]);
 		await Promise.race([client?.disconnect().catch(() => {}), sleep(LEAVE_MS)]);
@@ -265,8 +274,16 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 
 	let control: Awaited<ReturnType<typeof listenControl>> | undefined;
 	const handleRequest = async (request: Request): Promise<Reply> => {
-		if (request.cmd === "status") return { ok: true, ...facts(), uptimeMs: now() - startedAt, ...(own.lastError ? { lastError: own.lastError } : {}), towers: [], link: null, ...(guiHost ? { gui: guiHost.facts() } : {}) };
+		if (request.cmd === "status") return { ok: true, ...facts(), uptimeMs: now() - startedAt, ...(own.lastError ? { lastError: own.lastError } : {}), towers: [], link: link?.status() ?? null, ...(guiHost ? { gui: guiHost.facts() } : {}) };
 		if (phase === "restarting" || phase === "stopping") return { ok: false, error: "restarting" };
+		if (request.cmd === "link") {
+			// A request of a session to the link holder (service.ts): the answer is the holder's own, in `answer`; `ok` is only whether the server took the request. Only the primary server holds the link.
+			const from = phrase(request.from, 200);
+			if (!from || typeof request.body !== "object" || request.body === null) return { ok: false, error: "a link request needs from and body" };
+			if (!slot.primary) return { ok: true, answer: { ok: false, code: "no_link", error: "Straw Link runs in the sb server of the default Herdr only, and this session's Herdr is another one" } };
+			if (!link) return { ok: true, answer: { ok: false, code: "no_holder", error: "The link holder is not running in the sb server yet; ask again in a moment" } };
+			return { ok: true, answer: await link.request(request.body, from) };
+		}
 		const asked = await guiHost?.handle(request);
 		if (asked) return asked;
 		if (request.cmd === "stop") {
@@ -335,13 +352,14 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	const herdrCfg = { ...o.herdr, call: o.herdr?.call ?? herdrCall(slot.herdr), api: o.herdr?.api ?? herdrApi(slot.herdr), watch: o.herdr?.watch ?? o.watch ?? herdrWatch(slot.herdr), events: o.herdr?.events ?? herdrEvents(slot.herdr), stateDir: slot.stateDir };
 	const kitEnv = { ...env, PI_INTERCOM_SESSION_ID: serverId(slot) };
 	const cfg = headlessConfig({ ...herdrCfg, run: o.herdr?.run ?? socketRun(herdrRun, herdrCfg.call, undefined) }, kitEnv);
-	// SAFETY: the kit hands a client to the modules that run the net; it is attached at the first connection, before any of them is built (none is in B1).
+	// SAFETY: the kit hands a client to the modules that run the net; it is attached at the first connection, before any of them is built (the link holder is built right after it).
 	const kit = createHeadlessKit({ client: OFFLINE, env: kitEnv, cfg, log: () => {} });
 	const gui = o.gui === false ? undefined : o.gui ?? {};
 	guiHost = gui && createGuiHost({
 		slot, kit, log, pid, version, started: () => own.started, runs: (record) => runsAs({ alive, startOf }, record),
 		sessions: async () => (client?.isConnected() ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))),
-		link: gui.link ?? createGuiLink({ events: kit.pi.events, id: () => serverId(slot), stateDir: slot.stateDir, agentDir: env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), log: (text) => log.line("link", { text }) }),
+		// The primary server holds the link itself (B3), so the GUI asks the holder in this process as the server, which the holder takes GUI requests from; before it runs, and on a secondary server, the channel reaches the holder's session.
+		link: gui.link ?? inProcessLink(createGuiLink({ events: kit.pi.events, id: () => serverId(slot), stateDir: slot.stateDir, agentDir: env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), log: (text) => log.line("link", { text }) }), () => link, () => serverId(slot)),
 		status: () => ({ state: phase === "ready" ? "live" : phase, version, pid, mode, desk, uptimeMs: now() - startedAt, log: fileOf(slot, "log"), ...(own.lastError ? { lastError: own.lastError } : {}) }),
 		restart: gui.restart ?? ((reason) => spawnRestart(cliBeside(), reason, "the GUI", serverEnv(env), slot.dir)),
 		failed: (code, text) => recordError(code, text), tailscale: gui.tailscale, bundle: gui.bundle, bindWaitMs: gui.bindWaitMs,
@@ -359,6 +377,15 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	}), o.herdrPollMs ?? HERDR_POLL_MS));
 
 	// pi-intercom: the server's own session, reconnecting with the sidecar's backoff (1, 2, 5, 10, then 30 s). While it is disconnected its identities are not live.
+	// The link holder (B3): the primary server only, built once the first connection is attached (the kit's channel needs a client). A computer with no team set up gets no channel, election, or files.
+	const startLink = () => {
+		if (link || !slot.primary || leaving) return;
+		link = createLinkService({
+			kit, stateDir: slot.stateDir, version, pid, started: () => own.started,
+			notify: (text, level = "info") => log.line("link-notice", { level, text: phrase(text, 300) }), deps: o.link,
+		});
+		linkFirst = link.start();
+	};
 	let connecting = false, resolveFirst!: (ok: boolean) => void;
 	const first = new Promise<boolean>((resolve) => (resolveFirst = resolve));
 	let connectBegan = now();
@@ -382,6 +409,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 				next.on("error", () => {});
 				await next.connect({ name: "sb server", cwd: slot.dir, model: "straw-boss-server", pid, startedAt, lastActivity: now() }, serverId(slot));
 				log.line("intercom-connected", { id: serverId(slot), intercom: mod.version, ms: now() - connectBegan });
+				startLink();
 				resolveFirst(true);
 				break;
 			} catch (error) {
@@ -394,6 +422,8 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	};
 	void connectLoop();
 	await Promise.race([first, sleep(o.brokerMs ?? BROKER_MS).then(() => false)]);
+	// The link holder has looked once (it is bound to the identities, which are registered, and the GUI ports come after it): a first look that is slow does not hold the start.
+	if (linkFirst) await Promise.race([linkFirst, sleep(o.linkMs ?? LINK_MS)]).then(((began) => () => trace("link", began))(now()));
 
 	// The GUI binds the recorded ports last (a restart keeps the URL), after the intercom ids are as registered as they can be and, with the link holder in the server, after that.
 	await guiHost?.start();
