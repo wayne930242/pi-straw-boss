@@ -111,7 +111,7 @@ test("R-F009: without user ids a trust folder must lie in the profile; the confi
 });
 
 test("R-F002: the GUI's pop hands the trust directory on", () => {
-	assert.match(readFileSync(new URL("../src/host.ts", import.meta.url), "utf8"), /popBase\(\{[^}]*trustDir: trustDir\(guiDir\)/);
+	assert.match(readFileSync(new URL("../src/server/guihost.ts", import.meta.url), "utf8"), /popBase\(\{[^}]*trustDir: trustDir\(slot\.stateDir\)/);
 });
 
 test("R-F004 (live): a request rewritten under the same id and a new digest is told to the opening again", async () => {

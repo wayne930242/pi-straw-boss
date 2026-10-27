@@ -1,3 +1,4 @@
+import { createServer as createNetServer } from "node:net";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,7 @@ import type { IntercomModule } from "../src/server/intercom.ts";
 import { runServer, type ServerHandle, type ServerOptions } from "../src/server/main.ts";
 import { readRecord, type ServerRecord, secretDir, slotOf } from "../src/server/record.ts";
 import { StubClient } from "./agent-fakes.ts";
+import { bundle, noLink, noTailscale } from "./gui-fakes.ts";
 
 // A world for the sb server's tests: one state directory, servers that run in this process under fake pids (each with a fake pi-intercom client, no Herdr, no ACL), and
 // requesters (`Ctx`) whose spawn starts one of those servers, so a start, a restart, and a stop go through the real control socket, record, and lock.
@@ -58,7 +60,10 @@ export class ServerWorld {
 			acl: async (dir) => { this.acls.push(dir); if (this.aclError) throw this.aclError; },
 			// The folder's own ACL step is not run here (it needs Windows); its order is pinned in server-winprep.test.ts.
 			prepare: (slot) => secretDir(slot.dir),
-			herdrUp: async () => true, watch: () => () => {}, touchMs: 30, brokerMs: 1500, herdrPollMs: 30, herdrGoneMs: 200, sleep, ...over,
+			herdrUp: async () => true, watch: () => () => {}, touchMs: 30, brokerMs: 1500, herdrPollMs: 30, herdrGoneMs: 200, sleep,
+			// The GUI the server serves binds ports of its own; the machine's Tailscale and link holder are not asked.
+			gui: { bundle, tailscale: noTailscale, link: noLink, bindWaitMs: 200 },
+			...over,
 		};
 		return { options, client, pid };
 	}
@@ -100,4 +105,15 @@ export class ServerWorld {
 		await Promise.all(this.running.map((r) => r.handle.shutdown(0)));
 		rmSync(this.root, { recursive: true, force: true });
 	}
+}
+
+/** A loopback port nobody listens on now: a test that plants a GUI port in a record must not name one a real GUI of this machine may hold (the server binds the recorded port). */
+export function freePort(): Promise<number> {
+	return new Promise((resolve, reject) => {
+		const probe = createNetServer();
+		probe.on("error", reject).listen(0, "127.0.0.1", () => {
+			const { port } = probe.address() as { port: number };
+			probe.close(() => resolve(port));
+		});
+	});
 }

@@ -215,8 +215,8 @@ export function clearStopped(slot: Slot): boolean {
 		const { stopped: _stopped, ...rest } = record;
 		return { ...rest, ...(record.gui ? { gui: { ...record.gui, stopped: undefined } } : {}) } as ServerRecord;
 	});
-	if (slot.primary) {
-		const file = join(slot.stateDir, "gui.json"), gui = parse<Record<string, unknown>>(readRaw(file));
+	{
+		const file = join(slot.dir, "gui.json"), gui = parse<Record<string, unknown>>(readRaw(file));
 		if (isObject(gui) && gui.stopped) {
 			const { stopped: _stopped, ...rest } = gui;
 			writeJson(file, rest);

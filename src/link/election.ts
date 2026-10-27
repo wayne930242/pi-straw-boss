@@ -1,4 +1,4 @@
-import { newer } from "../handover.ts";
+import { newer } from "../semver.ts";
 import { alive as pidAlive } from "../remote.ts";
 import { startOf } from "../startof.ts";
 import type { HolderRecord, LinkStore } from "./store.ts";

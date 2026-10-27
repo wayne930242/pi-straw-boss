@@ -7,6 +7,7 @@ import type { Session } from "../herdr.ts";
 import { startOf } from "../startof.ts";
 import { type Channel, type Kit, REGISTER } from "../state.ts";
 import { createApproval } from "./approval.ts";
+import { ASK_MS, HolderSlow, NO_HOLDER, SUMMARY_KEEP_MS, SUMMARY_MS } from "./guiport.ts";
 import { readLinkConfig } from "./config.ts";
 import type { DeviceKeys } from "./device.ts";
 import { readFileSync } from "node:fs";
@@ -60,15 +61,7 @@ export { MESSAGE_TYPE };
 /** The session entry that remembers which inbox messages this session has already taken, so a restart does not take one twice. */
 export const SEEN = "straw-link-seen";
 const LONG_WAIT_MS = 10 * 60_000;
-/** Longer than the holder's worst case for a send: the lock wait, a reading of Herdr, and the wait for the relay; a tower that gave up earlier would invite a resend of a message that went out. */
-export const ASK_MS = 60_000;
-/** The GUI's net read waits this long for the holder's summary: a holder that is lost must not freeze the map. */
-const SUMMARY_MS = 2000;
-/** A slow holder's last summary is served for this long; after that the map shows nothing rather than stale allies, alerts, and forwarded confirms. */
-const SUMMARY_KEEP_MS = 30_000;
-/** The holder is there but did not answer in time: the one failure for which the last summary may stand in. */
-class HolderSlow extends Error {}
-const NO_HOLDER = "No link holder is running on this computer yet. If Straw Link is not set up here, open Teams in the GUI and press Set up; otherwise it starts within a few seconds, and if it stays so a team file or its config.json entry is missing";
+export { ASK_MS };
 
 type ChannelEvent = { type: string; fromSessionId?: string; payload?: unknown };
 interface Held { id: string; item: InboxItem; at: number; noticed: boolean }

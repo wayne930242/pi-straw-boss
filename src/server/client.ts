@@ -598,13 +598,14 @@ export const unreachableText = (record: Pick<ServerRecord, "pid" | "detach">) =>
 	`the sb server (pid ${record.pid}) runs but this process may not reach it: it was probably started from an elevated pi or shell, and this one is not elevated; stop or restart it from an elevated shell`;
 
 /** The state of the server for a shell, from the files and a hello (docs/specs/2026-10-26-sb-backend.md, States for a shell). */
-export type State = "live" | "restarting" | "stopped" | "gone";
+export type State = "live" | "restarting" | "stopped" | "gui-stopped" | "gone";
 export function stateOf(ctx: Pick<Ctx, "now">, seen: Pick<Probe, "record" | "live" | "denied">): State {
 	const { record } = seen, live = seen.live || seen.denied === true;
 	if (!record) return "gone";
 	if (record.stopped) return "stopped";
 	if (restartingFresh(record, ctx.now())) return "restarting";
-	return live ? "live" : "gone";
+	// A server that runs with its GUI stopped on purpose (`/boss gui stop`) is still live, but its URL does not answer: a shell runs `up`, which starts the GUI again.
+	return live ? (record.gui?.stopped ? "gui-stopped" : "live") : "gone";
 }
 
 /**
@@ -617,7 +618,8 @@ export async function describe(ctx: Ctx): Promise<Record<string, unknown>> {
 	if (seen.live && record) {
 		try {
 			const { reply } = await callControl(record.socket, record.secret, { cmd: "status" }, 3000);
-			if (reply?.ok) more = { uptimeMs: reply.uptimeMs, towers: reply.towers ?? [], link: reply.link ?? null };
+			const remote = (reply?.gui as { remote?: unknown } | undefined)?.remote;
+			if (reply?.ok) more = { uptimeMs: reply.uptimeMs, towers: reply.towers ?? [], link: reply.link ?? null, ...(remote ? { remote } : {}) };
 		} catch { /* the server went while it was asked */ }
 	}
 	return {
@@ -638,5 +640,5 @@ export function detachWarning(record: Pick<ServerRecord, "detach" | "detachFailu
 	if (record?.detach === "wmi-in-job") return "the sb server was started through WMI, but the job it is in did not allow it to break away, so it stays in the WMI provider host's job and ends with that job's limits";
 	return undefined;
 }
-/** The GUI's URL, once the server hosts the GUI (B2); null while the pi sessions do. */
+/** The GUI's URL; null while the server has not started one. */
 export const guiUrl = (record: ServerRecord | undefined) => (record?.gui ? `http://127.0.0.1:${record.gui.port}/${record.gui.token}/` : null);

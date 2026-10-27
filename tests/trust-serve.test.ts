@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { startGui, type Gui } from "../src/gui.ts";
-import { readRecord, writeRecord } from "../src/handover.ts";
 import { collectNet } from "../src/net.ts";
 import type { Pane, Workspace } from "../src/herdr.ts";
 import { answerFile, listRequests, requestFile, resultFile, sweep, writeAtomic } from "../src/trust/files.ts";
@@ -217,16 +216,12 @@ test("the route is absent from a server started without trust support", async ()
 	assert.equal((await local(gui, { id: id(1) })).status, 503);
 });
 
-test("the snapshot carries `trust` only while a question is open, and every server writes `trust: 1` into gui.json", async () => {
+test("the snapshot carries `trust` only while a question is open (the server writes `trust: 1` into gui.json: server-gui.test.ts)", async () => {
 	const dir = dirOf(), s = serve(dir);
 	const read = () => collectNet({ run: async () => "{}", world: async () => ({ panes, workspaces, tabs: [] }), sessions: async () => [], trust: s });
 	assert.equal("trust" in (await read()), false, "no question: the snapshot is as it was");
 	put(dir, 1);
 	assert.deepEqual((await read()).trust?.map((t) => [t.folder, t.agents.length]), [["/work/demo", 1]]);
-	const state = join(scratch, "record");
-	mkdirSync(state, { recursive: true });
-	writeRecord(state, { port: 1, remotePort: 2, token: "t", csrf: "c" } as Gui, ["owner", "session"], "0.44.0", HERDR);
-	assert.equal(readRecord(state)?.trust, 1);
 });
 
 test("an answer the pi set aside because the folder changed frees the question: the next answer, for the new digest, is taken", async () => {

@@ -206,6 +206,8 @@ mountHotkeys((hotkey) => panels?.hotkey(hotkey) ?? false); // Space opens the ne
 el("teams").addEventListener("click", openTeams);
 el("pair").hidden = location.hostname !== "127.0.0.1"; // pairing is this computer's: a paired device comes in by its tailnet name (remote.ts)
 el("pair").addEventListener("click", () => void import("./pair.ts").then(({ pairTile }) => openTile(pairTile(), true)));
+el("server").hidden = location.hostname !== "127.0.0.1"; // restarting the server and reading its log are this computer's too (the server answers 403 local_only to a paired device)
+el("server").addEventListener("click", () => void import("./server.ts").then(({ serverTile }) => openTile(serverTile(), true)));
 // The phone's quick-switch drawer (drawer.ts, swipe.ts): its own chunk, fetched where there is a touch screen or a narrow window, now or once the window narrows.
 let drawer: Drawer | undefined;
 const touchy = matchMedia("(pointer: coarse), (max-width: 640px)");

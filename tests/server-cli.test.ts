@@ -65,6 +65,24 @@ test("status says gone with no server, and never prints the secret or the socket
 	assert.ok(!live.out.includes(world.record()!.secret) && !live.out.includes(world.record()!.socket) && !live.out.includes("secret"));
 });
 
+test("status carries the GUI's url from the record; a GUI stopped on purpose is gui-stopped while the server runs, and up starts it again on the same url and it answers 200", async () => {
+	const s = await world.start();
+	await s.handle.ready;
+	const gui = world.record()!.gui!, url = `http://127.0.0.1:${gui.port}/${gui.token}/`;
+	assert.equal((await cli(["status"])).json?.url, url);
+	const record = world.record()!;
+	assert.equal((await callControl(record.socket, record.secret, { cmd: "gui-stop" })).reply?.ok, true);
+	const stopped = await cli(["status"]);
+	assert.deepEqual([stopped.json?.state, stopped.json?.url], ["gui-stopped", url]);
+	await assert.rejects(fetch(url), "the page is down");
+	const up = await cli(["up"]);
+	assert.equal(up.code, 0, up.err);
+	assert.deepEqual([up.json?.server, up.json?.url], ["found", url]);
+	assert.equal((await fetch(url)).status, 200);
+	assert.equal((await cli(["status"])).json?.state, "live");
+	assert.equal(world.record()?.gui?.stopped, false);
+});
+
 test("status gives the other states of the table: restarting (with its reason), stopped, gone with the last error and the start-error", async () => {
 	const base = { pid: 7, started: "T-7", version: "0.44.0", herdr: world.slot.herdr, mode: "detached" as const, desk: false, intercom: {}, log: "/l", socket: "/nowhere", secret: "s".repeat(64), intercomId: "sb-server-00000000" };
 	mkdirSync(world.slot.dir, { recursive: true });
@@ -89,7 +107,8 @@ test("up starts a server and prints one JSON line: url, pid, started, version, p
 	const first = await cli(["up"]);
 	assert.equal(first.code, 0, first.err);
 	const j = first.json!;
-	assert.equal(j.url, null, "no GUI listener in the server yet: the pi sessions host it until the GUI moves in");
+	const gui = world.record()!.gui!;
+	assert.equal(j.url, `http://127.0.0.1:${gui.port}/${gui.token}/`, "the server's own GUI");
 	assert.equal(typeof j.pid, "number");
 	assert.equal(j.pid, world.record()!.pid);
 	assert.equal(typeof j.started, "string");
@@ -99,7 +118,7 @@ test("up starts a server and prints one JSON line: url, pid, started, version, p
 	assert.equal(j.desk, false);
 	assert.equal(j.server, "started");
 	assert.equal(j.log, fileOf(world.slot, "log"));
-	assert.deepEqual((j.steps as { name: string; ok: boolean }[]).map((s) => [s.name, s.ok]), [["herdr", true], ["version", true], ["server", true]]);
+	assert.deepEqual((j.steps as { name: string; ok: boolean }[]).map((s) => [s.name, s.ok]), [["herdr", true], ["version", true], ["server", true], ["gui", true]]);
 	assert.ok((j.steps as { ms: number }[]).every((s) => typeof s.ms === "number"));
 	assert.deepEqual(j.warnings, []);
 	assert.equal(first.out.trim().split("\n").length, 1, "one line");

@@ -2,8 +2,9 @@ import { existsSync, readFileSync } from "node:fs";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
 import {
-	type Ctx, decide, describe, ensure, lockWaitFor, makeCtx, probe, restart, RESTART_EVERY_MS, ServerError, stop,
+	type Ctx, decide, describe, ensure, lockWaitFor, makeCtx, probe, restart, RESTART_EVERY_MS, ServerError, stop, unreachableText,
 } from "./server/client.ts";
+import { callControl } from "./server/socket.ts";
 import { tailLog } from "./server/log.ts";
 import { fileOf, readRecord, slotOf } from "./server/record.ts";
 import { newer } from "./semver.ts";
@@ -162,8 +163,33 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 			}
 		},
 	};
+	/**
+	 * One request to the live server over its control socket, for the GUI commands (host.ts). `start` says what an absent server gets: the boss's own command starts it (and clears a stop
+	 * on purpose), an automatic ask starts it only when the rules allow, and `never` leaves it down (`error: "no server"`). The server's own refusals come back as its reply.
+	 */
+	async function ask(request: Record<string, unknown>, { start }: { start: "boss" | "auto" | "never" }): Promise<{ ok: boolean; error?: string; [key: string]: unknown }> {
+		const ctx = ctxFor();
+		let seen = await probe(ctx);
+		if (!seen.live && !seen.denied && start !== "never") {
+			try {
+				const done = await ensure(ctx, { boss: start === "boss", lockWaitMs: lockWaitFor(ctx) });
+				if ("skipped" in done) return { ok: false, error: done.skipped.do === "nothing" && done.skipped.why === "stopped" ? "stopped" : done.skipped.do === "refuse" ? done.skipped.text : "the sb server is not running" };
+			} catch (error) {
+				return { ok: false, error: (error as Error).message };
+			}
+			seen = await probe(ctx);
+		}
+		if (seen.denied && seen.record) return { ok: false, error: unreachableText(seen.record) };
+		if (!seen.live || !seen.record) return { ok: false, error: "no server" };
+		try {
+			return (await callControl(seen.record.socket, seen.record.secret, { ...request, cmd: String(request.cmd) }, 30_000)).reply ?? { ok: false, error: "the sb server gave no answer" };
+		} catch (error) {
+			return { ok: false, error: (error as Error).message };
+		}
+	}
 	return {
 		...api,
+		ask,
 		/** The `/boss server [stop|restart [--downgrade] [reason]]` command: the boss's own, so it asks to confirm what costs something and clears a stop on purpose. */
 		async command(sub: "" | "stop" | "restart", rest: string) {
 			const ask = async (title: string, message: string) => (await s.ui?.confirm(title, message)) === true;
