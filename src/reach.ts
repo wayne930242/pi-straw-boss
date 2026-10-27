@@ -17,6 +17,8 @@ import { trustDir } from "./trust/files.ts";
 const OUTBOX = "intercom:outbox-request";
 const OUTBOX_RESULT = "intercom:outbox-result";
 const SEND_MS = 30_000;
+/** When a failed send to a tower identity is tried again, counted from the first failure, and how often the identity is looked for meanwhile. */
+const TOWER_RETRY_AT = [2000, 5000, 10_000, 20_000], TOWER_POLL_MS = 500;
 
 /** Live sessions whose pane carries an `sb_role` token: the sessions that joined the net, and towers. */
 export function netMembers(sessions: Session[], ps: Pane[]) {
@@ -36,10 +38,8 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit, server:
 	const { run, api, sleep } = cfg;
 	const nonce = randomUUID().slice(0, 8);
 	let requests = 0, toldStopped = false;
-	const send = (to: string, message: string) =>
+	const sendOnce = (to: string, message: string, requestId: string) =>
 		new Promise<SendResult>((resolve) => {
-			// pi-intercom keeps a message id per sender session and refuses it again with other content, and a restarted pi keeps its session id: the id carries this process's own nonce.
-			const requestId = `straw-boss-${me()}-${nonce}-${++requests}`;
 			const done = (result: SendResult) => {
 				off();
 				clearTimeout(timeout);
@@ -49,6 +49,35 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit, server:
 			const timeout = setTimeout(() => done({ status: "failed", detail: `no result within ${SEND_MS / 1000} s` }), SEND_MS);
 			pi.events.emit(OUTBOX, { version: 1, requestId, extensionId: "pi-straw-boss", extensionName: "Pi Straw Boss", to, message });
 		});
+	const live = async (id: string) => {
+		try {
+			return (await s.c.listSessions()).some((x) => x.id === id);
+		} catch {
+			return false;
+		}
+	};
+	/**
+	 * One message. The broker never sends a message again by itself and pi-intercom's outbox cannot tell an unknown outcome from a refusal (docs/specs/2026-10-26-sb-backend.md, Queueing and
+	 * concurrency), so a failed send to a tower identity of the sb server (`sb-tower-*`) is tried again, whatever the reason: at 2, 5, 10, and 20 s after the first failure (the restart budget is 30 s), or at
+	 * once when the identity is live again. pi-intercom's outbox refuses a request id it already used, so a retry goes under `<request id>~r<n>`; the tower service's dedupe makes a retry safe.
+	 */
+	const send = async (to: string, message: string) => {
+		// pi-intercom keeps a message id per sender session and refuses it again with other content, and a restarted pi keeps its session id: the id carries this process's own nonce.
+		const requestId = `straw-boss-${me()}-${nonce}-${++requests}`;
+		let result = await sendOnce(to, message, requestId);
+		if (!to.startsWith("sb-tower-")) return result;
+		for (let n = 1, waited = 0; n <= TOWER_RETRY_AT.length && (result.status === "failed" || result.status === "blocked"); n++) {
+			const at = TOWER_RETRY_AT[n - 1]!;
+			while (waited < at) {
+				const step = Math.min(TOWER_POLL_MS, at - waited);
+				await sleep(step);
+				waited += step;
+				if (await live(to)) break;
+			}
+			result = await sendOnce(to, message, `${requestId}~r${n}`);
+		}
+		return result;
+	};
 	/**
 	 * The tower of this workspace, or of another by id or label. A missing tower is opened only in this workspace: by /boss tower, by a main, or by the guard's rule. With
 	 * `towerRuns.enabled` the sb server makes it (it starts no pi); `boss` is the boss's own command, which may start a server that was stopped on purpose.

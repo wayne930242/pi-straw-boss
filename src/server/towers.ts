@@ -14,6 +14,7 @@ import { trustDir } from "../trust/files.ts";
 import type { IntercomModule } from "./intercom.ts";
 import type { Log } from "./log.ts";
 import { secretDir, type Slot, towerId, towerName } from "./record.ts";
+import { openSeen, type Seen } from "./towerseen.ts";
 import { appendEvent, deleteService, listServices, purgeAll, purgeQueues, putLedger, queueLength, readLedger, readService, type ServiceRecord, towerDir, writeService } from "./towerstore.ts";
 
 // The tower service without runs (docs/specs/2026-10-26-sb-backend.md, The tower service; build step B4), behind `towerRuns.enabled`. The server stands in for a workspace's tower:
@@ -86,6 +87,8 @@ interface Live {
 	starting?: Promise<void>;
 	registered?: Promise<boolean>;
 	stopped: boolean;
+	/** The messages taken, for dedupe (towerseen.ts); opened when the first message comes. */
+	seen?: Seen;
 }
 
 export function createTowers(o: TowersOptions): Towers {
@@ -107,10 +110,17 @@ export function createTowers(o: TowersOptions): Towers {
 
 	const wire = (l: Live, client: IntercomLike) => {
 		client.on("message", (from: Session, message: Incoming) => {
-			// Queued with a flush to disk, and kept: runs come with B5. No text reaches the log.
+			// Written to disk with a flush, then receipted, then remembered (towerseen.ts). The receipt `queued` goes only after the flush: the broker waits for it, and a sender whose message is not
+			// confirmed retries it, which the dedupe makes safe. No text reaches the log.
 			try {
-				const written = appendEvent(slot, l.record, { kind: "intercom", from: { id: from.id, ...(from.name ? { name: from.name } : {}) }, text: message.content.text, at: new Date(now()).toISOString(), messageId: message.id });
-				log.line("tower-event", { workspace: l.record.workspace, kind: "intercom", from: from.id, seq: written.seq });
+				const seen = (l.seen ??= openSeen(slot, l.record.workspace, now)), verdict = seen.check(from.id, message.id, message.content.text);
+				if (verdict === "conflict") return log.line("tower-dropped", { workspace: l.record.workspace, from: from.id, why: "the same message id with other content" });
+				if (verdict === "new") {
+					const written = appendEvent(slot, l.record, { kind: "intercom", from: { id: from.id, ...(from.name ? { name: from.name } : {}) }, text: message.content.text, at: new Date(now()).toISOString(), messageId: message.id });
+					seen.add(from.id, message.id, message.content.text);
+					log.line("tower-event", { workspace: l.record.workspace, kind: "intercom", from: from.id, seq: written.seq });
+				}
+				client.sendMessageReceipt?.({ messageId: message.id, status: "queued", timestamp: now() });
 			} catch (cause) {
 				error("queue", `an event for ${l.record.id} could not be queued: ${(cause as Error).message}`);
 			}
@@ -118,7 +128,7 @@ export function createTowers(o: TowersOptions): Towers {
 		client.on("disconnected", () => void reconnect(l, client));
 		client.on("error", () => {});
 	};
-	const registration = (l: Live) => ({ name: l.record.name, cwd: dirOf(l.record.workspace), model: "straw-boss-tower", pid: o.pid, startedAt: o.startedAt, lastActivity: now(), herdrPaneId: l.record.pane });
+	const registration = (l: Live) => ({ name: l.record.name, cwd: dirOf(l.record.workspace), model: "straw-boss-tower", pid: o.pid, startedAt: o.startedAt, lastActivity: now(), herdrPaneId: l.record.pane, acknowledgesReceipts: true });
 
 	/** The first connection of an identity: the kit and the modules made from it, the `close-main` channel, then the registration (retried until it holds or the service is gone). */
 	const register = (l: Live): Promise<boolean> => (l.registered ??= (async () => {
