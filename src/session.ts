@@ -8,6 +8,7 @@ import { isSub, type Place, panes, place, report, waitFor, workspaces } from "./
 import type { createHost } from "./host.ts";
 import { CONNECT_MS, type Membership } from "./membership.ts";
 import { orphans } from "./orphan.ts";
+import type { RunMode } from "./runmode.ts";
 import type { Presence } from "./presence.ts";
 import type { Reach } from "./reach.ts";
 import type { Roles } from "./roles.ts";
@@ -18,7 +19,7 @@ const SUBAGENT_TOOLS = ["subagent", "subagent_resume"];
 const CHECKING = "Straw Boss is still asking Herdr whether this is a sub workspace; try again in a moment";
 
 /** What the session does at its start, around each run, and at its end. */
-export function registerSession(kit: Kit, { briefing, roles, presence, membership, guard, host, reach, digest, control, startTower }: { briefing: Briefing; roles: Roles; presence: Presence; membership: Membership; guard: Guard; host: ReturnType<typeof createHost>; reach: Reach; digest: Digest; control: Control; startTower(): Promise<void> }) {
+export function registerSession(kit: Kit, { runMode, briefing, roles, presence, membership, guard, host, reach, digest, control, startTower }: { runMode: RunMode; briefing: Briefing; roles: Roles; presence: Presence; membership: Membership; guard: Guard; host: ReturnType<typeof createHost>; reach: Reach; digest: Digest; control: Control; startTower(): Promise<void> }) {
 	const { pi, cfg, s, guiDir, me, role, tell } = kit;
 	const { run, env, version } = cfg;
 	const who = () => pi.getSessionName() || s.ownName || me().slice(0, 8);
@@ -62,6 +63,8 @@ export function registerSession(kit: Kit, { briefing, roles, presence, membershi
 	};
 
 	pi.on("session_start", async (event, ctx) => {
+		// The run mode's own handler ran before this one (registered first, and pi awaits them in turn): a run or a pane it quits has no net to join.
+		if (runMode.mode !== "normal") return;
 		const start = (started = {});
 		s.stopped = false;
 		s.ui = ctx.ui;
@@ -131,18 +134,19 @@ export function registerSession(kit: Kit, { briefing, roles, presence, membershi
 
 	// The tower's run starts with what happened in its workspace since its last run, and the digest is cleared as it is read.
 	pi.on("before_agent_start", async (event) => {
+		if (runMode.active()) return;
 		const sections = event.systemPromptOptions.sections;
 		briefing.begin(sections);
 		if (!s.holdsTower || !sections[ENTRY]) return;
 		const lines = await digest.take(s.at.workspaceId).catch(() => []);
 		if (lines.length) sections[ENTRY] += `\n\nSince your last run:\n${lines.map((line) => `- ${line}`).join("\n")}`;
 	});
-	pi.on("agent_settled", () => briefing.settled());
+	pi.on("agent_settled", () => void (!runMode.active() && briefing.settled()));
 
 	// A member that dispatches or resumes a subagent without promoting is promoted here, before the subagent starts, unless the tab already has a main.
 	// A tower only coordinates: it dispatches no subagent (one would outlive it with no one to take its result), and opens a main for the work instead.
 	pi.on("tool_call", async (event) => {
-		if (!SUBAGENT_TOOLS.includes(event.toolName)) return;
+		if (!SUBAGENT_TOOLS.includes(event.toolName) || runMode.active()) return;
 		await checked; // a subagent launched while session start still asks Herdr about the workspace waits for the answer
 		if (s.barred) return;
 		if (s.isTower) return { block: true, reason: "A tower dispatches no subagents. Open a main for this work with boss_open_main, or route it to the main that owns it." };
@@ -163,6 +167,7 @@ export function registerSession(kit: Kit, { briefing, roles, presence, membershi
 	});
 
 	pi.on("session_shutdown", async (event) => {
+		if (runMode.mode === "run") return; // a run's own shutdown is runmode.ts's: it joined nothing and holds no pane, tokens, or board entry
 		// This session's board entry goes with the session on quit, new, resume, and fork (its id is done in this process); a reload keeps it.
 		if (event.reason !== "reload" && s.boardId) removeEntry(join(guiDir, "board"), s.boardId);
 		s.boardId = undefined;

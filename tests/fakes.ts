@@ -374,6 +374,7 @@ export class Agent {
 	pane: string;
 	regs = new Map<string, Registration>();
 	tools = new Map<string, ToolDefinition>();
+	flags = new Map<string, string | boolean | undefined>();
 	commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void>; getArgumentCompletions?(prefix: string): { value: string }[] | null }>();
 	entries: { customType: string; data: unknown }[];
 	notices: { text: string; level?: string }[] = [];
@@ -455,6 +456,8 @@ export class Agent {
 			events,
 			on: (type: string, handler: (event: unknown, ctx: unknown) => unknown) => this.handlers.set(type, [...(this.handlers.get(type) ?? []), handler]),
 			registerTool: (tool: ToolDefinition) => this.tools.set(tool.name, tool),
+			registerFlag: (name: string) => void this.flags.set(name, undefined),
+			getFlag: (name: string) => this.flags.get(name),
 			registerCommand: (name: string, command: { handler(args: string, ctx: unknown): Promise<void>; getArgumentCompletions?(prefix: string): { value: string }[] | null }) => this.commands.set(name, command),
 			appendEntry: (customType: string, data: unknown) => this.entries.push({ customType, data }),
 			setSessionName: (name: string) => void (this.name = name), // pi-intercom reports the new name to the broker
