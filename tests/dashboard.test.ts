@@ -614,3 +614,27 @@ test("sbir7-F003: a pending GUI read settling out of order does not overwrite a 
 	await until(() => lines().includes("http://third/"), "the pending result is applied after the failed refresh");
 	dashboard.stop();
 });
+
+test("sbir8-F001: when refreshes come faster than reads, an answer newer than the shown one still replaces it", async () => {
+	const { state, ui } = fakeUi();
+	const gate: Array<(url: string | undefined) => void> = [];
+	let reads = 0;
+	const collectNext = async (): Promise<Snapshot> => {
+		reads++;
+		return { ...snapshot([]), pending: new Promise<string | undefined>((resolve) => gate.push(resolve)) };
+	};
+	const dashboard = startDashboard({ ui: ui as never, collect: collectNext, frameMs: 5, pollMs: 100_000, minGapMs: 0 });
+	const lines = () => state.component!.render(100).join("\n");
+	await until(() => reads === 1, "first read");
+	gate[0]!("http://a/");
+	await until(() => lines().includes("http://a/"), "the first answer");
+	dashboard.poke();
+	await until(() => reads === 2, "second read");
+	dashboard.poke();
+	await until(() => reads === 3, "third read");
+	gate[1]!(undefined); // the GUI stopped; this read was superseded before it settled
+	await until(() => !lines().includes("http://a/"), "a superseded read newer than the shown answer still clears the dead URL");
+	gate[2]!("http://b/");
+	await until(() => lines().includes("http://b/"), "the newest answer");
+	dashboard.stop();
+});

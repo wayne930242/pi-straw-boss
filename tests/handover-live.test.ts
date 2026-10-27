@@ -216,12 +216,15 @@ test("sbir7-F001/F002: registerTrust never throws at load (older pi exports, a t
 	assert.equal(launches({}), 1);
 	const argv = process.argv;
 	try {
-		for (const extra of [["-p"], ["--print"], ["--mode", "json"], ["--mode=rpc"], ["--approve"], ["--no-approve"]]) {
+		for (const extra of [["-p"], ["--print"], ["--mode", "json"], ["--mode", "rpc"], ["--approve"], ["-a"], ["--no-approve"], ["-na"]]) {
 			process.argv = [...argv, ...extra];
 			assert.equal(launches({}), 0, extra.join(" "));
 		}
-		process.argv = [...argv, "--mode", "interactive"];
-		assert.equal(launches({}), 1, "--mode interactive");
+		// pi's own parser: `--mode text` without -p is interactive, and after `--` every word is the message
+		for (const extra of [["--mode", "text"], ["--", "-p"]]) {
+			process.argv = [...argv, ...extra];
+			assert.equal(launches({}), 1, extra.join(" "));
+		}
 	} finally {
 		process.argv = argv;
 	}

@@ -51,13 +51,13 @@ export interface AskDeps {
 	uuid(): string;
 }
 
-/** pi asks only in its interactive mode, and not under `-p`/`--print`, another `--mode`, or an explicit `--approve`/`--no-approve`. */
+/** pi asks only in its interactive mode: not under `-p`/`--print`, `--mode json|rpc`, or an explicit `-a`/`--approve`/`-na`/`--no-approve` (pi's own parser: `--mode text` alone stays interactive, and every word after `--` is the message). */
 function interactive(argv: readonly string[]): boolean {
 	for (let i = 0; i < argv.length; i++) {
 		const a = argv[i]!;
-		if (a === "-p" || a === "--print" || a === "--approve" || a === "--no-approve") return false;
-		if (a === "--mode" && argv[i + 1] !== "interactive") return false;
-		if (a.startsWith("--mode=") && a !== "--mode=interactive") return false;
+		if (a === "--") return true;
+		if (a === "-p" || a === "--print" || a === "-a" || a === "--approve" || a === "-na" || a === "--no-approve") return false;
+		if (a === "--mode" && (argv[i + 1] === "json" || argv[i + 1] === "rpc")) return false;
 	}
 	return true;
 }
@@ -199,7 +199,7 @@ export const guiUp = (guiDir: string, env: NodeJS.ProcessEnv, read: StartRead = 
 /** Registers the handler (before the subagent return, so every pi in Herdr has it) and marks the process's first session start. `io` is the terminal and process it answers on (tests). */
 export function registerTrust(pi: ExtensionAPI, { cfg, guiDir }: Pick<Kit, "cfg" | "guiDir">, io: Pick<AskDeps, "stdin" | "proc" | "write"> & Partial<Pick<AskDeps, "saved" | "defaultTrust"> & { resources(cwd: string): boolean }> = { stdin: process.stdin, proc: process, write: (text) => void process.stderr.write(text) }) {
 	const { env, startRead } = cfg;
-	// Older pi lacks these (hasTrustRequiringProjectResources < 0.79.2, getDefaultProjectTrust < 0.79.1, ProjectTrustStore < 0.79.0): then nothing is relayed or warmed and pi asks in the terminal.
+	// Older pi lacks these (hasTrustRequiringProjectResources < 0.79.2, getDefaultProjectTrust < 0.79.1, ProjectTrustStore < 0.79.0): then whatever needs a missing one is skipped (no early read below 0.79.2; nothing relayed below 0.79.1) and pi asks in the terminal.
 	const api = pi_ as unknown as Record<string, any>;
 	const saved = io.saved ?? ((cwd: string) => {
 		if (typeof api.ProjectTrustStore !== "function") throw new Error("pi has no ProjectTrustStore");
