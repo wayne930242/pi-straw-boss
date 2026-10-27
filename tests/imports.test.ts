@@ -462,7 +462,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased (settings check) to 1404: gui/refusal.ts (the refusal worded from the server's facts, 12 lines with its import in deploy.ts and quit.ts's Pop).
 	// Unreleased (GUI in the sb server) to 1461: gui/server.ts (55: the server panel, a lazy tile) and main.ts (2: the header button, this computer's page only).
 	// Unreleased to 1486 (sb server B5, GUI): render.ts (the tower's standing-by state and the service's notices with their buttons), composer.ts (wakes), chat.ts, scene.ts, and session.ts (the tower unit's service and queue).
-	assert.ok(page <= 1486, `the page's TypeScript has ${page} lines`);
+	assert.ok(page <= 1487, `the page's TypeScript has ${page} lines`);
 });
 
 test("the built page is small, self-contained (no remote URLs, fonts, or imports), and carries no demo fixture", { skip: !existsSync(join(root, "dist/gui/index.html")) && "run npm run gui:build first" }, () => {
@@ -531,7 +531,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased (project trust) to 53.65 KB / 19.3 KB gzipped: a trust question as an alert (alerts.ts), its reminder and its place in the HUD and the tab badge (notify.ts, main.ts), with the messages the map uses in both languages.
 	// Unreleased (GUI in the sb server) to 54.35 KB / 19.5 KB gzipped: the header's Server button (this computer's page only) and its two messages in both languages; the panel itself is a lazy chunk (gui/server.ts).
 	// Unreleased (settings check) to 53.85 KB: quit.ts's Pop reads the refusal facts of a folder pi must not start in (the words are in the lazy deploy chunk, gui/refusal.ts).
-	assert.ok(size(entry).length <= 54_350 && gz(entry) <= 19_500, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// Unreleased (sb server B5, GUI) to 56.4 KB / 20.2 KB gzipped: the tower unit of the service (standing by, the notices with Retry, Deliver again, and Drop in render.ts, the composer's wake line, the served-inbox notice) and its messages in both languages.
+	assert.ok(size(entry).length <= 56_400 && gz(entry) <= 20_200, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).
@@ -591,7 +592,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased (settings check, probe): 149.55 KB / 61.4 KB gzipped for the fourth refusal message, `unchecked` (could not be checked in time), in both languages.
 	// Unreleased (the Edit's refusals in the page's language) to 152.4 KB / 62.4 KB gzipped: eleven messages in both languages (gui/composer.ts takeWhy) so a take-back's refusal is not English under zh-TW.
 	// Unreleased (GUI in the sb server) to 155.6 KB / 63.85 KB gzipped: the server panel (gui/server.ts, a lazy chunk of about 3.2 KB) and its messages in both languages.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 155_600 && total(chunks, gz) <= 63_850, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// Unreleased (sb server B5, GUI) to 155.8 KB / 63.9 KB gzipped: the composer's wake placeholder and the tower notice messages that the chat chunk carries.
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 155_800 && total(chunks, gz) <= 63_900, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
@@ -644,5 +646,6 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased to 72 KB / 15.7 KB gzipped: the trust question names its folder whole, in the panel and in the deploy step.
 	// Merged with the queue's Edit: 77.5 KB / 16.8 KB gzipped in all.
 	// Unreleased to 80.2 KB / 17.4 KB gzipped: the phone's tap targets (one media block: 44 px boxes, chips drawn inside them, the queue and trust rows, the composer's 48 px keys; +2.7 KB / 0.6 KB).
-	assert.ok(total(css, (n) => size(n).length) <= 80_200 && total(css, gz) <= 17_400, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// Unreleased (sb server B5, GUI) to 80.6 KB / 17.5 KB gzipped: the tower notices' rows (.tower-notices).
+	assert.ok(total(css, (n) => size(n).length) <= 80_600 && total(css, gz) <= 17_500, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });

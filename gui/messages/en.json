@@ -608,5 +608,6 @@
 	"tower_parked": "Parked: {kind} from {from}: {first}",
 	"tower_deliver": "Deliver again",
 	"tower_drop": "Drop",
-	"tower_action_failed": "The tower refused it: {reason}"
+	"tower_action_failed": "The tower refused it: {reason}",
+	"link_a_served": "{count} Straw Link message waits in the inbox of team {team}; ally runs, which take it, come with the next step"
 }

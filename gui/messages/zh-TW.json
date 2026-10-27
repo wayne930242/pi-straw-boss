@@ -552,5 +552,6 @@
 	"tower_parked": "已擱置：{kind}，來自 {from}：{first}",
 	"tower_deliver": "重新送達",
 	"tower_drop": "捨棄",
-	"tower_action_failed": "tower 拒絕了：{reason}"
+	"tower_action_failed": "tower 拒絕了：{reason}",
+	"link_a_served": "團隊 {team} 的收件匣有 {count} 則 Straw Link 訊息在等：下一步會有 ally run 來接手"
 }

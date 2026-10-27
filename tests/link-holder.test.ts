@@ -132,6 +132,22 @@ test("a tower is offered a message only if its pane is in the team's project; wi
 	assert.equal(b.offers[0]!.tower, "tower-late");
 });
 
+test("a tower the sb server runs takes no offer (B5): the message waits in the inbox, the boss's notice says ally runs come with the next step, and nothing is offered to the identity", async () => {
+	const [a, b] = [rig("a"), rig("b", { towers: false })];
+	await Promise.all([a.start(), b.start()]);
+	b.net = netOf([["sb-tower-wb", "w-b", "label-b", b.project]]);
+	await send(a, "for the served tower");
+	await until(() => relay.ackedBy(bob.id).length === 1, 3000, "the ack");
+	await until(() => b.holder.summary().alerts.some((x) => x.kind === "served"), 3000, "the served notice");
+	for (let i = 0; i < 3; i++) await b.holder.drain();
+	assert.equal(b.offers.length, 0, "an offer to a tower that is no session would go nowhere");
+	assert.equal(b.store.inboxIds().length, 1, "the message stays in the inbox");
+	const served = b.holder.summary().alerts.filter((x) => x.kind === "served");
+	assert.equal(served.length, 1);
+	assert.equal(served[0]!.data.count, 1);
+	assert.ok(!b.holder.summary().alerts.some((x) => x.kind === "inbox" || x.kind === "held"), "it is not told as a missing tower or an idle one");
+});
+
 test("an inbox message older than 7 days is dropped", async () => {
 	const [a, b] = [rig("a"), rig("b", { towers: false })];
 	await Promise.all([a.start(), b.start()]);

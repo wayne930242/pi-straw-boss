@@ -18,6 +18,7 @@ export function alertLine(a: LinkAlert): string {
 		case "unreachable": return m.link_a_unreachable({ team, minutes: text(d.minutes) });
 		case "inbox": return m.link_a_inbox({ count: text(d.count), team });
 		case "held": return m.link_a_held({ count: text(d.count), team });
+		case "served": return m.link_a_served({ count: text(d.count), team });
 	}
 }
 
