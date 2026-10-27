@@ -102,19 +102,23 @@ export function prepareSlot(slot: Slot, platform: NodeJS.Platform = process.plat
 
 let temps = 0;
 /** Writes a JSON file by rename, mode 600: a reader never sees half a file. On Windows a rename onto a file a reader has open fails for a moment, so it is tried a few times. */
+/** Renames `temp` over `file`, trying again for a moment when Windows holds the target (an antivirus scan, a reader): EPERM, EBUSY, EACCES. */
+export function renameInto(temp: string, file: string) {
+	for (let tries = 0; ; tries++) {
+		try {
+			return renameSync(temp, file);
+		} catch (error) {
+			if (tries >= 20 || !["EPERM", "EBUSY", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+		}
+	}
+}
 export function writeJson(file: string, value: unknown) {
 	// Created new (`wx`) under a name no earlier file has: a temporary file that was already there (another account's, with its owner) is never written to and renamed into place (R8-F002).
 	const temp = `${file}.${process.pid}.${temps++}.${randomBytes(4).toString("hex")}.tmp`;
 	try {
 		writeFileSync(temp, JSON.stringify(value), { mode: 0o600, flag: "wx" });
-		for (let tries = 0; ; tries++) {
-			try {
-				return renameSync(temp, file);
-			} catch (error) {
-				if (tries >= 20 || !["EPERM", "EBUSY", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
-				Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
-			}
-		}
+		return renameInto(temp, file);
 	} catch (error) {
 		rmSync(temp, { force: true });
 		throw error;

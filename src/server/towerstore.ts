@@ -1,8 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, closeSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
+import { chmodSync, closeSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { LedgerRow } from "../opener.ts";
-import { secretDir, type Slot } from "./record.ts";
+import { renameInto, secretDir, type Slot } from "./record.ts";
 
 // What the tower service keeps on disk (docs/specs/2026-10-26-sb-backend.md, State): `tower/<workspace id>/` in the server's slot, mode 700, each file written by rename, mode 600.
 // B4 writes `service.json` (the identity, its pane and tab, and the next event sequence number), `queue/` (events that arrived for the identity), and `opened.json` (the opener's
@@ -10,6 +10,8 @@ import { secretDir, type Slot } from "./record.ts";
 
 /** A tower service that has no tab for 24 h is forgotten with its queue; events and ledger entries are kept this long. */
 export const KEEP_MS = 24 * 3600_000;
+/** The most events a workspace's queue holds: past it the oldest go first. B4 queues and nothing reads; B5 reads it (see the spec, Queueing and concurrency, B4's backlog). */
+export const MAX_QUEUE = 1000;
 
 export interface ServiceRecord {
 	workspace: string;
@@ -65,7 +67,7 @@ function writeDurable(file: string, value: unknown): void {
 		closeSync(fd);
 	}
 	try {
-		renameSync(temp, file);
+		renameInto(temp, file);
 	} catch (error) {
 		rmSync(temp, { force: true });
 		throw error;
@@ -124,26 +126,46 @@ export function queueLength(slot: Slot, workspace: string): number {
 		return 0;
 	}
 }
+/** Per queue folder, what this process knows of it: the newest sequence number and the count, so an append reads the folder once, not at every event. */
+const known = new Map<string, { top: number; count: number }>();
+const look = (dir: string) => {
+	const found = known.get(dir);
+	if (found && statSync(dir, { throwIfNoEntry: false })) return found;
+	let top = -1, count = 0;
+	for (const name of readdirSync(dir)) {
+		if (!name.endsWith(".json")) continue;
+		count++;
+		top = Math.max(top, Number.isFinite(seqOf(name)) ? seqOf(name) : -1);
+	}
+	const fresh = { top, count };
+	known.set(dir, fresh);
+	return fresh;
+};
 /**
  * Queues one event: the sequence number is the service's next one (or past the newest file still there, since a reopened tower's service starts again at 0 beside a kept queue),
- * the file is flushed before the call returns, and the service record carries the next number. Returns the event as written.
+ * the file is flushed before the call returns, and the service record carries the next number. A queue past `max` events drops its oldest. Returns the event as written.
  */
-export function appendEvent(slot: Slot, service: ServiceRecord, event: Omit<QueuedEvent, "seq" | "id">): QueuedEvent {
+export function appendEvent(slot: Slot, service: ServiceRecord, event: Omit<QueuedEvent, "seq" | "id">, max = MAX_QUEUE): QueuedEvent {
 	const dir = queueDir(slot, service.workspace);
 	ensureDir(towerDir(slot, service.workspace));
 	ensureDir(dir);
-	let top = -1;
-	for (const name of readdirSync(dir)) top = Math.max(top, Number.isFinite(seqOf(name)) ? seqOf(name) : -1);
-	const seq = Math.max(service.seq, top + 1);
+	const state = look(dir);
+	const seq = Math.max(service.seq, state.top + 1);
 	const id = createHash("sha256").update(`${event.from.id}\n${event.messageId}\n${event.text}`).digest("hex").slice(0, 16);
 	const written: QueuedEvent = { id, seq, ...event };
 	writeDurable(join(dir, `${String(seq).padStart(PAD, "0")}-${id}.json`), written);
+	state.top = seq;
+	state.count++;
+	for (const name of state.count > max ? readdirSync(dir).filter((n) => n.endsWith(".json")).sort().slice(0, state.count - max) : []) {
+		rmSync(join(dir, name), { force: true });
+		state.count--;
+	}
 	service.seq = seq + 1;
 	writeDurable(join(towerDir(slot, service.workspace), SERVICE), service);
 	return written;
 }
-/** Removes queued events older than KEEP_MS (their files' mtime) from every workspace folder that has no service. Returns how many went. */
-export function purgeQueues(slot: Slot, now: number, live: (workspace: string) => boolean): number {
+/** Removes queued events older than KEEP_MS (their files' mtime) from every workspace folder. Returns how many went. */
+export function purgeQueues(slot: Slot, now: number): number {
 	let gone = 0, names: string[] = [];
 	try {
 		names = readdirSync(towersDir(slot));
@@ -156,10 +178,29 @@ export function purgeQueues(slot: Slot, now: number, live: (workspace: string) =
 		} catch { continue; }
 		for (const file of files) {
 			const stat = statSync(join(queue, file), { throwIfNoEntry: false });
-			if (!stat || now - stat.mtimeMs <= KEEP_MS || live(name)) continue;
+			if (!stat || now - stat.mtimeMs <= KEEP_MS) continue;
 			rmSync(join(queue, file), { force: true });
+			known.delete(queue);
 			gone++;
 		}
+	}
+	return gone;
+}
+/** The flag is off: every workspace's `service.json`, queue, and ledger go (message text stays on disk with no time limit otherwise). Returns how many files went. */
+export function purgeAll(slot: Slot): number {
+	let gone = 0, names: string[] = [];
+	try {
+		names = readdirSync(towersDir(slot));
+	} catch { return 0; }
+	for (const name of names) {
+		const dir = join(towersDir(slot), name), queue = join(dir, "queue");
+		let files: string[] = [];
+		try {
+			files = readdirSync(queue);
+		} catch { /* no queue */ }
+		for (const file of files) rmSync(join(queue, file), { force: true }), gone++;
+		known.delete(queue);
+		for (const file of [SERVICE, OPENED]) if (statSync(join(dir, file), { throwIfNoEntry: false })) rmSync(join(dir, file), { force: true }), gone++;
 	}
 	return gone;
 }

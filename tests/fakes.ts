@@ -97,6 +97,8 @@ export class FakeHerdr {
 		for (const pane of this.panes) pane.terminal_id = `term_${this.terminals++}`; // a restored pane runs in a new terminal; its id is the same
 		this.wsTokenHistory.length = 0;
 		this.calls.length = 0;
+		// Every events connection reconnects to the new server and is acknowledged again (`on(null)`), as `events.subscribe` does.
+		for (const l of [...this.listeners]) queueMicrotask(() => this.listeners.has(l) && l.on(null));
 	}
 	private agentNames = new Map<string, string>(); // name → pane: Herdr frees a name with its pane (checked on Herdr itself)
 	/** The next this-many `agent start` calls fail with agent_pane_busy, as a new tab's shell does before its prompt. */

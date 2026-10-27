@@ -170,3 +170,37 @@ test("a secondary slot's identity (sb-tower-<slot8>-<ws>) is not covered by the 
 	restarting(a.env!, clock - 6000, clock, "sb-tower-deadbeef-wa");
 	await until(() => role() === "member", "only this Herdr's own identity is covered");
 });
+
+// --- the review of B4 (B4R-F002, F005, F008) --------------------------------------------------------------------------------------------------------------------------
+
+test("B4R-F002: a hand-over whose first ask failed asks once more before the tower stays resident", async () => {
+	let spawns = 0;
+	const base = sw.ctx();
+	const ctx = { ...base, spawn: (spec: Parameters<typeof base.spawn>[0]) => (spawns++ === 0 ? { pid: 99_999, exited: Promise.resolve(1) } : base.spawn(spec)) };
+	const tower = world.tower("tower-wA", "wA:t7", "wA:p7", false, { server: { ctx, cli: "/fake/cli.mjs" } });
+	sw.herdr.addTab("wA:t7", "work", "wA:p7", "pi");
+	await tower.start();
+	await until(() => tower.stopped, "the resident tower to quit after the second ask");
+	assert.ok(spawns >= 2, `the second ask started a server (${spawns})`);
+	assert.equal(readService(sw.slot, "wA")?.pane, "wA:p7");
+});
+
+test("B4R-F005: a server on an older package is upgraded by the ask, and the ask goes to the new server's record", async () => {
+	const first = await ensureTowerVia(sw.ctx({ version: "0.44.0" }), { workspace: "wA" });
+	assert.equal(first.id, "sb-tower-wa");
+	const upgraded = await ensureTowerVia(sw.ctx({ version: "0.45.0" }), { workspace: "wA" });
+	assert.equal(upgraded.id, "sb-tower-wa");
+	assert.equal(readRecord(sw.slot)?.version, "0.45.0");
+	assert.equal(sw.running.length, 2);
+});
+
+test("B4R-F008: a server stopped on purpose is told once, by one notice", async () => {
+	const ctx = sw.ctx();
+	await ensureTowerVia(ctx, { workspace: "wA" });
+	assert.equal((await stop(ctx)).outcome, "stopped");
+	const a = world.agent({ id: "a", name: "docs", pane: "wA:p1", tab: "wA:t1", env: envOf(), deps: { server: server(), guardMs: 0, now: () => clock, autoTower: true } });
+	await a.start();
+	await a.command("promote").catch(() => {});
+	await ticks(5);
+	assert.equal(a.notices.filter((n) => /stopped on purpose/.test(n.text)).length, 1, JSON.stringify(a.notices));
+});

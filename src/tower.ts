@@ -12,7 +12,7 @@ import { towerRunsEnabled } from "./server/towerruns.ts";
 import { ENTRY, type Kit } from "./state.ts";
 import type { Tools } from "./tools.ts";
 
-const SETTLE_MS = 2000;
+const SETTLE_MS = 2000, HANDOVER_RETRY_MS = 1000;
 // What Herdr reports that changes the dashboard: panes (their agent status and tokens), tabs, and workspaces (their tokens and labels), coming, going, moving, and taking focus (the spinner runs only on screen).
 const SCREEN_EVENTS = ["pane.created", "pane.closed", "pane.updated", "pane.moved", "pane.exited", "pane.agent_detected", "tab.created", "tab.closed", "tab.renamed", "tab.moved", "tab.focused", "workspace.focused", "workspace.created", "workspace.updated", "workspace.metadata_updated", "workspace.renamed", "workspace.moved", "workspace.reordered", "workspace.closed"];
 
@@ -26,7 +26,8 @@ export function createTower({ pi, cfg, s, guiDir, me, tell }: Kit, { membership,
 		// take it, or a workspace another tower holds, leaves it resident as before.
 		if (towerRunsEnabled(guiDir)) {
 			try {
-				const got = await reach.handOver(s.at.workspaceId, s.at.paneId);
+				// The server may have adopted the pane while the reply was lost; `ensure-tower` is idempotent, so one more ask tells (and a server that really failed fails again).
+				const got = await reach.handOver(s.at.workspaceId, s.at.paneId).catch(async (cause: Error) => (await sleep(HANDOVER_RETRY_MS), reach.handOver(s.at.workspaceId, s.at.paneId).catch(() => Promise.reject(cause))));
 				if (!got.resident) {
 					s.isTower = false; // nothing of this session's role is cleared at its shutdown: the server owns the marks now
 					s.closing = { keepPane: true }; // the pane stays, at its shell prompt, as the standing pane

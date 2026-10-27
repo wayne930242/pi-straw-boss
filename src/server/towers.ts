@@ -14,7 +14,7 @@ import { trustDir } from "../trust/files.ts";
 import type { IntercomModule } from "./intercom.ts";
 import type { Log } from "./log.ts";
 import { secretDir, type Slot, towerId, towerName } from "./record.ts";
-import { appendEvent, deleteService, listServices, purgeQueues, putLedger, queueLength, readLedger, readService, type ServiceRecord, towerDir, writeService } from "./towerstore.ts";
+import { appendEvent, deleteService, listServices, purgeAll, purgeQueues, putLedger, queueLength, readLedger, readService, type ServiceRecord, towerDir, writeService } from "./towerstore.ts";
 
 // The tower service without runs (docs/specs/2026-10-26-sb-backend.md, The tower service; build step B4), behind `towerRuns.enabled`. The server stands in for a workspace's tower:
 // it makes the tower tab with a standing pane that sits at its shell prompt, registers the tower identity (`sb-tower-<workspace>`, with a cwd of its own) with pi-intercom, writes
@@ -24,6 +24,8 @@ import { appendEvent, deleteService, listServices, purgeQueues, putLedger, queue
 // One identity is one pi-intercom connection and one headless kit (the modules of a pi session get the channel and the outbox from it), so the opener, the `close-main` ask, and
 // the sender are the ones a tower session used, with the identity as their `me()`.
 
+/** What `residentOf` names when it could not read who holds the workspace. */
+const UNKNOWN = "(unknown)";
 const RETRY_MS = [1000, 2000, 5000, 10_000, 30_000];
 const REFRESH_MS = 4 * 60_000, RECOVER_MS = 60_000, RECOVER_POLL_MS = 2000, RESIDENT_MS = 2000, REGISTER_WAIT_MS = 3000, LEAVE_MS = 2000;
 /** What Herdr reports that ends a tower's tab, or moves the head: any of them makes the service look again. */
@@ -94,7 +96,7 @@ export function createTowers(o: TowersOptions): Towers {
 	let activation: Promise<void> | undefined, stopped = false, recoverUntil = 0, events: (() => void) | undefined;
 	const timers: ReturnType<typeof setInterval>[] = [];
 	const digest = createDigest(run, now);
-	const readHead = headReader({ run, digest, workspaces: () => [...services.keys()] });
+	const readHead = headReader({ run, digest, workspaces: () => [...services.values()].filter((l) => l.state !== "waiting" && !l.stopped).map((l) => l.record.workspace) });
 	let looking: Promise<void> = Promise.resolve();
 
 	const place = (l: Live): Place => ({ paneId: l.record.pane, tabId: l.record.tab, workspaceId: l.record.workspace });
@@ -174,11 +176,20 @@ export function createTowers(o: TowersOptions): Towers {
 
 	/** The marks the guard, `tower_list`, the dashboard, and the sidebar find the tower by: the workspace's `tower` token and the standing pane's role and sort key. Display and discovery only. */
 	const publish = async (l: Live) => {
+		// A live foreign holder keeps the workspace: this service steps back and waits for it (a hand-over whose reply was lost leaves the resident running and publishing its own token).
+		const foreign = await residentOf(l);
+		if (foreign) return void (await yieldTo(l, foreign));
 		const own = await netTokens(run, place(l), "tower", l.record.name, now(), cfg.world).then((net) => net.own, () => ({}));
 		await Promise.all([
 			report(run, "workspace", l.record.workspace, { tower: l.record.id, sb_tower_quit: null }),
 			report(run, "pane", l.record.pane, { sb_role: "tower", ...own }),
 		]).catch((cause: Error) => error("tokens", `${l.record.id}: ${cause.message}`));
+	};
+	const yieldTo = async (l: Live, holder: string) => {
+		if (l.stopped || services.get(l.record.workspace) !== l) return;
+		log.line("tower-yield", { workspace: l.record.workspace, resident: holder });
+		await release(l);
+		services.set(l.record.workspace, adopt(l.record));
 	};
 	const CLEAR = { sb_role: null, sb_order: null, sb_mark: null, sb_indent: null, sb_name: null, sb_tab: null, sb_main_tab: null, sb_member_tab: null };
 
@@ -232,7 +243,12 @@ export function createTowers(o: TowersOptions): Towers {
 		if (!all.length && recovering) return;
 		for (const l of [...services.values()]) {
 			if (l.stopped) continue;
-			const found = all.some((w) => w.workspace_id === l.record.workspace) ? await locate(l, recovering).catch(() => undefined) : undefined;
+			let found: Pane | undefined;
+			try {
+				found = all.some((w) => w.workspace_id === l.record.workspace) ? await locate(l, recovering) : undefined;
+			} catch {
+				continue; // a pane or tab list that failed is unknown, not a tab that is gone
+			}
 			if (!found) {
 				if (!recovering) await lose(l, "its tab is gone");
 				continue;
@@ -242,8 +258,9 @@ export function createTowers(o: TowersOptions): Towers {
 			l.record = { ...l.record, pane: found.pane_id, tab: found.tab_id };
 			writeService(slot, l.record);
 			log.line("tower-found", { workspace: l.record.workspace, pane: found.pane_id });
+			// A service that is not live yet (waiting for a resident, registering) publishes when it gets there, with the record as it is by then.
 			if (l.client) await release(l).then(() => services.set(l.record.workspace, adopt(l.record)));
-			else await publish(l);
+			else if (l.state === "live") await publish(l);
 		}
 	};
 	const look = () => (looking = looking.then(reconcile).catch((cause: Error) => error("reconcile", cause.message)));
@@ -252,10 +269,13 @@ export function createTowers(o: TowersOptions): Towers {
 
 	/** The session id of a resident tower of an older build that holds the workspace's `tower` token, when it is live. */
 	const residentOf = async (l: Live): Promise<string | undefined> => {
-		const held = (await workspaces(run).catch(() => [])).find((w) => w.workspace_id === l.record.workspace)?.tokens?.tower;
+		// Fails closed: a read that fails (the server's own broker connection is not up yet, Herdr does not answer) leaves a holder possible, and the service waits.
+		const all = await workspaces(run).catch(() => undefined);
+		if (!all) return UNKNOWN;
+		const held = all.find((w) => w.workspace_id === l.record.workspace)?.tokens?.tower;
 		if (!held || held === l.record.id) return undefined;
 		const sessions = await o.sessions().catch(() => undefined);
-		return sessions?.some((x) => x.id === held) ? held : undefined;
+		return !sessions || sessions.some((x) => x.id === held) ? held : undefined;
 	};
 	const adopt = (record: ServiceRecord): Live => {
 		const l: Live = { record, state: "registering", stopped: false };
@@ -273,7 +293,7 @@ export function createTowers(o: TowersOptions): Towers {
 			}
 			if (l.stopped || stopped) return;
 			// The resident closed its pane when it quit, and with it its tab: nothing is left to stand in.
-			if (waited && !(await locate(l, true).catch(() => undefined))) return void (await lose(l, "the resident tower closed its tab"));
+			if (waited && (await locate(l, true).then((p) => !p, () => false))) return void (await lose(l, "the resident tower closed its tab"));
 			l.state = "registering";
 			if (!(await register(l))) return;
 			l.state = "live";
@@ -297,8 +317,12 @@ export function createTowers(o: TowersOptions): Towers {
 			} catch { continue; }
 			if (record?.role !== "tower" || typeof record.pane !== "string" || typeof record.workspace !== "string") continue;
 			const pane = ps.find((p) => p.pane_id === record!.pane && p.workspace_id === record!.workspace), workspace = all.find((w) => w.workspace_id === record!.workspace);
-			// A pane that is not in this Herdr belongs to another one (or to a tab that is gone): the record is left for the server that finds it.
-			if (!pane || !workspace || isSub(workspace)) continue;
+			// A pane that is not in this Herdr belongs to another one (or to a tab that is gone): the record is left for the server that finds it. Herdr ids are short counters that repeat
+			// across Herdr servers and `roles/` is shared by them all, so the id alone proves nothing: the pane must also be in the recorded tab, and that tab a tower tab or the pane
+			// run the record's own session file.
+			if (!pane || !workspace || isSub(workspace) || record.tab !== pane.tab_id) continue;
+			const glyph = (await tabs(run, workspace.workspace_id)).some((t) => t.tab_id === pane.tab_id && t.label === TOWER_LABEL);
+			if (!glyph && !(typeof (record as { file?: unknown }).file === "string" && pane.agent_session?.value === (record as { file?: string }).file)) continue;
 			if (!services.has(workspace.workspace_id) && !readService(slot, workspace.workspace_id)) {
 				const made: ServiceRecord = { workspace: workspace.workspace_id, label: workspace.label, id: towerId(slot, workspace.workspace_id), name: towerName(slot, workspace.label), pane: pane.pane_id, tab: pane.tab_id, created: new Date(now()).toISOString(), seq: 0 };
 				writeService(slot, made);
@@ -316,18 +340,23 @@ export function createTowers(o: TowersOptions): Towers {
 		} catch (cause) {
 			error("convert", (cause as Error).message);
 		}
-		purgeQueues(slot, now(), (workspace) => services.has(workspace));
+		purgeQueues(slot, now());
 		const adopted = listServices(slot).map((record) => adopt(record));
 		log.line("towers-active", { services: adopted.length });
+		let connections = 0;
 		const stop = cfg.events(WATCHED, (event) => {
+			// Every acknowledgement after the first is a reconnection (Herdr restarted): the recovery window opens here too, since nothing orders this connection against the watch's
+			// takeover, and a tab that is not back yet must not end its service.
+			if (event === null && connections++ > 0) recoverUntil = Math.max(recoverUntil, now() + (o.recoverMs ?? RECOVER_MS));
 			if (event === null || HEAD_EVENTS.has(event.event)) readHead();
 			look();
 		});
 		events = stop;
 		readHead();
 		timers.push(setInterval(() => {
+			if (!o.enabled()) return void retire().catch((cause: Error) => error("retire", cause.message));
 			for (const l of services.values()) if (l.state === "live") void publish(l);
-			purgeQueues(slot, now(), (workspace) => services.has(workspace));
+			purgeQueues(slot, now());
 		}, o.refreshMs ?? REFRESH_MS));
 		// A service whose tab is not found yet (Herdr is restoring) is looked for until the minute is over; one waiting for a resident looks at it. Both stop themselves.
 		timers.push(setInterval(() => { if (now() < recoverUntil + RECOVER_POLL_MS) look(); }, RECOVER_POLL_MS));
@@ -337,8 +366,29 @@ export function createTowers(o: TowersOptions): Towers {
 	};
 	/** Once, however many ask while it runs: a second start would adopt every service twice. */
 	const activate = async () => {
-		if (stopped || !o.enabled()) return;
-		await (activation ??= begin());
+		if (stopped) return;
+		if (!o.enabled()) return void (await retire());
+		activation ??= begin().catch((cause: Error) => {
+			// A start that failed once is tried again by the next ask, from scratch.
+			activation = undefined;
+			timers.splice(0).forEach(clearInterval);
+			events?.();
+			events = undefined;
+			throw cause;
+		});
+		await activation;
+	};
+	/** The flag is off: the identities leave, our token goes, and `service.json`, the queues and the ledger are purged, so no message text stays on disk with no time limit. */
+	const retire = async () => {
+		const all = await workspaces(run).catch(() => []);
+		for (const l of [...services.values()]) {
+			services.delete(l.record.workspace);
+			await release(l);
+			if (all.find((w) => w.workspace_id === l.record.workspace)?.tokens?.tower === l.record.id) await report(run, "workspace", l.record.workspace, { tower: null }).catch(() => {});
+			log.line("tower-retired", { workspace: l.record.workspace, id: l.record.id });
+		}
+		const gone = purgeAll(slot);
+		if (gone) log.line("towers-purged", { files: gone });
 	};
 
 	// --- ensure-tower --------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -349,7 +399,8 @@ export function createTowers(o: TowersOptions): Towers {
 		const ws = target.workspace_id;
 		const existing = services.get(ws);
 		if (existing && !existing.stopped) {
-			if (await locate(existing, false).catch(() => undefined)) {
+			// A pane list that fails is unknown: the ask fails, the service stays.
+			if (await locate(existing, false)) {
 				if (existing.state !== "waiting") await Promise.race([existing.starting, sleep(o.registerMs ?? REGISTER_WAIT_MS)]);
 				return answer(existing, false);
 			}

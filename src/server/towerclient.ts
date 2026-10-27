@@ -26,7 +26,11 @@ async function serverFor(ctx: Ctx, boss: boolean) {
 		if (seen.denied) throw new Error("the sb server runs but this process may not reach it (started from an elevated shell?)");
 		if (seen.live && seen.record) {
 			// A server on an older package than this one is upgraded by a session's look, not by a tower request.
-			if (verdict.do === "upgrade") await restart(ctx, { reason: "upgrade", upgrade: true, lockWaitMs: 0 }).catch(() => {});
+			if (verdict.do === "upgrade") {
+				// The new server has its own record and secret: the old record answers nothing.
+				const done = await restart(ctx, { reason: "upgrade", upgrade: true, lockWaitMs: 0 }).catch(() => undefined);
+				return done?.record ?? seen.record;
+			}
 			return seen.record;
 		}
 		if (seen.record?.stopped && !boss) throw new Error(STOPPED);

@@ -404,3 +404,178 @@ test("an identity whose broker connection drops registers again", async () => {
 	await until(() => world.clients.some((c) => c !== first && c.sessionId === "sb-tower-wa" && c.connected), "the identity registered again");
 	assert.equal((await ask(s, { cmd: "status" })).towers && ((await ask(s, { cmd: "status" })).towers as { state: string }[])[0]!.state, "live");
 });
+
+// --- the review of B4 (B4R-F001 to F010) -----------------------------------------------------------------------------------------------------------------------------------
+
+const resident = (id = "old-tower") => {
+	world.herdr.workspace("wA").tokens.tower = id;
+	world.sessions = [{ id, name: "tower · Alpha" }];
+};
+const standing = () => writeService(world.slot, { workspace: "wA", label: "Alpha", id: "sb-tower-wa", name: "tower · Alpha", pane: "wA:p7", tab: "wA:t7", created: "x", seq: 0 });
+
+test("B4R-F001: a failed pane list is unknown, not a lost tab: the service, the identity and the tokens stay, and ensure fails instead of reopening", async () => {
+	const s = await started();
+	const reply = await ask(s, { cmd: "ensure-tower", workspace: "wA" });
+	await sleep(300); // past the recovery window of the start
+	world.herdr.failPanes = true;
+	world.herdr.emit("pane.closed", "pane_closed", { pane_id: "wA:p999", workspace_id: "wA" });
+	await sleep(200);
+	const failed = await ask(s, { cmd: "ensure-tower", workspace: "wA" });
+	world.herdr.failPanes = false;
+	assert.equal(failed.ok, false, "an ask that cannot see the panes fails");
+	assert.ok(readService(world.slot, "wA"), "service.json stays");
+	assert.equal(tokens().tower, "sb-tower-wa");
+	assert.equal(tokens().sb_tower_quit, undefined, "no sb_tower_quit: no main is demoted");
+	assert.equal(world.client("sb-tower-wa")?.connected, true);
+	assert.equal(pane(String(reply.pane)).tokens.sb_role, "tower");
+	// With the panes readable again and the tab really gone, the service ends.
+	world.herdr.tabs = world.herdr.tabs.filter((t) => t.tab_id !== reply.tab);
+	world.herdr.panes = world.herdr.panes.filter((p) => p.tab_id !== reply.tab);
+	world.herdr.emit("pane.closed", "pane_closed", { pane_id: String(reply.pane), workspace_id: "wA" });
+	await until(() => !readService(world.slot, "wA"), "the service to end on a successful read");
+});
+
+test("B4R-F002: a failed session list keeps the service waiting beside a live resident", async () => {
+	world.herdr.addTab("wA:t7", TOWER_LABEL, "wA:p7", "pi");
+	resident();
+	standing();
+	let calls = 0;
+	await started({ towers: { recoverMs: 150, registerMs: 500, residentMs: 20, retryMs: [20], sessions: async () => { if (calls++ < 3) throw new Error("pi-intercom is not connected"); return world.sessions; } } });
+	await sleep(200);
+	assert.equal(world.client("sb-tower-wa"), undefined, "no identity beside a live resident");
+	assert.equal(tokens().tower, "old-tower");
+});
+
+test("B4R-F002: a waiting service whose pane Herdr renumbered after a restart publishes nothing over the live resident", async () => {
+	world.herdr.addTab("wA:t7", TOWER_LABEL, "wA:p7", "pi");
+	resident();
+	standing();
+	await started();
+	await sleep(100);
+	world.herdr.tabs = world.herdr.tabs.filter((t) => t.tab_id !== "wA:t7");
+	world.herdr.panes = world.herdr.panes.filter((p) => p.tab_id !== "wA:t7");
+	world.herdr.addTab("wA:t55", TOWER_LABEL, "wA:p55", "shell");
+	world.takeovers.forEach((cb) => cb());
+	await until(() => readService(world.slot, "wA")?.pane === "wA:p55", "the record to follow the pane");
+	await sleep(100);
+	assert.equal(tokens().tower, "old-tower", "the resident's token is not overwritten");
+	assert.equal(pane("wA:p55").tokens.sb_role, undefined);
+	assert.equal(world.client("sb-tower-wa"), undefined);
+});
+
+test("B4R-F002: a live service yields to a resident that holds the workspace at its next refresh, and registers again once it leaves", async () => {
+	const s = await started({ towers: { recoverMs: 150, registerMs: 500, residentMs: 20, retryMs: [20], refreshMs: 60 } });
+	await ask(s, { cmd: "ensure-tower", workspace: "wA" });
+	const first = world.client("sb-tower-wa")!;
+	assert.equal(first.connected, true);
+	resident(); // a resident tower took the token (a lost hand-over reply: it stayed and published its own)
+	await until(() => first.connected === false, "the identity to leave");
+	await sleep(150);
+	assert.equal(tokens().tower, "old-tower", "the resident keeps its token");
+	world.sessions = [];
+	delete world.herdr.workspace("wA").tokens.tower;
+	await until(() => tokens().tower === "sb-tower-wa" && world.clients.some((c) => c !== first && c.sessionId === "sb-tower-wa" && c.connected), "the service to take the workspace again");
+});
+
+test("B4R-F003: a roles/ record whose pane id only collides with a main here (another tab, no matching session) is left alone", async () => {
+	world.herdr.addTab("wA:t5", "work-main", "wA:p5", "pi");
+	pane("wA:p5").tokens.sb_role = "main";
+	const roles = join(world.stateDir, "roles");
+	mkdirSync(roles, { recursive: true });
+	writeFileSync(join(roles, "stale.json"), JSON.stringify({ role: "tower", pane: "wA:p5", tab: "wA:t99", workspace: "wA", at: 1 }));
+	// Same tab id, but the tab is no tower tab and its pane runs another session.
+	world.herdr.addTab("wA:t6", "work-two", "wA:p6", "pi");
+	pane("wA:p6").agent_session = { value: "/sessions/main.jsonl" };
+	writeFileSync(join(roles, "other.json"), JSON.stringify({ role: "tower", pane: "wA:p6", tab: "wA:t6", workspace: "wA", file: "/sessions/tower.jsonl", at: 1 }));
+	await started();
+	await sleep(150);
+	assert.equal(readService(world.slot, "wA"), undefined);
+	assert.equal(pane("wA:p5").tokens.sb_role, "main");
+	assert.equal(pane("wA:p6").tokens.sb_role, undefined);
+	assert.deepEqual(readdirSync(roles).sort(), ["other.json", "stale.json"]);
+});
+
+test("B4R-F003: a record whose pane runs its own session file converts even when the tab has no tower label", async () => {
+	world.herdr.addTab("wA:t6", "renamed", "wA:p6", "pi");
+	pane("wA:p6").agent_session = { value: "/sessions/tower.jsonl" };
+	const roles = join(world.stateDir, "roles");
+	mkdirSync(roles, { recursive: true });
+	writeFileSync(join(roles, "mine.json"), JSON.stringify({ role: "tower", pane: "wA:p6", tab: "wA:t6", workspace: "wA", file: "/sessions/tower.jsonl", at: 1 }));
+	await started();
+	assert.equal(readService(world.slot, "wA")?.pane, "wA:p6");
+	assert.deepEqual(readdirSync(roles), []);
+});
+
+for (const order of ["events first", "takeover first"] as const) {
+	test(`B4R-F004: a Herdr restart that gave the tab other ids is followed whichever reconnects first (${order})`, async () => {
+		const s = await started();
+		const reply = await ask(s, { cmd: "ensure-tower", workspace: "wA" });
+		await sleep(300); // past the start's recovery window
+		world.herdr.tabs = world.herdr.tabs.filter((t) => t.tab_id !== reply.tab);
+		world.herdr.panes = world.herdr.panes.filter((p) => p.tab_id !== reply.tab);
+		if (order === "takeover first") world.takeovers.forEach((cb) => cb());
+		world.herdr.restart(); // the events connection is acknowledged again
+		if (order === "events first") {
+			await sleep(100);
+			world.takeovers.forEach((cb) => cb());
+		}
+		await sleep(30);
+		assert.ok(readService(world.slot, "wA"), "not ended before the tab is restored");
+		world.herdr.addTab("wA:t55", TOWER_LABEL, "wA:p55", "shell");
+		world.herdr.emit("pane.closed", "pane_closed", { pane_id: "wA:p999", workspace_id: "wA" }); // a look, as the restore's events bring
+		await until(() => readService(world.slot, "wA")?.pane === "wA:p55", "the record to follow");
+		assert.equal(tokens().sb_tower_quit, undefined);
+	});
+}
+
+test("B4R-F006: with the flag turned off the server releases its identities and purges service.json, the queue, and the ledger; a start with the flag off purges leftovers too", async () => {
+	const s = await started({ towers: { recoverMs: 150, registerMs: 500, residentMs: 20, retryMs: [20], refreshMs: 60 } });
+	const reply = await ask(s, { cmd: "ensure-tower", workspace: "wA" });
+	const tower = world.client("sb-tower-wa")!;
+	tower.incoming({ id: "x" }, { id: "m1", content: { text: "hello" } });
+	await until(() => readQueue(world.slot, "wA").length === 1, "the event to be queued");
+	world.setFlag(false);
+	await until(() => tower.connected === false && !readService(world.slot, "wA") && readQueue(world.slot, "wA").length === 0, "the identity to leave and the files to go");
+	assert.equal(tokens().tower, undefined);
+	assert.equal(pane(String(reply.pane)).tokens.sb_role, "tower", "the standing pane stays as a bare tower tab");
+	// Leftovers of an earlier run found by a server that starts with the flag off.
+	standing();
+	const dir = join(towerDir(world.slot, "wA"), "queue");
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(join(dir, "0000000000-aa.json"), JSON.stringify({ text: "old" }));
+	await world.close();
+	world = new TowerWorld();
+	world.setFlag(false);
+	standing();
+	mkdirSync(join(towerDir(world.slot, "wA"), "queue"), { recursive: true });
+	writeFileSync(join(towerDir(world.slot, "wA"), "queue", "0000000000-aa.json"), JSON.stringify({ text: "old" }));
+	await started();
+	await until(() => !readService(world.slot, "wA") && readQueue(world.slot, "wA").length === 0, "the leftovers to go");
+});
+
+test("B4R-F009: a waiting service gets no head-change digest line (the resident notes it itself)", async () => {
+	world.herdr.addTab("wA:t7", TOWER_LABEL, "wA:p7", "pi");
+	resident();
+	standing();
+	await started();
+	await sleep(100);
+	const [a, b] = world.herdr.workspaces;
+	world.herdr.workspaces = [b!, a!];
+	world.herdr.emit("workspace.moved", "workspace_moved", { workspace_id: "wB" });
+	await sleep(150);
+	assert.deepEqual(Object.keys(tokens("wA")).filter((k) => k.startsWith("sbd_")), []);
+});
+
+test("B4R-F010: a start that failed once is tried again by the next ensure", async () => {
+	let failed = false;
+	const h = world.herdr;
+	await started({ herdr: { run: h.runFor("none"), api: h.api, watch: (cb: () => void) => (world.takeovers.push(cb), () => {}), events: (types: string[], on: Parameters<typeof h.events>[1]) => {
+		if (!failed) throw (failed = true, new Error("events.subscribe refused"));
+		return h.events(types, on);
+	} } });
+	const s = world.running[0]!;
+	// The server's own start failed (recorded, not fatal); the first ask starts the service again from scratch.
+	const first = await ask(s, { cmd: "ensure-tower", workspace: "wA" });
+	assert.equal(first.ok, true, JSON.stringify(first));
+	assert.equal(first.live, true);
+});

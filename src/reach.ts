@@ -6,7 +6,9 @@ import type { Kit, Scope, SendResult } from "./state.ts";
 import { inside } from "./link/routing.ts";
 import { type Ctx, makeCtx } from "./server/client.ts";
 import { slotOf } from "./server/record.ts";
-import { ensureTowerVia, type TowerAnswer } from "./server/towerclient.ts";
+import { ensureTowerVia, STOPPED, type TowerAnswer } from "./server/towerclient.ts";
+
+export { STOPPED };
 import { towerRunsEnabled } from "./server/towerruns.ts";
 import { serverCli, VERSION } from "./server/version.ts";
 import { ensureTower } from "./towertab.ts";
@@ -33,7 +35,7 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit, server:
 }) {
 	const { run, api, sleep } = cfg;
 	const nonce = randomUUID().slice(0, 8);
-	let requests = 0;
+	let requests = 0, toldStopped = false;
 	const send = (to: string, message: string) =>
 		new Promise<SendResult>((resolve) => {
 			// pi-intercom keeps a message id per sender session and refuses it again with other content, and a restarted pi keeps its session id: the id carries this process's own nonce.
@@ -71,7 +73,11 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit, server:
 		if (towerRunsEnabled(cfg.stateDir ?? guiDir)) {
 			// A live tower is the tower, whoever runs it; otherwise the server stands in for it.
 			if (held && (await live(held))) return { target, routed: target !== asked ? asked : undefined, id: held, opened: false };
-			const got = await ensureTowerVia(server.ctx(), { workspace: target.workspace_id, cwd: process.cwd(), boss });
+			const got = await ensureTowerVia(server.ctx(), { workspace: target.workspace_id, cwd: process.cwd(), boss }).catch((error: Error) => {
+				// A server stopped on purpose is told once per session, whichever automatic path (a promotion, the guard) hit it first; the error still goes to the caller.
+				if (error.message === STOPPED && !toldStopped) tell(`Straw Boss: ${STOPPED}`, "warning"), toldStopped = true;
+				throw error;
+			});
 			return { target, routed: target !== asked ? asked : undefined, id: got.id, opened: got.opened };
 		}
 		const moveFirst = (tabId: string) => api("tab.move", { tab_id: tabId, insert_index: 0 }).catch((error: Error) => tell(`Straw Boss: could not move the tower tab first: ${error.message}`, "warning"));
