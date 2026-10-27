@@ -154,13 +154,21 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 
 	async function logs() {
 		const file = fileOf(slot, "log"), lines = Number(flags.lines ?? 200);
-		// The log is a file of the folder: read only once the folder is judged (b1f-F004).
-		if (existsSync(file)) await passGate(ctx);
-		for (const line of tailLog(file, lines)) out(`${line}\n`);
+		// The log (and the rotated ones) are files of the folder: read only once the folder is judged, which is once it exists, not once server.log does (b1f-F004, R2-F001).
+		let gated = false;
+		const gate = async () => {
+			if (gated || !existsSync(slot.dir)) return;
+			await passGate(ctx);
+			gated = true;
+		};
+		await gate();
+		if (gated) for (const line of tailLog(file, lines)) out(`${line}\n`);
 		if (!flags.follow) return 0;
-		let at = logSize(file);
+		let at = gated ? logSize(file) : 0;
 		while (!deps.signal?.aborted) {
 			await ctx.sleep(500);
+			await gate();
+			if (!gated) continue;
 			const more = readFrom(file, at);
 			at = more.size;
 			if (more.text) out(more.text);

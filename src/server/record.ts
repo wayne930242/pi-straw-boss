@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, closeSync, constants, existsSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { herdrSocket } from "../endpoint.ts";
 import { alive as pidAlive } from "../remote.ts";
 import { startedOrWait, startOf } from "../startof.ts";
@@ -78,19 +78,20 @@ export interface ServerRecord {
 export interface StartError { at: string; code: "acl" | "loader" | "intercom" | "start"; text: string; sddl?: string }
 
 /** Prepares a folder for secrets: mode 700 (a no-op on Windows, where the ACL does it). */
-export function secretDir(dir: string) {
+export function secretDir(dir: string, own?: string) {
 	try {
 		mkdirSync(dir, { recursive: true, mode: 0o700 });
 		chmodSync(dir, 0o700);
 	} catch (error) {
-		throw rootMade(dir, error);
+		throw rootMade(dir, error, own);
 	}
 }
 /** A folder a `sudo` run made cannot be written or changed by the user afterwards: told as that, with what to do (uid 0 is accepted as an owner, so this is the one place it shows). */
-function rootMade(dir: string, error: unknown): unknown {
+function rootMade(dir: string, error: unknown, own?: string): unknown {
 	const code = (error as NodeJS.ErrnoException).code;
-	if ((code !== "EPERM" && code !== "EACCES") || !process.getuid || process.getuid() === 0) return error;
-	for (let at = dir; ; at = dirname(at)) {
+	if (own === undefined || (code !== "EPERM" && code !== "EACCES") || !process.getuid || process.getuid() === 0) return error;
+	// Only the agent folder, the state folder and what is below them are pi's: a system folder above them is not told to be chowned or removed.
+	for (let at = dir; at === own || at.startsWith(own + sep); at = dirname(at)) {
 		try {
 			if (lstatSync(at).uid === 0) return new Error(`${at} belongs to root; it was made by a sudo run: sudo chown -R it to your account, or remove it with sudo, then start again (${code}).`);
 			return error;
@@ -98,6 +99,7 @@ function rootMade(dir: string, error: unknown): unknown {
 			if (dirname(at) === at) return error;
 		}
 	}
+	return error;
 }
 /**
  * Makes the slot's folder ready for the first file in it. On Windows the state folder is protected (owner and SYSTEM, no inheritance) first, before the lock, the placeholder record, or
@@ -108,7 +110,7 @@ export function prepareSlot(slot: Slot, platform: NodeJS.Platform = process.plat
 	if (platform !== "win32") {
 		// The gate comes before the folder is made or changed: a folder that landed foreign between two gates gets nothing (R13-F002's POSIX twin).
 		const gated = gate?.();
-		return gated ? gated.then(() => secretDir(slot.dir)) : secretDir(slot.dir);
+		return gated ? gated.then(() => secretDir(slot.dir, dirname(slot.stateDir))) : secretDir(slot.dir, dirname(slot.stateDir));
 	}
 	protectFolder(slot.stateDir, run, ms);
 	const rest = () => {
@@ -117,7 +119,7 @@ export function prepareSlot(slot: Slot, platform: NodeJS.Platform = process.plat
 			mkdirSync(dir, { recursive: true });
 			refuseLink(dir);
 		}
-		secretDir(slot.dir);
+		secretDir(slot.dir, dirname(slot.stateDir));
 	};
 	// The owner gate (R13-F002) comes before anything else is made in the folder, so a folder that landed foreign (a swapped temporary folder) gets not even a secondary slot's empty `servers\` in it.
 	const gated = gate?.();

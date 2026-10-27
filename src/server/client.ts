@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { createConnection } from "node:net";
+import { dirname } from "node:path";
 import { localEndpoint } from "../endpoint.ts";
 import { alive as pidAlive } from "../remote.ts";
 import { newer } from "../semver.ts";
@@ -318,7 +319,7 @@ export async function launch(ctx: Ctx, { began, old, deadline }: { began?: strin
 	let keeps = old, mine: { began: string; expect: Replaced } | undefined;
 	if (!began) {
 		// The caller holds the lock, which `lockFor` took after the state folder was made safe at this very start: the folder is only made again here, with no second round of native calls.
-		const marked = markStarting(ctx.slot, ctx.now(), { pid: process.pid, version: ctx.version, desk: ctx.env.STRAW_BOSS_DESK === "1", intercom: intercomOf(ctx.env, ctx.platform), mode: "detached", by: ctx.by, prepare: (slot) => secretDir(slot.dir) });
+		const marked = markStarting(ctx.slot, ctx.now(), { pid: process.pid, version: ctx.version, desk: ctx.env.STRAW_BOSS_DESK === "1", intercom: intercomOf(ctx.env, ctx.platform), mode: "detached", by: ctx.by, prepare: (slot) => secretDir(slot.dir, dirname(slot.stateDir)) });
 		mine = { began: marked.began, expect: marked.expect };
 		keeps = marked.expect;
 	}
@@ -397,7 +398,7 @@ export async function lockFor(ctx: Ctx, waitMs: number, deadline?: number, gate 
 		throw aclRefusal(ctx, error as Error);
 	}
 	// Prepared just above: the lock only makes the folder again, with no second round of native calls.
-	return takeLock(ctx.slot, ctx.by, { ...ctx.lock, prepare: (slot) => secretDir(slot.dir) }, waitMs).catch((error) => {
+	return takeLock(ctx.slot, ctx.by, { ...ctx.lock, prepare: (slot) => secretDir(slot.dir, dirname(slot.stateDir)) }, waitMs).catch((error) => {
 		// A lock that cannot be opened is a start that cannot run here, said as it is (exit 3, `acl`): not a lock another start holds.
 		if (error instanceof LockUnreadable) throw new ServerError("start-failed", `acl: ${error.message}`, { at: new Date(ctx.now()).toISOString(), code: "acl", text: error.message });
 		throw new ServerError("busy", (error as Error).message, undefined, "lock");
@@ -638,9 +639,12 @@ export function stateOf(ctx: Pick<Ctx, "now">, seen: Pick<Probe, "record" | "liv
  */
 export async function describe(ctx: Ctx): Promise<Record<string, unknown>> {
 	const seen = await probe(ctx), record = seen.record, state = stateOf(ctx, seen);
-	// The last start's error is a file of the folder: read only once the folder is judged (b1f-F004).
-	if (existsSync(fileOf(ctx.slot, "startError"))) await passGate(ctx);
-	const startError = readStartError(ctx.slot);
+	// The last start's error is a file of the folder: read only once the folder is judged, and not at all when it was not there to be judged for (b1f-F004, R2-F002).
+	let startError: StartError | undefined;
+	if (existsSync(fileOf(ctx.slot, "startError"))) {
+		await passGate(ctx);
+		startError = readStartError(ctx.slot);
+	}
 	let more: Record<string, unknown> = { towers: [], link: null };
 	if (seen.live && record) {
 		try {

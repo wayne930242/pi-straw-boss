@@ -74,20 +74,33 @@ export function readDacl(dir: string, run: RunNative, timeoutMs?: number): strin
 	const file = join(tmpdir(), `sb-acl-${process.pid}-${randomBytes(4).toString("hex")}.txt`);
 	try {
 		run("icacls.exe", [dir, "/save", file, "/L", "/Q"], timeoutMs);
-		let raw: Buffer;
-		try {
-			raw = readFileSync(file);
-		} catch (error) {
-			// icacls ran (it exited 0) and left nothing to read: not a program that is missing.
-			throw new Refused(`icacls /save wrote no file: ${asciiLine((error as Error).message)}`);
-		}
-		const text = (raw[0] === 0xff && raw[1] === 0xfe ? raw.subarray(2).toString("utf16le") : raw.toString("utf8")).replace(/\0/g, "");
-		const sddl = text.split(/\r?\n/).map((line) => line.trim()).find((line) => /^[OGDS]:/.test(line));
-		if (!sddl) throw new Refused(`icacls /save wrote no SDDL: ${text.trim().slice(0, 120) || "nothing"}`);
-		return sddl;
+		return sddlIn(file);
 	} finally {
 		rmSync(file, { force: true });
 	}
+}
+/** `readDacl` for a caller that must not hold the event loop (the owner gate). */
+async function readDaclAsync(dir: string, run: RunNativeAsync, timeoutMs?: number): Promise<string> {
+	const file = join(tmpdir(), `sb-acl-${process.pid}-${randomBytes(4).toString("hex")}.txt`);
+	try {
+		await run("icacls.exe", [dir, "/save", file, "/L", "/Q"], timeoutMs);
+		return sddlIn(file);
+	} finally {
+		rmSync(file, { force: true });
+	}
+}
+function sddlIn(file: string): string {
+	let raw: Buffer;
+	try {
+		raw = readFileSync(file);
+	} catch (error) {
+		// icacls ran (it exited 0) and left nothing to read: not a program that is missing.
+		throw new Refused(`icacls /save wrote no file: ${asciiLine((error as Error).message)}`);
+	}
+	const text = (raw[0] === 0xff && raw[1] === 0xfe ? raw.subarray(2).toString("utf16le") : raw.toString("utf8")).replace(/\0/g, "");
+	const sddl = text.split(/\r?\n/).map((line) => line.trim()).find((line) => /^[OGDS]:/.test(line));
+	if (!sddl) throw new Refused(`icacls /save wrote no SDDL: ${text.trim().slice(0, 120) || "nothing"}`);
+	return sddl;
 }
 
 /**
@@ -156,7 +169,7 @@ const POWERSHELL = "WindowsPowerShell\\v1.0\\powershell.exe";
  */
 const ownerCall = (paths: string[]) => {
 	// One line per path: `<index>:<SID>`, or `<index>:-` for a path that is not there. A folder is read with `Directory`, a file with `File`.
-	const script = [PROGRESS_OFF, CLM_CHECK, "$i = 0", "foreach ($p in ($env:SB_OWNER_DIR -split '\\|')) {",
+	const script = [PROGRESS_OFF, "$ErrorActionPreference = 'Stop'", CLM_CHECK, "$i = 0", "foreach ($p in ($env:SB_OWNER_DIR -split '\\|')) {",
 		"  $a = if ([IO.Directory]::Exists($p)) { [IO.Directory]::GetAccessControl($p, [Security.AccessControl.AccessControlSections]::Owner) } elseif ([IO.File]::Exists($p)) { [IO.File]::GetAccessControl($p, [Security.AccessControl.AccessControlSections]::Owner) } else { $null }",
 		"  if ($a) { \"$($i):\" + $a.GetOwner([Security.Principal.SecurityIdentifier]).Value } else { \"$($i):-\" }", "  $i++", "}"].join("\n");
 	// The paths come in the environment, never quoted into the script: PowerShell reads U+2018 to U+201B as single quotes too, so a path such as `O’Neil` would break (or inject into) the script. `|` cannot be in a Windows path.
@@ -228,6 +241,16 @@ const remember = (dir: string) => {
 	const id = identityOf(dir);
 	if (id) verified.set(dir.toLowerCase(), id);
 };
+/** The folders whose OWNER this process has read and found acceptable, closed or not: `secure` need not read it again before it fixes a wrong DACL. */
+const ownerRead = new Map<string, string>();
+const isOwnerRead = (dir: string) => {
+	const id = identityOf(dir);
+	return id !== undefined && ownerRead.get(dir.toLowerCase()) === id;
+};
+const rememberOwner = (dir: string) => {
+	const id = identityOf(dir);
+	if (id) ownerRead.set(dir.toLowerCase(), id);
+};
 const acceptableOwner = (owner: string) => owner.toUpperCase() === sid!.toUpperCase() || OWNER_OK_SIDS.includes(owner);
 const foreignOwner = (dir: string, owner: string, tail: string) => `the folder ${dir} belongs to another account (${owner}), not to ${sid}. Run pi as that account (an elevated shell for an administrator's), or delete the folder ${dir}, then start again. (${tail})`;
 /** How long a read of the owner that failed (Constrained Language Mode, a timeout) is not tried again: a session looks every 2 s, and a read is a blocking PowerShell start. */
@@ -267,8 +290,17 @@ export async function ownerGate(dir: string, run: RunNativeAsync = runNativeAsyn
 		if (reading.get(key)?.done === read) reading.delete(key);
 	}
 }
+/** Whether the folder's DACL is exactly the owner's and SYSTEM's (what `secure` checks): a failed read says no. */
+async function closed(dir: string, run: RunNativeAsync, timeoutMs: number | undefined): Promise<boolean> {
+	try {
+		return folderProblems(await readDaclAsync(dir, run, timeoutMs), sid!).length === 0;
+	} catch {
+		return false;
+	}
+}
 async function readOwner(dir: string, also: string[], key: string, id: string | undefined, run: RunNativeAsync, timeoutMs: number | undefined, now: () => number): Promise<void> {
 	let failure: Error, unreadable = false;
+	const existed = new Set(also.filter((path) => existsSync(path)));
 	try {
 		if (!sid) {
 			try {
@@ -283,10 +315,15 @@ async function readOwner(dir: string, also: string[], key: string, id: string | 
 		const owners = await ownersAsync(dir, also, run, timeoutMs);
 		// The folder at the name now is the one that was read, or nothing is known of it: it is read again by the next request.
 		if (identityOf(dir) !== id) throw new Error(`${dir} was replaced while its owner was read`);
+		// A path that was there when the read began and reads '-' went away meanwhile: nothing is known of it, and the next request reads again (R2-F003).
+		const vanished = also.findIndex((path, at) => owners[at + 1] === undefined && existed.has(path));
+		if (vanished >= 0) throw new GateTimeout(`${also[vanished]} went away while its owner was read`);
 		const bad = owners.findIndex((owner) => owner !== undefined && !acceptableOwner(owner));
 		if (bad < 0) {
 			refused.delete(key);
-			remember(dir);
+			rememberOwner(dir);
+			// Remembered only for a folder that others cannot add entries to: a record another account puts into an open folder later is still judged (R2-F003).
+			if (await closed(dir, run, timeoutMs)) remember(dir);
 			return;
 		}
 		const path = bad === 0 ? dir : also[bad - 1]!;
@@ -325,10 +362,10 @@ function secure(target: string, run: RunNative, left: () => number | undefined, 
 		}
 		if (!wrong) return;
 		// Read already by the gate that runs before `protectFolder` (this start, or an earlier one of this process for this very folder): not asked twice.
-		if (!isVerified(target)) {
+		if (!isVerified(target) && !isOwnerRead(target)) {
 			const owner = ownerOfFolder(target, run, left());
 			if (!acceptableOwner(owner)) throw new Refused(foreignOwner(target, owner, "owner read; its permissions are not the owner's and SYSTEM's; nothing in the folder was changed"));
-			remember(target);
+			rememberOwner(target);
 		}
 	}
 	stepOf("protect", target, () => run("icacls.exe", protectArgs(target, sid!), left()));
@@ -336,6 +373,8 @@ function secure(target: string, run: RunNative, left: () => number | undefined, 
 	refuseLink(target);
 	const problems = folderProblems(stepOf("read-back", target, () => readDacl(target, run, left())), sid!);
 	if (problems.length) throw new Refused(problems.join("; "));
+	// The owner was judged above (or by the gate) and the DACL is closed now: the gate need not read this folder again.
+	if (!fresh) remember(target);
 }
 /**
  * Makes a folder that does not exist yet, protected from its first moment on: it is made under an unpredictable name beside its final one and protected, checked to be
@@ -415,8 +454,10 @@ export function protectFolder(dir: string, run: RunNative = runNative, timeoutMs
 		if (!existsSync(dir) && intoPlace(dir, run, left, rename)) return;
 		secure(dir, run, left);
 	} catch (error) {
-		throw new Error(`could not protect ${dir} before writing to it: ${(error as Error).message}`);
+		const text = `could not protect ${dir} before writing to it: ${(error as Error).message}`;
+		// A read that ran out of time stays a wait, not a refusal of the folder (F006).
+		throw error instanceof GateTimeout ? new GateTimeout(text) : new Error(text);
 	}
 }
 /** For tests: forgets the owner's SID. */
-export const forgetSid = () => { sid = undefined; verified.clear(); refused.clear(); reading.clear(); };
+export const forgetSid = () => { sid = undefined; verified.clear(); ownerRead.clear(); refused.clear(); reading.clear(); };

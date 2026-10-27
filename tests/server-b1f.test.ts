@@ -57,17 +57,19 @@ test("F002: one PowerShell read judges the state folder, the slot's folder and t
 	const record = fileOf(slot, "record");
 	writeFileSync(record, "{}");
 	const calls: { file: string; env?: Record<string, string> }[] = [];
-	const answer = (owners: string[]) => async (file: string, _a: string[], _ms?: number, env?: Record<string, string>) => {
+	const answer = (owners: string[]) => async (file: string, args: string[], _ms?: number, env?: Record<string, string>) => {
 		calls.push({ file, ...(env ? { env } : {}) });
+		if (args.includes("/save")) writeFileSync(args[args.indexOf("/save") + 1]!, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(`straw-boss\r\nD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;${OWNER})\r\n`, "utf16le")]));
+		if (args.includes("/save")) return "";
 		return file === "whoami.exe" ? `"PC\\me","${OWNER}"\r\n` : owners.map((o, i) => `${i}:${o}`).join("\r\n");
 	};
 	await assert.rejects(ownerGate(slot.stateDir, answer([OWNER, OWNER, FOREIGN]), undefined, undefined, [slot.dir, record]), (e: Error) => e.message.includes(`the folder ${record} belongs to another account (${FOREIGN})`));
 	const read = calls.filter((c) => c.file.endsWith("powershell.exe"));
 	assert.equal(read.length, 1, "one PowerShell for the three paths");
 	assert.equal(read[0]!.env!.SB_OWNER_DIR, [slot.stateDir, slot.dir, record].join("|"));
-	// A refusal is held; and a path that is not there (`-`) is nothing to refuse.
+	// A refusal is held; and a closed folder whose paths are all acceptable is remembered.
 	forgetSid();
-	assert.equal(await ownerGate(slot.stateDir, answer([OWNER, "-", OWNER]), undefined, undefined, [slot.dir, record]), true);
+	assert.equal(await ownerGate(slot.stateDir, answer([OWNER, OWNER, OWNER]), undefined, undefined, [slot.dir, record]), true);
 	assert.equal(await ownerGate(slot.stateDir, answer([FOREIGN]), undefined, undefined, [slot.dir, record]), false, "remembered: no second read");
 });
 
@@ -171,5 +173,5 @@ test("F005b: prepareSlot waits for the gate before it makes the folder on POSIX,
 });
 
 test("root: a folder a sudo run made is told with what to do", { skip: !process.getuid || process.getuid() === 0 || !existsSync("/var/root") }, () => {
-	assert.throws(() => secretDir("/var/root/straw-boss-test"), /belongs to root; it was made by a sudo run: sudo chown -R it/);
+	assert.throws(() => secretDir("/var/root/straw-boss-test", "/var/root"), /belongs to root; it was made by a sudo run: sudo chown -R it/);
 });

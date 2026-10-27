@@ -70,7 +70,7 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 			if (verdict.do === "refuse") return tellOnce(verdict.why, `Straw Boss: ${verdict.text}`);
 			if (verdict.do === "start") {
 				if (failedAt !== undefined && cfg.now() - failedAt < RETRY_FAILED_MS) return;
-				await ensure(ctx);
+				await ensure(ctx); if (stopped) return;
 			}
 			if (verdict.do === "upgrade") {
 				// An upgrade that failed is asked for again when the record's version or the package's changes, not as time passes: a package whose dist is older than its
@@ -78,15 +78,15 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 				const pair = `${seen.record!.version}|${ctx.version}`;
 				if (failedUpgrade === pair) return;
 				upgradePair = pair;
-				const before = seen.record!.version, done = await restart(ctx, { reason: "upgrade", upgrade: true, lockWaitMs: 0 });
+				const before = seen.record!.version, done = await restart(ctx, { reason: "upgrade", upgrade: true, lockWaitMs: 0 }); if (stopped) return;
 				// An upgrade that starts a server no newer than the one it replaced would be asked for again at every look.
 				if (!newer(done.record.version, before)) throw new Error(`the upgrade started pi-straw-boss ${done.record.version}, not newer than the ${before} it replaced (this session loaded ${cfg.version}; the package on disk is ${ctx.version})`);
 			}
 			failedAt = undefined;
 			failedUpgrade = undefined;
 		} catch (error) {
-			// Another session holds the lock (it starts or restarts the server); the next look finds the result.
-			if (error instanceof ServerError && error.code === "busy") return;
+			// Another session holds the lock (it starts or restarts the server); the next look finds the result. A session that shut down meanwhile tells nothing.
+			if (stopped || (error instanceof ServerError && error.code === "busy")) return;
 			if (verdictWas === "upgrade") failedUpgrade = upgradePair;
 			else failedAt = cfg.now();
 			tellOnce(`failed:${(error as Error).message}`, `Straw Boss: the sb server ${verdictWas === undefined ? "was not looked at" : `could not ${verdictWas === "upgrade" ? "upgrade" : "start"}`}: ${(error as Error).message}`, "error");
@@ -129,7 +129,7 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 		async logs(lines = MAX_LOG_LINES) {
 			// The log is a file of the folder: read only once the folder is judged (b1f-F004).
 			const ctx = ctxFor();
-			if (existsSync(fileOf(ctx.slot, "log"))) await passGate(ctx).catch((error: ServerError) => refuse(error));
+			if (existsSync(ctx.slot.dir)) await passGate(ctx).catch((error: ServerError) => refuse(error));
 			return tailLog(fileOf(slot(), "log"), Math.max(1, Math.min(MAX_LOG_LINES, Math.floor(lines))));
 		},
 		/**

@@ -529,7 +529,8 @@ test("R12, R13-F001: the owner read is one -EncodedCommand PowerShell that check
 		const script = Buffer.from(seen[0]!.args[seen[0]!.args.indexOf("-EncodedCommand") + 1]!, "base64").toString("utf16le");
 		const lines = script.split("\n");
 		assert.match(lines[0]!, /ProgressPreference/);
-		assert.match(lines[1]!, /LanguageMode -ne 'FullLanguage'.*sb-constrained-language/, "the language mode is checked before any .NET call");
+		assert.match(lines[1]!, /ErrorActionPreference = 'Stop'/, "the script stops at its first error (R2-F003)");
+		assert.match(lines[2]!, /LanguageMode -ne 'FullLanguage'.*sb-constrained-language/, "the language mode is checked before any .NET call");
 		assert.deepEqual(seen[0]!.env, { SB_OWNER_DIR: dir }, "the folder is in the environment");
 		assert.ok(script.includes("$env:SB_OWNER_DIR"));
 		assert.ok(!script.includes(dir) && !/[\u2018-\u201B]/.test(script) && !script.includes("brien"), "no part of the path is in the script");
@@ -668,7 +669,7 @@ test("R13: a start in a folder the user owns reads the owner ONCE (the gate befo
 	const done = await ensure(ctx, { boss: true });
 	assert.ok("server" in done && done.server === "started");
 	assert.equal(powershells(n), 1, "one owner read for the whole start");
-	assert.deepEqual(called(n).slice(0, 4), ["whoami", "powershell", "/save", "/inheritance:r"]);
+	assert.deepEqual(called(n).slice(0, 5), ["whoami", "powershell", "/save", "/save", "/inheritance:r"], "the gate's own DACL read follows its owner read");
 	assert.ok(readFileSync(join(world.stateDir, "server.log"), "utf8").includes("phase name=owner-gate"), "the cost is a phase in the log (written after the gate passed)");
 	const again = powershells(n);
 	assert.equal(await ownerGate(world.stateDir, run), false, "the same folder, the same process: no read");
@@ -872,9 +873,13 @@ const later = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 /** The native calls as the real runner gives them to a pi session: the PowerShell answers after `ms`, and the loop is free meanwhile. A `fail` makes that read fail. */
 function slowNative(ms: number, over: { owner?: string; fail?: Error } = {}) {
 	const calls: string[] = [];
-	const run = async (file: string) => {
+	const run = async (file: string, args: string[] = []) => {
 		calls.push(file);
 		if (file === "whoami.exe") return `"PC\\me","${OWNER}"\r\n`;
+		if (args.includes("/save")) {
+			writeFileSync(args[args.indexOf("/save") + 1]!, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(`straw-boss\r\n${GOOD}\r\n`, "utf16le")]));
+			return "";
+		}
 		await later(ms);
 		if (over.fail) throw over.fail;
 		return `${over.owner ?? OWNER}\r\n`;
