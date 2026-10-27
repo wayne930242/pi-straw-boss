@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -151,7 +152,7 @@ test("sbir6-F004: registerTrust starts the early read only where pi will ask: re
 	assert.equal(launches({ resources: () => false }), 0, "a folder without resources that need trust");
 	assert.equal(launches({ saved: () => true }), 0, "a trusted folder");
 	assert.equal(launches({ saved: () => { throw new Error("broken"); } }), 0, "a broken trust.json");
-	assert.equal(launches({ stdin: { ...tty, isTTY: false } }), 0, "no terminal (pi -p, a subagent)");
+	assert.equal(launches({ stdin: { ...tty, isTTY: false } }), 0, "stdin is not a terminal (a subagent)");
 	assert.equal(launches({ stdin: { ...tty, setRawMode: undefined } }), 0, "a terminal that cannot be read raw");
 	assert.equal(launches({ defaultTrust: () => "trust" }), 0, "defaultProjectTrust is not ask");
 });
@@ -195,5 +196,44 @@ test("RC4-F001: the tower's dashboard finds the GUI through the session's own so
 		}
 	} finally {
 		await world.stopAll();
+	}
+});
+
+test("sbir7-F001/F002: registerTrust never throws at load (older pi exports, a throwing predicate, a stale record) and starts no early read under -p, --mode, or --approve", async () => {
+	const { port } = await squatter();
+	const tty = { isTTY: true, isRaw: false, setRawMode: () => {}, resume: () => {}, pause: () => {}, on: () => {}, off: () => {} };
+	const proc = { pid: process.pid, on: () => {}, off: () => {}, listenerCount: () => 1, kill: () => {} };
+	const launches = (over: Record<string, unknown>, dir = stateWith(port)) => {
+		const cold = counted(10);
+		registerTrust({ on: () => {} } as never, { cfg: { env: ENV, now: Date.now, sleep: async () => {}, startRead: { later: cold.startedLater } } as never, guiDir: dir }, { stdin: tty, proc, write: () => {}, resources: () => true, saved: () => null, defaultTrust: () => "ask", ...over });
+		return cold.reads.length;
+	};
+	assert.equal(launches({ resources: () => { throw new Error("old pi"); } }), 0, "a throwing predicate leaves the load alive and starts nothing");
+	assert.equal(launches({ defaultTrust: () => { throw new Error("old pi"); } }), 0);
+	let asked = 0;
+	assert.equal(launches({ resources: () => (asked++, true) }, stateWith(port, { pid: 2 ** 22 + 12345 })), 0, "a stale record");
+	assert.equal(asked, 0, "the cheap record checks run before the predicate");
+	assert.equal(launches({}), 1);
+	const argv = process.argv;
+	try {
+		for (const extra of [["-p"], ["--print"], ["--mode", "json"], ["--mode=rpc"], ["--approve"], ["--no-approve"]]) {
+			process.argv = [...argv, ...extra];
+			assert.equal(launches({}), 0, extra.join(" "));
+		}
+		process.argv = [...argv, "--mode", "interactive"];
+		assert.equal(launches({}), 1, "--mode interactive");
+	} finally {
+		process.argv = argv;
+	}
+});
+
+test("sbir7-F001: with the export surfaces of pi 0.78.1, 0.79.0, 0.79.1 the load and the handler degrade instead of throwing, with a live and a stale record", async () => {
+	const { port } = await squatter();
+	for (const surface of ["pi-0.78.1.mjs", "pi-0.79.0.mjs", "pi-0.79.1.mjs"]) {
+		for (const dir of [stateWith(port), stateWith(port, { pid: 2 ** 22 + 12345 }), stateWith(port, null)]) {
+			const out = spawnSync(process.execPath, [join(import.meta.dirname, "old-pi/load.mjs"), join(import.meta.dirname, "old-pi", surface), dir, SOCKET], { encoding: "utf8", timeout: 60_000 });
+			// 0.79.1 has the saved decision and the default, so the handler (not the early read, which needs the resources check) may read the start time of a live record
+			assert.match(out.stdout, surface === "pi-0.79.1.mjs" ? /^OK reads=[01] decision=undecided/ : /^OK reads=0 decision=undecided/, `${surface}: ${out.stdout}${out.stderr}`);
+		}
 	}
 });

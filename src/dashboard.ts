@@ -112,7 +112,7 @@ const DEBOUNCE_MS = 500;
 export function startDashboard({ ui, collect: read, watch, frameMs = 1000, pollMs = SAFETY_MS, minGapMs = 500, debounceMs = DEBOUNCE_MS }: { ui: ExtensionContext["ui"]; collect(): Promise<Snapshot> } & Timing): Dashboard {
 	let live: Dashboard | undefined;
 	ui.setWidget(KEY, (tui, theme) => {
-		let snap: Snapshot = { title: "", mark: "unknown", head: false, rows: [] }, known: { url?: string } | undefined, frame = 0, busy = false, again = false, stopped = false, last = 0, due = Infinity;
+		let snap: Snapshot = { title: "", mark: "unknown", head: false, rows: [] }, known: { url?: string } | undefined, frame = 0, busy = false, again = false, stopped = false, last = 0, due = Infinity, seq = 0;
 		let spinner: ReturnType<typeof setInterval> | undefined, wake: ReturnType<typeof setTimeout> | undefined;
 		// One pending read at a time, at the earliest time anyone asked for (and not inside the gap after the last read).
 		const schedule = (delay: number) => {
@@ -132,11 +132,11 @@ export function startDashboard({ ui, collect: read, watch, frameMs = 1000, pollM
 				const p = snap.pending;
 				if (p) { // the rows are drawn now with the last known GUI line; the title follows when the read settles
 					snap = { ...snap, gui: known?.url, checking: !known };
-					const shown = snap;
+					const mine = ++seq;
 					void p.then((url) => {
-						known = { url };
-						if (stopped || snap !== shown) return;
-						snap = { ...shown, gui: url, checking: false, pending: undefined };
+						if (mine === seq) known = { url }; // only the newest read's answer is the last known GUI line
+						if (stopped || snap.pending !== p) return; // a failed refresh keeps the pending read (its snapshot still carries it); a newer read replaces it
+						snap = { ...snap, gui: url, checking: false, pending: undefined };
 						tui.requestRender();
 					});
 				}

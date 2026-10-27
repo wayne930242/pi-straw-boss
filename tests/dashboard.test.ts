@@ -583,3 +583,34 @@ test("RC4-F003: the GUI line is read alongside the sessions and the world, not a
 	assert.equal(await (snap as Snapshot).pending, "http://127.0.0.1:5000/t/");
 	assert.equal(await (await collect({ run: world.herdr.runFor("wA:p1"), workspaceId: "wA", sessions: async () => [], gui: async () => { throw new Error("no"); } })).pending, undefined, "a failed GUI read leaves the line out");
 });
+
+test("sbir7-F003: a pending GUI read settling out of order does not overwrite a newer read, and a failed refresh while one is pending still gets its result", async () => {
+	const { state, ui } = fakeUi();
+	const gate: Array<(url: string | undefined) => void> = [];
+	let reads = 0, fail = false;
+	const collectNext = async (): Promise<Snapshot> => {
+		reads++;
+		if (fail) throw new Error("herdr is gone");
+		return { ...snapshot([]), pending: new Promise<string | undefined>((resolve) => gate.push(resolve)) };
+	};
+	const dashboard = startDashboard({ ui: ui as never, collect: collectNext, frameMs: 5, pollMs: 100_000, minGapMs: 0 });
+	const lines = () => state.component!.render(100).join("\n");
+	await until(() => reads === 1, "first read");
+	dashboard.poke();
+	await until(() => reads === 2, "second read");
+	gate[1]!("http://new/");
+	await until(() => lines().includes("http://new/"), "the newer read's line");
+	gate[0]!("http://old/"); // settles late
+	await settle();
+	assert.ok(lines().includes("http://new/") && !lines().includes("http://old/"), "the late older answer does not replace the newer");
+	dashboard.poke();
+	await until(() => reads === 3, "third read");
+	await settle();
+	assert.ok(lines().includes("http://new/") && !lines().includes("http://old/"), "the line shown while the next read is pending is the newest answer, not the late older one");
+	fail = true;
+	dashboard.poke();
+	await until(() => state.component!.render(80).some((line) => /dashboard unavailable/.test(line)), "error row while the third read is pending");
+	gate[2]!("http://third/");
+	await until(() => lines().includes("http://third/"), "the pending result is applied after the failed refresh");
+	dashboard.stop();
+});
