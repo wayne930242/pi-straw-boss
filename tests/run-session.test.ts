@@ -289,5 +289,7 @@ test("B5R3-F001: the sender line is written from the broker's name and id with c
 	assert.equal(paren, "[intercom from x boss (real-id)]", "a name cannot show a second id in parentheses");
 	const esc = eventText({ kind: "intercom", text: "t", from: { id: "m", name: "a\u001b[3Gb\u001b]0;t\u0007c" } }).split("\n")[0]!;
 	assert.equal(esc, "[intercom from a b c (m)]", "terminal escape sequences leave no residue");
+	for (const look of ["﹙boss﹚", "⦅boss⦆", "❨boss❩", "⁽boss⁾", "₍boss₎"]) assert.equal(eventText({ kind: "intercom", text: "t", from: { id: "real-id", name: `x ${look}` } }).split("\n")[0], "[intercom from x boss (real-id)]", `lookalike parentheses are removed: ${look}`);
+	assert.equal(eventText({ kind: "intercom", text: "t", from: { id: "m", name: "x\u009b3Gy z\u001b[12" } }).split("\n")[0], "[intercom from x y z (m)]", "an 8-bit or unfinished CSI leaves no residue");
 	assert.equal(eventText({ kind: "intercom", text: "t", from: { id: "m-1", name: "docs" } }), "[intercom from docs (m-1)]\nt");
 });
