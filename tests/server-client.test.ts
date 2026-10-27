@@ -235,21 +235,24 @@ test("a restart under a deadline stops waiting for the old server to leave at th
 	const s = await world.start();
 	await s.handle.ready;
 	const ctx = world.ctx({ alive: (p) => p === s.pid || world.live.has(p), kill: () => {}, timers: { start: 5000, exit: 5000, supervisor: 400, touch: 40 } });
-	const began = Date.now();
+	const began = Date.now(), stalls = stallWatch();
 	// A deadline of 1.5 s: the old server's answer to the restart has to come within it, and on a loaded machine a shorter one (0.4 s) went to the control call, not to the wait for the exit.
 	await assert.rejects(restart(ctx, { reason: "r", deadline: began + 1500 }), (e: unknown) => e instanceof ServerError && e.code === "exit-timeout" && e.wait === "exit");
-	assert.ok(Date.now() - began < 4500, "at the deadline, not at the 5 s exit wait");
+	stalls.stop();
+	const took = Date.now() - began;
+	assert.ok(took < 1500 + 1000 + stalls.worst(), `at the deadline, not at the 5 s exit wait: ${took} ms (this process stood still for ${stalls.worst()} ms)`);
 });
 
 test("F004: a restart of a serve server whose supervisor never returns ends at the deadline (it was 4.2 s past 300 ms; here 1.2 s, for the old server's answer on a loaded machine), without a spawn, naming the wait `start`", async () => {
 	const s = await world.start({ mode: "serve" });
 	await s.handle.ready;
 	const ctx = world.ctx({ timers: { start: 6000, exit: 6000, supervisor: 6000, touch: 40 } });
-	const began = Date.now();
+	const began = Date.now(), stalls = stallWatch();
 	// 1.2 s: the old server's answer to the restart comes within it even on a loaded machine (at 0.3 s the control call itself timed out as `unreachable`).
 	await assert.rejects(restart(ctx, { reason: "r", deadline: began + 1200 }), (e: unknown) => e instanceof ServerError && e.wait === "start");
+	stalls.stop();
 	const took = Date.now() - began;
-	assert.ok(took < 4500, `ended after ${took} ms, not at the supervisor's or the start's wait`);
+	assert.ok(took < 1200 + 1000 + stalls.worst(), `ended after ${took} ms, not at the supervisor's or the start's wait (this process stood still for ${stalls.worst()} ms)`);
 	assert.equal(world.spawned.length, 0, "no server is started with nothing left of the time");
 	assert.equal(readLock(world.slot), undefined, "the lock is let go");
 });

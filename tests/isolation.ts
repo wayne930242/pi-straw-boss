@@ -9,6 +9,9 @@ import { startOf } from "../src/startof.ts";
 // short on purpose (a unix socket path is limited to about 100 characters). The process that made the root removes it at exit; every process kills the servers it noted in `pids/` and, when
 // one was still running, makes the run fail.
 
+/** The folders go derives its caches and telemetry from (os.UserCacheDir, os.UserConfigDir): isolation points them into the root, and `goEnv` gives go the real ones back. */
+const GO_DIRS = ["APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"] as const;
+
 /** What a test must not inherit from the shell or the pi session that started it. */
 export const INHERITED = /^(PI_(INTERCOM|SUBAGENT|HERDR_AGENTS)_.*|PI_SESSION_(FILE|ID)|STRAW_BOSS_.*|HERDR_.*|SB_TEST_REAL_SERVER)$/;
 
@@ -22,22 +25,35 @@ export function installIsolation(env: NodeJS.ProcessEnv = process.env, platform:
 	const home = env.HOME ?? homedir(), relay = join(home, "projects", "straw-relay");
 	if (!env.STRAW_RELAY_DIR && existsSync(join(relay, ".git"))) env.STRAW_RELAY_DIR = relay;
 	env.SB_TEST_REAL_HOME = home;
+	for (const key of GO_DIRS) if (env[key] !== undefined) env[`SB_TEST_REAL_${key}`] = env[key];
 	const root = mkdtempSync(join(platform === "win32" ? tmpdir() : "/tmp", "sbt-")), fake = join(root, "h");
 	for (const key of Object.keys(env)) if (INHERITED.test(key)) delete env[key];
 	const agent = join(fake, ".pi", "agent");
 	mkdirSync(agent, { recursive: true });
 	Object.assign(env, {
 		[TEST_ROOT]: root, HOME: fake, USERPROFILE: fake, PI_CODING_AGENT_DIR: agent, APPDATA: join(fake, "AppData", "Roaming"), LOCALAPPDATA: join(fake, "AppData", "Local"),
-		XDG_CONFIG_HOME: join(fake, ".config"), XDG_DATA_HOME: join(fake, ".local", "share"), XDG_STATE_HOME: join(fake, ".local", "state"), HERDR_SOCKET_PATH: join(root, "herdr.sock"), TMPDIR: root, TEMP: root, TMP: root,
+		XDG_CONFIG_HOME: join(fake, ".config"), XDG_CACHE_HOME: join(fake, ".cache"), XDG_DATA_HOME: join(fake, ".local", "share"), XDG_STATE_HOME: join(fake, ".local", "state"), HERDR_SOCKET_PATH: join(root, "herdr.sock"), TMPDIR: root, TEMP: root, TMP: root,
 	});
 	return { root, owner: true };
 }
 
-/** The environment for the go toolchain: the home the run started from, where go keeps its telemetry (a child of `go` outlives the command, and would write into the root after it is removed). */
-export const goEnv = (env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv => (env.SB_TEST_REAL_HOME ? { ...env, HOME: env.SB_TEST_REAL_HOME, USERPROFILE: env.SB_TEST_REAL_HOME } : env);
+/**
+ * The environment for the go toolchain: the home and the config and cache folders (APPDATA, LOCALAPPDATA, XDG_CONFIG_HOME, XDG_CACHE_HOME) the run started from, where go keeps its build cache and telemetry
+ * (a child of `go` outlives the command, and would write into the root after it is removed; a build in the root would be cold every time). A folder the shell did not set is unset for go too, so it falls back to the real home.
+ */
+export const goEnv = (env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv => {
+	if (!env.SB_TEST_REAL_HOME) return env;
+	const out: NodeJS.ProcessEnv = { ...env, HOME: env.SB_TEST_REAL_HOME, USERPROFILE: env.SB_TEST_REAL_HOME };
+	for (const key of GO_DIRS) {
+		const real = env[`SB_TEST_REAL_${key}`];
+		if (real === undefined) delete out[key];
+		else out[key] = real;
+	}
+	return out;
+};
 
 /** Whether the process noted for `pid` still runs: the pid answers, it is one this account may signal (EPERM is another account's process), and its start time is the one noted when it is known. */
-const alive = (pid: number, root: string) => {
+const alive = (pid: number, root: string, platform: NodeJS.Platform = process.platform) => {
 	try {
 		process.kill(pid, 0);
 	} catch {
@@ -45,6 +61,8 @@ const alive = (pid: number, root: string) => {
 	}
 	try {
 		const noted = readFileSync(join(root, PIDS_DIR, String(pid)), "utf8").split("\n")[1]?.trim();
+		// Windows answers from a cache that a background call fills, and it can still hold the time of a server that ended before another process took the pid: a timed note is never judged against it, so nothing is killed on it.
+		if (noted && platform === "win32") return false;
 		return !noted || startOf(pid) === noted;
 	} catch {
 		return false; // forgotten meanwhile: the process ended
@@ -53,21 +71,21 @@ const alive = (pid: number, root: string) => {
 const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 /** The servers the run noted that still run; `by` limits it to those one process started. */
-export function leftover(root: string, by?: number): number[] {
+export function leftover(root: string, by?: number, platform: NodeJS.Platform = process.platform): number[] {
 	const dir = join(root, PIDS_DIR);
 	if (!existsSync(dir)) return [];
-	return readdirSync(dir).filter((name) => /^\d+$/.test(name) && (by === undefined || Number(readFileSync(join(dir, name), "utf8").split("\n")[0]) === by)).map(Number).filter((pid) => alive(pid, root));
+	return readdirSync(dir).filter((name) => /^\d+$/.test(name) && (by === undefined || Number(readFileSync(join(dir, name), "utf8").split("\n")[0]) === by)).map(Number).filter((pid) => alive(pid, root, platform));
 }
 
 /** Kills what `leftover` lists (its process group first: a detached server leads its own) and waits up to a second for it to go. Returns the pids that were running. */
-export function reap(root: string, by?: number): number[] {
-	const found = leftover(root, by);
+export function reap(root: string, by?: number, platform: NodeJS.Platform = process.platform): number[] {
+	const found = leftover(root, by, platform);
 	for (const pid of found) {
 		for (const target of [-pid, pid]) {
 			try { process.kill(target, "SIGKILL"); } catch { /* gone already, or not a group */ }
 		}
 	}
-	for (let waited = 0; waited < 1000 && found.some((pid) => alive(pid, root)); waited += 20) pause(20);
+	for (let waited = 0; waited < 1000 && found.some((pid) => alive(pid, root, platform)); waited += 20) pause(20);
 	return found;
 }
 

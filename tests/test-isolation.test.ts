@@ -89,6 +89,20 @@ test("a server a test run starts is noted by pid, and reap kills what still runs
 	assert.deepEqual(reap(dir), []);
 });
 
+test("RC2-F005: on Windows a timed note is never judged against the cached start time: the pid a server left may be another process's, so reap kills nothing on a timed note there", () => {
+	const dir = isolate(mkdtempSync(join(tmpdir(), "psb-iso-")));
+	const child = spawn("sleep", ["60"], { detached: true, stdio: "ignore" });
+	child.unref();
+	cleanup.push(() => void child.kill("SIGKILL"));
+	const time = startOf(child.pid!);
+	assert.ok(time, "the start time is known (ps) and cached");
+	noteStarted(child.pid, { [TEST_ROOT]: dir }, ["node", "x.test.ts"], () => time);
+	assert.deepEqual(leftover(dir, undefined, "win32"), [], "the cache would have said the same process");
+	assert.deepEqual(reap(dir, undefined, "win32"), []);
+	process.kill(child.pid!, 0);
+	assert.deepEqual(reap(dir, undefined, "darwin"), [child.pid], "elsewhere the start time is read at once and matches");
+});
+
 /** A launch as the Windows breakaway gives it: no pid at first, `started` answering with the pid (and the server's own start time, when WMI told it), `release` called when the start no longer needs it. */
 const breakaway = (child: { pid?: number }, told: { serverStarted?: string }) => {
 	let released = 0;
@@ -242,13 +256,16 @@ test("the real spawn forgets a pid when its process ends, so a reused pid is nev
 });
 
 test("the go toolchain is run with the home the run started from, and the inherited-variable scrub clears SB_TEST_REAL_SERVER", () => {
-	const env: NodeJS.ProcessEnv = { HOME: "/Users/someone", PATH: "/usr/bin", SB_TEST_REAL_SERVER: "1" };
+	const env: NodeJS.ProcessEnv = { HOME: "/Users/someone", PATH: "/usr/bin", SB_TEST_REAL_SERVER: "1", APPDATA: "/real/appdata", LOCALAPPDATA: "/real/local", XDG_CONFIG_HOME: "/real/config" };
 	const made = installIsolation(env);
 	cleanup.push(() => rmSync(made.root, { recursive: true, force: true }));
 	assert.equal(env.SB_TEST_REAL_SERVER, undefined, "a shell that exported it does not open every real spawn");
 	assert.notEqual(env.HOME, "/Users/someone");
 	assert.equal(goEnv(env).HOME, "/Users/someone", "go writes its telemetry where it always did, not into the root that is removed at the end");
 	assert.equal(goEnv(env).PATH, "/usr/bin");
+	assert.deepEqual([goEnv(env).APPDATA, goEnv(env).LOCALAPPDATA, goEnv(env).XDG_CONFIG_HOME], ["/real/appdata", "/real/local", "/real/config"], "go's build cache and telemetry folders are the real ones");
+	assert.equal(goEnv(env).XDG_CACHE_HOME, undefined, "one the shell never set is not set for go either");
+	assert.ok(inside(env.APPDATA!, made.root) && inside(env.XDG_CACHE_HOME!, made.root), "the process's own stay in the root");
 	assert.ok(INHERITED.test("SB_TEST_REAL_SERVER"));
 });
 

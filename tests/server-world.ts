@@ -2,6 +2,7 @@ import "./setup.ts"; // a run without --import ./tests/setup.ts is isolated too,
 import { createServer as createNetServer } from "node:net";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { Worker } from "node:worker_threads";
 import { join } from "node:path";
 import type { IntercomLike } from "../src/agent/kit.ts";
 import { type Ctx, makeCtx, type SpawnSpec, type Timers } from "../src/server/client.ts";
@@ -20,18 +21,18 @@ export async function until(check: () => unknown, what: string, ms = 5000): Prom
 	throw new Error(`Timed out waiting for ${what}`);
 }
 /**
- * How long this process's own event loop stood still (beyond the tick), while a test ran. A test that measures the gap between two things the process does itself (a touch of `restarting.since`, a sampler
- * of the record) cannot get a better gap than the loop gave it: on a loaded machine (a full run, other agents' work) the process is descheduled for hundreds of ms, and a bound on the wall-clock gap fails for
- * that and for nothing in the code. The test allows its bound plus the worst stall seen, which a touch that never came would still exceed.
+ * How long this process stood still (beyond the tick) while a test ran, seen from a worker thread's timer: the thread sees the OS descheduling the whole process (a full run, other agents' work), which a
+ * bound on the wall-clock gap between two things the process does itself cannot get around, but not a block of the main thread, which is what the code under test must never do (a synchronous `ps` or
+ * PowerShell call in a touch loop). The test allows its bound plus the worst stall seen, which a touch that never came, or one held up by the code's own block, still exceeds.
  */
 export function stallWatch(tickMs = 5) {
-	let last = Date.now(), worst = 0;
-	const timer = setInterval(() => {
-		const now = Date.now();
-		worst = Math.max(worst, now - last - tickMs);
-		last = now;
-	}, tickMs);
-	return { worst: () => worst, stop: () => clearInterval(timer) };
+	const worst = new Int32Array(new SharedArrayBuffer(4));
+	const worker = new Worker(
+		`const { workerData: { worst, tickMs } } = require("node:worker_threads"); let last = Date.now();
+		setInterval(() => { const now = Date.now(); Atomics.store(worst, 0, Math.max(Atomics.load(worst, 0), now - last - tickMs)); last = now; }, tickMs);`,
+		{ eval: true, workerData: { worst, tickMs } },
+	);
+	return { worst: () => Atomics.load(worst, 0), stop: () => void worker.terminate() };
 }
 export const FAST: Timers = { start: 5000, exit: 2000, supervisor: 400, touch: 40 };
 
