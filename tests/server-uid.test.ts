@@ -58,6 +58,7 @@ async function decoy(dir: string, socket: string) {
 	mkdirSync(dir, { recursive: true });
 	let connections = 0;
 	const listener = createServer((conn) => (connections++, conn.destroy()));
+	listener.unref();
 	await new Promise<void>((resolve) => listener.listen(socket, resolve));
 	const record = { pid: process.pid, version: "0.1.0", herdr: world.slot.herdr, mode: "detached", desk: false, intercom: { transport: "default" }, log: join(dir, "server.log"), socket, secret: "a".repeat(64), intercomId: "sb-server-x", stopped: false };
 	writeFileSync(join(dir, "server.json"), JSON.stringify(record));

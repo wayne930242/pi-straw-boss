@@ -1,13 +1,13 @@
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { stateDirOf } from "../agent/paths.ts";
 import { newer } from "../semver.ts";
 import {
-	type Ctx, unreachableText, describe, ensure, guiUrl, herdrListens, isIdentity, detachWarning, lockFor, lockWaitFor, makeCtx, probe, restart, ServerError, serverEnv, stop, takeOver, trusted, type Wait, waitReady, within,
+	type Ctx, unreachableText, describe, ensure, guiUrl, herdrListens, isIdentity, detachWarning, lockFor, lockWaitFor, makeCtx, passGate, probe, restart, ServerError, serverEnv, stop, takeOver, trusted, type Wait, waitReady, within,
 } from "./client.ts";
 import { ACL_TOKEN } from "./acl.ts";
 import { logSize, readFrom, tailLog } from "./log.ts";
-import { clearStartError, clearStopped, fileOf, readRecord, readStartError, type ServerRecord, slotOf, type StartError } from "./record.ts";
+import { clearStartError, clearStopped, fileOf, readStartError, type ServerRecord, slotOf, type StartError } from "./record.ts";
 import type { ServerHandle, ServerOptions } from "./main.ts";
 import { VERSION } from "./version.ts";
 
@@ -141,8 +141,21 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 		return 0;
 	}
 
+	/** The folder's `start-error.json`, read once the folder is judged; nothing where it cannot be judged. */
+	async function filed(): Promise<StartError | undefined> {
+		if (!existsSync(fileOf(slot, "startError"))) return undefined;
+		try {
+			await passGate(ctx);
+		} catch {
+			return undefined;
+		}
+		return readStartError(slot);
+	}
+
 	async function logs() {
 		const file = fileOf(slot, "log"), lines = Number(flags.lines ?? 200);
+		// The log is a file of the folder: read only once the folder is judged (b1f-F004).
+		if (existsSync(file)) await passGate(ctx);
 		for (const line of tailLog(file, lines)) out(`${line}\n`);
 		if (!flags.follow) return 0;
 		let at = logSize(file);
@@ -193,8 +206,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 			await stepOf("herdr", async () => {
 				if (!(await (deps.herdrListens ?? herdrListens)(ctx, within(ctx, deadline, 2000)))) throw new StepError("herdr", `no Herdr server answers at ${slot.herdr}`);
 				// The folder's owner is judged before its record is read (R13-F003).
-				await trusted(ctx, deadline);
-				const found = readRecord(slot);
+				const found = await trusted(ctx, deadline);
 				if (found && found.herdr !== slot.herdr) throw new StepError("herdr", `the record in ${slot.dir} serves ${found.herdr}, not ${slot.herdr}`);
 				return { value: undefined };
 			});
@@ -237,7 +249,9 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 			return 0;
 		} catch (error) {
 			if (!(error instanceof StepError)) throw error;
-			err(`${JSON.stringify({ step: error.step, ...(error.wait ? { wait: error.wait } : {}), reason: error.message, steps, warnings, log: fileOf(slot, "log"), ...(readStartError(slot) ?? error.startError ? { startError: readStartError(slot) ?? error.startError } : {}) })}\n`);
+			// A refusal of the folder (`acl`) is the reason; the folder's own `start-error.json` is not read then, and is read otherwise only once the folder is judged (b1f-F004).
+			const startError = error.startError?.code === "acl" ? error.startError : (await filed()) ?? error.startError;
+			err(`${JSON.stringify({ step: error.step, ...(error.wait ? { wait: error.wait } : {}), reason: error.message, steps, warnings, log: fileOf(slot, "log"), ...(startError ? { startError } : {}) })}\n`);
 			return error.exit;
 		}
 	}

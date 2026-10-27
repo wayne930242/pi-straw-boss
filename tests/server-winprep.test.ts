@@ -531,9 +531,10 @@ test("R12, R13-F001: the owner read is one -EncodedCommand PowerShell that check
 		assert.match(lines[0]!, /ProgressPreference/);
 		assert.match(lines[1]!, /LanguageMode -ne 'FullLanguage'.*sb-constrained-language/, "the language mode is checked before any .NET call");
 		assert.deepEqual(seen[0]!.env, { SB_OWNER_DIR: dir }, "the folder is in the environment");
-		assert.ok(lines.includes("$d = $env:SB_OWNER_DIR"));
+		assert.ok(script.includes("$env:SB_OWNER_DIR"));
 		assert.ok(!script.includes(dir) && !/[\u2018-\u201B]/.test(script) && !script.includes("brien"), "no part of the path is in the script");
-		assert.match(script, /\[IO\.Directory\]::GetAccessControl\(\$d, \[Security\.AccessControl\.AccessControlSections\]::Owner\)\.GetOwner\(\[Security\.Principal\.SecurityIdentifier\]\)\.Value/);
+		assert.match(script, /\[IO\.Directory\]::GetAccessControl\(\$p, \[Security\.AccessControl\.AccessControlSections\]::Owner\)/);
+		assert.match(script, /GetOwner\(\[Security\.Principal\.SecurityIdentifier\]\)\.Value/);
 	}
 });
 
@@ -745,6 +746,7 @@ async function decoy(dir: string, socket: string) {
 	mkdirSync(dir, { recursive: true });
 	let connections = 0;
 	const listener = createServer((conn) => (connections++, conn.destroy()));
+	listener.unref();
 	await new Promise<void>((resolve) => listener.listen(socket, resolve));
 	const record = { pid: process.pid, version: "0.1.0", herdr: world.slot.herdr, mode: "detached", desk: false, intercom: { transport: "default" }, log: join(dir, "server.log"), socket, secret: "a".repeat(64), intercomId: "sb-server-x", stopped: false };
 	writeFileSync(join(dir, "server.json"), JSON.stringify(record));

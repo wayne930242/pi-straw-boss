@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, closeSync, constants, existsSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { herdrSocket } from "../endpoint.ts";
 import { alive as pidAlive } from "../remote.ts";
 import { startedOrWait, startOf } from "../startof.ts";
@@ -79,8 +79,25 @@ export interface StartError { at: string; code: "acl" | "loader" | "intercom" | 
 
 /** Prepares a folder for secrets: mode 700 (a no-op on Windows, where the ACL does it). */
 export function secretDir(dir: string) {
-	mkdirSync(dir, { recursive: true, mode: 0o700 });
-	chmodSync(dir, 0o700);
+	try {
+		mkdirSync(dir, { recursive: true, mode: 0o700 });
+		chmodSync(dir, 0o700);
+	} catch (error) {
+		throw rootMade(dir, error);
+	}
+}
+/** A folder a `sudo` run made cannot be written or changed by the user afterwards: told as that, with what to do (uid 0 is accepted as an owner, so this is the one place it shows). */
+function rootMade(dir: string, error: unknown): unknown {
+	const code = (error as NodeJS.ErrnoException).code;
+	if ((code !== "EPERM" && code !== "EACCES") || !process.getuid || process.getuid() === 0) return error;
+	for (let at = dir; ; at = dirname(at)) {
+		try {
+			if (lstatSync(at).uid === 0) return new Error(`${at} belongs to root; it was made by a sudo run: sudo chown -R it to your account, or remove it with sudo, then start again (${code}).`);
+			return error;
+		} catch {
+			if (dirname(at) === at) return error;
+		}
+	}
 }
 /**
  * Makes the slot's folder ready for the first file in it. On Windows the state folder is protected (owner and SYSTEM, no inheritance) first, before the lock, the placeholder record, or
@@ -88,7 +105,11 @@ export function secretDir(dir: string) {
  * `gate` may be asynchronous (the owner read is a PowerShell start a pi session must not wait for with its event loop): then the answer is a promise that ends when the rest is done.
  */
 export function prepareSlot(slot: Slot, platform: NodeJS.Platform = process.platform, run?: RunNative, ms?: number, gate?: () => void | Promise<void>): void | Promise<void> {
-	if (platform !== "win32") return secretDir(slot.dir);
+	if (platform !== "win32") {
+		// The gate comes before the folder is made or changed: a folder that landed foreign between two gates gets nothing (R13-F002's POSIX twin).
+		const gated = gate?.();
+		return gated ? gated.then(() => secretDir(slot.dir)) : secretDir(slot.dir);
+	}
 	protectFolder(slot.stateDir, run, ms);
 	const rest = () => {
 		// A secondary slot's folders inherit the protected one: none of them may be a link or junction that sends what is written into them elsewhere.
@@ -103,27 +124,34 @@ export function prepareSlot(slot: Slot, platform: NodeJS.Platform = process.plat
 	return gated ? gated.then(rest) : rest();
 }
 
-/** What `stat` answers that the uid gate reads. */
-export type UidStat = (path: string) => { uid: number };
+/** What `stat` and `lstat` answer that the uid gate reads. */
+export type UidStat = (path: string) => { uid: number; isSymbolicLink?: () => boolean };
 /**
  * The owner gate where there is no ACL (docs/specs/2026-10-26-sb-backend.md, The control socket): a state folder, a secondary slot's folder and the record in it that another uid owns are refused before
- * the record is read, a hello is sent, or anything is written, with the words of the Windows gate. A stat each, no process. Whatever the path leads to is judged (a link to another account's folder is
- * that folder). A path that is not there is nothing to refuse; a stat that fails for any other reason is a refusal that says so. `uid` is null where there is no `getuid`. Returns false, as the
- * Windows gate does when it read nothing.
+ * the record is read, a hello is sent, or anything is written, with the words of the Windows gate. A stat each, no process. A link is judged twice: its own owner (`lstat`: a link another account made
+ * is that account's, whatever it points to), then the target's (`stat`). uid 0 is accepted as an owner, as BUILTIN\Administrators and SYSTEM are on Windows: root is no adversary to the user (its folder is
+ * told by `secretDir` when the user cannot use it). A path that is not there is nothing to refuse; a stat that fails for any other reason is a refusal that says so. `uid` is null where there is no
+ * `getuid`. Returns false, as the Windows gate does when it read nothing.
  */
-export function uidGate(slot: Slot, stat: UidStat = statSync, uid: number | null = process.getuid?.() ?? null): boolean {
+export function uidGate(slot: Slot, stat: UidStat = statSync, uid: number | null = process.getuid?.() ?? null, lstat: UidStat = stat === statSync ? lstatSync : stat): boolean {
 	if (uid === null) return false;
 	const paths = [...new Set([slot.stateDir, slot.dir, fileOf(slot, "record")])];
+	const refuse = (path: string, kind: string, owner: number, what = "") => new Error(`could not check ${slot.stateDir} before trusting or writing to it: the ${kind} ${path}${what} belongs to another account (uid ${owner}), not to uid ${uid}. Run pi as that account, or delete the ${kind} ${path}, then start again.`);
 	for (const path of paths) {
-		let owner: number;
-		try {
-			owner = stat(path).uid;
-		} catch (error) {
-			const code = (error as NodeJS.ErrnoException).code;
-			if (code === "ENOENT" || code === "ENOTDIR") continue;
-			throw new Error(`could not check ${slot.stateDir} before trusting or writing to it: ${(error as Error).message}`);
+		const kind = path === paths.at(-1) ? "file" : "folder";
+		for (const [look, what] of [[lstat, " (a link)"], [stat, ""]] as const) {
+			let info: ReturnType<UidStat>;
+			try {
+				info = look(path);
+			} catch (error) {
+				const code = (error as NodeJS.ErrnoException).code;
+				if (code === "ENOENT" || code === "ENOTDIR") break;
+				throw new Error(`could not check ${slot.stateDir} before trusting or writing to it: ${(error as Error).message}`);
+			}
+			if (info.uid !== uid && info.uid !== 0) throw refuse(path, kind, info.uid, look === lstat && info.isSymbolicLink?.() ? what : "");
+			// Not a link: the target is the path itself, judged already.
+			if (look === lstat && !info.isSymbolicLink?.()) break;
 		}
-		if (owner !== uid) throw new Error(`could not check ${slot.stateDir} before trusting or writing to it: the ${path === paths.at(-1) ? "file" : "folder"} ${path} belongs to another account (uid ${owner}), not to uid ${uid}. Run pi as that account, or delete the ${path === paths.at(-1) ? "file" : "folder"} ${path}, then start again.`);
 	}
 	return false;
 }
@@ -149,11 +177,25 @@ export function writeJson(file: string, value: unknown) {
 	}
 }
 const readRaw = (file: string) => { try { return readFileSync(file, "utf8"); } catch { return undefined; } };
+/** The record's text, read from the file this open handle names: a link is not followed (`O_NOFOLLOW`) and a file another uid owns is not read, so what was stat-ed is what is read (F005c). */
+function readOwned(file: string): string | undefined {
+	if (process.platform === "win32" || !process.getuid) return readRaw(file);
+	let fd: number | undefined;
+	try {
+		fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+		const owner = fstatSync(fd).uid;
+		return owner === process.getuid() || owner === 0 ? readFileSync(fd, "utf8") : undefined;
+	} catch {
+		return undefined;
+	} finally {
+		if (fd !== undefined) closeSync(fd);
+	}
+}
 const parse = <T>(raw: string | undefined): T | undefined => { try { return raw === undefined ? undefined : (JSON.parse(raw) as T); } catch { return undefined; } };
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
 export function readRecord(slot: Slot): ServerRecord | undefined {
-	const record = parse<Partial<ServerRecord>>(readRaw(fileOf(slot, "record")));
+	const record = parse<Partial<ServerRecord>>(readOwned(fileOf(slot, "record")));
 	// SAFETY: a record this code wrote has these fields; the three checked here are the ones every reader needs to reach the server, and a file without them is no record.
 	return isObject(record) && typeof record.pid === "number" && typeof record.socket === "string" && typeof record.secret === "string" ? (record as ServerRecord) : undefined;
 }

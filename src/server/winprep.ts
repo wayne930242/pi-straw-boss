@@ -34,13 +34,15 @@ export type RunNativeAsync = (file: string, args: string[], timeoutMs?: number, 
  */
 export function execAsync(file: string, args: string[], { timeout, ...options }: { timeout: number; windowsHide?: boolean; cwd?: string; env?: NodeJS.ProcessEnv }): Promise<string> {
 	return new Promise((resolve, reject) => {
+		let timedOut = false;
 		const child = execFile(file, args, { encoding: "utf8", ...options }, (error, stdout, stderr) => {
 			clearTimeout(timer);
 			if (!error) return resolve(stdout);
 			const code = (error as { code?: unknown }).code;
-			reject(Object.assign(error, { status: typeof code === "number" ? code : null, stdout, stderr, ...(error.killed || error.signal ? { code: "ETIMEDOUT", syscall: `spawn ${file}` } : {}) }));
+			// Only the kill this function's own timer made is a timeout: a death by another signal, or a `maxBuffer` kill, keeps the error's own words (F006).
+			reject(Object.assign(error, { status: typeof code === "number" ? code : null, stdout, stderr, ...(timedOut ? { code: "ETIMEDOUT", syscall: `spawn ${file}` } : {}) }));
 		});
-		const timer = setTimeout(() => child.kill(), timeout);
+		const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeout);
 		timer.unref();
 		child.stdin?.on("error", () => {});
 		child.stdin?.end();
@@ -152,39 +154,60 @@ const POWERSHELL = "WindowsPowerShell\\v1.0\\powershell.exe";
  * could imitate. The Constrained Language check comes first, so a machine that locks PowerShell down says so (the word is told as a sentence by `execFailure`). Read by `ownerGate` before the
  * first file is created in an existing folder, and by `secure` where a wrong DACL is about to be changed and the folder was not gated yet.
  */
-const ownerCall = (dir: string) => {
-	const script = [PROGRESS_OFF, CLM_CHECK, "$d = $env:SB_OWNER_DIR", "[IO.Directory]::GetAccessControl($d, [Security.AccessControl.AccessControlSections]::Owner).GetOwner([Security.Principal.SecurityIdentifier]).Value"].join("\n");
-	// The folder comes in the environment, never quoted into the script: PowerShell reads U+2018 to U+201B as single quotes too, so a path such as `O’Neil` would break (or inject into) the script.
-	return { file: POWERSHELL, args: [...POWERSHELL_FLAGS, "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], env: { SB_OWNER_DIR: dir } };
+const ownerCall = (paths: string[]) => {
+	// One line per path: `<index>:<SID>`, or `<index>:-` for a path that is not there. A folder is read with `Directory`, a file with `File`.
+	const script = [PROGRESS_OFF, CLM_CHECK, "$i = 0", "foreach ($p in ($env:SB_OWNER_DIR -split '\\|')) {",
+		"  $a = if ([IO.Directory]::Exists($p)) { [IO.Directory]::GetAccessControl($p, [Security.AccessControl.AccessControlSections]::Owner) } elseif ([IO.File]::Exists($p)) { [IO.File]::GetAccessControl($p, [Security.AccessControl.AccessControlSections]::Owner) } else { $null }",
+		"  if ($a) { \"$($i):\" + $a.GetOwner([Security.Principal.SecurityIdentifier]).Value } else { \"$($i):-\" }", "  $i++", "}"].join("\n");
+	// The paths come in the environment, never quoted into the script: PowerShell reads U+2018 to U+201B as single quotes too, so a path such as `O’Neil` would break (or inject into) the script. `|` cannot be in a Windows path.
+	return { file: POWERSHELL, args: [...POWERSHELL_FLAGS, "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], env: { SB_OWNER_DIR: paths.join("|") } };
 };
+/** A native call that ran out of time (not one that failed): `execFileSync`'s timeout and `execAsync`'s own both say `ETIMEDOUT` from a `spawn` call. */
+export const isTimeout = (error: unknown) => (error as { code?: unknown })?.code === "ETIMEDOUT" && String((error as { syscall?: unknown }).syscall ?? "").startsWith("spawn");
+/** A read that ran out of time: a wait to try again, never a refusal of the folder, and not remembered. */
+export class GateTimeout extends Error {}
 const ownerUnread = (dir: string, error: unknown) => {
 	const failed = error as Error & { stderr?: unknown; stdout?: unknown };
-	return new Refused(`the owner of ${dir} could not be read (${execFailure(failed, failed.stderr, failed.stdout)})`);
+	const text = `the owner of ${dir} could not be read (${execFailure(failed, failed.stderr, failed.stdout)})`;
+	return isTimeout(error) ? new GateTimeout(text) : new Refused(text);
 };
-const ownerIn = (dir: string, out: string): string => {
-	const found = out.split(/\r?\n/).map((line) => line.trim()).filter((line) => /^S-1-[0-9-]+$/i.test(line)).pop();
+/** The owners one read answered, by path index (`undefined`: the path was not there). A bare SID line (no index) is the first path's. */
+const ownersIn = (dir: string, out: string, count: number): (string | undefined)[] => {
+	const owners: (string | undefined)[] = Array.from({ length: count });
+	let found = 0;
+	for (const line of out.split(/\r?\n/).map((l) => l.trim())) {
+		const m = /^(?:(\d+):)?(S-1-[0-9-]+|-)$/i.exec(line);
+		if (!m) continue;
+		const at = m[1] === undefined ? 0 : Number(m[1]);
+		if (at < count) {
+			owners[at] = m[2] === "-" ? undefined : m[2];
+			found++;
+		}
+	}
 	if (!found) throw new Refused(`the owner of ${dir} could not be read (PowerShell gave no SID: ${asciiLine(out).slice(0, 80) || "nothing"})`);
-	return found;
+	if (!owners[0]) throw new Refused(`the owner of ${dir} could not be read (PowerShell gave no SID for it)`);
+	return owners;
 };
 export function ownerOfFolder(dir: string, run: RunNative, timeoutMs?: number): string {
-	const { file, args, env } = ownerCall(dir);
+	const { file, args, env } = ownerCall([dir]);
 	let out: string;
 	try {
 		out = run(file, args, timeoutMs, env);
 	} catch (error) {
 		throw ownerUnread(dir, error);
 	}
-	return ownerIn(dir, out);
+	return ownersIn(dir, out, 1)[0]!;
 }
-async function ownerOfFolderAsync(dir: string, run: RunNativeAsync, timeoutMs?: number): Promise<string> {
-	const { file, args, env } = ownerCall(dir);
+/** The owners of the folder and of `also` (the slot's folder, the record) in ONE PowerShell start. */
+async function ownersAsync(dir: string, also: string[], run: RunNativeAsync, timeoutMs?: number): Promise<(string | undefined)[]> {
+	const { file, args, env } = ownerCall([dir, ...also]);
 	let out: string;
 	try {
 		out = await run(file, args, timeoutMs, env);
 	} catch (error) {
 		throw ownerUnread(dir, error);
 	}
-	return ownerIn(dir, out);
+	return ownersIn(dir, out, also.length + 1);
 }
 /** A folder as the file system knows it, so that one made again under the same name is not taken for the one that was checked (the volume and the file index). */
 const identityOf = (dir: string): string | undefined => {
@@ -224,7 +247,7 @@ const reading = new Map<string, { id: string | undefined; done: Promise<void> }>
  * The read is asynchronous: a PowerShell start is 2 to 5 s, and a pi session whose event loop waited for it would freeze its screen. Requests that come while it runs (a look, a link request, the GUI)
  * share it, so they cost one PowerShell between them, and all get its verdict. A folder replaced meanwhile is not the one that was read: the read fails and nothing is remembered.
  */
-export async function ownerGate(dir: string, run: RunNativeAsync = runNativeAsync, timeoutMs?: number, now: () => number = Date.now): Promise<boolean> {
+export async function ownerGate(dir: string, run: RunNativeAsync = runNativeAsync, timeoutMs?: number, now: () => number = Date.now, also: string[] = []): Promise<boolean> {
 	if (!existsSync(dir)) return false;
 	refuseLink(dir);
 	if (isVerified(dir)) return false;
@@ -235,7 +258,7 @@ export async function ownerGate(dir: string, run: RunNativeAsync = runNativeAsyn
 		await under.done;
 		return false;
 	}
-	const read = readOwner(dir, key, id, run, timeoutMs, now);
+	const read = readOwner(dir, also, key, id, run, timeoutMs, now);
 	reading.set(key, { id, done: read });
 	try {
 		await read;
@@ -244,29 +267,36 @@ export async function ownerGate(dir: string, run: RunNativeAsync = runNativeAsyn
 		if (reading.get(key)?.done === read) reading.delete(key);
 	}
 }
-async function readOwner(dir: string, key: string, id: string | undefined, run: RunNativeAsync, timeoutMs: number | undefined, now: () => number): Promise<void> {
+async function readOwner(dir: string, also: string[], key: string, id: string | undefined, run: RunNativeAsync, timeoutMs: number | undefined, now: () => number): Promise<void> {
 	let failure: Error, unreadable = false;
 	try {
 		if (!sid) {
 			try {
 				sid = sidIn(await run("whoami.exe", WHOAMI, timeoutMs));
 			} catch (error) {
+				if (isTimeout(error)) throw new GateTimeout(explainNative("whoami", dir, error as never));
 				failedStep("whoami", dir, error);
 			}
 		}
-		const owner = await ownerOfFolderAsync(dir, run, timeoutMs);
+		// The folder, the slot's folder and the record are judged by ONE PowerShell (F002): a record or folder planted by another account inside a folder the user owns is refused too. Judged at this read only:
+		// the record's own identity changes on every write, so it is not remembered; a protected folder (B1) keeps others out of it afterwards.
+		const owners = await ownersAsync(dir, also, run, timeoutMs);
 		// The folder at the name now is the one that was read, or nothing is known of it: it is read again by the next request.
 		if (identityOf(dir) !== id) throw new Error(`${dir} was replaced while its owner was read`);
-		if (acceptableOwner(owner)) {
+		const bad = owners.findIndex((owner) => owner !== undefined && !acceptableOwner(owner));
+		if (bad < 0) {
 			refused.delete(key);
 			remember(dir);
 			return;
 		}
-		failure = new Error(`could not check ${dir} before trusting or writing to it: ${foreignOwner(dir, owner, "owner read before the folder or a record in it is trusted; nothing was written into the folder")}`);
+		const path = bad === 0 ? dir : also[bad - 1]!;
+		failure = new Error(`could not check ${dir} before trusting or writing to it: ${foreignOwner(path, owners[bad]!, "owner read before the folder or a record in it is trusted; nothing was written into the folder")}`);
 	} catch (error) {
-		failure = new Error(`could not check ${dir} before trusting or writing to it: ${(error as Error).message}`);
+		failure = error instanceof GateTimeout ? new GateTimeout(`could not check ${dir} before trusting or writing to it: ${error.message}`) : new Error(`could not check ${dir} before trusting or writing to it: ${(error as Error).message}`);
 		unreadable = true;
 		if (identityOf(dir) !== id) throw failure;
+		// A read that ran out of time says nothing about the folder: the next request reads again (F006).
+		if (failure instanceof GateTimeout) throw failure;
 	}
 	if (id) refused.set(key, { id, error: failure, ...(unreadable ? { retryAt: now() + OWNER_READ_RETRY_MS } : {}) });
 	throw failure;

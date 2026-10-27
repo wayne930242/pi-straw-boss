@@ -2,10 +2,10 @@ import { existsSync, readFileSync } from "node:fs";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
 import {
-	type Ctx, decide, describe, ensure, lockWaitFor, makeCtx, probe, restart, RESTART_EVERY_MS, ServerError, stop, trusted,
+	type Ctx, decide, describe, ensure, lockWaitFor, makeCtx, probe, restart, RESTART_EVERY_MS, passGate, ServerError, stop, trusted,
 } from "./server/client.ts";
 import { tailLog } from "./server/log.ts";
-import { fileOf, readRecord, slotOf } from "./server/record.ts";
+import { fileOf, slotOf } from "./server/record.ts";
 import { newer } from "./semver.ts";
 import { packageRoot } from "./server/version.ts";
 import type { Kit } from "./state.ts";
@@ -64,6 +64,8 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 		let verdictWas: string | undefined, upgradePair: string | undefined;
 		try {
 			const ctx = ctxFor(), seen = await probe(ctx), verdict = decide(ctx, seen);
+			// A look still in flight when the session shuts down does nothing more: it would make the folder again after the session closed.
+			if (stopped) return;
 			verdictWas = verdict.do;
 			if (verdict.do === "refuse") return tellOnce(verdict.why, `Straw Boss: ${verdict.text}`);
 			if (verdict.do === "start") {
@@ -124,7 +126,10 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 			return describe(ctxFor());
 		},
 		/** `boss_server logs`: the last lines of the server's log, at most 200. */
-		logs(lines = MAX_LOG_LINES) {
+		async logs(lines = MAX_LOG_LINES) {
+			// The log is a file of the folder: read only once the folder is judged (b1f-F004).
+			const ctx = ctxFor();
+			if (existsSync(fileOf(ctx.slot, "log"))) await passGate(ctx).catch((error: ServerError) => refuse(error));
 			return tailLog(fileOf(slot(), "log"), Math.max(1, Math.min(MAX_LOG_LINES, Math.floor(lines))));
 		},
 		/**
@@ -136,8 +141,8 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 			if (!why || why.length > 200 || /[\r\n]/.test(why)) throw new Error("A restart needs a reason: 1 to 200 characters on one line.");
 			const ctx = ctxFor();
 			// The once-a-minute limit is judged under server.lock (client.ts), so two asks at once cannot both pass it.
-			await trusted(ctx);
-			if (!boss && readRecord(ctx.slot)?.stopped) throw new Error("The sb server was stopped on purpose; an agent cannot restart it. The boss starts it again with /boss server.");
+			const found = await trusted(ctx).catch((error: unknown) => refuse(error));
+			if (!boss && found?.stopped) throw new Error("The sb server was stopped on purpose; an agent cannot restart it. The boss starts it again with /boss server.");
 			try {
 				const done = await restart(ctx, { reason: why, downgrade, boss, limit: !boss });
 				return { server: done.server, pid: done.record.pid, version: done.record.version };

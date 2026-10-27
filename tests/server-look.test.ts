@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -364,4 +364,24 @@ test("B1 follow-up: a look whose owner read is slow does not freeze the session:
 	await sleep(200);
 	assert.equal(calls.filter((c) => c.endsWith("powershell.exe")).length, 1, "the looks every 30 ms during and after the read started one PowerShell");
 	assert.equal(a.notices.filter((n) => /sb server/.test(n.text)).length, 0, "and said nothing");
+});
+
+test("b1f-F008: a look still reading the owner when the session shuts down does nothing more: the folder is not made again", async () => {
+	plant();
+	forgetSid();
+	const owner = "S-1-5-21-1111111111-2222222222-3333333333-1001";
+	let reading = false;
+	const slow = async (file: string) => {
+		if (file === "whoami.exe") return `"PC\\me","${owner}"\r\n`;
+		reading = true;
+		await sleep(150);
+		return `${owner}\r\n`;
+	};
+	const a = session("f2", { server: { ctx: { ...reaching(), gate: (slot: typeof sw.slot, ms?: number) => ownerGate(slot.stateDir, slow, ms) }, cli: "/fake/cli.mjs" } });
+	await a.start();
+	await until(() => reading, "the owner read to start");
+	await a.stop();
+	await sleep(300);
+	assert.equal(sw.spawned.length, 0, "no server was started after the session closed");
+	assert.equal(existsSync(join(sw.slot.dir, "server.lock")), false, "and no lock was taken");
 });

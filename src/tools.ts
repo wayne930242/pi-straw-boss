@@ -59,7 +59,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { post, callT
 						return { text: JSON.stringify(result, null, 2), details: result };
 					}
 					if (action === "logs") {
-						const text = server.logs(lines ?? 200).join("\n");
+						const text = (await server.logs(lines ?? 200)).join("\n");
 						return { text: text || "(the log is empty)", details: { lines: text ? text.split("\n").length : 0 } };
 					}
 					const done = await server.restart(reason ?? "", { boss: false });

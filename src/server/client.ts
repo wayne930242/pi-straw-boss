@@ -12,7 +12,7 @@ import {
 	adoptStarting, clearStartError, clearStopped, endStarting, fileOf, type IntercomScope, type LockDeps, LockUnreadable, markStarting, prepareSlot, readRecord, secretDir, readStartError, restartingFresh, type ServerRecord,
 	type Slot, type StartError, takeLock, TOUCH_MS, touchRestarting, uidGate, updateRecord,
 } from "./record.ts";
-import { ownerGate, resetFileAcl } from "./winprep.ts";
+import { GateTimeout, ownerGate, resetFileAcl } from "./winprep.ts";
 import { callControl, helloWhy, type Reply } from "./socket.ts";
 
 // What reaches the server from outside it (docs/specs/2026-10-26-sb-backend.md, Starting, Stopping, Restarts and upgrades): a pi session's look, the shell's `cli.mjs`, a
@@ -152,13 +152,16 @@ export function makeCtx(over: Partial<Ctx> & Pick<Ctx, "slot" | "version" | "cli
 	return {
 		env: process.env, platform: process.platform, node: process.execPath, spawn: platform === "win32" ? (spec) => spawnBreakaway(spec, { fallback: spawnDetached }) : spawnDetached, timers: timersFor(over.platform),
 		kill: (pid, signal) => void process.kill(pid, signal), prepare,
-		gate: over.gate ?? (platform !== "win32" ? (slot: Slot) => uidGate(slot) : over.prepare ? () => false : (slot: Slot, ms?: number) => ownerGate(slot.stateDir, undefined, ms)),
+		gate: over.gate ?? (platform !== "win32" ? (slot: Slot) => uidGate(slot) : over.prepare ? () => false : (slot: Slot, ms?: number) => ownerGate(slot.stateDir, undefined, ms, undefined, ownedBesides(slot))),
 		// This process holds the locks it takes: it is alive however the liveness check is replaced.
 		lock: { now, alive: (pid) => pid === process.pid || alive(pid), startOf: start, sleep, note: (event, fields) => log.line(event, fields), prepare, ...(platform === "win32" ? { repair: (file: string) => resetFileAcl(file, undefined, 15_000) } : {}) },
 		startedLater: over.startedLater ?? (over.startOf ? async (pid: number) => over.startOf!(pid) : (pid: number) => startedLater(pid, { hold: false })),
 		...over, now, sleep, alive, startOf: start, log,
 	};
 }
+
+/** What the Windows owner read judges besides the state folder, in the same PowerShell: the slot's own folder (a secondary slot's) and the record. */
+const ownedBesides = (slot: Slot): string[] => [...new Set([slot.dir, fileOf(slot, "record")])].filter((path) => path !== slot.stateDir && existsSync(path));
 
 export interface Probe {
 	record: ServerRecord | undefined;
@@ -182,8 +185,7 @@ export function runsAs(ctx: Pick<Ctx, "alive" | "startOf">, record: Pick<ServerR
 /** A server counts as live when its PID is alive, started at the recorded time, and answers hello on the control socket within 2 s: a PID alone is not enough. */
 const DENIED_START_MS = 3000;
 export async function probe(ctx: Ctx, deadline?: number, startKnownElsewhere = false): Promise<Probe> {
-	await trusted(ctx, deadline);
-	const record = readRecord(ctx.slot);
+	const record = await trusted(ctx, deadline);
 	// A record with no socket is a start that has not got far enough to listen (`markStarting`): there is nothing to ask.
 	if (!record || !record.socket || !ctx.alive(record.pid)) return { record, live: false, runs: false, hello: undefined };
 	// The hello comes first: a server that answers it with the secret and its pid is that server, and no start time has to be asked for (on Windows that is a PowerShell start for a process that
@@ -205,19 +207,27 @@ export async function probe(ctx: Ctx, deadline?: number, startKnownElsewhere = f
 }
 
 /**
- * R13-F003: a record is what another account's folder can hold too, and everything that follows trusts it (a pipe to talk to, a secret, the state `status` tells, a record to write back). The folder's
- * owner is judged before the record is read: on Windows once per process for the folder, without the event loop waiting for the PowerShell (the memo of the other gates, shared by the requests that come
- * together); elsewhere by a stat. Nothing is judged where there is no record. A foreign folder is the `acl` refusal of a start, and nothing was sent or written.
+ * R13-F003: a record is what another account's folder can hold too, and everything that follows trusts it (a pipe to talk to, a secret, the state `status` tells, a record to write back). The record is
+ * read FIRST, and a record that was read is used only once the folder's owner is judged (b1f-F001: a gate that asks "is there a record?" before reading it is passed by a record that appears, and
+ * disappears, in between). On Windows the judgement is once per process for the folder, without the event loop waiting for the PowerShell (the memo of the other gates, shared by the requests that come
+ * together); elsewhere a stat. Nothing is judged where there is no record. A foreign folder is the `acl` refusal of a start, and nothing was sent or written. Returns the record.
  */
-export async function trusted(ctx: Ctx, deadline?: number): Promise<void> {
-	if (!existsSync(fileOf(ctx.slot, "record"))) return;
+export async function trusted(ctx: Ctx, deadline?: number): Promise<ServerRecord | undefined> {
+	const record = readRecord(ctx.slot);
+	// A record file that was not read (another uid's, a link) is judged too: the answer is then "none", and the refusal says why.
+	if (record || existsSync(fileOf(ctx.slot, "record"))) await passGate(ctx, deadline);
+	return record;
+}
+/** The gate with no regard to a record: before any file of the slot is read (a log, `start-error.json`; b1f-F004), which another account's folder can hold as well. */
+export async function passGate(ctx: Ctx, deadline?: number): Promise<void> {
 	try {
 		await ctx.gate(ctx.slot, deadline === undefined ? undefined : within(ctx, deadline, 15_000));
 	} catch (error) {
 		throw aclRefusal(ctx, error as Error);
 	}
 }
-const aclRefusal = (ctx: Pick<Ctx, "now">, error: Error) => new ServerError("start-failed", `acl: ${error.message}`, { at: new Date(ctx.now()).toISOString(), code: "acl", text: error.message });
+/** A gate that ran out of time is a wait (exit 1), not a refusal of the folder; anything else is `acl`. */
+const aclRefusal = (ctx: Pick<Ctx, "now">, error: Error) => error instanceof GateTimeout ? new ServerError("start-failed", error.message, undefined, "start") : new ServerError("start-failed", `acl: ${error.message}`, { at: new Date(ctx.now()).toISOString(), code: "acl", text: error.message });
 
 /** Whether Herdr listens at the slot's socket. */
 export const herdrListens = (ctx: Pick<Ctx, "slot" | "platform">, ms = 2000) => new Promise<boolean>((resolve) => {
@@ -627,7 +637,10 @@ export function stateOf(ctx: Pick<Ctx, "now">, seen: Pick<Probe, "record" | "liv
  * of its work, and, for a server that is gone, the start-error of the last attempt. Works with the server down, from the files.
  */
 export async function describe(ctx: Ctx): Promise<Record<string, unknown>> {
-	const seen = await probe(ctx), record = seen.record, state = stateOf(ctx, seen), startError = readStartError(ctx.slot);
+	const seen = await probe(ctx), record = seen.record, state = stateOf(ctx, seen);
+	// The last start's error is a file of the folder: read only once the folder is judged (b1f-F004).
+	if (existsSync(fileOf(ctx.slot, "startError"))) await passGate(ctx);
+	const startError = readStartError(ctx.slot);
 	let more: Record<string, unknown> = { towers: [], link: null };
 	if (seen.live && record) {
 		try {
