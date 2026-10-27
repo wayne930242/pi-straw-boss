@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { startDashboard } from "./dashboard.ts";
+import type { StartRead } from "./handover.ts";
 import type { Ask } from "./host.ts";
 import type { HerdrApi, HerdrCall, HerdrRun, HerdrWorld, Place, Session, Sleep } from "./herdr.ts";
 import type { LinkDeps } from "./link/runtime.ts";
@@ -28,11 +29,11 @@ export type Role = "tower" | "main" | "member";
 export type Scope = "tab" | "workspace" | "towers" | "all";
 /**
  * `run` is the CLI for every command; left out, Herdr's listings, `pane current`, and `report-metadata` go over the socket instead (`socketRun`) and `world` is one `session.snapshot`. `world` is the dashboard's and the GUI's reading of panes and workspaces.
- * `adoptMs` is how often a session looks after the sb server; `ask` is how it reaches the server's GUI (host.ts; the control socket by default, through the look).
+ * `adoptMs` is how often a session looks after the sb server; `ask` is how it reaches the server's GUI (host.ts; the control socket by default, through the look); `startRead` is where the recorded server's start time is read from (handover.ts; the process's own cache by default).
  */
-export interface Deps { run?: HerdrRun; world?: HerdrWorld; api?: HerdrApi; call?: HerdrCall; copy?: (text: string) => Promise<void>; env?: NodeJS.ProcessEnv; sleep?: Sleep; promptDir?: string; openUrl?: (url: string) => Promise<void>; watch?: HerdrWatch; stateDir?: string; autoTower?: boolean; nudgeMs?: number; version?: string; guardMs?: number; couple?: boolean; events?: HerdrEvents; detectMs?: number; now?: () => number; later?: (pid: number, args: string[]) => void; adoptMs?: number; restoreMs?: number; link?: LinkDeps; server?: ServerLookDeps | null; ask?: Ask }
+export interface Deps { run?: HerdrRun; world?: HerdrWorld; api?: HerdrApi; call?: HerdrCall; copy?: (text: string) => Promise<void>; env?: NodeJS.ProcessEnv; sleep?: Sleep; promptDir?: string; openUrl?: (url: string) => Promise<void>; watch?: HerdrWatch; stateDir?: string; autoTower?: boolean; nudgeMs?: number; version?: string; guardMs?: number; couple?: boolean; events?: HerdrEvents; detectMs?: number; now?: () => number; later?: (pid: number, args: string[]) => void; adoptMs?: number; restoreMs?: number; link?: LinkDeps; server?: ServerLookDeps | null; ask?: Ask; startRead?: StartRead }
 /** The dependencies with their defaults filled in; `server` (how a session looks after the sb server, server-look.ts) is null in a session that does not: a test world, a net sidecar. */
-export type Config = Required<Omit<Deps, "stateDir" | "link" | "server" | "ask">> & Pick<Deps, "stateDir" | "link" | "server" | "ask">;
+export type Config = Required<Omit<Deps, "stateDir" | "link" | "server" | "ask" | "startRead">> & Pick<Deps, "stateDir" | "link" | "server" | "ask" | "startRead">;
 
 export interface State {
 	// What this session is.

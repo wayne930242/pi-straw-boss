@@ -69,6 +69,6 @@ export function createTower({ pi, cfg, s, guiDir, me, tell }: Kit, { membership,
 		presence.keepFresh();
 		await presence.publish();
 		// The dashboard lives exactly as long as this session holds the tower role.
-		if (s.hasUI) s.dashboard = startDashboard({ ui: s.ui!, watch: (refresh) => events(SCREEN_EVENTS, () => refresh()), collect: () => collect({ run, world, sessions: () => s.c.listSessions(), workspaceId: s.at.workspaceId, tabId: s.at.tabId, gui: async () => { const r = readRecord(guiDir); return r && (await answersLive(r)) ? urlOf(r) : undefined; } }) });
+		if (s.hasUI) s.dashboard = startDashboard({ ui: s.ui!, watch: (refresh) => events(SCREEN_EVENTS, () => refresh()), collect: () => collect({ run, world, sessions: () => s.c.listSessions(), workspaceId: s.at.workspaceId, tabId: s.at.tabId, gui: async () => { const r = readRecord(guiDir); return r && (await answersLive(r, cfg.startRead)) ? urlOf(r) : undefined; } }) });
 	};
 }

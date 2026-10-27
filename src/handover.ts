@@ -89,12 +89,14 @@ export const listening = (port: number) =>
 	});
 
 const START_WAIT_MS = 6000;
+/** Where a session reads another process's start time and how long it waits: the process's own cache and 6 s unless a test (or a caller) says otherwise. */
+export interface StartRead { later?: (pid: number, o: { hold: false }) => Promise<string | undefined>; waitMs?: number }
 /** Another process's start time, waited for up to 6 s: a Windows read is 3.5 to 5 s on a cold cache, and a new pi asks its trust question once, at its start. Unknown after the bound stays unknown (nothing is sent). */
-export const startBounded = (pid: number, waitMs = START_WAIT_MS, later: (pid: number, o: { hold: false }) => Promise<string | undefined> = startedLater): Promise<string | undefined> => Promise.race([later(pid, { hold: false }).catch(() => undefined), delay<undefined>(waitMs, undefined, { ref: false })]);
+export const startBounded = (pid: number, waitMs = START_WAIT_MS, later: NonNullable<StartRead["later"]> = startedLater): Promise<string | undefined> => Promise.race([later(pid, { hold: false }).catch(() => undefined), delay<undefined>(waitMs, undefined, { ref: false })]);
 
 /**
  * Whether the recorded server runs and answers its page, for a session that is not the server (the tower's dashboard, a trust question). The token goes to the port only after the process that
  * recorded it is shown to be alive: its pid runs and its start time is the recorded one. A record without a start time, or one the machine cannot tell yet (the Windows read is not in within 6 s), is not verified,
- * and nothing is sent: another account's process may hold the port a crashed server left (RC2-F001).
+ * and nothing is sent: another account's process may hold the port a crashed server left (RC2-F001). `read` is where the start time comes from; the callers pass the session's own (`cfg.startRead`), which is the process's cache by default.
  */
-export const answersLive = async (r: GuiRecord, start: (pid: number) => string | undefined | Promise<string | undefined> = startBounded): Promise<boolean> => Boolean(r.started) && alive(r.pid) && (await start(r.pid)) === r.started && answers(r);
+export const answersLive = async (r: GuiRecord, { later, waitMs }: StartRead = {}): Promise<boolean> => Boolean(r.started) && alive(r.pid) && (await startBounded(r.pid, waitMs, later)) === r.started && answers(r);

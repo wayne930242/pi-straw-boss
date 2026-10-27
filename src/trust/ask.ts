@@ -3,7 +3,8 @@ import { lstatSync, watch as fsWatch } from "node:fs";
 import { join } from "node:path";
 import { getAgentDir, type ExtensionAPI, ProjectTrustStore, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { herdrSocket } from "../endpoint.ts";
-import { answersLive, readRecord } from "../handover.ts";
+import { answersLive, readRecord, type GuiRecord, type StartRead } from "../handover.ts";
+import { alive } from "../remote.ts";
 import { startedLater, startOf } from "../startof.ts";
 import type { Kit } from "../state.ts";
 import { answerFile, answerOf, ensureDir, MAX_FILE, readJson, remove, requestFile, resultFile, sweep, trustDir, writeAtomic } from "./files.ts";
@@ -153,20 +154,37 @@ export function createAsk(d: AskDeps) {
 	}
 }
 
-/** Registers the handler (before the subagent return, so every pi in Herdr has it) and marks the process's first session start. */
-export function registerTrust(pi: ExtensionAPI, { cfg, guiDir }: Pick<Kit, "cfg" | "guiDir">) {
-	const { env } = cfg;
-	void startedLater(readRecord(guiDir)?.pid ?? 0, { hold: false }).catch(() => undefined); // the server's start time is read now, so it is under way at pi's trust question (RC3-F001)
+/** The recorded server is one that reads trust requests for this Herdr: the first thing `up` asks, before anything is read from the machine. */
+const reads = (record: GuiRecord | undefined, env: NodeJS.ProcessEnv): record is GuiRecord => Boolean(record && !record.stopped && record.trust === 1 && record.herdr === herdrSocket(env));
+
+/**
+ * Starts the read of the recorded server's start time when a trust question could reach it: the record is of a live server that reads trust requests, and has a start time to compare.
+ * On Windows the read is 3.5 to 5 s, and started here it is under way (and cached) by the time pi asks its question. Nothing is started for a stale gui.json (a dead pid) or a stopped server:
+ * that would be a PowerShell at pi's busiest moment for a question that is never relayed (RC3-F002).
+ */
+export function warmServerStart(guiDir: string, env: NodeJS.ProcessEnv, read: StartRead = {}) {
+	const record = readRecord(guiDir);
+	if (!reads(record, env) || !record.started || !alive(record.pid)) return;
+	void (read.later ?? startedLater)(record.pid, { hold: false }).catch(() => undefined);
+}
+
+/** Whether a GUI can be asked now: the recorded server reads trust requests, runs as recorded, and answers its page. */
+export const guiUp = (guiDir: string, env: NodeJS.ProcessEnv, read: StartRead = {}) => async (): Promise<boolean> => {
+	const record = readRecord(guiDir);
+	return Boolean(reads(record, env) && (await answersLive(record, read)));
+};
+
+/** Registers the handler (before the subagent return, so every pi in Herdr has it) and marks the process's first session start. `io` is the terminal and process it answers on (tests). */
+export function registerTrust(pi: ExtensionAPI, { cfg, guiDir }: Pick<Kit, "cfg" | "guiDir">, io: Pick<AskDeps, "stdin" | "proc" | "write"> = { stdin: process.stdin, proc: process, write: (text) => void process.stderr.write(text) }) {
+	const { env, startRead } = cfg;
+	warmServerStart(guiDir, env, startRead); // the server's start time is read now, so it is under way at pi's trust question (RC3-F001)
 	// SAFETY: the process-wide flag is a boolean under a registered symbol that only this module sets.
 	const state = globalThis as unknown as Record<symbol, boolean>;
 	const decide = createAsk({
-		env, dir: trustDir(guiDir), stdin: process.stdin, proc: process, write: (text) => void process.stderr.write(text),
+		env, dir: trustDir(guiDir), ...io,
 		saved: (cwd) => new ProjectTrustStore(getAgentDir()).get(cwd),
 		defaultTrust: (cwd) => SettingsManager.create(cwd, getAgentDir(), { projectTrusted: false }).getDefaultProjectTrust(),
-		up: async () => {
-			const record = readRecord(guiDir);
-			return Boolean(record && !record.stopped && record.trust === 1 && record.herdr === herdrSocket(env) && (await answersLive(record)));
-		},
+		up: guiUp(guiDir, env, startRead),
 		first: () => !state[STARTED], now: cfg.now, sleep: cfg.sleep, startOf, uuid: randomUUID,
 		watch: (dir, wake) => {
 			try {
