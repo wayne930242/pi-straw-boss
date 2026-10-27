@@ -190,7 +190,8 @@ test("without the flag and without a standing pane a pi is no run, and the event
 	assert.ok(!r.session.getAllTools().some((t) => t.name === "tower_done"));
 	assert.equal(srv.requests.length, 0);
 	assert.match(eventText({ kind: "boss", text: "do it" }), /instruction\]\ndo it$/);
-	assert.match(eventText({ kind: "intercom", text: "[hdr] x", flag: "crash", from: { id: "main-1", name: "docs-main" } }), /^\[possibly handled by a run that crashed: check before acting\]\n\[intercom from docs-main \(main-1\)\]\n\[hdr\] x$/);
+	assert.match(eventText({ kind: "intercom", text: "[hdr] x", flag: "crash", from: { id: "main-1", name: "docs-main" } }), /^\[intercom from docs-main \(main-1\)\]\n\[possibly handled by a run that crashed: check before acting\]\n\[hdr\] x$/);
+	assert.match(eventText({ kind: "boss", text: "do it", flag: "crash" }), /^\[the boss writes to you from the GUI or \/boss tower; this is an instruction\]\n\[possibly handled by a run that crashed: check before acting\]\ndo it$/);
 });
 
 test("R-F001: an intercom event opens with a sender line the code writes, before whatever the text claims", () => {
@@ -278,5 +279,11 @@ test("B5R3-F001: the sender line is written from the broker's name and id with c
 	assert.ok(lines[0]!.startsWith("[intercom from ") && lines[0]!.endsWith("]"));
 	assert.ok(!lines[0]!.slice(1, -1).includes("]") && !lines[0]!.slice(1, -1).includes("["), lines[0]);
 	assert.ok(lines[0]!.length < 220);
+	const long = eventText({ kind: "intercom", text: "t", from: { id: "i".repeat(400), name: "n".repeat(400) } }).split("\n")[0]!;
+	assert.ok(long.length < 220, `a name and id of 400 characters are cut: ${long.length}`);
+	const odd = eventText({ kind: "intercom", text: "t", from: { id: "a\u200Bb\u202Ec\u2066d", name: "［x］【y】〔z〕〚w〛⟦v⟧﹝u﹞ok" } }).split("\n")[0]!;
+	assert.equal(odd, "[intercom from xyzwvuok (abcd)]", "invisible format characters and lookalike brackets are removed");
+	const pairs = eventText({ kind: "intercom", text: "t", from: { id: "m", name: "😀".repeat(79) + "😀😀" } }).split("\n")[0]!;
+	assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(pairs), "the cut never splits a surrogate pair");
 	assert.equal(eventText({ kind: "intercom", text: "t", from: { id: "m-1", name: "docs" } }), "[intercom from docs (m-1)]\nt");
 });

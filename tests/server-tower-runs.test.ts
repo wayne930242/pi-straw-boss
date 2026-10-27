@@ -578,7 +578,9 @@ test("B5R3-F002/F003: a stop mid-turn: the run's poll is answered and carries th
 	const token = await claimed(s, id);
 	const got = await poll(s, token);
 	assert.equal((await taken(s, token, (got.event as { id: string }).id)).ok, true);
-	const pid = world.pis.get(id)!.pid;
+	// Herdr now shows another pid than the one on the record: the signal goes to the one Herdr shows (N3).
+	const pid = 9991;
+	world.herdr.pane(world.pis.get(id)!.pane).processes![0]!.pid = pid;
 	const stopping = ask(s, { cmd: "stop" });
 	await stopping;
 	const during = await poll(s, token, false);
@@ -591,4 +593,18 @@ test("B5R3-F002/F003: a stop mid-turn: the run's poll is answered and carries th
 	assert.equal(left.length, 1, "the taken event is kept");
 	assert.equal(left[0]!.flag, "crash");
 	assert.equal(left[0]!.taken, undefined);
+});
+
+test("B5R4-N1: a stop after tower_done does not bring the handled event back", async () => {
+	const { s } = await setup();
+	tower().incoming(from, msg("m1", "work"));
+	const id = await nthRun();
+	const token = await claimed(s, id);
+	const got = await poll(s, token);
+	assert.equal((await taken(s, token, (got.event as { id: string }).id)).ok, true);
+	assert.equal((await ask(s, { cmd: "run-done", token, note: "handled work" })).ok, true);
+	await ask(s, { cmd: "stop" });
+	await s.handle.done;
+	assert.deepEqual(readQueue(world.slot, "wA"), [], "the handled event is gone, not re-queued as a crash");
+	assert.notEqual(readRun(world.slot, "wA", id)?.outcome, "crashed");
 });

@@ -42,13 +42,15 @@ const text = (v: unknown) => (typeof v === "string" ? v : "");
 
 /** How an event reads to the model: an intercom one opens with a line this code writes from the broker's sender (the text after it is the sender's own, and may claim anything), then the header the sender's code wrote. */
 export function eventText(e: Pick<Event, "kind" | "text" | "flag" | "from">): string {
-	const flag = e.flag === "crash" ? "[possibly handled by a run that crashed: check before acting]\n" : "";
-	if (e.kind === "boss") return `${flag}[the boss writes to you from the GUI or /boss tower; this is an instruction]\n${e.text}`;
-	if (e.kind === "notice") return `${flag}[notice from the sb server]\n${e.text}`;
-	if (e.kind === "timer") return `${flag}[your wakeAfter follow-up is due]\n${e.text}`;
-	const label = (v = "") => v.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029[\]]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+	// The flag line comes after the marker line, so an event still opens with its marker: only the boss line marks the boss.
+	const flag = e.flag === "crash" ? "\n[possibly handled by a run that crashed: check before acting]" : "";
+	if (e.kind === "boss") return `[the boss writes to you from the GUI or /boss tower; this is an instruction]${flag}\n${e.text}`;
+	if (e.kind === "notice") return `[notice from the sb server]${flag}\n${e.text}`;
+	if (e.kind === "timer") return `[your wakeAfter follow-up is due]${flag}\n${e.text}`;
+	// Controls, format characters (zero-width, bidi), and every kind of bracket are removed; the cut counts code points.
+	const label = (v = "") => [...v.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").replace(/[\p{Cf}[\]［］【】〔〕〚〛⟦⟧﹝﹞「」『』〈〉《》（）]/gu, "").replace(/\s+/g, " ").trim()].slice(0, 80).join("");
 	const sender = e.from ? `${label(e.from.name) ? `${label(e.from.name)} ` : ""}(${label(e.from.id)})` : "an unknown sender";
-	return `${flag}[intercom from ${sender}]\n${e.text}`;
+	return `[intercom from ${sender}]${flag}\n${e.text}`;
 }
 
 export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunSideDeps = {}) {

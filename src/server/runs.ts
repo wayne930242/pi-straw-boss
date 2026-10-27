@@ -704,7 +704,9 @@ export function createRuns(o: RunsOptions) {
 					if (pid !== undefined) try { kill(pid, "SIGTERM"); } catch { /* gone */ }
 				}
 				// A run cut off mid-turn may have handled what it took: the events come back flagged, as after a Herdr restart (B5R3-F002).
-				await finish(a, "quit", "the sb server stopped", true);
+				// A run that already handed in its tower_done handled what it took: the events are removed.
+				if (a.closing !== undefined) await finish(a, "done");
+				else await finish(a, "quit", "the sb server stopped", true);
 			}
 		},
 		/** The notes of a service, for the brief. */
