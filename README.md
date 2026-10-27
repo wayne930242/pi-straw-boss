@@ -76,7 +76,7 @@ Any extension's `select` and `confirm` (an `mp-infra` command review, say) can b
 3. Type `/boss tower` to open the workspace's tower and watch its dashboard. It also opens by itself when agents start to collide.
 4. Type `/boss gui` from any session to see the whole net in your browser.
 
-The tower only routes and coordinates, so it can run a lighter model: set `towerModel` in `~/.pi/agent/straw-boss/config.json` ([how it works](docs/how-it-works.md#how-it-works)). The experimental tower service of the sb server is off unless `towerRuns.enabled` is `true` there ([how it works](docs/how-it-works.md#the-tower-service-b4-off-by-default)).
+The tower only routes and coordinates, so it can run a lighter model: set `towerModel` in `~/.pi/agent/straw-boss/config.json` ([how it works](docs/how-it-works.md#how-it-works)). The experimental tower service of the sb server, with its local runs (a tower that wakes for the events it gets and ends with a handoff note, and `/boss tower <prompt>` to write to it), is off unless `towerRuns.enabled` is `true` there ([how it works](docs/how-it-works.md#the-tower-service-b4-off-by-default)).
 
 ## Tools and commands
 
