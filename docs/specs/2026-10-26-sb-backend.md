@@ -314,17 +314,31 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
         is sent to the record's pipe (not even a hello), and nothing is written, because every write path in `client.ts` is behind a probe.
         A folder with no record is not read (nothing is trusted yet; a start's gate reads it before its first file, as before).
         **Cost, measured on the Mac as a count of PowerShell starts; the Windows time is for the VM:** one PowerShell per process per folder
-        identity, for any process that finds a record: a session at its first look (the sync read blocks that session's event loop for the
-        length of a PowerShell start, 2 to 5 s on the VM, once), each `cli.mjs status`, `stop`, second `up` (a shell command is a new process: one
-        read each, where it read none before). The memo (`verified`, by volume and file index) also holds a **refusal**: a session looks every
-        2 s, and a foreign folder costs one PowerShell for the process, not one per look. A read that FAILS (Constrained Language Mode, a timeout) is
-        remembered for `OWNER_READ_RETRY_MS` (60 s) and told again meanwhile without a new PowerShell. The wrong-owner verdict lasts as long as the
-        folder's identity does; an owner changed on the same folder is seen by the next pi process. POSIX: the gate is a no-op there (below).
-        **POSIX:** the write paths are already behind `secretDir`, whose `chmod 700` fails with EPERM on a folder the user does not own, and the long
-        socket path moves to `/tmp/sb-<uid>` only when that folder is the user's with mode 700. What POSIX does not do is an owner check before a
-        READ of a record: a foreign `straw-boss/` that a process can read would still be looked at (hello to its socket, `status` text). On POSIX an
-        account that could make it needs write access to the agent directory, which is the user's own (mode 755) unless `PI_CODING_AGENT_DIR` points
-        into a shared place; B1 leaves that as it is.
+        identity, for any process that finds a record: a session at its first look, each `cli.mjs status`, `stop`, second `up` (a shell command
+        is a new process: one read each, where it read none before). The memo (`verified`, by volume and file index) also holds a **refusal**: a
+        session looks every 2 s, and a foreign folder costs one PowerShell for the process, not one per look. A read that FAILS (Constrained
+        Language Mode, a timeout) is remembered for `OWNER_READ_RETRY_MS` (60 s) and told again meanwhile without a new PowerShell. The wrong-owner
+        verdict lasts as long as the folder's identity does; an owner changed on the same folder is seen by the next pi process.
+        **The read is asynchronous (B1 follow-up):** `ownerGate` starts the PowerShell as a child process and awaits it (`execAsync`, with `execFileSync`'s
+        error shape and a closed input), so a pi session's event loop (its screen, its timers, the GUI, the link) is never held for the 2 to 5 s of a
+        PowerShell start. `Ctx.gate` and `Ctx.prepare` may answer with a promise, `lockFor`, `launch` and `probe` await them, and the gate inside
+        `prepareSlot` (between the protect call and the `mkdir`s of a secondary slot) is awaited before they are made. Requests that come while a read
+        runs for a folder (a look, a link request, the GUI, `status`) share it: one `whoami` and one PowerShell between them, one verdict for all,
+        a refusal or a failed read included. A folder replaced while its owner is read (another file index afterwards) is not the folder that was read:
+        the read fails and nothing is remembered, and the next request reads the folder that is there. The remaining synchronous native calls are
+        `whoami`, `icacls /save` and the protect call of `protectFolder` (tens of milliseconds each); the PowerShell of `secure`'s wrong-DACL path
+        is skipped for a folder the gate has read, which is every folder a probe has passed. Shell commands (`status`, `stop`, `up`) use the same
+        asynchronous read; nothing waits on it with the loop held.
+        **POSIX (B1 follow-up):** where there is no ACL the same gate is `uidGate` (`record.ts`): a `stat` of the state folder, the slot's own
+        folder (a secondary slot) and the record file, following links (a link to another account's folder is that folder), each compared
+        with `process.getuid()`. A path that another uid owns is refused with the words of the Windows gate ("could not check … before trusting
+        or writing to it: the folder … belongs to another account (uid N), not to uid M. Run pi as that account, or delete the folder …, then
+        start again."), as the same `acl` error (exit 3 in the shell, "the sb server was not looked at" once in a session), BEFORE the record is
+        read, a hello is sent, or a file is written; the folder is checked before the record, and a refusal stops at the first path. A path that
+        is not there is nothing to refuse; a `stat` that fails for any other reason is a refusal that says so. It starts no process and needs no
+        memo. A root-owned folder is refused for a user's pi, as another uid's: root is not the user (`sudo pi` with a retained `HOME` leaves a
+        folder the user's pi will refuse; delete it or run pi as root). `cli.mjs up` and a session's `boss_server restart` run it (`trusted`) before
+        they read the record at all.
         The protect call on a swapped temporary folder, and on an existing user-owned folder swapped between the identity check and the call
         (the gate refuses it afterwards), adds the user and SYSTEM where the attacker granted WRITE_DAC and leaves the owner as it was: the
         changes `protectFolder` can make to a foreign folder.

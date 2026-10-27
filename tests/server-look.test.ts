@@ -7,6 +7,7 @@ import { createRemoteTurns } from "../src/link/hooks.ts";
 import { MESSAGE_TYPE } from "../src/link/turn.ts";
 import { RESTART_EVERY_MS } from "../src/server-look.ts";
 import { fileOf, writeRecord } from "../src/server/record.ts";
+import { forgetSid, ownerGate } from "../src/server/winprep.ts";
 import { type Agent, until, World } from "./fakes.ts";
 import { bob, TEAM_HEX } from "./link/holder-world.ts";
 import { ServerWorld, sleep } from "./server-world.ts";
@@ -340,4 +341,27 @@ test("a remote turn cannot use boss_server at any level, dispatch included; a lo
 	const blocked = (await call()) as { block?: boolean; reason?: string };
 	assert.equal(blocked.block, true);
 	assert.match(String(blocked.reason), /cannot see or restart this computer's sb server/);
+});
+
+test("B1 follow-up: a look whose owner read is slow does not freeze the session: a timer set while it runs fires before it ends, and the looks that come meanwhile and after share the one read", async () => {
+	plant();
+	forgetSid();
+	const owner = "S-1-5-21-1111111111-2222222222-3333333333-1001", calls: string[] = [], order: string[] = [];
+	const slow = async (file: string) => {
+		calls.push(file);
+		if (file === "whoami.exe") return `"PC\\me","${owner}"\r\n`;
+		// Set while the read runs; due long before it ends, so it fires first unless the session's event loop was held still.
+		setTimeout(() => order.push("timer"), 10);
+		await sleep(250);
+		order.push("owner read done");
+		return `${owner}\r\n`;
+	};
+	const gate = (slot: typeof sw.slot, ms?: number) => ownerGate(slot.stateDir, slow, ms);
+	const a = world.agent({ id: "f1", pane: "wA:p95", tab: "wA:t1", ui: true, env: { HOME: sw.env.HOME! }, deps: { stateDir: sw.stateDir, version: "0.44.0", adoptMs: 30, server: { ctx: { ...reaching(), gate }, cli: "/fake/cli.mjs" } } });
+	await a.start();
+	await until(() => order.includes("owner read done"), "the owner read to finish");
+	assert.deepEqual(order, ["timer", "owner read done"]);
+	await sleep(200);
+	assert.equal(calls.filter((c) => c.endsWith("powershell.exe")).length, 1, "the looks every 30 ms during and after the read started one PowerShell");
+	assert.equal(a.notices.filter((n) => /sb server/.test(n.text)).length, 0, "and said nothing");
 });

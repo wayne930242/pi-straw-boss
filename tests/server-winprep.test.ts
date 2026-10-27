@@ -6,7 +6,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { createServer } from "node:net";
 import { describe, ensure, launch, lockFor, probe, restart, ServerError, stop } from "../src/server/client.ts";
 import { markStarting, prepareSlot, takeLock } from "../src/server/record.ts";
-import { explainNative, forgetSid, OWNER_READ_RETRY_MS, RENAME_WAITS_MS, ownerGate, ownerOfFolder, ownerSid, protectArgs, protectFolder, readDacl, refuseLink, resetFileAcl } from "../src/server/winprep.ts";
+import { execAsync, explainNative, forgetSid, OWNER_READ_RETRY_MS, RENAME_WAITS_MS, ownerGate, ownerOfFolder, ownerSid, protectArgs, protectFolder, readDacl, refuseLink, resetFileAcl } from "../src/server/winprep.ts";
 import { ServerWorld } from "./server-world.ts";
 
 // docs/specs/2026-10-26-sb-backend.md, The control socket: on Windows the state folder is protected before the first file is created in it (the VM's second pass found the lock, the
@@ -670,12 +670,12 @@ test("R13: a start in a folder the user owns reads the owner ONCE (the gate befo
 	assert.deepEqual(called(n).slice(0, 4), ["whoami", "powershell", "/save", "/inheritance:r"]);
 	assert.ok(readFileSync(join(world.stateDir, "server.log"), "utf8").includes("phase name=owner-gate"), "the cost is a phase in the log (written after the gate passed)");
 	const again = powershells(n);
-	assert.equal(ownerGate(world.stateDir, run), false, "the same folder, the same process: no read");
+	assert.equal(await ownerGate(world.stateDir, run), false, "the same folder, the same process: no read");
 	assert.equal(powershells(n), again);
 	// The folder made again under its name is another folder: read again.
 	rmSync(world.stateDir, { recursive: true });
 	mkdirSync(world.stateDir, { recursive: true });
-	assert.equal(ownerGate(world.stateDir, run), true);
+	assert.equal(await ownerGate(world.stateDir, run), true);
 	assert.equal(powershells(n), again + 1);
 });
 
@@ -862,4 +862,138 @@ test("R13-F003: where the gate is a no-op (every platform but Windows) a look of
 	assert.equal((await probe(ctx)).live, true);
 	assert.ok(gates >= 1, "the look asks the gate");
 	assert.equal(world.ctx().gate(world.slot), false);
+});
+
+// --- B1 follow-up: a pi session's event loop never waits for the owner read; the requests that come together share one read ---
+
+const later = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+/** The native calls as the real runner gives them to a pi session: the PowerShell answers after `ms`, and the loop is free meanwhile. A `fail` makes that read fail. */
+function slowNative(ms: number, over: { owner?: string; fail?: Error } = {}) {
+	const calls: string[] = [];
+	const run = async (file: string) => {
+		calls.push(file);
+		if (file === "whoami.exe") return `"PC\\me","${OWNER}"\r\n`;
+		await later(ms);
+		if (over.fail) throw over.fail;
+		return `${over.owner ?? OWNER}\r\n`;
+	};
+	return { calls, run, reads: () => calls.filter((c) => c.endsWith("powershell.exe")).length, whoamis: () => calls.filter((c) => c === "whoami.exe").length };
+}
+
+test("B1 follow-up: the owner read waits for a slow PowerShell without blocking the event loop: a timer that was set meanwhile fires during it", async () => {
+	forgetSid();
+	mkdirSync(world.stateDir, { recursive: true });
+	const slow = slowNative(200);
+	// Timers run in the order they are due: this one, due long before the read ends, comes first unless the loop was held still.
+	const order: string[] = [];
+	setTimeout(() => order.push("timer"), 10);
+	assert.equal(await ownerGate(world.stateDir, slow.run), true);
+	order.push("read done");
+	assert.deepEqual(order, ["timer", "read done"]);
+	assert.equal(slow.reads(), 1);
+});
+
+test("B1 follow-up: a look at a record (probe) with a slow owner read does not block the loop: a timer set meanwhile fires before the probe is answered", async () => {
+	forgetSid();
+	const slow = slowNative(150);
+	const bait = await decoy(world.stateDir, join(world.root, "decoy.sock"));
+	const ctx = world.ctx({ platform: "win32", alive: () => true, gate: (slot, ms) => ownerGate(slot.stateDir, slow.run, ms) });
+	const order: string[] = [];
+	try {
+		setTimeout(() => order.push("timer"), 30);
+		await probe(ctx);
+		order.push("probe answered");
+	} finally {
+		await bait.close();
+	}
+	assert.deepEqual(order, ["timer", "probe answered"]);
+	assert.equal(slow.reads(), 1);
+});
+
+test("B1 follow-up: requests that come together (a look, a link request, the GUI) start ONE whoami and ONE PowerShell for the folder; the ones after them read none", async () => {
+	forgetSid();
+	const slow = slowNative(120);
+	const bait = await decoy(world.stateDir, join(world.root, "decoy.sock"));
+	const ctx = world.ctx({ platform: "win32", alive: () => true, gate: (slot, ms) => ownerGate(slot.stateDir, slow.run, ms) });
+	try {
+		const seen = await Promise.all([probe(ctx), probe(ctx), probe(ctx), describe(ctx)]);
+		assert.ok(seen.every(Boolean));
+		assert.equal(slow.reads(), 1, "one PowerShell for four requests");
+		assert.equal(slow.whoamis(), 1, "and one whoami");
+		await probe(ctx);
+		assert.equal(slow.reads(), 1, "the memo serves the next");
+	} finally {
+		await bait.close();
+	}
+});
+
+test("B1 follow-up: requests that come together at another account's folder are all refused with the same text after one read, nothing is sent to its pipe, and a later request is refused from the memo", async () => {
+	forgetSid();
+	const slow = slowNative(120, { owner: FOREIGN });
+	const bait = await decoy(world.stateDir, join(world.root, "decoy.sock"));
+	const before = bytes(world.stateDir);
+	const ctx = world.ctx({ platform: "win32", alive: () => true, gate: (slot, ms) => ownerGate(slot.stateDir, slow.run, ms) });
+	try {
+		const verdicts = await Promise.allSettled([probe(ctx), probe(ctx), ensure(ctx, { boss: true }), stop(ctx)]);
+		for (const v of verdicts) assert.ok(v.status === "rejected" && v.reason instanceof ServerError && v.reason.startError?.code === "acl" && /belongs to another account \(S-1-5-21-9-9-9-1002\)/.test(v.reason.message), JSON.stringify(v));
+		assert.equal(slow.reads(), 1);
+		await assert.rejects(probe(ctx), /belongs to another account/);
+		assert.equal(slow.reads(), 1, "refused from the memo");
+		assert.equal(bait.connections(), 0);
+		assert.deepEqual(bytes(world.stateDir), before);
+		assert.equal(world.spawned.length, 0);
+	} finally {
+		await bait.close();
+	}
+});
+
+test("B1 follow-up: a read that fails is shared by the requests that came together, and is tried again only after the pause", async () => {
+	forgetSid();
+	const slow = slowNative(80, { fail: new Error("sb-constrained-language") });
+	const bait = await decoy(world.stateDir, join(world.root, "decoy.sock"));
+	let t = 50_000;
+	const ctx = world.ctx({ platform: "win32", alive: () => true, gate: (slot, ms) => ownerGate(slot.stateDir, slow.run, ms, () => t) });
+	try {
+		const verdicts = await Promise.allSettled([probe(ctx), probe(ctx), probe(ctx)]);
+		assert.ok(verdicts.every((v) => v.status === "rejected" && /could not be read/.test(String(v.reason.message))));
+		assert.equal(slow.reads(), 1);
+		await assert.rejects(probe(ctx), /could not be read/);
+		assert.equal(slow.reads(), 1, "inside the pause");
+		t += OWNER_READ_RETRY_MS + 1;
+		await assert.rejects(probe(ctx), /could not be read/);
+		assert.equal(slow.reads(), 2, "after it");
+	} finally {
+		await bait.close();
+	}
+});
+
+test("B1 follow-up: a folder swapped for another while its owner is read is not taken for the one that was read: the read fails, nothing is remembered, and the next request reads the folder that is there", async () => {
+	forgetSid();
+	mkdirSync(world.stateDir, { recursive: true });
+	const slow = slowNative(100);
+	const first = ownerGate(world.stateDir, slow.run);
+	// Moved aside, not removed: the new folder cannot be given the old one's file index.
+	renameSync(world.stateDir, `${world.stateDir}.old`);
+	mkdirSync(world.stateDir);
+	await assert.rejects(first, /replaced while its owner was read/);
+	assert.equal(await ownerGate(world.stateDir, slow.run), true);
+	assert.equal(slow.reads(), 2);
+});
+
+test("B1 follow-up: the real asynchronous runner gives what the synchronous one gives: the output, the exit code and stderr of a failure, a timeout as ETIMEDOUT, a missing program as ENOENT, and an input that ends at once", async () => {
+	const node = process.execPath;
+	assert.equal(await execAsync(node, ["-e", "console.log('hi')"], { timeout: 10_000 }), "hi\n");
+	// The PowerShell of the owner read is given no input; a program that waits for the end of its input would hang for ever without this.
+	assert.equal(await execAsync(node, ["-e", "process.stdin.on('data', () => {}).on('end', () => console.log('eof'))"], { timeout: 10_000 }), "eof\n");
+	const exit = await execAsync(node, ["-e", "console.error('boom'); process.exit(7)"], { timeout: 10_000 }).catch((e: unknown) => e as Error & { status?: unknown; stderr?: unknown });
+	assert.ok(exit instanceof Error);
+	assert.deepEqual([exit.status, String(exit.stderr).trim()], [7, "boom"]);
+	const started = Date.now();
+	const slow = await execAsync(node, ["-e", "setTimeout(() => {}, 60000)"], { timeout: 300 }).catch((e: unknown) => e as Error & { code?: unknown; killed?: unknown; syscall?: unknown });
+	assert.ok(slow instanceof Error);
+	assert.deepEqual([slow.code, slow.killed, String(slow.syscall).startsWith("spawn")], ["ETIMEDOUT", true, true]);
+	assert.ok(Date.now() - started < 8_000, "the program was stopped at the timeout, not waited for");
+	const missing = await execAsync(join(world.root, "no-such-program"), [], { timeout: 5_000 }).catch((e: unknown) => e as Error & { code?: unknown; syscall?: unknown });
+	assert.ok(missing instanceof Error);
+	assert.deepEqual([missing.code, String(missing.syscall).startsWith("spawn")], ["ENOENT", true]);
 });

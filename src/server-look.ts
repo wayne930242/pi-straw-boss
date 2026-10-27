@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
 import {
-	type Ctx, decide, describe, ensure, lockWaitFor, makeCtx, probe, restart, RESTART_EVERY_MS, ServerError, stop,
+	type Ctx, decide, describe, ensure, lockWaitFor, makeCtx, probe, restart, RESTART_EVERY_MS, ServerError, stop, trusted,
 } from "./server/client.ts";
 import { tailLog } from "./server/log.ts";
 import { fileOf, readRecord, slotOf } from "./server/record.ts";
@@ -136,6 +136,7 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 			if (!why || why.length > 200 || /[\r\n]/.test(why)) throw new Error("A restart needs a reason: 1 to 200 characters on one line.");
 			const ctx = ctxFor();
 			// The once-a-minute limit is judged under server.lock (client.ts), so two asks at once cannot both pass it.
+			await trusted(ctx);
 			if (!boss && readRecord(ctx.slot)?.stopped) throw new Error("The sb server was stopped on purpose; an agent cannot restart it. The boss starts it again with /boss server.");
 			try {
 				const done = await restart(ctx, { reason: why, downgrade, boss, limit: !boss });

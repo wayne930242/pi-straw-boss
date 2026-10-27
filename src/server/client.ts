@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
 import { createConnection } from "node:net";
 import { localEndpoint } from "../endpoint.ts";
 import { alive as pidAlive } from "../remote.ts";
@@ -9,7 +10,7 @@ import { spawnBreakaway } from "./breakaway.ts";
 import { createLog, type Log } from "./log.ts";
 import {
 	adoptStarting, clearStartError, clearStopped, endStarting, fileOf, type IntercomScope, type LockDeps, LockUnreadable, markStarting, prepareSlot, readRecord, secretDir, readStartError, restartingFresh, type ServerRecord,
-	type Slot, type StartError, takeLock, TOUCH_MS, touchRestarting, updateRecord,
+	type Slot, type StartError, takeLock, TOUCH_MS, touchRestarting, uidGate, updateRecord,
 } from "./record.ts";
 import { ownerGate, resetFileAcl } from "./winprep.ts";
 import { callControl, helloWhy, type Reply } from "./socket.ts";
@@ -132,13 +133,13 @@ export interface Ctx {
 	spawn(spec: SpawnSpec): Launched;
 	kill(pid: number, signal: NodeJS.Signals): void;
 	lock: LockDeps;
-	/** Makes the slot's folder ready before the first file is created in it (on Windows, protects it); `ms` is the time its native calls may take. `gate`, when given, is called right after the state folder is protected and before anything else is made in it (a secondary slot's `servers\\<hash>` folders), so a folder that landed foreign gets nothing. */
-	prepare(slot: Slot, ms?: number, gate?: () => void): void;
+	/** Makes the slot's folder ready before the first file is created in it (on Windows, protects it); `ms` is the time its native calls may take. `gate`, when given, is called right after the state folder is protected and before anything else is made in it (a secondary slot's `servers\\<hash>` folders), so a folder that landed foreign gets nothing. It may be asynchronous, and then so is the answer. */
+	prepare(slot: Slot, ms?: number, gate?: () => void | Promise<void>): void | Promise<void>;
 	/**
-	 * The gate before the first file is created in an existing state folder: on Windows one owner read (`ownerGate`), refusing another account's folder with nothing written in it. Returns whether it read.
-	 * Called where a file is about to be created and no server is known to run; elsewhere a no-op.
+	 * The gate before a record in the state folder is trusted and before the first file is created in it: on Windows one owner read (`ownerGate`, asynchronous: a pi session's event loop does not wait
+	 * for a PowerShell start), elsewhere a stat of the owner (`uidGate`); another account's folder is refused with nothing written in it. Returns whether it read an owner with a process.
 	 */
-	gate(slot: Slot, ms?: number): boolean;
+	gate(slot: Slot, ms?: number): boolean | Promise<boolean>;
 	log: Log;
 	node: string;
 	timers: Timers;
@@ -147,11 +148,11 @@ export function makeCtx(over: Partial<Ctx> & Pick<Ctx, "slot" | "version" | "cli
 	const now = over.now ?? Date.now, alive = over.alive ?? pidAlive, start = over.startOf ?? startOf;
 	const sleep = over.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 	const log = over.log ?? createLog(fileOf(over.slot, "log"), { now });
-	const platform = over.platform ?? process.platform, prepare = over.prepare ?? ((slot: Slot, ms?: number, gate?: () => void) => prepareSlot(slot, platform, undefined, ms, gate));
+	const platform = over.platform ?? process.platform, prepare = over.prepare ?? ((slot: Slot, ms?: number, gate?: () => void | Promise<void>) => prepareSlot(slot, platform, undefined, ms, gate));
 	return {
 		env: process.env, platform: process.platform, node: process.execPath, spawn: platform === "win32" ? (spec) => spawnBreakaway(spec, { fallback: spawnDetached }) : spawnDetached, timers: timersFor(over.platform),
 		kill: (pid, signal) => void process.kill(pid, signal), prepare,
-		gate: over.gate ?? (over.prepare || platform !== "win32" ? () => false : (slot: Slot, ms?: number) => ownerGate(slot.stateDir, undefined, ms)),
+		gate: over.gate ?? (platform !== "win32" ? (slot: Slot) => uidGate(slot) : over.prepare ? () => false : (slot: Slot, ms?: number) => ownerGate(slot.stateDir, undefined, ms)),
 		// This process holds the locks it takes: it is alive however the liveness check is replaced.
 		lock: { now, alive: (pid) => pid === process.pid || alive(pid), startOf: start, sleep, note: (event, fields) => log.line(event, fields), prepare, ...(platform === "win32" ? { repair: (file: string) => resetFileAcl(file, undefined, 15_000) } : {}) },
 		startedLater: over.startedLater ?? (over.startOf ? async (pid: number) => over.startOf!(pid) : (pid: number) => startedLater(pid, { hold: false })),
@@ -181,10 +182,8 @@ export function runsAs(ctx: Pick<Ctx, "alive" | "startOf">, record: Pick<ServerR
 /** A server counts as live when its PID is alive, started at the recorded time, and answers hello on the control socket within 2 s: a PID alone is not enough. */
 const DENIED_START_MS = 3000;
 export async function probe(ctx: Ctx, deadline?: number, startKnownElsewhere = false): Promise<Probe> {
+	await trusted(ctx, deadline);
 	const record = readRecord(ctx.slot);
-	// R13-F003: a record is what another account's folder can hold too, and everything below trusts it (a pipe to talk to, a secret, the state `status` tells, a record to write back). The folder's owner is
-	// read before any of that, once per process for the folder (the memo of the other gates; nothing is read where there is no record). A foreign folder is a refusal, like the start's.
-	if (record) ownerOk(ctx, deadline);
 	// A record with no socket is a start that has not got far enough to listen (`markStarting`): there is nothing to ask.
 	if (!record || !record.socket || !ctx.alive(record.pid)) return { record, live: false, runs: false, hello: undefined };
 	// The hello comes first: a server that answers it with the secret and its pid is that server, and no start time has to be asked for (on Windows that is a PowerShell start for a process that
@@ -205,10 +204,15 @@ export async function probe(ctx: Ctx, deadline?: number, startKnownElsewhere = f
 	return other ? { record, live: false, runs: false, hello: undefined } : { record, live: false, runs: true, denied: true, hello: undefined };
 }
 
-/** Throws the `acl` refusal of a folder that is another account's (or whose owner cannot be read); returns when the gate passes. */
-function ownerOk(ctx: Ctx, deadline?: number): void {
+/**
+ * R13-F003: a record is what another account's folder can hold too, and everything that follows trusts it (a pipe to talk to, a secret, the state `status` tells, a record to write back). The folder's
+ * owner is judged before the record is read: on Windows once per process for the folder, without the event loop waiting for the PowerShell (the memo of the other gates, shared by the requests that come
+ * together); elsewhere by a stat. Nothing is judged where there is no record. A foreign folder is the `acl` refusal of a start, and nothing was sent or written.
+ */
+export async function trusted(ctx: Ctx, deadline?: number): Promise<void> {
+	if (!existsSync(fileOf(ctx.slot, "record"))) return;
 	try {
-		ctx.gate(ctx.slot, deadline === undefined ? undefined : within(ctx, deadline, 15_000));
+		await ctx.gate(ctx.slot, deadline === undefined ? undefined : within(ctx, deadline, 15_000));
 	} catch (error) {
 		throw aclRefusal(ctx, error as Error);
 	}
@@ -296,7 +300,7 @@ export async function launch(ctx: Ctx, { began, old, deadline }: { began?: strin
 	if (waitMs <= 0) throw new ServerError("start-failed", "the time given ran out before the server was started", undefined, "start");
 	// A start that is not a restart creates files (the placeholder, the log): where `lockFor` was told a server runs and it has gone since, the gate is passed here, before the first of them.
 	if (!began) try {
-		ctx.gate(ctx.slot, waitMs);
+		await ctx.gate(ctx.slot, waitMs);
 	} catch (error) {
 		throw aclRefusal(ctx, error as Error);
 	}
@@ -366,18 +370,18 @@ export async function lockFor(ctx: Ctx, waitMs: number, deadline?: number, gate 
 		// no-ops where the owner was read for this folder already, and where a server is known to run (`gate` false).
 		// The phase times the gate's own reads (R13-F006), not the folder preparation around them.
 		let read = false, gateMs = 0;
-		const gated = () => {
+		const gated = async () => {
 			const t = ctx.now();
 			try {
-				if (ctx.gate(ctx.slot, ms)) read = true;
+				if (await ctx.gate(ctx.slot, ms)) read = true;
 			} finally {
 				gateMs += ctx.now() - t;
 			}
 		};
-		if (gate) gated();
+		if (gate) await gated();
 		// The gate is also passed inside `prepare`, between the protect call and the mkdirs of a secondary slot; a no-op when the folder was read already.
-		ctx.prepare(ctx.slot, ms, gate ? gated : undefined);
-		if (gate) gated();
+		await ctx.prepare(ctx.slot, ms, gate ? gated : undefined);
+		if (gate) await gated();
 		if (read) ctx.log.line("phase", { name: "owner-gate", ms: gateMs });
 	} catch (error) {
 		throw aclRefusal(ctx, error as Error);

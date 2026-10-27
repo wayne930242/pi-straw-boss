@@ -85,19 +85,47 @@ export function secretDir(dir: string) {
 /**
  * Makes the slot's folder ready for the first file in it. On Windows the state folder is protected (owner and SYSTEM, no inheritance) first, before the lock, the placeholder record, or
  * the log is created, by two native calls and once per process; the slot's own folder (below it, for a secondary slot) then inherits that. Elsewhere it is the 700 folder.
+ * `gate` may be asynchronous (the owner read is a PowerShell start a pi session must not wait for with its event loop): then the answer is a promise that ends when the rest is done.
  */
-export function prepareSlot(slot: Slot, platform: NodeJS.Platform = process.platform, run?: RunNative, ms?: number, gate?: () => void): void {
-	if (platform === "win32") {
-		protectFolder(slot.stateDir, run, ms);
-		// The owner gate (R13-F002) comes before anything else is made in the folder, so a folder that landed foreign (a swapped temporary folder) gets not even a secondary slot's empty `servers\` in it.
-		gate?.();
+export function prepareSlot(slot: Slot, platform: NodeJS.Platform = process.platform, run?: RunNative, ms?: number, gate?: () => void | Promise<void>): void | Promise<void> {
+	if (platform !== "win32") return secretDir(slot.dir);
+	protectFolder(slot.stateDir, run, ms);
+	const rest = () => {
 		// A secondary slot's folders inherit the protected one: none of them may be a link or junction that sends what is written into them elsewhere.
 		if (!slot.primary) for (const dir of [join(slot.stateDir, "servers"), slot.dir]) {
 			mkdirSync(dir, { recursive: true });
 			refuseLink(dir);
 		}
+		secretDir(slot.dir);
+	};
+	// The owner gate (R13-F002) comes before anything else is made in the folder, so a folder that landed foreign (a swapped temporary folder) gets not even a secondary slot's empty `servers\` in it.
+	const gated = gate?.();
+	return gated ? gated.then(rest) : rest();
+}
+
+/** What `stat` answers that the uid gate reads. */
+export type UidStat = (path: string) => { uid: number };
+/**
+ * The owner gate where there is no ACL (docs/specs/2026-10-26-sb-backend.md, The control socket): a state folder, a secondary slot's folder and the record in it that another uid owns are refused before
+ * the record is read, a hello is sent, or anything is written, with the words of the Windows gate. A stat each, no process. Whatever the path leads to is judged (a link to another account's folder is
+ * that folder). A path that is not there is nothing to refuse; a stat that fails for any other reason is a refusal that says so. `uid` is null where there is no `getuid`. Returns false, as the
+ * Windows gate does when it read nothing.
+ */
+export function uidGate(slot: Slot, stat: UidStat = statSync, uid: number | null = process.getuid?.() ?? null): boolean {
+	if (uid === null) return false;
+	const paths = [...new Set([slot.stateDir, slot.dir, fileOf(slot, "record")])];
+	for (const path of paths) {
+		let owner: number;
+		try {
+			owner = stat(path).uid;
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			if (code === "ENOENT" || code === "ENOTDIR") continue;
+			throw new Error(`could not check ${slot.stateDir} before trusting or writing to it: ${(error as Error).message}`);
+		}
+		if (owner !== uid) throw new Error(`could not check ${slot.stateDir} before trusting or writing to it: the ${path === paths.at(-1) ? "file" : "folder"} ${path} belongs to another account (uid ${owner}), not to uid ${uid}. Run pi as that account, or delete the ${path === paths.at(-1) ? "file" : "folder"} ${path}, then start again.`);
 	}
-	secretDir(slot.dir);
+	return false;
 }
 
 let temps = 0;
