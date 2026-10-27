@@ -224,8 +224,8 @@ test("a boss event wakes a service the loop held, and Retry does too", async () 
 });
 
 test("a run past the steer time is told to wrap up, past the cap it is told to quit, and a pi that stays gets Escape and /quit, then SIGTERM from a PID read from Herdr", async () => {
-	// A wide window between the steer and the quit: under load a watcher tick can miss a 150 ms one (B5 review F013).
-	world.runTimers = { steerAt: 150, quitAt: 1500, quitGrace: 60, signal: 60 };
+	// A wide window between the steer and the quit: under load (a load average of 70 was seen) a watcher tick can come seconds late, and the steer is skipped when the first tick that sees the run is already past the cap (B5 review F013).
+	world.runTimers = { steerAt: 150, quitAt: 6000, quitGrace: 60, signal: 60 };
 	const { s } = await setup();
 	tower().incoming(from, msg("m1", "slow"));
 	const id = await nthRun();
