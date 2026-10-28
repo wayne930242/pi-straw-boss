@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { lstatSync } from "node:fs";
 import { basename } from "node:path";
 import { fieldsOf } from "../header.ts";
 import { type HerdrRun, panes, report, result, type Sleep, startPi } from "../herdr.ts";
@@ -171,6 +172,15 @@ export interface ServiceRef {
 	memory?(): MemorySummary;
 }
 
+/** Whether anything is at `file` yet (pi writes a new session's file at its first assistant message). */
+const onDisk = (file: string) => {
+	try {
+		lstatSync(file);
+		return true;
+	} catch {
+		return false;
+	}
+};
 interface Active {
 	rec: RunRecord;
 	svc: Svc;
@@ -212,6 +222,8 @@ interface Active {
 	graceUntil?: number;
 	/** A boss conversation: the boss turns its session has had (the pointer's, and this run's). */
 	turns?: number;
+	/** A conversation's session file the run reported before pi wrote it (pi creates a new session's file at its first assistant message): kept as the boss session once it is on disk (`settlePointer`). */
+	pendingFile?: string;
 	/** A boss conversation ended at its hard cap (the wrap-up note says so). */
 	capped?: boolean;
 	/** The boss asked for a new session (`/new`) while this conversation had not reported its file yet: the pointer is marked when it does. */
@@ -651,6 +663,7 @@ export function createRuns(o: RunsOptions) {
 	/** Ends a run in the records: its events, its note, the crash rules, and the service goes back to standing (the next wake comes 1 s later). */
 	async function finish(a: Active, outcome: Outcome, detail?: string, keepTaken = false) {
 		if (a.ended) return;
+		settlePointer(a);
 		a.ended = true;
 		const svc = a.svc, ws = svc.ref.workspace;
 		a.rec.outcome = outcome;
@@ -960,6 +973,7 @@ export function createRuns(o: RunsOptions) {
 		const a = of(req.token);
 		if (!a || a.ended) return unknown;
 		a.lastPoll = now();
+		settlePointer(a);
 		// The run is up and asking: what its brief showed as expired is shown (a run that never gets here shows it again to the next).
 		// Marking them shown moves the memory, which is the brief's own doing: the run has that brief already.
 		if (a.expired) (a.svc.ref.shown?.(a.expired), (a.expired = undefined), (a.briefV = a.svc.ref.briefVersion?.() ?? a.briefV));
@@ -1033,6 +1047,7 @@ export function createRuns(o: RunsOptions) {
 	/** The boss wrote in a conversation: its turn count and the pointer's `lastAt` move (the pointer is the run's own once its file is reported). */
 	function bossTurn(a: Active) {
 		if (!a.rec.conversation) return;
+		settlePointer(a);
 		a.turns = (a.turns ?? 0) + 1;
 		try {
 			const was = readPointer(slot, a.rec.workspace);
@@ -1044,9 +1059,16 @@ export function createRuns(o: RunsOptions) {
 		const path = underRoot(file, o.sessions ?? sessionsRoot());
 		if (!path) return error("conversation", `${a.rec.id}: the session file is not under pi's sessions folder, so it is not kept as the boss session`);
 		const was = readPointer(slot, a.rec.workspace), same = was?.file === path;
-		const next: BossPointer = { file: path, run: a.rec.id, startedAt: same ? was!.startedAt : iso(now()), lastAt: iso(now()), turns: same ? Math.max(a.turns ?? 0, was!.turns) : 0, ...(a.fresh ? { fresh: true as const } : {}) };
+		const next: BossPointer = { file: path, run: a.rec.id, startedAt: same ? was!.startedAt : iso(now()), lastAt: iso(now()), turns: same ? Math.max(a.turns ?? 0, was!.turns) : a.rec.conversation?.resumed ? 0 : a.turns ?? 0, ...(a.fresh ? { fresh: true as const } : {}) };
 		a.turns = next.turns;
 		try { writePointer(slot, a.rec.workspace, next); } catch (cause) { error("conversation", (cause as Error).message); }
+	}
+	/** A reported session file that was not on disk yet is kept as the boss session once it is (every check of `keepPointer` then applies); a file that never appears is no pointer and no error. */
+	function settlePointer(a: Active) {
+		const file = a.pendingFile;
+		if (file === undefined || !onDisk(file)) return;
+		a.pendingFile = undefined;
+		keepPointer(a, file);
 	}
 	/** The boss asked for a new session: the pointer says so, so the next conversation does not resume. */
 	function markFresh(workspace: string) {
@@ -1064,6 +1086,7 @@ export function createRuns(o: RunsOptions) {
 		const a = of(req.token);
 		if (!a || a.ended) return unknown;
 		if (a.rec.kind !== "local") return { ok: false as const, error: "an ally run has no boss in it" };
+		settlePointer(a);
 		if (bossOver(a)) return { ok: true as const };
 		a.boss = now();
 		a.bossSince ??= a.boss;
@@ -1081,7 +1104,8 @@ export function createRuns(o: RunsOptions) {
 		const a = of(req.token);
 		if (!a || a.ended) return unknown;
 		// `/new` in a conversation's pi starts the boss over: the next conversation is a new session.
-		if (a.rec.conversation && req.reason === "new") a.rec.file ? markFresh(a.rec.workspace) : (a.fresh = true);
+		// A file pi has not written yet is not the pointer's: the earlier boss session is marked too, and the new one when it is kept.
+		if (a.rec.conversation && req.reason === "new") a.rec.file && !a.pendingFile ? markFresh(a.rec.workspace) : (a.fresh = true, markFresh(a.rec.workspace));
 		a.pending = "quit";
 		await finish(a, "quit", phrase(req.reason, 60) || "the session was replaced");
 		return { ok: true as const };
@@ -1117,7 +1141,7 @@ export function createRuns(o: RunsOptions) {
 		for (const rec of listRuns(slot, ws).filter((r) => !r.outcome)) {
 			// A run of a server that went away: it has `lost` to reconnect with its run id; until then it is the service's run.
 			// A conversation of the last server is still the boss's: its time counts from its start (the boss's presence is memory only, and their next word tells it again).
-			const a: Active = { rec, svc, commands: [], lastPoll: now(), started: Date.parse(rec.startedAt) || now(), digestKeys: [], offered: new Map(), recovering: now(), ...(rec.left ? { left: true, pending: "quit" as Outcome } : {}), ...(rec.conversation ? { boss: now(), bossSince: Date.parse(rec.startedAt) || now(), turns: ((p) => (p?.run === rec.id ? p.turns : rec.conversation!.turns))(readPointer(slot, ws)) } : {}) };
+			const a: Active = { rec, svc, commands: [], lastPoll: now(), started: Date.parse(rec.startedAt) || now(), digestKeys: [], offered: new Map(), recovering: now(), ...(rec.left ? { left: true, pending: "quit" as Outcome } : {}), ...(rec.conversation ? { boss: now(), bossSince: Date.parse(rec.startedAt) || now(), turns: ((p) => (p?.run === rec.id ? p.turns : rec.conversation!.turns))(readPointer(slot, ws)), ...(rec.file && readPointer(slot, ws)?.run !== rec.id ? { pendingFile: rec.file } : {}) } : {}) };
 			if (rec.kind === "ally" && rec.device) svc.allies.set(rec.device, a);
 			else {
 				svc.run = svc.run ?? a;
@@ -1334,7 +1358,10 @@ export function createRuns(o: RunsOptions) {
 			if (!a || typeof file !== "string" || file.length > 4096) return;
 			if (a.rec.kind === "ally" && !(typeof session === "string" && /^[\w-]{1,128}$/.test(session) && basename(file).endsWith(`_${session}.jsonl`))) return;
 			a.rec.file = file;
-			if (a.rec.conversation && a.rec.kind === "local") keepPointer(a, file);
+			if (a.rec.conversation && a.rec.kind === "local") {
+				a.pendingFile = onDisk(file) ? undefined : file;
+				if (a.pendingFile === undefined) keepPointer(a, file);
+			}
 			writeRun(slot, a.rec);
 		},
 		/**

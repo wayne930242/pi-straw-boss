@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import { readPointer } from "../src/server/bossconv.ts";
+import { fileOf } from "../src/server/record.ts";
 import { readQueue } from "../src/server/towerstore.ts";
 import { callControl } from "../src/server/socket.ts";
 import { readRun } from "../src/server/towerrunstore.ts";
@@ -103,4 +105,34 @@ test("an ally run: a teammate's message wakes a run in its own pane; the run cla
 	assert.deepEqual(world.ally.takenIds, ["m1"]);
 	assert.ok(world.herdr.closed.includes(pane));
 	assert.equal(readRun(world.slot, "wA", id)?.kind, "ally");
+});
+
+test("a boss conversation of a real pi session: pi writes the new session's file only at its first assistant message, yet it becomes the boss session, and after /quit the next conversation resumes that file", async () => {
+	const s: Running = await world.start({ gui: { bundle, tailscale: noTailscale, link: noLink, bindWaitMs: 200 } });
+	await s.handle.ready;
+	const serverAsk = (r: Request): Promise<Answer> => callControl(s.handle.endpoint, world.record()!.secret, r as { cmd: string }).then((x) => x.reply as Answer);
+	await serverAsk({ cmd: "ensure-tower", workspace: "wA" });
+	assert.equal((await serverAsk({ cmd: "tower-event", workspace: "wA", text: "hello boss", present: true })).ok, true);
+	await until(() => world.pis.size === 1, "the conversation's pi");
+	const [id, pi] = [...world.pis.entries()][0]!;
+	let token = "";
+	const ask = (r: Request) => (r.cmd === "claim" ? serverAsk({ ...r, pane: pi.pane, pid: pi.pid, started: `T-${pi.pid}` }).then((a) => ((token = String(a.token)), a)) : serverAsk(r));
+	const sessionDir = join(world.env.PI_CODING_AGENT_DIR!, "sessions", "--proj--");
+	const r = await makeRig(root, ask, sessions, { flag: id, sessionDir });
+	const onDiskAtTheModel: boolean[] = [];
+	r.faux.setResponses([((_context: unknown) => (onDiskAtTheModel.push(existsSync(sessionDir) && readdirSync(sessionDir).length > 0), fauxAssistantMessage("hello"))) as never]);
+	await until(() => readPointer(world.slot, "wA") !== undefined, "the boss session to be kept once pi has written it");
+	assert.deepEqual(onDiskAtTheModel, [false], "pi had not written the file when the model was asked");
+	const file = r.session.sessionManager.getSessionFile()!;
+	assert.ok(existsSync(file));
+	assert.equal(readPointer(world.slot, "wA")!.file, realpathSync(file));
+	assert.doesNotMatch(readFileSync(fileOf(world.slot, "log"), "utf8"), /error code=conversation/);
+	// /quit: the extension tells the server the boss left; pi is gone.
+	assert.equal((await serverAsk({ cmd: "run-done", token, left: true })).ok, true);
+	world.live.delete(pi.pid);
+	await until(() => readRun(world.slot, "wA", id)?.outcome === "done", "the conversation to end as done");
+	assert.equal((await serverAsk({ cmd: "tower-event", workspace: "wA", text: "again", present: true })).ok, true);
+	await until(() => world.pis.size === 2, "the second conversation's pi");
+	const args = [...world.pis.values()][1]!.args;
+	assert.equal(args[args.indexOf("--session") + 1], realpathSync(file), "the next conversation resumes the same file");
 });

@@ -16,7 +16,7 @@ export type Answer = { ok: boolean; [key: string]: unknown };
 /** The scratch folder of one rig: made by `scratchRoot()`, removed by the caller with `rmSync`. */
 export const scratchRoot = () => realpathSync(mkdtempSync(join(tmpdir(), "psb-run-session-")));
 
-export async function rig(root: string, ask: (request: Request) => Promise<Answer>, sessions: AgentSession[], { flag = "RUN", herdr, glyphWaitMs = 300, lostMs = 300, gateMs = 60 }: { flag?: string | null; herdr?: (args: string[]) => Promise<string>; glyphWaitMs?: number; lostMs?: number; gateMs?: number } = {}) {
+export async function rig(root: string, ask: (request: Request) => Promise<Answer>, sessions: AgentSession[], { flag = "RUN", herdr, glyphWaitMs = 300, lostMs = 300, gateMs = 60, sessionDir }: { flag?: string | null; herdr?: (args: string[]) => Promise<string>; glyphWaitMs?: number; lostMs?: number; gateMs?: number; /** Keep the session in a file of this folder, as pi does (its file appears at the first assistant message); in memory by default. */ sessionDir?: string } = {}) {
 	const agentDir = join(root, "agent"), project = join(root, "project");
 	mkdirSync(agentDir, { recursive: true });
 	mkdirSync(project, { recursive: true });
@@ -42,7 +42,7 @@ export async function rig(root: string, ask: (request: Request) => Promise<Answe
 	await loader.reload();
 	if (flag !== null) loader.getExtensions().runtime.flagValues.set("sb-run", flag);
 	const { session } = await createAgentSession({
-		cwd: project, agentDir, modelRuntime: runtime, model: runtime.getModel("faux", "faux-1")!, resourceLoader: loader, sessionManager: SessionManager.inMemory(),
+		cwd: project, agentDir, modelRuntime: runtime, model: runtime.getModel("faux", "faux-1")!, resourceLoader: loader, sessionManager: sessionDir ? SessionManager.create(project, sessionDir) : SessionManager.inMemory(),
 		settingsManager: SettingsManager.inMemory({}),
 	} as never);
 	sessions.push(session);

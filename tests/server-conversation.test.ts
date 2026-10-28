@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { BOSS_FILE_MAX, readPointer, resumable, type BossPointer, writePointer } from "../src/server/bossconv.ts";
 import { addText, updateMemory } from "../src/server/towermemory.ts";
 import { readNotes, readRun } from "../src/server/towerrunstore.ts";
+import { fileOf } from "../src/server/record.ts";
 import { callControl } from "../src/server/socket.ts";
 import { towerPanel } from "../src/server/towerpanel.ts";
 import { type Running, sleep, until } from "./server-world.ts";
@@ -530,4 +531,85 @@ test("an event run the boss spoke in before the last conversation turn is not na
 	await quit(s, third);
 	const fourth = await conversation(s, 4, file, "and again");
 	assert.doesNotMatch(fourth.brief, /the boss spoke in this run|olderrunnote/, "after the boss talked again it is old news");
+});
+
+// pi writes a new session's file at its first assistant message, but the extension reports `run-file` at session_start: the file is not on disk when the server first hears of it (Windows VM pass, b6 T4).
+const logText = () => readFileSync(fileOf(world.slot, "log"), "utf8");
+const noPointer = () => !existsSync(join(world.slot.dir, "tower", "wA", "boss-session.json"));
+/** A conversation run claimed, its boss event taken, its session file reported before it is on disk. */
+const unwritten = async (s: Running, name: string) => {
+	assert.equal((await ask(s, { cmd: "tower-event", workspace: "wA", text: "hello", present: true })).ok, true);
+	const id = await nthRun(1);
+	const { token } = await claimRun(s, id);
+	const file = join(sessions(), name);
+	await ask(s, { cmd: "run-file", token, file });
+	await drain(s, token);
+	assert.ok(!existsSync(file), "pi has not written it yet");
+	return { id, token, file };
+};
+const write = (file: string, bytes = 200) => (mkdirSync(sessions(), { recursive: true }), writeFileSync(file, "x".repeat(bytes)));
+
+test("a new conversation's session file that pi writes after run-file becomes the boss session at the run's next poll, with the turns already taken; a missing file is no error; /quit then the next present event resumes that file", async () => {
+	const s = await setup();
+	const run = await unwritten(s, "2026-10-28_late.jsonl");
+	assert.equal(noPointer(), true, "nothing to keep yet");
+	assert.doesNotMatch(logText(), /error code=conversation/, "a file not on disk yet is not an error");
+	write(run.file);
+	assert.equal((await poll(s, run.token, false)).ok, true);
+	const pointer = readPointer(world.slot, "wA")!;
+	assert.equal(pointer.file, realpathSync(run.file));
+	assert.equal(pointer.run, run.id);
+	assert.equal(pointer.turns, 1, "the boss event taken before the file existed still counts");
+	await quit(s, run);
+	const second = await conversation(s, 2, run.file, "again");
+	const args = argsOf(second.id);
+	assert.equal(args[args.indexOf("--session") + 1], realpathSync(run.file), "the next conversation resumes the same file");
+	assert.deepEqual(readRun(world.slot, "wA", second.id)?.conversation?.resumed, true);
+});
+
+test("the deferred file is kept at the boss's next word (run-boss) too, and at the run's end when pi wrote it only then", async () => {
+	const s = await setup();
+	const run = await unwritten(s, "2026-10-28_word.jsonl");
+	write(run.file);
+	assert.equal((await ask(s, { cmd: "run-boss", token: run.token })).ok, true);
+	assert.equal(readPointer(world.slot, "wA")?.file, realpathSync(run.file));
+	assert.equal(readPointer(world.slot, "wA")?.turns, 2, "the boss word is the second turn");
+	await quit(s, run);
+});
+
+test("a deferred file is kept at the run's end when it appeared after the last poll", async () => {
+	const s = await setup();
+	const run = await unwritten(s, "2026-10-28_end.jsonl");
+	write(run.file);
+	await quit(s, run);
+	assert.equal(readPointer(world.slot, "wA")?.file, realpathSync(run.file), "the quit settles it");
+});
+
+test("the deferred path keeps every guard: a file that shows up outside the sessions folder, as a link to one, or that is not a .jsonl is not kept, and says so; a file that never shows up leaves no pointer and no error", async () => {
+	const s = await setup();
+	const outsideRun = async (file: string, make: (file: string) => void) => {
+		const n = world.pis.size + 1;
+		assert.equal((await ask(s, { cmd: "tower-event", workspace: "wA", text: "hello", present: true })).ok, true);
+		const id = await nthRun(n);
+		const { token } = await claimRun(s, id);
+		assert.equal((await ask(s, { cmd: "run-file", token, file })).ok, true);
+		await drain(s, token);
+		make(file);
+		await poll(s, token, false);
+		assert.equal(noPointer(), true, `${file} is not kept`);
+		await quit(s, { id, token });
+		assert.equal(noPointer(), true);
+	};
+	const before = () => (logText().match(/error code=conversation/g) ?? []).length;
+	const gone = join(world.root, "elsewhere.jsonl");
+	await outsideRun(gone, (f) => writeFileSync(f, "x"));
+	assert.equal(before(), 1, "outside the folder: refused with the error");
+	const target = join(world.root, "target.jsonl");
+	writeFileSync(target, "x");
+	await outsideRun(join(sessions(), "link.jsonl"), (f) => (mkdirSync(sessions(), { recursive: true }), symlinkSync(target, f)));
+	assert.equal(before(), 2, "a link out of the folder: refused with the error");
+	await outsideRun(join(sessions(), "not-a-session.txt"), (f) => write(f));
+	assert.equal(before(), 3, "not a .jsonl: refused with the error");
+	await outsideRun(join(sessions(), "never.jsonl"), () => {});
+	assert.equal(before(), 3, "a file that never appears is no error");
 });
