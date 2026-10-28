@@ -178,7 +178,7 @@ test("the handoff carries a header, tells the main to report to the sender and t
 	const { towerA } = await opened();
 	const [handoff] = heard().filter((h) => h.to === NEW.main);
 	assert.match(handoff!.line, /^\[straw net from="tower · tower-wA" id=tower-wA role=tower head=yes workspace=Alpha kind=handoff scope=main to="main · wA \(main of Alpha\)" reply=expected\]/);
-	assert.match(handoff!.body, /report the outcome with intercom send to both: the sender and the tower that opened this tab\. Then wait; the tower closes this tab after your done report/);
+	assert.match(handoff!.body, /report the outcome to the sender with intercom send and to the tower that opened this tab with call_tower \(why: milestone, reply: false\)\. Then wait; the tower closes this tab after your done report/);
 	assert.match(handoff!.body, /Sender: api-main \(session id a1\)\nTower: tower · tower-wA \(session id tower-wA\)\nRequest, verbatim:\nFix the export button\.$/);
 	assert.match(towerA.sent.length ? "" : "ok", /ok/);
 });
@@ -257,7 +257,7 @@ test("a main that does not answer the control channel (an older pi-straw-boss) l
 test("the tower prompt teaches tower_list, tower_send without a second send, reporting back once, and closing opened mains; the main prompt reports to its tower", () => {
 	const tower = readFileSync(`${PROMPT_DIR}/tower.md`, "utf8"), main = readFileSync(`${PROMPT_DIR}/main.md`, "utf8");
 	for (const term of ["tower_list", "tower_send", "already names", "report back once", "boss_close_main", "awaits a boss decision"]) assert.ok(tower.includes(term), `tower.md names ${term}`);
-	assert.match(main, /If a tower opened your tab, report the outcome to the sender and to that tower/);
+	assert.match(main, /If a tower opened your tab, report the outcome to the sender, and to that tower with `call_tower`/);
 });
 
 const asks = () => world.broker.published.filter((p) => (p.payload as { type?: string }).type === "close-main").length;

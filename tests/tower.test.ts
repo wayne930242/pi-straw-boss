@@ -385,20 +385,3 @@ test("D19: a call_tower without why (an older caller, a run's tool) is sent with
 	await assert.rejects(a.tool("call_tower", { message: "x", why: "progress" }), /why/);
 	assert.equal(world.broker.delivered.length, 1, "nothing went out for the refused word");
 });
-
-test("D19: the 4th milestone call from one session within 10 minutes is sent and its answer says routine progress belongs on the board; the window slides, and other reasons do not count", async () => {
-	const tower = world.tower("tower-wA", "wA:t7", "wA:p7");
-	await tower.start();
-	let clock = 1_000_000;
-	const a = world.agent({ id: "main-1", pane: "wA:p1", tab: "wA:t1", deps: { now: () => clock } });
-	await a.start();
-	await a.promote();
-	const call = async (why: string) => textOf(await a.tool("call_tower", { message: `m ${why}`, why, reply: false }));
-	const hint = /Routine progress belongs on your board/;
-	for (const [i, why] of ["milestone", "shared", "milestone", "blocked", "milestone"].entries()) assert.doesNotMatch(await call(why), hint, `call ${i + 1}`);
-	clock += 1000;
-	assert.match(await call("milestone"), hint, "the 4th milestone within 10 minutes (the shared and blocked calls do not count)");
-	assert.equal(world.broker.delivered.length, 6, "every call was sent, the 4th included");
-	clock += 11 * 60_000;
-	assert.doesNotMatch(await call("milestone"), hint, "10 minutes later the count starts again");
-});

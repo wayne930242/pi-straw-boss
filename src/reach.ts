@@ -19,8 +19,6 @@ const OUTBOX_RESULT = "intercom:outbox-result";
 const SEND_MS = 30_000;
 /** When a failed send to a tower identity is tried again, counted from the first failure, and how often the identity is looked for meanwhile. */
 const TOWER_RETRY_AT = [2000, 5000, 10_000, 20_000], TOWER_POLL_MS = 500;
-/** The soft guard on `milestone` calls (D19): past this many within the window, the answer tells the main its routine progress belongs on the board. Nothing is refused. */
-const MILESTONE_FREE = 3, MILESTONE_WINDOW_MS = 10 * 60_000;
 
 /** Live sessions whose pane carries an `sb_role` token: the sessions that joined the net, and towers. */
 export function netMembers(sessions: Session[], ps: Pane[]) {
@@ -170,8 +168,6 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit, server:
 		const [result] = await deliver([net.sessions.find((x) => x.id === to) ?? { id: to }], message, kind, scope, reply, net, origin, why);
 		return result!;
 	};
-	/** When this session's `milestone` calls went out, for the soft guard: the 4th within 10 minutes still goes, with a word about the board. */
-	const milestones: number[] = [];
 	/**
 	 * `why` (D19) is milestone, shared, or blocked; a caller that gives none is sent as `unspecified`, which the tower wakes for as it does for `blocked`. A word outside the set is refused before anything is sent.
 	 */
@@ -182,13 +178,7 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit, server:
 		const result = await post(tower.id, message, "call_tower", "tower", reply, undefined, reason);
 		if (result.status !== "sent") throw new Error(`The tower of ${tower.target.label} did not take the message: ${result.status} ${result.code ?? ""} ${result.detail ?? ""}`.trim());
 		const via = tower.routed ? ` (${tower.routed.label} is a sub workspace)` : "";
-		let board = "";
-		if (reason === "milestone") {
-			const at = cfg.now();
-			milestones.splice(0, milestones.length, ...milestones.filter((t) => at - t < MILESTONE_WINDOW_MS), at);
-			if (milestones.length > MILESTONE_FREE) board = " Routine progress belongs on your board, not in a call to the tower.";
-		}
-		const text = `Sent to the tower of ${tower.target.label}${via}${tower.opened ? " (opened it)" : ""}. ${reply ? "It replies through intercom." : "It is told no reply is expected."}${board}`;
+		const text = `Sent to the tower of ${tower.target.label}${via}${tower.opened ? " (opened it)" : ""}. ${reply ? "It replies through intercom." : "It is told no reply is expected."}`;
 		return { text, details: { workspace: tower.target.workspace_id, towerId: tower.id, opened: tower.opened, status: result.status } };
 	};
 

@@ -68,6 +68,8 @@ test("D19: milestones that finish together land in one run, and a later one does
 	tower().incoming(from, call("m1", "api landed", "milestone", false));
 	await sleep(200);
 	tower().incoming({ id: "main-2", name: "web-main" }, call("m2", "web landed", "milestone", false));
+	// The hold ends 600 ms after m1, so 400 ms after m2; counted from m2 it would end at 600 ms.
+	await until(() => world.pis.size >= 1, "the run at the first milestone's hold, not the second's", 520);
 	const id = await nthRun();
 	await sleep(150);
 	assert.equal(world.pis.size, 1);
@@ -87,6 +89,7 @@ test("D19: a shared or blocked call wakes at the short wait and takes the held m
 			await sleep(150);
 			assert.equal(world.pis.size, 0, "held");
 			tower().incoming({ id: "main-2", name: "web-main" }, call("m2", `${why} now`, why, true));
+			await until(() => world.pis.size >= 1, `a run at the short wait, not the hold (3000 ms), after ${why}`, 1000);
 			const id = await nthRun();
 			assert.deepEqual(await drain(s, await claimed(s, id)), ["api landed", `${why} now`]);
 		} finally {

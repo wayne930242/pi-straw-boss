@@ -29,7 +29,10 @@ export const linkRequestParameters = () => Type.Object({
 });
 
 /** The tools the agent calls: what a joined session has (status, call_tower, broadcast, rename, promote), and the tower's boss_open_main. */
-export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { post, callTower, status, broadcast, towerList, towerSend, read, promote, digest, closeMain, link, server }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend" | "read"> & Pick<Membership, "promote"> & { digest: Digest; closeMain: CloseMain; link: Link; server?: ServerLook }) {
+export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { post, callTower, status, broadcast, towerList, towerSend, read, promote, digest, closeMain, link, server, towerCall }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend" | "read"> & Pick<Membership, "promote"> & { digest: Digest; closeMain: CloseMain; link: Link; server?: ServerLook; towerCall?: boolean }) {
+	// A main says why it calls (required); a tower's call is a blocked one, so it may leave it out and the header says unspecified.
+	const whyType = Type.Union([Type.Literal("milestone"), Type.Literal("shared"), Type.Literal("blocked")], { description: "Why you call: milestone, shared, or blocked. The tower reads it in the header." });
+	const whyField = towerCall || role() === "tower" ? Type.Optional(whyType) : whyType;
 	const tool = <P extends TSchema>(name: string, description: string, parameters: P, body: (params: Static<P>) => Promise<{ text: string; details?: unknown }>) =>
 		pi.registerTool({
 			name, label: name, description, parameters,
@@ -44,10 +47,10 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { post, callT
 				const result = await status();
 				return { text: JSON.stringify(result, null, 2), details: result };
 			});
-			tool("call_tower", "Send a message to the tower of your workspace, or of another workspace by id or exact label. Opens the tower tab when none is running. Call it at three points only, and say which with why: milestone (a task landed, a deliverable is ready, or what the tower asked is done; send it with reply false unless you need an answer), shared (before you touch anything outside your tab: a port, database, shared branch, deploy target, another app's checkout, a running service; say what and for how long, then wait for the answer), blocked (you wait on someone outside your tab, or on a decision your authorizations do not cover). Routine progress goes on your work board, never in a call. The message goes out under a header the code writes (your name, role, and workspace, the recipient, whether you expect a reply, and why). A tower replies through intercom unless you say reply is false.",
+			tool("call_tower", "Send a message to the tower of your workspace, or of another workspace by id or exact label. Opens the tower tab when none is running. why: milestone (something landed; reply false unless you need an answer), shared (before you change something outside your tab; wait for the answer), or blocked (you wait on someone outside your tab). Routine progress goes on your work board, not here. The message goes out under a header the code writes (your name, role, and workspace, the recipient, whether you expect a reply, and why). A tower replies through intercom unless you say reply is false.",
 				Type.Object({
 					message: Type.String({ description: "What the tower needs to know or do: at most two sentences, details by reference." }),
-					why: Type.Union([Type.Literal("milestone"), Type.Literal("shared"), Type.Literal("blocked")], { description: "Why you call: milestone, shared, or blocked. The tower reads it in the header." }),
+					why: whyField,
 					workspace: Type.Optional(Type.String({ description: "Another workspace's id or exact label. Omit for your own." })),
 					reply: Type.Optional(Type.Boolean({ description: "Whether you wait for the tower's answer. Default true; false for a milestone or a notice." })),
 				}),
