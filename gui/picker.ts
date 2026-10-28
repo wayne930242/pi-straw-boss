@@ -9,6 +9,9 @@ import { post } from "./post.ts";
 // window shows the last column only, with the breadcrumb and shortcuts to go up (style.css).
 
 const KEYS = new Set<string>(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter"]);
+/** The desk shell's native folder dialog (desk-mode spec S10): its preload exposes it as `globalThis.strawBossDesk.pickFolder`; a browser has none. */
+type PickFolder = (options: { defaultPath?: string; title?: string }) => Promise<string | null>;
+const nativePick = (): PickFolder | undefined => ((hook) => (typeof hook === "function" ? (hook as PickFolder) : undefined))((globalThis as { strawBossDesk?: { pickFolder?: unknown } }).strawBossDesk?.pickFolder);
 interface Places { home: string; places: { name: string; path: string }[]; recent: string[] }
 const refusal = (r: { status: number; body: { reason?: string } }) => new Error(r.body.reason ?? m.refused({ status: r.status }));
 
@@ -25,6 +28,7 @@ export function folderPicker(start: Record<string, unknown>, changed: (path: str
 		},
 	});
 	const back = h("button", { type: "button", class: "later", "aria-label": m.picker_back(), title: m.picker_back() }, "←"), forward = h("button", { type: "button", class: "later", "aria-label": m.picker_forward(), title: m.picker_forward() }, "→");
+	const native = nativePick(), choose = native && h("button", { type: "button", class: "later" }, m.picker_choose());
 	const crumbs = h("nav", { class: "picker-crumbs", "aria-label": m.picker_path() }), make = h("button", { type: "button", class: "later" }, `＋ ${m.new_folder()}`);
 	const made = h("input", { type: "text", maxlength: "255", placeholder: m.new_folder_name(), "aria-label": m.new_folder_name() }) as HTMLInputElement;
 	const places = h("div", { class: "picker-places", role: "group", "aria-label": m.picker_places() }), cols = h("div", { class: "picker-cols", tabindex: "0", role: "group", "aria-label": m.picker_label() });
@@ -73,6 +77,8 @@ export function folderPicker(start: Record<string, unknown>, changed: (path: str
 		});
 	};
 	make.onclick = create;
+	// The folder the dialog returns is listed through the same call as a click on a breadcrumb, so the server judges it (home only, nothing hidden) and a refusal shows in the note; a cancelled dialog (null) changes nothing.
+	if (choose) choose.onclick = () => void native!({ defaultPath: picker.state().path, title: m.picker_choose_title() }).then((path) => (path ? picker.go(path) : undefined), (error: Error) => void (note.textContent = error.message));
 	made.addEventListener("keydown", (event) => event.key === "Enter" && (event.preventDefault(), create()));
 	made.addEventListener("keydown", (event) => event.key === "Escape" && made.value === "" && !made.hidden && (event.stopPropagation(), (made.hidden = true), cols.focus()));
 	cols.addEventListener("keydown", (event) => {
@@ -91,5 +97,5 @@ export function folderPicker(start: Record<string, unknown>, changed: (path: str
 		places.replaceChildren(button(m.picker_home(), found.home), ...(["Desktop", "Documents"] as const).flatMap((n) => ((p) => (p ? [button(n === "Desktop" ? m.picker_desktop() : m.picker_documents(), p.path)] : []))(named(n))), ...(found.recent.length ? [h("b", null, m.picker_recent()), ...found.recent.map((path) => button(path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1), path))] : []));
 	}, () => {});
 	void picker.start();
-	return { picker, el: h("div", { class: "picker" }, h("div", { class: "picker-bar" }, back, forward, crumbs, make), made, h("div", { class: "picker-body" }, places, cols), h("p", { class: "spawn-at" }, m.folder_here(), " ", where), note) };
+	return { picker, el: h("div", { class: "picker" }, h("div", { class: "picker-bar" }, back, forward, crumbs, make, choose), made, h("div", { class: "picker-body" }, places, cols), h("p", { class: "spawn-at" }, m.folder_here(), " ", where), note) };
 }

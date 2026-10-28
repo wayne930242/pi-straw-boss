@@ -466,6 +466,8 @@
 	"deploy_ready": "Unit ready",
 	"new_folder": "New folder",
 	"new_folder_name": "Name of the new folder",
+	"picker_choose": "Choose…",
+	"picker_choose_title": "Choose a folder",
 	"picker_back": "Back",
 	"picker_forward": "Forward",
 	"picker_path": "Path",
