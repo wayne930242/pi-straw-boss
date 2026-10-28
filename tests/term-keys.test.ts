@@ -18,6 +18,10 @@ class El {
 	hidden = false;
 	disabled = false;
 	value = "";
+	caret = -1;
+	setSelectionRange(a: number) {
+		this.caret = a;
+	}
 	title = "";
 	onclick: ((e: { isTrusted: boolean }) => void) | null = null;
 	constructor(tag: string) {
@@ -159,7 +163,7 @@ test("text from a soft keyboard goes to the keys route as text, and the text box
 	kb.fire("click");
 	sink.value = "ls";
 	sink.fire("input", { inputType: "insertText" });
-	assert.equal(sink.value, "");
+	assert.equal(sink.value, "\u200b", "only the sentinel stays");
 	await gap();
 	assert.deepEqual(sent, [{ text: "ls", stream: "st" }]);
 });
@@ -198,6 +202,31 @@ test("Backspace and Enter from a soft keyboard (a beforeinput; its keydown has n
 	assert.ok(real.defaultPrevented, "a real Backspace keydown is the pane's, and the browser then sends no beforeinput for it");
 	await gap();
 	assert.deepEqual(sent, [{ key: "backspace", stream: "st" }]);
+});
+
+test("an open box keeps a sentinel, so Backspace on an empty box is a deletion that sends one backspace, and the sentinel is never typed", async () => {
+	fine.on = false;
+	const { sink, kb, sent } = world();
+	kb.fire("click");
+	assert.equal(sink.value, "\u200b");
+	assert.equal(sink.caret, 1);
+	sink.fire("beforeinput", { inputType: "deleteContentBackward" });
+	await gap();
+	assert.deepEqual(sent, [{ key: "backspace", stream: "st" }]);
+	assert.equal(sink.value, "\u200b");
+	sink.value = "\u200bhi\u200b";
+	sink.fire("input", { inputType: "insertText" });
+	await gap();
+	assert.deepEqual(sent.at(-1), { text: "hi", stream: "st" });
+	sink.value = "\u200b";
+	sink.fire("input", { inputType: "insertText" });
+	await gap();
+	assert.equal(sent.length, 2, "an empty box sends no text");
+	sink.value = "\u200bq";
+	sink.fire("beforeinput", { inputType: "deleteContentBackward" });
+	assert.equal(sent.length, 2, "a box with typed text deletes it itself");
+	kb.fire("click");
+	assert.equal(sink.value, "");
 });
 
 test("the keyboard has the pad's refusals: a standing or read-only unit's 409 shows in the pad, and nothing is sent while the mirror is off", async () => {

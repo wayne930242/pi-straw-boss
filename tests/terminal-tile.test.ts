@@ -13,6 +13,13 @@ class El {
 	classes = new Set<string>();
 	classList = { toggle: (c: string, on?: boolean) => ((on ?? !this.classes.has(c)) ? this.classes.add(c) : this.classes.delete(c)), contains: (c: string) => this.classes.has(c), remove: (c: string) => this.classes.delete(c) };
 	onclick: (() => void) | null = null;
+	value = "";
+	addEventListener() {}
+	focus() {}
+	blur() {}
+	getBoundingClientRect() {
+		return { left: 0, bottom: 0 };
+	}
 	scrollTop = 0;
 	scrollHeight = 0;
 	clientWidth = 400;

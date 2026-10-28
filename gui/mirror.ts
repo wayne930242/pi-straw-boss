@@ -11,6 +11,7 @@ import type { Answer } from "./post.ts";
 // Keyboard button that focuses it (a second tap, or the tile closing, blurs it); on a desktop a click into the mirror focuses it too.
 
 export interface Span { text: string; cls: string; fg?: string; bg?: string }
+const SENTINEL = "\u200b";
 export interface Frame { key: string; seq?: number; rows?: number; cols?: number; whole?: boolean; set?: [number, string][]; hidden?: boolean; ended?: string }
 export type Post = (action: "mirror" | "keys", body: Record<string, unknown>) => Promise<Answer>;
 type Color = number | string | undefined; // a palette index (0–15), an rgb() colour, or the terminal's own
@@ -118,7 +119,10 @@ export function mountTerminals({ tiles, post, stream, pad }: { tiles: { open(til
 		// is "Unidentified", keyCode 229) but a beforeinput that names it, so that is read too, once: a keydown the pad took never reaches beforeinput.
 		// A composition goes as one write when it ends. The mirror lights up as it takes the keyboard and flashes with each key.
 		{
-			const { sink } = t, flush = () => ((typed) => ((sink.value = ""), typed && t.pad?.text?.(typed)))(sink.value);
+			const { sink } = t, rest = () => ((sink.value = SENTINEL), sink.setSelectionRange?.(1, 1)), typedIn = () => sink.value.replaceAll(SENTINEL, "");
+			// An open box holds one zero-width character kept before the caret, so Backspace on an empty box still deletes something and a phone's
+			// keyboard (Gboard sends nothing for Backspace on an empty input) fires its deleteContentBackward; the sentinel is never typed.
+			const flush = () => ((typed) => (on ? rest() : (sink.value = ""), typed && t.pad?.text?.(typed)))(typedIn());
 			let on = false;
 			if (globalThis.matchMedia?.("(pointer: fine)").matches) {
 				t.scroll.title = m.typing_hint();
@@ -128,7 +132,7 @@ export function mountTerminals({ tiles, post, stream, pad }: { tiles: { open(til
 			t.kb.addEventListener("click", () => (on ? sink.blur() : sink.focus({ preventScroll: true })));
 			sink.addEventListener("keydown", (e) => t.pad?.type?.(e) && e.preventDefault());
 			sink.addEventListener("beforeinput", (e) => {
-				const { inputType, isComposing } = e as InputEvent, key = inputType === "deleteContentBackward" && !sink.value ? "backspace" : inputType === "insertLineBreak" || inputType === "insertParagraph" ? "enter" : undefined;
+				const { inputType, isComposing } = e as InputEvent, key = inputType === "deleteContentBackward" && !typedIn() ? "backspace" : inputType === "insertLineBreak" || inputType === "insertParagraph" ? "enter" : undefined;
 				if (isComposing || !key) return;
 				e.preventDefault();
 				flush();
@@ -141,6 +145,7 @@ export function mountTerminals({ tiles, post, stream, pad }: { tiles: { open(til
 				const at = t.scroll.getBoundingClientRect(); // an input method's candidates show by the mirror's bottom-left corner
 				Object.assign(sink.style, { left: `${at.left + 12}px`, top: `${Math.min(at.bottom, innerHeight) - 28}px` });
 				on = true;
+				rest();
 				t.kb.setAttribute("aria-pressed", "true");
 				t.typing.hidden = false;
 				t.scroll.classList.add("typing", "engage");
