@@ -2,7 +2,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { Type, type Static, type TSchema } from "typebox";
 import { readBoard } from "./boardread.ts";
-import { setBoard } from "./boardset.ts";
+import type { BoardFill } from "./boardfill.ts";
+import { NOT_MAIN, setBoard, whereTo } from "./boardset.ts";
 import type { Digest } from "./digest.ts";
 import type { Membership } from "./membership.ts";
 import type { CloseMain } from "./closemain.ts";
@@ -29,7 +30,7 @@ export const linkRequestParameters = () => Type.Object({
 });
 
 /** The tools the agent calls: what a joined session has (status, call_tower, broadcast, rename, promote), and the tower's boss_open_main. */
-export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { post, callTower, status, broadcast, towerList, towerSend, read, promote, digest, closeMain, link, server, towerCall }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend" | "read"> & Pick<Membership, "promote"> & { digest: Digest; closeMain: CloseMain; link: Link; server?: ServerLook; towerCall?: boolean }) {
+export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { post, callTower, status, broadcast, towerList, towerSend, read, promote, digest, closeMain, link, server, towerCall, boardFill }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend" | "read"> & Pick<Membership, "promote"> & { digest: Digest; closeMain: CloseMain; link: Link; server?: ServerLook; towerCall?: boolean; boardFill: BoardFill }) {
 	// A main says why it calls (required); a tower's call is a blocked one, so it may leave it out and the header says unspecified.
 	const whyType = Type.Union([Type.Literal("milestone"), Type.Literal("shared"), Type.Literal("blocked")], { description: "Why you call: milestone, shared, or blocked. The tower reads it in the header." });
 	const whyField = towerCall || role() === "tower" ? Type.Optional(whyType) : whyType;
@@ -44,7 +45,9 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { post, callT
 	return {
 		addNetTools() {
 			tool("boss_status", "Show this workspace's Straw Boss coordinators: each tab's main agent, this workspace's tower, the head tower, and the other towers.", Type.Object({}), async () => {
-				const result = await status();
+				// In a remote turn the answer is for the senders, so its labels and names are scrubbed.
+				const scope = link.remoteScope();
+				const result = await status(scope ? { project: scope.project } : undefined);
 				return { text: JSON.stringify(result, null, 2), details: result };
 			});
 			tool("call_tower", "Send a message to the tower of your workspace, or of another workspace by id or exact label. Opens the tower tab when none is running. why: milestone (something landed; reply false unless you need an answer), shared (before you change something outside your tab; wait for the answer), or blocked (you wait on someone outside your tab). Routine progress goes on your work board, not here. The message goes out under a header the code writes (your name, role, and workspace, the recipient, whether you expect a reply, and why). A tower replies through intercom unless you say reply is false.",
@@ -92,17 +95,25 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { post, callT
 					return { content: [{ type: "text", text }], details: { action: params.action } };
 				},
 			});
-			// The work board: a main writes its own entry, whole, and towers read all of them (board_read). Nothing here names another session's file.
-			if (!s.isTower) tool("board_set", "Replace this main agent's work board entry: one line of what you work on now, and a short checklist with done marks. Towers on this computer and, for a Straw Link team bound to your project, your teammates' towers read it. Call it when your work turns to another task and when a step is done. Terse agent language; no secrets, credentials, customer data, or paths outside the project. It is not a report: the done report still goes to whoever asked. Only a tab's main agent may write.",
+			// The work board fills itself from the main's todo list and name (boardfill.ts); board_set overrides it, whole, until the todos move, and `auto` hands it back. Nothing here names another session's file.
+			if (!s.isTower) tool("board_set", "Override this main agent's work board entry. The board fills itself from your todo list and your name; this replaces it with one line of what you work on now and a short checklist with done marks, until your todos move. `auto: true` (with no text) hands the board back to auto-fill at once. Towers on this computer and, for a Straw Link team bound to your project, your teammates' towers read it; allies get an auto-filled entry as its line and done count only, and a board_set entry whole. Terse agent language; no secrets, credentials, customer data, or paths outside the project. It is not a report: the done report still goes to whoever asked. Only a tab's main agent may write.",
 				Type.Object({
-					now: Type.String({ description: "What you work on now: 1 to 120 characters, one line." }),
+					now: Type.Optional(Type.String({ description: "What you work on now: 1 to 120 characters, one line. Required unless auto is true." })),
 					items: Type.Optional(Type.Array(Type.Object({ t: Type.String({ description: "1 to 80 characters." }), done: Type.Boolean() }), { description: "At most 8 checklist items; the whole list replaces the old one." })),
+					auto: Type.Optional(Type.Boolean({ description: "true: give the board back to auto-fill (from your todo list and your name); no now or items." })),
 				}),
-				async ({ now, items }) => {
+				async ({ now, items, auto }) => {
 					const cwd = (await cfg.world().catch(() => undefined))?.panes.find((p) => p.pane_id === s.at?.paneId)?.cwd ?? process.cwd();
-					const home = cfg.link?.home ?? homedir();
+					const home = cfg.link?.home ?? homedir(), agentDir = cfg.env.PI_CODING_AGENT_DIR ?? join(home, ".pi", "agent");
+					if (auto) {
+						if (now !== undefined || items !== undefined) throw new Error("auto: true takes no now or items; the board follows your todo list and your name");
+						if (role() !== "main") throw new Error(NOT_MAIN);
+						const derived = boardFill.handBack(), where = whereTo({ stateDir: guiDir, cwd, home, agentDir });
+						return { text: derived ? `Board handed back to auto-fill (${derived.text.items.length} item${derived.text.items.length === 1 ? "" : "s"}). It goes to: ${where}; allies get its name and done count only.` : "Board handed back to auto-fill. There is nothing to show yet (no todo list and no name); it fills when you have either.", details: { auto: true, now: derived?.text.now ?? null, items: derived?.text.items.length ?? 0, sharedWith: where } };
+					}
+					if (now === undefined) throw new Error("now is required unless auto is true");
 					s.boardId = me();
-					return setBoard({ dir: join(guiDir, "board"), stateDir: guiDir, session: me(), isMain: role() === "main", now: cfg.now(), cwd, input: { now, items }, home, agentDir: cfg.env.PI_CODING_AGENT_DIR ?? join(home, ".pi", "agent") });
+					return setBoard({ dir: join(guiDir, "board"), stateDir: guiDir, session: me(), isMain: role() === "main", now: cfg.now(), cwd, input: { now, items }, home, agentDir, autoFill: true });
 				});
 			// The session's name is what the net and the GUI show for it. A main agent names its tab too: the tab is its squad, and pi-auto-tab-name
 			// leaves a tab alone once anyone else labelled it. A tower keeps its own name.
@@ -114,6 +125,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { post, callT
 					if (Array.from(phrase).length > 40) throw new Error(`The name has ${Array.from(phrase).length} characters; keep it a short phrase (at most 16 fit the tab)`);
 					const was = pi.getSessionName() || s.ownName || me().slice(0, 8);
 					pi.setSessionName(phrase);
+					boardFill.refresh(); // the board's line starts with the name
 					const label = tabLabel(phrase);
 					const failed = role() !== "main" ? undefined : await cfg.run(["tab", "rename", s.at.tabId, label]).then(() => "", (err: unknown) => String(err)); // "" when relabelled
 					const tab = failed === undefined ? "" : failed ? ` The tab kept its label: ${failed}` : ` The tab is now labelled "${label}".`;

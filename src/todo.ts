@@ -7,15 +7,19 @@ import { type Todo, todosOf } from "./items.ts";
 export interface TodoSum { done: number; total: number; now?: string }
 export const TODO_TEXT = 120;
 
-/** The todo list in short from a branch's entries, oldest first: rpiv-todo's state entries win over its tool results (rpiv-todo's own replay rule). */
-export function todoOfBranch(entries: readonly unknown[]): TodoSum | undefined {
+/** The todo list from a branch's entries, oldest first: rpiv-todo's state entries win over its tool results (rpiv-todo's own replay rule). */
+export function todosOfBranch(entries: readonly unknown[]): Todo[] | undefined {
 	let fromEntries: Todo[] | undefined, fromResults: Todo[] | undefined;
 	for (let i = entries.length - 1; i >= 0 && !fromEntries; i--) { // from the leaf: the newest state entry wins, so the walk stops there
 		const e = entries[i] as { type?: string; customType?: string; data?: unknown; message?: { role?: string; toolName?: string; details?: unknown } };
 		if (e.type === "custom" && e.customType === "rpiv-todo-state") fromEntries = todosOf(e.data);
 		else if (e.type === "message" && e.message?.role === "toolResult" && e.message.toolName === "todo") fromResults ??= todosOf(e.message.details);
 	}
-	const list = fromEntries ?? fromResults, doing = list?.find((t) => t.status === "in_progress");
+	return fromEntries ?? fromResults;
+}
+/** The todo list in short from a branch's entries. */
+export function todoOfBranch(entries: readonly unknown[]): TodoSum | undefined {
+	const list = todosOfBranch(entries), doing = list?.find((t) => t.status === "in_progress");
 	if (!list?.length) return undefined;
 	const now = doing && (doing.activeForm || doing.subject).replace(/[\p{Cc}\p{Cf}]+/gu, " ").trim().slice(0, TODO_TEXT);
 	return { done: list.filter((t) => t.status === "completed").length, total: list.length, ...(now && { now }) };

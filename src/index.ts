@@ -3,6 +3,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { startBridge } from "./bridge.ts";
 import { interceptUi } from "./intercept.ts";
 import { registerBoss } from "./boss.ts";
+import { createBoardFill } from "./boardfill.ts";
 import { createBriefing } from "./briefing.ts";
 import { createCloseMain } from "./closemain.ts";
 import { createDigest } from "./digest.ts";
@@ -63,7 +64,7 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		// A join adds the tools of a joined session, and the tools promote through the membership: each is built with the other's hook.
 		const membership = createMembership(kit, { presence, election, guard, briefing, roles, openTower: reach.openTower, register: () => (tools.addNetTools(), tools.addPromote()), control: () => control });
 		// `look` (above) starts and upgrades the sb server (src/server/) and is the way to it; a session that is no part of that has none.
-		const tools = createTools(kit, { ...reach, promote: membership.promote, digest, closeMain: (query) => control.closeMain(query), link, server: look });
+		const tools = createTools(kit, { ...reach, promote: membership.promote, digest, closeMain: (query) => control.closeMain(query), link, server: look, boardFill: createBoardFill(kit) });
 		const host = createHost(kit, { connected: membership.connected, ask: cfg.ask ?? look?.ask });
 		closeSelf = createClosing(kit);
 		const control = createCloseMain(kit, { closeSelf, check: bridge.stashCheck });

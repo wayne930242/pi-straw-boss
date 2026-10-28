@@ -783,7 +783,7 @@ The boss asked for it: "server restart 也要讓 agent 或 user 有辦法做，�
 | Tower restore after a Herdr restart | `roles/<hash>.json` with role `tower` | `tower/<ws>/service.json`, by workspace id (kept by a restore) |
 | Choosing the tower that gets a link message | The holder, by tower pane cwd | The server, by the standing pane's cwd (else the workspace's checkout path) inside the team's `project` |
 
-The rest stays in sessions: joining, the tab channel and its election, the guard, promotion, `board_set`, `call_tower` and
+The rest stays in sessions: joining, the tab channel and its election, the guard, promotion, `board_set` and the board's auto-fill (`boardfill.ts`: a main writes its own entry from its todo list and name), `call_tower` and
 `boss_broadcast` (the sending side), the dialog bridge and `intercept.ts`, orphan nudges, blocked dialogs, pane balance, stash, the
 sidecars, the `link_request` tool (it asks the server), and the remote-turn hooks (they run inside ally runs).
 
@@ -1043,7 +1043,7 @@ Local run, in this order:
 1. **Who and why** (≤ 300): `You are a run of the tower of workspace <label> (<id>); head tower: <label>. Woken <HH:MM> by: <n intercom,
    n boss, n notice, n timer>. Your identity for replies is sb-tower-<ws>; everything you send leaves under it.`
 2. **Mains you supervise** (≤ 24 rows, each ≤ 200): per tab of the workspace, the main's name, short session id, state (`idle`,
-   `working`, `waiting`, `commanding`), whether a tower opened it (and for whom), and its board `now` with its open item count. Members
+   `working`, `waiting`, `commanding`), whether a tower opened it (and for whom), and its board `now` with its open item count (an entry the board filled from the todo list, `src: "todo"`, shows an ally run the main's name and the done count, `<name> (3/5)`, and no task text or item count: **Ally run**). Members
    are counted per tab and not named. A tab with no main says so. These are the same data as `board_read`'s `local` and the dashboard.
 3. **Open obligations** (≤ 10 rows): from the opener's ledger, the run records, and `awaiting.json`. Mains this tower opened that have
    not reported, mains that reported done and wait to be closed, sends that expect a reply and have none, asks for a main still open,
@@ -1059,7 +1059,7 @@ The events are not part of the brief. They arrive as messages, each with the hea
 
 Ally run: section 1 names the sender (label, short id, team, level), with no head tower and no identity. Sections 2 and 3 are replaced by
 what the run's sender may already see. That is the `tower_list` and `board_read` scope of a remote turn: only workspaces inside the
-project the sender's team binds (and, inside them, only the sessions whose pane folder lies in it; none at all when the team binds no project), and only that team's boards. Section 4 is left out (the digest is local). Section 5 is that device's
+project the sender's team binds (and, inside them, only the sessions whose pane folder lies in it; none at all when the team binds no project), and only that team's boards, each auto-filled entry as the allies receive it (the main's name and the done count, no task text and no items; a `board_set` entry whole: Straw Link spec, Work board, Sharing with allies). Section 4 is left out (the digest is local). Section 5 is that device's
 last ally-run note. Section 6 lists the tools the level allows. Added:
 
 - **Asks in this run** (≤ 5 rows): for each envelope of the run that carries `awaitsReply`, its ask id and first line, so the run can
@@ -1642,6 +1642,7 @@ trials), unchanged otherwise.
 
 ## Risks
 
+- **Model-written text to an ally is not scrubbed.** `allyLabel` covers the labels and names the code reads from Herdr and the board. What a model writes itself (a `tower_send` body, the args of a confirm request) leaves as written; the scrub cannot tell a path in prose from one the boss meant to send. `boss_status`, `tower_list`, `board_read`, presence, and the brief show an ally only the workspaces and sessions inside the project its sender's team binds.
 - **A squatter that lets the port go (RC3-F002, closed by rotating the token on every new listener).** Another account that binds the port during a crash or restart gap receives the open page's reconnect (token in the path, CSRF secret in its requests) and can free the port again. The GUI therefore keeps no token across a gap: every listener that starts has a token and CSRF secret of its own (**GUI token and CSRF secret**), the old ones answer 403, and the remote serve entry is pointed at the new remote listener. The cost, decided by the user, is that every crash, restart, or upgrade ends the open pages (reopen `/boss gui`) and a paired phone scans the QR code again.
 - **The server is now a single point.** While it is down, every workspace lacks a live tower. Mains survive a restart while `restarting`
   is fresh and through the guard's 15 s grace after that, and the broker keeps mail for 24 h, but a server that stays down demotes mains.
@@ -1688,6 +1689,7 @@ straw-boss-desk's owner also agreed to D11.
 | D17 | The boss in a run | "你開口後，等你離開才結束" (boss, 2026-10-28): once the boss speaks in a run (a line at the tower prompt, or input in the run's pi), the run does not end on tower_done or the cap; it ends when the boss quits it, or after 10 minutes without input or a turn. The cap waits for the boss for 4 hours at most (**Crash and timeout**, The boss in the run). |
 | D18 | Coordination goes through the tower | "統一用塔台" (boss, 2026-10-28). D16 and D17 belong to `feat/sb-net-standin`, so this and the next row keep the numbers of the tower-experience delta. |
 | D19 | When a main calls the tower | The boss's decision, 2026-10-28, after "統一用塔台": a main calls the tower at three points only (a finished milestone; before it changes shared things; when it is blocked or waiting), and routine progress goes on the work board and wakes nothing. `call_tower` carries the reason as `why` in the code-written header (**Wake triggers**), `prompts/main.md`, `member*.md`, and `tower-run.md` say what each reason asks, and a milestone that expects no reply is held up to 30 s to coalesce (**Queueing and concurrency**). |
+| D20 | The work board fills itself | The board fills itself from the main's todo list and name, and `board_set` overrides it (2026-10-28, tower experience; D16 and D17 belong to the standing prompt, D18 to D24 to the tower delta). A main writes its own entry from its todo list and its name, scrubbed of paths outside the project, URLs, emails, and token shapes; `board_set` stands until the todos or the name move, and `board_set { auto: true }` hands it back. Q1 = A ("allies get `now` and the done count of an auto entry only") is **superseded** by the boss on 2026-10-28: "收緊：自動的只給名字＋進度": an auto entry gives allies the main's name and the done count (`<name> (3/5)`), no task text; a `board_set` entry goes whole (Straw Link spec, **Auto-fill**; built in T2). |
 
 ## Review record
 

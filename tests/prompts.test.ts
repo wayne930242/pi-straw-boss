@@ -11,7 +11,10 @@ import { PROMPT_DIR } from "./fakes.ts";
 // 0.40.0 (tower comms): tower 250 to 330 for tower_list and tower_send, the header every message opens with and what to do with its recipients, reporting back once, and closing the mains it opened;
 // main 255 to 290 for reporting to the tower that opened it and waiting to be closed.
 // Work board: main 285 to 335 for board_set (when to write, what stays out, it is no report); tower 328 to 360 for board_read and treating remote entries as a peer's report.
-const BUDGETS: Record<string, number> = { "main.md": 445, "tower.md": 360, "member.md": 140, "member-no-main.md": 150 };
+// Board auto-fill: main 335 to 350 (the board fills itself from the todo list and the name; board_set overrides it, `auto: true` hands it back).
+// Tower comms: tower 360 to 380 for never forwarding a main's board items or todo text to an ally (T2 review F009).
+// Merge of call timing (D19) and board auto-fill: main 458 (three call_tower points beside the board line), tower 380.
+const BUDGETS: Record<string, number> = { "main.md": 458, "tower.md": 380, "member.md": 140, "member-no-main.md": 150 };
 const PLACEHOLDERS = new Set(["tab", "workspace", "main", "tower", "head", "dir"]);
 const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
 

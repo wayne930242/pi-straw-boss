@@ -450,7 +450,7 @@ test("a relay that refuses the stream for good (the device was removed) ends the
 
 test("presence: each holder tells the team it is online; share status adds the bound workspaces and their tabs, share presence only that it is online; an old presence is offline", async () => {
 	const [a, b] = [rig("a"), rig("b")];
-	a.net = netOf([["tower-a", "w-a", "label-a", a.project]], { tabs: [{ tab_id: "w-a:t0", workspace_id: "w-a", label: "tower" }, { tab_id: "w-a:t1", workspace_id: "w-a", label: "api work" }], panes: [...netOf([["tower-a", "w-a", "label-a", a.project]]).panes, { pane_id: "px", tab_id: "w-a:t1", workspace_id: "w-a", agent_status: "working", tokens: { sb_role: "main" } }] });
+	a.net = netOf([["tower-a", "w-a", "label-a", a.project]], { tabs: [{ tab_id: "w-a:t0", workspace_id: "w-a", label: "tower" }, { tab_id: "w-a:t1", workspace_id: "w-a", label: "api work" }], panes: [...netOf([["tower-a", "w-a", "label-a", a.project]]).panes, { pane_id: "px", tab_id: "w-a:t1", workspace_id: "w-a", cwd: a.project, agent_status: "working", tokens: { sb_role: "main" } }] });
 	await Promise.all([a.start(), b.start()]);
 	await until(() => b.holder.list()[0]?.devices[0]?.online, 3000, "A's presence at B");
 	const [team] = b.holder.list();

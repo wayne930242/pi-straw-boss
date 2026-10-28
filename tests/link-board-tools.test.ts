@@ -71,6 +71,25 @@ test("a main on A writes with board_set and B's tower reads it with board_read a
 	await until(async () => (await read(b.c.tower)).remote?.[0]?.entries?.length === 0, "the entry gone at B");
 });
 
+test("an auto-filled entry reaches the ally's tower as its name and done count only; a board_set entry goes whole", async () => {
+	const a = await setup("a", [{ id: "auto-a", name: "auto /etc/secret", inside: true }, { id: "set-a", name: "set main", inside: true }]);
+	const b = await setup("b", []);
+	await until(() => a.c.server.service.status().active && b.c.server.service.status().active, "both holders");
+	const [auto, set] = a.agents as [Agent, Agent];
+	auto.entries.push({ customType: "rpiv-todo-state", data: { tasks: [{ id: 1, subject: "schema", status: "completed" }, { id: 2, subject: "writer", status: "in_progress", activeForm: "Writing the CSV writer" }, { id: 3, subject: "tests", status: "pending" }], nextId: 4 } });
+	await auto.fire("turn_end");
+	await set.tool("board_set", { now: "MP-2 manual line", items: [{ t: "step one", done: true }, { t: "step two", done: false }] });
+	let rows: Row[] = [];
+	await until(async () => ((rows = (await read(b.c.tower)).remote?.[0]?.entries ?? []), rows.length === 2 && rows.every((e) => e.now)), "both entries at B");
+	assert.ok(rows.every((e) => !String(e.main).includes("/etc")), "no path in the name on the wire");
+	const byMain = Object.fromEntries(rows.map((e) => [e.main!, e]));
+	assert.deepEqual([byMain["auto …"]!.now, byMain["auto …"]!.items], ["auto … (1/3)", []], "an auto entry: the name and the count, no task text, no items");
+	assert.deepEqual([byMain["set main"]!.now, byMain["set main"]!.items], ["MP-2 manual line", [{ t: "step one", done: true }, { t: "step two", done: false }]], "a board_set entry: whole");
+	// A's own tower sees both whole.
+	const local = (await read(a.c.tower, { scope: "local" })).local;
+	assert.deepEqual(local.map((r) => [r.main, r.items!.length]).sort(), [["auto /etc/secret", 3], ["set main", 2]]);
+});
+
 test("a computer without a team has no remote key in board_read, and mains and members have no board_read at all", async () => {
 	const c = computer(root, relay, "a", { gateMs: 60 });
 	computers.push(c);
@@ -130,4 +149,16 @@ test("senders of two teams in one remote turn get no ally rows from board_read o
 	await b.c.tower.fire("message_start", { message: { ...second, details: { ...second.details, team: other } } });
 	assert.deepEqual((await read(b.c.tower)).remote, [], "two teams: no ally rows");
 	assert.deepEqual((await listOf()).remote, [], "two teams: no ally towers");
+});
+
+test("tab and workspace labels with a path never reach the wire or a remote turn", async () => {
+	const a = await setup("a", [{ id: "lbl-a", name: "lbl main", inside: true }]);
+	const b = await setup("b", []);
+	await until(() => a.c.server.service.status().active && b.c.server.service.status().active, "both holders");
+	await a.agents[0]!.tool("board_set", { now: "MP-3 line", items: [{ t: "x", done: false }] });
+	a.c.world.herdr.tabs.find((t) => t.tab_id === "wA:t1")!.label = "tab /etc/secret";
+	a.c.world.herdr.workspaces.find((w) => w.workspace_id === "wA")!.label = "ws /etc/secret";
+	let rows: Row[] = [];
+	await until(async () => ((rows = (await read(b.c.tower)).remote?.[0]?.entries ?? []), rows.length === 1 && Boolean(rows[0]!.now)), "the entry at B");
+	assert.ok(!JSON.stringify(rows).includes("/etc/secret"), "no path in any label at B");
 });

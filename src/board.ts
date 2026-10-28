@@ -15,12 +15,16 @@ export const DEAD_MS = 24 * 3600_000;
 export interface BoardItem { t: string; done: boolean }
 /** What a main writes. */
 export interface BoardText { now: string; items: BoardItem[] }
-/** What the file holds. */
-export interface Entry extends BoardText { v: 1; session: string; updated: number }
+/** Who wrote an entry: the main's `board_set`, or the auto-fill from its todo list (boardfill.ts). Local only: it is in the file, and never on the wire to allies. */
+export type Src = "todo" | "set";
+/** The todo list's tasks done and in all, kept with an auto entry. */
+export interface Count { done: number; total: number }
+/** What the file holds. `count` and `who` (the scrubbed session name, the only text an ally gets of an auto entry) go with `src: "todo"` only. */
+export interface Entry extends BoardText { v: 1; session: string; updated: number; src: Src; count?: Count; who?: string }
 
 // Control and format characters (escapes, bidi overrides, zero-width joiners) are refused on write and removed on read.
 const BAD = /[\p{Cc}\p{Cf}]/u;
-const BAD_ALL = /[\p{Cc}\p{Cf}]/gu;
+const BAD_ALL = /[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}]/gu;
 const SAFE_SESSION = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const fold = (text: string) => text.replace(/\s+/gu, " ").trim();
 
@@ -68,10 +72,10 @@ export function cleanText(input: { now?: unknown; items?: unknown }): BoardText 
 export const safeSession = (session: string) => SAFE_SESSION.test(session);
 const fileOf = (dir: string, session: string) => join(dir, `${session}.json`);
 
-/** Writes the whole entry of `session`, atomically (a temporary file renamed over it), in a folder only this user can open. */
-export function writeEntry(dir: string, session: string, text: BoardText, now: number): Entry {
+/** Writes the whole entry of `session`, atomically (a temporary file renamed over it), in a folder only this user can open. A `board_set` entry is `src: "set"`, the default. */
+export function writeEntry(dir: string, session: string, text: BoardText, now: number, meta: { src?: Src; count?: Count; who?: string } = {}): Entry {
 	if (!safeSession(session)) throw new Error("This session has no id a board file can be named for");
-	const entry: Entry = { v: 1, session, now: text.now, items: text.items, updated: now };
+	const src = meta.src ?? "set", entry: Entry = { v: 1, session, now: text.now, items: text.items, updated: now, src, ...(src === "todo" && meta.count ? { count: meta.count } : {}), ...(src === "todo" && meta.who ? { who: meta.who } : {}) };
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	try { chmodSync(dir, 0o700); } catch { /* a file system without modes */ }
 	const file = fileOf(dir, session), temp = `${file}.${process.pid}.tmp`;
@@ -102,7 +106,10 @@ export function readEntries(dir: string): Entry[] {
 			// The file is named for its session, and says so: a file that disagrees is somebody's copy, not this session's entry.
 			if (raw?.v !== 1 || raw.session !== session || !safeSession(session) || typeof raw.updated !== "number" || !Number.isFinite(raw.updated) || typeof raw.now !== "string" || !Array.isArray(raw.items)) return [];
 			if (!raw.items.every((i) => typeof i === "object" && i !== null && typeof (i as BoardItem).t === "string" && typeof (i as BoardItem).done === "boolean")) return [];
-			return [{ v: 1, session, updated: raw.updated, ...cleanText(raw) }];
+			const c = raw.count as Partial<Count> | undefined, src: Src = raw.src === "todo" ? "todo" : "set"; // a file without `src` is a board_set entry
+			const count = src === "todo" && Number.isSafeInteger(c?.done) && Number.isSafeInteger(c?.total) && c!.done! >= 0 && c!.done! <= c!.total! && c!.total! <= 200 ? { done: c!.done!, total: c!.total! } : undefined;
+			const who = src === "todo" ? clean(raw.who, BOARD.label) : "";
+			return [{ v: 1, session, updated: raw.updated, src, ...(count ? { count } : {}), ...(who ? { who } : {}), ...cleanText(raw) }];
 		} catch {
 			return [];
 		}
@@ -121,6 +128,16 @@ export function purge(dir: string, live: ReadonlySet<string>, now: number): void
 	} catch { /* nothing to tidy */ }
 }
 
+/**
+ * What allies' towers get of an entry (spec, Work board, Sharing; boss decision 2026-10-28): a `board_set` entry whole; an auto entry only the main's name and the done count
+ * (`<name> (3/5)`), never a task's text and no items.
+ */
+export function forAllies(e: { now: string; items: BoardItem[]; src: Src; count?: Count | undefined; who?: string | undefined }): BoardText {
+	if (e.src !== "todo") return { now: e.now, items: e.items };
+	const tail = e.count ? `(${e.count.done}/${e.count.total})` : "", who = clean(e.who, BOARD.now - tail.length - 1);
+	return { now: [who, tail].filter(Boolean).join(" "), items: [] };
+}
+
 /** The id an entry has on the wire: the first 8 bytes of sha256(device id ‖ session id), hex. No local session id leaves the computer. */
 export const wireId = (device: string, session: string): string => createHash("sha256").update(device).update(session).digest().subarray(0, 8).toString("hex");
 
@@ -137,6 +154,9 @@ export interface LocalRow {
 	items: BoardItem[];
 	updatedSecondsAgo?: number;
 	cwd?: string;
+	src?: Src;
+	count?: Count;
+	who?: string;
 }
 
 /**
@@ -149,11 +169,11 @@ export function joinLocal(entries: Entry[], mains: LiveMain[], now: number): Loc
 		const e = byId.get(m.session);
 		return {
 			session: m.session, workspaceId: m.workspaceId, workspace: m.workspace, tab: m.tab, main: m.name, state: m.state, items: e?.items ?? [],
-			...(e ? { now: e.now, updatedSecondsAgo: Math.max(0, Math.round((now - e.updated) / 1000)) } : {}), ...(m.cwd ? { cwd: m.cwd } : {}),
+			...(e ? { now: e.now, src: e.src, ...(e.count ? { count: e.count } : {}), ...(e.who ? { who: e.who } : {}), updatedSecondsAgo: Math.max(0, Math.round((now - e.updated) / 1000)) } : {}), ...(m.cwd ? { cwd: m.cwd } : {}),
 		};
 	});
 	const gone = entries.filter((e) => !mains.some((m) => m.session === e.session) && now - e.updated <= ENDED_MS).map((e): LocalRow => ({
-		session: e.session, workspace: "", tab: "", main: "", state: "ended", now: e.now, items: e.items, updatedSecondsAgo: Math.max(0, Math.round((now - e.updated) / 1000)),
+		session: e.session, workspace: "", tab: "", main: "", state: "ended", now: e.now, items: e.items, src: e.src, ...(e.count ? { count: e.count } : {}), ...(e.who ? { who: e.who } : {}), updatedSecondsAgo: Math.max(0, Math.round((now - e.updated) / 1000)),
 	}));
 	return [...live, ...gone];
 }
