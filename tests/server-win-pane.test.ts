@@ -180,3 +180,20 @@ test("elsewhere a start that times out ends the run as before: one start per run
 	assert.deepEqual(world.herdr.closed, []);
 	assert.equal((await ask(s, { cmd: "ensure-tower", workspace: "wA" })).pane, ensured.pane);
 });
+
+test("win32: the fresh standing pane made after a forced kill gets the tower prompt typed (Herdr gives no foreground group there, so only a pane known fresh is typed into)", async () => {
+	world.runTimers = { quitGrace: 60, signal: 60 };
+	const { s, ensured } = await setup();
+	await until(() => world.herdr.typed.some((t) => t.pane === ensured.pane), "the prompt typed into the first standing pane");
+	tower().incoming(from, msg("m1", "one"));
+	const id = await nthRun();
+	const token = await claimed(s, id);
+	await drain(s, token);
+	assert.equal((await ask(s, { cmd: "run-done", token, note: "ok" })).ok, true);
+	await until(() => world.kills.length >= 1, "the signal");
+	exit(id);
+	await until(() => world.herdr.closed.includes(ensured.tab!), "the old standing tab to be closed");
+	const again = await ask(s, { cmd: "ensure-tower", workspace: "wA" });
+	assert.notEqual(again.pane, ensured.pane);
+	await until(() => world.herdr.typed.some((t) => t.pane === again.pane && /prompt --workspace wA/.test(t.text)), "the prompt typed into the renewed pane");
+});
