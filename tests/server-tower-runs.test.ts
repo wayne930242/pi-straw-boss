@@ -234,7 +234,8 @@ test("a boss event wakes a service the loop held, and Retry does too", async () 
 test("a run past the steer time is told to wrap up, past the cap it is told to quit, and a pi that stays gets Escape and /quit, then SIGTERM from a PID read from Herdr", async () => {
 	// The run's clock is the test's: the watcher sees an age only when the test sets it, one step at a time, so a tick that comes seconds late under load (a load average of 70 was seen) cannot find the run already past the cap and skip the steer (B5 review F013).
 	const clock = (world.runClock = fakeClock());
-	world.runTimers = { steerAt: 150, quitAt: 3000, quitGrace: 60, signal: 60 };
+	// The times are ones the real clock cannot reach during the test: a run that stops reading the test's clock times out instead of passing.
+	world.runTimers = { steerAt: 600_000, quitAt: 1_200_000, quitGrace: 60_000, signal: 30_000 };
 	const { s } = await setup();
 	tower().incoming(from, msg("m1", "slow"));
 	const id = await nthRun();
@@ -246,19 +247,29 @@ test("a run past the steer time is told to wrap up, past the cap it is told to q
 		if (command) seen.push(command.type);
 		return done();
 	}, what, 20_000);
+	// Whole watcher ticks at the clock's frozen age: what a tick would do at that age it has done before the check after it.
+	const ticks = async () => {
+		const from = world.aliveCalls;
+		await until(() => world.aliveCalls >= from + 2, "two watcher ticks", 20_000);
+	};
+	await ticks();
 	assert.equal((await poll(s, token, false)).command, undefined, "nothing is told before the steer time");
-	clock.advance(200);
+	clock.advance(600_001);
 	await commandsUntil(() => seen.length > 0, "the steer");
 	assert.deepEqual(seen, ["steer"]);
-	clock.advance(3000);
+	await ticks();
+	assert.equal((await poll(s, token, false)).command, undefined, "the steer is told once");
+	clock.advance(600_000);
 	await commandsUntil(() => seen.includes("quit"), "the quit command");
 	assert.deepEqual(seen, ["steer", "quit"]);
+	await ticks();
 	assert.deepEqual([...world.herdr.keys], [], "pi has had no grace yet");
-	clock.advance(60);
+	clock.advance(60_000);
 	await until(() => world.herdr.keys.some((k) => k.includes("/quit")), "Escape and /quit through Herdr", 20_000);
 	assert.deepEqual(world.herdr.keys.slice(0, 3).map((k) => k.slice(1)), [["send-keys", ensureedPane(), "esc"], ["send-text", ensureedPane(), "/quit"], ["send-keys", ensureedPane(), "enter"]]);
+	await ticks();
 	assert.deepEqual([...world.kills], [], "no signal before its time");
-	clock.advance(60);
+	clock.advance(30_000);
 	await until(() => world.kills.length === 1, "SIGTERM", 20_000);
 	assert.deepEqual(world.kills[0], [world.pis.get(id)!.pid, "SIGTERM"]);
 	exit(id);
@@ -270,7 +281,7 @@ const ensureedPane = () => world.herdr.panes.find((p) => p.tokens.sb_role === "t
 
 test("a run idle with nothing pending and no tower_done gets one steer, then is ended with the note (ended without a note)", async () => {
 	const clock = (world.runClock = fakeClock());
-	world.runTimers = { idleSteer: 80, idleEnd: 100 };
+	world.runTimers = { idleSteer: 60_000, idleEnd: 300_000 };
 	const { s } = await setup();
 	tower().incoming(from, msg("m1", "quick"));
 	const id = await nthRun();
@@ -283,9 +294,17 @@ test("a run idle with nothing pending and no tower_done gets one steer, then is 
 		await until(async () => ((got = (await poll(s, token)).command as { type: string } | undefined), got !== undefined), what, 20_000);
 		return got!.type;
 	};
-	clock.advance(100);
+	const ticks = async () => {
+		const from = world.aliveCalls;
+		await until(() => world.aliveCalls >= from + 2, "two watcher ticks", 20_000);
+	};
+	await ticks();
+	assert.equal((await poll(s, token)).command, undefined, "nothing is told before the idle time");
+	clock.advance(60_000);
 	assert.equal(await nextCommand("the steer"), "steer");
-	clock.advance(100);
+	await ticks();
+	assert.equal((await poll(s, token)).command, undefined, "the idle steer is told once");
+	clock.advance(300_000);
 	assert.equal(await nextCommand("the quit"), "quit");
 	exit(id);
 	await until(() => readRun(world.slot, "wA", id)?.outcome === "quit", "the outcome");

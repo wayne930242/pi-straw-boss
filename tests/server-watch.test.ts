@@ -128,10 +128,10 @@ test("a watch does not keep the process alive: neither its socket nor its retry 
 	await server.start();
 	const { execFileSync } = await import("node:child_process");
 	const src = new URL("../src/server-watch.ts", import.meta.url).pathname;
-	// How long node takes to start and to load the module is the machine's (a load average of 100 was seen), so the child ends itself by its own unref'd clock, counted from its script: exit 3 says the loop was still held 3 s
+	// How long node takes to start and to load the module is the machine's (a load average of 100 was seen), so the child ends itself by its own unref'd clock, armed where its loop should drain (after what it awaits: a stall inside that wait would otherwise expire it at once): exit 3 says the loop was still held 3 s
 	// after the script ran. The outer limit is only a last resort.
 	const watchdog = "setTimeout(() => process.exit(3), 3000).unref();";
-	const script = `import { herdrWatch } from ${JSON.stringify(src)}; herdrWatch(${JSON.stringify(server.path)})(() => {}); ${watchdog} await new Promise((r) => setTimeout(r, 100));`;
+	const script = `import { herdrWatch } from ${JSON.stringify(src)}; herdrWatch(${JSON.stringify(server.path)})(() => {}); await new Promise((r) => setTimeout(r, 100)); ${watchdog}`;
 	execFileSync(process.execPath, ["--input-type=module", "-e", script], { timeout: 60_000 });
 	await server.stop();
 	const down = `import { herdrWatch } from ${JSON.stringify(src)}; herdrWatch(${JSON.stringify(server.path)})(() => {}); ${watchdog}`;
