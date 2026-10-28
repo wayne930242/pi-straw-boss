@@ -182,7 +182,7 @@ export function createGuiHost(o: GuiHostOptions) {
 				const next = await net.read(), summary = await o.link.summary();
 				return summary && (summary.allies.length || summary.alerts.length || summary.confirms.length) ? { ...next, link: summary } : next;
 			},
-			net, call: cfg.call, hub, dir: o.bundle ?? BUNDLE, paired: join(dir, "paired.json"), port: prefer.port, remotePort: prefer.remotePort, bindWaitMs: wait,
+			net, call: cfg.call, hub, dir: o.bundle ?? BUNDLE, paired: join(dir, "paired.json"), port: prefer.port, remotePort: prefer.remotePort, bindWaitMs: wait, desk: cfg.env.STRAW_BOSS_DESK === "1",
 			link: { call: (name, args) => o.link.call(name, args), enable: () => o.link.enable() }, ...(o.tower ? { tower: o.tower } : {}), trust: { answer: trust.answer, watch: trust.watch },
 			server: { status: () => o.status(), log: (lines) => tailLog(fileOf(slot, "log"), lines), restart: async (reason) => (o.restart ? o.restart(reason) : { status: 501, body: { error: "unavailable", reason: "This server cannot restart itself." } }) },
 			// An older build's /boss gui stop: the GUI stops, and nothing starts it again but the boss's own command. Its takeover is refused (409): that build reports the GUI as stale and leaves it alone.

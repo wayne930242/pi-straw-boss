@@ -10,7 +10,7 @@ export const scratch = mkdtempSync(join(tmpdir(), "psb-gui-world-"));
 process.on("exit", () => rmSync(scratch, { recursive: true, force: true }));
 export const bundle = join(scratch, "bundle");
 mkdirSync(bundle, { recursive: true });
-writeFileSync(join(bundle, "index.html"), "<title>Straw Net</title>");
+writeFileSync(join(bundle, "index.html"), "<!doctype html><html><head><title>Straw Net</title></head><body></body></html>");
 
 /** The link holder is not under test here: the GUI's way to it answers that none runs. */
 export const noLink: GuiLink = { call: async () => ({ ok: false, error: "No link holder is running on this computer yet.", code: "no_holder" }), enable: async () => {}, summary: async () => undefined, close() {} };
