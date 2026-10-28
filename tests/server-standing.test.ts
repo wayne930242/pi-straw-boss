@@ -150,7 +150,7 @@ test("a run's start tells the prompt to leave and takes the stand-in away first;
 	const { s, pane } = await setup();
 	const prompt = new FakePrompt(s, pane);
 	await until(() => world.herdr.pane(pane).agent === "tower", "the stand-in");
-	await ask(s, { cmd: "tower-event", workspace: "wA", text: "hello", present: true });
+	await ask(s, { cmd: "tower-event", workspace: "wA", text: "hello" }); // not `present`: this test is about the pane, and a run the boss is in does not end at tower_done (server-tower-runs.test.ts)
 	const id = await nthRun();
 	assert.equal(prompt.left, true, "the prompt was told to leave and said it was gone");
 	assert.equal(releases().length, 1, "the stand-in was released before pi started");
