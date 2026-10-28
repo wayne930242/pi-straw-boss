@@ -16,7 +16,7 @@ export function headlessConfig(d: HeadlessDeps, env: NodeJS.ProcessEnv): Config 
 		sleep: d.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))), now: d.now ?? Date.now,
 		watch: d.watch ?? herdrWatch(), events: d.events ?? herdrEvents(), guardMs: d.guardMs ?? GUARD_MS, couple: d.couple ?? true, autoTower: d.autoTower ?? true, detectMs: d.detectMs ?? 1000,
 		copy: unavailable("copy"), openUrl: unavailable("openUrl"), later: unavailable("later"),
-		promptDir: "", nudgeMs: 0, version: "", adoptMs: 0, restoreMs: d.restoreMs ?? RESTORE_WAIT_MS,
+		promptDir: "", nudgeMs: 0, version: "", adoptMs: 0, restoreMs: d.restoreMs ?? RESTORE_WAIT_MS, integrationMs: 0,
 	};
 }
 
