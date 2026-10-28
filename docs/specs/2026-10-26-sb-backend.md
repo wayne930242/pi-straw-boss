@@ -940,6 +940,17 @@ something: the `boss` row. A send on its own wakes nothing.
    - the PID and start time are the ones the server recorded for that run. Right after `startPi` the server reads the run's pi PID with
      `herdr pane process-info` and its start time with `startOf`, and writes them to `runs/<id>.json`; a claim that comes before that is
      held (answered `wait`, retried each second for 10 s);
+   - **pi is the process the server found, not the one Herdr listed.** Herdr lists one process on Windows (and on POSIX the foreground group,
+     in no order), and with `cmd.exe /c pi.cmd` (the shell resolves `pi` to the npm shim) that is the wrapper: the VM pass of B6 saw
+     `foreground_processes` hold only the `cmd.exe` whose command line carries `--sb-run <id>`, with pi's `node.exe` as its child, so
+     the PID and start time recorded from the list never matched pi's own claim (every run "crashed", `pi exited without tower_done`).
+     The server therefore reads the process table itself (`src/server/lineage.ts`: one PowerShell CIM query on Windows, `ps -A -ww` elsewhere)
+     and records the first process below the listed one whose command line carries the run id and that is not a wrapper (`cmd`, `sh`, `bash`,
+     `env`, `npm`, `volta`, `powershell` and the like), reached through wrappers only and started no earlier than its parent (a reused PID
+     is not a parent). What pi itself started, such as a tool whose command line also holds the id, is never taken for pi. Its PID and start
+     time go in `pid` and `started`; the processes between go in `via` (the listed one first). A pi's own report (`ppid`, an argument) is never read: the claim still has to carry the recorded PID and start time. A
+     wrapper whose child is not in the table yet is looked at again (3 reads, 400 ms apart); a table that cannot be read leaves the listed
+     process, as before. The cost is the one PowerShell start that read the start time before (the table gives it too);
    - the server has processed every Herdr takeover it has seen (**A Herdr restart**). Until then every claim is held the same way. A pi
      that Herdr's pi integration resumed with `--sb-run <old id>` therefore meets a run that is already ended, or a PID that does not
      match, and its claim is refused;
@@ -983,7 +994,27 @@ something: the `boss` row. A send on its own wakes nothing.
   queue.
 - **The boss in the run.** Once the boss speaks in a run, the run does not end on its own (D17, the boss: 「你開口後，等你離開才結束」). They speak by a line at the tower prompt (`present`: the run it wakes is theirs from its claim), by input from the keyboard in the run's pi (`pi.on("input")` with source `interactive`, told with `run-boss` at the first word and at most every 15 s; an event or a steer is never a sign), or by starting pi by hand in the standing pane. While they are in the run, `tower_done` is answered `stay` with the reason, keeps no note, and does not end the run. The run ends when the boss quits it (`run-done {left: true}` from the quit; as `done` with the note `(the boss left the run)`, its untaken events stay queued unflagged; a quit of a run they are not in, or one the server is already ending, is what it was before) or after `bossAway` (10 min) of silence with no turn under way, when `idleSince` restarts so that the idle steer and end above apply (6 min), and the cap waits for them. The run cap and the idle limits do not apply while the boss is in the run, in the middle of a turn too; the bound is `bossMax`, 4 hours from their first word (kept for the run's life: their absences and returns do not restart it), after which the cap applies at once and a later sign of them changes nothing; `tower_done` is not answered `stay` while the server is ending the run. The state is in memory only: a server restart forgets it until the boss's next word.
 - **Quit fails.** If pi has not exited 10 s after `quit`, the server sends Escape and `/quit` through Herdr, then SIGTERM to the PID read
-  from `herdr pane process-info`, never one from a record alone.
+  from `herdr pane process-info`, never one from a record alone. Every PID is verified at the moment of the signal: the server lists the
+  pane's foreground and reads the process table then (not the throttled liveness check, not the start-time cache), and the recorded pi is
+  signalled only while it is in the table with the start time recorded and below the process Herdr lists. When pi runs below a wrapper
+  (`via`), pi's own PID gets the signal first and the wrappers between it and the listed one after it, because ending a wrapper does not
+  end its child (on Windows `process.kill` is `TerminateProcess` of that one process). The same holds for a stop of the server, and for a
+  start that failed after pi was running: a `herdr agent start` that timed out may still have left pi (and its wrapper) in the pane, so the
+  run's end looks for it by the run id. **A run with no recorded pi (the start failed) or a record that no longer checks out ends only a
+  listed process whose command line carries `--sb-run <id>`, with the wrappers down to the pi below it;** a node, a hand pi, or any other
+  process the pane holds is not the run's and is left alone. The process table read for a signal runs beside the watcher's tick, one at a
+  time per run (a PowerShell read on Windows takes seconds, and every run's watch waits on the tick); a table that cannot be read leaves the
+  pi Herdr lists itself checked against its start time alone, and a pi below a wrapper unsignalled.
+- **Windows ends nothing by force if it can help it** (VM pass B6, `ev/x6a`-`x6i`). A pi ended with `TerminateProcess` (what `process.kill` is there) leaves its pane's console in an input mode where
+  the next `herdr agent start` into the same pane types a mangled command (`[f((Get-Command …`, a PowerShell ParserError) and times out: 5 of 5 starts after a kill, 0 of 5 after a graceful `/quit`.
+  Therefore on Windows: (1) a run that has to leave gets the quit command at its poll and then Escape and `/quit` through Herdr as above, with 30 s and then 20 s before any signal (10 s and 5 s elsewhere);
+  (2) a **stop** of the server tells its runs to quit and waits 8 s (1.5 s elsewhere) for them to exit, the server's exit waiting for that decision however long a process table read takes (the stop
+  window is the leave time plus the grace plus 1 s on Windows, 6 s elsewhere for the table read and the signal), and a pi that stays is **not signalled**: its run is left without an outcome, as a restart leaves it, and the pi reclaims
+  the run from the next server or ends itself when the server stays away for `lostMs`; a run whose `tower_done` is in is recorded `done` and its pi leaves by itself; the client's stop waits 8 s longer
+  for the exit; (3) after any signal to a run's processes the standing pane is **not used again**: when the run is recorded, the service makes a fresh tab as `ensure-tower` does (marked `sb_role=tower`,
+  moved to the front), moves its record to it as the reconcile does when Herdr kept neither id, closes the old tab, and registers the identity again; the service keeps its runs, queue, and notices and
+  wakes no run until the new identity is live; (4) a local run's `agent start` that times out is taken for the pane's doing the first time: the leftovers of the start are ended, the pane is renewed, and
+  the start is tried once more; that first timeout leaves no notice and no crash, and a second one is the run's crash like any other (counted once toward the crash loop and the hold).
 - **Crash.** The pi exits without `tower_done`: its socket closes and Herdr reports the pane at its shell or the agent gone. Its offered
   events go back to the queue. Its taken events go back too, flagged `possibly handled by a run that crashed: check before acting` in the
   next brief, so delivery is at least once. The note is `(crashed)` with the last outcome. The digest lines it was shown stay for the next
@@ -1593,8 +1624,10 @@ trials), unchanged otherwise.
      records the time to `hello`, and `url` is null). The first run (271971e) found the P0 below and 12.8 to 25.6 s; the log's phases say where
      the time goes. A `status` polled during the start never says `gone`, and `stop` takes under 2 s on POSIX.
   2. The detached server opens no console window: no window appears, and the node process has no main window handle.
-  3. **A run claims:** a `call_tower` wakes a run, and its claim passes, which shows that `herdr pane process-info` reports pi's own node
-     PID through the `pi.cmd` wrapper and that `startOf` reads its start time.
+  3. **A run claims:** a `call_tower` wakes a run, and its claim passes. The VM pass of B6 showed that `herdr pane process-info` does **not**
+     report pi's node PID through the `pi.cmd` wrapper (it lists the `cmd.exe`); `fix/b6-win-picmd` resolves pi from the process table
+     (see **The wake protocol**, claim), and the VM re-checks it from a shell that resolves `pi` to `pi.cmd` as well as from one that
+     resolves `pi.ps1`.
   4. The ACL is set and checked by SID under an account with a zh-TW name (`測試PM`): the state folder's SDDL is protected and holds
      exactly that account's SID and `SY`, with no inherited ACE; `server.json` written after it holds only those two, inherited; the
      agent dir's ACL is unchanged; and the whole check is one PowerShell start.

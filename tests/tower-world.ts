@@ -6,6 +6,7 @@ import { ServerWorld } from "./server-world.ts";
 import type { Session } from "../src/herdr.ts";
 import type { Towers } from "../src/server/towers.ts";
 import { createAllows } from "../src/server/allows.ts";
+import type { Proc } from "../src/server/lineage.ts";
 import type { AllyItem, AllyPort, Timers } from "../src/server/runs.ts";
 import type { StandingTimers } from "../src/server/standing.ts";
 
@@ -59,6 +60,11 @@ export class TowerWorld extends ServerWorld {
 	/** The pi processes `agent start` made: run id → PID and pane; and the signals the server sent. */
 	pis = new Map<string, { pid: number; pane: string; args: string[] }>();
 	kills: [number, string][] = [];
+	/** What the server's process table read answers (undefined: it cannot be read); a test sets it to put a wrapper above a pi. */
+	procTable: Proc[] | undefined;
+	procReads = 0;
+	/** While set, the process table read for that run id waits for it. */
+	procGate: ((runId: string) => Promise<void> | undefined) | undefined;
 	/** How often the server asked for a process start time. */
 	startCalls = 0;
 	nextPi = 7000;
@@ -71,6 +77,8 @@ export class TowerWorld extends ServerWorld {
 	runMax: number | undefined;
 	/** How often the service writes its tokens again (the server's 4 minutes), when a test wants to see a refresh. */
 	refreshMs: number | undefined;
+	/** The platform the runs are ended for (win32: no signal where it can be avoided, and a pane whose pi was signalled is replaced). */
+	runPlatform: NodeJS.Platform | undefined;
 	/** The tower service of the last server started in this world, once it is built. */
 	expose: Towers | undefined;
 	ally = new FakeAlly();
@@ -112,9 +120,10 @@ export class TowerWorld extends ServerWorld {
 					return this.linkAnswers.get(String(b.op))?.(b) ?? { ok: false, code: "no_holder", error: "no holder in this world" };
 				},
 				runs: {
-					timers: { ...FAST_RUNS, ...this.runTimers }, alive: (pid) => this.live.has(pid), startOf: (pid) => (this.startCalls++, `T-${pid}`), kill: (pid, signal) => void this.kills.push([pid, signal]),
+					timers: { ...FAST_RUNS, ...this.runTimers }, alive: (pid) => this.live.has(pid), procs: async (runId) => (this.procReads++, await this.procGate?.(runId), this.procTable), startOf: (pid) => (this.startCalls++, `T-${pid}`), kill: (pid, signal) => void this.kills.push([pid, signal]),
 					settings: async () => { await this.settingsHold; if (this.settingsError) throw this.settingsError; },
 					...(this.runMax ? { max: () => this.runMax! } : {}),
+					...(this.runPlatform ? { platform: this.runPlatform } : {}),
 				},
 			},
 			...over,

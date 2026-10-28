@@ -27,6 +27,8 @@ export interface RunRecord {
 	/** pi's PID and its start time, read from Herdr's process list right after the start: a claim must match them. */
 	pid?: number;
 	started?: string;
+	/** The processes between Herdr's listed one and pi's own, when pi was started through a wrapper (`cmd.exe /c pi.cmd`): the listed one first. A kill takes pi's own and then the listed one. */
+	via?: number[];
 	/** The pi session file, once the pane reports it. */
 	file?: string;
 	startedAt: string;
