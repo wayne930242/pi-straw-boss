@@ -29,6 +29,7 @@ const PATH = "/etc/secret", MAIL = "me@corp.example", TOKEN = `ghp_${"A1b2C3d4E"
 const POISON = [PATH, "ghp_", MAIL, "me@", "corp.example"];
 const poisoned = (tag: string) => `${tag} ${PATH} ${MAIL} ${TOKEN}`;
 const WS = poisoned("ws"), TAB = poisoned("tab"), NAME = poisoned("nm"), BY = poisoned("by"), TODO = poisoned("todo");
+const OUTSIDE = "OutsideWorkspaceZ", OUTSIDE_NAME = "OutsideTowerNameZ";
 const leaks = (text: string) => POISON.filter((p) => text.includes(p));
 const raw = (text: string) => [WS, TAB, NAME, BY].some((x) => text.includes(x.slice(0, 40)));
 
@@ -121,6 +122,11 @@ async function remoteTurnPaths(): Promise<Path[]> {
 	const herdr = a.world.herdr;
 	herdr.workspaces.find((w) => w.workspace_id === "wA")!.label = WS;
 	herdr.tabs.find((t) => t.tab_id === "wA:t1")!.label = TAB;
+	// A second workspace with a tower, outside the project: no ally path may name it.
+	herdr.workspaces.find((w) => w.workspace_id === "wB")!.label = OUTSIDE;
+	herdr.workspaces.find((w) => w.workspace_id === "wB")!.tokens.tower = "tower-b";
+	const other = a.world.agent({ id: "tower-b", name: OUTSIDE_NAME, pane: "wB:p1", tab: "wB:t1", deps: a.deps });
+	await other.start();
 	const main = a.world.agent({ id: "main-1", name: NAME, pane: "wA:p1", tab: "wA:t1", deps: a.deps });
 	herdr.pane("wA:p1").cwd = a.project;
 	herdr.pane("wA:p1").tokens.sb_opened_by = BY;
@@ -152,6 +158,7 @@ async function allyRunPaths(): Promise<Path[]> {
 	const ask = (cmd: Record<string, unknown>) => callControl(s.handle.endpoint, world!.record()!.secret, cmd as { cmd: string }).then((x) => x.reply as Reply);
 	// The workspace label before the tower is ensured: the service records it, and the brief names it.
 	world.herdr.workspaces.find((w) => w.workspace_id === "wA")!.label = WS;
+	world.herdr.workspaces.find((w) => w.workspace_id === "wB")!.label = OUTSIDE;
 	await ask({ cmd: "ensure-tower", workspace: "wA" });
 	const proj = join(world.stateDir, "proj");
 	mkdirSync(join(proj, "app"), { recursive: true });
@@ -169,7 +176,7 @@ async function allyRunPaths(): Promise<Path[]> {
 	world.sessions = [
 		{ id: "main-1", name: NAME, herdrLocation: at("wA:p71", { id: "wA", label: WS }, { id: "wA:t1", label: TAB }) },
 		{ id: "member-1", name: poisoned("mem"), herdrLocation: at("wA:p72", { id: "wA", label: WS }, { id: "wA:t1", label: TAB }) },
-		{ id: "tower-b", name: poisoned("tw"), herdrLocation: at("wB:p1", { id: "wB", label: "Beta" }, { id: "wB:t1", label: "ops" }) },
+		{ id: "tower-b", name: OUTSIDE_NAME, herdrLocation: at("wB:p1", { id: "wB", label: OUTSIDE }, { id: "wB:t1", label: "ops" }) },
 	];
 	const derived = deriveBoard({ name: NAME, todos: [{ id: 1, subject: TODO, status: "in_progress" }], root: proj })!;
 	mkdirSync(join(world.stateDir, "board"), { recursive: true });
@@ -210,6 +217,7 @@ test("no path that leaves for an ally carries a path, a token, or an email addre
 	const found: string[] = [];
 	for (const p of paths) {
 		const out = await p.out();
+		if (out.includes(OUTSIDE) || out.includes(OUTSIDE_NAME)) found.push(`${p.name}: a workspace outside the project`);
 		for (const l of leaks(out)) found.push(`${p.name}: ${l}`);
 		// A path that carried no label at all would pass for the wrong reason: a scrubbed label shows the mark.
 		if (!out.includes("…")) found.push(`${p.name}: no scrubbed label in the output`);

@@ -1588,6 +1588,7 @@ trials), unchanged otherwise.
 
 ## Risks
 
+- **Model-written text to an ally is not scrubbed.** `allyLabel` covers the labels and names the code reads from Herdr and the board. What a model writes itself (a `tower_send` body, the args of a confirm request) leaves as written; the scrub cannot tell a path in prose from one the boss meant to send. `boss_status`, `tower_list`, `board_read`, presence, and the brief show an ally only the workspaces and sessions inside the project its sender's team binds.
 - **A squatter that lets the port go (RC3-F002, closed by rotating the token on every new listener).** Another account that binds the port during a crash or restart gap receives the open page's reconnect (token in the path, CSRF secret in its requests) and can free the port again. The GUI therefore keeps no token across a gap: every listener that starts has a token and CSRF secret of its own (**GUI token and CSRF secret**), the old ones answer 403, and the remote serve entry is pointed at the new remote listener. The cost, decided by the user, is that every crash, restart, or upgrade ends the open pages (reopen `/boss gui`) and a paired phone scans the QR code again.
 - **The server is now a single point.** While it is down, every workspace lacks a live tower. Mains survive a restart while `restarting`
   is fresh and through the guard's 15 s grace after that, and the broker keeps mail for 24 h, but a server that stays down demotes mains.

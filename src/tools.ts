@@ -43,7 +43,8 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { post, callT
 		addNetTools() {
 			tool("boss_status", "Show this workspace's Straw Boss coordinators: each tab's main agent, this workspace's tower, the head tower, and the other towers.", Type.Object({}), async () => {
 				// In a remote turn the answer is for the senders, so its labels and names are scrubbed.
-				const result = await status(link.remoteScope() !== undefined);
+				const scope = link.remoteScope();
+				const result = await status(scope ? { project: scope.project } : undefined);
 				return { text: JSON.stringify(result, null, 2), details: result };
 			});
 			tool("call_tower", "Send a message to the tower of your workspace, or of another workspace by id or exact label. Opens the tower tab when none is running. The message goes out under a header the code writes (your name, role, and workspace, the recipient, and whether you expect a reply). A tower replies through intercom unless you say reply is false.",

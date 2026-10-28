@@ -116,17 +116,23 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit, server:
 		const moveFirst = (tabId: string) => api("tab.move", { tab_id: tabId, insert_index: 0 }).catch((error: Error) => tell(`Straw Boss: could not move the tower tab first: ${error.message}`, "warning"));
 		return { target, routed: target !== asked ? asked : undefined, ...(await ensureTower({ run, sleep, live, moveFirst, model: towerModel(guiDir), trustDir: trustDir(guiDir) }, target, process.cwd())) };
 	};
-	/** `forAlly`: a remote turn or an ally run asks, so every label and name in the answer goes through the one gate for text that leaves for an ally. */
-	const status = async (forAlly = false) => {
-		const L = <T extends string | undefined>(t: T): T | string => (forAlly ? allyLabel(t) : t);
+	/** What an ally may see of the net: in a remote turn or an ally run only the workspaces with a pane inside the project the senders' teams bind (none when they bind several), and in them only the sessions whose pane is inside it. */
+	const scopeOf = (within: { project: string | undefined } | undefined, ps: Pane[]) => ({
+		bound: (workspaceId: string) => !within || (within.project !== undefined && ps.some((p) => p.workspace_id === workspaceId && p.cwd && inside(p.cwd, within.project!))),
+		here: (x: Session | undefined) => !within || (within.project !== undefined && ps.some((p) => p.pane_id === x?.herdrLocation?.paneId && p.cwd && inside(p.cwd, within.project!))),
+	});
+	/** `within`: a remote turn or an ally run asks, so the answer is scoped like `tower_list`, and every label and name in it goes through the one gate for text that leaves for an ally. */
+	const status = async (within?: { project: string | undefined }) => {
+		const L = <T extends string | undefined>(t: T): T | string => (within ? allyLabel(t) : t);
 		const sessions = await s.c.listSessions();
 		const [ps, all] = [await panes(run), await workspaces(run)];
+		const { bound, here } = scopeOf(within, ps);
 		const mine = all.find((w) => w.workspace_id === s.at.workspaceId);
 		const towerOf = (w?: Workspace) => {
 			const x = sessions.find((y) => y.id === w?.tokens?.tower);
 			return x && w && { workspace: L(w.label), id: x.id, name: L(nameOf(x)), head: w === headOf(all) };
 		};
-		const own = netMembers(sessions, ps).filter((m) => m.workspace.id === s.at.workspaceId && m.role !== "tower");
+		const own = netMembers(sessions, ps).filter((m) => m.workspace.id === s.at.workspaceId && m.role !== "tower" && here(m.s));
 		const tabs = Object.values(Object.groupBy(own, (m) => m.tab.id)).map((group = []) => ({
 			id: group[0]?.tab.id,
 			label: L(group[0]?.tab.label),
@@ -136,10 +142,10 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit, server:
 		return {
 			me: { id: me(), role: role() },
 			workspace: { id: s.at.workspaceId, label: L(mine?.label) },
-			head: headOf(all)?.workspace_id,
+			head: ((h) => (h !== undefined && bound(h) ? h : undefined))(headOf(all)?.workspace_id),
 			tower: towerOf(mine) ?? null,
 			tabs,
-			towers: all.filter((w) => w !== mine).flatMap((w) => towerOf(w) ?? []),
+			towers: all.filter((w) => w !== mine && bound(w.workspace_id)).flatMap((w) => towerOf(w) ?? []),
 		};
 	};
 	/** One reading of the net: the live sessions, every pane, every workspace. */
@@ -223,10 +229,7 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit, server:
 		const L = <T extends string | undefined>(t: T): T | string => (within ? allyLabel(t) : t);
 		const net = await read(), mark = (x: Session) => ({ id: x.id, name: L(nameOf(x)), state: sessionMark(x, net.ps.find((p) => p.pane_id === x.herdrLocation?.paneId)) });
 		const mine = net.all.find((w) => w.workspace_id === s.at.workspaceId);
-		// In a remote turn only the workspaces inside the project the senders' teams bind (none when they bind several).
-		const bound = (workspaceId: string) => !within || (within.project !== undefined && net.ps.some((p) => p.workspace_id === workspaceId && p.cwd && inside(p.cwd, within.project!)));
-		// And inside those, only the sessions whose pane directory is inside it, so a tab outside the project shows nothing of itself.
-		const here = (x: Session | undefined) => !within || (within.project !== undefined && net.ps.some((p) => p.pane_id === x?.herdrLocation?.paneId && p.cwd && inside(p.cwd, within.project!)));
+		const { bound, here } = scopeOf(within, net.ps);
 		const towers = stationsOf(net).filter((st) => bound(st.workspace.workspace_id)).map((st) => {
 			const tabs = Object.values(Object.groupBy(st.members.filter((m) => here(m.s)), (m) => m.tab.id)).map((group = []) => ({ label: L(group[0]!.tab.label), main: L(nameOf(group.find((m) => m.role === "main")?.s)) || null, members: group.filter((m) => m.role === "member").map((m) => L(nameOf(m.s))) }));
 			return { workspace: { id: st.workspace.workspace_id, label: L(st.workspace.label) }, head: st.head, self: st.self, reach: st.via, sessions: st.sessions.filter(here).map(mark), tabs };
