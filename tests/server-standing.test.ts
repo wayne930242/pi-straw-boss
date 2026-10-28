@@ -220,6 +220,27 @@ test("Ctrl+D leaves the pane to the boss for good: the stand-in goes and nothing
 	await until(() => world.herdr.typed.length === 2, "the prompt after the run");
 });
 
+test("B6 VM F6: when the next run is about to start (its event waits and the wake is due within a few seconds), the pane freed by a run gets no prompt typed, since the run would wait for it to start and leave", async () => {
+	world.runTimers = { wake: 900 };
+	const { s, pane } = await setup();
+	await until(() => world.herdr.typed.length === 1, "the first typing");
+	const prompt = new FakePrompt(s, pane);
+	await until(() => world.herdr.pane(pane).agent === "tower", "the stand-in");
+	await ask(s, { cmd: "tower-event", workspace: "wA", text: "first" });
+	await prompt.exit(true); // the prompt leaves for the run
+	const id = await nthRun();
+	await work(s, id);
+	await ask(s, { cmd: "tower-event", workspace: "wA", text: "second", present: false }); // arrives as the first run ends
+	exit(id);
+	await until(() => readRun(world.slot, "wA", id)?.outcome === "done", "the run to end");
+	const pi = world.herdr.pane(pane);
+	pi.agent = undefined;
+	pi.processes = [];
+	await sleep(500);
+	assert.equal(world.herdr.typed.length, 1, "no prompt into the pane the next run is about to take");
+	await nthRun(2);
+});
+
 test("a Herdr restart ends the boss's Ctrl+D too: every pane is a fresh shell", async () => {
 	const { s, pane } = await setup();
 	const prompt = new FakePrompt(s, pane);
@@ -245,6 +266,20 @@ test("where Herdr cannot tell a bare shell from a build (no pgid, as on Windows)
 	assert.equal(world.herdr.typed.length, 1, "nothing is typed on a later look: the shell may be busy");
 });
 
+test("Windows gives shell_pid and a foreground group that are always the shell's: a program the boss runs there is never typed into, however often the look comes (B6 F10)", async () => {
+	world.runPlatform = "win32";
+	world.herdr.winShell = true;
+	world.herdr.shellForeground = true;
+	const { s, pane } = await setup();
+	await until(() => world.herdr.typed.length === 1, "the first typing into the new tab");
+	// The prompt is gone and `ping -t localhost` runs in the shell: process-info lists the shell alone, the group is the shell's pid.
+	new FakePrompt(s, pane).stop();
+	await sleep(1500);
+	assert.equal(world.herdr.typed.length, 1, "the pane is not fresh: no typing, whatever the group says");
+	const lost = () => readFileSync(fileOf(world.slot, "log"), "utf8").split("\n").filter((l) => /prompt-lost/.test(l));
+	assert.equal(lost().length, 1, "said once, not at every look");
+});
+
 test("where Herdr gives the shell's pid and the foreground group, a prompt that died is typed again when the foreground is the shell itself, and not while something else holds it (SR-F003)", async () => {
 	world.herdr.shellPids = true;
 	const { s, pane } = await setup();
@@ -267,6 +302,9 @@ test("idleShell: a process list alone is never an idle shell unless the pane is 
 	assert.equal(idleShell({ foreground_processes: [{ name: "zsh" }, { name: "vim" }] }, true), false);
 	assert.equal(idleShell({ shell_pid: 5, foreground_process_group_id: 5, foreground_processes: [] }), true, "with the pgid pair the groups decide");
 	assert.equal(idleShell({ shell_pid: 5, foreground_process_group_id: 9 }, true), false);
+	const win = { shell_pid: 5, foreground_process_group_id: 5, foreground_processes: [{ pid: 5, name: "powershell.exe" }] };
+	assert.equal(idleShell(win, false, false), false, "Windows: the group is the shell's whatever runs, so it proves nothing");
+	assert.equal(idleShell(win, true, false), true, "Windows, a pane known fresh");
 });
 
 test("between the prompt's post and the wake the next look does not type the prompt again (SR-F004)", async () => {

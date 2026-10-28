@@ -309,6 +309,24 @@ test("R-F003: a run whose server does not answer (or only refuses) for lostMs en
 	assert.match(r.notes.join("\n"), /out of reach/);
 });
 
+test("B6 VM F9: a run in the middle of a turn whose server stays out of reach for lostMs aborts the turn before it leaves, since pi keeps a shutdown until its next idle moment", async () => {
+	const srv = server();
+	let down = false;
+	const inner = srv.ask.bind(srv);
+	srv.ask = async (request: Request): Promise<Answer> => (request.cmd === "run-poll" && down ? { ok: false, error: "no server" } : inner(request));
+	const r = await rig(srv);
+	await until(() => srv.requests.some((q) => q.cmd === "run-file"), "the run to be set up");
+	let aborts = 0;
+	const abort = r.session.abort.bind(r.session);
+	r.session.abort = async () => (aborts++, abort());
+	const busy = await busyTurn(r);
+	down = true;
+	await until(() => r.shutdowns.length === 1, "the busy run to give up", 3000);
+	assert.equal(aborts, 1, "the model call is aborted so pi reaches its idle moment");
+	busy.release();
+	await busy.turn.catch(() => {});
+});
+
 test("B5R-F002: a re-claim that the starting server refuses is waited for, not the end of the run", async () => {
 	const srv = server();
 	const inner = srv.ask.bind(srv);
@@ -341,6 +359,15 @@ test("R-F004: a pi in a tower-glyph tab whose pane lost its tokens asks pane-rol
 	await until(() => r.shutdowns.length === 1, "the pi to quit");
 	assert.equal(srv.requests.filter((q) => q.cmd === "pane-role").length, 4, "asked again while the server was not there");
 	assert.match(r.notes.join("\n"), /Herdr restored this pane/);
+});
+
+test("B6 VM F4: a resident tower (STRAW_BOSS_ROLE=tower) in a pane the server marked is never asked pane-role, so a /reload cannot make it a hand run; it stays a normal session that hands over itself", async () => {
+	flagOn();
+	const srv = server();
+	const r = await rig(srv, { flag: null, herdr: herdrWith({ sb_role: "tower" }, TOWER_LABEL), env: { STRAW_BOSS_ROLE: "tower" } });
+	assert.equal(srv.requests.filter((q) => q.cmd === "pane-role").length, 0, "no pane-role from a resident tower");
+	assert.equal(r.shutdowns.length, 0);
+	assert.ok(!r.session.getAllTools().some((t) => t.name === "tower_done"), "not a run");
 });
 
 test("R-F004: an unmarked pane in a tab without the tower label is never asked about", async () => {

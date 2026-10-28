@@ -129,11 +129,14 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		const pane = env.HERDR_PANE_ID, workspace = env.HERDR_WORKSPACE_ID;
 		// Without the flag file no sb server runs towers, so no pane is one (and a session asks Herdr nothing at its start for this).
 		if (!pane || !workspace || !towerRunsEnabled(guiDir)) return { role: "none" };
+		// A resident tower (it carries STRAW_BOSS_ROLE=tower) is no pi the boss typed into a standing pane: it hands its pane over itself (tower.ts). A /reload right after the server registered its identity finds its pane marked
+		// `tower` already, and asking would make it a hand run that never hands over and never ends (B6 VM F4).
+		if (env.STRAW_BOSS_ROLE === "tower") return { role: "none" };
 		const mine = (await panes(cfg.run, workspace).catch(() => [])).find((p) => p.pane_id === pane);
 		const marked = RUN_PANE_ROLES.has(mine?.tokens?.sb_role ?? "");
 		// Herdr drops the pane tokens at a restart until the server publishes them again, so a pi resumed first finds its pane unmarked: a pane in a tab with the tower label is asked about too (not a resident tower the session started itself, which carries STRAW_BOSS_ROLE=tower), and waits
 		// up to 30 s for a live server and for its takeover (docs/specs/2026-10-26-sb-backend.md, Local runs, step 2).
-		const glyph = !marked && env.STRAW_BOSS_ROLE !== "tower" && mine !== undefined && (await tabs(cfg.run, workspace).catch(() => [])).some((t) => t.tab_id === mine.tab_id && t.label === TOWER_LABEL);
+		const glyph = !marked && mine !== undefined && (await tabs(cfg.run, workspace).catch(() => [])).some((t) => t.tab_id === mine.tab_id && t.label === TOWER_LABEL);
 		if (!marked && !glyph) return { role: "none" };
 		const end = cfg.now() + (glyph ? glyphWaitMs : claimWaitMs), started = startOf(process.pid);
 		for (;;) {
@@ -290,7 +293,10 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	/** The server did not answer, or refused: the run waits for it (a restart takes up to 30 s) and ends when `lostMs` has passed without an answer. */
 	function unreachable(why: string) {
 		outOfReach ??= cfg.now();
-		if (cfg.now() - outOfReach > lostMs) end(`the sb server has been out of reach for ${Math.round(lostMs / 1000)} s; this run ends: ${why}`);
+		if (cfg.now() - outOfReach <= lostMs) return;
+		// pi keeps a shutdown until its next idle moment, and a model call can last many minutes: an orphaned run in the middle of a turn aborts it first (B6 VM F9).
+		if (!ending) try { if (ctx && !ctx.isIdle()) ctx.abort(); } catch { /* the session is already gone */ }
+		end(`the sb server has been out of reach for ${Math.round(lostMs / 1000)} s; this run ends: ${why}`);
 	}
 	async function reclaim() {
 		try {
