@@ -88,7 +88,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// GUI fix pass (sb server B6) to 411: net.ts turns a live ally run with a known session file into a read-only unit of its own (key `ally-<run id>`, the path kept off the page).
 	// T3 review fixes to 415: net.ts (`MemoryNotice`, a run's change to the memory that the boss can undo, in the snapshot); pi first (D23): `MemoryProposal` in its place.
 	// T4 to 421: net.ts (`TowerConversation` on `TowerService`, the idle mark, and the event-run units, kept equal to runs.ts) and the tower option's conversation function in gui.ts.
-	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 421, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
+	// T4 visual fix to 424: net.ts (`bossIn` on `TowerService`, kept equal to runs.ts).
+	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 424, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
 	// Input (the spec's figure), remote access over Tailscale, its terminal pairing panel (QR, c copies, o opens), and the QR encoder each have their own.
 	// What a waiting session waits on (0.5.0, read for display only; answering is deferred) has its own as well.
 	// 0.5.1 raised remote.ts from 165 to 185 (a recorded server counts as running only if its process started when the entry says: a reused PID
@@ -673,7 +674,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Boss conversation (T4) to 171,147 bytes / 69.0 KB gzipped: the comms' box, dividers, event-run chips, Leave and New, and their messages in both languages (towerconv.ts).
 	// T4 review fix 1 to 171,850 bytes / 69.25 KB gzipped: the event-run words and the conversation placeholder.
 	// T4 recheck round 2 to 172,059 bytes / 69.26 KB gzipped: the event run's own read-only reason, in both languages.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 172_100 && total(chunks, gz) <= 69_300, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// T4 visual fix to 172,700 bytes / 69.5 KB gzipped: the in-event-run row and the composer line, in both languages.
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 172_700 && total(chunks, gz) <= 69_500, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
