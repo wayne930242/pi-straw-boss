@@ -32,7 +32,8 @@ export const copyText = (text: string, [cmd, ...args] = CLIPBOARD) =>
 export async function showLines(ui: ExtensionContext["ui"], lines: string[], { block = () => {}, keys = {} }: { block?: (active: boolean) => void; keys?: Record<string, () => Promise<string>> } = {}) {
 	const wide = Math.max(...lines.map((line) => [...line].length));
 	const wrap = (text: string, width: number) => text.split(" ").reduce<string[]>((out, word) => ([...(out.at(-1) ?? "")].length + word.length < width && out.length ? (out[out.length - 1] += ` ${word}`) : out.push(word), out), []);
-	const narrow = (width: number) => [...wrap(`This pane is ${width} columns wide; the QR code needs ${wide}. Widen it, or use Phone in the GUI.`, width), "", ...lines.slice(-3).flatMap((line) => wrap(line, width))];
+	const blanks = lines.flatMap((line, i) => (line === "" ? [i] : []));
+	const narrow = (width: number) => [...wrap(`This pane is ${width} columns wide; the QR code needs ${wide}. Widen it, or use Phone in the GUI.`, width), "", ...lines.slice((blanks.at(-2) ?? -1) + 1).filter(Boolean).flatMap((line) => wrap(line, width))]; // the last two blocks: the code to type (what a narrow pane can still use), and the keys
 	block(true);
 	try {
 		await ui.custom<void>((tui, _theme, _keys, done) => {

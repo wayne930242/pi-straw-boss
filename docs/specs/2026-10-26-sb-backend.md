@@ -724,9 +724,11 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
   the carried-over `gui` block of a starting record still holds the old token and means nothing until then. The costs, accepted:
   - a page or a desk webview left open stops working at every restart or crash (its stream's reconnects meet 403) and has to load the
     new URL: the shell reads the record again at every Moved (a changed `port` or `token`), and a session reads `gui.json` at each use;
-  - a paired phone scans a new QR code, because its cookie is scoped to `Path=/<token>/`; the entries stay in `paired.json`, and remote
+  - a paired phone pairs again, because its cookie is scoped to `Path=/<token>/`: by scanning a new QR code in a browser, or, in an installed
+    app, by typing the short pairing code into the fixed entry `/sb-app/` (decision D16, **Remote app entry**); the entries stay in `paired.json`, and remote
     access, when wanted, comes back by itself with the serve entry pointed at the new remote listener and links that carry the new token;
-  - an installed iOS or Android home-screen app keeps its old start URL and is removed and installed again.
+  - an installed iOS or Android home-screen app no longer has to be removed and installed again: its start URL is the fixed entry (the manifest
+    of a remote page says so), and an app installed before that, with a tokened start URL, is sent there from its dead address.
   Asks while the same listener runs give the same URL. The sessions' restart confirms and the page's Restart button say that the page's
   address is replaced.
 - Upgrades:
@@ -1252,6 +1254,27 @@ What changes:
 - A session in a tower pane whose id is not the workspace's `tower` token is the tower's run. `net.ts`, the dashboard, and `tower_list`
   fold it into the tower unit and never list it as a unit of its own.
 
+### Remote app entry
+
+Decision D16 (boss, 2026-10-28): "固定 app 入口＋在 app 裡輸配對碼". The token rotation and the unpairing on restart (RC3-F002) stay as decided; what changes is
+how an installed app pairs again. Everything below is on the remote listener; the local listener answers `/sb-app/` as any wrong token (403).
+
+- **Entry.** `GET /sb-app/` passes the identity checks of a remote page (remote on, exact MagicDNS host, no Funnel marker, this machine's
+  `Tailscale-User-Login`), else 403. With a device cookie (`sb_remote`, `Path=/sb-app/`) that is a live pairing it answers 302 to the current
+  `/<token>/` and sets both cookies again; without one it answers a page with a code field (no token, no secret, no script, CSP `form-action 'self'`);
+  a document load whose `Sec-Fetch-Site` is not `same-origin` gets the one-time self-reload of a tokened page first, because Android launching the
+  app leaves the SameSite=Strict cookie behind.
+- **Manifest.** A remote page's `manifest.webmanifest` has `start_url` `/sb-app/` and `scope` `/` (the page it leads to must be in scope); the local one is unchanged.
+- **Code.** `access.pairCode()`: 8 characters of a 32-symbol alphabet without I, L, O, U (40 bits), once, 10 minutes, at most 16 waiting, void with remote off or
+  another identity. Shown beside the QR on this computer's page (`remote/pair` and `remote/on` answer `code`) and in the `/boss gui remote` overlay, not in the text
+  the conversation shows. `POST /sb-app/pair` (`application/x-www-form-urlencoded`, 1 KB) is a form post from the entry's own page: `Origin` is the https name and
+  `Sec-Fetch-Site` is `same-origin` when sent, else 403 and nothing counted. Five wrong codes void every waiting code and the entry answers 429 until `pairCode()` is
+  asked again, which only this computer can do (the Phone tile, `/boss gui remote`).
+- **Cookies.** A pairing, by QR or code, and each renewal set the cookie twice: `Path=/<token>/` and `Path=/sb-app/`, never `Path=/`, so the pairing is not
+  sent to other paths on the host (a cookie has no port).
+- **Old installs.** A document load at a dead token by this machine's user, or at the current token with no pairing and `Sec-Fetch-Site: same-origin`, answers 302 to
+  `/sb-app/`: an app installed before the entry (start URL a tokened address) finds it by itself.
+
 ## `gui.json` and its successor (for straw-boss-desk's owner)
 
 This section stands alone, so straw-boss-desk's owner can review it without the rest. The owner agreed to it on 2026-10-26 (D11).
@@ -1588,7 +1611,7 @@ trials), unchanged otherwise.
 
 ## Risks
 
-- **A squatter that lets the port go (RC3-F002, closed by rotating the token on every new listener).** Another account that binds the port during a crash or restart gap receives the open page's reconnect (token in the path, CSRF secret in its requests) and can free the port again. The GUI therefore keeps no token across a gap: every listener that starts has a token and CSRF secret of its own (**GUI token and CSRF secret**), the old ones answer 403, and the remote serve entry is pointed at the new remote listener. The cost, decided by the user, is that every crash, restart, or upgrade ends the open pages (reopen `/boss gui`) and a paired phone scans the QR code again.
+- **A squatter that lets the port go (RC3-F002, closed by rotating the token on every new listener).** Another account that binds the port during a crash or restart gap receives the open page's reconnect (token in the path, CSRF secret in its requests) and can free the port again. The GUI therefore keeps no token across a gap: every listener that starts has a token and CSRF secret of its own (**GUI token and CSRF secret**), the old ones answer 403, and the remote serve entry is pointed at the new remote listener. The cost, decided by the user, is that every crash, restart, or upgrade ends the open pages (reopen `/boss gui`) and a paired phone pairs again (a QR code in a browser; in an installed app a typed code at the fixed entry, D16), where it first also meant removing and installing a home-screen app again.
 - **The server is now a single point.** While it is down, every workspace lacks a live tower. Mains survive a restart while `restarting`
   is fresh and through the guard's 15 s grace after that, and the broker keeps mail for 24 h, but a server that stays down demotes mains.
   The session looks and the supervisor keep that window short, and `boss_server status` and the log say why it is down.
@@ -1630,6 +1653,7 @@ straw-boss-desk's owner also agreed to D11.
 | D13 | The ally thread for the brief keeps peer text at rest | "存，每台裝置最近 20 則、留 7 天": a per-device store of both directions, the last 20 messages, 7 days (**The brief**). |
 | D14 | Restarting and debugging the server | "server restart 也要讓 agent 或 user 有辦法做，不然很難 debug": `boss_server` for local sessions and local runs, Restart server and Show log in the GUI on this computer's page only, `server.log` with rotation, `cli.mjs logs`, and the reason recorded (**Seeing and restarting the server**). |
 | D15 | Prompting a tower that is not resident | "如果 tower 現在不是常駐，那會需要 /boss tower [prompt] 的指令": `/boss tower <prompt>` posts a `boss` event the way the GUI composer does, so the boss can wake the tower from any pi session; it does not change focus. A bare `/boss tower` still opens and focuses the tab. Built in B5. |
+| D16 | An installed app after a restart (remote access; boss, 2026-10-28) | Live on 0.46.0: the GUI token rotates on every new listener and paired devices are cleared (RC3-F002), so a phone's home-screen app kept the old tokened start URL, got 403 for good, and on iOS (the app has its own cookie jar) scanning the QR in Safari never paired it. The boss: "固定 app 入口＋在 app 裡輸配對碼". The rotation and the unpairing on restart stay. The remote listener gets a fixed, token-free entry `/sb-app/` (the remote manifest's `start_url`); with a valid device cookie it redirects to the current page, without one it shows a field for a short pairing code (8 characters, 40 bits, once, 10 minutes, void after 5 wrong tries until a new code is asked for on this computer, the same identity checks as the QR, a CSRF-checked POST); the pairing sets the device cookie for `Path=/<token>/` and for `Path=/sb-app/` (never `Path=/`, so it is not sent to other paths on the host). The code is shown beside the QR on this computer's page and in the `/boss gui remote` overlay. The local listener is unchanged, and no token or secret is on the entry's pages (**Remote app entry**). |
 
 ## Review record
 

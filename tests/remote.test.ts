@@ -17,6 +17,7 @@ import { until } from "./fakes.ts";
 const scratch = mkdtempSync(join(tmpdir(), "psb-remote-test-"));
 mkdirSync(join(scratch, "bundle"));
 writeFileSync(join(scratch, "bundle", "index.html"), "<!doctype html><html><head><title>Straw Net</title></head><body></body></html>");
+writeFileSync(join(scratch, "bundle", "manifest.webmanifest"), JSON.stringify({ name: "Straw Net", id: "./", start_url: "./", scope: "./", display: "standalone", icons: [{ src: "icon.svg", sizes: "any" }] }));
 const running: Gui[] = [];
 after(async () => {
 	await Promise.all(running.map((g) => g.stop()));
@@ -272,7 +273,10 @@ test("over the tailnet: only this user's paired devices get in, a code pairs onc
 		assert.match(launch.body, /<meta http-equiv="refresh" content="0">/, `${site}: a page load from outside reloads itself, same-origin, so the cookie can ride along`);
 		assert.match(launch.body, /<a href="">/, "and links to itself for a browser that blocks refresh");
 	}
-	for (const [headers, method] of [[{ "sec-fetch-site": "same-origin", "sec-fetch-dest": "document" }], [{ "sec-fetch-site": "cross-site", "sec-fetch-dest": "script" }], [{ "sec-fetch-dest": "document" }], [{ "sec-fetch-site": "cross-site", "sec-fetch-dest": "document" }, "POST"]] as const) {
+	// A same-origin page load without a pairing (an installed app has no address bar) goes on to the fixed entry, which asks for a pairing code.
+	const bounced = await remoteGet(gui, page, { "sec-fetch-site": "same-origin", "sec-fetch-dest": "document" });
+	assert.deepEqual([bounced.status, bounced.headers.location], [302, "/sb-app/"]);
+	for (const [headers, method] of [[{ "sec-fetch-site": "cross-site", "sec-fetch-dest": "script" }], [{ "sec-fetch-dest": "document" }], [{ "sec-fetch-site": "cross-site", "sec-fetch-dest": "document" }, "POST"]] as const) {
 		const r = await remoteGet(gui, page, headers, method, method && "{}");
 		assert.deepEqual([r.status, r.headers["content-type"]], [401, "text/plain"], `${JSON.stringify(headers)}: the plain refusal, so the reload never loops`);
 		assert.match(r.body, /not paired.*camera/);
@@ -284,8 +288,11 @@ test("over the tailnet: only this user's paired devices get in, a code pairs onc
 	const code = gui.access.pair()!;
 	const paired = await remoteGet(gui, `${page}pair/${code}`);
 	assert.equal(paired.status, 200);
-	const cookie = String(paired.headers["set-cookie"]);
-	assert.match(cookie, new RegExp(`^sb_remote=[0-9a-f]{64}; Path=/${gui.token}/; Max-Age=\\d+; HttpOnly; Secure; SameSite=Strict$`));
+	const cookies = paired.headers["set-cookie"] as string[];
+	assert.equal(cookies.length, 2);
+	assert.match(cookies[0]!, new RegExp(`^sb_remote=[0-9a-f]{64}; Path=/${gui.token}/; Max-Age=\\d+; HttpOnly; Secure; SameSite=Strict$`));
+	assert.match(cookies[1]!, new RegExp(`^sb_remote=${cookies[0]!.slice(10, 74)}; Path=/sb-app/; Max-Age=\\d+; HttpOnly; Secure; SameSite=Strict$`), "the same pairing, also for the fixed entry's path and no other");
+	const cookie = cookies[0]!;
 	assert.match(paired.body, new RegExp(`http-equiv="refresh" content="0;url=/${gui.token}/"`));
 	assert.equal((await remoteGet(gui, `${page}pair/${code}`)).status, 403, "the same QR does not pair twice");
 	const jar = cookie.split(";")[0]!;
@@ -318,6 +325,9 @@ test("switchRemote turns the entry on with a QR and records it, and off removes 
 	const on = await switchRemote(gui, true, dir, ts.run);
 	assert.match(on.text, /Remote access is on for me@example.com, tailnet only/);
 	assert.ok(on.lines!.length > 20 && on.lines!.some((l) => l.includes("█")), "a QR to scan");
+	const at = on.lines!.findIndex((l) => /installed app, type this code/.test(l));
+	assert.match(on.lines![at + 1]!, /^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/, "the code to type, beside the QR");
+	assert.ok(!on.text.includes(on.lines![at + 1]!) && !on.plain.includes(on.lines![at + 1]!), "and not in the text the conversation shows");
 	assert.deepEqual(JSON.parse(readFileSync(join(dir, "remote.json"), "utf8")), { target: "http://127.0.0.1:6000", pid: process.pid, started: startOf(process.pid) });
 	assert.deepEqual(gui.access.remote, { host: HOST, login: LOGIN });
 	const off = await switchRemote(gui, false, dir, ts.run);
@@ -690,4 +700,176 @@ test("S7: runs reads the ISO form as it is, with and without a recorded start", 
 	assert.equal(runs({ pid: process.pid }, wrote, () => "2026-10-26T04:21:53.123Z"), true, "no recorded start: the process is older than the file");
 	assert.equal(runs({ pid: process.pid }, wrote, () => "2026-10-26T04:45:00.000Z"), false, "no recorded start: the process started after the file was written");
 	assert.equal(runs({ pid: process.pid, started: "2026-10-26T04:21:53.123Z" }, wrote, () => undefined), true, "not known yet: the entry stands");
+});
+
+
+const form = (headers: Record<string, string | undefined> = {}) => ({ origin: `https://${HOST}`, "content-type": "application/x-www-form-urlencoded", "sec-fetch-site": "same-origin", ...headers });
+const reqOf = (headers: Record<string, string> = {}, method = "POST") => ({ method, headers: { host: HOST, "tailscale-user-login": LOGIN, origin: `https://${HOST}`, "content-type": "application/x-www-form-urlencoded", "sec-fetch-site": "same-origin", "x-forwarded-for": "100.1.2.3", ...headers } }) as unknown as IncomingMessage;
+
+test("a typed pairing code pairs like a scanned one: once, within ten minutes, from the entry's own form, for this machine's user only", () => {
+	const access = createAccess(T);
+	assert.equal(access.pairCode(), undefined, "no codes while remote is off");
+	access.enable(ID);
+	const code = access.pairCode()!;
+	assert.match(code, /^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/, "8 characters of 5 bits, none that read as another");
+	const body = `code=${encodeURIComponent(code)}`;
+	assert.deepEqual(access.redeem(reqOf({ "tailscale-user-login": "other@example.com" }), body), { status: 403 }, "another user's device is refused and does not use the code up");
+	assert.deepEqual(access.redeem(reqOf({ "tailscale-funnel-request": "?1" }), body), { status: 403 });
+	assert.deepEqual(access.redeem(reqOf({ host: "evil.example:8443" }), body), { status: 403 });
+	// A request that is not the entry's own form post never reaches the code, uses nothing up, and counts for nothing.
+	for (let i = 0; i < 12; i++) for (const bad of [reqOf({ origin: "https://evil.example" }), reqOf({ origin: "" }), reqOf({ "sec-fetch-site": "cross-site" }), reqOf({ "sec-fetch-site": "same-site" }), reqOf({ "content-type": "application/json" }), reqOf({}, "GET")]) assert.deepEqual(access.redeem(bad, body), { status: 403 });
+	const first = access.redeem(reqOf({ "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1" }), body);
+	assert.ok("cookie" in first);
+	assert.deepEqual(via(access, "", { cookie: `sb_remote=${first.cookie}` }), IN(first.cookie), "the cookie is a pairing like a scanned one's");
+	assert.equal(access.devices.list()[0]!.label, "iPhone · Safari");
+	assert.deepEqual(access.redeem(reqOf(), body), { wrong: true }, "used up");
+	// Case, spaces, a missing hyphen, and look-alikes (O, I, L) are forgiven.
+	for (let i = 0, found = false; i < 400 && !found; i++) {
+		const next = access.pairCode()!;
+		if (!/[01]/.test(next)) continue;
+		found = true;
+		const typed = next.toLowerCase().replace("-", " ").replace(/0/g, "o").replace(/1/g, "l");
+		assert.ok("cookie" in access.redeem(reqOf(), `code=${encodeURIComponent(typed)}`), typed);
+	}
+	// The count of wrong codes: four are forgiven; the fifth voids every waiting code and nothing is tried until the boss asks this computer for a new one.
+	const waiting = access.pairCode()!;
+	for (let i = 0; i < 4; i++) assert.deepEqual(access.redeem(reqOf(), "code=AAAA-AAAA"), { wrong: true });
+	assert.ok("cookie" in access.redeem(reqOf(), `code=${waiting}`), "four misses: the code still pairs");
+	const doomed = access.pairCode()!;
+	for (const wrong of ["code=AAAA-AAAA", "code=", "code=%%%", "", "code=" + "A".repeat(500), "code=0000-0000"]) {
+		const r = access.redeem(reqOf(), wrong);
+		assert.ok("wrong" in r || "status" in r, wrong);
+	}
+	assert.deepEqual(access.redeem(reqOf(), `code=${doomed}`), { status: 429 }, "locked: the right code is not tried either");
+	assert.deepEqual(access.redeem(reqOf({ "tailscale-user-login": "other@example.com" }), `code=${doomed}`), { status: 403 }, "another user's request does not learn it is locked");
+	assert.ok("cookie" in access.redeem(reqOf(), `code=${access.pairCode()}`), "a new code gives the tries back");
+	// Ten minutes, turning remote off, and another identity void a code.
+	const late = access.pairCode()!, now = Date.now();
+	mock.method(Date, "now", () => now + 10 * 60_000 + 1);
+	try {
+		assert.deepEqual(access.redeem(reqOf(), `code=${late}`), { wrong: true }, "expired");
+	} finally {
+		mock.restoreAll();
+	}
+	const off = access.pairCode()!;
+	access.disable();
+	access.enable(ID);
+	assert.deepEqual(access.redeem(reqOf(), `code=${off}`), { wrong: true }, "remote off voids it");
+	const mine = access.pairCode()!;
+	access.enable({ host: HOST, login: "other@example.com" });
+	assert.deepEqual(access.redeem(reqOf({ "tailscale-user-login": "other@example.com" }), `code=${mine}`), { wrong: true }, "another identity voids it");
+	// Sixteen waiting at most: the oldest goes first.
+	access.enable(ID);
+	const oldest = access.pairCode()!;
+	for (let i = 0; i < 16; i++) access.pairCode();
+	assert.deepEqual(access.redeem(reqOf(), `code=${oldest}`), { wrong: true });
+});
+
+test("the fixed entry (/sb-app/) is on the remote listener only, holds no token or secret, sends a paired device on, and takes a typed code from an unpaired one", async () => {
+	const gui = await startGui({ read: async () => ({ bases: [] }), dir: join(scratch, "bundle"), pollMs: 50, pingMs: 1000 });
+	running.push(gui);
+	const entry = "/sb-app/", page = `/${gui.token}/`, doc = { "sec-fetch-dest": "document", "sec-fetch-site": "same-origin" };
+	const secrets = (text: string) => text.includes(gui.token) || text.includes(gui.csrf);
+	const local = (path: string, headers: Record<string, string | undefined> = {}) => remoteGet(gui, path, { host: `127.0.0.1:${gui.port}`, "tailscale-user-login": undefined, "x-forwarded-for": undefined, "x-forwarded-proto": undefined, "tailscale-headers-info": undefined, ...headers }, "GET", undefined, gui.port);
+	assert.equal((await remoteGet(gui, entry, doc)).status, 403, "remote is off: no entry");
+	gui.access.enable(ID);
+	assert.equal((await local(entry, doc)).status, 403, "the local listener has no entry");
+	assert.equal((await remoteGet(gui, "/sb-app", doc)).status, 308);
+	for (const headers of [{ "tailscale-user-login": undefined }, { "tailscale-user-login": "other@example.com" }, { "tailscale-funnel-request": "?1" }, { host: "box.tail1.ts.net" }, { host: "evil.example:8443" }]) {
+		assert.equal((await remoteGet(gui, entry, { ...doc, ...headers })).status, 403, `GET ${JSON.stringify(headers)}`);
+		assert.equal((await remoteGet(gui, `${entry}pair`, { ...form(), ...headers }, "POST", "code=AAAA-AAAA")).status, 403, `POST ${JSON.stringify(headers)}`);
+	}
+	// Not paired: a page with a field for the code, and nothing of the listener's secrets.
+	const open = await remoteGet(gui, entry, { ...doc, "accept-language": "en-US" });
+	assert.deepEqual([open.status, open.headers["content-type"], open.headers["set-cookie"], open.headers["cache-control"]], [200, "text/html; charset=utf-8", undefined, "no-store"]);
+	assert.match(open.body, /<form method="post" action="\/sb-app\/pair">/);
+	assert.match(open.body, /name="code"/);
+	assert.ok(!secrets(open.body), "no token and no CSRF secret on the entry's page");
+	assert.match(String(open.headers["content-security-policy"]), /form-action 'self'/);
+	assert.match(String(open.headers["content-security-policy"]), /script-src 'self'/);
+	assert.ok(!/<script/.test(open.body), "the page runs no script");
+	assert.match((await remoteGet(gui, entry, { ...doc, "accept-language": "zh-TW,zh;q=0.9" })).body, /配對碼/);
+	for (const site of ["none", "cross-site", "same-site"]) {
+		const launch = await remoteGet(gui, entry, { "sec-fetch-dest": "document", "sec-fetch-site": site });
+		assert.equal(launch.status, 200, site);
+		assert.match(launch.body, /<meta http-equiv="refresh" content="0">/, `${site}: a launch from outside reloads once, same-origin, so a cookie Strict withheld can ride along`);
+		assert.ok(!/<form/.test(launch.body) && !secrets(launch.body));
+	}
+	assert.match((await remoteGet(gui, entry, { "sec-fetch-dest": "document" })).body, /<form/, "a browser that sends no Sec-Fetch-Site gets the form straight away");
+	assert.match((await remoteGet(gui, entry, { cookie: `sb_remote=${"0".repeat(64)}`, ...doc })).body, /<form/, "a cookie the server does not know is not a pairing");
+	assert.equal((await remoteGet(gui, `${entry}nothing`, doc)).status, 404);
+	assert.equal((await remoteGet(gui, entry, doc, "PUT", "x")).status, 403);
+
+	// Typing a code.
+	const post = (text: string, headers: Record<string, string | undefined> = {}) => remoteGet(gui, `${entry}pair`, { ...form(), ...headers }, "POST", text);
+	const code = gui.access.pairCode()!;
+	for (const headers of [{ origin: undefined }, { origin: "https://evil.example" }, { origin: `http://${HOST}` }, { "sec-fetch-site": "cross-site" }, { "content-type": "application/json" }, { "content-type": undefined }]) {
+		const r = await post(`code=${code}`, headers);
+		assert.deepEqual([r.status, r.headers["set-cookie"]], [403, undefined], `${JSON.stringify(headers)}: not the entry's own form`);
+	}
+	const big = await post(`code=${"A".repeat(2000)}`).catch((error: Error) => ({ status: 413, body: error.message, headers: {} }));
+	assert.equal(big.status, 413, "a body over 1 KB is refused");
+	const wrong = await post("code=AAAA-AAAA");
+	assert.equal(wrong.status, 403);
+	assert.match(wrong.body, /did not work/);
+	assert.match(wrong.body, /<form/, "and asks again");
+	assert.ok(!secrets(wrong.body));
+	const paired = await post(`code=${code.toLowerCase()}`, { "user-agent": "Mozilla/5.0 (Linux; Android 16; Pixel 10) AppleWebKit/537.36 Chrome/140.0.0.0 Mobile Safari/537.36" });
+	assert.equal(paired.status, 200);
+	const cookies = paired.headers["set-cookie"] as string[], value = cookies[0]!.slice(10, 74);
+	assert.match(cookies[0]!, new RegExp(`^sb_remote=[0-9a-f]{64}; Path=/${gui.token}/; Max-Age=\\d+; HttpOnly; Secure; SameSite=Strict$`));
+	assert.match(cookies[1]!, new RegExp(`^sb_remote=${value}; Path=/sb-app/; Max-Age=\\d+; HttpOnly; Secure; SameSite=Strict$`));
+	assert.match(paired.body, /http-equiv="refresh" content="0;url=\/sb-app\/"/);
+	assert.ok(!secrets(paired.body), "the pairing page leads back to the entry, not to the token");
+	assert.equal((await post(`code=${code}`)).status, 403, "the same code does not pair twice");
+
+	// Paired: the entry sends the device on to the current page and sets its cookies for this listener's token.
+	const jar = `sb_remote=${value}`, on = await remoteGet(gui, entry, { ...doc, cookie: jar });
+	assert.deepEqual([on.status, on.headers.location, on.body], [302, page, ""]);
+	assert.equal((on.headers["set-cookie"] as string[]).length, 2);
+	assert.match((on.headers["set-cookie"] as string[])[0]!, new RegExp(`Path=/${gui.token}/`));
+	assert.equal((await remoteGet(gui, page, { cookie: jar })).status, 200, "and the page lets it in");
+	assert.equal((await remoteGet(gui, entry, { ...doc, cookie: jar, "tailscale-user-login": "other@example.com" })).status, 403, "a cookie alone is not enough");
+	assert.equal(gui.access.devices.list()[0]!.label, "Android · Chrome");
+
+	// A restart voids every pairing (the token is new): the cookie in the app's jar finds the form again.
+	gui.access.devices.unpairAll();
+	assert.match((await remoteGet(gui, entry, { ...doc, cookie: jar })).body, /<form/);
+
+	// Five wrong codes lock the entry until the boss asks this computer for a new code.
+	const waiting = gui.access.pairCode()!;
+	for (let i = 0; i < 5; i++) assert.equal((await post("code=AAAA-AAAA")).status, 403);
+	const locked = await post(`code=${waiting}`);
+	assert.equal(locked.status, 429);
+	assert.ok(!/<form/.test(locked.body) && !secrets(locked.body));
+	assert.equal((await post(`code=${gui.access.pairCode()}`)).status, 200, "a new code works");
+});
+
+test("an installed app's old address leads to the fixed entry; the remote manifest starts there and the local one is unchanged", async () => {
+	const gui = await startGui({ read: async () => ({ bases: [] }), dir: join(scratch, "bundle"), pollMs: 50, pingMs: 1000 });
+	running.push(gui);
+	gui.access.enable(ID);
+	const dead = `/${"0".repeat(gui.token.length)}/`, doc = { "sec-fetch-dest": "document", "sec-fetch-site": "same-origin" };
+	for (const site of ["same-origin", "none", "cross-site"]) {
+		const r = await remoteGet(gui, dead, { "sec-fetch-dest": "document", "sec-fetch-site": site });
+		assert.deepEqual([r.status, r.headers.location, r.body], [302, "/sb-app/", ""], `a document load at a dead address by this user (${site})`);
+	}
+	const other = await remoteGet(gui, dead, { ...doc, "tailscale-user-login": "other@example.com" });
+	assert.equal(other.status, 403);
+	assert.match(other.body, /This address does not work here/, "another user gets the dead-address page, not a way to the entry");
+	assert.deepEqual([(await remoteGet(gui, dead, { "sec-fetch-dest": "empty" })).status, (await remoteGet(gui, dead, { ...doc }, "POST", "{}")).status], [403, 403], "a script's request or a post gets the plain refusal");
+	const jar = `sb_remote=${(gui.access.redeem(reqOf(), `code=${gui.access.pairCode()}`) as { cookie: string }).cookie}`;
+	const manifest = JSON.parse((await remoteGet(gui, `/${gui.token}/manifest.webmanifest`, { cookie: jar })).body);
+	assert.deepEqual([manifest.start_url, manifest.scope, manifest.name, manifest.display], ["/sb-app/", "/", "Straw Net", "standalone"], "an app installed from the tailnet starts at the fixed entry, whose scope covers the page it leads to");
+	assert.ok(!JSON.stringify(manifest).includes(gui.token));
+	const bare = { "tailscale-user-login": undefined, "x-forwarded-for": undefined, "x-forwarded-proto": undefined, "tailscale-headers-info": undefined };
+	const here = JSON.parse((await remoteGet(gui, `/${gui.token}/manifest.webmanifest`, { host: `127.0.0.1:${gui.port}`, ...bare }, "GET", undefined, gui.port)).body);
+	assert.deepEqual([here.start_url, here.scope], ["./", "./"], "this computer's page keeps its own");
+	// The pairing QR sets the entry's cookie too, so an app installed after scanning it is paired at the entry.
+	const qr = await remoteGet(gui, `/${gui.token}/pair/${gui.access.pair()}`);
+	assert.equal((qr.headers["set-cookie"] as string[]).length, 2);
+	// The control endpoint hands the page the code beside the QR.
+	const pairing = await remoteGet(gui, `/${gui.token}/api/remote/pair`, { host: `127.0.0.1:${gui.port}`, ...bare, origin: `http://127.0.0.1:${gui.port}`, "sec-fetch-site": "same-origin", "content-type": "application/json", "x-sb-csrf": gui.csrf }, "POST", "{}", gui.port);
+	assert.equal(pairing.status, 200);
+	assert.match(JSON.parse(pairing.body).code, /^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/);
 });

@@ -270,6 +270,7 @@
 	"new_code": "新的配對碼",
 	"asking_code": "正在取得配對碼…",
 	"pair_scan": "用以本機使用者身分登入 Tailscale 的手機掃描。只能用一次，十分鐘內有效。",
+	"pair_code": "或在已安裝的 app 裡輸入這組配對碼。只能用一次，十分鐘內有效。",
 	"no_answer": "伺服器沒有回應。",
 	"remote_off_ask": "遠端存取還沒開啟。要開啟，讓你 tailnet 上的手機可以開這個頁面嗎？只有用這台電腦的 Tailscale 帳號登入的裝置能配對，絕不使用 Funnel。",
 	"remote_turn_on": "開啟遠端存取",

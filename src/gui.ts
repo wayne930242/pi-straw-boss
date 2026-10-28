@@ -14,7 +14,8 @@ import { canonical, readers } from "./history.ts";
 import { createMirrors } from "./mirror.ts";
 import type { Found, Net, Ref } from "./net.ts";
 import { qr } from "./qr.ts";
-import { type Access, cookieFor, createAccess } from "./remote.ts";
+import { createEntry, zhOf } from "./appentry.ts";
+import { APP, type Access, appCookieFor, cookieFor, createAccess } from "./remote.ts";
 import { packageRoot, VERSION as PACKAGE_VERSION } from "./server/version.ts";
 import { api, type Hub as Files, image, watchSession, type Watch, watchWorkspace } from "./watch.ts";
 
@@ -102,11 +103,19 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 	}
 	const token = randomBytes(16).toString("hex"), csrf = randomBytes(16).toString("hex");
 	const page = html.toString("utf8").replace("<head>", `<head>\n<base href="/${token}/">\n<meta name="sb-csrf" content="${csrf}">${desk ? '\n<meta name="sb-desk" content="1">' : ""}\n<meta name="sb-build" content="${build}">`);
+	const remoteManifest = (() => {
+		try {
+			const manifest = bundle.get("manifest.webmanifest");
+			return manifest && JSON.stringify({ ...JSON.parse(manifest.toString("utf8")), start_url: APP, scope: "/" });
+		} catch {
+			return undefined; // a manifest that is not JSON is served as it is
+		}
+	})();
 	const files: Files = { lookup: (key) => net?.lookup(key), workspace: (id) => net?.workspace(id) ?? [], readers: readers() };
 	// Turning remote access off ends the streams of remote pages, and unpairing a device ends that device's (`remotes` names each stream's device); their next request finds the cookie void.
 	const clients = new Map<ServerResponse, Watch | undefined>(), remotes = new Map<ServerResponse, string>(), access = createAccess(token, (device) => remotes.forEach((d, c) => (!device || d === device) && c.end()), paired);
-	const pair = (code = access.pair(), host = access.remote?.host, url = `https://${host}/${token}/pair/${code}`) => (code && host ? { url, rows: qr(url).map((row) => row.map(Number).join("")) } : undefined);
-	const mirrors = createMirrors({ call, lookup: (key) => net?.lookup(key), secret: waitsForSecret, canonical }), docs = hub && createDocs(hub, (key) => net?.lookup(key)?.name ?? key);
+	const pair = (code = access.pair(), host = access.remote?.host, url = `https://${host}/${token}/pair/${code}`) => (code && host ? { url, rows: qr(url).map((row) => row.map(Number).join("")), code: access.pairCode() } : undefined);
+	const entry = createEntry(access, token, HEADERS), mirrors = createMirrors({ call, lookup: (key) => net?.lookup(key), secret: waitsForSecret, canonical }), docs = hub && createDocs(hub, (key) => net?.lookup(key)?.name ?? key);
 	const stop = (asked: Asked) => (refuseTake && asked.take ? false : (setTimeout(() => (onStop ? onStop(asked) : void halt()), 10), true)); // after the reply has gone out
 	const dismissAll = async () => {
 		const n = net?.dismissAll?.() ?? 0;
@@ -166,20 +175,26 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 		const [, given, ...path] = pathname.split("/");
 		const fail = (code: number) => res.writeHead(code, { ...HEADERS, "content-type": "text/plain" }).end(code === 403 ? "forbidden" : "not found");
 		const answer = ({ status, body }: Reply) => res.writeHead(status, { ...HEADERS, "content-type": TYPES[".json"] }).end(JSON.stringify(body));
+		// The installed app's fixed entry exists on the remote listener only; on the local one `sb-app` is just a wrong token.
+		if (kind === "remote" && given === APP.slice(1, -1)) return void entry(req, res, path);
 		const who = access.check(req, kind, (own().address() as AddressInfo).port, given, path);
 		if ("status" in who) {
-			// A page load at a dead address (the token was replaced by a restart) says so, without a secret in it; a script's request gets the plain refusal.
-			if (who.status === 403) return void (req.method === "GET" && req.headers["sec-fetch-dest"] === "document" ? res.writeHead(403, { ...HEADERS, "content-type": TYPES[".html"] }).end(`<!doctype html><meta charset="utf-8"><p>${/^\s*zh-(?:tw|hk|mo|hant)\b/i.test(String(req.headers["accept-language"] ?? "")) ? REPLACED_ZH : REPLACED}</p>`) : fail(403));
+			// A page load at a dead address (the token was replaced by a restart) says so, without a secret in it; a script's request gets the plain refusal. On the remote listener a document load by this machine's user goes
+			// on to the fixed entry instead: an installed app's start URL is a dead address after every restart, and the entry is where it pairs again.
+			const document = req.method === "GET" && req.headers["sec-fetch-dest"] === "document";
+			if (who.status === 403) return void (document && kind === "remote" && access.admits(req) ? res.writeHead(302, { ...HEADERS, location: APP }).end() : document ? res.writeHead(403, { ...HEADERS, "content-type": TYPES[".html"] }).end(`<!doctype html><meta charset="utf-8"><p>${zhOf(req) ? REPLACED_ZH : REPLACED}</p>`) : fail(403));
 			// The SameSite=Strict cookie stays behind on a navigation from another site, and Android counts launching the installed app as one: such a
 			// page load reloads itself once, a same-origin navigation that carries the cookie when this device has one. Sec-Fetch-Site decides, so the
 			// reload never loops, and a browser that sends no Sec-Fetch-Site gets the plain refusal.
 			const site = req.headers["sec-fetch-site"];
-			if (req.method === "GET" && req.headers["sec-fetch-dest"] === "document" && typeof site === "string" && site !== "same-origin") return void res.writeHead(401, { ...HEADERS, "content-type": TYPES[".html"] }).end(`<!doctype html><meta http-equiv="refresh" content="0"><p><a href="">Open the straw net</a></p><p>If it does not open, this device is not paired: scan a new QR code from /boss gui remote.</p>`); // the link, same-origin too, for a browser that blocks refresh
-			return void res.writeHead(401, { ...HEADERS, "content-type": "text/plain" }).end("This device is not paired. Scan a new QR code from /boss gui remote with this device's camera; it opens in the browser. An app installed from Chrome on Android shares the browser's pairing, so open it again after pairing. On iOS, pair in Safari, then delete the app and add it to the Home Screen again.");
+			if (document && typeof site === "string" && site !== "same-origin") return void res.writeHead(401, { ...HEADERS, "content-type": TYPES[".html"] }).end(`<!doctype html><meta http-equiv="refresh" content="0"><p><a href="">Open the straw net</a></p><p>If it does not open, this device is not paired: scan a new QR code from /boss gui remote.</p>`); // the link, same-origin too, for a browser that blocks refresh
+			// A same-origin page load that still has no pairing (an installed app has no address bar to go anywhere else) goes to the fixed entry, which asks for a pairing code.
+			if (document && site === "same-origin") return void res.writeHead(302, { ...HEADERS, location: APP }).end();
+			return void res.writeHead(401, { ...HEADERS, "content-type": "text/plain" }).end(`This device is not paired. Scan a new QR code from /boss gui remote with this device's camera; it opens in the browser. In an installed app, open the app again and type the pairing code that /boss gui remote shows beside the QR on the page it opens (${APP}); on iOS the app has cookies of its own, so scanning the QR in Safari does not pair it.`);
 		}
-		if ("reissue" in who && who.reissue) res.setHeader("set-cookie", cookieFor(token, who.reissue)); // a use renewed the pairing: the browser's cookie lasts 90 days from now
-		// A pairing code was just exchanged: the cookie is set, and the page reloads itself, so the cookie also rides on a same-site navigation.
-		if ("cookie" in who) return void res.writeHead(200, { ...HEADERS, "content-type": TYPES[".html"], "set-cookie": cookieFor(token, who.cookie) }).end(`<!doctype html><meta http-equiv="refresh" content="0;url=/${token}/"><p>Paired. Opening the straw net…</p>`);
+		if ("reissue" in who && who.reissue) res.setHeader("set-cookie", [cookieFor(token, who.reissue), appCookieFor(who.reissue)]); // a use renewed the pairing: the browser's cookies last 90 days from now
+		// A pairing code was just exchanged: the cookies are set, and the page reloads itself, so they also ride on a same-site navigation.
+		if ("cookie" in who) return void res.writeHead(200, { ...HEADERS, "content-type": TYPES[".html"], "set-cookie": [cookieFor(token, who.cookie), appCookieFor(who.cookie)] }).end(`<!doctype html><meta http-equiv="refresh" content="0;url=/${token}/"><p>Paired. Opening the straw net…</p>`);
 		if (path[0] === "doc") return void (docs ? docs.serve(req, res, path.slice(1), who.origin).catch(() => res.destroy()) : fail(404)); // the documents sessions show (docs.ts)
 		if (path[0] === "api") {
 			let parts: string[];
@@ -207,6 +222,8 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 			return void fail(404);
 		}
 		if (file === "index.html") return void res.writeHead(200, { ...HEADERS, "content-type": TYPES[".html"] }).end(page);
+		// A remote page installs with the fixed entry as its start URL: the token in its own address changes with every listener, and an installed app cannot follow it.
+		if (file === "manifest.webmanifest" && who.remote && remoteManifest) return void res.writeHead(200, { ...HEADERS, "content-type": TYPES[".webmanifest"] }).end(remoteManifest);
 		const body = bundle.get(file);
 		if (!body) return void fail(404);
 		// A font's or sound's name carries its content hash, so a phone keeps it instead of fetching it on every page load.
