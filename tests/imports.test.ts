@@ -549,7 +549,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased (sb server B5, GUI) to 56.4 KB / 20.2 KB gzipped: the tower unit of the service (standing by, the notices with Retry, Deliver again, and Drop in render.ts, the composer's wake line, the served-inbox notice) and its messages in both languages.
 	// After the merge with 0.46.0 (its `replaced` state and banner, 55.0 KB / 19.75 KB alone) to 56.95 KB / 20.4 KB.
 	// GUI visual pass (sb server B5) to 62.15 KB / 22.15 KB gzipped: the tower service's words in both languages (its states, last run, queue count, notices, refusals; five of them plural) and the notices' buttons that say "Working…" and show a refusal.
-	assert.ok(size(entry).length <= 62_150 && gz(entry) <= 22_150, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// Desk remainder (S9) to 62.35 KB / 22.2 KB gzipped: the desk marker read once at load (desk.ts) and the Phone, Stash, and Stashed buttons left out in a desk window.
+	assert.ok(size(entry).length <= 62_350 && gz(entry) <= 22_200, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).
@@ -612,7 +613,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased (sb server B5, GUI) to 155.8 KB / 63.9 KB gzipped: the composer's wake placeholder and the tower notice messages that the chat chunk carries.
 	// GUI visual pass (sb server B5) to 157.4 KB / 64.25 KB gzipped: towerturns.ts (a run's turns the server wrote, the Terminal tab's sentence, a refused send's words) and the session view's tower code, with their messages in both languages.
 	// Review RV-F001 to 158.2 KB / 64.6 KB gzipped: the boss turn of a service tower without the server's marker line (bossTurn) and its crash note in both languages.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 158_200 && total(chunks, gz) <= 64_600, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// Desk remainder (S10) to 158.5 KB / 64.7 KB gzipped: the folder picker's Choose… button for the desk shell's native dialog, with its two messages in both languages.
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 158_500 && total(chunks, gz) <= 64_700, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
