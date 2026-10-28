@@ -2,7 +2,7 @@ import type { MemorySummary } from "../src/net.ts";
 import { h } from "./dom.ts";
 import { m } from "./paraglide/messages.js";
 import { post } from "./post.ts";
-import { MEMORY_CAP, type MemoryEntry, type MemoryView, memoryChip, memoryGroups, memoryMeta, memoryWhy } from "./towermodel.ts";
+import { MEMORY_CAP, type MemoryEntry, type MemoryView, memoryChip, memoryGroups, memoryMeta, memoryNoticeText, memoryWhy } from "./towermodel.ts";
 
 // The tower's memory in its comms (src/server/towermemory.ts): the boss's standing instructions and decisions, verbatim, and the tower's waits. The boss adds, edits, and deletes here; every change names the rev it
 // read, and a memory that moved on is shown again with a line saying so. All text is set as text: no Markdown, no links, no HTML.
@@ -41,7 +41,8 @@ async function load(p: Panel, answer?: { ok: boolean; status: number; body: Reco
 const change = async (p: Panel, body: Record<string, unknown>) => {
 	p.note = "";
 	p.edit = undefined;
-	const r = await post(`tower/${encodeURIComponent(p.ws)}/memory`, { ...body, rev: p.view?.rev ?? 0 }).catch(() => undefined);
+	// A notice is named by its id and needs no rev: it stays the same whatever else moved.
+	const r = await post(`tower/${encodeURIComponent(p.ws)}/memory`, body.op === "undo" || body.op === "dismiss" ? body : { ...body, rev: p.view?.rev ?? 0 }).catch(() => undefined);
 	return load(p, r ?? { ok: false, status: 0, body: { reason: m.unreachable() } });
 };
 
@@ -68,7 +69,7 @@ function draw(p: Panel) {
 	};
 	const section = (title: string, rows: MemoryEntry[], more: Node[], cap?: string) => h("section", null, h("h4", null, title, cap && h("small", null, cap)), rows.length ? h("ul", null, ...rows.map(row)) : h("p", { class: "tmem-empty" }, m.memory_empty()), ...more);
 	p.body.replaceChildren(
-		...view.notices.map((n) => line(n.text)),
+		...view.notices.map((n) => line(memoryNoticeText(n), ...(n.run ? [button(m.memory_undo(), () => void change(p, { op: "undo", notice: n.id }))] : []), button(m.memory_dismiss(), () => void change(p, { op: "dismiss", notice: n.id })))),
 		...(view.notices.length ? [button(m.memory_ack(), () => void change(p, { op: "ack" }))] : []),
 		section(m.memory_standing(), groups.standing, [add("standing")], `${groups.standing.length}/${MEMORY_CAP.standing}`),
 		section(m.memory_decisions(), groups.decisions, [add("decision")], `${groups.decisions.length}/${MEMORY_CAP.decision}`),

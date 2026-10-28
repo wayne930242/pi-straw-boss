@@ -626,5 +626,9 @@
 	"memory_wait_expired": "已過 7 天而失效",
 	"memory_rev": "你讀到記憶之後它又有變動，所以重新顯示了。請再試一次。",
 	"memory_failed": "記憶拒絕了：{reason}",
-	"memory_counts": "{standing} 常駐指示・{decisions} 決定・{waits} 等待"
+	"memory_counts": "{standing} 常駐指示・{decisions} 決定・{waits} 等待",
+	"memory_note_added": "塔台從你的訊息保存了 {id}：{text}",
+	"memory_note_retired": "塔台依你的話撤掉了 {id}：{text}",
+	"memory_undo": "復原",
+	"memory_dismiss": "知道了"
 }

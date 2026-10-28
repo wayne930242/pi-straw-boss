@@ -22,7 +22,7 @@ import { addAnswer, addRoute, ALLY_LEDGER, type Peer, readAnswers, removeAnswer,
 import { type AllyItem, type AllyPort, createRuns, type Runs, type RunsOptions, type ServiceRef, type ServiceStatus } from "./runs.ts";
 import { addExpect, clearExpect, lastNote, readExpects, readTimer } from "./towerrunstore.ts";
 import { runTool, type ServerTools } from "./runtools.ts";
-import { markShown, memoryRequest, memorySection, memorySummary, memoryTool, noteMessage, readMemory } from "./towermemory.ts";
+import { hasWaitOn, markShown, memoryRequest, memorySection, memorySummary, memoryTool, noteMessage, readMemory } from "./towermemory.ts";
 import { openSeen, type Seen } from "./towerseen.ts";
 import { readTowerRuns } from "./towerruns.ts";
 import { appendEvent, deleteService, listServices, purgeAll, purgeQueues, putLedger, queueLength, readLedger, readService, type ServiceRecord, towerDir, writeService } from "./towerstore.ts";
@@ -151,9 +151,11 @@ export function createTowers(o: TowersOptions): Towers {
 		live: () => l.state === "live" && Boolean(l.client?.isConnected()),
 		cwd: async () => (await panes(run, l.record.workspace).catch(() => [])).find((p) => p.pane_id === l.record.pane)?.cwd ?? l.record.cwd ?? slot.stateDir,
 		clearDigest: (keys) => digest.drop(l.record.workspace, keys),
+		// The run that was shown an expired wait has polled: it will not be shown again (towermemory.ts).
+		shown: (ids) => { try { markShown(slot, l.record.workspace, now(), ids); } catch (cause) { error("memory", (cause as Error).message); } },
 		memory: () => {
 			const { memory, problem } = readMemory(slot, l.record.workspace, now());
-			return { ...memorySummary(memory, now()), ...(problem ? { notices: [problem] } : {}) };
+			return { ...memorySummary(memory, now()), ...(problem ? { notices: [{ id: "unreadable", text: problem }] } : {}) };
 		},
 		allyLine: (item) => {
 			const mine = { name: l.record.name, id: l.record.id, role: "tower" as const, workspace: l.record.label };
@@ -191,9 +193,9 @@ export function createTowers(o: TowersOptions): Towers {
 			const at = new Date(woken);
 			// The boss's standing instructions and decisions and the open waits (towermemory.ts): a local brief only, never an ally's. An expired wait is shown once.
 			const kept = readMemory(slot, ws, now()), section = memorySection(kept.memory, now(), kept.problem);
-			if (section.expired.length) try { markShown(slot, ws, now(), section.expired); } catch (cause) { error("memory", (cause as Error).message); }
 			return {
 				digestKeys: lines.map((x) => x.key),
+				expired: section.expired,
 				text: buildBrief({
 					label: l.record.label, workspace: ws, head: mains.head, woken: `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`, counts, identity: l.record.id,
 					memory: section.text, mains: mains.rows, obligations: [...mains.opened, ...(o.asks?.openOf(ws) ?? []).map((a) => `an ask for the main ${a.forName} is open (sent ${ageOf(now() - a.at)} ago): its answer goes to that main, not to you`), ...readExpects(slot, ws, now()).map((e) => `waiting for a reply from ${e.name} (asked ${ageOf(now() - e.at)} ago): ${e.first}`), ...(timer && timer.at <= now() ? ["your wakeAfter follow-up is due"] : [])], digest: lines.map((x) => x.line),
@@ -232,6 +234,19 @@ export function createTowers(o: TowersOptions): Towers {
 
 	// --- the identity -------------------------------------------------------------------------------------------------------------------------------------------------------------
 
+	/**
+	 * A wait on a session now has a message to look at (whether it answers the wait is the run's to judge). The id on the message is the broker's, so the wait is marked only when the net the server reads
+	 * (Herdr's panes and the broker's sessions) shows a live session with that id in this tower's workspace.
+	 */
+	const markAnswered = async (l: Live, session: string): Promise<void> => {
+		try {
+			const ws = l.record.workspace;
+			if (!hasWaitOn(slot, ws, session)) return;
+			const live = (await l.reach?.read())?.sessions.find((x) => x.id === session);
+			if (live?.herdrLocation?.workspace?.id !== ws) return;
+			for (const id of noteMessage(slot, ws, now(), session)) log.line("tower-memory", { workspace: ws, op: "answered", id });
+		} catch (cause) { error("memory", (cause as Error).message); }
+	};
 	const wire = (l: Live, client: IntercomLike) => {
 		client.on("message", (from: Session, message: Incoming) => {
 			// Written to disk with a flush, then receipted, then remembered (towerseen.ts). The receipt `queued` goes only after the flush: the broker waits for it, and a sender whose message is not
@@ -251,10 +266,7 @@ export function createTowers(o: TowersOptions): Towers {
 					const written = appendEvent(slot, l.record, { kind: "intercom", from: { id: from.id, ...(from.name ? { name: from.name } : {}) }, text: message.content.text, at: new Date(now()).toISOString(), messageId: message.id });
 					seen.add(from.id, message.id, message.content.text);
 					clearExpect(slot, l.record.workspace, from.id, now());
-					// A wait on this session now has a message to look at; whether it answers the wait is the run's to judge.
-					try {
-						for (const id of noteMessage(slot, l.record.workspace, now(), from.id)) log.line("tower-memory", { workspace: l.record.workspace, op: "answered", id });
-					} catch (cause) { error("memory", (cause as Error).message); }
+					void markAnswered(l, from.id);
 					log.line("tower-event", { workspace: l.record.workspace, kind: "intercom", from: from.id, seq: written.seq });
 					runs.poke(l.record.workspace);
 				}

@@ -13,7 +13,7 @@ const { m } = await import("../gui/paraglide/messages.js");
 
 interface Sent { path: string; body: Record<string, unknown>; csrf: string }
 type Entry = { id: string; kind: string; text: string; by: string; via: string; at: string; for?: string; on?: string; state?: string; outcome?: string };
-let memory: { rev: number; entries: Entry[]; notices: { id: string; text: string; at: string }[] };
+let memory: { rev: number; entries: Entry[]; notices: { id: string; text: string; at: string; run?: { op: string; entry: string; kind: string; text: string } }[] };
 let sent: Sent[];
 let lag: "rev" | undefined;
 const entry = (id: string, kind: string, text: string, over: Partial<Entry> = {}): Entry => ({ id, kind, text, by: "boss", via: "gui", at: "2026-10-28T10:00:00Z", ...over });
@@ -24,6 +24,7 @@ Object.assign(globalThis, {
 		const body = JSON.parse(init.body) as Record<string, unknown>;
 		sent.push({ path, body, csrf: init.headers["x-sb-csrf"]! });
 		if (body.op === "read") return answer(200, memory);
+		if (body.op === "undo" || body.op === "dismiss") return answer(200, (memory.notices = memory.notices.filter((n) => n.id !== body.notice)) && memory);
 		if (lag === "rev" || body.rev !== memory.rev) return answer(409, { error: "rev", reason: "The memory changed since you read it", ...memory });
 		if (body.op === "add") memory.entries.push(entry(`${body.kind === "standing" ? "S" : "D"}${memory.entries.length + 1}`, String(body.kind), String(body.text).trim()));
 		if (body.op === "delete") memory.entries = memory.entries.filter((e) => e.id !== body.id);
@@ -150,13 +151,51 @@ test("a dropped decision's notice shows with a button that dismisses it", async 
 	reset();
 	memory.notices = [{ id: "D1", text: "Decision D1 was dropped to keep 24: old", at: "2026-10-28T10:00:00Z" }];
 	const box = new El("div");
-	draw(box, summary({ notices: ["Decision D1 was dropped to keep 24: old"] }));
+	draw(box, summary({ notices: [{ id: "D1", text: "Decision D1 was dropped to keep 24: old" }] }));
 	await open(box);
 	assert.ok(box.find((el) => el.attrs.get("class") === "tmem-note")[0]!.textContent.includes("Decision D1 was dropped"));
 	click(box, m.memory_ack());
 	await settle();
 	assert.deepEqual(sent.at(-1)!.body, { op: "ack", rev: 3 });
 	assert.equal(box.find((el) => el.attrs.get("class") === "tmem-note").length, 0);
+});
+
+const kept = { id: "n-1", text: "The tower kept S2 from your message: never force push", at: "2026-10-28T10:00:00Z", run: { op: "added", entry: "S2", kind: "standing", text: "never force push" } } as const;
+test("T3R-F001 a run's change is a notice on the tower card with Undo and Dismiss, in the page's language; both post to the memory route with the notice's id", async () => {
+	reset();
+	const service: TowerService = { state: "standing", queued: 0, allyRuns: [], notices: [], parked: [], memory: summary({ notices: [kept, { id: "n-2", text: "The tower retired D1 on your words: old", run: { op: "retired", entry: "D1", kind: "decision", text: "old" } as const }] }) };
+	assert.deepEqual(noticeRows(service).map((r) => [r.id, r.text, r.actions]), [
+		["memory-n-1", m.memory_note_added({ id: "S2", text: "never force push" }), ["undo", "dismiss"]],
+		["memory-n-2", m.memory_note_retired({ id: "D1", text: "old" }), ["undo", "dismiss"]],
+	]);
+	assert.equal(noticeRows(service, { locale: "zh-TW" })[0]!.text, "塔台從你的訊息保存了 S2：never force push");
+	memory.notices = [kept];
+	const box = new El("div");
+	fillNotices(box as unknown as HTMLElement, "wA", service, "sb-tower-wa");
+	click(box, m.memory_undo());
+	await settle();
+	assert.deepEqual(sent.map((x) => [x.path, x.body]), [["api/tower/wA/memory", { op: "undo", notice: "n-1" }]]);
+	click(box, m.memory_dismiss());
+	await settle();
+	assert.deepEqual(sent.at(-1)!.body, { op: "dismiss", notice: "n-1" });
+});
+
+test("a memory file the server cannot read is a row on the card with no button: nothing in it can be dismissed", () => {
+	const service: TowerService = { state: "standing", queued: 0, allyRuns: [], notices: [], parked: [], memory: summary({ notices: [{ id: "unreadable", text: "memory.json cannot be read (EACCES)" }] }) };
+	assert.deepEqual(noticeRows(service).map((r) => [r.text, r.actions]), [["memory.json cannot be read (EACCES)", []]]);
+});
+
+test("T3R-F001 the open panel lists a run's change with Undo and Dismiss beside it", async () => {
+	reset();
+	memory.notices = [kept];
+	const box = new El("div");
+	draw(box, summary({ notices: [kept] }));
+	await open(box);
+	assert.ok(texts(box, "tmem-note").some((t) => t.includes(m.memory_note_added({ id: "S2", text: "never force push" }))));
+	click(box, m.memory_undo());
+	await settle();
+	assert.deepEqual(sent.at(-1)!.body, { op: "undo", notice: "n-1" });
+	assert.equal(box.find((el) => el.attrs.get("class") === "tmem-note").length, 0, "the panel is drawn again from the answer");
 });
 
 test("a wait for the boss is a notice on the tower card with an Answer link to the comms; waits for agents are not", () => {

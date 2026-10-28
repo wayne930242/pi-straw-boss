@@ -86,7 +86,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased (IRQ-F001, F003) to 390: the page-load 403's note in Traditional Chinese when Accept-Language asks for it.
 	// Unreleased to 408 (sb server B5, GUI): net.ts (the tower service in the snapshot: TowerService, TowerView, the unit it makes of a standing tower) and gui.ts (the `tower` option and its route scope).
 	// GUI fix pass (sb server B6) to 411: net.ts turns a live ally run with a known session file into a read-only unit of its own (key `ally-<run id>`, the path kept off the page).
-	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 414, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
+	// T3 review fixes to 415: net.ts (`MemoryNotice`, a run's change to the memory that the boss can undo, in the snapshot).
+	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 415, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
 	// Input (the spec's figure), remote access over Tailscale, its terminal pairing panel (QR, c copies, o opens), and the QR encoder each have their own.
 	// What a waiting session waits on (0.5.0, read for display only; answering is deferred) has its own as well.
 	// 0.5.1 raised remote.ts from 165 to 185 (a recorded server counts as running only if its process started when the entry says: a reused PID
@@ -334,7 +335,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Review fixes of the 0.46.0 integration (SBIR-F002): testguard.ts 115 (`guarded` notes the start time WMI told and lets a note with none go at `release`; a pid of 0 is never noted).
 	// Test isolation merged with B4: server-look.ts 197 (deps.track and the reach context); client.ts 647 (testguard.ts, new, checks a real spawn).
 	// Unreleased (R-F002): client.ts 697 to 698 for the ready server's record read again in waitReady.
-	for (const [name, max] of [["record.ts", 472], ["log.ts", 135], ["version.ts", 28], ["acl.ts", 398], ["socket.ts", 220], ["client.ts", 699], ["intercom.ts", 102], ["main.ts", 594], ["cli.ts", 362], ["winprep.ts", 492], ["breakaway.ts", 251], ["testguard.ts", 115], ["towers.ts", 724], ["towerstore.ts", 267], ["towerruns.ts", 28], ["towerclient.ts", 70]] as const) assert.ok(count(`src/server/${name}`) <= max, `src/server/${name} has ${count(`src/server/${name}`)} lines`);
+	// T3 review fixes: towers.ts 724 to 736 (a wait is marked answered only for a sender the net shows in this workspace, and the expired waits a brief showed are marked at the run's first poll).
+	for (const [name, max] of [["record.ts", 472], ["log.ts", 135], ["version.ts", 28], ["acl.ts", 398], ["socket.ts", 220], ["client.ts", 699], ["intercom.ts", 102], ["main.ts", 594], ["cli.ts", 362], ["winprep.ts", 492], ["breakaway.ts", 251], ["testguard.ts", 115], ["towers.ts", 736], ["towerstore.ts", 267], ["towerruns.ts", 28], ["towerclient.ts", 70]] as const) assert.ok(count(`src/server/${name}`) <= max, `src/server/${name} has ${count(`src/server/${name}`)} lines`);
 	// The page: the files the spec budgets one by one, then this round's own figures (no figure in the spec): the focus views, the overlay
 	// layer (alert spotting and the stack model in the map's chunk, the layer's DOM and tiles in a chunk of their own), the dev-only demo, and everything else.
 	// 0.18.1 raised mirror.ts to 154 for embed, a terminal shown inside the session view instead of a tile.
@@ -490,7 +492,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Desk remainder to 1600 (desk-mode spec S9, S10): desk.ts (the page's desk marker and the Phone rule), quit.ts (Stash and Stashed left out in a desk window), picker.ts (Choose…), main.ts.
 	// GUI fix pass (sb server B6) to 1632: towerallies.ts (21: the ally runs' chips), towerturns.ts (97: the verified header and a run's events by their kind), the notice's pointer to the towers (linkbar.ts), and the chips and the notices in render.ts's card and the workspace view.
 	// Tower memory (T3) to 1749: towermemory.ts (the memory panel, 78), the panel's model in towermodel.ts (the entries' groups, words, and refusals), the waits-for-you notice's Answer link in towernotes.ts, and the three calls that pass the tower's key or draw the panel.
-	assert.ok(page <= 1749, `the page's TypeScript has ${page} lines`);
+	// T3 review fixes to 1756: the notices a run's change leaves (Undo and Dismiss on the card and in the panel: towermodel.ts, towernotes.ts, towermemory.ts).
+	assert.ok(page <= 1756, `the page's TypeScript has ${page} lines`);
 });
 
 test("the built page is small, self-contained (no remote URLs, fonts, or imports), and carries no demo fixture", { skip: !existsSync(join(root, "dist/gui/index.html")) && "run npm run gui:build first" }, () => {
@@ -567,7 +570,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Desk remainder (S9) to 62.35 KB / 22.2 KB gzipped: the desk marker read once at load (desk.ts) and the Phone, Stash, and Stashed buttons left out in a desk window.
 	// GUI fix pass (sb server B6) to 64.75 KB / 22.95 KB gzipped: a run's events read by the kind the server sent them with, the teammates' labels and the folded header (chat.ts, towerturns.ts), the ally runs' chips and words (towerallies.ts, towermodel.ts), the workspace view's queue chip and notices, and their messages in both languages.
 	// Tower memory (T3) to 67.35 KB / 23.8 KB gzipped: the panel's, the waits-for-you notice's, and the memory route's messages in both languages (the map chunk carries every message).
-	assert.ok(size(entry).length <= 67_350 && gz(entry) <= 23_800, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// T3 review fixes to 68.25 KB / 24.1 KB gzipped: the notices a run's change leaves, with their words and the Undo and Dismiss buttons (four more messages in both languages).
+	assert.ok(size(entry).length <= 68_250 && gz(entry) <= 24_100, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).
@@ -633,7 +637,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Desk remainder (S10) to 158.5 KB / 64.7 KB gzipped: the folder picker's Choose… button for the desk shell's native dialog, with its two messages in both languages.
 	// GUI fix pass (sb server B6) to 162.8 KB / 66.3 KB gzipped: a run's events read by their kind, the teammates' labels and the folded header, the ally runs' chips and comms, the standing-by sentence, and their messages in both languages.
 	// Tower memory (T3) to 166.45 KB / 67.4 KB gzipped: the memory panel (gui/towermemory.ts), its model, and the waits-for-you notice's Answer link in the session view's chunk.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 166_450 && total(chunks, gz) <= 67_400, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// T3 review fixes to 166.65 KB / 67.5 KB gzipped: the Undo and Dismiss buttons of the memory panel's notices and the model that words a run's change.
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 166_650 && total(chunks, gz) <= 67_500, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.

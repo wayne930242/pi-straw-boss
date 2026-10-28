@@ -766,5 +766,9 @@
 	"memory_wait_expired": "expired after 7 days",
 	"memory_rev": "The memory changed since you read it, so it is shown again. Try once more.",
 	"memory_failed": "The memory refused it: {reason}",
-	"memory_counts": "{standing} standing · {decisions} decisions · {waits} waits"
+	"memory_counts": "{standing} standing · {decisions} decisions · {waits} waits",
+	"memory_note_added": "The tower kept {id} from your message: {text}",
+	"memory_note_retired": "The tower retired {id} on your words: {text}",
+	"memory_undo": "Undo",
+	"memory_dismiss": "Dismiss"
 }

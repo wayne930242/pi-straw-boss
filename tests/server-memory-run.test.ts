@@ -3,7 +3,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { TowerWorld } from "./tower-world.ts";
 import { type Running, until } from "./server-world.ts";
 import { callControl } from "../src/server/socket.ts";
-import { loadMemory } from "../src/server/towermemory.ts";
+import { addWait, loadMemory, updateMemory } from "../src/server/towermemory.ts";
 import { readRun } from "../src/server/towerrunstore.ts";
 
 // The tower memory in a run (docs/specs/2026-10-26-sb-backend.md, Tower memory; tower-design/spec-delta.md section 1) against a fake Herdr, fake pi-intercom clients, and a pi that is a test: the quote rule against the
@@ -58,11 +58,11 @@ test("a run keeps a standing instruction or a decision only as a verbatim quote 
 	world.expose!.runs.boss("wA", BOSS);
 	const { token } = await claimNth(s);
 	await drain(s, token);
-	const standing = await tool(s, token, { op: "add", kind: "standing", quote: "deploys to ws01 are authorized." });
+	const standing = await tool(s, token, { op: "add", kind: "standing", quote: "Standing: deploys to ws01 are authorized." });
 	assert.equal(standing.ok, true, JSON.stringify(standing));
-	const decision = await tool(s, token, { op: "add", kind: "decision", quote: "beta.67 first, production waits until Monday." });
+	const decision = await tool(s, token, { op: "add", kind: "decision", quote: "Decision: beta.67 first, production waits until Monday." });
 	assert.equal(decision.ok, true);
-	assert.deepEqual(memory().entries.map((e) => [e.id, e.kind, e.text, e.by, e.via]), [["S1", "standing", "deploys to ws01 are authorized.", "run", "run"], ["D1", "decision", "beta.67 first, production waits until Monday.", "run", "run"]]);
+	assert.deepEqual(memory().entries.map((e) => [e.id, e.kind, e.text, e.by, e.via]), [["S1", "standing", "Standing: deploys to ws01 are authorized.", "run", "run"], ["D1", "decision", "Decision: beta.67 first, production waits until Monday.", "run", "run"]]);
 	assert.match(memory().entries[0]!.event ?? "", /^[0-9a-f]{16}$/, "the boss event the quote was found in is recorded");
 	for (const quote of ["deploys to ws01 are never authorized", "ship everything", "deploys to ws01 are authorised"]) {
 		const refused = await tool(s, token, { op: "add", kind: "standing", quote });
@@ -108,12 +108,12 @@ test("an ally run's token is refused tower_memory by its kind, and its brief sho
 	world.expose!.runs.boss("wA", "Standing: SECRET-STANDING-TEXT stays here.");
 	const local = await claimNth(s);
 	await drain(s, local.token);
-	await tool(s, local.token, { op: "add", kind: "standing", quote: "SECRET-STANDING-TEXT stays here." });
+	await tool(s, local.token, { op: "add", kind: "standing", quote: "Standing: SECRET-STANDING-TEXT stays here." });
 	assert.doesNotMatch(local.brief, /Memory:/, "the brief was built before anything was kept");
 	await end(s, local.token, local.id);
 	tower().incoming(from, msg("m9", "another event"));
 	const next = await claimNth(s, 2);
-	assert.match(next.brief, /\[S1\] SECRET-STANDING-TEXT stays here\./, "the next local run's brief carries it");
+	assert.match(next.brief, /\[S1\] Standing: SECRET-STANDING-TEXT stays here\./, "the next local run's brief carries it");
 	await drain(s, next.token);
 	await end(s, next.token, next.id);
 	const minted = world.expose!.runs.mint("wA", { kind: "ally", device: "d1", level: "dispatch", team: "team-1" });
@@ -163,11 +163,54 @@ test("a brief carries the memory section only when there is memory, and the log 
 	await drain(s, empty.token);
 	world.expose!.runs.boss("wA", "Remember to keep PLAINTEXT-IN-MEMORY out of logs.");
 	await drain(s, empty.token);
-	await tool(s, empty.token, { op: "add", kind: "standing", quote: "keep PLAINTEXT-IN-MEMORY out of logs." });
+	await tool(s, empty.token, { op: "add", kind: "standing", quote: "Remember to keep PLAINTEXT-IN-MEMORY out of logs." });
 	const log = await ask(s, { cmd: "status" });
 	assert.ok(!JSON.stringify(log).includes("PLAINTEXT-IN-MEMORY"));
 	const { readFileSync } = await import("node:fs");
 	const { fileOf } = await import("../src/server/record.ts");
 	assert.ok(!readFileSync(fileOf(world.slot, "log"), "utf8").includes("PLAINTEXT-IN-MEMORY"));
 	assert.match(readFileSync(fileOf(world.slot, "log"), "utf8"), /tower-memory/);
+});
+
+// --- the T3 review's findings ----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+const alpha = (workspace = "wA") => ({ id: "main-1", name: "docs-main", herdrLocation: { status: "ok" as const, workspace: { id: workspace, label: workspace }, tab: { id: `${workspace}:t1`, label: "work" }, paneId: "wA:p1" } });
+const pause = (ms: number) => new Promise((done) => setTimeout(done, ms));
+test("T3R-F007 a wait is marked answered only by a message whose sender is a live session of this workspace in the net the server reads", async () => {
+	world.sessions = [alpha()];
+	const s = await setup();
+	tower().incoming(from, msg("m0", "go"));
+	const one = await claimNth(s);
+	await drain(s, one.token);
+	assert.equal((await tool(s, one.token, { op: "add", kind: "wait", text: "docs-main to confirm the build", for: "agent", on: "docs-main" })).ok, true);
+	await end(s, one.token, one.id);
+	world.sessions = [];
+	tower().incoming(from, msg("m1", "from an id the net does not know"));
+	await pause(200);
+	assert.equal(memory().entries[0]!.state, "open", "no live session has that id");
+	world.sessions = [alpha("wB")];
+	tower().incoming(from, msg("m2", "from a session of another workspace"));
+	await pause(200);
+	assert.equal(memory().entries[0]!.state, "open", "a session of another workspace does not answer this tower's wait");
+	world.sessions = [alpha()];
+	tower().incoming(from, msg("m3", "the build is green"));
+	await until(() => memory().entries[0]!.state === "answered", "the wait to be answered by a verified sender");
+});
+
+test("T3R-F008 an expired wait is marked shown when the run it was shown to takes its first poll, not when the brief is built", async () => {
+	const s = await setup();
+	const old = Date.now() - 7.5 * 86_400_000;
+	updateMemory(world.slot, "wA", old, (m) => addWait(m, old, { by: "run", run: "r0" }, { text: "old wait", for: "boss" }));
+	tower().incoming(from, msg("m0", "go"));
+	const one = await claimNth(s);
+	assert.match(one.brief, /\[W1\] expired/);
+	assert.equal(memory().entries[0]!.shown, undefined, "the claim alone marks nothing");
+	const rev = memory().rev;
+	await drain(s, one.token);
+	assert.equal(memory().entries[0]!.shown, true, "the first poll does");
+	assert.equal(memory().rev, rev + 1);
+	await end(s, one.token, one.id);
+	tower().incoming(from, msg("m1", "again"));
+	const two = await claimNth(s, 2);
+	assert.doesNotMatch(two.brief, /W1/, "shown once");
 });
