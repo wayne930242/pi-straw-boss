@@ -216,6 +216,25 @@ test("/boss gui remote turns remote access on in the server and draws the pairin
 	assert.deepEqual(ts.config(), {}, "the end of the server takes the entry down");
 });
 
+test("with STRAW_BOSS_DESK=1 the pairing overlay has no o key: it lists none, and pressing o opens nothing and says nothing", async () => {
+	const copied: string[] = [], shown: string[] = [];
+	await startHosted(world, { tailscale: fakeTailscale().run });
+	const a = world.agent({ id: "viewer-a", pane: "wA:p1", tab: "wA:t1", env: { STRAW_BOSS_DESK: "1" }, deps: { ...deps, copy: async (text) => void copied.push(text), openUrl: async (url) => void shown.push(url) } });
+	await a.start();
+	const command = a.command("gui remote");
+	await until(() => a.overlays.length === 1, "the QR overlay");
+	const overlay = a.overlays[0]!;
+	assert.deepEqual(overlay.render(120).slice(-2), ["c  copy a new one-time link", "Esc or q  close"], "the o key is not listed");
+	overlay.handleInput!("\x1b[111u");
+	overlay.handleInput!("o");
+	overlay.handleInput!("c"); // the c after the o has been handled, so the o had run (or not) by then
+	await until(() => copied.length === 1, "the copy");
+	assert.deepEqual(shown, [], "no browser is opened");
+	assert.ok(!overlay.render(120).some((line) => line.startsWith("Opened")), "and the overlay does not claim it did");
+	overlay.handleInput!("q");
+	await command;
+});
+
 test("the page's Turn on remote access serves the GUI on the tailnet from the server and answers with a pairing code", async () => {
 	const ts = fakeTailscale();
 	const hosted = await startHosted(world, { tailscale: ts.run });

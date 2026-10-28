@@ -21,6 +21,8 @@ import { forgetStart, startedLater, startOf } from "./startof.ts";
 // explicitly: stopping the server removes the serve entry but not the wish, so the next server turns it on again.
 
 export const PORT = 8443;
+/** The line under the QR that names the **o** key; a desk shell shows the page itself, so its sessions drop the line with the key (host.ts). */
+export const OPEN_LINE = "o  open one in this computer's browser";
 const CODE_MS = 10 * 60_000, MAX_CODES = 16;
 const FORWARDED = ["x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "forwarded", "via", "tailscale-headers-info", "tailscale-user-login", "tailscale-user-name", "tailscale-funnel-request"];
 export type Run = (args: string[]) => Promise<string>;
@@ -221,7 +223,7 @@ export async function switchRemote(gui: { port: number; remotePort: number; toke
 	gui.access.enable(id);
 	// Every link is a new one-time pairing URL: the QR's own, and one per press of c or o in the overlay.
 	const link = () => `https://${id.host}/${gui.token}/pair/${gui.access.pair()}`;
-	const lines = [...qrLines(qr(link())), "", "Scan with a device signed in to Tailscale as", id.login, "", "c  copy a new one-time link", "o  open one in this computer's browser", "Esc or q  close"];
+	const lines = [...qrLines(qr(link())), "", "Scan with a device signed in to Tailscale as", id.login, "", "c  copy a new one-time link", OPEN_LINE, "Esc or q  close"];
 	const plain = `Remote access is on for ${id.login}, tailnet only: https://${id.host}/${gui.token}/`; // `plain`: for a server that starts again, where no QR is shown
 	return { text: `${plain} (scan the QR; it works once, within ten minutes)`, plain, lines, link, changed: true };
 }
