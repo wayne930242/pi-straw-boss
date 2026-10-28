@@ -23,6 +23,8 @@ export interface Texts {
 	/** The lines under the first state line. */
 	hint: string[];
 	waking: string;
+	/** `/new` was taken. */
+	fresh: string;
 	leaving: string;
 	noTower: string;
 	silent(why: string): string;
@@ -33,10 +35,11 @@ export interface Texts {
 const EN: Texts = {
 	header: (label, a) => `tower · ${label}: ${stateWord(a, { standing: "standing by", waking: "waking up", running: "running", closing: "closing", held: "held" }, (n) => `${n} queued`)}`,
 	hint: [
-		"Type a message and press Enter to wake the tower with it; Enter alone wakes it without one.",
+		"Type a message and press Enter to wake the tower with it; Enter alone wakes it without one. /new makes the next conversation a new session.",
 		"Ctrl+D leaves this pane to your shell. From any pi session: /boss tower <message>.",
 	],
 	waking: "waking the tower…",
+	fresh: "the next conversation with the tower is a new session.",
 	leaving: "leaving this pane to your shell; this prompt comes back when a tower run ends (wake the tower from any pi session with /boss tower <message>).",
 	noTower: "the sb server has no tower for this workspace any more; this pane is yours.",
 	silent: (why) => `the sb server does not answer (${why}); waiting for it.`,
@@ -46,10 +49,11 @@ const EN: Texts = {
 const ZH: Texts = {
 	header: (label, a) => `塔台 · ${label}：${stateWord(a, { standing: "待命中", waking: "喚醒中", running: "執行中", closing: "收尾中", held: "已擱置" }, (n) => `${n} 則待處理`)}`,
 	hint: [
-		"輸入訊息後按 Enter，連同訊息喚醒塔台；直接按 Enter 則不帶訊息。",
+		"輸入訊息後按 Enter，連同訊息喚醒塔台；直接按 Enter 則不帶訊息。輸入 /new 讓下一次對話成為新的工作階段。",
 		"Ctrl+D 把這個窗格還給你的 shell。在任何 pi 工作階段都可用：/boss tower <訊息>。",
 	],
 	waking: "正在喚醒塔台…",
+	fresh: "下一次和塔台的對話會是新的工作階段。",
 	leaving: "把這個窗格還給你的 shell；塔台的一次執行結束後，這個提示會回來（在任何 pi 工作階段用 /boss tower <訊息> 即可喚醒塔台）。",
 	noTower: "sb 伺服器已不再為這個工作區執行塔台，這個窗格歸你了。",
 	silent: (why) => `sb 伺服器沒有回應（${why}），等它回來。`,

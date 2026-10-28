@@ -388,7 +388,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			// The runs (runs.ts): a pi started with --sb-run claims its run; a pi in a standing pane asks its role; a run polls for its events, confirms them, and ends with tower_done.
 			case "claim": return answer(async (t) => ({ ...(await t.runs.claim(request)) }));
 			case "pane-role": return answer(async (t) => ({ ...(await t.runs.paneRole(request)) }));
-			case "run-poll": return answer(async (t) => ({ ...t.runs.poll(request) }));
+			case "run-poll": return answer(async (t) => ({ ...(await t.runs.poll(request)) }));
 			case "run-taken": return answer(async (t) => ({ ...t.runs.taken(request) }));
 			case "run-done": return answer(async (t) => ({ ...(await t.runs.done(request)) }));
 			case "run-boss": return answer(async (t) => ({ ...t.runs.present(request) }));
@@ -412,6 +412,9 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			// The boss's memory (towermemory.ts `memoryRequest`): `/boss memory` in a pi session is the GUI panel's request on the same function. A run's token never gets here (rungate.ts refuses it).
 			case "tower-memory": return workspace && typeof request.json === "object" && request.json !== null ? answer(async (t) => ({ ...t.memory(workspace, request.json as Record<string, unknown>) })) : Promise.resolve({ ok: false, error: "tower-memory needs a workspace and a request" });
 			case "tower-retry": return workspace ? answer(async (t) => (t.runs.retry(workspace), {})) : Promise.resolve({ ok: false, error: "tower-retry needs a workspace" });
+			// The boss conversation (runs.ts `leave`, `fresh`): `/boss tower leave|new` and the GUI's Leave and New are these two; a run token never gets here (rungate.ts).
+			case "tower-leave": return workspace ? answer(async (t) => ({ ...(await t.runs.leave(workspace)) })) : Promise.resolve({ ok: false, error: "tower-leave needs a workspace" });
+			case "tower-new": return workspace ? answer(async (t) => ({ ...(await t.runs.fresh(workspace)) })) : Promise.resolve({ ok: false, error: "tower-new needs a workspace" });
 			case "tower-deliver": case "tower-drop": {
 				const id = text(request.id, 64);
 				return workspace && id ? answer(async (t) => (request.cmd === "tower-drop" ? t.runs.dropParked(workspace, id) : t.runs.deliverAgain(workspace, id), {})) : Promise.resolve({ ok: false, error: `${request.cmd} needs a workspace and an event id` });
@@ -485,7 +488,9 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			view: (workspace) => towers?.runs.view(workspace),
 			has: (workspace) => towers?.runs.view(workspace) !== undefined,
 			live: (workspace) => Boolean(towers?.runs.status(workspace)?.run),
-			event: async (workspace, text) => { try { return (towers!.runs.boss(workspace, text, "the boss (GUI)"), { ok: true }); } catch (error) { return { ok: false, error: (error as Error).message }; } },
+			// The composer is the boss at a keyboard: the same boss event as the tower prompt's (`present`), so a conversation starts or goes on (docs/how-it-works.md, The boss conversation).
+			event: async (workspace, text) => { try { return (towers!.runs.boss(workspace, text, "the boss (GUI)", { present: true }), { ok: true }); } catch (error) { return { ok: false, error: (error as Error).message }; } },
+			conversation: async (workspace, what) => { try { return { ok: true, ...(what === "leave" ? await towers!.runs.leave(workspace) : await towers!.runs.fresh(workspace)) }; } catch (error) { return { ok: false, error: (error as Error).message }; } },
 			memory: (workspace, json) => towers!.memory(workspace, json),
 			act: async (workspace, what, id) => { try { return (what === "retry" ? towers!.runs.retry(workspace) : what === "deliver" ? towers!.runs.deliverAgain(workspace, id!) : towers!.runs.dropParked(workspace, id!), { ok: true }); } catch (error) { return { ok: false, error: (error as Error).message }; } },
 		},

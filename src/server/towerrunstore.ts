@@ -1,5 +1,6 @@
 import { appendFileSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import type { ConversationInfo } from "./bossconv.ts";
 import type { Slot } from "./record.ts";
 import { ensureDir, safe, towerDir, writeDurable, writeDurableText } from "./towerstore.ts";
 
@@ -44,6 +45,8 @@ export interface RunRecord {
 	left?: true;
 	/** The boss started pi in the standing pane by hand. */
 	hand?: true;
+	/** A boss conversation (bossconv.ts): the run a present boss event woke when no local run was live. How it began; absent on an event run. */
+	conversation?: ConversationInfo;
 	/** A short word on why it ended (the quit failed, the pane vanished). */
 	detail?: string;
 }

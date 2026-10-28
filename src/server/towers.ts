@@ -22,7 +22,8 @@ import { ageOf, allyTools, buildAllyBrief, buildBrief, gatherMains, LOCAL_TOOLS 
 import { createStanding, type PromptReply, type StandingTimers } from "./standing.ts";
 import { addAnswer, addRoute, ALLY_LEDGER, type Peer, readAnswers, removeAnswer, routeOf, spendRoute } from "./allyroute.ts";
 import { type AllyItem, type AllyPort, createRuns, type Runs, type RunsOptions, type ServiceRef, type ServiceStatus } from "./runs.ts";
-import { addExpect, clearExpect, lastNote, readExpects, readTimer } from "./towerrunstore.ts";
+import { type ConversationInfo, sessionsRoot } from "./bossconv.ts";
+import { addExpect, clearExpect, lastNote, listRuns, readExpects, readNotes, readTimer } from "./towerrunstore.ts";
 import { runTool, type ServerTools } from "./runtools.ts";
 import { hasWaitOn, markShown, memoryRequest, memorySection, memorySummary, memoryTool, noteMessage, readMemory } from "./towermemory.ts";
 import { openSeen, type Seen } from "./towerseen.ts";
@@ -174,6 +175,9 @@ export function createTowers(o: TowersOptions): Towers {
 			const { memory, problem } = readMemory(slot, l.record.workspace, now());
 			return { ...memorySummary(memory), ...(problem ? { problem } : {}) };
 		},
+		// A live run is given a new brief when the memory moved or a run left a note (runs.ts `refreshed`): what a conversation of an hour would otherwise not see.
+		briefVersion: () => `${readMemory(slot, l.record.workspace, now()).memory.rev}:${lastNote(slot, l.record.workspace, "local")?.at ?? ""}`,
+		liveSessions: async () => (await panes(run).catch(() => [])).flatMap((p) => (p.agent_session?.value ? [p.agent_session.value] : [])),
 		allyLine: (item) => {
 			const mine = { name: allyLabel(l.record.name), id: l.record.id, role: "tower" as const, workspace: allyLabel(l.record.label) };
 			// An answer a local session gave to what the run asked or opened: no verified peer header, the session is local; the device's next run reads it as data.
@@ -199,7 +203,7 @@ export function createTowers(o: TowersOptions): Towers {
 				}),
 			};
 		},
-		async brief({ events, woken }) {
+		async brief({ events, woken, run: rec, refresh }) {
 			const ws = l.record.workspace, all = await workspaces(run), target = all.find((w) => w.workspace_id === ws);
 			if (!target || !l.client) throw new Error("the tower's workspace or its intercom connection is gone");
 			const mains = await gatherMains({ run, now, sessions: () => l.client!.listSessions(), boardDir: join(slot.stateDir, "board"), workspace: target, ledger: readLedger(slot, ws, now()) });
@@ -210,11 +214,13 @@ export function createTowers(o: TowersOptions): Towers {
 			const at = new Date(woken);
 			// The boss's standing instructions and decisions and the open waits (towermemory.ts): a local brief only, never an ally's. An expired wait is shown once.
 			const kept = readMemory(slot, ws, now()), section = memorySection(kept.memory, now(), kept.problem);
+			const talk = rec.conversation && conversationLines(rec.conversation, ws);
 			return {
 				digestKeys: lines.map((x) => x.key),
 				expired: section.expired,
 				text: buildBrief({
 					label: l.record.label, workspace: ws, head: mains.head, woken: `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`, counts, identity: l.record.id,
+					...(refresh ? { refreshed: true as const } : {}), ...(talk ? { conversation: talk.line, since: talk.since } : {}),
 					memory: section.text, mains: mains.rows, obligations: [...mains.opened, ...(o.asks?.openOf(ws) ?? []).map((a) => `an ask for the main ${a.forName} is open (sent ${ageOf(now() - a.at)} ago): its answer goes to that main, not to you`), ...readExpects(slot, ws, now()).map((e) => `waiting for a reply from ${e.name} (asked ${ageOf(now() - e.at)} ago): ${e.first}`), ...(timer && timer.at <= now() ? ["your wakeAfter follow-up is due"] : [])], digest: lines.map((x) => x.line),
 					...(note ? { note: { text: note.note, age: ageOf(now() - Date.parse(note.at)) } } : {}),
 					flags: [
@@ -243,7 +249,16 @@ export function createTowers(o: TowersOptions): Towers {
 			if (ws) removeAnswer(slot, ws, id.slice(LOCAL.length), now());
 		},
 	};
-	const runs: Runs = createRuns({ slot, run, sleep, now, log, enabled: o.enabled, max: () => readTowerRuns(slot.stateDir).max, trustDir: trustDir(slot.stateDir), model: () => towerModel(slot.stateDir), ...(allyPort ? { ally: allyPort } : {}), ...o.runs });
+	/** The brief's section 1a: how the boss conversation began, and what the event runs left since the boss last talked with the tower (the first lines of up to 3 notes, 1,200 characters together). */
+	const conversationLines = (c: ConversationInfo, ws: string): { line: string; since: string[] } => {
+		const day = (at?: string) => (at && Number.isFinite(Date.parse(at)) ? new Date(at).toLocaleDateString("sv") : "an unknown day");
+		const line = c.resumed ? `Boss conversation: the boss is at this pane. Resumed session from ${day(c.from)}, ${c.turns} boss turn${c.turns === 1 ? "" : "s"}.` : `Boss conversation: the boss is at this pane. New session: ${c.why ?? "no earlier boss session"}.`;
+		const after = c.after ? Date.parse(c.after) : NaN, events = new Set(listRuns(slot, ws).filter((r) => r.kind === "local" && !r.conversation).map((r) => r.id));
+		const notes = Number.isFinite(after) ? readNotes(slot, ws).filter((n) => n.kind === "local" && events.has(n.run) && Date.parse(n.at) > after).slice(-3) : [];
+		const rows = notes.map((n) => `- ${ageOf(now() - Date.parse(n.at))} ago: ${phrase(n.note.split("\n")[0], 380)}`);
+		return { line, since: rows };
+	};
+	const runs: Runs = createRuns({ slot, run, sleep, now, log, sessions: sessionsRoot(o.env), enabled: o.enabled, max: () => readTowerRuns(slot.stateDir).max, trustDir: trustDir(slot.stateDir), model: () => towerModel(slot.stateDir), ...(allyPort ? { ally: allyPort } : {}), ...o.runs });
 
 	const standing = createStanding({ run, api: cfg.api, world: cfg.world, sleep, now, log, command: o.promptCommand ?? (() => undefined), timers: o.standing });
 	const place = (l: Live): Place => ({ paneId: l.record.pane, tabId: l.record.tab, workspaceId: l.record.workspace });

@@ -8,6 +8,7 @@ import { rememberStart, startOf as processStartOf, startedLater as processStarte
 import { assertSettingsSafe } from "../trust/settings.ts";
 import { waitPastTrust } from "../trust/wait.ts";
 import type { MemorySummary, TowerView } from "../net.ts";
+import { type BossPointer, type ConversationInfo, readPointer, resumable, sessionsRoot, underRoot, writePointer } from "./bossconv.ts";
 import { herdrCode } from "./herdrcode.ts";
 import { chain, isWrapper, leafOf, type Proc, type Procs, readProcs } from "./lineage.ts";
 import type { Log } from "./log.ts";
@@ -76,6 +77,26 @@ const ALLY_BATCH = 5;
 /** How long after the boss wrote at the tower prompt the run it woke still counts as the one they are in (a run waits for a free slot, a settings check, and its claim). */
 const PROMPT_WAKE_MS = 5 * 60_000;
 
+/** A boss conversation as the GUI and `/boss tower status` say it. Times are epoch milliseconds. */
+export interface ConversationStatus {
+	since: string;
+	resumed: boolean;
+	/** Why a new session was started (a resumed one has none). */
+	why?: string;
+	turns: number;
+	/** The run waits for the boss: its last poll was idle with nothing queued. */
+	idle: boolean;
+	/** The boss counts as gone at this time if they stay silent (only while the run is idle). */
+	idleAt?: number;
+	/** How long the boss may be silent, and when the hard cap ends the conversation. */
+	idleMs: number;
+	capAt: number;
+	/** The boss left or the server is ending it: it is closing. */
+	closing?: true;
+}
+/** One of the last local runs: `conversation` when a boss conversation, else an event run. */
+export interface LocalRunRow { id: string; kind: "conversation" | "event"; resumed?: boolean; why?: string; startedAt: string; endedAt?: string; outcome?: Outcome; /** The first line of its handoff note. */ note?: string }
+export const RUNS_SHOWN = 6;
 export type ServiceState = "standing" | "waking" | "running" | "closing" | "held";
 export interface Notice { id: string; level: "info" | "warning" | "error"; kind: "settings" | "loop" | "start" | "late"; text: string; at: number; detail?: string }
 /** What the GUI and `status` show of a service's runs. */
@@ -83,6 +104,10 @@ export interface ServiceStatus {
 	state: ServiceState;
 	queued: number;
 	run?: { id: string; kind: "local" | "ally"; startedAt: string };
+	/** The live local run is a boss conversation (bossconv.ts): how it began, and when it ends if the boss goes quiet. */
+	conversation?: ConversationStatus;
+	/** The last local runs, oldest first (at most `RUNS_SHOWN`): the conversations and the event runs, with the handoff note each left. */
+	localRuns?: LocalRunRow[];
 	/** `id` and `label` name the run and its device for the GUI (the label is the roster's, cut to the label character set); `device` is the device id. */
 	allyRuns: { id: string; device: string; label: string; startedAt: string }[];
 	lastRun?: { endedAt: string; outcome: Outcome };
@@ -122,8 +147,12 @@ export interface ServiceRef {
 	yieldPane(): Promise<void>;
 	/** A local run ended: the pane is free for the prompt again. */
 	freed(): void;
-	/** The brief for a run: the server builds it from the net, the opener's ledger, the digest, and the last note. */
-	brief(input: { events: QueuedEvent[]; woken: number; run: RunRecord }): Promise<{ text: string; digestKeys: string[]; expired?: string[] }>;
+	/** The brief for a run: the server builds it from the net, the opener's ledger, the digest, and the last note. `refresh`: a live run is given the newest, not a new one. */
+	brief(input: { events: QueuedEvent[]; woken: number; run: RunRecord; refresh?: true }): Promise<{ text: string; digestKeys: string[]; expired?: string[] }>;
+	/** What a refreshed brief would differ by, cheap to compute: a live run is given a new brief when it moves (the memory, a handoff note). */
+	briefVersion?(): string;
+	/** The session files the live panes report (Herdr's `agent_session`): the boss conversation does not resume one another pi has open. */
+	liveSessions?(): Promise<string[]>;
 	/** The expired waits a brief showed are shown now: the run took its first poll. */
 	shown?(ids: string[]): void;
 	/** Drops the digest lines a run's brief showed. */
@@ -179,6 +208,15 @@ interface Active {
 	bossSince?: number;
 	/** After the boss's silence ended their time here, the run has the idle wrap-up window to itself: the cap does not cut it short until then. */
 	graceUntil?: number;
+	/** A boss conversation: the boss turns its session has had (the pointer's, and this run's). */
+	turns?: number;
+	/** A boss conversation ended at its hard cap (the wrap-up note says so). */
+	capped?: boolean;
+	/** The boss asked for a new session (`/new`) while this conversation had not reported its file yet: the pointer is marked when it does. */
+	fresh?: boolean;
+	/** The brief version the run has (`briefVersion`), and a refresh under way. */
+	briefV?: string;
+	refreshing?: boolean;
 }
 interface Svc {
 	ref: ServiceRef;
@@ -232,6 +270,8 @@ export interface RunsOptions {
 	append?: typeof appendEvent;
 	/** The link holder's messages for tower identities (B6): without it a service runs local runs only. */
 	ally?: AllyPort;
+	/** Where pi keeps its session files, for the boss conversation's pointer (bossconv.ts); defaults to the agent folder's `sessions`. */
+	sessions?: string;
 }
 
 const phrase = (value: unknown, max: number) => (typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max) : "");
@@ -324,21 +364,35 @@ export function createRuns(o: RunsOptions) {
 		if (active.ended) return; // the service was detached during the check
 		svc.refusedAt = undefined;
 		svc.notices = svc.notices.filter((n) => n.id !== "settings");
+		// A boss event written at the tower prompt (or the GUI's composer) with no local run live starts the boss conversation: it resumes the boss session when bossconv.ts says it may, else begins a new one.
+		const resume = bossWake(svc) ? await conversationOf(svc) : undefined;
+		if (active.ended) return;
+		if (resume) (rec.conversation = resume.info, active.turns = resume.info.turns);
 		byRun.set(id, active);
 		writeRun(slot, rec);
-		log.line("run-start", { workspace: svc.ref.workspace, run: id, kind: "local" });
+		log.line("run-start", { workspace: svc.ref.workspace, run: id, kind: "local", ...(resume ? { conversation: resume.file ? "resumed" : "new" } : {}) });
 		ensureWatcher();
-		await launch(active, `tower run · ${svc.ref.record().label} · ${id.slice(0, 8)}`);
+		await launch(active, resume ? `tower · boss · ${svc.ref.record().label}` : `tower run · ${svc.ref.record().label} · ${id.slice(0, 8)}`, resume?.file ? ["--session", resume.file] : []);
+	};
+	/** The boss wrote at the tower prompt (or the GUI) a short while ago and no run was live: the run these events wake is their conversation. */
+	const bossWake = (svc: Svc) => svc.bossAt !== undefined && now() - svc.bossAt <= PROMPT_WAKE_MS;
+	/** Whether the boss's last session may be resumed, and the record of how the conversation begins. */
+	const conversationOf = async (svc: Svc): Promise<{ info: ConversationInfo; file?: string }> => {
+		const ws = svc.ref.workspace, pointer = readPointer(slot, ws);
+		const live = await svc.ref.liveSessions?.().catch(() => [] as string[]) ?? [];
+		const got = resumable(pointer, { now: now(), root: o.sessions ?? sessionsRoot(), live, ...(win || process.getuid === undefined ? {} : { uid: process.getuid() }) });
+		const base = pointer ? { from: pointer.startedAt, after: pointer.lastAt } : {};
+		return got.ok ? { file: got.file, info: { resumed: true, ...base, turns: pointer!.turns } } : { info: { resumed: false, ...(pointer ? { after: pointer.lastAt } : {}), turns: 0, why: got.why } };
 	};
 	/** Starts pi in the run's pane, finds its process, and waits for its claim; a start that fails ends the run as crashed. */
-	const launch = async (active: Active, name: string) => {
+	const launch = async (active: Active, name: string, extra: string[] = []) => {
 		const { rec, svc } = active, id = rec.id;
 		for (let attempt = 1; ; attempt++) {
 			let started = false;
 			try {
 				// The standing pane shows the tower prompt between runs; Herdr starts an agent only in an available shell, so the prompt leaves first. An ally run has a pane of its own.
 				if (rec.kind === "local") await svc.ref.yieldPane().catch((cause: Error) => error("run-yield", `${rec.id}: ${cause.message}`));
-				await start(o.run, o.sleep, rec.agent, rec.pane, ["--name", name, "--sb-run", id, ...(o.model() ? ["--model", o.model()!] : [])]);
+				await start(o.run, o.sleep, rec.agent, rec.pane, ["--name", name, "--sb-run", id, ...extra, ...(o.model() ? ["--model", o.model()!] : [])]);
 				started = true;
 				const found = await procOf(rec.pane, id);
 				if (!found) throw new Error("pi's process was not found in the pane");
@@ -748,12 +802,14 @@ export function createRuns(o: RunsOptions) {
 				if (a.boss !== undefined && (now() - (a.bossSince ?? a.boss) >= t.bossMax || (a.idleSince !== undefined && now() - Math.max(a.boss, a.idleSince) >= t.bossAway))) {
 					const away = now() - (a.bossSince ?? a.boss) < t.bossMax;
 					a.boss = undefined;
-					if (away) {
+					// A conversation that reaches its hard cap is wrapped up like one the boss left: a timeout would count against the loop rule, and the boss did nothing wrong.
+					if (!away && a.rec.conversation) a.capped = true;
+					if (away || a.rec.conversation) {
 						// The boss left without quitting: the run gets the normal wrap-up (an idle steer, then the end with a note), and the cap does not cut it short meanwhile.
 						a.idleSince = now();
 						a.steeredIdle = false;
 						a.graceUntil = now() + t.idleSteer + t.idleEnd + t.quitGrace;
-						log.line("run-boss-away", { workspace: a.rec.workspace, run: a.rec.id });
+						log.line(away ? "run-boss-away" : "run-boss-cap", { workspace: a.rec.workspace, run: a.rec.id });
 					}
 				}
 				const bossHere = a.boss !== undefined, grace = a.graceUntil !== undefined && now() < a.graceUntil;
@@ -767,11 +823,11 @@ export function createRuns(o: RunsOptions) {
 				if (a.idleSince !== undefined && !bossHere) {
 					const idle = now() - a.idleSince;
 					if (idle >= t.idleSteer + t.idleEnd) {
-						try { addNote(slot, a.rec.workspace, { kind: a.rec.kind, ...(a.rec.device ? { device: a.rec.device } : {}), run: a.rec.id, at: iso(now()), note: "(ended without a note)" }); } catch (cause) { error("run-note", (cause as Error).message); }
+						try { addNote(slot, a.rec.workspace, { kind: a.rec.kind, ...(a.rec.device ? { device: a.rec.device } : {}), run: a.rec.id, at: iso(now()), note: a.rec.conversation ? (a.capped ? "(ended at the 4 h cap)" : "(ended idle)") : "(ended without a note)" }); } catch (cause) { error("run-note", (cause as Error).message); }
 						terminate(a, "quit");
 					} else if (idle >= t.idleSteer && !a.steeredIdle) {
 						a.steeredIdle = true;
-						a.commands.push({ type: "steer", text: "You are idle with nothing pending. Call tower_done with your handoff note." });
+						a.commands.push({ type: "steer", text: a.rec.conversation ? "The boss has left: call tower_done with your handoff note." : "You are idle with nothing pending. Call tower_done with your handoff note." });
 					}
 				}
 			}
@@ -790,6 +846,7 @@ export function createRuns(o: RunsOptions) {
 		const built = ally ? { ...(await svc.ref.allyBrief({ run: a.rec, items: itemsOf(a, true), woken: a.started })), digestKeys: [] as string[], expired: [] as string[] } : await svc.ref.brief({ events: waitingOf(svc), woken: a.started, run: a.rec });
 		a.digestKeys = built.digestKeys;
 		a.expired = built.expired?.length ? built.expired : undefined;
+		a.briefV = ally ? undefined : svc.ref.briefVersion?.();
 		a.token = randomBytes(24).toString("hex");
 		a.lastPoll = now();
 		a.recovering = undefined;
@@ -804,7 +861,7 @@ export function createRuns(o: RunsOptions) {
 		byToken.set(a.token, a);
 		if (!ally) svc.state = "running";
 		// A pi the boss started by hand is a run they are in; so is the run a boss event from the tower prompt wakes (they are at the pane).
-		if (!ally && (hand || (svc.bossAt !== undefined && now() - svc.bossAt <= PROMPT_WAKE_MS))) {
+		if (!ally && (hand || a.rec.conversation || bossWake(svc))) {
 			a.boss = now();
 			a.bossSince = a.boss;
 		}
@@ -876,16 +933,39 @@ export function createRuns(o: RunsOptions) {
 	/** The line an ally run reads for a message: the verified header (device, team, the ask it carries) and the peer's text. */
 	const allyText = (a: Active, i: AllyItem): string => a.svc.ref.allyLine(i);
 	const unknown = { ok: false as const, error: "unknown_token" };
+	/** The newest brief for a live local run whose brief version moved since it had one, else undefined. A brief that cannot be built is tried again at the next change. */
+	const refreshed = async (a: Active): Promise<string | undefined> => {
+		const version = a.rec.kind === "local" ? a.svc.ref.briefVersion?.() : undefined;
+		if (version === undefined || version === a.briefV || a.refreshing) return undefined;
+		a.refreshing = true;
+		try {
+			const built = await a.svc.ref.brief({ events: [], woken: a.started, run: a.rec, refresh: true });
+			a.briefV = version;
+			a.digestKeys = built.digestKeys;
+			if (built.expired?.length) a.expired = built.expired;
+			return built.text;
+		} catch (cause) {
+			a.briefV = version;
+			error("run-brief", `${a.rec.id}: ${(cause as Error).message}`);
+			return undefined;
+		} finally {
+			a.refreshing = false;
+		}
+	};
 	/** The run's poll: its heartbeat, and at idle the next event; or a command (steer, quit). */
-	function poll(req: Record<string, unknown>) {
+	async function poll(req: Record<string, unknown>) {
 		const a = of(req.token);
 		if (!a || a.ended) return unknown;
 		a.lastPoll = now();
 		// The run is up and asking: what its brief showed as expired is shown (a run that never gets here shows it again to the next).
-		if (a.expired) (a.svc.ref.shown?.(a.expired), (a.expired = undefined));
+		// Marking them shown moves the memory, which is the brief's own doing: the run has that brief already.
+		if (a.expired) (a.svc.ref.shown?.(a.expired), (a.expired = undefined), (a.briefV = a.svc.ref.briefVersion?.() ?? a.briefV));
 		const command = a.commands.shift();
 		if (command) return { ok: true as const, command };
 		if (a.terminating !== undefined || a.closing !== undefined) return { ok: true as const };
+		// A long-lived run (a conversation may last an hour) is given a new brief when what it is made of moved: it reads the newest at its next turn (runmode.ts `before_agent_start`).
+		const fresh = await refreshed(a);
+		if (fresh) return { ok: true as const, brief: fresh };
 		if (req.idle !== true) return (a.idleSince = undefined, { ok: true as const });
 		// An event offered and not yet taken is offered again (the run did not confirm it); then the next one waiting.
 		const again = [...a.offered.values()][0], next = again ?? (a.rec.kind === "ally" ? allyEvents(a).find((e) => !a.offered.has(e.id)) : waitingOf(a.svc, new Set(a.offered.keys()))[0]);
@@ -905,6 +985,7 @@ export function createRuns(o: RunsOptions) {
 		a.offered.delete(event.id);
 		a.rec.events.push(event.id);
 		writeRun(slot, a.rec);
+		if (event.kind === "boss") bossTurn(a);
 		return { ok: true as const };
 	}
 	/** `tower_done`: refused while events are outstanding; otherwise the note is kept, the digest lines it showed are cleared, and the run is told to leave. */
@@ -932,14 +1013,42 @@ export function createRuns(o: RunsOptions) {
 	}
 	/** The boss quit a run they were in: it ends as done, with a note of its own; the events it did not take wait for the next run. A quit of any other run, or of one the server is already ending, changes nothing. */
 	async function bossLeft(a: Active) {
-		if (a.boss === undefined || a.rec.kind !== "local" || a.terminating !== undefined || a.pending !== undefined) return { ok: true as const };
-		addNote(slot, a.rec.workspace, { kind: "local", run: a.rec.id, at: iso(now()), note: "(the boss left the run)" });
+		// A conversation is the boss's even when they have been quiet past `bossAway`: their quit is theirs, not a crash.
+		if ((a.boss === undefined && !a.rec.conversation) || a.rec.kind !== "local" || a.terminating !== undefined || a.pending !== undefined) return { ok: true as const };
+		await closeBossRun(a, a.rec.conversation ? "(boss quit)" : "(the boss left the run)");
+		return { ok: true as const };
+	}
+	/** The boss's leave, from their own pi (`/quit`) or from a command: the run ends as done with a note of the server's. */
+	async function closeBossRun(a: Active, note: string) {
+		addNote(slot, a.rec.workspace, { kind: "local", run: a.rec.id, at: iso(now()), note });
 		await a.svc.ref.clearDigest(a.digestKeys).catch(() => {});
 		a.boss = undefined;
 		a.closing = now();
 		a.svc.state = "closing";
 		a.commands.length = 0;
-		return { ok: true as const };
+	}
+	/** The boss wrote in a conversation: its turn count and the pointer's `lastAt` move (the pointer is the run's own once its file is reported). */
+	function bossTurn(a: Active) {
+		if (!a.rec.conversation) return;
+		a.turns = (a.turns ?? 0) + 1;
+		try {
+			const was = readPointer(slot, a.rec.workspace);
+			if (was?.run === a.rec.id) writePointer(slot, a.rec.workspace, { ...was, lastAt: iso(now()), turns: a.turns });
+		} catch (cause) { error("conversation", (cause as Error).message); }
+	}
+	/** The conversation's session file is known: it becomes the boss session (only a conversation moves the pointer, and only a file under pi's sessions folder). */
+	function keepPointer(a: Active, file: string) {
+		const path = underRoot(file, o.sessions ?? sessionsRoot());
+		if (!path) return error("conversation", `${a.rec.id}: the session file is not under pi's sessions folder, so it is not kept as the boss session`);
+		const was = readPointer(slot, a.rec.workspace), same = was?.file === path;
+		const next: BossPointer = { file: path, run: a.rec.id, startedAt: same ? was!.startedAt : iso(now()), lastAt: iso(now()), turns: same ? Math.max(a.turns ?? 0, was!.turns) : 0, ...(a.fresh ? { fresh: true as const } : {}) };
+		a.turns = next.turns;
+		try { writePointer(slot, a.rec.workspace, next); } catch (cause) { error("conversation", (cause as Error).message); }
+	}
+	/** The boss asked for a new session: the pointer says so, so the next conversation does not resume. */
+	function markFresh(workspace: string) {
+		const was = readPointer(slot, workspace);
+		if (was) writePointer(slot, workspace, { ...was, fresh: true });
 	}
 	/** The boss spoke in the run's session (its extension saw input from the keyboard): they are in the run. */
 	function present(req: Record<string, unknown>) {
@@ -950,6 +1059,7 @@ export function createRuns(o: RunsOptions) {
 		a.boss = now();
 		a.bossSince ??= a.boss;
 		a.graceUntil = undefined;
+		bossTurn(a);
 		return { ok: true as const };
 	}
 	/** The server is ending the run, or the boss's `bossMax` since their first word is spent: a sign of them changes nothing. */
@@ -960,6 +1070,8 @@ export function createRuns(o: RunsOptions) {
 	async function releaseRun(req: Record<string, unknown>) {
 		const a = of(req.token);
 		if (!a || a.ended) return unknown;
+		// `/new` in a conversation's pi starts the boss over: the next conversation is a new session.
+		if (a.rec.conversation && req.reason === "new") a.rec.file ? markFresh(a.rec.workspace) : (a.fresh = true);
 		a.pending = "quit";
 		await finish(a, "quit", phrase(req.reason, 60) || "the session was replaced");
 		return { ok: true as const };
@@ -994,7 +1106,8 @@ export function createRuns(o: RunsOptions) {
 		const ws = ref.workspace, live = new Set<string>();
 		for (const rec of listRuns(slot, ws).filter((r) => !r.outcome)) {
 			// A run of a server that went away: it has `lost` to reconnect with its run id; until then it is the service's run.
-			const a: Active = { rec, svc, commands: [], lastPoll: now(), started: Date.parse(rec.startedAt) || now(), digestKeys: [], offered: new Map(), recovering: now(), ...(rec.left ? { left: true, pending: "quit" as Outcome } : {}) };
+			// A conversation of the last server is still the boss's: its time counts from its start (the boss's presence is memory only, and their next word tells it again).
+			const a: Active = { rec, svc, commands: [], lastPoll: now(), started: Date.parse(rec.startedAt) || now(), digestKeys: [], offered: new Map(), recovering: now(), ...(rec.left ? { left: true, pending: "quit" as Outcome } : {}), ...(rec.conversation ? { boss: now(), bossSince: Date.parse(rec.startedAt) || now(), turns: ((p) => (p?.run === rec.id ? p.turns : rec.conversation!.turns))(readPointer(slot, ws)) } : {}) };
 			if (rec.kind === "ally" && rec.device) svc.allies.set(rec.device, a);
 			else {
 				svc.run = svc.run ?? a;
@@ -1031,6 +1144,23 @@ export function createRuns(o: RunsOptions) {
 		}
 	}
 	const find = (workspace: string) => services.get(workspace);
+	const conversationStatus = (a: Active): ConversationStatus => {
+		const c = a.rec.conversation!, idle = a.idleSince !== undefined;
+		return {
+			since: a.rec.startedAt, resumed: c.resumed, ...(c.why ? { why: c.why } : {}), turns: a.turns ?? c.turns, idle,
+			...(idle && a.boss !== undefined ? { idleAt: Math.max(a.boss, a.idleSince!) + t.bossAway } : {}),
+			idleMs: t.bossAway, capAt: (a.bossSince ?? a.started) + t.bossMax,
+			...(a.closing !== undefined || a.terminating !== undefined ? { closing: true as const } : {}),
+		};
+	};
+	/** The last local runs with the first line of the note each left. */
+	const localRunRows = (workspace: string): LocalRunRow[] => {
+		const notes = new Map(readNotes(slot, workspace).filter((n) => n.kind === "local").map((n) => [n.run, n.note.split("\n")[0]!]));
+		return listRuns(slot, workspace).filter((r) => r.kind === "local").slice(-RUNS_SHOWN).map((r): LocalRunRow => ({
+			id: r.id, kind: r.conversation ? "conversation" : "event", ...(r.conversation ? { resumed: r.conversation.resumed, ...(r.conversation.why ? { why: r.conversation.why } : {}) } : {}),
+			startedAt: r.startedAt, ...(r.endedAt ? { endedAt: r.endedAt } : {}), ...(r.outcome ? { outcome: r.outcome } : {}), ...(notes.has(r.id) ? { note: phrase(notes.get(r.id), 200) } : {}),
+		}));
+	};
 
 	const api = {
 		attach, detach, poke: (workspace: string) => { const s = services.get(workspace); if (s) poke(s); },
@@ -1111,6 +1241,32 @@ export function createRuns(o: RunsOptions) {
 			if (svc.state === "held") svc.state = "standing";
 			poke(svc);
 		},
+		/**
+		 * The boss leaves the conversation (`/boss tower leave`, the GUI's Leave, the tower prompt's `/quit`): it ends as done with the note `(boss quit)`; what it did not take waits for the next run. Refused when no
+		 * conversation is live, or it has not claimed yet. A pi's own `/quit` reaches the same end through `run-done left`.
+		 */
+		async leave(workspace: string) {
+			const svc = services.get(workspace);
+			if (!svc) throw new Error(`The sb server stands in for no tower of workspace ${workspace}`);
+			const a = svc.run;
+			if (!a || a.ended || !a.rec.conversation) throw new Error("No boss conversation is live in this tower.");
+			if (a.closing !== undefined || a.terminating !== undefined) return { left: true as const, already: true as const };
+			if (!a.token) throw new Error("The boss conversation has not started yet; try again in a moment.");
+			await closeBossRun(a, "(boss quit)");
+			a.commands.push({ type: "quit" });
+			log.line("run-boss-left", { workspace, run: a.rec.id, by: "command" });
+			return { left: true as const };
+		},
+		/** The boss starts over (`/boss tower new`, the GUI's New, the tower prompt's `/new`): the next conversation is a new session, and a live one ends as `leave` ends it. */
+		async fresh(workspace: string) {
+			const svc = services.get(workspace);
+			if (!svc) throw new Error(`The sb server stands in for no tower of workspace ${workspace}`);
+			const a = svc.run, live = a && !a.ended && a.rec.conversation ? a : undefined;
+			markFresh(workspace);
+			if (live && !live.rec.file) live.fresh = true;
+			if (live?.token && live.closing === undefined && live.terminating === undefined) await api.leave(workspace);
+			return { fresh: true as const, left: live !== undefined };
+		},
 		deliverAgain(workspace: string, id: string) {
 			const svc = services.get(workspace), e = readQueue(slot, workspace, true).find((x) => x.id === id);
 			if (!svc || !e) throw new Error("No such parked event");
@@ -1132,6 +1288,8 @@ export function createRuns(o: RunsOptions) {
 				state: svc.state,
 				queued: waitingOf(svc, new Set(run?.offered.keys() ?? [])).length,
 				...(run ? { run: { id: run.rec.id, kind: run.rec.kind, startedAt: run.rec.startedAt } } : {}),
+				...(run && !run.ended && run.rec.conversation ? { conversation: conversationStatus(run) } : {}),
+				...(localRunRows(workspace).length ? { localRuns: localRunRows(workspace) } : {}),
 				allyRuns: [...svc.allies.values()].map((a) => ({ id: a.rec.id, device: a.rec.device ?? "?", label: a.rec.deviceLabel ?? a.rec.deviceShort ?? (a.rec.device ?? "?").slice(0, 6), startedAt: a.rec.startedAt })),
 				...(svc.lastRun ? { lastRun: svc.lastRun } : {}),
 				...(recent ? { crashes: recent } : {}),
@@ -1141,10 +1299,13 @@ export function createRuns(o: RunsOptions) {
 		},
 		/** The waiting events of a workspace for the GUI's queue rows. */
 		queue: (workspace: string) => { const s = find(workspace); return s ? waitingOf(s, new Set(s.run?.offered.keys() ?? [])) : []; },
-		/** The session file of the live run, else of the last local run (the comms of the tower unit). */
+		/**
+		 * The session file the tower unit's comms show: the live conversation's, else the boss session's (bossconv.ts), which an event run does not move, so the log stays one line of talk with the boss. With no boss
+		 * session yet it is the live run's, else the last local run's, as before.
+		 */
 		file: (workspace: string): string | undefined => {
-			const svc = find(workspace);
-			return svc?.run?.rec.file ?? listRuns(slot, workspace).filter((r) => r.kind === "local" && r.file).at(-1)?.file;
+			const svc = find(workspace), live = svc?.run && !svc.run.ended && svc.run.rec.conversation ? svc.run.rec.file : undefined;
+			return live ?? readPointer(slot, workspace)?.file ?? svc?.run?.rec.file ?? listRuns(slot, workspace).filter((r) => r.kind === "local" && r.file).at(-1)?.file;
 		},
 		/** The boss messages a local run took, oldest first: the ones a memory proposal may cite (towermemory.ts). A message offered and not confirmed is not one. */
 		bossEvents(token: unknown): { id: string; text: string }[] {
@@ -1161,6 +1322,7 @@ export function createRuns(o: RunsOptions) {
 			if (!a || typeof file !== "string" || file.length > 4096) return;
 			if (a.rec.kind === "ally" && !(typeof session === "string" && /^[\w-]{1,128}$/.test(session) && basename(file).endsWith(`_${session}.jsonl`))) return;
 			a.rec.file = file;
+			if (a.rec.conversation && a.rec.kind === "local") keepPointer(a, file);
 			writeRun(slot, a.rec);
 		},
 		/**
@@ -1213,8 +1375,10 @@ export function createRuns(o: RunsOptions) {
 			if (!status) return undefined;
 			const rows = api.queue(workspace).map((e) => ({ text: phrase(`${e.kind}${e.from?.name ?? e.from?.id ? ` · ${e.from?.name ?? e.from?.id}` : ""}: ${e.text.split("\n").find((l) => l.trim()) ?? ""}`, 240), as: "followUp" as const }));
 			const file = api.file(workspace), allyFiles = Object.fromEntries([...(find(workspace)?.allies.values() ?? [])].flatMap((a) => (a.rec.file ? [[a.rec.id, a.rec.file]] : [])));
+			// The event runs among the last local runs are read-only units of their own; the conversation's file is the tower unit's.
+			const eventFiles = Object.fromEntries(listRuns(slot, workspace).filter((r) => r.kind === "local" && !r.conversation && r.file).slice(-RUNS_SHOWN).map((r) => [r.id, r.file!]));
 			const memory = find(workspace)?.ref.memory?.();
-			return { ...status, ...(memory ? { memory } : {}), queue: rows, ...(file ? { file } : {}), ...(Object.keys(allyFiles).length ? { allyFiles } : {}) };
+			return { ...status, ...(memory ? { memory } : {}), queue: rows, ...(file ? { file } : {}), ...(Object.keys(allyFiles).length ? { allyFiles } : {}), ...(Object.keys(eventFiles).length ? { eventFiles } : {}) };
 		},
 	};
 	return api;

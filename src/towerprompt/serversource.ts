@@ -52,6 +52,15 @@ export function serverSource(ctx: Ctx, workspace: string, pid: number = process.
 			}
 			if (reply.ok !== true) throw new Error(String(reply.error ?? "the sb server gave no reason"));
 		},
+		async fresh() {
+			let reply;
+			try {
+				reply = await ask({ cmd: "tower-new", workspace }, POST_MS);
+			} catch (cause) {
+				throw new Error(cause instanceof Unreachable ? `the sb server did not answer: ${cause.message}` : (cause as Error).message);
+			}
+			if (reply.ok !== true) throw new Error(String(reply.error ?? "the sb server gave no reason"));
+		},
 		leave: () => tell("prompt-leave"),
 		gone: () => tell("prompt-gone"),
 	};

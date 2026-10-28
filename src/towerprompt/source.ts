@@ -18,6 +18,8 @@ export interface PromptSource {
 	poll(): Promise<Polled>;
 	/** Posts the boss's words to the tower as a `boss` event; rejects with the server's own words when it does not take them. */
 	post(text: string): Promise<void>;
+	/** The boss typed `/new`: the next boss conversation is a new session (the server's `tower-new`, the function `/boss tower new` and the GUI's New reach); rejects with the server's own words. */
+	fresh(): Promise<void>;
 	/** The boss took the pane with Ctrl+D (or Ctrl+C): the server stops asking for the prompt for a while. Best effort. */
 	leave(): Promise<void>;
 	/** The prompt is ending on its own, because a run starts or the boss woke the tower: the server need not wait for it. Best effort. */
