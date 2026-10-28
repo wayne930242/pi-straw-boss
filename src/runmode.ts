@@ -378,7 +378,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 			return void context.shutdown();
 		}
 		mode = "run";
-		markRun(); // balance.ts reads it at the quit
+		markRun(claim?.kind); // balance.ts reads it at the quit
 		keep();
 		if (!pinPeer()) return void refuseUnpinned();
 		registerTools();

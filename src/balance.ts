@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { inRun } from "./runmark.ts";
+import { inStandingRun } from "./runmark.ts";
 
 // Pane balance: when a pi starts in a Herdr tab, or quits out of one, the tab's panes are made equal again, so a tab that
 // pi-herdr-agents keeps splitting for workers does not end up as a chain of halves. Every pi does this, joined or not.
@@ -31,7 +31,7 @@ export default function paneBalance(pi: ExtensionAPI, helper = runHelper, env = 
 		helper(["now", paneId]);
 	}
 	pi.on("session_shutdown", (event) => {
-		// A tower run's pane is a standing pane (it never closes) or an ally pane (the server closes it): the helper would only wait out its 30 s, and on Windows `Start-Process -Wait` for pi.cmd waits for it too, so the next `herdr agent start` in the pane finds no prompt.
-		if (event.reason === "quit" && !inRun(argv)) helper(["after-close", paneId, env.HERDR_TAB_ID ?? ""]);
+		// A local tower run's pane is a standing pane that never closes: the helper would only wait out its 30 s, and on Windows `Start-Process -Wait` for pi.cmd waits for it too, so the next `herdr agent start` in the pane finds no prompt. An ally pane is closed by the server as soon as pi is gone, so it keeps the helper and the tower tab is rebalanced.
+		if (event.reason === "quit" && !inStandingRun(argv)) helper(["after-close", paneId, env.HERDR_TAB_ID ?? ""]);
 	});
 }

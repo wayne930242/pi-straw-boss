@@ -200,6 +200,8 @@ test("VM: a tower run's pi (flag or claim) never spawns after-close: its pane st
 	markRun();
 	try {
 		assert.deepEqual(quitting([]), [], "a run claimed through pane-role");
+		markRun("ally");
+		assert.deepEqual(quitting(["node", "pi", "--sb-run", "RUN"]), [["after-close", "lead", "w:t1"]], "an ally run's pane is closed by the server: the tab is rebalanced");
 	} finally {
 		delete globalThis[Symbol.for("pi-straw-boss.run.mark")];
 		delete globalThis[started];

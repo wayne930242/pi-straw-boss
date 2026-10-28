@@ -7,6 +7,7 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { TOWER_LABEL } from "../src/herdr.ts";
 import { eventText } from "../src/runmode.ts";
+import { inRun, inStandingRun } from "../src/runmark.ts";
 import { type Answer, call, type Request, results, rig as makeRig, scratchRoot } from "./run-rig.ts";
 import { until } from "./server-world.ts";
 
@@ -20,6 +21,11 @@ afterEach(() => {
 	for (const s of sessions.splice(0)) s.dispose();
 	rmSync(root, { recursive: true, force: true });
 });
+/** A negative window without a sleep: `n` more polls of the run reach the server, each one a chance for the thing that must not happen. */
+const polls = async (srv: ReturnType<typeof server>, n: number) => {
+	const target = srv.requests.filter((q) => q.cmd === "run-poll").length + n;
+	await until(() => srv.requests.filter((q) => q.cmd === "run-poll").length >= target, `${n} more polls`);
+};
 const rig = (srv: ReturnType<typeof server>, over: Parameters<typeof makeRig>[3] = {}) => makeRig(root, (r) => srv.ask(r), sessions, over);
 
 const BRIEF = "You are a run of the tower of workspace Alpha (wA); head tower: Alpha. BRIEF-MARK";
@@ -167,6 +173,23 @@ test("the intercom tool is blocked in a run with a pointer to tower_reply", asyn
 	assert.doesNotMatch(results(r.session)[0]!, /SENT/);
 });
 
+const MARK = Symbol.for("pi-straw-boss.run.mark");
+const clearMark = () => void delete (globalThis as Record<symbol, unknown>)[MARK];
+
+test("VM: the run mode marks the process once the claim is taken (balance.ts reads it): a local run stands, an ally run does not", async () => {
+	for (const kind of ["local", "ally"] as const) {
+		clearMark();
+		const srv = server();
+		const inner = srv.ask.bind(srv);
+		srv.ask = async (request: Request): Promise<Answer> => { const a = await inner(request); return request.cmd === "claim" ? { ...a, kind, ...(kind === "ally" ? { level: "reply", peer: { device: "dev1", label: "Dev", short: "d1", team: "t1", teamName: "T" } } : {}) } : a; };
+		await rig(srv);
+		await until(() => srv.requests.some((q) => q.cmd === "run-poll"), `the ${kind} run to poll`);
+		assert.equal(inRun([]), true, "the claim marks the process");
+		assert.equal(inStandingRun([]), kind === "local");
+		clearMark();
+	}
+});
+
 test("a steer command from the server starts a turn, and quit shuts pi down", async () => {
 	const srv = server();
 	const r = await rig(srv);
@@ -196,12 +219,12 @@ test("VM: a quit ordered while the turn runs is held until the turn ends (pi can
 	const busy = await busyTurn(r);
 	srv.command({ type: "quit" });
 	await until(() => srv.requests.filter((q) => q.cmd === "run-poll").length > 3 && !srv.hasCommands(), "the quit to be delivered");
-	await new Promise((resolve) => setTimeout(resolve, 100));
+	await polls(srv, 3);
 	assert.equal(r.shutdowns.length, 0, "no shutdown is asked of pi while the turn runs");
 	busy.release();
 	await busy.turn;
 	await until(() => r.shutdowns.length === 1, "the quit at the idle moment");
-	await new Promise((resolve) => setTimeout(resolve, 100));
+	await polls(srv, 3);
 	assert.equal(r.shutdowns.length, 1, "once");
 });
 
@@ -219,7 +242,7 @@ test("VM: a stop that ordered a quit while the turn ran, followed by the run cla
 	await until(() => srv.requests.filter((q) => q.cmd === "claim").length === 2, "the claim again");
 	busy.release();
 	await busy.turn;
-	await new Promise((resolve) => setTimeout(resolve, 300));
+	await polls(srv, 3);
 	assert.equal(r.shutdowns.length, 0, "the earlier stop is not honoured");
 	assert.equal(srv.requests.filter((q) => q.cmd === "run-done").length, 0, "and the server is not told the run was quit");
 	// The run still lives off the server's queue, and a quit ordered now goes out.
