@@ -51,8 +51,8 @@ test("B5R-F001/F004: an old queue/parked folder does not throw; its old files ag
 	assert.equal(purgeQueues(slot, Date.now()), 1);
 	assert.deepEqual(readdirSync(parked), ["new.json"]);
 	mkdirSync(join(base, "runs"), { recursive: true });
-	for (const f of ["runs/r1.json", "notes.jsonl", "expects.json", "timer.json", "seen.jsonl"]) writeFileSync(join(base, f), "x");
-	assert.ok(purgeAll(slot) >= 7);
+	for (const f of ["runs/r1.json", "notes.jsonl", "expects.json", "timer.json", "seen.jsonl", "ally-routes.json", "ally-answers.json", "ally-opened.json"]) writeFileSync(join(base, f), "x");
+	assert.ok(purgeAll(slot) >= 10);
 	assert.deepEqual(readdirSync(base), []);
 	assert.equal(existsSync(parked), false);
 });

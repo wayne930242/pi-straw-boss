@@ -18,7 +18,8 @@ import { secretDir, type Slot, towerId, towerName } from "./record.ts";
 import type { Allows } from "./allows.ts";
 import type { Asks } from "./asks.ts";
 import { ageOf, allyTools, buildAllyBrief, buildBrief, gatherMains, LOCAL_TOOLS } from "./towerbrief.ts";
-import { type AllyPort, createRuns, type Runs, type RunsOptions, type ServiceRef, type ServiceStatus } from "./runs.ts";
+import { addAnswer, addRoute, ALLY_LEDGER, type Peer, readAnswers, removeAnswer, routeOf, spendRoute } from "./allyroute.ts";
+import { type AllyItem, type AllyPort, createRuns, type Runs, type RunsOptions, type ServiceRef, type ServiceStatus } from "./runs.ts";
 import { addExpect, clearExpect, lastNote, readExpects, readTimer } from "./towerrunstore.ts";
 import { runTool, type ServerTools } from "./runtools.ts";
 import { openSeen, type Seen } from "./towerseen.ts";
@@ -115,6 +116,8 @@ interface Live {
 	reach?: Reach;
 	control?: Control;
 	open?: ReturnType<typeof opener>;
+	/** The opener an ally run opens mains with: its ledger is the ally runs' own (allyroute.ts), so the local brief never lists them. */
+	openAlly?: ReturnType<typeof opener>;
 	/** The start in flight: the wait for a resident tower, then the registration, then the tokens. */
 	starting?: Promise<void>;
 	registered?: Promise<boolean>;
@@ -147,6 +150,8 @@ export function createTowers(o: TowersOptions): Towers {
 		clearDigest: (keys) => digest.drop(l.record.workspace, keys),
 		allyLine: (item) => {
 			const mine = { name: l.record.name, id: l.record.id, role: "tower" as const, workspace: l.record.label };
+			// An answer a local session gave to what the run asked or opened: no verified peer header, the session is local; the device's next run reads it as data.
+			if (item.local) return stamp({ from: { name: item.local.name, id: item.local.id, role: "session" }, kind: "tower_reply", scope: "session", to: [mine], reply: false }, item.text);
 			const from = { name: item.label, id: `link:${item.device}`, role: "tower" as const, ...(item.fromWorkspace ? { workspace: item.fromWorkspace } : {}) };
 			return stamp({ from, kind: "tower_send", scope: "tower", to: [mine], reply: item.replyExpected, remote: { device: item.label, short: item.short, team: item.teamName }, ...(item.awaitsReply ? { asks: item.awaitsReply } : {}) }, item.text);
 		},
@@ -192,7 +197,24 @@ export function createTowers(o: TowersOptions): Towers {
 			};
 		},
 	});
-	const runs: Runs = createRuns({ slot, run, sleep, now, log, enabled: o.enabled, max: () => readTowerRuns(slot.stateDir).max, trustDir: trustDir(slot.stateDir), model: () => towerModel(slot.stateDir), ...(o.ally ? { ally: o.ally } : {}), ...o.runs });
+	// The link holder's messages for the identity, and beside them the answers local sessions gave to what ally runs asked or opened (allyroute.ts): both are for a device's next ally run, neither enters a local run.
+	const workspaceOf = (identity: string) => [...services.values()].find((x) => x.record.id === identity)?.record.workspace;
+	const LOCAL = "local-";
+	const allyPort: AllyPort | undefined = o.ally && {
+		standing: (device, team) => o.ally!.standing(device, team),
+		project: (team) => o.ally!.project(team),
+		thread: (device) => o.ally!.thread(device),
+		waiting: (identity) => {
+			const ws = workspaceOf(identity), answers: AllyItem[] = ws ? readAnswers(slot, ws, now()).map((a) => ({ id: `${LOCAL}${a.id}`, device: a.device, label: a.label, short: a.short, team: a.team, teamName: a.teamName, fromWorkspace: "", replyExpected: false, text: a.text, at: a.at, local: a.from })) : [];
+			return [...o.ally!.waiting(identity), ...answers].sort((a, b) => a.at - b.at);
+		},
+		taken: async (id, identity) => {
+			const ws = workspaceOf(identity);
+			if (!id.startsWith(LOCAL)) return o.ally!.taken(id, identity);
+			if (ws) removeAnswer(slot, ws, id.slice(LOCAL.length), now());
+		},
+	};
+	const runs: Runs = createRuns({ slot, run, sleep, now, log, enabled: o.enabled, max: () => readTowerRuns(slot.stateDir).max, trustDir: trustDir(slot.stateDir), model: () => towerModel(slot.stateDir), ...(allyPort ? { ally: allyPort } : {}), ...o.runs });
 
 	const place = (l: Live): Place => ({ paneId: l.record.pane, tabId: l.record.tab, workspaceId: l.record.workspace });
 	const dirOf = (workspace: string) => join(towerDir(slot, workspace));
@@ -207,7 +229,15 @@ export function createTowers(o: TowersOptions): Towers {
 			try {
 				const seen = (l.seen ??= openSeen(slot, l.record.workspace, now)), verdict = seen.check(from.id, message.id, message.content.text);
 				if (verdict === "conflict") return log.line("tower-dropped", { workspace: l.record.workspace, from: from.id, why: "the same message id with other content" });
-				if (verdict === "new") {
+				const ws = l.record.workspace, route = verdict === "new" ? routeOf(slot, ws, from.id, now()) : undefined, local = route && readExpects(slot, ws, now()).find((e) => e.to === from.id);
+				if (route && (!local || route.at >= local.at)) {
+					// A session an ally run wrote to or opened is answering the device, not the local run: the answer waits for the device's next ally run.
+					addAnswer(slot, ws, { id: `${Date.now().toString(36)}-${message.id}`.slice(0, 80), device: route.device, label: route.label, short: route.short, team: route.team, teamName: route.teamName, from: { id: from.id, name: phrase(from.name ?? from.id, 40) }, text: message.content.text, at: now() }, now());
+					spendRoute(slot, ws, route, now());
+					seen.add(from.id, message.id, message.content.text);
+					log.line("tower-ally-answer", { workspace: ws, from: from.id });
+					runs.pokeAllies(l.record.id);
+				} else if (verdict === "new") {
 					const written = appendEvent(slot, l.record, { kind: "intercom", from: { id: from.id, ...(from.name ? { name: from.name } : {}) }, text: message.content.text, at: new Date(now()).toISOString(), messageId: message.id });
 					seen.add(from.id, message.id, message.content.text);
 					clearExpect(slot, l.record.workspace, from.id, now());
@@ -241,11 +271,14 @@ export function createTowers(o: TowersOptions): Towers {
 					l.reach = createReach(kit, undefined, { retryCapMs: RUN_SEND_CAP_MS });
 					l.control = createCloseMain(kit, { closeSelf: () => "A tower service closes no mains for itself; ask it to close one.", check: () => undefined });
 					l.control.register();
-					l.open = opener({
+					// Two openers over the same tower: the local run's, whose ledger the local brief lists, and the ally runs', whose ledger is their own (allyroute.ts).
+					const openerFor = (file?: string) => opener({
 						run, sleep, workspaceId: l.record.workspace, cwd: l.record.cwd ?? slot.stateDir, sessions: () => (l.client ?? client).listSessions(), send: (to, message) => l.reach!.send(to, message),
 						tower: () => ({ id: l.record.id, name: l.record.name }), trustDir: trustDir(slot.stateDir),
-						ledger: { entries: () => readLedger(slot, l.record.workspace, now()), put: (row) => { try { putLedger(slot, l.record.workspace, row, now()); } catch (cause) { error("ledger", (cause as Error).message); } } },
+						ledger: { entries: () => readLedger(slot, l.record.workspace, now(), file), put: (row) => { try { putLedger(slot, l.record.workspace, row, now(), file); } catch (cause) { error("ledger", (cause as Error).message); } } },
 					});
+					l.open = openerFor();
+					l.openAlly = openerFor(ALLY_LEDGER);
 				}
 				l.kit.attach(client);
 				l.client = client;
@@ -584,11 +617,14 @@ export function createTowers(o: TowersOptions): Towers {
 		if (!who) throw new Error("unknown_token");
 		const name = typeof request.tool === "string" ? request.tool : "", args = (typeof request.args === "object" && request.args !== null ? request.args : {}) as Record<string, unknown>;
 		const l = need(who.workspace), ws = who.workspace;
+		// What an ally run waits on or opens is its device's: the routes (allyroute.ts) send those sessions' answers to the device's next ally run, never to a local run, and its opened mains have a ledger of their own.
+		const peer: Peer | undefined = who.kind === "ally" && who.device && who.team ? { device: who.device, label: who.deviceLabel ?? who.device.slice(0, 6), short: who.deviceShort ?? who.device.slice(0, 6), team: who.team, teamName: who.teamName ?? who.team.slice(0, 6) } : undefined;
+		const route = (to: string, name: string, kind: "expect" | "opened") => { try { addRoute(slot, ws, { ...peer!, to, name, kind, at: now() }, now()); } catch (cause) { error("ally-route", (cause as Error).message); } };
 		const host = {
-			reach: l.reach!, open: l.open!, closeMain: l.control!.closeMain, now, boardDir: join(slot.stateDir, "board"), label: l.record.label,
+			reach: l.reach!, open: peer ? async (request: Parameters<NonNullable<Live["open"]>>[0]) => { const opened = await l.openAlly!(request); route(opened.main, "opened main", "opened"); return opened; } : l.open!, closeMain: l.control!.closeMain, now, boardDir: join(slot.stateDir, "board"), label: l.record.label,
 			link: async (body: Record<string, unknown>) => ((await o.link?.(body, l.record.id)) ?? { ok: false, code: "no_holder", error: "The link holder is not running in the sb server" }) as { ok: boolean; error?: string },
 			server: o.server ?? { status: () => ({}), logs: () => [], restart: () => Promise.reject(new Error("The server cannot restart itself here")) },
-			expect: (to: string, who: string, text: string) => { try { addExpect(slot, ws, { to, name: who, at: now(), first: phrase(text, 80) }, now()); } catch (cause) { error("expects", (cause as Error).message); } },
+			expect: (to: string, name: string, text: string) => { if (peer) return route(to, phrase(name, 40), "expect"); try { addExpect(slot, ws, { to, name, at: now(), first: phrase(text, 80) }, now()); } catch (cause) { error("expects", (cause as Error).message); } },
 			who, identity: l.record.id, requests: l.requests,
 			allow: (q: { toolCallId: string; tool: string; args: unknown }) => (o.allows ? o.allows.take({ pane: who.pane, ...q, sessions: () => l.client!.listSessions() }) : Promise.resolve({ ok: false as const, reason: "this server holds no Allows" })),
 			allowRequest: (q: { toolCallId: string; lines: string[] }) => (o.allows ? o.allows.takeRequest({ pane: who.pane, ...q, sessions: () => l.client!.listSessions() }) : Promise.resolve({ ok: false as const, reason: "this server holds no Allows" })),

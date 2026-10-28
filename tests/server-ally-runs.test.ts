@@ -6,7 +6,8 @@ import { TowerWorld } from "./tower-world.ts";
 import { type Running, sleep, until } from "./server-world.ts";
 import { argsDigest } from "../src/server/allows.ts";
 import { callControl } from "../src/server/socket.ts";
-import { lastNote, listRuns, readRun } from "../src/server/towerrunstore.ts";
+import { lastNote, listRuns, readExpects, readRun } from "../src/server/towerrunstore.ts";
+import { readLedger, readQueue } from "../src/server/towerstore.ts";
 
 // The ally runs of the tower service (docs/specs/2026-10-26-sb-backend.md, Ally runs, The wake protocol, The brief; B6) against a fake Herdr, a fake link holder (`world.ally`), and a pi that is a test:
 // a message of a teammate's device that waits for the tower identity gets a run of its own in a pane split off the tower's tab, claimed over the control socket like a local run.
@@ -367,6 +368,77 @@ test("a forward confirm is the requester's: another run's forget-confirm is refu
 	assert.equal((await confirm(t2, "dlg-3")).ok, true);
 	await world.expose!.runs.release({ token: t2, reason: "test" });
 	assert.equal(world.expose?.runs.confirmed("dlg-3", true), false);
+});
+
+/** An ally run for DEV1 at dispatch, claimed; and the main `main-1` it may write to. */
+const dispatchRun = async () => {
+	const { s } = await setup();
+	world.ally.level.set(DEV1, "dispatch");
+	world.ally.add("m1", DEV1, "ask the main for the status");
+	world.expose?.allyWaiting("sb-tower-wa");
+	world.sessions = [{ id: "main-1", name: "docs-main", herdrLocation: { status: "ok", workspace: { id: "wA", label: "Alpha" }, tab: { id: "wA:t1", label: "work" }, paneId: "wA:p1" } } as never];
+	const id = await nthRun();
+	const token = String((await claimed(s, id)).token);
+	return { s, id, token, run: (tool: string, args: Record<string, unknown>) => ask(s, { cmd: "run-tool", token, tool, args }) };
+};
+const finish = async (s: Running, id: string, token: string) => {
+	await drain(s, token);
+	assert.equal((await ask(s, { cmd: "run-done", token, note: "asked the main" })).ok, true);
+	exit(id);
+	await until(() => readRun(world.slot, "wA", id)?.outcome, "the run to end");
+};
+const towerClient = () => world.client("sb-tower-wa")!;
+/** The run ids Herdr was asked to start pi for (a main the opener starts has no `--sb-run`, and the fake keys it by a placeholder). */
+const runIds = () => [...world.pis.keys()].filter((k) => /^[0-9a-f]{16}$/.test(k));
+
+test("what an ally run waits for from a local session is its device's, not the local run's: no expectation reaches the local brief, and the session's answer goes to the device's next ally run, never to a local run (RV6-F003)", async () => {
+	const { s, id, token, run } = await dispatchRun();
+	const sent = await run("tower_reply", { to: "main-1", message: "what is the status of the export?", reply: true });
+	assert.equal(sent.ok, true, JSON.stringify(sent));
+	assert.deepEqual(readExpects(world.slot, "wA", Date.now()), [], "the local run's expectations stay its own");
+	await finish(s, id, token);
+	towerClient().incoming({ id: "main-1", name: "docs-main" }, { id: "a1", content: { text: "the export is green" } } as never);
+	await until(() => world.pis.size === 2, "an ally run for the answer");
+	assert.deepEqual(readQueue(world.slot, "wA"), [], "nothing entered the local queue");
+	const second = [...world.pis.keys()][1]!;
+	await until(() => readRun(world.slot, "wA", second)?.pid, "the second run's pid");
+	assert.equal(readRun(world.slot, "wA", second)!.kind, "ally");
+	assert.equal(readRun(world.slot, "wA", second)!.device, DEV1);
+	const token2 = String((await claimed(s, second)).token);
+	const events = await drain(s, token2);
+	assert.equal(events.length, 1);
+	assert.match(events[0]!.text, /kind=tower_reply/);
+	assert.match(events[0]!.text, /the export is green$/);
+	const status = ((await ask(s, { cmd: "status" })).towers as { service: { run?: unknown } }[])[0]!.service;
+	assert.equal(status.run, undefined, "no local run was woken");
+	// The answer is delivered once: it left the store with the run.
+	assert.equal((await ask(s, { cmd: "run-done", token: token2, note: "relayed" })).ok, true);
+	exit(second);
+	await until(() => readRun(world.slot, "wA", second)?.outcome, "the second run to end");
+	await sleep(150);
+	assert.equal(world.pis.size, 2, "and no third run");
+});
+
+test("a main an ally run opened is the device's: the ledger of the local run holds nothing of it, and the main's report goes to the device's next ally run (RV6-F003)", async () => {
+	const { s, id, token, run } = await dispatchRun();
+	const orig = world.herdr.onAgentStart!;
+	world.herdr.onAgentStart = (p, args) => {
+		orig(p, args);
+		if (args.includes("--sb-run")) return;
+		p.tokens.sb_role = "main";
+		world.sessions.push({ id: "opened-1", name: "main", herdrLocation: { status: "current", paneId: p.pane_id } as never });
+	};
+	const opened = await run("boss_open_main", { request: "Fix the export button", sender: "docs-main" });
+	assert.equal(opened.ok, true, JSON.stringify(opened));
+	assert.equal(readLedger(world.slot, "wA", Date.now()).length, 0, "the local run's ledger (its brief's opened lines) is untouched");
+	await finish(s, id, token);
+	towerClient().incoming({ id: "opened-1", name: "main" }, { id: "r1", content: { text: "done: the button is fixed" } } as never);
+	await until(() => runIds().length === 2, "an ally run for the report");
+	assert.deepEqual(readQueue(world.slot, "wA"), []);
+	const second = runIds()[1]!;
+	await until(() => readRun(world.slot, "wA", second)?.pid, "the second run's pid");
+	const events = await drain(s, String((await claimed(s, second)).token));
+	assert.match(events[0]!.text, /done: the button is fixed$/);
 });
 
 test("a forward confirm: the ally run asks its own sender's device, whatever the request names, and the answer reaches the run at its poll", async () => {

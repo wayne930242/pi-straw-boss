@@ -68,7 +68,7 @@ export interface ServiceStatus {
 }
 
 /** One message of a teammate's device waiting in the link inbox for a tower identity the server runs (src/link/holder.ts `servedFor`): an ally run takes it. */
-export interface AllyItem { id: string; device: string; label: string; short: string; team: string; teamName: string; fromWorkspace: string; replyExpected: boolean; text: string; at: number; awaitsReply?: string; askedBy?: string }
+export interface AllyItem { id: string; device: string; label: string; short: string; team: string; teamName: string; fromWorkspace: string; replyExpected: boolean; text: string; at: number; awaitsReply?: string; askedBy?: string; /** An answer a local session gave to what an ally run asked or opened (allyroute.ts), not a message from the device: the session that said it. */ local?: { id: string; name: string } }
 /** What the hub needs of the link holder to run allies (towers.ts builds it from the link service; main.ts gives it). */
 export interface AllyPort {
 	/** The messages waiting for the tower identity, oldest first. */
@@ -804,7 +804,7 @@ export function createRuns(o: RunsOptions) {
 				// A sender that left the roster ends the run now, not at the next tick; the level is the lower of the claimed one and the device's now.
 				const standing = standingOf(a);
 				if (!standing) terminate(a, "quit");
-				return { id: a.rec.id, workspace: a.rec.workspace, kind: "ally", ...(standing ? { level: standing.level } : { gone: true as const }), ...(a.rec.device ? { device: a.rec.device } : {}), ...(a.rec.deviceLabel ? { deviceLabel: a.rec.deviceLabel } : {}), ...(a.rec.team ? { team: a.rec.team } : {}), pane: a.rec.pane, asks: itemsOf(a, true).flatMap((i) => (i.awaitsReply ? [i.awaitsReply] : [])) };
+				return { id: a.rec.id, workspace: a.rec.workspace, kind: "ally", ...(standing ? { level: standing.level } : { gone: true as const }), ...(a.rec.device ? { device: a.rec.device } : {}), ...(a.rec.deviceLabel ? { deviceLabel: a.rec.deviceLabel } : {}), ...(a.rec.deviceShort ? { deviceShort: a.rec.deviceShort } : {}), ...(a.rec.team ? { team: a.rec.team } : {}), ...(a.rec.teamName ? { teamName: a.rec.teamName } : {}), pane: a.rec.pane, asks: itemsOf(a, true).flatMap((i) => (i.awaitsReply ? [i.awaitsReply] : [])) };
 			}
 			return a && !a.ended ? { id: a.rec.id, workspace: a.rec.workspace, kind: a.rec.kind, ...(a.rec.level ? { level: a.rec.level } : {}), ...(a.rec.device ? { device: a.rec.device } : {}), ...(a.rec.deviceLabel ? { deviceLabel: a.rec.deviceLabel } : {}), ...(a.rec.team ? { team: a.rec.team } : {}), pane: a.rec.pane, asks: itemsOf(a, true).flatMap((i) => (i.awaitsReply ? [i.awaitsReply] : [])) } : undefined;
 		},

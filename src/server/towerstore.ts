@@ -58,6 +58,8 @@ export const safe = (id: string) => id.replace(/[^A-Za-z0-9_-]/g, (c) => `.${c.c
 export const towersDir = (slot: Slot) => join(slot.dir, "tower");
 export const towerDir = (slot: Slot, workspace: string) => join(towersDir(slot), safe(workspace));
 const SERVICE = "service.json", OPENED = "opened.json";
+/** What the ally runs of a workspace keep apart from the local run's files (allyroute.ts): their questions to local sessions, the answers to bring back, and the mains they opened. */
+export const ALLY_FILES = ["ally-routes.json", "ally-answers.json", "ally-opened.json"] as const;
 
 const readJson = <T>(file: string): T | undefined => {
 	try {
@@ -242,7 +244,7 @@ export function purgeAll(slot: Slot): number {
 	} catch { return 0; }
 	for (const name of names) {
 		const dir = join(towersDir(slot), name);
-		for (const entry of ["queue", "runs", SERVICE, OPENED, "notes.jsonl", "expects.json", "timer.json", "seen.jsonl"]) {
+		for (const entry of ["queue", "runs", SERVICE, OPENED, "notes.jsonl", "expects.json", "timer.json", "seen.jsonl", ...ALLY_FILES]) {
 			const path = join(dir, entry), stat = statSync(path, { throwIfNoEntry: false });
 			if (!stat) continue;
 			gone += stat.isDirectory() ? countFiles(path) : 1;
@@ -253,13 +255,13 @@ export function purgeAll(slot: Slot): number {
 	return gone;
 }
 
-/** The opener's ledger of one workspace: the entries of the last 24 h. */
-export function readLedger(slot: Slot, workspace: string, now: number): LedgerRow[] {
-	const found = readJson<{ entries?: LedgerRow[] }>(join(towerDir(slot, workspace), OPENED));
+/** The opener's ledger of one workspace: the entries of the last 24 h. `file` is the ally runs' ledger when it is theirs (allyroute.ts). */
+export function readLedger(slot: Slot, workspace: string, now: number, file: string = OPENED): LedgerRow[] {
+	const found = readJson<{ entries?: LedgerRow[] }>(join(towerDir(slot, workspace), file));
 	return (Array.isArray(found?.entries) ? found.entries : []).filter((e) => typeof e?.key === "string" && typeof e.at === "number" && now - e.at <= KEEP_MS);
 }
-export function putLedger(slot: Slot, workspace: string, entry: LedgerRow, now: number): void {
-	const entries = [...readLedger(slot, workspace, now).filter((e) => e.key !== entry.key), entry];
+export function putLedger(slot: Slot, workspace: string, entry: LedgerRow, now: number, file: string = OPENED): void {
+	const entries = [...readLedger(slot, workspace, now, file).filter((e) => e.key !== entry.key), entry];
 	ensureDir(towerDir(slot, workspace));
-	writeDurable(join(towerDir(slot, workspace), OPENED), { entries });
+	writeDurable(join(towerDir(slot, workspace), file), { entries });
 }
