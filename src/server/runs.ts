@@ -7,6 +7,7 @@ import { rememberStart, startOf as processStartOf, startedLater as processStarte
 import { assertSettingsSafe } from "../trust/settings.ts";
 import { waitPastTrust } from "../trust/wait.ts";
 import type { TowerView } from "../net.ts";
+import { herdrCode } from "./herdrcode.ts";
 import { chain, isWrapper, leafOf, type Proc, type Procs, readProcs } from "./lineage.ts";
 import type { Log } from "./log.ts";
 import type { Slot } from "./record.ts";
@@ -127,7 +128,9 @@ export interface ServiceRef {
 	/** The message as an ally run reads it: the verified header the server writes, then the peer's text. */
 	allyLine(item: AllyItem): string;
 	/** A fresh standing pane for the service, the old one closed (Windows, after a pi in it was ended by force); the new pane's id, or undefined when it could not be made. */
-	renewPane?(): Promise<string | undefined>;
+	renewPane?(runId: string): Promise<string | undefined>;
+	/** Whether the standing pane is being replaced: a pi that turns up in it meanwhile is not admitted. */
+	renewing?(): boolean;
 }
 
 interface Active {
@@ -149,6 +152,8 @@ interface Active {
 	signalled?: boolean;
 	/** A signal was sent to the run's processes: on Windows its pane is not used again. */
 	forced?: boolean;
+	/** A Windows stop left this run's pi alone (it was told to quit and stayed): the next server records it `quit` when the pi is gone. */
+	left?: boolean;
 	/** A process table read for the run that is under way (recovery after a server restart). */
 	resolving?: Promise<void>;
 	/** When the process start time was last compared with the recorded one (a `ps` call on macOS and Linux): once at first, then every `lost`. */
@@ -320,10 +325,10 @@ export function createRuns(o: RunsOptions) {
 				if (active.ended) return;
 				// Windows, the standing pane: a start that timed out is taken for the pane's doing (a console a killed pi left in a mode that mangles what Herdr types), so the run is tried once more in a fresh pane and the
 				// first timeout is not counted. A second timeout is the run's own failure.
-				if (attempt === 1 && win && rec.kind === "local" && !started && /time(d)? ?out/i.test((cause as Error).message)) {
+				if (attempt === 1 && win && rec.kind === "local" && !started && herdrCode(cause) === "timeout") {
 					log.line("run-start-retry", { run: id, why: phrase((cause as Error).message, 120) });
 					await reap(active).catch(() => {});
-					const pane = await svc.ref.renewPane?.().catch(() => undefined);
+					const pane = await svc.ref.renewPane?.(id).catch(() => undefined);
 					if (pane && !active.ended) {
 						active.forced = false; // the pane it was signalled in is the one just replaced
 						rec.pane = pane;
@@ -509,6 +514,8 @@ export function createRuns(o: RunsOptions) {
 		}
 		if (!pids.length) {
 			for (const top of carried) {
+				// A table that was read must still show the listed carrier as the run's (its PID may be another program's by now); only an unreadable table leaves it to Herdr's list.
+				if (table && !table.find((p) => p.pid === top)?.carries) continue;
 				const hit = table && leafOf(table, top);
 				pids.push(...(hit ? [hit.pid, ...[...hit.via].reverse()] : [top]));
 			}
@@ -612,7 +619,7 @@ export function createRuns(o: RunsOptions) {
 			}
 		}
 		// Windows: a pane whose pi was ended by force is not used again. The service is told before it can wake a run (the pane renews at once, and the wake finds the identity not live until the new pane has registered).
-		if (a.forced && win && !ally) void svc.ref.renewPane?.().catch((cause: Error) => error("run-renew", cause.message));
+		if (a.forced && win && !ally) void svc.ref.renewPane?.(a.rec.id).catch((cause: Error) => error("run-renew", cause.message));
 		release();
 		poke(svc);
 	}
@@ -675,7 +682,7 @@ export function createRuns(o: RunsOptions) {
 				const exited = gone(a) || (a.rec.pid === undefined && a.token !== undefined && (await panes(o.run, a.rec.workspace).catch(() => undefined))?.every((p) => p.pane_id !== a.rec.pane) === true);
 				if (exited) {
 					const outcome = a.pending ?? (a.closing !== undefined ? "done" : "crashed");
-					await finish(a, outcome, outcome === "crashed" ? "pi exited without tower_done" : undefined);
+					await finish(a, outcome, outcome === "crashed" ? "pi exited without tower_done" : undefined, a.left === true);
 					continue;
 				}
 				if (a.recovering !== undefined) {
@@ -758,6 +765,12 @@ export function createRuns(o: RunsOptions) {
 		a.token = randomBytes(24).toString("hex");
 		a.lastPoll = now();
 		a.recovering = undefined;
+		// A pi a stop left that reclaims its run is a live run again.
+		if (a.left) {
+			a.left = undefined;
+			a.pending = undefined;
+			delete a.rec.left;
+		}
 		a.rec.claimed = true;
 		writeRun(slot, a.rec);
 		byToken.set(a.token, a);
@@ -798,6 +811,8 @@ export function createRuns(o: RunsOptions) {
 		const svc = [...services.values()].find((s) => s.ref.record().pane === pane);
 		if (!svc || typeof pid !== "number") return { ok: true, role: "none" };
 		if (pendingTakeovers > 0) return { ok: true, role: "wait" };
+		// The pane is being replaced: a pi typed into it now would be admitted and then lose its pane.
+		if (svc.ref.renewing?.()) return { ok: true, role: "quit", reason: "the standing pane is being replaced; try again in the new one" };
 		if ((restored.get(pane) ?? 0) > now()) return { ok: true, role: "quit", reason: "Herdr restored this pane after a restart and resumed the old run's pi; the server starts its runs itself" };
 		if (svc.run && !svc.run.ended) return { ok: true, role: "quit", reason: "a run of the tower service holds this pane" };
 		// The boss started pi by hand in the standing pane: a local run with the brief and no events, under the run cap, and only for a PID Herdr lists in that pane (B5R-F007).
@@ -949,7 +964,7 @@ export function createRuns(o: RunsOptions) {
 		const ws = ref.workspace, live = new Set<string>();
 		for (const rec of listRuns(slot, ws).filter((r) => !r.outcome)) {
 			// A run of a server that went away: it has `lost` to reconnect with its run id; until then it is the service's run.
-			const a: Active = { rec, svc, commands: [], lastPoll: now(), started: Date.parse(rec.startedAt) || now(), digestKeys: [], offered: new Map(), recovering: now() };
+			const a: Active = { rec, svc, commands: [], lastPoll: now(), started: Date.parse(rec.startedAt) || now(), digestKeys: [], offered: new Map(), recovering: now(), ...(rec.left ? { left: true, pending: "quit" as Outcome } : {}) };
 			if (rec.kind === "ally" && rec.device) svc.allies.set(rec.device, a);
 			else {
 				svc.run = svc.run ?? a;
@@ -1140,6 +1155,8 @@ export function createRuns(o: RunsOptions) {
 					// reclaims it from the next server, or ends itself when the server stays away.
 					if (win && a.closing === undefined) {
 						log.line("run-left", { run: a.rec.id });
+						a.rec.left = true;
+						writeRun(slot, a.rec);
 						continue;
 					}
 					if (!win) await reap(a);

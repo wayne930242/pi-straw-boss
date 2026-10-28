@@ -40,6 +40,8 @@ export interface RunRecord {
 	admitted?: string[];
 	/** Claimed once: a second claim for the same run is refused (a server restart's reconnect is the one exception). */
 	claimed?: true;
+	/** A Windows stop left the run's pi alone: the next server finds the record without an outcome and records `quit` when that pi is gone. */
+	left?: true;
 	/** The boss started pi in the standing pane by hand. */
 	hand?: true;
 	/** A short word on why it ended (the quit failed, the pane vanished). */

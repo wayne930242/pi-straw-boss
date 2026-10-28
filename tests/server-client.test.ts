@@ -553,6 +553,17 @@ test("stop: the server leaves marked stopped; a session's look then leaves it do
 	assert.ok("skipped" in auto);
 });
 
+test("stop waits for the exit 8 s longer on Windows (the server gives its runs' pi that long to leave) than elsewhere", async () => {
+	for (const [platform, waited] of [["win32", 8200], ["linux", 200]] as const) {
+		const s = await world.start();
+		await s.handle.ready;
+		let clock = 0;
+		const ctx = world.ctx({ platform, timers: { start: 1000, exit: 200, supervisor: 50, touch: 30 }, alive: () => true, now: () => clock, sleep: async (ms: number) => void (clock += ms) });
+		await assert.rejects(stop(ctx), (e: unknown) => e instanceof ServerError && e.code === "exit-timeout");
+		assert.ok(clock >= waited && clock < waited + 100, `${platform}: waited ${clock} ms`);
+	}
+});
+
 test("stop against a serve server is refused, and the server runs on", async () => {
 	const s = await world.start({ mode: "serve" });
 	await s.handle.ready;
