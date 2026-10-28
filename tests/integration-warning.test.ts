@@ -17,13 +17,19 @@ const nap = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 test("a session whose pane has an agent but no agent_session warns once after the grace, naming the fix, and never again", async () => {
 	const a = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1", deps: { integrationMs: GRACE } });
 	await a.start();
-	assert.deepEqual(warnings(a), [], "nothing before the grace");
 	await until(() => warnings(a).length === 1, "the warning");
 	assert.equal(warnings(a)[0]!.level, "warning");
 	assert.equal(warnings(a)[0]!.text, "Herdr's pi integration is missing for this agent directory, so this session cannot join the net; run `herdr integration install pi` and restart pi.");
 	await a.fire("session_start", { reason: "new" }); // another session in the same pi process
 	await nap(GRACE * 3);
 	assert.equal(warnings(a).length, 1, "once per session, however long it lives");
+});
+
+test("nothing is said before the grace: a session still within it has no warning", async () => {
+	const a = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1", deps: { integrationMs: 60_000 } });
+	await a.start();
+	await nap(100);
+	assert.deepEqual(warnings(a), []);
 });
 
 test("a session whose pane has its agent_session does not warn, and neither does a pane Herdr reports no agent for", async () => {
