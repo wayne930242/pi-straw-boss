@@ -24,7 +24,7 @@ export interface Entry extends BoardText { v: 1; session: string; updated: numbe
 
 // Control and format characters (escapes, bidi overrides, zero-width joiners) are refused on write and removed on read.
 const BAD = /[\p{Cc}\p{Cf}]/u;
-const BAD_ALL = /[\p{Cc}\p{Cf}]/gu;
+const BAD_ALL = /[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}]/gu;
 const SAFE_SESSION = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const fold = (text: string) => text.replace(/\s+/gu, " ").trim();
 

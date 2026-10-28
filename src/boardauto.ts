@@ -60,7 +60,7 @@ const hostOf = (url: string) => {
  * The text is cleaned first (NFKC except for `…` itself, whitespace folded, control and format characters removed, look-alike slashes made `/`), so nothing re-joins a token after the check.
  */
 export function scrubBoard(raw: string, root?: string): string {
-	const text = raw.replace(/[^…]+/gu, (part) => part.normalize("NFKC")).replace(/[\u2044\u2215\u29f8\u2571]/gu, "/").replace(/\s+/gu, " ").replace(/[\p{Cc}\p{Cf}]/gu, "");
+	const text = raw.replace(/[^…]+/gu, (part) => part.normalize("NFKC")).replace(/[\u2044\u2215\u29f8\u2571]/gu, "/").replace(/\s+/gu, " ").replace(/[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}]/gu, "");
 	let out = text.replace(URL_RE, (m) => keepTail(m, hostOf)).replace(EMAIL_RE, HIDDEN);
 	for (const re of SECRET) out = out.replace(re, HIDDEN);
 	for (const re of [WIN_PATH, HOME_PATH, POSIX_PATH]) out = out.replace(re, (m) => keepTail(m, (p) => (re === HOME_PATH ? HIDDEN : pathText(p, root))));

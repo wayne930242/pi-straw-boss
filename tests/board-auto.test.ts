@@ -106,6 +106,16 @@ test("the scrub cleans first: a format character inside a token, path, or email 
 	assert.ok(!d.text.now.includes("sk-") && !d.text.items[0]!.t.includes("sk-"));
 });
 
+test("the scrub removes default-ignorable characters that are not format characters", () => {
+	for (const ch of ["\ufe0f", "\u034f", "\u{e0100}", "\u180b", "\u3164"]) {
+		const id = `U+${ch.codePointAt(0)!.toString(16)}`;
+		assert.equal(scrubBoard(`ghp_ABCDEFGH${ch}IJKLMNOPQRSTUVWX01`, ROOT), "…", `token ${id}`);
+		assert.equal(scrubBoard(`me${ch}@corp.example`, ROOT), "…", `email ${id}`);
+		assert.equal(scrubBoard(`/${ch}Users/me/acme`, ROOT), "…", `path ${id}`);
+		assert.ok(!scrubBoard(`a${ch}b`, ROOT).includes(ch), `plain ${id}`);
+	}
+});
+
 test("quoted credential values and short bearer tokens are scrubbed", () => {
 	for (const t of [`password: 'x'`, `token = "abc123"`, `password: 'Hunter22'`, "Bearer abcdefgh12345678abcd"]) {
 		assert.equal(scrubBoard(`a ${t} b`, ROOT), "a … b", t);

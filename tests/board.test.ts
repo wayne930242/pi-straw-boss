@@ -32,6 +32,7 @@ test("the write rules: now 1 to 120 characters, 8 items of 1 to 80, whitespace f
 
 test("the reader holds a file to the same rules by cutting: removal of control and format characters, folded whitespace, caps", () => {
 	assert.equal(clean("a\x1b[3Gb\u202Ec\u200Bd\n e", 40), "a[3Gbcd e");
+	for (const ch of ["\ufe0f", "\u034f", "\u{e0100}", "\u180b", "\u3164"]) assert.equal(clean(`a${ch}b`, 40), "ab", `U+${ch.codePointAt(0)!.toString(16)}`);
 	assert.equal(clean("x".repeat(50), 40).length, 40);
 	const cut = cleanText({ now: `${"y".repeat(130)}`, items: Array.from({ length: 10 }, (_, i) => ({ t: i === 0 ? "a\u202Eb" : "z".repeat(90), done: i % 2 === 0 })) });
 	assert.equal(cut.now.length, 120);

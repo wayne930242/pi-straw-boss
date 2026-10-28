@@ -30,8 +30,10 @@ const POISON = [PATH, "ghp_", MAIL, "me@", "corp.example"];
 const poisoned = (tag: string) => `${tag} ${PATH} ${MAIL} ${TOKEN}`;
 const WS = poisoned("ws"), TAB = poisoned("tab"), NAME = poisoned("nm"), BY = poisoned("by"), TODO = poisoned("todo");
 const OUTSIDE = "OutsideWorkspaceZ", OUTSIDE_NAME = "OutsideTowerNameZ";
+// Work that is not the project's: a tab whose panes are outside it (or have no directory) and a session there. No ally path may name any of these.
+const OUTSIDE_ALL = [OUTSIDE, OUTSIDE_NAME, "OtherClientAcme", "NoCwdTabZ", "OutsideTabZ", "OutsideSessionZ"];
 const leaks = (text: string) => POISON.filter((p) => text.includes(p));
-const raw = (text: string) => [WS, TAB, NAME, BY].some((x) => text.includes(x.slice(0, 40)));
+const raw = (text: string, fields: string[]) => fields.filter((x) => !text.includes(x.slice(0, 40)));
 
 let root = "";
 let relay: FakeRelay;
@@ -78,6 +80,9 @@ function rig(name: "a" | "b"): Rig {
 function poisonedNet(a: Rig): void {
 	const tower = a.net.workspaces[0]!;
 	tower.label = WS;
+	// Tabs of the bound workspace that work outside the project (a pane elsewhere; a pane with no directory): their labels never leave.
+	a.net.panes.push({ pane_id: "o1", tab_id: "w-a:t2", workspace_id: "w-a", cwd: join(root, "elsewhere"), agent_status: "working", tokens: {} }, { pane_id: "o2", tab_id: "w-a:t3", workspace_id: "w-a", agent_status: "idle", tokens: {} });
+	a.net.tabs.push({ tab_id: "w-a:t2", workspace_id: "w-a", label: "OtherClientAcme" }, { tab_id: "w-a:t3", workspace_id: "w-a", label: "NoCwdTabZ" });
 	a.net.panes.push({ pane_id: "m0", tab_id: "w-a:t1", workspace_id: "w-a", cwd: a.project, agent_status: "working", tokens: { sb_role: "main", sb_opened_by: BY } });
 	a.net.tabs.push({ tab_id: "w-a:t1", workspace_id: "w-a", label: TAB });
 	a.net.sessions.push({ id: "main-1", name: NAME, herdrLocation: { status: "current", workspace: { id: "w-a", label: WS }, tab: { id: "w-a:t1", label: TAB }, paneId: "m0" } });
@@ -113,7 +118,7 @@ async function holderPaths(): Promise<Path[]> {
 
 // --- a remote turn of a tower's pi (the extension), and an ally run of the sb server ----------------------------------------------------------------------------------------------
 
-interface Path { name: string; out: () => Promise<string>; local?: () => Promise<string> }
+interface Path { name: string; out: () => Promise<string>; local?: () => Promise<string>; localRaw?: string[]; forbid?: (RegExp | string)[]; require?: string[] }
 
 /** Computer A, whose tower is in a remote turn from bob: board_read, tower_list and boss_status as the senders may read them; and the same tools in a local turn. */
 async function remoteTurnPaths(): Promise<Path[]> {
@@ -148,6 +153,10 @@ async function remoteTurnPaths(): Promise<Path[]> {
 	return ["board_read", "tower_list", "boss_status"].map((name) => ({ name: `remote turn ${name}`, out: () => remote(name), local: call(name) }));
 }
 
+const IN_PROJECT = ["InProjectTabZ", "InProjectSessionZ"];
+/** What each local view of the ally-run tools holds raw (the fields that tool shows). */
+const LOCAL_RAW: Record<string, string[]> = { boss_status: [WS], tower_list: [WS, TAB, NAME], board_read: [NAME] };
+
 type Reply = Record<string, unknown> & { ok: boolean; error?: string; details?: unknown; brief?: unknown };
 /** The sb server with a tower, and an ally run of team-1 whose sender's team binds `proj`: the run's tools and its brief. */
 async function allyRunPaths(): Promise<Path[]> {
@@ -172,10 +181,25 @@ async function allyRunPaths(): Promise<Path[]> {
 	herdr.addPane("wA:p72", "wA:t1", "pi").tokens.sb_role = "member";
 	herdr.pane("wA:p72").cwd = join(proj, "app");
 	herdr.workspaces.find((w) => w.workspace_id === "wB")!.tokens.tower = "tower-b";
+	herdr.workspaces.find((w) => w.workspace_id === "wA")!.tokens.tower = "tower-a";
+	// Another tab of the tower's workspace whose pane is outside the project, and one inside it; the other workspace has a pane inside the project of a second team.
+	const proj3 = join(world.stateDir, "proj3");
+	herdr.addTab("wA:t2", "OutsideTabZ", "wA:p73");
+	herdr.pane("wA:p73").tokens.sb_role = "member";
+	herdr.pane("wA:p73").cwd = join(world.stateDir, "elsewhere");
+	herdr.addTab("wA:t3", "InProjectTabZ", "wA:p74");
+	herdr.pane("wA:p74").tokens.sb_role = "member";
+	herdr.pane("wA:p74").cwd = join(proj, "app");
+	herdr.addPane("wB:p1", "wB:t1", "pi").cwd = join(proj3, "app");
+	world.ally.projects.set("team-3", proj3);
 	const at = (paneId: string, workspace: { id: string; label: string }, tab: { id: string; label: string }) => ({ status: "ok" as const, workspace, tab, paneId });
 	world.sessions = [
 		{ id: "main-1", name: NAME, herdrLocation: at("wA:p71", { id: "wA", label: WS }, { id: "wA:t1", label: TAB }) },
 		{ id: "member-1", name: poisoned("mem"), herdrLocation: at("wA:p72", { id: "wA", label: WS }, { id: "wA:t1", label: TAB }) },
+		// The tower session of the tower's own workspace: its pane is outside the project, so tower_list lists no session for that workspace (boss_status names the tower itself).
+		{ id: "tower-a", name: "TowerSessZ", herdrLocation: at("wA:p1", { id: "wA", label: WS }, { id: "wA:t1", label: TAB }) },
+		{ id: "out-1", name: "OutsideSessionZ", herdrLocation: at("wA:p73", { id: "wA", label: WS }, { id: "wA:t2", label: "OutsideTabZ" }) },
+		{ id: "in-1", name: "InProjectSessionZ", herdrLocation: at("wA:p74", { id: "wA", label: WS }, { id: "wA:t3", label: "InProjectTabZ" }) },
 		{ id: "tower-b", name: OUTSIDE_NAME, herdrLocation: at("wB:p1", { id: "wB", label: OUTSIDE }, { id: "wB:t1", label: "ops" }) },
 	];
 	const derived = deriveBoard({ name: NAME, todos: [{ id: 1, subject: TODO, status: "in_progress" }], root: proj })!;
@@ -184,11 +208,15 @@ async function allyRunPaths(): Promise<Path[]> {
 	const allyToken = world.expose!.runs.mint("wA", { kind: "ally", device: "d1", level: "reply", team: "team-1" });
 	// A local run's token comes from a claimed run; the ally's token is minted, and a local one is minted the same way.
 	const localToken = world.expose!.runs.mint("wA", { kind: "local" });
+	// Two more ally runs: a team that binds no project (the senders bind several), and a team whose project holds only the other workspace (so the head is outside it).
+	const noProject = world.expose!.runs.mint("wA", { kind: "ally", device: "d2", level: "reply", team: "team-2" });
+	const elsewhere = world.expose!.runs.mint("wA", { kind: "ally", device: "d3", level: "reply", team: "team-3" });
 	const tool = async (token: unknown, name: string) => {
 		const got = await ask({ cmd: "run-tool", token, tool: name, args: {} });
 		assert.equal(got.ok, true, `${name}: ${JSON.stringify(got)}`);
 		return JSON.stringify(got);
 	};
+	let claimedToken = "";
 	const brief = async () => {
 		world!.ally.add("m1", "a".repeat(26), "hello");
 		world!.expose?.allyWaiting("sb-tower-wa");
@@ -197,8 +225,11 @@ async function allyRunPaths(): Promise<Path[]> {
 		await untilAsync(() => readdirSync(join(world!.stateDir)).length > 0, "the state");
 		const got = await ask({ cmd: "claim", runId: id, pane: pi.pane, pid: pi.pid, started: `T-${pi.pid}` });
 		assert.equal(got.ok, true, JSON.stringify(got));
+		claimedToken = String(got.token);
 		return JSON.stringify(got.brief);
 	};
+	// The line the run reads for the message it was woken by: the header restates the tower's workspace label.
+	const event = async () => JSON.stringify((await ask({ cmd: "run-poll", token: claimedToken, idle: true })).event);
 	// What the brief is built from, with the fields it does not print yet (opened-by, the ledger's lines, the head's label): a later brief change must not leak them.
 	const gather = async (within?: { project: string }) => {
 		const workspace = (await workspaces(world!.herdr.runFor("none"))).find((w) => w.workspace_id === "wA")!;
@@ -206,9 +237,15 @@ async function allyRunPaths(): Promise<Path[]> {
 		return JSON.stringify(await gatherMains({ run: world!.herdr.runFor("none"), now: Date.now, sessions: async () => world!.sessions, boardDir: join(world!.stateDir, "board"), workspace, ledger, ...(within ? { within } : {}) }));
 	};
 	return [
-		{ name: "ally run gatherMains (tab, main, opened-by, ledger lines, head)", out: () => gather({ project: proj }), local: () => gather() },
-		...["boss_status", "tower_list", "board_read"].map((name) => ({ name: `ally run ${name}`, out: () => tool(allyToken, name), local: () => tool(localToken, name) })),
+		{ name: "ally run gatherMains (tab, main, opened-by, ledger lines, head)", out: () => gather({ project: proj }), local: () => gather(), localRaw: [WS, TAB, NAME, BY] },
+		{ name: "ally run gatherMains of no project", out: () => gather({ project: undefined as unknown as string }), forbid: [...IN_PROJECT, /head\\*":\\*"wA/] },
+		...["boss_status", "tower_list", "board_read"].map((name) => ({ name: `ally run ${name}`, out: () => tool(allyToken, name), local: () => tool(localToken, name), localRaw: LOCAL_RAW[name]!, ...(name === "tower_list" ? { forbid: ["TowerSessZ"] } : {}), ...(name === "board_read" ? {} : { require: name === "boss_status" ? [IN_PROJECT[0]!] : IN_PROJECT }) })),
+		...["boss_status", "tower_list", "board_read"].flatMap((name) => [
+			{ name: `ally run ${name}, senders bind no project`, out: () => tool(noProject, name), forbid: [...IN_PROJECT, /head\\*":\\*"wA/] },
+			{ name: `ally run ${name}, head workspace outside the project`, out: () => tool(elsewhere, name), forbid: [...IN_PROJECT, /head\\*":\\*"wA/] },
+		]),
 		{ name: "ally run brief (the mains it may see, its workspace label)", out: brief },
+		{ name: "ally run event header (the tower and its workspace label)", out: event, require: ["tower of"] },
 	];
 }
 
@@ -217,15 +254,17 @@ test("no path that leaves for an ally carries a path, a token, or an email addre
 	const found: string[] = [];
 	for (const p of paths) {
 		const out = await p.out();
-		if (out.includes(OUTSIDE) || out.includes(OUTSIDE_NAME)) found.push(`${p.name}: a workspace outside the project`);
+		for (const x of OUTSIDE_ALL) if (out.includes(x)) found.push(`${p.name}: ${x} outside the project`);
+		for (const x of p.forbid ?? []) if (typeof x === "string" ? out.includes(x) : x.test(out)) found.push(`${p.name}: ${x} is not in this ally's scope`);
+		for (const x of p.require ?? []) if (!out.includes(x)) found.push(`${p.name}: ${x} missing from the scope`);
 		for (const l of leaks(out)) found.push(`${p.name}: ${l}`);
 		// A path that carried no label at all would pass for the wrong reason: a scrubbed label shows the mark.
-		if (!out.includes("…")) found.push(`${p.name}: no scrubbed label in the output`);
+		if (!p.forbid && !out.includes("…")) found.push(`${p.name}: no scrubbed label in the output`);
 	}
 	assert.deepEqual(found, [], "poison reached an ally");
 	// The local view of the same data is untouched.
 	const rawMissing: string[] = [];
-	for (const p of paths) if (p.local && !raw(await p.local())) rawMissing.push(p.name);
+	for (const p of paths) if (p.local) for (const x of raw(await p.local(), p.localRaw ?? [])) rawMissing.push(`${p.name}: ${x.slice(0, 8)}`);
 	assert.deepEqual(rawMissing, [], "a local view lost its raw label");
 });
 

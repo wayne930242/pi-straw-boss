@@ -7,6 +7,7 @@ import { headReader } from "../headwatch.ts";
 import { createTab, headOf, isSub, type Pane, panes, parentOf, type Place, report, type Session, tabs, TOWER_LABEL, towerModel, type Workspace, workspaces } from "../herdr.ts";
 import { type Opened, opener } from "../opener.ts";
 import { netTokens } from "../order.ts";
+import { allyLabel } from "../boardauto.ts";
 import { stamp } from "../header.ts";
 import { createReach, nameOf, type Reach } from "../reach.ts";
 import type { HerdrEvents } from "../server-watch.ts";
@@ -149,9 +150,9 @@ export function createTowers(o: TowersOptions): Towers {
 		cwd: async () => (await panes(run, l.record.workspace).catch(() => [])).find((p) => p.pane_id === l.record.pane)?.cwd ?? l.record.cwd ?? slot.stateDir,
 		clearDigest: (keys) => digest.drop(l.record.workspace, keys),
 		allyLine: (item) => {
-			const mine = { name: l.record.name, id: l.record.id, role: "tower" as const, workspace: l.record.label };
+			const mine = { name: allyLabel(l.record.name), id: l.record.id, role: "tower" as const, workspace: allyLabel(l.record.label) };
 			// An answer a local session gave to what the run asked or opened: no verified peer header, the session is local; the device's next run reads it as data.
-			if (item.local) return stamp({ from: { name: item.local.name, id: item.local.id, role: "session" }, kind: "tower_reply", scope: "session", to: [mine], reply: false }, item.text);
+			if (item.local) return stamp({ from: { name: allyLabel(item.local.name), id: item.local.id, role: "session" }, kind: "tower_reply", scope: "session", to: [mine], reply: false }, item.text);
 			const from = { name: item.label, id: `link:${item.device}`, role: "tower" as const, ...(item.fromWorkspace ? { workspace: item.fromWorkspace } : {}) };
 			return stamp({ from, kind: "tower_send", scope: "tower", to: [mine], reply: item.replyExpected, remote: { device: item.label, short: item.short, team: item.teamName }, ...(item.awaitsReply ? { asks: item.awaitsReply } : {}) }, item.text);
 		},

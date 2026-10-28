@@ -969,7 +969,7 @@ export class LinkHolder {
 		return towers.flatMap((tower) => {
 			const workspace = net.workspaces.find((w) => w.workspace_id === tower.workspace_id);
 			if (!workspace) return [];
-			const tabs = net.tabs.filter((t) => t.workspace_id === workspace.workspace_id && t.tab_id !== tower.tab_id).map((t) => {
+			const tabs = net.tabs.filter((t) => t.workspace_id === workspace.workspace_id && t.tab_id !== tower.tab_id && net.panes.some((p) => p.tab_id === t.tab_id && p.cwd && inside(p.cwd, project))).map((t) => {
 				const states = net.panes.filter((p) => p.tab_id === t.tab_id).map((p) => p.agent_status ?? "unknown");
 				return { label: allyLabel(t.label ?? t.tab_id), state: states.includes("blocked") ? "blocked" : states.includes("working") ? "working" : (states[0] ?? "unknown") };
 			});
