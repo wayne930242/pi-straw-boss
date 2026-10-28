@@ -95,9 +95,13 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	// An ally run is one remote turn for its whole session (docs/specs/2026-10-26-sb-backend.md, Security: Remote turns after the split): the hooks of link/hooks.ts, registered by the session's link module, hold every
 	// call to the level of its sender, which the claim fixes and the policy can only lower. The `forward` confirm to the sender's device goes through the server with the run's token, which pins the device; its answer
 	// comes back as a command at the poll.
-	const pinPeer = () => {
-		const peer = claim?.kind === "ally" ? claim.peer : undefined;
-		if (peer && link) link.pinRun({ id: peer.device, short: peer.short, label: peer.label, team: peer.team, floor: (["reply", "forward", "dispatch"].includes(claim!.level ?? "") ? claim!.level : "reply") as Level }, async (op) => (await call({ cmd: "link", body: op })).answer as Answer);
+	/** Pins an ally run's turn to its sender; false for an ally claim that cannot be pinned (no peer, or no link module), which must not run unpinned with every tool. */
+	const pinPeer = (): boolean => {
+		if (claim?.kind !== "ally") return true;
+		const peer = claim.peer;
+		if (!peer || !link) return false;
+		link.pinRun({ id: peer.device, short: peer.short, label: peer.label, team: peer.team, floor: (["reply", "forward", "dispatch"].includes(claim!.level ?? "") ? claim!.level : "reply") as Level }, async (op) => (await call({ cmd: "link", body: op })).answer as Answer);
+		return true;
 	};
 	const approval = createApproval({ bus: pi.events, onError: () => {} });
 
@@ -272,12 +276,17 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		try {
 			const again = await claimRun(claim!.run);
 			claim = again;
-			pinPeer();
+			if (!pinPeer()) return refuseUnpinned();
 			outOfReach = undefined;
 			keep();
 		} catch (error) {
 			unreachable(`the server no longer knows this run: ${(error as Error).message}`);
 		}
+	}
+	/** An ally claim with no peer (or a session with no link module) is never run unpinned: the server is told to let the run go and pi leaves. */
+	function refuseUnpinned() {
+		end("this ally run names no sender it can be pinned to, so it cannot run");
+		void ask({ cmd: "run-release", token: claim?.token, reason: "unpinned" }).catch(() => {});
 	}
 	const keep = () => void ((globalThis as Record<symbol, unknown>)[KEPT] = claim ? { claim } : undefined);
 	function end(reason: string) {
@@ -340,7 +349,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		}
 		mode = "run";
 		keep();
-		pinPeer();
+		if (!pinPeer()) return void refuseUnpinned();
 		registerTools();
 		await call({ cmd: "run-file", file: context.sessionManager.getSessionFile() ?? "" }).catch(() => {});
 		timer = setInterval(() => void tick(), pollMs);

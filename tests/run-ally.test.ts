@@ -26,7 +26,7 @@ const PEER = { device: DEV, label: "Carol Mac", short: DEV.slice(0, 6), team: TE
 const BRIEF = "You are an ally run: BRIEF-MARK";
 const HEADER = `[straw net from=Carol Mac id=link:${DEV} role=tower remote=Carol Mac device=${DEV.slice(0, 6)} team="Team One" verified=yes kind=tower_send scope=tower to=x reply=none]`;
 
-function server(over: { kind?: "ally" | "local"; level?: string } = {}) {
+function server(over: { kind?: "ally" | "local"; level?: string; peer?: false } = {}) {
 	const requests: Request[] = [], queue: { id: string; kind: string; text: string }[] = [], taken: string[] = [];
 	const commands: unknown[] = [];
 	let tool: (r: Request) => Answer = () => ({ ok: true, text: "tool answer", details: {} });
@@ -40,7 +40,7 @@ function server(over: { kind?: "ally" | "local"; level?: string } = {}) {
 		async ask(request: Request): Promise<Answer> {
 			requests.push(request);
 			switch (request.cmd) {
-				case "claim": return { ok: true, token: "TOKEN", kind: over.kind ?? "ally", level: over.level ?? "reply", ...((over.kind ?? "ally") === "ally" ? { peer: PEER } : {}), run: "RUN", workspace: "wA", identity: "sb-tower-wa", label: "Alpha", brief: BRIEF };
+				case "claim": return { ok: true, token: "TOKEN", kind: over.kind ?? "ally", level: over.level ?? "reply", ...((over.kind ?? "ally") === "ally" && over.peer !== false ? { peer: PEER } : {}), run: "RUN", workspace: "wA", identity: "sb-tower-wa", label: "Alpha", brief: BRIEF };
 				case "run-poll": {
 					if (commands.length) return { ok: true, command: commands.shift() };
 					if (request.idle !== true) return { ok: true };
@@ -135,6 +135,17 @@ test("a forward confirm goes to the server with the run's token, and the server'
 	srv.command({ type: "confirmed", dialogId: body.dialogId, allow: true });
 	await until(() => results(r.session).length === 1, "the result");
 	assert.match(results(r.session)[0]!, /RAN/);
+});
+
+test("an ally claim that names no peer ends the run before it can take a turn: it is never left unpinned (RV6-F008)", async () => {
+	const srv = server({ peer: false });
+	srv.push("m1", "hello");
+	const r = await rig(srv);
+	await until(() => r.shutdowns.length === 1, "the run to end itself");
+	assert.ok(r.notes.some((n) => /ally/i.test(n) && /peer|sender/i.test(n)), r.notes.join("|"));
+	assert.ok(srv.requests.some((q) => q.cmd === "run-release"), "the server is told to let the run go");
+	assert.equal(srv.requests.filter((q) => q.cmd === "run-taken").length, 0, "no event was taken");
+	assert.ok(!r.session.getAllTools().some((t) => t.name === "tower_send"), "and no ally tool was registered");
 });
 
 test("an ally run's context drops pi-intercom's messages", async () => {
