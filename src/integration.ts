@@ -6,14 +6,16 @@ import type { Kit } from "./state.ts";
 
 const MISSING = "Herdr's pi integration is missing for this agent directory, so this session cannot join the net; run `herdr integration install pi` and restart pi.";
 
-/** One warning per session: `arm` at each session start, `stop` at its end. A listing that fails says nothing; the next session of this process does not warn again. */
-export function createIntegrationWatch({ cfg, s, tell }: Kit) {
-	let timer: ReturnType<typeof setTimeout> | undefined, warned = false;
-	const stop = () => (clearTimeout(timer), (timer = undefined));
+/** One warning per process: `arm` at each session start, `stop` at its end. A listing that fails says nothing; a later session of this process does not warn again. */
+export function createIntegrationWatch({ cfg, tell }: Kit) {
+	let timer: ReturnType<typeof setTimeout> | undefined, warned = false, generation = 0;
+	const stop = () => (generation++, clearTimeout(timer), (timer = undefined));
 	const check = async () => {
 		timer = undefined;
-		const mine = (await panes(cfg.run, s.at.workspaceId).catch(() => [])).find((p) => p.pane_id === s.at.paneId);
-		if (mine?.agent && !mine.agent_session?.value && !warned) {
+		const mark = generation, pane = cfg.env.HERDR_PANE_ID;
+		if (!pane) return;
+		const mine = (await panes(cfg.run).catch(() => [])).find((p) => p.pane_id === pane);
+		if (mark === generation && mine?.agent && !mine.agent_session?.value && !warned) {
 			warned = true;
 			tell(MISSING, "warning");
 		}
@@ -21,7 +23,7 @@ export function createIntegrationWatch({ cfg, s, tell }: Kit) {
 	return {
 		arm() {
 			if (warned || timer) return;
-			timer = setTimeout(() => void check(), cfg.integrationMs);
+			timer = setTimeout(() => void check().catch(() => {}), cfg.integrationMs);
 			timer.unref();
 		},
 		stop,

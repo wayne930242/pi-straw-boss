@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { until, World } from "./fakes.ts";
 
-// Herdr's pi integration (desk-mode spec S6): a session whose pane Herdr reports as an agent without an `agent_session` cannot join the net, and says so once.
+// Herdr's pi integration (desk-mode spec S6): a session whose pane Herdr reports as an agent without an `agent_session` cannot join the net, and says so once per process.
 
 let world = new World();
 afterEach(async () => {
@@ -22,7 +22,7 @@ test("a session whose pane has an agent but no agent_session warns once after th
 	assert.equal(warnings(a)[0]!.text, "Herdr's pi integration is missing for this agent directory, so this session cannot join the net; run `herdr integration install pi` and restart pi.");
 	await a.fire("session_start", { reason: "new" }); // another session in the same pi process
 	await nap(GRACE * 3);
-	assert.equal(warnings(a).length, 1, "once per session, however long it lives");
+	assert.equal(warnings(a).length, 1, "once per process, however long it lives");
 });
 
 test("nothing is said before the grace: a session still within it has no warning", async () => {
@@ -57,5 +57,35 @@ test("a tower warns too, and a Herdr that fails the listing leaves it quiet", as
 	const a = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1", deps: { integrationMs: GRACE } });
 	await a.start();
 	await nap(GRACE * 3);
+	assert.deepEqual(warnings(a), []);
+});
+
+test("a session in a sub workspace (a linked worktree) stays alive and warns once, with no unhandled rejection", async () => {
+	world.herdr.workspace("wA").worktree = { checkout_path: "/w/alpha", is_linked_worktree: true, repo_key: "/r/alpha" };
+	const rejections: unknown[] = [];
+	const onReject = (e: unknown) => rejections.push(e);
+	process.on("unhandledRejection", onReject);
+	try {
+		const a = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1", deps: { integrationMs: GRACE } });
+		await a.start();
+		await until(() => warnings(a).length === 1, "the warning");
+		await nap(GRACE * 2);
+		assert.deepEqual(rejections, []);
+		assert.equal(warnings(a).length, 1);
+	} finally {
+		process.off("unhandledRejection", onReject);
+	}
+});
+
+test("a check that finishes after the session ended says nothing", async () => {
+	let open!: () => void;
+	const a = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1", deps: { integrationMs: 400 } });
+	await a.start();
+	world.herdr.paneListGate = new Promise((resolve) => (open = resolve));
+	await until(() => world.herdr.gated > 0, "the check's listing");
+	await a.stop("quit");
+	world.herdr.paneListGate = undefined;
+	open();
+	await nap(200);
 	assert.deepEqual(warnings(a), []);
 });

@@ -74,6 +74,9 @@ export class FakeHerdr {
 	failReads = false;
 	/** Pane lists fail while this is set (the workspace and tab lists still answer). */
 	failPanes = false;
+	/** While set, `pane list` answers only after it resolves. */
+	paneListGate: Promise<void> | undefined;
+	gated = 0;
 	wsTokenHistory: (string | undefined)[] = [];
 	onAgentStart?: (pane: FakePane, args: string[]) => void;
 	/** What `pane send-keys`, `send-text` and `agent start` were asked, and what `pane read` answers. */
@@ -140,7 +143,10 @@ export class FakeHerdr {
 		this.tabs = [...this.tabs.filter((t) => t !== tab).slice(0, insert_index), tab, ...this.tabs.filter((t) => t !== tab).slice(insert_index)];
 	};
 	runFor(self: string) {
-		return async (args: string[]) => this.handle(self, args);
+		return async (args: string[]) => {
+			if (this.paneListGate && args[0] === "pane" && args[1] === "list") (this.gated++, await this.paneListGate);
+			return this.handle(self, args);
+		};
 	}
 
 	private handle(self: string, args: string[]): string {
