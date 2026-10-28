@@ -5,7 +5,7 @@
 export const deskMode = (doc: Pick<Document, "querySelector"> = document): boolean => doc.querySelector<HTMLMetaElement>('meta[name="sb-desk"]')?.content === "1";
 
 /** This page's mode, read when the page loads (a node test has no page: normal mode). */
-export const desk = typeof document !== "undefined" && deskMode();
+export const desk = typeof document !== "undefined" && typeof document.querySelector === "function" && deskMode();
 
 /** Whether the HUD's Phone button is hidden: in desk mode always, otherwise on any page but this computer's own (a paired device comes in by its tailnet name: remote.ts). */
 export const phoneHidden = (hostname: string, off = desk) => off || hostname !== "127.0.0.1";
