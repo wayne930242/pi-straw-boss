@@ -111,6 +111,8 @@ export interface LinkView extends LinkSummary {
 	prefill: Prefill | undefined;
 }
 const HEAD_DIFF_MS = 2 * 60_000, DOWN_MS = 2 * 60_000, HELD_MS = 10 * 60_000;
+/** A reply for a main that the main has not taken this long after the first offer (an older build never connects to the channel) goes to an ally run, which is told who asked. */
+const REPLY_OFFER_MS = 5 * 60_000;
 
 export interface AllyDevice { id: string; short: string; label: string; online: boolean; ageMs: number | null; roster: number | null; workspaces: WorkspaceState[] }
 export interface AllyTeam { team: string; name: string; devices: AllyDevice[] }
@@ -179,7 +181,7 @@ export class LinkHolder {
 	private told = new Set<string>();
 	/** Teams stopped for good (a roster fork, a removed device, a lost team file), with the team file's stamp at that moment. The mark is also on disk, for the next holder. */
 	private stopped = new Map<string, string>();
-	private offered = new Map<string, { tower: string; at: number }>();
+	private offered = new Map<string, { tower: string; at: number; /** When the first offer of this reply went to this main. */ first?: number }>();
 	/** Dialogs this device's towers put to other devices at `forward`, by dialog id: who may answer, and what the answer has to carry. */
 	private asked = new Map<string, { team: string; device: string; digest: string; tower: string; at: number }>();
 	/** Confirm requests other devices put to this one. */
@@ -647,9 +649,17 @@ export class LinkHolder {
 					this.again = true;
 					continue;
 				}
-				const was = this.offered.get(id);
+				const was = this.offered.get(id), first = was?.tower === main.id ? (was.first ?? was.at) : this.now();
+				if (this.now() - first >= REPLY_OFFER_MS) {
+					const { reply, ...plain } = item;
+					this.offered.delete(id);
+					await store.withLock(() => store.putInbox({ ...plain, askedBy: reply!.mainName }));
+					store.log({ event: "reply-fallback", id, why: "not-taken" });
+					this.again = true;
+					continue;
+				}
 				if (was && was.tower === main.id && this.now() - was.at < (this.o.offerAgainMs ?? 30_000)) continue;
-				this.offered.set(id, { tower: main.id, at: this.now() });
+				this.offered.set(id, { tower: main.id, at: this.now(), first });
 				this.waiting.get(id)!.offered = true;
 				await this.o.offer(main, id);
 				continue;

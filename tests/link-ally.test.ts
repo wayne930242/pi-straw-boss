@@ -190,6 +190,27 @@ test("a tower-reply is the reply to an ask only when the server has the ask open
 	assert.equal(b.store.readInbox(item.id)!.askedBy, "docs-main");
 });
 
+test("a reply offered to a main that does not take it (an older build, a main that never connects to the channel) falls back to an ally run after 5 minutes, not before (RV6-F005)", async () => {
+	const { a, b } = await pair({ served: false });
+	await until(() => capsOf(a, bob.id).length === 2, 3000, "caps");
+	b.open = { main: "main-1", mainName: "docs-main", tower: "sb-tower-wb", workspace: "label-b" };
+	b.net = { ...netOf([["tower-b", "w-b", "label-b", b.project]]), sessions: [{ id: "tower-b", herdrLocation: { status: "current", paneId: "p0" } }, { id: "main-1", name: "docs-main", herdrLocation: { status: "current", paneId: "p9" } }] as never };
+	b.net.panes.push({ pane_id: "p9", tab_id: "w-b:t1", workspace_id: "w-b", cwd: b.project, agent_status: "idle", tokens: { sb_role: "main" } } as never);
+	await sendTo(a, "the answer", { inReplyTo: ASK });
+	await until(() => b.offers.some((x) => x.tower === "main-1"), 3000, "the offer to the main");
+	const item = b.store.readInbox(b.offers.find((x) => x.tower === "main-1")!.id)!;
+	// The offer is made again, and the main never takes it: still a reply for the main at 4 minutes.
+	b.skew += 4 * 60_000;
+	void b.holder.drain();
+	await until(() => b.offers.filter((x) => x.tower === "main-1").length >= 2, 3000, "the offer again");
+	assert.deepEqual(b.store.readInbox(item.id)!.reply, { ask: ASK, main: "main-1", mainName: "docs-main", tower: "sb-tower-wb" });
+	b.skew += 2 * 60_000;
+	void b.holder.drain();
+	await until(() => b.store.readInbox(item.id)?.reply === undefined, 3000, "the fallback");
+	assert.equal(b.store.readInbox(item.id)!.askedBy, "docs-main", "the ally run is told which main asked");
+	assert.ok(events(b).some((e) => e.event === "reply-fallback" && e.why === "not-taken"));
+});
+
 test("the thread store keeps both directions per device, mode 600, the last 20 messages, none older than 7 days", async () => {
 	const { a, b } = await pair({ served: false });
 	await until(() => capsOf(a, bob.id).length === 2, 3000, "caps");
