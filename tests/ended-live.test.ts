@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { El } from "./chat-dom.ts";
 
-// An ended session shows no live activity where the GUI mounts it: the comms' live line (gui/session.ts calls liveNote) and the dossier's mark and state (gui/dossier.ts).
+// An ended session shows no live activity where the GUI mounts it: the comms' live line (gui/session.ts calls liveNote) the dossier's mark and state (gui/dossier.ts), and the map's unit card (gui/render.ts).
 
 import "./session-dom.ts";
 const { m } = await import("../gui/paraglide/messages.js");
@@ -42,4 +42,20 @@ test("the dossier of a session that is not live draws no working mark and no too
 	assert.ok(!out[0]!.state.includes(m.using({ tool: "edit" })), out[0]!.state);
 	assert.equal(out[1]!.mark, "working");
 	assert.ok(out[1]!.state.includes(m.using({ tool: "edit" })), out[1]!.state);
+});
+
+test("the map card of a unit that is not live draws no working mark and no tool, and one that is live draws both", async () => {
+	const { fillUnit, unitEl } = await import("../gui/render.ts");
+	const drawn: { mark: string | undefined; note: string; label: string | null }[] = [];
+	for (const extra of [{ ended: true }, { control: true }]) {
+		const el = unitEl() as unknown as El;
+		fillUnit(el as never, unit(extra) as never);
+		drawn.push({ mark: el.dataset.mark, note: el.find((x) => x.classes.has("note"))[0]!.textContent, label: el.find((x) => x.classes.has("hit"))[0]!.attrs.get("aria-label") ?? null });
+	}
+	assert.notEqual(drawn[0]!.mark, "working");
+	assert.ok(!drawn[0]!.note.includes(m.using({ tool: "edit" })), drawn[0]!.note);
+	assert.ok(!drawn[0]!.label?.includes(m.using({ tool: "edit" })), String(drawn[0]!.label));
+	assert.equal(drawn[1]!.mark, "working");
+	assert.ok(drawn[1]!.note.includes(m.using({ tool: "edit" })), drawn[1]!.note);
+	assert.ok(drawn[1]!.label?.includes(m.using({ tool: "edit" })), String(drawn[1]!.label));
 });

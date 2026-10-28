@@ -41,3 +41,9 @@ Object.assign(El.prototype, {
 		return el === this || this.kids.some((k) => typeof k !== "string" && (k as El & { contains(e: unknown): boolean }).contains(el));
 	},
 });
+/** A map card's parts are found by the last class or tag of selectors such as ":scope > .card .age". */
+const plainQuery = El.prototype.querySelector;
+El.prototype.querySelector = function (this: El, selector: string) {
+	return plainQuery.call(this, selector.trim().split(/\s+/).at(-1)!);
+};
+Object.assign(El.prototype, { closest: () => null }); // a card in no base

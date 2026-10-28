@@ -132,18 +132,19 @@ function ticks(card: HTMLElement, list: Unit["ticks"] = []) {
 	}));
 }
 
-const unitEl = () => html(`<div class="unit"><div class="card"><a class="hit"></a>${PLATE}<div class="meta"><span class="name"></span><span class="line"><em class="role"></em><em class="agent"></em><span class="note"></span><span class="age"></span></span><span class="todo" hidden><b></b><span></span></span></div><button type="button" class="quit-btn" data-close="unit" hidden></button><span class="ticks" aria-hidden="true"></span></div><div class="subs"></div></div>`);
-function fillUnit(el: HTMLElement, u: Omit<Unit, "id" | "key" | "control" | "role" | "subs"> & { key?: string; control?: boolean; role: Unit["role"] | "outpost"; subs?: Unit[] }) {
-	const ws = el.closest<HTMLElement>(".base")?.dataset.key, hit = el.querySelector(".hit")!;
+export const unitEl = () => html(`<div class="unit"><div class="card"><a class="hit"></a>${PLATE}<div class="meta"><span class="name"></span><span class="line"><em class="role"></em><em class="agent"></em><span class="note"></span><span class="age"></span></span><span class="todo" hidden><b></b><span></span></span></div><button type="button" class="quit-btn" data-close="unit" hidden></button><span class="ticks" aria-hidden="true"></span></div><div class="subs"></div></div>`);
+/** A card draws what the chat's live line and the dossier draw: a unit that is not live (an ended subagent) keeps no working mark and no tool (liveMark, liveNote). */
+export function fillUnit(el: HTMLElement, u: Omit<Unit, "id" | "key" | "control" | "role" | "subs"> & { key?: string; control?: boolean; role: Unit["role"] | "outpost"; subs?: Unit[] }) {
+	const ws = el.closest<HTMLElement>(".base")?.dataset.key, hit = el.querySelector(".hit")!, mk = liveMark(u, undefined, u.mark), note = closed(u) ? undefined : u.note;
 	aim(hit, u.key && ws ? { view: "session", ws, key: u.key } : undefined);
-	hit.setAttribute("aria-label", `${u.name}: ${doing(u.note, u.mark)}`);
-	hit.toggleAttribute("data-alert", urgent(u.mark));
-	mark(el, u.mark);
-	fillPlate(el.querySelector(".plate")!, u.role, u.mark, u.docs);
+	hit.setAttribute("aria-label", `${u.name}: ${doing(note, mk)}`);
+	hit.toggleAttribute("data-alert", urgent(mk));
+	mark(el, mk);
+	fillPlate(el.querySelector(".plate")!, u.role, mk, u.docs);
 	text(el, ".name", u.name);
 	text(el, ".role", roleName(u.role));
 	text(el, ".agent", u.agent ? AGENT[u.agent] : "");
-	say(el, ".note", u.note, u.mark);
+	say(el, ".note", note, mk);
 	age(el.querySelector(":scope > .card .age")!, u.since);
 	const todo = el.querySelector<HTMLElement>(":scope > .card .todo")!;
 	todo.hidden = !u.todo;
