@@ -1,6 +1,6 @@
 id = "wayne930242.straw-boss"
 name = "Straw Boss"
-version = "0.3.0"
+version = "0.4.0"
 min_herdr_version = "0.9.3"
 description = "Turn the sidebar Agents list into a straw net view when Herdr starts, and toggle it by key: towers first, then main agents, then members"
 # agent.view.set is a socket method, which the CLI cannot send: the script reaches it over Herdr's Unix socket, or its named pipe on Windows.
