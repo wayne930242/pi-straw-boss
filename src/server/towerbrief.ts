@@ -98,8 +98,8 @@ export async function gatherMains(d: GatherDeps): Promise<{ rows: MainRow[]; ope
 	const rows = tabs.map((group = []): MainRow => {
 		const main = group.find((m) => m.role === "main");
 		const row = main && board.find((r) => r.session === main.s.id);
-		// An ally run sees what the sender's tower would be sent: an auto-filled entry as its line and done count only.
-		const entry = row && d.within && row.now !== undefined ? { ...row, ...forAllies({ now: row.now, items: row.items, src: row.src ?? "set", count: row.count }) } : row;
+		// An ally run sees what the sender's tower would be sent: an auto-filled entry as the main's name and done count only.
+		const entry = row && d.within && row.now !== undefined ? { ...row, ...forAllies({ now: row.now, items: row.items, src: row.src ?? "set", count: row.count, who: row.who }) } : row;
 		const pane = main && paneOf(main.s);
 		return {
 			tab: clean(group[0]!.tab.label, 40),

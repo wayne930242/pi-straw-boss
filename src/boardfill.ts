@@ -28,7 +28,7 @@ export function createBoardFill({ pi, cfg, s, guiDir, me, role, tell }: Kit): Bo
 		return deriveBoard({ name: named(), todos: todosOfBranch(branch), root: ctx?.cwd ?? process.cwd() });
 	};
 	const write = (d: Derived) => {
-		writeEntry(dir, me(), d.text, cfg.now(), { src: "todo", ...(d.count ? { count: d.count } : {}) });
+		writeEntry(dir, me(), d.text, cfg.now(), { src: "todo", ...(d.count ? { count: d.count } : {}), ...(d.who ? { who: d.who } : {}) });
 		s.boardId = me(); // remembered for the shutdown that deletes the file (session.ts)
 	};
 	const refresh = () => {
@@ -43,6 +43,7 @@ export function createBoardFill({ pi, cfg, s, guiDir, me, role, tell }: Kit): Bo
 			if (key === last) return;
 			last = key;
 			if (d) write(d);
+			else if (readEntries(dir).find((e) => e.session === me())?.src === "todo") removeEntry(dir, me()); // nothing to say any more: the old auto line must not stay
 		} catch (error) {
 			if (!warned) tell(`Straw Boss: the work board could not be filled from the todo list: ${(error as Error).message}`, "warning");
 			warned = true;

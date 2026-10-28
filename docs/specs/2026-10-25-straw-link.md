@@ -546,16 +546,17 @@ Decided by the boss on 2026-10-28 (D20 in the sb-backend spec): "the work board 
   `<name>: next <first pending>` (id order), else `<name>: done (n/n)`, and with no todo list `<name>` alone. A name that is pi's default
   (none, or the session id) is no name: the line has no prefix, and with no name and no list there is no entry. `items` are the tasks in
   progress, then pending in id order, then completed (highest id first), at most 8, each its subject, done when completed. `count` is
-  the whole list's `done` and `total`.
-- **Scrub** (`scrubBoard`, before the text is cut to the caps; nothing is refused, since no model wrote it for the board):
+  the whole list's `done` and `total`. `who` is the scrubbed name (what allies get). With no name and no list the entry is removed, so a
+  stale auto line never stays.
+- **Scrub** (`scrubBoard`: the text is cleaned first (NFKC, whitespace folded, control and format characters such as U+200B and U+00AD removed, look-alike slashes made `/`), then scrubbed, and only then cut to the caps, so nothing re-joins a token after the check and a token at the cut cannot leave a prefix; nothing is refused, since no model wrote it for the board):
 
 | Pattern | Becomes |
 |---|---|
 | An absolute path inside the session's working folder | The path relative to it |
-| Any other path: POSIX, `~/`, `$HOME/`, `%USERPROFILE%\`, `C:\`, a UNC path, or `../` out of the folder | `…` |
+| Any other path: POSIX, `~/`, `~user/`, `$HOME/`, `%USERPROFILE%\`, `C:\`, `c:Users\`, `\Users\` with no drive, a UNC path (`\\host\` or `//host/`), or `../` out of the folder | `…` |
 | A URL | Its host only; `…` for one with userinfo or no host |
 | An email address | `…` |
-| A secret-shaped token: `sk-`, `ghp_`/`gho_`, `glpat-`, `xox?-`, `AKIA`, a JWT, hex of 32 or more, a run of 32 or more letters and digits in both cases with a digit | `…` |
+| A secret-shaped token: `sk-`, `ghp_`/`gho_`, `glpat-`, `xox?-`, `AKIA`, a JWT, `npm_`, `sk_live_`/`rk_live_`/`pk_live_` (and `_test_`), hex of 32 or more with or without `0x`, a run of 32 or more letters, digits, and `/` in both cases with a digit (an AWS secret key), `Password=`, `Pwd=`, `secret`, `token`, or `api key` with its value | `…` |
 | A task with more than half of its words `…` | Dropped; the last of the 8 places says `(n hidden)`, marked done so no reader counts it open |
 
   Customer names cannot be found by pattern, a path with spaces and a URL without a scheme are not recognized, and a 40-digit git commit
@@ -588,9 +589,10 @@ Decided by the boss on 2026-10-28 (D20 in the sb-backend spec): "the work board 
   120, items 8 of 80; the decoder cuts again.
 - Encrypted with the team key of the current epoch and signed like every envelope; a receiver runs every check of **Envelope**, the
   ephemeral `ts` guard per sender and kind included, so an older board never replaces a newer one.
-- **What an entry shows allies** (decided 2026-10-28, Q1 A: "allies get `now` and the done count of an auto entry only; a `board_set`
-  entry goes whole, as today"). A `src: "todo"` entry goes as its `now` suffixed with the count (`… (3/5)`, the line cut so the suffix
-  stays within 120 characters) and **no items**; a `src: "set"` entry goes whole. The wire is unchanged: `src` and `count` are local.
+- **What an entry shows allies** (decided 2026-10-28; it tightens Q1 A, which let `now` through, after review T2R-F001; boss: "收緊：自動的只給名字＋進度"). A
+  `src: "todo"` entry goes as the main's scrubbed name and the done count only (`<name> (3/5)`; the count alone without a name, the name alone
+  without a todo list), with **no task text** and no items; a `src: "set"` entry goes whole. The file keeps the name as `who`. The wire is
+  unchanged: `src`, `count`, and `who` are local.
   The same reduction applies wherever the allies' view is computed: the `board` kind, `board_read` in a remote turn, and the `seen` rows
   of an ally run's brief. The local towers, and a local run, read the whole entry.
 - **Which entries a team gets.** For each team, the holder sends the entries of live mains whose pane cwd is inside that team's

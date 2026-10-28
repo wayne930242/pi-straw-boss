@@ -22,8 +22,8 @@ test("now: the task in progress, else the first pending as next, else done (n/n)
 	assert.equal(deriveBoard({ name: "MP-1 cost", todos: [todo(2, "Fix rounding", "in_progress"), todo(3, "Ship", "pending")] })!.text.now, "MP-1 cost: Fix rounding", "else its subject");
 	assert.equal(deriveBoard({ name: "MP-1 cost", todos: [todo(1, "A", "completed"), todo(5, "Later", "pending"), todo(3, "Ship", "pending")] })!.text.now, "MP-1 cost: next Ship", "the first pending in id order");
 	assert.equal(deriveBoard({ name: "MP-1 cost", todos: [todo(1, "A", "completed"), todo(2, "B", "completed")] })!.text.now, "MP-1 cost: done (2/2)");
-	assert.deepEqual(deriveBoard({ name: "MP-1 cost", todos: [] }), { text: { now: "MP-1 cost", items: [] } }, "no list: the name alone, and no count");
-	assert.deepEqual(deriveBoard({ name: "MP-1 cost", todos: undefined }), { text: { now: "MP-1 cost", items: [] } });
+	assert.deepEqual(deriveBoard({ name: "MP-1 cost", todos: [] }), { text: { now: "MP-1 cost", items: [] }, who: "MP-1 cost" }, "no list: the name alone, and no count");
+	assert.deepEqual(deriveBoard({ name: "MP-1 cost", todos: undefined }), { text: { now: "MP-1 cost", items: [] }, who: "MP-1 cost" });
 	assert.equal(deriveBoard({ name: "", todos: l })!.text.now, "Fixing rounding", "pi's default name is none, so the line has no prefix");
 	assert.equal(deriveBoard({ name: "", todos: [] }), undefined, "no name and no list: no entry");
 	assert.equal(deriveBoard({ name: "  ", todos: undefined }), undefined);
@@ -56,6 +56,8 @@ test("the scrub: paths inside the project are relative, every other path is hidd
 	assert.equal(s("cwd:/Users/me/x and HOME=/Users/me"), "cwd:… and HOME=…", "a path after a colon or an equals sign");
 	assert.equal(s("home ~/projects/x and $HOME/y and %USERPROFILE%\\z"), "home … and … and …");
 	assert.equal(s("climb ../customer-a/data.csv"), "climb …");
+	assert.equal(s("unc //server/share/x and \\Users\\me\\o and c:Users\\me and ~me/notes"), "unc … and … and … and …", "slash UNC, no drive, drive-relative, ~user");
+	assert.equal(s("fw ／Users／me／x and ∕Users∕me and \uff3cUsers\uff3cme"), "fw … and … and …", "look-alike slashes");
 	assert.equal(s("win C:\\Users\\me\\x.txt and D:/data/y"), "win … and …");
 	assert.equal(s("share \\\\fileserver\\public\\plan.xlsx ok"), "share … ok");
 	assert.equal(s("relative src/a.ts and 3/5 and and/or stay"), "relative src/a.ts and 3/5 and and/or stay");
@@ -84,10 +86,35 @@ test("the scrub: emails and each token family", () => {
 		"xoxb-123456789012-abcdefghij", "xoxp-123456789012-abcdefghij", "AKIAIOSFODNN7EXAMPLE",
 		"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk",
 		"0123456789abcdef0123456789abcdef", "0123456789abcdef0123456789abcdef01234567", "Zm9vYmFyQmF6cXV4MTIzNDU2Nzg5MEFiQ2RFZkdoSWo",
+		"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "npm_abcdefghijklmnopqrstuvwxyz0123456789", "rk_live_abcdef012345", "sk_live_abcdef012345", "pk_live_abcdef012345", "sk_test_abcdef012345",
+		"0x0123456789abcdef0123456789abcdef", "Password=Hunter22", "Pwd=Hunter22", "api_key: abc123",
 	];
 	for (const token of tokens) assert.equal(s(`key ${token} end`), "key … end", token);
 	// Not secrets: a short hex, a long word, a long path segment, and prose that starts like a prefix.
 	for (const text of ["commit abc1234 and 0123456789abcdef", "internationalization-and-localization-of-everything", "the sk-learn and ghp_ prefix", "disk-usage-checks", "Ab1 Cd2 Ef3"]) assert.equal(s(text), text, text);
+});
+
+test("the scrub cleans first: a format character inside a token, path, or email does not hide it", () => {
+	for (const ch of ["\u200b", "\u00ad", "\u200d", "\u202e"]) {
+		assert.equal(scrubBoard(`fix sk-${ch}proj1234567890abcdef`, ROOT), "fix …", `token with U+${ch.charCodeAt(0).toString(16)}`);
+		assert.equal(scrubBoard(`gh${ch}p_0123456789abcdefghijklmnopqrstuv`, ROOT), "…");
+		assert.equal(scrubBoard(`C${ch}:\\Users\\me\\secret.txt`, ROOT), "…", "path");
+		assert.equal(scrubBoard(`a${ch}@example.com`, ROOT), "…", "email");
+		assert.equal(scrubBoard(`/Users${ch}/me/x`, ROOT), "…");
+	}
+	const d = deriveBoard({ name: "n", root: ROOT, todos: [todo(1, "x sk-\u200bproj1234567890abcdef", "in_progress")] })!;
+	assert.ok(!d.text.now.includes("sk-") && !d.text.items[0]!.t.includes("sk-"));
+});
+
+test("scrub, then cut: a token that straddles the cut leaves no prefix", () => {
+	const d = deriveBoard({ name: "", root: ROOT, todos: [todo(1, `${"a ".repeat(55)}sk-ant-api03-abcdefghijklmnop`, "in_progress")] })!;
+	assert.ok(!d.text.now.includes("sk-") && !d.text.items[0]!.t.includes("sk-"), d.text.now);
+	assert.equal(deriveBoard({ name: "", root: ROOT, todos: [todo(1, `${"a ".repeat(37)}sk-ant-api03-abcdefghijklmnop`, "in_progress")] })!.text.items[0]!.t.includes("sk"), false);
+});
+
+test("deriveBoard keeps the scrubbed name as who, and none when there is no name", () => {
+	assert.equal(deriveBoard({ name: "acme /etc/x", todos: [todo(1, "t", "pending")] })!.who, "acme …");
+	assert.equal(deriveBoard({ name: "", todos: [todo(1, "t", "pending")] })!.who, undefined);
 });
 
 test("deriveBoard scrubs the name, the task, and the items; an item that is mostly scrubbed is dropped and counted as (n hidden), which is not an open task", () => {
@@ -108,12 +135,13 @@ test("deriveBoard scrubs the name, the task, and the items; an item that is most
 
 test("what allies get: an auto entry is its line and the done count only, a board_set entry whole", () => {
 	const items = [{ t: "a", done: true }, { t: "b", done: false }];
-	assert.deepEqual(forAllies({ now: "n: doing x", items, src: "todo", count: { done: 1, total: 5 } }), { now: "n: doing x (1/5)", items: [] });
-	assert.deepEqual(forAllies({ now: "n", items: [], src: "todo" }), { now: "n", items: [] }, "a name-only entry has no count");
-	assert.deepEqual(forAllies({ now: "n: doing x", items, src: "set", count: { done: 1, total: 5 } }), { now: "n: doing x", items });
-	const long = forAllies({ now: "x".repeat(120), items, src: "todo", count: { done: 12, total: 20 } });
-	assert.equal(Array.from(long.now).length, 120);
-	assert.ok(long.now.endsWith(" (12/20)"), "the count keeps its place when the line is cut");
+	assert.deepEqual(forAllies({ now: "n: doing x", items, src: "todo", count: { done: 1, total: 5 }, who: "n" }), { now: "n (1/5)", items: [] }, "the name and the count, no task text");
+	assert.deepEqual(forAllies({ now: "n", items: [], src: "todo", who: "n" }), { now: "n", items: [] }, "a name-only entry has no count");
+	assert.deepEqual(forAllies({ now: "doing secret x", items, src: "todo", count: { done: 1, total: 5 } }), { now: "(1/5)", items: [] }, "no name: the count alone");
+	assert.deepEqual(forAllies({ now: "n: done (3/3)", items, src: "todo", count: { done: 3, total: 3 }, who: "n" }), { now: "n (3/3)", items: [] }, "the count once");
+	assert.deepEqual(forAllies({ now: "n: doing x", items, src: "set", count: { done: 1, total: 5 }, who: "n" }), { now: "n: doing x", items });
+	const long = forAllies({ now: "x", items, src: "todo", count: { done: 12, total: 20 }, who: "x".repeat(200) });
+	assert.ok(Array.from(long.now).length <= 120 && long.now.endsWith(" (12/20)"), "the count keeps its place when the name is cut");
 });
 
 // ---- Files ---------------------------------------------------------------------------------------------------------------
@@ -200,6 +228,29 @@ test("pi's default name (the session id) makes no prefix, and no name with no li
 	assert.equal(entryOf("b1")!.now, "Writing the CSV writer");
 });
 
+test("a stale auto entry goes when the todo list empties and the session has no name; a name keeps a name-only entry; a board_set entry stays", async () => {
+	const b = await main("b1", "b1");
+	setTodos(b, LIST);
+	await b.fire("turn_end");
+	assert.ok(entryOf("b1"));
+	setTodos(b, []);
+	await b.fire("turn_end");
+	assert.equal(entryOf("b1"), undefined, "no name, no list: the old line is removed");
+	const c = await main("named", "c1", 2);
+	setTodos(c, LIST);
+	await c.fire("turn_end");
+	setTodos(c, []);
+	await c.fire("turn_end");
+	assert.deepEqual([entryOf("c1")!.now, entryOf("c1")!.who, entryOf("c1")!.count], ["named", "named", undefined]);
+	const d = await main("b3", "b3", 3);
+	setTodos(d, LIST);
+	await d.fire("turn_end");
+	await d.tool("board_set", { now: "manual" });
+	setTodos(d, []);
+	await d.fire("turn_end");
+	assert.equal(entryOf("b3")!.now, "manual", "a board_set entry is not an auto line");
+});
+
 test("board_set overrides until the todo list or the name moves, and auto: true hands the board back at once", async () => {
 	const a = await main();
 	setTodos(a, LIST);
@@ -218,7 +269,7 @@ test("board_set overrides until the todo list or the name moves, and auto: true 
 	assert.deepEqual([entryOf("a1")!.src, entryOf("a1")!.now], ["todo", "renamed: Ship"], "so does a new name");
 	await a.tool("board_set", { now: "manual three" });
 	const back = textOf(await a.tool("board_set", { auto: true }));
-	assert.match(back, /handed back to auto-fill \(3 items\)\. It goes to: local towers; allies get its line and done count only/);
+	assert.match(back, /handed back to auto-fill \(3 items\)\. It goes to: local towers; allies get its name and done count only/);
 	assert.deepEqual([entryOf("a1")!.src, entryOf("a1")!.now, entryOf("a1")!.count], ["todo", "renamed: Ship", { done: 2, total: 3 }]);
 });
 
@@ -299,7 +350,7 @@ test("the entry goes with the session on quit and stays on reload", async () => 
 
 // ---- What a tower and an ally run read -----------------------------------------------------------------------------------
 
-test("board_read in a remote turn and an ally run's brief show an auto entry as its line and done count; a local turn shows it whole; a board_set entry is whole to all", async () => {
+test("board_read in a remote turn and an ally run's brief show an auto entry as its name and done count; a local turn shows it whole; a board_set entry is whole to all", async () => {
 	const project = mkdtempSync(join(tmpdir(), "psb-board-auto-project-"));
 	try {
 		const a = await main(), b = await main("set-main", "a2", 2);
@@ -312,11 +363,11 @@ test("board_read in a remote turn and an ally run's brief show an auto entry as 
 		const read = async (scoped: boolean) => (await readBoard({ dir: boardDir(), now: Date.now(), net: { sessions: await world.broker.sessionList(), ps: await panes(run) }, link: { boards: async () => [], remoteScope: () => (scoped ? scope : undefined) }, scope: "local" })).local as { main: string; now: string; items: unknown[] }[];
 		const shape = (rows: { main: string; now: string; items: unknown[] }[]) => rows.map((r) => [r.main, r.now, r.items.length]).sort();
 		assert.deepEqual(shape(await read(false)), [["api-main", "api-main: Writing the CSV writer", 3], ["set-main", "manual line", 1]], "a local turn: whole");
-		assert.deepEqual(shape(await read(true)), [["api-main", "api-main: Writing the CSV writer (1/3)", 0], ["set-main", "manual line", 1]], "a remote turn: what the allies get");
+		assert.deepEqual(shape(await read(true)), [["api-main", "api-main (1/3)", 0], ["set-main", "manual line", 1]], "a remote turn: what the allies get");
 		const gather = (within?: { project: string }) => gatherMains({ run, now: Date.now, sessions: () => world.broker.sessionList(), boardDir: boardDir(), workspace: { workspace_id: "wA", label: "Alpha" } as never, ledger: [], ...(within ? { within } : {}) });
 		const nowOf = (g: Awaited<ReturnType<typeof gatherMains>>) => g.rows.flatMap((r) => (r.main ? [[r.main.name, r.main.now, r.main.open]] : [])).sort();
 		assert.deepEqual(nowOf(await gather()), [["api-main", "api-main: Writing the CSV writer", 2], ["set-main", "manual line", 1]], "the local run: the line and the open count");
-		assert.deepEqual(nowOf(await gather({ project })), [["api-main", "api-main: Writing the CSV writer (1/3)", 0], ["set-main", "manual line", 1]], "an ally run: the line and the done count, and no open count (the brief omits a zero)");
+		assert.deepEqual(nowOf(await gather({ project })), [["api-main", "api-main (1/3)", 0], ["set-main", "manual line", 1]], "an ally run: the name and the done count, and no open count (the brief omits a zero)");
 	} finally {
 		rmSync(project, { recursive: true, force: true });
 	}

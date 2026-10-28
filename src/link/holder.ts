@@ -1004,7 +1004,7 @@ export class LinkHolder {
 		return net.sessions.flatMap((x): BoardWireEntry[] => {
 			const pane = panes.get(x.herdrLocation?.paneId ?? "");
 			if (pane?.tokens?.sb_role !== "main" || !pane.cwd || !inside(pane.cwd, project)) return [];
-			const e = byId.get(x.id), shown = e && forAllies(e); // an auto-filled entry leaves as its line and done count only (spec, Work board, Sharing)
+			const e = byId.get(x.id), shown = e && forAllies(e); // an auto-filled entry leaves as the main's name and done count only (spec, Work board, Sharing)
 			return [{ id: wireId(device, x.id), workspace: x.herdrLocation?.workspace?.label ?? "", tab: x.herdrLocation?.tab?.label ?? "", name: x.name ?? "", now: shown?.now ?? "", updated: e?.updated ?? 0, items: shown?.items ?? [] }];
 		}).sort((a, b) => b.updated - a.updated).slice(0, LIMITS.boardEntries);
 	}

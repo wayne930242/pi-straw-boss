@@ -71,7 +71,7 @@ test("a main on A writes with board_set and B's tower reads it with board_read a
 	await until(async () => (await read(b.c.tower)).remote?.[0]?.entries?.length === 0, "the entry gone at B");
 });
 
-test("an auto-filled entry reaches the ally's tower as its line and done count only; a board_set entry goes whole", async () => {
+test("an auto-filled entry reaches the ally's tower as its name and done count only; a board_set entry goes whole", async () => {
 	const a = await setup("a", [{ id: "auto-a", name: "auto main", inside: true }, { id: "set-a", name: "set main", inside: true }]);
 	const b = await setup("b", []);
 	await until(() => a.c.server.service.status().active && b.c.server.service.status().active, "both holders");
@@ -82,7 +82,7 @@ test("an auto-filled entry reaches the ally's tower as its line and done count o
 	let rows: Row[] = [];
 	await until(async () => ((rows = (await read(b.c.tower)).remote?.[0]?.entries ?? []), rows.length === 2 && rows.every((e) => e.now)), "both entries at B");
 	const byMain = Object.fromEntries(rows.map((e) => [e.main!, e]));
-	assert.deepEqual([byMain["auto main"]!.now, byMain["auto main"]!.items], ["auto main: Writing the CSV writer (1/3)", []], "an auto entry: the line and the count, no items");
+	assert.deepEqual([byMain["auto main"]!.now, byMain["auto main"]!.items], ["auto main (1/3)", []], "an auto entry: the name and the count, no task text, no items");
 	assert.deepEqual([byMain["set main"]!.now, byMain["set main"]!.items], ["MP-2 manual line", [{ t: "step one", done: true }, { t: "step two", done: false }]], "a board_set entry: whole");
 	// A's own tower sees both whole.
 	const local = (await read(a.c.tower, { scope: "local" })).local;
