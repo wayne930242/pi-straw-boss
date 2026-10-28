@@ -313,20 +313,25 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			const from = run ? towerId(slot, run.workspace) : phrase(request.from, 200);
 			if (!from || typeof request.body !== "object" || request.body === null) return { ok: false, error: "a link request needs from and body" };
 			// An ally run may ask its own sender's device to confirm a call at `forward`, and nobody else's: the device and the team are the run's, whatever the request says. The answer comes back to the run at its poll.
+			// The wait is the requester's: only the run that asked may forget it, and a request the holder refuses leaves no wait behind.
+			let confirming: string | undefined;
 			if (run?.kind === "ally") {
 				const body = request.body as Record<string, unknown>;
 				if (body.op === "confirm-request") {
 					const info = towers?.runs.runOf(request.token);
 					if (!info?.device || !info.team || typeof body.dialogId !== "string") return { ok: false, error: "an ally run asks its sender to confirm with a dialog id" };
 					towers!.runs.watchConfirm(request.token, body.dialogId);
+					confirming = body.dialogId;
 					request.body = { ...body, device: info.device, team: info.team };
-				}
+				} else if (body.op === "forget-confirm" && (typeof body.dialogId !== "string" || !towers?.runs.forgetConfirm(request.token, body.dialogId))) return { ok: false, error: "an ally run forgets only a confirm it asked for" };
 			}
 			// A test replaces the holder the tower service asks (`options.towers.link`); the requests of runs go the same way.
-			if (o.towers?.link) return { ok: true, answer: await o.towers.link(request.body, from) };
-			if (!slot.primary) return { ok: true, answer: { ok: false, code: "no_link", error: NO_LINK } };
-			if (!link) return { ok: true, answer: { ok: false, code: "no_holder", error: "The link holder is not running in the sb server yet; ask again in a moment" } };
-			return { ok: true, answer: await link.request(request.body, from) };
+			const answer = o.towers?.link ? await o.towers.link(request.body, from)
+				: !slot.primary ? { ok: false, code: "no_link", error: NO_LINK }
+				: !link ? { ok: false, code: "no_holder", error: "The link holder is not running in the sb server yet; ask again in a moment" }
+				: await link.request(request.body, from);
+			if (confirming && (answer as { ok?: unknown } | undefined)?.ok !== true) towers?.runs.forgetConfirm(request.token, confirming);
+			return { ok: true, answer };
 		}
 		const asked = await guiHost?.handle(request);
 		if (asked) return asked;

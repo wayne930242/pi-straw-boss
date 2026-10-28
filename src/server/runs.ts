@@ -413,6 +413,7 @@ export function createRuns(o: RunsOptions) {
 		try { writeRun(slot, a.rec); pruneRuns(slot, ws); } catch (cause) { error("run-record", (cause as Error).message); }
 		if (a.token) byToken.delete(a.token);
 		byRun.delete(a.rec.id);
+		for (const [dialogId, run] of confirms) if (run === a.rec.id) confirms.delete(dialogId);
 		slots = Math.max(0, slots - 1);
 		if (svc.run === a) svc.run = undefined;
 		const ally = a.rec.kind === "ally";
@@ -777,6 +778,13 @@ export function createRuns(o: RunsOptions) {
 		watchConfirm(token: unknown, dialogId: string) {
 			const a = of(token);
 			if (a && !a.ended) confirms.set(dialogId, a.rec.id);
+		},
+		/** The run forgets a confirm it asked for (the dialog ended another way, or the holder refused the request): false when this run did not ask for it. */
+		forgetConfirm(token: unknown, dialogId: string): boolean {
+			const a = of(token);
+			if (!a || a.ended || confirms.get(dialogId) !== a.rec.id) return false;
+			confirms.delete(dialogId);
+			return true;
 		},
 		/** The sender's device answered a `forward` confirm: true when an ally run was waiting for it. */
 		confirmed(dialogId: string, allow: boolean): boolean {

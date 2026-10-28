@@ -336,6 +336,39 @@ test("the server's level for an ally run is the lower of the claimed level and t
 	assert.equal((await ask(s, { cmd: "run-tool", token, tool: "tower_reply", args: { to: "main-1", message: "go" } })).ok, true);
 });
 
+test("a forward confirm is the requester's: another run's forget-confirm is refused, a failed request and an ended run leave nothing behind (RV6-F011)", async () => {
+	const { s } = await setup();
+	world.ally.level.set(DEV1, "forward");
+	world.ally.level.set(DEV2, "forward");
+	world.ally.add("m1", DEV1, "one");
+	world.ally.add("x1", DEV2, "two");
+	world.expose?.allyWaiting("sb-tower-wa");
+	const ids = [await nthRun(1), await nthRun(2)];
+	const tokens = new Map<string, string>();
+	for (const id of ids) tokens.set(readRun(world.slot, "wA", id)!.device!, String((await claimed(s, id)).token));
+	const [t1, t2] = [tokens.get(DEV1)!, tokens.get(DEV2)!];
+	const confirm = (token: string, dialogId: string) => ask(s, { cmd: "link", token, body: { op: "confirm-request", dialogId, digest: "x", tool: "write", args: "{}", tower: "me", team: "t", device: "d" } });
+	const forget = (token: string, dialogId: string) => ask(s, { cmd: "link", token, body: { op: "forget-confirm", dialogId } });
+	world.linkAnswers.set("confirm-request", () => ({ ok: true }));
+	world.linkAnswers.set("forget-confirm", () => ({ ok: true }));
+	assert.equal((await confirm(t1, "dlg-1")).ok, true);
+	// Another run cannot make the server forget it, and the holder is not asked to.
+	const before = world.linkCalls.length;
+	assert.equal((await forget(t2, "dlg-1")).ok, false);
+	assert.equal(world.linkCalls.length, before, "the holder heard nothing of it");
+	assert.equal((await forget(t1, "dlg-1")).ok, true, "the requester may");
+	assert.equal(world.expose?.runs.confirmed("dlg-1", true), false, "forgotten");
+	// A request the holder refused is not kept.
+	world.linkAnswers.set("confirm-request", () => ({ ok: false, error: "no such device" }));
+	await confirm(t1, "dlg-2");
+	assert.equal(world.expose?.runs.confirmed("dlg-2", true), false);
+	// A run that ends takes its waits with it.
+	world.linkAnswers.set("confirm-request", () => ({ ok: true }));
+	assert.equal((await confirm(t2, "dlg-3")).ok, true);
+	await world.expose!.runs.release({ token: t2, reason: "test" });
+	assert.equal(world.expose?.runs.confirmed("dlg-3", true), false);
+});
+
 test("a forward confirm: the ally run asks its own sender's device, whatever the request names, and the answer reaches the run at its poll", async () => {
 	const { s } = await setup();
 	world.ally.level.set(DEV1, "forward");
