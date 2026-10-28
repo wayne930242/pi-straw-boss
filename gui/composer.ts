@@ -17,6 +17,11 @@ import { towerWhy } from "./towerturns.ts";
 export const MAX_TEXT = 16_384;
 type Note = [tone: string, text: string];
 export const ENDING = /^\s*\/(quit|exit|new|resume|fork|clone|import|reload)(?=\s|$)/;
+/**
+ * The command in `text` that ends or replaces the session it is sent to, which asks first; none for a tower the sb server runs: its composer is the boss conversation's, where exactly `/quit` leaves it and `/new` starts over
+ * (src/control.ts), so neither ends a pi session to confirm.
+ */
+export const endsSession = (text: string, unit: Pick<Unit, "wakes">): string | undefined => (unit.wakes ? undefined : text.match(ENDING)?.[0].trim());
 export type Post = (action: "input" | "keys" | "focus" | "answer" | "mirror" | "commands" | "dequeue", body: Record<string, unknown>) => Promise<Answer>;
 type Flight = { sent?: string; answer: Promise<Answer> };
 // Sends on their way, by session key. They outlive a composer replaced meanwhile (the route left and came back), whose successor waits for
@@ -194,7 +199,7 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 		if (busy || asking || !text.trim()) return;
 		if (why) return say(why, "error");
 		if (new TextEncoder().encode(text).length > MAX_TEXT) return say(m.too_long(), "error");
-		const command = !confirmed && text.match(ENDING)?.[0].trim();
+		const command = !confirmed && endsSession(text, unit);
 		if (command) return ask(m.ends_session({ command }), m.send_command({ command }), () => submit(as, text));
 		void call("input", { text, as, confirmed }, text);
 	}

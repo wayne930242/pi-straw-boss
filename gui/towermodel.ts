@@ -13,6 +13,24 @@ export type Word = (mk: Mark) => string;
 /** The ally runs of a service as one phrase: the device of the one, else how many. */
 export const allyWord = (service: TowerService, o?: Opts) => (service.allyRuns.length === 1 ? m.tower_state_ally({ device: service.allyRuns[0]!.label }, o) : service.allyRuns.length > 1 ? m.ally_runs({ count: service.allyRuns.length }, o) : m.role_ally({}, o));
 
+type Conversation = NonNullable<TowerService["conversation"]>;
+const clock = (v: number | string) => new Date(v).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+const minutes = (c: Conversation) => Math.max(1, Math.round(c.idleMs / 60_000));
+/** A boss conversation in one phrase for the map, the header and the dossier: that it is the boss's, whether it waits for them, and when their silence ends it. An idle one is not "working". */
+export const conversationWord = (c: Conversation, o?: Opts) => (c.closing ? m.conv_state_closing({}, o) : (c.idle ? m.conv_state_waiting : m.conv_state_working)({ minutes: minutes(c) }, o));
+/** What the comms' conversation box says of a live conversation, line by line: how it began, what it does now and when it ends, and the hard cap. `why` is the server's own English reason, kept for a tooltip. */
+export function conversationFacts(c: Conversation, o?: Opts): { began: string; why?: string; now: string; cap: string } {
+	return {
+		began: c.resumed ? m.conv_resumed({ turns: c.turns }, o) : c.why ? m.conv_new_why({ why: c.why }, o) : m.conv_new({}, o),
+		...(c.why ? { why: c.why } : {}),
+		now: c.closing ? m.conv_closing({}, o) : c.idle && c.idleAt ? m.conv_idle_deadline({ time: clock(c.idleAt) }, o) : m.conv_working({ minutes: minutes(c) }, o),
+		cap: m.conv_cap({ time: clock(c.capAt) }, o),
+	};
+}
+/** The divider that opens a conversation's run in the log, and how it ended (a time and its note) when it has. */
+export function conversationDivider(r: NonNullable<TowerService["localRuns"]>[number], o?: Opts): { title: string; ended?: string } {
+	return { title: (r.resumed ? m.conv_divider_resumed : m.conv_divider_new)({ time: clock(r.startedAt) }, o), ...(r.endedAt ? { ended: [m.conv_ended({ time: clock(r.endedAt) }, o), r.note].filter(Boolean).join(" · ") } : {}) };
+}
 /**
  * The one word for the tower's state, on the map, in the dossier and in the comms. A tower the server runs says what the service is doing; one that stands by with nobody working says so instead
  * of "idle". Without a service (a resident tower) it is the mark's word.
@@ -23,7 +41,7 @@ export function towerWord(service: TowerService | undefined, mk: Mark, word: Wor
 		case "held": return m.tower_state_held({}, o);
 		case "waking": return m.tower_state_waking({}, o);
 		case "closing": return m.tower_state_closing({}, o);
-		case "running": return service.run?.kind === "ally" ? allyWord(service, o) : word(mk);
+		case "running": return service.run?.kind === "ally" ? allyWord(service, o) : service.conversation && mk !== "waiting" ? conversationWord(service.conversation, o) : word(mk); // a question it waits on is the news
 		case "standing": return mk !== "idle" ? word(mk) : service.allyRuns.length ? allyWord(service, o) : m.mark_standing({}, o); // an ally run is working: not "standing by"
 	}
 }
