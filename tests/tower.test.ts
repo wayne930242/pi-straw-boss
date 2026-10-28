@@ -360,3 +360,45 @@ test("towers of different workspaces start under different lowercase Herdr agent
 	assert.deepEqual(world.herdr.commands("agent", "start").map((args) => args[2]), ["tower-wa", "tower-wb"]);
 	assert.deepEqual(world.broker.delivered.map((d) => d.to), ["tower-wA", "tower-wB"]);
 });
+
+// D19 (docs/specs/2026-10-26-sb-backend.md, Wake triggers): a main calls the tower for a milestone, before it touches something shared, or when it is blocked, and the code-written header says which.
+
+const headerOf = (message: string) => /^\[straw net [^\]]*\]/.exec(message)?.[0] ?? "";
+
+test("D19: call_tower requires why (milestone, shared, or blocked) in pi's tool, and the header carries it", async () => {
+	const tower = world.tower("tower-wA", "wA:t7", "wA:p7");
+	await tower.start();
+	const a = await main();
+	const schema = a.tools.get("call_tower")!.parameters as { required?: string[]; properties: Record<string, { anyOf?: { const: string }[] }> };
+	assert.ok(schema.required?.includes("why"), "why is required");
+	assert.deepEqual(schema.properties.why!.anyOf?.map((x) => x.const), ["milestone", "shared", "blocked"]);
+	for (const why of ["milestone", "shared", "blocked"]) await a.tool("call_tower", { message: `m ${why}`, why, reply: why !== "milestone" });
+	assert.deepEqual(world.broker.delivered.map((d) => /reply=(\w+) why=(\w+)\]$/.exec(headerOf(d.message))?.slice(1)), [["none", "milestone"], ["expected", "shared"], ["expected", "blocked"]]);
+});
+
+test("D19: a call_tower without why (an older caller, a run's tool) is sent with why=unspecified, and a word outside the set is refused", async () => {
+	const tower = world.tower("tower-wA", "wA:t7", "wA:p7");
+	await tower.start();
+	const a = await main();
+	await a.tool("call_tower", { message: "no reason given" });
+	assert.match(headerOf(world.broker.delivered[0]!.message), / reply=expected why=unspecified\]$/);
+	await assert.rejects(a.tool("call_tower", { message: "x", why: "progress" }), /why/);
+	assert.equal(world.broker.delivered.length, 1, "nothing went out for the refused word");
+});
+
+test("D19: the 4th milestone call from one session within 10 minutes is sent and its answer says routine progress belongs on the board; the window slides, and other reasons do not count", async () => {
+	const tower = world.tower("tower-wA", "wA:t7", "wA:p7");
+	await tower.start();
+	let clock = 1_000_000;
+	const a = world.agent({ id: "main-1", pane: "wA:p1", tab: "wA:t1", deps: { now: () => clock } });
+	await a.start();
+	await a.promote();
+	const call = async (why: string) => textOf(await a.tool("call_tower", { message: `m ${why}`, why, reply: false }));
+	const hint = /Routine progress belongs on your board/;
+	for (const [i, why] of ["milestone", "shared", "milestone", "blocked", "milestone"].entries()) assert.doesNotMatch(await call(why), hint, `call ${i + 1}`);
+	clock += 1000;
+	assert.match(await call("milestone"), hint, "the 4th milestone within 10 minutes (the shared and blocked calls do not count)");
+	assert.equal(world.broker.delivered.length, 6, "every call was sent, the 4th included");
+	clock += 11 * 60_000;
+	assert.doesNotMatch(await call("milestone"), hint, "10 minutes later the count starts again");
+});

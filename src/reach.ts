@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { sessionMark } from "./netdata.ts";
-import { type Kind, type Party, stamp } from "./header.ts";
+import { type Kind, type Party, stamp, type Why, WHYS } from "./header.ts";
 import { headOf, isSub, type Pane, panes, parentOf, type Session, towerModel, workspaces, type Workspace } from "./herdr.ts";
 import type { Kit, Scope, SendResult } from "./state.ts";
 import { inside } from "./link/routing.ts";
@@ -19,6 +19,8 @@ const OUTBOX_RESULT = "intercom:outbox-result";
 const SEND_MS = 30_000;
 /** When a failed send to a tower identity is tried again, counted from the first failure, and how often the identity is looked for meanwhile. */
 const TOWER_RETRY_AT = [2000, 5000, 10_000, 20_000], TOWER_POLL_MS = 500;
+/** The soft guard on `milestone` calls (D19): past this many within the window, the answer tells the main its routine progress belongs on the board. Nothing is refused. */
+const MILESTONE_FREE = 3, MILESTONE_WINDOW_MS = 10 * 60_000;
 
 /** Live sessions whose pane carries an `sb_role` token: the sessions that joined the net, and towers. */
 export function netMembers(sessions: Session[], ps: Pane[]) {
@@ -158,22 +160,35 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit, server:
 		return { name: nameOf(mine) || s.ownName || me(), id: me(), role: role() ?? "session", ...(s.isTower && workspace && workspace === headOf(net.all) ? { head: true } : {}), ...(workspace ? { workspace: workspace.label } : {}) };
 	};
 	/** The message under its header, once for the whole audience: every recipient reads the same line, with the others named in it. */
-	const deliver = async (targets: Session[], message: string, kind: Kind, scope: string, reply: boolean, net: Net, origin?: string) => {
-		const line = stamp({ from: selfParty(net), kind, scope, to: targets.map((x) => partyOf(x, net)), reply, ...(origin ?? s.remoteOrigin ? { origin: (origin ?? s.remoteOrigin)! } : {}) }, message);
+	const deliver = async (targets: Session[], message: string, kind: Kind, scope: string, reply: boolean, net: Net, origin?: string, why?: Why) => {
+		const line = stamp({ from: selfParty(net), kind, scope, to: targets.map((x) => partyOf(x, net)), reply, ...(origin ?? s.remoteOrigin ? { origin: (origin ?? s.remoteOrigin)! } : {}), ...(why ? { why } : {}) }, message);
 		return Promise.all(targets.map(async (x) => ({ id: x.id, name: nameOf(x), ...(await send(x.id, line)) })));
 	};
 	/** One session by id, with a header. The result is intercom's. */
-	const post = async (to: string, message: string, kind: Kind, scope: string, reply: boolean, origin?: string): Promise<SendResult> => {
+	const post = async (to: string, message: string, kind: Kind, scope: string, reply: boolean, origin?: string, why?: Why): Promise<SendResult> => {
 		const net = await read();
-		const [result] = await deliver([net.sessions.find((x) => x.id === to) ?? { id: to }], message, kind, scope, reply, net, origin);
+		const [result] = await deliver([net.sessions.find((x) => x.id === to) ?? { id: to }], message, kind, scope, reply, net, origin, why);
 		return result!;
 	};
-	const callTower = async (message: string, workspace: string | undefined, reply = true) => {
+	/** When this session's `milestone` calls went out, for the soft guard: the 4th within 10 minutes still goes, with a word about the board. */
+	const milestones: number[] = [];
+	/**
+	 * `why` (D19) is milestone, shared, or blocked; a caller that gives none is sent as `unspecified`, which the tower wakes for as it does for `blocked`. A word outside the set is refused before anything is sent.
+	 */
+	const callTower = async (message: string, workspace: string | undefined, reply = true, why?: string) => {
+		if (why !== undefined && !(WHYS as readonly string[]).includes(why)) throw new Error(`why is ${WHYS.join(", ")}, not ${JSON.stringify(why)}`);
+		const reason: Why = (why as Why | undefined) ?? "unspecified";
 		const tower = await openTower(workspace);
-		const result = await post(tower.id, message, "call_tower", "tower", reply);
+		const result = await post(tower.id, message, "call_tower", "tower", reply, undefined, reason);
 		if (result.status !== "sent") throw new Error(`The tower of ${tower.target.label} did not take the message: ${result.status} ${result.code ?? ""} ${result.detail ?? ""}`.trim());
 		const via = tower.routed ? ` (${tower.routed.label} is a sub workspace)` : "";
-		const text = `Sent to the tower of ${tower.target.label}${via}${tower.opened ? " (opened it)" : ""}. ${reply ? "It replies through intercom." : "It is told no reply is expected."}`;
+		let board = "";
+		if (reason === "milestone") {
+			const at = cfg.now();
+			milestones.splice(0, milestones.length, ...milestones.filter((t) => at - t < MILESTONE_WINDOW_MS), at);
+			if (milestones.length > MILESTONE_FREE) board = " Routine progress belongs on your board, not in a call to the tower.";
+		}
+		const text = `Sent to the tower of ${tower.target.label}${via}${tower.opened ? " (opened it)" : ""}. ${reply ? "It replies through intercom." : "It is told no reply is expected."}${board}`;
 		return { text, details: { workspace: tower.target.workspace_id, towerId: tower.id, opened: tower.opened, status: result.status } };
 	};
 

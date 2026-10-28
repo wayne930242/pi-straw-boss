@@ -13,13 +13,13 @@ export class UsageError extends Error {}
 export const ASK_MS: Record<string, number> = { default: 60_000, "call-tower": 120_000 };
 const USAGE = `usage: cli.ts join --pane P --kind claude|codex --session S [--record FILE] [--cli straw-net.py]
        cli.ts status | promote | stop [--pane P]
-       cli.ts call-tower --message M [--workspace W] [--pane P]
+       cli.ts call-tower --message M [--why milestone|shared|blocked] [--reply true|false] [--workspace W] [--pane P]
        cli.ts broadcast --message M [--scope tab|workspace|towers|all] [--pane P]
        cli.ts send --to ID --message M [--pane P]
        cli.ts rename --name N [--pane P]
        cli.ts board --now N [--item '[x] done step'] [--item '[ ] open step']… [--pane P]`;
 const NEEDS: Record<string, string[]> = { join: ["kind", "session"], serve: ["kind", "session"], status: [], promote: [], stop: [], "call-tower": ["message"], broadcast: ["message"], send: ["to", "message"], rename: ["name"], board: ["now"] };
-const FLAGS = ["pane", "kind", "session", "record", "cli", "message", "workspace", "scope", "to", "name", "now", "item"];
+const FLAGS = ["pane", "kind", "session", "record", "cli", "message", "workspace", "scope", "to", "name", "now", "item", "why", "reply"];
 
 export type Args = { command: string; pane: string; item?: string[] } & Partial<Record<string, string>>;
 /** The command line as options. The pane is `--pane`, else the one the process runs in (HERDR_PANE_ID). */
@@ -42,9 +42,13 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
 		if (!given[need]) throw new UsageError(`--${need} is required`);
 	}
 	if (given.kind && given.kind !== "claude" && given.kind !== "codex") throw new UsageError("--kind must be claude or codex");
+	if (given.why && command !== "call-tower") throw new UsageError("--why belongs to the call-tower command");
+	if (given.reply && command !== "call-tower") throw new UsageError("--reply belongs to the call-tower command");
+	if (given.why && !["milestone", "shared", "blocked"].includes(given.why)) throw new UsageError("--why must be milestone, shared, or blocked");
+	if (given.reply && !["true", "false"].includes(given.reply)) throw new UsageError("--reply must be true or false");
 	if (given.scope && !["tab", "workspace", "towers", "all"].includes(given.scope)) throw new UsageError("--scope must be tab, workspace, towers, or all");
 	const { pane: _pane, ...options } = given;
-	const wanted = { join: ["kind", "session", "record", "cli"], serve: ["kind", "session", "record", "cli"], "call-tower": ["message", "workspace"], broadcast: ["message", "scope"], send: ["to", "message"], rename: ["name"], board: ["now"] }[command] ?? [];
+	const wanted = { join: ["kind", "session", "record", "cli"], serve: ["kind", "session", "record", "cli"], "call-tower": ["message", "workspace", "why", "reply"], broadcast: ["message", "scope"], send: ["to", "message"], rename: ["name"], board: ["now"] }[command] ?? [];
 	return { command, pane, ...Object.fromEntries(wanted.map((key) => [key, options[key]]).filter(([, value]) => value !== undefined)), ...(item.length ? { item } : {}) };
 }
 

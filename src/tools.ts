@@ -44,13 +44,14 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { post, callT
 				const result = await status();
 				return { text: JSON.stringify(result, null, 2), details: result };
 			});
-			tool("call_tower", "Send a message to the tower of your workspace, or of another workspace by id or exact label. Opens the tower tab when none is running. The message goes out under a header the code writes (your name, role, and workspace, the recipient, and whether you expect a reply). A tower replies through intercom unless you say reply is false.",
+			tool("call_tower", "Send a message to the tower of your workspace, or of another workspace by id or exact label. Opens the tower tab when none is running. Call it at three points only, and say which with why: milestone (a task landed, a deliverable is ready, or what the tower asked is done; send it with reply false unless you need an answer), shared (before you touch anything outside your tab: a port, database, shared branch, deploy target, another app's checkout, a running service; say what and for how long, then wait for the answer), blocked (you wait on someone outside your tab, or on a decision your authorizations do not cover). Routine progress goes on your work board, never in a call. The message goes out under a header the code writes (your name, role, and workspace, the recipient, whether you expect a reply, and why). A tower replies through intercom unless you say reply is false.",
 				Type.Object({
 					message: Type.String({ description: "What the tower needs to know or do: at most two sentences, details by reference." }),
+					why: Type.Union([Type.Literal("milestone"), Type.Literal("shared"), Type.Literal("blocked")], { description: "Why you call: milestone, shared, or blocked. The tower reads it in the header." }),
 					workspace: Type.Optional(Type.String({ description: "Another workspace's id or exact label. Omit for your own." })),
-					reply: Type.Optional(Type.Boolean({ description: "Whether you wait for the tower's answer. Default true; false for a notice." })),
+					reply: Type.Optional(Type.Boolean({ description: "Whether you wait for the tower's answer. Default true; false for a milestone or a notice." })),
 				}),
-				({ message, workspace, reply }) => callTower(message, workspace, reply ?? true));
+				({ message, why, workspace, reply }) => callTower(message, workspace, reply ?? true, why));
 			tool("boss_broadcast", "Send one message to every other session in a scope. tab, workspace, and towers reach only sessions that joined the net (towers: each workspace's tower, else its mains, else its members); all reaches every pi session on this machine (for notices such as the boss going to sleep). The message goes out under a header the code writes (your name and role, the scope, every recipient). A tower reaches other towers with tower_send instead.",
 				Type.Object({
 					message: Type.String({ description: "The message, once; receivers do not re-broadcast it." }),

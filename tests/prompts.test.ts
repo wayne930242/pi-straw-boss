@@ -11,7 +11,7 @@ import { PROMPT_DIR } from "./fakes.ts";
 // 0.40.0 (tower comms): tower 250 to 330 for tower_list and tower_send, the header every message opens with and what to do with its recipients, reporting back once, and closing the mains it opened;
 // main 255 to 290 for reporting to the tower that opened it and waiting to be closed.
 // Work board: main 285 to 335 for board_set (when to write, what stays out, it is no report); tower 328 to 360 for board_read and treating remote entries as a peer's report.
-const BUDGETS: Record<string, number> = { "main.md": 335, "tower.md": 360, "member.md": 140, "member-no-main.md": 150 };
+const BUDGETS: Record<string, number> = { "main.md": 440, "tower.md": 360, "member.md": 140, "member-no-main.md": 150 };
 const PLACEHOLDERS = new Set(["tab", "workspace", "main", "tower", "head", "dir"]);
 const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
 
@@ -54,4 +54,17 @@ test("the main plans from planning.md: graph, todos with owners and blockedBy, s
 	for (const term of ["single-loop", "fan-out", "orchestrator-worker", "`owner`", "`blockedBy`", "share one checkpoint", "without asking the boss to confirm the plan", "contradicts the architecture"]) assert.ok(plan.includes(term), `planning.md names ${term}`);
 	assert.doesNotMatch(plan, /Start only on their confirmation/);
 	assert.ok(words(plan) <= 650, `planning.md has ${words(plan)} words (budget 650)`);
+});
+
+// D18 and D19 (docs/specs/2026-10-26-sb-backend.md, Decisions): coordination goes through the tower, and a main calls it at three points only. main.md goes from 332 to 437 words for that rule.
+test("D19: the main calls the tower at three points only, routine progress stays on the board, and a milestone goes without a reply", () => {
+	const main = readFileSync(`${PROMPT_DIR}/main.md`, "utf8");
+	for (const term of ["`call_tower`", "three points only", "`milestone`", "`shared`", "`blocked`", "reply: false", "never call the tower to report"]) assert.ok(main.includes(term), `main.md names ${term}`);
+	assert.doesNotMatch(main, /call_tower reaches the tower \(report coordination friction there\)/);
+	for (const file of ["member.md", "member-no-main.md"]) assert.match(readFileSync(`${PROMPT_DIR}/${file}`, "utf8"), /`call_tower` and `why: blocked`/, `${file} reports friction as blocked`);
+});
+
+test("D19: the tower run reads why= from the header: milestone updates obligations, shared is answered go or wait with the owner named, blocked is routed, and nobody is asked for progress", () => {
+	const run = readFileSync(`${PROMPT_DIR}/tower-run.md`, "utf8");
+	for (const term of ["`why=`", "`milestone`", "`shared`", "`blocked`", "go or wait", "owner", "Never ask mains for progress", "board_read"]) assert.ok(run.includes(term), `tower-run.md names ${term}`);
 });

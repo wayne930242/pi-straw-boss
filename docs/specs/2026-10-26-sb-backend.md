@@ -842,7 +842,7 @@ An event wakes a run. Everything else is shown in the GUI or handled by the serv
 
 | Source | Becomes | Run |
 |---|---|---|
-| An intercom message to a tower identity: `call_tower`, `tower_send` from another tower, a `boss_broadcast` with scope `towers`, a main's done report, a reply to something the tower sent, a plain `intercom send` | Event `intercom`, with the text as received (its code-written header included) and the broker's sender line | Local |
+| An intercom message to a tower identity: `call_tower`, `tower_send` from another tower, a `boss_broadcast` with scope `towers`, a main's done report, a reply to something the tower sent, a plain `intercom send` | Event `intercom`, with the text as received (its code-written header included, which for a `call_tower` says `why=milestone\|shared\|blocked\|unspecified`, D19) and the broker's sender line | Local |
 | A Straw Link `tower` envelope routed to this workspace (**Delivery**, Straw Link spec) | Event `link`, through the inbox as today | Ally (**Ally runs**) |
 | The boss types into the tower from the GUI while no local run is live | Event `boss`, the text verbatim | Local, queued ahead of the rest |
 | The boss types `/boss tower <prompt>` in any pi session of the workspace (D15) | Event `boss`, the prompt verbatim, through the same server endpoint as the GUI composer | Local, queued ahead of the rest |
@@ -899,7 +899,11 @@ something: the `boss` row. A send on its own wakes nothing.
   registering, written before anything else is done. The gap is in pi-intercom, so B5 proposes an upstream change: a mailbox flush to an
   `acknowledgesReceipts` session waits for each receipt and puts unreceipted mail back in the mailbox when that session disconnects.
   Until that ships, it is a documented limit (**Risks**).
-- **Coalescing.** A wake waits 1 s after the first event, so a burst starts one run with all of it.
+- **Coalescing.** A wake waits 1 s after the first event, so a burst starts one run with all of it. One kind of event waits longer (D19): an intercom event whose header
+  says `why=milestone` and `reply=none` waits up to **30 s** (`Timers.hold`), counted from the first such event, for others when no local run is live, so mains that finish
+  together land in one run. Every other event (`shared`, `blocked`, `unspecified`, a reply expected, `boss`, `notice`, `timer`) wakes at 1 s from its arrival and takes any
+  held milestones with it. The server reads the header only at the very start of the event text, with quoted values kept whole, so text that spells out `why=milestone` is
+  not held. A live run gets each event at its next idle moment, with no hold.
 - **Events while a local run is live** go to that run, at the next moment it is idle (`isIdle()` and no pending message, checked in the
   same tick, as `pump` does). Each one goes as one custom message `straw-tower` with `triggerTurn`, and the run reports it `taken` once it
   is in the session. An event offered but not taken returns to the head of the queue when the run ends.
@@ -1035,7 +1039,7 @@ the run's kind on every request, in addition to the hooks in the run.
 | Tool | In a local run | In an ally run |
 |---|---|---|
 | `tower_list`, `board_read` | The full answer, as today | Scoped to the sender's team, as in a remote turn today |
-| `boss_status`, `call_tower` | Inside the workspace, as today | `boss_status` only (allowlisted) |
+| `boss_status`, `call_tower` | Inside the workspace, as today; `call_tower` takes `why` (D19) | `boss_status` only (allowlisted) |
 | `tower_send` | Sent by the server as the tower identity, with the header the server writes (`id=sb-tower-<ws>`, `role=tower`, `head=yes` when it is). With `device`, `reply: true`, and `for: <local session>`, it is an ask for a main (**Replies for a main**) | Only to the sender's device (its id, short id, or label); `inReplyTo` answers one of the run's asks. Any other device, and a call without a device, is refused outright at every level: an Allow the boss gave for another device would otherwise send the text to the sender. |
 | `tower_reply` (new) `{ to, message, reply? }` | One message to one local session by id or name, sent as the tower identity under the header. This replaces "answer with intercom send". | Gate (dispatch: allowed), and the server checks the gate's Allow (below). A tower identity of this machine is refused outright, since it would carry peer text into a local run. `origin=remote:<device id>` is stamped by the server. What the run waits for from the session (`reply: true`) is the device's: **Questions to local sessions**. |
 | `boss_open_main`, `boss_close_main` | Run by the server with the persisted ledger and limits; `close-main` goes out from the tower identity | Gate (dispatch: allowed) |
@@ -1630,6 +1634,8 @@ straw-boss-desk's owner also agreed to D11.
 | D13 | The ally thread for the brief keeps peer text at rest | "存，每台裝置最近 20 則、留 7 天": a per-device store of both directions, the last 20 messages, 7 days (**The brief**). |
 | D14 | Restarting and debugging the server | "server restart 也要讓 agent 或 user 有辦法做，不然很難 debug": `boss_server` for local sessions and local runs, Restart server and Show log in the GUI on this computer's page only, `server.log` with rotation, `cli.mjs logs`, and the reason recorded (**Seeing and restarting the server**). |
 | D15 | Prompting a tower that is not resident | "如果 tower 現在不是常駐，那會需要 /boss tower [prompt] 的指令": `/boss tower <prompt>` posts a `boss` event the way the GUI composer does, so the boss can wake the tower from any pi session; it does not change focus. A bare `/boss tower` still opens and focuses the tab. Built in B5. |
+| D18 | Coordination goes through the tower | "統一用塔台" (boss, 2026-10-28). D16 and D17 belong to `feat/sb-net-standin`, so this and the next row keep the numbers of the tower-experience delta. |
+| D19 | When a main calls the tower | "mains call the tower only at (1) a finished milestone, (2) before touching shared things, (3) when blocked/waiting; routine progress = work board only, no wake" (boss, 2026-10-28). `call_tower` carries the reason as `why` in the code-written header (**Wake triggers**), `prompts/main.md`, `member*.md`, and `tower-run.md` say what each reason asks, and a milestone that expects no reply is held up to 30 s to coalesce (**Queueing and concurrency**). The 4th `milestone` call from one session within 10 minutes is still sent, with a word about the board. |
 
 ## Review record
 

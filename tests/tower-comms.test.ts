@@ -39,11 +39,11 @@ async function town() {
 
 test("a message sent for a session opens with a header the code writes: sender, role, workspace, kind, scope, every recipient, and whether a reply is expected", async () => {
 	const { a1 } = await town();
-	await a1.tool("call_tower", { message: "port 3000 is taken" });
+	await a1.tool("call_tower", { message: "port 3000 is taken", why: "shared" });
 	await a1.tool("call_tower", { message: "fyi", reply: false });
 	assert.deepEqual(heard().map((h) => h.line), [
-		'[straw net from=api-main id=a1 role=main workspace=Alpha kind=call_tower scope=tower to="tower · tower-wA (head tower of Alpha)" reply=expected] port 3000 is taken',
-		'[straw net from=api-main id=a1 role=main workspace=Alpha kind=call_tower scope=tower to="tower · tower-wA (head tower of Alpha)" reply=none] fyi',
+		'[straw net from=api-main id=a1 role=main workspace=Alpha kind=call_tower scope=tower to="tower · tower-wA (head tower of Alpha)" reply=expected why=shared] port 3000 is taken',
+		'[straw net from=api-main id=a1 role=main workspace=Alpha kind=call_tower scope=tower to="tower · tower-wA (head tower of Alpha)" reply=none why=unspecified] fyi',
 	]);
 });
 

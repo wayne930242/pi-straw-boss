@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { fieldsOf } from "../header.ts";
 import { type HerdrRun, panes, report, result, type Sleep, startPi } from "../herdr.ts";
 import { alive as pidAlive } from "../remote.ts";
 import { startOf as processStartOf, startedLater as processStartedLater } from "../startof.ts";
@@ -20,6 +21,8 @@ import type { RunWho } from "./rungate.ts";
 export interface Timers {
 	/** Events are coalesced: a wake waits this long after the first. */
 	wake: number;
+	/** A milestone that expects no reply (`why=milestone`, `reply=none`) waits this long for others when no local run is live (D19); any other event ends the wait at `wake`. */
+	hold: number;
 	/** How long a started pi may take to claim (a trust question the boss answers is not counted). */
 	claim: number;
 	/** How often the server looks at its live runs. */
@@ -44,7 +47,7 @@ export interface Timers {
 	/** How long a stopping server waits for its runs to quit after telling them. */
 	stopGrace: number;
 }
-export const TIMERS: Timers = { wake: 1000, claim: 60_000, watch: 2000, idleSteer: 60_000, idleEnd: 300_000, steerAt: 18 * 60_000, quitAt: RUN_CAP_MINUTES * 60_000, quitGrace: 10_000, signal: 5000, lost: 30_000, refuse: 60_000, loop: 600_000, restored: 120_000, stopGrace: 1500 };
+export const TIMERS: Timers = { wake: 1000, hold: 30_000, claim: 60_000, watch: 2000, idleSteer: 60_000, idleEnd: 300_000, steerAt: 18 * 60_000, quitAt: RUN_CAP_MINUTES * 60_000, quitGrace: 10_000, signal: 5000, lost: 30_000, refuse: 60_000, loop: 600_000, restored: 120_000, stopGrace: 1500 };
 const LOOP_MAX = 3;
 const LEVELS = ["reply", "forward", "dispatch"];
 /** The lower of two trust levels (an unknown one counts as `reply`). */
@@ -132,6 +135,8 @@ interface Svc {
 	state: ServiceState;
 	run?: Active;
 	wake?: ReturnType<typeof setTimeout>;
+	/** When `wake` fires. */
+	wakeAt?: number;
 	timer?: ReturnType<typeof setTimeout>;
 	crashes: number[];
 	notices: Notice[];
@@ -208,12 +213,28 @@ export function createRuns(o: RunsOptions) {
 
 	// --- wake -------------------------------------------------------------------------------------------------------------------------------------------------------
 
+	/** A milestone that expects no reply: a main's notice that something landed, which can wait for others (D19). The header is the code's, read at the very start of the text only. */
+	const holdable = (e: QueuedEvent) => {
+		if (e.kind !== "intercom") return false;
+		const fields = fieldsOf(e.text);
+		return fields?.why === "milestone" && fields.reply === "none";
+	};
+	/**
+	 * The wake comes `wake` after an event that cannot wait, and for events that can (`holdable`) `hold` after the first of them, so mains that finish together land in one run. A burst of milestones does not
+	 * extend the hold, and an event that arrives during it ends it at `wake`: the run takes every event that waits.
+	 */
 	const poke = (svc: Svc) => {
 		pokeAlly(svc);
-		if (stopped || svc.run || svc.wake || svc.state === "held" || !o.enabled()) return;
+		if (stopped || svc.run || svc.state === "held" || !o.enabled()) return;
 		if (svc.refusedAt !== undefined && now() - svc.refusedAt < t.refuse) return;
-		if (!waitingOf(svc).length) return;
-		svc.wake = setTimeout(() => ((svc.wake = undefined), void begin(svc).catch((cause: Error) => (error("run-begin", cause.message), (svc.state = "standing")))), t.wake);
+		const waiting = waitingOf(svc);
+		if (!waiting.length) return;
+		const at = now(), first = Math.min(...waiting.filter(holdable).map((e) => Date.parse(e.at)).filter(Number.isFinite), at);
+		const due = waiting.some((e) => !holdable(e)) ? at + t.wake : Math.max(at + t.wake, first + t.hold);
+		if (svc.wake && svc.wakeAt! <= due) return;
+		clearTimeout(svc.wake);
+		svc.wakeAt = due;
+		svc.wake = setTimeout(() => ((svc.wake = undefined), void begin(svc).catch((cause: Error) => (error("run-begin", cause.message), (svc.state = "standing")))), due - at);
 		svc.wake.unref();
 	};
 	const release = () => {
