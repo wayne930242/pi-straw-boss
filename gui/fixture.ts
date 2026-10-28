@@ -44,17 +44,17 @@ const TOWER_STATES = ["working", "waiting", "new", "closing", "standing", "off"]
 type TowerState = (typeof TOWER_STATES)[number];
 function towerService(state: TowerState): { service?: TowerService; mark: Mark } {
 	if (state === "off") return { mark: "working" };
-	const live = state !== "standing", idle = state === "waiting", began = stamp(414);
+	const live = state !== "standing", idle = state === "waiting", began = stamp(420);
 	const localRuns: NonNullable<TowerService["localRuns"]> = [
 		{ id: "c1", kind: "conversation", resumed: false, why: "no earlier boss session", startedAt: stamp(5), endedAt: stamp(150), outcome: "done", note: "(boss quit)" },
 		{ id: "e1", kind: "event", startedAt: stamp(160), endedAt: stamp(171), outcome: "done", note: "routed the green build to docs", key: "run-e1" },
 		{ id: "e2", kind: "event", startedAt: stamp(180), endedAt: stamp(190), outcome: "crashed", note: "(crashed: pi exited without tower_done)" },
 		{ id: "c2", kind: "conversation", resumed: true, startedAt: stamp(204), endedAt: stamp(380), outcome: "quit", note: "(ended idle)" },
-		{ id: "c3", kind: "conversation", resumed: state !== "new", ...(state === "new" ? { why: "the boss asked for a new one (/new)" } : {}), startedAt: began, ...(live ? {} : { endedAt: stamp(430), outcome: "done", note: "(boss quit)" }) },
+		{ id: "c3", kind: "conversation", resumed: state !== "new", ...(state === "new" ? { why: "the boss asked for a new one (/new)" } : {}), startedAt: began, ...(live ? {} : { endedAt: stamp(436), outcome: "done", note: "(boss quit)" }) },
 	];
 	const service: TowerService = {
 		state: live ? (state === "closing" ? "closing" : "running") : "standing", queued: state === "standing" ? 0 : 1, notices: [], parked: [], allyRuns: [], localRuns,
-		...(live ? { run: { id: "c3", kind: "local" as const, startedAt: began }, conversation: { since: began, resumed: state !== "new", ...(state === "new" ? { why: "the boss asked for a new one (/new)" } : {}), turns: state === "new" ? 0 : 14, idle, ...(idle ? { idleAt: Date.now() + 7 * 60_000 } : {}), idleMs: 600_000, capAt: Date.now() + 3.4 * 3_600_000, ...(state === "closing" ? { closing: true as const } : {}) } } : { lastRun: { endedAt: stamp(430), outcome: "done" } }),
+		...(live ? { run: { id: "c3", kind: "local" as const, startedAt: began }, conversation: { since: began, resumed: state !== "new", ...(state === "new" ? { why: "the boss asked for a new one (/new)" } : {}), turns: state === "new" ? 0 : 14, idle, ...(idle ? { idleAt: Date.now() + 7 * 60_000 } : {}), idleMs: 600_000, capAt: Date.now() + 3.4 * 3_600_000, ...(state === "closing" ? { closing: true as const } : {}) } } : { lastRun: { endedAt: stamp(436), outcome: "done" } }),
 	};
 	return { service, mark: !live ? "idle" : idle ? "idle" : "working" };
 }

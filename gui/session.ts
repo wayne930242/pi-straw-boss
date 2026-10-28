@@ -113,11 +113,11 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 			if (head) {
 				mark(head, mk); // the head glows while the unit is commanding
 				// An ally run's comms are a unit the net lists only on its tower's chip (src/net.ts): the history names it by its device, and the page says what it is.
-				const ally = !u && scene.info?.role === "ally";
-				text(head, "h2 span", ally ? m.ally_run({ device: scene.info?.name ?? "" }) : (u?.name ?? scene.info?.name ?? ""));
-				text(head, "p", [hit?.base.label ?? (ally ? scene.net?.bases.find((b) => b.id === wsOf(scene))?.label : undefined), hit?.squad && m.squad_label({ label: hit.squad }), u?.service && statusLine(u.service, mk, (k) => LABEL[k]()), ally && m.role_ally()].filter(Boolean).join(" · "));
+				const ally = !u && scene.info?.role === "ally", eventRun = !u && scene.info?.role === "run";
+				text(head, "h2 span", ally ? m.ally_run({ device: scene.info?.name ?? "" }) : eventRun ? m.event_run({ id: scene.info?.name ?? "" }) : (u?.name ?? scene.info?.name ?? ""));
+				text(head, "p", [hit?.base.label ?? ((ally || eventRun) ? scene.net?.bases.find((b) => b.id === wsOf(scene))?.label : undefined), hit?.squad && m.squad_label({ label: hit.squad }), u?.service && statusLine(u.service, mk, (k) => LABEL[k]()), ally && m.role_ally(), eventRun && m.role_run()].filter(Boolean).join(" · "));
 				fillAllies(view.querySelector<HTMLElement>(".comms-allies")!, hit?.base.id ?? wsOf(scene), u?.service);
-				const chan = head.querySelector<HTMLElement>(".chan")!, kind = channelOf(u, state, ally);
+				const chan = head.querySelector<HTMLElement>(".chan")!, kind = channelOf(u, state, ally || eventRun);
 				chan.dataset.state = kind === "live" ? "live" : "closed";
 				text(chan, "b", { live: m.channel_open, readonly: m.channel_readonly, closed: m.channel_closed, none: m.no_channel }[kind]());
 				chan.title = chan.querySelector("b")!.textContent ?? ""; // a phone shows the dot alone
@@ -135,7 +135,7 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 			if (notes) (fillConversation(view.querySelector<HTMLElement>(".tower-conv")!, hit?.base.id ?? wsOf(scene), u?.service), fillNotices(notes, hit?.base.id ?? wsOf(scene), u?.service, u?.key), fillMemory(view.querySelector<HTMLElement>(".tower-memory")!, hit?.base.id ?? wsOf(scene), u?.service?.memory));
 			if (shown === "term" && holdOf(u?.key ?? "") !== held) setMode("term"); // the tower woke or went to stand by: the terminal or its sentence changes
 			chat?.setLive(mk === "working" || mk === "commanding" ? `${doing(u!.note, mk)}` : urgent(mk) ? LABEL[mk]() : "", mk);
-			composer?.update({ name, control: Boolean(u?.control), agent: u?.agent, live: !closed(u, state), mark: mk, online: online(), answerable: Boolean(u?.pending?.answer), wakes: Boolean(u?.service), held: u?.service?.state === "held", allyLive: Boolean(u?.service?.allyRuns.length && !u.service.run), ally: !u && scene.info?.role === "ally" });
+			composer?.update({ name, control: Boolean(u?.control), agent: u?.agent, live: !closed(u, state), mark: mk, online: online(), answerable: Boolean(u?.pending?.answer), wakes: Boolean(u?.service), held: u?.service?.state === "held", conversation: Boolean(u?.service?.conversation && !u.service.conversation.closing), allyLive: Boolean(u?.service?.allyRuns.length && !u.service.run), ally: !u && (scene.info?.role === "ally" || scene.info?.role === "run") });
 			asker?.update(u?.pending, mk === "waiting" && Boolean(u?.control) && online()); // its dialog above the composer, answerable or not
 		},
 	};

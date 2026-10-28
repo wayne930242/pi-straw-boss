@@ -29,7 +29,7 @@ type Flight = { sent?: string; answer: Promise<Answer> };
 const flights = new Map<string, Flight>();
 /** `live`: its channel is open (scene.ts `closed`). `answerable`: its question panel on the page answers it. */
 /** `wakes`: the tower of the sb server's service, which has no pi to type into while it stands by: Send posts a boss event that wakes it (the server's tower route). `held`: the service stopped waking after repeated crashes; a boss event still wakes it. `allyLive`: an ally run is working and no local run is (a message wakes a run of the boss's own). `ally`: the unit is an ally run's comms, which are read and never written to. */
-export interface Unit { wakes?: boolean; held?: boolean; allyLive?: boolean; ally?: boolean; name: string; control: boolean; agent?: keyof typeof AGENT; live: boolean; mark: Mark; online: boolean; answerable?: boolean }
+export interface Unit { wakes?: boolean; /** The boss conversation is live (and not ending): a message continues it. */ conversation?: boolean; held?: boolean; allyLive?: boolean; ally?: boolean; name: string; control: boolean; agent?: keyof typeof AGENT; live: boolean; mark: Mark; online: boolean; answerable?: boolean }
 
 /** The server's input API for one session. */
 export const postTo = (key: string): Post => (action, body) => post(`sessions/${encodeURIComponent(key)}/${action}`, body);
@@ -205,7 +205,7 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 	}
 	function draw() {
 		const why = blocked(unit), working = unit.mark === "working";
-		box.placeholder = why ?? (unit.wakes ? (unit.held ? m.placeholder_held() : unit.allyLive ? m.placeholder_ally() : m.placeholder_wake()) : m.placeholder({ name: unit.name }));
+		box.placeholder = why ?? (unit.wakes ? (unit.held ? m.placeholder_held() : unit.allyLive ? m.placeholder_ally() : unit.conversation ? m.placeholder_conversation() : m.placeholder_wake()) : m.placeholder({ name: unit.name }));
 		box.disabled = attach.disabled = !typable(unit); // a closed channel (the session left the net, or a finished subagent's pi exited) takes no typing at all, as it takes no sending
 		send.disabled = busy || Boolean(why) || !box.value.trim(); // nothing typed, nothing to send
 		follow.hidden = stop.hidden = !working || Boolean(why) || Boolean(unit.wakes); // a tower's run is woken, not steered or stopped from here

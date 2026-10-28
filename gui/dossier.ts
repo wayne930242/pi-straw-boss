@@ -20,10 +20,10 @@ export function mountDossier(host: HTMLElement, scene: Readonly<Scene>, { openTi
 		const root = host.firstElementChild as HTMLElement, { net, info, model, ctx } = scene, ws = wsOf(scene);
 		mark(root, mk);
 		fillPlate(root.querySelector(".plate")!, u?.role ?? info?.role ?? "member", mk);
-		const ally = !u && info?.role === "ally"; // an ally run's comms: a unit only its tower's chip lists (src/net.ts)
-		text(root, "h3", ally ? m.ally_run({ device: name }) : name);
+		const ally = !u && info?.role === "ally", eventRun = !u && info?.role === "run"; // an ally or event run's comms: a unit only its tower's chip lists (src/net.ts)
+		text(root, "h3", ally ? m.ally_run({ device: name }) : eventRun ? m.event_run({ id: name }) : name);
 		text(root, ".role", roleName(u?.role ?? info?.role ?? "session"));
-		say(root, ".state", u?.note, mk, u ? (u.service && !u.service.run ? statusLine(u.service, mk, (k) => LABEL[k]()) : undefined) : ally ? m.ally_state() : m.not_in_net()); // a tower the server runs says "standing by", as the map does
+		say(root, ".state", u?.note, mk, u ? (u.service && !u.service.run ? statusLine(u.service, mk, (k) => LABEL[k]()) : undefined) : ally ? m.ally_state() : eventRun ? m.event_run_state() : m.not_in_net()); // a tower the server runs says "standing by", as the map does
 		const note = root.querySelector<HTMLElement>(".d-note")!;
 		note.hidden = state !== "recent" && state !== "unknown";
 		note.replaceChildren(state === "unknown" ? m.note_unknown() : m.note_recent());

@@ -1050,6 +1050,12 @@ export function createRuns(o: RunsOptions) {
 		const was = readPointer(slot, workspace);
 		if (was) writePointer(slot, workspace, { ...was, fresh: true });
 	}
+	/** The boss is in an event run (not a conversation): the record says when, so the next conversation's brief can name the run and what it left. */
+	function markBossIn(a: Active) {
+		if (a.rec.conversation || a.rec.bossIn) return;
+		a.rec.bossIn = iso(now());
+		writeRun(slot, a.rec);
+	}
 	/** The boss spoke in the run's session (its extension saw input from the keyboard): they are in the run. */
 	function present(req: Record<string, unknown>) {
 		const a = of(req.token);
@@ -1059,6 +1065,7 @@ export function createRuns(o: RunsOptions) {
 		a.boss = now();
 		a.bossSince ??= a.boss;
 		a.graceUntil = undefined;
+		markBossIn(a);
 		bossTurn(a);
 		return { ok: true as const };
 	}
@@ -1219,7 +1226,7 @@ export function createRuns(o: RunsOptions) {
 			// At the tower prompt the boss is at the pane: the run this wakes is one they are in, from its claim (or from now, when a run is live already).
 			if (opts.present) {
 				svc.bossAt = now();
-				if (svc.run?.token && !svc.run.ended && svc.run.rec.kind === "local" && !bossOver(svc.run)) (svc.run.boss = now(), (svc.run.bossSince ??= svc.run.boss));
+				if (svc.run?.token && !svc.run.ended && svc.run.rec.kind === "local" && !bossOver(svc.run)) (svc.run.boss = now(), (svc.run.bossSince ??= svc.run.boss), markBossIn(svc.run));
 			}
 			poke(svc);
 			return written;
@@ -1264,8 +1271,9 @@ export function createRuns(o: RunsOptions) {
 			const a = svc.run, live = a && !a.ended && a.rec.conversation ? a : undefined;
 			markFresh(workspace);
 			if (live && !live.rec.file) live.fresh = true;
-			if (live?.token && live.closing === undefined && live.terminating === undefined) await api.leave(workspace);
-			return { fresh: true as const, left: live !== undefined };
+			const left = Boolean(live?.token && live.closing === undefined && live.terminating === undefined);
+			if (left) await api.leave(workspace);
+			return { fresh: true as const, left };
 		},
 		deliverAgain(workspace: string, id: string) {
 			const svc = services.get(workspace), e = readQueue(slot, workspace, true).find((x) => x.id === id);
@@ -1300,11 +1308,11 @@ export function createRuns(o: RunsOptions) {
 		/** The waiting events of a workspace for the GUI's queue rows. */
 		queue: (workspace: string) => { const s = find(workspace); return s ? waitingOf(s, new Set(s.run?.offered.keys() ?? [])) : []; },
 		/**
-		 * The session file the tower unit's comms show: the live conversation's, else the boss session's (bossconv.ts), which an event run does not move, so the log stays one line of talk with the boss. With no boss
+		 * The session file the tower unit's comms show: the live conversation's, or the event run the boss is in (they spoke to it while it ran), else the boss session's (bossconv.ts), which an event run does not move, so the log stays one line of talk with the boss. With no boss
 		 * session yet it is the live run's, else the last local run's, as before.
 		 */
 		file: (workspace: string): string | undefined => {
-			const svc = find(workspace), live = svc?.run && !svc.run.ended && svc.run.rec.conversation ? svc.run.rec.file : undefined;
+			const svc = find(workspace), run = svc?.run, live = run && !run.ended && run.rec.kind === "local" && (run.rec.conversation || run.boss !== undefined) ? run.rec.file : undefined;
 			return live ?? readPointer(slot, workspace)?.file ?? svc?.run?.rec.file ?? listRuns(slot, workspace).filter((r) => r.kind === "local" && r.file).at(-1)?.file;
 		},
 		/** The boss messages a local run took, oldest first: the ones a memory proposal may cite (towermemory.ts). A message offered and not confirmed is not one. */

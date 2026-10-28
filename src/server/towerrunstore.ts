@@ -47,6 +47,8 @@ export interface RunRecord {
 	hand?: true;
 	/** A boss conversation (bossconv.ts): the run a present boss event woke when no local run was live. How it began; absent on an event run. */
 	conversation?: ConversationInfo;
+	/** An event run the boss spoke in (a present boss event reached it, or they typed in it): when they first did. The next conversation's brief names the run. */
+	bossIn?: string;
 	/** A short word on why it ended (the quit failed, the pane vanished). */
 	detail?: string;
 }

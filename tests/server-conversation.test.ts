@@ -337,7 +337,16 @@ test("resumable: a regular .jsonl under the sessions folder, small and recent, n
 	assert.match((resumable(pointer(outside), env) as { why: string }).why, /not under pi's sessions folder/);
 	const link = join(sessions(), "link.jsonl");
 	symlinkSync(outside, link);
-	assert.match((resumable(pointer(link), env) as { why: string }).why, /not under pi's sessions folder/, "a link out of the folder is not followed");
+	assert.match((resumable(pointer(link), env) as { why: string }).why, /link/, "a link out of the folder is not followed");
+	const inner = sessionFile("inner.jsonl"), innerLink = join(sessions(), "inner-link.jsonl");
+	symlinkSync(inner, innerLink);
+	assert.match((resumable(pointer(innerLink), env) as { why: string }).why, /link/, "nor a link to another session inside the folder (T4R-F004)");
+	const realDir = join(sessions(), "real-dir"), dirLink = join(sessions(), "dir-link");
+	mkdirSync(realDir);
+	writeFileSync(join(realDir, "d.jsonl"), "x");
+	symlinkSync(realDir, dirLink);
+	assert.match((resumable(pointer(join(dirLink, "d.jsonl")), env) as { why: string }).why, /link/, "nor a file behind a linked folder");
+	assert.equal(resumable(pointer(join(realDir, "d.jsonl")), env).ok, true, "the same file by its real path is fine");
 	assert.match((resumable(pointer(sessionFile("c.jsonl")), { ...env, uid: (env.uid ?? 0) + 1 }) as { why: string }).why, /not the boss's/, "a file of another user");
 	writePointer(world.slot, "wA", pointer(file));
 	assert.equal(readPointer(world.slot, "wA")?.turns, 4);
@@ -365,4 +374,52 @@ test("the GUI's tower panel is the pi interface's functions: the composer is a p
 	assert.match(String(again.error), /No boss conversation is live/);
 	assert.deepEqual(await panel.conversation!("wA", "new"), { ok: true, fresh: true, left: false });
 	assert.equal((await panel.event("wZ", "x")).ok, false);
+});
+
+test("a boss message while an event run is live stays with that run, the comms show it, and the next conversation's brief names it (T4R-F001)", async () => {
+	const s = await setup();
+	const file = sessionFile("2026-10-28_aaa.jsonl");
+	await quit(s, await conversation(s, 1, file));
+	tower().incoming({ id: "main-1", name: "docs-main" }, { id: "m1", content: { text: "build is green" } });
+	const eventRun = await nthRun(2);
+	const ev = await claimRun(s, eventRun);
+	const evFile = sessionFile("2026-10-28_eee.jsonl");
+	await ask(s, { cmd: "run-file", token: ev.token, file: evFile });
+	await drain(s, ev.token);
+	assert.equal(world.expose!.runs.view("wA")!.file, realpathSync(file), "before the boss speaks the comms are the boss session");
+	assert.equal((await ask(s, { cmd: "tower-event", workspace: "wA", text: "what is the state of the build?", present: true })).ok, true);
+	assert.equal(world.pis.size, 2, "no conversation starts: the event run is live");
+	assert.equal(world.expose!.runs.view("wA")!.file, evFile, "the comms show the run the boss is in");
+	assert.equal(typeof readRun(world.slot, "wA", eventRun)?.bossIn, "string");
+	assert.equal(((await poll(s, ev.token)).event as { text: string }).text, "what is the state of the build?");
+	assert.equal((await ask(s, { cmd: "run-done", token: ev.token, note: "answered the boss about the build", left: true })).ok, true);
+	exit(eventRun);
+	await until(() => readRun(world.slot, "wA", eventRun)?.outcome === "done", "the event run to end");
+	assert.equal(world.expose!.runs.view("wA")!.file, realpathSync(file), "when it ends the comms return to the boss session");
+	const next = await conversation(s, 3, file, "again");
+	assert.match(next.brief, /the boss spoke in this run \d+m ago/);
+	assert.match(next.brief, /answered the boss about the build|the boss left the run/);
+});
+
+test("an event run the boss never spoke in is not named as one in the brief", async () => {
+	const s = await setup();
+	const file = sessionFile("2026-10-28_aaa.jsonl");
+	await quit(s, await conversation(s, 1, file));
+	tower().incoming({ id: "main-1", name: "docs-main" }, { id: "m1", content: { text: "hi" } });
+	const eventRun = await nthRun(2);
+	const ev = await claimRun(s, eventRun);
+	await drain(s, ev.token);
+	await ask(s, { cmd: "run-done", token: ev.token, note: "did it" });
+	exit(eventRun);
+	await until(() => readRun(world.slot, "wA", eventRun)?.outcome === "done", "the event run to end");
+	const next = await conversation(s, 3, file, "again");
+	assert.match(next.brief, /did it/);
+	assert.doesNotMatch(next.brief, /the boss spoke in this run/);
+});
+
+test("/new reports left only when a live conversation was really left: one that has not claimed yet goes on (T4R-F006)", async () => {
+	const s = await setup();
+	assert.equal((await ask(s, { cmd: "tower-event", workspace: "wA", text: "x", present: true })).ok, true);
+	await nthRun(1);
+	assert.equal((await ask(s, { cmd: "tower-new", workspace: "wA" })).left, false, "not claimed: marked, not left");
 });

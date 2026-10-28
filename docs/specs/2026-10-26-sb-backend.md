@@ -1118,12 +1118,12 @@ GUI; a boss message is an instruction". "Never ask the boss" stays.
 
 ## The boss conversation
 
-T4 of the tower experience (D23, D25; boss: "The GUI composer continues the same boss conversation as `tower>` (one per workspace)").
+T4 of the tower experience (D23, D26; boss: "The GUI composer continues the same boss conversation as `tower>` (one per workspace)").
 
 **Start.** A `boss` event with `present` (the tower prompt's Enter, the GUI composer, `/boss tower <prompt>`; one server function, `runs.boss`) when no local run is live
 starts a *conversation*: `pi --name "tower · boss · <label>" --sb-run <id> --session <file>`. The file is `tower/<workspace id>/boss-session.json`'s
-`file` (`{file, run, startedAt, lastAt, turns, fresh?}`, mode 600), used only when it is a regular file (`lstat`, no link), under pi's `sessions` folder by real path, owned
-by the server's uid (POSIX), at most 4 MB, last written at most 7 days ago, named by no live pane's `agent_session`, and the boss did not ask for a new one (`fresh`). If any check
+`file` (`{file, run, startedAt, lastAt, turns, fresh?}`, mode 600), used only when it is a regular file and no part of its path below the `sessions` folder is a symlink (each component is `lstat`ed), under pi's `sessions` folder by real path, owned
+by the server's uid (POSIX), at most 4 MB, the boss's last turn in it (the pointer's `lastAt`) at most 7 days ago, named by no live pane's `agent_session`, and the boss did not ask for a new one (`fresh`). If any check
 fails the run has no `--session` and brief 1a says why. Only a conversation writes the pointer, by its own `run-file` report and only for a `.jsonl` under `sessions`; event
 runs, ally runs, and the boss's typing in an event run never do, and an ally run never resumes it. The pointer's `turns` counts the boss events the conversation took and the boss's typing in its pi.
 
@@ -1859,7 +1859,7 @@ straw-boss-desk's owner also agreed to D11.
 | D20 | The work board fills itself | The board fills itself from the main's todo list and name, and `board_set` overrides it (2026-10-28, tower experience; D16 and D17 belong to the standing prompt, D18 to D24 to the tower delta). A main writes its own entry from its todo list and its name, scrubbed of paths outside the project, URLs, emails, and token shapes; `board_set` stands until the todos or the name move, and `board_set { auto: true }` hands it back. Q1 = A ("allies get `now` and the done count of an auto entry only") is **superseded** by the boss on 2026-10-28: "收緊：自動的只給名字＋進度": an auto entry gives allies the main's name and the done count (`<name> (3/5)`), no task text; a `board_set` entry goes whole (Straw Link spec, **Auto-fill**; built in T2). |
 | D22 | Event runs stay fresh; the tower's memory is bounded and the boss's | "event runs stay fresh. A bounded tower memory (the boss's standing instructions, decisions, and open waits), editable in the GUI, sits beside the handoff note." Q3 = A (a run keeps one by a verbatim quote of the boss's words, checked by the server) is replaced on 2026-10-28: "改成提議＋你確認". A tower run can only **propose** a standing instruction or a decision (and retiring one); it takes effect only when the boss confirms it, with `/boss memory` or in the GUI. Waits stay run-written. Ally runs never see memory (**Tower memory**). |
 | D23 | pi first, the GUI mirrors | "不該把 GUI 當成必備的，所有操作都應該走 pi 介面，GUI 只是接這個行為": every memory operation is a `/boss memory` command in any joined pi session, and the GUI's panel and card call the same server function with the same rev check and add nothing of their own. A slash command is the boss's typed input only: no tool, run token, ally, or link reaches it (**Tower memory**). |
-| D25 | The GUI composer continues the boss conversation | Q2 = A, 2026-10-28: "The GUI composer continues the same boss conversation as `tower>` (one per workspace)." The GUI, the prompt, and `/boss tower` call one server function; a conversation resumes the last boss session under the checks of **The boss conversation**, and an event run stays fresh. |
+| D26 | The GUI composer continues the boss conversation | Q2 = A, 2026-10-28: "The GUI composer continues the same boss conversation as `tower>` (one per workspace)." The GUI, the prompt, and `/boss tower` call one server function; a conversation resumes the last boss session under the checks of **The boss conversation**, and an event run stays fresh. |
 
 ## Review record
 

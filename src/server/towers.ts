@@ -253,9 +253,11 @@ export function createTowers(o: TowersOptions): Towers {
 	const conversationLines = (c: ConversationInfo, ws: string): { line: string; since: string[] } => {
 		const day = (at?: string) => (at && Number.isFinite(Date.parse(at)) ? new Date(at).toLocaleDateString("sv") : "an unknown day");
 		const line = c.resumed ? `Boss conversation: the boss is at this pane. Resumed session from ${day(c.from)}, ${c.turns} boss turn${c.turns === 1 ? "" : "s"}.` : `Boss conversation: the boss is at this pane. New session: ${c.why ?? "no earlier boss session"}.`;
-		const after = c.after ? Date.parse(c.after) : NaN, events = new Set(listRuns(slot, ws).filter((r) => r.kind === "local" && !r.conversation).map((r) => r.id));
-		const notes = Number.isFinite(after) ? readNotes(slot, ws).filter((n) => n.kind === "local" && events.has(n.run) && Date.parse(n.at) > after).slice(-3) : [];
-		const rows = notes.map((n) => `- ${ageOf(now() - Date.parse(n.at))} ago: ${phrase(n.note.split("\n")[0], 380)}`);
+		const after = c.after ? Date.parse(c.after) : NaN, events = new Map(listRuns(slot, ws).filter((r) => r.kind === "local" && !r.conversation).map((r) => [r.id, r]));
+		// An event run the boss spoke in after their last conversation turn is named with when, so the resumed session knows who said what to whom.
+		const spoke = (id: string) => { const at = events.get(id)?.bossIn; return at !== undefined && (!Number.isFinite(after) || Date.parse(at) > after) ? at : undefined; };
+		const notes = readNotes(slot, ws).filter((n) => n.kind === "local" && events.has(n.run) && (spoke(n.run) !== undefined || (Number.isFinite(after) && Date.parse(n.at) > after))).slice(-3);
+		const rows = notes.map((n) => `- ${ageOf(now() - Date.parse(n.at))} ago${spoke(n.run) ? ` (the boss spoke in this run ${ageOf(now() - Date.parse(spoke(n.run)!))} ago, so what they said is in that run's session, not in yours)` : ""}: ${phrase(n.note.split("\n")[0], 380)}`);
 		return { line, since: rows };
 	};
 	const runs: Runs = createRuns({ slot, run, sleep, now, log, sessions: sessionsRoot(o.env), enabled: o.enabled, max: () => readTowerRuns(slot.stateDir).max, trustDir: trustDir(slot.stateDir), model: () => towerModel(slot.stateDir), ...(allyPort ? { ally: allyPort } : {}), ...o.runs });

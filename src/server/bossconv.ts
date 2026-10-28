@@ -1,6 +1,6 @@
 import { lstatSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Slot } from "./record.ts";
 import { ensureDir, towerDir, writeDurable } from "./towerstore.ts";
 
@@ -58,13 +58,29 @@ export function underRoot(file: string, root: string): string | undefined {
 	return base && path && path.startsWith(base + sep) ? path : undefined;
 }
 
+/** Whether any component of `file` below `root` is a symlink (each is lstat'ed; a missing one is not a link). */
+function linkIn(file: string, root: string): boolean {
+	const base = resolve(root), rel = relative(base, resolve(file));
+	if (rel.startsWith("..") || isAbsolute(rel)) return false;
+	let at = base;
+	for (const part of rel.split(sep)) {
+		at = join(at, part);
+		try {
+			if (lstatSync(at).isSymbolicLink()) return true;
+		} catch {
+			return false;
+		}
+	}
+	return false;
+}
+
 export type Resume = { ok: true; file: string } | { ok: false; why: string };
 export interface ResumeEnv {
 	now: number;
 	root: string;
 	/** The session files the live panes report (Herdr's `agent_session`): a session another pi has open is not resumed. */
 	live: string[];
-	/** The owner a session file must have (POSIX); unset on Windows, where the file must not be a link instead. */
+	/** The owner a session file must have (POSIX); unset on Windows. A link anywhere below the root is refused on both. */
 	uid?: number;
 }
 /** Whether the pointer's session may be resumed, and the reason when it may not (shown in the brief's first line and the GUI's divider). */
@@ -72,6 +88,7 @@ export function resumable(pointer: BossPointer | undefined, e: ResumeEnv): Resum
 	if (!pointer) return { ok: false, why: "no earlier boss session" };
 	if (pointer.fresh) return { ok: false, why: "the boss asked for a new one (/new)" };
 	if (e.now - Date.parse(pointer.lastAt) > BOSS_FILE_DAYS * 86_400_000) return { ok: false, why: `the last boss turn was over ${BOSS_FILE_DAYS} days ago` };
+	if (linkIn(pointer.file, e.root)) return { ok: false, why: "the last session file is, or sits behind, a link" };
 	const path = underRoot(pointer.file, e.root);
 	if (!path) return { ok: false, why: "the last session file is gone, or not under pi's sessions folder" };
 	let stat;

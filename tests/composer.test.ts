@@ -55,6 +55,8 @@ test("an ally run's comms say a teammate's message drives them and take no typin
 	assert.equal(blocked(unit), m.blocked_no_pane(), "any other unit with no pane keeps its reason");
 	assert.notEqual(m.blocked_ally(), m.blocked_no_pane());
 	assert.match(m.placeholder_ally(), /ally run/);
+	assert.notEqual(m.placeholder_conversation(), m.placeholder_wake(), "a live boss conversation is continued, not woken (T4R-F002)");
+	assert.match(m.placeholder_conversation({}, { locale: "zh-TW" }), /對話/);
 	assert.notEqual(m.placeholder_ally(), m.placeholder_wake());
 });
 
