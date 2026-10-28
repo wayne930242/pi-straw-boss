@@ -511,14 +511,14 @@ test("up --timeout: the time spent preparing the folder with no one holding serv
 	assert.notEqual(r.errJson?.wait, "lock", "no one held the lock");
 	assert.equal(r.errJson?.wait, "start");
 	assert.equal(readLock(world.slot), undefined, "and it left no lock behind");
-	assert.ok(clock.elapsed() < 800, `${clock.elapsed()} ms`);
+	assert.equal(clock.elapsed(), 400, "the deadline passed during the 400 ms of preparing, and nothing waited after it");
 	// With a real holder the wait is the lock's, and it ends at the deadline too.
 	const lock = await takeLock(world.slot, "someone else", { alive: () => true }, 0);
 	clock = fakeClock();
 	const busy = await cli(["up", "--timeout", "0.3"], { ctx: { now: clock.now, sleep: clock.sleep, lock: { now: clock.now, sleep: clock.sleep, alive: () => true, startOf: () => undefined, prepare: () => {} } } });
 	lock.release();
 	assert.equal(busy.errJson?.wait, "lock");
-	assert.ok(clock.elapsed() >= 250 && clock.elapsed() < 800, `${clock.elapsed()} ms`);
+	assert.equal(clock.elapsed(), 300, "the lock wait ended at the deadline");
 });
 
 test("status drops lastError once the server is ready: a failure of an earlier attempt does not survive a successful start", async () => {

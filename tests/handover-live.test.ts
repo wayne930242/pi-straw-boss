@@ -143,8 +143,9 @@ test("RC4-F001/F002: registerTrust starts the early read at load, and its handle
 	registerTrust(pi, { cfg: { env: ENV, now: Date.now, sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)), startRead: { later: cold.startedLater, waitMs: 3000 } } as never, guiDir }, { stdin, proc, write: (text) => void out.push(text), resources: () => true });
 	assert.equal(cold.reads.length, 1, "the read started when the extension loaded");
 	const decided = handlers.get("project_trust")!({ cwd }, { mode: "tui", hasUI: true }) as Promise<{ trusted: string }>;
-	await new Promise<void>((resolve) => setImmediate(resolve)); // the question is waiting on the read that is under way
-	assert.deepEqual(seen, [], "nothing was sent while the read was pending");
+	// the question is waiting on the read that is under way
+	assert.equal(await Promise.race([decided.then(() => "decided"), new Promise<string>((resolve) => setImmediate(() => resolve("pending")))]), "pending", "the question is still pending");
+	assert.equal(existsSync(trustDir(guiDir)) && readdirSync(trustDir(guiDir)).length > 0, false, "no request file while the read was pending");
 	cold.release();
 	await until(() => existsSync(trustDir(guiDir)) && readdirSync(trustDir(guiDir)).some((f) => /^[0-9a-f-]{36}\.json$/.test(f)), "the request file: the GUI was found live through the cold source", 20_000);
 	assert.deepEqual(seen, ["/secret-token/"], "the token went to the port once the start time matched");

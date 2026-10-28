@@ -70,6 +70,8 @@ export class TowerWorld extends ServerWorld {
 	 */
 	runClock: ReturnType<typeof fakeClock> | undefined;
 	runMax: number | undefined;
+	/** How often the runs' watcher asked whether a pi lives: once per run per tick, so two more calls mean a whole tick ran since. */
+	aliveCalls = 0;
 	/** The tower service of the last server started in this world, once it is built. */
 	expose: Towers | undefined;
 	ally = new FakeAlly();
@@ -111,7 +113,7 @@ export class TowerWorld extends ServerWorld {
 					return this.linkAnswers.get(String(b.op))?.(b) ?? { ok: false, code: "no_holder", error: "no holder in this world" };
 				},
 				runs: {
-					timers: { ...FAST_RUNS, ...this.runTimers }, ...(this.runClock ? { now: this.runClock.now } : {}), alive: (pid) => this.live.has(pid), startOf: (pid) => (this.startCalls++, `T-${pid}`), kill: (pid, signal) => void this.kills.push([pid, signal]),
+					timers: { ...FAST_RUNS, ...this.runTimers }, ...(this.runClock ? { now: this.runClock.now } : {}), alive: (pid) => (this.aliveCalls++, this.live.has(pid)), startOf: (pid) => (this.startCalls++, `T-${pid}`), kill: (pid, signal) => void this.kills.push([pid, signal]),
 					settings: async () => { await this.settingsHold; if (this.settingsError) throw this.settingsError; },
 					...(this.runMax ? { max: () => this.runMax! } : {}),
 				},
