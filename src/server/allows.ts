@@ -59,7 +59,7 @@ export function createAllows(o: AllowsOptions = {}) {
 		for (;;) {
 			prune();
 			why = `the hub holds no Allow for tool call ${toolCallId} of this run`;
-			for (const h of held.filter((x) => x.note.owner === owner && x.note.toolCallId === toolCallId && x.note.pane === pane)) {
+			for (const h of held.filter((x) => !x.used && x.note.owner === owner && x.note.toolCallId === toolCallId && x.note.pane === pane)) {
 				const problem = fits(h.note);
 				if (problem) {
 					why = problem;
@@ -71,6 +71,12 @@ export function createAllows(o: AllowsOptions = {}) {
 					why = "the session that relayed the Allow is not on this run's pane";
 					continue;
 				}
+				// Used up in the same turn of the event loop as the check, so a second call that waited on `sessions()` meanwhile finds it gone.
+				if (h.used) {
+					why = "the Allow was used by another call";
+					continue;
+				}
+				h.used = true;
 				return { ok: true, held: h };
 			}
 			if (now() >= deadline) return { ok: false, reason: why };
@@ -93,9 +99,7 @@ export function createAllows(o: AllowsOptions = {}) {
 				if (parsed.tool !== q.tool) return `the Allow was given for another tool (${parsed.tool}), not ${q.tool}`;
 				return parsed.digest === digest ? undefined : "the Allow was given for other arguments than this call has";
 			});
-			if (!got.ok) return got;
-			got.held!.used = true;
-			return { ok: true };
+			return got.ok ? { ok: true } : got;
 		},
 		/** The approval of a `link_request` call: its dialog body starts with the lines the holder said the request does. */
 		async takeRequest(q: { pane: string; toolCallId: string; lines: string[]; sessions: Placed }): Promise<TakeResult> {
@@ -104,9 +108,7 @@ export function createAllows(o: AllowsOptions = {}) {
 				const cut = note.title.indexOf("\n\n");
 				return cut >= 0 && note.title.slice(cut + 2).startsWith(expected) ? undefined : "the approval was given for another request";
 			});
-			if (!got.ok) return got;
-			got.held!.used = true;
-			return { ok: true };
+			return got.ok ? { ok: true } : got;
 		},
 	};
 }

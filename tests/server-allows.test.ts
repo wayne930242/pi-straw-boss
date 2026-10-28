@@ -86,3 +86,16 @@ test("an approval of a link_request is taken for its own call id and a body that
 	allows.note(gate({ toolCallId: "tc-5" }));
 	assert.equal((await allows.takeRequest({ ...q, toolCallId: "tc-5", lines: ["x"] })).ok, false);
 });
+
+test("two calls that take the same Allow at once get it once (RV6-F006)", async () => {
+	clock = 1000;
+	const allows = make({ waitMs: 20 });
+	allows.note(gate());
+	const slow = async () => (await new Promise((resolve) => setImmediate(resolve)), placed()());
+	const [a, b] = await Promise.all([allows.take(ask({ sessions: slow })), allows.take(ask({ sessions: slow }))]);
+	assert.equal([a, b].filter((x) => x.ok).length, 1, JSON.stringify([a, b]));
+	allows.note(gate({ owner: "straw-link-request", toolCallId: "tc-7", title: "Link request\n\nrun it" }));
+	const q = { pane: "wA:p9", toolCallId: "tc-7", lines: ["run it"], sessions: slow };
+	const [c, d] = await Promise.all([allows.takeRequest(q), allows.takeRequest(q)]);
+	assert.equal([c, d].filter((x) => x.ok).length, 1, JSON.stringify([c, d]));
+});
