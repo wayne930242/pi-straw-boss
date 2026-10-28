@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { StubClient } from "./agent-fakes.ts";
+import { fakeClock } from "./fake-clock.ts";
 import { FakeHerdr } from "./fakes.ts";
 import { ServerWorld } from "./server-world.ts";
 import type { Session } from "../src/herdr.ts";
@@ -63,6 +64,11 @@ export class TowerWorld extends ServerWorld {
 	/** While set, the settings check waits for it (a pi started by hand meanwhile). */
 	settingsHold: Promise<void> | undefined;
 	runTimers: Partial<Timers> = {};
+	/**
+	 * The clock of the runs (the age of a run, the idle time, the quit grace) when a test sets one: the watcher still ticks every 20 ms, but it sees only the ages the test gives it, so a tick that comes late under load cannot step over a
+	 * time (the steer is skipped when the first tick that sees a run is already past the cap). Unset, the runs use the server's clock.
+	 */
+	runClock: ReturnType<typeof fakeClock> | undefined;
 	runMax: number | undefined;
 	/** The tower service of the last server started in this world, once it is built. */
 	expose: Towers | undefined;
@@ -105,7 +111,7 @@ export class TowerWorld extends ServerWorld {
 					return this.linkAnswers.get(String(b.op))?.(b) ?? { ok: false, code: "no_holder", error: "no holder in this world" };
 				},
 				runs: {
-					timers: { ...FAST_RUNS, ...this.runTimers }, alive: (pid) => this.live.has(pid), startOf: (pid) => (this.startCalls++, `T-${pid}`), kill: (pid, signal) => void this.kills.push([pid, signal]),
+					timers: { ...FAST_RUNS, ...this.runTimers }, ...(this.runClock ? { now: this.runClock.now } : {}), alive: (pid) => this.live.has(pid), startOf: (pid) => (this.startCalls++, `T-${pid}`), kill: (pid, signal) => void this.kills.push([pid, signal]),
 					settings: async () => { await this.settingsHold; if (this.settingsError) throw this.settingsError; },
 					...(this.runMax ? { max: () => this.runMax! } : {}),
 				},

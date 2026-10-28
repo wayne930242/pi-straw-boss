@@ -128,11 +128,14 @@ test("a watch does not keep the process alive: neither its socket nor its retry 
 	await server.start();
 	const { execFileSync } = await import("node:child_process");
 	const src = new URL("../src/server-watch.ts", import.meta.url).pathname;
-	const script = `import { herdrWatch } from ${JSON.stringify(src)}; herdrWatch(${JSON.stringify(server.path)})(() => {}); await new Promise((r) => setTimeout(r, 100));`;
-	execFileSync(process.execPath, ["--input-type=module", "-e", script], { timeout: 5000 });
+	// How long node takes to start and to load the module is the machine's (a load average of 100 was seen), so the child ends itself by its own unref'd clock, counted from its script: exit 3 says the loop was still held 3 s
+	// after the script ran. The outer limit is only a last resort.
+	const watchdog = "setTimeout(() => process.exit(3), 3000).unref();";
+	const script = `import { herdrWatch } from ${JSON.stringify(src)}; herdrWatch(${JSON.stringify(server.path)})(() => {}); ${watchdog} await new Promise((r) => setTimeout(r, 100));`;
+	execFileSync(process.execPath, ["--input-type=module", "-e", script], { timeout: 60_000 });
 	await server.stop();
-	const down = `import { herdrWatch } from ${JSON.stringify(src)}; herdrWatch(${JSON.stringify(server.path)})(() => {});`;
-	execFileSync(process.execPath, ["--input-type=module", "-e", down], { timeout: 5000 });
+	const down = `import { herdrWatch } from ${JSON.stringify(src)}; herdrWatch(${JSON.stringify(server.path)})(() => {}); ${watchdog}`;
+	execFileSync(process.execPath, ["--input-type=module", "-e", down], { timeout: 60_000 });
 });
 
 test("the event stream subscribes to the asked types, delivers each event (split anywhere), and says null after each (re)connection", async () => {

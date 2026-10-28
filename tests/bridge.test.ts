@@ -493,13 +493,20 @@ test("a bridge follows gui.json from the start: a server that starts later is jo
 test("the gui.json check keeps no process alive: a session with a bridge and no server exits on its own", () => {
 	const dir = mkdtempSync(join(tmpdir(), "psb-bridge-test-"));
 	dirs.push(dir);
+	// What this asks is whether the bridge leaves a timer that holds the loop (its 2 s poll and 2 s verdict wait), so the child reports what holds its loop before the bridge and after the session has started: the same list means the bridge added
+	// nothing. How long node takes to start and to load the module graph is the machine's (the old 5 s bound failed in full runs on a loaded machine, where this test took 8.7 s), and a child that stays alive ends itself by its own unref'd clock, counted from the start of the
+	// session: the outer limit is only a last resort.
 	const code = `import { startBridge } from ${JSON.stringify(new URL("../src/bridge.ts", import.meta.url).href)};
 const hs = new Map(), pi = { events: { on: () => () => {}, emit: () => {} }, on: (t, h) => hs.set(t, h) };
+const before = process.getActiveResourcesInfo();
 startBridge(pi, { env: { HERDR_PANE_ID: "wA:p1", PI_INTERCOM_SESSION_ID: "S" }, dir: ${JSON.stringify(dir)}, local: () => undefined });
-hs.get("session_start")({}, { hasUI: false, ui: {}, sessionManager: { getSessionFile: () => undefined } });`;
-	const start = Date.now(), run = spawnSync(process.execPath, ["--input-type=module", "-e", code], { timeout: 10_000 });
-	assert.equal(run.status, 0, String(run.stderr));
-	assert.ok(Date.now() - start < 5000, "it did not wait for the 2 s timer");
+setTimeout(() => process.exit(3), 4000).unref();
+hs.get("session_start")({}, { hasUI: false, ui: {}, sessionManager: { getSessionFile: () => undefined } });
+process.stdout.write(JSON.stringify({ before, after: process.getActiveResourcesInfo() }));`;
+	const run = spawnSync(process.execPath, ["--input-type=module", "-e", code], { encoding: "utf8", timeout: 60_000 });
+	assert.equal(run.status, 0, `exit ${run.status} (3: it was still running 4 s after the session started): ${run.stderr}`);
+	const { before, after } = JSON.parse(run.stdout) as { before: string[]; after: string[] };
+	assert.deepEqual(after, before, "no timer, immediate, or request holds the loop once the session has started");
 });
 
 /** pi-herdr-doc-review 0.4.x on the bus, as its README's "Browser viewers" describes it: the list, the request, and a form with its result. */

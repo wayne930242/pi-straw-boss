@@ -6,6 +6,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { decide, describe, ensure, intercomOf, launch, lockFor, lockWaitFor, probe, restart, sameBroker, serverEnv, ServerError, SPAWN_OPTIONS, stateOf, stop, takeOver, timersFor } from "../src/server/client.ts";
 import { fileOf, readLock, readRecord, readStartError, secretDir, type ServerRecord, takeLock, writeRecord, writeStartError } from "../src/server/record.ts";
 import { callControl, listenControl } from "../src/server/socket.ts";
+import { fakeClock } from "./fake-clock.ts";
 import { freePort, ServerWorld, sleep, stallWatch, until } from "./server-world.ts";
 
 // What reaches the server from outside (docs/specs/2026-10-26-sb-backend.md, Starting, Stopping, Restarts and upgrades): liveness, the session look's rules, the start, the
@@ -185,17 +186,17 @@ test("R-F004: the wait for the lock a start or restart holds is that start's wai
 test("R-F004: stop and restart wait for a busy lock as long as lockWaitFor says, no more and no less (not a fixed 10 s or 20 s)", async () => {
 	const timers = { start: 600, exit: 200, supervisor: 100, touch: 40 };
 	for (const [name, run] of [["stop", (ctx: Parameters<typeof stop>[0]) => stop(ctx)], ["restart", (ctx: Parameters<typeof stop>[0]) => restart(ctx, { reason: "r" })]] as const) {
-		// Released inside the wait: the request gets the lock and goes on.
+		// Released inside the wait: the request gets the lock and goes on. The release comes at the wait's first look at the lock, not after a time: a stall of the test process cannot make it late.
 		let held = await takeLock(world.slot, "a start", world.ctx().lock, 0);
-		setTimeout(() => held.release(), 400);
-		await run(world.ctx({ timers }));
-		// Held past the wait: busy, at the wait and not at a fixed 10 s.
+		const base = world.ctx({ timers }), released = { done: false };
+		await run({ ...base, lock: { ...base.lock, sleep: async (ms) => { if (!released.done) (released.done = true, held.release()); await sleep(ms); } } });
+		assert.ok(released.done, `${name} waited for the lock`);
+		// Held past the wait: busy, at the wait and not at a fixed 10 s. The lock's wait runs on a clock of the test's, so what it waited is read off that clock.
 		held = await takeLock(world.slot, "a start", world.ctx().lock, 0);
-		const began = Date.now();
-		await assert.rejects(run(world.ctx({ timers })), (e: unknown) => e instanceof ServerError && e.code === "busy", name);
-		const waited = Date.now() - began;
+		const clock = fakeClock(), ctx = world.ctx({ timers });
+		await assert.rejects(run({ ...ctx, lock: { ...ctx.lock, now: clock.now, sleep: clock.sleep } }), (e: unknown) => e instanceof ServerError && e.code === "busy", name);
 		held.release();
-		assert.ok(waited >= 700 && waited < 1600, `${name} waited ${waited} ms for a wait of 800 ms`);
+		assert.equal(clock.elapsed(), 800, `${name} waited ${clock.elapsed()} ms for a wait of 800 ms`);
 		rmSync(fileOf(world.slot, "record"), { force: true });
 	}
 });
@@ -204,31 +205,27 @@ test("R-F004: stop and restart wait for a busy lock as long as lockWaitFor says,
 
 test("a deadline cuts the lock wait: a lock that stays held is busy, naming the wait `lock`, at the deadline", async () => {
 	const held = await takeLock(world.slot, "a start", world.ctx().lock, 0);
-	const began = Date.now();
-	await assert.rejects(ensure(world.ctx(), { boss: true, deadline: Date.now() + 300 }), (e: unknown) => e instanceof ServerError && e.code === "busy" && e.wait === "lock");
+	const clock = fakeClock();
+	await assert.rejects(ensure(world.ctx({ now: clock.now, sleep: clock.sleep }), { boss: true, deadline: clock.now() + 300 }), (e: unknown) => e instanceof ServerError && e.code === "busy" && e.wait === "lock");
 	held.release();
-	const waited = Date.now() - began;
-	assert.ok(waited >= 250 && waited < 1500, `waited ${waited} ms`);
+	assert.ok(clock.elapsed() >= 250 && clock.elapsed() <= 350, `waited ${clock.elapsed()} ms`);
 });
 
 test("a deadline cuts the start wait too: a server that never answers fails at the deadline, naming the wait `start`, not after the 5 s the timers give", async () => {
-	const ctx = world.ctx({ spawn: () => ({ pid: 5, exited: new Promise(() => {}) }) });
-	const began = Date.now();
-	await assert.rejects(launch(ctx, { deadline: Date.now() + 300 }), (e: unknown) => e instanceof ServerError && e.wait === "start" && /within 0\.3 s/.test(e.message));
-	assert.ok(Date.now() - began < 1500);
+	const clock = fakeClock(), ctx = world.ctx({ now: clock.now, sleep: clock.sleep, spawn: () => ({ pid: 5, exited: new Promise(() => {}) }) });
+	await assert.rejects(launch(ctx, { deadline: clock.now() + 300 }), (e: unknown) => e instanceof ServerError && e.wait === "start" && /within 0\.3 s/.test(e.message));
+	assert.ok(clock.elapsed() <= 300 + 100, `the start wait took ${clock.elapsed()} ms, not the 5 s the timers give`);
 	// With no deadline the wait is the timers', and it names itself the same way.
 	const short = world.ctx({ timers: { start: 200, exit: 100, supervisor: 50, touch: 30 }, spawn: () => ({ pid: 5, exited: new Promise(() => {}) }) });
 	await assert.rejects(launch(short), (e: unknown) => e instanceof ServerError && e.wait === "start");
 });
 
 test("the lock wait and the start wait share the deadline: a lock held for 250 ms leaves the start the rest of 700 ms, so the whole call ends at the deadline", async () => {
-	const held = await takeLock(world.slot, "a start", world.ctx().lock, 0);
-	setTimeout(() => held.release(), 250);
-	const ctx = world.ctx({ spawn: () => ({ pid: 5, exited: new Promise(() => {}) }) });
-	const began = Date.now();
-	await assert.rejects(ensure(ctx, { boss: true, deadline: began + 700 }), (e: unknown) => e instanceof ServerError && e.wait === "start");
-	const total = Date.now() - began;
-	assert.ok(total >= 650 && total < 1500, `the whole call took ${total} ms`);
+	const held = await takeLock(world.slot, "a start", world.ctx().lock, 0), clock = fakeClock();
+	clock.at(250, () => held.release());
+	const ctx = world.ctx({ now: clock.now, sleep: clock.sleep, spawn: () => ({ pid: 5, exited: new Promise(() => {}) }) });
+	await assert.rejects(ensure(ctx, { boss: true, deadline: clock.now() + 700 }), (e: unknown) => e instanceof ServerError && e.wait === "start");
+	assert.ok(clock.elapsed() >= 700 && clock.elapsed() <= 700 + 100, `the whole call took ${clock.elapsed()} ms`);
 });
 
 test("a restart under a deadline stops waiting for the old server to leave at the deadline, naming the wait `exit`", async () => {
