@@ -87,7 +87,7 @@ export async function guarded(button: { disabled: boolean; textContent: string |
 	}
 }
 
-// --- the tower's memory panel (src/server/towermemory.ts): the boss's standing instructions and decisions, verbatim, and the waits ------------------------------------------------------------
+// --- the tower's memory panel (src/server/towermemory.ts): the boss's standing instructions and decisions as the boss wrote or confirmed them, and the waits ------------------------------------------------------------
 
 /** An entry as the memory route answers it (`view` in towermemory.ts). */
 export interface MemoryEntry { id: string; kind: "standing" | "decision" | "wait"; text: string; by: "boss" | "run"; via: "gui" | "proposal" | "run"; at: string; for?: "boss" | "agent"; on?: string; state?: "open" | "answered" | "resolved" | "expired"; due?: string; answered?: string; outcome?: string; ended?: string }

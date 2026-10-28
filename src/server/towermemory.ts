@@ -87,12 +87,16 @@ export function loadMemory(slot: Slot, workspace: string): { memory: Memory; pro
 	} catch { /* reported below */ }
 	const proposals = raw?.proposals ?? [];
 	if (!raw || raw.v !== 1 || !Number.isInteger(raw.rev) || !Array.isArray(raw.entries) || !raw.entries.every(isEntry) || !Array.isArray(proposals) || !proposals.every(isProposal)) return { memory: emptyMemory(), problem: "memory.json is unreadable (not the format this server writes); fix or remove it" };
-	const entries = raw.entries;
+	// An entry a run kept in the branch builds (`by: "run"`, a standing instruction or a decision) was never the boss's word: it comes back as a proposal, to be confirmed or rejected (a wait is a run's own note and stays).
+	const entries = raw.entries.filter((e) => e.kind === "wait" || e.by !== "run");
+	const revived = raw.entries.filter((e) => e.kind !== "wait" && e.by === "run");
 	// A counter is never below the largest id in the file, whatever the file says.
-	const top = (letter: string) => [...entries, ...proposals].reduce((n, e) => (e.id[0] === letter ? Math.max(n, Number(e.id.slice(1))) : n), 0) + 1;
-	const next = { S: Math.max(raw.next?.S ?? 1, top("S")), D: Math.max(raw.next?.D ?? 1, top("D")), W: Math.max(raw.next?.W ?? 1, top("W")), P: Math.max(raw.next?.P ?? 1, top("P")) };
+	const all = raw.entries;
+	const high = (letter: string) => [...all, ...proposals].reduce((n, e) => (e.id[0] === letter ? Math.max(n, Number(e.id.slice(1))) : n), 0) + 1;
+	const next = { S: Math.max(raw.next?.S ?? 1, high("S")), D: Math.max(raw.next?.D ?? 1, high("D")), W: Math.max(raw.next?.W ?? 1, high("W")), P: Math.max(raw.next?.P ?? 1, high("P")) };
+	const asked: Proposal[] = revived.map((e) => ({ id: `P${next.P++}`, op: "add", kind: e.kind as "standing" | "decision", text: e.text, run: e.run ?? "earlier build", at: e.at }));
 	// A file an older build wrote may hold a list of notices: they are not read, and the next write leaves them out.
-	return { memory: { v: 1, rev: raw.rev!, next, entries, proposals } };
+	return { memory: { v: 1, rev: raw.rev!, next, entries, proposals: [...proposals, ...asked] } };
 }
 
 /**

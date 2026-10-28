@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
@@ -20,10 +20,10 @@ const slotIn = () => ({ dir: mkdtempSync(join(tmpdir(), "psb-memcmd-")) }) as Sl
 const toolEnv = (slot: Slot) => ({ slot, workspace: "wA", run: "r1", now: () => NOW, bossEvents: () => [{ id: "e1", text: "Standing: ship the beta.67 build to ws01.\nYes." }], session: async (q: string) => ({ id: q, name: q }), log: { line() {}, hide() {} } });
 
 /** The command against a memory file, through the very function the server's route calls; `sent` is what went over. */
-function harness(over: { own?: string; lang?: "en" | "zh-TW" } = {}) {
+function harness(over: { own?: string; lang?: "en" | "zh-TW"; interactive?: boolean } = {}) {
 	const slot = slotIn(), told: { text: string; level: string }[] = [], sent: Record<string, unknown>[] = [];
 	const deps: MemoryCmdDeps = {
-		lang: over.lang ?? "en", own: "own" in over ? over.own : "wA",
+		lang: over.lang ?? "en", interactive: over.interactive ?? true, own: "own" in over ? over.own : "wA",
 		ask: async (workspace, json) => (sent.push(json), { ok: true, ...memoryRequest(slot, workspace, NOW, json) }),
 		workspaces: async () => [{ workspace_id: "wA", label: "Alpha" }, { workspace_id: "wB", label: "Beta" }],
 		tell: (text, level = "info") => void told.push({ text, level }),
@@ -96,12 +96,12 @@ test("confirm and reject answer a proposal: the confirm goes to the server's rou
 	const rev = loadMemory(h.slot, "wA").memory.rev;
 	await h.run("confirm P1");
 	assert.deepEqual(h.sent, [{ op: "read" }, { op: "confirm", proposal: "P1", rev }]);
-	assert.deepEqual([h.last().level, h.last().text], ["info", "P1 confirmed: S2 kept: Always run the tests first."]);
+	assert.deepEqual([h.last().level, h.last().text], ["info", "P1 confirmed (wA): S2 kept: Always run the tests first."]);
 	await h.run("confirm P2");
-	assert.equal(h.last().text, "P2 confirmed: D1 retired: ws01 beta.67 first");
+	assert.equal(h.last().text, "P2 confirmed (wA): D1 retired: ws01 beta.67 first");
 	await h.run("reject P3");
 	assert.deepEqual(h.sent.at(-1), { op: "reject", proposal: "P3" }, "a reject changes nothing live and takes no rev");
-	assert.equal(h.last().text, "P3 rejected.");
+	assert.equal(h.last().text, "P3 rejected (wA): beta.67 second");
 	const memory = loadMemory(h.slot, "wA").memory;
 	assert.deepEqual([memory.entries.map((e) => e.id), memory.proposals], [["S1", "W1", "S2"], []]);
 	await h.run("confirm P9");
@@ -183,7 +183,7 @@ afterEach(async () => {
 const envOf = () => Object.fromEntries(Object.entries(sw.env).filter((e): e is [string, string] => e[1] !== undefined));
 
 test("/boss memory in a joined pi session reaches the server's memory route: list, confirm, reject, add; and a session of another workspace names its own", async () => {
-	const a = world.agent({ id: "a", name: "docs", pane: "wA:p1", tab: "wA:t1", env: envOf(), deps: { server: { ctx: sw.ctx(), cli: "/fake/cli.mjs" } } });
+	const a = world.agent({ id: "a", name: "docs", pane: "wA:p1", tab: "wA:t1", ui: true, env: envOf(), deps: { server: { ctx: sw.ctx(), cli: "/fake/cli.mjs" } } });
 	await a.start();
 	await a.command("tower");
 	updateMemory(sw.slot, "wA", Date.now(), (m) => addText(m, Date.now(), "gui", "standing", "Never deploy on Friday"));
@@ -193,9 +193,9 @@ test("/boss memory in a joined pi session reaches the server's memory route: lis
 	await a.command("memory");
 	assert.match(said().at(-1)!, /Memory \(wA\): 1 standing · 0 decisions · 0 waits · 2 proposals to confirm[\s\S]*P1 add decision: beta\.67 first[\s\S]*S1 {2}Never deploy on Friday/);
 	await a.command("memory confirm P1");
-	assert.match(said().at(-1)!, /P1 confirmed: D1 kept: beta\.67 first/);
+	assert.match(said().at(-1)!, /P1 confirmed \(wA\): D1 kept: beta\.67 first/);
 	await a.command("memory reject P2");
-	assert.equal(said().at(-1), "P2 rejected.");
+	assert.equal(said().at(-1), "P2 rejected (wA): beta.67 second");
 	await a.command("memory add standing Always run the tests first.");
 	assert.equal(said().at(-1), "S2 kept: Always run the tests first.");
 	assert.deepEqual(loadMemory(sw.slot, "wA").memory.entries.map((e) => [e.id, e.text, e.by, e.via]), [["S1", "Never deploy on Friday", "boss", "gui"], ["D1", "beta.67 first", "boss", "proposal"], ["S2", "Always run the tests first.", "boss", "gui"]]);
@@ -203,4 +203,52 @@ test("/boss memory in a joined pi session reaches the server's memory route: lis
 	assert.equal(a.notices.filter((n) => n.level === "error").length, 0, JSON.stringify(a.notices));
 	assert.equal(readQueue(sw.slot, "wA").length, 0, "the command wrote no event to the tower");
 	await until(async () => true, "settled");
+});
+
+test("a session with no screen (pi -p) may list but changes nothing: confirm, reject, add, edit, delete and resolve are refused and ask the server nothing", async () => {
+	const h = harness({ interactive: false });
+	seed(h);
+	await propose(h, { op: "add", kind: "standing", text: "Always run the tests first." });
+	const before = JSON.stringify(loadMemory(h.slot, "wA").memory);
+	for (const args of ["confirm P1", "reject P1", "add standing x", "edit S1 x", "delete S1", "resolve W1"]) {
+		h.sent.length = 0;
+		await h.run(args);
+		assert.equal(h.last().level, "error", args);
+		assert.match(h.last().text, /only the list|只能看清單/, args);
+		assert.deepEqual(h.sent, [], args);
+	}
+	assert.equal(JSON.stringify(loadMemory(h.slot, "wA").memory), before);
+	await h.run("list");
+	assert.equal(h.last().level, "info");
+	assert.match(h.last().text, /P1 add standing: Always run the tests first\./);
+});
+
+test("the list names the workspace the proposals are for, and confirm and reject say which workspace and which text they acted on; the ids are per workspace, so -w B acts on B's P1", async () => {
+	const h = harness();
+	updateMemory(h.slot, "wA", NOW, (m) => void m);
+	await memoryTool({ ...toolEnv(h.slot), workspace: "wB" }, { op: "add", kind: "standing", text: "B's own rule" });
+	await memoryTool(toolEnv(h.slot), { op: "add", kind: "standing", text: "A's own rule" });
+	await h.run("-w wB");
+	assert.match(h.last().text, /Proposals from the tower for wB .*\nP1 add standing: B's own rule/);
+	await h.run("confirm P1");
+	assert.equal(h.last().text, "P1 confirmed (wA): S1 kept: A's own rule");
+	assert.equal(loadMemory(h.slot, "wB").memory.proposals.length, 1, "B's P1 was not touched");
+	await h.run("-w wB confirm P1");
+	assert.equal(h.last().text, "P1 confirmed (wB): S1 kept: B's own rule");
+});
+
+test("the CLI cleans the stored text again before it prints it: escapes and line breaks in memory.json do not reach the terminal", async () => {
+	const h = harness();
+	updateMemory(h.slot, "wA", NOW, (m) => void m);
+	await propose(h, { op: "add", kind: "standing", text: "Run the tests." });
+	const file = join(h.slot.dir, "tower", "wA", "memory.json");
+	const raw = JSON.parse(readFileSync(file, "utf8"));
+	raw.proposals[0].text = "Run\u001b[2Jthe\ntests\r.";
+	raw.proposals[0].cites = "said\u001b[31m this";
+	writeFileSync(file, JSON.stringify(raw));
+	await h.run("");
+	assert.doesNotMatch(h.last().text, /\u001b|\r/);
+	assert.match(h.last().text, /P1 add standing: Run\[2Jthe tests \./, "the same clean as the brief: control characters go, line breaks fold");
+	await h.run("confirm P1");
+	assert.doesNotMatch(h.last().text, /\u001b|\r|\n/);
 });

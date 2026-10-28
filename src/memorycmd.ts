@@ -3,6 +3,8 @@
 // `memoryRequest`): the same refusals, the same rev check (each write names the rev this command has just read). A slash command is typed by the boss and nothing else reaches it: no tool of a run exposes it,
 // and the server refuses `tower-memory` to a run token. Its own words come in English and Traditional Chinese (the page has Paraglide; a pi session has this table); the server's refusals stay as it wrote them.
 
+import { clean } from "./board.ts";
+
 export type Lang = "en" | "zh-TW";
 /** Traditional Chinese for a zh-TW, zh-HK, zh-MO, or zh-Hant locale, as the shell names it; English otherwise. */
 export const memoryLang = (env: NodeJS.ProcessEnv): Lang => (/^zh[_-](TW|HK|MO|Hant)/i.test(env.LC_ALL || env.LC_MESSAGES || env.LANG || "") ? "zh-TW" : "en");
@@ -46,17 +48,18 @@ const WORDS = {
 		noMatch: (q: string, all: string) => `No workspace matches "${q}". Workspaces: ${all}`,
 		noTower: (ws: string, why: string) => `No tower memory for ${ws}: ${why}`,
 		noProposal: (id: string) => `No such proposal ${id}: /boss memory shows the ones that wait`,
+		noUi: "/boss memory changes the memory only in a pi session with a screen (a person at the keyboard): this one has none, so only the list is allowed.",
 		head: (ws: string, n: number[]) => `Memory (${ws}): ${n[0]} standing · ${n[1]} decisions · ${n[2]} waits${n[3] ? ` · ${n[3]} proposals to confirm` : ""}`,
 		none: "Nothing is kept.",
-		proposals: (id: string) => `Proposals from the tower (/boss memory confirm ${id} · reject ${id}):`,
+		proposals: (id: string, ws: string) => `Proposals from the tower for ${ws} (/boss memory confirm ${id} · reject ${id}):`,
 		propAdd: (id: string, kind: string, text: string) => `${id} add ${kind}: ${text}`,
 		propRetire: (id: string, target: string | undefined, text: string) => `${id} retire ${target}: ${text}`,
 		cites: (text: string) => `    from your message: ${text}`,
 		standing: "Standing instructions:", decisions: "Decisions (newest first):", waits: "Waits:",
 		forBoss: "for you", forAgent: (who: string) => `for ${who}`, state: (s?: string, outcome?: string) => (s === "answered" ? " (answered?)" : s === "resolved" ? ` (resolved${outcome ? `: ${outcome}` : ""})` : s === "expired" ? " (expired)" : ""),
-		confirmedAdd: (p: string, id: string, text: string) => `${p} confirmed: ${id} kept: ${text}`,
-		confirmedRetire: (p: string, id: string | undefined, text: string) => `${p} confirmed: ${id} retired: ${text}`,
-		rejected: (p: string) => `${p} rejected.`, kept: (id: string, text: string) => `${id} kept: ${text}`, edited: (id: string) => `${id} edited.`, deleted: (id: string) => `${id} deleted.`, resolved: (id: string) => `${id} resolved.`,
+		confirmedAdd: (p: string, ws: string, id: string, text: string) => `${p} confirmed (${ws}): ${id} kept: ${text}`,
+		confirmedRetire: (p: string, ws: string, id: string | undefined, text: string) => `${p} confirmed (${ws}): ${id} retired: ${text}`,
+		rejected: (p: string, ws: string, text: string) => `${p} rejected (${ws}): ${text}`, kept: (id: string, text: string) => `${id} kept: ${text}`, edited: (id: string) => `${id} edited.`, deleted: (id: string) => `${id} deleted.`, resolved: (id: string) => `${id} resolved.`,
 	},
 	"zh-TW": {
 		usage: "用法：/boss memory [-w workspace] [list | confirm P1 | reject P1 | add standing|decision <內容> | edit S1 <內容> | delete D1 | resolve W1 [結果]]",
@@ -64,19 +67,27 @@ const WORDS = {
 		noMatch: (q: string, all: string) => `沒有符合「${q}」的 workspace。現有：${all}`,
 		noTower: (ws: string, why: string) => `${ws} 沒有塔台記憶可用：${why}`,
 		noProposal: (id: string) => `沒有這則提議 ${id}：/boss memory 會列出等你確認的`,
+		noUi: "/boss memory 只在有畫面的 pi session（有人在鍵盤前）裡改記憶：這個 session 沒有畫面，只能看清單。",
 		head: (ws: string, n: number[]) => `記憶（${ws}）：${n[0]} 常駐指示・${n[1]} 決定・${n[2]} 等待${n[3] ? `・${n[3]} 則待你確認` : ""}`,
 		none: "沒有保存任何內容。",
-		proposals: (id: string) => `塔台的提議（/boss memory confirm ${id}・reject ${id}）：`,
+		proposals: (id: string, ws: string) => `${ws} 的塔台提議（/boss memory confirm ${id}・reject ${id}）：`,
 		propAdd: (id: string, kind: string, text: string) => `${id} 新增${kind}：${text}`,
 		propRetire: (id: string, target: string | undefined, text: string) => `${id} 撤掉 ${target}：${text}`,
 		cites: (text: string) => `    你的訊息：${text}`,
 		standing: "常駐指示：", decisions: "決定（新到舊）：", waits: "等待：",
 		forBoss: "等你", forAgent: (who: string) => `等 ${who}`, state: (s?: string, outcome?: string) => (s === "answered" ? "（可能已回覆）" : s === "resolved" ? `（已處理${outcome ? `：${outcome}` : ""}）` : s === "expired" ? "（已失效）" : ""),
-		confirmedAdd: (p: string, id: string, text: string) => `${p} 已確認：${id} 已保存：${text}`,
-		confirmedRetire: (p: string, id: string | undefined, text: string) => `${p} 已確認：${id} 已撤掉：${text}`,
-		rejected: (p: string) => `${p} 已駁回。`, kept: (id: string, text: string) => `${id} 已保存：${text}`, edited: (id: string) => `${id} 已改。`, deleted: (id: string) => `${id} 已刪。`, resolved: (id: string) => `${id} 已處理。`,
+		confirmedAdd: (p: string, ws: string, id: string, text: string) => `${p} 已確認（${ws}）：${id} 已保存：${text}`,
+		confirmedRetire: (p: string, ws: string, id: string | undefined, text: string) => `${p} 已確認（${ws}）：${id} 已撤掉：${text}`,
+		rejected: (p: string, ws: string, text: string) => `${p} 已駁回（${ws}）：${text}`, kept: (id: string, text: string) => `${id} 已保存：${text}`, edited: (id: string) => `${id} 已改。`, deleted: (id: string) => `${id} 已刪。`, resolved: (id: string) => `${id} 已處理。`,
 	},
 };
+
+/** Everything the file holds is cleaned again before it is shown, as the brief does (a writer of memory.json could put escapes or line breaks there to disguise what a confirm applies). */
+const tidy = (v: View): View => ({
+	...v,
+	entries: v.entries.map((e) => ({ ...e, id: clean(e.id, 20), text: clean(e.text, 1_000_000), ...(e.on !== undefined ? { on: clean(e.on, 100) } : {}), ...(e.outcome !== undefined ? { outcome: clean(e.outcome, 1_000) } : {}) })),
+	proposals: v.proposals.map((p) => ({ ...p, id: clean(p.id, 20), text: clean(p.text, 1_000_000), ...(p.target !== undefined ? { target: clean(p.target, 20) } : {}), ...(p.cites !== undefined ? { cites: clean(p.cites, 1_000_000) } : {}) })),
+});
 
 /** The memory as text: the proposals waiting for the boss first, then standing instructions, decisions, and waits. */
 function render(ws: string, v: View, lang: Lang): string {
@@ -84,7 +95,7 @@ function render(ws: string, v: View, lang: Lang): string {
 	const row = (e: View["entries"][number]) => `${e.id}  ${e.kind === "wait" ? `${e.for === "boss" ? w.forBoss : w.forAgent(e.on ?? "?")}: ` : ""}${e.text}${e.kind === "wait" ? w.state(e.state, e.outcome) : ""}`;
 	return [
 		w.head(ws, [of("standing").length, of("decision").length, of("wait").length, v.proposals.length]), ...(v.entries.length || v.proposals.length ? [] : [w.none]),
-		...part(w.proposals(v.proposals[0]?.id ?? "P1"), v.proposals.flatMap((p) => [p.op === "add" ? w.propAdd(p.id, KIND[lang][p.kind], p.text) : w.propRetire(p.id, p.target, p.text), ...(p.cites ? [w.cites(p.cites)] : [])])),
+		...part(w.proposals(v.proposals[0]?.id ?? "P1", ws), v.proposals.flatMap((p) => [p.op === "add" ? w.propAdd(p.id, KIND[lang][p.kind], p.text) : w.propRetire(p.id, p.target, p.text), ...(p.cites ? [w.cites(p.cites)] : [])])),
 		...part(w.standing, of("standing").map(row)), ...part(w.decisions, of("decision").reverse().map(row)), ...part(w.waits, of("wait").map(row)),
 	].join("\n");
 }
@@ -96,12 +107,15 @@ export interface MemoryCmdDeps {
 	/** One request to the sb server's `tower-memory` command for a workspace: its reply, whose `status` and `body` are the memory route's. */
 	ask(workspace: string, json: Record<string, unknown>): Promise<{ ok: boolean; error?: string; status?: number; body?: Record<string, unknown> }>;
 	workspaces(): Promise<{ workspace_id: string; label: string }[]>;
+	/** True when the pi session has a screen (`ctx.hasUI`): a print or RPC run (`pi -p`) has none, and its memory writes are refused. */
+	interactive: boolean;
 	tell(text: string, level?: "info" | "warning" | "error"): void;
 }
 /** `/boss memory <args>`. */
 export async function runMemoryCommand(args: string, d: MemoryCmdDeps): Promise<void> {
 	const w = WORDS[d.lang], parsed = parseMemoryArgs(args);
 	if ("usage" in parsed) return d.tell(w.usage, "warning");
+	if (parsed.op !== "list" && !d.interactive) return d.tell(w.noUi, "error");
 	try {
 		let ws = d.own;
 		if (parsed.workspace) {
@@ -118,16 +132,16 @@ export async function runMemoryCommand(args: string, d: MemoryCmdDeps): Promise<
 			return r.body!;
 		};
 		// SAFETY: the body of a `read` is the memory route's `view` (towermemory.ts), whose shape `View` repeats.
-		const view = (await call({ op: "read" })) as unknown as View;
+		const view = tidy((await call({ op: "read" })) as unknown as View);
 		const say = (text: string) => d.tell(text);
 		switch (parsed.op) {
 			case "list": return say(render(target, view, d.lang));
 			case "confirm": case "reject": {
 				const p = view.proposals.find((x) => x.id === parsed.id);
 				if (!p) throw new Error(w.noProposal(parsed.id));
-				if (parsed.op === "reject") return void (await call({ op: "reject", proposal: p.id }), say(w.rejected(p.id)));
+				if (parsed.op === "reject") return void (await call({ op: "reject", proposal: p.id }), say(w.rejected(p.id, target, p.text)));
 				const done = await call({ op: "confirm", proposal: p.id, rev: view.rev });
-				return say(p.op === "add" ? w.confirmedAdd(p.id, String(done.id), p.text) : w.confirmedRetire(p.id, p.target, p.text));
+				return say(p.op === "add" ? w.confirmedAdd(p.id, target, String(done.id), p.text) : w.confirmedRetire(p.id, target, p.target, p.text));
 			}
 			case "add": {
 				const done = await call({ op: "add", kind: parsed.kind, text: parsed.text, rev: view.rev });

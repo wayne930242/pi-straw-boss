@@ -26,7 +26,7 @@ export interface BriefInput {
 	identity: string;
 	mains: MainRow[];
 	obligations: string[];
-	/** The Memory section (towermemory.ts `memorySection`): the boss's standing instructions and decisions, verbatim, and the open waits; empty when there is none. */
+	/** The Memory section (towermemory.ts `memorySection`): the boss's standing instructions and decisions as the boss wrote or confirmed them, and the open waits; empty when there is none. */
 	memory?: string;
 	digest: string[];
 	note?: { text: string; age: string };

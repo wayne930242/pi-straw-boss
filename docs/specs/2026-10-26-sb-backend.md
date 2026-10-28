@@ -1117,8 +1117,10 @@ is refused; the same proposal twice is one.
 **Only the boss confirms.** `confirm` applies a proposal: an add becomes an entry (`by: "boss"`, `via: "proposal"`) under the caps above, a retire removes the entry (refused when the entry is gone, or
 the boss edited it since the run proposed: "reject the proposal"), and the proposal goes; a confirm the caps refuse leaves the proposal where it is. `reject` removes it. Both are requests to one server function
 (`memoryRequest`) that has exactly two doors, and both are the boss's: the GUI's `POST tower/<workspace>/memory` (page origin and CSRF) and the control socket's `tower-memory` command, which is what
-`/boss memory` sends. `rungate.ts` refuses `tower-memory` to every run token, local or ally, and the tool has no `confirm` or `reject` op; `/boss` takes no command in a run; a link envelope, a main, an
-ally, or an intercom message has no route to either door. A confirm names the `rev` it read; a reject names the proposal's id, which is never reused, and takes no rev. Known limit: a run that
+`/boss memory` sends. `rungate.ts` refuses `tower-memory` to every run token, local or ally, and the tool has no `confirm` or `reject` op; `/boss` takes no command in a run; a link envelope, an
+ally, or an intercom message has no route to either door. That is a guarantee against those routes only: any same-user agent with a shell, a main as well as a run, reaches both doors (the control socket with the
+secret from `server.json`, `pi -p "/boss memory …"`, send-text into a pane, a direct write of `memory.json`). `/boss memory` therefore refuses every write (confirm, reject, add, edit, delete, resolve) in a pi session
+with no screen (`!ctx.hasUI`: print and RPC mode) and allows the list; that closes the `pi -p` door and no other. A confirm names the `rev` it read; a reject names the proposal's id, which is never reused, and takes no rev. Known limit: a run that
 goes around its tools (below, T3R-F005) can also write `memory.json` directly, and that bypasses proposals as it bypassed the quote check.
 
 **`/boss memory`.** In any joined pi session of the workspace (default its own; `-w <workspace id or label>` names another), a command of the boss's own typing:
@@ -1727,14 +1729,14 @@ trials), unchanged otherwise.
 - **D4 puts peer text into mains again**, bounded as **Security** says and guarded by the step-4 hooks.
 - **The thread store keeps peer text at rest** (D13): at most 20 messages per device and 7 days, in the folder that holds the team keys.
 - **`tsx` stays at runtime** for pi-intercom's client until pi-intercom ships JavaScript; B1's measurement says what it costs on Windows.
-- **A local run can go around the proposal rule (T3R-F005, found in the T3 review, older than T3; ticket: "local run tool restriction").** A local run
+- **A local run, or any main, can go around the proposal rule (T3R-F005, found in the T3 review, older than T3; ticket: "local run tool restriction", whose scope includes mains and members with a shell: T3P-F001).** A local run
   keeps `bash`, `write`, and `edit`: `src/runmode.ts` blocks only `intercom` and `subagent*`, `runs.ts` starts pi with no tool restriction, a request without a run
   token is judged by the hello secret alone (`rungate.ts`), and `tower-event` writes a `boss` event. A run misled by peer text (a remote board entry, a
   `tower_send`, a main's message) could write `tower/<workspace>/memory.json` itself (same user, so mode 600 stops nothing), which bypasses proposals as it bypassed the quote check,
   or read the secret from `server.json` and send the control socket a `tower-memory` of its own: `rungate.ts` refuses that command to a *run token*, but a request without one is judged by the hello
   secret alone. "Only the boss confirms" therefore holds against a run that goes through its tools, not against a hijacked one; T3 adds persistence across runs to what such a run could already do. Not
   changed here. The fix is outside T3: block `bash`, `write`, and `edit` in run mode for local runs, as `prompts/tower-run.md` already promises, or at least refuse any tool path under the agent
-  directory and the straw-boss state folder, as the ally gate does. It should land before `towerRuns` defaults on.
+  directory and the straw-boss state folder, as the ally gate does. It should land before `towerRuns` defaults on. A main misled by peer text (D4) has the same shell and the same doors, so the restriction cannot stop at runs; the ticket decides what a main may do. Entries a run kept in the branch builds (`by: "run"`) load as proposals, never as the boss's own (T3P-F002).
 
 ## Decisions (boss, 2026-10-26)
 

@@ -24,9 +24,9 @@ export function registerBoss({ pi, cfg, s, guiDir, tell }: Kit, { runMode, host,
 		tell(`Handed to the tower${tower.opened ? " (it was opened for this)" : ""}: it reads the prompt as the boss's instruction in its next run.`);
 	};
 	// `/boss memory`: the boss's own interface to the tower's memory (memorycmd.ts); the GUI's panel is the same server op. It is the boss's typed input only: a tower run takes no /boss command.
-	const memory = (args: string) => server
+	const memory = (args: string, interactive: boolean) => server
 		? runMemoryCommand(args, {
-			lang: memoryLang(cfg.env), own: s.at?.workspaceId, workspaces: () => workspaces(cfg.run), tell,
+			lang: memoryLang(cfg.env), interactive, own: s.at?.workspaceId, workspaces: () => workspaces(cfg.run), tell,
 			ask: async (workspace, json) => {
 				const r = await server.ask({ cmd: "tower-memory", workspace, json }, { start: "never" });
 				return { ok: r.ok, ...(typeof r.error === "string" ? { error: r.error } : {}), ...(typeof r.status === "number" ? { status: r.status } : {}), ...(typeof r.body === "object" && r.body !== null ? { body: Object.fromEntries(Object.entries(r.body)) } : {}) };
@@ -54,7 +54,7 @@ export function registerBoss({ pi, cfg, s, guiDir, tell }: Kit, { runMode, host,
 				if (args.trim() === "status") return tell(s.joined || s.isTower ? JSON.stringify(await reach.status(), null, 2) : "Not in the net: still joining, or this session cannot join.");
 				if (args.trim() === "close all") return await stashing.closeAll();
 				const mem = /^memory(?:\s+([\s\S]*))?$/.exec(args.trim());
-				if (mem) return await memory(mem[1] ?? "");
+				if (mem) return await memory(mem[1] ?? "", ctx.hasUI);
 				const stash = /^(stash|pop)(?:\s+(.+))?$/.exec(args.trim());
 				if (stash) return await (stash[1] === "stash" ? stashing.stash(stash[2]) : stashing.pop(stash[2]));
 				const prompt = /^tower\s+([\s\S]+)$/.exec(args.trim());

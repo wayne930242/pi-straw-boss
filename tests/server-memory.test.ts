@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -545,4 +545,24 @@ test("T3R-F009 the brief's one-line guarantee holds for what is read from the fi
 	assert.equal(lines(text).filter((l) => l.startsWith("- ")).length, 3, text);
 	assert.ok(!lines(text).some((l) => l.startsWith("[S9]") || l.startsWith("##") || l.startsWith("- [S9]")), text);
 	assert.ok(!/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2028\u2029]/.test(text.replace(/\n/g, "")), JSON.stringify(text));
+});
+
+test("entries a run kept in the branch builds (by run, a standing instruction or a decision) load as proposals to confirm, never as the boss's own; waits stay", () => {
+	const slot = slotIn();
+	const file = join(slot.dir, "tower", "wA", "memory.json");
+	mkdirSync(join(slot.dir, "tower", "wA"), { recursive: true });
+	const at = "2026-10-28T10:00:00.000Z";
+	writeFileSync(file, JSON.stringify({ v: 1, rev: 4, next: { S: 3, D: 2, W: 2, P: 1 }, entries: [
+		{ id: "S1", kind: "standing", text: "boss rule", by: "boss", via: "gui", at },
+		{ id: "S2", kind: "standing", text: "run rule", by: "run", via: "run", at, run: "r9" },
+		{ id: "D1", kind: "decision", text: "run decision", by: "run", via: "run", at, run: "r9" },
+		{ id: "W1", kind: "wait", text: "a wait", by: "run", via: "run", at, run: "r9", for: "boss", state: "open" },
+	], proposals: [] }));
+	const { memory, problem } = loadMemory(slot, "wA");
+	assert.equal(problem, undefined);
+	assert.deepEqual(memory.entries.map((e) => e.id), ["S1", "W1"]);
+	assert.deepEqual(memory.proposals.map((p) => [p.id, p.op, p.kind, p.text, p.run]), [["P1", "add", "standing", "run rule", "r9"], ["P2", "add", "decision", "run decision", "r9"]]);
+	assert.equal(memory.next.P, 3);
+	const text = memorySection(memory, Date.parse(at)).text;
+	assert.ok(text.indexOf("boss rule") < text.indexOf("Proposed") && text.indexOf("Proposed") < text.indexOf("run rule"), "run-made text sits only under the not-confirmed heading");
 });
