@@ -106,6 +106,12 @@ test("the scrub cleans first: a format character inside a token, path, or email 
 	assert.ok(!d.text.now.includes("sk-") && !d.text.items[0]!.t.includes("sk-"));
 });
 
+test("quoted credential values and short bearer tokens are scrubbed", () => {
+	for (const t of [`password: 'x'`, `token = "abc123"`, `password: 'Hunter22'`, "Bearer abcdefgh12345678abcd"]) {
+		assert.equal(scrubBoard(`a ${t} b`, ROOT), "a … b", t);
+	}
+});
+
 test("scrub, then cut: a token that straddles the cut leaves no prefix", () => {
 	const d = deriveBoard({ name: "", root: ROOT, todos: [todo(1, `${"a ".repeat(55)}sk-ant-api03-abcdefghijklmnop`, "in_progress")] })!;
 	assert.ok(!d.text.now.includes("sk-") && !d.text.items[0]!.t.includes("sk-"), d.text.now);

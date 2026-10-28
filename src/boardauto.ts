@@ -19,7 +19,7 @@ const SECRET = [
 	/\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{8,}/g,
 	/\b0x[0-9a-fA-F]{32,}/g,
 	// A credential named and given in the same breath (a connection string, an env line).
-	/\b(?:pass(?:word)?|pwd|secret|token|api[_-]?key)\s*[=:]\s*[^\s;,"']+/giu,
+	/\b(?:pass(?:word)?|pwd|secret|token|api[_-]?key)\s*[=:]\s*["']?[^\s;,"']+["']?|\bBearer\s+[A-Za-z0-9._~+\/=-]{16,}/giu,
 ];
 const URL_RE = /\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"'`)\]}]*/giu;
 const EMAIL_RE = /[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+/gu;

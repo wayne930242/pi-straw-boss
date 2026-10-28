@@ -72,7 +72,7 @@ test("a main on A writes with board_set and B's tower reads it with board_read a
 });
 
 test("an auto-filled entry reaches the ally's tower as its name and done count only; a board_set entry goes whole", async () => {
-	const a = await setup("a", [{ id: "auto-a", name: "auto main", inside: true }, { id: "set-a", name: "set main", inside: true }]);
+	const a = await setup("a", [{ id: "auto-a", name: "auto /etc/secret", inside: true }, { id: "set-a", name: "set main", inside: true }]);
 	const b = await setup("b", []);
 	await until(() => a.c.server.service.status().active && b.c.server.service.status().active, "both holders");
 	const [auto, set] = a.agents as [Agent, Agent];
@@ -81,12 +81,13 @@ test("an auto-filled entry reaches the ally's tower as its name and done count o
 	await set.tool("board_set", { now: "MP-2 manual line", items: [{ t: "step one", done: true }, { t: "step two", done: false }] });
 	let rows: Row[] = [];
 	await until(async () => ((rows = (await read(b.c.tower)).remote?.[0]?.entries ?? []), rows.length === 2 && rows.every((e) => e.now)), "both entries at B");
+	assert.ok(rows.every((e) => !String(e.main).includes("/etc")), "no path in the name on the wire");
 	const byMain = Object.fromEntries(rows.map((e) => [e.main!, e]));
-	assert.deepEqual([byMain["auto main"]!.now, byMain["auto main"]!.items], ["auto main (1/3)", []], "an auto entry: the name and the count, no task text, no items");
+	assert.deepEqual([byMain["auto …"]!.now, byMain["auto …"]!.items], ["auto … (1/3)", []], "an auto entry: the name and the count, no task text, no items");
 	assert.deepEqual([byMain["set main"]!.now, byMain["set main"]!.items], ["MP-2 manual line", [{ t: "step one", done: true }, { t: "step two", done: false }]], "a board_set entry: whole");
 	// A's own tower sees both whole.
 	const local = (await read(a.c.tower, { scope: "local" })).local;
-	assert.deepEqual(local.map((r) => [r.main, r.items!.length]).sort(), [["auto main", 3], ["set main", 2]]);
+	assert.deepEqual(local.map((r) => [r.main, r.items!.length]).sort(), [["auto /etc/secret", 3], ["set main", 2]]);
 });
 
 test("a computer without a team has no remote key in board_read, and mains and members have no board_read at all", async () => {

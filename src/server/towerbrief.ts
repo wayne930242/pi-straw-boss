@@ -1,3 +1,4 @@
+import { scrubBoard } from "../boardauto.ts";
 import { clean, forAllies, joinLocal, type LiveMain, readEntries } from "../board.ts";
 import { headOf, type Pane, panes, type Session, workspaces, type Workspace } from "../herdr.ts";
 import { sessionMark } from "../netdata.ts";
@@ -103,7 +104,7 @@ export async function gatherMains(d: GatherDeps): Promise<{ rows: MainRow[]; ope
 		const pane = main && paneOf(main.s);
 		return {
 			tab: clean(group[0]!.tab.label, 40),
-			...(main ? { main: { name: clean(nameOf(main.s), 40), id: main.s.id, state: sessionMark(main.s, pane), ...(pane?.tokens?.sb_opened_by ? { openedBy: clean(pane.tokens.sb_opened_by, 40) } : {}), ...(entry?.now ? { now: entry.now } : {}), ...(entry ? { open: entry.items.filter((x) => !x.done).length } : {}) } } : {}),
+			...(main ? { main: { name: d.within ? clean(scrubBoard(nameOf(main.s)), 40) : clean(nameOf(main.s), 40), id: main.s.id, state: sessionMark(main.s, pane), ...(pane?.tokens?.sb_opened_by ? { openedBy: clean(pane.tokens.sb_opened_by, 40) } : {}), ...(entry?.now ? { now: entry.now } : {}), ...(entry ? { open: entry.items.filter((x) => !x.done).length } : {}) } } : {}),
 			members: group.filter((m) => m.role === "member").length,
 		};
 	});
