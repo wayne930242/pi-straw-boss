@@ -403,7 +403,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// GUI fix pass (sb server B6): chat.ts 284 to 301 (a run's events read by their kind: the YOU bubble and the notice shared by every incoming message, the labels, the folded header, the standing-by sentence), session.ts 135 to 139 and dossier.ts 50 to 51 (an ally run's comms: its header, state, and chips), workspace.ts 61 to 66 (the queue chip, the chips, and the notices of the workspace view).
 	// GUI fix pass 2 (sb server B6): chat.ts 301 to 307 (the intercom label with its id and origin, the boss bubble only in a service run), scene.ts 41 to 47 (channelOf: the read-only channel of an ally run), composer.ts 303 to 305 (typable).
 	// Ended bar (sb server B6): composer.ts 315 to 327 (barOf, and draw swaps the composer for the one-line bar).
-	for (const [name, max] of [["router.ts", 80], ["chat.ts", 334], ["markdown.ts", 180], ["views.ts", 90], ["scene.ts", 47], ["tokens.ts", 24], ["nav.ts", 43], ["workspace.ts", 66], ["dossier.ts", 51], ["session.ts", 142], ["bars.ts", 85], ["lightbox.ts", 34], ["layer.ts", 264], ["askkeys.ts", 75], ["composer.ts", 327], ["ask.ts", 185], ["mirror.ts", 175], ["keypad.ts", 124], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
+	for (const [name, max] of [["router.ts", 80], ["chat.ts", 334], ["markdown.ts", 180], ["views.ts", 90], ["scene.ts", 47], ["tokens.ts", 24], ["nav.ts", 43], ["workspace.ts", 66], ["dossier.ts", 52], ["session.ts", 142], ["bars.ts", 85], ["lightbox.ts", 34], ["layer.ts", 264], ["askkeys.ts", 75], ["composer.ts", 327], ["ask.ts", 185], ["mirror.ts", 175], ["keypad.ts", 124], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
 	// 0.28.0 to 185 with the answer keys' hooks into gui/ask.ts (the focus on the first option, the textarea). 0.28.0 raised gui/ask.ts from 156 to 175 for the secret panel: the masked field with Show and Hide, Submit, the way back to the terminal, the unsupported-remote notice, and a value that leaves with its one request.
 	// 0.10.0: the page's text comes from Paraglide's messages (gui/messages), which raised chat.ts, views.ts, layer.ts, ask.ts, mirror.ts, and doc.ts by one
 	// line each for the messages import; the strings replaced in place. gui/i18n.ts picks the locale (the menu's choice, the browser's languages with
@@ -530,7 +530,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Boss conversation (T4) to 1819: towerconv.ts (the comms' box, dividers, chips, Leave and New), the conversation fields in towermodel.ts, and the composer's /quit and /new.
 	// T4 visual fix to 1820: the in-event-run row (towerconv.ts) and the composer line.
 	// Ended bar (sb server B6) to 1823: gui/composer.ts (barOf and the bar in draw) and render.ts (liveNote: no activity line under a session that is not live), which gui/session.ts calls.
-	assert.ok(page <= 1823, `the page's TypeScript has ${page} lines`);
+	// Ended dossier (sb server B6) to 1825: render.ts liveMark and the dossier's two calls of it and closed.
+	assert.ok(page <= 1825, `the page's TypeScript has ${page} lines`);
 });
 
 test("the built page is small, self-contained (no remote URLs, fonts, or imports), and carries no demo fixture", { skip: !existsSync(join(root, "dist/gui/index.html")) && "run npm run gui:build first" }, () => {

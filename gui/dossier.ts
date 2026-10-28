@@ -1,8 +1,8 @@
 import type { Tile } from "./layer.ts";
 import { docList, docTile } from "./doc.ts";
 import { m } from "./paraglide/messages.js";
-import { fillPlate, html, LABEL, mark, PLATE, roleName, say, sync, text } from "./render.ts";
-import { locate, type Scene, type Subject, wsOf } from "./scene.ts";
+import { fillPlate, html, LABEL, liveMark, mark, PLATE, roleName, say, sync, text } from "./render.ts";
+import { closed, locate, type Scene, type Subject, wsOf } from "./scene.ts";
 import { fillToken, linkTo, tokenEl } from "./tokens.ts";
 import { statusLine } from "./towermodel.ts";
 
@@ -15,7 +15,8 @@ const droneOf = (el: HTMLElement) => el.classList.add("drone");
 export interface DossierDeps { openTile(tile: Tile, focus?: boolean): void; fullScreen(on: boolean): void }
 
 export function mountDossier(host: HTMLElement, scene: Readonly<Scene>, { openTile, fullScreen }: DossierDeps) {
-	return function draw({ key, hit, u, mk, state, name }: Subject) {
+	return function draw({ key, hit, u, mk: last, state, name }: Subject) {
+		const mk = liveMark(u, state, last); // a session that is not live keeps no spinner and no tool, as the chat's live line (liveNote)
 		if (!host.firstElementChild) (host.append(html(DOSSIER())), (host.querySelector<HTMLElement>(".d-x")!.onclick = () => fullScreen(false)));
 		const root = host.firstElementChild as HTMLElement, { net, info, model, ctx } = scene, ws = wsOf(scene);
 		mark(root, mk);
@@ -23,7 +24,7 @@ export function mountDossier(host: HTMLElement, scene: Readonly<Scene>, { openTi
 		const ally = !u && info?.role === "ally", eventRun = !u && info?.role === "run"; // an ally or event run's comms: a unit only its tower's chip lists (src/net.ts)
 		text(root, "h3", ally ? m.ally_run({ device: name }) : eventRun ? m.event_run({ id: name }) : name);
 		text(root, ".role", roleName(u?.role ?? info?.role ?? "session"));
-		say(root, ".state", u?.note, mk, u ? (u.service && !u.service.run ? statusLine(u.service, mk, (k) => LABEL[k]()) : undefined) : ally ? m.ally_state() : eventRun ? m.event_run_state() : m.not_in_net()); // a tower the server runs says "standing by", as the map does
+		say(root, ".state", closed(u, state) ? undefined : u?.note, mk, u ? (u.service && !u.service.run ? statusLine(u.service, mk, (k) => LABEL[k]()) : undefined) : ally ? m.ally_state() : eventRun ? m.event_run_state() : m.not_in_net()); // a tower the server runs says "standing by", as the map does
 		const note = root.querySelector<HTMLElement>(".d-note")!;
 		note.hidden = state !== "recent" && state !== "unknown";
 		note.replaceChildren(state === "unknown" ? m.note_unknown() : m.note_recent());

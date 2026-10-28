@@ -58,6 +58,8 @@ const monitorNote = (note: string) => ((i) => (note.slice(8, i) === "stale" ? m.
 export const doing = (note: string | undefined, mk: Mark) => (note ? (note.startsWith("tool:") ? m.using({ tool: note.slice(5) }) : note.startsWith("monitor:") ? monitorNote(note) : Object.hasOwn(NOTE, note) ? NOTE[note]!() : note) : LABEL[mk]());
 /** The activity line under the last transmission: empty while the session is not live, so an ended session shows no spinner. */
 export const liveNote = (u: { note?: string; control?: boolean; ended?: boolean } | undefined, state: string | undefined, mk: Mark) => (closed(u, state) ? "" : mk === "working" || mk === "commanding" ? doing(u?.note, mk) : urgent(mk) ? LABEL[mk]() : "");
+/** The mark a view of a unit draws: a session that is not live keeps no working or commanding mark (no spinner), whatever its last one was. */
+export const liveMark = (u: { control?: boolean; ended?: boolean } | undefined, state: string | undefined, mk: Mark): Mark => (closed(u, state) && (mk === "working" || mk === "commanding") ? "done" : mk);
 /** Writes what a unit is doing into `selector`, flagged `data-monitoring` (red in style.css) while it only waits on a running monitor. */
 export const say = (el: Element, selector: string, note: string | undefined, mk: Mark, value = doing(note, mk)) => {
 	text(el, selector, value);
