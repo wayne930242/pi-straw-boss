@@ -246,3 +246,16 @@ test("a device that is no member of any team file loses its thread at the next p
 	await a.holder.drain();
 	assert.deepEqual(a.store.threadDevices(), [bob.id], "the stranger's thread went");
 });
+
+test("RV8-F003: a taken from the main whose reply fell back is ignored only while no offer to that main is open; a current offer to it is taken", async () => {
+	const { b } = await pair({ served: false });
+	const id = "ab".repeat(16);
+	const holder = b.holder as unknown as { replyFellBack: Map<string, string>; offered: Map<string, { tower: string; at: number }> };
+	await b.store.withLock(() => b.store.putInbox({ v: 1, id, team: TEAM_HEX, from: alice.id, fromLabel: "alice-mac", fromShort: "alice", seq: 1, sentAt: Date.now(), received: Date.now(), fromWorkspace: "label-a", toWorkspace: "label-b", replyExpected: false, text: "x" }));
+	holder.replyFellBack.set(id, "main-1");
+	await b.holder.taken(id, "main-1");
+	assert.ok(b.store.readInbox(id), "no offer: the late taken is ignored");
+	holder.offered.set(id, { tower: "main-1", at: Date.now() });
+	await b.holder.taken(id, "main-1");
+	assert.equal(b.store.readInbox(id), undefined, "a current offer to that main: its taken removes the item");
+});

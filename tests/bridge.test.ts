@@ -670,3 +670,11 @@ test("a twin (the wrap of ctx.ui) yields to a contract owner's dialog on the sam
 	d.events.emit("straw-boss:ui:pending", { ...twin, toolCallId: undefined });
 	assert.equal(d.lists().at(-1)?.length ?? 0, 1, "the bridge keeps it for the hub, which leaves it in the terminal");
 });
+
+test("RV8-F001: a gui.json of a dead server does not hide the live hub.json: the bridge joins the first of the two whose process runs", () => {
+	const s = session({ gui: "" });
+	s.record("G", 2 ** 22 + 7);
+	writeFileSync(join(s.dir, "hub.json"), JSON.stringify({ pid: process.pid, ownerSession: "H" }));
+	s.bridge.sync();
+	assert.deepEqual(s.regs.map((r) => r.namespace), [guiNamespace("H")], "the live hub.json is joined, the dead gui.json is not");
+});

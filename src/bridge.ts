@@ -79,7 +79,8 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close, platform
 	let ticket: { id: string; before: string; expected: string; at: number; take?: string } | undefined, taken: { take: string; text: string; at: number } | undefined, ui: Pick<ExtensionContext, "hasUI" | "ui"> | undefined;
 	let queued: Queued[] = [], waits = () => false, idle = () => true, todo: TodoSum | undefined, branch = (): readonly unknown[] => [];
 	const open = () => [...recs.values()].filter((r) => r.state !== "closed");
-	const alive = () => { try { return gpid > 0 && (process.kill(gpid, 0), true); } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; } }; // a server that died without removing gui.json gets no probe answers
+	const pidAlive = (pid: number) => { try { return pid > 0 && (process.kill(pid, 0), true); } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; } };
+	const alive = () => pidAlive(gpid); // a server that died without removing gui.json gets no probe answers
 
 	// Where the dialogs go: the hub in this process while it runs here, else G's channel while G owns it.
 	const target = () => (local() ? me() : g);
@@ -115,7 +116,9 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close, platform
 				return undefined;
 			}
 		};
-		[g, gpid] = named("gui.json") ?? named("hub.json") ?? [undefined, 0];
+		// The first of the two whose process runs: a gui.json left by a dead server must not hide the live hub.json; with none alive, the first that exists.
+		const found = [named("gui.json"), named("hub.json")].filter((x) => x !== undefined);
+		[g, gpid] = found.find(([, pid]) => pidAlive(pid)) ?? found[0] ?? [undefined, 0];
 		if (g && g !== me() && !chans.has(g) && alive()) join_(g); // a host whose process is gone is not joined: the survivor that takes over rewrites gui.json within moments
 		push();
 		return true;

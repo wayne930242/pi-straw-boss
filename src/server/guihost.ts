@@ -267,7 +267,12 @@ export function createGuiHost(o: GuiHostOptions) {
 			// The gates' tracking does not depend on the page: a GUI stopped on purpose, or one that could not bind, still has the Allows of the boss's yes in the terminal.
 			theHub().track();
 			// The bridges follow gui.json to the hub; a server with no gui.json (no GUI served, or one that could not bind on a fresh state folder) names its session in hub.json.
-			writeJson(join(dir, "hub.json"), { pid, ownerSession: id });
+			try {
+				writeJson(join(dir, "hub.json"), { pid, ownerSession: id });
+			} catch (error) {
+				log.line("hub-json-failed", { text: phrase((error as Error).message, 300) });
+				o.failed("hub.json", (error as Error).message);
+			}
 			if (o.listen === false) return;
 			const prefer = recorded();
 			if (prefer.stopped) {

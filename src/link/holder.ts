@@ -721,7 +721,7 @@ export class LinkHolder {
 	async taken(id: string, tower: string): Promise<void> {
 		const was = this.offered.get(id);
 		if (was && was.tower !== tower) return;
-		if (this.replyFellBack.get(id) === tower) return;
+		if (!was && this.replyFellBack.get(id) === tower) return;
 		this.replyFellBack.delete(id);
 		this.offered.delete(id);
 		this.waiting.delete(id);

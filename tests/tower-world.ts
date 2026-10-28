@@ -68,6 +68,8 @@ export class TowerWorld extends ServerWorld {
 	expose: Towers | undefined;
 	ally = new FakeAlly();
 	allows = createAllows({ waitMs: 150 });
+	/** The server builds its own Allows (the hub's gates feed them) instead of the shared fake. */
+	serverAllows = false;
 	/** The requests the tower service sent the link holder (the tools of a run), and the answer for each op. */
 	linkCalls: { body: Record<string, unknown>; from: string }[] = [];
 	linkAnswers = new Map<string, (body: Record<string, unknown>) => Record<string, unknown>>();
@@ -96,7 +98,7 @@ export class TowerWorld extends ServerWorld {
 			} }),
 			herdr: { run: this.herdr.runFor("none"), events: this.herdr.events, api: this.herdr.api, watch: (cb: () => void) => (this.takeovers.push(cb), () => {}) },
 			towers: {
-				recoverMs: 150, registerMs: 500, residentMs: 20, retryMs: [20], ally: this.ally, allows: this.allows, expose: (t: Towers) => void (this.expose = t),
+				recoverMs: 150, registerMs: 500, residentMs: 20, retryMs: [20], ally: this.ally, ...(this.serverAllows ? {} : { allows: this.allows }), expose: (t: Towers) => void (this.expose = t),
 				link: async (body, from) => {
 					const b = body as Record<string, unknown>;
 					this.linkCalls.push({ body: b, from });

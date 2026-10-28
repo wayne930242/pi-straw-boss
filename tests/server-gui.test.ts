@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createServer as createHttpServer, get, request } from "node:http";
 import { createServer } from "node:net";
@@ -8,8 +8,9 @@ import { guiNamespace } from "../src/bridgewire.ts";
 import { startGui } from "../src/gui.ts";
 import { writeRecordFile } from "../src/handover.ts";
 import { switchRemote } from "../src/remote.ts";
-import { fileOf, readRecord, writeRecord } from "../src/server/record.ts";
+import { fileOf, readRecord, slotOf, writeRecord } from "../src/server/record.ts";
 import { until, World } from "./fakes.ts";
+import { scratch } from "./gui-fakes.ts";
 import { bundle, fakeTailscale, Hosted, markAlive, markGone, startHosted } from "./gui-world.ts";
 
 // The GUI in the sb server (docs/specs/2026-10-26-sb-backend.md, GUI, `gui.json` and its successor): where it starts, what it records, what a restart keeps, and what stops it.
@@ -684,4 +685,11 @@ test("RV6-F004/RV7: a server with no GUI (gui: false) or none that could bind st
 	await until(() => b.regs.get(guiNamespace(id)), "B's bridge on the server's channel");
 	assert.equal((await h.ask("status")).gui, undefined, "status says nothing of a GUI this server does not serve");
 	assert.equal((await h.ask("gui", { boss: true })).ok, false, "and the boss's gui command is refused as before");
+});
+
+test("RV8-F002: a hub.json that cannot be written is logged and recorded as lastError \"hub.json\", and the server is still ready", async () => {
+	mkdirSync(join(slotOf(world.stateDir, { HOME: join(scratch, "home"), PI_CODING_AGENT_DIR: join(scratch, "agent") }).dir, "hub.json"), { recursive: true }); // a directory where the file goes
+	const h = await host({ gui: false, pid: process.pid });
+	assert.equal(h.record().lastError?.code, "hub.json");
+	assert.equal(h.record().pid, h.pid, "the server is up");
 });
