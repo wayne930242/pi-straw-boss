@@ -25,6 +25,7 @@ import {
 import { AFTER, endpointFor, helloOf, listenControl, newSecret, type Reply, type Request } from "./socket.ts";
 import { promptCommand } from "./standing.ts";
 import { createTowers, type Towers, type TowersOptions } from "./towers.ts";
+import { towerPanel } from "./towerpanel.ts";
 import { runsStopMs } from "./runs.ts";
 import { readTowerRuns } from "./towerruns.ts";
 import { packageRoot, VERSION } from "./version.ts";
@@ -484,16 +485,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		restart: gui.restart ?? ((reason) => spawnRestart(cliBeside(), reason, "the GUI", serverEnv(env), slot.dir)),
 		failed: (code, text) => recordError(code, text), tailscale: gui.tailscale, bundle: gui.bundle, bindWaitMs: gui.bindWaitMs,
 		// The page's tower units: the service's state and queue in the net, the composer as a boss event, and the notices' buttons (towers is built below, after the GUI host, and may be absent).
-		tower: {
-			view: (workspace) => towers?.runs.view(workspace),
-			has: (workspace) => towers?.runs.view(workspace) !== undefined,
-			live: (workspace) => Boolean(towers?.runs.status(workspace)?.run),
-			// The composer is the boss at a keyboard: the same boss event as the tower prompt's (`present`), so a conversation starts or goes on (docs/how-it-works.md, The boss conversation).
-			event: async (workspace, text) => { try { return (towers!.runs.boss(workspace, text, "the boss (GUI)", { present: true }), { ok: true }); } catch (error) { return { ok: false, error: (error as Error).message }; } },
-			conversation: async (workspace, what) => { try { return { ok: true, ...(what === "leave" ? await towers!.runs.leave(workspace) : await towers!.runs.fresh(workspace)) }; } catch (error) { return { ok: false, error: (error as Error).message }; } },
-			memory: (workspace, json) => towers!.memory(workspace, json),
-			act: async (workspace, what, id) => { try { return (what === "retry" ? towers!.runs.retry(workspace) : what === "deliver" ? towers!.runs.deliverAgain(workspace, id!) : towers!.runs.dropParked(workspace, id!), { ok: true }); } catch (error) { return { ok: false, error: (error as Error).message }; } },
-		},
+		tower: towerPanel(() => towers),
 	});
 	// The tower service (behind `towerRuns.enabled`): it stands in for each workspace's tower, and finds the tabs again when a new Herdr server takes over.
 	// What `boss_server` does for a run (runtools.ts): the server answers it itself, so it can refuse an ally run's token and keep the restart limit.

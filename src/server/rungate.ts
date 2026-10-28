@@ -2,6 +2,8 @@
 // secret is its credential, as before. A request that carries a run token is a run's: the server looks the token up and holds the request to the run's kind. A local run is the tower itself, so it may do
 // what a tower does (read the status, ask the link holder for a list, a board, a send, or an approved request, open and close mains of its own workspace); an ally run is a peer's message at a
 // level, so it may do almost nothing (B6 widens it with the gate). Neither kind administers the GUI, the link team, the tower's tab, or the server.
+// Nor does either kind speak as the boss or steer the boss conversation (docs/how-it-works.md, The boss conversation): `tower-event`, `tower-leave`, `tower-new`, `tower-retry`, `tower-deliver`, `tower-drop`, and the prompt's commands are
+// not in any list below, so the default refuses them. A run's only sign of the boss is `run-boss` for its own session, which an ally run's token cannot make and a made-up one is unknown for.
 
 export type Kind = "local" | "ally";
 export interface RunInfo { id: string; workspace: string; kind: Kind }

@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { BOSS_FILE_MAX, readPointer, resumable, type BossPointer, writePointer } from "../src/server/bossconv.ts";
 import { addText, updateMemory } from "../src/server/towermemory.ts";
 import { readNotes, readRun } from "../src/server/towerrunstore.ts";
 import { callControl } from "../src/server/socket.ts";
+import { towerPanel } from "../src/server/towerpanel.ts";
 import { type Running, sleep, until } from "./server-world.ts";
 import { TowerWorld } from "./tower-world.ts";
 
@@ -214,18 +215,20 @@ test("the boss's silence ends a conversation with a steer that says so and the n
 	assert.equal(readNotes(world.slot, "wA").at(-1)!.note, "(ended idle)");
 });
 
-test("the 4 h cap of a conversation is a wrap-up, not a timeout", async () => {
-	world.runTimers = { bossAway: 600_000, idleSteer: 100, idleEnd: 200, bossMax: 150, steerAt: 60_000, quitAt: 120_000, quitGrace: 60, signal: 60 };
+test("the 4 h cap of a conversation that is busy at that moment is a wrap-up as well, not a timeout: the cap is the boss's time, not the run's", async () => {
+	world.runTimers = { bossAway: 600_000, idleSteer: 100, idleEnd: 200, bossMax: 300, steerAt: 60_000, quitAt: 100, quitGrace: 600, signal: 60 };
 	const s = await setup();
 	const c = await conversation(s, 1, sessionFile("2026-10-28_aaa.jsonl"));
 	const seen: string[] = [];
+	// Busy through the cap (the model is at work), then quiet.
+	for (const end = Date.now() + 340; Date.now() < end; await sleep(15)) await poll(s, c.token, false);
 	for (const end = Date.now() + 1500; Date.now() < end && !seen.includes("quit"); await sleep(15)) {
 		const command = (await poll(s, c.token)).command as { type: string } | undefined;
 		if (command) seen.push(command.type);
 	}
 	assert.deepEqual(seen, ["steer", "quit"]);
 	exit(c.id);
-	await until(() => readRun(world.slot, "wA", c.id)?.outcome === "quit", "quit at the cap");
+	await until(() => readRun(world.slot, "wA", c.id)?.outcome === "quit", "quit at the cap, not timeout");
 	assert.equal(readNotes(world.slot, "wA").at(-1)!.note, "(ended at the 4 h cap)");
 });
 
@@ -243,12 +246,17 @@ test("the pointer is written only for a file under pi's sessions folder, and onl
 	assert.equal((await ask(s, { cmd: "tower-event", workspace: "wA", text: "x", present: true })).ok, true);
 	const id = await nthRun(1);
 	const { token } = await claimRun(s, id);
-	const outside = join(world.root, "elsewhere.jsonl");
+	const outside = join(world.root, "elsewhere.jsonl"), good = sessionFile("2026-10-28_ok.jsonl");
 	writeFileSync(outside, "x");
+	const written = () => existsSync(join(world.slot.dir, "tower", "wA", "boss-session.json"));
 	await ask(s, { cmd: "run-file", token, file: outside });
-	assert.equal(readPointer(world.slot, "wA"), undefined, "a file outside the sessions folder is not kept as the boss session");
+	assert.equal(written(), false, "a file outside the sessions folder is not kept as the boss session");
 	await ask(s, { cmd: "run-file", token, file: sessionFile("not-a-session.txt") });
-	assert.equal(readPointer(world.slot, "wA"), undefined, "nor a file that is not a .jsonl");
+	assert.equal(written(), false, "nor a file that is not a .jsonl");
+	await ask(s, { cmd: "run-file", token, file: good });
+	assert.equal(readPointer(world.slot, "wA")?.file, realpathSync(good), "a session file is");
+	await ask(s, { cmd: "run-file", token, file: outside });
+	assert.equal(readPointer(world.slot, "wA")?.file, realpathSync(good), "and a later file outside the folder changes nothing");
 });
 
 test("whoever the comms show: the boss session is the tower unit's file while it lasts, and an event run is listed apart with its note", async () => {
@@ -336,4 +344,25 @@ test("resumable: a regular .jsonl under the sessions folder, small and recent, n
 	writeFileSync(join(world.slot.dir, "tower", "wA", "boss-session.json"), "{not json");
 	assert.equal(readPointer(world.slot, "wA"), undefined, "a pointer that cannot be read is no pointer");
 	assert.equal(readFileSync(join(world.slot.dir, "tower", "wA", "boss-session.json"), "utf8"), "{not json");
+});
+
+test("the GUI's tower panel is the pi interface's functions: the composer is a present boss event (a conversation starts), Leave and New are leave and fresh, and a refusal is the server's words", async () => {
+	const s = await setup();
+	const panel = towerPanel(() => world.expose);
+	assert.equal(panel.has("wA"), true);
+	assert.equal(panel.has("wZ"), false);
+	assert.deepEqual(await panel.event("wA", "hello from the composer"), { ok: true });
+	const id = await nthRun(1);
+	assert.deepEqual(readRun(world.slot, "wA", id)?.conversation?.resumed, false, "a composer message with no run live starts the boss conversation, as the tower prompt's does");
+	const { token } = await claimRun(s, id);
+	assert.equal(panel.live("wA"), true);
+	assert.equal((await panel.conversation!("wA", "leave")).ok, true);
+	assert.equal(((await poll(s, token)).command as { type: string }).type, "quit");
+	exit(id);
+	await until(() => readRun(world.slot, "wA", id)?.outcome === "done", "the conversation to end");
+	const again = await panel.conversation!("wA", "leave");
+	assert.equal(again.ok, false);
+	assert.match(String(again.error), /No boss conversation is live/);
+	assert.deepEqual(await panel.conversation!("wA", "new"), { ok: true, fresh: true, left: false });
+	assert.equal((await panel.event("wZ", "x")).ok, false);
 });
