@@ -7,7 +7,8 @@ import { fileOf, readLock, readRecord, readStartError, takeLock, writeRecord, wr
 import type { ServerHandle, ServerOptions } from "../src/server/main.ts";
 import { callControl } from "../src/server/socket.ts";
 import { GateTimeout } from "../src/server/winprep.ts";
-import { ServerWorld, sleep, until } from "./server-world.ts";
+import { fakeClock } from "./fake-clock.ts";
+import { ServerWorld, sleep, stallWatch, until } from "./server-world.ts";
 
 // docs/specs/2026-10-26-sb-backend.md: `cli.mjs up`, `serve`, `stop`, `status`, `restart`, `logs`: their output, their steps, and their exit codes 0 to 5.
 
@@ -270,15 +271,14 @@ test("--timeout bounds the whole up, and the failure names which wait ran out be
 	const locked = await cli(["up", "--timeout", "0.3"]);
 	lock.release();
 	assert.equal(locked.errJson?.wait, "lock");
-	// start: this up starts the server and it does not answer; the start wait is cut to what --timeout leaves.
-	const began = Date.now();
-	const silent = await cli(["up", "--timeout", "0.5"], { ctx: { spawn: () => ({ pid: 5, exited: new Promise(() => {}) }) } });
+	// start: this up starts the server and it does not answer; the start wait is cut to what --timeout leaves. The clock is the test's, so the lock and the folder check take none of the time given.
+	const clock = fakeClock();
+	const silent = await cli(["up", "--timeout", "0.5"], { ctx: { now: clock.now, sleep: clock.sleep, spawn: () => ({ pid: 5, exited: new Promise(() => {}) }) } });
 	assert.equal(silent.code, 1);
 	assert.equal(silent.errJson?.step, "server");
 	assert.equal(silent.errJson?.wait, "start");
-	// The start wait is what --timeout leaves after the lock and the folder check: 0.5 s on an idle machine, 0.4 s or less when those took 100 ms (a loaded one).
-	assert.match(String(silent.errJson?.reason), /did not answer hello within 0\.[2-5] s/);
-	assert.ok(Date.now() - began < 2500, "not the 5 s the start timer gives");
+	assert.match(String(silent.errJson?.reason), /did not answer hello within 0\.5 s/);
+	assert.ok(clock.elapsed() >= 500 && clock.elapsed() <= 500 + 100, `the start wait took ${clock.elapsed()} ms: --timeout, not the 5 s the start timer gives`);
 	// hello: another requester's start is under way (a fresh restarting, no lock held) and no hello comes.
 	mkdirSync(world.slot.dir, { recursive: true });
 	writeRecord(world.slot, { pid: 4_000_000, version: "0.44.0", herdr: world.slot.herdr, mode: "detached", desk: false, intercom: { transport: "default" }, log: "/l", socket: "", secret: "", intercomId: "x", restarting: { began: new Date().toISOString(), since: new Date().toISOString(), reason: "starting", by: "someone" } });
@@ -491,32 +491,34 @@ test("up --timeout 1: an owner read that runs out of time is exit 1 with wait st
 	const honours = async (_slot: unknown, ms?: number) => { await sleep(ms ?? 5000); throw new GateTimeout("the owner of the state folder could not be read (timed out)"); };
 	const ignores = async () => { await sleep(3000); return true; };
 	for (const gate of [honours, ignores]) {
-		const began = Date.now();
+		const began = Date.now(), stalls = stallWatch();
 		const r = await cli(["up", "--timeout", "1"], { ctx: { gate } });
+		stalls.stop();
 		assert.equal(r.code, 1, r.err);
 		assert.equal(r.errJson?.wait, "start");
 		assert.equal(r.errJson?.startError, undefined, "no acl refusal");
 		assert.doesNotMatch(String(r.errJson?.reason), /^acl:/);
-		assert.ok(Date.now() - began < 1500, `within the time given and a margin: ${Date.now() - began} ms`);
+		assert.ok(Date.now() - began < 1500 + stalls.worst(), `within the time given and a margin: ${Date.now() - began} ms (this process stood still for ${stalls.worst()} ms)`);
 	}
 });
 
 test("up --timeout: the time spent preparing the folder with no one holding server.lock is not reported as a lock wait, and the call ends within 0.5 s of the deadline", async () => {
-	const prepare = async () => void (await sleep(400));
-	const began = Date.now();
-	const r = await cli(["up", "--timeout", "0.3"], { ctx: { prepare } });
+	// The clock is the test's: preparing the folder takes 400 ms of it, and what the call waited is read off it.
+	let clock = fakeClock();
+	const prepare = async () => void (await clock.sleep(400));
+	const r = await cli(["up", "--timeout", "0.3"], { ctx: { prepare, now: clock.now, sleep: clock.sleep } });
 	assert.equal(r.code, 1, r.err);
 	assert.notEqual(r.errJson?.wait, "lock", "no one held the lock");
 	assert.equal(r.errJson?.wait, "start");
 	assert.equal(readLock(world.slot), undefined, "and it left no lock behind");
-	assert.ok(Date.now() - began < 800, `${Date.now() - began} ms`);
+	assert.ok(clock.elapsed() < 800, `${clock.elapsed()} ms`);
 	// With a real holder the wait is the lock's, and it ends at the deadline too.
 	const lock = await takeLock(world.slot, "someone else", { alive: () => true }, 0);
-	const held = Date.now();
-	const busy = await cli(["up", "--timeout", "0.3"]);
+	clock = fakeClock();
+	const busy = await cli(["up", "--timeout", "0.3"], { ctx: { now: clock.now, sleep: clock.sleep, lock: { now: clock.now, sleep: clock.sleep, alive: () => true, startOf: () => undefined, prepare: () => {} } } });
 	lock.release();
 	assert.equal(busy.errJson?.wait, "lock");
-	assert.ok(Date.now() - held < 800, `${Date.now() - held} ms`);
+	assert.ok(clock.elapsed() >= 250 && clock.elapsed() < 800, `${clock.elapsed()} ms`);
 });
 
 test("status drops lastError once the server is ready: a failure of an earlier attempt does not survive a successful start", async () => {

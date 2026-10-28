@@ -55,8 +55,8 @@ test("RC3-F001: answersLive on a cold Windows cache waits for the start time rea
 
 test("RC3-F001: a start time that is not in within the bound stays unknown and nothing is sent", async () => {
 	const { seen, port } = await squatter();
-	const slow = winStart(2000);
-	assert.equal(await answersLive(record(port, { pid: process.ppid, started: "2026-10-27T10:00:00.000Z" }), { later: slow.startedLater, waitMs: 100 }), false);
+	const slow = held();
+	assert.equal(await answersLive(record(port, { pid: process.ppid, started: T0 }), { later: slow.startedLater, waitMs: 100 }), false);
 	assert.deepEqual(seen, []);
 });
 
@@ -88,14 +88,24 @@ const counted = (ms: number) => {
 	const source = createStartOf({ platform: "win32", launch: ((_f: string, _a: string[], _o: unknown, done: (error: Error | null, out: string) => void) => (reads.push(reads.length), void setTimeout(() => done(null, T0), ms))) as never });
 	return { reads, ...source };
 };
+/**
+ * A Windows source whose read ends when the test says so (`release`), not after a time. A test of what happens while the read is pending, or past the bound, then does not depend on how late the machine runs its timers:
+ * with a 2 s read and a 100 ms bound, a stall of the test process longer than the read let the start time arrive first, and the token went out (RC4-F001).
+ */
+const held = () => {
+	const reads: number[] = [], waiting: (() => void)[] = [];
+	const source = createStartOf({ platform: "win32", launch: ((_f: string, _a: string[], _o: unknown, done: (error: Error | null, out: string) => void) => (reads.push(reads.length), void waiting.push(() => done(null, T0)))) as never });
+	return { reads, release: () => void waiting.splice(0).forEach((end) => end()), ...source };
+};
 
 test("RC4-F001: the trust question's `up` on a cold Windows source waits for the read and relays; past the bound it sends nothing", async () => {
 	const { seen, port } = await squatter();
 	const cold = counted(300);
 	assert.equal(await guiUp(stateWith(port), ENV, { later: cold.startedLater, waitMs: 3000 })(), true);
 	assert.deepEqual(seen, ["/secret-token/"]);
-	const slow = counted(2000), before = seen.length;
-	assert.equal(await guiUp(stateWith(port), ENV, { later: slow.startedLater, waitMs: 100 })(), false);
+	const never = held(), before = seen.length;
+	assert.equal(await guiUp(stateWith(port), ENV, { later: never.startedLater, waitMs: 100 })(), false);
+	assert.equal(never.reads.length, 1, "the read was under way, and had not ended at the bound");
 	assert.equal(seen.length, before, "nothing was sent after the bound");
 });
 
@@ -123,7 +133,7 @@ test("RC4-F002: the early read starts for a live server that reads trust request
 
 test("RC4-F001/F002: registerTrust starts the early read at load, and its handler asks the GUI through the session's own source", async () => {
 	const { seen, port } = await squatter();
-	const guiDir = stateWith(port), cwd = mkdtempSync(join(scratch, "cwd-")), cold = counted(300);
+	const guiDir = stateWith(port), cwd = mkdtempSync(join(scratch, "cwd-")), cold = held();
 	const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
 	const pi = { on: (type: string, handler: (event: unknown, ctx: unknown) => unknown) => void handlers.set(type, handler) } as never;
 	let keyed = () => {};
@@ -133,7 +143,10 @@ test("RC4-F001/F002: registerTrust starts the early read at load, and its handle
 	registerTrust(pi, { cfg: { env: ENV, now: Date.now, sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)), startRead: { later: cold.startedLater, waitMs: 3000 } } as never, guiDir }, { stdin, proc, write: (text) => void out.push(text), resources: () => true });
 	assert.equal(cold.reads.length, 1, "the read started when the extension loaded");
 	const decided = handlers.get("project_trust")!({ cwd }, { mode: "tui", hasUI: true }) as Promise<{ trusted: string }>;
-	await until(() => existsSync(trustDir(guiDir)) && readdirSync(trustDir(guiDir)).some((f) => /^[0-9a-f-]{36}\.json$/.test(f)), "the request file: the GUI was found live through the cold source");
+	await new Promise<void>((resolve) => setImmediate(resolve)); // the question is waiting on the read that is under way
+	assert.deepEqual(seen, [], "nothing was sent while the read was pending");
+	cold.release();
+	await until(() => existsSync(trustDir(guiDir)) && readdirSync(trustDir(guiDir)).some((f) => /^[0-9a-f-]{36}\.json$/.test(f)), "the request file: the GUI was found live through the cold source", 20_000);
 	assert.deepEqual(seen, ["/secret-token/"], "the token went to the port once the start time matched");
 	assert.equal(cold.reads.length, 1, "the question used the read that was under way");
 	keyed();
@@ -160,7 +173,7 @@ test("sbir6-F004: registerTrust starts the early read only where pi will ask: re
 
 test("RC4-F001: a start time that is not in within the bound leaves registerTrust's question to the terminal and sends nothing", async () => {
 	const { seen, port } = await squatter();
-	const guiDir = stateWith(port), cwd = mkdtempSync(join(scratch, "cwd-")), slow = counted(2000);
+	const guiDir = stateWith(port), cwd = mkdtempSync(join(scratch, "cwd-")), slow = held();
 	let handler: ((event: unknown, ctx: unknown) => unknown) | undefined;
 	const pi = { on: (type: string, h: (event: unknown, ctx: unknown) => unknown) => void (type === "project_trust" && (handler = h)) } as never;
 	const stdin = { isTTY: true, isRaw: false, setRawMode: () => {}, resume: () => {}, pause: () => {}, on: () => {}, off: () => {} };
@@ -174,23 +187,26 @@ test("RC4-F001: the tower's dashboard finds the GUI through the session's own so
 	const world = new World();
 	try {
 		const { seen, port } = await squatter();
-		const cold = counted(300), tower = world.tower("tower-cold", "wA:t7", "wA:p7", true, { stateDir: stateWith(port), startRead: { later: cold.startedLater, waitMs: 3000 } });
+		const cold = held(), tower = world.tower("tower-cold", "wA:t7", "wA:p7", true, { stateDir: stateWith(port), startRead: { later: cold.startedLater, waitMs: 3000 } });
 		await tower.start();
 		const component = tower.components.get("straw-boss-dashboard")!;
 		// The rows render at once (sbir6-F005): the first reading says "checking…" while the cold start-time read runs, and the GUI line follows when it settles.
-		await until(() => component.render(80)[0]!.includes(`${TOWER_LABEL} Alpha`), "the first reading", 5000);
+		await until(() => component.render(80)[0]!.includes(`${TOWER_LABEL} Alpha`), "the first reading", 20_000);
 		assert.ok(component.render(80).some((line) => line.includes("GUI checking")), "the first reading did not wait for the GUI read");
+		await until(() => cold.reads.length === 1, "the read to start", 20_000);
 		assert.deepEqual(seen, [], "nothing was sent while the read was pending");
-		await until(() => component.render(80).some((line) => line.includes(`http://127.0.0.1:${port}/secret-token/`)), "the GUI line after the read settles", 5000);
+		cold.release();
+		await until(() => component.render(80).some((line) => line.includes(`http://127.0.0.1:${port}/secret-token/`)), "the GUI line after the read settles", 20_000);
 		assert.deepEqual(seen.slice(0, 1), ["/secret-token/"]);
-		const slow = counted(2000), late = new World();
+		// The first tower keeps reading (Herdr events, the poll), so it sends to its own squatter; the second tower's has no other visitor, and what it was sent is the whole answer.
+		const quiet = await squatter(), slow = held(), late = new World();
 		try {
-			const before = seen.length, other = late.tower("tower-slow", "wA:t7", "wA:p7", true, { stateDir: stateWith(port), startRead: { later: slow.startedLater, waitMs: 100 } });
+			const other = late.tower("tower-slow", "wA:t7", "wA:p7", true, { stateDir: stateWith(quiet.port), startRead: { later: slow.startedLater, waitMs: 100 } });
 			await other.start();
-			await until(() => other.components.get("straw-boss-dashboard")?.render(80)[0]?.includes(`${TOWER_LABEL} Alpha`), "the first reading");
-			await until(() => other.components.get("straw-boss-dashboard")!.render(80).some((line) => line.includes("GUI not running")), "the read to settle past the bound");
-			assert.ok(other.components.get("straw-boss-dashboard")!.render(80).some((line) => line.includes("GUI not running")), "no GUI line: the start time was not in within the bound");
-			assert.equal(seen.length, before, "nothing was sent after the bound");
+			await until(() => other.components.get("straw-boss-dashboard")?.render(80)[0]?.includes(`${TOWER_LABEL} Alpha`), "the first reading", 20_000);
+			await until(() => other.components.get("straw-boss-dashboard")!.render(80).some((line) => line.includes("GUI not running")), "the read to settle past the bound", 20_000);
+			assert.equal(slow.reads.length, 1, "the read was under way, and had not ended at the bound");
+			assert.deepEqual(quiet.seen, [], "nothing was sent after the bound");
 			await other.stop();
 		} finally {
 			await late.stopAll();

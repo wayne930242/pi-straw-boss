@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
+import { fakeClock } from "./fake-clock.ts";
 import { TowerWorld } from "./tower-world.ts";
 import { type Running, sleep, until } from "./server-world.ts";
 import { callControl } from "../src/server/socket.ts";
@@ -231,7 +232,8 @@ test("a boss event wakes a service the loop held, and Retry does too", async () 
 });
 
 test("a run past the steer time is told to wrap up, past the cap it is told to quit, and a pi that stays gets Escape and /quit, then SIGTERM from a PID read from Herdr", async () => {
-	// A wide window between the steer and the quit: under load (a load average of 70 was seen) a watcher tick can come seconds late, and the steer is skipped when the first tick that sees the run is already past the cap (B5 review F013).
+	// The run's clock is the test's: the watcher sees an age only when the test sets it, one step at a time, so a tick that comes seconds late under load (a load average of 70 was seen) cannot find the run already past the cap and skip the steer (B5 review F013).
+	const clock = (world.runClock = fakeClock());
 	world.runTimers = { steerAt: 150, quitAt: 3000, quitGrace: 60, signal: 60 };
 	const { s } = await setup();
 	tower().incoming(from, msg("m1", "slow"));
@@ -239,16 +241,25 @@ test("a run past the steer time is told to wrap up, past the cap it is told to q
 	const token = await claimed(s, id);
 	await drain(s, token);
 	const seen: string[] = [];
-	await until(async () => {
-		const got = await poll(s, token, false);
-		const command = got.command as { type: string; text?: string } | undefined;
+	const commandsUntil = (done: () => boolean, what: string) => until(async () => {
+		const command = (await poll(s, token, false)).command as { type: string } | undefined;
 		if (command) seen.push(command.type);
-		return seen.includes("quit");
-	}, "the quit command", 15_000);
+		return done();
+	}, what, 20_000);
+	assert.equal((await poll(s, token, false)).command, undefined, "nothing is told before the steer time");
+	clock.advance(200);
+	await commandsUntil(() => seen.length > 0, "the steer");
+	assert.deepEqual(seen, ["steer"]);
+	clock.advance(3000);
+	await commandsUntil(() => seen.includes("quit"), "the quit command");
 	assert.deepEqual(seen, ["steer", "quit"]);
-	await until(() => world.herdr.keys.some((k) => k.includes("/quit")), "Escape and /quit through Herdr");
+	assert.deepEqual([...world.herdr.keys], [], "pi has had no grace yet");
+	clock.advance(60);
+	await until(() => world.herdr.keys.some((k) => k.includes("/quit")), "Escape and /quit through Herdr", 20_000);
 	assert.deepEqual(world.herdr.keys.slice(0, 3).map((k) => k.slice(1)), [["send-keys", ensureedPane(), "esc"], ["send-text", ensureedPane(), "/quit"], ["send-keys", ensureedPane(), "enter"]]);
-	await until(() => world.kills.length === 1, "SIGTERM");
+	assert.deepEqual([...world.kills], [], "no signal before its time");
+	clock.advance(60);
+	await until(() => world.kills.length === 1, "SIGTERM", 20_000);
 	assert.deepEqual(world.kills[0], [world.pis.get(id)!.pid, "SIGTERM"]);
 	exit(id);
 	await until(() => readRun(world.slot, "wA", id)?.outcome === "timeout", "the outcome");
@@ -258,6 +269,7 @@ test("a run past the steer time is told to wrap up, past the cap it is told to q
 const ensureedPane = () => world.herdr.panes.find((p) => p.tokens.sb_role === "tower")!.pane_id;
 
 test("a run idle with nothing pending and no tower_done gets one steer, then is ended with the note (ended without a note)", async () => {
+	const clock = (world.runClock = fakeClock());
 	world.runTimers = { idleSteer: 80, idleEnd: 100 };
 	const { s } = await setup();
 	tower().incoming(from, msg("m1", "quick"));
@@ -265,10 +277,16 @@ test("a run idle with nothing pending and no tower_done gets one steer, then is 
 	const token = await claimed(s, id);
 	await drain(s, token);
 	assert.equal((await poll(s, token)).command, undefined);
-	await sleep(120);
-	assert.equal(((await poll(s, token)).command as { type: string; text: string }).type, "steer");
-	await sleep(130);
-	assert.equal(((await poll(s, token)).command as { type: string }).type, "quit");
+	// The idle time is the clock's, one step at a time: a watcher tick that comes late under load cannot find the run past the end and skip the steer.
+	const nextCommand = async (what: string) => {
+		let got: { type: string } | undefined;
+		await until(async () => ((got = (await poll(s, token)).command as { type: string } | undefined), got !== undefined), what, 20_000);
+		return got!.type;
+	};
+	clock.advance(100);
+	assert.equal(await nextCommand("the steer"), "steer");
+	clock.advance(100);
+	assert.equal(await nextCommand("the quit"), "quit");
 	exit(id);
 	await until(() => readRun(world.slot, "wA", id)?.outcome === "quit", "the outcome");
 	assert.equal(readNotes(world.slot, "wA").at(-1)!.note, "(ended without a note)");
