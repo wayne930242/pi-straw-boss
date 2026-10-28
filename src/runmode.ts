@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { BOSS_MARK, CRASH_FLAG } from "./eventmarks.ts";
+import { BOSS_MARK, CRASH_FLAG, cleanLabel } from "./eventmarks.ts";
 import { panes, type Place, TOWER_LABEL, tabs } from "./herdr.ts";
 import { createApproval } from "./link/approval.ts";
 import type { Level } from "./link/config.ts";
@@ -59,8 +59,7 @@ export function eventText(e: Pick<Event, "kind" | "text" | "flag" | "from">): st
 	if (e.kind === "timer") return `[your wakeAfter follow-up is due]${flag}\n${e.text}`;
 	// A teammate's message to an ally run: the server wrote the verified header (device, team, the ask it carries) before the peer's text.
 	if (e.kind === "link") return e.text;
-	// An allowlist: terminal escape sequences (7- and 8-bit, finished or not) and controls become spaces, then only letters, digits, spaces and ._-@ are kept (NFC first, so accented letters stay whole); the cut counts code points. Known limits (docs/how-it-works.md): bracket-like letters stay, combining marks go.
-	const label = (v = "") => [...v.replace(/(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]?|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?/g, " ").replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").normalize("NFC").replace(/[^\p{L}\p{N}\s._@-]/gu, "").replace(/\s+/g, " ").trim()].slice(0, 80).join("");
+	const label = (v = "") => cleanLabel(v);
 	const sender = e.from ? `${label(e.from.name) ? `${label(e.from.name)} ` : ""}(${label(e.from.id)})` : "an unknown sender";
 	return `[intercom from ${sender}]${flag}\n${e.text}`;
 }
@@ -351,7 +350,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		keep();
 		if (!pinPeer()) return void refuseUnpinned();
 		registerTools();
-		await call({ cmd: "run-file", file: context.sessionManager.getSessionFile() ?? "" }).catch(() => {});
+		await call({ cmd: "run-file", file: context.sessionManager.getSessionFile() ?? "", session: context.sessionManager.getSessionId() }).catch(() => {});
 		timer = setInterval(() => void tick(), pollMs);
 		timer.unref();
 		void tick();

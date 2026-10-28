@@ -86,17 +86,30 @@ test("a message that waits for the tower identity gets an ally run in a pane spl
 	assert.deepEqual(status.allyRuns.map((a) => [a.id, a.label]), [[id, `label-${DEV1}`]], "the GUI names a run by its id and its device's label");
 });
 
-test("the tower's view carries the session file of a live ally run by run id, once the run reported it, and the status never carries a path", async () => {
+test("the tower's view carries the session file of a live ally run by run id, once the run reported it bound to its pi session, and the status never carries a path", async () => {
 	const { s } = await setup();
 	world.ally.add("m1", DEV1, "hello");
 	world.expose?.allyWaiting("sb-tower-wa");
 	const id = await nthRun(), got = await claimed(s, id);
 	assert.equal(world.expose!.runs.view("wA")!.allyFiles, undefined, "no file before the run reports one");
-	assert.equal((await ask(s, { cmd: "run-file", token: got.token, file: "/s/ally.jsonl" })).ok, true);
+	assert.equal((await ask(s, { cmd: "run-file", token: got.token, file: "/s/2026_ses-1.jsonl", session: "ses-1" })).ok, true);
 	const view = world.expose!.runs.view("wA")!;
-	assert.deepEqual(view.allyFiles, { [id]: "/s/ally.jsonl" });
+	assert.deepEqual(view.allyFiles, { [id]: "/s/2026_ses-1.jsonl" });
 	assert.equal(view.file, undefined, "an ally run's file is not the tower's comms");
-	assert.ok(!JSON.stringify(view.allyRuns).includes("ally.jsonl"), "the service reading has no path");
+	assert.ok(!JSON.stringify(view.allyRuns).includes("ses-1.jsonl"), "the service reading has no path");
+});
+
+test("an ally run's file is kept only when it is named for the pi session the run reports: another session's file, no session, or an odd session id leaves it unset (GR-F004)", async () => {
+	const { s } = await setup();
+	world.ally.add("m1", DEV1, "hello");
+	world.expose?.allyWaiting("sb-tower-wa");
+	const id = await nthRun(), got = await claimed(s, id);
+	for (const report of [{ file: "/s/2026_other.jsonl", session: "ses-1" }, { file: "/s/2026_ses-1.jsonl" }, { file: "/s/2026_ses-1.jsonl", session: 7 }, { file: "/s/2026_a/b.jsonl", session: "a/b" }, { file: "/s/2026_ses-1.jsonl", session: "" }]) {
+		await ask(s, { cmd: "run-file", token: got.token, ...report });
+		assert.equal(world.expose!.runs.view("wA")!.allyFiles, undefined, JSON.stringify(report));
+	}
+	await ask(s, { cmd: "run-file", token: got.token, file: "/s/2026_ses-1.jsonl", session: "ses-1" });
+	assert.deepEqual(world.expose!.runs.view("wA")!.allyFiles, { [id]: "/s/2026_ses-1.jsonl" });
 });
 
 test("the claim of an ally run answers its kind, level, sender, and an ally brief; the brief has the sender, the asks, and the thread, and no head tower or identity", async () => {

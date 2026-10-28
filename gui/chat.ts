@@ -10,7 +10,7 @@ import { mount, parse } from "./markdown.ts";
 import type { Post } from "./composer.ts";
 import { m } from "./paraglide/messages.js";
 import { html, ICON, roleName } from "./render.ts";
-import { bossTurn, eventTurn, heard, type Turn } from "./towerturns.ts";
+import { bossTurn, eventTurn, heard, senderOf, type Turn } from "./towerturns.ts";
 
 // The comms log of one session. The model is pure: items merge by entry id (a repeated one is ignored), tool results attach to their call by
 // callId, a reset replaces everything, and at most 600 items stay mounted (the farthest page is dropped and fetched again on scroll).
@@ -177,9 +177,14 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor }: 
 	const you = (it: Item, body: string, crashed: boolean | undefined, raw: string) => h("article", { class: "tx you" }, h("header", null, stamp(it), h("b", null, m.you()), icon("user")), h("div", { class: "bubble", title: raw }, crashed ? h("small", { class: "boss-flag" }, m.boss_crash_flag()) : null, ...plain(body), thumbs(it.id, it.images)));
 	/** An incoming message: its label on one collapsed line, its text (and the crash flag, or the verified header folded behind "details") inside. */
 	const notice = (it: Item, label: (Node | string)[], body: string, more: { crashed?: boolean; raw?: string } = {}) => h("article", { class: "tx sys" }, h("details", { class: "notice" }, h("summary", null, icon("comms"), h("em", null, m.incoming()), ...label, stamp(it)), more.crashed ? h("small", { class: "boss-flag" }, m.boss_crash_flag()) : null, h("pre", null, body), more.raw ? h("details", { class: "notice-raw" }, h("summary", null, m.notice_details()), h("pre", { class: "raw" }, more.raw)) : null));
+	/** A message from a session on this computer: its name (a link to it when the net lists it), its id, and where it comes from; a teammate's message through Straw Link says so too, so the two never read alike. */
+	const intercomLabel = (from: string | undefined): (Node | string)[] => {
+		const s = senderOf(from);
+		return [m.notice_intercom(), " ", (s.name && link(s.name)) || s.name, s.id ? ` (${s.id})` : "", " · ", m.notice_origin_local()];
+	};
 	const turnLabel = (t: Exclude<Turn, { kind: "boss" }>): (Node | string)[] => {
-		if (t.kind === "link") return [{ ask: m.notice_link_ask, reply: m.notice_link_reply, answer: m.notice_link_answer, message: m.notice_link_message }[t.what]({ from: t.from })];
-		if (t.kind === "intercom") return [m.notice_intercom(), " ", (t.from && link(t.from.replace(/ \([^()]*\)$/, ""))) || (t.from ?? "")];
+		if (t.kind === "link") return [{ ask: m.notice_link_ask, reply: m.notice_link_reply, answer: m.notice_link_answer, message: m.notice_link_message }[t.what]({ from: t.from }), " · ", m.notice_origin_teammate()];
+		if (t.kind === "intercom") return intercomLabel(t.from);
 		return [t.kind === "server" ? m.notice_server() : m.notice_timer()];
 	};
 	function render(it: Item): HTMLElement {
@@ -187,7 +192,7 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor }: 
 			case "user": {
 				// A run of a tower the sb server runs gets what came to the tower as user turns; the server wrote their first line, and they are not the boss's (towermodel.ts `heard`).
 				const said = who().service ? heard(it.text) : undefined;
-				if (said) return notice(it, [said.kind === "intercom" ? m.notice_intercom() : said.kind === "server" ? m.notice_server() : m.notice_timer(), " ", said.kind === "intercom" ? (link(said.from.replace(/ \([^()]*\)$/, "")) || said.from) : ""], it.text ?? "");
+				if (said) return notice(it, said.kind === "intercom" ? intercomLabel(said.from) : [said.kind === "server" ? m.notice_server() : m.notice_timer()], it.text ?? "");
 				const boss = who().service ? bossTurn(it.text) : undefined; // the server's marker line is not shown
 				return you(it, boss ? boss.body : (it.text ?? ""), boss?.crashed, boss ? (it.text ?? "") : "");
 			}
@@ -199,9 +204,10 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor }: 
 			case "bash": return h("article", { class: "tx sys" }, h("details", { class: "act" }, h("summary", { "data-mark": it.exit ? "error" : "done" }, h("b", { class: "badge" }), h("code", null, "shell"), h("span", { class: "sum" }, `! ${it.command}`), it.exit ? h("span", { class: "stop", "data-mark": "error" }, m.exit_code({ code: it.exit })) : null), it.text ? h("pre", { class: "out" }, it.text) : null));
 			case "notice": {
 				// A run's event is read by what the server sent it as, not by its text (towerturns.ts `eventTurn`); a message to an ally run or a main carries the verified header, folded.
+				// The boss's own message is a YOU bubble only in a run of a tower the sb server runs: that is the one writer of `kind: "boss"` (runmode.ts), so anywhere else the same entry is a message another party wrote into a session, and shows as one.
 				const turn = eventTurn(it);
-				if (turn?.kind === "boss") return you(it, turn.body, turn.crashed, it.text ?? "");
-				if (turn) return notice(it, turnLabel(turn), turn.body, turn.kind === "link" ? { raw: turn.raw } : { crashed: turn.crashed });
+				if (turn?.kind === "boss" && who().service) return you(it, turn.body, turn.crashed, it.text ?? "");
+				if (turn && turn.kind !== "boss") return notice(it, turnLabel(turn), turn.body, turn.kind === "link" ? { raw: turn.raw } : { crashed: turn.crashed });
 				return notice(it, [NOTICE[it.type ?? ""]?.() ?? it.type ?? m.notice(), " ", (it.from && link(it.from)) || (it.from ?? "")], it.text ?? "");
 			}
 			case "divider": return h("article", { class: "tx rule" }, h("details", null, h("summary", null, it.type === "compaction" ? m.compacted({ tokens: (it.tokens ?? 0).toLocaleString() }) : m.branch_summary()), h("pre", null, it.text ?? "")));

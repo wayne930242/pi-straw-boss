@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { basename } from "node:path";
 import { type HerdrRun, panes, report, result, type Sleep, startPi } from "../herdr.ts";
 import { alive as pidAlive } from "../remote.ts";
 import { startOf as processStartOf, startedLater as processStartedLater } from "../startof.ts";
@@ -880,10 +881,14 @@ export function createRuns(o: RunsOptions) {
 			const svc = find(workspace);
 			return svc?.run?.rec.file ?? listRuns(slot, workspace).filter((r) => r.kind === "local" && r.file).at(-1)?.file;
 		},
-		/** The pi session file the run's pane reports, kept in the record. */
-		setFile(token: unknown, file: unknown) {
+		/**
+		 * The pi session file the run's pane reports, kept in the record. An ally run's file is kept only when it is named for the pi session the run reports (`<time>_<session id>.jsonl`, as pi names it), so a run cannot
+		 * hand the GUI another session's file; the same-user residual (the run reports both) is in docs/how-it-works.md.
+		 */
+		setFile(token: unknown, file: unknown, session?: unknown) {
 			const a = of(token);
 			if (!a || typeof file !== "string" || file.length > 4096) return;
+			if (a.rec.kind === "ally" && !(typeof session === "string" && /^[\w-]{1,128}$/.test(session) && basename(file).endsWith(`_${session}.jsonl`))) return;
 			a.rec.file = file;
 			writeRun(slot, a.rec);
 		},

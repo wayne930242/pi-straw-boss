@@ -17,7 +17,7 @@ import { formatRoute, type Route } from "./router.ts";
 // is touched and CSS transitions play on state changes. Motion is CSS on transform and opacity only. The unit token (plate, icon, ring,
 // badge) and the keyed `sync` are shared with the focus views, so a unit looks and moves the same on every route.
 
-export const ICON: Record<string, string> = { main: "main", member: "member", subagent: "subagent", outpost: "outpost", outside: "outside", tower: "tower" };
+export const ICON: Record<string, string> = { main: "main", member: "member", subagent: "subagent", outpost: "outpost", outside: "outside", tower: "tower", ally: "tower" };
 export const LABEL: Record<Mark, () => string> = { commanding: m.mark_commanding, working: m.mark_working, waiting: m.mark_waiting, idle: m.mark_idle, done: m.mark_done, error: m.mark_error, unknown: m.mark_unknown };
 const ROLE: Record<string, () => string> = { ally: m.role_ally, main: m.role_main, member: m.role_member, subagent: m.role_subagent, tower: m.role_tower, outpost: m.role_outpost, outside: m.role_outside, session: m.role_session };
 /** The server's fixed status words; any other note (a subagent's tool or phase) shows as it is. */

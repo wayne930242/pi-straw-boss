@@ -739,5 +739,8 @@
 	"blocked_ally": "A teammate's message drives this ally run. You can read its comms here; you cannot write to it.",
 	"link_show_towers": "Show towers",
 	"link_a_confirm_plain": "{label} ({short}) asks you to confirm a {tool} call from its tower",
-	"ally_state": "driven by a teammate's message · read only"
+	"ally_state": "driven by a teammate's message · read only",
+	"channel_readonly": "read only",
+	"notice_origin_local": "this computer",
+	"notice_origin_teammate": "teammate"
 }

@@ -1,5 +1,5 @@
-import { type FSWatcher, realpathSync, watch } from "node:fs";
-import { type FileHandle, open, stat } from "node:fs/promises";
+import { constants, type FSWatcher, realpathSync, watch } from "node:fs";
+import { type FileHandle, lstat, open as openFile, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { FULL_LIMIT, type Item, type Json, parse, type Todo, toItem, todosOf } from "./items.ts";
 
@@ -28,6 +28,13 @@ export function canonical(path?: string): string | undefined {
 			if (dir === dirname(dir)) return resolve(path);
 		}
 	}
+}
+
+/** A session file opened for reading without following a symlink at its last step (ELOOP), so a file swapped for a link after the path was resolved is not read; without O_NOFOLLOW (Windows) the link is looked for first (docs/how-it-works.md). */
+async function open(file: string): Promise<FileHandle> {
+	const nofollow = constants.O_NOFOLLOW ?? 0;
+	if (!nofollow && (await lstat(file)).isSymbolicLink()) throw Object.assign(new Error(`ELOOP: ${file} is a symbolic link`), { code: "ELOOP" });
+	return openFile(file, constants.O_RDONLY | nofollow);
 }
 
 /** `todos` comes with a change that holds a new todo snapshot (and with every reset): the list, or null when the branch has none. */
@@ -105,7 +112,7 @@ export function openReader(file: string, pollMs = 1000): Reader {
 	async function load(idx: number[], max = Infinity) {
 		const items: Item[] = [];
 		if (!idx.length) return items;
-		const fh = await open(file, "r");
+		const fh = await open(file);
 		try {
 			for (const i of idx.toReversed()) {
 				const e = ents[i]!;
@@ -125,7 +132,7 @@ export function openReader(file: string, pollMs = 1000): Reader {
 	async function todos(): Promise<Todo[] | null> {
 		const on = path.filter((i) => ents[i]!.todo), last = on.findLast((i) => ents[i]!.todo === "entry") ?? on.at(-1);
 		if (last === undefined) return null;
-		const e = ents[last]!, fh = await open(file, "r");
+		const e = ents[last]!, fh = await open(file);
 		try {
 			const d = parse((await grab(fh, e.off, Math.min(e.len, 1 << 20))).toString("utf8"));
 			return todosOf(e.todo === "entry" ? d?.data : d?.message?.details) ?? null;
@@ -142,7 +149,7 @@ export function openReader(file: string, pollMs = 1000): Reader {
 	async function reindex() {
 		[ents, byId, path, bad, size, headText] = [[], new Map(), [], 0, 0, ""];
 		cur = { start: 0, len: 0, head: Buffer.alloc(0), tail: Buffer.alloc(0) };
-		const fh = await open(file, "r");
+		const fh = await open(file);
 		try {
 			const s = await fh.stat();
 			ino = s.ino;
@@ -156,7 +163,7 @@ export function openReader(file: string, pollMs = 1000): Reader {
 	const emit = (change: Change) => listeners.forEach((fn) => fn(change));
 	/** New bytes were appended: new entries extend the path, or move the branch (a new parent) and reset the page. */
 	async function append(to: number) {
-		const n = ents.length, fh = await open(file, "r");
+		const n = ents.length, fh = await open(file);
 		try {
 			await scan(fh, to);
 		} finally {
@@ -172,7 +179,7 @@ export function openReader(file: string, pollMs = 1000): Reader {
 		emit({ reset: true, ...(await page()), todos: await todos() });
 	}
 	const headChanged = async () => {
-		const fh = await open(file, "r");
+		const fh = await open(file);
 		try {
 			return headText !== "" && (await grab(fh, 0, headText.length)).toString("latin1") !== headText;
 		} finally {
@@ -207,7 +214,7 @@ export function openReader(file: string, pollMs = 1000): Reader {
 			await look();
 			const i = byId.get(id), e = i === undefined ? undefined : ents[i];
 			if (!e) return undefined;
-			const fh = await open(file, "r");
+			const fh = await open(file);
 			try {
 				const d = parse((await grab(fh, e.off, Math.min(e.len, 2 * FULL_LIMIT))).toString("utf8"));
 				return d && toItem(d, e.len, true);

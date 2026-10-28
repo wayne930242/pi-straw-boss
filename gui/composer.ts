@@ -114,6 +114,8 @@ export function settleTake(key: string, r: Answer, into?: { box: { value: string
 	}
 	if (r.ok || r.status === 400 || (r.status === 409 && SETTLED.includes(r.body.error ?? ""))) endTake(key);
 }
+/** Whether the box takes typing: not on a closed channel, and not in an ally run's comms, which are read and never written to. */
+export const typable = (u: Pick<Unit, "live" | "ally">) => u.live && !u.ally;
 /** Why nothing can be sent right now, or undefined. */
 export function blocked(u: Unit): string | undefined {
 	if (!u.online) return m.blocked_offline();
@@ -199,7 +201,7 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 	function draw() {
 		const why = blocked(unit), working = unit.mark === "working";
 		box.placeholder = why ?? (unit.wakes ? (unit.held ? m.placeholder_held() : unit.allyLive ? m.placeholder_ally() : m.placeholder_wake()) : m.placeholder({ name: unit.name }));
-		box.disabled = attach.disabled = !unit.live; // a closed channel (the session left the net, or a finished subagent's pi exited) takes no typing at all, as it takes no sending
+		box.disabled = attach.disabled = !typable(unit); // a closed channel (the session left the net, or a finished subagent's pi exited) takes no typing at all, as it takes no sending
 		send.disabled = busy || Boolean(why) || !box.value.trim(); // nothing typed, nothing to send
 		follow.hidden = stop.hidden = !working || Boolean(why) || Boolean(unit.wakes); // a tower's run is woken, not steered or stopped from here
 		[follow.disabled, stop.disabled] = [send.disabled, busy]; // a follow-up needs a message too

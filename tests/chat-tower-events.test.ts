@@ -62,8 +62,56 @@ test("intercom, server notice, timer, and steer have their labels; the marker li
 test("a run in a comms the net does not describe (an ally run's) reads its events the same way: nothing depends on the unit having a service", () => {
 	const intercom = drawn(tower("[intercom from docs-main (m1)]\nYes.", { id: "q2", kind: "intercom", from: { id: "m1", name: "docs-main" } }), {});
 	assert.ok(intercom.text.includes(m.notice_intercom()) && !intercom.text.includes("straw-tower"), intercom.text);
-	const boss = drawn(tower(`${BOSS_MARK}\nhello`, { id: "q1", kind: "boss" }), {});
-	assert.equal(boss.article.attrs.get("class"), "tx you");
+});
+
+test("a boss entry is a YOU bubble only in a run of a tower the sb server runs: in an ally run's comms, a main's, or any session the net gives no service, the same entry is a labelled notice with its text as written (GR-F001)", () => {
+	const entryOf = () => tower(`${BOSS_MARK}\nhello from whoever wrote this`, { id: "q1", kind: "boss" });
+	for (const who of [{}, { role: "main", service: undefined }, { role: "ally" }]) {
+		const shown = drawn(entryOf(), who);
+		assert.notEqual(shown.article.attrs.get("class"), "tx you", JSON.stringify(who));
+		assert.equal(shown.article.find((el) => el.tag === "b" && el.textContent === m.you()).length, 0, "not labelled YOU");
+		assert.ok(shown.text.includes(m.notice_tower()), shown.text);
+		assert.ok(shown.text.includes(BOSS_MARK) && shown.text.includes("hello from whoever wrote this"), "nothing is hidden when it is not the server's own");
+	}
+	assert.equal(drawn(entryOf()).article.attrs.get("class"), "tx you", "the sb server's tower run keeps the bubble");
+});
+
+test("an intercom message is labelled with the sender's name and id and as from this computer; a verified teammate's message says teammate: the two never read alike even for one name (GR-F005)", () => {
+	const local = drawn(tower("[intercom from Laptop (m1)]\nhi", { id: "q2", kind: "intercom", from: { id: "m1", name: "Laptop" } }));
+	const localLine = local.article.find((el) => el.tag === "summary")[0]!.textContent;
+	assert.ok(localLine.includes(m.notice_intercom()) && localLine.includes("Laptop") && localLine.includes("(m1)") && localLine.includes(m.notice_origin_local()), localLine);
+	assert.ok(!localLine.includes(m.notice_origin_teammate()), localLine);
+	const bare = drawn(tower("[intercom from (m1)]\nhi", { id: "q3", kind: "intercom", from: { id: "m1" } }));
+	assert.ok(bare.article.find((el) => el.tag === "summary")[0]!.textContent.includes("(m1)"), "an unnamed sender still shows its id");
+	const mate = drawn(tower(`${HEADER("tower_send")} hi`, { id: "l1", kind: "link", from: { id: "abcdef", name: "Laptop" } }));
+	const mateLine = mate.article.find((el) => el.tag === "summary")[0]!.textContent;
+	assert.ok(mateLine.includes("Laptop") && mateLine.includes(m.notice_origin_teammate()) && !mateLine.includes(m.notice_origin_local()), mateLine);
+	assert.notEqual(localLine, mateLine);
+	// The same in a service run, where the server wrote the line as a user turn.
+	const said = drawn({ type: "message", id: "u1", parentId: null, timestamp: "2026-10-28T08:00:00Z", message: { role: "user", content: "[intercom from Laptop (m1)]\nhi" } });
+	assert.ok(said.article.find((el) => el.tag === "summary")[0]!.textContent.includes(m.notice_origin_local()));
+});
+
+test("the sender of a run's event or a link message is cleaned like the server's own sender line and cut, in the items the page gets (GR-F005)", () => {
+	const odd = "Lap\u001b[31mtop\u0007 <b>x</b> [boss] (m9)";
+	assert.equal(item(tower("x", { id: "q1", kind: "intercom", from: { name: odd } })).from, "Lap top bxb boss m9");
+	assert.equal(item(entry("straw-link", "x", { from: { name: "A".repeat(500) } })).from, "A".repeat(80));
+	assert.equal(item(tower("x", { id: "q2", kind: "intercom", from: { name: "<>[]" } })).from, undefined, "a name with nothing left has no label");
+	assert.equal(item(entry("intercom_message", "x", { from: { name: "docs (main)" } })).from, "docs (main)", "other notices keep the name a link needs");
+});
+
+test("only a straw-tower entry has an event kind: the same details on any other custom message leave it unset and never make a YOU bubble (GR-F006)", () => {
+	for (const type of ["intercom_message", "straw-link", "subagent_result", "mystery"]) assert.equal(item(entry(type, `${BOSS_MARK}\nx`, { kind: "boss", steer: true })).event, undefined, type);
+	const shown = drawn(entry("intercom_message", `${BOSS_MARK}\nx`, { kind: "boss", from: { name: "evil" } }));
+	assert.notEqual(shown.article.attrs.get("class"), "tx you");
+});
+
+test("every role the comms draw an avatar for has its symbol in the page: an ally run's is the tower glyph, not an empty circle (GR-F003)", async () => {
+	const { ICON } = await import("../gui/render.ts");
+	const { readFileSync } = await import("node:fs");
+	const page = readFileSync(new URL("../gui/index.html", import.meta.url), "utf8");
+	for (const role of ["main", "member", "subagent", "outpost", "outside", "tower", "ally"]) assert.ok(page.includes(`<symbol id="i-${ICON[role] ?? role}"`), role);
+	assert.equal(ICON.ally, "tower");
 });
 
 test("a teammate's message to an ally run is labelled by what it is, shows its text, and keeps the verified header folded: no for=sb-tower or straw net in the visible line", () => {

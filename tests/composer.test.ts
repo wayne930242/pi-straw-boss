@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { aftermath, blocked, confirmed, deposit, endTake, recall, recallTake, rescue, settleTake, startTake, takeWhy, withPulled } from "../gui/composer.ts";
+import { aftermath, blocked, confirmed, deposit, endTake, recall, recallTake, rescue, settleTake, startTake, takeWhy, typable, withPulled } from "../gui/composer.ts";
 import { m } from "../gui/paraglide/messages.js";
-import { closed } from "../gui/scene.ts";
+import { channelOf, closed } from "../gui/scene.ts";
 import type { Answer } from "../gui/post.ts";
 
 const answer = (status: number, reason?: string): Answer => ({ ok: status < 400, status, body: reason ? { reason } : {} });
@@ -56,6 +56,20 @@ test("an ally run's comms say a teammate's message drives them and take no typin
 	assert.notEqual(m.blocked_ally(), m.blocked_no_pane());
 	assert.match(m.placeholder_ally(), /ally run/);
 	assert.notEqual(m.placeholder_ally(), m.placeholder_wake());
+});
+
+test("an ally run's comms are not an open channel and take no typing: the header says read only, the box and attach are off, and the reason is the ally one (GR-F002)", () => {
+	const unit = { name: "Laptop", control: false, live: true, mark: "unknown" as const, online: true };
+	assert.equal(channelOf(undefined, "live", true), "readonly");
+	assert.equal(channelOf(undefined, "recent", true), "readonly", "a run that left the net is still not written to");
+	assert.equal(channelOf({ control: true }, "live", false), "live");
+	assert.equal(channelOf(undefined, undefined, false), "none");
+	assert.equal(channelOf({ control: false, ended: true }, "live", false), "closed");
+	assert.notEqual(m.channel_readonly(), m.channel_open());
+	assert.equal(typable({ ...unit, ally: true }), false);
+	assert.equal(typable(unit), true, "any other live unit is typed to");
+	assert.equal(typable({ ...unit, live: false }), false);
+	assert.equal(blocked({ ...unit, ally: true }), m.blocked_ally(), "the reason shown is the ally one");
 });
 
 test("the queue taken back goes in front of what is already in the box, a blank line between; an empty or blank box takes it as it is", () => {

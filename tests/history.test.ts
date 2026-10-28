@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, statSync, truncateSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -149,6 +149,25 @@ test("a session with no file yet shows nothing, and the page fills in when the f
 	writeFileSync(path, lines([header(), user("u1", null, "born")]));
 	await until(() => changes.length >= 1, "the created file");
 	assert.deepEqual([changes[0]!.reset, ids(changes[0]!.items)], [true, ["u1"]]);
+});
+
+test("a session file that is a symlink is not read, whether it was one at the start or replaced a real file afterwards (GR-F004)", { skip: process.platform === "win32" }, async () => {
+	const real = file(), link = file();
+	writeFileSync(real, lines([header(), user("u1", null, "secret")]));
+	symlinkSync(real, link);
+	const r = reader(link);
+	await r.ready;
+	assert.deepEqual((await r.page()).items, [], "a link is refused at the first index");
+	const swapped = file(), target = file();
+	writeFileSync(swapped, lines([header(), user("u1", null, "mine")]));
+	writeFileSync(target, lines([header(), user("u9", null, "someone else's")]));
+	const w = reader(swapped);
+	await w.ready;
+	assert.deepEqual(ids((await w.page()).items), ["u1"]);
+	rmSync(swapped);
+	symlinkSync(target, swapped);
+	await until(async () => (await w.page()).items.length === 0, "the index of the replaced file to be dropped, not rebuilt from the link's target");
+	assert.ok(!ids((await w.page()).items).includes("u9"));
 });
 
 test("readers are shared per file, stop watching when released, and keep at most the last eight idle", async () => {

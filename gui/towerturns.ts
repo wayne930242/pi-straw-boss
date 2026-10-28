@@ -27,6 +27,12 @@ export function bossTurn(text: string | undefined): { body: string; crashed: boo
 	return { body: lines.slice(crashed ? 2 : 1).join("\n"), crashed };
 }
 
+/** The sender of an intercom marker line (`label (id)`, `(id)`, or the words for none) as its name and id; the line is the server's, written from the broker's sender and cleaned, so the id is the session's own. */
+export function senderOf(from: string | undefined): { name: string; id?: string } {
+	const text = (from ?? "").trim(), at = /^(.*?)\s*\(([^()]*)\)$/.exec(text);
+	return at ? { name: at[1]!, ...(at[2] ? { id: at[2] } : {}) } : { name: text };
+}
+
 /** A header the code writes (src/header.ts) and the text under it: its fields as written, the line itself, and the peer's text. Undefined for a message that does not open with one, or whose line does not close. */
 export function strawHeader(text: string | undefined): { fields: Record<string, string>; raw: string; body: string } | undefined {
 	const t = text ?? "", open = "[straw net ";
@@ -75,7 +81,10 @@ export function eventTurn(it: { type?: string; event?: string; text?: string; fr
 	if (it.type !== "straw-tower") return undefined;
 	switch (it.event) {
 		case "boss": return { kind: "boss", ...strip((l) => l === BOSS_MARK) };
-		case "intercom": return { kind: "intercom", from: it.from ?? "", ...strip(MARKS.intercom) };
+		case "intercom": {
+			const first = text.split("\n", 1)[0]!, marked = MARKS.intercom(first);
+			return { kind: "intercom", from: marked ? first.slice("[intercom from ".length, -1) : (it.from ?? ""), ...strip(MARKS.intercom) };
+		}
 		case "notice": return { kind: "server", ...strip(MARKS.notice) };
 		case "steer": return { kind: "server", body: text.replace(/^\[sb server\] /, ""), crashed: false };
 		case "timer": return { kind: "timer", ...strip(MARKS.timer) };

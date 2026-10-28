@@ -599,5 +599,8 @@
 	"blocked_ally": "這個隊友 run 由隊友的訊息驅動。你可以在這裡看它的通訊，但不能寫給它。",
 	"link_show_towers": "查看塔台",
 	"link_a_confirm_plain": "{label}（{short}）請你確認它塔台的一次 {tool} 呼叫",
-	"ally_state": "由隊友的訊息驅動・唯讀"
+	"ally_state": "由隊友的訊息驅動・唯讀",
+	"channel_readonly": "唯讀",
+	"notice_origin_local": "本機",
+	"notice_origin_teammate": "隊友"
 }

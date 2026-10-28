@@ -1,5 +1,6 @@
 import { type FileHandle, open } from "node:fs/promises";
 import { basename } from "node:path";
+import { cleanLabel } from "./eventmarks.ts";
 
 // Session entries as displayable items: what the chat shows for each kind of entry, with previews capped so a page stays small.
 // `full` lifts the caps for the one-entry fetch (thinking text, whole tool result, images).
@@ -78,8 +79,11 @@ export function toItem(d: Json, len: number, full = false): Item | undefined {
 		case "custom_message": {
 			if (!d.display) return undefined;
 			const sessionFile = d.details?.sessionFile;
+			const named = d.details?.from?.name ?? d.details?.name;
+			// The sender of a tower run's event or a link message is a device label or a session name another party chose: cleaned as the server's own sender line is, and cut.
+			const from = typeof named === "string" ? ((d.customType === "straw-tower" || d.customType === "straw-link" ? cleanLabel(named) : clip(named, 80)) || undefined) : undefined;
 			const event = d.customType === "straw-tower" ? (d.details?.steer === true ? "steer" : d.details?.kind) : undefined;
-			return { ...base, kind: "notice", type: d.customType, text: clip(textOf(d.content), full ? FULL : 600), from: d.details?.from?.name ?? d.details?.name, link: typeof sessionFile === "string" ? idOf(sessionFile) : undefined, ...(typeof event === "string" ? { event: clip(event, 20) } : {}) };
+			return { ...base, kind: "notice", type: d.customType, text: clip(textOf(d.content), full ? FULL : 600), from, link: typeof sessionFile === "string" ? idOf(sessionFile) : undefined, ...(typeof event === "string" ? { event: clip(event, 20) } : {}) };
 		}
 		case "compaction": return { ...base, kind: "divider", type: "compaction", tokens: d.tokensBefore, text: clip(String(d.summary ?? ""), full ? FULL : 600) };
 		case "branch_summary": return { ...base, kind: "divider", type: "branch", text: clip(String(d.summary ?? ""), full ? FULL : 600) };

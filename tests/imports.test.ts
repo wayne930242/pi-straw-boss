@@ -234,11 +234,13 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased: cli.ts 158 to 160, the directory pi-intercom is looked for beside (`here`), so a test runs the same in a checkout next to a pi-intercom checkout.
 	// Straw Link work board (step 5b): sidecar.ts 349 to 363 for the `board` command and deleting the entry on leaving; cli.ts 160 to 163 for repeated `--item` flags.
 	for (const [name, max] of [["kit.ts", 163], ["paths.ts", 114], ["sidecar.ts", 363], ["cli.ts", 163], ["claim.ts", 45]] as const) assert.ok(count(`src/agent/${name}`) <= max, `src/agent/${name} has ${count(`src/agent/${name}`)} lines`);
-	assert.ok(count("src/history.ts") <= 258, `src/history.ts has ${count("src/history.ts")} lines`);
+	// GUI fix pass 2 (sb server B6) to 263: the session file opened without following a symlink (GR-F004).
+	assert.ok(count("src/history.ts") <= 263, `src/history.ts has ${count("src/history.ts")} lines`);
 	// The item mapping and the stream glue came out of the reader to keep it within its budget; the spec sets no figure for them.
 	// 0.19.0 to 108 for Todo and todosOf, a todo snapshot checked field by field.
 	// GUI fix pass (sb server B6) to 110: a tower run's message carries the kind the server sent it with (`event`).
-	assert.ok(count("src/items.ts") <= 110, `src/items.ts has ${count("src/items.ts")} lines`);
+	// GUI fix pass 2 (sb server B6) to 113: the sender of a run event or link message cleaned and cut (GR-F005).
+	assert.ok(count("src/items.ts") <= 113, `src/items.ts has ${count("src/items.ts")} lines`);
 	// 0.20.0 to 106 for an entry's images served one by one as their bytes (image).
 	assert.ok(count("src/watch.ts") <= 106, `src/watch.ts has ${count("src/watch.ts")} lines`);
 	// Pane balance is a separate extension entry with its plain-JavaScript helper.
@@ -294,7 +296,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased to 323 (sb server B5, RV-F001): eventmarks.ts (3, new: the two lines the server writes at the head of a boss event, shared by runmode.ts and the page).
 	// Unreleased to 355 (desk remainder, docs/specs/2026-10-26-desk-mode.md S6): integration.ts (33, new: the one warning a session gives when Herdr's pi integration is missing), index.ts (the check built and handed to the session).
 	// Unreleased 355 to 357 (desk remainder, review): integration.ts (32), its own pane from the environment and the generation that drops a check finished after the session ended.
-	assert.ok(rest <= 357, `the rest of src has ${rest} lines`);
+	// GUI fix pass 2 (sb server B6) 357 to 363: eventmarks.ts holds the one cleaner of an outside name (cleanLabel), shared by the sender line and the items.
+	assert.ok(rest <= 363, `the rest of src has ${rest} lines`);
 	// Unreleased (settings check, probe): settings.ts is the lstat gate, the child's program (refuses a link it cannot follow, stats before opening; review SR5), and its runner (160); it no longer walks links. settings.ts 92 (new: the look before pi starts in a folder), raised 92 to 135 for the link walk (every hop of .pi and settings.json, refusing /proc, /dev, /sys; review SP-R001).
 	// Unreleased raised trust/ask.ts from 182 to 183 (RC3-F001): the recorded server's start time is read when the handler registers.
 	// Unreleased raised trust/ask.ts from 183 to 201 (RC4-F001, F002): `warmServerStart` (the early read only for a live server that reads trust requests) and `guiUp` (what the handler's `up` asks) are exported for their tests, and `registerTrust` takes the terminal it answers on.
@@ -371,7 +374,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// intercom turns shown as incoming, the Terminal tab's sentence for a tower with no run, the notices again in the comms, the state in the head and the dossier, the server queue's label, a held tower's placeholder).
 	// Review RV-F001: chat.ts 283 to 284 for the boss turn of a service tower shown without the server marker line.
 	// GUI fix pass (sb server B6): chat.ts 284 to 301 (a run's events read by their kind: the YOU bubble and the notice shared by every incoming message, the labels, the folded header, the standing-by sentence), session.ts 135 to 139 and dossier.ts 50 to 51 (an ally run's comms: its header, state, and chips), workspace.ts 61 to 66 (the queue chip, the chips, and the notices of the workspace view).
-	for (const [name, max] of [["router.ts", 80], ["chat.ts", 301], ["markdown.ts", 180], ["views.ts", 90], ["scene.ts", 41], ["tokens.ts", 24], ["nav.ts", 43], ["workspace.ts", 66], ["dossier.ts", 51], ["session.ts", 139], ["bars.ts", 85], ["lightbox.ts", 34], ["layer.ts", 264], ["askkeys.ts", 75], ["composer.ts", 303], ["ask.ts", 185], ["mirror.ts", 175], ["keypad.ts", 124], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
+	// GUI fix pass 2 (sb server B6): chat.ts 301 to 307 (the intercom label with its id and origin, the boss bubble only in a service run), scene.ts 41 to 47 (channelOf: the read-only channel of an ally run), composer.ts 303 to 305 (typable).
+	for (const [name, max] of [["router.ts", 80], ["chat.ts", 307], ["markdown.ts", 180], ["views.ts", 90], ["scene.ts", 47], ["tokens.ts", 24], ["nav.ts", 43], ["workspace.ts", 66], ["dossier.ts", 51], ["session.ts", 139], ["bars.ts", 85], ["lightbox.ts", 34], ["layer.ts", 264], ["askkeys.ts", 75], ["composer.ts", 305], ["ask.ts", 185], ["mirror.ts", 175], ["keypad.ts", 124], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
 	// 0.28.0 to 185 with the answer keys' hooks into gui/ask.ts (the focus on the first option, the textarea). 0.28.0 raised gui/ask.ts from 156 to 175 for the secret panel: the masked field with Show and Hide, Submit, the way back to the terminal, the unsupported-remote notice, and a value that leaves with its one request.
 	// 0.10.0: the page's text comes from Paraglide's messages (gui/messages), which raised chat.ts, views.ts, layer.ts, ask.ts, mirror.ts, and doc.ts by one
 	// line each for the messages import; the strings replaced in place. gui/i18n.ts picks the locale (the menu's choice, the browser's languages with
@@ -630,7 +634,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Review RV-F001 to 158.2 KB / 64.6 KB gzipped: the boss turn of a service tower without the server's marker line (bossTurn) and its crash note in both languages.
 	// Desk remainder (S10) to 158.5 KB / 64.7 KB gzipped: the folder picker's Choose… button for the desk shell's native dialog, with its two messages in both languages.
 	// GUI fix pass (sb server B6) to 162.8 KB / 66.3 KB gzipped: a run's events read by their kind, the teammates' labels and the folded header, the ally runs' chips and comms, the standing-by sentence, and their messages in both languages.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 162_800 && total(chunks, gz) <= 66_300, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// GUI fix pass 2 (sb server B6) to 163.4 KB / 66.5 KB gzipped: the read-only channel word, the local and teammate origin of a message, and the sender line read from the server's marker.
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 163_400 && total(chunks, gz) <= 66_500, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.

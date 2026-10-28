@@ -32,6 +32,12 @@ export const towerBase = (hit: Found | undefined): Base | undefined => (hit?.u.r
  */
 export const closed = (u: { control?: boolean; ended?: boolean } | undefined, state?: string) => (state ? state !== "live" : !u) || Boolean(u?.ended && !u.control);
 
+/** What the comms header says of the channel: `readonly` for an ally run (a teammate's message drives it, so the comms there are read and never written to), else open or closed as `closed` decides; `closedWord` tells a left session from one never listed. */
+export function channelOf(u: { control?: boolean; ended?: boolean } | undefined, state: string | undefined, ally: boolean): "live" | "readonly" | "closed" | "none" {
+	if (ally) return "readonly";
+	return !closed(u, state) ? "live" : state === "recent" || u?.ended ? "closed" : "none";
+}
+
 /** The unit a session route is about, as the net describes it, else as the history's header does: the same facts the comms header and the dossier both show. */
 export function subject(scene: Readonly<Scene>) {
 	if (scene.route.view !== "session") return;

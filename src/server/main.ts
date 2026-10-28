@@ -390,7 +390,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			case "run-done": return answer(async (t) => ({ ...(await t.runs.done(request)) }));
 			case "run-release": return answer(async (t) => ({ ...(await t.runs.release(request)) }));
 			case "run-tool": return answer(async (t) => ({ ...(await t.runTool(request)) }));
-			case "run-file": return answer(async (t) => (t.runs.setFile(request.token, request.file), {}));
+			case "run-file": return answer(async (t) => (t.runs.setFile(request.token, request.file, request.session), {}));
 			// The boss writes to the tower (the GUI's composer, `/boss tower <prompt>`): an event ahead of the rest.
 			case "tower-event": {
 				const body = text(request.text, 16_384);

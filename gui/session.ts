@@ -8,7 +8,7 @@ import type { Tile } from "./layer.ts";
 import { m } from "./paraglide/messages.js";
 import { aimSession } from "./quit.ts";
 import { aim, aimOpening, doing, html, LABEL, mark, urgent, text } from "./render.ts";
-import { closed, locate, type Scene, type Subject, towerBase, wsOf } from "./scene.ts";
+import { channelOf, closed, locate, type Scene, type Subject, towerBase, wsOf } from "./scene.ts";
 import { linkTo } from "./tokens.ts";
 import { fillAllies } from "./towerallies.ts";
 import { fillNotices } from "./towernotes.ts";
@@ -114,9 +114,9 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 				text(head, "h2 span", ally ? m.ally_run({ device: scene.info?.name ?? "" }) : (u?.name ?? scene.info?.name ?? ""));
 				text(head, "p", [hit?.base.label ?? (ally ? scene.net?.bases.find((b) => b.id === wsOf(scene))?.label : undefined), hit?.squad && m.squad_label({ label: hit.squad }), u?.service && statusLine(u.service, mk, (k) => LABEL[k]()), ally && m.role_ally()].filter(Boolean).join(" · "));
 				fillAllies(view.querySelector<HTMLElement>(".comms-allies")!, hit?.base.id ?? wsOf(scene), u?.service);
-				const chan = head.querySelector<HTMLElement>(".chan")!, open = !closed(u, state);
-				chan.dataset.state = open ? "live" : "closed";
-				text(chan, "b", open ? m.channel_open() : state === "recent" || u?.ended ? m.channel_closed() : m.no_channel());
+				const chan = head.querySelector<HTMLElement>(".chan")!, kind = channelOf(u, state, ally);
+				chan.dataset.state = kind === "live" ? "live" : "closed";
+				text(chan, "b", { live: m.channel_open, readonly: m.channel_readonly, closed: m.channel_closed, none: m.no_channel }[kind]());
 				chan.title = chan.querySelector("b")!.textContent ?? ""; // a phone shows the dot alone
 				// A tower's comms open a main in its base (main.ts opens the same tile the map's "+ Main" does); no other unit has the button.
 				const add = head.querySelector<HTMLButtonElement>(".head-main")!, base = towerBase(hit);
