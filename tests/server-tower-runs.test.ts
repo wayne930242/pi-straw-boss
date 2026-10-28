@@ -762,7 +762,8 @@ test("a run the server is already ending ignores a left: the outcome stays the s
 test("the boss's time in a run is bounded: past bossMax the cap applies again", async () => {
 	world.runTimers = { quitAt: 250, steerAt: 120, bossMax: 400, bossAway: 60_000, quitGrace: 60, signal: 60 };
 	const { s } = await setup();
-	const { id, token } = await woken(s, { present: true });
+	const { id, token } = await woken(s);
+	assert.equal((await ask(s, { cmd: "run-boss", token })).ok, true, "the boss speaks in this event run");
 	assert.deepEqual((await commandsFor(s, token, 300)).map((c) => c.type), [], "the boss is there: the cap waits");
 	const later = await commandsFor(s, token, 600);
 	assert.ok(later.some((c) => c.type === "quit"), JSON.stringify(later));
@@ -773,7 +774,8 @@ test("the boss's time in a run is bounded: past bossMax the cap applies again", 
 test("the boss's 4 hours are counted from their first word in the run, not from their return after each absence (SR-F005)", async () => {
 	world.runTimers = { quitAt: 300, steerAt: 150, bossMax: 1500, bossAway: 120, idleSteer: 60_000, idleEnd: 60_000, quitGrace: 60, signal: 60 };
 	const { s } = await setup();
-	const { id, token } = await woken(s, { present: true });
+	const { id, token } = await woken(s);
+	assert.equal((await ask(s, { cmd: "run-boss", token })).ok, true, "the boss speaks in this event run");
 	const first = Date.now();
 	// The boss is silent: the idle run is "away" after bossAway, and its grace window keeps the cap off.
 	assert.deepEqual((await commandsFor(s, token, 600)).map((c) => c.type), []);
@@ -792,7 +794,8 @@ test("the boss's 4 hours are counted from their first word in the run, not from 
 test("a run the server is ending at bossMax answers tower_done without a stay, and a boss sign that comes after changes nothing (SR-F005)", async () => {
 	world.runTimers = { quitAt: 250, steerAt: 120, bossMax: 400, bossAway: 60_000, quitGrace: 5000, signal: 5000 };
 	const { s } = await setup();
-	const { id, token } = await woken(s, { present: true });
+	const { id, token } = await woken(s);
+	assert.equal((await ask(s, { cmd: "run-boss", token })).ok, true, "the boss speaks in this event run");
 	const later = await commandsFor(s, token, 700);
 	assert.ok(later.some((c) => c.type === "quit"), JSON.stringify(later));
 	assert.equal((await ask(s, { cmd: "run-boss", token })).ok, true, "harmless");

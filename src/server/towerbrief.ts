@@ -11,7 +11,7 @@ import { inside } from "../link/routing.ts";
 // characters. Each section has its own cap, and a section that was cut says how much it left out. The events are not part of it: they arrive as messages.
 
 export const BRIEF_MAX = 8000;
-const CAPS = { who: 300, mains: 24, mainRow: 200, obligations: 10, digest: 20, digestLine: 80, note: 1200, tools: 900 } as const;
+const CAPS = { talk: 1400, who: 300, mains: 24, mainRow: 200, obligations: 10, digest: 20, digestLine: 80, note: 1200, tools: 900 } as const;
 export const RUN_CAP_MINUTES = 20;
 
 export interface MainRow { tab: string; main?: { name: string; id: string; state: string; openedBy?: string; now?: string; open?: number }; members: number }
@@ -35,6 +35,11 @@ export interface BriefInput {
 	flags: string[];
 	/** The tools the run has, one line each. */
 	tools: string[];
+	/** A live run is given this brief again, newer than the one it started with (no wake line). */
+	refreshed?: true;
+	/** Section 1a, a boss conversation (towers.ts `conversationLines`): how it began, and what the event runs left since the boss last talked with the tower. */
+	conversation?: string;
+	since?: string[];
 }
 
 const cut = (text: string, max: number) => (Array.from(text).length > max ? `${Array.from(text).slice(0, max - 1).join("").trimEnd()}…` : text);
@@ -65,7 +70,7 @@ function shrink(text: string, limit: number, marker: (n: number) => string, none
 
 export function buildBrief(i: BriefInput): string {
 	const woke = (["intercom", "boss", "notice", "timer"] as const).flatMap((k) => (i.counts[k] ? [`${i.counts[k]} ${k}`] : []));
-	const who = cut(`You are a run of the tower of workspace ${i.label} (${i.workspace}); head tower: ${i.head || "none"}. Woken ${i.woken} by: ${woke.join(", ") || "nothing queued"}. Your identity for replies is ${i.identity}; everything you send leaves under it.`, CAPS.who);
+	const who = cut(`You are a run of the tower of workspace ${i.label} (${i.workspace}); head tower: ${i.head || "none"}. ${i.refreshed ? `Woken ${i.woken}; this is the newest brief, refreshed while you run.` : `Woken ${i.woken} by: ${woke.join(", ") || "nothing queued"}.`} Your identity for replies is ${i.identity}; everything you send leaves under it.`, CAPS.who);
 	const obligations = i.obligations.length ? ["Open obligations:", ...rowsOf(i.obligations, CAPS.obligations, 200, 2300)].join("\n") : "";
 	const digest = i.digest.length ? ["Since your last run:", ...i.digest.slice(-CAPS.digest).map((l) => `- ${cut(one(l), CAPS.digestLine)}`), ...(i.digest.length > CAPS.digest ? [`(+${i.digest.length - CAPS.digest} older lines left out)`] : [])].join("\n") : "";
 	const note = i.note ? [`Handoff note from the last run (${i.note.age} ago):`, cut(i.note.text, CAPS.note)].join("\n") : "";
@@ -74,7 +79,8 @@ export function buildBrief(i: BriefInput): string {
 	const mainLines = i.mains.map((m) => (m.main ? `${m.tab}: main ${m.main.name} (${m.main.id.slice(0, 8)}) ${m.main.state}${m.main.openedBy ? `, opened by ${m.main.openedBy}` : ""}${m.main.now ? `; now: ${m.main.now}` : ""}${m.main.open ? ` (${m.main.open} open)` : ""}${m.members ? `; ${m.members} members` : ""}` : `${m.tab}: no main${m.members ? `; ${m.members} members` : ""}`));
 	const mains = ["Mains you supervise:", ...(mainLines.length ? rowsOf(mainLines, CAPS.mains, CAPS.mainRow, 2400) : ["- none: no tab of this workspace has joined"])].join("\n");
 	// The tools, the tower_done line, the crash flags, and the 20-minute line are never cut. When the rest does not fit, the memory beyond its floor goes first, then the mains, the digest, the note, the rest of the memory, and the obligations.
-	const parts: Record<string, string> = { mains, obligations, memory: i.memory ?? "", digest, note };
+	const talk = cut([i.conversation ?? "", ...(i.since?.length ? ["Since you last talked with the boss:", ...i.since.slice(0, 3)] : [])].filter(Boolean).join("\n"), CAPS.talk);
+	const parts: Record<string, string> = { talk, mains, obligations, memory: i.memory ?? "", digest, note };
 	const size = () => [who, ...Object.values(parts), tools, flags].filter(Boolean).join("\n\n").length;
 	const MORE = (n: number) => `(+${n} more)`, left = (what: string) => `${what}: left out to fit the brief.`;
 	const pass = (name: string, floor: number, marker: (n: number) => string, none: string) => {
@@ -88,7 +94,7 @@ export function buildBrief(i: BriefInput): string {
 	pass("note", 0, MORE, left("Handoff note"));
 	pass("memory", 0, memoryMarker, memoryNone);
 	pass("obligations", 0, MORE, left("Open obligations"));
-	return cut([who, parts.mains, parts.obligations, parts.memory, parts.digest, parts.note, tools, flags].filter(Boolean).join("\n\n"), BRIEF_MAX);
+	return cut([who, parts.talk, parts.mains, parts.obligations, parts.memory, parts.digest, parts.note, tools, flags].filter(Boolean).join("\n\n"), BRIEF_MAX);
 }
 
 /** `3m`, `2h`, `1d 4h`: how long ago, for a note or an event. */

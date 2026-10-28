@@ -10,6 +10,7 @@ import { mount, parse } from "./markdown.ts";
 import type { Post } from "./composer.ts";
 import { m } from "./paraglide/messages.js";
 import { html, ICON, roleName } from "./render.ts";
+import { conversationDivider } from "./towermodel.ts";
 import { bossTurn, eventTurn, heard, senderOf, type Turn } from "./towerturns.ts";
 
 // The comms log of one session. The model is pure: items merge by entry id (a repeated one is ignored), tool results attach to their call by
@@ -83,7 +84,8 @@ export interface Who extends Shelf { key: string; name: string; role: string; ma
 /** `docFor` opens the document a show_doc path names while its session lists it (doc.ts), or is undefined. */
 export interface ChatDeps { who(): Who; link(name: string): HTMLAnchorElement | undefined; docFor?(path: string): (() => void) | undefined }
 /** `reveal` opens the log at an entry (scrolled into view and lit), or with none at the newest entry. `log` is the scrolling log, a focus target. `docs` shows Open beside on the show_doc cards whose document is listed now. */
-export interface Chat { apply(event: HistoryEvent): void; setLive(text: string, mark: Mark): void; reveal(at?: string): void; docs(): void; log: HTMLElement }
+export interface Chat { apply(event: HistoryEvent): void; setLive(text: string, mark: Mark): void; reveal(at?: string): void; docs(): void; /** The boss conversation's runs (src/server/runs.ts `LocalRunRow`): a divider opens each in the log, with how it ended once it has. */ runs(rows: ConversationRun[]): void; log: HTMLElement }
+export type ConversationRun = NonNullable<TowerService["localRuns"]>[number];
 
 /** Who an assistant message is from, as its header says: the unit's role, since the page header already names the session. */
 export const speaker = (who: { role: string }) => roleName(who.role);
@@ -233,6 +235,26 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor }: 
 		empty.textContent = svc?.state === "standing" && !svc.run ? m.tower_empty() : m.no_transmissions(); // a tower the sb server stands in for says what standing by is
 		if (!model.items.length) list.append(empty);
 		top.hidden = !model.before;
+		place();
+	}
+	// A divider for each run of the boss conversation: before the first entry written since the run began (the session file is one line of talk across runs, so the run's own start is the only marker).
+	let convRuns: ConversationRun[] = [];
+	const rules = new Map<string, { el: HTMLElement; sig: string }>();
+	function place() {
+		const shown = new Set<string>();
+		for (const r of convRuns) {
+			const at = Date.parse(r.startedAt), index = model.items.findIndex((it) => it.at !== undefined && Date.parse(it.at) >= at);
+			if (index === 0 && model.before) continue; // it began before the part of the log that is mounted
+			const anchor = index < 0 ? "" : model.items[index]!.id, sig = JSON.stringify([anchor, conversationDivider(r)]), old = rules.get(r.id);
+			shown.add(r.id);
+			if (old && old.sig === sig && old.el.isConnected) continue;
+			old?.el.remove();
+			const say = conversationDivider(r), el = h("article", { class: "tx rule conv-rule" }, h("div", null, h("b", null, say.title), say.ended ? h("small", null, say.ended) : null));
+			rules.set(r.id, { el, sig });
+			const before = anchor ? els.get(anchor) : undefined;
+			before ? before.before(el) : list.append(el);
+		}
+		for (const [id, rule] of rules) if (!shown.has(id)) (rule.el.remove(), rules.delete(id));
 	}
 	// Calls that just received a result are redrawn in place.
 	const touch = (d: Delta) => d.touched.forEach((id) => {
@@ -281,6 +303,11 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor }: 
 	return {
 		log: scroller,
 		docs,
+		runs(rows) {
+			if (JSON.stringify(rows) === JSON.stringify(convRuns)) return;
+			convRuns = rows;
+			place();
+		},
 		apply(e) {
 			if (e.reset) {
 				paint(model.reset({ items: e.items ?? [], before: e.before }));

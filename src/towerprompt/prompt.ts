@@ -130,6 +130,15 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 		await end(() => source.gone());
 	};
 
+	const startOver = async () => {
+		try {
+			await source.fresh();
+			say(text.fresh);
+		} catch (cause) {
+			say(text.refused(clean((cause as Error).message, 400)));
+		}
+	};
+
 	o.signal?.addEventListener("abort", () => void end(() => source.gone()), { once: true });
 	// The first look comes before the screen: a tower that is gone, or a run that is already starting, needs no prompt.
 	const first = await source.poll().catch((cause: Error) => ({ kind: "wait" as const, why: cause.message }));
@@ -138,6 +147,8 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 	rl = createInterface({ input: o.input, output: o.output, prompt: PROMPT, terminal });
 	rl.on("line", (raw) => {
 		if (finished || posting) return;
+		// `/new` alone is the prompt's own command, not a message: the next boss conversation starts a new session.
+		if (!batch.length && raw.trim() === "/new") return void startOver();
 		batch.push(raw);
 		clearTimeout(batchTimer);
 		batchTimer = setTimeout(() => void flush(), PASTE_MS);

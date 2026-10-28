@@ -31,6 +31,7 @@ import { qr } from "./qr.ts";
 //   POST /<token>/api/dirs, open/base, open/member, open/main                            a folder picker, a new base with a member, a new member, a new main (spawn.ts)
 //   POST /<token>/api/trust/answer {id, digest, choice, answerId}                       answers a project trust question (trust/serve.ts); a paired device may, as it may answer a relayed confirm
 //   POST /<token>/api/tower/<workspace>/memory {op, …}                                   the tower's memory panel (towermemory.ts `memoryRequest`, the very function `/boss memory` reaches over the control socket's `tower-memory`): read, add, edit, delete, resolve, confirm or reject a run's proposal; a write carries the rev it read (409 `rev` when the file moved on); a paired device may, as it may use the composer
+//   POST /<token>/api/tower/<workspace>/leave, /new                                    leaves the boss conversation, or starts over (the next one is a new session): runs.ts `leave` and `fresh`, the functions `/boss tower leave|new` and the tower prompt's `/new` reach over the control socket; exactly `/quit` and `/new` typed in the tower's composer do the same; a paired device may, as it may use the composer
 //   POST /<token>/api/link/<name> {…}                                                    Straw Link's team settings, through the link holder (link.ts of the page): state, create, invite, decide, join-start, trust, …
 //                                                                                        This computer's page only, except `state` (without a pending invite's text) and `confirm-answer`, which a paired device may do like it answers any confirm
 //   POST /<token>/api/server/stop {by, take}                                             stops the GUI listeners: an older session's /boss gui stop or takeover (never remote)
@@ -57,6 +58,8 @@ export interface TowerPanel {
 	live(workspace: string): boolean;
 	event(workspace: string, text: string): Promise<{ ok: boolean; error?: string }>;
 	act(workspace: string, what: "retry" | "deliver" | "drop", id?: string): Promise<{ ok: boolean; error?: string }>;
+	/** The boss leaves the conversation, or starts a fresh one (runs.ts `leave`, `fresh`): the pi twins are `/boss tower leave` and `/boss tower new`, which reach the same functions over the control socket. */
+	conversation?(workspace: string, what: "leave" | "new"): Promise<{ ok: boolean; error?: string; left?: boolean; fresh?: boolean; already?: boolean }>;
 	/** The memory panel's request (towermemory.ts `memoryRequest`): read the boss's standing instructions, decisions, and waits, or change them as the boss; a write names the rev it read. */
 	memory?(workspace: string, json: Record<string, unknown>): Promise<Reply> | Reply;
 }
@@ -173,6 +176,11 @@ export function createControl({ link, server: panel, lookup, call, csrf, canonic
 		}
 		if (scope === "tower") {
 			if (action === "memory") return tower?.memory && tower.has(key) ? tower.memory(key, read.json) : no(404, "not_found", "No such tower.");
+			if (action === "leave" || action === "new") {
+				if (!tower?.conversation || !tower.has(key)) return no(404, "not_found", "No such tower.");
+				const done = await tower.conversation(key, action);
+				return done.ok ? { status: 200, body: { ...(done.left !== undefined ? { left: done.left } : {}), ...(done.fresh ? { fresh: true } : {}) } } : no(409, "refused", done.error ?? "The tower refused it.");
+			}
 			const what = ["retry", "deliver", "drop"].find((w) => w === action);
 			if (!tower || !what || !tower.has(key)) return no(404, "not_found", "No such tower.");
 			const id = typeof read.json.id === "string" && read.json.id.length <= 64 ? read.json.id : undefined;
@@ -186,6 +194,12 @@ export function createControl({ link, server: panel, lookup, call, csrf, canonic
 			if (action === "input") {
 				const text = checkText(read.json.text);
 				if (typeof text !== "string") return text;
+				// The conversation's two commands, as at the tower prompt: exactly `/quit` leaves it and `/new` starts over (the Leave and New buttons post to tower/<ws>/leave and /new).
+				const command = text.trim() === "/quit" ? "leave" : text.trim() === "/new" ? "new" : undefined;
+				if (command && tower.conversation) {
+					const said = await tower.conversation(ws, command);
+					return said.ok ? { status: 200, body: { accepted: true, command } } : no(409, "refused", said.error ?? "The tower refused it.");
+				}
 				const done = await tower.event(ws, text);
 				return done.ok ? { status: 200, body: { accepted: true, woke: true } } : no(409, "refused", done.error ?? "The tower did not take it.");
 			}

@@ -57,6 +57,9 @@ and it runs from the installed pi-straw-boss package.
   boss message from the GUI, or a notice the server raises (**Wake triggers**).
 - **Brief**: the short context a run gets at its start (**The brief**).
 - **Handoff note**: what a run leaves for the next run of the same kind (`tower_done`).
+- **Boss conversation**: a local run a `boss` event with `present` starts while no local run is live. It resumes the boss's last session
+  and lasts as long as the boss is in it (**The boss conversation**). Every other local run is an **event run**: a fresh session, ended by
+  `tower_done`.
 - **Tower memory**: `tower/<workspace id>/memory.json`. It holds the boss's standing instructions and decisions, the waits the tower keeps, and
   the proposals runs made that the boss has not answered; every local brief carries it (**Tower memory**).
 
@@ -1113,6 +1116,37 @@ carry the run's own short-lived id, and the answer would reach a pi that had alr
 tower_done and a handoff note; a main's result comes back as a new event, so do not wait for it"; and "the boss may write to you from the
 GUI; a boss message is an instruction". "Never ask the boss" stays.
 
+## The boss conversation
+
+T4 of the tower experience (D23, D26; boss: "The GUI composer continues the same boss conversation as `tower>` (one per workspace)").
+
+**Start.** A `boss` event with `present` (the tower prompt's Enter, the GUI composer, `/boss tower <prompt>`; one server function, `runs.boss`) when no local run is live
+starts a *conversation*: `pi --name "tower · boss · <label>" --sb-run <id> --session <file>`. The file is `tower/<workspace id>/boss-session.json`'s
+`file` (`{file, run, startedAt, lastAt, turns, fresh?}`, mode 600), used only when it is a regular file and no part of its path below the `sessions` folder is a symlink (each component is `lstat`ed), under pi's `sessions` folder by real path, owned
+by the server's uid (POSIX), at most 4 MB, the boss's last turn in it (the pointer's `lastAt`) at most 7 days ago, named by no live pane's `agent_session`, and the boss did not ask for a new one (`fresh`). If any check
+fails the run has no `--session` and brief 1a says why. Only a conversation writes the pointer, by its own `run-file` report and only for a `.jsonl` under `sessions`; event
+runs, ally runs, and the boss's typing in an event run never do, and an ally run never resumes it. The pointer's `turns` counts the boss events the conversation took and the boss's typing in its pi.
+
+**Brief 1a.** First section: `Boss conversation: the boss is at this pane. Resumed session from <date>, <n> boss turns` or `New session: <why>`; a resumed one adds the first lines of the
+event-run notes written since (at most 3, 1,200 characters, 1,400 for the section). A live run is given a newer brief in `run-poll`'s answer when the memory or the last local note moved.
+
+**Limits.** The boss is in the run from its claim (D17 holds). The 60 s idle steer and the 20 minute cap do not apply. The boss's 10 minutes of silence while the run is idle,
+or the 4 h hard cap from the start, give the wrap-up (steer, then `quit` 5 minutes later, notes `(ended idle)` / `(ended at the 4 h cap)`), recorded `quit`: a conversation is never a
+timeout, so it never counts toward the crash loop. `tower_done` (answered with a stay while the boss is in), and the boss's `/quit` (note `(boss quit)`, outcome `done`) end it at once.
+
+**Leave and New.** Control commands `tower-leave` and `tower-new` (and `tower-event` with `present`), each refused to every run token (`rungate.ts`: a resumed session's agent traffic gains
+no standing, and a run cannot start, leave, or mark presence). Leave sends `quit` to a live conversation (refused when none is live or it has not claimed); New marks the pointer `fresh`
+and, for a live conversation, leaves it as Leave does. `/quit` and `/new` typed alone at the tower prompt, in the GUI composer, or in the conversation's pi map to them.
+
+**`/boss tower`.** `status`, `parked`, `retry`, `deliver <id>`, `drop <id>`, `leave`, `new` over `status`, `tower-retry`, `tower-deliver`, `tower-drop`, `tower-leave`, `tower-new` with the
+server's own refusals; the writes are refused in a pi with no screen, as `/boss memory`'s are. The GUI's buttons call the same functions (pi first).
+
+**Marker.** `BOSS_MARK` is unchanged, byte for byte: a resumed session holds old lines the page reads by that text, and the writer is not told to the model, so no `via` field.
+
+**GUI.** `ServiceStatus.conversation` (and `TowerService` in `src/net.ts`, kept equal): `{since, resumed, turns, why?, idle, idleMs, idleAt?, capAt, closing?}`. The comms show the boss session
+(stable), a divider per run, and event runs as read-only chips; the state word is `boss conversation · ends after 10 min idle` (en, zh-TW), an idle conversation is `waiting`, not `working`;
+**Leave conversation** and **New conversation** replace the ENDING confirm for a tower's composer.
+
 ## Tower memory
 
 Event runs stay fresh: no persistent session. What has to outlive a run is kept apart, small and bounded, in `tower/<workspace id>/memory.json`
@@ -1670,6 +1704,7 @@ trials), unchanged otherwise.
     - the receipt goes only after the fsync;
     - the sender retries any failed send to `sb-tower-*`, `E_TARGET_NOT_FOUND` included, for up to 30 s.
   - The brief builder's caps per section and in total, the ally scope, its asks and thread, and no digest or local note in an ally brief.
+  - Boss conversation (`tests/server-conversation.test.ts`, `tower-gui.test.ts`, `tower-conversation-gui.test.ts`, `tower-command.test.ts`, `tower-prompt.test.ts`): resume only under the file checks (link, outside `sessions`, size, age, uid, a live pane, `fresh`), only a conversation moves the pointer, an ally run never resumes, `--session` on the command line; brief 1a and the refresh in `run-poll`; the 10 minute idle, the 4 h cap as a wrap-up even for a busy run, never a timeout; Leave and New through the socket, the GUI routes, and `/quit` `/new` in the composer and the prompt; no run token can call `tower-event`, `tower-leave`, `tower-new`; an idle conversation is not "working"; `/boss tower status|retry|parked|deliver|drop` with the server's refusals and no writes without a screen. Each guard was mutation-checked.
   - Tower memory (`tests/server-memory.test.ts`, `server-memory-run.test.ts`, `tower-memory-gui.test.ts`):
     - the caps (a full cap refuses and drops nothing of the boss's), ids never reused, `rev` and the 409, an unreadable file never written over, modes 600 and 700, a no-op change that writes nothing;
     - a run's add and retire are proposals that change no live entry, cite only a boss message of that run (not an intercom message, another run's, or one offered and not taken), and are capped at 12 without evicting one, deduplicated, and expire after 7 days;
@@ -1784,6 +1819,8 @@ trials), unchanged otherwise.
 - **D4 puts peer text into mains again**, bounded as **Security** says and guarded by the step-4 hooks.
 - **The thread store keeps peer text at rest** (D13): at most 20 messages per device and 7 days, in the folder that holds the team keys.
 - **`tsx` stays at runtime** for pi-intercom's client until pi-intercom ships JavaScript; B1's measurement says what it costs on Windows.
+- **A resumed boss session carries old agent traffic.** The conversation's session holds everything earlier turns saw (intercom text, notices, text quoting the boss). The run treats only an event that opens with the boss line as the boss's, and no run token can mark presence or write `tower-event`; but the model reads the old text again, so a past injection stays in context until the boss starts `/new`. The 4 MB and 7 day bounds limit how long.
+- **The pointer is trusted on disk.** `boss-session.json` is same-user state: a process with the user's shell can point the next conversation at another session file under `sessions` (the uid, link, and size checks bound it, not a hostile same-user process).
 - **A local run, or any main, can go around the proposal rule (T3R-F005, found in the T3 review, older than T3; ticket: "local run tool restriction", whose scope includes mains and members with a shell: T3P-F001).** A local run
   keeps `bash`, `write`, and `edit`: `src/runmode.ts` blocks only `intercom` and `subagent*`, `runs.ts` starts pi with no tool restriction, a request without a run
   token is judged by the hello secret alone (`rungate.ts`), and `tower-event` writes a `boss` event. A run misled by peer text (a remote board entry, a
@@ -1822,6 +1859,7 @@ straw-boss-desk's owner also agreed to D11.
 | D20 | The work board fills itself | The board fills itself from the main's todo list and name, and `board_set` overrides it (2026-10-28, tower experience; D16 and D17 belong to the standing prompt, D18 to D24 to the tower delta). A main writes its own entry from its todo list and its name, scrubbed of paths outside the project, URLs, emails, and token shapes; `board_set` stands until the todos or the name move, and `board_set { auto: true }` hands it back. Q1 = A ("allies get `now` and the done count of an auto entry only") is **superseded** by the boss on 2026-10-28: "收緊：自動的只給名字＋進度": an auto entry gives allies the main's name and the done count (`<name> (3/5)`), no task text; a `board_set` entry goes whole (Straw Link spec, **Auto-fill**; built in T2). |
 | D22 | Event runs stay fresh; the tower's memory is bounded and the boss's | "event runs stay fresh. A bounded tower memory (the boss's standing instructions, decisions, and open waits), editable in the GUI, sits beside the handoff note." Q3 = A (a run keeps one by a verbatim quote of the boss's words, checked by the server) is replaced on 2026-10-28: "改成提議＋你確認". A tower run can only **propose** a standing instruction or a decision (and retiring one); it takes effect only when the boss confirms it, with `/boss memory` or in the GUI. Waits stay run-written. Ally runs never see memory (**Tower memory**). |
 | D23 | pi first, the GUI mirrors | "不該把 GUI 當成必備的，所有操作都應該走 pi 介面，GUI 只是接這個行為": every memory operation is a `/boss memory` command in any joined pi session, and the GUI's panel and card call the same server function with the same rev check and add nothing of their own. A slash command is the boss's typed input only: no tool, run token, ally, or link reaches it (**Tower memory**). |
+| D26 | The GUI composer continues the boss conversation | Q2 = A, 2026-10-28: "The GUI composer continues the same boss conversation as `tower>` (one per workspace)." The GUI, the prompt, and `/boss tower` call one server function; a conversation resumes the last boss session under the checks of **The boss conversation**, and an event run stays fresh. |
 
 ## Review record
 

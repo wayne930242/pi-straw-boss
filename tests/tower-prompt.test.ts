@@ -26,6 +26,12 @@ class FakeSource implements PromptSource {
 		if (this.failPost) throw this.failPost;
 		this.posted.push(text);
 	}
+	freshed = 0;
+	failFresh: Error | undefined;
+	async fresh() {
+		if (this.failFresh) throw this.failFresh;
+		this.freshed++;
+	}
 	async leave() {
 		this.left++;
 	}
@@ -256,4 +262,22 @@ test("an unexpected state word is shown as it is, and nothing the server sends i
 	await sleep(30);
 	p.input.end();
 	await p.done;
+});
+
+test("`/new` alone at the prompt asks the server for a new boss session and goes on waiting; it is no message, and in the middle of a message it is a word like any other", async () => {
+	const source = new FakeSource();
+	const p = screen(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("/new\n");
+	await until(() => source.freshed === 1, "the server to be asked");
+	await until(() => /next conversation with the tower is a new session/.test(p.text()), "the confirmation");
+	assert.deepEqual(source.posted, [], "nothing was posted to the tower");
+	assert.equal(source.gones, 0, "the prompt stays");
+	source.failFresh = new Error("the server is busy");
+	p.input.write("/new\n");
+	await until(() => /the tower did not take it: the server is busy/.test(p.text()), "the refusal is shown");
+	assert.deepEqual(source.posted, []);
+	p.input.write("please /new that\n");
+	assert.equal(await ended(p.done), 0);
+	assert.deepEqual(source.posted, ["please /new that"], "only a line that is exactly /new is the command");
 });

@@ -248,6 +248,8 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	};
 	const apply = async (answer: Answer) => {
 		const command = answer.command as Command | undefined, event = answer.event as Event | undefined;
+		// A run that lives long is given a newer brief when what it is made of moved (runs.ts `refreshed`): `before_agent_start` reads it at the next turn.
+		if (typeof answer.brief === "string" && answer.brief && claim) (claim = { ...claim, brief: answer.brief }, keep());
 		if (command?.type === "quit") return void ((quitOrdered = true), flushQuit());
 		if (command?.type === "confirmed") return link?.answerForward(command.dialogId, command.allow);
 		if (command?.type === "steer") return send(`[sb server] ${command.text}`, { steer: true });

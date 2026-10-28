@@ -1,6 +1,6 @@
 import { trackActivity } from "../src/activity.ts";
 import type { Mark } from "../src/netdata.ts";
-import type { Net, Unit } from "../src/net.ts";
+import type { Net, TowerService, Unit } from "../src/net.ts";
 import type { Data, Page } from "./chat.ts";
 import { demoOpen } from "./demo-open.ts";
 import { DEMO_DOC, DEMO_PAGE, demoHistory, demoScreen, WHOLE } from "./demo-chat.ts";
@@ -37,10 +37,42 @@ const demo = (): Net => ({
 const NEXT: Record<Mark, Mark[]> = { working: ["working", "waiting", "idle", "done", "commanding"], commanding: ["working", "commanding", "idle"], waiting: ["working"], idle: ["working"], done: ["working"], error: ["working"], unknown: ["working"] };
 const units = (net: Net) => net.bases.flatMap((b) => [...(b.tower?.subs ?? []), ...b.tabs.flatMap((t) => t.units.flatMap((u) => [u, ...u.subs]))]);
 
-export interface Control { drop(): void; silence(): void; restore(): void; doc(): void }
+// The harbor tower as the sb server's service shows it in each state of the boss conversation (src/server/runs.ts): `?tower=<state>` starts the demo in one, and the toolbar's "tower" button steps through them.
+// The runs' times match the demo history of the tower's comms (demo-chat.ts), so the dividers fall between its rounds.
+const stamp = (n: number) => new Date(Date.UTC(2026, 9, 17, 8, 0, 0) + n * 47_000).toISOString();
+const TOWER_STATES = ["working", "waiting", "new", "closing", "inrun", "standing", "off"] as const;
+type TowerState = (typeof TOWER_STATES)[number];
+/** The boss spoke to an event run that is still live: no conversation, the run's own chip is the comms, and its heading names it. */
+const inRun = (): TowerService => ({
+	state: "running", queued: 0, notices: [], parked: [], allyRuns: [], run: { id: "e3", kind: "local", startedAt: stamp(420) }, bossIn: { id: "e3", since: stamp(424) },
+	localRuns: [
+		{ id: "c2", kind: "conversation", resumed: true, startedAt: stamp(204), endedAt: stamp(380), outcome: "quit", note: "(ended idle)" },
+		{ id: "e3", kind: "event", startedAt: stamp(420), key: "run-e3" },
+	],
+});
+function towerService(state: TowerState): { service?: TowerService; mark: Mark } {
+	if (state === "off") return { mark: "working" };
+	if (state === "inrun") return { mark: "working", service: inRun() };
+	const live = state !== "standing", idle = state === "waiting", began = stamp(420);
+	const localRuns: NonNullable<TowerService["localRuns"]> = [
+		{ id: "c1", kind: "conversation", resumed: false, why: "no earlier boss session", startedAt: stamp(5), endedAt: stamp(150), outcome: "done", note: "(boss quit)" },
+		{ id: "e1", kind: "event", startedAt: stamp(160), endedAt: stamp(171), outcome: "done", note: "routed the green build to docs", key: "run-e1" },
+		{ id: "e2", kind: "event", startedAt: stamp(180), endedAt: stamp(190), outcome: "crashed", note: "(crashed: pi exited without tower_done)" },
+		{ id: "c2", kind: "conversation", resumed: true, startedAt: stamp(204), endedAt: stamp(380), outcome: "quit", note: "(ended idle)" },
+		{ id: "c3", kind: "conversation", resumed: state !== "new", ...(state === "new" ? { why: "the boss asked for a new one (/new)" } : {}), startedAt: began, ...(live ? {} : { endedAt: stamp(436), outcome: "done", note: "(boss quit)" }) },
+	];
+	const service: TowerService = {
+		state: live ? (state === "closing" ? "closing" : "running") : "standing", queued: state === "standing" ? 0 : 1, notices: [], parked: [], allyRuns: [], localRuns,
+		...(live ? { run: { id: "c3", kind: "local" as const, startedAt: began }, conversation: { since: began, resumed: state !== "new", ...(state === "new" ? { why: "the boss asked for a new one (/new)" } : {}), turns: state === "new" ? 0 : 14, idle, ...(idle ? { idleAt: Date.now() + 7 * 60_000 } : {}), idleMs: 600_000, capAt: Date.now() + 3.4 * 3_600_000, ...(state === "closing" ? { closing: true as const } : {}) } } : { lastRun: { endedAt: stamp(436), outcome: "done" } }),
+	};
+	return { service, mark: !live ? "idle" : idle ? "idle" : "working" };
+}
+
+export interface Control { drop(): void; silence(): void; restore(): void; doc(): void; tower(state?: string): void }
 
 export function createFixture({ resume, tick = 2500 }: { resume(): void; tick?: number }): { open(watch: string | null): Source; data(key: string): Data; control: Control } {
 	demoOpen(); // the opening tiles' folder picker and deploy, with no server
+	let towerNow: TowerState = "off";
 	let net = demo(), step = 0, waits = 0, dropped = false, silent = false, current: FixtureSource | undefined, live = 0, notes = 0;
 	// The demo documents stand in for the server's: the HTML one as a data: page, the text ones from here.
 	[docHooks.src, docHooks.load] = [() => `data:text/html;charset=utf-8,${encodeURIComponent(DEMO_PAGE)}`, async (cap) => ({ text: cap === "plan" ? DEMO_DOC : `# Notes ${cap.slice(5)}\n\nA demo document that arrived on its own.` })];
@@ -62,7 +94,7 @@ export function createFixture({ resume, tick = 2500 }: { resume(): void; tick?: 
 			if (dropped) return;
 			if (watch?.startsWith("w:")) this.timers.push(setTimeout(() => this.send("cards", { a1: "I merged the billing branch and the tests pass.", a3: "Waiting for your answer about the deploy window." }), 250));
 			else if (watch) {
-				this.timers.push(setTimeout(() => this.send("history", { key: watch, state: "live", reset: true, ...page(), header: { id: watch, cwd: "/work/harbor-api" }, unreadable: 0, todos: [{ id: 1, subject: "Find where the rounding happens", status: "completed" }, { id: 2, subject: "Fix the ledger rounding before tax", status: "in_progress", activeForm: "fixing the ledger rounding" }, { id: 3, subject: "Add a regression test for credit notes", status: "pending" }] }), 250));
+				this.timers.push(setTimeout(() => this.send("history", { key: watch, state: "live", reset: true, ...page(), ...(watch.startsWith("run-") ? { role: "run", name: watch.slice(4, 12) } : {}), header: { id: watch, cwd: "/work/harbor-api" }, unreadable: 0, todos: [{ id: 1, subject: "Find where the rounding happens", status: "completed" }, { id: 2, subject: "Fix the ledger rounding before tax", status: "in_progress", activeForm: "fixing the ledger rounding" }, { id: 3, subject: "Add a regression test for credit notes", status: "pending" }] }), 250));
 				// A new reply every few seconds, so the page shows a live chat.
 				this.timers.push(setInterval(() => {
 					const n = ++live, call = `live-c${n}`;
@@ -108,8 +140,17 @@ export function createFixture({ resume, tick = 2500 }: { resume(): void; tick?: 
 		silence: () => (silent = true),
 		restore: () => ((dropped = false), (silent = false), resume()),
 		// billing-main shows a new document: on its comms it opens as a tile without focus; elsewhere its token gets the scroll badge.
+		tower: (state) => {
+			towerNow = TOWER_STATES.includes(state as TowerState) ? (state as TowerState) : TOWER_STATES[(TOWER_STATES.indexOf(towerNow) + 1) % TOWER_STATES.length]!;
+			const harbor = net.bases[0]!.tower!, shown = towerService(towerNow);
+			(harbor.mark = shown.mark), (harbor.service = shown.service);
+			net = structuredClone(net);
+			current?.send("message", net);
+		},
 		doc: () => ((units(net).find((u) => u.key === "a1")!.docs = [...(units(net).find((u) => u.key === "a1")!.docs ?? []), doc(`note-${++notes}`, `docs/notes-${notes}.md`, "Notes for review")]), (net = structuredClone(net)), current?.send("message", net)),
 	};
+	const start = new URLSearchParams(location.search).get("tower");
+	if (start) control.tower(start);
 	mountToolbar(control);
 	const data = (key: string): Data => ({
 		older: async (before) => page(before),
@@ -146,7 +187,7 @@ function mountToolbar(control: Control) {
 	// On a phone it folds to a "demo" tab in the right margin, which no panel reaches; a tap shows the rest.
 	const phone = innerWidth < 640;
 	if (phone) bar.style.cssText += ";left:auto;bottom:auto;right:0;top:40%;writing-mode:vertical-rl;flex-direction:column;padding:6px 1px;gap:4px";
-	const buttons = [["demo", () => buttons.slice(1).forEach((b) => (b.style.display = b.style.display ? "" : "none"))], ["drop stream", control.drop], ["go silent", control.silence], ["restore", control.restore], ["doc arrives", control.doc], ["drawer", () => document.dispatchEvent(new Event("sb-drawer"))]].map(([label, run]) => {
+	const buttons = [["demo", () => buttons.slice(1).forEach((b) => (b.style.display = b.style.display ? "" : "none"))], ["drop stream", control.drop], ["go silent", control.silence], ["restore", control.restore], ["doc arrives", control.doc], ["tower", () => control.tower()], ["drawer", () => document.dispatchEvent(new Event("sb-drawer"))]].map(([label, run]) => {
 		const button = document.createElement("button");
 		[button.textContent, button.onclick] = [label as string, run as () => void];
 		button.style.cssText = `all:unset;cursor:pointer;padding:3px 9px;border-radius:8px;background:#1a2748;color:#dbe6ff;${phone ? "padding:8px 1px;" : ""}${label !== "demo" && phone ? "display:none" : ""}`;

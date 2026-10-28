@@ -2,7 +2,7 @@ import type { Mark } from "../src/netdata.ts";
 import type { Chat, Data, Who } from "./chat.ts";
 import { mountAsk } from "./ask.ts";
 import { drawMonitors, drawQueued, drawTodos, mountQueueEdit } from "./bars.ts";
-import { mountComposer, postTo } from "./composer.ts";
+import { mountComposer, wakeOf, postTo } from "./composer.ts";
 import { docFor, docTile } from "./doc.ts";
 import type { Tile } from "./layer.ts";
 import { m } from "./paraglide/messages.js";
@@ -11,6 +11,7 @@ import { aim, aimOpening, doing, html, LABEL, mark, urgent, text } from "./rende
 import { channelOf, closed, locate, type Scene, type Subject, towerBase, wsOf } from "./scene.ts";
 import { linkTo } from "./tokens.ts";
 import { fillAllies } from "./towerallies.ts";
+import { fillConversation } from "./towerconv.ts";
 import { fillMemory } from "./towermemory.ts";
 import { fillNotices } from "./towernotes.ts";
 import { statusLine } from "./towermodel.ts";
@@ -20,7 +21,7 @@ import { h } from "./dom.ts";
 // The session route's comms: the header, the log (chat.ts, its own chunk), the bars above the composer, the composer, the question panel, and the
 // session's terminal as the other mode. A phone's Info button, in the header, opens the dossier full-screen through `fullScreen`.
 
-const COMMS = () => `<div class="comms-in"><header class="comms-head"><a class="head-back" data-back aria-label="${m.back()}">‹</a><span class="logo"><svg><use href="#i-comms"/></svg></span><div class="head-id"><h2><small>${m.comms()}</small> <span></span></h2><p></p><div class="allies comms-allies" hidden></div></div><div class="modes" role="group"><button type="button" data-mode="chat" aria-pressed="true">${m.comms()}</button><button type="button" data-mode="term" aria-pressed="false">${m.terminal()}</button></div><span class="chan link" data-state="live"><i></i><b>${m.channel_open()}</b></span><button type="button" class="pair-btn head-main" hidden></button><button type="button" class="pair-btn head-info">${m.info()}</button><button type="button" class="quit-btn head-quit" data-close="unit" hidden></button></header><div class="chat-root"></div><div class="tower-notes"><div class="tower-notices"></div><div class="tower-memory" hidden></div></div><div class="queue-list" hidden></div><div class="queue-act" hidden><span>${m.queue_edit_hint()}</span><button type="button" class="cmp-alt">${m.queue_edit()}</button></div><details class="todos" hidden><summary><b></b><span></span></summary><ol></ol></details><details class="monitors" hidden><summary><b></b><span></span></summary><ul></ul></details><div class="ask-root"></div><div class="composer-root"></div><div class="term-root" hidden></div></div>`;
+const COMMS = () => `<div class="comms-in"><header class="comms-head"><a class="head-back" data-back aria-label="${m.back()}">‹</a><span class="logo"><svg><use href="#i-comms"/></svg></span><div class="head-id"><h2><small>${m.comms()}</small> <span></span></h2><p></p><div class="allies comms-allies" hidden></div></div><div class="modes" role="group"><button type="button" data-mode="chat" aria-pressed="true">${m.comms()}</button><button type="button" data-mode="term" aria-pressed="false">${m.terminal()}</button></div><span class="chan link" data-state="live"><i></i><b>${m.channel_open()}</b></span><button type="button" class="pair-btn head-main" hidden></button><button type="button" class="pair-btn head-info">${m.info()}</button><button type="button" class="quit-btn head-quit" data-close="unit" hidden></button></header><div class="chat-root"></div><div class="tower-notes"><div class="tower-conv" hidden></div><div class="tower-notices"></div><div class="tower-memory" hidden></div></div><div class="queue-list" hidden></div><div class="queue-act" hidden><span>${m.queue_edit_hint()}</span><button type="button" class="cmp-alt">${m.queue_edit()}</button></div><details class="todos" hidden><summary><b></b><span></span></summary><ol></ol></details><details class="monitors" hidden><summary><b></b><span></span></summary><ul></ul></details><div class="ask-root"></div><div class="composer-root"></div><div class="term-root" hidden></div></div>`;
 
 export interface SessionDeps {
 	view: HTMLElement; data(key: string): Data; openTile(tile: Tile, focus?: boolean): void; embedTerminal(key: string, name: string, host: HTMLElement): Promise<() => void>; online(): boolean;
@@ -107,15 +108,16 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 		draw({ u, hit, mk, state, name }: Subject) {
 			view.querySelector<HTMLElement>(".modes")?.toggleAttribute("hidden", !u?.control);
 			chat?.docs();
+			chat?.runs((u?.service?.localRuns ?? []).filter((r) => r.kind === "conversation"));
 			const head = view.querySelector<HTMLElement>(".comms-head");
 			if (head) {
 				mark(head, mk); // the head glows while the unit is commanding
 				// An ally run's comms are a unit the net lists only on its tower's chip (src/net.ts): the history names it by its device, and the page says what it is.
-				const ally = !u && scene.info?.role === "ally";
-				text(head, "h2 span", ally ? m.ally_run({ device: scene.info?.name ?? "" }) : (u?.name ?? scene.info?.name ?? ""));
-				text(head, "p", [hit?.base.label ?? (ally ? scene.net?.bases.find((b) => b.id === wsOf(scene))?.label : undefined), hit?.squad && m.squad_label({ label: hit.squad }), u?.service && statusLine(u.service, mk, (k) => LABEL[k]()), ally && m.role_ally()].filter(Boolean).join(" · "));
+				const ally = !u && scene.info?.role === "ally", eventRun = !u && scene.info?.role === "run";
+				text(head, "h2 span", ally ? m.ally_run({ device: scene.info?.name ?? "" }) : eventRun ? m.event_run({ id: scene.info?.name ?? "" }) : (u?.name ?? scene.info?.name ?? ""));
+				text(head, "p", [hit?.base.label ?? ((ally || eventRun) ? scene.net?.bases.find((b) => b.id === wsOf(scene))?.label : undefined), hit?.squad && m.squad_label({ label: hit.squad }), u?.service && statusLine(u.service, mk, (k) => LABEL[k]()), ally && m.role_ally(), eventRun && m.role_run()].filter(Boolean).join(" · "));
 				fillAllies(view.querySelector<HTMLElement>(".comms-allies")!, hit?.base.id ?? wsOf(scene), u?.service);
-				const chan = head.querySelector<HTMLElement>(".chan")!, kind = channelOf(u, state, ally);
+				const chan = head.querySelector<HTMLElement>(".chan")!, kind = channelOf(u, state, ally || eventRun);
 				chan.dataset.state = kind === "live" ? "live" : "closed";
 				text(chan, "b", { live: m.channel_open, readonly: m.channel_readonly, closed: m.channel_closed, none: m.no_channel }[kind]());
 				chan.title = chan.querySelector("b")!.textContent ?? ""; // a phone shows the dot alone
@@ -130,10 +132,10 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 			drawMonitors(view, u?.monitors);
 			drawQueued(view, u?.queued, u?.key, Boolean(u?.service));
 			const notes = view.querySelector<HTMLElement>(".tower-notices");
-			if (notes) (fillNotices(notes, hit?.base.id ?? wsOf(scene), u?.service, u?.key), fillMemory(view.querySelector<HTMLElement>(".tower-memory")!, hit?.base.id ?? wsOf(scene), u?.service?.memory));
+			if (notes) (fillConversation(view.querySelector<HTMLElement>(".tower-conv")!, hit?.base.id ?? wsOf(scene), u?.service), fillNotices(notes, hit?.base.id ?? wsOf(scene), u?.service, u?.key), fillMemory(view.querySelector<HTMLElement>(".tower-memory")!, hit?.base.id ?? wsOf(scene), u?.service?.memory));
 			if (shown === "term" && holdOf(u?.key ?? "") !== held) setMode("term"); // the tower woke or went to stand by: the terminal or its sentence changes
 			chat?.setLive(mk === "working" || mk === "commanding" ? `${doing(u!.note, mk)}` : urgent(mk) ? LABEL[mk]() : "", mk);
-			composer?.update({ name, control: Boolean(u?.control), agent: u?.agent, live: !closed(u, state), mark: mk, online: online(), answerable: Boolean(u?.pending?.answer), wakes: Boolean(u?.service), held: u?.service?.state === "held", allyLive: Boolean(u?.service?.allyRuns.length && !u.service.run), ally: !u && scene.info?.role === "ally" });
+			composer?.update({ name, control: Boolean(u?.control), agent: u?.agent, live: !closed(u, state), mark: mk, online: online(), answerable: Boolean(u?.pending?.answer), ...wakeOf(u?.service), ally: !u && (scene.info?.role === "ally" || scene.info?.role === "run"), run: !u && scene.info?.role === "run" });
 			asker?.update(u?.pending, mk === "waiting" && Boolean(u?.control) && online()); // its dialog above the composer, answerable or not
 		},
 	};

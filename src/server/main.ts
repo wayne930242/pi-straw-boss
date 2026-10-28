@@ -25,6 +25,7 @@ import {
 import { AFTER, endpointFor, helloOf, listenControl, newSecret, type Reply, type Request } from "./socket.ts";
 import { promptCommand } from "./standing.ts";
 import { createTowers, type Towers, type TowersOptions } from "./towers.ts";
+import { towerPanel } from "./towerpanel.ts";
 import { runsStopMs } from "./runs.ts";
 import { readTowerRuns } from "./towerruns.ts";
 import { packageRoot, VERSION } from "./version.ts";
@@ -388,7 +389,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			// The runs (runs.ts): a pi started with --sb-run claims its run; a pi in a standing pane asks its role; a run polls for its events, confirms them, and ends with tower_done.
 			case "claim": return answer(async (t) => ({ ...(await t.runs.claim(request)) }));
 			case "pane-role": return answer(async (t) => ({ ...(await t.runs.paneRole(request)) }));
-			case "run-poll": return answer(async (t) => ({ ...t.runs.poll(request) }));
+			case "run-poll": return answer(async (t) => ({ ...(await t.runs.poll(request)) }));
 			case "run-taken": return answer(async (t) => ({ ...t.runs.taken(request) }));
 			case "run-done": return answer(async (t) => ({ ...(await t.runs.done(request)) }));
 			case "run-boss": return answer(async (t) => ({ ...t.runs.present(request) }));
@@ -412,6 +413,9 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			// The boss's memory (towermemory.ts `memoryRequest`): `/boss memory` in a pi session is the GUI panel's request on the same function. A run's token never gets here (rungate.ts refuses it).
 			case "tower-memory": return workspace && typeof request.json === "object" && request.json !== null ? answer(async (t) => ({ ...t.memory(workspace, request.json as Record<string, unknown>) })) : Promise.resolve({ ok: false, error: "tower-memory needs a workspace and a request" });
 			case "tower-retry": return workspace ? answer(async (t) => (t.runs.retry(workspace), {})) : Promise.resolve({ ok: false, error: "tower-retry needs a workspace" });
+			// The boss conversation (runs.ts `leave`, `fresh`): `/boss tower leave|new` and the GUI's Leave and New are these two; a run token never gets here (rungate.ts).
+			case "tower-leave": return workspace ? answer(async (t) => ({ ...(await t.runs.leave(workspace)) })) : Promise.resolve({ ok: false, error: "tower-leave needs a workspace" });
+			case "tower-new": return workspace ? answer(async (t) => ({ ...(await t.runs.fresh(workspace)) })) : Promise.resolve({ ok: false, error: "tower-new needs a workspace" });
 			case "tower-deliver": case "tower-drop": {
 				const id = text(request.id, 64);
 				return workspace && id ? answer(async (t) => (request.cmd === "tower-drop" ? t.runs.dropParked(workspace, id) : t.runs.deliverAgain(workspace, id), {})) : Promise.resolve({ ok: false, error: `${request.cmd} needs a workspace and an event id` });
@@ -481,14 +485,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		restart: gui.restart ?? ((reason) => spawnRestart(cliBeside(), reason, "the GUI", serverEnv(env), slot.dir)),
 		failed: (code, text) => recordError(code, text), tailscale: gui.tailscale, bundle: gui.bundle, bindWaitMs: gui.bindWaitMs,
 		// The page's tower units: the service's state and queue in the net, the composer as a boss event, and the notices' buttons (towers is built below, after the GUI host, and may be absent).
-		tower: {
-			view: (workspace) => towers?.runs.view(workspace),
-			has: (workspace) => towers?.runs.view(workspace) !== undefined,
-			live: (workspace) => Boolean(towers?.runs.status(workspace)?.run),
-			event: async (workspace, text) => { try { return (towers!.runs.boss(workspace, text, "the boss (GUI)"), { ok: true }); } catch (error) { return { ok: false, error: (error as Error).message }; } },
-			memory: (workspace, json) => towers!.memory(workspace, json),
-			act: async (workspace, what, id) => { try { return (what === "retry" ? towers!.runs.retry(workspace) : what === "deliver" ? towers!.runs.deliverAgain(workspace, id!) : towers!.runs.dropParked(workspace, id!), { ok: true }); } catch (error) { return { ok: false, error: (error as Error).message }; } },
-		},
+		tower: towerPanel(() => towers),
 	});
 	// The tower service (behind `towerRuns.enabled`): it stands in for each workspace's tower, and finds the tabs again when a new Herdr server takes over.
 	// What `boss_server` does for a run (runtools.ts): the server answers it itself, so it can refuse an ally run's token and keep the restart limit.

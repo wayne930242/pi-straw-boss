@@ -58,6 +58,7 @@ async function setup(over: Partial<TowerPanel> & { runLive?: boolean } = {}) {
 		event: over.event ?? (async (ws, text) => (events.push([ws, text]), { ok: true })),
 		act: over.act ?? (async (ws, what, id) => (acts.push([ws, what, id]), { ok: true })),
 		...(over.memory ? { memory: over.memory } : {}),
+		...(over.conversation ? { conversation: over.conversation } : {}),
 	};
 	const lookup = (key: string): Found | undefined => (key === "ally-r1" ? { key, base: "wA", name: "Laptop", role: "ally", file: FILE, live: true } : key === "sb-tower-wa" ? { key, base: "wA", name: "tower", role: "tower", ...(over.runLive ? { file: FILE, pane: "wA:p1" } : {}), live: true } : key === "main-1" ? { key, base: "wA", name: "docs", role: "main", file: FILE, pane: "wA:p2", live: true } : undefined);
 	const call = async (method: string) => (calls.push(method), method === "pane.get" ? { pane: { pane_id: "wA:p2", agent: "pi", agent_session: { value: FILE } } } : {});
@@ -147,4 +148,40 @@ test("the memory panel's route: its request reaches the service with the workspa
 	assert.equal((await send(s.gui, "tower/wZ/memory", { op: "read" })).status, 404);
 	const bare = await setup();
 	assert.equal((await send(bare.gui, "tower/wA/memory", { op: "read" })).status, 404);
+});
+
+test("Leave and New post to tower/<ws>/leave and /new, which reach the conversation's two functions; a refusal is shown with the server's reason; an unknown tower is 404", async () => {
+	const asked: [string, string][] = [];
+	const { gui } = await setup({ conversation: async (ws, what) => (asked.push([ws, what]), what === "leave" ? { ok: true, left: true } : { ok: true, fresh: true, left: false }) });
+	const left = await send(gui, "tower/wA/leave", {}), fresh = await send(gui, "tower/wA/new", {});
+	assert.deepEqual([left.status, left.body], [200, { left: true }]);
+	assert.deepEqual([fresh.status, fresh.body], [200, { fresh: true, left: false }]);
+	assert.deepEqual(asked, [["wA", "leave"], ["wA", "new"]]);
+	assert.equal((await send(gui, "tower/wZ/leave", {})).status, 404);
+	const refusing = await setup({ conversation: async () => ({ ok: false, error: "No boss conversation is live in this tower." }) });
+	const refused = await send(refusing.gui, "tower/wA/leave", {});
+	assert.equal(refused.status, 409);
+	assert.equal(refused.body.reason, "No boss conversation is live in this tower.");
+	const none = await setup();
+	assert.equal((await send(none.gui, "tower/wA/leave", {})).status, 404, "a server with no conversation functions has no such route");
+});
+
+test("exactly /quit and /new typed in a tower's composer are Leave and New, not messages; any other text is the boss's event", async () => {
+	const asked: [string, string][] = [];
+	const { gui, events } = await setup({ conversation: async (ws, what) => (asked.push([ws, what]), { ok: true }) });
+	for (const text of ["/quit", " /new "]) assert.deepEqual((await send(gui, "sessions/sb-tower-wa/input", { text, as: "send" })).body.accepted, true, text);
+	assert.deepEqual(asked, [["wA", "leave"], ["wA", "new"]]);
+	assert.deepEqual(events, [], "neither was written to the tower as the boss's words");
+	for (const text of ["/quit now", "please /new that", "/new tests"]) await send(gui, "sessions/sb-tower-wa/input", { text, as: "send" });
+	assert.deepEqual(events.map((e) => e[1]), ["/quit now", "please /new that", "/new tests"]);
+});
+
+test("a conversation that waits for the boss shows as idle, not working; one that works, or is closing, shows as working", () => {
+	const run = { id: "c1", kind: "local" as const, startedAt: "2026-10-28T10:00:00Z" };
+	const conversation = (over: object) => ({ since: "2026-10-28T10:00:00Z", resumed: true, turns: 3, idle: false, idleMs: 600_000, capAt: 1, ...over });
+	const mark = (c?: object) => net(() => view({ state: "running", run, ...(c ? { conversation: conversation(c) } : {}) })).bases[0]!.tower!.mark;
+	assert.equal(mark(), "working", "an event run is working");
+	assert.equal(mark({ idle: false }), "working");
+	assert.equal(mark({ idle: true }), "idle", "the run waits for the boss");
+	assert.equal(mark({ idle: true, closing: true }), "working");
 });

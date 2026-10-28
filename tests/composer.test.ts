@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { aftermath, blocked, confirmed, deposit, endTake, recall, recallTake, rescue, settleTake, startTake, takeWhy, typable, withPulled } from "../gui/composer.ts";
+import { wakeOf, placeholderOf, aftermath, blocked, confirmed, deposit, endTake, recall, recallTake, rescue, settleTake, startTake, takeWhy, typable, withPulled } from "../gui/composer.ts";
 import { m } from "../gui/paraglide/messages.js";
 import { channelOf, closed } from "../gui/scene.ts";
 import type { Answer } from "../gui/post.ts";
@@ -55,6 +55,8 @@ test("an ally run's comms say a teammate's message drives them and take no typin
 	assert.equal(blocked(unit), m.blocked_no_pane(), "any other unit with no pane keeps its reason");
 	assert.notEqual(m.blocked_ally(), m.blocked_no_pane());
 	assert.match(m.placeholder_ally(), /ally run/);
+	assert.notEqual(m.placeholder_conversation(), m.placeholder_wake(), "a live boss conversation is continued, not woken (T4R-F002)");
+	assert.match(m.placeholder_conversation({}, { locale: "zh-TW" }), /對話/);
 	assert.notEqual(m.placeholder_ally(), m.placeholder_wake());
 });
 
@@ -172,4 +174,30 @@ test("a take-back's refusal is worded in the page's language, by the server's co
 	assert.equal(takeWhy({ ok: true, status: 200, body: { text: "t" } }, "zh-TW"), undefined);
 	settleTake("sess-nokey", { ok: false, status: 409, body: { error: "no_key", reason: "x" } });
 	assert.equal(recallTake("sess-nokey"), undefined);
+});
+
+test("a tower's empty box: held, ally, a live conversation (not ending), else the wake line; any other unit names itself (R5-F006 M4, M4b)", () => {
+	const unit = { name: "tower", control: true, live: true, mark: "idle" as const, online: true, wakes: true };
+	assert.equal(placeholderOf(unit), m.placeholder_wake());
+	assert.equal(placeholderOf({ ...unit, conversation: true }), m.placeholder_conversation());
+	assert.equal(placeholderOf({ ...unit, conversation: true, held: true }), m.placeholder_held());
+	assert.equal(placeholderOf({ ...unit, conversation: true, allyLive: true }), m.placeholder_ally());
+	assert.equal(placeholderOf({ ...unit, eventRun: true }), m.placeholder_event_run());
+	assert.equal(placeholderOf({ ...unit, wakes: false }), m.placeholder({ name: "tower" }));
+	const svc = { state: "running", run: {}, allyRuns: [] as unknown[] };
+	assert.equal(wakeOf({ ...svc, conversation: {} }).conversation, true);
+	assert.equal(wakeOf({ ...svc, conversation: { closing: true } }).conversation, false, "a closing conversation is not continued");
+	assert.equal(wakeOf(svc).conversation, false);
+	assert.equal(wakeOf({ ...svc, bossIn: { id: "e3" } }).eventRun, true);
+	assert.equal(wakeOf({ ...svc, bossIn: { id: "e3" }, conversation: {} }).eventRun, false);
+	assert.deepEqual(wakeOf(undefined), { wakes: false, held: false, conversation: false, allyLive: false, eventRun: false });
+	assert.deepEqual(wakeOf({ state: "held", allyRuns: [{}] }), { wakes: true, held: true, conversation: false, allyLive: true, eventRun: false });
+});
+
+test("an event run's comms say it is the tower's run, not a teammate's ally run (found in the visual pass)", () => {
+	const unit = { name: "e3", control: false, live: true, mark: "unknown" as const, online: true, ally: true };
+	assert.equal(blocked(unit), m.blocked_ally());
+	assert.equal(blocked({ ...unit, run: true }), m.blocked_run());
+	assert.notEqual(m.blocked_run(), m.blocked_ally());
+	assert.match(m.blocked_run({}, { locale: "zh-TW" }), /塔台/);
 });

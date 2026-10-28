@@ -17,6 +17,11 @@ import { towerWhy } from "./towerturns.ts";
 export const MAX_TEXT = 16_384;
 type Note = [tone: string, text: string];
 export const ENDING = /^\s*\/(quit|exit|new|resume|fork|clone|import|reload)(?=\s|$)/;
+/**
+ * The command in `text` that ends or replaces the session it is sent to, which asks first; none for a tower the sb server runs: its composer is the boss conversation's, where exactly `/quit` leaves it and `/new` starts over
+ * (src/control.ts), so neither ends a pi session to confirm.
+ */
+export const endsSession = (text: string, unit: Pick<Unit, "wakes">): string | undefined => (unit.wakes ? undefined : text.match(ENDING)?.[0].trim());
 export type Post = (action: "input" | "keys" | "focus" | "answer" | "mirror" | "commands" | "dequeue", body: Record<string, unknown>) => Promise<Answer>;
 type Flight = { sent?: string; answer: Promise<Answer> };
 // Sends on their way, by session key. They outlive a composer replaced meanwhile (the route left and came back), whose successor waits for
@@ -24,7 +29,7 @@ type Flight = { sent?: string; answer: Promise<Answer> };
 const flights = new Map<string, Flight>();
 /** `live`: its channel is open (scene.ts `closed`). `answerable`: its question panel on the page answers it. */
 /** `wakes`: the tower of the sb server's service, which has no pi to type into while it stands by: Send posts a boss event that wakes it (the server's tower route). `held`: the service stopped waking after repeated crashes; a boss event still wakes it. `allyLive`: an ally run is working and no local run is (a message wakes a run of the boss's own). `ally`: the unit is an ally run's comms, which are read and never written to. */
-export interface Unit { wakes?: boolean; held?: boolean; allyLive?: boolean; ally?: boolean; name: string; control: boolean; agent?: keyof typeof AGENT; live: boolean; mark: Mark; online: boolean; answerable?: boolean }
+export interface Unit { wakes?: boolean; /** The boss conversation is live (and not ending): a message continues it. */ conversation?: boolean; held?: boolean; allyLive?: boolean; /** The boss is in the live event run: a message goes to it. */ eventRun?: boolean; ally?: boolean; /** The unit is an event run's comms (read only; the boss writes to the tower). */ run?: boolean; name: string; control: boolean; agent?: keyof typeof AGENT; live: boolean; mark: Mark; online: boolean; answerable?: boolean }
 
 /** The server's input API for one session. */
 export const postTo = (key: string): Post => (action, body) => post(`sessions/${encodeURIComponent(key)}/${action}`, body);
@@ -120,9 +125,14 @@ export const typable = (u: Pick<Unit, "live" | "ally">) => u.live && !u.ally;
 export function blocked(u: Unit): string | undefined {
 	if (!u.online) return m.blocked_offline();
 	if (!u.live) return m.blocked_ended();
-	if (!u.control) return u.ally ? m.blocked_ally() : u.agent ? m.blocked_agent({ agent: AGENT[u.agent] }) : m.blocked_no_pane();
+	if (!u.control) return u.run ? m.blocked_run() : u.ally ? m.blocked_ally() : u.agent ? m.blocked_agent({ agent: AGENT[u.agent] }) : m.blocked_no_pane();
 	if (u.mark === "waiting") return u.answerable ? m.blocked_answer_above() : m.blocked_answer_terminal();
 }
+
+/** What the empty box says: a tower is woken (or continued, while the boss conversation is live), any other unit is written to. */
+export const placeholderOf = (unit: Unit) => (unit.wakes ? (unit.held ? m.placeholder_held() : unit.allyLive ? m.placeholder_ally() : unit.eventRun ? m.placeholder_event_run() : unit.conversation ? m.placeholder_conversation() : m.placeholder_wake()) : m.placeholder({ name: unit.name }));
+/** What a tower's service tells the composer: it wakes (never steers), is held, continues a live boss conversation that is not ending, or has only an ally run live. */
+export const wakeOf = (service?: { state: string; run?: unknown; allyRuns: unknown[]; conversation?: { closing?: boolean }; bossIn?: unknown }): Pick<Unit, "wakes" | "held" | "conversation" | "allyLive" | "eventRun"> => ({ eventRun: Boolean(service?.bossIn && !service.conversation), wakes: Boolean(service), held: service?.state === "held", conversation: Boolean(service?.conversation && !service.conversation.closing), allyLive: Boolean(service?.allyRuns.length && !service.run) });
 
 export function mountComposer(root: HTMLElement, key: string, post: Post, upload = (file: File) => sendFile(`sessions/${encodeURIComponent(key)}/upload`, file)) {
 	const store = `sb-draft:${key}`, touch = matchMedia("(pointer: coarse)").matches;
@@ -194,13 +204,13 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 		if (busy || asking || !text.trim()) return;
 		if (why) return say(why, "error");
 		if (new TextEncoder().encode(text).length > MAX_TEXT) return say(m.too_long(), "error");
-		const command = !confirmed && text.match(ENDING)?.[0].trim();
+		const command = !confirmed && endsSession(text, unit);
 		if (command) return ask(m.ends_session({ command }), m.send_command({ command }), () => submit(as, text));
 		void call("input", { text, as, confirmed }, text);
 	}
 	function draw() {
 		const why = blocked(unit), working = unit.mark === "working";
-		box.placeholder = why ?? (unit.wakes ? (unit.held ? m.placeholder_held() : unit.allyLive ? m.placeholder_ally() : m.placeholder_wake()) : m.placeholder({ name: unit.name }));
+		box.placeholder = why ?? placeholderOf(unit);
 		box.disabled = attach.disabled = !typable(unit); // a closed channel (the session left the net, or a finished subagent's pi exited) takes no typing at all, as it takes no sending
 		send.disabled = busy || Boolean(why) || !box.value.trim(); // nothing typed, nothing to send
 		follow.hidden = stop.hidden = !working || Boolean(why) || Boolean(unit.wakes); // a tower's run is woken, not steered or stopped from here
