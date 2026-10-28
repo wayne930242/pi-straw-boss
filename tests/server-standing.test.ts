@@ -245,6 +245,20 @@ test("where Herdr cannot tell a bare shell from a build (no pgid, as on Windows)
 	assert.equal(world.herdr.typed.length, 1, "nothing is typed on a later look: the shell may be busy");
 });
 
+test("Windows gives shell_pid and a foreground group that are always the shell's: a program the boss runs there is never typed into, however often the look comes (B6 F10)", async () => {
+	world.runPlatform = "win32";
+	world.herdr.winShell = true;
+	world.herdr.shellForeground = true;
+	const { s, pane } = await setup();
+	await until(() => world.herdr.typed.length === 1, "the first typing into the new tab");
+	// The prompt is gone and `ping -t localhost` runs in the shell: process-info lists the shell alone, the group is the shell's pid.
+	new FakePrompt(s, pane).stop();
+	await sleep(1500);
+	assert.equal(world.herdr.typed.length, 1, "the pane is not fresh: no typing, whatever the group says");
+	const lost = () => readFileSync(fileOf(world.slot, "log"), "utf8").split("\n").filter((l) => /prompt-lost/.test(l));
+	assert.equal(lost().length, 1, "said once, not at every look");
+});
+
 test("where Herdr gives the shell's pid and the foreground group, a prompt that died is typed again when the foreground is the shell itself, and not while something else holds it (SR-F003)", async () => {
 	world.herdr.shellPids = true;
 	const { s, pane } = await setup();
@@ -267,6 +281,9 @@ test("idleShell: a process list alone is never an idle shell unless the pane is 
 	assert.equal(idleShell({ foreground_processes: [{ name: "zsh" }, { name: "vim" }] }, true), false);
 	assert.equal(idleShell({ shell_pid: 5, foreground_process_group_id: 5, foreground_processes: [] }), true, "with the pgid pair the groups decide");
 	assert.equal(idleShell({ shell_pid: 5, foreground_process_group_id: 9 }, true), false);
+	const win = { shell_pid: 5, foreground_process_group_id: 5, foreground_processes: [{ pid: 5, name: "powershell.exe" }] };
+	assert.equal(idleShell(win, false, false), false, "Windows: the group is the shell's whatever runs, so it proves nothing");
+	assert.equal(idleShell(win, true, false), true, "Windows, a pane known fresh");
 });
 
 test("between the prompt's post and the wake the next look does not type the prompt again (SR-F004)", async () => {

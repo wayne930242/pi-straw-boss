@@ -140,7 +140,7 @@ export class FakeHerdr {
 	}
 	/** Whether `pane process-info` carries the shell's pid and the foreground process group (macOS and Linux); without them (Windows) a bare shell and a running build look alike. */
 	shellPids = false;
-	/** Answers `pane process-info` as Windows does (see `shellForeground`). */
+	/** Answers `pane process-info` as Windows does (see `shellForeground`): `shell_pid` and a `foreground_process_group_id` that is always the shell's pid, whatever runs under it (the VM's shape, B6 F10). */
 	winShell = false;
 	/** What `pane run` typed into a pane (the sb server types the tower prompt's command into a standing pane's shell). */
 	typed: { pane: string; text: string }[] = [];
@@ -202,7 +202,7 @@ export class FakeHerdr {
 		// `winShell` makes it answer as on Windows: the shell's pid, and (with `shellForeground`) the shell listed in the foreground of a pane at its prompt.
 		if (group === "pane" && cmd === "process-info") {
 			const running = this.pane(flag("--pane")!).processes ?? [];
-			if (this.winShell) return out({ process_info: { pane_id: flag("--pane"), shell_pid: SHELL_PID, foreground_processes: running.length ? running : this.shellForeground ? [{ pid: SHELL_PID, name: "powershell.exe", argv0: "powershell.exe", cmdline: "powershell.exe -NoExit" }] : [] } });
+			if (this.winShell) return out({ process_info: { pane_id: flag("--pane"), shell_pid: SHELL_PID, foreground_process_group_id: SHELL_PID, foreground_processes: running.length ? running : this.shellForeground ? [{ pid: SHELL_PID, name: "powershell.exe", argv0: "powershell.exe", cmdline: "powershell.exe -NoExit" }] : [] } });
 			const foreground = running.length ? running : [{ pid: FAKE_SHELL, name: "zsh", argv0: "zsh" }];
 			return out({ process_info: { pane_id: flag("--pane"), foreground_processes: foreground, ...(this.shellPids ? { shell_pid: FAKE_SHELL, foreground_process_group_id: running.length ? (running[0]!.pid ?? 0) : FAKE_SHELL } : {}) } });
 		}
