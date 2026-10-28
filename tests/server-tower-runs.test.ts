@@ -5,6 +5,8 @@ import { afterEach, beforeEach, test } from "node:test";
 import { TowerWorld } from "./tower-world.ts";
 import { type Running, sleep, until } from "./server-world.ts";
 import { callControl } from "../src/server/socket.ts";
+import { fileOf } from "../src/server/record.ts";
+import { readTowerRuns } from "../src/server/towerruns.ts";
 import { listRuns, readNotes, readRun, readTimer, writeRun } from "../src/server/towerrunstore.ts";
 import { readQueue, readService, towerDir } from "../src/server/towerstore.ts";
 
@@ -612,4 +614,21 @@ test("B5R4-N1: a stop after tower_done does not bring the handled event back", a
 	await s.handle.done;
 	assert.deepEqual(readQueue(world.slot, "wA"), [], "the handled event is gone, not re-queued as a crash");
 	assert.notEqual(readRun(world.slot, "wA", id)?.outcome, "crashed");
+});
+
+test("a config.json that cannot be parsed keeps the service on, is told once as an error (log and the status's lastError), and a missing file is no error (RV6-F009)", async () => {
+	assert.deepEqual(readTowerRuns(join(world.stateDir, "nowhere")), { enabled: true, max: 4 }, "no file: the default, with nothing to tell");
+	writeFileSync(join(world.stateDir, "config.json"), '{ "towerRuns": { "enabled": false, ');
+	const parsed = readTowerRuns(world.stateDir);
+	assert.equal(parsed.enabled, true);
+	assert.match(String(parsed.problem), /config\.json/);
+	const s = await started();
+	const ensured = await ask(s, { cmd: "ensure-tower", workspace: "wA" });
+	assert.equal(ensured.ok, true, "the service is on");
+	await until(async () => ((await ask(s, { cmd: "status" })).lastError as { code?: string } | undefined)?.code === "config", "the config error to be recorded");
+	const status = await ask(s, { cmd: "status" });
+	assert.match(String((status.lastError as { text: string }).text), /config\.json[^]*towerRuns\.enabled/);
+	await sleep(150);
+	const lines = readFileSync(fileOf(world.slot, "log"), "utf8").split("\n").filter((l) => /\bcode=config\b/.test(l));
+	assert.equal(lines.length, 1, lines.join("\n"));
 });

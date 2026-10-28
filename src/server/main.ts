@@ -483,9 +483,16 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			if (done.status >= 400) throw new Error(`The restart did not start (${JSON.stringify(done.body)})`);
 		},
 	};
+	// An unreadable config.json keeps the service on; the boss is told once per distinct problem, in the log and as the status's lastError.
+	let toldConfig = "";
+	const towerRuns = () => {
+		const read = readTowerRuns(slot.stateDir);
+		if (read.problem !== toldConfig) (toldConfig = read.problem ?? "", read.problem && recordError("config", read.problem));
+		return read;
+	};
 	towers = createTowers({
 		ally: allyPort(() => link), allows, asks,
-		slot, cfg, env, connect: () => mod.connect(), log, pid, startedAt, enabled: () => readTowerRuns(slot.stateDir).enabled, server: serverTools,
+		slot, cfg, env, connect: () => mod.connect(), log, pid, startedAt, enabled: () => towerRuns().enabled, server: serverTools,
 		link: async (body, from) => (!slot.primary ? { ok: false, code: "no_link", error: NO_LINK } : link ? link.request(body, from) : { ok: false, code: "no_holder", error: "The link holder is not running in the sb server yet; ask again in a moment" }),
 		sessions: () => (client ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))), ...o.towers,
 	});
