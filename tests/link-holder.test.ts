@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
@@ -50,7 +50,7 @@ interface Rig {
 	restart(over?: { store?: LinkStore }): Promise<void>;
 }
 
-function rig(name: "a" | "b", o: { entries?: ReturnType<typeof rosterOf>; seed?: boolean; towers?: boolean } = {}): Rig {
+function rig(name: "a" | "b", o: { entries?: ReturnType<typeof rosterOf>; seed?: boolean; towers?: boolean; runs?: boolean } = {}): Rig {
 	const keys = name === "a" ? alice : bob, entries = o.entries ?? rosterOf();
 	const dir = join(root, name, "link"), project = join(root, `${name}-project`);
 	mkdirSync(project, { recursive: true });
@@ -60,8 +60,11 @@ function rig(name: "a" | "b", o: { entries?: ReturnType<typeof rosterOf>; seed?:
 	if (o.seed !== false) writeTeam(first, entries, keys);
 	const r = { name, dir, project, offers: [], notices: [], displaced: 0, isHolder: true, skew: 0, share: "status", postWaitMs: 3000 } as unknown as Rig;
 	r.net = o.towers === false ? netOf([]) : netOf([[`tower-${name}`, `w-${name}`, `label-${name}`, project]]);
+	const stateDir = join(root, name, "state");
+	mkdirSync(stateDir, { recursive: true });
+	writeFileSync(join(stateDir, "config.json"), JSON.stringify(o.runs ? { towerRuns: { enabled: true } } : {}));
 	const build = (store: LinkStore) => new LinkHolder({
-		store, isHolder: () => r.isHolder, config: () => config(project, r.share)(), net: async () => r.net, relay: clientFor(relay),
+		store, stateDir, isHolder: () => r.isHolder, config: () => config(project, r.share)(), net: async () => r.net, relay: clientFor(relay),
 		offer: (tower, id) => void r.offers.push({ tower: tower.id, id }), notify: (text) => void r.notices.push(text), onDisplaced: () => void r.displaced++,
 		now: () => Date.now() + r.skew, backoff: () => 5, drainMs: 20, presenceMs: 40, offerAgainMs: 60_000, postWaitMs: r.postWaitMs, haltRetryMs: 150,
 	});
@@ -130,6 +133,45 @@ test("a tower is offered a message only if its pane is in the team's project; wi
 	b.net = netOf([["tower-late", "w-late", "late", b.project]]);
 	await until(() => b.offers.length === 1, 3000, "the late tower to be offered the message");
 	assert.equal(b.offers[0]!.tower, "tower-late");
+});
+
+test("a tower the sb server runs takes no offer (B5): the message waits in the inbox, the boss's notice says ally runs come with the next step, and nothing is offered to the identity", async () => {
+	const [a, b] = [rig("a"), rig("b", { towers: false })];
+	await Promise.all([a.start(), b.start()]);
+	b.net = netOf([["sb-tower-wb", "w-b", "label-b", b.project]]);
+	await send(a, "for the served tower");
+	await until(() => relay.ackedBy(bob.id).length === 1, 3000, "the ack");
+	await until(() => b.holder.summary().alerts.some((x) => x.kind === "served"), 3000, "the served notice");
+	for (let i = 0; i < 3; i++) await b.holder.drain();
+	assert.equal(b.offers.length, 0, "an offer to a tower that is no session would go nowhere");
+	assert.equal(b.store.inboxIds().length, 1, "the message stays in the inbox");
+	const served = b.holder.summary().alerts.filter((x) => x.kind === "served");
+	assert.equal(served.length, 1);
+	assert.equal(served[0]!.data.count, 1);
+	assert.ok(!b.holder.summary().alerts.some((x) => x.kind === "inbox" || x.kind === "held"), "it is not told as a missing tower or an idle one");
+});
+
+async function runPi(runs: boolean) {
+	const [a, b] = [rig("a"), rig("b", { towers: false, runs })];
+	await Promise.all([a.start(), b.start()]);
+	b.net = netOf([["pi-run", "w-b", "label-b", b.project]]);
+	(b.net.sessions[0] as { name?: string }).name = "tower run · label-b · 1a2b3c4d";
+	await send(a, "for the run's pi");
+	await until(() => relay.ackedBy(bob.id).length === 1, 3000, "the ack");
+	return b;
+}
+
+test("B5R3-F006: the pi of a tower run takes no offer when the tower runs are on", async () => {
+	const b = await runPi(true);
+	for (let i = 0; i < 3; i++) await b.holder.drain();
+	assert.equal(b.offers.length, 0, "the run's pi is served by the server");
+	await until(() => b.holder.summary().alerts.some((x) => x.kind === "served"), 3000, "the served notice");
+	assert.equal(b.store.inboxIds().length, 1, "the message stays in the inbox");
+});
+
+test("B5R3-F006: with the tower runs off a session of that name is an ordinary tower and is offered the message", async () => {
+	const b = await runPi(false);
+	await until(() => b.offers.length === 1, 3000, "an offer to the session");
 });
 
 test("an inbox message older than 7 days is dropped", async () => {

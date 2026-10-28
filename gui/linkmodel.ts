@@ -16,8 +16,9 @@ export function alertLine(a: LinkAlert): string {
 		case "fork": return m.link_a_fork({ team, reason: text(d.reason) });
 		case "mismatch": return m.link_a_mismatch({ label: text(d.label), short: text(d.short), team });
 		case "unreachable": return m.link_a_unreachable({ team, minutes: text(d.minutes) });
-		case "inbox": return m.link_a_inbox({ count: text(d.count), team });
-		case "held": return m.link_a_held({ count: text(d.count), team });
+		case "inbox": return m.link_a_inbox({ count: Number(d.count) || 0, team });
+		case "held": return m.link_a_held({ count: Number(d.count) || 0, team });
+		case "served": return m.link_a_served({ count: Number(d.count) || 0, team });
 	}
 }
 

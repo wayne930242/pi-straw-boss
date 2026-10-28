@@ -12,7 +12,7 @@ test("every notice kind reads in English and in Chinese, with the teammate's wor
 	const all: LinkAlert[] = [
 		alert("join-request", { label: "bob-mac", short: "abc123", unattended: 0 }), alert("join-request", { label: "ci-box", short: "def456", unattended: 1 }),
 		alert("confirm", { label: "bob-mac", short: "abc123", tool: "bash" }), alert("fork", { reason: "entry 4 is invalid" }, "error"),
-		alert("mismatch", { label: "bob-mac", short: "abc123" }, "error"), alert("unreachable", { minutes: 3 }), alert("inbox", { count: 2 }, "info"), alert("held", { count: 1 }, "info"),
+		alert("mismatch", { label: "bob-mac", short: "abc123" }, "error"), alert("unreachable", { minutes: 3 }), alert("inbox", { count: 2 }, "info"), alert("held", { count: 1 }, "info"), alert("served", { count: 3 }, "info"),
 	];
 	const en = all.map(alertLine), zh = all.map((a) => ((l) => l)(alertLine(a)));
 	assert.deepEqual(en.slice(0, 3), [

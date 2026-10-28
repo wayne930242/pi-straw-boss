@@ -2,7 +2,7 @@ import type { Pending } from "../src/ask.ts";
 import type { Mark } from "../src/netdata.ts";
 import type { Shelf } from "../src/documents.ts";
 import type { Item, Todo } from "../src/items.ts";
-import type { Queued } from "../src/net.ts";
+import type { Queued, TowerService } from "../src/net.ts";
 import type { Monitor } from "../src/monitors.ts";
 import { h, replay } from "./dom.ts";
 import { createFollow, reach } from "./follow.ts";
@@ -10,6 +10,7 @@ import { mount, parse } from "./markdown.ts";
 import type { Post } from "./composer.ts";
 import { m } from "./paraglide/messages.js";
 import { html, ICON, roleName } from "./render.ts";
+import { bossTurn, heard } from "./towerturns.ts";
 
 // The comms log of one session. The model is pure: items merge by entry id (a repeated one is ignored), tool results attach to their call by
 // callId, a reset replaces everything, and at most 600 items stay mounted (the farthest page is dropped and fetched again on scroll).
@@ -78,7 +79,7 @@ export interface HistoryEvent { key: string; state?: string; successor?: string;
 /** `post` stands in for the server's input API (composer.ts) in the dev fixture. */
 /** `pic` is the URL of an entry's n-th image. */
 export interface Data { older(before: string): Promise<Page>; latest(): Promise<Page>; entry(id: string): Promise<Item | undefined>; pic?(id: string, n: number): string; post?: Post }
-export interface Who extends Shelf { key: string; name: string; role: string; mark: Mark; note?: string; control?: boolean; agent?: "claude" | "codex"; ended?: boolean; pending?: Pending; queued?: Queued[]; monitors?: Monitor[] }
+export interface Who extends Shelf { key: string; name: string; role: string; mark: Mark; note?: string; control?: boolean; agent?: "claude" | "codex"; ended?: boolean; pending?: Pending; queued?: Queued[]; monitors?: Monitor[]; service?: TowerService }
 /** `docFor` opens the document a show_doc path names while its session lists it (doc.ts), or is undefined. */
 export interface ChatDeps { who(): Who; link(name: string): HTMLAnchorElement | undefined; docFor?(path: string): (() => void) | undefined }
 /** `reveal` opens the log at an entry (scrolled into view and lit), or with none at the newest entry. `log` is the scrolling log, a focus target. `docs` shows Open beside on the show_doc cards whose document is listed now. */
@@ -174,7 +175,13 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor }: 
 	function render(it: Item): HTMLElement {
 		const stamp = h("time", null, clock(it.at));
 		switch (it.kind) {
-			case "user": return h("article", { class: "tx you" }, h("header", null, stamp, h("b", null, m.you()), icon("user")), h("div", { class: "bubble" }, ...plain(it.text ?? ""), thumbs(it.id, it.images)));
+			case "user": {
+				// A run of a tower the sb server runs gets what came to the tower as user turns; the server wrote their first line, and they are not the boss's (towermodel.ts `heard`).
+				const said = who().service ? heard(it.text) : undefined;
+				if (said) return h("article", { class: "tx sys" }, h("details", { class: "notice" }, h("summary", null, icon("comms"), h("em", null, m.incoming()), said.kind === "intercom" ? m.notice_intercom() : said.kind === "server" ? m.notice_server() : m.notice_timer(), " ", said.kind === "intercom" ? (link(said.from.replace(/ \([^()]*\)$/, "")) || said.from) : "", stamp), h("pre", null, it.text ?? "")));
+				const boss = who().service ? bossTurn(it.text) : undefined; // the server's marker line is not shown
+				return h("article", { class: "tx you" }, h("header", null, stamp, h("b", null, m.you()), icon("user")), h("div", { class: "bubble", title: boss ? (it.text ?? "") : "" }, boss?.crashed ? h("small", { class: "boss-flag" }, m.boss_crash_flag()) : null, ...plain(boss ? boss.body : (it.text ?? "")), thumbs(it.id, it.images)));
+			}
 			case "assistant": {
 				const me = who(), body = h("pre", { class: "thought-text" }), more = it.thought ? h("button", { class: "thought", type: "button" }, it.thought < 0 ? m.thought_redacted() : m.thought_chars({ count: it.thought.toLocaleString() })) : null;
 				if (it.thought && it.thought > 0) more?.addEventListener("click", () => fetchBody(more, body, it.id, (full) => full.thoughtText));

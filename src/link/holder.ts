@@ -18,6 +18,7 @@ import { inside, nearestTeams, oneTeamEach, resolveDevice, towersFor, type Membe
 import type { Backoff, Sleep } from "./retry.ts";
 import type { Disposition, EnvelopeEvent, RelayEvent, RosterEvent } from "./sse.ts";
 import { TeamFileError, type InboxItem, type LinkStore, type TeamFile } from "./store.ts";
+import { towerRunsEnabled } from "../server/towerruns.ts";
 
 // The link holder's work (docs/specs/2026-10-25-straw-link.md, Link holder). Only the session the election names runs this: it reads the device
 // keys, holds the relay stream of each team, and writes the team files; every write is under link/holder.lock. A message the relay delivers is
@@ -79,7 +80,11 @@ const CONFIRM_MAX = 20;
 export interface SendRequest { fromSession: string; device: string; workspace?: string; text: string; reply: boolean }
 export type SendResult = { ok: true; text: string; details: Record<string, unknown> } | { ok: false; error: string };
 /** What the GUI shows as a notice. `data` is plain text and numbers: the page puts them in text nodes. */
-export type AlertKind = "join-request" | "confirm" | "fork" | "mismatch" | "unreachable" | "inbox" | "held";
+export type AlertKind = "join-request" | "confirm" | "fork" | "mismatch" | "unreachable" | "inbox" | "held" | "served";
+/** A tower the sb server runs (src/server/towers.ts) is an identity, not a session: it takes no offer, so what is for it waits in the inbox until an ally run takes it (B6). */
+const SERVED_TOWER = /^sb-tower-/;
+/** The pi the server started for a run, which sits in the standing pane while the run lives: the message is the tower's, even if the run's pi is the session found there. */
+const SERVED_RUN = /^tower run · /;
 export interface LinkAlert { id: string; kind: AlertKind; level: "info" | "warning" | "error"; team: string; teamName: string; data: Record<string, string | number> }
 /** A teammate's workspace as the map shows it beside the local bases (spec, GUI). */
 export interface AllyBase { id: string; team: string; teamName: string; device: string; short: string; label: string; online: boolean; workspace: string | null; tower: string; tabs: { label: string; state: string }[] }
@@ -164,7 +169,7 @@ export class LinkHolder {
 	private draining: Promise<void> | undefined;
 	private again = false;
 	/** Inbox messages no tower has taken yet: no tower open, or offered and not taken. For the GUI's notices. */
-	private waiting = new Map<string, { team: string; from: string; since: number; offered: boolean }>();
+	private waiting = new Map<string, { team: string; from: string; since: number; offered: boolean; served?: boolean }>();
 	/** What the GUI does to teams (admin.ts). */
 	readonly admin: TeamAdmin;
 	/** The link actions agents ask for, waiting for the boss (request.ts). */
@@ -584,6 +589,10 @@ export class LinkHolder {
 				this.tellOnce(`inbox/${id}`, `Straw Link: a message from ${item.fromLabel} waits in the inbox; no tower is open on ${policy.project}${item.toWorkspace ? ` in workspace ${restrictLabel(item.toWorkspace)}` : ""}`, "info");
 				continue;
 			}
+			if (SERVED_TOWER.test(first.session.id) || (towerRunsEnabled(this.o.stateDir ?? "") && SERVED_RUN.test(first.session.name ?? ""))) {
+				Object.assign(this.waiting.get(id)!, { offered: false, served: true });
+				continue;
+			}
 			// An offer is sticky: the tower that has it keeps it while it is still a tower of the project, so a tower that opens nearer the root,
 			// or a changed workspace order, never gives the same message to a second one while the first still holds it.
 			const was = this.offered.get(id), pick = (was && picks.find((p) => p.session.id === was.tower)) || first;
@@ -919,9 +928,9 @@ export class LinkHolder {
 				if (now - since > HEAD_DIFF_MS && seen && now - seen.at <= PRESENCE_ONLINE_MS) out.push({ id: `heads/${run.team}/${device}`, kind: "mismatch", level: "error", team: run.team, teamName: name(run.team), data: { label: seen.presence.label, short: shortId(device) } });
 			}
 		}
-		const waits = new Map<string, { kind: "inbox" | "held"; team: string; n: number }>();
+		const waits = new Map<string, { kind: "inbox" | "held" | "served"; team: string; n: number }>();
 		for (const w of this.waiting.values()) {
-			const kind = w.offered ? (now - w.since > HELD_MS ? "held" : undefined) : "inbox";
+			const kind = w.served ? "served" : w.offered ? (now - w.since > HELD_MS ? "held" : undefined) : "inbox";
 			if (!kind) continue;
 			const key = `${kind}/${w.team}`, hit = waits.get(key);
 			waits.set(key, { kind, team: w.team, n: (hit?.n ?? 0) + 1 });

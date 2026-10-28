@@ -5,6 +5,8 @@ import { mountCalm } from "./calm.ts";
 import { replay } from "./dom.ts";
 import { m } from "./paraglide/messages.js";
 import { allyMark, stateName } from "./linkmodel.ts";
+import { fillNotices } from "./towernotes.ts";
+import { queueChip, statusLine } from "./towermodel.ts";
 import { mountMinimap } from "./minimap.ts";
 import { packets } from "./packets.ts";
 import { aimBase, aimSquad, aimStash, aimTower, aimUnit } from "./quit.ts";
@@ -155,7 +157,9 @@ export function aimOpening(button: HTMLElement, b: Base, tab?: string) {
 	if (button.textContent !== (kind === "main" ? m.open_main() : m.open_member())) button.textContent = kind === "main" ? m.open_main() : m.open_member();
 }
 
-const baseEl = () => html(`<section class="base"><header><div class="tower"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></div><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>${m.head_tower()}</span><h2><a class="enter-base"></a></h2><p><span class="tstate"></span><span class="age"></span></p><button type="button" class="quit-btn tower-quit" data-close="unit" hidden></button></div><button type="button" class="quit-btn" data-close="base"></button></header><div class="subs tower-subs"></div><div class="spawn-btns"><button type="button" class="pair-btn"></button><button type="button" class="pair-btn" data-close="stash"></button></div><div class="tabs"></div><div class="outposts" data-label="${m.outposts()}"></div></section>`);
+const baseEl = () => html(`<section class="base"><header><div class="tower"><i class="sweep"></i><i class="pulse"></i><svg><use href="#i-tower"/></svg><b class="badge"></b></div><div class="title"><span class="crown"><svg><use href="#i-crown"/></svg>${m.head_tower()}</span><h2><a class="enter-base"></a></h2><p><span class="tstate"></span><span class="tqueue"></span><span class="age"></span></p><button type="button" class="quit-btn tower-quit" data-close="unit" hidden></button></div><button type="button" class="quit-btn" data-close="base"></button></header><div class="subs tower-subs"></div><div class="tower-notices"></div><div class="spawn-btns"><button type="button" class="pair-btn"></button><button type="button" class="pair-btn" data-close="stash"></button></div><div class="tabs"></div><div class="outposts" data-label="${m.outposts()}"></div></section>`);
+/** The tower's state as the map says it: the service's own word (standing by, waking, held…) and how its last run ended, or the mark's word for a tower with no service. */
+const towerLine = (t: NonNullable<Base["tower"]>) => statusLine(t.service, t.mark, (mk) => LABEL[mk]());
 function fillBase(el: HTMLElement, b: Base) {
 	mark(el, b.mark);
 	el.classList.toggle("head", b.head);
@@ -164,13 +168,15 @@ function fillBase(el: HTMLElement, b: Base) {
 	mark(tower, b.tower?.mark ?? "unknown");
 	text(el, "h2 a", b.label);
 	aim(el.querySelector("h2 a")!, { view: "workspace", ws: b.id });
-	text(el, ".title .tstate", b.tower ? m.control_tower({ state: LABEL[b.tower.mark]() }) : m.no_tower());
+	text(el, ".title .tstate", b.tower ? m.control_tower({ state: towerLine(b.tower) }) : m.no_tower());
+	text(el, ".title .tqueue", queueChip(b.tower?.service) ?? "");
 	age(el.querySelector(".title .age")!, b.tower?.since);
 	aimOpening(el.querySelector(".spawn-btns button")!, b);
 	aimBase(el.querySelector("header > .quit-btn")!, b);
 	aimStash(el.querySelector(".spawn-btns [data-close=stash]")!, b);
 	aimTower(el.querySelector(".tower-quit")!, b.tower);
 	sync(el.querySelector(".tower-subs")!, b.tower?.subs ?? [], unitEl, fillUnit);
+	fillNotices(el.querySelector(".tower-notices")!, b.id, b.tower?.service);
 	sync(el.querySelector(".tabs")!, b.tabs, () => html(`<div class="tab"><h3><span></span><button type="button" class="tab-add"></button><button type="button" class="quit-btn" data-close="tab"></button></h3><div class="units"></div></div>`), (tab, t) => {
 		text(tab, "h3 span", m.tab_label({ label: t.label }));
 		aimSquad(tab.querySelector(".quit-btn")!, b, t);

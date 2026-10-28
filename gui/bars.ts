@@ -8,14 +8,14 @@ import { text } from "./render.ts";
 
 /** Queued rows the user opened, by session and then by what they hold (the nth of identical rows counts apart): the sets outlive a re-render, so an open row stays open while its queue redraws, and opening one never opens another session's or an identical row's. */
 const opened = new Map<string, Set<string>>();
-/** What the session's queue holds, under the chat as the bubbles it will become, until a turn takes them. A row cut by the clamp opens to its full text on a click, Enter or Space, and closes again. */
-export function drawQueued(view: HTMLElement, list: Queued[] | undefined, session = "") {
+/** What the session's queue holds, under the chat as the bubbles it will become, until a turn takes them. `server`: the tower's queue is the sb server's (events for its next run), not pi's: its rows say so, and there is no Edit, which the server always refuses. A row cut by the clamp opens to its full text on a click, Enter or Space, and closes again. */
+export function drawQueued(view: HTMLElement, list: Queued[] | undefined, session = "", server = false) {
 	const box = view.querySelector<HTMLElement>(".queue-list");
 	if (!box) return;
 	box.hidden = !list?.length;
 	const act = view.querySelector<HTMLElement>(".queue-act");
-	if (act) act.hidden = !list?.length;
-	const tag = (q: Queued) => Object.assign(document.createElement("b"), { textContent: q.as === "steer" ? m.queued_steer() : m.queued_follow() });
+	if (act) act.hidden = !list?.length || server;
+	const tag = (q: Queued) => Object.assign(document.createElement("b"), { textContent: server ? m.queued_server() : q.as === "steer" ? m.queued_steer() : m.queued_follow() });
 	const live = new Set<string>(), mine = opened.get(session) ?? new Set<string>(), seen = new Map<string, number>();
 	opened.set(session, mine);
 	box.replaceChildren(...(list ?? []).map((q) => {

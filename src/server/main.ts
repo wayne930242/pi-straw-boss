@@ -9,13 +9,15 @@ import { rememberStart, startedLater, startOf as processStartOf } from "../start
 import { AclError, applyAcl, awaitAclMarker } from "./acl.ts";
 import { createGuiLink, elsewhereLink, type GuiLink, inProcessLink, NO_LINK } from "../link/guiport.ts";
 import type { Run } from "../remote.ts";
-import { herdrListens, intercomOf, runsAs, serverEnv } from "./client.ts";
+import { herdrListens, intercomOf, RESTART_EVERY_MS, runsAs, serverEnv } from "./client.ts";
 import { cliBeside, createGuiHost, spawnRestart } from "./guihost.ts";
 import { type IntercomModule, loadIntercom, LoaderError } from "./intercom.ts";
 import { createLinkService, type LinkService, type ServiceDeps } from "../link/service.ts";
-import { createLog } from "./log.ts";
+import { createLog, tailLog } from "./log.ts";
+import { gateRun, type RunInfo } from "./rungate.ts";
+import type { ServerTools } from "./runtools.ts";
 import {
-	clearStartError, type Detach, fileOf, prepareSlot, readRecord, restartingNow, type ServerRecord, serverId, type Slot, TOUCH_MS, updateRecord, writeRecord, writeStartError,
+	clearStartError, type Detach, fileOf, prepareSlot, readRecord, restartingNow, type ServerRecord, serverId, type Slot, TOUCH_MS, towerId, updateRecord, writeRecord, writeStartError,
 } from "./record.ts";
 import { AFTER, endpointFor, helloOf, listenControl, newSecret, type Reply, type Request } from "./socket.ts";
 import { createTowers, type Towers, type TowersOptions } from "./towers.ts";
@@ -261,7 +263,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		// The GUI listeners and the remote entry go before the intercom ids are released.
 		await Promise.race([guiHost?.leave(phase === "stopping").catch(() => {}), sleep(GUI_LEAVE_MS)]);
 		// The tower identities leave the broker with the server's own session; their tokens and files stay for the server that comes next.
-		await Promise.race([Promise.all([towers?.stop(), client?.disconnect().catch(() => {})]), sleep(LEAVE_MS)]);
+		await Promise.race([Promise.all([towers?.stop({ quitRuns: phase === "stopping" }), client?.disconnect().catch(() => {})]), sleep(LEAVE_MS)]);
 		const disconnected = now();
 		await control?.close();
 		log.line("exit", { code, disconnectMs: disconnected - began, closeMs: now() - disconnected });
@@ -278,12 +280,32 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	};
 
 	let control: Awaited<ReturnType<typeof listenControl>> | undefined;
+	// One restart a minute for an agent (a session's `boss_server`, a run's), decided here and not only by the requester under the lock: the record's last restart that counts, or one a run asked for just now.
+	let restartAskedAt: number | undefined;
+	const restartTooSoon = (): string | undefined => {
+		const last = Math.max(restartAskedAt ?? 0, Date.parse(readRecord(slot)?.lastRestart?.at ?? "") || 0);
+		return last && now() - last < RESTART_EVERY_MS ? `The sb server was restarted ${Math.round((now() - last) / 1000)} s ago; restarts are taken once a minute at most.` : undefined;
+	};
 	const handleRequest = async (request: Request): Promise<Reply> => {
+		// A request that carries a run token is a run's: the token must be one the server issued, and the request is held to the run's kind (rungate.ts). One without a token is a session's or a shell's.
+		let run: RunInfo | undefined;
+		// A run of the server before this one polls and claims while this one is still loading the runs from disk and connecting the tower identities: it is told to wait (a claim `wait`, a poll or other
+		// request a refusal that is not `unknown_token`), so the run keeps its claim through the restart and does not end on the first answer (B5R-F002).
+		if ((phase === "starting" || !towers?.loaded()) && request.cmd !== "status") {
+			if (request.cmd === "claim" || request.cmd === "pane-role") return { ok: true, wait: true, role: "wait" };
+			if (request.token !== undefined) return { ok: false, error: "the server is still starting" };
+		}
+		if (request.token !== undefined) {
+			run = towers?.runs.runOf(request.token);
+			const verdict = run ? gateRun({ cmd: request.cmd, workspace: request.workspace, body: request.body }, run) : { ok: false as const, error: "unknown_token" };
+			if (!verdict.ok) return { ok: false, error: verdict.error };
+		}
 		if (request.cmd === "status") return { ok: true, ...facts(), uptimeMs: now() - startedAt, ...(own.lastError ? { lastError: own.lastError } : {}), towers: towers?.status() ?? [], link: link?.status() ?? null, ...(guiHost ? { gui: guiHost.facts() } : {}) };
-		if (phase === "restarting" || phase === "stopping") return { ok: false, error: "restarting" };
+		if (phase === "restarting" || (phase === "stopping" && request.cmd !== "run-poll")) return { ok: false, error: "restarting" };
 		if (request.cmd === "link") {
 			// A request of a session to the link holder (service.ts): the answer is the holder's own, in `answer`; `ok` is only whether the server took the request. Only the primary server holds the link.
-			const from = phrase(request.from, 200);
+			// A run's requests go out as its workspace's tower, whatever it says it is.
+			const from = run ? towerId(slot, run.workspace) : phrase(request.from, 200);
 			if (!from || typeof request.body !== "object" || request.body === null) return { ok: false, error: "a link request needs from and body" };
 			if (!slot.primary) return { ok: true, answer: { ok: false, code: "no_link", error: NO_LINK } };
 			if (!link) return { ok: true, answer: { ok: false, code: "no_holder", error: "The link holder is not running in the sb server yet; ask again in a moment" } };
@@ -301,6 +323,8 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		}
 		if (request.cmd === "restart") {
 			const reason = phrase(request.reason, 200) || "restart", who = phrase(request.by, 120) || "unknown";
+			const tooSoon = request.limit === true ? restartTooSoon() : undefined;
+			if (tooSoon) return { ok: false, error: `rate: ${tooSoon}` };
 			log.line("restart", { reason, by: who });
 			// One read of the clock: `began`, `since` and `lastRestart.at` are the same moment (two reads can fall in different milliseconds).
 			const when = at();
@@ -335,6 +359,25 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			case "close-main": {
 				const query = text(request.query);
 				return workspace && query ? answer(async (t) => ({ closed: await t.closeMain({ workspace, query }) })) : Promise.resolve({ ok: false, error: "close-main needs a workspace and a session" });
+			}
+			// The runs (runs.ts): a pi started with --sb-run claims its run; a pi in a standing pane asks its role; a run polls for its events, confirms them, and ends with tower_done.
+			case "claim": return answer(async (t) => ({ ...(await t.runs.claim(request)) }));
+			case "pane-role": return answer(async (t) => ({ ...(await t.runs.paneRole(request)) }));
+			case "run-poll": return answer(async (t) => ({ ...t.runs.poll(request) }));
+			case "run-taken": return answer(async (t) => ({ ...t.runs.taken(request) }));
+			case "run-done": return answer(async (t) => ({ ...(await t.runs.done(request)) }));
+			case "run-release": return answer(async (t) => ({ ...(await t.runs.release(request)) }));
+			case "run-tool": return answer(async (t) => ({ ...(await t.runTool(request)) }));
+			case "run-file": return answer(async (t) => (t.runs.setFile(request.token, request.file), {}));
+			// The boss writes to the tower (the GUI's composer, `/boss tower <prompt>`): an event ahead of the rest.
+			case "tower-event": {
+				const body = text(request.text, 16_384);
+				return workspace && body ? answer(async (t) => ({ queued: t.runs.boss(workspace, body).id })) : Promise.resolve({ ok: false, error: "tower-event needs a workspace and text" });
+			}
+			case "tower-retry": return workspace ? answer(async (t) => (t.runs.retry(workspace), {})) : Promise.resolve({ ok: false, error: "tower-retry needs a workspace" });
+			case "tower-deliver": case "tower-drop": {
+				const id = text(request.id, 64);
+				return workspace && id ? answer(async (t) => (request.cmd === "tower-drop" ? t.runs.dropParked(workspace, id) : t.runs.deliverAgain(workspace, id), {})) : Promise.resolve({ ok: false, error: `${request.cmd} needs a workspace and an event id` });
 			}
 			default:
 				return undefined;
@@ -399,10 +442,32 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		status: () => ({ state: phase === "ready" ? "live" : phase, version, pid, mode, desk, uptimeMs: now() - startedAt, log: fileOf(slot, "log"), ...(own.lastError ? { lastError: own.lastError } : {}) }),
 		restart: gui.restart ?? ((reason) => spawnRestart(cliBeside(), reason, "the GUI", serverEnv(env), slot.dir)),
 		failed: (code, text) => recordError(code, text), tailscale: gui.tailscale, bundle: gui.bundle, bindWaitMs: gui.bindWaitMs,
+		// The page's tower units: the service's state and queue in the net, the composer as a boss event, and the notices' buttons (towers is built below, after the GUI host, and may be absent).
+		tower: {
+			view: (workspace) => towers?.runs.view(workspace),
+			has: (workspace) => towers?.runs.view(workspace) !== undefined,
+			live: (workspace) => Boolean(towers?.runs.status(workspace)?.run),
+			event: async (workspace, text) => { try { return (towers!.runs.boss(workspace, text, "the boss (GUI)"), { ok: true }); } catch (error) { return { ok: false, error: (error as Error).message }; } },
+			act: async (workspace, what, id) => { try { return (what === "retry" ? towers!.runs.retry(workspace) : what === "deliver" ? towers!.runs.deliverAgain(workspace, id!) : towers!.runs.dropParked(workspace, id!), { ok: true }); } catch (error) { return { ok: false, error: (error as Error).message }; } },
+		},
 	});
 	// The tower service (behind `towerRuns.enabled`): it stands in for each workspace's tower, and finds the tabs again when a new Herdr server takes over.
+	// What `boss_server` does for a run (runtools.ts): the server answers it itself, so it can refuse an ally run's token and keep the restart limit.
+	const serverTools: ServerTools = {
+		status: () => ({ state: phase === "ready" ? "live" : phase, version, pid, mode, desk, uptimeMs: now() - startedAt, log: fileOf(slot, "log"), ...(own.lastError ? { lastError: own.lastError } : {}), ...(readRecord(slot)?.lastRestart ? { lastRestart: readRecord(slot)!.lastRestart } : {}) }),
+		logs: (lines) => tailLog(fileOf(slot, "log"), lines),
+		async restart(reason, by) {
+			const soon = restartTooSoon();
+			if (soon) throw new Error(soon);
+			restartAskedAt = now();
+			log.line("restart-asked", { by, reason });
+			const done = await (gui?.restart ?? ((why: string) => spawnRestart(cliBeside(), why, by, serverEnv(env), slot.dir)))(reason);
+			if (done.status >= 400) throw new Error(`The restart did not start (${JSON.stringify(done.body)})`);
+		},
+	};
 	towers = createTowers({
-		slot, cfg, env, connect: () => mod.connect(), log, pid, startedAt, enabled: () => readTowerRuns(slot.stateDir).enabled,
+		slot, cfg, env, connect: () => mod.connect(), log, pid, startedAt, enabled: () => readTowerRuns(slot.stateDir).enabled, server: serverTools,
+		link: async (body, from) => (!slot.primary ? { ok: false, code: "no_link", error: NO_LINK } : link ? link.request(body, from) : { ok: false, code: "no_holder", error: "The link holder is not running in the sb server yet; ask again in a moment" }),
 		sessions: () => (client ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))), ...o.towers,
 	});
 	stops.push(cfg.watch(() => {

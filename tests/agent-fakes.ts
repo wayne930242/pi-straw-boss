@@ -36,6 +36,10 @@ export class StubClient extends EventEmitter implements IntercomLike {
 	updatePresence = (updates: { name?: string }) => void this.frames.push({ type: "presence", ...updates });
 	updateExtensionCapabilities = (extensions: { namespace: string; ownerEligible: boolean }[]) => void this.capabilities.push(extensions);
 	sendExtensionMessage = (message: Record<string, unknown>) => void this.frames.push(message);
+	/** The receipts this client sent the broker, and a hook that runs as each one goes (a test reads the disk at that moment). */
+	receipts: { messageId: string; status: string; detail?: string }[] = [];
+	onReceipt?: (receipt: { messageId: string; status: string }) => void;
+	sendMessageReceipt = (receipt: { messageId: string; status: string; detail?: string }) => (this.onReceipt?.(receipt), void this.receipts.push(receipt));
 	onBrokerMessage(handler: (message: Broker) => void) {
 		this.taps.add(handler);
 		return () => void this.taps.delete(handler);

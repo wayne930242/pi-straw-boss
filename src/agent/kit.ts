@@ -25,6 +25,8 @@ export interface IntercomLike {
 	updatePresence(updates: { name?: string; status?: string }): void;
 	updateExtensionCapabilities(extensions: { namespace: string; ownerEligible: boolean }[]): void;
 	sendExtensionMessage(message: Record<string, unknown>): void;
+	/** Tells the broker (and the sender) what became of a message: only a receiver registered with `acknowledgesReceipts` is waited for (the sb server's tower identities). */
+	sendMessageReceipt?(receipt: { messageId: string; status: "queued" | "receiver_received" | "injected" | "acknowledged" | "expired"; timestamp: number; detail?: string }): void;
 	onBrokerMessage(handler: (message: Broker) => void): () => void;
 	on(event: "message", listener: (from: Session, message: Incoming) => void): unknown;
 	on(event: "disconnected" | "error", listener: (error: Error) => void): unknown;

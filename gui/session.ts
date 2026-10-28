@@ -10,11 +10,15 @@ import { aimSession } from "./quit.ts";
 import { aim, aimOpening, doing, html, LABEL, mark, urgent, text } from "./render.ts";
 import { closed, locate, type Scene, type Subject, towerBase, wsOf } from "./scene.ts";
 import { linkTo } from "./tokens.ts";
+import { fillNotices } from "./towernotes.ts";
+import { statusLine } from "./towermodel.ts";
+import { termHold } from "./towerturns.ts";
+import { h } from "./dom.ts";
 
 // The session route's comms: the header, the log (chat.ts, its own chunk), the bars above the composer, the composer, the question panel, and the
 // session's terminal as the other mode. A phone's Info button, in the header, opens the dossier full-screen through `fullScreen`.
 
-const COMMS = () => `<div class="comms-in"><header class="comms-head"><a class="head-back" data-back aria-label="${m.back()}">‹</a><span class="logo"><svg><use href="#i-comms"/></svg></span><div class="head-id"><h2><small>${m.comms()}</small> <span></span></h2><p></p></div><div class="modes" role="group"><button type="button" data-mode="chat" aria-pressed="true">${m.comms()}</button><button type="button" data-mode="term" aria-pressed="false">${m.terminal()}</button></div><span class="chan link" data-state="live"><i></i><b>${m.channel_open()}</b></span><button type="button" class="pair-btn head-main" hidden></button><button type="button" class="pair-btn head-info">${m.info()}</button><button type="button" class="quit-btn head-quit" data-close="unit" hidden></button></header><div class="chat-root"></div><div class="queue-list" hidden></div><div class="queue-act" hidden><span>${m.queue_edit_hint()}</span><button type="button" class="cmp-alt">${m.queue_edit()}</button></div><details class="todos" hidden><summary><b></b><span></span></summary><ol></ol></details><details class="monitors" hidden><summary><b></b><span></span></summary><ul></ul></details><div class="ask-root"></div><div class="composer-root"></div><div class="term-root" hidden></div></div>`;
+const COMMS = () => `<div class="comms-in"><header class="comms-head"><a class="head-back" data-back aria-label="${m.back()}">‹</a><span class="logo"><svg><use href="#i-comms"/></svg></span><div class="head-id"><h2><small>${m.comms()}</small> <span></span></h2><p></p></div><div class="modes" role="group"><button type="button" data-mode="chat" aria-pressed="true">${m.comms()}</button><button type="button" data-mode="term" aria-pressed="false">${m.terminal()}</button></div><span class="chan link" data-state="live"><i></i><b>${m.channel_open()}</b></span><button type="button" class="pair-btn head-main" hidden></button><button type="button" class="pair-btn head-info">${m.info()}</button><button type="button" class="quit-btn head-quit" data-close="unit" hidden></button></header><div class="chat-root"></div><div class="tower-notes"><div class="tower-notices"></div></div><div class="queue-list" hidden></div><div class="queue-act" hidden><span>${m.queue_edit_hint()}</span><button type="button" class="cmp-alt">${m.queue_edit()}</button></div><details class="todos" hidden><summary><b></b><span></span></summary><ol></ol></details><details class="monitors" hidden><summary><b></b><span></span></summary><ul></ul></details><div class="ask-root"></div><div class="composer-root"></div><div class="term-root" hidden></div></div>`;
 
 export interface SessionDeps {
 	view: HTMLElement; data(key: string): Data; openTile(tile: Tile, focus?: boolean): void; embedTerminal(key: string, name: string, host: HTMLElement): Promise<() => void>; online(): boolean;
@@ -26,7 +30,9 @@ export interface SessionDeps {
 
 export function mountSession(scene: Readonly<Scene>, { view, data, openTile, embedTerminal, online, fullScreen, opened }: SessionDeps) {
 	let chat: Chat | undefined, composer: ReturnType<typeof mountComposer> | undefined, asker: ReturnType<typeof mountAsk> | undefined, entering = 0;
-	let unembed: (() => void) | undefined, pendingMode: "term" | undefined, modeTurn = 0;
+	let unembed: (() => void) | undefined, pendingMode: "term" | undefined, modeTurn = 0, shown: "chat" | "term" = "chat", held: string | undefined;
+	/** What stands where a tower's terminal would be while the sb server's service has no run live (the server answers its keys and mirror with 409): a sentence, and no pad over an empty box. */
+	const holdOf = (key: string) => termHold(locate(scene.net, key)?.u.service);
 	/** Focus that fell to the page (the dialog that opened this route closed, its link gone) lands in the comms: the box, or the log on a touch screen. */
 	const claim = () => setTimeout(() => scene.route.view === "session" && (document.activeElement ?? document.body) === document.body && (matchMedia("(pointer: fine)").matches && composer?.ready() ? composer.box : chat?.log)?.focus({ preventScroll: true }));
 
@@ -34,6 +40,7 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 		const turn = ++entering, { mountChat } = await import("./chat.ts");
 		if (turn !== entering || scene.route.view !== "session") return;
 		view.replaceChildren(html(COMMS()));
+		shown = "chat";
 		const who = (): Who => locate(scene.net, key)?.u ?? { key, name: scene.info?.name ?? key, role: scene.info?.role ?? "member", mark: "unknown" as Mark };
 		const link = (name: string) => {
 			const hit = locate(scene.net, key), sub = hit?.u.subs.find((s) => s.name === name) ?? scene.net?.bases.flatMap((b) => [...b.tabs.flatMap((t) => t.units), ...b.outside]).find((x) => x.name === name);
@@ -57,6 +64,7 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 		if (scene.route.view !== "session") return;
 		const key = scene.route.key, root = view.querySelector<HTMLElement>(".comms-in");
 		if (!root) return void (pendingMode = mode === "term" ? "term" : undefined);
+		shown = mode;
 		root.querySelectorAll<HTMLButtonElement>(".modes button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
 		for (const sel of [".chat-root", ".ask-root", ".composer-root"]) root.querySelector<HTMLElement>(sel)!.hidden = mode === "term";
 		const host = root.querySelector<HTMLElement>(".term-root")!;
@@ -66,6 +74,7 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 		unembed = undefined;
 		if (mode !== "term") return claim();
 		const turn = ++modeTurn, name = locate(scene.net, key)?.u.name ?? scene.info?.name ?? key;
+		if ((held = holdOf(key))) return host.replaceChildren(h("p", { class: "term-hold", role: "status" }, held));
 		// Switching to the terminal gives it the keyboard once, on a desktop (only a desktop's mirror has the text box that takes it).
 		void embedTerminal(key, name, host).then((off) => (turn === modeTurn && scene.route.view === "session" && scene.route.key === key ? ((unembed = off), host.querySelector<HTMLElement>(".term-sink")?.focus({ preventScroll: true })) : off()));
 	}
@@ -100,7 +109,7 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 			if (head) {
 				mark(head, mk); // the head glows while the unit is commanding
 				text(head, "h2 span", u?.name ?? scene.info?.name ?? "");
-				text(head, "p", [hit?.base.label, hit?.squad && m.squad_label({ label: hit.squad })].filter(Boolean).join(" · "));
+				text(head, "p", [hit?.base.label, hit?.squad && m.squad_label({ label: hit.squad }), u?.service && statusLine(u.service, mk, (k) => LABEL[k]())].filter(Boolean).join(" · "));
 				const chan = head.querySelector<HTMLElement>(".chan")!, open = !closed(u, state);
 				chan.dataset.state = open ? "live" : "closed";
 				text(chan, "b", open ? m.channel_open() : state === "recent" || u?.ended ? m.channel_closed() : m.no_channel());
@@ -114,9 +123,12 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 			}
 			drawTodos(view, scene.info?.todos);
 			drawMonitors(view, u?.monitors);
-			drawQueued(view, u?.queued, u?.key);
+			drawQueued(view, u?.queued, u?.key, Boolean(u?.service));
+			const notes = view.querySelector<HTMLElement>(".tower-notices");
+			if (notes) fillNotices(notes, hit?.base.id ?? wsOf(scene), u?.service);
+			if (shown === "term" && holdOf(u?.key ?? "") !== held) setMode("term"); // the tower woke or went to stand by: the terminal or its sentence changes
 			chat?.setLive(mk === "working" || mk === "commanding" ? `${doing(u!.note, mk)}` : urgent(mk) ? LABEL[mk]() : "", mk);
-			composer?.update({ name, control: Boolean(u?.control), agent: u?.agent, live: !closed(u, state), mark: mk, online: online(), answerable: Boolean(u?.pending?.answer) });
+			composer?.update({ name, control: Boolean(u?.control), agent: u?.agent, live: !closed(u, state), mark: mk, online: online(), answerable: Boolean(u?.pending?.answer), wakes: Boolean(u?.service), held: u?.service?.state === "held" });
 			asker?.update(u?.pending, mk === "waiting" && Boolean(u?.control) && online()); // its dialog above the composer, answerable or not
 		},
 	};

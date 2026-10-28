@@ -5,8 +5,8 @@ import type { LedgerRow } from "../opener.ts";
 import { renameInto, secretDir, type Slot } from "./record.ts";
 
 // What the tower service keeps on disk (docs/specs/2026-10-26-sb-backend.md, State): `tower/<workspace id>/` in the server's slot, mode 700, each file written by rename, mode 600.
-// B4 writes `service.json` (the identity, its pane and tab, and the next event sequence number), `queue/` (events that arrived for the identity), and `opened.json` (the opener's
-// ledger). The run records, the handoff notes, and the rest come with the runs (B5).
+// `service.json` (the identity, its pane and tab, and the next event sequence number), `queue/` (events that arrived for the identity, `queue/parked/` the ones a crash parked),
+// `seen.jsonl` (the intercom messages taken, for dedupe), `runs/<run id>.json`, `notes.jsonl` (handoff notes), and `opened.json` (the opener's ledger).
 
 /** A tower service that has no tab for 24 h is forgotten with its queue; events and ledger entries are kept this long. */
 export const KEEP_MS = 24 * 3600_000;
@@ -30,17 +30,26 @@ export interface ServiceRecord {
 	/** Set while a resident tower of an older build still holds the workspace: the identity is registered once that session leaves. */
 	waiting?: true;
 }
-/** One event the service queued: an intercom message to the identity. Nothing wakes a run from it before B5. */
+/** What wakes a run (the spec, Wake triggers): an intercom message, the boss typing into the tower, a notice the server raises, a follow-up the last run asked for. */
+export type EventKind = "intercom" | "boss" | "notice" | "timer";
+/** One event the service queued. */
 export interface QueuedEvent {
 	id: string;
 	seq: number;
-	kind: "intercom";
-	from: { id: string; name?: string };
+	kind: EventKind;
+	/** The sender of an intercom message, or the boss. */
+	from?: { id: string; name?: string };
 	/** The text as received, its header included. */
 	text: string;
 	at: string;
-	/** The broker's message id. */
-	messageId: string;
+	/** The broker's message id (intercom events). */
+	messageId?: string;
+	/** The run that has it in its session; it stays here until that run ends well, so a crash can give it back. */
+	taken?: { run: string; at: string };
+	/** Runs that crashed or timed out holding it: two park it. */
+	crashes?: number;
+	/** `crash` once a run that had it died: the next brief says so. */
+	flag?: "crash";
 }
 
 /** A file name for a Herdr id: ids are short counters, but nothing a caller sends may leave the folder. */
@@ -57,11 +66,12 @@ const readJson = <T>(file: string): T | undefined => {
 	}
 };
 /** Written whole by rename, flushed to disk first: a reader never sees half a file, and a crash after the call loses nothing. */
-function writeDurable(file: string, value: unknown): void {
+export const writeDurable = (file: string, value: unknown): void => writeDurableText(file, JSON.stringify(value));
+export function writeDurableText(file: string, text: string): void {
 	const temp = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
 	const fd = openSync(temp, "wx", 0o600);
 	try {
-		writeSync(fd, JSON.stringify(value));
+		writeSync(fd, text);
 		fsyncSync(fd);
 	} finally {
 		closeSync(fd);
@@ -73,7 +83,7 @@ function writeDurable(file: string, value: unknown): void {
 		throw error;
 	}
 }
-const ensureDir = (dir: string) => {
+export const ensureDir = (dir: string) => {
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	chmodSync(dir, 0o700);
 };
@@ -108,16 +118,46 @@ export function listServices(slot: Slot): ServiceRecord[] {
 const queueDir = (slot: Slot, workspace: string) => join(towerDir(slot, workspace), "queue");
 const PAD = 10;
 const seqOf = (name: string) => Number(/^(\d+)-/.exec(name)?.[1] ?? NaN);
-/** The queued events of a workspace, oldest first. */
-export function readQueue(slot: Slot, workspace: string): QueuedEvent[] {
+const parkedDir = (slot: Slot, workspace: string) => join(queueDir(slot, workspace), "parked");
+const nameOf = (event: Pick<QueuedEvent, "seq" | "id">) => `${String(event.seq).padStart(PAD, "0")}-${event.id}.json`;
+/** The queued events of a workspace, oldest first; with `parked`, the ones a crash parked instead (`queue/parked/`). */
+export function readQueue(slot: Slot, workspace: string, parked = false): QueuedEvent[] {
+	const dir = parked ? parkedDir(slot, workspace) : queueDir(slot, workspace);
 	let names: string[] = [];
 	try {
-		names = readdirSync(queueDir(slot, workspace)).filter((name) => name.endsWith(".json")).sort();
+		names = readdirSync(dir).filter((name) => name.endsWith(".json")).sort();
 	} catch { /* empty */ }
 	return names.flatMap((name) => {
-		const event = readJson<QueuedEvent>(join(queueDir(slot, workspace), name));
+		const event = readJson<QueuedEvent>(join(dir, name));
 		return event && typeof event.text === "string" ? [event] : [];
 	});
+}
+/** Writes an event's file again (its `taken` mark, a crash count), flushed. */
+export function updateEvent(slot: Slot, workspace: string, event: QueuedEvent): void {
+	writeDurable(join(queueDir(slot, workspace), nameOf(event)), event);
+}
+/** Removes an event that is done (or dropped). */
+export function removeEvent(slot: Slot, workspace: string, event: Pick<QueuedEvent, "seq" | "id">): void {
+	rmSync(join(queueDir(slot, workspace), nameOf(event)), { force: true });
+	const state = known.get(queueDir(slot, workspace));
+	if (state && state.count > 0) state.count--;
+}
+/** Moves an event to `queue/parked/`: it is no longer offered. */
+export function parkEvent(slot: Slot, workspace: string, event: QueuedEvent): void {
+	ensureDir(parkedDir(slot, workspace));
+	writeDurable(join(parkedDir(slot, workspace), nameOf(event)), event);
+	removeEvent(slot, workspace, event);
+}
+/** Puts a parked event back in the queue (Deliver again). */
+export function unparkEvent(slot: Slot, workspace: string, event: QueuedEvent): void {
+	rmSync(join(parkedDir(slot, workspace), nameOf(event)), { force: true });
+	const { taken: _taken, crashes: _crashes, ...rest } = event;
+	writeDurable(join(queueDir(slot, workspace), nameOf(event)), rest);
+	const state = known.get(queueDir(slot, workspace));
+	if (state) state.count++;
+}
+export function dropParked(slot: Slot, workspace: string, event: Pick<QueuedEvent, "seq" | "id">): void {
+	rmSync(join(parkedDir(slot, workspace), nameOf(event)), { force: true });
 }
 export function queueLength(slot: Slot, workspace: string): number {
 	try {
@@ -151,9 +191,9 @@ export function appendEvent(slot: Slot, service: ServiceRecord, event: Omit<Queu
 	ensureDir(dir);
 	const state = look(dir);
 	const seq = Math.max(service.seq, state.top + 1);
-	const id = createHash("sha256").update(`${event.from.id}\n${event.messageId}\n${event.text}`).digest("hex").slice(0, 16);
+	const id = createHash("sha256").update(`${event.from?.id ?? ""}\n${event.messageId ?? randomBytes(8).toString("hex")}\n${event.text}`).digest("hex").slice(0, 16);
 	const written: QueuedEvent = { id, seq, ...event };
-	writeDurable(join(dir, `${String(seq).padStart(PAD, "0")}-${id}.json`), written);
+	writeDurable(join(dir, nameOf(written)), written);
 	state.top = seq;
 	state.count++;
 	for (const name of state.count > max ? readdirSync(dir).filter((n) => n.endsWith(".json")).sort().slice(0, state.count - max) : []) {
@@ -164,7 +204,7 @@ export function appendEvent(slot: Slot, service: ServiceRecord, event: Omit<Queu
 	writeDurable(join(towerDir(slot, service.workspace), SERVICE), service);
 	return written;
 }
-/** Removes queued events older than KEEP_MS (their files' mtime) from every workspace folder. Returns how many went. */
+/** Removes queued events older than KEEP_MS (their files' mtime) from every workspace folder, `queue/parked/` included (a folder inside `queue/` is never removed as a file). Returns how many went. */
 export function purgeQueues(slot: Slot, now: number): number {
 	let gone = 0, names: string[] = [];
 	try {
@@ -172,35 +212,42 @@ export function purgeQueues(slot: Slot, now: number): number {
 	} catch { /* none */ }
 	for (const name of names) {
 		const queue = join(towersDir(slot), name, "queue");
-		let files: string[] = [];
-		try {
-			files = readdirSync(queue);
-		} catch { continue; }
-		for (const file of files) {
-			const stat = statSync(join(queue, file), { throwIfNoEntry: false });
-			if (!stat || now - stat.mtimeMs <= KEEP_MS) continue;
-			rmSync(join(queue, file), { force: true });
-			known.delete(queue);
-			gone++;
+		for (const dir of [queue, join(queue, "parked")]) {
+			let files: string[] = [];
+			try {
+				files = readdirSync(dir);
+			} catch { continue; }
+			for (const file of files) {
+				const stat = statSync(join(dir, file), { throwIfNoEntry: false });
+				if (!stat || stat.isDirectory() || now - stat.mtimeMs <= KEEP_MS) continue;
+				rmSync(join(dir, file), { force: true });
+				known.delete(queue);
+				gone++;
+			}
 		}
 	}
 	return gone;
 }
-/** The flag is off: every workspace's `service.json`, queue, and ledger go (message text stays on disk with no time limit otherwise). Returns how many files went. */
+const countFiles = (dir: string): number => {
+	let n = 0;
+	for (const e of readdirSync(dir, { withFileTypes: true })) n += e.isDirectory() ? countFiles(join(dir, e.name)) : 1;
+	return n;
+};
+/** The flag is off: every workspace's `service.json`, queue (parked events too), runs, notes, expectations, timer, dedupe ledger and opener's ledger go (message text stays on disk with no time limit otherwise). Returns how many files went. */
 export function purgeAll(slot: Slot): number {
 	let gone = 0, names: string[] = [];
 	try {
 		names = readdirSync(towersDir(slot));
 	} catch { return 0; }
 	for (const name of names) {
-		const dir = join(towersDir(slot), name), queue = join(dir, "queue");
-		let files: string[] = [];
-		try {
-			files = readdirSync(queue);
-		} catch { /* no queue */ }
-		for (const file of files) rmSync(join(queue, file), { force: true }), gone++;
-		known.delete(queue);
-		for (const file of [SERVICE, OPENED]) if (statSync(join(dir, file), { throwIfNoEntry: false })) rmSync(join(dir, file), { force: true }), gone++;
+		const dir = join(towersDir(slot), name);
+		for (const entry of ["queue", "runs", SERVICE, OPENED, "notes.jsonl", "expects.json", "timer.json", "seen.jsonl"]) {
+			const path = join(dir, entry), stat = statSync(path, { throwIfNoEntry: false });
+			if (!stat) continue;
+			gone += stat.isDirectory() ? countFiles(path) : 1;
+			rmSync(path, { recursive: true, force: true });
+		}
+		known.delete(join(dir, "queue"));
 	}
 	return gone;
 }

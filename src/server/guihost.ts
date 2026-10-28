@@ -11,7 +11,8 @@ import { alive } from "../remote.ts";
 import { answers, boundedWait, type GuiRecord, listening, postServer, readRecord as readGuiJson, writeRecordFile } from "../handover.ts";
 import type { Session } from "../herdr.ts";
 import { type GuiLink } from "../link/guiport.ts";
-import { type Net, netSource } from "../net.ts";
+import { type Net, netSource, type TowerView } from "../net.ts";
+import type { TowerPanel } from "../control.ts";
 import { identity, type Run, switchRemote, tailscale } from "../remote.ts";
 import { createSpawn } from "../spawn.ts";
 import { popBase, stashedList } from "../stash.ts";
@@ -65,6 +66,8 @@ export interface GuiHostOptions {
 	startWaitMs?: number;
 	/** The GUI's way to the link holder. */
 	link: GuiLink;
+	/** The tower service of a workspace for the net, and the composer's and notices' way to it (towers.ts). */
+	tower?: { view(workspace: string): TowerView | undefined } & TowerPanel;
 	/** What the page's server panel shows. */
 	status(): Record<string, unknown>;
 	/** Asks the server to restart as the GUI's button does; the reply goes to the page. */
@@ -171,7 +174,7 @@ export function createGuiHost(o: GuiHostOptions) {
 	};
 	const begin = async (prefer: ReturnType<typeof recorded>, wait: number): Promise<Gui> => {
 		hub ??= createHub(kit.pi, id, NO_BRIDGE);
-		const net = netSource({ run: cfg.run, world: cfg.world, sessions, stashed: () => stashedList(slot.stateDir), trust, hub });
+		const net = netSource({ ...(o.tower ? { services: (workspace: string) => o.tower!.view(workspace) } : {}), run: cfg.run, world: cfg.world, sessions, stashed: () => stashedList(slot.stateDir), trust, hub });
 		// `running` is read by the page's remote buttons, which only come once the server is up.
 		let running!: Gui;
 		running = await startGui({
@@ -180,7 +183,7 @@ export function createGuiHost(o: GuiHostOptions) {
 				return summary && (summary.allies.length || summary.alerts.length || summary.confirms.length) ? { ...next, link: summary } : next;
 			},
 			net, call: cfg.call, hub, dir: o.bundle ?? BUNDLE, paired: join(dir, "paired.json"), port: prefer.port, remotePort: prefer.remotePort, bindWaitMs: wait,
-			link: { call: (name, args) => o.link.call(name, args), enable: () => o.link.enable() }, trust: { answer: trust.answer, watch: trust.watch },
+			link: { call: (name, args) => o.link.call(name, args), enable: () => o.link.enable() }, ...(o.tower ? { tower: o.tower } : {}), trust: { answer: trust.answer, watch: trust.watch },
 			server: { status: () => o.status(), log: (lines) => tailLog(fileOf(slot, "log"), lines), restart: async (reason) => (o.restart ? o.restart(reason) : { status: 501, body: { error: "unavailable", reason: "This server cannot restart itself." } }) },
 			// An older build's /boss gui stop: the GUI stops, and nothing starts it again but the boss's own command. Its takeover is refused (409): that build reports the GUI as stale and leaves it alone.
 			refuseTake: true,

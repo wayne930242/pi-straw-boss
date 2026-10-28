@@ -68,6 +68,22 @@ test("a session without a screen, a subagent, and a session that has no server d
 	assert.ok(!none.tools.has("boss_server"), "no server: no tool");
 });
 
+test("B5R3: a tower run (the sb-run flag) looks at nothing: it starts no server that was down, where an ordinary session starts one", async () => {
+	const run = session("run1");
+	const set = run.flags.set.bind(run.flags);
+	run.flags.set = (name, value) => set(name, name === "sb-run" ? "RUN" : value);
+	run.flags.set("sb-run", "RUN");
+	await run.start();
+	await sleep(300);
+	assert.equal(sw.spawned.length, 0, "a run starts no server");
+	await run.command("server");
+	assert.match(run.notices.at(-1)!.text, /A tower run takes no \/boss command/);
+	assert.equal(sw.spawned.length, 0, "/boss server is refused in a run, so it starts nothing");
+	const plain = session("plain1");
+	await plain.start();
+	await until(() => sw.spawned.length === 1, "an ordinary session starts the server");
+});
+
 test("a session on an older package never starts a server; a record of a gone server in another broker scope does not stop a session from starting one (F6)", async () => {
 	plant({ version: "0.45.0", pid: 99 });
 	const old = session("old", { version: "0.44.0" });

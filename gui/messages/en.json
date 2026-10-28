@@ -508,8 +508,36 @@
 	"link_a_fork": "Team {team} stopped: {reason}",
 	"link_a_mismatch": "{label} ({short}) shows another roster than this computer in team {team}; the relay may be showing different rosters",
 	"link_a_unreachable": "The relay of team {team} has been unreachable for {minutes} minutes",
-	"link_a_inbox": "{count} message waiting in the inbox of team {team}: no tower is open on its project",
-	"link_a_held": "{count} message has waited more than 10 minutes for an idle tower in team {team}",
+	"link_a_inbox": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} message waits in the inbox of team {team}: no tower is open on its project",
+				"countPlural=other": "{count} messages wait in the inbox of team {team}: no tower is open on its project"
+			}
+		}
+	],
+	"link_a_held": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} message has waited more than 10 minutes for an idle tower in team {team}",
+				"countPlural=other": "{count} messages have waited more than 10 minutes for an idle tower in team {team}"
+			}
+		}
+	],
 	"link_allow": "Allow",
 	"link_deny": "Deny",
 	"link_review": "Review",
@@ -602,5 +630,80 @@
 	"link_setup_wait": "Starting. This takes a few seconds.",
 	"link_prefilled": "An agent asked for this screen: {reason}",
 	"ally_tag": "{team} · teammate",
-	"link_trust_help": "What a message from this device may do. reply: the allowed read-only tools run; anything else asks you here. forward: the same, but anything else asks that device's owner on their computer. dispatch: runs as a message from you would, under this computer's own guards."
+	"link_trust_help": "What a message from this device may do. reply: the allowed read-only tools run; anything else asks you here. forward: the same, but anything else asks that device's owner on their computer. dispatch: runs as a message from you would, under this computer's own guards.",
+	"mark_standing": "standing by",
+	"placeholder_wake": "Wakes the tower",
+	"tower_notice_retry": "Retry",
+	"tower_parked": "Parked: {kind} from {from}: {first}",
+	"tower_deliver": "Deliver again",
+	"tower_drop": "Drop",
+	"tower_action_failed": "The tower refused it: {reason}",
+	"link_a_served": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} Straw Link message waits in the inbox of team {team}; ally runs, which take it, come with the next step",
+				"countPlural=other": "{count} Straw Link messages wait in the inbox of team {team}; ally runs, which take them, come with the next step"
+			}
+		}
+	],
+	"tower_state_waking": "waking",
+	"tower_state_closing": "closing",
+	"tower_state_held": "held",
+	"tower_state_ally": "ally run",
+	"tower_last_crashed": "last run crashed",
+	"tower_last_timeout": "last run timed out",
+	"tower_last_quit": "last run quit",
+	"tower_failures": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} failed run lately",
+				"countPlural=other": "{count} failed runs lately"
+			}
+		}
+	],
+	"tower_queued": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} message queued",
+				"countPlural=other": "{count} messages queued"
+			}
+		}
+	],
+	"queued_server": "Queued · next run",
+	"tower_working": "Working…",
+	"tower_notice_start": "A run could not start: {reason}",
+	"tower_notice_loop": "Runs crashed or timed out again and again, so the tower stops waking. The queue is kept; Retry, or a message from the boss, wakes it again.",
+	"tower_notice_late": "An event was parked after two runs crashed with it: {what}",
+	"tower_parked_anon": "Parked: {kind}: {first}",
+	"tower_err_standing": "The tower is standing by: no run is live, so there is no terminal. Write to it in the composer; that wakes it.",
+	"tower_err_server_queue": "These messages wait in the sb server's queue for the tower's next run; they are taken when it runs.",
+	"tower_err_no_event": "No such parked event.",
+	"tower_err_no_tower": "The sb server runs no tower for this workspace.",
+	"tower_term_standing": "The tower is standing by, so it has no terminal. A run opens one when it wakes; write to it in Comms to wake it.",
+	"tower_term_held": "The tower is held after repeated crashes, so it has no terminal. Retry it, or write to it in Comms.",
+	"placeholder_held": "Held after repeated crashes · a message wakes it",
+	"notice_server": "notice from the sb server",
+	"notice_timer": "wake-up call",
+	"boss_crash_flag": "A run that crashed may already have handled this: check before acting."
 }

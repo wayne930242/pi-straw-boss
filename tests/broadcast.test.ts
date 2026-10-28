@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { Agent, bare, World } from "./fakes.ts";
 
@@ -72,4 +74,16 @@ test("a restarted pi keeps its session id, and what it sends carries a message i
 	await again.start();
 	await again.tool("boss_broadcast", { message: "two", scope: "tab" });
 	assert.deepEqual(world.broker.delivered.map((d) => [d.to, bare(d.message)]), [["a2", "one"], ["a2", "two"]]);
+});
+
+test("B5 R-F008: with the tower runs on, a workspace broadcast reaches the tower identity and not the pi of a run in the standing pane (it would hear twice)", async () => {
+	mkdirSync(world.stateDir, { recursive: true });
+	writeFileSync(join(world.stateDir, "config.json"), JSON.stringify({ towerRuns: { enabled: true } }));
+	// The sb server's identity for Alpha, and the pi in the standing pane (tower-wA, role tower) as a run's.
+	const identity = world.agent({ id: "sb-tower-wa", pane: "none", outsideHerdr: true });
+	await identity.start();
+	world.herdr.workspace("wA").tokens.tower = "sb-tower-wa";
+	assert.deepEqual(await sent(a1, "workspace"), ["a2", "c", "sb-tower-wa"]);
+	assert.ok(!(await sent(a1, "all")).includes("tower-wA"), "scope all does not reach the run's pi either");
+	assert.ok((await sent(a1, "all")).includes("sb-tower-wa"));
 });
