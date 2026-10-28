@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { scrubBoard } from "../boardauto.ts";
+import { allyLabel } from "../boardauto.ts";
 import { cleanText, clean, BOARD, forAllies, purge, readEntries, wireId, type Entry } from "../board.ts";
 import { MAX_BODY_BYTES } from "./wire.ts";
 import { restrictLabel } from "./text.ts";
@@ -766,7 +766,7 @@ export class LinkHolder {
 				team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device!.keys, seq, ts: this.now(), kind: as, to: [target.id],
 				plaintext: as === "tower-reply"
 					? encodePlaintext("tower-reply", { inReplyTo: req.inReplyTo!, text: req.text })
-					: encodePlaintext("tower", { fromWorkspace: workspace?.label ?? "", toWorkspace: req.workspace ?? "", replyExpected: req.reply, text: req.text, ...(withAsk ? { awaitsReply: req.awaitsReply! } : {}) }),
+					: encodePlaintext("tower", { fromWorkspace: allyLabel(workspace?.label), toWorkspace: req.workspace ?? "", replyExpected: req.reply, text: req.text, ...(withAsk ? { awaitsReply: req.awaitsReply! } : {}) }),
 			});
 		});
 		const post = async (as: "tower" | "tower-reply") => {
@@ -894,7 +894,7 @@ export class LinkHolder {
 				if (!key) throw new Error(`This device holds no key for epoch ${state.epoch}`);
 				return buildEnvelope({
 					team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device!.keys, seq, ts: this.now(), kind: "confirm-request", to: [req.device],
-					plaintext: encodePlaintext("confirm-request", { dialogId: req.dialogId, digest: req.digest, tool: req.tool, args: req.args, tower: req.tower }),
+					plaintext: encodePlaintext("confirm-request", { dialogId: req.dialogId, digest: req.digest, tool: req.tool, args: req.args, tower: allyLabel(req.tower) }),
 				});
 			});
 		} catch (error) {
@@ -971,9 +971,9 @@ export class LinkHolder {
 			if (!workspace) return [];
 			const tabs = net.tabs.filter((t) => t.workspace_id === workspace.workspace_id && t.tab_id !== tower.tab_id).map((t) => {
 				const states = net.panes.filter((p) => p.tab_id === t.tab_id).map((p) => p.agent_status ?? "unknown");
-				return { label: t.label ?? t.tab_id, state: states.includes("blocked") ? "blocked" : states.includes("working") ? "working" : (states[0] ?? "unknown") };
+				return { label: allyLabel(t.label ?? t.tab_id), state: states.includes("blocked") ? "blocked" : states.includes("working") ? "working" : (states[0] ?? "unknown") };
 			});
-			return [{ label: workspace.label, tower: tower.agent_status ?? "unknown", tabs }];
+			return [{ label: allyLabel(workspace.label), tower: tower.agent_status ?? "unknown", tabs }];
 		});
 	}
 
@@ -1006,7 +1006,7 @@ export class LinkHolder {
 			const pane = panes.get(x.herdrLocation?.paneId ?? "");
 			if (pane?.tokens?.sb_role !== "main" || !pane.cwd || !inside(pane.cwd, project)) return [];
 			const e = byId.get(x.id), shown = e && forAllies(e); // an auto-filled entry leaves as the main's name and done count only (spec, Work board, Sharing)
-			return [{ id: wireId(device, x.id), workspace: clean(scrubBoard(x.herdrLocation?.workspace?.label ?? ""), BOARD.label), tab: clean(scrubBoard(x.herdrLocation?.tab?.label ?? ""), BOARD.label), name: clean(scrubBoard(x.name ?? ""), 40), now: shown?.now ?? "", updated: e?.updated ?? 0, items: shown?.items ?? [] }];
+			return [{ id: wireId(device, x.id), workspace: allyLabel(x.herdrLocation?.workspace?.label), tab: allyLabel(x.herdrLocation?.tab?.label), name: allyLabel(x.name), now: shown?.now ?? "", updated: e?.updated ?? 0, items: shown?.items ?? [] }];
 		}).sort((a, b) => b.updated - a.updated).slice(0, LIMITS.boardEntries);
 	}
 

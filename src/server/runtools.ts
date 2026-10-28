@@ -112,7 +112,7 @@ async function allyTool(host: ToolHost, name: string, args: Record<string, unkno
 		if (!taken.ok) throw new Error(`${name} was not allowed: ${taken.reason}`);
 	}
 	switch (name) {
-		case "boss_status": return json(await host.reach.status());
+		case "boss_status": return json(await host.reach.status(true));
 		case "tower_list": return scopedList(host);
 		case "board_read": return scopedBoards(host, args);
 		case "tower_send": return towerSendDevice(host, args, who.device!, true);

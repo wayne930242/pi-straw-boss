@@ -68,6 +68,12 @@ export function scrubBoard(raw: string, root?: string): string {
 	return out.replace(BASE64_RUN, (m) => (/[a-z]/.test(m) && /[A-Z]/.test(m) && /\d/.test(m) ? HIDDEN : m));
 }
 
+/**
+ * The one gate for text that leaves this computer for an ally and that a person typed or a tool named: a label, a name, an opened-by, a task. It scrubs first and cuts last (a cut first leaves
+ * the head of a token, a path, or an address that the scrub could no longer recognise). Every envelope field and every tool answer an ally can read goes through it; nothing else calls `scrubBoard`.
+ */
+export const allyLabel = (text: unknown, max: number = BOARD.label, root?: string): string => (typeof text === "string" ? clean(scrubBoard(text, root), max) : "");
+
 /** An item is dropped when more than half of its words were scrubbed away. */
 const mostlyHidden = (text: string) => {
 	const words = text.split(" ");
@@ -89,7 +95,7 @@ export interface Derived { text: BoardText; count?: Count; who?: string }
  * `<name>: done (n/n)`, else the name; the items are the tasks, in progress first, then pending in id order, then completed, newest first. Text is cleaned and scrubbed, and only then cut to the board's caps.
  */
 export function deriveBoard({ name, todos, root }: AutoInput): Derived | undefined {
-	const text = (t: string, max: number) => clean(scrubBoard(t, root), max);
+	const text = (t: string, max: number) => allyLabel(t, max, root);
 	const who = text(name, 40), list = todos ?? [];
 	const by = (status: Todo["status"]) => list.filter((t) => t.status === status);
 	const doing = by("in_progress")[0], pending = by("pending").sort((a, b) => a.id - b.id), done = by("completed").sort((a, b) => b.id - a.id);

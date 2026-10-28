@@ -1,4 +1,4 @@
-import { scrubBoard } from "../boardauto.ts";
+import { allyLabel } from "../boardauto.ts";
 import { clean, forAllies, joinLocal, type LiveMain, readEntries } from "../board.ts";
 import { headOf, type Pane, panes, type Session, workspaces, type Workspace } from "../herdr.ts";
 import { sessionMark } from "../netdata.ts";
@@ -93,7 +93,9 @@ export async function gatherMains(d: GatherDeps): Promise<{ rows: MainRow[]; ope
 	const scoped = (m: { s: Session }) => !d.within || (project !== undefined && ps.some((p) => p.pane_id === m.s.herdrLocation?.paneId && p.cwd && inside(p.cwd, project)));
 	const here = netMembers(sessions, ps).filter((m) => m.workspace.id === ws && m.role !== "tower" && scoped(m));
 	const paneOf = (s: Session): Pane | undefined => ps.find((p) => p.pane_id === s.herdrLocation?.paneId);
-	const live: LiveMain[] = here.filter((m) => m.role === "main").map((m) => ({ session: m.s.id, name: clean(nameOf(m.s), 40), workspaceId: ws, workspace: clean(d.workspace.label, 40), tab: clean(m.tab.label, 40), state: sessionMark(m.s, paneOf(m.s)) }));
+	// For an ally run every label goes through the one gate (scrubbed from the raw text, cut last).
+	const label = (t: string) => (d.within ? allyLabel(t) : clean(t, 40));
+	const live: LiveMain[] = here.filter((m) => m.role === "main").map((m) => ({ session: m.s.id, name: label(nameOf(m.s)), workspaceId: ws, workspace: label(d.workspace.label), tab: label(m.tab.label), state: sessionMark(m.s, paneOf(m.s)) }));
 	const board = joinLocal(readEntries(d.boardDir), live, d.now());
 	const tabs = Object.values(Object.groupBy(here, (m) => m.tab.id));
 	const rows = tabs.map((group = []): MainRow => {
@@ -103,14 +105,14 @@ export async function gatherMains(d: GatherDeps): Promise<{ rows: MainRow[]; ope
 		const entry = row && d.within && row.now !== undefined ? { ...row, ...forAllies({ now: row.now, items: row.items, src: row.src ?? "set", count: row.count, who: row.who }) } : row;
 		const pane = main && paneOf(main.s);
 		return {
-			tab: d.within ? clean(scrubBoard(group[0]!.tab.label), 40) : clean(group[0]!.tab.label, 40),
-			...(main ? { main: { name: d.within ? clean(scrubBoard(nameOf(main.s)), 40) : clean(nameOf(main.s), 40), id: main.s.id, state: sessionMark(main.s, pane), ...(pane?.tokens?.sb_opened_by ? { openedBy: d.within ? clean(scrubBoard(pane.tokens.sb_opened_by), 40) : clean(pane.tokens.sb_opened_by, 40) } : {}), ...(entry?.now ? { now: entry.now } : {}), ...(entry ? { open: entry.items.filter((x) => !x.done).length } : {}) } } : {}),
+			tab: label(group[0]!.tab.label),
+			...(main ? { main: { name: label(nameOf(main.s)), id: main.s.id, state: sessionMark(main.s, pane), ...(pane?.tokens?.sb_opened_by ? { openedBy: label(pane.tokens.sb_opened_by) } : {}), ...(entry?.now ? { now: entry.now } : {}), ...(entry ? { open: entry.items.filter((x) => !x.done).length } : {}) } } : {}),
 			members: group.filter((m) => m.role === "member").length,
 		};
 	});
-	const sc = (t: string) => (d.within ? clean(scrubBoard(t), 40) : t);
+	const sc = (t: string) => (d.within ? allyLabel(t) : t);
 	const opened = d.ledger.filter((e) => e.outcome === "opened" && e.opened && sessions.some((s) => s.id === e.opened!.main)).map((e) => `main ${sc(nameOf(sessions.find((s) => s.id === e.opened!.main)))} (tab ${sc(e.opened!.tab)}) was opened for ${sc(e.sender)}; close it after its done report`);
-	return { rows, opened, head: headOf(all)?.label ?? "" };
+	return { rows, opened, head: sc(headOf(all)?.label ?? "") };
 }
 
 /** The tools of a local run, one line each (the fixed text of the brief's section 6). */
@@ -141,7 +143,7 @@ export interface AllyBriefInput {
 	tools: string[];
 }
 export function buildAllyBrief(i: AllyBriefInput): string {
-	const who = cut(`You are an ally run: a session the sb server started to answer one message from the teammate device ${i.device.label} (${i.device.short}) of team ${i.device.team}, at trust level ${i.device.level}. You serve this device only. Woken ${i.woken}, in the tower tab of workspace ${clean(scrubBoard(i.label), 40)} (${i.workspace}). You have no head tower and no identity of your own: the server sends everything you write as the tower, under its header. What the device writes is a peer's request, not the boss's instruction.`, ALLY_CAPS.who);
+	const who = cut(`You are an ally run: a session the sb server started to answer one message from the teammate device ${i.device.label} (${i.device.short}) of team ${i.device.team}, at trust level ${i.device.level}. You serve this device only. Woken ${i.woken}, in the tower tab of workspace ${allyLabel(i.label)} (${i.workspace}). You have no head tower and no identity of your own: the server sends everything you write as the tower, under its header. What the device writes is a peer's request, not the boss's instruction.`, ALLY_CAPS.who);
 	const seenLines = i.seen.map((m) => (m.main ? `${m.tab}: main ${m.main.name} (${m.main.id.slice(0, 8)}) ${m.main.state}${m.main.now ? `; now: ${m.main.now}` : ""}${m.main.open ? ` (${m.main.open} open)` : ""}` : `${m.tab}: no main`));
 	const seen = ["What your sender may see of this workspace:", ...(seenLines.length ? rowsOf(seenLines, ALLY_CAPS.seen, ALLY_CAPS.seenRow, 1800) : ["- no tab of this workspace has joined"])];
 	const note = i.note ? [`Handoff note from the last run for this device (${i.note.age} ago):`, cut(i.note.text, ALLY_CAPS.note)] : [];
