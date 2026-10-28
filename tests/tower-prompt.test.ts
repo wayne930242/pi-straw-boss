@@ -41,6 +41,51 @@ function screen(source: PromptSource, over: { locale?: "en" | "zh-TW"; pollMs?: 
 	return { input, done, text: () => text };
 }
 
+/** The prompt's end, or a failure after 3 s: an exception inside readline's event leaves the promise unsettled and would hang the suite. */
+const ended = (done: Promise<number>) => Promise.race([done, new Promise<number>((_, reject) => setTimeout(() => reject(new Error("the prompt did not end")), 3000).unref())]);
+
+/** A screen that is a terminal: readline then edits the line itself, and the prompt must never touch it after it closed. */
+function terminal(source: PromptSource) {
+	const input = new PassThrough(), output = Object.assign(new PassThrough(), { isTTY: true, columns: 80, rows: 24 });
+	let text = "";
+	output.on("data", (chunk) => void (text += String(chunk)));
+	const done = runPrompt({ workspace: "wA", source, input, output, locale: "en", pollMs: 15 });
+	return { input, done, text: () => text };
+}
+
+test("on a terminal, Ctrl+D leaves the pane to the shell without touching the closed line (a real pane threw ERR_USE_AFTER_CLOSE and exited 1)", async () => {
+	const source = new FakeSource();
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("\x04");
+	assert.equal(await ended(p.done), 0);
+	assert.equal(source.left, 1);
+	assert.match(p.text(), /leaving this pane to your shell/);
+});
+
+test("on a terminal, Ctrl+C leaves the pane to the shell the same way, and says it once", async () => {
+	const source = new FakeSource();
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("\x03");
+	assert.equal(await ended(p.done), 0);
+	assert.equal(source.left, 1);
+	assert.equal(p.text().match(/leaving this pane/g)?.length, 1);
+});
+
+test("on a terminal, a line wakes the tower and a state change redraws the prompt with what the boss had typed", async () => {
+	const source = new FakeSource();
+	source.answers = [{ kind: "state", answer: STATE }, { kind: "state", answer: STATE }, { kind: "state", answer: { ...STATE, queued: 3 } }];
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("half a mess");
+	await until(() => /3 queued/.test(p.text()), "the changed state");
+	assert.match(p.text().slice(p.text().lastIndexOf("3 queued")), /tower> half a mess/, "the prompt comes back with the typed text");
+	p.input.write("age\r");
+	assert.equal(await ended(p.done), 0);
+	assert.deepEqual(source.posted, ["half a message"]);
+});
+
 test("the prompt shows the tower's state and a hint, and waits at `tower>`", async () => {
 	const source = new FakeSource();
 	const p = screen(source);

@@ -6,6 +6,8 @@ import type { PollAnswer, PromptSource } from "./source.ts";
 // The screen of the tower prompt (docs/how-it-works.md, The standing pane): the tower's state on one line, a hint, and a line to write at `tower> `. It polls its source for the state and for the order to
 // leave, posts what the boss writes as a `boss` event, and ends in one of four ways: the boss wrote (the tower is waking: exit 0, the server starts the run in this pane), a run is starting (the same),
 // the boss pressed Ctrl+D or Ctrl+C (the pane is theirs, the server is told), or the server stands in for no tower here any more. Every exit is 0: what the shell does next is not an error.
+// It is plain readline on purpose: cli.mjs runs under plain node, where pi's own packages (pi-tui) are not on disk, and scripts/build-server.mjs fails the bundle that imports one. A fuller screen (the net's rows, the
+// board) goes through the same two seams, the PromptSource and the injected streams, but needs its own way to draw.
 
 export const PROMPT = "tower> ";
 const POLL_MS = 2000;
@@ -32,19 +34,22 @@ const clean = (value: unknown, max = 200) => String(value).replace(/[\u0000-\u00
 export async function runPrompt(o: PromptOptions): Promise<number> {
 	const text = textsFor(o.locale), pollMs = o.pollMs ?? POLL_MS, source = o.source;
 	const terminal = (o.output as Partial<NodeJS.WriteStream>).isTTY === true;
-	let rl: Interface | undefined, finished = false, posting = false, silent = false, shown: string | undefined;
+	let rl: Interface | undefined, closed = false, finished = false, posting = false, silent = false, shown: string | undefined;
 	let timer: ReturnType<typeof setTimeout> | undefined, batch: string[] = [], batchTimer: ReturnType<typeof setTimeout> | undefined;
 	let finish!: (code: number) => void;
 	const done = new Promise<number>((resolve) => (finish = resolve));
 
-	/** A line of its own: above what the boss is typing when a terminal shows that. */
-	const say = (line: string) => {
-		if (rl && terminal && !finished) {
+	/**
+	 * A line of its own. On a terminal it replaces the line the cursor is on (the prompt and what the boss typed, which `again` draws back below it); a line that ends the prompt asks for no prompt again,
+	 * and none is drawn on an interface that was closed (Ctrl+D closes it before this runs: a prompt on it throws ERR_USE_AFTER_CLOSE, which a pane showed and a test with no terminal did not).
+	 */
+	const say = (line: string, again = true) => {
+		if (terminal) {
 			cursorTo(o.output, 0);
 			clearLine(o.output, 0);
-			o.output.write(`${line}\n`);
-			rl.prompt(true);
-		} else o.output.write(`${line}\n`);
+		}
+		o.output.write(`${line}\n`);
+		if (again && terminal && rl && !closed && !finished) rl.prompt(true);
 	};
 	/** Ends the prompt: what the server is told goes first, within the source's own time limit. */
 	const end = async (after: () => Promise<void>) => {
@@ -65,7 +70,7 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 	/** What one poll does to the screen; returns whether the prompt goes on. */
 	const handle = async (polled: Awaited<ReturnType<PromptSource["poll"]>>): Promise<boolean> => {
 		if (polled.kind === "gone") {
-			say(text.noTower);
+			say(text.noTower, false);
 			await end(async () => {});
 			return false;
 		}
@@ -77,7 +82,7 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 		if (silent) say(text.back);
 		silent = false;
 		if (polled.answer.leave) {
-			say(text.waking);
+			say(text.waking, false);
 			await end(() => source.gone());
 			return false;
 		}
@@ -105,10 +110,10 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 		} catch (cause) {
 			say(text.refused(clean((cause as Error).message, 400)));
 			posting = false;
-			if (!finished) rl?.prompt();
+			if (!finished && !terminal) rl?.prompt(); // a terminal drew it already, with what the boss typed
 			return;
 		}
-		say(text.waking);
+		say(text.waking, false);
 		await end(() => source.gone());
 	};
 
@@ -127,10 +132,10 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 	// Ctrl+D (the end of the input) and Ctrl+C both leave the pane to the boss: a prompt that came back at once would be in the way of whatever they wanted a shell for.
 	const leave = () => {
 		if (finished || posting || batch.length) return;
-		say(text.leaving);
+		say(text.leaving, false);
 		void end(() => source.leave());
 	};
-	rl.on("close", leave);
+	rl.on("close", () => void ((closed = true), leave()));
 	rl.on("SIGINT", leave);
 	rl.prompt();
 	if (!finished) timer = setTimeout(() => void poll(), pollMs);
