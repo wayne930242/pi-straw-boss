@@ -154,6 +154,6 @@ export function allyTools(level: string): string[] {
 		"- boss_status; tower_list and board_read, which show only your sender's team; read, grep, find, and ls inside the project's tracked files.",
 		"- tower_send {device, message, inReplyTo?} writes to your sender only; answer an ask by its id with inReplyTo.",
 	];
-	if (level === "dispatch") return [...base, "- tower_reply, boss_open_main, and boss_close_main run without a confirm; link_request, boss_server, and a wakeAfter are not yours."];
-	return [...base, `- Anything else asks the boss to confirm first${level === "forward" ? ", and your sender's device is asked as well" : ""}; link_request and boss_server are never yours.`];
+	if (level === "dispatch") return [...base, "- tower_reply, boss_open_main, and boss_close_main run without a confirm; call_tower, link_request, boss_server, and a wakeAfter are not yours."];
+	return [...base, `- Anything else asks the boss to confirm first${level === "forward" ? ", and your sender's device is asked as well" : ""}; call_tower, link_request, and boss_server are never yours.`];
 }
