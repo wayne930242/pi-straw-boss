@@ -92,6 +92,7 @@ const isSender = (who: RunWho, device: string) => device === who.device || devic
 async function allyTool(host: ToolHost, name: string, args: Record<string, unknown>, extra: CallExtra): Promise<ToolResult> {
 	const { who } = host;
 	if (!ALLY.has(name)) throw new Error(`${name} is not available in an ally run`);
+	if (who.gone) throw new Error("The sender of this run is no longer a member of its team: the run is ending");
 	const level = who.level ?? "reply", gated = level !== "dispatch" && !FREE.has(name);
 	// A target on this computer that is a tower identity would carry a peer's text into a local run: refused outright, whatever the level or an Allow.
 	// And a device other than its sender is refused the same way: an Allow the boss gave for it would otherwise send the text to the sender, not to the device the boss approved.

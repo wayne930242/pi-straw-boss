@@ -44,7 +44,7 @@ const localToken = async (s: Running) => {
 	return String(got!.token);
 };
 const tool = (s: Running, token: unknown, name: string, args: Record<string, unknown> = {}) => ask(s, { cmd: "run-tool", token, tool: name, args });
-const ally = () => towers!.runs.mint("wA", { kind: "ally", device: "d1", level: "reply" });
+const ally = () => towers!.runs.mint("wA", { kind: "ally", device: "d1", level: "reply", team: "team-1" });
 
 test("a run-tool request needs a token the server issued; boss_status answers under the tower identity", async () => {
 	const s = await started();

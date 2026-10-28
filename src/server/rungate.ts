@@ -6,7 +6,7 @@
 export type Kind = "local" | "ally";
 export interface RunInfo { id: string; workspace: string; kind: Kind }
 /** A run as the tower tools see it: its kind, and for an ally run the device it serves, its label and team, the level it was claimed at, its pane, and the ask ids its messages carry. */
-export interface RunWho extends RunInfo { level?: string; device?: string; deviceLabel?: string; team?: string; pane: string; asks?: string[] }
+export interface RunWho extends RunInfo { level?: string; device?: string; deviceLabel?: string; team?: string; pane: string; asks?: string[]; /** An ally run whose sender is no longer a member of its team: the run is being ended, and its tools are refused. */ gone?: true }
 export type Verdict = { ok: true } | { ok: false; error: string };
 
 /**

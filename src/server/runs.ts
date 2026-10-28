@@ -46,6 +46,9 @@ export interface Timers {
 }
 export const TIMERS: Timers = { wake: 1000, claim: 60_000, watch: 2000, idleSteer: 60_000, idleEnd: 300_000, steerAt: 18 * 60_000, quitAt: RUN_CAP_MINUTES * 60_000, quitGrace: 10_000, signal: 5000, lost: 30_000, refuse: 60_000, loop: 600_000, restored: 120_000, stopGrace: 1500 };
 const LOOP_MAX = 3;
+const LEVELS = ["reply", "forward", "dispatch"];
+/** The lower of two trust levels (an unknown one counts as `reply`). */
+const lower = (a: string, b: string) => LEVELS[Math.min(Math.max(LEVELS.indexOf(a), 0), Math.max(LEVELS.indexOf(b), 0))]!;
 /** The most messages an ally run is given at its start; the rest wait for the next run. */
 const ALLY_BATCH = 5;
 
@@ -482,6 +485,13 @@ export function createRuns(o: RunsOptions) {
 		return rest;
 	};
 
+	/** What this computer gives an ally run's sender now (undefined: the sender is no longer a member of the team). The server holds a run to the lower of this and the level it was claimed at. */
+	const standingOf = (a: Active): { level: string } | undefined => {
+		if (!o.ally || !a.rec.device || !a.rec.team) return undefined;
+		const current = o.ally.standing(a.rec.device, a.rec.team);
+		return current && { level: lower(a.rec.level ?? "reply", current.level) };
+	};
+
 	// --- watching ---------------------------------------------------------------------------------------------------------------------------------------------------
 
 	const ensureWatcher = () => {
@@ -526,6 +536,11 @@ export function createRuns(o: RunsOptions) {
 					continue;
 				}
 				if (!a.token) continue;
+				if (a.rec.kind === "ally" && !standingOf(a)) {
+					log.line("ally-ended", { workspace: a.rec.workspace, run: a.rec.id, why: "the sender left the roster" });
+					terminate(a, "quit");
+					continue;
+				}
 				if (now() - a.lastPoll > t.lost) {
 					log.line("run-lost", { run: a.rec.id });
 					terminate(a, "crashed");
@@ -777,6 +792,12 @@ export function createRuns(o: RunsOptions) {
 		/** The run behind a token, or undefined. */
 		runOf: (token: unknown): RunWho | undefined => {
 			const a = of(token);
+			if (a && !a.ended && a.rec.kind === "ally") {
+				// A sender that left the roster ends the run now, not at the next tick; the level is the lower of the claimed one and the device's now.
+				const standing = standingOf(a);
+				if (!standing) terminate(a, "quit");
+				return { id: a.rec.id, workspace: a.rec.workspace, kind: "ally", ...(standing ? { level: standing.level } : { gone: true as const }), ...(a.rec.device ? { device: a.rec.device } : {}), ...(a.rec.deviceLabel ? { deviceLabel: a.rec.deviceLabel } : {}), ...(a.rec.team ? { team: a.rec.team } : {}), pane: a.rec.pane, asks: itemsOf(a, true).flatMap((i) => (i.awaitsReply ? [i.awaitsReply] : [])) };
+			}
 			return a && !a.ended ? { id: a.rec.id, workspace: a.rec.workspace, kind: a.rec.kind, ...(a.rec.level ? { level: a.rec.level } : {}), ...(a.rec.device ? { device: a.rec.device } : {}), ...(a.rec.deviceLabel ? { deviceLabel: a.rec.deviceLabel } : {}), ...(a.rec.team ? { team: a.rec.team } : {}), pane: a.rec.pane, asks: itemsOf(a, true).flatMap((i) => (i.awaitsReply ? [i.awaitsReply] : [])) } : undefined;
 		},
 		/** A new Herdr server took over: the takeover is counted until `settled` (claims are held meanwhile), and every live run ends with outcome `herdr-restart`. */
@@ -861,10 +882,10 @@ export function createRuns(o: RunsOptions) {
 		 * A run token for a run the server did not start through pi: B6 issues an ally run's token this way once it has started its pane, and the tests use it to hold an ally token to its kind. It has no pane
 		 * or PID, so the watcher leaves it alone (`release` ends it).
 		 */
-		mint(workspace: string, who: { kind: "local" | "ally"; device?: string; level?: string }): string {
+		mint(workspace: string, who: { kind: "local" | "ally"; device?: string; level?: string; team?: string }): string {
 			const svc = services.get(workspace);
 			if (!svc) throw new Error(`The sb server stands in for no tower of workspace ${workspace}`);
-			const rec: RunRecord = { id: newId(), workspace, kind: who.kind, ...(who.device ? { device: who.device } : {}), ...(who.level ? { level: who.level } : {}), pane: svc.ref.record().pane, agent: "minted", startedAt: iso(now()), events: [] };
+			const rec: RunRecord = { id: newId(), workspace, kind: who.kind, ...(who.device ? { device: who.device } : {}), ...(who.level ? { level: who.level } : {}), ...(who.team ? { team: who.team } : {}), pane: svc.ref.record().pane, agent: "minted", startedAt: iso(now()), events: [] };
 			const a: Active = { rec, svc, commands: [], lastPoll: now(), started: now(), digestKeys: [], offered: new Map(), token: randomBytes(24).toString("hex") };
 			byToken.set(a.token!, a);
 			return a.token!;

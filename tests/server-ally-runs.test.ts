@@ -302,6 +302,40 @@ test("the Allow check is off at dispatch: an ally run at dispatch calls tower_re
 	for (const tool of ["boss_server", "link_request", "call_tower"]) assert.match(String((await ask(s, { cmd: "run-tool", token, tool, args: { action: "restart", reason: "x" } })).error), /not available in an ally run/, tool);
 });
 
+test("a sender that leaves the roster during a run gets the run ended with quit and its tools refused (RV6-F002)", async () => {
+	const { s } = await setup();
+	world.ally.add("m1", DEV1, "hello");
+	world.expose?.allyWaiting("sb-tower-wa");
+	const id = await nthRun();
+	const token = String((await claimed(s, id)).token);
+	assert.equal((await ask(s, { cmd: "run-tool", token, tool: "boss_status", args: {} })).ok, true);
+	world.ally.gone.add(DEV1);
+	const refused = await ask(s, { cmd: "run-tool", token, tool: "boss_status", args: {} });
+	assert.equal(refused.ok, false);
+	assert.match(String(refused.error), /no longer a member/);
+	await until(async () => (await poll(s, token)).command !== undefined, "the quit command");
+	exit(id);
+	await until(() => readRun(world.slot, "wA", id)?.outcome, "the run to end");
+	assert.equal(readRun(world.slot, "wA", id)!.outcome, "quit");
+});
+
+test("the server's level for an ally run is the lower of the claimed level and the device's level now: lowering trust from dispatch makes the gate apply at once (RV6-F002)", async () => {
+	const { s } = await setup();
+	world.ally.level.set(DEV1, "dispatch");
+	world.ally.add("m1", DEV1, "do it");
+	world.expose?.allyWaiting("sb-tower-wa");
+	const id = await nthRun();
+	const token = String((await claimed(s, id)).token);
+	world.sessions = [{ id: "main-1", name: "docs-main", herdrLocation: { paneId: "wA:p1" } } as never];
+	assert.equal((await ask(s, { cmd: "run-tool", token, tool: "tower_reply", args: { to: "main-1", message: "go" } })).ok, true, "at dispatch there is no gate");
+	world.ally.level.set(DEV1, "reply");
+	const gated = await ask(s, { cmd: "run-tool", token, tool: "tower_reply", args: { to: "main-1", message: "go" } });
+	assert.match(String(gated.error), /needs the boss's confirm/);
+	// Back at dispatch (what the run was claimed at): the gate is off again; a run is never above its claim.
+	world.ally.level.set(DEV1, "dispatch");
+	assert.equal((await ask(s, { cmd: "run-tool", token, tool: "tower_reply", args: { to: "main-1", message: "go" } })).ok, true);
+});
+
 test("a forward confirm: the ally run asks its own sender's device, whatever the request names, and the answer reaches the run at its poll", async () => {
 	const { s } = await setup();
 	world.ally.level.set(DEV1, "forward");
