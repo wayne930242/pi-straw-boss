@@ -832,6 +832,7 @@ sidecars, the `link_request` tool (it asks the server), and the remote-turn hook
 - `notes.jsonl`: handoff notes, local ones and each device's ally ones apart, the last 10 of each.
 - `opened.json`: the opener's ledger (sender, request hash, outcome, tab, main), 24 h.
 - `awaiting.json`: asks sent for a main (**Replies for a main**), 24 h.
+- `ally-routes.json`, `ally-answers.json`, `ally-opened.json`: what ally runs leave for their device apart from the local run's files (**Ally runs**, *Questions to local sessions*): the local sessions an ally run waits on or opened, what they answered until the device's next ally run takes it, and the ledger of the mains ally runs opened. 24 h.
 
 `link/threads/<device id>.jsonl` (primary server only; mode 600, in the 700 `link/` folder) is each ally device's thread (**The brief**).
 
@@ -1008,7 +1009,7 @@ The events are not part of the brief. They arrive as messages, each with the hea
 
 Ally run: section 1 names the sender (label, short id, team, level), with no head tower and no identity. Sections 2 and 3 are replaced by
 what the run's sender may already see. That is the `tower_list` and `board_read` scope of a remote turn: only workspaces inside the
-project the sender's team binds, and only that team's boards. Section 4 is left out (the digest is local). Section 5 is that device's
+project the sender's team binds (and, inside them, only the sessions whose pane folder lies in it; none at all when the team binds no project), and only that team's boards. Section 4 is left out (the digest is local). Section 5 is that device's
 last ally-run note. Section 6 lists the tools the level allows. Added:
 
 - **Asks in this run** (≤ 5 rows): for each envelope of the run that carries `awaitsReply`, its ask id and first line, so the run can
@@ -1035,8 +1036,8 @@ the run's kind on every request, in addition to the hooks in the run.
 |---|---|---|
 | `tower_list`, `board_read` | The full answer, as today | Scoped to the sender's team, as in a remote turn today |
 | `boss_status`, `call_tower` | Inside the workspace, as today | `boss_status` only (allowlisted) |
-| `tower_send` | Sent by the server as the tower identity, with the header the server writes (`id=sb-tower-<ws>`, `role=tower`, `head=yes` when it is). With `device`, `reply: true`, and `for: <local session>`, it is an ask for a main (**Replies for a main**) | Only to the sender's device; `inReplyTo` answers one of the run's asks. Any other target needs the gate, and the server checks the gate's Allow (below). A target that is a tower identity of this machine is refused outright, since it would carry peer text into a local run. |
-| `tower_reply` (new) `{ to, message, reply? }` | One message to one local session by id or name, sent as the tower identity under the header. This replaces "answer with intercom send". | Gate, as for `tower_send` to a local target. `origin=remote:<device id>` is stamped by the server. |
+| `tower_send` | Sent by the server as the tower identity, with the header the server writes (`id=sb-tower-<ws>`, `role=tower`, `head=yes` when it is). With `device`, `reply: true`, and `for: <local session>`, it is an ask for a main (**Replies for a main**) | Only to the sender's device (its id, short id, or label); `inReplyTo` answers one of the run's asks. Any other device, and a call without a device, is refused outright at every level: an Allow the boss gave for another device would otherwise send the text to the sender. |
+| `tower_reply` (new) `{ to, message, reply? }` | One message to one local session by id or name, sent as the tower identity under the header. This replaces "answer with intercom send". | Gate (dispatch: allowed), and the server checks the gate's Allow (below). A tower identity of this machine is refused outright, since it would carry peer text into a local run. `origin=remote:<device id>` is stamped by the server. What the run waits for from the session (`reply: true`) is the device's: **Questions to local sessions**. |
 | `boss_open_main`, `boss_close_main` | Run by the server with the persisted ledger and limits; `close-main` goes out from the tower identity | Gate (dispatch: allowed) |
 | `boss_server` | As in any local session (**Seeing and restarting the server**) | Refused by the token's kind, at every level |
 | `link_request` | Unchanged (the boss approves) | Refused at every level, as today |
@@ -1045,7 +1046,9 @@ the run's kind on every request, in addition to the hooks in the run.
 **The gate's Allow, checked by the server.** For a gated call from an ally run, the run sends the server the call's `toolCallId` and the
 SHA-256 of its canonical arguments, with its token. The server takes it only when the hub holds an Allow for the gate dialog of that
 `toolCallId`, opened by this run's token, over arguments with that digest, and not yet used. The Allow is then used up. A second call
-with the same id, other arguments, or another run's token is refused.
+with the same id, other arguments, or another run's token is refused. The Allow is used up in the same turn of the event loop as the check, so two calls that take it at once get it once.
+
+The hub notes Allows from the server's start, whether or not a page listens: a GUI stopped on purpose, or one that could not bind, does not stop the boss's yes in the terminal from being the Allow (the hub keeps its channel and its gate tracking through the page's stop, and asks the bridges for their open dialogs again).
 
 pi-intercom's `intercom` tool is blocked in runs with a pointer to `tower_reply` and `tower_send`. Without the block, a reply would
 carry the run's own short-lived id, and the answer would reach a pi that had already exited.
@@ -1060,17 +1063,27 @@ GUI; a boss message is an instruction". "Never ask the boss" stays.
   when the run starts go into it, up to 5, oldest first. A message that arrives during the run waits for the next fresh run (D1).
 - The run's level is fixed when it is claimed: the server computes it from `link.trust` or the unattended policy, and the run's hooks
   read the policy again and take the lower of the two. A sender that leaves the roster before the run starts has its messages dropped,
-  as today. One that leaves during the run gets its run ended with `quit`.
-- At `dispatch` (an unattended device's controller) the run has the full tower tools of a local run, minus `link_request`,
-  `boss_server`, and `wakeAfter`, and keeps the device's own guards.
+  as today. One that leaves during the run gets its run ended with `quit`: the server looks at the roster at every watch tick and at every tool call of the run. The server also holds the run to the lower of the level it was claimed at and the level the device has now, so lowering a device's trust from `dispatch` makes the gate apply to its running run at once; a raise never lifts a run above its claim.
+- At `dispatch` (an unattended device's controller) the run has the tower tools of a local run that serve the sender, minus `link_request`,
+  `boss_server`, `call_tower`, and `wakeAfter`, with `tower_send` to the sender only (never to a local tower: its text would reach a local run),
+  and keeps the device's own guards. This is stricter than "the full tower tools" an earlier draft promised, and the code is the reference.
+- A run whose claim names no sender (no peer, or a session with no link module to pin the turn) shuts down at once: it never runs unpinned with every tool.
 - **No tower service for the team's project.** On an attended device, a link message for a project in which no workspace has a tower
   service waits in the inbox for 7 days with a GUI notice, as today. The server opens nothing for it; the boss opens the workspace, or a
   promotion opens its tower, and the message then gets its ally run. Only an unattended device opens a workspace for a controller
   (**Unattended devices**).
-- A `confirm-request` from an ally's gate at `forward` stays a GUI alert for the boss and wakes nothing (D5).
+- A `confirm-request` from an ally's gate at `forward` stays a GUI alert for the boss and wakes nothing (D5). The wait for the sender's answer is the requesting run's: only that run may forget it, and the server drops it when the holder refuses the request or the run ends.
 - The Straw Link spec's rule "an attended device never opens a tab or a session for a remote message" is amended by the boss's
   decision D1: an attended device opens a session, an ally run in the tower tab of a workspace it already has, never a tab or a
   workspace (**Addressing and delivery**, Straw Link spec, amended in the same change).
+
+### Questions to local sessions
+
+An ally run may write to a local session (`tower_reply`, at `dispatch` or against an Allow) or open a main (`boss_open_main`). What that session says back answers the peer's request, so it must never enter a local run, whose brief and queue the boss trusts. Three things are kept apart, per device:
+
+- **Waits.** `tower_reply` with `reply: true` in an ally run records a route (`ally-routes.json`) for the session and the device, not an expectation of the local brief. A main the run opened is a route too, for all its reports.
+- **Answers.** A message from a session with a route does not become a local event. It is stored as an answer for the device (`ally-answers.json`) and wakes an ally run for that device like a link message: it waits for the device's next fresh run, is read by it under a header with `kind=tower_reply` and no `verified=yes` (the session is local; the words are still data), and leaves the store when that run ends well. A route made by `tower_reply` is spent by its first answer. When the local run also waits on the same session, the newer wait wins.
+- **Ledger.** The mains an ally run opened have a ledger of their own (`ally-opened.json`), so the local brief's "opened for" lines never name a peer's text.
 
 ### Replies for a main (D4)
 
@@ -1122,7 +1135,7 @@ It then closes the ask. Anything else (no ask, wrong device, used, expired) is t
   `kind=link_reply` and `for=<tower>`.
 
 No run starts and nothing enters a tower. That main's run is then a remote turn at the replying device's level, with the step-4 hooks
-(**Security**). If the main has gone (not live, or no longer the tab's main), the reply falls back to an ally run, whose brief says which
+(**Security**). If the main has gone (not live, or no longer the tab's main), or has not taken the offer within 5 minutes of the first one (a main of an older build never connects to the channel), the reply falls back to an ally run, whose brief says which
 main asked.
 
 **Mixed builds.** An ask to an older device comes back as a plain `tower` and gets an ally run, and so does an ally's reply to an older
@@ -1376,7 +1389,7 @@ All of it is behind the flag `towerRuns.enabled` (**Build steps**). With the fla
 Inserted before Straw Link step 6, which is rebased on them. Each step passes `npm run check` and `npm test`, updates
 `docs/how-it-works.md`, and is merged on its own. B4 to B6 sit behind one flag, `towerRuns.enabled` in `config.json` (off by default), so a
 release between them never leaves a tower that takes no events or link mail with no taker. The flag goes on by default, and is then
-removed, with the release that carries B6.
+removed, with the release that carries B6. A `config.json` that exists but cannot be parsed leaves the service on, as a missing one does, and the server tells the boss once (the log's `error code=config` and the status's `lastError`): the file's own `enabled: false` is not obeyed while it is broken, and silence there would hide that.
 
 1. **B1, server skeleton.**
    - `src/server/{main,cli,record,socket,log}.ts`, built to `dist/server/*.mjs` by `prepack`, with the build's check that the bundle has
