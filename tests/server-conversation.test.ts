@@ -393,6 +393,9 @@ test("a boss message while an event run is live stays with that run, the comms s
 	assert.equal(world.pis.size, 2, "no conversation starts: the event run is live");
 	assert.equal(world.expose!.runs.view("wA")!.file, evFile, "the comms show the run the boss is in");
 	assert.equal(typeof readRun(world.slot, "wA", eventRun)?.bossIn, "string");
+	const inStatus = world.expose!.runs.status("wA")!;
+	assert.equal(inStatus.bossIn?.id, eventRun, "the status says the boss is in this event run");
+	assert.equal(inStatus.conversation, undefined);
 	assert.equal(((await poll(s, ev.token)).event as { text: string }).text, "what is the state of the build?");
 	assert.equal((await ask(s, { cmd: "run-done", token: ev.token, note: "answered the boss about the build", left: true })).ok, true);
 	exit(eventRun);

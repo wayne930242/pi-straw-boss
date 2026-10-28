@@ -48,6 +48,14 @@ test("the facts: how it began (resumed with turns, or new with the server's reas
 	assert.match(conversationFacts(conv(), zh).cap, /^上限 \d\d:\d\d$/);
 });
 
+test("the boss in an event run: the box says so in place of the conversation row, with no Leave or New", () => {
+	const el = box(svc({ conversation: undefined, bossIn: { id: "e3", since: "2026-10-28T10:05:00Z" }, run: { id: "e3", kind: "local", startedAt: "2026-10-28T10:00:00Z" } }));
+	assert.equal(el.hidden, false);
+	assert.match(el.textContent, /^You are in event run e3 · started \d\d:\d\d/);
+	assert.doesNotMatch(el.textContent, /Boss conversation/);
+	assert.deepEqual(buttons(el), []);
+});
+
 test("a run's divider: resumed or new with its start, and how it ended with its note once it has", () => {
 	const run = { id: "c1", kind: "conversation" as const, resumed: true, startedAt: "2026-10-28T10:00:00Z" };
 	assert.match(conversationDivider(run).title, /^Boss conversation · resumed · \d\d:\d\d$/);

@@ -182,13 +182,16 @@ test("a tower's empty box: held, ally, a live conversation (not ending), else th
 	assert.equal(placeholderOf({ ...unit, conversation: true }), m.placeholder_conversation());
 	assert.equal(placeholderOf({ ...unit, conversation: true, held: true }), m.placeholder_held());
 	assert.equal(placeholderOf({ ...unit, conversation: true, allyLive: true }), m.placeholder_ally());
+	assert.equal(placeholderOf({ ...unit, eventRun: true }), m.placeholder_event_run());
 	assert.equal(placeholderOf({ ...unit, wakes: false }), m.placeholder({ name: "tower" }));
 	const svc = { state: "running", run: {}, allyRuns: [] as unknown[] };
 	assert.equal(wakeOf({ ...svc, conversation: {} }).conversation, true);
 	assert.equal(wakeOf({ ...svc, conversation: { closing: true } }).conversation, false, "a closing conversation is not continued");
 	assert.equal(wakeOf(svc).conversation, false);
-	assert.deepEqual(wakeOf(undefined), { wakes: false, held: false, conversation: false, allyLive: false });
-	assert.deepEqual(wakeOf({ state: "held", allyRuns: [{}] }), { wakes: true, held: true, conversation: false, allyLive: true });
+	assert.equal(wakeOf({ ...svc, bossIn: { id: "e3" } }).eventRun, true);
+	assert.equal(wakeOf({ ...svc, bossIn: { id: "e3" }, conversation: {} }).eventRun, false);
+	assert.deepEqual(wakeOf(undefined), { wakes: false, held: false, conversation: false, allyLive: false, eventRun: false });
+	assert.deepEqual(wakeOf({ state: "held", allyRuns: [{}] }), { wakes: true, held: true, conversation: false, allyLive: true, eventRun: false });
 });
 
 test("an event run's comms say it is the tower's run, not a teammate's ally run (found in the visual pass)", () => {

@@ -38,6 +38,8 @@ export interface TowerService {
 	run?: { id: string; kind: "local" | "ally"; startedAt: string };
 	/** The live local run is a boss conversation (the hand copy of runs.ts `ConversationStatus`; times are epoch milliseconds). */
 	conversation?: { since: string; resumed: boolean; why?: string; turns: number; idle: boolean; idleAt?: number; idleMs: number; capAt: number; closing?: true };
+	/** The live local run is an event run the boss spoke into (runs.ts `ServiceStatus.bossIn`). */
+	bossIn?: { id: string; since: string };
 	/** The last local runs, oldest first (runs.ts `LocalRunRow`); `key` is the read-only unit that shows an event run's comms, added while its session file is known. */
 	localRuns?: { id: string; kind: "conversation" | "event"; resumed?: boolean; why?: string; startedAt: string; endedAt?: string; outcome?: string; note?: string; key?: string }[];
 	/** `key`: the read-only unit that shows the run's comms (the net adds it while the run's session file is known; the file itself never reaches the page). */

@@ -11,10 +11,10 @@ import { conversationFacts, guarded } from "./towermodel.ts";
 
 const clock = (at: string) => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 export function fillConversation(box: HTMLElement, ws: string, service: TowerService | undefined) {
-	const c = service?.conversation, events = (service?.localRuns ?? []).filter((r) => r.kind === "event"), sig = JSON.stringify([ws, c, events.map((r) => [r.id, r.key, r.outcome, r.note])]);
+	const c = service?.conversation, inRun = !c ? service?.bossIn : undefined, events = (service?.localRuns ?? []).filter((r) => r.kind === "event"), sig = JSON.stringify([ws, c, inRun, events.map((r) => [r.id, r.key, r.outcome, r.note])]);
 	if (box.dataset.sig === sig) return;
 	box.dataset.sig = sig;
-	box.hidden = !c && !events.length;
+	box.hidden = !c && !inRun && !events.length;
 	if (box.hidden) return box.replaceChildren();
 	const fail = h("small", { class: "tnote-fail", role: "alert" }), done = h("small", { class: "conv-done", role: "status" }), say = (text?: string) => ((fail.textContent = text ?? ""), (done.textContent = ""));
 	const button = (label: string, title: string, path: "leave" | "new", ok: () => string) => {
@@ -30,6 +30,7 @@ export function fillConversation(box: HTMLElement, ws: string, service: TowerSer
 			h("p", { class: "conv-acts" }, ...(c.closing ? [] : [button(m.conv_leave(), m.conv_leave_title(), "leave", m.conv_left)]), button(m.conv_new_button(), m.conv_new_title(), "new", m.conv_fresh), fail, done),
 		);
 	}
+	if (inRun) rows.push(h("p", { class: "conv-line conv-in-run" }, h("b", null, m.conv_in_run({ id: inRun.id, time: clock(service?.run?.startedAt ?? inRun.since) }))));
 	if (events.length) {
 		rows.push(h("p", { class: "conv-runs" }, ...events.map((r) => {
 			const label = m.conv_event_run({ time: clock(r.startedAt) }), tip = r.note ? m.conv_event_run_note({ outcome: r.outcome ?? "…", note: r.note }) : (r.outcome ?? "");

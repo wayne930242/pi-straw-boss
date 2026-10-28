@@ -44,7 +44,7 @@ const TOWER_STATES = ["working", "waiting", "new", "closing", "inrun", "standing
 type TowerState = (typeof TOWER_STATES)[number];
 /** The boss spoke to an event run that is still live: no conversation, the run's own chip is the comms, and its heading names it. */
 const inRun = (): TowerService => ({
-	state: "running", queued: 0, notices: [], parked: [], allyRuns: [], run: { id: "e3", kind: "local", startedAt: stamp(420) },
+	state: "running", queued: 0, notices: [], parked: [], allyRuns: [], run: { id: "e3", kind: "local", startedAt: stamp(420) }, bossIn: { id: "e3", since: stamp(424) },
 	localRuns: [
 		{ id: "c2", kind: "conversation", resumed: true, startedAt: stamp(204), endedAt: stamp(380), outcome: "quit", note: "(ended idle)" },
 		{ id: "e3", kind: "event", startedAt: stamp(420), key: "run-e3" },

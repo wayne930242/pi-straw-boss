@@ -550,6 +550,8 @@
 	"ally_tag": "{team} · 隊友",
 	"link_trust_help": "這台裝置傳來的訊息能做什麼。reply：允許清單內的唯讀工具直接執行，其餘在這裡問你。forward：同上，但其餘改問對方電腦上的人。dispatch：像你自己送的訊息一樣執行，仍受這台電腦自己的防護限制。",
 	"mark_standing": "待命",
+	"placeholder_event_run": "送給正在跑的事件 run・它會在這裡回答",
+	"conv_in_run": "你正在事件 run {id} 裡・{time} 開始",
 	"placeholder_wake": "喚醒塔台",
 	"placeholder_conversation": "接續與塔台的老闆對話",
 	"tower_notice_retry": "重試",

@@ -106,6 +106,8 @@ export interface ServiceStatus {
 	run?: { id: string; kind: "local" | "ally"; startedAt: string };
 	/** The live local run is a boss conversation (bossconv.ts): how it began, and when it ends if the boss goes quiet. */
 	conversation?: ConversationStatus;
+	/** The live local run is an event run the boss spoke into (`bossIn`, when): it answers them, in place of a conversation. */
+	bossIn?: { id: string; since: string };
 	/** The last local runs, oldest first (at most `RUNS_SHOWN`): the conversations and the event runs, with the handoff note each left. */
 	localRuns?: LocalRunRow[];
 	/** `id` and `label` name the run and its device for the GUI (the label is the roster's, cut to the label character set); `device` is the device id. */
@@ -1298,6 +1300,7 @@ export function createRuns(o: RunsOptions) {
 				queued: waitingOf(svc, new Set(run?.offered.keys() ?? [])).length,
 				...(run ? { run: { id: run.rec.id, kind: run.rec.kind, startedAt: run.rec.startedAt } } : {}),
 				...(run && !run.ended && run.rec.conversation ? { conversation: conversationStatus(run) } : {}),
+				...(run && !run.ended && run.rec.kind === "local" && !run.rec.conversation && run.rec.bossIn ? { bossIn: { id: run.rec.id, since: run.rec.bossIn } } : {}),
 				...(localRunRows(workspace).length ? { localRuns: localRunRows(workspace) } : {}),
 				allyRuns: [...svc.allies.values()].map((a) => ({ id: a.rec.id, device: a.rec.device ?? "?", label: a.rec.deviceLabel ?? a.rec.deviceShort ?? (a.rec.device ?? "?").slice(0, 6), startedAt: a.rec.startedAt })),
 				...(svc.lastRun ? { lastRun: svc.lastRun } : {}),
