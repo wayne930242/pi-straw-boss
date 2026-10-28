@@ -112,6 +112,21 @@ test("Safety: focused, busy, pinned", async () => {
 	assert.equal(statePinned.closes.length, 0, "a pin in the state file holds even when the token was lost");
 });
 
+test("A tower's standing pane in a linked worktree is never swept, however long it was an agent's and however idle its shell is (SR-disposition)", async () => {
+	const seen = state({ initialized: true, agentSeen: { "term_w2:p1": 1, "term_w2:p2": 1 } });
+	const bare = await plan({ workspaces: [workspace("w2", "linked")], panes: [pane("w2:p1", "w2")], state: seen });
+	assert.equal(bare.closes.length, 1, "control: the same pane without the marks is swept");
+	for (const [why, workspaces, panes, reason] of [
+		["pane role tower (Ctrl+D parked, the stand-in released)", [workspace("w2", "linked")], [pane("w2:p1", "w2", { tokens: { sb_role: "tower" } })], /pane w2:p1 is a tower's standing pane/],
+		["pane role ally", [workspace("w2", "linked")], [pane("w2:p1", "w2", { tokens: { sb_role: "ally" } })], /pane w2:p1 is an ally run's pane/],
+		["the workspace's tower token", [workspace("w2", "linked", { tokens: { tower: "sb-tower-w2" } })], [pane("w2:p1", "w2")], /its tower \(sb-tower-w2\) stands in it/],
+	]) {
+		const result = await plan({ workspaces, panes, state: seen });
+		assert.equal(result.closes.length, 0, why);
+		assert.match(result.skips.join("\n"), reason, why);
+	}
+});
+
 test("Confirmation wait", async () => {
 	const seen = state({ initialized: true, agentSeen: { "term_w2:p1": 1 } });
 	const input = { workspaces: [workspace("w2", "linked")], panes: [pane("w2:p1", "w2")], confirmMs: CONFIRM_MS };
@@ -914,6 +929,10 @@ test("The parent shell stays while a worktree remains, has an agent, is pinned, 
 		["its shell runs something", { infos: { "m:p1": busy } }, /vite is running in m:p1/],
 		["its pane is focused", { parentPane: { focused: true } }, /focused pane/],
 		["a second pane runs something", { extraPane: true, infos: { "m:p2": busy } }, /vite is running in m:p2/],
+		["a tower stands in it (the workspace token)", { parent: { tokens: { tower: "sb-tower-m" } } }, /its tower \(sb-tower-m\) stands in it/],
+		["its standing pane is marked as a tower's", { parentPane: { tokens: { sb_role: "tower" } } }, /pane m:p1 is a tower's standing pane/],
+		["a tower's stand-in agent is on the standing pane", { parentPane: { agent: "letta", tokens: { sb_role: "tower" } } }, /pane m:p1 is a tower's standing pane/],
+		["an ally run's pane is in it", { extraPane: { tokens: { sb_role: "ally" } } }, /pane m:p2 is an ally run's pane/],
 	];
 	for (const [name, setup, expected] of cases) {
 		const dir = await tempDir();
@@ -921,7 +940,7 @@ test("The parent shell stays while a worktree remains, has an agent, is pinned, 
 			const parent = parentShell("m", setup.parent);
 			const w = parentWorld({
 				workspaces: [parent, ...(setup.children ? [childOf()] : [])],
-				panes: [pane("m:p1", "m", setup.parentPane), ...(setup.extraPane ? [pane("m:p2", "m")] : [])],
+				panes: [pane("m:p1", "m", setup.parentPane), ...(setup.extraPane ? [pane("m:p2", "m", setup.extraPane === true ? {} : setup.extraPane)] : [])],
 				infos: setup.infos,
 			});
 			const store = createStore(dir);

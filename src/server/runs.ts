@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { basename } from "node:path";
 import { type HerdrRun, panes, report, result, type Sleep, startPi } from "../herdr.ts";
+import { allyKids, clearOrder } from "../order.ts";
 import { alive as pidAlive } from "../remote.ts";
 import { startOf as processStartOf, startedLater as processStartedLater } from "../startof.ts";
 import { assertSettingsSafe } from "../trust/settings.ts";
@@ -44,14 +45,20 @@ export interface Timers {
 	restored: number;
 	/** How long a stopping server waits for its runs to quit after telling them. */
 	stopGrace: number;
+	/** The boss's silence (no input in the run's session, no turn) after which a run they were in goes back to the normal wrap-up. */
+	bossAway: number;
+	/** The most a boss's time in one run holds off the run cap; then the cap applies again. */
+	bossMax: number;
 }
-export const TIMERS: Timers = { wake: 1000, claim: 60_000, watch: 2000, idleSteer: 60_000, idleEnd: 300_000, steerAt: 18 * 60_000, quitAt: RUN_CAP_MINUTES * 60_000, quitGrace: 10_000, signal: 5000, lost: 30_000, refuse: 60_000, loop: 600_000, restored: 120_000, stopGrace: 1500 };
+export const TIMERS: Timers = { wake: 1000, claim: 60_000, watch: 2000, idleSteer: 60_000, idleEnd: 300_000, steerAt: 18 * 60_000, quitAt: RUN_CAP_MINUTES * 60_000, quitGrace: 10_000, signal: 5000, lost: 30_000, refuse: 60_000, loop: 600_000, restored: 120_000, stopGrace: 1500, bossAway: 10 * 60_000, bossMax: 4 * 3_600_000 };
 const LOOP_MAX = 3;
 const LEVELS = ["reply", "forward", "dispatch"];
 /** The lower of two trust levels (an unknown one counts as `reply`). */
 const lower = (a: string, b: string) => LEVELS[Math.min(Math.max(LEVELS.indexOf(a), 0), Math.max(LEVELS.indexOf(b), 0))]!;
 /** The most messages an ally run is given at its start; the rest wait for the next run. */
 const ALLY_BATCH = 5;
+/** How long after the boss wrote at the tower prompt the run it woke still counts as the one they are in (a run waits for a free slot, a settings check, and its claim). */
+const PROMPT_WAKE_MS = 5 * 60_000;
 
 export type ServiceState = "standing" | "waking" | "running" | "closing" | "held";
 export interface Notice { id: string; level: "info" | "warning" | "error"; kind: "settings" | "loop" | "start" | "late"; text: string; at: number; detail?: string }
@@ -93,6 +100,12 @@ export interface ServiceRef {
 	live(): boolean;
 	/** The folder the settings check looks at: the standing pane's, else the workspace's checkout path. */
 	cwd(): Promise<string>;
+	/** The tower's `sb_order` key, which the panes of its ally runs are keyed after; undefined when Herdr cannot place the tower. */
+	towerKey(): Promise<string | undefined>;
+	/** A local run is about to start pi in the standing pane: the stand-in goes and the tower prompt leaves (standing.ts); resolves once the pane is free. */
+	yieldPane(): Promise<void>;
+	/** A local run ended: the pane is free for the prompt again. */
+	freed(): void;
 	/** The brief for a run: the server builds it from the net, the opener's ledger, the digest, and the last note. */
 	brief(input: { events: QueuedEvent[]; woken: number; run: RunRecord }): Promise<{ text: string; digestKeys: string[] }>;
 	/** Drops the digest lines a run's brief showed. */
@@ -128,6 +141,12 @@ interface Active {
 	/** A run found on disk after a server restart that has not reconnected yet. */
 	recovering?: number;
 	ended?: boolean;
+	/** The boss is in this run: when they last showed it (they spoke in its session, or woke it from the tower prompt). Memory only: a server restart forgets it, and their next word tells it again. */
+	boss?: number;
+	/** When the boss first showed it, for `bossMax`: kept for the life of the run (their absences do not restart it). */
+	bossSince?: number;
+	/** After the boss's silence ended their time here, the run has the idle wrap-up window to itself: the cap does not cut it short until then. */
+	graceUntil?: number;
 }
 interface Svc {
 	ref: ServiceRef;
@@ -141,6 +160,8 @@ interface Svc {
 	refusedAt?: number;
 	/** Events a pending slot wait is for. */
 	waiting?: boolean;
+	/** The boss wrote at the tower prompt: the run these events wake is one they are in. */
+	bossAt?: number;
 	/** The ally runs of the service: one per device. */
 	allies: Map<string, Active>;
 	allyWake?: ReturnType<typeof setTimeout>;
@@ -257,6 +278,8 @@ export function createRuns(o: RunsOptions) {
 	const launch = async (active: Active, name: string) => {
 		const { rec, svc } = active, id = rec.id;
 		try {
+			// The standing pane shows the tower prompt between runs; Herdr starts an agent only in an available shell, so the prompt leaves first. An ally run has a pane of its own.
+			if (rec.kind === "local") await svc.ref.yieldPane().catch((cause: Error) => error("run-yield", `${rec.id}: ${cause.message}`));
 			await start(o.run, o.sleep, rec.agent, rec.pane, ["--name", name, "--sb-run", id, ...(o.model() ? ["--model", o.model()!] : [])]);
 			const found = await procOf(rec.pane, id);
 			if (!found) throw new Error("pi's process was not found in the pane");
@@ -329,7 +352,7 @@ export function createRuns(o: RunsOptions) {
 			const lead = svc.ref.record().pane, dir = await svc.ref.cwd();
 			const made = await result(o.run, ["pane", "split", lead, "--direction", "right", "--cwd", dir, "--no-focus"]);
 			rec.pane = made.pane.pane_id as string;
-			await report(o.run, "pane", rec.pane, { sb_role: "ally" }).catch(() => {});
+			await markAllies(svc);
 		} catch (cause) {
 			if (active.ended) return;
 			error("run-start", `${rec.id}: the pane could not be split: ${(cause as Error).message}`);
@@ -343,6 +366,20 @@ export function createRuns(o: RunsOptions) {
 		ensureWatcher();
 		// The claim is waited for in the background: the next device's run starts meanwhile.
 		void launch(active, `ally run · ${first.label} · ${id.slice(0, 8)}`).catch((cause: Error) => error("run-start", `${id}: ${cause.message}`));
+	};
+	/**
+	 * Writes the tokens of the panes the service's ally runs live in (order.ts `allyKids`): `sb_role`, and the row's place, mark, branch and name in the net view. The tokens last 10 minutes and a run may last 20, so the
+	 * tower's publish writes them again (`markAllies`); a pane that cannot be placed (Herdr does not know the tower) keeps its role alone. A failed write waits for the next one.
+	 */
+	const markAllies = async (svc: Svc, towerKey?: string | null) => {
+		const live = [...svc.allies.values()].filter((a) => a.rec.pane && !a.ended);
+		if (!live.length) return;
+		const key = towerKey === undefined ? await svc.ref.towerKey().catch(() => undefined) : towerKey ?? undefined;
+		const kids = key ? allyKids(key, live.map((a) => ({ pane: a.rec.pane, label: a.rec.deviceLabel ?? a.rec.device ?? "?" }))) : [];
+		for (const a of live) {
+			const kid = kids.find((k) => k.pane === a.rec.pane);
+			await report(o.run, "pane", a.rec.pane, { sb_role: "ally", sb_order: kid?.order ?? null, sb_mark: kid?.mark ?? null, sb_indent: kid?.indent ?? null, sb_name: kid?.name ?? null }).catch(() => {});
+		}
 	};
 	/** A Herdr agent name is lowercase, up to 32 characters, and unique per run. */
 	const agentName = (s: Slot, workspace: string, id: string, prefix = "tower") => `${prefix}-${s.primary ? "" : `${s.slot8}-`}${workspace.toLowerCase().replace(/[^a-z0-9_-]/g, "")}-${id.slice(0, 8)}`.slice(0, 32).replace(/[-_]+$/, "");
@@ -437,6 +474,7 @@ export function createRuns(o: RunsOptions) {
 		if (!ally) {
 			svc.lastRun = { endedAt: a.rec.endedAt, outcome };
 			svc.state = svc.state === "held" ? "held" : "standing";
+			svc.ref.freed();
 		}
 		log.line("run-end", { workspace: ws, run: a.rec.id, kind: a.rec.kind, outcome, ...(detail ? { detail: phrase(detail, 120) } : {}) });
 		if (failed && ally) {
@@ -464,7 +502,12 @@ export function createRuns(o: RunsOptions) {
 	async function finishAlly(a: Active, outcome: Outcome, failed: boolean, keepTaken: boolean) {
 		const svc = a.svc, identity = svc.ref.record().id;
 		// The pane is closed once pi has exited: a pane that pi leaves returns to its shell and would stay (a started pi that is still there goes with it).
-		if (a.rec.pane) await o.run(["pane", "close", a.rec.pane]).catch(() => {});
+		if (a.rec.pane) {
+			await clearOrder(o.run, [a.rec.pane]);
+			await o.run(["pane", "close", a.rec.pane]).catch(() => {});
+			// The panes of the device's siblings move up in the order, and the branch of the last one is drawn.
+			await markAllies(svc);
+		}
 		for (const id of a.rec.events) {
 			try {
 				if (!failed && outcome !== "herdr-restart" && !keepTaken) {
@@ -549,14 +592,27 @@ export function createRuns(o: RunsOptions) {
 					terminate(a, "crashed");
 					continue;
 				}
-				if (age >= t.quitAt) {
+				// The boss is in the run (docs/how-it-works.md, The boss in a run): the cap and the idle wrap-up wait for them. Their silence for `bossAway` while the run is idle, or `bossMax` in all, ends it.
+				if (a.boss !== undefined && (now() - (a.bossSince ?? a.boss) >= t.bossMax || (a.idleSince !== undefined && now() - Math.max(a.boss, a.idleSince) >= t.bossAway))) {
+					const away = now() - (a.bossSince ?? a.boss) < t.bossMax;
+					a.boss = undefined;
+					if (away) {
+						// The boss left without quitting: the run gets the normal wrap-up (an idle steer, then the end with a note), and the cap does not cut it short meanwhile.
+						a.idleSince = now();
+						a.steeredIdle = false;
+						a.graceUntil = now() + t.idleSteer + t.idleEnd + t.quitGrace;
+						log.line("run-boss-away", { workspace: a.rec.workspace, run: a.rec.id });
+					}
+				}
+				const bossHere = a.boss !== undefined, grace = a.graceUntil !== undefined && now() < a.graceUntil;
+				if (age >= t.quitAt && !bossHere && !grace) {
 					a.pending = "timeout";
 					terminate(a, "timeout");
-				} else if (age >= t.steerAt && !a.steeredLong) {
+				} else if (age >= t.steerAt && !a.steeredLong && !bossHere && !grace) {
 					a.steeredLong = true;
 					a.commands.push({ type: "steer", text: `You have run for ${Math.round(age / 60_000)} minutes and the cap is ${RUN_CAP_MINUTES}. Wrap up now and call tower_done with your handoff note.` });
 				}
-				if (a.idleSince !== undefined) {
+				if (a.idleSince !== undefined && !bossHere) {
 					const idle = now() - a.idleSince;
 					if (idle >= t.idleSteer + t.idleEnd) {
 						try { addNote(slot, a.rec.workspace, { kind: a.rec.kind, ...(a.rec.device ? { device: a.rec.device } : {}), run: a.rec.id, at: iso(now()), note: "(ended without a note)" }); } catch (cause) { error("run-note", (cause as Error).message); }
@@ -588,6 +644,12 @@ export function createRuns(o: RunsOptions) {
 		writeRun(slot, a.rec);
 		byToken.set(a.token, a);
 		if (!ally) svc.state = "running";
+		// A pi the boss started by hand is a run they are in; so is the run a boss event from the tower prompt wakes (they are at the pane).
+		if (!ally && (hand || (svc.bossAt !== undefined && now() - svc.bossAt <= PROMPT_WAKE_MS))) {
+			a.boss = now();
+			a.bossSince = a.boss;
+		}
+		if (!ally) svc.bossAt = undefined;
 		log.line("run-claim", { workspace: a.rec.workspace, run: a.rec.id, ...(hand ? { hand: true } : {}) });
 		const r = svc.ref.record();
 		const peer: Peer | undefined = ally && a.rec.device && a.rec.team ? { device: a.rec.device, label: a.rec.deviceLabel ?? a.rec.device.slice(0, 6), short: a.rec.deviceShort ?? a.rec.device.slice(0, 6), team: a.rec.team, teamName: a.rec.teamName ?? a.rec.team.slice(0, 6) } : undefined;
@@ -683,6 +745,9 @@ export function createRuns(o: RunsOptions) {
 		const a = of(req.token);
 		if (!a || a.ended) return unknown;
 		if (a.closing !== undefined) return { ok: true as const };
+		if (req.left === true) return bossLeft(a);
+		// The boss is in this run: it is not the model's to end. It answers them, and the run ends when they quit it or are silent for `bossAway` (the idle wrap-up then asks for the note).
+		if (a.boss !== undefined && a.terminating === undefined) return { ok: true as const, stay: true as const, text: `The boss is in this session: they spoke here, or woke you from the tower prompt. Stay and answer them; do not end the run. It ends when they quit it, or when they have been silent for ${Math.round(t.bossAway / 60_000)} minutes and you are asked to wrap up. Then call tower_done with your handoff note.` };
 		const note = typeof req.note === "string" ? req.note.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u2028\u2029]/g, "").split("\n").map((l) => l.trim()).filter(Boolean).join("\n") : "";
 		if (!note || note.length > 1200) return { ok: false as const, error: "the handoff note is 1 to 1,200 characters, one item per line" };
 		if (req.wakeAfter !== undefined && a.rec.kind !== "local") return { ok: false as const, error: "an ally run schedules no wake" };
@@ -697,6 +762,32 @@ export function createRuns(o: RunsOptions) {
 		if (a.rec.kind === "local") a.svc.state = "closing";
 		a.commands.length = 0;
 		return { ok: true as const };
+	}
+	/** The boss quit a run they were in: it ends as done, with a note of its own; the events it did not take wait for the next run. A quit of any other run, or of one the server is already ending, changes nothing. */
+	async function bossLeft(a: Active) {
+		if (a.boss === undefined || a.rec.kind !== "local" || a.terminating !== undefined || a.pending !== undefined) return { ok: true as const };
+		addNote(slot, a.rec.workspace, { kind: "local", run: a.rec.id, at: iso(now()), note: "(the boss left the run)" });
+		await a.svc.ref.clearDigest(a.digestKeys).catch(() => {});
+		a.boss = undefined;
+		a.closing = now();
+		a.svc.state = "closing";
+		a.commands.length = 0;
+		return { ok: true as const };
+	}
+	/** The boss spoke in the run's session (its extension saw input from the keyboard): they are in the run. */
+	function present(req: Record<string, unknown>) {
+		const a = of(req.token);
+		if (!a || a.ended) return unknown;
+		if (a.rec.kind !== "local") return { ok: false as const, error: "an ally run has no boss in it" };
+		if (bossOver(a)) return { ok: true as const };
+		a.boss = now();
+		a.bossSince ??= a.boss;
+		a.graceUntil = undefined;
+		return { ok: true as const };
+	}
+	/** The server is ending the run, or the boss's `bossMax` since their first word is spent: a sign of them changes nothing. */
+	function bossOver(a: Active) {
+		return a.terminating !== undefined || (a.bossSince !== undefined && now() - a.bossSince >= t.bossMax);
 	}
 	/** `/new`, `/resume`, or `/fork` in a run end its claim: the next event wakes a fresh run. */
 	async function releaseRun(req: Record<string, unknown>) {
@@ -798,7 +889,9 @@ export function createRuns(o: RunsOptions) {
 		},
 		/** Messages wait in the link inbox for the tower identity: the service of that identity starts ally runs for them. */
 		pokeAllies: (identity: string) => { for (const s of services.values()) if (s.ref.record().id === identity) pokeAlly(s); },
-		claim, paneRole, poll, taken, done, release: releaseRun,
+		claim, paneRole, poll, taken, done, present, release: releaseRun,
+		/** Writes the tokens of the service's ally panes again (the tower's publish, with its own `sb_order` as the key). */
+		markAllies: (workspace: string, towerKey?: string | null) => { const s = services.get(workspace); return s ? markAllies(s, towerKey) : Promise.resolve(); },
 		/** The run behind a token, or undefined. */
 		runOf: (token: unknown): RunWho | undefined => {
 			const a = of(token);
@@ -820,12 +913,17 @@ export function createRuns(o: RunsOptions) {
 			for (const a of runs) await finish(a, "herdr-restart");
 			pendingTakeovers = Math.max(0, pendingTakeovers - 1);
 		},
-		/** The boss writes to the tower (the GUI's composer, `/boss tower <prompt>`): an event ahead of the rest; a held service wakes again. */
-		boss(workspace: string, text: string, from = "the boss"): QueuedEvent {
+		/** The boss writes to the tower (the GUI's composer, `/boss tower <prompt>`, the tower prompt): an event ahead of the rest; a held service wakes again. */
+		boss(workspace: string, text: string, from = "the boss", opts: { present?: boolean } = {}): QueuedEvent {
 			const svc = services.get(workspace);
 			if (!svc) throw new Error(`The sb server stands in for no tower of workspace ${workspace}`);
 			const written = append(slot, svc.ref.record(), { kind: "boss", from: { id: "boss", name: from }, text, at: iso(now()) });
 			if (svc.state === "held") (svc.state = svc.run ? "running" : "standing", (svc.crashes = []), (svc.notices = svc.notices.filter((n) => n.id !== "loop")));
+			// At the tower prompt the boss is at the pane: the run this wakes is one they are in, from its claim (or from now, when a run is live already).
+			if (opts.present) {
+				svc.bossAt = now();
+				if (svc.run?.token && !svc.run.ended && svc.run.rec.kind === "local" && !bossOver(svc.run)) (svc.run.boss = now(), (svc.run.bossSince ??= svc.run.boss));
+			}
 			poke(svc);
 			return written;
 		},

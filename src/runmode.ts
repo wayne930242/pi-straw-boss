@@ -31,6 +31,8 @@ export interface RunSideDeps {
 }
 export const MESSAGE = "straw-tower";
 const POLL_MS = 1000, CLAIM_WAIT_MS = 10_000, LOST_MS = 30_000, TURN_START_MS = 15_000, GLYPH_WAIT_MS = 30_000;
+/** The boss's words in the run's session are told to the server at most this often: its silence is judged in minutes. */
+const BOSS_SIGN_MS = 15_000;
 /** A run's pane tokens: the tower's standing pane and an ally run's pane. */
 const RUN_PANE_ROLES = new Set(["tower", "ally"]);
 /** A `/reload` makes a new instance of the extension in the same process: the claim stays with the process. */
@@ -74,7 +76,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	let timer: ReturnType<typeof setInterval> | undefined, polling = false, ending = false, closing = false;
 	// The turn a message was sent for has not begun, or one is under way: the run is not idle for the server until it settles.
 	let inTurn = false, triggered: number | undefined, outOfReach: number | undefined;
-	let registered = false;
+	let registered = false, bossSign: number | undefined, signing: Promise<unknown> | undefined;
 
 	// Every request goes through the session's look at the server (server-look.ts), which passes the record through the owner gate before it is trusted or a secret is sent to its socket (R13-F003):
 	// a run never reads the record itself. It starts nothing: a run of a server that is gone has nothing to run for.
@@ -196,7 +198,10 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 				wakeAfter: Type.Optional(Type.Number({ description: "Minutes until a follow-up run, 5 to 240. Local runs only." })),
 			}),
 			execute: async (_id, params, _signal, _update, context) => {
-				await call({ cmd: "run-done", note: params.note, ...(params.wakeAfter !== undefined ? { wakeAfter: params.wakeAfter } : {}) });
+				await signing;
+				const answer = await call({ cmd: "run-done", note: params.note, ...(params.wakeAfter !== undefined ? { wakeAfter: params.wakeAfter } : {}) });
+				// The boss is in this run: the server does not end it, and the model is told why (docs/how-it-works.md, The boss in a run).
+				if (answer.stay === true) return { content: [{ type: "text", text: text(answer.text) || "The boss is in this session: stay and answer them; the run ends when they quit it." }], details: { stay: true } };
 				closing = true;
 				// Pi leaves once this result is written: the server has recorded the note and marked the run closing.
 				context.shutdown();
@@ -299,6 +304,15 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 
 	// --- the session's events --------------------------------------------------------------------------------------------------------------------------------------------
 
+	// The boss's own words in this session (the keyboard, not an event or a steer of the server's) make them part of the run: the server then keeps it until they leave (docs/how-it-works.md, The boss in a run).
+	pi.on("input", (event) => {
+		if (mode !== "run" || claim?.kind !== "local" || event.source !== "interactive") return;
+		if (bossSign !== undefined && cfg.now() - bossSign < BOSS_SIGN_MS) return;
+		bossSign = cfg.now();
+		// Not waited for: pi takes the boss's words only after this handler, and a round trip here would let the run's own event start a turn first and the words be refused as "already processing". The request goes out now;
+		// a tower_done waits for it (below), so it is heard before the model can end the run. A server that did not hear is asked again at their next words.
+		signing = call({ cmd: "run-boss" }).catch(() => void (bossSign = undefined));
+	});
 	pi.on("agent_start", () => void ((inTurn = true), (triggered = undefined)));
 	pi.on("agent_settled", () => void (inTurn = false));
 	pi.on("tool_call", (event) => {
@@ -362,6 +376,8 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		// /new, /resume, and /fork end the claim; a /reload keeps it, and a quit after tower_done or by the server's command is the server's own.
 		if (event.reason === "reload") return void (mode = "unknown");
 		if (!closing && event.reason !== "quit") await ask({ cmd: "run-release", token: claim.token, reason: event.reason }).catch(() => {});
+		// A quit that tower_done did not come before is the boss's /quit or the server's own order; the server knows which (a run it is ending ignores this) and ends a run the boss was in as done, not crashed.
+		if (!closing && event.reason === "quit" && claim.kind === "local") await ask({ cmd: "run-done", token: claim.token, left: true }).catch(() => {});
 		(globalThis as Record<symbol, unknown>)[KEPT] = undefined;
 	});
 

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Reply } from "./control.ts";
-import { createTab, type HerdrRun, isSub, type Pane, panes, parentOf, report, result, type Session, type Sleep, startPi, tabs, workspaces } from "./herdr.ts";
+import { createTab, type HerdrRun, isStandin, isSub, type Pane, panes, parentOf, report, result, type Session, type Sleep, startPi, tabs, workspaces } from "./herdr.ts";
 import { assertSettingsSafe } from "./trust/settings.ts";
 import { waitPastTrust } from "./trust/wait.ts";
 
@@ -89,17 +89,18 @@ export async function survey(run: HerdrRun, workspaceId: string, live: Session[]
 	if (isSub(ws)) reasons.push(`${ws.label} is a sub workspace; stash the base it belongs to`);
 	// A sub workspace is neither recorded nor closed: anything running in it would lose the base it reports to.
 	for (const sub of all.filter((w) => isSub(w) && parentOf(all, w)?.workspace_id === workspaceId)) {
-		const ps = await panes(run, sub.workspace_id), busy = ps.filter((p) => p.agent).length;
+		const ps = await panes(run, sub.workspace_id), busy = ps.filter((p) => p.agent && !isStandin(p)).length;
 		if (busy) reasons.push(`its sub workspace ${sub.label} runs ${busy} agent${busy > 1 ? "s" : ""}`);
-		for (const p of ps.filter((x) => !x.agent)) if ((await foreground(run, p.pane_id))?.length !== 0) reasons.push(`pane ${p.pane_id} in its sub workspace ${sub.label} runs something`);
+		for (const p of ps.filter((x) => !x.agent || isStandin(x))) if (!isStandin(p) && (await foreground(run, p.pane_id))?.length !== 0) reasons.push(`pane ${p.pane_id} in its sub workspace ${sub.label} runs something`);
 	}
 	const here = await panes(run, workspaceId), sessionAt = (p: Pane) => live.find((s) => s.herdrLocation?.paneId === p.pane_id);
 	for (const t of await tabs(run, workspaceId)) {
 		const tab: StashTab = { ...(t.label ? { label: t.label } : {}), panes: [] };
 		for (const p of here.filter((x) => x.tab_id === t.tab_id)) {
 			const cwd = p.cwd ?? ws.worktree?.checkout_path ?? "", session = sessionAt(p), who = session?.name ?? `pane ${p.pane_id}`;
-			if (!p.agent) {
-				const fg = await foreground(run, p.pane_id);
+			// A tower the sb server runs stands in its pane with the stand-in agent while the tower prompt, a process of the server's own, runs there: the pane is its shell, which a pop makes again.
+			if (!p.agent || isStandin(p)) {
+				const fg = isStandin(p) ? [] : await foreground(run, p.pane_id);
 				if (!cwd && resume) reasons.push(`pane ${p.pane_id} has no folder Herdr knows of`);
 				if (!fg) reasons.push(`Herdr cannot say what runs in pane ${p.pane_id}`);
 				else if (fg.length) reasons.push(`pane ${p.pane_id} runs ${fg.join(", ")}`);

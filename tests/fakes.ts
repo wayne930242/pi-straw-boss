@@ -45,7 +45,8 @@ export const settle = async () => {
 };
 
 interface Tokens { [name: string]: string }
-interface FakePane { pane_id: string; tab_id: string; workspace_id: string; terminal_id: string; agent?: string; agent_status?: string; agent_session?: { value: string }; label?: string; tokens: Tokens; env?: string[]; cwd?: string; processes?: { argv?: string[]; argv0?: string; name?: string; pid?: number; cmdline?: string }[] }
+const FAKE_SHELL = 4;
+interface FakePane { pane_id: string; tab_id: string; workspace_id: string; terminal_id: string; agent?: string; agent_status?: string; reportSeq?: number; standinMessage?: string; agent_session?: { value: string }; label?: string; tokens: Tokens; env?: string[]; cwd?: string; processes?: { argv?: string[]; argv0?: string; name?: string; pid?: number; cmdline?: string }[] }
 interface FakeWorkspace { workspace_id: string; label: string; agent_status?: string; focused?: boolean; active_tab_id?: string; tokens: Tokens; worktree?: { checkout_path?: string; is_linked_worktree?: boolean; repo_key?: string } }
 
 /** A tiny Herdr: workspaces, tabs, panes, and the CLI subcommands the extension calls. */
@@ -133,7 +134,40 @@ export class FakeHerdr {
 	commands(group: string, cmd: string) {
 		return this.calls.filter((args) => args[0] === group && args[1] === cmd);
 	}
+	/** Whether `pane process-info` carries the shell's pid and the foreground process group (macOS and Linux); without them (Windows) a bare shell and a running build look alike. */
+	shellPids = false;
+	/** What `pane run` typed into a pane (the sb server types the tower prompt's command into a standing pane's shell). */
+	typed: { pane: string; text: string }[] = [];
+	/** The reports and releases of agents the socket API took (`pane.report_agent`, `pane.release_agent`), as sent. */
+	agentCalls: { method: string; params: Record<string, unknown> }[] = [];
+	/** Makes a report of an agent label Herdr does not keep (a Herdr that changed) clear at once, as Herdr's check does for a pane at its idle shell prompt. */
+	refuseStandin = false;
+	/** Herdr clears a reported agent when the pane's foreground is its idle shell (checked live: the label is gone about a second after the prompt exits). */
+	dropStandin(paneId: string) {
+		const pane = this.pane(paneId);
+		if (pane.agent === "tower") (pane.agent = undefined, pane.agent_status = undefined, pane.standinMessage = undefined);
+	}
+	private reportAgent(method: string, params: Record<string, unknown>) {
+		this.agentCalls.push({ method, params });
+		const pane = this.panes.find((p) => p.pane_id === params.pane_id);
+		if (!pane) throw new Error(`herdr ${method} failed: pane_not_found pane ${String(params.pane_id)} not found`);
+		const seq = typeof params.seq === "number" ? params.seq : undefined;
+		// Herdr ignores a report whose seq is not above the last one it took, and one for an agent label while another agent holds the pane (checked live).
+		if (seq !== undefined && pane.reportSeq !== undefined && seq <= pane.reportSeq) return;
+		if (method === "pane.release_agent") {
+			if (pane.agent === params.agent) (pane.agent = undefined, pane.agent_status = undefined, pane.standinMessage = undefined);
+			if (seq !== undefined) pane.reportSeq = seq;
+			return;
+		}
+		if (pane.agent && pane.agent !== params.agent) return;
+		if (seq !== undefined) pane.reportSeq = seq;
+		if (this.refuseStandin) return;
+		pane.agent = String(params.agent);
+		pane.agent_status = String(params.state);
+		pane.standinMessage = typeof params.message === "string" ? params.message : undefined;
+	}
 	api = async (method: string, params: object) => {
+		if (method === "pane.report_agent" || method === "pane.release_agent") return this.reportAgent(method, params as Record<string, unknown>);
 		if (method !== "tab.move") throw new Error(`unexpected herdr api call: ${method}`);
 		if (this.failMove) throw new Error("herdr tab.move failed: connect ENOENT");
 		const { tab_id, insert_index } = params as { tab_id: string; insert_index: number };
@@ -158,7 +192,12 @@ export class FakeHerdr {
 		if (this.failPanes && group === "pane" && cmd === "list") throw new Error("herdr pane list failed: not answering");
 		if (group === "pane" && cmd === "current") return out({ pane: this.pane(self) });
 		// The foreground processes of a pane, as Herdr lists them (a launch script shows its argv; pi shows only its argv0).
-		if (group === "pane" && cmd === "process-info") return out({ process_info: { pane_id: flag("--pane"), foreground_processes: this.pane(flag("--pane")!).processes ?? [] } });
+		// A pane with nothing else in the foreground lists its shell, as Herdr does; `shellPids` makes it answer as it does on macOS and Linux (the shell's pid and the foreground process group), which Windows cannot.
+		if (group === "pane" && cmd === "process-info") {
+			const running = this.pane(flag("--pane")!).processes ?? [];
+			const foreground = running.length ? running : [{ pid: FAKE_SHELL, name: "zsh", argv0: "zsh" }];
+			return out({ process_info: { pane_id: flag("--pane"), foreground_processes: foreground, ...(this.shellPids ? { shell_pid: FAKE_SHELL, foreground_process_group_id: running.length ? (running[0]!.pid ?? 0) : FAKE_SHELL } : {}) } });
+		}
 		if (group === "workspace" && cmd === "list") return out({ workspaces: this.workspaces });
 		if (group === "pane" && cmd === "list") return out({ panes: this.panes.filter((p) => !flag("--workspace") || p.workspace_id === flag("--workspace")) });
 		if (group === "tab" && cmd === "list") return out({ tabs: this.tabs.filter((t) => t.workspace_id === flag("--workspace")) });
@@ -211,7 +250,11 @@ export class FakeHerdr {
 			this.prompts.push({ pane: pane.pane_id, text: args[3]!, args: args.slice(4) });
 			return out({ type: "agent_prompted", agent: { pane_id: pane.pane_id, agent: pane.agent } });
 		}
+		if (group === "pane" && cmd === "run") return (this.typed.push({ pane: args[2]!, text: args.slice(3).join(" ") }), out({}));
 		if (group === "agent" && cmd === "start") {
+			// Herdr starts an agent only in an available shell: a stand-in agent or a running tower prompt (the node process of `cli.mjs prompt`) in the pane keeps it busy.
+			const holder = this.panes.find((p) => p.pane_id === flag("--pane"));
+			if (holder?.agent === "tower" || holder?.processes?.some((proc) => /\bprompt --workspace\b/.test(proc.cmdline ?? ""))) throw new Error(`herdr ${args.join(" ")} failed: agent_pane_busy: agent target pane ${flag("--pane")} is not an available shell`);
 			if (this.busy-- > 0) throw new Error(`herdr ${args.join(" ")} failed: agent_pane_busy: agent target pane ${flag("--pane")} is not an available shell`);
 			if (!/^[a-z][a-z0-9_-]{0,31}$/.test(args[2]!)) throw new Error(`herdr agent start failed: invalid_agent_name: ${args[2]}`);
 			if (this.panes.some((p) => p.pane_id === this.agentNames.get(args[2]!))) throw new Error(`herdr agent start failed: agent_name_taken: agent name ${args[2]} is already used`);

@@ -112,6 +112,13 @@ export async function planSweep({ workspaces, panes, state, now, confirmMs = CON
 			if (key in state.candidates) ops.push(del(["candidates", key]));
 			continue;
 		}
+		// A tower's standing pane is a bare shell between runs (and after the boss's Ctrl+D), which is no leftover: nothing in a workspace a tower stands in is swept.
+		const tower = towerReason(workspace, panes.filter((candidate) => candidate.workspace_id === pane.workspace_id));
+		if (tower) {
+			skips.push(`skip ${workspace.label} (${pane.pane_id}): ${tower}`);
+			if (key in state.candidates) ops.push(del(["candidates", key]));
+			continue;
+		}
 		// A pane that never ran an agent is the user's shell. On the first run every agentless pane counts as one that did, but only
 		// a pane the run treats as a leftover is marked: a pinned, focused or busy one stays the user's, for later runs too.
 		const unseen = !(key in state.agentSeen);
@@ -335,8 +342,24 @@ const hasDefaultLabel = (workspace) => {
 };
 
 /**
+ * What keeps a parent shell open that is not an agent or a busy shell: a Straw Boss tower stands in it. The sb server's tower sits in a
+ * tab of the main-checkout workspace, and its standing pane is a bare shell between runs, so it looks like one of the idle shells this
+ * plugin closes; the tokens the server writes (`tower` on the workspace, `sb_role` on the panes) are the only thing that tells it apart.
+ * An ally run's pane is split off the same tab. The plugin writes and reads no other `sb_*` token.
+ * @returns {string | null} the reason, or null
+ */
+function towerReason(workspace, panes) {
+	if (workspace.tokens?.tower) return `its tower (${workspace.tokens.tower}) stands in it`;
+	const tower = panes.find((pane) => pane.tokens?.sb_role === "tower");
+	if (tower) return `pane ${tower.pane_id} is a tower's standing pane`;
+	const ally = panes.find((pane) => pane.tokens?.sb_role === "ally");
+	return ally ? `pane ${ally.pane_id} is an ally run's pane` : null;
+}
+
+/**
  * Decides which remembered parent shells to close: the workspace of a main checkout that a worktree was grouped under, once none is
- * left in its repository, when every pane is an idle shell and the user neither pinned nor renamed it. `ignore` lists workspaces
+ * left in its repository, when every pane is an idle shell and the user neither pinned nor renamed it. A workspace a Straw Boss tower
+ * stands in is never one (`towerReason`). `ignore` lists workspaces
  * that are about to close and no longer count as children (a dry run). A parent must qualify for `confirmMs` before it is closed.
  * `state.parents` is the remembered set (apply noteParents first).
  * @returns {Promise<{ closes: object[], skips: string[], ops: object[], nextAt: number | null }>}
@@ -357,6 +380,7 @@ export async function planParents({ workspaces, panes, state, now, confirmMs = C
 		else if (isPinned(parent, state)) reason = "workspace is pinned";
 		else if (recordOf(parent, state)?.renamed || !hasDefaultLabel(parent)) reason = "its name was changed";
 		else if (mine.length === 0) reason = "it has no panes";
+		else if ((reason = towerReason(parent, mine))) { /* a tower stands in it */ }
 		else if (mine.some((pane) => pane.agent)) reason = `${mine.find((pane) => pane.agent).agent} is running in ${mine.find((pane) => pane.agent).pane_id}`;
 		else if (mine.some((pane) => pane.focused)) reason = "focused pane";
 		else {

@@ -4,7 +4,7 @@ import { createHeadlessKit, type HeadlessKit, type Incoming, type IntercomLike }
 import { createCloseMain, type Control } from "../closemain.ts";
 import { createDigest } from "../digest.ts";
 import { headReader } from "../headwatch.ts";
-import { createTab, headOf, isSub, type Pane, panes, parentOf, type Place, report, type Session, tabs, TOWER_LABEL, towerModel, type Workspace, workspaces } from "../herdr.ts";
+import { createTab, headOf, isStandin, isSub, type Pane, panes, parentOf, type Place, report, type Session, tabs, TOWER_LABEL, towerModel, type Workspace, workspaces } from "../herdr.ts";
 import { type Opened, opener } from "../opener.ts";
 import { netTokens } from "../order.ts";
 import { stamp } from "../header.ts";
@@ -18,6 +18,7 @@ import { secretDir, type Slot, towerId, towerName } from "./record.ts";
 import type { Allows } from "./allows.ts";
 import type { Asks } from "./asks.ts";
 import { ageOf, allyTools, buildAllyBrief, buildBrief, gatherMains, LOCAL_TOOLS } from "./towerbrief.ts";
+import { createStanding, type PromptReply, type StandingTimers } from "./standing.ts";
 import { addAnswer, addRoute, ALLY_LEDGER, type Peer, readAnswers, removeAnswer, routeOf, spendRoute } from "./allyroute.ts";
 import { type AllyItem, type AllyPort, createRuns, type Runs, type RunsOptions, type ServiceRef, type ServiceStatus } from "./runs.ts";
 import { addExpect, clearExpect, lastNote, readExpects, readTimer } from "./towerrunstore.ts";
@@ -67,6 +68,10 @@ export interface TowersOptions {
 	retryMs?: number[];
 	/** Replaces the runs' seams (timers, starting pi, the settings check, liveness), for tests. */
 	runs?: Partial<RunsOptions>;
+	/** The line typed into a standing pane's shell to start the tower prompt (main.ts builds it from the CLI beside the server); without it the server types nothing and reports no stand-in. */
+	promptCommand?: (workspace: string) => string | undefined;
+	/** The timers of the standing pane (standing.ts), for tests. */
+	standing?: Partial<StandingTimers>;
 	/** A request to the link holder as a tower identity (main.ts; absent in a world without one). */
 	link?: (body: unknown, from: string) => Promise<unknown>;
 	/** The server's own part of `boss_server` for a run. */
@@ -100,6 +105,8 @@ export interface Towers {
 	status(): TowerRow[];
 	/** The runs of the services (runs.ts): claims, the run's requests, the boss's events. */
 	runs: Runs;
+	/** The tower prompt in a standing pane (standing.ts): its poll, Ctrl+D, and exit. */
+	prompt(cmd: "prompt-poll" | "prompt-leave" | "prompt-gone", workspace: string, pid: number): Promise<PromptReply | { ok: true }>;
 	/** Messages wait in the link inbox for this tower identity: ally runs are started for them. */
 	allyWaiting(identity: string): void;
 	/** A tool a run calls (`run-tool`): checked against the token's kind, done as the tower identity. */
@@ -147,6 +154,9 @@ export function createTowers(o: TowersOptions): Towers {
 		record: () => l.record,
 		live: () => l.state === "live" && Boolean(l.client?.isConnected()),
 		cwd: async () => (await panes(run, l.record.workspace).catch(() => [])).find((p) => p.pane_id === l.record.pane)?.cwd ?? l.record.cwd ?? slot.stateDir,
+		towerKey: async () => (await netTokens(run, place(l), "tower", l.record.name, now(), cfg.world)).own.sb_order ?? undefined,
+		yieldPane: () => standing.yieldPane(l.record.workspace),
+		freed: () => standing.freed(l.record.workspace),
 		clearDigest: (keys) => digest.drop(l.record.workspace, keys),
 		allyLine: (item) => {
 			const mine = { name: l.record.name, id: l.record.id, role: "tower" as const, workspace: l.record.label };
@@ -216,6 +226,7 @@ export function createTowers(o: TowersOptions): Towers {
 	};
 	const runs: Runs = createRuns({ slot, run, sleep, now, log, enabled: o.enabled, max: () => readTowerRuns(slot.stateDir).max, trustDir: trustDir(slot.stateDir), model: () => towerModel(slot.stateDir), ...(allyPort ? { ally: allyPort } : {}), ...o.runs });
 
+	const standing = createStanding({ run, api: cfg.api, world: cfg.world, sleep, now, log, command: o.promptCommand ?? (() => undefined), timers: o.standing });
 	const place = (l: Live): Place => ({ paneId: l.record.pane, tabId: l.record.tab, workspaceId: l.record.workspace });
 	const dirOf = (workspace: string) => join(towerDir(slot, workspace));
 	const error = (code: string, text: string) => log.line("error", { code, text: phrase(text, 300) });
@@ -316,11 +327,13 @@ export function createTowers(o: TowersOptions): Towers {
 		// A live foreign holder keeps the workspace: this service steps back and waits for it (a hand-over whose reply was lost leaves the resident running and publishing its own token).
 		const foreign = await residentOf(l);
 		if (foreign) return void (await yieldTo(l, foreign));
-		const own = await netTokens(run, place(l), "tower", l.record.name, now(), cfg.world).then((net) => net.own, () => ({}));
+		const own: Record<string, string | null> = await netTokens(run, place(l), "tower", l.record.name, now(), cfg.world).then((net) => net.own, () => ({}));
 		await Promise.all([
 			report(run, "workspace", l.record.workspace, { tower: l.record.id, sb_tower_quit: null }),
 			report(run, "pane", l.record.pane, { sb_role: "tower", ...own }),
 		]).catch((cause: Error) => error("tokens", `${l.record.id}: ${cause.message}`));
+		// The panes of its ally runs are keyed after it.
+		await runs.markAllies(l.record.workspace, own.sb_order ?? null);
 	};
 	const yieldTo = async (l: Live, holder: string) => {
 		if (l.stopped || services.get(l.record.workspace) !== l) return;
@@ -351,6 +364,7 @@ export function createTowers(o: TowersOptions): Towers {
 	/** The boss closed the tower, or its tab is gone: the identity leaves, the marks go, `sb_tower_quit` records how many members the base had, and the record goes. The queue stays 24 h. */
 	const lose = async (l: Live, why: string) => {
 		if (services.get(l.record.workspace) === l) services.delete(l.record.workspace);
+		await standing.detach(l.record.workspace);
 		await runs.detach(l.record.workspace, why);
 		await release(l);
 		log.line("tower-closed", { workspace: l.record.workspace, id: l.record.id, why });
@@ -415,12 +429,14 @@ export function createTowers(o: TowersOptions): Towers {
 		const sessions = await o.sessions().catch(() => undefined);
 		return !sessions || sessions.some((x) => x.id === held) ? held : undefined;
 	};
-	const adopt = (record: ServiceRecord): Live => {
+	/** `fresh`: the standing pane was made by this call, so it is known to be a shell nobody has used (standing.ts types into it where Herdr cannot tell an idle shell from a busy one). */
+	const adopt = (record: ServiceRecord, fresh = false): Live => {
 		const l: Live = { record, state: "registering", stopped: false, requests: new Map() };
 		const prior = services.get(record.workspace);
 		if (prior && !prior.stopped) return prior;
 		services.set(record.workspace, l);
 		runs.attach(refOf(l));
+		standing.attach({ workspace: record.workspace, label: () => l.record.label, pane: () => l.record.pane, live: () => l.state === "live" && !l.stopped && Boolean(l.client?.isConnected()), status: () => runs.status(record.workspace) }, fresh);
 		l.starting = (async () => {
 			// A resident tower keeps its workspace; the service registers its identity once that session leaves. Two towers never hold one workspace.
 			let waited = false;
@@ -438,6 +454,7 @@ export function createTowers(o: TowersOptions): Towers {
 			l.state = "live";
 			runs.poke(record.workspace);
 			await publish(l);
+			standing.kick(record.workspace);
 		})().catch((cause: Error) => error("tower-start", `${record.id}: ${cause.message}`));
 		return l;
 	};
@@ -505,6 +522,7 @@ export function createTowers(o: TowersOptions): Towers {
 		// A service whose tab is not found yet (Herdr is restoring) is looked for until the minute is over; one waiting for a resident looks at it. Both stop themselves.
 		timers.push(setInterval(() => { if (now() < recoverUntil + RECOVER_POLL_MS) look(); }, RECOVER_POLL_MS));
 		timers.forEach((t) => t.unref());
+		standing.start();
 		await Promise.race([Promise.all(adopted.map((l) => l.starting)), sleep(o.registerMs ?? REGISTER_WAIT_MS)]);
 		await look();
 		loadedAll = true;
@@ -529,6 +547,7 @@ export function createTowers(o: TowersOptions): Towers {
 		const all = await workspaces(run).catch(() => []);
 		for (const l of [...services.values()]) {
 			services.delete(l.record.workspace);
+			await standing.detach(l.record.workspace);
 			await runs.detach(l.record.workspace, "the tower service is off");
 			await release(l);
 			if (all.find((w) => w.workspace_id === l.record.workspace)?.tokens?.tower === l.record.id) await report(run, "workspace", l.record.workspace, { tower: null }).catch(() => {});
@@ -566,13 +585,15 @@ export function createTowers(o: TowersOptions): Towers {
 		const marked = given ?? here.find((p) => p.tokens?.sb_role === "tower");
 		const bare = marked ? [] : (await tabs(run, ws)).filter((t) => t.label === TOWER_LABEL).flatMap((t) => {
 			const inside = here.filter((p) => p.tab_id === t.tab_id);
-			return inside.length === 1 && !inside[0]!.agent && !inside[0]!.tokens?.sb_role ? [inside[0]!] : [];
+			// The stand-in agent is no agent: the pane of a tower whose tokens lapsed while the prompt went on is still the tower's.
+			return inside.length === 1 && (!inside[0]!.agent || isStandin(inside[0]!)) && !inside[0]!.tokens?.sb_role ? [inside[0]!] : [];
 		});
-		let pane = marked ?? bare[0], dir: string | undefined;
+		let pane = marked ?? bare[0], dir: string | undefined, made = false;
 		if (!pane) {
 			dir = target.worktree?.checkout_path ?? cwd ?? slot.stateDir;
-			const made = await createTab(run, ws, dir, [], TOWER_LABEL);
-			pane = { pane_id: made.paneId, tab_id: made.tabId };
+			const tab = await createTab(run, ws, dir, [], TOWER_LABEL);
+			pane = { pane_id: tab.paneId, tab_id: tab.tabId };
+			made = true;
 		} else {
 			// Other shell-only leftovers are closed; failing to close one leaves a harmless tab.
 			for (const extra of bare.slice(1)) await run(["tab", "close", extra.tab_id]).catch(() => {});
@@ -583,7 +604,7 @@ export function createTowers(o: TowersOptions): Towers {
 		await cfg.api("tab.move", { tab_id: pane.tab_id, insert_index: 0 }).catch((cause: Error) => error("tab-move", cause.message));
 		const record: ServiceRecord = { ...draft.record, pane: pane.pane_id, tab: pane.tab_id, ...(pane.cwd ?? dir ? { cwd: pane.cwd ?? dir } : {}), created: new Date(now()).toISOString() };
 		writeService(slot, record);
-		const l = adopt(record);
+		const l = adopt(record, made);
 		log.line("tower-opened", { workspace: ws, id: record.id, pane: record.pane, tab: record.tab });
 		await Promise.race([l.starting, sleep(o.registerMs ?? REGISTER_WAIT_MS)]);
 		return answer(l, true);
@@ -671,13 +692,15 @@ export function createTowers(o: TowersOptions): Towers {
 		async takeover() {
 			// A new Herdr server has no tokens and no pane environment: the tabs are looked for (for a minute, since a restore brings them back one by one), and the marks are written again.
 			recoverUntil = now() + (o.recoverMs ?? RECOVER_MS);
+			// Every pane is a fresh shell: the prompt that stood there is gone, and so is the label Herdr kept for it.
+			standing.reset();
 			// Runs that were live end with outcome `herdr-restart`, and claims are held until this has been processed (the wake protocol, step 2).
 			runs.takeoverBegin();
 			try {
 				if (!activation) return;
 				log.line("towers-takeover", { services: services.size });
 				await look();
-				for (const l of services.values()) if (l.state === "live") await publish(l);
+				for (const l of services.values()) if (l.state === "live") (await publish(l), standing.kick(l.record.workspace));
 				readHead();
 			} finally {
 				await runs.takeoverEnd();
@@ -685,8 +708,13 @@ export function createTowers(o: TowersOptions): Towers {
 		},
 		status: () => [...services.values()].map((l) => ({ workspace: l.record.workspace, label: l.record.label, id: l.record.id, state: l.state, queue: queueLength(slot, l.record.workspace), ...(runs.status(l.record.workspace) ? { service: runs.status(l.record.workspace)! } : {}) })),
 		runs,
+		async prompt(cmd, workspace, pid) {
+			if (cmd === "prompt-poll") return standing.poll(workspace, pid);
+			return cmd === "prompt-leave" ? standing.leave(workspace, pid) : standing.gone(workspace, pid);
+		},
 		async stop(opts) {
 			stopped = true;
+			await standing.stop();
 			await runs.stop(opts);
 			timers.forEach(clearInterval);
 			events?.();

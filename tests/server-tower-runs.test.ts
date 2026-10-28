@@ -334,7 +334,7 @@ test("a Herdr restart ends the live run (herdr-restart), its events return flagg
 	assert.equal(readRun(world.slot, "wA", id)?.outcome, "herdr-restart");
 });
 
-test("pane-role: a pane the server does not list is none; a standing pane that holds a live run is quit; one pi by hand becomes a run that ends on tower_done", async () => {
+test("pane-role: a pane the server does not list is none; a standing pane that holds a live run is quit; one pi by hand becomes a run the boss is in, which ends when they leave", async () => {
 	const { s, ensured } = await setup();
 	assert.equal((await ask(s, { cmd: "pane-role", pane: "wA:p1", pid: 1 })).role, "none");
 	assert.equal((await ask(s, { cmd: "pane-role", pane: ensured.pane, pid: 5555 })).role, "quit", "a PID Herdr does not list in the pane is not taken (B5R-F007)");
@@ -345,7 +345,9 @@ test("pane-role: a pane the server does not list is none; a standing pane that h
 	const token = String((hand.claim as { token: string }).token);
 	assert.match(String((hand.claim as { brief: string }).brief), /tower of workspace Alpha/);
 	assert.equal((await ask(s, { cmd: "pane-role", pane: ensured.pane, pid: 5556 })).role, "quit", "the pane is taken");
-	assert.equal((await ask(s, { cmd: "run-done", token, note: "by hand" })).ok, true);
+	// The boss started it: tower_done does not end it; their quit does.
+	assert.equal((await ask(s, { cmd: "run-done", token, note: "by hand" })).stay, true);
+	assert.equal((await ask(s, { cmd: "run-done", token, note: "by hand", left: true })).ok, true);
 	world.live.delete(5555);
 	await until(() => listRuns(world.slot, "wA").some((r) => r.hand && r.outcome === "done"), "done");
 });
@@ -631,4 +633,139 @@ test("a config.json that cannot be parsed keeps the service on, is told once as 
 	await sleep(150);
 	const lines = readFileSync(fileOf(world.slot, "log"), "utf8").split("\n").filter((l) => /\bcode=config\b/.test(l));
 	assert.equal(lines.length, 1, lines.join("\n"));
+});
+
+// --- The boss in the run (docs/how-it-works.md, The boss in a run): once the boss speaks in a run, it stays until they leave ---
+
+/** Polls the run for `ms` as its pi does, keeping every command it was handed. */
+const commandsFor = async (s: Running, token: string, ms: number, idle = true) => {
+	const seen: { type: string; text?: string }[] = [];
+	for (const end = Date.now() + ms; Date.now() < end; await sleep(15)) {
+		const command = (await poll(s, token, idle)).command as { type: string; text?: string } | undefined;
+		if (command) seen.push(command);
+	}
+	return seen;
+};
+const woken = async (s: Running, over: Record<string, unknown> = {}, n = 1) => {
+	assert.equal((await ask(s, { cmd: "tower-event", workspace: "wA", text: "look at the board", ...over })).ok, true);
+	const id = await nthRun(n);
+	const token = await claimed(s, id);
+	await drain(s, token);
+	return { id, token };
+};
+
+test("run-boss: while the boss is in the run tower_done stays (no note, no end), the cap does not cut it, and their silence for bossAway hands the run the normal wrap-up: a steer, then tower_done ends it", async () => {
+	world.runTimers = { steerAt: 100, quitAt: 300, bossAway: 500, idleSteer: 120, idleEnd: 60_000, quitGrace: 60, signal: 60 };
+	const { s } = await setup();
+	const { id, token } = await woken(s);
+	assert.equal((await ask(s, { cmd: "run-boss", token })).ok, true);
+	const stay = await ask(s, { cmd: "run-done", token, note: "n" });
+	assert.equal(stay.ok, true);
+	assert.equal(stay.stay, true, JSON.stringify(stay));
+	assert.match(String(stay.text), /boss/i);
+	assert.deepEqual(readNotes(world.slot, "wA"), [], "a refused end keeps no note");
+	// Past the steer time and the cap: nothing is said to the run while the boss is there.
+	assert.deepEqual(await commandsFor(s, token, 380), []);
+	// A sign of the boss renews the time.
+	assert.equal((await ask(s, { cmd: "run-boss", token })).ok, true);
+	assert.deepEqual(await commandsFor(s, token, 380), []);
+	// Their silence ends it: the idle steer, no cap quit.
+	const after = await commandsFor(s, token, 900);
+	assert.deepEqual(after.map((c) => c.type), ["steer"], JSON.stringify(after));
+	const end = await ask(s, { cmd: "run-done", token, note: "boss talked about the board" });
+	assert.equal(end.ok, true);
+	assert.equal(end.stay, undefined);
+	exit(id);
+	await until(() => readRun(world.slot, "wA", id)?.outcome === "done", "the outcome");
+	assert.equal(readNotes(world.slot, "wA").at(-1)!.note, "boss talked about the board");
+});
+
+test("a boss event written at the tower prompt (present) makes the run it wakes a run the boss is in from its claim; one from the GUI does not", async () => {
+	const { s } = await setup();
+	const first = await woken(s, { present: true });
+	assert.equal((await ask(s, { cmd: "run-done", token: first.token, note: "n" })).stay, true);
+	assert.equal((await ask(s, { cmd: "run-done", token: first.token, note: "(the boss left)", left: true })).ok, true);
+	exit(first.id);
+	await until(() => readRun(world.slot, "wA", first.id)?.outcome === "done", "the first run to end");
+	const second = await woken(s, {}, 2);
+	const done = await ask(s, { cmd: "run-done", token: second.token, note: "plain" });
+	assert.equal(done.ok, true);
+	assert.equal(done.stay, undefined, "no sign of the boss: tower_done ends the run as before");
+});
+
+test("the boss quitting their run (run-done left) ends it as done, not crashed: the leave note, no crash for the loop, the events it did not take stay queued; without the boss in the run it is a crash as before", async () => {
+	const { s } = await setup();
+	const a = await woken(s, { present: true });
+	tower().incoming(from, msg("m9", "arrives while the boss talks"));
+	const left = await ask(s, { cmd: "run-done", token: a.token, note: "ignored", left: true });
+	assert.equal(left.ok, true, JSON.stringify(left));
+	exit(a.id);
+	await until(() => readRun(world.slot, "wA", a.id)?.outcome === "done", "the outcome");
+	assert.match(readNotes(world.slot, "wA").at(-1)!.note, /boss/i);
+	assert.equal(readQueue(world.slot, "wA").filter((e) => e.kind === "intercom" && !e.flag).length, 1, "the event it did not take waits for the next run, unflagged");
+	// The next run: the boss is not in it. A quit with no tower_done is a crash, as ever.
+	const b = await woken(s, {}, 2);
+	assert.equal((await ask(s, { cmd: "run-done", token: b.token, note: "x", left: true })).ok, true, "the call is harmless");
+	exit(b.id);
+	await until(() => readRun(world.slot, "wA", b.id)?.outcome === "crashed", "the crash");
+});
+
+test("a run the server is already ending ignores a left: the outcome stays the server's", async () => {
+	world.runTimers = { lost: 150, quitGrace: 60, signal: 60 };
+	const { s } = await setup();
+	const a = await woken(s, { present: true });
+	await sleep(400); // no polls for longer than `lost`: the server ends the run
+	assert.equal(((await poll(s, a.token)).command as { type: string } | undefined)?.type, "quit", "the server is ending it");
+	const left = await ask(s, { cmd: "run-done", token: a.token, note: "n", left: true });
+	assert.equal(left.ok, true);
+	exit(a.id);
+	await until(() => readRun(world.slot, "wA", a.id)?.outcome === "crashed", "the server's outcome");
+});
+
+test("the boss's time in a run is bounded: past bossMax the cap applies again", async () => {
+	world.runTimers = { quitAt: 250, steerAt: 120, bossMax: 400, bossAway: 60_000, quitGrace: 60, signal: 60 };
+	const { s } = await setup();
+	const { id, token } = await woken(s, { present: true });
+	assert.deepEqual((await commandsFor(s, token, 300)).map((c) => c.type), [], "the boss is there: the cap waits");
+	const later = await commandsFor(s, token, 600);
+	assert.ok(later.some((c) => c.type === "quit"), JSON.stringify(later));
+	exit(id);
+	await until(() => readRun(world.slot, "wA", id)?.outcome === "timeout", "the timeout");
+});
+
+test("the boss's 4 hours are counted from their first word in the run, not from their return after each absence (SR-F005)", async () => {
+	world.runTimers = { quitAt: 300, steerAt: 150, bossMax: 1500, bossAway: 120, idleSteer: 60_000, idleEnd: 60_000, quitGrace: 60, signal: 60 };
+	const { s } = await setup();
+	const { id, token } = await woken(s, { present: true });
+	const first = Date.now();
+	// The boss is silent: the idle run is "away" after bossAway, and its grace window keeps the cap off.
+	assert.deepEqual((await commandsFor(s, token, 600)).map((c) => c.type), []);
+	// They come back, and keep coming back every moment (the model is busy with them: its polls are not idle, so no second absence is seen on a slow machine).
+	let quit = false;
+	while (!quit && Date.now() - first < 2400) {
+		await ask(s, { cmd: "run-boss", token });
+		quit = (await commandsFor(s, token, 60, false)).some((c) => c.type === "quit");
+	}
+	assert.equal(quit, true, "the run ends at bossMax after the first word, though the boss never stopped coming back");
+	assert.ok(Date.now() - first < 2100, `ended ${Date.now() - first} ms after the first word (bossMax 1500; a bound restarted at the return would end it after 2100)`);
+	exit(id);
+	await until(() => readRun(world.slot, "wA", id)?.outcome === "timeout", "the timeout");
+});
+
+test("a run the server is ending at bossMax answers tower_done without a stay, and a boss sign that comes after changes nothing (SR-F005)", async () => {
+	world.runTimers = { quitAt: 250, steerAt: 120, bossMax: 400, bossAway: 60_000, quitGrace: 5000, signal: 5000 };
+	const { s } = await setup();
+	const { id, token } = await woken(s, { present: true });
+	const later = await commandsFor(s, token, 700);
+	assert.ok(later.some((c) => c.type === "quit"), JSON.stringify(later));
+	assert.equal((await ask(s, { cmd: "run-boss", token })).ok, true, "harmless");
+	const end = await ask(s, { cmd: "run-done", token, note: "wrapped up" });
+	assert.equal(end.stay, undefined, JSON.stringify(end));
+	exit(id);
+	await until(() => readRun(world.slot, "wA", id)?.outcome === "timeout", "the outcome stays the server's");
+});
+
+test("run-boss belongs to a local run: an ally run, or a token the server does not know, is refused", async () => {
+	const { s } = await setup();
+	assert.equal((await ask(s, { cmd: "run-boss", token: "nope" })).ok, false);
 });

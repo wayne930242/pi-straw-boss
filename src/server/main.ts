@@ -23,6 +23,7 @@ import {
 	clearStartError, type Detach, fileOf, prepareSlot, readRecord, restartingNow, type ServerRecord, serverId, type Slot, TOUCH_MS, towerId, updateRecord, writeRecord, writeStartError,
 } from "./record.ts";
 import { AFTER, endpointFor, helloOf, listenControl, newSecret, type Reply, type Request } from "./socket.ts";
+import { promptCommand } from "./standing.ts";
 import { createTowers, type Towers, type TowersOptions } from "./towers.ts";
 import { readTowerRuns } from "./towerruns.ts";
 import { packageRoot, VERSION } from "./version.ts";
@@ -388,13 +389,23 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			case "run-poll": return answer(async (t) => ({ ...t.runs.poll(request) }));
 			case "run-taken": return answer(async (t) => ({ ...t.runs.taken(request) }));
 			case "run-done": return answer(async (t) => ({ ...(await t.runs.done(request)) }));
+			case "run-boss": return answer(async (t) => ({ ...t.runs.present(request) }));
 			case "run-release": return answer(async (t) => ({ ...(await t.runs.release(request)) }));
 			case "run-tool": return answer(async (t) => ({ ...(await t.runTool(request)) }));
 			case "run-file": return answer(async (t) => (t.runs.setFile(request.token, request.file, request.session), {}));
 			// The boss writes to the tower (the GUI's composer, `/boss tower <prompt>`): an event ahead of the rest.
 			case "tower-event": {
 				const body = text(request.text, 16_384);
-				return workspace && body ? answer(async (t) => ({ queued: t.runs.boss(workspace, body).id })) : Promise.resolve({ ok: false, error: "tower-event needs a workspace and text" });
+				// `present`: the boss wrote it at the tower prompt in the standing pane, so they are at the keyboard and the run it wakes stays for them (runs.ts, the boss's presence).
+				return workspace && body ? answer(async (t) => ({ queued: t.runs.boss(workspace, body, "the boss", { present: request.present === true }).id })) : Promise.resolve({ ok: false, error: "tower-event needs a workspace and text" });
+			}
+			// The tower prompt in the standing pane (towerprompt/, standing.ts): it polls for the state it shows and for the order to leave, says Ctrl+D, and says it is gone. It starts nothing and holds no run token;
+			// its requests are a session's or a shell's, as the CLI's, and a server that is still loading tells it to wait.
+			case "prompt-poll": case "prompt-leave": case "prompt-gone": {
+				const pid = request.pid;
+				if (!towers || !towers.loaded()) return Promise.resolve({ ok: false, error: "the server is still starting" });
+				if (!workspace || typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return Promise.resolve({ ok: false, error: `${request.cmd} needs a workspace and the prompt's pid` });
+				return towers.prompt(request.cmd, workspace, pid);
 			}
 			case "tower-retry": return workspace ? answer(async (t) => (t.runs.retry(workspace), {})) : Promise.resolve({ ok: false, error: "tower-retry needs a workspace" });
 			case "tower-deliver": case "tower-drop": {
@@ -499,7 +510,8 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		ally: allyPort(() => link), allows, asks,
 		slot, cfg, env, connect: () => mod.connect(), log, pid, startedAt, enabled: () => towerRuns().enabled, server: serverTools,
 		link: async (body, from) => (!slot.primary ? { ok: false, code: "no_link", error: NO_LINK } : link ? link.request(body, from) : { ok: false, code: "no_holder", error: "The link holder is not running in the sb server yet; ask again in a moment" }),
-		sessions: () => (client ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))), ...o.towers,
+		sessions: () => (client ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))),
+		promptCommand: (workspace) => promptCommand(cliBeside(), slot.stateDir, workspace), ...o.towers,
 	});
 	stops.push(cfg.watch(() => {
 		log.line("herdr-takeover");

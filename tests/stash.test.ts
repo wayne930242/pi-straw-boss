@@ -57,6 +57,20 @@ test("a stash checks every session, records the base with its tower tab first, t
 	assert.deepEqual(listStashes(w.dir), ["A"]);
 });
 
+test("the stand-in agent of a tower the sb server runs is the standing pane's shell with the tower prompt in it, not an agent that blocks the stash", async () => {
+	const w = world();
+	// The server's tower: no pi session, a standing pane that shows the stand-in `tower` while the prompt (a node process) runs there.
+	w.panes.splice(w.panes.findIndex((p) => p.pane_id === "wA:p1"), 1, { pane_id: "wA:p1", tab_id: "wA:t1", workspace_id: "wA", agent: "tower", agent_status: "idle", cwd: w.dir, tokens: { sb_role: "tower" } });
+	w.fg["wA:p1"] = ["node"];
+	w.live.splice(0, 1);
+	const s = stasher(w);
+	const r = await s.go();
+	assert.equal(r.status, 200, JSON.stringify(r.body));
+	assert.deepEqual(s.checked.sort(), ["b", "m"], "no session is asked for the tower");
+	const st = JSON.parse(readFileSync(stashFile(w.dir, "A"), "utf8")) as Stash;
+	assert.deepEqual(st.tabs.map((t) => [t.label, t.panes.map((p) => p.kind)]), [["work", ["main", "member", "shell"]], ["T", ["shell"]]]);
+});
+
 test("anything a resume would lose refuses the stash, names every reason, and closes nothing", async () => {
 	const w = world();
 	w.panes[0]!.agent_status = "working";

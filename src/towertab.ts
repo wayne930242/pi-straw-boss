@@ -1,4 +1,4 @@
-import { createTab, type HerdrRun, panes, report, type Sleep, startPi, tabs, TOWER_LABEL, type Workspace, workspaces } from "./herdr.ts";
+import { createTab, type HerdrRun, isStandin, panes, report, type Sleep, startPi, tabs, TOWER_LABEL, type Workspace, workspaces } from "./herdr.ts";
 import { assertSettingsSafe } from "./trust/settings.ts";
 import { waitPastTrust } from "./trust/wait.ts";
 
@@ -35,7 +35,8 @@ async function open({ run, sleep, live, moveFirst, model, trustDir }: TowerEnv, 
 	const marked = here.find((p) => p.tokens?.sb_role === "tower");
 	const bare = marked ? [] : (await tabs(run, ws)).filter((t) => t.label === TOWER_LABEL).flatMap((t) => {
 		const inside = here.filter((p) => p.tab_id === t.tab_id);
-		return inside.length === 1 && !inside[0]!.agent && !inside[0]!.tokens?.sb_role ? [inside[0]!] : [];
+		// The stand-in agent of the sb server's tower prompt is no agent: that server has gone (the tower service is off), and its prompt leaves at its next poll.
+		return inside.length === 1 && (!inside[0]!.agent || isStandin(inside[0]!)) && !inside[0]!.tokens?.sb_role ? [inside[0]!] : [];
 	});
 	const reused = marked ?? bare[0];
 	if (reused) {
