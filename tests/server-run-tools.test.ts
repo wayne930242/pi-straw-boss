@@ -121,12 +121,18 @@ test("an ally run's token: the free reads, tower_send to its sender, and the gat
 	for (const name of ["boss_status", "tower_list", "board_read"]) assert.equal((await tool(s, token, name)).ok, true, name);
 	for (const name of ["call_tower", "boss_server", "link_request"]) assert.match(String((await tool(s, token, name, { message: "x", action: "restart", reason: "x" })).error), /not available in an ally run/, name);
 	assert.match(String((await tool(s, token, "tower_send", { message: "x" })).error), /sender only/, "a local target is refused outright");
-	for (const [name, args] of [["tower_reply", { to: "x", message: "x" }], ["boss_open_main", { request: "x", sender: "x" }], ["boss_close_main", { main: "x" }], ["tower_send", { device: "someone-else", message: "x" }]] as const) {
+	for (const [name, args] of [["tower_reply", { to: "x", message: "x" }], ["boss_open_main", { request: "x", sender: "x" }], ["boss_close_main", { main: "x" }]] as const) {
 		const got = await tool(s, token, name, { ...args });
 		assert.equal(got.ok, false, name);
 		assert.match(String(got.error), /needs the boss's confirm/, name);
 		const withId = await ask(s, { cmd: "run-tool", token, tool: name, args, toolCallId: "tc-1" });
 		assert.match(String(withId.error), /was not allowed/, `${name}: no Allow was given`);
+	}
+	// RV6-F007: a device other than the sender is refused outright, with or without a call id, so no Allow can turn it into a send to the sender.
+	for (const extra of [{}, { toolCallId: "tc-2" }]) {
+		const other = await ask(s, { cmd: "run-tool", token, tool: "tower_send", args: { device: "someone-else", message: "x" }, ...extra });
+		assert.equal(other.ok, false);
+		assert.match(String(other.error), /sender only/);
 	}
 	assert.equal(restarts.length, 0);
 	assert.match(String((await ask(s, { cmd: "run-done", token, note: "n", wakeAfter: 10 })).error), /ally run schedules no wake/);

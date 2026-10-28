@@ -94,14 +94,18 @@ async function allyTool(host: ToolHost, name: string, args: Record<string, unkno
 	if (!ALLY.has(name)) throw new Error(`${name} is not available in an ally run`);
 	const level = who.level ?? "reply", gated = level !== "dispatch" && !FREE.has(name);
 	// A target on this computer that is a tower identity would carry a peer's text into a local run: refused outright, whatever the level or an Allow.
-	if (name === "tower_send" && opt(args, "device") === undefined) throw new Error("An ally run writes to its sender only: give device (the sender's id, short id, or label)");
+	// And a device other than its sender is refused the same way: an Allow the boss gave for it would otherwise send the text to the sender, not to the device the boss approved.
+	if (name === "tower_send") {
+		const device = opt(args, "device");
+		if (device === undefined) throw new Error("An ally run writes to its sender only: give device (the sender's id, short id, or label)");
+		if (!isSender(who, device)) throw new Error("An ally run writes to its sender only: that device is not the sender of this run");
+	}
 	if (name === "tower_reply") {
 		const to = str(args, "to", 200);
 		if (await host.isTower(to)) throw new Error("An ally run may not write to a tower identity of this computer: it would carry a peer's text into a local run");
 	}
 	// The sender's own device is the one write the allowlist lets through; everything else outside the free reads needs the Allow of the gate.
-	const toSender = name === "tower_send" && isSender(who, opt(args, "device")!);
-	if (gated && !toSender) {
+	if (gated && name !== "tower_send") {
 		if (!extra.toolCallId) throw new Error(`${name} needs the boss's confirm in this run, and the call carried no tool call id`);
 		const taken = await host.allow({ toolCallId: extra.toolCallId, tool: name, args });
 		if (!taken.ok) throw new Error(`${name} was not allowed: ${taken.reason}`);
