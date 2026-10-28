@@ -1,6 +1,6 @@
 import { headlessConfig } from "../../src/agent/config.ts";
 import { createHeadlessKit } from "../../src/agent/kit.ts";
-import { createLinkService, type LinkService, type ServiceDeps } from "../../src/link/service.ts";
+import { createLinkService, type LinkService, type ServiceDeps, type ServiceOptions } from "../../src/link/service.ts";
 import { FakeClient } from "../agent-fakes.ts";
 import type { World } from "../fakes.ts";
 
@@ -25,7 +25,7 @@ export interface LinkServer {
 }
 
 /** Builds the service and connects it (the fake client connects without waiting); `start` false leaves the election and the channel to the test (`server.service.start()`). */
-export function linkServer(world: World, o: { id?: string; deps?: ServiceDeps; version?: string; start?: boolean; started?: () => string | undefined } = {}): LinkServer {
+export function linkServer(world: World, o: { id?: string; deps?: ServiceDeps; version?: string; start?: boolean; started?: () => string | undefined; tower?: ServiceOptions["tower"] } = {}): LinkServer {
 	const id = o.id ?? "sb-server-test", client = new FakeClient(world.broker, "");
 	const env = { PI_INTERCOM_SESSION_ID: id } as NodeJS.ProcessEnv;
 	const cfg = headlessConfig({ run: world.herdr.runFor(""), api: world.herdr.api, events: world.herdr.events, watch: world.watch, stateDir: world.stateDir, sleep: async () => undefined }, env);
@@ -33,7 +33,7 @@ export function linkServer(world: World, o: { id?: string; deps?: ServiceDeps; v
 	kit.attach(client);
 	void client.connect({ name: "sb server", cwd: world.stateDir, model: "straw-boss-server", pid: process.pid, startedAt: Date.now(), lastActivity: Date.now() }, id);
 	const notices: { text: string; level?: string }[] = [];
-	const service = createLinkService({ kit, stateDir: world.stateDir, version: o.version ?? "0.46.0", ...(o.started ? { started: o.started } : {}), notify: (text, level) => void notices.push({ text, level }), deps: o.deps });
+	const service = createLinkService({ kit, stateDir: world.stateDir, version: o.version ?? "0.46.0", ...(o.started ? { started: o.started } : {}), notify: (text, level) => void notices.push({ text, level }), deps: o.deps, ...(o.tower ? { tower: o.tower } : {}) });
 	const server: LinkServer = {
 		id, service, client, notices, ready: Promise.resolve(),
 		ask: (op, from) => service.request(op, from),

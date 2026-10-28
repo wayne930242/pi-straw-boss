@@ -9,13 +9,15 @@
 
 import { restrictLabel } from "./link/text.ts";
 
-export type Kind = "call_tower" | "broadcast" | "tower_send" | "tower_reply" | "handoff";
+export type Kind = "call_tower" | "broadcast" | "tower_send" | "tower_reply" | "handoff" | "link_reply";
 /** `session` is a pi session that did not join the net (a scope `all` broadcast reaches it). `head`: the tower of the head workspace. */
 export interface Party { name: string; id: string; role: "tower" | "main" | "member" | "session"; head?: boolean; workspace?: string }
+/** The tower identity a `link_reply` was asked through (`for=`), written by the code from the ask the server recorded. */
+const FOR = /^[A-Za-z0-9_.:-]{1,80}$/;
 /** The verified sender of a message that came over Straw Link: its device label and short id from the roster, and the team. */
 export interface Remote { device: string; short: string; team: string }
 /** `origin`: `remote:<device id>` on a message a tower sent to a local session during a Straw Link remote turn, so its receiver knows a peer's text started it. */
-export interface Stamp { from: Party; kind: Kind; scope: string; to: Party[]; reply: boolean; remote?: Remote; origin?: string; /** The ask id the message carries (a `tower` with `awaitsReply`): an ally run answers it with `inReplyTo`. */ asks?: string }
+export interface Stamp { from: Party; kind: Kind; scope: string; to: Party[]; reply: boolean; remote?: Remote; origin?: string; /** The ask id the message carries (a `tower` with `awaitsReply`): an ally run answers it with `inReplyTo`. */ asks?: string; /** A `link_reply` for a main: the tower identity that asked on its behalf. */ for?: string }
 const ORIGIN = /^remote:[a-z2-7]{26}$/;
 /** A remote sender's `id=`: never a session id of this machine, so a reply cannot be aimed at a local session by a remote's choice. */
 export const REMOTE_ID = /^link:[a-z2-7]{26}$/;
@@ -28,7 +30,8 @@ const roleOf = (p: Party) => (p.head ? "head tower" : p.role);
 const MAX_NAMED = 20;
 const recipient = (p: Party) => `${clean(p.name)} (${roleOf(p)}${p.workspace ? ` of ${clean(p.workspace)}` : ""})`;
 
-export function header({ from, kind, scope, to, reply, remote, origin, asks }: Stamp): string {
+export function header({ from, kind, scope, to, reply, remote, origin, asks, for: asked }: Stamp): string {
+	if (asked !== undefined && !FOR.test(asked)) throw new Error("A link_reply names the tower that asked by its identity");
 	if (origin !== undefined && !ORIGIN.test(origin)) throw new Error("A remote origin is remote: and a link device id");
 	if (asks !== undefined && !/^[0-9a-f]{32}$/.test(asks)) throw new Error("An ask id is 16 random bytes in hex");
 	// A remote header's sender-controlled fields are cut to the label character set and 40 characters here as well as where the link code builds them; the team is this computer's own name for it, so it keeps its characters (80 at most).
@@ -41,6 +44,7 @@ export function header({ from, kind, scope, to, reply, remote, origin, asks }: S
 		`kind=${kind}`, `scope=${scope}`, `to=${quote([...to.slice(0, MAX_NAMED).map(recipient), ...(to.length > MAX_NAMED ? [`+${to.length - MAX_NAMED} more`] : [])].join("; "))}`, `reply=${reply ? "expected" : "none"}`,
 		...(origin ? [`origin=${origin}`] : []),
 		...(asks ? [`asks=${asks}`] : []),
+		...(asked ? [`for=${asked}`] : []),
 	];
 	return `[straw net ${fields.join(" ")}]`;
 }
