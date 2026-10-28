@@ -234,6 +234,8 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 	});
 
 	const api = {
+		/** Joins the link channel now if this session should be on it (a session that has just become the tab's main). */
+		look,
 		/** The confirm requests other devices put to this one, waiting for its boss (the GUI of a later step shows them). */
 		async confirms(): Promise<ConfirmView[]> {
 			const answer = await ask({ op: "confirms" });

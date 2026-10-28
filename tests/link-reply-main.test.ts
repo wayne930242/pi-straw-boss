@@ -23,6 +23,7 @@ afterEach(async () => {
 	rmSync(root, { recursive: true, force: true });
 });
 const ASK = "9".repeat(32);
+const listening = (c: Computer, id: string) => c.world.broker.registrations.some((r) => r.id === id && r.namespace === NAMESPACE);
 
 test("the reply to an ask goes to the main that asked, as a straw-link message with kind=link_reply and for=<tower>, once; the tower and other mains get nothing", async () => {
 	const open = new Map<string, { main: string; mainName: string; tower: string; workspace: string }>();
@@ -37,9 +38,8 @@ test("the reply to an ask goes to the main that asked, as a straw-link message w
 	await other.promote();
 	open.set(ASK, { main: "main-b", mainName: "api main", tower: "tower-b", workspace: "Beta" });
 	await until(() => a.server.service.holder?.capsFor(TEAM_HEX, bob.id).includes("tower-reply"), "A to know B takes replies");
-	// A main joins the link channel on its next tick after it is promoted, not within `promote`; the server's offer goes only to the sessions on the channel then, and is not made again for `offerAgainMs`.
-	const listening = (id: string) => b.world.broker.registrations.some((r) => r.id === id && r.namespace === NAMESPACE);
-	await until(() => listening(main.id) && listening(other.id), "both mains to be on the link channel");
+	// The server's offer goes only to the sessions on the link channel then, and is not made again for `offerAgainMs`: a promoted main is on it at once.
+	assert.ok(listening(b, main.id) && listening(b, other.id), "both mains to be on the link channel as they are promoted");
 	const sent = await a.server.ask({ op: "send", device: "bob-mac", text: "yes, the deploy is green", reply: false, inReplyTo: ASK }, a.tower.id);
 	assert.equal(sent.ok, true, JSON.stringify(sent));
 	assert.equal((sent.details as { as: string }).as, "tower-reply");
@@ -68,6 +68,20 @@ test("a reply is not taken by a main it was not offered for, nor by the tower", 
 	await a.server.ask({ op: "send", device: "bob-mac", text: "for a main that is gone", reply: false, inReplyTo: ASK }, a.tower.id);
 	// The main named is not live, so the holder hands it to an ally run: nobody of this computer's sessions takes it.
 	await until(() => b.server.service.store.inboxIds().length === 1 && b.server.service.store.readInbox(b.server.service.store.inboxIds()[0]!)?.askedBy === "api main", "the fallback");
-	await new Promise((r) => setTimeout(r, 200));
+	// Nothing more is coming: the main is on the channel (so an offer to it would have been taken) and the inbox holds the message for the ally run, not for it.
+	await until(() => listening(b, wrong.id), "the main to be on the link channel");
+	assert.equal(b.server.service.store.inboxIds().length, 1);
 	assert.equal(wrong.sent.length, 0);
+});
+
+test("a session that becomes main is on the link channel at once, not at its next tick", async () => {
+	const b = computer(root, relay, "b", { gateMs: 60 });
+	computers.push(b);
+	const slow = { ...b.deps, link: { ...b.deps.link, tickMs: 600_000 } };
+	const main = b.world.agent({ id: "main-slow", name: "slow main", pane: "wB:p1", tab: "wB:t1", deps: slow });
+	b.world.herdr.pane(main.pane).cwd = b.project;
+	await Promise.all([b.tower.start(), main.start()]);
+	assert.equal(listening(b, main.id), false, "a member is not on the channel");
+	await main.promote();
+	assert.equal(listening(b, main.id), true);
 });

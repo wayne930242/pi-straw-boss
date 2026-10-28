@@ -12,10 +12,10 @@ export const CONNECT_MS = 15_000;
 const CLAIM_MS = 5000;
 type Event = { type: string; fromSessionId?: string; owner?: { sessionId: string }; payload?: { type?: string; force?: boolean } };
 /** What membership calls on the other modules; `register` adds the tools a joined session has. */
-interface Parts { presence: Presence; election: Election; guard: Guard; briefing: Briefing; roles: Roles; openTower: Reach["openTower"]; register(): void; control(): { register(): void } }
+interface Parts { presence: Presence; election: Election; guard: Guard; briefing: Briefing; roles: Roles; openTower: Reach["openTower"]; register(): void; onMain?(): void; control(): { register(): void } }
 
 /** Joining the tab's net: its intercom channel, the events that change the session's role, and becoming the tab's main. */
-export function createMembership({ pi, cfg, s, me, tell }: Kit, { presence, election, guard, briefing, roles, openTower, register, control }: Parts) {
+export function createMembership({ pi, cfg, s, me, tell }: Kit, { presence, election, guard, briefing, roles, openTower, register, onMain, control }: Parts) {
 	const { run, sleep, autoTower } = cfg;
 	let joining: Promise<void> | undefined;
 	// A join that failed after registering retries on the tab the session is in now: its channel when it has registered there already, else a new
@@ -75,7 +75,7 @@ export function createMembership({ pi, cfg, s, me, tell }: Kit, { presence, elec
 			if (s.isMain !== wasMain) (tell(`This session is ${s.isMain ? "now" : "no longer"} the main agent of ${s.info.tab}`), briefing.rebrief());
 			await presence.publish(sessions);
 			if (s.isMain && !wasMain) {
-				roles.remember("main");
+				(roles.remember("main"), onMain?.()); // a main joins the link channel for the reply to its ask now, not at the next tick
 				if (s.restored) await adoptOpener(); // the late confirmation of a claim that timed out
 				// The workspace's first main opens the tower at once; later mains find it open. A main a Herdr restore gave back finds its tower coming back too.
 				if (s.restored) s.restored = false;
