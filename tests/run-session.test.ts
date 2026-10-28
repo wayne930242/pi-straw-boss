@@ -122,8 +122,8 @@ test("the tower tools are clients of the server, tower_done ends the run, and a 
 	srv.push("e1", "go");
 	const r = await rig(srv);
 	const names = r.session.getAllTools().map((t) => t.name);
-	for (const n of ["boss_status", "call_tower", "tower_list", "board_read", "tower_send", "tower_reply", "tower_done", "boss_open_main", "boss_close_main", "boss_server"]) assert.ok(names.includes(n), `${n} is registered`);
-	for (const n of ["link_request", "boss_broadcast", "board_set", "boss_rename", "boss_promote"]) assert.ok(!names.includes(n), `${n} is not`);
+	for (const n of ["boss_status", "call_tower", "tower_list", "board_read", "tower_send", "tower_reply", "tower_done", "boss_open_main", "boss_close_main", "boss_server", "link_request"]) assert.ok(names.includes(n), `${n} is registered`);
+	for (const n of ["boss_broadcast", "board_set", "boss_rename", "boss_promote"]) assert.ok(!names.includes(n), `${n} is not`);
 	srv.refuseDone("1 event still for you");
 	r.faux.setResponses([call("tower_send", { message: "hello", workspace: "Beta" }), call("tower_done", { note: "routed" }), call("tower_reply", { to: "main-1", message: "ok" }), fauxAssistantMessage("finished")]);
 	await until(() => srv.taken.length === 1, "the event");

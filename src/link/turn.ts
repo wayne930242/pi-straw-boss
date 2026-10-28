@@ -15,8 +15,12 @@ const DEVICE = /^[a-z2-7]{26}$/;
 
 export interface RemoteSender extends Sender { team: string; level: Level }
 
+/** The one sender an ally run serves (docs/specs/2026-10-26-sb-backend.md, Security): the run is a remote turn at the claim's level, or at the policy's when that is lower, for its whole session. */
+export interface Pinned { id: string; short: string; label: string; team: string; floor: Level }
+
 export class Turns {
 	private senders = new Map<string, RemoteSender>();
+	private pinned: Pinned | undefined;
 	private ids = new Set<string>();
 	private levelOf: (device: string) => Level;
 	private onChange: () => void;
@@ -44,22 +48,40 @@ export class Turns {
 		if (typeof d.id === "string") this.ids.add(d.id);
 		this.onChange();
 	}
-	/** The run ended: `agent_settled`, or the session did. */
+	/** The run ended: `agent_settled`, or the session did. An ally run's pinned sender stays: its session is one remote turn. */
 	settle(): void {
 		if (this.senders.size === 0 && this.ids.size === 0) return;
 		this.senders.clear();
 		this.ids.clear();
+		if (this.pinned) this.senders.set(this.pinned.id, this.pin1(this.pinned));
 		this.onChange();
+	}
+	/** An ally run's session: every tool call of it is held to this sender's level from now on, until the session ends. */
+	pin(sender: Pinned): void {
+		this.pinned = sender;
+		this.senders.set(sender.id, this.pin1(sender));
+		this.onChange();
+	}
+	private pin1(p: Pinned): RemoteSender {
+		return { id: p.id, short: p.short, label: restrictLabel(p.label), team: p.team, level: this.pinnedLevel(p) };
+	}
+	/** The lower of the level the run was claimed at and the one the policy gives the device now (a policy that cannot be read raises no one above `reply`). */
+	private pinnedLevel(p: Pinned): Level {
+		let now: Level = "reply";
+		try {
+			now = this.levelOf(p.id);
+		} catch { /* reply */ }
+		return RANK[now] < RANK[p.floor] ? now : p.floor;
 	}
 	get active(): boolean {
 		return this.senders.size > 0;
 	}
 	/** The lowest level among the run's remote senders. */
 	get level(): Level | undefined {
-		return LEVELS.find((l) => [...this.senders.values()].some((s) => s.level === l));
+		return LEVELS.find((l) => this.list.some((s) => s.level === l));
 	}
 	get list(): RemoteSender[] {
-		return [...this.senders.values()];
+		return [...this.senders.values()].map((s) => (this.pinned && s.id === this.pinned.id ? this.pin1(this.pinned) : s));
 	}
 	/** The sender whose level the run is at: the first of the lowest. */
 	get lowest(): RemoteSender | undefined {

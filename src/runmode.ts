@@ -4,11 +4,15 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import { BOSS_MARK, CRASH_FLAG } from "./eventmarks.ts";
 import { panes, type Place, TOWER_LABEL, tabs } from "./herdr.ts";
+import { createApproval } from "./link/approval.ts";
+import type { Level } from "./link/config.ts";
+import type { Link } from "./link/runtime.ts";
+import { HERE_ONLY } from "./link/request.ts";
 import type { ServerLook } from "./server-look.ts";
 import { towerRunsEnabled } from "./server/towerruns.ts";
 import { startOf } from "./startof.ts";
 import { ENTRY, type Kit } from "./state.ts";
-import { createTools } from "./tools.ts";
+import { createTools, LINK_REQUEST_DESCRIPTION, linkRequestParameters } from "./tools.ts";
 
 // A pi the sb server started for a tower run (docs/specs/2026-10-26-sb-backend.md, Local runs): it is a short life of its own and no part of a tab's net. At its start it claims its run over the
 // control socket (`--sb-run <run id>`; a pi without the flag in a standing pane asks `pane-role`), gets the brief and a run token, registers the tower tools as clients of the server, and lives off
@@ -27,18 +31,23 @@ export interface RunSideDeps {
 }
 export const MESSAGE = "straw-tower";
 const POLL_MS = 1000, CLAIM_WAIT_MS = 10_000, LOST_MS = 30_000, TURN_START_MS = 15_000, GLYPH_WAIT_MS = 30_000;
-/** A run's pane tokens: the tower's standing pane (B6 adds the ally panes). */
-const RUN_PANE_ROLES = new Set(["tower"]);
+/** A run's pane tokens: the tower's standing pane and an ally run's pane. */
+const RUN_PANE_ROLES = new Set(["tower", "ally"]);
 /** A `/reload` makes a new instance of the extension in the same process: the claim stays with the process. */
 const KEPT = Symbol.for("pi-straw-boss.run");
-interface Claim { token: string; kind: "local" | "ally"; level?: string; run: string; workspace: string; identity: string; label: string; brief: string; hand?: boolean }
+interface Peer { device: string; label: string; short: string; team: string; teamName: string }
+interface Claim { token: string; kind: "local" | "ally"; level?: string; peer?: Peer; run: string; workspace: string; identity: string; label: string; brief: string; hand?: boolean }
 interface Event { id: string; kind: string; text: string; from?: { id: string; name?: string }; flag?: string }
-type Command = { type: "steer"; text: string } | { type: "quit" };
+type Command = { type: "steer"; text: string } | { type: "quit" } | { type: "confirmed"; dialogId: string; allow: boolean };
 
 const NO_SUBAGENTS = "A tower run dispatches no subagents: one would outlive the run. Open a main for the work with boss_open_main, or route it to the main that owns it.";
 const BLOCKED = "In a tower run, answer a local session with tower_reply (or tower_send to a tower): intercom would carry this run's own short-lived id, and the answer would reach a pi that has already exited.";
 /** The tower tools a local run registers (the same descriptions and schemas as a resident tower's, tools.ts), each now a client of the server. */
 const REGISTERED = new Set(["boss_status", "call_tower", "boss_server", "tower_list", "board_read", "tower_send", "boss_open_main", "boss_close_main"]);
+/** What an ally run registers: no `call_tower`, `boss_server`, or `link_request`; the server refuses them by the run's kind as well. */
+const ALLY_REGISTERED = new Set(["boss_status", "tower_list", "board_read", "tower_send", "boss_open_main", "boss_close_main"]);
+/** pi-intercom's custom message: an ally run's context drops it, as a backstop to the blocked tool. */
+const INTERCOM_MESSAGE = "intercom_message";
 const text = (v: unknown) => (typeof v === "string" ? v : "");
 
 /** How an event reads to the model: an intercom one opens with a line this code writes from the broker's sender (the text after it is the sender's own, and may claim anything), then the header the sender's code wrote. */
@@ -48,13 +57,15 @@ export function eventText(e: Pick<Event, "kind" | "text" | "flag" | "from">): st
 	if (e.kind === "boss") return `${BOSS_MARK}${flag}\n${e.text}`;
 	if (e.kind === "notice") return `[notice from the sb server]${flag}\n${e.text}`;
 	if (e.kind === "timer") return `[your wakeAfter follow-up is due]${flag}\n${e.text}`;
+	// A teammate's message to an ally run: the server wrote the verified header (device, team, the ask it carries) before the peer's text.
+	if (e.kind === "link") return e.text;
 	// An allowlist: terminal escape sequences (7- and 8-bit, finished or not) and controls become spaces, then only letters, digits, spaces and ._-@ are kept (NFC first, so accented letters stay whole); the cut counts code points. Known limits (docs/how-it-works.md): bracket-like letters stay, combining marks go.
 	const label = (v = "") => [...v.replace(/(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]?|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?/g, " ").replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").normalize("NFC").replace(/[^\p{L}\p{N}\s._@-]/gu, "").replace(/\s+/g, " ").trim()].slice(0, 80).join("");
 	const sender = e.from ? `${label(e.from.name) ? `${label(e.from.name)} ` : ""}(${label(e.from.id)})` : "an unknown sender";
 	return `[intercom from ${sender}]${flag}\n${e.text}`;
 }
 
-export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunSideDeps = {}) {
+export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunSideDeps = {}, link?: Link) {
 	const { pi, cfg, s, guiDir, tell } = kit;
 	const { env } = cfg;
 	const { pollMs = POLL_MS, claimWaitMs = CLAIM_WAIT_MS, lostMs = LOST_MS, startMs = TURN_START_MS, glyphWaitMs = GLYPH_WAIT_MS } = deps;
@@ -80,6 +91,15 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		if (!answer.ok) throw Object.assign(new Error(String(answer.error ?? "the sb server refused the request")), { reply: answer });
 		return answer;
 	};
+
+	// An ally run is one remote turn for its whole session (docs/specs/2026-10-26-sb-backend.md, Security: Remote turns after the split): the hooks of link/hooks.ts, registered by the session's link module, hold every
+	// call to the level of its sender, which the claim fixes and the policy can only lower. The `forward` confirm to the sender's device goes through the server with the run's token, which pins the device; its answer
+	// comes back as a command at the poll.
+	const pinPeer = () => {
+		const peer = claim?.kind === "ally" ? claim.peer : undefined;
+		if (peer && link) link.pinRun({ id: peer.device, short: peer.short, label: peer.label, team: peer.team, floor: (["reply", "forward", "dispatch"].includes(claim!.level ?? "") ? claim!.level : "reply") as Level }, async (op) => (await call({ cmd: "link", body: op })).answer as Answer);
+	};
+	const approval = createApproval({ bus: pi.events, onError: () => {} });
 
 	// --- claiming --------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -121,8 +141,8 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	// --- the tools ---------------------------------------------------------------------------------------------------------------------------------------------------
 
 	/** A tower tool of the run: the server does the work as the tower identity and the run only shows what came back. */
-	const tool = async (name: string, args: unknown): Promise<{ text: string; details?: unknown }> => {
-		const answer = await call({ cmd: "run-tool", tool: name, args });
+	const tool = async (name: string, args: unknown, toolCallId?: string): Promise<{ text: string; details?: unknown }> => {
+		const answer = await call({ cmd: "run-tool", tool: name, args, ...(toolCallId ? { toolCallId } : {}) });
 		return { text: text(answer.text) || "(no text)", ...(answer.details !== undefined ? { details: answer.details } : {}) };
 	};
 	function registerTools() {
@@ -133,9 +153,9 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 			get(target, key) {
 				if (key === "registerTool") {
 					return (def: Parameters<ExtensionAPI["registerTool"]>[0]) => {
-						if (!REGISTERED.has(def.name)) return;
-						target.registerTool({ ...def, execute: async (_id: string, params: unknown) => {
-							const done = await tool(def.name, params);
+						if (!(claim!.kind === "ally" ? ALLY_REGISTERED : REGISTERED).has(def.name)) return;
+						target.registerTool({ ...def, execute: async (id: string, params: unknown) => {
+							const done = await tool(def.name, params, id);
 							return { content: [{ type: "text" as const, text: done.text }], details: done.details };
 						} } as never);
 					};
@@ -149,10 +169,9 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		s.at = { workspaceId: claim!.workspace, paneId: env.HERDR_PANE_ID ?? "", tabId: env.HERDR_TAB_ID ?? "" } as Place;
 		const tools = createTools({ ...kit, pi: proxy }, { post: unused, callTower: unused, status: unused, broadcast: unused, towerList: unused, towerSend: unused, read: unused, promote: unused, digest: undefined as never, closeMain: unused, link: undefined as never, server: claim!.kind === "local" ? ({} as never) : undefined } as never);
 		tools.addNetTools();
-		if (claim!.kind === "local") {
-			tools.addOpenMain();
-			tools.addTowerComms();
-		}
+		tools.addOpenMain();
+		tools.addTowerComms();
+		if (claim!.kind === "local") registerLinkRequest();
 		pi.registerTool({
 			name: "tower_reply", label: "tower_reply",
 			description: "Answer one local session (a main or a member) by its intercom name or session id. It goes out under the tower's header, as the tower identity, so the answer reaches the session that asked. In a run this replaces intercom send.",
@@ -161,8 +180,8 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 				message: Type.String({ description: "The answer, terse: what the session needs to know or do." }),
 				reply: Type.Optional(Type.Boolean({ description: "Whether you wait for an answer. Default false." })),
 			}),
-			execute: async (_id, params) => {
-				const done = await tool("tower_reply", params);
+			execute: async (id, params) => {
+				const done = await tool("tower_reply", params, id);
 				return { content: [{ type: "text", text: done.text }], details: done.details };
 			},
 		});
@@ -183,6 +202,30 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		});
 	}
 
+	/**
+	 * `link_request` in a local run: the boss approves it in the dialog this run publishes, as in any session; the server asks the holder what the request does (`open`), carries it out only when the hub saw
+	 * this approval close with a yes for this call (`run`), and an approval the boss refuses withdraws it (`drop`). An ally run has none (the server refuses it by the run's kind).
+	 */
+	function registerLinkRequest() {
+		pi.registerTool({
+			name: "link_request", label: "link_request", description: LINK_REQUEST_DESCRIPTION, parameters: linkRequestParameters(),
+			execute: async (toolCallId, params, signal, _update, context) => {
+				const args = Object.fromEntries(Object.entries(params.args ?? {}).filter((e): e is [string, string] => typeof e[1] === "string"));
+				const opened = await tool("link_request", { phase: "open", action: params.action, args, reason: params.reason }, toolCallId);
+				const details = opened.details as { id: string; lines: string[]; reason: string };
+				const asker = `tower run of ${claim!.label}`;
+				const lines = [...details.lines, `Asked by session: ${asker} (${claim!.run.slice(0, 8)})`, `Reason: ${details.reason}`];
+				const verdict = await approval.approve({ hereOnly: (HERE_ONLY as readonly string[]).includes(params.action), toolCallId, lines, asker, ...(context.hasUI ? { ui: context.ui } : {}), ...(signal ? { signal } : {}) });
+				if (!verdict.approved) {
+					await tool("link_request", { phase: "drop", id: details.id }, toolCallId).catch(() => undefined);
+					throw new Error(verdict.reason);
+				}
+				const ran = await tool("link_request", { phase: "run", id: details.id }, toolCallId);
+				return { content: [{ type: "text", text: ran.text }], details: { action: params.action } };
+			},
+		});
+	}
+
 	// --- living off the server's queue ----------------------------------------------------------------------------------------------------------------------------
 
 	const send = (message: string, details: unknown) => {
@@ -192,6 +235,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	const apply = async (answer: Answer) => {
 		const command = answer.command as Command | undefined, event = answer.event as Event | undefined;
 		if (command?.type === "quit") return void ctx?.shutdown();
+		if (command?.type === "confirmed") return link?.answerForward(command.dialogId, command.allow);
 		if (command?.type === "steer") return send(`[sb server] ${command.text}`, { steer: true });
 		if (!event) return;
 		// Idle and nothing queued are read again at the moment of delivery, after the round trip: a run that got busy meanwhile is offered the event again at its next idle poll.
@@ -228,6 +272,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		try {
 			const again = await claimRun(claim!.run);
 			claim = again;
+			pinPeer();
 			outOfReach = undefined;
 			keep();
 		} catch (error) {
@@ -254,11 +299,17 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		// A subagent would outlive the run (a pane and a process left behind after tower_done): a run routes work through the mains it opens.
 		if (event.toolName === "subagent" || event.toolName === "subagent_resume") return { block: true, reason: NO_SUBAGENTS };
 	});
+	// An ally run has no business with pi-intercom: its own id is fresh and no header names it, so a message from it is dropped from the context as a backstop.
+	pi.on("context", (event) => {
+		if (mode !== "run" || claim?.kind !== "ally") return;
+		const kept = event.messages.filter((m) => (m as { customType?: unknown }).customType !== INTERCOM_MESSAGE);
+		return kept.length === event.messages.length ? undefined : { messages: kept };
+	});
 	pi.on("before_agent_start", (event) => {
 		if (mode !== "run" || !claim) return;
 		const sections = event.systemPromptOptions.sections;
 		const head = /head tower: ([^\n;.]+)/.exec(claim.brief)?.[1]?.trim() ?? "none yet";
-		const role = readFileSync(join(cfg.promptDir, "tower-run.md"), "utf8").trim().replace(/\{\{(\w+)\}\}/g, (_, key: string) => ({ workspace: claim!.label, head })[key] ?? "none yet");
+		const role = readFileSync(join(cfg.promptDir, claim.kind === "ally" ? "ally-run.md" : "tower-run.md"), "utf8").trim().replace(/\{\{(\w+)\}\}/g, (_, key: string) => ({ workspace: claim!.label, head })[key] ?? "none yet");
 		sections[ENTRY] = `${role}\n\n${claim.brief}`;
 	});
 	pi.on("session_start", async (event, context) => {
@@ -289,6 +340,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		}
 		mode = "run";
 		keep();
+		pinPeer();
 		registerTools();
 		await call({ cmd: "run-file", file: context.sessionManager.getSessionFile() ?? "" }).catch(() => {});
 		timer = setInterval(() => void tick(), pollMs);

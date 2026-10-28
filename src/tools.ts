@@ -16,6 +16,18 @@ import { trustDir } from "./trust/files.ts";
 /** The tab label for a name, cut at 16 characters as pi-auto-tab-name cuts it, so that extension takes the label as its own and keeps it. */
 export const tabLabel = (name: string): string => Array.from(name).length > 16 ? `${Array.from(name).slice(0, 16).join("").trimEnd()}…` : name;
 
+const arg = (description: string) => Type.Optional(Type.String({ description }));
+/** `link_request`: the description and the parameters a session and a tower run register (runmode.ts) alike. */
+export const LINK_REQUEST_DESCRIPTION = "Ask for a Straw Link action (teams across computers). It never runs unasked: the boss gets an approval dialog that shows the action, every argument, your reason, and this session, and the action runs only when they approve it (in the GUI, from a paired device, or in the terminal); no answer in 10 minutes refuses it. Actions: create (relay, project; opens the Create team screen, where the boss types the relay's token), invite (team; returns an invite text), invite-unattended (team, device id of the unattended computer), join (text; opens the Join screen with the invite filled in, the boss compares the safety words), trust (device, level reply|forward|dispatch), leave (team), and for an admin remove (team, device), role (team, device, role admin|member), rotate (team). Refused on an unattended device.";
+export const linkRequestParameters = () => Type.Object({
+	action: Type.Union(["create", "invite", "invite-unattended", "join", "trust", "leave", "remove", "role", "rotate"].map((a) => Type.Literal(a))),
+	args: Type.Optional(Type.Object({
+		team: arg("A team's id, an id prefix of 6 or more characters, or its name (the project folder's name)."), relay: arg("The relay's origin, e.g. https://relay.example."), project: arg("An absolute project folder."), share: arg("presence or status."),
+		device: arg("A device's id, short id, or label; for invite-unattended its 26-character id."), level: arg("reply, forward, or dispatch."), role: arg("admin or member."), text: arg("The invite text, strawlink1:…"), label: arg("This computer's label in the team."),
+	})),
+	reason: Type.String({ description: "One line: why you ask. The boss reads it in the dialog." }),
+});
+
 /** The tools the agent calls: what a joined session has (status, call_tower, broadcast, rename, promote), and the tower's boss_open_main. */
 export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { post, callTower, status, broadcast, towerList, towerSend, read, promote, digest, closeMain, link, server }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend" | "read"> & Pick<Membership, "promote"> & { digest: Digest; closeMain: CloseMain; link: Link; server?: ServerLook }) {
 	const tool = <P extends TSchema>(name: string, description: string, parameters: P, body: (params: Static<P>) => Promise<{ text: string; details?: unknown }>) =>
@@ -65,20 +77,12 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { post, callT
 					const done = await server.restart(reason ?? "", { boss: false });
 					return { text: `The sb server ${done.server}: pid ${done.pid}, pi-straw-boss ${done.version}.`, details: done };
 				});
-			const arg = (description: string) => Type.Optional(Type.String({ description }));
 			// A call nested in another tool's (codemode) is written to the session file only when its parent ends, so the key pad's file check would never see it open.
 			pi.on("tool_call", (e) => (e.toolName === "link_request" && (e as { parentToolCallId?: string }).parentToolCallId ? { block: true, reason: "link_request is called directly, not from another tool" } : undefined));
 			pi.registerTool({
 				name: "link_request", label: "link_request",
-				description: "Ask for a Straw Link action (teams across computers). It never runs unasked: the boss gets an approval dialog that shows the action, every argument, your reason, and this session, and the action runs only when they approve it (in the GUI, from a paired device, or in the terminal); no answer in 10 minutes refuses it. Actions: create (relay, project; opens the Create team screen, where the boss types the relay's token), invite (team; returns an invite text), invite-unattended (team, device id of the unattended computer), join (text; opens the Join screen with the invite filled in, the boss compares the safety words), trust (device, level reply|forward|dispatch), leave (team), and for an admin remove (team, device), role (team, device, role admin|member), rotate (team). Refused on an unattended device.",
-				parameters: Type.Object({
-					action: Type.Union(["create", "invite", "invite-unattended", "join", "trust", "leave", "remove", "role", "rotate"].map((a) => Type.Literal(a))),
-					args: Type.Optional(Type.Object({
-						team: arg("A team's id, an id prefix of 6 or more characters, or its name (the project folder's name)."), relay: arg("The relay's origin, e.g. https://relay.example."), project: arg("An absolute project folder."), share: arg("presence or status."),
-						device: arg("A device's id, short id, or label; for invite-unattended its 26-character id."), level: arg("reply, forward, or dispatch."), role: arg("admin or member."), text: arg("The invite text, strawlink1:…"), label: arg("This computer's label in the team."),
-					})),
-					reason: Type.String({ description: "One line: why you ask. The boss reads it in the dialog." }),
-				}),
+				description: LINK_REQUEST_DESCRIPTION,
+				parameters: linkRequestParameters(),
 				execute: async (toolCallId, params, signal, _update, ctx) => {
 					const text = await link.request({ action: params.action, args: Object.fromEntries(Object.entries(params.args ?? {}).filter((e): e is [string, string] => typeof e[1] === "string")), reason: params.reason, toolCallId, asker: s.ownName || pi.getSessionName() || me(), ...(ctx.hasUI ? { ui: ctx.ui } : {}), ...(signal ? { signal } : {}) });
 					return { content: [{ type: "text", text }], details: { action: params.action } };
@@ -163,8 +167,13 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { post, callT
 					workspace: Type.Optional(Type.String({ description: "One workspace's id or exact label. Omit for every other tower. With device: a workspace label on that device." })),
 					device: Type.Optional(Type.String({ description: "A teammate's device (short id, id, or label) to send over Straw Link. Omit for towers on this computer." })),
 					reply: Type.Optional(Type.Boolean({ description: "Whether you wait for an answer. Default false; true only when you act on it." })),
+					for: Type.Optional(Type.String({ description: "Tower run only, with device and reply: a live main of your workspace (id or name) that asked for this. The device's answer then goes to that main directly; the result says whether the device's build can do that." })),
+					inReplyTo: Type.Optional(Type.String({ description: "Ally run only: the ask id (see your brief and the event header, asks=) of a message you answer. The answer goes to the main that asked." })),
 				}),
-				({ message, workspace, device, reply }) => device === undefined ? towerSend(message, workspace, reply ?? false) : link.send({ device, text: message, reply: reply ?? false, ...(workspace !== undefined ? { workspace } : {}) }));
+				({ message, workspace, device, reply, for: forMain, inReplyTo }) => {
+					if (forMain !== undefined || inReplyTo !== undefined) throw new Error("for and inReplyTo work in a tower run of the sb server (the run tools ask the server)");
+					return device === undefined ? towerSend(message, workspace, reply ?? false) : link.send({ device, text: message, reply: reply ?? false, ...(workspace !== undefined ? { workspace } : {}) });
+				});
 			tool("boss_close_main", "Close a main you opened with boss_open_main: ask it to quit as /boss close would, so its pane and tab close. Only mains opened by a tower in your workspace, never one the boss opened. Refused while it has a running turn, a queued message, an open dialog, a monitor, or a subagent; try again later. Close an opened main after its done report, unless it waits for a boss decision.",
 				Type.Object({ main: Type.String({ description: "The opened main's intercom name or session id." }) }),
 				async ({ main }) => {

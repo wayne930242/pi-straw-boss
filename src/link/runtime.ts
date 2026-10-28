@@ -15,7 +15,7 @@ import { readPolicy } from "./policy.ts";
 import { type ServiceDeps } from "./service.ts";
 import { type InboxItem, LinkStore } from "./store.ts";
 import { type RemoteTower, remoteTowers } from "./remotelist.ts";
-import { MESSAGE_TYPE } from "./turn.ts";
+import { MESSAGE_TYPE, type Pinned } from "./turn.ts";
 import { NAMESPACE } from "./wire.ts";
 
 // Straw Link inside a pi session (docs/specs/2026-10-25-straw-link.md, Architecture; docs/specs/2026-10-26-sb-backend.md, What moves out of pi sessions). The link holder is not
@@ -173,7 +173,10 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 		const late = new Promise<never>((_, reject) => void (timer = setTimeout(() => reject(new HolderSlow(`The link holder did not answer within ${ms / 1000} s`)), ms)));
 		return Promise.race([work, late]).finally(() => clearTimeout(timer));
 	};
+	/** An ally run (runmode.ts) puts its requests to the server with its own token: the gate's `forward` confirm goes through here. */
+	let route: ((op: Record<string, unknown>) => Promise<Answer>) | undefined;
 	const ask = async (op: Record<string, unknown>, ms = ASK_MS): Promise<Answer> => {
+		if (route) return route(op);
 		const answer = await (opts.ask ? within(opts.ask(op, sid(), ms), ms) : askServer(op, ms));
 		// The server has no holder (yet): told as the missing holder is, so a caller can tell "not there" from "refused".
 		if (!answer.ok && answer.code === "no_holder") throw new Error(NO_HOLDER);
@@ -277,6 +280,16 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 		},
 		/** Whether this computer is attended (no unattended policy file). */
 		attended,
+		/**
+		 * An ally run (docs/specs/2026-10-26-sb-backend.md, Ally runs): its whole session is one remote turn at the level the claim fixed (the policy can only lower it), and the requests the hooks make of the holder
+		 * go to the server by `route` with the run's token.
+		 */
+		pinRun(sender: Pinned, via: (op: Record<string, unknown>) => Promise<Answer>) {
+			route = via;
+			remote.turns.pin(sender);
+		},
+		/** The sender's device answered the `forward` confirm of a dialog (the server hands it to the run at its poll). */
+		answerForward,
 		/** Sets Straw Link up on this computer without a team yet (the GUI's Team settings): the server's holder starts within a few seconds. */
 		async enable(): Promise<void> {
 			await store.withLock(() => store.enable());

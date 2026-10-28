@@ -57,7 +57,7 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		if (env.PI_SUBAGENT_ID) return;
 		// A pi the sb server started for a tower run (runmode.ts) decides first, at session_start: when it is a run, nothing of the net starts.
 		warmStart(); // Windows tells a process's start time through PowerShell, 2 to 3 s: read this one's now, in the background, so the records written later carry it
-		const link = createLink(kit), briefing = createBriefing(kit), roles = createRoles(kit), look = cfg.server ? createServerLook(kit, cfg.server) : undefined, runMode = createRunMode(kit, look, cfg.runSide), reach = createReach(kit, look), election = createElection(kit), presence = createPresence(kit), digest = createDigest(run, now);
+		const link = createLink(kit), briefing = createBriefing(kit), roles = createRoles(kit), look = cfg.server ? createServerLook(kit, cfg.server) : undefined, runMode = createRunMode(kit, look, cfg.runSide, link), reach = createReach(kit, look), election = createElection(kit), presence = createPresence(kit), digest = createDigest(run, now);
 		look?.holdWhile(() => runMode.mode === "run" || Boolean(pi.getFlag("sb-run")));
 		const guard = createGuard(kit, { ...election, openTower: reach.openTower, roles });
 		// A join adds the tools of a joined session, and the tools promote through the membership: each is built with the other's hook.

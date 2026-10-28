@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
@@ -63,4 +64,43 @@ test("an event wakes a run; the run claims, takes the event, answers with tower_
 	assert.deepEqual(readQueue(world.slot, "wA").filter((e) => !e.taken), [], "nothing is left in the queue");
 	const status = (await serverAsk({ cmd: "status" })).towers as { service: { state: string } }[];
 	assert.equal(status[0]!.service.state, "standing");
+});
+
+test("an ally run: a teammate's message wakes a run in its own pane; the run claims at the sender's level, answers the ask by inReplyTo through the server, and ends; the message leaves the inbox and the pane closes", async () => {
+	const DEV = "a".repeat(26), TEAM = "1".repeat(32), ASK = "c".repeat(32);
+	mkdirSync(join(root, "project"), { recursive: true });
+	mkdirSync(join(root, "straw-boss"), { recursive: true });
+	writeFileSync(join(root, "straw-boss", "config.json"), JSON.stringify({ link: { teams: { [TEAM]: { project: join(root, "project") } }, trust: { [DEV]: "reply" } } }));
+	const s: Running = await world.start({ gui: { bundle, tailscale: noTailscale, link: noLink, bindWaitMs: 200 } });
+	await s.handle.ready;
+	const serverAsk = (r: Request): Promise<Answer> => callControl(s.handle.endpoint, world.record()!.secret, r as { cmd: string }).then((x) => x.reply as Answer);
+	await serverAsk({ cmd: "ensure-tower", workspace: "wA" });
+	world.linkAnswers.set("send", (b) => ({ ok: true, text: "Sent.", details: { device: b.device } }));
+	world.ally.add("m1", DEV, "is the deploy green?", { team: TEAM, label: "Carol Mac", awaitsReply: ASK, replyExpected: true });
+	world.expose?.allyWaiting("sb-tower-wa");
+	await until(() => world.pis.size === 1, "the ally run's pi");
+	const [id, pi] = [...world.pis.entries()][0]!;
+	await until(() => readRun(world.slot, "wA", id)?.pid, "the pid");
+	const ask = (r: Request) => (r.cmd === "claim" ? serverAsk({ ...r, pane: pi.pane, pid: pi.pid, started: `T-${pi.pid}` }) : serverAsk(r));
+	const r = await makeRig(root, ask, sessions, { flag: id });
+	const seen: string[] = [];
+	r.faux.setResponses([
+		((context: { messages: unknown[] }) => (seen.push(JSON.stringify(context.messages)), call("tower_send", { device: "Carol Mac", message: "yes, green", inReplyTo: ASK }))) as never,
+		call("tower_done", { note: "answered Carol about the deploy" }),
+		fauxAssistantMessage("done"),
+	]);
+	await until(() => r.shutdowns.length === 1, "the run to end itself");
+	assert.match(seen[0]!, /is the deploy green\?/);
+	assert.match(seen[0]!, new RegExp(`asks=${ASK}`), "the ask id is in the header the server wrote");
+	assert.match(seen[0]!, /You are an ally run/, "the ally brief");
+	const sent = world.linkCalls.find((c) => c.body.op === "send")!;
+	assert.equal(sent.body.device, DEV, "to the sender's full id");
+	assert.equal(sent.body.inReplyTo, ASK);
+	assert.equal(sent.from, "sb-tower-wa");
+	const pane = readRun(world.slot, "wA", id)!.pane;
+	world.live.delete(pi.pid);
+	await until(() => readRun(world.slot, "wA", id)?.outcome === "done", "the run recorded as done");
+	assert.deepEqual(world.ally.takenIds, ["m1"]);
+	assert.ok(world.herdr.closed.includes(pane));
+	assert.equal(readRun(world.slot, "wA", id)?.kind, "ally");
 });
