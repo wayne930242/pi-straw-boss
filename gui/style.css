@@ -153,7 +153,6 @@ svg { display: block; }
 .queue-list b { margin-right: 8px; color: var(--accent); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; }
 .queue-act { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4px 10px; margin: 0 16px 6px; color: var(--dim); font-size: 12px; line-height: 1.4; }
 .queue-act[hidden] { display: none; }
-.queue-act span { flex: 0 1 auto; max-width: 64ch; text-align: right; }
 .in-term .queue-list, .in-term .queue-act { display: none; }
 /* The todo list above the composer, as pi's widget shows it in the terminal: ○ waiting, ◐ in progress, ✓ done. */
 .todos { margin: 0 16px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); font-size: 13px; }
@@ -870,7 +869,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 	.todos, .monitors { padding-block: 0; } :is(.todos ol, .monitors ul) { margin: 0 0 10px; }
 	.link-form summary { padding-block: 12px; }
 	/* The queue's hint and Edit share one row instead of the button on a row of its own (two lines saved above the composer). */
-	.queue-act { flex-wrap: nowrap; justify-content: space-between; gap: 10px; } .queue-act span { flex: 1 1 0; text-align: left; } .queue-act button { flex: none; min-width: 56px; min-height: 44px; }
+	.queue-act { flex-wrap: nowrap; justify-content: flex-end; gap: 10px; } .queue-act button { flex: none; min-width: 56px; min-height: 44px; }
 	.trust .ask-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; } .trust .ask-send { grid-column: 1 / -1; } /* Trust across the width, the other two side by side, instead of 2 + 1 wrapping at a width of their own */
 	.tl-mark { pointer-events: none; } /* 10 px and a few px apart: a finger would hit the wrong event; each unit is one tap away on its card or in the drawer */
 	.picker-body { height: clamp(180px, calc(100dvh - 412px), 360px); } /* the folder list gives way so the name and Open stay on the screen */

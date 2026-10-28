@@ -140,12 +140,13 @@ test("the queue's Edit line shows with the queue and goes with it; the button ru
 	assert.equal(declared(".queue-act[hidden]", "display"), "none", "the author style would otherwise show a hidden line");
 });
 
-test("the Edit line and its hint have words in both languages, and the hint says what comes back and what cannot", async () => {
+test("the Edit button reads \"Edit all steers\" / \"編輯所有插話\" and has no hint line", async () => {
 	const { readFileSync } = await import("node:fs");
-	for (const [file, mustSay] of [["en.json", [/together/, /one text/, /delivered/]], ["zh-TW.json", [/全部/, /一段文字/, /送達/]]] as const) {
+	for (const [file, label] of [["en.json", "Edit all steers"], ["zh-TW.json", "編輯所有插話"]] as const) {
 		const messages = JSON.parse(readFileSync(new URL(`../gui/messages/${file}`, import.meta.url), "utf8")) as Record<string, string>;
-		for (const key of ["queue_edit", "queue_edit_hint", "edit_taking", "edit_taken", "edit_none", "edit_unsure"]) assert.ok(messages[key], `${file} ${key}`);
-		for (const re of mustSay) assert.match(messages.queue_edit_hint!, re, file);
+		for (const key of ["queue_edit", "edit_taking", "edit_taken", "edit_none", "edit_unsure"]) assert.ok(messages[key], `${file} ${key}`);
+		assert.equal(messages.queue_edit, label, file);
+		assert.equal(messages.queue_edit_hint, undefined, `${file} keeps no hint`);
 	}
 });
 

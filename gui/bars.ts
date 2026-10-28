@@ -45,7 +45,7 @@ export function drawQueued(view: HTMLElement, list: Queued[] | undefined, sessio
 	for (const key of mine) if (!live.has(key)) mine.delete(key);
 	if (!list?.length) opened.delete(session); // a session with no queue keeps nothing
 }
-/** The queue's Edit: pressing it runs `take` (the composer's take-back, composer.ts) once at a time; the button is disabled while it runs. The hint and button live in the session view's markup (`.queue-act`), shown with the queue. */
+/** The queue's Edit: pressing it runs `take` (the composer's take-back, composer.ts) once at a time; the button is disabled while it runs. The button lives in the session view's markup (`.queue-act`), shown with the queue. */
 export function mountQueueEdit(view: HTMLElement, take: () => Promise<unknown>) {
 	const button = view.querySelector<HTMLButtonElement>(".queue-act button");
 	if (button) button.onclick = () => {
