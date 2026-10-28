@@ -151,8 +151,8 @@ test("a button that asks the server is off and says so while it waits, and comes
 
 test("Straw Link notices agree with their number", () => {
 	const note = (kind: "inbox" | "held" | "served", count: number) => alertLine({ id: "a", kind, level: "info", team: "t", teamName: "Moldplan", data: { count } } as never);
-	assert.match(note("served", 1), /^1 Straw Link message waits in the inbox/);
-	assert.match(note("served", 2), /^2 Straw Link messages wait in the inbox/);
+	assert.match(note("served", 1), /^1 Straw Link message has waited more than 10 minutes in the inbox/);
+	assert.match(note("served", 2), /^2 Straw Link messages have waited more than 10 minutes in the inbox/);
 	assert.match(note("inbox", 1), /^1 message waits in the inbox/);
 	assert.match(note("inbox", 3), /^3 messages wait in the inbox/);
 	assert.match(note("held", 1), /^1 message has waited/);

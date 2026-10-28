@@ -650,8 +650,8 @@
 				"countPlural"
 			],
 			"match": {
-				"countPlural=one": "{count} Straw Link message waits in the inbox of team {team}; ally runs, which take it, come with the next step",
-				"countPlural=other": "{count} Straw Link messages wait in the inbox of team {team}; ally runs, which take them, come with the next step"
+				"countPlural=one": "{count} Straw Link message has waited more than 10 minutes in the inbox of team {team} for an ally run",
+				"countPlural=other": "{count} Straw Link messages have waited more than 10 minutes in the inbox of team {team} for an ally run"
 			}
 		}
 	],

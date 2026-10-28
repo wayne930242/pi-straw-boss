@@ -75,7 +75,27 @@ export interface InboxItem {
 	toWorkspace: string;
 	replyExpected: boolean;
 	text: string;
+	/** The ask id of a `tower` sent with its fifth field: the ally run that works this message answers it by `inReplyTo` (docs/specs/2026-10-26-sb-backend.md, Replies for a main). */
+	awaitsReply?: string;
+	/** A `tower-reply` taken as the reply to an ask a local tower made for a main: it goes to that main, as a peer's data, and to no run. */
+	reply?: { ask: string; main: string; mainName: string; tower: string };
+	/** A reply whose main was gone falls back to an ally run, whose brief says which main asked. */
+	askedBy?: string;
 }
+
+/** What one device and this computer's towers said to each other, one row per message (docs/specs/2026-10-26-sb-backend.md, The brief, The thread store). */
+export interface ThreadRow {
+	dir: "in" | "out";
+	at: number;
+	id: string;
+	kind: "tower" | "tower-reply";
+	awaitsReply?: string;
+	inReplyTo?: string;
+	text: string;
+}
+/** The thread store keeps the last 20 messages of a device, none older than 7 days, each cut to 4,000 characters. */
+export const THREAD_KEEP = 20, THREAD_MAX_AGE_MS = 7 * 24 * 3600_000, THREAD_TEXT = 4000;
+const DEVICE_ID = /^[a-z2-7]{26}$/;
 
 /** An invite this device made, kept until it is used, ends, or lapses: its secret opens the join request that comes back for it. */
 export interface InviteFile {
@@ -148,6 +168,70 @@ export class LinkStore {
 	/** The directory and its subdirectories, private. */
 	ensure(): void {
 		for (const dir of [this.dir, this.path("teams"), this.path("inbox")]) mkdirPrivate(dir);
+	}
+
+	// ---- The thread store ----------------------------------------------------------------------------------------------------------
+
+	private threadPath(device: string) {
+		return this.path("threads", `${device}.jsonl`);
+	}
+	/** The rows of a device's thread, oldest first; none older than 7 days. Peer text at rest, mode 600 in this 700 folder; only the ally brief builder reads it. */
+	readThread(device: string, now = this.now()): ThreadRow[] {
+		if (!DEVICE_ID.test(device)) return [];
+		let text: string;
+		try {
+			text = readFileSync(this.threadPath(device), "utf8");
+		} catch {
+			return [];
+		}
+		return text.split("\n").flatMap((line) => {
+			try {
+				const v = JSON.parse(line) as ThreadRow;
+				return (v.dir === "in" || v.dir === "out") && count(v.at) && typeof v.id === "string" && (v.kind === "tower" || v.kind === "tower-reply") && typeof v.text === "string" && now - v.at <= THREAD_MAX_AGE_MS ? [v] : [];
+			} catch {
+				return [];
+			}
+		});
+	}
+	/** Adds one row and prunes: the last 20, none older than 7 days. */
+	appendThread(device: string, row: ThreadRow): void {
+		this.assertLocked("Writing a thread");
+		if (!DEVICE_ID.test(device)) throw new Error("a thread is named by the device id");
+		mkdirPrivate(this.path("threads"));
+		const kept = [...this.readThread(device), { ...row, text: row.text.length > THREAD_TEXT ? row.text.slice(0, THREAD_TEXT) : row.text }].slice(-THREAD_KEEP);
+		this.write(this.threadPath(device), kept.map((r) => JSON.stringify(r)).join("\n") + "\n");
+	}
+	/** Devices that have a thread file. */
+	threadDevices(): string[] {
+		try {
+			return readdirSync(this.path("threads")).flatMap((n) => (/^[a-z2-7]{26}\.jsonl$/.test(n) ? [n.slice(0, 26)] : []));
+		} catch {
+			return [];
+		}
+	}
+	removeThread(device: string): void {
+		this.assertLocked("Removing a thread");
+		if (DEVICE_ID.test(device)) rmSync(this.threadPath(device), { force: true });
+	}
+	/** Prunes every thread by age, drops the files that are empty then, and returns how many rows went. */
+	purgeThreads(now = this.now()): number {
+		this.assertLocked("Purging the threads");
+		let gone = 0;
+		for (const device of this.threadDevices()) {
+			const all = this.readAll(device), kept = this.readThread(device, now);
+			if (kept.length === all) continue;
+			gone += all - kept.length;
+			if (kept.length) this.write(this.threadPath(device), kept.map((r) => JSON.stringify(r)).join("\n") + "\n");
+			else rmSync(this.threadPath(device), { force: true });
+		}
+		return gone;
+	}
+	private readAll(device: string): number {
+		try {
+			return readFileSync(this.threadPath(device), "utf8").split("\n").filter(Boolean).length;
+		} catch {
+			return 0;
+		}
 	}
 
 	// ---- The lock ------------------------------------------------------------------------------------------------------------------
@@ -434,6 +518,9 @@ export class LinkStore {
 		return this.read(this.path("inbox", `${id}.json`), (v) => {
 			if (!isObject(v) || v.v !== 1 || v.id !== id || typeof v.team !== "string" || typeof v.from !== "string" || typeof v.fromLabel !== "string" || typeof v.fromShort !== "string") return undefined;
 			if (!count(v.seq) || !count(v.sentAt) || !count(v.received) || typeof v.fromWorkspace !== "string" || typeof v.toWorkspace !== "string" || typeof v.replyExpected !== "boolean" || typeof v.text !== "string") return undefined;
+			if (v.awaitsReply !== undefined && !(typeof v.awaitsReply === "string" && HEX16.test(v.awaitsReply))) return undefined;
+			if (v.askedBy !== undefined && typeof v.askedBy !== "string") return undefined;
+			if (v.reply !== undefined && !(isObject(v.reply) && HEX16.test(String(v.reply.ask)) && typeof v.reply.main === "string" && typeof v.reply.mainName === "string" && typeof v.reply.tower === "string")) return undefined;
 			// SAFETY: each field of InboxItem was checked above.
 			return v as unknown as InboxItem;
 		});

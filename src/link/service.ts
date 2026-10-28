@@ -8,7 +8,8 @@ import { type Channel, type Kit, REGISTER } from "../state.ts";
 import { readLinkConfig } from "./config.ts";
 import type { DeviceKeys } from "./device.ts";
 import { holderAlive, LinkElection } from "./election.ts";
-import { LinkHolder, type RelayPort, type SendResult } from "./holder.ts";
+import { LinkHolder, type HolderOptions, type RelayPort, type SendResult } from "./holder.ts";
+import { createLevelOf } from "./level.ts";
 import { type PolicyDeps, readPolicy } from "./policy.ts";
 import { RelayClient } from "./relay.ts";
 import type { NetView } from "./routing.ts";
@@ -32,6 +33,9 @@ export interface ServiceDeps {
 	presenceMs?: number;
 	/** The least time between two boards to a team (default 15 s). */
 	boardMs?: number;
+	/** How often `caps` is sent unchanged, and the least time between two (default an hour and 15 s). */
+	capsMs?: number;
+	capsMinMs?: number;
 	offerAgainMs?: number;
 	relay?: (url: string, device: DeviceKeys) => RelayPort;
 	alive?: (record: HolderRecord) => boolean;
@@ -54,6 +58,8 @@ export interface ServiceOptions {
 	/** A notice for the boss. The server has no screen: it goes to the log, and the last few are in `status()`. */
 	notify: (text: string, level?: "info" | "warning" | "error") => void;
 	deps?: ServiceDeps;
+	/** The tower service of the same server (towers.ts), when it runs: the asks local towers made for their mains, and what to tell when messages wait for a tower identity it runs. */
+	tower?: Pick<HolderOptions, "asks" | "served">;
 }
 
 const NOTICES = 10;
@@ -62,7 +68,7 @@ export interface Notice { at: number; level: "info" | "warning" | "error"; text:
 type Answer = { ok: boolean; error?: string; [key: string]: unknown };
 type ChannelEvent = { type: string; fromSessionId?: string; payload?: unknown };
 
-export function createLinkService({ kit, stateDir, version, started, pid = process.pid, notify, deps: opts = {} }: ServiceOptions) {
+export function createLinkService({ kit, stateDir, version, started, pid = process.pid, notify, deps: opts = {}, tower }: ServiceOptions) {
 	const { pi, cfg } = kit;
 	const store = new LinkStore(join(stateDir, "link"));
 	const home = opts.home ?? homedir(), agentDir = cfg.env.PI_CODING_AGENT_DIR ?? join(home, ".pi", "agent");
@@ -131,7 +137,8 @@ export function createLinkService({ kit, stateDir, version, started, pid = proce
 			relay: opts.relay ?? ((url, device) => new RelayClient({ url, device })),
 			onDisplaced: () => void look().catch(() => undefined),
 			confirmed: (tower, dialogId, allow) => void publish({ version: 1, type: "confirmed", to: tower, id: dialogId, allow }),
-			drainMs: opts.drainMs, presenceMs: opts.presenceMs, boardMinMs: opts.boardMs, offerAgainMs: opts.offerAgainMs,
+			drainMs: opts.drainMs, presenceMs: opts.presenceMs, boardMinMs: opts.boardMs, offerAgainMs: opts.offerAgainMs, capsMs: opts.capsMs, capsMinMs: opts.capsMinMs,
+			...(tower?.asks ? { asks: tower.asks } : {}), ...(tower?.served ? { served: tower.served } : {}),
 		});
 		holder = fresh;
 		await fresh.start();
@@ -181,7 +188,10 @@ export function createLinkService({ kit, stateDir, version, started, pid = proce
 		const only = Array.isArray((body as { teams?: unknown }).teams) ? ((body as { teams: unknown[] }).teams.filter((t) => typeof t === "string") as string[]) : undefined;
 		if (op.op === "list") return { ok: true, teams: holder.list(only) };
 		if (op.op === "board-read") return holder.boards({ ...(only ? { only } : {}), ...(typeof op.device === "string" ? { device: op.device } : {}) });
-		if (op.op === "send" && typeof op.device === "string" && typeof op.text === "string") return holder.send({ fromSession: from, device: op.device, text: op.text, reply: op.reply === true, ...(typeof op.workspace === "string" && op.workspace ? { workspace: op.workspace } : {}) });
+		if (op.op === "send" && typeof op.device === "string" && typeof op.text === "string") {
+			const r = body as { awaitsReply?: unknown; inReplyTo?: unknown };
+			return holder.send({ fromSession: from, device: op.device, text: op.text, reply: op.reply === true, ...(typeof op.workspace === "string" && op.workspace ? { workspace: op.workspace } : {}), ...(typeof r.awaitsReply === "string" ? { awaitsReply: r.awaitsReply } : {}), ...(typeof r.inReplyTo === "string" ? { inReplyTo: r.inReplyTo } : {}) });
+		}
 		if (op.op === "taken" && typeof op.id === "string") return (await holder.taken(op.id, from), { ok: true });
 		if (op.op === "confirm-request" && [op.team, op.device, op.dialogId, op.digest, op.tool, op.args, op.tower].every((v) => typeof v === "string")) {
 			return holder.requestConfirm({ fromSession: from, team: op.team as string, device: op.device as string, dialogId: op.dialogId as string, digest: op.digest as string, tool: op.tool as string, args: op.args as string, tower: op.tower as string });
@@ -271,6 +281,8 @@ export function createLinkService({ kit, stateDir, version, started, pid = proce
 			return store;
 		},
 		attended,
+		/** The level this computer gives a device (the policy file's, else `link.trust`, else `reply`): an ally run is claimed at it. */
+		levelOf: createLevelOf({ config, policy: opts.policy, log: (event) => store.log(event), tell: (text, level) => note(text, level) }),
 	};
 	return api;
 }

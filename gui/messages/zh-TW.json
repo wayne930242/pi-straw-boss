@@ -556,7 +556,7 @@
 	"tower_deliver": "重新送達",
 	"tower_drop": "捨棄",
 	"tower_action_failed": "tower 拒絕了：{reason}",
-	"link_a_served": "團隊 {team} 的收件匣有 {count} 則 Straw Link 訊息在等：下一步會有 ally run 來接手",
+	"link_a_served": "團隊 {team} 的收件匣有 {count} 則 Straw Link 訊息等 ally run 接手已超過 10 分鐘",
 	"tower_state_waking": "喚醒中",
 	"tower_state_closing": "收工中",
 	"tower_state_held": "已暫停",

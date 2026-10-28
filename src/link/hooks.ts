@@ -1,8 +1,9 @@
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import { decide, filterListing, readTracked, type Scope, searchRoot, type Tracked } from "./allow.ts";
-import { type Level, type LinkConfig } from "./config.ts";
+import { type LinkConfig } from "./config.ts";
+import { createLevelOf } from "./level.ts";
 import { createGate, type ForwardPort } from "./gate.ts";
-import { type PolicyDeps, readPolicy } from "./policy.ts";
+import { type PolicyDeps } from "./policy.ts";
 import { hideOldRemote, Turns } from "./turn.ts";
 
 // The hooks that make a run a remote turn and hold it to its level (docs/specs/2026-10-25-straw-link.md, Remote turns): the run classification, the
@@ -30,16 +31,7 @@ export interface RemoteDeps {
 
 export function createRemoteTurns({ pi, now, config, policy: policyDeps, home, agentDir, linkDir, gateMs, setOrigin, tower, log, tell, ask }: RemoteDeps) {
 	/** The level this computer gives a device: the policy file's on an unattended device, config.json's otherwise, `reply` when none names it. */
-	let refusedTold = "";
-	const levelOf = (device: string): Level => {
-		const found = readPolicy(policyDeps);
-		if (found.mode === "unattended") return found.trust.get(device) ?? "reply";
-		if (found.mode === "refused") {
-			if (refusedTold !== found.reason) (refusedTold = found.reason, log({ event: "policy-refused", reason: found.reason }), tell(`Straw Link: unattended mode is refused (${found.reason}); every sender stays at reply`, "error"));
-			return "reply";
-		}
-		return config().trust.get(device) ?? "reply";
-	};
+	const levelOf = createLevelOf({ config, policy: policyDeps, log, tell });
 	const turns = new Turns(levelOf, () => void (setOrigin(turns.lowest ? `remote:${turns.lowest.id}` : undefined)));
 	const trackedFor = new Map<string, { at: number; value: Tracked }>();
 	/** The project every sender's team binds: a run that carries senders of several teams reads only where all of them may, and with different projects there is no such place. */

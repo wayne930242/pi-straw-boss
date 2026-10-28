@@ -8,7 +8,7 @@ import type { LinkConfig } from "./config.ts";
 import { shortId, type DeviceKeys } from "./device.ts";
 import { buildEnvelope, openEnvelope, parseEnvelope, recordTaken, type Header, type ReceiveState } from "./envelope.ts";
 import { PayloadTooLargeError, RelayError, UnauthorizedError } from "./errors.ts";
-import { type Board, type BoardWireEntry, type ConfirmAnswer, type ConfirmRequest, encodePlaintext, LIMITS, type Presence, type TowerMessage, type WorkspaceState } from "./kinds.ts";
+import { askIdOk, type Board, type BoardWireEntry, type Caps, type ConfirmAnswer, type ConfirmRequest, encodePlaintext, LIMITS, type Presence, type TowerMessage, type TowerReply, type WorkspaceState } from "./kinds.ts";
 import { type AdminRun, type InviteView, type JoinRequestView, type JoinView, type Prefill, TeamAdmin, type TeamView } from "./admin.ts";
 import { Outbox, type QueuedEnvelope } from "./outbox.ts";
 import { Requests } from "./request.ts";
@@ -17,7 +17,7 @@ import { decodeEntry, encodeEntry, replayEncoded, type RosterEntry, type RosterS
 import { inside, nearestTeams, oneTeamEach, resolveDevice, towersFor, type MemberRef, type NetView } from "./routing.ts";
 import type { Backoff, Sleep } from "./retry.ts";
 import type { Disposition, EnvelopeEvent, RelayEvent, RosterEvent } from "./sse.ts";
-import { TeamFileError, type InboxItem, type LinkStore, type TeamFile } from "./store.ts";
+import { TeamFileError, type InboxItem, type LinkStore, type TeamFile, type ThreadRow } from "./store.ts";
 import { towerRunsEnabled } from "../server/towerruns.ts";
 
 // The link holder's work (docs/specs/2026-10-25-straw-link.md, Link holder). Only the session the election names runs this: it reads the device
@@ -70,6 +70,13 @@ export interface HolderOptions {
 	/** The most messages kept in the inbox from one sender (default 100) and in all (default 500); past that the relay keeps the envelope. */
 	inboxPerSender?: number;
 	inboxMax?: number;
+	/** The asks local towers made for their mains and have not had answered (src/server/asks.ts): a `tower-reply` is taken as a reply only against one, once, from the device asked. */
+	asks?: { take(q: { team: string; device: string; ask: string }): { main: string; mainName: string; tower: string; workspace: string } | undefined };
+	/** Told, at each pass of the inbox, that messages wait for a tower identity the sb server runs (src/server/towers.ts): an ally run is woken for them. */
+	served?: (identity: string) => void;
+	/** How often `caps` is sent unchanged (default an hour) and the least time between two (default 15 s). */
+	capsMs?: number;
+	capsMinMs?: number;
 }
 
 export interface ConfirmRequestInput { fromSession: string; team: string; device: string; dialogId: string; digest: string; tool: string; args: string; tower: string }
@@ -77,7 +84,8 @@ export interface ConfirmRequestInput { fromSession: string; team: string; device
 export interface ConfirmView { dialogId: string; team: string; from: string; fromLabel: string; fromShort: string; digest: string; tool: string; args: string; tower: string; at: number }
 const CONFIRM_MAX_MS = 10 * 60_000;
 const CONFIRM_MAX = 20;
-export interface SendRequest { fromSession: string; device: string; workspace?: string; text: string; reply: boolean }
+/** `awaitsReply`: an ask id (32 hex) a local tower made for a main; `inReplyTo`: the ask id of the message this one answers (an ally run's reply). Each is written to the wire only against the peer's `caps` (Replies for a main). */
+export interface SendRequest { fromSession: string; device: string; workspace?: string; text: string; reply: boolean; awaitsReply?: string; inReplyTo?: string }
 export type SendResult = { ok: true; text: string; details: Record<string, unknown> } | { ok: false; error: string };
 /** What the GUI shows as a notice. `data` is plain text and numbers: the page puts them in text nodes. */
 export type AlertKind = "join-request" | "confirm" | "fork" | "mismatch" | "unreachable" | "inbox" | "held" | "served";
@@ -113,6 +121,10 @@ export interface AllyBoard { origin: "remote"; team: string; teamId: string; dev
 const BOARD_OFFLINE_MS = 2 * 3600_000, BOARD_MAX_AGE_MS = 7 * 24 * 3600_000;
 /** The board is sent at most this often per team, and once an hour unchanged; a relay without the kind is left alone for an hour. */
 const BOARD_MIN_MS = 15_000, BOARD_REFRESH_MS = 3600_000, BOARD_OFF_MS = 3600_000;
+/** What this build takes (docs/specs/2026-10-26-sb-backend.md, Replies for a main). A `caps` older than 2 hours counts as none. */
+export const CAPS_FEATURES = ["tower.awaitsReply", "tower-reply"] as const;
+export const CAPS_STALE_MS = 2 * 3600_000;
+const CAPS_REFRESH_MS = 3600_000, CAPS_MIN_MS = 15_000, CAPS_OFF_MS = 3600_000, REPLY_OFF_MS = 3600_000, FALLBACK_LOG_MS = 3600_000;
 
 /** The default wait for the relay in `send`; the tower waits for the holder's answer longer than this plus the lock wait (runtime.ts `ASK_MS`), or it would give up on a message that was sent. */
 export const POST_WAIT_MS = 10_000;
@@ -137,6 +149,12 @@ interface TeamRun {
 	/** What this holder last sent as a board to the team: the hash (without `ts`), when, the `ts` used, the epoch it was built for, and until when a relay that refused the kind is left alone. */
 	boardSent: { hash: string | undefined; looked: number; at: number; ts: number; epoch: number; offUntil: number; wasEmpty: boolean };
 	lastEphemeral: Map<string, number>;
+	/** The last `caps` of each peer, in memory only: the relay gives it back on the next stream. */
+	caps: Map<string, { at: number; features: string[] }>;
+	/** What this holder last sent as `caps` to the team: when, the `ts` used, and until when a relay that refused the kind is left alone. */
+	capsSent: { at: number; ts: number; offUntil: number };
+	/** Until when a relay that refused `tower-reply` is not sent one (a plain `tower` goes instead). */
+	replyOffUntil: number;
 	presenceTimer: ReturnType<typeof setInterval> | undefined;
 	/** Set when the team can no longer be used (removed, forked, file lost); nothing more is taken from it. */
 	dead: string | undefined;
@@ -169,7 +187,11 @@ export class LinkHolder {
 	private draining: Promise<void> | undefined;
 	private again = false;
 	/** Inbox messages no tower has taken yet: no tower open, or offered and not taken. For the GUI's notices. */
-	private waiting = new Map<string, { team: string; from: string; since: number; offered: boolean; served?: boolean }>();
+	private waiting = new Map<string, { team: string; from: string; since: number; offered: boolean; served?: boolean; identity?: string }>();
+	/** When a `tower-reply` last fell back to a plain `tower`, by device, so the log tells it once an hour. */
+	private fellBack = new Map<string, number>();
+	/** `tower-reply`s that stopped waiting for the relay (they answered "queued"), by envelope id: what to send instead when the relay refuses the kind. */
+	private lateReplies = new Map<string, () => void>();
 	/** What the GUI does to teams (admin.ts). */
 	readonly admin: TeamAdmin;
 	/** The link actions agents ask for, waiting for the boss (request.ts). */
@@ -248,6 +270,7 @@ export class LinkHolder {
 		await this.refresh();
 		await this.drain();
 		await this.sendBoards();
+		await this.sendCaps();
 	}
 
 	/** Starts the teams that have a team file and a config entry, stops the ones that lost either, and tells about the rest once. */
@@ -309,6 +332,10 @@ export class LinkHolder {
 			if (who !== undefined) {
 				if (outcome === "halted") return;
 				gone.delete(key);
+				// A `tower-reply` the relay refused after the send stopped waiting goes again as the plain `tower` it falls back to.
+				const again = this.lateReplies.get(key);
+				this.lateReplies.delete(key);
+				if (again && outcome instanceof RelayError && outcome.code === "unknown-kind") return void again();
 				if (outcome instanceof Error) this.o.notify(`Straw Link: the relay refused ${who}: ${refusal(outcome)}`, "warning");
 				return;
 			}
@@ -342,7 +369,7 @@ export class LinkHolder {
 			},
 			onRetry: (_item, error) => store.log({ event: "send-retry", team, error: String(error) }),
 		});
-		const run: TeamRun = { team, teamId, client, outbox, stream: undefined, presences: new Map(), boards: new Map(), boardSent: { hash: undefined, looked: 0, at: 0, ts: 0, epoch: 0, offUntil: 0, wasEmpty: false }, lastEphemeral: new Map(), presenceTimer: undefined, dead: undefined, settled, haltTimer: undefined, gone, waiters, downSince: undefined, headDiff: new Map() };
+		const run: TeamRun = { team, teamId, client, outbox, stream: undefined, presences: new Map(), boards: new Map(), boardSent: { hash: undefined, looked: 0, at: 0, ts: 0, epoch: 0, offUntil: 0, wasEmpty: false }, lastEphemeral: new Map(), caps: new Map(), capsSent: { at: 0, ts: 0, offUntil: 0 }, replyOffUntil: 0, presenceTimer: undefined, dead: undefined, settled, haltTimer: undefined, gone, waiters, downSince: undefined, headDiff: new Map() };
 		this.runs.set(team, run);
 		// What an earlier holder (or this one before a restart) built and did not see land goes first, in order, before anything new is accepted.
 		for (const item of store.outboxPending(team)) {
@@ -362,7 +389,7 @@ export class LinkHolder {
 			onState: (st) => {
 				run.downSince = st.state === "open" ? undefined : st.state === "retrying" ? (run.downSince ?? this.now()) : run.downSince;
 				// A stream that (re)starts is a reason to send the board once more (the 15 second spacing still holds).
-				if (st.state === "open") Object.assign(run.boardSent, { hash: undefined, looked: 0 });
+				if (st.state === "open") (Object.assign(run.boardSent, { hash: undefined, looked: 0 }), (run.capsSent.at = 0));
 			},
 		});
 		void run.stream.start();
@@ -431,6 +458,7 @@ export class LinkHolder {
 		}
 		run.lastEphemeral = recordTaken(this.state(run, tf, roster), opened.header).lastEphemeral;
 		if (opened.header.kind === "board") run.boards.set(opened.header.from, { at: this.now(), ts: opened.header.ts, board: opened.message as Board });
+		if (opened.header.kind === "caps") run.caps.set(opened.header.from, { at: this.now(), features: (opened.message as Caps).features });
 		if (opened.header.kind === "presence") {
 			const presence = opened.message as Presence;
 			run.presences.set(opened.header.from, { at: this.now(), presence });
@@ -452,11 +480,12 @@ export class LinkHolder {
 				if (opened.reason === "roster-ahead" || opened.reason === "roster-mismatch") this.tellOnce(`mismatch/${run.team}/${header.from}`, `Straw Link: a message from ${shortId(header.from)} names a roster this device cannot match (${opened.reason}); the relay may be showing different rosters`);
 				return { d: "ack" };
 			}
-			if (header.kind === "tower" && this.inboxFull(run.team, header.from)) {
+			if ((header.kind === "tower" || header.kind === "tower-reply") && this.inboxFull(run.team, header.from)) {
 				this.tellOnce(`full/${run.team}/${header.from}`, `Straw Link: the inbox holds too many messages from ${shortId(header.from)}; the relay keeps the rest until some are taken`);
 				return { d: "keep" };
 			}
 			if (header.kind === "tower") this.stage(run, roster, header, opened.message as TowerMessage);
+			else if (header.kind === "tower-reply") this.takeReply(run, roster, header, opened.message as TowerReply);
 			else if (header.kind === "confirm-request") this.takeConfirmRequest(run, roster, header, opened.message as ConfirmRequest);
 			else if (header.kind === "confirm-answer") this.takeConfirmAnswer(run, roster, header, opened.message as ConfirmAnswer);
 			else store.log({ event: "unhandled-kind", team: run.team, kind: header.kind, from: header.from });
@@ -486,8 +515,33 @@ export class LinkHolder {
 		const item: InboxItem = {
 			v: 1, id: header.id.toString("hex"), team: run.team, from: header.from, fromLabel: sender?.label ?? shortId(header.from), fromShort: shortId(header.from),
 			seq: header.seq, sentAt: header.ts, received: this.now(), fromWorkspace: message.fromWorkspace, toWorkspace: message.toWorkspace, replyExpected: message.replyExpected, text: message.text,
+			...(message.awaitsReply !== undefined ? { awaitsReply: message.awaitsReply } : {}),
 		};
 		this.o.store.putInbox(item);
+		this.thread(header.from, { dir: "in", at: item.received, id: item.id, kind: "tower", ...(message.awaitsReply !== undefined ? { awaitsReply: message.awaitsReply } : {}), text: message.text });
+	}
+	/** A row of a device's thread, under the lock; a store that cannot write it does not lose the message. */
+	private thread(device: string, row: ThreadRow): void {
+		try {
+			this.o.store.appendThread(device, row);
+		} catch (error) {
+			this.o.store.log({ event: "thread-failed", error: String(error) });
+		}
+	}
+	/**
+	 * A `tower-reply` is the reply to an ask a local tower made for a main only when its `inReplyTo` names an open ask, the envelope comes from the device asked, and the ask was not used:
+	 * the text then waits in the inbox as a reply for that main. Anything else (no ask, another device, used, expired) is handled as the plain `tower` it falls back to.
+	 */
+	private takeReply(run: TeamRun, roster: RosterState, header: Header, message: TowerReply): void {
+		const taken = this.o.asks?.take({ team: run.team, device: header.from, ask: message.inReplyTo });
+		const sender = roster.members.get(header.from);
+		const item: InboxItem = {
+			v: 1, id: header.id.toString("hex"), team: run.team, from: header.from, fromLabel: sender?.label ?? shortId(header.from), fromShort: shortId(header.from),
+			seq: header.seq, sentAt: header.ts, received: this.now(), fromWorkspace: "", toWorkspace: taken?.workspace ?? "", replyExpected: false, text: message.text,
+			...(taken ? { reply: { ask: message.inReplyTo, main: taken.main, mainName: taken.mainName, tower: taken.tower } } : {}),
+		};
+		this.o.store.putInbox(item);
+		this.thread(header.from, { dir: "in", at: item.received, id: item.id, kind: "tower-reply", inReplyTo: message.inReplyTo, text: message.text });
 	}
 
 	/** The election's record no longer names this session: nothing is acted on from here, and every stream ends. */
@@ -555,11 +609,11 @@ export class LinkHolder {
 	private async drainOnce(): Promise<void> {
 		const { store } = this.o;
 		if (!this.running) return;
-		await store.withLock(() => void (store.purgeInbox(INBOX_MAX_AGE_MS, this.now()), this.admin.purgeInvites()));
+		await store.withLock(() => void (store.purgeInbox(INBOX_MAX_AGE_MS, this.now()), this.admin.purgeInvites(), this.purgeThreads()));
 		const ids = store.inboxIds();
 		for (const id of this.waiting.keys()) if (!ids.includes(id)) this.waiting.delete(id);
 		if (ids.length === 0) return;
-		const config = this.o.config(), net = await this.o.net();
+		const config = this.o.config(), net = await this.o.net(), servedNow = new Set<string>();
 		for (const id of ids) {
 			const item = store.readInbox(id);
 			if (!item) {
@@ -583,6 +637,23 @@ export class LinkHolder {
 				await store.withLock(() => store.removeInbox(id));
 				continue;
 			}
+			if (item.reply) {
+				// An answer to an ask a local tower made for a main goes to that main, as peer data; a main that is gone (not live, or no longer its tab's main) hands it to an ally run, which is told who asked.
+				const main = net.sessions.find((s) => s.id === item.reply!.main), mainPane = main && net.panes.find((p) => p.pane_id === main.herdrLocation?.paneId);
+				if (!main || mainPane?.tokens?.sb_role !== "main") {
+					const { reply, ...plain } = item;
+					await store.withLock(() => store.putInbox({ ...plain, askedBy: reply!.mainName }));
+					store.log({ event: "reply-fallback", id, why: main ? "not-main" : "gone" });
+					this.again = true;
+					continue;
+				}
+				const was = this.offered.get(id);
+				if (was && was.tower === main.id && this.now() - was.at < (this.o.offerAgainMs ?? 30_000)) continue;
+				this.offered.set(id, { tower: main.id, at: this.now() });
+				this.waiting.get(id)!.offered = true;
+				await this.o.offer(main, id);
+				continue;
+			}
 			const picks = towersFor(net, policy.project, item.toWorkspace), first = picks[0];
 			if (!first) {
 				this.waiting.get(id)!.offered = false;
@@ -590,7 +661,9 @@ export class LinkHolder {
 				continue;
 			}
 			if (SERVED_TOWER.test(first.session.id) || (towerRunsEnabled(this.o.stateDir ?? "") && SERVED_RUN.test(first.session.name ?? ""))) {
-				Object.assign(this.waiting.get(id)!, { offered: false, served: true });
+				// The sb server stands in for this tower: the message stays in the inbox until an ally run has it, and the server is told one waits (`servedFor`).
+				Object.assign(this.waiting.get(id)!, { offered: false, served: true, identity: first.session.id });
+				servedNow.add(first.session.id);
 				continue;
 			}
 			// An offer is sticky: the tower that has it keeps it while it is still a tower of the project, so a tower that opens nearer the root,
@@ -601,6 +674,28 @@ export class LinkHolder {
 			this.waiting.get(id)!.offered = true;
 			await this.o.offer(pick.session, id);
 		}
+		for (const identity of servedNow) {
+			try {
+				this.o.served?.(identity);
+			} catch (error) {
+				store.log({ event: "served-failed", error: String(error) });
+			}
+		}
+	}
+
+	/** Threads older than 7 days go, and so does the thread of a device that is no member of any team this computer still has a file for (it left, was removed, or this computer left the team). Under the lock. */
+	private purgeThreads(): void {
+		const { store } = this.o;
+		store.purgeThreads(this.now());
+		const members = new Set<string>();
+		for (const team of store.teamIds()) {
+			try {
+				for (const id of this.loadTeam(team).state.members.keys()) members.add(id);
+			} catch {
+				return; // a team file that cannot be read says nothing about who left
+			}
+		}
+		for (const device of store.threadDevices()) if (!members.has(device)) store.removeThread(device);
 	}
 
 	/** The tower that was offered a message has put it into its session: it leaves the inbox. */
@@ -637,33 +732,122 @@ export class LinkHolder {
 		const run = teams.find((r) => r.team === target.team)!;
 		if (run.outbox.haltedBy) return { ok: false, error: `The relay is refusing this device (${restrictLabel(run.outbox.haltedBy.code)}), so nothing is sent to team ${run.team.slice(0, 6)} right now; it is tried again every ${Math.round((this.o.haltRetryMs ?? 60_000) / 1000)} s` };
 		const workspace = net.workspaces.find((w) => w.workspace_id === pane.workspace_id);
-		const queued = await run.outbox.submit((seq) => {
+		// A field or a kind this peer's build may not take goes to it only against its last `caps`; otherwise the message is the plain `tower` an older build reads (Replies for a main).
+		const peer = this.capsOf(run, target.id);
+		if ((req.awaitsReply !== undefined && !askIdOk(req.awaitsReply)) || (req.inReplyTo !== undefined && !askIdOk(req.inReplyTo))) return { ok: false, error: "An ask id is 32 lowercase hex digits" };
+		const withAsk = req.awaitsReply !== undefined && peer.includes("tower.awaitsReply");
+		let kind: "tower" | "tower-reply" = req.inReplyTo !== undefined && peer.includes("tower-reply") && this.now() >= run.replyOffUntil ? "tower-reply" : "tower";
+		const submit = (as: "tower" | "tower-reply") => run.outbox.submit((seq) => {
 			const { state } = this.loadTeam(run.team), key = state.keys.get(state.epoch);
 			if (!key) throw new Error(`This device holds no key for epoch ${state.epoch}`);
 			return buildEnvelope({
-				team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device!.keys, seq, ts: this.now(), kind: "tower", to: [target.id],
-				plaintext: encodePlaintext("tower", { fromWorkspace: workspace?.label ?? "", toWorkspace: req.workspace ?? "", replyExpected: req.reply, text: req.text }),
+				team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device!.keys, seq, ts: this.now(), kind: as, to: [target.id],
+				plaintext: as === "tower-reply"
+					? encodePlaintext("tower-reply", { inReplyTo: req.inReplyTo!, text: req.text })
+					: encodePlaintext("tower", { fromWorkspace: workspace?.label ?? "", toWorkspace: req.workspace ?? "", replyExpected: req.reply, text: req.text, ...(withAsk ? { awaitsReply: req.awaitsReply! } : {}) }),
 			});
 		});
-		const id = queued.id.toString("hex");
-		await new Promise<void>((resolve) => {
-			if (run.settled.has(id)) return resolve();
-			const timer = setTimeout(resolve, this.o.postWaitMs ?? POST_WAIT_MS);
-			timer.unref();
-			run.waiters.set(id, () => (clearTimeout(timer), resolve()));
-		});
-		run.waiters.delete(id);
-		const outcome = run.settled.get(id);
-		run.settled.delete(id);
+		const post = async (as: "tower" | "tower-reply") => {
+			const queued = await submit(as), id = queued.id.toString("hex");
+			await new Promise<void>((resolve) => {
+				if (run.settled.has(id)) return resolve();
+				const timer = setTimeout(resolve, this.o.postWaitMs ?? POST_WAIT_MS);
+				timer.unref();
+				run.waiters.set(id, () => (clearTimeout(timer), resolve()));
+			});
+			run.waiters.delete(id);
+			const outcome = run.settled.get(id);
+			run.settled.delete(id);
+			return { queued, id, outcome };
+		};
+		let { queued, id, outcome } = await post(kind);
+		if (kind === "tower-reply" && outcome instanceof RelayError && outcome.code === "unknown-kind") {
+			// The relay does not know the kind yet: for an hour replies go as the plain `tower` they fall back to, and this one goes again now.
+			run.replyOffUntil = this.now() + REPLY_OFF_MS;
+			this.logFallback(target.id, "the relay refused the kind");
+			kind = "tower";
+			({ queued, id, outcome } = await post("tower"));
+		} else if (kind === "tower-reply" && outcome === undefined) {
+			this.lateReplies.set(id, () => {
+				run.replyOffUntil = this.now() + REPLY_OFF_MS;
+				this.logFallback(target.id, "the relay refused the kind");
+				void submit("tower").catch((error: Error) => this.o.store.log({ event: "fallback-failed", team: run.team, error: error.message }));
+			});
+		}
+		if (outcome === undefined || outcome === "posted") await store.withLock(() => this.thread(target.id, { dir: "out", at: this.now(), id, kind, ...(withAsk ? { awaitsReply: req.awaitsReply! } : {}), ...(kind === "tower-reply" ? { inReplyTo: req.inReplyTo! } : {}), text: req.text })).catch(() => undefined);
 		const who = members.find((m) => m.team === target.team && m.id === target.id);
 		const name = `${who?.label ?? "device"} (${shortId(target.id)})`;
 		if (outcome === undefined || outcome === "halted") run.gone.set(id, `the message to ${name}`);
 		store.log({ event: "send", team: run.team, to: target.id, id, outcome: outcome === undefined ? "queued" : outcome === "posted" ? "posted" : String(outcome) });
-		const details = { team: run.team, device: target.id, id, seq: queued.seq };
-		if (outcome === "posted") return { ok: true, text: `Sent to the tower of ${name}${req.workspace ? ` (workspace ${req.workspace})` : ""} through the relay. ${req.reply ? "It replies through tower_send." : "It is told no reply is expected."}`, details: { ...details, status: "posted" } };
+		const details = { team: run.team, device: target.id, id, seq: queued.seq, as: kind, ...(req.awaitsReply !== undefined ? { asked: withAsk } : {}) };
+		const how = req.awaitsReply !== undefined ? (withAsk ? " It carries your ask id, so its answer comes back to the main that asked." : " That device\'s build does not take ask ids, so it went as a plain message and the answer will reach a fresh ally run here, not the main.") : req.inReplyTo !== undefined ? (kind === "tower-reply" ? " Sent as a reply to the ask." : " Sent as a plain message: that device\'s build takes no replies to an ask.") : "";
+		if (outcome === "posted") return { ok: true, text: `Sent to the tower of ${name}${req.workspace ? ` (workspace ${req.workspace})` : ""} through the relay. ${req.reply ? "It replies through tower_send." : "It is told no reply is expected."}${how}`, details: { ...details, status: "posted" } };
 		if (outcome === "halted") return { ok: true, text: `The relay refused this device just now; the message to ${name} is saved on this computer and tried again within ${Math.round((this.o.haltRetryMs ?? 60_000) / 1000)} s.`, details: { ...details, status: "queued" } };
-		if (outcome === undefined) return { ok: true, text: `The relay did not take the message to ${name} yet; it is saved on this computer and sent again until the relay takes it.`, details: { ...details, status: "queued" } };
+		if (outcome === undefined) return { ok: true, text: `The relay did not take the message to ${name} yet; it is saved on this computer and sent again until the relay takes it.${how}`, details: { ...details, status: "queued" } };
 		return { ok: false, error: `The message to ${name} was not sent: ${refusal(outcome)}` };
+	}
+
+	/** The features a peer's last `caps` listed; none when it sent none or the last one is older than 2 hours (the relay keeps a `caps` after its sender downgrades). */
+	private capsOf(run: TeamRun, device: string): string[] {
+		const seen = run.caps.get(device);
+		return seen && this.now() - seen.at <= CAPS_STALE_MS ? seen.features : [];
+	}
+	/** What `device` takes, as its last fresh `caps` said (for the sb server's ask: it says in its answer whether the ask id was written). */
+	capsFor(team: string, device: string): string[] {
+		const run = this.runs.get(team);
+		return run ? this.capsOf(run, device) : [];
+	}
+	/** The fallback of a `tower-reply` to a plain `tower` is logged once per device and hour. */
+	private logFallback(device: string, why: string): void {
+		const last = this.fellBack.get(device);
+		if (last !== undefined && this.now() - last < FALLBACK_LOG_MS) return;
+		this.fellBack.set(device, this.now());
+		this.o.store.log({ event: "tower-reply-fallback", device, why });
+	}
+
+	// ---- Caps (Replies for a main) ------------------------------------------------------------------------------------------------------
+
+	/** `caps` goes to each team at a stream start, then once an hour (never twice within 15 s); a relay that refuses the kind is left alone for an hour, as the board is. */
+	private async sendCaps(): Promise<void> {
+		if (!this.running || !this.device) return;
+		const now = this.now(), min = this.o.capsMinMs ?? CAPS_MIN_MS, every = this.o.capsMs ?? CAPS_REFRESH_MS;
+		for (const run of [...this.runs.values()]) {
+			const sent = run.capsSent;
+			if (run.dead || now < sent.offUntil || (sent.at !== 0 && now - sent.at < every) || now - sent.at < min) continue;
+			try {
+				const { state } = this.loadTeam(run.team), key = state.keys.get(state.epoch);
+				if (!key) continue;
+				const ts = Math.max(now, sent.ts + 1);
+				sent.at = now; // a failed post is tried again after the spacing, not at every tick
+				const envelope = buildEnvelope({ team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device.keys, seq: 0, ts, kind: "caps", to: [], plaintext: encodePlaintext("caps", { features: [...CAPS_FEATURES] }) });
+				await run.client.postEnvelope(run.teamId, envelope);
+				sent.ts = ts;
+			} catch (error) {
+				if (error instanceof RelayError && error.code === "unknown-kind") {
+					sent.offUntil = now + CAPS_OFF_MS;
+					this.o.store.log({ event: "caps-unsupported", team: run.team });
+				} else this.o.store.log({ event: "caps-failed", team: run.team, error: String(error) });
+			}
+		}
+	}
+
+	/** Messages that wait for the tower identity `identity` the sb server runs, oldest received first (an ally run takes them). */
+	servedFor(identity: string): InboxItem[] {
+		const items: InboxItem[] = [];
+		for (const [id, w] of this.waiting) {
+			if (!w.served || w.identity !== identity) continue;
+			const item = this.o.store.readInbox(id);
+			if (item && !item.reply) items.push(item);
+		}
+		return items.sort((a, b) => a.received - b.received || (a.id < b.id ? -1 : 1));
+	}
+	/** Whether `device` is a member of `team` on this computer's roster (a run whose sender left is ended). */
+	isMember(team: string, device: string): boolean {
+		try {
+			return this.loadTeam(team).state.members.has(device);
+		} catch {
+			return false;
+		}
 	}
 
 	// ---- Confirms across devices (Remote turns, `forward`) ------------------------------------------------------------------------------
@@ -930,7 +1114,8 @@ export class LinkHolder {
 		}
 		const waits = new Map<string, { kind: "inbox" | "held" | "served"; team: string; n: number }>();
 		for (const w of this.waiting.values()) {
-			const kind = w.served ? "served" : w.offered ? (now - w.since > HELD_MS ? "held" : undefined) : "inbox";
+			// A message for a tower the server runs waits for an ally run slot: the boss hears of it after 10 minutes.
+			const kind = w.served ? (now - w.since > HELD_MS ? "served" : undefined) : w.offered ? (now - w.since > HELD_MS ? "held" : undefined) : "inbox";
 			if (!kind) continue;
 			const key = `${kind}/${w.team}`, hit = waits.get(key);
 			waits.set(key, { kind, team: w.team, n: (hit?.n ?? 0) + 1 });
