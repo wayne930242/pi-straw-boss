@@ -58,7 +58,7 @@ async function setup(over: Partial<TowerPanel> & { runLive?: boolean } = {}) {
 		event: over.event ?? (async (ws, text) => (events.push([ws, text]), { ok: true })),
 		act: over.act ?? (async (ws, what, id) => (acts.push([ws, what, id]), { ok: true })),
 	};
-	const lookup = (key: string): Found | undefined => (key === "sb-tower-wa" ? { key, base: "wA", name: "tower", role: "tower", ...(over.runLive ? { file: FILE, pane: "wA:p1" } : {}), live: true } : key === "main-1" ? { key, base: "wA", name: "docs", role: "main", file: FILE, pane: "wA:p2", live: true } : undefined);
+	const lookup = (key: string): Found | undefined => (key === "ally-r1" ? { key, base: "wA", name: "Laptop", role: "ally", file: FILE, live: true } : key === "sb-tower-wa" ? { key, base: "wA", name: "tower", role: "tower", ...(over.runLive ? { file: FILE, pane: "wA:p1" } : {}), live: true } : key === "main-1" ? { key, base: "wA", name: "docs", role: "main", file: FILE, pane: "wA:p2", live: true } : undefined);
 	const call = async (method: string) => (calls.push(method), method === "pane.get" ? { pane: { pane_id: "wA:p2", agent: "pi", agent_session: { value: FILE } } } : {});
 	const gui = await startGui({ read: async () => ({ bases: [] }), net: { lookup, workspace: () => [] }, call, tower, dir: join(scratch, "bundle"), pollMs: 50 });
 	running.push(gui);
@@ -121,4 +121,16 @@ test("the notices' buttons: Retry, Deliver again, and Drop reach the service; a 
 	const r = await send(failing.gui, "tower/wA/drop", { id: "gone" });
 	assert.equal(r.status, 409);
 	assert.equal(r.body.reason, "No such parked event");
+});
+
+test("an ally run's comms take nothing: no input, keys, or focus (no pane backs the unit), an unknown ally key is no session, and the service's tower route does not take it for its tower", async () => {
+	const s = await setup();
+	for (const [action, body] of [["input", { text: "hello", as: "send" }], ["keys", { key: "esc", stream: "s1" }], ["focus", {}], ["dequeue", { take: "a".repeat(16) }]] as const) {
+		const r = await send(s.gui, `sessions/ally-r1/${action}`, body);
+		assert.equal(r.status, 409, action);
+		assert.equal(r.body.error, "not_live", action);
+	}
+	assert.equal((await send(s.gui, "sessions/ally-zz/input", { text: "hello", as: "send" })).status, 404);
+	assert.deepEqual(s.events, [], "no boss event was made of it");
+	assert.deepEqual(s.calls, [], "nothing reached Herdr");
 });

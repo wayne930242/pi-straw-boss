@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { said } from "../gui/log.ts";
 import type { Row } from "../src/netdata.ts";
 import type { Pane, Session, Workspace } from "../src/herdr.ts";
-import { buildNet, type Net, netSource, type Ref } from "../src/net.ts";
+import { buildNet, type Net, netSource, type Ref, type TowerView } from "../src/net.ts";
 
 const ws = (id: string, label: string, extra: Partial<Workspace> = {}): Workspace => ({ workspace_id: id, label, tokens: {}, ...extra });
 const pane = (id: string, tab: string, tokens: Record<string, string> = {}, extra: Partial<Pane> = {}): Pane => ({ pane_id: id, tab_id: tab, tokens, ...extra });
@@ -268,6 +268,40 @@ test("a subagent whose run is recorded done but whose pi still watches a running
 		status = "done";
 		assert.deepEqual(await kids(), { "kid-open": [true, "idle"] }, "the monitor stopped and pi is idle: finished as before");
 		assert.equal(source.dismiss("kid-open"), true);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("a live ally run whose session file is its own is a read-only unit of the net: its key is on the tower's chip, the path stays off the page, a file outside the sessions folder or of an unlisted run is no unit, and the key lapses with the registry", async () => {
+	const root = realpathSync(mkdtempSync(join(tmpdir(), "psb-net-ally-")));
+	try {
+		const dir = join(root, "sessions"), mine = join(dir, "2026_ally-1.jsonl"), other = join(root, "elsewhere", "2026_ally-2.jsonl");
+		mkdirSync(dir, { recursive: true });
+		mkdirSync(join(root, "elsewhere"));
+		writeFileSync(mine, "");
+		writeFileSync(other, "");
+		const run = (id: string, label: string) => ({ id, device: "d".repeat(26), label, startedAt: "2026-10-28T08:00:00Z" });
+		let view: TowerView | undefined = { state: "standing", queued: 0, allyRuns: [run("r1", "Laptop"), run("r2", "Desk"), run("r3", "NoFile")], notices: [], parked: [], queue: [], allyFiles: { r1: mine, r2: other, rX: mine } };
+		const ps = panes.map((p) => (p.pane_id === "wA:p5" ? { ...p, agent: "pi", agent_session: { value: join(dir, "2026_tower-a.jsonl") } } : p));
+		const herdr = async (args: string[]) => JSON.stringify({ result: args[0] === "pane" ? { panes: ps } : { workspaces } });
+		const source = netSource({ run: herdr, sessions: async () => sessions, sessionDir: dir, services: (w) => (w === "wA" ? view : undefined) });
+		const net = await source.read(), chips = net.bases[0]!.tower!.service!.allyRuns;
+		assert.deepEqual(chips.map((c) => [c.label, c.key]), [["Laptop", "ally-r1"], ["Desk", undefined], ["NoFile", undefined]]);
+		assert.ok(!JSON.stringify(net).includes(mine) && !JSON.stringify(net).includes("allyFiles"), "no path on the page");
+		assert.deepEqual(source.lookup("ally-r1"), { key: "ally-r1", base: "wA", name: "Laptop", role: "ally", file: mine, live: true }, "a unit with a file and no pane: nothing can be typed into it");
+		for (const key of ["ally-r2", "ally-r3", "ally-rX", "ally-zz", "r1"]) assert.equal(source.lookup(key), undefined, `${key} is no unit`);
+		view = { ...view!, allyRuns: [] };
+		await source.read();
+		assert.equal(source.lookup("ally-r1")?.live, false, "after the run ends its comms stay readable for a while, as a session's do");
+		const realNow = Date.now;
+		Date.now = () => realNow() + 11 * 60_000;
+		try {
+			await source.read();
+			assert.equal(source.lookup("ally-r1"), undefined, "then the key is no longer in the allow list");
+		} finally {
+			Date.now = realNow;
+		}
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

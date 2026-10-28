@@ -59,7 +59,8 @@ export interface ServiceStatus {
 	state: ServiceState;
 	queued: number;
 	run?: { id: string; kind: "local" | "ally"; startedAt: string };
-	allyRuns: { device: string; startedAt: string }[];
+	/** `id` and `label` name the run and its device for the GUI (the label is the roster's, cut to the label character set); `device` is the device id. */
+	allyRuns: { id: string; device: string; label: string; startedAt: string }[];
 	lastRun?: { endedAt: string; outcome: Outcome };
 	/** Runs that crashed or timed out inside the loop window, while there are any (the service is held at three). */
 	crashes?: number;
@@ -865,7 +866,7 @@ export function createRuns(o: RunsOptions) {
 				state: svc.state,
 				queued: waitingOf(svc, new Set(run?.offered.keys() ?? [])).length,
 				...(run ? { run: { id: run.rec.id, kind: run.rec.kind, startedAt: run.rec.startedAt } } : {}),
-				allyRuns: [...svc.allies.values()].map((a) => ({ device: a.rec.device ?? "?", startedAt: a.rec.startedAt })),
+				allyRuns: [...svc.allies.values()].map((a) => ({ id: a.rec.id, device: a.rec.device ?? "?", label: a.rec.deviceLabel ?? a.rec.deviceShort ?? (a.rec.device ?? "?").slice(0, 6), startedAt: a.rec.startedAt })),
 				...(svc.lastRun ? { lastRun: svc.lastRun } : {}),
 				...(recent ? { crashes: recent } : {}),
 				notices: svc.notices,
@@ -924,13 +925,13 @@ export function createRuns(o: RunsOptions) {
 		notes: (workspace: string) => readNotes(slot, workspace),
 		running: () => slots,
 		tick,
-		/** What the GUI shows of a tower the server runs: the service's state, its waiting events as queued rows (kind, sender, first line), and the session file of its comms. */
+		/** What the GUI shows of a tower the server runs: the service's state, its waiting events as queued rows (kind, sender, first line), the session file of its comms, and the files of its live ally runs (by run id; the net turns each into a read-only unit and keeps the path off the page). */
 		view(workspace: string): TowerView | undefined {
 			const status = api.status(workspace);
 			if (!status) return undefined;
 			const rows = api.queue(workspace).map((e) => ({ text: phrase(`${e.kind}${e.from?.name ?? e.from?.id ? ` · ${e.from?.name ?? e.from?.id}` : ""}: ${e.text.split("\n").find((l) => l.trim()) ?? ""}`, 240), as: "followUp" as const }));
-			const file = api.file(workspace);
-			return { ...status, queue: rows, ...(file ? { file } : {}) };
+			const file = api.file(workspace), allyFiles = Object.fromEntries([...(find(workspace)?.allies.values() ?? [])].flatMap((a) => (a.rec.file ? [[a.rec.id, a.rec.file]] : [])));
+			return { ...status, queue: rows, ...(file ? { file } : {}), ...(Object.keys(allyFiles).length ? { allyFiles } : {}) };
 		},
 	};
 	return api;

@@ -27,6 +27,61 @@ export function bossTurn(text: string | undefined): { body: string; crashed: boo
 	return { body: lines.slice(crashed ? 2 : 1).join("\n"), crashed };
 }
 
+/** A header the code writes (src/header.ts) and the text under it: its fields as written, the line itself, and the peer's text. Undefined for a message that does not open with one, or whose line does not close. */
+export function strawHeader(text: string | undefined): { fields: Record<string, string>; raw: string; body: string } | undefined {
+	const t = text ?? "", open = "[straw net ";
+	if (!t.startsWith(open)) return undefined;
+	const fields: Record<string, string> = {};
+	let i = open.length;
+	for (;;) {
+		while (t[i] === " ") i++;
+		if (t[i] === "]") break;
+		const eq = t.indexOf("=", i);
+		if (eq < 0 || !/^[a-z]+$/.test(t.slice(i, eq))) return undefined;
+		const key = t.slice(i, eq);
+		let end: number;
+		if (t[eq + 1] === '"') {
+			end = t.indexOf('"', eq + 2);
+			if (end < 0) return undefined;
+			fields[key] = t.slice(eq + 2, end++);
+		} else {
+			end = eq + 1;
+			while (end < t.length && t[end] !== " " && t[end] !== "]") end++;
+			fields[key] = t.slice(eq + 1, end);
+		}
+		i = end;
+	}
+	return { fields, raw: t.slice(0, i + 1), body: t.slice(i + 1).replace(/^ /, "") };
+}
+
+/** One event of a tower's run as the comms say it: who it is from and what it carried, with the server's marker lines (and the crash flag after them) taken off. */
+export type Turn = { kind: "boss" | "intercom" | "server" | "timer"; body: string; crashed: boolean; from?: string } | { kind: "link"; what: "ask" | "reply" | "answer" | "message"; from: string; body: string; raw?: string };
+const MARKS = { intercom: (l: string) => l.startsWith("[intercom from ") && l.endsWith("]"), notice: (l: string) => l === "[notice from the sb server]", timer: (l: string) => l === "[your wakeAfter follow-up is due]" };
+
+/**
+ * The turn a tower-run message is, by what the server sent it as (`event`, src/items.ts from `details.kind`): the text can say anything, so only the kind the server recorded makes a message the boss's.
+ * A `straw-tower` event of a kind this page does not know, and any other message, give undefined (the generic notice). A link message is cut at the verified header, which stays whole for the details.
+ */
+export function eventTurn(it: { type?: string; event?: string; text?: string; from?: string }): Turn | undefined {
+	const text = it.text ?? "", strip = (ok: (line: string) => boolean) => {
+		const lines = text.split("\n"), marked = ok(lines[0] ?? "") ? 1 : 0, crashed = marked === 1 && lines[1] === CRASH_FLAG;
+		return { body: lines.slice(marked + (crashed ? 1 : 0)).join("\n"), crashed };
+	};
+	if (it.type === "straw-link" || it.event === "link") {
+		const head = strawHeader(text), kind = head?.fields.kind, from = it.from ?? head?.fields.remote ?? head?.fields.from ?? "?";
+		const what = kind === "link_reply" ? "reply" : kind === "tower_reply" ? "answer" : head?.fields.asks ? "ask" : "message";
+		return { kind: "link", what, from, body: head ? head.body : text, ...(head ? { raw: head.raw } : {}) };
+	}
+	if (it.type !== "straw-tower") return undefined;
+	switch (it.event) {
+		case "boss": return { kind: "boss", ...strip((l) => l === BOSS_MARK) };
+		case "intercom": return { kind: "intercom", from: it.from ?? "", ...strip(MARKS.intercom) };
+		case "notice": return { kind: "server", ...strip(MARKS.notice) };
+		case "steer": return { kind: "server", body: text.replace(/^\[sb server\] /, ""), crashed: false };
+		case "timer": return { kind: "timer", ...strip(MARKS.timer) };
+	}
+}
+
 /** What the tower refused to a send, in the page's language: by the code the page's server gives, else by the reasons it is known to give; undefined for any other (the server's own words stay). */
 export function towerWhy(r: Pick<Answer, "status" | "body">, o?: Opts): string | undefined {
 	if (r.status < 400) return undefined;

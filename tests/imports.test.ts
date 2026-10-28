@@ -85,7 +85,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased (R-F001) to 389: gui.ts answers a page load at a replaced address with a short HTML 403 and the words of the page's banner.
 	// Unreleased (IRQ-F001, F003) to 390: the page-load 403's note in Traditional Chinese when Accept-Language asks for it.
 	// Unreleased to 408 (sb server B5, GUI): net.ts (the tower service in the snapshot: TowerService, TowerView, the unit it makes of a standing tower) and gui.ts (the `tower` option and its route scope).
-	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 408, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
+	// GUI fix pass (sb server B6) to 411: net.ts turns a live ally run with a known session file into a read-only unit of its own (key `ally-<run id>`, the path kept off the page).
+	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 411, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
 	// Input (the spec's figure), remote access over Tailscale, its terminal pairing panel (QR, c copies, o opens), and the QR encoder each have their own.
 	// What a waiting session waits on (0.5.0, read for display only; answering is deferred) has its own as well.
 	// 0.5.1 raised remote.ts from 165 to 185 (a recorded server counts as running only if its process started when the entry says: a reused PID
@@ -236,7 +237,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	assert.ok(count("src/history.ts") <= 258, `src/history.ts has ${count("src/history.ts")} lines`);
 	// The item mapping and the stream glue came out of the reader to keep it within its budget; the spec sets no figure for them.
 	// 0.19.0 to 108 for Todo and todosOf, a todo snapshot checked field by field.
-	assert.ok(count("src/items.ts") <= 108, `src/items.ts has ${count("src/items.ts")} lines`);
+	// GUI fix pass (sb server B6) to 110: a tower run's message carries the kind the server sent it with (`event`).
+	assert.ok(count("src/items.ts") <= 110, `src/items.ts has ${count("src/items.ts")} lines`);
 	// 0.20.0 to 106 for an entry's images served one by one as their bytes (image).
 	assert.ok(count("src/watch.ts") <= 106, `src/watch.ts has ${count("src/watch.ts")} lines`);
 	// Pane balance is a separate extension entry with its plain-JavaScript helper.
@@ -368,7 +370,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased raised chat.ts to 283, session.ts to 135, dossier.ts to 50, workspace.ts to 61, and composer.ts to 303 (sb server B5, GUI visual pass): the tower service's words and notices come from towermodel.ts and towerturns.ts, and the views call them (a run's
 	// intercom turns shown as incoming, the Terminal tab's sentence for a tower with no run, the notices again in the comms, the state in the head and the dossier, the server queue's label, a held tower's placeholder).
 	// Review RV-F001: chat.ts 283 to 284 for the boss turn of a service tower shown without the server marker line.
-	for (const [name, max] of [["router.ts", 80], ["chat.ts", 284], ["markdown.ts", 180], ["views.ts", 90], ["scene.ts", 41], ["tokens.ts", 24], ["nav.ts", 43], ["workspace.ts", 61], ["dossier.ts", 50], ["session.ts", 135], ["bars.ts", 85], ["lightbox.ts", 34], ["layer.ts", 264], ["askkeys.ts", 75], ["composer.ts", 303], ["ask.ts", 185], ["mirror.ts", 175], ["keypad.ts", 124], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
+	// GUI fix pass (sb server B6): chat.ts 284 to 301 (a run's events read by their kind: the YOU bubble and the notice shared by every incoming message, the labels, the folded header, the standing-by sentence), session.ts 135 to 139 and dossier.ts 50 to 51 (an ally run's comms: its header, state, and chips), workspace.ts 61 to 66 (the queue chip, the chips, and the notices of the workspace view).
+	for (const [name, max] of [["router.ts", 80], ["chat.ts", 301], ["markdown.ts", 180], ["views.ts", 90], ["scene.ts", 41], ["tokens.ts", 24], ["nav.ts", 43], ["workspace.ts", 66], ["dossier.ts", 51], ["session.ts", 139], ["bars.ts", 85], ["lightbox.ts", 34], ["layer.ts", 264], ["askkeys.ts", 75], ["composer.ts", 303], ["ask.ts", 185], ["mirror.ts", 175], ["keypad.ts", 124], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
 	// 0.28.0 to 185 with the answer keys' hooks into gui/ask.ts (the focus on the first option, the textarea). 0.28.0 raised gui/ask.ts from 156 to 175 for the secret panel: the masked field with Show and Hide, Submit, the way back to the terminal, the unsupported-remote notice, and a value that leaves with its one request.
 	// 0.10.0: the page's text comes from Paraglide's messages (gui/messages), which raised chat.ts, views.ts, layer.ts, ask.ts, mirror.ts, and doc.ts by one
 	// line each for the messages import; the strings replaced in place. gui/i18n.ts picks the locale (the menu's choice, the browser's languages with
@@ -485,7 +488,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased to 1486 (sb server B5, GUI): render.ts (the tower's standing-by state and the service's notices with their buttons), composer.ts (wakes), chat.ts, scene.ts, and session.ts (the tower unit's service and queue).
 	// GUI visual pass (sb server B5) to 1590: towermodel.ts (81: the service's state, last run, queue, notices, and the buttons that answer) and towernotes.ts (26: the notices drawn in the card and the comms), less what render.ts no longer holds; towerturns.ts is the session view's.
 	// Desk remainder to 1600 (desk-mode spec S9, S10): desk.ts (the page's desk marker and the Phone rule), quit.ts (Stash and Stashed left out in a desk window), picker.ts (Choose…), main.ts.
-	assert.ok(page <= 1600, `the page's TypeScript has ${page} lines`);
+	// GUI fix pass (sb server B6) to 1632: towerallies.ts (21: the ally runs' chips), towerturns.ts (97: the verified header and a run's events by their kind), the notice's pointer to the towers (linkbar.ts), and the chips and the notices in render.ts's card and the workspace view.
+	assert.ok(page <= 1632, `the page's TypeScript has ${page} lines`);
 });
 
 test("the built page is small, self-contained (no remote URLs, fonts, or imports), and carries no demo fixture", { skip: !existsSync(join(root, "dist/gui/index.html")) && "run npm run gui:build first" }, () => {
@@ -560,7 +564,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// After the merge with 0.46.0 (its `replaced` state and banner, 55.0 KB / 19.75 KB alone) to 56.95 KB / 20.4 KB.
 	// GUI visual pass (sb server B5) to 62.15 KB / 22.15 KB gzipped: the tower service's words in both languages (its states, last run, queue count, notices, refusals; five of them plural) and the notices' buttons that say "Working…" and show a refusal.
 	// Desk remainder (S9) to 62.35 KB / 22.2 KB gzipped: the desk marker read once at load (desk.ts) and the Phone, Stash, and Stashed buttons left out in a desk window.
-	assert.ok(size(entry).length <= 62_350 && gz(entry) <= 22_200, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// GUI fix pass (sb server B6) to 64.75 KB / 22.95 KB gzipped: a run's events read by the kind the server sent them with, the teammates' labels and the folded header (chat.ts, towerturns.ts), the ally runs' chips and words (towerallies.ts, towermodel.ts), the workspace view's queue chip and notices, and their messages in both languages.
+	assert.ok(size(entry).length <= 64_750 && gz(entry) <= 22_950, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).
@@ -624,7 +629,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// GUI visual pass (sb server B5) to 157.4 KB / 64.25 KB gzipped: towerturns.ts (a run's turns the server wrote, the Terminal tab's sentence, a refused send's words) and the session view's tower code, with their messages in both languages.
 	// Review RV-F001 to 158.2 KB / 64.6 KB gzipped: the boss turn of a service tower without the server's marker line (bossTurn) and its crash note in both languages.
 	// Desk remainder (S10) to 158.5 KB / 64.7 KB gzipped: the folder picker's Choose… button for the desk shell's native dialog, with its two messages in both languages.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 158_500 && total(chunks, gz) <= 64_700, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// GUI fix pass (sb server B6) to 162.8 KB / 66.3 KB gzipped: a run's events read by their kind, the teammates' labels and the folded header, the ally runs' chips and comms, the standing-by sentence, and their messages in both languages.
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 162_800 && total(chunks, gz) <= 66_300, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
@@ -680,5 +686,6 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased (sb server B5, GUI) to 80.6 KB / 17.5 KB gzipped: the tower notices' rows (.tower-notices).
 	// GUI visual pass (sb server B5) to 81.75 KB / 17.7 KB gzipped: the notices wrap and read at AA, the queue chip, the comms' notices and the terminal's sentence, the wrapping state line, and a tower's phone header on two rows.
 	// Review RV-F001 to 81.9 KB: the crash note of a boss turn (.boss-flag).
-	assert.ok(total(css, (n) => size(n).length) <= 81_900 && total(css, gz) <= 17_700, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// GUI fix pass (sb server B6) to 82.6 KB / 17.8 KB gzipped: the ally runs' chips, the workspace view's notices, the folded header of a teammate's message, and the foot's shrinking column.
+	assert.ok(total(css, (n) => size(n).length) <= 82_600 && total(css, gz) <= 17_800, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });

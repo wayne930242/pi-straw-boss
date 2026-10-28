@@ -10,6 +10,9 @@ type Opts = { locale?: "en" | "zh-TW" };
 /** The mark's own word (render.ts `LABEL`). */
 export type Word = (mk: Mark) => string;
 
+/** The ally runs of a service as one phrase: the device of the one, else how many. */
+export const allyWord = (service: TowerService, o?: Opts) => (service.allyRuns.length === 1 ? m.tower_state_ally({ device: service.allyRuns[0]!.label }, o) : service.allyRuns.length > 1 ? m.ally_runs({ count: service.allyRuns.length }, o) : m.role_ally({}, o));
+
 /**
  * The one word for the tower's state, on the map, in the dossier and in the comms. A tower the server runs says what the service is doing; one that stands by with nobody working says so instead
  * of "idle". Without a service (a resident tower) it is the mark's word.
@@ -20,8 +23,8 @@ export function towerWord(service: TowerService | undefined, mk: Mark, word: Wor
 		case "held": return m.tower_state_held({}, o);
 		case "waking": return m.tower_state_waking({}, o);
 		case "closing": return m.tower_state_closing({}, o);
-		case "running": return service.run?.kind === "ally" ? m.tower_state_ally({}, o) : word(mk);
-		case "standing": return mk === "idle" ? m.mark_standing({}, o) : word(mk);
+		case "running": return service.run?.kind === "ally" ? allyWord(service, o) : word(mk);
+		case "standing": return mk !== "idle" ? word(mk) : service.allyRuns.length ? allyWord(service, o) : m.mark_standing({}, o); // an ally run is working: not "standing by"
 	}
 }
 

@@ -506,7 +506,7 @@
 	"link_alerts_button": "Link {count}",
 	"link_a_join": "{label} ({short}) asks to join team {team}",
 	"link_a_join_unattended": "{label} ({short}), an unattended device, asks to join team {team}",
-	"link_a_confirm": "{label} ({short}) asks you to confirm a {tool} call from its tower",
+	"link_a_confirm": "{label} ({short}) asks you to confirm a {tool} call from its tower {tower}, which acts on a message you sent",
 	"link_a_fork": "Team {team} stopped: {reason}",
 	"link_a_mismatch": "{label} ({short}) shows another roster than this computer in team {team}; the relay may be showing different rosters",
 	"link_a_unreachable": "The relay of team {team} has been unreachable for {minutes} minutes",
@@ -650,15 +650,15 @@
 				"countPlural"
 			],
 			"match": {
-				"countPlural=one": "{count} Straw Link message has waited more than 10 minutes in the inbox of team {team} for an ally run",
-				"countPlural=other": "{count} Straw Link messages have waited more than 10 minutes in the inbox of team {team} for an ally run"
+				"countPlural=one": "{count} Straw Link message has waited more than 10 minutes in the inbox of team {team} for an ally run. Look at the tower's card on the map: a held tower or a refused start keeps it waiting.",
+				"countPlural=other": "{count} Straw Link messages have waited more than 10 minutes in the inbox of team {team} for an ally run. Look at the tower's card on the map: a held tower or a refused start keeps them waiting."
 			}
 		}
 	],
 	"tower_state_waking": "waking",
 	"tower_state_closing": "closing",
 	"tower_state_held": "held",
-	"tower_state_ally": "ally run",
+	"tower_state_ally": "ally run · {device}",
 	"tower_last_crashed": "last run crashed",
 	"tower_last_timeout": "last run timed out",
 	"tower_last_quit": "last run quit",
@@ -707,5 +707,37 @@
 	"placeholder_held": "Held after repeated crashes · a message wakes it",
 	"notice_server": "notice from the sb server",
 	"notice_timer": "wake-up call",
-	"boss_crash_flag": "A run that crashed may already have handled this: check before acting."
+	"boss_crash_flag": "A run that crashed may already have handled this: check before acting.",
+	"notice_link_ask": "request from {from}",
+	"notice_link_reply": "reply to your ask from {from}",
+	"notice_link_answer": "answer from {from}",
+	"notice_link_message": "message from {from}",
+	"notice_details": "details",
+	"notice_tower": "tower event",
+	"notice_straw_link": "Straw Link message",
+	"ally_run": "ally run · {device}",
+	"ally_runs": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} ally run",
+				"countPlural=other": "{count} ally runs"
+			}
+		}
+	],
+	"ally_run_open": "Read this ally run's comms (read only)",
+	"ally_run_unseen": "Its comms are not shown yet: the run's session file is not known",
+	"role_ally": "ally run",
+	"tower_empty": "This tower stands by. The sb server wakes it for a run when a message arrives; your first message here starts that run.",
+	"placeholder_ally": "An ally run is answering a teammate · a message wakes a run of your own",
+	"blocked_ally": "A teammate's message drives this ally run. You can read its comms here; you cannot write to it.",
+	"link_show_towers": "Show towers",
+	"link_a_confirm_plain": "{label} ({short}) asks you to confirm a {tool} call from its tower",
+	"ally_state": "driven by a teammate's message · read only"
 }

@@ -20,6 +20,8 @@ test("every notice kind reads in English and in Chinese, with the teammate's wor
 		"ci-box (def456), an unattended device, asks to join team moldplan",
 		"bob-mac (abc123) asks you to confirm a bash call from its tower",
 	]);
+	assert.equal(alertLine(alert("confirm", { label: "bob-mac", short: "abc123", tool: "bash", tower: "Delta" })), "bob-mac (abc123) asks you to confirm a bash call from its tower Delta, which acts on a message you sent");
+	assert.match(alertLine(alert("served", { count: 3 }, "info")), /^3 Straw Link messages have waited more than 10 minutes in the inbox of team moldplan for an ally run\. Look at the tower's card/);
 	assert.match(en[3]!, /^Team moldplan stopped: entry 4 is invalid$/);
 	assert.match(en[5]!, /unreachable for 3 minutes/);
 	assert.match(m.link_a_join({ label: "bob-mac", short: "abc123", team: "moldplan" }, { locale: "zh-TW" }), /bob-mac（abc123）要求加入團隊 moldplan/);

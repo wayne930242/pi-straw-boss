@@ -79,10 +79,24 @@ test("a message that waits for the tower identity gets an ally run in a pane spl
 	assert.equal(rec.level, "forward");
 	assert.deepEqual(rec.admitted, ["m1"]);
 	assert.equal(world.herdr.pane(rec.pane).tokens.sb_role, "ally");
-	const status = ((await ask(s, { cmd: "status" })).towers as { service: { state: string; run?: unknown; allyRuns: { device: string }[] } }[])[0]!.service;
+	const status = ((await ask(s, { cmd: "status" })).towers as { service: { state: string; run?: unknown; allyRuns: { id: string; device: string; label: string }[] } }[])[0]!.service;
 	assert.equal(status.run, undefined, "no local run");
 	assert.deepEqual(status.allyRuns.map((a) => a.device), [DEV1]);
 	assert.equal(status.state, "standing", "an ally run leaves the service's own state alone");
+	assert.deepEqual(status.allyRuns.map((a) => [a.id, a.label]), [[id, `label-${DEV1}`]], "the GUI names a run by its id and its device's label");
+});
+
+test("the tower's view carries the session file of a live ally run by run id, once the run reported it, and the status never carries a path", async () => {
+	const { s } = await setup();
+	world.ally.add("m1", DEV1, "hello");
+	world.expose?.allyWaiting("sb-tower-wa");
+	const id = await nthRun(), got = await claimed(s, id);
+	assert.equal(world.expose!.runs.view("wA")!.allyFiles, undefined, "no file before the run reports one");
+	assert.equal((await ask(s, { cmd: "run-file", token: got.token, file: "/s/ally.jsonl" })).ok, true);
+	const view = world.expose!.runs.view("wA")!;
+	assert.deepEqual(view.allyFiles, { [id]: "/s/ally.jsonl" });
+	assert.equal(view.file, undefined, "an ally run's file is not the tower's comms");
+	assert.ok(!JSON.stringify(view.allyRuns).includes("ally.jsonl"), "the service reading has no path");
 });
 
 test("the claim of an ally run answers its kind, level, sender, and an ally brief; the brief has the sender, the asks, and the thread, and no head tower or identity", async () => {

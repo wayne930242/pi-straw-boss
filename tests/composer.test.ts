@@ -49,6 +49,15 @@ test("a finished subagent whose pi has exited has a closed channel and a compose
 	assert.equal(blocked({ ...gone, control: true, live: !closed({ control: true, ended: true }, "live") }), undefined, "and an interactive finished subagent can be typed to");
 });
 
+test("an ally run's comms say a teammate's message drives them and take no typing; a tower with only an ally run working still says a message wakes a run of the boss's own", () => {
+	const unit = { name: "Laptop", control: false, live: true, mark: "unknown" as const, online: true };
+	assert.equal(blocked({ ...unit, ally: true }), m.blocked_ally());
+	assert.equal(blocked(unit), m.blocked_no_pane(), "any other unit with no pane keeps its reason");
+	assert.notEqual(m.blocked_ally(), m.blocked_no_pane());
+	assert.match(m.placeholder_ally(), /ally run/);
+	assert.notEqual(m.placeholder_ally(), m.placeholder_wake());
+});
+
 test("the queue taken back goes in front of what is already in the box, a blank line between; an empty or blank box takes it as it is", () => {
 	assert.equal(withPulled("one\n\ntwo", ""), "one\n\ntwo");
 	assert.equal(withPulled("one", "  \n"), "one");

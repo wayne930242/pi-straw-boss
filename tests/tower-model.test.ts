@@ -30,6 +30,17 @@ test("every state of the service has its own word, and a tower with no service k
 	assert.equal(new Set(all).size, all.length, "no two states read alike");
 });
 
+test("an ally run is never read as standing by: the device of the one run, the count of several, the zh-TW words, and the local run's own word while it works", () => {
+	const run = (label: string) => ({ id: `r-${label}`, device: "d".repeat(26), label, startedAt: "t" });
+	assert.equal(towerWord(svc({ allyRuns: [run("Laptop")] }), "idle", word), "ally run · Laptop");
+	assert.equal(towerWord(svc({ allyRuns: [run("Laptop"), run("Desk")] }), "idle", word), "2 ally runs");
+	assert.equal(towerWord(svc({ allyRuns: [run("Laptop")] }), "idle", word, zh), "隊友 run · Laptop");
+	assert.equal(towerWord(svc({ allyRuns: [run("Laptop"), run("Desk")] }), "idle", word, zh), "2 個隊友 run");
+	assert.equal(towerWord(svc({ state: "running", run: { id: "r", kind: "ally", startedAt: "t" }, allyRuns: [run("Laptop")] }), "working", word), "ally run · Laptop", "a run of kind ally names its device");
+	assert.equal(towerWord(svc({ state: "running", run: { id: "r", kind: "local", startedAt: "t" }, allyRuns: [run("Laptop")] }), "working", word), "working", "the local run is the tower's news; the chips name the ally runs");
+	assert.equal(towerWord(svc({ allyRuns: [run("Laptop")] }), "waiting", word), "waiting");
+});
+
 test("the state in Chinese: the same words everywhere the page names it", () => {
 	assert.equal(towerWord(svc({ state: "held" }), "idle", word, zh), "已暫停");
 	assert.equal(towerWord(svc(), "idle", word, zh), "待命");
@@ -176,6 +187,11 @@ test("a long unbroken text in a notice wraps inside its card", () => {
 	assert.match(span, /overflow-wrap:\s*anywhere/);
 	assert.match(rule(".tower-notices .tnote"), /min-width:\s*0/);
 	assert.match(rule(".base > .tower-notices"), /min-width:\s*0/);
+});
+
+test("the page's foot (timeline, credit line) is one column that may shrink, so a phone's width is the window's (en 390 was 415)", () => {
+	assert.match(css, /\n\.foot \{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+	assert.match(rule(".zoom-in > .tower-notices"), /min-width:\s*0/);
 });
 
 test("notice colours read at AA (4.5:1) on the card's panel and on the page", () => {

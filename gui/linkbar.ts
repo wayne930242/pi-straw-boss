@@ -33,7 +33,7 @@ export function mountLinkBar(open: () => void, news: (count: number) => void) {
 		const allow = h("button", { type: "button", class: "pair-btn" }, m.link_allow()), deny = h("button", { type: "button", class: "pair-btn" }, m.link_deny());
 		allow.onclick = () => answer(c, true, row);
 		deny.onclick = () => answer(c, false, row);
-		row.append(h("b", null, alertLine({ id: "", kind: "confirm", level: "warning", team: c.team, teamName: "", data: { label: c.fromLabel, short: c.fromShort, tool: c.tool } })), h("pre", { class: "link-args" }, c.args), h("div", { class: "devices-acts" }, allow, deny), h("small", { class: "link-note", role: "status" }));
+		row.append(h("b", null, alertLine({ id: "", kind: "confirm", level: "warning", team: c.team, teamName: "", data: { label: c.fromLabel, short: c.fromShort, tool: c.tool, tower: c.tower } })), h("pre", { class: "link-args" }, c.args), h("div", { class: "devices-acts" }, allow, deny), h("small", { class: "link-note", role: "status" }));
 		return row;
 	};
 	return {
@@ -55,6 +55,12 @@ export function mountLinkBar(open: () => void, news: (count: number) => void) {
 				if (a.kind === "join-request" || a.kind === "fork" || a.kind === "mismatch") {
 					const go = h("button", { type: "button", class: "later" }, a.kind === "join-request" ? m.link_review() : m.link_open_teams());
 					go.onclick = () => (pop.hidePopover(), open());
+					row.append(go);
+				}
+				// A message that waits for an ally run is explained on the tower's card (held, a refused start), so the notice points there.
+				if (a.kind === "served") {
+					const go = h("a", { class: "later", href: "./", "data-route": "" }, m.link_show_towers());
+					go.onclick = () => pop.hidePopover();
 					row.append(go);
 				}
 				return row;

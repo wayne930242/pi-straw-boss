@@ -20,7 +20,7 @@ export function todosOf(snapshot: unknown): Todo[] | undefined {
 export interface Item {
 	id: string; kind: "user" | "assistant" | "result" | "bash" | "notice" | "divider" | "meta"; at?: string; text?: string; more?: boolean; images?: number; pics?: string[];
 	thought?: number; thoughtText?: string; tools?: Tool[]; model?: string; stop?: string; error?: string; ctx?: number;
-	callId?: string; name?: string; isError?: boolean; bytes?: number; command?: string; exit?: number; type?: string; from?: string; link?: string; tokens?: number;
+	callId?: string; name?: string; isError?: boolean; bytes?: number; command?: string; exit?: number; type?: string; from?: string; link?: string; tokens?: number; /** A `straw-tower` message: what the sb server sent it as (`details.kind`: boss, intercom, notice, timer, link), or `steer`. */ event?: string;
 }
 export interface Json { [key: string]: any } // eslint-disable-line @typescript-eslint/no-explicit-any -- session entries are untrusted JSON, read defensively
 
@@ -78,7 +78,8 @@ export function toItem(d: Json, len: number, full = false): Item | undefined {
 		case "custom_message": {
 			if (!d.display) return undefined;
 			const sessionFile = d.details?.sessionFile;
-			return { ...base, kind: "notice", type: d.customType, text: clip(textOf(d.content), full ? FULL : 600), from: d.details?.from?.name ?? d.details?.name, link: typeof sessionFile === "string" ? idOf(sessionFile) : undefined };
+			const event = d.customType === "straw-tower" ? (d.details?.steer === true ? "steer" : d.details?.kind) : undefined;
+			return { ...base, kind: "notice", type: d.customType, text: clip(textOf(d.content), full ? FULL : 600), from: d.details?.from?.name ?? d.details?.name, link: typeof sessionFile === "string" ? idOf(sessionFile) : undefined, ...(typeof event === "string" ? { event: clip(event, 20) } : {}) };
 		}
 		case "compaction": return { ...base, kind: "divider", type: "compaction", tokens: d.tokensBefore, text: clip(String(d.summary ?? ""), full ? FULL : 600) };
 		case "branch_summary": return { ...base, kind: "divider", type: "branch", text: clip(String(d.summary ?? ""), full ? FULL : 600) };

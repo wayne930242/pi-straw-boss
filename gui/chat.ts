@@ -10,7 +10,7 @@ import { mount, parse } from "./markdown.ts";
 import type { Post } from "./composer.ts";
 import { m } from "./paraglide/messages.js";
 import { html, ICON, roleName } from "./render.ts";
-import { bossTurn, heard } from "./towerturns.ts";
+import { bossTurn, eventTurn, heard, type Turn } from "./towerturns.ts";
 
 // The comms log of one session. The model is pure: items merge by entry id (a repeated one is ignored), tool results attach to their call by
 // callId, a reset replaces everything, and at most 600 items stay mounted (the farthest page is dropped and fetched again on scroll).
@@ -89,7 +89,7 @@ export interface Chat { apply(event: HistoryEvent): void; setLive(text: string, 
 export const speaker = (who: { role: string }) => roleName(who.role);
 const clock = (at?: string) => (at ? new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }) : "");
 const size = (n: number) => (n >= 1024 ? `${(n / 1024).toFixed(n >= 10240 ? 0 : 1)} KB` : `${n} B`);
-const NOTICE: Record<string, () => string> = { intercom_message: m.notice_intercom, subagent_result: m.notice_result, subagent_ping: m.notice_ping, subagent_status: m.notice_status, "pi-loop-monitor": m.notice_monitor, "memory-context": m.notice_memory, "doc-review": m.notice_doc_review };
+const NOTICE: Record<string, () => string> = { intercom_message: m.notice_intercom, subagent_result: m.notice_result, subagent_ping: m.notice_ping, subagent_status: m.notice_status, "pi-loop-monitor": m.notice_monitor, "memory-context": m.notice_memory, "doc-review": m.notice_doc_review, "straw-tower": m.notice_tower, "straw-link": m.notice_straw_link };
 const icon = (name: string) => {
 	const span = html(`<span class="ava"><svg><use/></svg></span>`);
 	span.querySelector("use")!.setAttribute("href", `#i-${ICON[name] ?? name}`);
@@ -172,25 +172,40 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor }: 
 		const pics = r && thumbs(r.id, r.images); // shown under the card, closed or open
 		return pics ? [card, pics] : [card];
 	}
+	const stamp = (it: Item) => h("time", null, clock(it.at));
+	/** The boss's own message: a YOU bubble. `raw` is the whole text, kept as the tooltip when the server's marker lines were taken off. */
+	const you = (it: Item, body: string, crashed: boolean | undefined, raw: string) => h("article", { class: "tx you" }, h("header", null, stamp(it), h("b", null, m.you()), icon("user")), h("div", { class: "bubble", title: raw }, crashed ? h("small", { class: "boss-flag" }, m.boss_crash_flag()) : null, ...plain(body), thumbs(it.id, it.images)));
+	/** An incoming message: its label on one collapsed line, its text (and the crash flag, or the verified header folded behind "details") inside. */
+	const notice = (it: Item, label: (Node | string)[], body: string, more: { crashed?: boolean; raw?: string } = {}) => h("article", { class: "tx sys" }, h("details", { class: "notice" }, h("summary", null, icon("comms"), h("em", null, m.incoming()), ...label, stamp(it)), more.crashed ? h("small", { class: "boss-flag" }, m.boss_crash_flag()) : null, h("pre", null, body), more.raw ? h("details", { class: "notice-raw" }, h("summary", null, m.notice_details()), h("pre", { class: "raw" }, more.raw)) : null));
+	const turnLabel = (t: Exclude<Turn, { kind: "boss" }>): (Node | string)[] => {
+		if (t.kind === "link") return [{ ask: m.notice_link_ask, reply: m.notice_link_reply, answer: m.notice_link_answer, message: m.notice_link_message }[t.what]({ from: t.from })];
+		if (t.kind === "intercom") return [m.notice_intercom(), " ", (t.from && link(t.from.replace(/ \([^()]*\)$/, ""))) || (t.from ?? "")];
+		return [t.kind === "server" ? m.notice_server() : m.notice_timer()];
+	};
 	function render(it: Item): HTMLElement {
-		const stamp = h("time", null, clock(it.at));
 		switch (it.kind) {
 			case "user": {
 				// A run of a tower the sb server runs gets what came to the tower as user turns; the server wrote their first line, and they are not the boss's (towermodel.ts `heard`).
 				const said = who().service ? heard(it.text) : undefined;
-				if (said) return h("article", { class: "tx sys" }, h("details", { class: "notice" }, h("summary", null, icon("comms"), h("em", null, m.incoming()), said.kind === "intercom" ? m.notice_intercom() : said.kind === "server" ? m.notice_server() : m.notice_timer(), " ", said.kind === "intercom" ? (link(said.from.replace(/ \([^()]*\)$/, "")) || said.from) : "", stamp), h("pre", null, it.text ?? "")));
+				if (said) return notice(it, [said.kind === "intercom" ? m.notice_intercom() : said.kind === "server" ? m.notice_server() : m.notice_timer(), " ", said.kind === "intercom" ? (link(said.from.replace(/ \([^()]*\)$/, "")) || said.from) : ""], it.text ?? "");
 				const boss = who().service ? bossTurn(it.text) : undefined; // the server's marker line is not shown
-				return h("article", { class: "tx you" }, h("header", null, stamp, h("b", null, m.you()), icon("user")), h("div", { class: "bubble", title: boss ? (it.text ?? "") : "" }, boss?.crashed ? h("small", { class: "boss-flag" }, m.boss_crash_flag()) : null, ...plain(boss ? boss.body : (it.text ?? "")), thumbs(it.id, it.images)));
+				return you(it, boss ? boss.body : (it.text ?? ""), boss?.crashed, boss ? (it.text ?? "") : "");
 			}
 			case "assistant": {
 				const me = who(), body = h("pre", { class: "thought-text" }), more = it.thought ? h("button", { class: "thought", type: "button" }, it.thought < 0 ? m.thought_redacted() : m.thought_chars({ count: it.thought.toLocaleString() })) : null;
 				if (it.thought && it.thought > 0) more?.addEventListener("click", () => fetchBody(more, body, it.id, (full) => full.thoughtText));
-				return h("article", { class: "tx in" }, icon(me.role), h("div", { class: "tx-body" }, h("header", null, h("b", null, speaker(me)), it.model ? h("span", null, it.model) : null, stamp, it.stop ? h("span", { class: "stop", "data-mark": "error" }, it.stop) : null), more, body, it.text ? h("div", { class: "md" }, mount(parse(it.text))) : null, it.error ? h("p", { class: "fault" }, it.error) : null, ...(it.tools ?? []).flatMap((t) => action(t, it.id))));
+				return h("article", { class: "tx in" }, icon(me.role), h("div", { class: "tx-body" }, h("header", null, h("b", null, speaker(me)), it.model ? h("span", null, it.model) : null, stamp(it), it.stop ? h("span", { class: "stop", "data-mark": "error" }, it.stop) : null), more, body, it.text ? h("div", { class: "md" }, mount(parse(it.text))) : null, it.error ? h("p", { class: "fault" }, it.error) : null, ...(it.tools ?? []).flatMap((t) => action(t, it.id))));
 			}
 			case "bash": return h("article", { class: "tx sys" }, h("details", { class: "act" }, h("summary", { "data-mark": it.exit ? "error" : "done" }, h("b", { class: "badge" }), h("code", null, "shell"), h("span", { class: "sum" }, `! ${it.command}`), it.exit ? h("span", { class: "stop", "data-mark": "error" }, m.exit_code({ code: it.exit })) : null), it.text ? h("pre", { class: "out" }, it.text) : null));
-			case "notice": return h("article", { class: "tx sys" }, h("details", { class: "notice" }, h("summary", null, icon("comms"), h("em", null, m.incoming()), NOTICE[it.type ?? ""]?.() ?? it.type ?? m.notice(), " ", (it.from && link(it.from)) || (it.from ?? ""), stamp), h("pre", null, it.text ?? "")));
+			case "notice": {
+				// A run's event is read by what the server sent it as, not by its text (towerturns.ts `eventTurn`); a message to an ally run or a main carries the verified header, folded.
+				const turn = eventTurn(it);
+				if (turn?.kind === "boss") return you(it, turn.body, turn.crashed, it.text ?? "");
+				if (turn) return notice(it, turnLabel(turn), turn.body, turn.kind === "link" ? { raw: turn.raw } : { crashed: turn.crashed });
+				return notice(it, [NOTICE[it.type ?? ""]?.() ?? it.type ?? m.notice(), " ", (it.from && link(it.from)) || (it.from ?? "")], it.text ?? "");
+			}
 			case "divider": return h("article", { class: "tx rule" }, h("details", null, h("summary", null, it.type === "compaction" ? m.compacted({ tokens: (it.tokens ?? 0).toLocaleString() }) : m.branch_summary()), h("pre", null, it.text ?? "")));
-			default: return h("article", { class: "tx note" }, it.text ?? "", " ", stamp);
+			default: return h("article", { class: "tx note" }, it.text ?? "", " ", stamp(it));
 		}
 	}
 	function paint(d: Delta) {
@@ -208,6 +223,8 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor }: 
 		// A message that just arrived or went out comes in with a motion; older pages and a redraw do not.
 		if (loaded && !d.front && !d.rebuild) made.forEach((el) => (el.classList.add("fresh"), (el.dataset.born = String(Date.now()))));
 		empty.remove();
+		const svc = who().service;
+		empty.textContent = svc?.state === "standing" && !svc.run ? m.tower_empty() : m.no_transmissions(); // a tower the sb server stands in for says what standing by is
 		if (!model.items.length) list.append(empty);
 		top.hidden = !model.before;
 	}

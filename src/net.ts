@@ -32,12 +32,13 @@ export interface TowerService {
 	state: "standing" | "waking" | "running" | "closing" | "held";
 	queued: number;
 	run?: { id: string; kind: "local" | "ally"; startedAt: string };
-	allyRuns: { device: string; startedAt: string }[];
+	/** `key`: the read-only unit that shows the run's comms (the net adds it while the run's session file is known; the file itself never reaches the page). */
+	allyRuns: { id: string; device: string; label: string; startedAt: string; key?: string }[];
 	lastRun?: { endedAt: string; outcome: string }; crashes?: number; // `crashes`: runs that crashed or timed out in the loop window, when any did
 	notices: { id: string; level: "info" | "warning" | "error"; kind: string; text: string; at: number; detail?: string }[];
 	parked: { id: string; kind: string; from?: string; first: string }[];
 }
-export type TowerView = TowerService & { queue: Queued[]; file?: string };
+export type TowerView = TowerService & { queue: Queued[]; file?: string; /** The session files of the live ally runs, by run id. */ allyFiles?: Record<string, string> };
 export interface Base { id: string; label: string; mark: Mark; head: boolean; tower: ({ name: string; mark: Mark; key: string; control: boolean; service?: TowerService; pending?: Pending; queued?: Queued[]; monitors?: Monitor[]; subs: Unit[] } & Shelf & Lately) | null; tabs: Tab[]; outposts: Outpost[]; outside: Unit[] }
 /** `stashed`: the bases put away with /boss stash, waiting to be popped (stash.ts). `trust`: the folders whose agents wait for a trust decision (trust/serve.ts). */
 /** `link`: Straw Link's teammates' bases, the notices it raises, and the confirms waiting for the boss; absent when Straw Link is not set up or says nothing. */
@@ -106,10 +107,12 @@ export function buildNet({ sessions, panes: ps, workspaces: all, children, servi
 		if (!tower && !tabs.length) return [];
 		// A tower the sb server runs: its comms are the live run's session file, else the last run's (read only); the composer wakes it (a boss event), so it is always a control; a live run that is
 		// not waiting on a question shows as working, and the queued events show as the unit's queued rows.
-		const view = tower ? services?.(w.workspace_id) : undefined, { queue, file: runFile, ...service } = view ?? ({} as Partial<TowerView>);
+		const view = tower ? services?.(w.workspace_id) : undefined, { queue, file: runFile, allyFiles, ...service } = view ?? ({} as Partial<TowerView>);
 		const named = tower && keep({ key: tower.id, base: w.workspace_id, name: tower.name ?? tower.id, role: "tower", file: view ? readable(runFile) : piFile(towerPane, tower.id), pane: towerPane?.pane_id });
+		// An ally run of the service whose session file is known is a unit of its own with no pane (a teammate's message drives it, so nothing is typed into it): the chip on the tower opens its comms read-only.
+		const allyRuns = (service.allyRuns ?? []).map((a) => { const file = readable(allyFiles?.[a.id]); return file ? { ...a, key: keep({ key: `ally-${a.id}`, base: w.workspace_id, name: a.label, role: "ally", file }) } : a; });
 		const towerMark = tower ? commanding(sessionMark(tower, towerPane), towerSubs.map((c) => c.mark)) : "unknown";
-		return [{ id: w.workspace_id, label: w.label, mark, head: w === headOf(all), tower: tower && named ? { name: tower.name ?? tower.id, mark: view ? (service.run ? (towerMark === "idle" || towerMark === "unknown" ? "working" : towerMark) : towerMark === "commanding" ? towerMark : "idle") : towerMark, key: named, control: view ? true : towerPane?.agent === "pi", ...(view ? { service: service as TowerService, ...(queue?.length ? { queued: queue } : {}) } : {}), subs: towerSubs } : null, tabs, outposts, outside }];
+		return [{ id: w.workspace_id, label: w.label, mark, head: w === headOf(all), tower: tower && named ? { name: tower.name ?? tower.id, mark: view ? (service.run ? (towerMark === "idle" || towerMark === "unknown" ? "working" : towerMark) : towerMark === "commanding" ? towerMark : "idle") : towerMark, key: named, control: view ? true : towerPane?.agent === "pi", ...(view ? { service: { ...service, allyRuns } as TowerService, ...(queue?.length ? { queued: queue } : {}) } : {}), subs: towerSubs } : null, tabs, outposts, outside }];
 	});
 	return { bases };
 }

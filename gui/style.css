@@ -343,6 +343,11 @@ svg { display: block; }
 /* The state line may be long (state, last run, failures), so a base's own line wraps instead of cutting the queue count off. */
 .base:not(.ally) > header .title p { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 0; white-space: normal; overflow: visible; }
 .title .tqueue { margin-left: 8px; padding: 0 7px; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 999px; color: var(--accent); font-size: 11px; white-space: nowrap; } .title .tqueue:empty { display: none; }
+/* The ally runs of a tower (a teammate's message drives each): a chip per run on the card, in the workspace view and under the comms header; a count first when there are several. The workspace view shows the notices as the card does. */
+.allies { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 6px; font-size: 0.85em; } .allies[hidden] { display: none; } .allies b { color: var(--dim); font-weight: 600; }
+.ally-chip { padding: 0 8px; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 999px; color: var(--accent); font-size: 11px; white-space: nowrap; text-decoration: none; } a.ally-chip:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.zoom-in > .tower-notices:empty { display: none; }
+.zoom-in > .tower-notices { margin: 12px 0; display: grid; gap: 6px; min-width: 0; }
 .term-hold { margin: 16px; padding: 14px 16px; border: 1px dashed var(--line); border-radius: 12px; color: var(--dim); line-height: 1.5; }
 .subs::before { content: ""; position: absolute; left: 3px; top: -4px; bottom: 22px; width: 1px; background: repeating-linear-gradient(color-mix(in srgb, var(--line-c) 50%, transparent) 0 4px, transparent 4px 8px); }
 .subs > .unit > .card::before { content: ""; position: absolute; left: -15px; top: 50%; width: 15px; height: 1px; background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--line-c) 50%, transparent) 0 4px, transparent 4px 8px); }
@@ -396,7 +401,7 @@ svg { display: block; }
 .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0 0 0 auto; padding: 0; list-style: none; color: var(--dim); font-size: 11px; }
 .legend li { display: flex; align-items: center; gap: 6px; } .legend .badge { width: 13px; height: 13px; font-size: 8px; }
 /* Under the stage: the net log and the icons' credit. */
-.foot { display: grid; gap: 10px; margin-top: 14px; } .foot .credit { opacity: 0.75; }
+.foot { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; margin-top: 14px; } .foot .credit { opacity: 0.75; }
 
 .enter { animation: pop 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.15) both; }
 .leaving { animation: out 0.35s ease-in both; pointer-events: none; }
@@ -601,6 +606,9 @@ summary::-webkit-details-marker { display: none; }
 .notice { border-color: color-mix(in srgb, var(--violet) 20%, transparent); background: color-mix(in srgb, var(--violet) 7%, transparent); }
 .notice .ava { width: 22px; height: 22px; }
 .notice pre, .rule pre { padding: 0 10px 8px; }
+.notice > .boss-flag { display: block; opacity: .7; padding: 0 10px 4px; }
+/* The verified header of a teammate's message stays folded under its text. */
+.notice-raw { margin: 0 10px 8px; } .notice-raw > summary { color: var(--dim); font-size: 12px; cursor: pointer; } .notice-raw pre { padding: 4px 0 0; }
 .rule summary { justify-content: center; }
 .rule summary::before, .rule summary::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 .tx.note { text-align: center; }

@@ -12,7 +12,7 @@ export function alertLine(a: LinkAlert): string {
 	const d = a.data, team = a.teamName;
 	switch (a.kind) {
 		case "join-request": return d.unattended ? m.link_a_join_unattended({ label: text(d.label), short: text(d.short), team }) : m.link_a_join({ label: text(d.label), short: text(d.short), team });
-		case "confirm": return m.link_a_confirm({ label: text(d.label), short: text(d.short), tool: text(d.tool) });
+		case "confirm": return d.tower ? m.link_a_confirm({ label: text(d.label), short: text(d.short), tool: text(d.tool), tower: text(d.tower) }) : m.link_a_confirm_plain({ label: text(d.label), short: text(d.short), tool: text(d.tool) });
 		case "fork": return m.link_a_fork({ team, reason: text(d.reason) });
 		case "mismatch": return m.link_a_mismatch({ label: text(d.label), short: text(d.short), team });
 		case "unreachable": return m.link_a_unreachable({ team, minutes: text(d.minutes) });
