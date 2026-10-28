@@ -130,6 +130,6 @@ test("the way back to the map is the drawer's foot, outside the list that scroll
 	assert.match(rule(".drawer-body"), /min-height:\s*0/, "the list scrolls inside its own box, so the foot never covers its last unit");
 	assert.doesNotMatch(rule(".drawer-map"), /position:\s*(sticky|fixed|absolute)/, "it stays in the flow of the foot");
 	const source = readFileSync(new URL("../gui/drawer.ts", import.meta.url), "utf8");
-	assert.match(source, /h\("footer", \{ class: "drawer-foot" \}, home\)/, "the link is in the foot");
-	assert.doesNotMatch(source, /drawer-top"[^)]*home/, "and not above the list");
+	assert.match(source, /h\("footer", \{ class: "drawer-foot" \}, top, home\)/, "the link is in the foot, under the Dismiss finished button that sits directly above it");
+	assert.match(source, /m\.drawer_title\(\)\), close\), body, h\("footer"/, "and nothing sits between the header and the list");
 });

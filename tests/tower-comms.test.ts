@@ -192,6 +192,18 @@ test("boss_close_main asks the opened main to quit as /boss close would: it quit
 	assert.ok(world.broker.published.every((p) => p.ns !== "straw-boss/control" || p.options?.audience === "capable"));
 });
 
+test("a main asked to close marks its pane sb_closing before it quits and clears its tokens, so the net never shows the pane as an unjoined pi that finished", async () => {
+	const { towerA, main } = await opened();
+	world.herdr.calls.length = 0;
+	await towerA.tool("boss_close_main", { main: NEW.main });
+	await until(() => main.stopped && world.herdr.closed.includes(NEW.pane), "the main quit and its pane closed");
+	const at = (pick: (args: string[]) => boolean) => world.herdr.calls.findIndex((args) => args[1] === "report-metadata" && args[2] === NEW.pane && pick(args));
+	const marked = at((args) => args.includes("sb_closing=1")), cleared = at((args) => args.includes("sb_role") && args.includes("--clear-token"));
+	assert.ok(marked >= 0, "the pane was marked");
+	assert.ok(cleared < 0 || marked < cleared, "the mark comes before its tokens are cleared");
+	assert.ok(!world.herdr.calls.some((args) => args.includes("sb_closing") && args.includes("--clear-token")), "and it is never cleared by the session: it stays until the pane is gone");
+});
+
 test("boss_close_main closes nothing it did not open: a main the boss opened, a main in another workspace, a session that is not a main, or no session", async () => {
 	const { towerA, a1, b1, a3 } = await opened();
 	await assert.rejects(towerA.tool("boss_close_main", { main: "api-main" }), /api-main was not opened by a tower \(the boss opened it\), so only the boss closes it/);

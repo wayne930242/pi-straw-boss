@@ -55,7 +55,7 @@ const RECENT_MS = 10 * 60_000;
 /**
  * The pure half: sessions, panes, and workspaces in, the net out. Sessions that did not join (no main or member token) are left out,
  * and so are workspaces with no part in the net (no live tower, nobody joined): a base is a workspace the net reaches. Every unit
- * that has a key is also written to `refs`, the server's allow list, with a file only from pi's `sessionDir`. A base's `outside` lists its other pi panes (D1).
+ * that has a key is also written to `refs`, the server's allow list, with a file only from pi's `sessionDir`. A base's `outside` lists its other pi panes (D1), except one that is closing on purpose (`sb_closing`, closing.ts: its session has left intercom, its pi is shutting down).
  */
 export function buildNet({ sessions, panes: ps, workspaces: all, children, services, sessionDir = join(process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "sessions") }: NetInput, refs = new Map<string, Ref>()): Net {
 	// Readable: a .jsonl really under pi's sessions directory (symlinks resolved), named for its intercom session (during /new the pane names the
@@ -93,7 +93,7 @@ export function buildNet({ sessions, panes: ps, workspaces: all, children, servi
 		}));
 		const outposts = all.filter((x) => isSub(x) && parentOf(all, x) === w && !claimed.has(x.workspace_id)).map((x): Outpost => ({ id: x.workspace_id, label: x.label, mark: markOf(x.agent_status) }));
 		const tower = towerOf(w), towerPane = tower && paneOf(tower), towerSubs = tower ? subsOf(tower.id, w.workspace_id) : [];
-		const outside = ps.filter((p) => p.workspace_id === w.workspace_id && p.agent === "pi" && p.pane_id !== towerPane?.pane_id && !held.has(p.pane_id)).flatMap((p): Unit[] => {
+		const outside = ps.filter((p) => p.workspace_id === w.workspace_id && p.agent === "pi" && p.pane_id !== towerPane?.pane_id && !held.has(p.pane_id) && !p.tokens?.sb_closing).flatMap((p): Unit[] => {
 			const s = sessions.find((x) => x.herdrLocation?.paneId === p.pane_id), file = p.agent_session?.value;
 			const key = s?.id ?? (file && basename(file, ".jsonl").split("_").pop());
 			if (!key) return [];

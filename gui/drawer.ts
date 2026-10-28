@@ -50,10 +50,10 @@ const phone = () => matchMedia("(max-width: 640px)").matches;
 
 export function mountDrawer() {
 	const body = h("div", { class: "drawer-body" }), close = h("button", { type: "button", class: "x", "aria-label": m.drawer_close() }, "×");
-	// Above the list, the HUD's own Dismiss finished (quit.ts: the same click, the same request), there while a finished subagent is; below it, stuck to the bottom within a thumb's reach, the way back to the map.
-	const home = h("a", { class: "drawer-map" }, m.drawer_map()), sweep = h("button", { type: "button", class: "pair-btn", "data-close": "dismiss-all", hidden: "" }), top = h("div", { class: "drawer-top", hidden: "" }, sweep);
+	// Below the list, stuck to the bottom within a thumb's reach: the HUD's own Dismiss finished (quit.ts: the same click, the same request), there while a finished subagent is, and under it the way back to the map.
+	const home = h("a", { class: "drawer-map" }, m.drawer_map()), sweep = h("button", { type: "button", class: "pair-btn", "data-close": "dismiss-all", hidden: "" }), top = h("div", { class: "drawer-sweep", hidden: "" }, sweep);
 	aim(home, { view: "map" });
-	const panel = h("aside", { class: "drawer", "aria-label": m.drawer_label() }, h("header", null, h("b", null, m.drawer_title()), close), top, body, h("footer", { class: "drawer-foot" }, home)), veil = h("div", { class: "drawer-veil" });
+	const panel = h("aside", { class: "drawer", "aria-label": m.drawer_label() }, h("header", null, h("b", null, m.drawer_title()), close), body, h("footer", { class: "drawer-foot" }, top, home)), veil = h("div", { class: "drawer-veil" });
 	document.body.append(veil, panel);
 	let latest: Net | undefined, here: string | undefined, open = false, x = 0, width = 0, t: { x0: number; y0: number; mode: "wait" | "drag" | "pass" | "card"; was: boolean; base: number; last: number; at: number; v: number; card?: HTMLElement } | undefined;
 	const draw = () => {

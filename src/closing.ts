@@ -1,6 +1,9 @@
 import { spawn } from "node:child_process";
 import { resolveExe } from "./exe.mjs";
+import { report } from "./herdr.ts";
 import type { Kit } from "./state.ts";
+
+const MARK_MS = 1000;
 
 /**
  * Closes a pane once the pi process `pid` has exited (at most 60 s), from a process of its own, so pi's shutdown runs to the end first. Windows has no sh, so there
@@ -20,12 +23,15 @@ export const afterExit = (pid: number, args: string[]) => {
  * Closing: pi quits as /quit would (its shutdown clears this session's tokens; a tower's quit clears the mains), then its pane closes, which
  * closes an emptied tab and an emptied base with it. `keepPane` leaves the pane to a caller that closes the whole tab or base.
  * Closing is this session's own: the GUI asks its bridge, /boss close asks here, and only a session that runs this extension can (not a subagent).
+ * Before it quits, the pane is marked `sb_closing` (kept until the pane is gone, and with the usual TTL if it is not): the session leaves intercom while pi is still shutting down,
+ * and a pane Herdr still lists as a pi with no session would show in the net as an unjoined agent that finished (net.ts `outside`).
  */
-export function createClosing({ s }: Kit) {
+export function createClosing({ cfg, s }: Kit) {
 	return (keepPane: boolean): string | undefined => {
 		if (!s.quit) return "This session has not started yet.";
 		s.closing ??= { keepPane };
-		setTimeout(() => s.quit?.(), 50); // after the answer has gone out
+		const pane = cfg.env.HERDR_PANE_ID, marked = pane ? report(cfg.run, "pane", pane, { sb_closing: "1" }).catch(() => {}) : undefined;
+		void Promise.race([marked, cfg.sleep(MARK_MS)]).then(() => setTimeout(() => s.quit?.(), 50)); // after the answer has gone out, and the mark has (a Herdr that does not answer holds the quit for MARK_MS at most)
 		return undefined;
 	};
 }

@@ -125,6 +125,28 @@ test("a base also lists its other pi panes as outside the net (D1), keyed by int
 	assert.deepEqual(net.bases[1]!.outside, []);
 });
 
+// A main closed on purpose (the GUI's Quit, /boss close, the tower's boss_close_main) leaves intercom while pi shuts down, and its pane stays in Herdr's list, still a pi, until pi has exited. Read as it is,
+// that pane is an unjoined pi that finished: a green card under "outside the net" for a moment. The closing session marks its pane `sb_closing` first (closing.ts), and the net leaves a marked pane out.
+test("a main that is being closed goes from its tab to nothing, never through a finished card outside the net; a real unjoined pi that finished stays", async () => {
+	const at = { ws: "wA", tab: "wA:t1", pane: "wA:p1" };
+	let live: Session[] = [session("tower-a", "tower", { ws: "wA", tab: "wA:t3", pane: "wA:p5" }), session("s1", "api-main", at)];
+	const stray = pane("wA:p9", "wA:t1", {}, { workspace_id: "wA", agent: "pi", agent_status: "done", agent_session: { value: "/s/2026_stray.jsonl" }, label: "stray" });
+	let ps: Pane[] = [...panes.filter((p) => p.pane_id !== "wA:p1"), pane("wA:p1", "wA:t1", { sb_role: "main" }, { workspace_id: "wA", agent: "pi", agent_status: "idle", agent_session: { value: "/s/2026_s1.jsonl" } }), stray];
+	const herdr = async (args: string[]) => JSON.stringify({ result: args[0] === "pane" ? { panes: ps } : { workspaces } });
+	const source = netSource({ run: herdr, sessions: async () => live, sessionDir: "/s" });
+	const where = async () => { const a = (await source.read()).bases[0]!; return [a.tabs.flatMap((t) => t.units.map((u) => u.key)), a.outside.map((u) => `${u.key}:${u.mark}`)]; };
+	assert.deepEqual(await where(), [["s1"], ["stray:done"]], "before: the main is in its tab");
+	// The main marks its pane, then leaves intercom; Herdr still lists the pane as a pi that is done.
+	ps = ps.map((p) => (p.pane_id === "wA:p1" ? { ...p, agent_status: "done", tokens: { sb_role: "main", sb_closing: "1" } } : p));
+	live = live.filter((x) => x.id !== "s1");
+	assert.deepEqual(await where(), [[], ["stray:done"]], "the closing main is on no list at all; the stray pi that finished is still shown");
+	// Its tokens are cleared at shutdown; the closing mark stays until the pane is gone.
+	ps = ps.map((p) => (p.pane_id === "wA:p1" ? { ...p, tokens: { sb_closing: "1" } } : p));
+	assert.deepEqual(await where(), [[], ["stray:done"]], "after its tokens are cleared too");
+	ps = ps.filter((p) => p.pane_id !== "wA:p1");
+	assert.deepEqual(await where(), [[], ["stray:done"]], "after the pane is gone");
+});
+
 test("a file is recorded only for a pi pane, as a .jsonl under the sessions directory, and named for its intercom session", () => {
 	const at = (id: string, value: string, agent = "pi") => (p: Pane) => (p.pane_id === id ? { ...p, agent, agent_session: { value } } : p);
 	const read = (...edits: ((p: Pane) => Pane)[]) => {
