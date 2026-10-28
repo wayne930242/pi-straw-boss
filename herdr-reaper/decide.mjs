@@ -112,6 +112,13 @@ export async function planSweep({ workspaces, panes, state, now, confirmMs = CON
 			if (key in state.candidates) ops.push(del(["candidates", key]));
 			continue;
 		}
+		// A tower's standing pane is a bare shell between runs (and after the boss's Ctrl+D), which is no leftover: nothing in a workspace a tower stands in is swept.
+		const tower = towerReason(workspace, panes.filter((candidate) => candidate.workspace_id === pane.workspace_id));
+		if (tower) {
+			skips.push(`skip ${workspace.label} (${pane.pane_id}): ${tower}`);
+			if (key in state.candidates) ops.push(del(["candidates", key]));
+			continue;
+		}
 		// A pane that never ran an agent is the user's shell. On the first run every agentless pane counts as one that did, but only
 		// a pane the run treats as a leftover is marked: a pinned, focused or busy one stays the user's, for later runs too.
 		const unseen = !(key in state.agentSeen);

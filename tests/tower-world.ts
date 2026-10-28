@@ -47,8 +47,8 @@ export class FakeAlly implements AllyPort {
 /** Short run timers: a wake after 40 ms, the watcher every 20 ms. A test overrides what it is about. */
 export const FAST_RUNS: Partial<Timers> = { wake: 40, claim: 3000, watch: 20, idleSteer: 60_000, idleEnd: 300_000, steerAt: 600_000, quitAt: 1_200_000, quitGrace: 200, signal: 100, lost: 60_000, refuse: 150, loop: 60_000, restored: 400, stopGrace: 300 };
 
-/** Short timers for the standing pane: a look every 30 ms, a prompt counts as there for 400 ms after its poll, the boss's Ctrl+D lasts 500 ms. A test overrides what it is about. */
-export const FAST_STANDING: Partial<StandingTimers> = { intervalMs: 30, presentMs: 400, parkMs: 500, launchMs: 250, leaveMs: 400, refreshMs: 60_000 };
+/** Short timers for the standing pane: a look every 30 ms, a prompt counts as there for 400 ms after its poll, a typed command is waited for 250 ms and then for twice as long, up to 1 s. A test overrides what it is about. */
+export const FAST_STANDING: Partial<StandingTimers> = { intervalMs: 30, presentMs: 400, launchMs: 250, launchMaxMs: 1000, leaveMs: 400, refreshMs: 60_000 };
 
 export class TowerWorld extends ServerWorld {
 	herdr = new FakeHerdr();

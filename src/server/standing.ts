@@ -6,7 +6,7 @@ import type { ServiceStatus } from "./runs.ts";
 // command into it (`cli.mjs prompt`, src/towerprompt/), and while that process polls, it reports a stand-in agent `tower` on the pane, so the tower keeps its row in Herdr's Agents list (and in the
 // net view) between runs. Herdr clears a reported agent about a second after the pane's foreground is back at its idle shell prompt, whatever the label (docs of Herdr, "Release on exit", and checked on
 // 0.9.5), so the label is kept by the prompt being there, and the server has the prompt come back whenever the pane is free: after a run, a Herdr restart, a crashed prompt. It never types into a pane
-// that runs something, that has an agent, or that the boss took with Ctrl+D (parked), and it releases the stand-in and has the prompt leave before a run starts pi there (Herdr starts an agent only in an
+// that runs something, that has an agent, or that the boss took with Ctrl+D (parked until a run takes the pane or Herdr restarts), and it releases the stand-in and has the prompt leave before a run starts pi there (Herdr starts an agent only in an
 // available shell).
 
 export interface StandingTimers {
@@ -14,18 +14,19 @@ export interface StandingTimers {
 	intervalMs: number;
 	/** How long after its last poll the prompt still counts as there. */
 	presentMs: number;
-	/** How long the pane stays the boss's after Ctrl+D; the end of a run ends it sooner. */
-	parkMs: number;
-	/** How long after the command was typed nothing is typed again. */
+	/** How long after the command was typed nothing is typed again; each typing with no poll after it doubles the wait, up to `launchMaxMs`. */
 	launchMs: number;
+	launchMaxMs: number;
 	/** How long a run's start waits for the prompt to leave, and then again after Ctrl+C. */
 	leaveMs: number;
 	/** How long a reported stand-in stands before it is reported again (Herdr keeps it without a refresh; the report also repairs a label Herdr lost). */
 	refreshMs: number;
 }
-export const STANDING: StandingTimers = { intervalMs: 3000, presentMs: 6000, parkMs: 30 * 60_000, launchMs: 15_000, leaveMs: 3000, refreshMs: 4 * 60_000 };
+export const STANDING: StandingTimers = { intervalMs: 3000, presentMs: 6000, launchMs: 15_000, launchMaxMs: 10 * 60_000, leaveMs: 3000, refreshMs: 4 * 60_000 };
 /** Reports of the stand-in that Herdr did not keep, in a row, before the server says so (once) and stops asking for this prompt. */
 const MISSES = 3;
+/** Typings of the command with no poll after any of them, in a row, before the server says so (once); it goes on at the capped pace. */
+const NO_START = 3;
 const SHELLS = new Set(["zsh", "bash", "fish", "sh", "dash", "ksh", "tcsh", "csh", "nu", "login", "pwsh", "powershell", "cmd"]);
 
 /** What the standing logic needs of one tower service (towers.ts builds it). */
@@ -57,10 +58,16 @@ interface Mine {
 	seen?: { pid: number; at: number };
 	/** A run is about to start or holds the pane: the prompt is told to leave. */
 	leaving: boolean;
-	/** The boss took the shell with Ctrl+D: until when nothing is typed. */
-	parked?: number;
+	/** The boss took the shell with Ctrl+D: nothing is typed until a run takes the pane (`freed`) or Herdr restarts (`reset`). */
+	parked: boolean;
 	/** When the command was last typed. */
 	launched?: number;
+	/** Typings since the last poll: the wait before the next one doubles with each. */
+	typings: number;
+	/** The server knows the pane is a fresh shell: just made, just freed by a run, or after a Herdr restart. Where Herdr gives no foreground group, this is the only time the server types. */
+	fresh: boolean;
+	/** The server said the prompt does not start. */
+	noStart: boolean;
 	/** The last stand-in reported, and how often Herdr did not keep it in a row. */
 	reported?: { message: string; at: number };
 	misses: number;
@@ -74,12 +81,15 @@ export function standinMessage(status: Pick<ServiceStatus, "state" | "queued"> |
 	return status && status.queued > 0 ? `${status.queued} queued` : "standing by";
 }
 
-/** Whether Herdr's process info says the pane's foreground is its shell at an idle prompt. */
-export function idleShell(info: { shell_pid?: unknown; foreground_process_group_id?: unknown; foreground_processes?: unknown } | undefined): boolean {
+/**
+ * Whether Herdr's process info positively says the pane's foreground is its shell at an idle prompt. With the shell's pid and the foreground group (macOS, Linux) the groups decide. Without them (Windows lists the
+ * shell alone whether a build runs under it or not) a list of shells is no proof of an idle prompt: it counts only for a pane the server knows is fresh (`fresh`), and an empty or missing list is unknown, never idle.
+ */
+export function idleShell(info: { shell_pid?: unknown; foreground_process_group_id?: unknown; foreground_processes?: unknown } | undefined, fresh = false): boolean {
 	if (!info) return false;
 	if (typeof info.shell_pid === "number" && typeof info.foreground_process_group_id === "number") return info.foreground_process_group_id === info.shell_pid;
 	const procs = Array.isArray(info.foreground_processes) ? (info.foreground_processes as { name?: string; argv0?: string }[]) : [];
-	return procs.every((p) => SHELLS.has(String(p.argv0 ?? p.name ?? "").replace(/^-/, "").split(/[\\/]/).pop()!.toLowerCase().replace(/\.exe$/, "")));
+	return fresh && procs.length > 0 && procs.every((p) => SHELLS.has(String(p.argv0 ?? p.name ?? "").replace(/^-/, "").split(/[\\/]/).pop()!.toLowerCase().replace(/\.exe$/, "")));
 }
 
 /** What the shells the panes run can take unquoted inside double quotes: letters, digits, spaces, and the punctuation of a path. A path with a quote, `$`, a backtick, `%`, or `!` makes no command. */
@@ -148,7 +158,7 @@ export function createStanding(o: StandingOptions) {
 			return;
 		}
 		if (present(m)) {
-			m.parked = undefined;
+			m.parked = false;
 			if (isStandin(pane)) m.misses = 0;
 			const message = standinMessage(status);
 			if (!isStandin(pane) || !m.reported || m.reported.message !== message || now() - m.reported.at >= t.refreshMs) await report(m, pane, message);
@@ -156,14 +166,22 @@ export function createStanding(o: StandingOptions) {
 		}
 		// The prompt is not there. Herdr clears its label itself a moment after; a release makes it at once.
 		await unreport(m);
-		if (m.parked !== undefined && now() < m.parked) return;
-		if (m.launched !== undefined && now() - m.launched < t.launchMs) return;
+		// The boss's Ctrl+D leaves the shell to them until a run takes the pane or Herdr restarts: no clock gives it back, since a prompt typed over their half-written line or the command they are about to run would run it.
+		if (m.parked) return;
+		// A wake is coming (the prompt posted the boss's words and left): a run takes the pane in a moment, and a prompt typed now would only have to leave again.
+		if (m.launched !== undefined && now() - m.launched < Math.min(t.launchMs * 2 ** Math.max(0, m.typings - 1), t.launchMaxMs)) return;
 		if (pane.agent) return;
 		const command = o.command(target.workspace);
 		if (!command) return;
 		// Typed only into a shell that waits at its prompt: a build the boss left running there, or an editor, is theirs.
-		if (!idleShell(await processInfo(pane.pane_id))) return;
+		if (!idleShell(await processInfo(pane.pane_id), m.fresh)) return;
 		m.launched = now();
+		m.fresh = false;
+		m.typings++;
+		if (m.typings === NO_START + 1 && !m.noStart) {
+			m.noStart = true;
+			log.line("prompt-not-starting", { workspace: target.workspace, pane: pane.pane_id, text: `The tower prompt did not start after ${NO_START} tries (is node on the PATH of the shell in that pane, and can the shell take the command?); the server tries again at a slower pace, up to every ${Math.round(t.launchMaxMs / 60_000)} minutes` });
+		}
 		try {
 			await run(["pane", "run", pane.pane_id, command]);
 			log.line("prompt-typed", { workspace: target.workspace, pane: pane.pane_id });
@@ -192,10 +210,11 @@ export function createStanding(o: StandingOptions) {
 	}));
 
 	return {
-		attach(target: StandingTarget) {
+		/** `fresh`: the pane was just made, so it is known to be a shell nobody has used. */
+		attach(target: StandingTarget, fresh = false) {
 			const m = mines.get(target.workspace);
 			if (m) m.target = target;
-			else mines.set(target.workspace, { target, leaving: false, misses: 0 });
+			else mines.set(target.workspace, { target, leaving: false, misses: 0, parked: false, typings: 0, fresh, noStart: false });
 		},
 		/** The service is gone: the stand-in is taken away, and the prompt, which polls a tower that is no more, leaves by itself. */
 		async detach(workspace: string) {
@@ -210,22 +229,25 @@ export function createStanding(o: StandingOptions) {
 			const m = mines.get(workspace);
 			if (!m) return { ok: false, error: `The sb server stands in for no tower of workspace ${workspace}`, gone: true };
 			m.seen = { pid, at: now() };
+			m.typings = 0;
+			m.noStart = false;
 			const status = m.target.status();
 			return { ok: true, label: m.target.label(), state: status?.state ?? "standing", queued: status?.queued ?? 0, leave: m.leaving };
 		},
-		/** Ctrl+D at the prompt: the shell is the boss's until a run ends or the park time passes. */
+		/** Ctrl+D at the prompt: the shell is the boss's until a run takes the pane and ends, or Herdr restarts. */
 		async leave(workspace: string, pid: number): Promise<PromptReply | { ok: true }> {
 			const m = mines.get(workspace);
 			if (!m) return { ok: false, error: `The sb server stands in for no tower of workspace ${workspace}`, gone: true };
 			if (m.seen?.pid === pid) m.seen = undefined;
-			m.parked = now() + t.parkMs;
+			m.parked = true;
 			await unreport(m);
 			return { ok: true };
 		},
-		/** The prompt is exiting after it was told to leave, or on its own. */
+		/** The prompt is exiting after it was told to leave, or on its own (the boss wrote: a run starts in about a second, and the next look does not type the command into the pane before it). */
 		gone(workspace: string, pid: number) {
 			const m = mines.get(workspace);
 			if (m?.seen?.pid === pid) m.seen = undefined;
+			if (m) (m.launched = now(), (m.typings = 0));
 			return { ok: true as const };
 		},
 		/** A run is about to start pi in the pane: the stand-in is taken away and the prompt told to leave; returns once it has gone, after Ctrl+C if it must (the prompt itself only). */
@@ -248,16 +270,12 @@ export function createStanding(o: StandingOptions) {
 			const m = mines.get(workspace);
 			if (!m) return;
 			m.leaving = false;
-			m.parked = undefined;
-			m.launched = undefined;
-			m.seen = undefined;
-			m.reported = undefined;
-			m.misses = 0;
+			Object.assign(m, { parked: false, launched: undefined, seen: undefined, reported: undefined, misses: 0, typings: 0, fresh: true, noStart: false });
 			void tick(workspace);
 		},
 		/** A new Herdr server: every pane is a fresh shell, so nothing is believed of what was there. */
 		reset() {
-			for (const m of mines.values()) Object.assign(m, { seen: undefined, leaving: false, parked: undefined, launched: undefined, reported: undefined, misses: 0, unsupported: undefined });
+			for (const m of mines.values()) Object.assign(m, { seen: undefined, leaving: false, parked: false, launched: undefined, reported: undefined, misses: 0, unsupported: undefined, typings: 0, fresh: true, noStart: false });
 		},
 		/** The look at once (a service just went live), without waiting for the interval. */
 		kick: (workspace: string) => void tick(workspace),

@@ -330,6 +330,20 @@ test("the boss typing into the run's session tells the server before the turn, a
 	assert.equal(srv.requests.filter((q) => q.cmd === "run-boss").length, 1, "throttled");
 });
 
+test("words sent into the session by an extension (pi-intercom's route) or by a program are no sign of the boss", async () => {
+	const srv = server();
+	srv.push("e1", "go");
+	const r = await rig(srv);
+	r.faux.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two"), fauxAssistantMessage("three")]);
+	await until(() => srv.taken.length === 1, "the event");
+	await settled(r);
+	await r.session.prompt("from an extension", { source: "extension" });
+	await r.session.prompt("from rpc", { source: "rpc" });
+	assert.equal(srv.requests.filter((q) => q.cmd === "run-boss").length, 0, "only the keyboard makes the boss part of the run");
+	await r.session.prompt("typed by the boss");
+	assert.equal(srv.requests.filter((q) => q.cmd === "run-boss").length, 1);
+});
+
 test("tower_done answered with a stay is the tool's result: the run goes on, the model is told why", async () => {
 	const srv = server();
 	srv.push("e1", "go");

@@ -82,8 +82,21 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 		if (silent) say(text.back);
 		silent = false;
 		if (polled.answer.leave) {
+			// The boss's line is on its way (the post ends the prompt, or refuses and the prompt goes on).
+			if (posting) return true;
+			// A run is starting in this pane while the boss is typing: their words are for the tower, and the pane is a shell in a moment, where they must not land. What they entered (the paste window) and what is on the line go first.
+			const words = [...batch, rl?.line ?? ""].join("\n").trim();
 			say(text.waking, false);
-			await end(() => source.gone());
+			await end(async () => {
+				if (words) {
+					try {
+						await source.post(words);
+					} catch (cause) {
+						o.output.write(`${text.refused(clean((cause as Error).message, 400))}\n${words.split("\n").map((l) => clean(l, 2000)).join("\n")}\n`);
+					}
+				}
+				await source.gone();
+			});
 			return false;
 		}
 		const line = header(polled.answer);

@@ -112,6 +112,21 @@ test("Safety: focused, busy, pinned", async () => {
 	assert.equal(statePinned.closes.length, 0, "a pin in the state file holds even when the token was lost");
 });
 
+test("A tower's standing pane in a linked worktree is never swept, however long it was an agent's and however idle its shell is (SR-disposition)", async () => {
+	const seen = state({ initialized: true, agentSeen: { "term_w2:p1": 1, "term_w2:p2": 1 } });
+	const bare = await plan({ workspaces: [workspace("w2", "linked")], panes: [pane("w2:p1", "w2")], state: seen });
+	assert.equal(bare.closes.length, 1, "control: the same pane without the marks is swept");
+	for (const [why, workspaces, panes, reason] of [
+		["pane role tower (Ctrl+D parked, the stand-in released)", [workspace("w2", "linked")], [pane("w2:p1", "w2", { tokens: { sb_role: "tower" } })], /pane w2:p1 is a tower's standing pane/],
+		["pane role ally", [workspace("w2", "linked")], [pane("w2:p1", "w2", { tokens: { sb_role: "ally" } })], /pane w2:p1 is an ally run's pane/],
+		["the workspace's tower token", [workspace("w2", "linked", { tokens: { tower: "sb-tower-w2" } })], [pane("w2:p1", "w2")], /its tower \(sb-tower-w2\) stands in it/],
+	]) {
+		const result = await plan({ workspaces, panes, state: seen });
+		assert.equal(result.closes.length, 0, why);
+		assert.match(result.skips.join("\n"), reason, why);
+	}
+});
+
 test("Confirmation wait", async () => {
 	const seen = state({ initialized: true, agentSeen: { "term_w2:p1": 1 } });
 	const input = { workspaces: [workspace("w2", "linked")], panes: [pane("w2:p1", "w2")], confirmMs: CONFIRM_MS };

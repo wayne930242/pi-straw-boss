@@ -733,6 +733,38 @@ test("the boss's time in a run is bounded: past bossMax the cap applies again", 
 	await until(() => readRun(world.slot, "wA", id)?.outcome === "timeout", "the timeout");
 });
 
+test("the boss's 4 hours are counted from their first word in the run, not from their return after each absence (SR-F005)", async () => {
+	world.runTimers = { quitAt: 300, steerAt: 150, bossMax: 1500, bossAway: 120, idleSteer: 60_000, idleEnd: 60_000, quitGrace: 60, signal: 60 };
+	const { s } = await setup();
+	const { id, token } = await woken(s, { present: true });
+	const first = Date.now();
+	// The boss is silent: the idle run is "away" after bossAway, and its grace window keeps the cap off.
+	assert.deepEqual((await commandsFor(s, token, 600)).map((c) => c.type), []);
+	// They come back, and keep coming back every moment (the model is busy with them: its polls are not idle, so no second absence is seen on a slow machine).
+	let quit = false;
+	while (!quit && Date.now() - first < 2400) {
+		await ask(s, { cmd: "run-boss", token });
+		quit = (await commandsFor(s, token, 60, false)).some((c) => c.type === "quit");
+	}
+	assert.equal(quit, true, "the run ends at bossMax after the first word, though the boss never stopped coming back");
+	assert.ok(Date.now() - first < 2100, `ended ${Date.now() - first} ms after the first word (bossMax 1500; a bound restarted at the return would end it after 2100)`);
+	exit(id);
+	await until(() => readRun(world.slot, "wA", id)?.outcome === "timeout", "the timeout");
+});
+
+test("a run the server is ending at bossMax answers tower_done without a stay, and a boss sign that comes after changes nothing (SR-F005)", async () => {
+	world.runTimers = { quitAt: 250, steerAt: 120, bossMax: 400, bossAway: 60_000, quitGrace: 5000, signal: 5000 };
+	const { s } = await setup();
+	const { id, token } = await woken(s, { present: true });
+	const later = await commandsFor(s, token, 700);
+	assert.ok(later.some((c) => c.type === "quit"), JSON.stringify(later));
+	assert.equal((await ask(s, { cmd: "run-boss", token })).ok, true, "harmless");
+	const end = await ask(s, { cmd: "run-done", token, note: "wrapped up" });
+	assert.equal(end.stay, undefined, JSON.stringify(end));
+	exit(id);
+	await until(() => readRun(world.slot, "wA", id)?.outcome === "timeout", "the outcome stays the server's");
+});
+
 test("run-boss belongs to a local run: an ally run, or a token the server does not know, is refused", async () => {
 	const { s } = await setup();
 	assert.equal((await ask(s, { cmd: "run-boss", token: "nope" })).ok, false);

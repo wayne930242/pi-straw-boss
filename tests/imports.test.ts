@@ -293,6 +293,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased to 323 (sb server B5, RV-F001): eventmarks.ts (3, new: the two lines the server writes at the head of a boss event, shared by runmode.ts and the page).
 	// Unreleased to 355 (desk remainder, docs/specs/2026-10-26-desk-mode.md S6): integration.ts (33, new: the one warning a session gives when Herdr's pi integration is missing), index.ts (the check built and handed to the session).
 	// Unreleased 355 to 357 (desk remainder, review): integration.ts (32), its own pane from the environment and the generation that drops a check finished after the session ended.
+	// Unreleased (sb net stand-in, review): towers.ts 724 to 726 (the standing pane made by ensure is known fresh: standing.ts types into it where Herdr gives no foreground group).
 	// Unreleased (sb net stand-in): order.ts 97 to 105 (an ally run's pane keys, written and cleared: allyKids, clearOrder).
 	// Unreleased 357 to 375 (sb net stand-in): herdr.ts (the stand-in's label, seq, report and release); stash.ts 289 to 290 (the stand-in counts as a bare pane; towertab.ts stays within its 78).
 	assert.ok(rest <= 375, `the rest of src has ${rest} lines`);
@@ -336,7 +337,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Test isolation merged with B4: server-look.ts 197 (deps.track and the reach context); client.ts 647 (testguard.ts, new, checks a real spawn).
 	// Unreleased (R-F002): client.ts 697 to 698 for the ready server's record read again in waitReady.
 	// Unreleased (sb net stand-in): main.ts 593 to 606 (prompt-poll, prompt-leave, prompt-gone, run-boss, the present flag of tower-event), cli.ts 362 to 382 (the prompt command), towers.ts 698 to 724 (the standing pane's wiring); standing.ts (the standing pane's look, new) and src/towerprompt/ (the prompt program: source, serversource, prompt, messages, new) have no figure in the spec.
-	for (const [name, max] of [["record.ts", 472], ["log.ts", 135], ["version.ts", 28], ["acl.ts", 398], ["socket.ts", 220], ["client.ts", 699], ["intercom.ts", 102], ["main.ts", 606], ["cli.ts", 382], ["winprep.ts", 492], ["breakaway.ts", 251], ["testguard.ts", 115], ["towers.ts", 724], ["towerstore.ts", 267], ["towerruns.ts", 28], ["towerclient.ts", 70]] as const) assert.ok(count(`src/server/${name}`) <= max, `src/server/${name} has ${count(`src/server/${name}`)} lines`);
+	for (const [name, max] of [["record.ts", 472], ["log.ts", 135], ["version.ts", 28], ["acl.ts", 398], ["socket.ts", 220], ["client.ts", 699], ["intercom.ts", 102], ["main.ts", 606], ["cli.ts", 382], ["winprep.ts", 492], ["breakaway.ts", 251], ["testguard.ts", 115], ["towers.ts", 726], ["towerstore.ts", 267], ["towerruns.ts", 28], ["towerclient.ts", 70]] as const) assert.ok(count(`src/server/${name}`) <= max, `src/server/${name} has ${count(`src/server/${name}`)} lines`);
 	// The page: the files the spec budgets one by one, then this round's own figures (no figure in the spec): the focus views, the overlay
 	// layer (alert spotting and the stack model in the map's chunk, the layer's DOM and tiles in a chunk of their own), the dev-only demo, and everything else.
 	// 0.18.1 raised mirror.ts to 154 for embed, a terminal shown inside the session view instead of a tile.

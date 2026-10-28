@@ -141,15 +141,15 @@ test("an ally run's token: the free reads, tower_send to its sender, and the gat
 test("run tokens on other requests: an ally token is refused link, the gui, the opener, the tower's closing, status and restart; a local token is refused what a tower never does", async () => {
 	const s = await started();
 	const a = ally();
-	for (const cmd of ["link", "gui", "gui-stop", "gui-remote", "gui-pair", "open-main", "close-main", "close-tower", "ensure-tower", "status", "restart", "stop", "tower-event"]) {
-		const got = await ask(s, { cmd, token: a, workspace: "wA", from: "x", body: { op: "list" }, request: "r", sender: "s", query: "q", text: "t" });
+	for (const cmd of ["link", "gui", "gui-stop", "gui-remote", "gui-pair", "open-main", "close-main", "close-tower", "ensure-tower", "status", "restart", "stop", "tower-event", "prompt-poll", "prompt-leave", "prompt-gone"]) {
+		const got = await ask(s, { cmd, token: a, workspace: "wA", from: "x", body: { op: "list" }, request: "r", sender: "s", query: "q", text: "t", pid: 4242 });
 		assert.equal(got.ok, false, cmd);
 		assert.match(String(got.error), /ally run|run token/, cmd);
 	}
 	assert.equal((await ask(s, { cmd: "link", token: "bogus", from: "x", body: { op: "list" } })).error, "unknown_token");
 	const token = await localToken(s);
-	for (const cmd of ["gui", "gui-stop", "gui-remote", "gui-pair", "close-tower", "ensure-tower", "stop", "restart", "tower-event", "tower-retry"]) {
-		const got = await ask(s, { cmd, token, workspace: "wA", on: true, text: "t" });
+	for (const cmd of ["gui", "gui-stop", "gui-remote", "gui-pair", "close-tower", "ensure-tower", "stop", "restart", "tower-event", "tower-retry", "prompt-poll", "prompt-leave", "prompt-gone"]) {
+		const got = await ask(s, { cmd, token, workspace: "wA", on: true, text: "t", pid: 4242 });
 		assert.equal(got.ok, false, cmd);
 		assert.match(String(got.error), /run token/, cmd);
 	}

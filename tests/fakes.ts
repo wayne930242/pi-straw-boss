@@ -45,6 +45,7 @@ export const settle = async () => {
 };
 
 interface Tokens { [name: string]: string }
+const FAKE_SHELL = 4;
 interface FakePane { pane_id: string; tab_id: string; workspace_id: string; terminal_id: string; agent?: string; agent_status?: string; reportSeq?: number; standinMessage?: string; agent_session?: { value: string }; label?: string; tokens: Tokens; env?: string[]; cwd?: string; processes?: { argv?: string[]; argv0?: string; name?: string; pid?: number; cmdline?: string }[] }
 interface FakeWorkspace { workspace_id: string; label: string; agent_status?: string; focused?: boolean; active_tab_id?: string; tokens: Tokens; worktree?: { checkout_path?: string; is_linked_worktree?: boolean; repo_key?: string } }
 
@@ -133,6 +134,8 @@ export class FakeHerdr {
 	commands(group: string, cmd: string) {
 		return this.calls.filter((args) => args[0] === group && args[1] === cmd);
 	}
+	/** Whether `pane process-info` carries the shell's pid and the foreground process group (macOS and Linux); without them (Windows) a bare shell and a running build look alike. */
+	shellPids = false;
 	/** What `pane run` typed into a pane (the sb server types the tower prompt's command into a standing pane's shell). */
 	typed: { pane: string; text: string }[] = [];
 	/** The reports and releases of agents the socket API took (`pane.report_agent`, `pane.release_agent`), as sent. */
@@ -189,7 +192,12 @@ export class FakeHerdr {
 		if (this.failPanes && group === "pane" && cmd === "list") throw new Error("herdr pane list failed: not answering");
 		if (group === "pane" && cmd === "current") return out({ pane: this.pane(self) });
 		// The foreground processes of a pane, as Herdr lists them (a launch script shows its argv; pi shows only its argv0).
-		if (group === "pane" && cmd === "process-info") return out({ process_info: { pane_id: flag("--pane"), foreground_processes: this.pane(flag("--pane")!).processes ?? [] } });
+		// A pane with nothing else in the foreground lists its shell, as Herdr does; `shellPids` makes it answer as it does on macOS and Linux (the shell's pid and the foreground process group), which Windows cannot.
+		if (group === "pane" && cmd === "process-info") {
+			const running = this.pane(flag("--pane")!).processes ?? [];
+			const foreground = running.length ? running : [{ pid: FAKE_SHELL, name: "zsh", argv0: "zsh" }];
+			return out({ process_info: { pane_id: flag("--pane"), foreground_processes: foreground, ...(this.shellPids ? { shell_pid: FAKE_SHELL, foreground_process_group_id: running.length ? (running[0]!.pid ?? 0) : FAKE_SHELL } : {}) } });
+		}
 		if (group === "workspace" && cmd === "list") return out({ workspaces: this.workspaces });
 		if (group === "pane" && cmd === "list") return out({ panes: this.panes.filter((p) => !flag("--workspace") || p.workspace_id === flag("--workspace")) });
 		if (group === "tab" && cmd === "list") return out({ tabs: this.tabs.filter((t) => t.workspace_id === flag("--workspace")) });

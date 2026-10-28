@@ -429,13 +429,14 @@ export function createTowers(o: TowersOptions): Towers {
 		const sessions = await o.sessions().catch(() => undefined);
 		return !sessions || sessions.some((x) => x.id === held) ? held : undefined;
 	};
-	const adopt = (record: ServiceRecord): Live => {
+	/** `fresh`: the standing pane was made by this call, so it is known to be a shell nobody has used (standing.ts types into it where Herdr cannot tell an idle shell from a busy one). */
+	const adopt = (record: ServiceRecord, fresh = false): Live => {
 		const l: Live = { record, state: "registering", stopped: false, requests: new Map() };
 		const prior = services.get(record.workspace);
 		if (prior && !prior.stopped) return prior;
 		services.set(record.workspace, l);
 		runs.attach(refOf(l));
-		standing.attach({ workspace: record.workspace, label: () => l.record.label, pane: () => l.record.pane, live: () => l.state === "live" && !l.stopped && Boolean(l.client?.isConnected()), status: () => runs.status(record.workspace) });
+		standing.attach({ workspace: record.workspace, label: () => l.record.label, pane: () => l.record.pane, live: () => l.state === "live" && !l.stopped && Boolean(l.client?.isConnected()), status: () => runs.status(record.workspace) }, fresh);
 		l.starting = (async () => {
 			// A resident tower keeps its workspace; the service registers its identity once that session leaves. Two towers never hold one workspace.
 			let waited = false;
@@ -587,11 +588,12 @@ export function createTowers(o: TowersOptions): Towers {
 			// The stand-in agent is no agent: the pane of a tower whose tokens lapsed while the prompt went on is still the tower's.
 			return inside.length === 1 && (!inside[0]!.agent || isStandin(inside[0]!)) && !inside[0]!.tokens?.sb_role ? [inside[0]!] : [];
 		});
-		let pane = marked ?? bare[0], dir: string | undefined;
+		let pane = marked ?? bare[0], dir: string | undefined, made = false;
 		if (!pane) {
 			dir = target.worktree?.checkout_path ?? cwd ?? slot.stateDir;
-			const made = await createTab(run, ws, dir, [], TOWER_LABEL);
-			pane = { pane_id: made.paneId, tab_id: made.tabId };
+			const tab = await createTab(run, ws, dir, [], TOWER_LABEL);
+			pane = { pane_id: tab.paneId, tab_id: tab.tabId };
+			made = true;
 		} else {
 			// Other shell-only leftovers are closed; failing to close one leaves a harmless tab.
 			for (const extra of bare.slice(1)) await run(["tab", "close", extra.tab_id]).catch(() => {});
@@ -602,7 +604,7 @@ export function createTowers(o: TowersOptions): Towers {
 		await cfg.api("tab.move", { tab_id: pane.tab_id, insert_index: 0 }).catch((cause: Error) => error("tab-move", cause.message));
 		const record: ServiceRecord = { ...draft.record, pane: pane.pane_id, tab: pane.tab_id, ...(pane.cwd ?? dir ? { cwd: pane.cwd ?? dir } : {}), created: new Date(now()).toISOString() };
 		writeService(slot, record);
-		const l = adopt(record);
+		const l = adopt(record, made);
 		log.line("tower-opened", { workspace: ws, id: record.id, pane: record.pane, tab: record.tab });
 		await Promise.race([l.starting, sleep(o.registerMs ?? REGISTER_WAIT_MS)]);
 		return answer(l, true);

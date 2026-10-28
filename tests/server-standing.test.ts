@@ -7,7 +7,7 @@ import { fileOf } from "../src/server/record.ts";
 import { callControl } from "../src/server/socket.ts";
 import { readRun } from "../src/server/towerrunstore.ts";
 import { deleteService } from "../src/server/towerstore.ts";
-import { standinMessage } from "../src/server/standing.ts";
+import { idleShell, standinMessage } from "../src/server/standing.ts";
 
 // The standing pane between runs (docs/specs/2026-10-26-sb-backend.md, The tower service, The standing pane): the sb server types the tower prompt's command into the pane's shell, and while that
 // prompt polls, it reports a stand-in agent `tower` on the pane, so the tower keeps its row in Herdr's Agents list (the net view). The prompt leaves before a run starts and comes back after it.
@@ -196,7 +196,7 @@ test("Ctrl+C is not sent when what the pane runs is not the prompt that polled",
 	stuck.stop();
 });
 
-test("Ctrl+D leaves the pane to the boss: the stand-in goes, the prompt is not typed again for the park time, and a run's end or the park time brings it back", async () => {
+test("Ctrl+D leaves the pane to the boss for good: the stand-in goes and nothing is typed on a timer, however long the boss stays; a run's end brings the prompt back (SR-F002)", async () => {
 	const { s, pane } = await setup();
 	await until(() => world.herdr.typed.length === 1, "the prompt's command");
 	const prompt = new FakePrompt(s, pane);
@@ -205,9 +205,102 @@ test("Ctrl+D leaves the pane to the boss: the stand-in goes, the prompt is not t
 	await prompt.exit();
 	await until(() => releases().length === 1, "the stand-in to be released");
 	assert.equal(world.herdr.pane(pane).agent, undefined);
-	await sleep(250);
-	assert.equal(world.herdr.typed.length, 1, "parked: the shell is the boss's");
-	await until(() => world.herdr.typed.length === 2, "the prompt after the park time", 2000);
+	world.herdr.shellPids = true; // a shell at its idle prompt, which is where the boss's own commands would be typed
+	await sleep(2500); // five times the old park time of these tests, ten times the launch wait
+	assert.equal(world.herdr.typed.length, 1, "parked: the shell is the boss's, and no clock gives it back");
+	// An explicit action brings the prompt back: a run takes the pane, and the prompt comes back when it ends.
+	await ask(s, { cmd: "tower-event", workspace: "wA", text: "wake" });
+	const id = await nthRun();
+	await work(s, id);
+	exit(id);
+	await until(() => readRun(world.slot, "wA", id)?.outcome === "done", "the run to end");
+	const pi = world.herdr.pane(pane);
+	pi.agent = undefined;
+	pi.processes = [];
+	await until(() => world.herdr.typed.length === 2, "the prompt after the run");
+});
+
+test("a Herdr restart ends the boss's Ctrl+D too: every pane is a fresh shell", async () => {
+	const { s, pane } = await setup();
+	const prompt = new FakePrompt(s, pane);
+	await until(() => world.herdr.pane(pane).agent === "tower", "the stand-in");
+	await ask(s, { cmd: "prompt-leave", workspace: "wA", pid: prompt.pid });
+	await prompt.exit();
+	await sleep(300);
+	assert.equal(world.herdr.typed.length, 1);
+	world.herdr.restart();
+	world.herdr.pane(pane).processes = [];
+	world.herdr.pane(pane).agent = undefined;
+	world.takeovers.forEach((cb) => cb());
+	await until(() => world.herdr.typed.length === 2, "the prompt typed again");
+});
+
+test("where Herdr cannot tell a bare shell from a build (no pgid, as on Windows), the prompt is typed only into a pane the server knows is fresh, and never on a later look (SR-F003)", async () => {
+	const { s, pane } = await setup();
+	await until(() => world.herdr.typed.length === 1, "the first typing into the new tab");
+	// The prompt dies (or never started) and the boss runs a build in the shell: Herdr lists the shell alone.
+	new FakePrompt(s, pane).stop();
+	world.herdr.pane(pane).processes = [];
+	await sleep(1500);
+	assert.equal(world.herdr.typed.length, 1, "nothing is typed on a later look: the shell may be busy");
+});
+
+test("where Herdr gives the shell's pid and the foreground group, a prompt that died is typed again when the foreground is the shell itself, and not while something else holds it (SR-F003)", async () => {
+	world.herdr.shellPids = true;
+	const { s, pane } = await setup();
+	await until(() => world.herdr.typed.length === 1, "the first typing");
+	new FakePrompt(s, pane).stop();
+	world.herdr.pane(pane).processes = [{ name: "make", argv0: "make", pid: 88 }];
+	await sleep(500);
+	assert.equal(world.herdr.typed.length, 1, "a foreground group that is not the shell's is the boss's work");
+	world.herdr.pane(pane).processes = [];
+	await until(() => world.herdr.typed.length === 2, "typed again at the idle shell");
+});
+
+test("idleShell: a process list alone is never an idle shell unless the pane is known fresh and every process is a shell; an empty or missing list is unknown", () => {
+	const shell = { foreground_processes: [{ name: "zsh" }] };
+	assert.equal(idleShell(undefined, true), false);
+	assert.equal(idleShell({}, true), false, "no list is unknown");
+	assert.equal(idleShell({ foreground_processes: [] }, true), false, "an empty list is unknown, not idle");
+	assert.equal(idleShell(shell), false, "not fresh and no pgid: unknown");
+	assert.equal(idleShell(shell, true), true);
+	assert.equal(idleShell({ foreground_processes: [{ name: "zsh" }, { name: "vim" }] }, true), false);
+	assert.equal(idleShell({ shell_pid: 5, foreground_process_group_id: 5, foreground_processes: [] }), true, "with the pgid pair the groups decide");
+	assert.equal(idleShell({ shell_pid: 5, foreground_process_group_id: 9 }, true), false);
+});
+
+test("between the prompt's post and the wake the next look does not type the prompt again (SR-F004)", async () => {
+	world.herdr.shellPids = true;
+	world.runTimers = { wake: 200 }; // 1 s in production, against the 15 s wait of a typing
+	const { s, pane } = await setup();
+	await until(() => world.herdr.typed.length === 1, "the first typing");
+	const prompt = new FakePrompt(s, pane);
+	await until(() => world.herdr.pane(pane).agent === "tower", "the stand-in");
+	await sleep(300); // longer than the launch wait since the typing (250 ms here)
+	// What the prompt does when the boss writes: posts a present boss event, tells the server it is gone, exits.
+	assert.equal((await ask(s, { cmd: "tower-event", workspace: "wA", text: "hello", present: true })).ok, true);
+	await prompt.exit(true);
+	await sleep(120);
+	assert.equal(world.herdr.typed.length, 1, `the command was typed ${world.herdr.typed.length} times while the wake was coming`);
+	await nthRun();
+});
+
+test("a prompt that cannot start is typed again less and less often, up to a cap, and the server says so once; a poll ends the backoff (SR-F007)", async () => {
+	world.herdr.shellPids = true;
+	const { s, pane } = await setup();
+	await sleep(3000);
+	const typed = world.herdr.typed.length;
+	assert.ok(typed >= 3 && typed <= 6, `${typed} typings in 3 s (250, 500, then 1000 ms apart)`);
+	const lines = () => readFileSync(fileOf(world.slot, "log"), "utf8").split("\n").filter((l) => /prompt-not-starting/.test(l));
+	assert.equal(lines().length, 1, lines().join("\n"));
+	await sleep(1500);
+	assert.equal(lines().length, 1, "said once");
+	// The prompt starts at last; when it dies the next typing comes after the short wait again.
+	const prompt = new FakePrompt(s, pane);
+	await until(() => prompt.polls > 0, "a poll");
+	await prompt.exit();
+	const before = world.herdr.typed.length;
+	await until(() => world.herdr.typed.length === before + 1, "typed again", 600);
 });
 
 test("nothing is typed into a pane that runs something, or that has an agent, and no stand-in is reported over another agent", async () => {

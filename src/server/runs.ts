@@ -141,7 +141,7 @@ interface Active {
 	ended?: boolean;
 	/** The boss is in this run: when they last showed it (they spoke in its session, or woke it from the tower prompt). Memory only: a server restart forgets it, and their next word tells it again. */
 	boss?: number;
-	/** When the boss first showed it, for `bossMax`. */
+	/** When the boss first showed it, for `bossMax`: kept for the life of the run (their absences do not restart it). */
 	bossSince?: number;
 	/** After the boss's silence ended their time here, the run has the idle wrap-up window to itself: the cap does not cut it short until then. */
 	graceUntil?: number;
@@ -593,7 +593,7 @@ export function createRuns(o: RunsOptions) {
 				// The boss is in the run (docs/how-it-works.md, The boss in a run): the cap and the idle wrap-up wait for them. Their silence for `bossAway` while the run is idle, or `bossMax` in all, ends it.
 				if (a.boss !== undefined && (now() - (a.bossSince ?? a.boss) >= t.bossMax || (a.idleSince !== undefined && now() - Math.max(a.boss, a.idleSince) >= t.bossAway))) {
 					const away = now() - (a.bossSince ?? a.boss) < t.bossMax;
-					a.boss = a.bossSince = undefined;
+					a.boss = undefined;
 					if (away) {
 						// The boss left without quitting: the run gets the normal wrap-up (an idle steer, then the end with a note), and the cap does not cut it short meanwhile.
 						a.idleSince = now();
@@ -643,7 +643,10 @@ export function createRuns(o: RunsOptions) {
 		byToken.set(a.token, a);
 		if (!ally) svc.state = "running";
 		// A pi the boss started by hand is a run they are in; so is the run a boss event from the tower prompt wakes (they are at the pane).
-		if (!ally && (hand || (svc.bossAt !== undefined && now() - svc.bossAt <= PROMPT_WAKE_MS))) (a.boss = a.bossSince = now());
+		if (!ally && (hand || (svc.bossAt !== undefined && now() - svc.bossAt <= PROMPT_WAKE_MS))) {
+			a.boss = now();
+			a.bossSince = a.boss;
+		}
 		if (!ally) svc.bossAt = undefined;
 		log.line("run-claim", { workspace: a.rec.workspace, run: a.rec.id, ...(hand ? { hand: true } : {}) });
 		const r = svc.ref.record();
@@ -742,7 +745,7 @@ export function createRuns(o: RunsOptions) {
 		if (a.closing !== undefined) return { ok: true as const };
 		if (req.left === true) return bossLeft(a);
 		// The boss is in this run: it is not the model's to end. It answers them, and the run ends when they quit it or are silent for `bossAway` (the idle wrap-up then asks for the note).
-		if (a.boss !== undefined) return { ok: true as const, stay: true as const, text: `The boss is in this session: they spoke here, or woke you from the tower prompt. Stay and answer them; do not end the run. It ends when they quit it, or when they have been silent for ${Math.round(t.bossAway / 60_000)} minutes and you are asked to wrap up. Then call tower_done with your handoff note.` };
+		if (a.boss !== undefined && a.terminating === undefined) return { ok: true as const, stay: true as const, text: `The boss is in this session: they spoke here, or woke you from the tower prompt. Stay and answer them; do not end the run. It ends when they quit it, or when they have been silent for ${Math.round(t.bossAway / 60_000)} minutes and you are asked to wrap up. Then call tower_done with your handoff note.` };
 		const note = typeof req.note === "string" ? req.note.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u2028\u2029]/g, "").split("\n").map((l) => l.trim()).filter(Boolean).join("\n") : "";
 		if (!note || note.length > 1200) return { ok: false as const, error: "the handoff note is 1 to 1,200 characters, one item per line" };
 		if (req.wakeAfter !== undefined && a.rec.kind !== "local") return { ok: false as const, error: "an ally run schedules no wake" };
@@ -763,7 +766,7 @@ export function createRuns(o: RunsOptions) {
 		if (a.boss === undefined || a.rec.kind !== "local" || a.terminating !== undefined || a.pending !== undefined) return { ok: true as const };
 		addNote(slot, a.rec.workspace, { kind: "local", run: a.rec.id, at: iso(now()), note: "(the boss left the run)" });
 		await a.svc.ref.clearDigest(a.digestKeys).catch(() => {});
-		a.boss = a.bossSince = undefined;
+		a.boss = undefined;
 		a.closing = now();
 		a.svc.state = "closing";
 		a.commands.length = 0;
@@ -774,10 +777,15 @@ export function createRuns(o: RunsOptions) {
 		const a = of(req.token);
 		if (!a || a.ended) return unknown;
 		if (a.rec.kind !== "local") return { ok: false as const, error: "an ally run has no boss in it" };
+		if (bossOver(a)) return { ok: true as const };
 		a.boss = now();
 		a.bossSince ??= a.boss;
 		a.graceUntil = undefined;
 		return { ok: true as const };
+	}
+	/** The server is ending the run, or the boss's `bossMax` since their first word is spent: a sign of them changes nothing. */
+	function bossOver(a: Active) {
+		return a.terminating !== undefined || (a.bossSince !== undefined && now() - a.bossSince >= t.bossMax);
 	}
 	/** `/new`, `/resume`, or `/fork` in a run end its claim: the next event wakes a fresh run. */
 	async function releaseRun(req: Record<string, unknown>) {
@@ -912,7 +920,7 @@ export function createRuns(o: RunsOptions) {
 			// At the tower prompt the boss is at the pane: the run this wakes is one they are in, from its claim (or from now, when a run is live already).
 			if (opts.present) {
 				svc.bossAt = now();
-				if (svc.run?.token && !svc.run.ended && svc.run.rec.kind === "local") (svc.run.boss = now(), (svc.run.bossSince ??= svc.run.boss));
+				if (svc.run?.token && !svc.run.ended && svc.run.rec.kind === "local" && !bossOver(svc.run)) (svc.run.boss = now(), (svc.run.bossSince ??= svc.run.boss));
 			}
 			poke(svc);
 			return written;

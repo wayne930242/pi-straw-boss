@@ -86,6 +86,41 @@ test("on a terminal, a line wakes the tower and a state change redraws the promp
 	assert.deepEqual(source.posted, ["half a message"]);
 });
 
+test("a run that starts while the boss is typing at `tower>` gets the boss's half-written line as the boss's event, and nothing is lost (SR-F001)", async () => {
+	const source = new FakeSource();
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("rm the old branch"); // no Enter
+	await until(() => p.text().includes("rm the old branch"), "the typed text to be echoed");
+	source.answers = [{ kind: "state", answer: { ...STATE, state: "waking", leave: true } }];
+	assert.equal(await ended(p.done), 0);
+	assert.deepEqual(source.posted, ["rm the old branch"]);
+	assert.equal(source.gones, 1);
+	assert.equal(source.left, 0);
+});
+
+test("a line the boss has entered but the prompt has not posted yet (the paste window) is posted once when the run starts", async () => {
+	const source = new FakeSource();
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("one\n");
+	source.answers = [{ kind: "state", answer: { ...STATE, state: "waking", leave: true } }];
+	assert.equal(await ended(p.done), 0);
+	assert.deepEqual(source.posted, ["one"], "once, not by both the paste timer and the leave");
+});
+
+test("when the server does not take the half-written line at the start of a run, the prompt shows it so the boss can send it again", async () => {
+	const source = new FakeSource();
+	source.failPost = new Error("no server");
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("keep this safe");
+	await until(() => p.text().includes("keep this safe"), "the echo");
+	source.answers = [{ kind: "state", answer: { ...STATE, state: "waking", leave: true } }];
+	assert.equal(await ended(p.done), 0);
+	assert.match(p.text().slice(p.text().indexOf("did not take it")), /keep this safe/);
+});
+
 test("the prompt shows the tower's state and a hint, and waits at `tower>`", async () => {
 	const source = new FakeSource();
 	const p = screen(source);
@@ -140,7 +175,7 @@ test("when the server says a run is starting, the prompt says it is waking the t
 	assert.equal(await p.done, 0);
 	assert.match(p.text(), /waking the tower…/);
 	assert.equal(source.gones, 1);
-	assert.equal(source.left, 0, "it was told to go: the park time is for Ctrl+D");
+	assert.equal(source.left, 0, "it was told to go: the park is for Ctrl+D");
 	assert.equal(source.posted.length, 0);
 });
 
