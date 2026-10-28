@@ -31,6 +31,7 @@ function server() {
 		requests, queue, taken,
 		push: (id: string, text: string, kind = "intercom") => void queue.push({ id, kind, text, from: { id: "main-1" } }),
 		command: (c: unknown) => void commands.push(c),
+		hasCommands: () => commands.length > 0,
 		refuseClaim: (error: string) => void (claimAnswer = { ok: false, error }),
 		refuseDone: (error: string) => void (doneAnswer = { ok: false, error }),
 		/** The boss is in the run: the server answers tower_done with a stay. */
@@ -176,6 +177,54 @@ test("a steer command from the server starts a turn, and quit shuts pi down", as
 	assert.match(seen[0]!, /Call tower_done with your handoff note/);
 	srv.command({ type: "quit" });
 	await until(() => r.shutdowns.length === 1, "quit");
+});
+
+/** A turn the model holds until `release()`: the run is busy meanwhile. */
+const busyTurn = async (r: Awaited<ReturnType<typeof makeRig>>) => {
+	let asked!: () => void, release!: () => void;
+	const modelAsked = new Promise<void>((resolve) => (asked = resolve)), gate = new Promise<void>((resolve) => (release = resolve));
+	r.faux.setResponses([(async () => (asked(), await gate, fauxAssistantMessage("busy done"))) as never]);
+	const turn = r.session.prompt("something else");
+	await modelAsked;
+	return { release, turn };
+};
+
+test("VM: a quit ordered while the turn runs is held until the turn ends (pi cannot take a deferred quit back), and goes out once", async () => {
+	const srv = server();
+	const r = await rig(srv);
+	await until(() => srv.requests.some((q) => q.cmd === "run-file"), "the run to be set up");
+	const busy = await busyTurn(r);
+	srv.command({ type: "quit" });
+	await until(() => srv.requests.filter((q) => q.cmd === "run-poll").length > 3 && !srv.hasCommands(), "the quit to be delivered");
+	await new Promise((resolve) => setTimeout(resolve, 100));
+	assert.equal(r.shutdowns.length, 0, "no shutdown is asked of pi while the turn runs");
+	busy.release();
+	await busy.turn;
+	await until(() => r.shutdowns.length === 1, "the quit at the idle moment");
+	await new Promise((resolve) => setTimeout(resolve, 100));
+	assert.equal(r.shutdowns.length, 1, "once");
+});
+
+test("VM: a stop that ordered a quit while the turn ran, followed by the run claiming again (the server restarted), does not end the run at its next idle moment", async () => {
+	const srv = server();
+	let forget = false;
+	const inner = srv.ask.bind(srv);
+	srv.ask = async (request: Request): Promise<Answer> => (request.cmd === "run-poll" && forget ? (forget = false, { ok: false, error: "unknown_token" }) : inner(request));
+	const r = await rig(srv, { lostMs: 5000 });
+	await until(() => srv.requests.some((q) => q.cmd === "run-file"), "the run to be set up");
+	const busy = await busyTurn(r);
+	srv.command({ type: "quit" });
+	await until(() => !srv.hasCommands(), "the quit to be delivered");
+	forget = true;
+	await until(() => srv.requests.filter((q) => q.cmd === "claim").length === 2, "the claim again");
+	busy.release();
+	await busy.turn;
+	await new Promise((resolve) => setTimeout(resolve, 300));
+	assert.equal(r.shutdowns.length, 0, "the earlier stop is not honoured");
+	assert.equal(srv.requests.filter((q) => q.cmd === "run-done").length, 0, "and the server is not told the run was quit");
+	// The run still lives off the server's queue, and a quit ordered now goes out.
+	srv.command({ type: "quit" });
+	await until(() => r.shutdowns.length === 1, "a quit ordered after the claim");
 });
 
 test("a server that forgot the token (a restart) is claimed again with the run id, and a refusal that lasts lostMs then ends the run", async () => {

@@ -10,6 +10,7 @@ import type { Link } from "./link/runtime.ts";
 import { HERE_ONLY } from "./link/request.ts";
 import type { ServerLook } from "./server-look.ts";
 import { towerRunsEnabled } from "./server/towerruns.ts";
+import { markRun } from "./runmark.ts";
 import { startOf } from "./startof.ts";
 import { ENTRY, type Kit } from "./state.ts";
 import { MEMORY_DESCRIPTION, memoryParameters } from "./memorytool.ts";
@@ -77,6 +78,8 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	let timer: ReturnType<typeof setInterval> | undefined, polling = false, ending = false, closing = false;
 	// The turn a message was sent for has not begun, or one is under way: the run is not idle for the server until it settles.
 	let inTurn = false, triggered: number | undefined, outOfReach: number | undefined;
+	// A quit the server ordered while the turn runs. pi would keep `ctx.shutdown()` itself and honour it at its next idle moment with no way to take it back, so the run holds the order instead: a server that restarted meanwhile (the run claims again) never ordered it, and the run goes on.
+	let quitOrdered = false;
 	let registered = false, bossSign: number | undefined, signing: Promise<unknown> | undefined;
 
 	// Every request goes through the session's look at the server (server-look.ts), which passes the record through the owner gate before it is trusted or a secret is sent to its socket (R13-F003):
@@ -245,7 +248,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	};
 	const apply = async (answer: Answer) => {
 		const command = answer.command as Command | undefined, event = answer.event as Event | undefined;
-		if (command?.type === "quit") return void ctx?.shutdown();
+		if (command?.type === "quit") return void ((quitOrdered = true), flushQuit());
 		if (command?.type === "confirmed") return link?.answerForward(command.dialogId, command.allow);
 		if (command?.type === "steer") return send(`[sb server] ${command.text}`, { steer: true });
 		if (!event) return;
@@ -254,9 +257,17 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		send(eventText(event), { id: event.id, kind: event.kind, ...(event.from ? { from: event.from } : {}) });
 		await call({ cmd: "run-taken", id: event.id }).catch((error: Error) => tell(`Straw Boss: the server did not take note of an event: ${error.message}`, "warning"));
 	};
+	/** Whether the ordered quit went out: only at an idle moment, which is when pi would have done it. */
+	function flushQuit(): boolean {
+		if (!quitOrdered || !ctx?.isIdle()) return false;
+		quitOrdered = false;
+		ctx.shutdown();
+		return true;
+	}
 	const idle = () => Boolean(ctx?.isIdle()) && !inTurn && (triggered === undefined || cfg.now() - triggered > startMs);
 	async function tick() {
 		if (polling || ending || !claim) return;
+		if (flushQuit()) return;
 		polling = true;
 		try {
 			const answer = await ask({ cmd: "run-poll", token: claim.token, idle: idle() });
@@ -283,6 +294,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		try {
 			const again = await claimRun(claim!.run);
 			claim = again;
+			quitOrdered = false; // the stop that ordered it was the old server's
 			if (!pinPeer()) return refuseUnpinned();
 			outOfReach = undefined;
 			keep();
@@ -317,7 +329,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		signing = call({ cmd: "run-boss" }).catch(() => void (bossSign = undefined));
 	});
 	pi.on("agent_start", () => void ((inTurn = true), (triggered = undefined)));
-	pi.on("agent_settled", () => void (inTurn = false));
+	pi.on("agent_settled", () => void ((inTurn = false), flushQuit()));
 	pi.on("tool_call", (event) => {
 		if (mode !== "run") return;
 		if (event.toolName === "intercom") return { block: true, reason: BLOCKED };
@@ -351,6 +363,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 				if (found.role === "none") return void (mode = "normal");
 				if (found.role === "quit") {
 					mode = "run";
+					markRun();
 					ending = true;
 					tell(`Straw Boss: ${found.reason ?? "this pane belongs to the sb server"}`, "warning");
 					return void context.shutdown();
@@ -359,11 +372,13 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 			}
 		} catch (error) {
 			mode = "run";
+			markRun();
 			ending = true;
 			tell(`Straw Boss: this run cannot start: ${(error as Error).message}`, "error");
 			return void context.shutdown();
 		}
 		mode = "run";
+		markRun(); // balance.ts reads it at the quit
 		keep();
 		if (!pinPeer()) return void refuseUnpinned();
 		registerTools();

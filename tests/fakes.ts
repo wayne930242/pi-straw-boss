@@ -276,6 +276,8 @@ export class FakeHerdr {
 		if (cmd === "report-metadata") {
 			// Herdr takes the positional id before the options; anything else fails like the real CLI.
 			if (args[3] !== "--source") throw new Error(`unknown option in ${args.join(" ")}`);
+			// A pane that is gone answers as Herdr's does (the code is what a caller matches).
+			if (group === "pane" && !this.panes.some((p) => p.pane_id === args[2])) throw new Error(`herdr pane.report_metadata failed: pane_not_found pane ${args[2]} not found`);
 			const target = group === "pane" ? this.pane(args[2]!).tokens : this.workspace(args[2]!).tokens;
 			// Herdr's limits: 16 token changes a report, 32 tokens a pane or workspace, and a value cut to 80 characters with its newlines dropped.
 			if (args.filter((arg) => arg === "--token" || arg === "--clear-token").length > 16) throw new Error("herdr report-metadata failed: invalid_metadata_token a metadata report may update at most 16 tokens");

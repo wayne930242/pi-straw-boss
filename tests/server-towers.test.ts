@@ -413,6 +413,16 @@ const resident = (id = "old-tower") => {
 };
 const standing = () => writeService(world.slot, { workspace: "wA", label: "Alpha", id: "sb-tower-wa", name: "tower · Alpha", pane: "wA:p7", tab: "wA:t7", created: "x", seq: 0 });
 
+test("VM #35: a service whose pane is gone when it publishes (the pane a handover replaced, a closed workspace) logs no tokens error: the stale report is dropped with a debug line", async () => {
+	standing(); // wA:p7 is in no tab of this Herdr
+	const s = await world.start({ towers: { recoverMs: 5000, registerMs: 500, residentMs: 20, retryMs: [20] } });
+	await s.handle.ready;
+	await until(() => /tower-registered/.test(logText()) && /tokens-dropped/.test(logText()), "the registration and the dropped report");
+	assert.doesNotMatch(logText(), /code=tokens/, "no error line for a pane that is not there");
+	assert.match(logText(), /tokens-dropped[^\n]*pane=wA:p7/);
+	assert.ok(readService(world.slot, "wA"), "the service stays: the tab is looked for within the recovery window");
+});
+
 test("B4R-F001: a failed pane list is unknown, not a lost tab: the service, the identity and the tokens stay, and ensure fails instead of reopening", async () => {
 	const s = await started();
 	const reply = await ask(s, { cmd: "ensure-tower", workspace: "wA" });

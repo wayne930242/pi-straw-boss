@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { balanceAfterClose, balanceTab, planBalance } from "../src/balance.mjs";
 import paneBalance, { runHelper } from "../src/balance.ts";
+import { markRun } from "../src/runmark.ts";
 
 const rect = (x, y, width, height) => ({ x, y, width, height });
 
@@ -177,4 +178,30 @@ test("the extension runs the helper detached when its pi starts and when it quit
 	handlers.get("session_shutdown")({ reason: "quit" });
 	assert.deepEqual(runs.at(-1), ["after-close", "lead", "w:t1"]);
 	delete globalThis[started];
+});
+
+test("VM: a tower run's pi (flag or claim) never spawns after-close: its pane stays or the server closes it, and the orphan would hold pi.cmd's wait for 30 s", () => {
+	const started = Symbol.for("pi-straw-boss.pane-balance.started");
+	const handlers = new Map();
+	const pi = { on(event, handler) { handlers.set(event, handler); } };
+	const env = { HERDR_PANE_ID: "lead", HERDR_TAB_ID: "w:t1" };
+	const quitting = (argv) => {
+		const runs = [];
+		delete globalThis[started];
+		paneBalance(pi, (args) => runs.push(args), env, argv);
+		runs.length = 0;
+		handlers.get("session_shutdown")({ reason: "quit" });
+		return runs;
+	};
+	assert.deepEqual(quitting([]), [["after-close", "lead", "w:t1"]], "a pi of a main still rebalances after its pane closes");
+	assert.deepEqual(quitting(["node", "pi", "--sb-run", "RUN"]), [], "a run started with --sb-run (local or ally)");
+	assert.deepEqual(quitting(["node", "pi", "--sb-run=RUN"]), [], "in the = form too");
+	// A pi in a standing pane has no flag: the run mode marks the process when the server hands it the pane.
+	markRun();
+	try {
+		assert.deepEqual(quitting([]), [], "a run claimed through pane-role");
+	} finally {
+		delete globalThis[Symbol.for("pi-straw-boss.run.mark")];
+		delete globalThis[started];
+	}
 });

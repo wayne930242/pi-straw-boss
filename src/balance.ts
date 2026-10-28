@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { inRun } from "./runmark.ts";
 
 // Pane balance: when a pi starts in a Herdr tab, or quits out of one, the tab's panes are made equal again, so a tab that
 // pi-herdr-agents keeps splitting for workers does not end up as a chain of halves. Every pi does this, joined or not.
@@ -20,7 +21,7 @@ export function runHelper(args: string[], launch = spawn): void {
 const STARTED = Symbol.for("pi-straw-boss.pane-balance.started");
 
 /** Equalises a Herdr tab only when a pi starts in it or quits out of it. */
-export default function paneBalance(pi: ExtensionAPI, helper = runHelper, env = process.env): void {
+export default function paneBalance(pi: ExtensionAPI, helper = runHelper, env = process.env, argv: readonly string[] = process.argv): void {
 	const paneId = env.HERDR_PANE_ID;
 	if (!paneId) return;
 	// Balance on load: session_start waits for every other extension's handler, about ten seconds later.
@@ -30,6 +31,7 @@ export default function paneBalance(pi: ExtensionAPI, helper = runHelper, env = 
 		helper(["now", paneId]);
 	}
 	pi.on("session_shutdown", (event) => {
-		if (event.reason === "quit") helper(["after-close", paneId, env.HERDR_TAB_ID ?? ""]);
+		// A tower run's pane is a standing pane (it never closes) or an ally pane (the server closes it): the helper would only wait out its 30 s, and on Windows `Start-Process -Wait` for pi.cmd waits for it too, so the next `herdr agent start` in the pane finds no prompt.
+		if (event.reason === "quit" && !inRun(argv)) helper(["after-close", paneId, env.HERDR_TAB_ID ?? ""]);
 	});
 }

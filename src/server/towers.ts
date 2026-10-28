@@ -364,7 +364,11 @@ export function createTowers(o: TowersOptions): Towers {
 		await Promise.all([
 			report(run, "workspace", l.record.workspace, { tower: l.record.id, sb_tower_quit: null }),
 			report(run, "pane", l.record.pane, { sb_role: "tower", ...own }),
-		]).catch((cause: Error) => error("tokens", `${l.record.id}: ${cause.message}`));
+		]).catch((cause: Error) => {
+			// The pane (or its workspace) is gone: the pane a handover replaced, a workspace closed while no server ran. The reconcile loses the service, or finds its tab again within the recovery window; a report to what is not there is no error.
+			if (/\b(pane|workspace)_not_found\b/.test(cause.message)) return log.line("tokens-dropped", { workspace: l.record.workspace, pane: l.record.pane, why: phrase(cause.message, 120) });
+			error("tokens", `${l.record.id}: ${cause.message}`);
+		});
 		// The panes of its ally runs are keyed after it.
 		await runs.markAllies(l.record.workspace, own.sb_order ?? null);
 	};
