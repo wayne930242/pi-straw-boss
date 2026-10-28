@@ -487,7 +487,7 @@ shows as offline. A device that sees a teammate on a different roster head for m
 
 ## Work board
 
-Status: built (build step 5b; see the build record below). Decisions by the boss on 2026-10-26:
+Status: built (build step 5b; see the build record below), amended 2026-10-28 so the board fills itself (**Auto-fill**). Decisions by the boss on 2026-10-26:
 
 | Question | Decision |
 |---|---|
@@ -513,10 +513,13 @@ with done marks. It works without Straw Link (local towers only); with a team it
 - The entry carries no name, workspace, tab, or state: a reader joins those from the net when it reads (the session's `boss_rename`
   name, its tab, its workspace, its state), so they are never stale and never written twice.
 - A live main with no entry still shows on the board with its name and tab and no `now`; the entry adds what the name cannot say.
+- **Local fields.** The file also holds `src` (`"set"` for `board_set`, `"todo"` for the auto-fill; a file without it is `set`) and, with
+  `src: "todo"`, `count` (`{ done, total }`: the todo list's tasks done and in all). Both stay on this computer: the `board` kind is unchanged
+  and carries neither (**Sharing with allies**).
 
 ### Writing: `board_set`
 
-- A new tool, `board_set({ now, items })`, replaces the session's whole entry. It is registered for joined sessions that are not towers
+- A tool, `board_set({ now, items })`, replaces the session's whole entry and overrides the auto-fill (**Auto-fill**); `board_set({ auto: true })`, with no text, hands the board back to it. It is registered for joined sessions that are not towers
   and refused unless the session is its tab's main at the time of the call (a member, a demoted main after the boss's `/boss`, a tower,
   a subagent: none writes). A sidecar main (Claude Code, Codex) gets the same through `straw-net.py board --now N [--item '[x] T']…`.
 - It writes only `<pi agent dir>/straw-boss/board/<own session id>.json` (folder mode 700, file 600, written to a temporary file and
@@ -524,10 +527,43 @@ with done marks. It works without Straw Link (local towers only); with a team it
   own" means here: the board trusts the processes of this user, as Straw Link does (**Threat model**, a local process).
 - Its answer says where the entry goes: "local towers" and, for each team whose project holds the main's pane cwd and whose `share` is
   `status`, `team <name> (<n> devices)`. A main learns before its next write that the text leaves the computer.
-- The main's prompt gains three lines: call `board_set` when its work turns to another task and when a step is done; terse agent
-  language, no secrets, credentials, customer data, or paths outside the project, since allies read it; a board entry is not a report
-  (the done report still goes to whoever asked).
-- `todo` items do not feed the board, and `boss_rename` does not write it (open question 1). They stay the main's own plan and name.
+- The main's prompt says that the board fills itself from its todo list and its name (it keeps the todos current), that `board_set`
+  overrides it until the todos move and `board_set { auto: true }` hands it back, that secrets, credentials, customer data, and paths
+  outside the project stay out of all of it, since allies read the board, and that a board entry is not a report (the done report still
+  goes to whoever asked).
+
+### Auto-fill
+
+Decided by the boss on 2026-10-28 (D20 in the sb-backend spec): "the work board fills itself from the main's todo list and name;
+`board_set` overrides it". It replaces the 2026-10-26 decision that `todo` does not feed the board.
+
+- **Where.** In the main's own session, the one writer of its own entry, with the same `writeEntry` as `board_set`. The bridge's
+  reading of rpiv-todo's snapshots on the branch (`todosOfBranch`) is the input, read at `turn_end`, after any tool call
+  (`tool_execution_end`: the `todo` tool, `boss_rename`, `boss_promote`), `session_tree`, and `session_compact`; `boss_rename` also refills
+  at once. A session writes only while it is its tab's main: a member, a demoted main, a tower, and a subagent write nothing, and the
+  sidecars (Claude Code, Codex) have no rpiv-todo, so `board_set` stays their only writer. The server takes no part.
+- **Derivation** (`src/boardauto.ts`). `now` is `<name>: <task in progress>` (its `activeForm`, else its subject), else
+  `<name>: next <first pending>` (id order), else `<name>: done (n/n)`, and with no todo list `<name>` alone. A name that is pi's default
+  (none, or the session id) is no name: the line has no prefix, and with no name and no list there is no entry. `items` are the tasks in
+  progress, then pending in id order, then completed (highest id first), at most 8, each its subject, done when completed. `count` is
+  the whole list's `done` and `total`.
+- **Scrub** (`scrubBoard`, before the text is cut to the caps; nothing is refused, since no model wrote it for the board):
+
+| Pattern | Becomes |
+|---|---|
+| An absolute path inside the session's working folder | The path relative to it |
+| Any other path: POSIX, `~/`, `$HOME/`, `%USERPROFILE%\`, `C:\`, a UNC path, or `../` out of the folder | `…` |
+| A URL | Its host only; `…` for one with userinfo or no host |
+| An email address | `…` |
+| A secret-shaped token: `sk-`, `ghp_`/`gho_`, `glpat-`, `xox?-`, `AKIA`, a JWT, hex of 32 or more, a run of 32 or more letters and digits in both cases with a digit | `…` |
+| A task with more than half of its words `…` | Dropped; the last of the 8 places says `(n hidden)`, marked done so no reader counts it open |
+
+  Customer names cannot be found by pattern, a path with spaces and a URL without a scheme are not recognized, and a 40-digit git commit
+  id is hex, so it is hidden: documented limits. The ally rule (**Sharing with allies**) is what bounds them.
+- **Override.** An auto-fill writes only when the entry it would write differs from the last one it wrote, not from the file, so a
+  `board_set` stands until the todo list or the name moves. `board_set { auto: true }` writes the derived entry at once (with nothing to
+  show it removes the entry). A `board_set` entry that outlived a `/reload` stands the same way: the first reading in the new
+  extension only records the derived entry.
 
 ### Local reading and expiry
 
@@ -552,6 +588,11 @@ with done marks. It works without Straw Link (local towers only); with a team it
   120, items 8 of 80; the decoder cuts again.
 - Encrypted with the team key of the current epoch and signed like every envelope; a receiver runs every check of **Envelope**, the
   ephemeral `ts` guard per sender and kind included, so an older board never replaces a newer one.
+- **What an entry shows allies** (decided 2026-10-28, Q1 A: "allies get `now` and the done count of an auto entry only; a `board_set`
+  entry goes whole, as today"). A `src: "todo"` entry goes as its `now` suffixed with the count (`… (3/5)`, the line cut so the suffix
+  stays within 120 characters) and **no items**; a `src: "set"` entry goes whole. The wire is unchanged: `src` and `count` are local.
+  The same reduction applies wherever the allies' view is computed: the `board` kind, `board_read` in a remote turn, and the `seen` rows
+  of an ally run's brief. The local towers, and a local run, read the whole entry.
 - **Which entries a team gets.** For each team, the holder sends the entries of live mains whose pane cwd is inside that team's
   `project` (resolved as delivery resolves it), and only when the team's `share` is `status`; with `presence` it sends none. A main
   outside every bound project stays on this computer. A device in two teams sends each its own board, and never another team's entries.
@@ -596,7 +637,7 @@ with done marks. It works without Straw Link (local towers only); with a team it
   are a peer's report, not the boss's instruction, and are never relayed as an instruction to a local session.
 - **In a remote turn** (any level), `board_read` is on the allowlist of **Trust levels**, but answers only what the run's senders already
   receive: local entries bound to the project their teams bind (the rule `hooks.ts` already applies to a run with senders of several
-  teams) and the remote boards of those teams. No local entry outside the bound project and no other team's board reaches a teammate's
+  teams) and the remote boards of those teams, each auto-filled local entry cut to what the allies receive (**Sharing with allies**). No local entry outside the bound project and no other team's board reaches a teammate's
   model this way.
 - **Later turns.** A `board_read` result stays in the tower's context. Unlike a `straw-link` message it is not replaced by a marker in
   later runs: it is a tool result the tower asked for, each remote line is at most 120 characters under `origin: "remote"`, and the
@@ -614,6 +655,11 @@ unit's state and monitors, the board says what each main is doing and how far it
 - Unit: the entry rules (caps, folded whitespace, refused control and bidi characters, the reader's second check), `board_set` refused
   for a member, a tower, a subagent, and a main replaced by `/boss`; the file is the session's own and atomic; expiry (`ended` for 30
   minutes, hidden after, files of dead sessions over 24 hours deleted, kept on `reload`, deleted on `quit`/`new`/`resume`/`fork`).
+- Auto-fill (`tests/board-auto.test.ts`): the derivation's order and caps, the default-name rule, and `done (n/n)`; a scrub corpus (POSIX,
+  `~`, `C:\`, and UNC paths inside and outside the project, URLs with credentials, each token family, emails, the hidden count); the
+  override (a `set` stands until the todo list or the name moves, `auto: true` ends it, a reload keeps a `set`); a member and a demoted
+  main write nothing; what an ally receives for an auto and for a `set` entry (the `board` kind, `board_read` in a remote turn, an ally
+  run's brief).
 - Wire: `board` encode and decode with vectors in `tests/link/vectors.json` (caps, a truncated entry, trailing bytes, the ephemeral flag
   fixed by the kind), replayed by straw-relay's tests; a pre-5b decoder drops it as `unknown-kind`.
 - Holder: entries bound by pane cwd and `share` (none with `presence`, a main outside the project never sent, two teams never mixed);
@@ -632,6 +678,8 @@ unit's state and monitors, the board says what each main is doing and how far it
 
 1. `todo` does not feed the board; a main writes its entry with `board_set`. Todos carry owners, `blockedBy`, anchors, and detail
    written for the main itself, and the board stays terse. A main with no entry shows its `boss_rename` name and tab.
+   **Superseded on 2026-10-28** (**Auto-fill**): the board fills itself from the todo list and the name, with the scrub and the ally
+   rule above bounding what leaves the computer.
 2. The board rides `share: "status"` (the default); there is no separate `board` share level, and `presence` keeps it off.
 3. 5b also scopes `tower_list` in a remote turn the way `board_read` is scoped: its `remote` lists only the senders' teams, and its
    local part only workspaces inside the project those teams bind.
@@ -766,5 +814,6 @@ Built in `src/board.ts` (entry rules, files, expiry, the local join), `boardset.
 - **`board_read` with `device` returns only the remote part** (the device is an ally, so the local part has nothing to add); an unknown or ambiguous device is an error that lists the candidates, as `tower_send` does.
 - **In a remote turn the local part needs a directory to prove binding**, so an `ended` entry (its session is gone) never shows; senders of teams that bind different projects see no local entry and no workspace in `tower_list`, only their teams' remote rows.
 - **A holder answers `board-read` with at most about 300 KB** of device rows (the channel's request size); the rest is left out.
+- **Auto-fill (2026-10-28)** is built in `src/boardauto.ts` (derivation and scrub), `src/boardfill.ts` (the session's writer and `board_set { auto }`), `src/board.ts` (`src`, `count`, `forAllies`), and `src/todo.ts` (`todosOfBranch`). The ally reduction is applied in `link/holder.ts` (`boardFor`), `boardread.ts` (a remote turn), and `server/towerbrief.ts` (an ally run's `seen` rows).
 - **Test seams**: `LinkDeps.boardMs` and `HolderOptions.boardMinMs` shorten the 15 second spacing; the live test uses 150 ms and still goes through the real relay.
 

@@ -71,6 +71,24 @@ test("a main on A writes with board_set and B's tower reads it with board_read a
 	await until(async () => (await read(b.c.tower)).remote?.[0]?.entries?.length === 0, "the entry gone at B");
 });
 
+test("an auto-filled entry reaches the ally's tower as its line and done count only; a board_set entry goes whole", async () => {
+	const a = await setup("a", [{ id: "auto-a", name: "auto main", inside: true }, { id: "set-a", name: "set main", inside: true }]);
+	const b = await setup("b", []);
+	await until(() => a.c.server.service.status().active && b.c.server.service.status().active, "both holders");
+	const [auto, set] = a.agents as [Agent, Agent];
+	auto.entries.push({ customType: "rpiv-todo-state", data: { tasks: [{ id: 1, subject: "schema", status: "completed" }, { id: 2, subject: "writer", status: "in_progress", activeForm: "Writing the CSV writer" }, { id: 3, subject: "tests", status: "pending" }], nextId: 4 } });
+	await auto.fire("turn_end");
+	await set.tool("board_set", { now: "MP-2 manual line", items: [{ t: "step one", done: true }, { t: "step two", done: false }] });
+	let rows: Row[] = [];
+	await until(async () => ((rows = (await read(b.c.tower)).remote?.[0]?.entries ?? []), rows.length === 2 && rows.every((e) => e.now)), "both entries at B");
+	const byMain = Object.fromEntries(rows.map((e) => [e.main!, e]));
+	assert.deepEqual([byMain["auto main"]!.now, byMain["auto main"]!.items], ["auto main: Writing the CSV writer (1/3)", []], "an auto entry: the line and the count, no items");
+	assert.deepEqual([byMain["set main"]!.now, byMain["set main"]!.items], ["MP-2 manual line", [{ t: "step one", done: true }, { t: "step two", done: false }]], "a board_set entry: whole");
+	// A's own tower sees both whole.
+	const local = (await read(a.c.tower, { scope: "local" })).local;
+	assert.deepEqual(local.map((r) => [r.main, r.items!.length]).sort(), [["auto main", 3], ["set main", 2]]);
+});
+
 test("a computer without a team has no remote key in board_read, and mains and members have no board_read at all", async () => {
 	const c = computer(root, relay, "a", { gateMs: 60 });
 	computers.push(c);

@@ -783,7 +783,7 @@ The boss asked for it: "server restart 也要讓 agent 或 user 有辦法做，�
 | Tower restore after a Herdr restart | `roles/<hash>.json` with role `tower` | `tower/<ws>/service.json`, by workspace id (kept by a restore) |
 | Choosing the tower that gets a link message | The holder, by tower pane cwd | The server, by the standing pane's cwd (else the workspace's checkout path) inside the team's `project` |
 
-The rest stays in sessions: joining, the tab channel and its election, the guard, promotion, `board_set`, `call_tower` and
+The rest stays in sessions: joining, the tab channel and its election, the guard, promotion, `board_set` and the board's auto-fill (`boardfill.ts`: a main writes its own entry from its todo list and name), `call_tower` and
 `boss_broadcast` (the sending side), the dialog bridge and `intercept.ts`, orphan nudges, blocked dialogs, pane balance, stash, the
 sidecars, the `link_request` tool (it asks the server), and the remote-turn hooks (they run inside ally runs).
 
@@ -993,7 +993,7 @@ Local run, in this order:
 1. **Who and why** (≤ 300): `You are a run of the tower of workspace <label> (<id>); head tower: <label>. Woken <HH:MM> by: <n intercom,
    n boss, n notice, n timer>. Your identity for replies is sb-tower-<ws>; everything you send leaves under it.`
 2. **Mains you supervise** (≤ 24 rows, each ≤ 200): per tab of the workspace, the main's name, short session id, state (`idle`,
-   `working`, `waiting`, `commanding`), whether a tower opened it (and for whom), and its board `now` with its open item count. Members
+   `working`, `waiting`, `commanding`), whether a tower opened it (and for whom), and its board `now` with its open item count (an entry the board filled from the todo list, `src: "todo"`, shows an ally run its `now` with the done count, `(3/5)`, and no item count: **Ally run**). Members
    are counted per tab and not named. A tab with no main says so. These are the same data as `board_read`'s `local` and the dashboard.
 3. **Open obligations** (≤ 10 rows): from the opener's ledger, the run records, and `awaiting.json`. Mains this tower opened that have
    not reported, mains that reported done and wait to be closed, sends that expect a reply and have none, asks for a main still open,
@@ -1009,7 +1009,7 @@ The events are not part of the brief. They arrive as messages, each with the hea
 
 Ally run: section 1 names the sender (label, short id, team, level), with no head tower and no identity. Sections 2 and 3 are replaced by
 what the run's sender may already see. That is the `tower_list` and `board_read` scope of a remote turn: only workspaces inside the
-project the sender's team binds (and, inside them, only the sessions whose pane folder lies in it; none at all when the team binds no project), and only that team's boards. Section 4 is left out (the digest is local). Section 5 is that device's
+project the sender's team binds (and, inside them, only the sessions whose pane folder lies in it; none at all when the team binds no project), and only that team's boards, each auto-filled entry as the allies receive it (its `now` with the done count and no items; a `board_set` entry whole: Straw Link spec, Work board, Sharing with allies). Section 4 is left out (the digest is local). Section 5 is that device's
 last ally-run note. Section 6 lists the tools the level allows. Added:
 
 - **Asks in this run** (≤ 5 rows): for each envelope of the run that carries `awaitsReply`, its ask id and first line, so the run can
@@ -1630,6 +1630,7 @@ straw-boss-desk's owner also agreed to D11.
 | D13 | The ally thread for the brief keeps peer text at rest | "存，每台裝置最近 20 則、留 7 天": a per-device store of both directions, the last 20 messages, 7 days (**The brief**). |
 | D14 | Restarting and debugging the server | "server restart 也要讓 agent 或 user 有辦法做，不然很難 debug": `boss_server` for local sessions and local runs, Restart server and Show log in the GUI on this computer's page only, `server.log` with rotation, `cli.mjs logs`, and the reason recorded (**Seeing and restarting the server**). |
 | D15 | Prompting a tower that is not resident | "如果 tower 現在不是常駐，那會需要 /boss tower [prompt] 的指令": `/boss tower <prompt>` posts a `boss` event the way the GUI composer does, so the boss can wake the tower from any pi session; it does not change focus. A bare `/boss tower` still opens and focuses the tab. Built in B5. |
+| D20 | The work board fills itself | The board fills itself from the main's todo list and name, and `board_set` overrides it (2026-10-28, tower experience; D16 and D17 belong to the standing prompt, D18 to D24 to the tower delta). A main writes its own entry from its todo list and its name, scrubbed of paths outside the project, URLs, emails, and token shapes; `board_set` stands until the todos or the name move, and `board_set { auto: true }` hands it back. Q1 = A: "allies get `now` and the done count of an auto entry only; a `board_set` entry goes whole, as today" (Straw Link spec, **Auto-fill**; built in T2). |
 
 ## Review record
 

@@ -43,7 +43,7 @@ test("the reader holds a file to the same rules by cutting: removal of control a
 
 test("an entry is the session's own file, written whole and atomically, readable by this user only", () => {
 	const entry = writeEntry(dir, "session-1", { now: "work", items: [{ t: "a", done: false }] }, T0);
-	assert.deepEqual(entry, { v: 1, session: "session-1", now: "work", items: [{ t: "a", done: false }], updated: T0 });
+	assert.deepEqual(entry, { v: 1, session: "session-1", now: "work", items: [{ t: "a", done: false }], updated: T0, src: "set" });
 	writeEntry(dir, "session-1", { now: "newer", items: [] }, T0 + 5);
 	assert.deepEqual(readdirSync(dir), ["session-1.json"], "a rename replaces the file; no temporary file is left");
 	assert.deepEqual(readEntries(dir).map((e) => [e.session, e.now, e.items.length, e.updated]), [["session-1", "newer", 0, T0 + 5]]);
@@ -71,7 +71,7 @@ test("a file that fails the structure check, or names another session than its o
 
 test("expiry: a live main shows with or without an entry; an entry whose session is gone shows as ended for 30 minutes after its update, then not at all", () => {
 	const mains = [{ session: "live", name: "api main", workspaceId: "wA", workspace: "Alpha", tab: "api", state: "working", cwd: "/p" }, { session: "bare", name: "no entry", workspaceId: "wA", workspace: "Alpha", tab: "docs", state: "idle" }];
-	const entries = (updated: number) => [{ v: 1 as const, session: "live", now: "x", items: [], updated: T0 }, { v: 1 as const, session: "gone", now: "left half done", items: [{ t: "a", done: true }], updated }];
+	const entries = (updated: number) => [{ v: 1 as const, session: "live", now: "x", items: [], updated: T0, src: "set" as const }, { v: 1 as const, session: "gone", now: "left half done", items: [{ t: "a", done: true }], updated, src: "set" as const }];
 	const fresh = joinLocal(entries(T0 - 5 * MIN), mains, T0);
 	assert.deepEqual(fresh.map((r) => [r.session, r.state, r.now ?? null]), [["live", "working", "x"], ["bare", "idle", null], ["gone", "ended", "left half done"]]);
 	assert.equal(fresh[2]!.updatedSecondsAgo, 300);

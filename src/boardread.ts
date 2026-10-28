@@ -1,4 +1,4 @@
-import { clean, joinLocal, type LiveMain, purge, readEntries } from "./board.ts";
+import { clean, forAllies, joinLocal, type LiveMain, purge, readEntries } from "./board.ts";
 import { sessionMark } from "./netdata.ts";
 import type { Pane, Session } from "./herdr.ts";
 import { inside } from "./link/routing.ts";
@@ -31,7 +31,8 @@ export async function readBoard(o: BoardReadInput): Promise<Record<string, unkno
 		purge(o.dir, new Set(o.net.sessions.map((s) => s.id)), o.now);
 		let rows = joinLocal(readEntries(o.dir), mains, o.now);
 		// In a remote turn: only entries of mains inside the project the senders' teams bind. An ended entry has no directory to prove it, so it stays out.
-		if (scope) rows = rows.filter((r) => scope.project !== undefined && r.cwd !== undefined && inside(r.cwd, scope.project));
+		// And as the allies get them: an auto-filled entry as its line and done count only.
+		if (scope) rows = rows.filter((r) => scope.project !== undefined && r.cwd !== undefined && inside(r.cwd, scope.project)).map((r) => (r.now === undefined ? r : { ...r, ...forAllies({ now: r.now, items: r.items, src: r.src ?? "set", count: r.count }) }));
 		out.local = rows.map((r) => ({ workspace: r.workspace, tab: r.tab, main: r.main, state: r.state, ...(r.now ? { now: r.now } : {}), items: r.items, ...(r.updatedSecondsAgo !== undefined ? { updatedSecondsAgo: r.updatedSecondsAgo } : {}) }));
 	}
 	if (o.scope !== "local" || o.device !== undefined) {
