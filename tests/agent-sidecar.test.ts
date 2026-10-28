@@ -515,3 +515,17 @@ test("a sidecar that becomes its tab's main deletes the record of the pi main it
 	await until(() => roleOf("wA:p3") === "main", "the sidecar is the main");
 	assert.deepEqual(held(), [], "the pi main's record is gone, and the sidecar, which has no session file, wrote none");
 });
+
+test("D19: call-tower writes why and reply into the header, why=unspecified without one, and refuses a word outside the set", async () => {
+	const tower = world.tower("tower-wA", "wA:t7", "wA:p7");
+	await tower.start();
+	world.herdr.workspace("wA").tokens.tower = "tower-wA";
+	const { sidecar } = await claude();
+	await sidecar.request({ cmd: "call-tower", message: "landed", why: "milestone", reply: "false" });
+	await sidecar.request({ cmd: "call-tower", message: "stuck", why: "blocked" });
+	await sidecar.request({ cmd: "call-tower", message: "old caller" });
+	const bad = (await sidecar.request({ cmd: "call-tower", message: "x", why: "progress" })) as { ok: boolean; error?: string };
+	assert.equal(bad.ok, false);
+	assert.match(bad.error ?? "", /why/);
+	assert.deepEqual(lines().filter((l) => l.to === "tower-wA").map((l) => /kind=call_tower .* (reply=\w+ why=\w+)\] /.exec(l.message)?.[1]), ["reply=none why=milestone", "reply=expected why=blocked", "reply=expected why=unspecified"]);
+});

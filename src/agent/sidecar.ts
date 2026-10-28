@@ -260,7 +260,8 @@ export async function startSidecar({ pane, kind, session, record, cli = "straw-n
 			return { text: said, role: kit.role() };
 		},
 		"call-tower": async (r) => {
-			const { text: said, details } = await reach.callTower(text(r.message, "message"), typeof r.workspace === "string" ? r.workspace : undefined);
+			// `why` and `reply` come as the words the command line gave; `why` is optional here (the header says `unspecified` without it), and a word outside the set is refused before anything is sent.
+			const { text: said, details } = await reach.callTower(text(r.message, "message"), typeof r.workspace === "string" ? r.workspace : undefined, r.reply !== false && r.reply !== "false", typeof r.why === "string" ? r.why : undefined);
 			return { text: said, workspace: details.workspace, towerId: details.towerId, opened: details.opened };
 		},
 		broadcast: async (r) => {

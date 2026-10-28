@@ -85,7 +85,7 @@ The tower only routes and coordinates, so it can run a lighter model: set `tower
 |---|---|
 | `boss_promote` | Become this tab's main agent (refused while it has one). |
 | `boss_status` | Main agents, this workspace's tower, and the other towers. |
-| `call_tower` | Message this workspace's tower, or another workspace's (under a header; `reply: false` for a notice). |
+| `call_tower` | Message this workspace's tower, or another workspace's (under a header). `why` says milestone, shared, or blocked: the three points a main calls it; `reply: false` for a notice. |
 | `boss_open_main` | Tower only: open a tab with a new main agent for a request no session owns. |
 | `boss_close_main` | Tower only: close a main this tower opened, once nothing runs in it. |
 | `tower_list` | Tower only: every workspace's tower, who a message for it reaches, its state, and what its tabs work on. |

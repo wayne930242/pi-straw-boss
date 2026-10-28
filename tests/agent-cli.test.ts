@@ -253,3 +253,11 @@ test("R-F007: a join for the session whose sidecar is leaving waits for it to be
 	assert.equal(spawned.length, 1);
 	assert.doesNotMatch(o.out.join(""), /already joined/);
 });
+
+test("D19: call-tower takes --why (milestone, shared, blocked) and --reply (true, false); other words are usage errors", () => {
+	assert.deepEqual(parseArgs(["call-tower", "--message", "landed", "--why", "milestone", "--reply", "false"], { HERDR_PANE_ID: PANE }), { command: "call-tower", pane: PANE, message: "landed", why: "milestone", reply: "false" });
+	for (const why of ["milestone", "shared", "blocked"]) assert.equal(parseArgs(["call-tower", "--message", "m", "--why", why], { HERDR_PANE_ID: PANE }).why, why);
+	assert.throws(() => parseArgs(["call-tower", "--message", "m", "--why", "progress"], { HERDR_PANE_ID: PANE }), /--why must be milestone, shared, or blocked/);
+	assert.throws(() => parseArgs(["call-tower", "--message", "m", "--reply", "maybe"], { HERDR_PANE_ID: PANE }), /--reply must be true or false/);
+	assert.throws(() => parseArgs(["broadcast", "--message", "m", "--why", "blocked"], { HERDR_PANE_ID: PANE }), /unknown option|--why belongs/);
+});

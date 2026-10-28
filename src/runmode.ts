@@ -172,7 +172,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		const unused = () => { throw new Error("not available in a tower run"); };
 		// SAFETY: only the registrations of createTools run here (their bodies are replaced above); `s.at` is what addOpenMain builds from.
 		s.at = { workspaceId: claim!.workspace, paneId: env.HERDR_PANE_ID ?? "", tabId: env.HERDR_TAB_ID ?? "" } as Place;
-		const tools = createTools({ ...kit, pi: proxy }, { post: unused, callTower: unused, status: unused, broadcast: unused, towerList: unused, towerSend: unused, read: unused, promote: unused, digest: undefined as never, closeMain: unused, link: undefined as never, server: claim!.kind === "local" ? ({} as never) : undefined } as never);
+		const tools = createTools({ ...kit, pi: proxy }, { post: unused, callTower: unused, status: unused, broadcast: unused, towerList: unused, towerSend: unused, read: unused, promote: unused, digest: undefined as never, closeMain: unused, link: undefined as never, server: claim!.kind === "local" ? ({} as never) : undefined, towerCall: true } as never);
 		tools.addNetTools();
 		tools.addOpenMain();
 		tools.addTowerComms();

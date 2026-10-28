@@ -42,7 +42,7 @@ export interface Opened { tab: string; pane: string; main: string; sender: strin
 export const handoff = (workspace: string, sender: Session, request: string, tower: { id: string; name: string }) =>
 	[
 		`Straw Boss: the tower of workspace ${workspace} opened this tab for you because no session owned the request below, and you are its main agent.`,
-		"Do the work, dispatching workers as your main agent prompt describes. When it is done, report the outcome with intercom send to both: the sender and the tower that opened this tab. Then wait; the tower closes this tab after your done report, so end it with the result and nothing you still have to do. If you wait for a boss decision, say so in your report and the tower leaves you open.",
+		"Do the work, dispatching workers as your main agent prompt describes. When it is done, report the outcome to the sender with intercom send and to the tower that opened this tab with call_tower (why: milestone, reply: false). Then wait; the tower closes this tab after your done report, so end it with the result and nothing you still have to do. If you wait for a boss decision, say so in your report and the tower leaves you open.",
 		`Sender: ${sender.name ?? sender.id} (session id ${sender.id})`,
 		`Tower: ${tower.name} (session id ${tower.id})`,
 		"Request, verbatim:",

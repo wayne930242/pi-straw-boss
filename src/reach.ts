@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { sessionMark } from "./netdata.ts";
-import { type Kind, type Party, stamp } from "./header.ts";
+import { type Kind, type Party, stamp, type Why, WHYS } from "./header.ts";
 import { headOf, isSub, type Pane, panes, parentOf, type Session, towerModel, workspaces, type Workspace } from "./herdr.ts";
 import type { Kit, Scope, SendResult } from "./state.ts";
 import { inside } from "./link/routing.ts";
@@ -158,19 +158,24 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit, server:
 		return { name: nameOf(mine) || s.ownName || me(), id: me(), role: role() ?? "session", ...(s.isTower && workspace && workspace === headOf(net.all) ? { head: true } : {}), ...(workspace ? { workspace: workspace.label } : {}) };
 	};
 	/** The message under its header, once for the whole audience: every recipient reads the same line, with the others named in it. */
-	const deliver = async (targets: Session[], message: string, kind: Kind, scope: string, reply: boolean, net: Net, origin?: string) => {
-		const line = stamp({ from: selfParty(net), kind, scope, to: targets.map((x) => partyOf(x, net)), reply, ...(origin ?? s.remoteOrigin ? { origin: (origin ?? s.remoteOrigin)! } : {}) }, message);
+	const deliver = async (targets: Session[], message: string, kind: Kind, scope: string, reply: boolean, net: Net, origin?: string, why?: Why) => {
+		const line = stamp({ from: selfParty(net), kind, scope, to: targets.map((x) => partyOf(x, net)), reply, ...(origin ?? s.remoteOrigin ? { origin: (origin ?? s.remoteOrigin)! } : {}), ...(why ? { why } : {}) }, message);
 		return Promise.all(targets.map(async (x) => ({ id: x.id, name: nameOf(x), ...(await send(x.id, line)) })));
 	};
 	/** One session by id, with a header. The result is intercom's. */
-	const post = async (to: string, message: string, kind: Kind, scope: string, reply: boolean, origin?: string): Promise<SendResult> => {
+	const post = async (to: string, message: string, kind: Kind, scope: string, reply: boolean, origin?: string, why?: Why): Promise<SendResult> => {
 		const net = await read();
-		const [result] = await deliver([net.sessions.find((x) => x.id === to) ?? { id: to }], message, kind, scope, reply, net, origin);
+		const [result] = await deliver([net.sessions.find((x) => x.id === to) ?? { id: to }], message, kind, scope, reply, net, origin, why);
 		return result!;
 	};
-	const callTower = async (message: string, workspace: string | undefined, reply = true) => {
+	/**
+	 * `why` (D19) is milestone, shared, or blocked; a caller that gives none is sent as `unspecified`, which the tower wakes for as it does for `blocked`. A word outside the set is refused before anything is sent.
+	 */
+	const callTower = async (message: string, workspace: string | undefined, reply = true, why?: string) => {
+		if (why !== undefined && !(WHYS as readonly string[]).includes(why)) throw new Error(`why is ${WHYS.join(", ")}, not ${JSON.stringify(why)}`);
+		const reason: Why = (why as Why | undefined) ?? "unspecified";
 		const tower = await openTower(workspace);
-		const result = await post(tower.id, message, "call_tower", "tower", reply);
+		const result = await post(tower.id, message, "call_tower", "tower", reply, undefined, reason);
 		if (result.status !== "sent") throw new Error(`The tower of ${tower.target.label} did not take the message: ${result.status} ${result.code ?? ""} ${result.detail ?? ""}`.trim());
 		const via = tower.routed ? ` (${tower.routed.label} is a sub workspace)` : "";
 		const text = `Sent to the tower of ${tower.target.label}${via}${tower.opened ? " (opened it)" : ""}. ${reply ? "It replies through intercom." : "It is told no reply is expected."}`;

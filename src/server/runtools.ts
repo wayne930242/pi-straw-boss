@@ -200,7 +200,7 @@ async function localTool(host: ToolHost, name: string, args: Record<string, unkn
 			return json(await readBoard({ dir: host.boardDir, now: host.now(), net: await reach.read(), link, scope, ...(device !== undefined ? { device } : {}) }));
 		}
 		case "call_tower": {
-			const done = await reach.callTower(str(args, "message"), opt(args, "workspace"), args.reply !== false);
+			const done = await reach.callTower(str(args, "message"), opt(args, "workspace"), args.reply !== false, opt(args, "why"));
 			if (args.reply !== false) host.expect(String((done.details as { towerId: string }).towerId), host.label, str(args, "message"));
 			return done;
 		}
