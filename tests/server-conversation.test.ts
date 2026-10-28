@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { mkdtempSync } from "node:fs";
@@ -649,6 +649,18 @@ test("pi's own /new while the conversation's file is deferred: the next conversa
 	await nextIsNew(s, run, "2026-10-28_rel2.jsonl");
 });
 
+test("pi's own /new while the conversation's file is deferred and the run record cannot be written: the release still finishes the run and marks the pointer (RC-F001)", async () => {
+	const s = await setup();
+	const run = await unwritten(s, "2026-10-28_ro.jsonl");
+	const record = join(world.slot.dir, "tower", "wA", "runs", `${run.id}.json`);
+	rmSync(record);
+	mkdirSync(join(record, "blocker"), { recursive: true });
+	assert.equal((await ask(s, { cmd: "run-release", token: run.token, reason: "new" })).ok, true);
+	assert.match(logText(), /error code=conversation/);
+	assert.equal(readPointer(world.slot, "wA")?.fresh, undefined, "no pointer yet: nothing was kept");
+	rmSync(record, { recursive: true });
+});
+
 const restart = async (s: Running) => {
 	await s.handle.shutdown(0);
 	await s.handle.done;
@@ -691,6 +703,7 @@ test("a missing file that can never qualify is refused and logged when it is rep
 	assert.equal((await ask(s, { cmd: "tower-event", workspace: "wA", text: "hello", present: true })).ok, true);
 	const id = await nthRun(1);
 	const { token } = await claimRun(s, id);
+	writeFileSync(join(world.root, "elsewhere.jsonl"), "x".repeat(200));
 	assert.equal((await ask(s, { cmd: "run-file", token, file: join(world.root, "elsewhere.jsonl") })).ok, true);
 	assert.equal(count(), 1, "logged at the report, not when it might have appeared");
 	await drain(s, token);
@@ -714,6 +727,25 @@ test("a symlink put at the deferred path after the report is refused and logged,
 	await poll(s, run.token, false);
 	assert.equal(count(), 1, "the link is something, so it is judged now, not waited for");
 	assert.equal(noPointer(), true);
-	await quit(s, run);
-	assert.equal(count(), 1);
+	const second = await restart(s);
+	const again = await claimRun(second, run.id);
+	await poll(second, again.token, false);
+	assert.equal(count(), 1, "the settled refusal is not waited for again after a restart (MD3)");
+	assert.equal(readRun(world.slot, "wA", run.id)?.deferred, undefined);
+	exit(run.id);
+});
+
+test("a session file reported by its real path while the sessions folder is a symlink is waited for (MR: mayAppear's realpath base)", async () => {
+	mkdirSync(join(world.root, "agent"), { recursive: true });
+	mkdirSync(join(world.root, "realsessions", "--proj--"), { recursive: true });
+	symlinkSync(join(world.root, "realsessions"), join(world.root, "agent", "sessions"));
+	const s = await setup();
+	assert.equal((await ask(s, { cmd: "tower-event", workspace: "wA", text: "hello", present: true })).ok, true);
+	const id = await nthRun(1);
+	const { token } = await claimRun(s, id);
+	const file = join(realpathSync(world.root), "realsessions", "--proj--", "2026-10-28_real.jsonl");
+	await ask(s, { cmd: "run-file", token, file });
+	await drain(s, token);
+	assert.equal(readRun(world.slot, "wA", id)?.deferred, true, "a real path under the folder may still appear");
+	exit(id);
 });

@@ -1084,7 +1084,7 @@ export function createRuns(o: RunsOptions) {
 	function holdFresh(a: Active) {
 		a.fresh = true;
 		a.rec.fresh = true;
-		writeRun(slot, a.rec);
+		try { writeRun(slot, a.rec); } catch (cause) { error("conversation", (cause as Error).message); }
 	}
 	/** The boss asked for a new session: the pointer says so, so the next conversation does not resume. */
 	function markFresh(workspace: string) {
