@@ -1,4 +1,5 @@
 import type { TowerService } from "../src/net.ts";
+import { BOSS_MARK, CRASH_FLAG } from "../src/eventmarks.ts";
 import { m } from "./paraglide/messages.js";
 import type { Answer } from "./post.ts";
 import { actionWhy } from "./towermodel.ts";
@@ -16,6 +17,14 @@ export function heard(text: string | undefined): { kind: "intercom"; from: strin
 	if (first.startsWith("[intercom from ") && first.endsWith("]")) return { kind: "intercom", from: first.slice("[intercom from ".length, -1) };
 	if (first === "[notice from the sb server]") return { kind: "server" };
 	if (first === "[your wakeAfter follow-up is due]") return { kind: "timer" };
+}
+
+/** The boss's own turn in a service tower's run: its marker line (and the crash flag line after it) is the server's, so the bubble shows what the boss wrote, with the flag as a note; undefined for any other turn. */
+export function bossTurn(text: string | undefined): { body: string; crashed: boolean } | undefined {
+	const lines = (text ?? "").split("\n");
+	if (lines[0] !== BOSS_MARK) return undefined;
+	const crashed = lines[1] === CRASH_FLAG;
+	return { body: lines.slice(crashed ? 2 : 1).join("\n"), crashed };
 }
 
 /** What the tower refused to a send, in the page's language: by the code the page's server gives, else by the reasons it is known to give; undefined for any other (the server's own words stay). */

@@ -577,6 +577,7 @@ a.tower:hover::before { border-color: var(--c); }
 .tx.you > header { display: flex; align-items: center; gap: 8px; color: var(--gold); }
 .tx.you .ava { color: var(--gold); }
 .bubble { max-width: 80%; padding: 7px 12px; line-height: 1.5; border-radius: 14px; border: 1px solid color-mix(in srgb, var(--gold) 22%, transparent); background: color-mix(in srgb, var(--gold) 8%, transparent); white-space: pre-wrap; overflow-wrap: anywhere; }
+.bubble .boss-flag { display: block; opacity: .7; }
 .tx.in { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 8px; align-items: start; }
 .tx-body { display: grid; gap: 6px; padding: 8px 12px; border-radius: 14px; border: 1px solid var(--line); background: var(--panel); }
 .tx-body, .tx-body > * { min-width: 0; }

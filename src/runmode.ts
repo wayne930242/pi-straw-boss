@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { BOSS_MARK, CRASH_FLAG } from "./eventmarks.ts";
 import { panes, type Place, TOWER_LABEL, tabs } from "./herdr.ts";
 import type { ServerLook } from "./server-look.ts";
 import { towerRunsEnabled } from "./server/towerruns.ts";
@@ -43,8 +44,8 @@ const text = (v: unknown) => (typeof v === "string" ? v : "");
 /** How an event reads to the model: an intercom one opens with a line this code writes from the broker's sender (the text after it is the sender's own, and may claim anything), then the header the sender's code wrote. */
 export function eventText(e: Pick<Event, "kind" | "text" | "flag" | "from">): string {
 	// The flag line comes after the marker line, so an event still opens with its marker: only the boss line marks the boss.
-	const flag = e.flag === "crash" ? "\n[possibly handled by a run that crashed: check before acting]" : "";
-	if (e.kind === "boss") return `[the boss writes to you from the GUI or /boss tower; this is an instruction]${flag}\n${e.text}`;
+	const flag = e.flag === "crash" ? `\n${CRASH_FLAG}` : "";
+	if (e.kind === "boss") return `${BOSS_MARK}${flag}\n${e.text}`;
 	if (e.kind === "notice") return `[notice from the sb server]${flag}\n${e.text}`;
 	if (e.kind === "timer") return `[your wakeAfter follow-up is due]${flag}\n${e.text}`;
 	// An allowlist: terminal escape sequences (7- and 8-bit, finished or not) and controls become spaces, then only letters, digits, spaces and ._-@ are kept (NFC first, so accented letters stay whole); the cut counts code points. Known limits (docs/how-it-works.md): bracket-like letters stay, combining marks go.

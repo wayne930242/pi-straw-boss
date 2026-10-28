@@ -704,5 +704,6 @@
 	"tower_term_held": "The tower is held after repeated crashes, so it has no terminal. Retry it, or write to it in Comms.",
 	"placeholder_held": "Held after repeated crashes · a message wakes it",
 	"notice_server": "notice from the sb server",
-	"notice_timer": "wake-up call"
+	"notice_timer": "wake-up call",
+	"boss_crash_flag": "A run that crashed may already have handled this: check before acting."
 }

@@ -10,7 +10,7 @@ import { mount, parse } from "./markdown.ts";
 import type { Post } from "./composer.ts";
 import { m } from "./paraglide/messages.js";
 import { html, ICON, roleName } from "./render.ts";
-import { heard } from "./towerturns.ts";
+import { bossTurn, heard } from "./towerturns.ts";
 
 // The comms log of one session. The model is pure: items merge by entry id (a repeated one is ignored), tool results attach to their call by
 // callId, a reset replaces everything, and at most 600 items stay mounted (the farthest page is dropped and fetched again on scroll).
@@ -179,7 +179,8 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor }: 
 				// A run of a tower the sb server runs gets what came to the tower as user turns; the server wrote their first line, and they are not the boss's (towermodel.ts `heard`).
 				const said = who().service ? heard(it.text) : undefined;
 				if (said) return h("article", { class: "tx sys" }, h("details", { class: "notice" }, h("summary", null, icon("comms"), h("em", null, m.incoming()), said.kind === "intercom" ? m.notice_intercom() : said.kind === "server" ? m.notice_server() : m.notice_timer(), " ", said.kind === "intercom" ? (link(said.from.replace(/ \([^()]*\)$/, "")) || said.from) : "", stamp), h("pre", null, it.text ?? "")));
-				return h("article", { class: "tx you" }, h("header", null, stamp, h("b", null, m.you()), icon("user")), h("div", { class: "bubble" }, ...plain(it.text ?? ""), thumbs(it.id, it.images)));
+				const boss = who().service ? bossTurn(it.text) : undefined; // the server's marker line is not shown
+				return h("article", { class: "tx you" }, h("header", null, stamp, h("b", null, m.you()), icon("user")), h("div", { class: "bubble", title: boss ? (it.text ?? "") : "" }, boss?.crashed ? h("small", { class: "boss-flag" }, m.boss_crash_flag()) : null, ...plain(boss ? boss.body : (it.text ?? "")), thumbs(it.id, it.images)));
 			}
 			case "assistant": {
 				const me = who(), body = h("pre", { class: "thought-text" }), more = it.thought ? h("button", { class: "thought", type: "button" }, it.thought < 0 ? m.thought_redacted() : m.thought_chars({ count: it.thought.toLocaleString() })) : null;

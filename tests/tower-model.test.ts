@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { TowerService } from "../src/net.ts";
 import type { Mark } from "../src/netdata.ts";
 import { actionWhy, guarded, lastLine, noticeRows, queueChip, statusLine, towerWord } from "../gui/towermodel.ts";
-import { heard, termHold, towerWhy } from "../gui/towerturns.ts";
+import { bossTurn, heard, termHold, towerWhy } from "../gui/towerturns.ts";
 import { alertLine } from "../gui/linkmodel.ts";
 import { m } from "../gui/paraglide/messages.js";
 
@@ -81,6 +81,14 @@ test("the notices of the service are the page's own words; a parked event has it
 	assert.match(zhRows[0]!.text, /^run 一再當機或逾時/);
 	assert.equal(zhRows[1]!.text, "run 無法啟動：boom");
 	assert.equal(zhRows[2]!.text, "已擱置：boss：x");
+});
+
+test("the boss's turn in a service tower drops the server's marker line and shows the crash flag as a note", () => {
+	assert.deepEqual(bossTurn("[the boss writes to you from the GUI or /boss tower; this is an instruction]\nship it"), { body: "ship it", crashed: false });
+	assert.deepEqual(bossTurn("[the boss writes to you from the GUI or /boss tower; this is an instruction]\n[possibly handled by a run that crashed: check before acting]\nship\nit"), { body: "ship\nit", crashed: true });
+	assert.equal(bossTurn("[the boss writes to you from the GUI or /boss tower; this is an instruction] x\nhi"), undefined);
+	assert.equal(bossTurn("hi\n[the boss writes to you from the GUI or /boss tower; this is an instruction]"), undefined);
+	assert.equal(bossTurn(undefined), undefined);
 });
 
 test("a run's turn that the server wrote is not the boss's: intercom, server notices and wake-up calls are recognized by their first line, the boss's own are not", () => {

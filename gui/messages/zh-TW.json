@@ -578,5 +578,6 @@
 	"tower_term_held": "tower 因反覆當機而暫停，沒有終端機。請重試，或在「通訊」裡寫給它。",
 	"placeholder_held": "反覆當機後暫停中・送出訊息就會喚醒",
 	"notice_server": "sb server 的通知",
-	"notice_timer": "喚醒鬧鐘"
+	"notice_timer": "喚醒鬧鐘",
+	"boss_crash_flag": "可能已被當機的 run 處理過：動手前先確認。"
 }
