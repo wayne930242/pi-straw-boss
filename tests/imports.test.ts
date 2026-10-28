@@ -591,7 +591,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Tower memory (T3) to 67.35 KB / 23.8 KB gzipped: the panel's, the waits-for-you notice's, and the memory route's messages in both languages (the map chunk carries every message).
 	// T3 review fixes to 68.25 KB / 24.1 KB gzipped: the notices a run's change leaves, with their words and the Undo and Dismiss buttons (four more messages in both languages).
 	// Tower memory, pi first (D23) to 68.9 KB / 24.2 KB gzipped: the proposals' words in both languages (Confirm, Reject, the card's sentences, the panel's heading and citation) in place of the notices'.
-	assert.ok(size(entry).length <= 68_900 && gz(entry) <= 24_200, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// Merge of T3 with the B6 GUI fixes: 68.9 KB to 68,903 bytes (the read-only channel word and the origin words beside the memory words).
+	assert.ok(size(entry).length <= 68_903 && gz(entry) <= 24_200, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).
