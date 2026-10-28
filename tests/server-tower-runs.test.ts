@@ -171,6 +171,8 @@ test("a run that exits without tower_done crashed: its taken events return flagg
 	await until(() => readRun(world.slot, "wA", first)?.outcome === "crashed", "run 1 crashed");
 	assert.deepEqual(readQueue(world.slot, "wA").map((e) => [e.text, e.flag, e.crashes, e.taken]), [["poison", "crash", 1, undefined]]);
 	assert.match(readNotes(world.slot, "wA").at(-1)!.note, /^\(crashed/);
+	const crashes = async () => ((await ask(s, { cmd: "status" })).towers as { service: { crashes?: number } }[])[0]!.service.crashes;
+	assert.equal(await crashes(), 1, "the page can show how many runs failed lately");
 	// The next brief says so.
 	const second = await nthRun(2);
 	const got = await claim(s, second);
@@ -184,6 +186,7 @@ test("a run that exits without tower_done crashed: its taken events return flagg
 	assert.deepEqual(readQueue(world.slot, "wA", true).map((e) => [e.text, e.crashes]), [["poison", 2]]);
 	const status = ((await ask(s, { cmd: "status" })).towers as { service: { notices: { kind: string }[]; parked: { id: string; first: string }[]; state: string } }[])[0]!.service;
 	assert.equal(status.parked[0]!.first, "poison");
+	assert.equal(await crashes(), 2);
 	// A third crash in ten minutes stops the waking.
 	tower().incoming(from, msg("m2", "another"));
 	const third = await nthRun(3);
@@ -194,12 +197,14 @@ test("a run that exits without tower_done crashed: its taken events return flagg
 	await until(async () => ((await ask(s, { cmd: "status" })).towers as { service: { state: string } }[])[0]!.service.state === "held", "held");
 	const held = ((await ask(s, { cmd: "status" })).towers as { service: { notices: { kind: string; detail?: string }[] } }[])[0]!.service;
 	assert.ok(held.notices.some((n) => n.kind === "loop"));
+	assert.equal(await crashes(), 3);
 	world.herdr.screen = "the tail of the pane\nerror: boom";
 	tower().incoming(from, msg("m3", "while held"));
 	await sleep(150);
 	assert.equal(world.pis.size, 3, "an intercom message does not wake a held service");
 	await ask(s, { cmd: "tower-event", workspace: "wA", text: "boss: go on" });
 	await nthRun(4);
+	assert.equal(await crashes(), undefined, "a boss message clears the count with the hold");
 	// Deliver again puts a parked event back; Drop discards it.
 	const parked = readQueue(world.slot, "wA", true)[0]!;
 	assert.equal((await ask(s, { cmd: "tower-drop", workspace: "wA", id: parked.id })).ok, true);

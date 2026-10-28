@@ -353,7 +353,9 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased raised session.ts to 124, bars.ts to 85, and composer.ts to 294: the queue's Edit (its bar, its wiring, and the composer's take-back with its id, the reply stored for a composer that is gone, and the rows opened per session).
 	// Unreleased raised composer.ts to 301: takeWhy, a take-back's refusal worded in the page's language.
 	// Unreleased raised composer.ts to 302 (sb server B5): `wakes`, the tower the composer wakes (its placeholder, and no follow-up or stop).
-	for (const [name, max] of [["router.ts", 80], ["chat.ts", 277], ["markdown.ts", 180], ["views.ts", 90], ["scene.ts", 41], ["tokens.ts", 24], ["nav.ts", 43], ["workspace.ts", 60], ["dossier.ts", 49], ["session.ts", 124], ["bars.ts", 85], ["lightbox.ts", 34], ["layer.ts", 264], ["askkeys.ts", 75], ["composer.ts", 302], ["ask.ts", 185], ["mirror.ts", 175], ["keypad.ts", 124], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
+	// Unreleased raised chat.ts to 283, session.ts to 135, dossier.ts to 50, workspace.ts to 61, and composer.ts to 303 (sb server B5, GUI visual pass): the tower service's words and notices come from towermodel.ts and towerturns.ts, and the views call them (a run's
+	// intercom turns shown as incoming, the Terminal tab's sentence for a tower with no run, the notices again in the comms, the state in the head and the dossier, the server queue's label, a held tower's placeholder).
+	for (const [name, max] of [["router.ts", 80], ["chat.ts", 283], ["markdown.ts", 180], ["views.ts", 90], ["scene.ts", 41], ["tokens.ts", 24], ["nav.ts", 43], ["workspace.ts", 61], ["dossier.ts", 50], ["session.ts", 135], ["bars.ts", 85], ["lightbox.ts", 34], ["layer.ts", 264], ["askkeys.ts", 75], ["composer.ts", 303], ["ask.ts", 185], ["mirror.ts", 175], ["keypad.ts", 124], ["doc.ts", 108], ["i18n.ts", 50], ["slash.ts", 63]] as const) assert.ok(count(`gui/${name}`) <= max, `gui/${name} has ${count(`gui/${name}`)} lines`);
 	// 0.28.0 to 185 with the answer keys' hooks into gui/ask.ts (the focus on the first option, the textarea). 0.28.0 raised gui/ask.ts from 156 to 175 for the secret panel: the masked field with Show and Hide, Submit, the way back to the terminal, the unsupported-remote notice, and a value that leaves with its one request.
 	// 0.10.0: the page's text comes from Paraglide's messages (gui/messages), which raised chat.ts, views.ts, layer.ts, ask.ts, mirror.ts, and doc.ts by one
 	// line each for the messages import; the strings replaced in place. gui/i18n.ts picks the locale (the menu's choice, the browser's languages with
@@ -427,7 +429,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// and the map's overview in a corner (gui/minimap.ts: shown while the map runs past the window, its frame moved on a scroll) have a figure each.
 	assert.ok(count("gui/timeline.ts") <= 42, `gui/timeline.ts has ${count("gui/timeline.ts")} lines`);
 	assert.ok(count("gui/minimap.ts") <= 44, `gui/minimap.ts has ${count("gui/minimap.ts")} lines`);
-	const shipped = new Set(["trust.ts", "timeline.ts", "minimap.ts", "swipe.ts", "drawer.ts", "router.ts", "chat.ts", "lightbox.ts", "follow.ts", "markdown.ts", "views.ts", "scene.ts", "tokens.ts", "nav.ts", "workspace.ts", "dossier.ts", "session.ts", "bars.ts", "layer.ts", "alerts.ts", "overlay.ts", "fixture.ts", "demo-chat.ts", "composer.ts", "pair.ts", "devices.ts", "spawn.ts", "deploy.ts", "demo-open.ts", "folders.ts", "picker.ts", "post.ts", "ask.ts", "mirror.ts", "keypad.ts", "doc.ts", "i18n.ts", "slash.ts", "hotkeys.ts", "askkeys.ts"]);
+	const shipped = new Set(["trust.ts", "timeline.ts", "minimap.ts", "swipe.ts", "drawer.ts", "router.ts", "chat.ts", "lightbox.ts", "follow.ts", "markdown.ts", "views.ts", "scene.ts", "tokens.ts", "nav.ts", "workspace.ts", "dossier.ts", "session.ts", "bars.ts", "layer.ts", "alerts.ts", "overlay.ts", "fixture.ts", "demo-chat.ts", "composer.ts", "pair.ts", "devices.ts", "spawn.ts", "deploy.ts", "demo-open.ts", "folders.ts", "picker.ts", "post.ts", "ask.ts", "mirror.ts", "keypad.ts", "doc.ts", "i18n.ts", "slash.ts", "hotkeys.ts", "askkeys.ts", "towerturns.ts"]);
 	const page = sum("gui", names("gui").filter((name) => !shipped.has(name)));
 	// 0.8.0 raised it from 540 to 543 for the scroll badge with the count of a unit's documents on its plate (render.ts).
 	// 0.10.0 to 554 for the messages: the import in main.ts, render.ts, log.ts, and stream.ts, the locale started in main.ts, and render.ts's role
@@ -467,7 +469,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased (R-F001) to 1472: the stream's `replaced` state (stream.ts: the look at the page's address, no resume once replaced) and its banner (main.ts).
 	// After the merge with 0.46.0 (the stream's `replaced` state and its banner) the page is 1498.
 	// Unreleased to 1486 (sb server B5, GUI): render.ts (the tower's standing-by state and the service's notices with their buttons), composer.ts (wakes), chat.ts, scene.ts, and session.ts (the tower unit's service and queue).
-	assert.ok(page <= 1498, `the page's TypeScript has ${page} lines`);
+	// GUI visual pass (sb server B5) to 1590: towermodel.ts (81: the service's state, last run, queue, notices, and the buttons that answer) and towernotes.ts (26: the notices drawn in the card and the comms), less what render.ts no longer holds; towerturns.ts is the session view's.
+	assert.ok(page <= 1590, `the page's TypeScript has ${page} lines`);
 });
 
 test("the built page is small, self-contained (no remote URLs, fonts, or imports), and carries no demo fixture", { skip: !existsSync(join(root, "dist/gui/index.html")) && "run npm run gui:build first" }, () => {
@@ -540,7 +543,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased (IRQ-F001) to 55.0 KB / 19.75 KB gzipped: the longer banner words in both languages (and the `replaced` dot's colour in the stylesheet).
 	// Unreleased (sb server B5, GUI) to 56.4 KB / 20.2 KB gzipped: the tower unit of the service (standing by, the notices with Retry, Deliver again, and Drop in render.ts, the composer's wake line, the served-inbox notice) and its messages in both languages.
 	// After the merge with 0.46.0 (its `replaced` state and banner, 55.0 KB / 19.75 KB alone) to 56.95 KB / 20.4 KB.
-	assert.ok(size(entry).length <= 56_950 && gz(entry) <= 20_400, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// GUI visual pass (sb server B5) to 62.15 KB / 22.15 KB gzipped: the tower service's words in both languages (its states, last run, queue count, notices, refusals; five of them plural) and the notices' buttons that say "Working…" and show a refusal.
+	assert.ok(size(entry).length <= 62_150 && gz(entry) <= 22_150, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).
@@ -601,7 +605,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased (the Edit's refusals in the page's language) to 152.4 KB / 62.4 KB gzipped: eleven messages in both languages (gui/composer.ts takeWhy) so a take-back's refusal is not English under zh-TW.
 	// Unreleased (GUI in the sb server) to 155.6 KB / 63.85 KB gzipped: the server panel (gui/server.ts, a lazy chunk of about 3.2 KB) and its messages in both languages.
 	// Unreleased (sb server B5, GUI) to 155.8 KB / 63.9 KB gzipped: the composer's wake placeholder and the tower notice messages that the chat chunk carries.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 155_800 && total(chunks, gz) <= 63_900, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// GUI visual pass (sb server B5) to 157.4 KB / 64.25 KB gzipped: towerturns.ts (a run's turns the server wrote, the Terminal tab's sentence, a refused send's words) and the session view's tower code, with their messages in both languages.
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 157_400 && total(chunks, gz) <= 64_250, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
@@ -655,5 +660,6 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Merged with the queue's Edit: 77.5 KB / 16.8 KB gzipped in all.
 	// Unreleased to 80.2 KB / 17.4 KB gzipped: the phone's tap targets (one media block: 44 px boxes, chips drawn inside them, the queue and trust rows, the composer's 48 px keys; +2.7 KB / 0.6 KB).
 	// Unreleased (sb server B5, GUI) to 80.6 KB / 17.5 KB gzipped: the tower notices' rows (.tower-notices).
-	assert.ok(total(css, (n) => size(n).length) <= 80_600 && total(css, gz) <= 17_500, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// GUI visual pass (sb server B5) to 81.75 KB / 17.7 KB gzipped: the notices wrap and read at AA, the queue chip, the comms' notices and the terminal's sentence, the wrapping state line, and a tower's phone header on two rows.
+	assert.ok(total(css, (n) => size(n).length) <= 81_750 && total(css, gz) <= 17_700, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });

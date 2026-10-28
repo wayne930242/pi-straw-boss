@@ -4,6 +4,7 @@ import { m } from "./paraglide/messages.js";
 import { aim, aimOpening, html, LABEL, mark, PLATE, sync, text, urgent } from "./render.ts";
 import { type Scene, wsOf } from "./scene.ts";
 import { fillToken, tokenEl } from "./tokens.ts";
+import { statusLine } from "./towermodel.ts";
 
 // The workspace route: its base zoomed in. The tower with its subagents, each tab as a squad of unit tokens, subagents tethered under their launcher, outposts, and the
 // workspace's other pi panes as unaligned units.
@@ -30,7 +31,7 @@ export function drawWorkspace(host: HTMLElement, scene: Readonly<Scene>) {
 	tower.toggleAttribute("data-alert", Boolean(base.tower && urgent(base.tower.mark)));
 	text(root, "h2", base.label);
 	aimOpening(root.querySelector(".spawn-btns button")!, base);
-	text(root, ".title p", base.tower ? m.control_tower({ state: LABEL[base.tower.mark]() }) : m.no_tower());
+	text(root, ".title p", base.tower ? m.control_tower({ state: statusLine(base.tower.service, base.tower.mark, (mk) => LABEL[mk]()) }) : m.no_tower());
 	sync(root.querySelector(".tower-drones")!, base.tower?.subs ?? [], tokenEl, (el, s) => (el.classList.add("drone"), fillToken(el, s, base.id)));
 	const all = [...(base.tower?.subs ?? []), ...base.tabs.flatMap((t) => t.units.flatMap((u) => [u, ...u.subs]))];
 	[base.tabs.length, all.length, all.filter((u) => u.mark === "working").length, all.filter((u) => u.mark === "waiting").length].forEach((n, i) => (root.querySelectorAll("dd")[i]!.textContent = String(n)));

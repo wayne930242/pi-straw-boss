@@ -33,7 +33,7 @@ export interface TowerService {
 	queued: number;
 	run?: { id: string; kind: "local" | "ally"; startedAt: string };
 	allyRuns: { device: string; startedAt: string }[];
-	lastRun?: { endedAt: string; outcome: string };
+	lastRun?: { endedAt: string; outcome: string }; crashes?: number; // `crashes`: runs that crashed or timed out in the loop window, when any did
 	notices: { id: string; level: "info" | "warning" | "error"; kind: string; text: string; at: number; detail?: string }[];
 	parked: { id: string; kind: string; from?: string; first: string }[];
 }

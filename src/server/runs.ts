@@ -55,6 +55,8 @@ export interface ServiceStatus {
 	run?: { id: string; kind: "local" | "ally"; startedAt: string };
 	allyRuns: { device: string; startedAt: string }[];
 	lastRun?: { endedAt: string; outcome: Outcome };
+	/** Runs that crashed or timed out inside the loop window, while there are any (the service is held at three). */
+	crashes?: number;
 	notices: Notice[];
 	parked: { id: string; kind: string; from?: string; first: string }[];
 }
@@ -650,13 +652,14 @@ export function createRuns(o: RunsOptions) {
 		status(workspace: string): ServiceStatus | undefined {
 			const svc = find(workspace);
 			if (!svc) return undefined;
-			const run = svc.run;
+			const run = svc.run, recent = svc.crashes.filter((x) => x > now() - t.loop).length;
 			return {
 				state: svc.state,
 				queued: waitingOf(svc, new Set(run?.offered.keys() ?? [])).length,
 				...(run ? { run: { id: run.rec.id, kind: run.rec.kind, startedAt: run.rec.startedAt } } : {}),
 				allyRuns: [],
 				...(svc.lastRun ? { lastRun: svc.lastRun } : {}),
+				...(recent ? { crashes: recent } : {}),
 				notices: svc.notices,
 				parked: readQueue(slot, workspace, true).map((e) => ({ id: e.id, kind: e.kind, ...(e.from?.name ?? e.from?.id ? { from: e.from?.name ?? e.from?.id } : {}), first: phrase(e.text.split("\n").find((l) => l.trim()) ?? "", 120) })),
 			};
