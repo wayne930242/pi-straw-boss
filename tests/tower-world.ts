@@ -4,7 +4,41 @@ import { StubClient } from "./agent-fakes.ts";
 import { FakeHerdr } from "./fakes.ts";
 import { ServerWorld } from "./server-world.ts";
 import type { Session } from "../src/herdr.ts";
-import type { Timers } from "../src/server/runs.ts";
+import type { Towers } from "../src/server/towers.ts";
+import { createAllows } from "../src/server/allows.ts";
+import type { AllyItem, AllyPort, Timers } from "../src/server/runs.ts";
+
+/** The link holder as the tower service sees it (AllyPort): messages that wait for the tower identity, who has left the roster, and what the server told it was taken. */
+export class FakeAlly implements AllyPort {
+	identity = "sb-tower-wa";
+	items: AllyItem[] = [];
+	takenIds: string[] = [];
+	gone = new Set<string>();
+	level = new Map<string, string>();
+	projects = new Map<string, string>();
+	threads = new Map<string, { dir: "in" | "out"; at: number; kind: string; text: string }[]>();
+	waiting(identity: string) {
+		return identity === this.identity ? this.items.filter((i) => !this.takenIds.includes(i.id)) : [];
+	}
+	async taken(id: string) {
+		this.takenIds.push(id);
+	}
+	standing(device: string) {
+		return this.gone.has(device) ? undefined : { level: this.level.get(device) ?? "reply" };
+	}
+	project(team: string) {
+		return this.projects.get(team);
+	}
+	thread(device: string) {
+		return this.threads.get(device) ?? [];
+	}
+	/** A message from a device, as the holder lists it. */
+	add(id: string, device: string, text: string, over: Partial<AllyItem> = {}): AllyItem {
+		const item: AllyItem = { id, device, label: `label-${device}`, short: device.slice(0, 6), team: "team-1", teamName: "Team One", fromWorkspace: "theirs", replyExpected: false, text, at: Date.now() + this.items.length, ...over };
+		this.items.push(item);
+		return item;
+	}
+}
 
 // A world for the tower service's tests: the sb server world with a fake Herdr and one fake pi-intercom client per identity. `towerRuns.enabled` is set in the state directory's config.json.
 // Runs: Herdr's `agent start` makes a pi process (a fake PID in the pane's process list) that the test claims and drives over the control socket (`pi`), and the run timers are short.
@@ -30,6 +64,13 @@ export class TowerWorld extends ServerWorld {
 	settingsHold: Promise<void> | undefined;
 	runTimers: Partial<Timers> = {};
 	runMax: number | undefined;
+	/** The tower service of the last server started in this world, once it is built. */
+	expose: Towers | undefined;
+	ally = new FakeAlly();
+	allows = createAllows({ waitMs: 150 });
+	/** The requests the tower service sent the link holder (the tools of a run), and the answer for each op. */
+	linkCalls: { body: Record<string, unknown>; from: string }[] = [];
+	linkAnswers = new Map<string, (body: Record<string, unknown>) => Record<string, unknown>>();
 	setFlag(enabled: boolean | undefined, max?: number) {
 		mkdirSync(this.stateDir, { recursive: true });
 		writeFileSync(join(this.stateDir, "config.json"), JSON.stringify(enabled === undefined ? {} : { towerRuns: { enabled, ...(max ? { max } : {}) } }));
@@ -55,7 +96,12 @@ export class TowerWorld extends ServerWorld {
 			} }),
 			herdr: { run: this.herdr.runFor("none"), events: this.herdr.events, api: this.herdr.api, watch: (cb: () => void) => (this.takeovers.push(cb), () => {}) },
 			towers: {
-				recoverMs: 150, registerMs: 500, residentMs: 20, retryMs: [20],
+				recoverMs: 150, registerMs: 500, residentMs: 20, retryMs: [20], ally: this.ally, allows: this.allows, expose: (t: Towers) => void (this.expose = t),
+				link: async (body, from) => {
+					const b = body as Record<string, unknown>;
+					this.linkCalls.push({ body: b, from });
+					return this.linkAnswers.get(String(b.op))?.(b) ?? { ok: false, code: "no_holder", error: "no holder in this world" };
+				},
 				runs: {
 					timers: { ...FAST_RUNS, ...this.runTimers }, alive: (pid) => this.live.has(pid), startOf: (pid) => (this.startCalls++, `T-${pid}`), kill: (pid, signal) => void this.kills.push([pid, signal]),
 					settings: async () => { await this.settingsHold; if (this.settingsError) throw this.settingsError; },

@@ -31,7 +31,8 @@ export interface ServiceRecord {
 	waiting?: true;
 }
 /** What wakes a run (the spec, Wake triggers): an intercom message, the boss typing into the tower, a notice the server raises, a follow-up the last run asked for. */
-export type EventKind = "intercom" | "boss" | "notice" | "timer";
+/** `link` is a teammate's message an ally run was given: it lives in the link inbox, never in this queue. */
+export type EventKind = "intercom" | "boss" | "notice" | "timer" | "link";
 /** One event the service queued. */
 export interface QueuedEvent {
 	id: string;

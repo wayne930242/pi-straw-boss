@@ -14,8 +14,12 @@ export interface RunRecord {
 	id: string;
 	workspace: string;
 	kind: "local" | "ally";
-	/** An ally run: the device and the level it was claimed at (B6). */
+	/** An ally run: the device, its label, the team, and the level it was claimed at (B6). */
 	device?: string;
+	deviceLabel?: string;
+	deviceShort?: string;
+	team?: string;
+	teamName?: string;
 	level?: string;
 	pane: string;
 	/** The Herdr agent name the run was started under; unique per run (the broker treats a name and cwd as one mailbox identity). */
@@ -30,6 +34,8 @@ export interface RunRecord {
 	outcome?: Outcome;
 	/** The ids of the events the run took. */
 	events: string[];
+	/** An ally run: the ids of the inbox messages it was given at its start (at most 5); a message that comes later waits for the next run. */
+	admitted?: string[];
 	/** Claimed once: a second claim for the same run is refused (a server restart's reconnect is the one exception). */
 	claimed?: true;
 	/** The boss started pi in the standing pane by hand. */

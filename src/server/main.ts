@@ -10,6 +10,9 @@ import { AclError, applyAcl, awaitAclMarker } from "./acl.ts";
 import { createGuiLink, elsewhereLink, type GuiLink, inProcessLink, NO_LINK } from "../link/guiport.ts";
 import type { Run } from "../remote.ts";
 import { herdrListens, intercomOf, RESTART_EVERY_MS, runsAs, serverEnv } from "./client.ts";
+import { createAllows } from "./allows.ts";
+import { allyPort } from "./allyport.ts";
+import { createAsks } from "./asks.ts";
 import { cliBeside, createGuiHost, spawnRestart } from "./guihost.ts";
 import { type IntercomModule, loadIntercom, LoaderError } from "./intercom.ts";
 import { createLinkService, type LinkService, type ServiceDeps } from "../link/service.ts";
@@ -137,6 +140,8 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	const trace = (name: string, began: number, facts: Record<string, string> = {}) => log.line("phase", { name, ms: now() - began, at: now() - startedAt, ...facts });
 	const timers: ReturnType<typeof setInterval>[] = [], stops: (() => void)[] = [];
 	let link: LinkService | undefined, linkFirst: Promise<void> | undefined;
+	// The Allows the dialog hub gave (a gate or an approval closed with a yes) and the asks the towers made for their mains: both are held for the tower service (B6).
+	const allows = createAllows({ now }), asks = createAsks(slot, now);
 
 	/** The start cannot go on: told in start-error.json (which `up` and the session looks read) and in the record, and the process leaves with the code. */
 	const abort = (code: "acl" | "loader" | "intercom" | "start", text: string, sddl?: string): ServerHandle => {
@@ -307,6 +312,18 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			// A run's requests go out as its workspace's tower, whatever it says it is.
 			const from = run ? towerId(slot, run.workspace) : phrase(request.from, 200);
 			if (!from || typeof request.body !== "object" || request.body === null) return { ok: false, error: "a link request needs from and body" };
+			// An ally run may ask its own sender's device to confirm a call at `forward`, and nobody else's: the device and the team are the run's, whatever the request says. The answer comes back to the run at its poll.
+			if (run?.kind === "ally") {
+				const body = request.body as Record<string, unknown>;
+				if (body.op === "confirm-request") {
+					const info = towers?.runs.runOf(request.token);
+					if (!info?.device || !info.team || typeof body.dialogId !== "string") return { ok: false, error: "an ally run asks its sender to confirm with a dialog id" };
+					towers!.runs.watchConfirm(request.token, body.dialogId);
+					request.body = { ...body, device: info.device, team: info.team };
+				}
+			}
+			// A test replaces the holder the tower service asks (`options.towers.link`); the requests of runs go the same way.
+			if (o.towers?.link) return { ok: true, answer: await o.towers.link(request.body, from) };
 			if (!slot.primary) return { ok: true, answer: { ok: false, code: "no_link", error: NO_LINK } };
 			if (!link) return { ok: true, answer: { ok: false, code: "no_holder", error: "The link holder is not running in the sb server yet; ask again in a moment" } };
 			return { ok: true, answer: await link.request(request.body, from) };
@@ -435,6 +452,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	const kit = createHeadlessKit({ client: OFFLINE, env: kitEnv, cfg, log: () => {} });
 	const gui = o.gui === false ? undefined : o.gui ?? {};
 	guiHost = gui && createGuiHost({
+		onAllow: (note) => allows.note(note),
 		slot, kit, log, pid, version, started: () => own.started, runs: (record) => runsAs({ alive, startOf }, record), startedLater: gui.startedLater ?? (o.startOf ? async (other) => o.startOf!(other) : (other) => startedLater(other, { hold: false })), startWaitMs: gui.startWaitMs,
 		sessions: async () => (client?.isConnected() ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))),
 		// The primary server holds the link itself (B3), so the GUI asks the holder in this process as the server, which the holder takes GUI requests from; before it runs, the channel reaches the holder's session. A secondary server holds none and its GUI says so (`no_link`, as its `link` request does): the channel would ask the primary's holder as a session that is not the GUI's host.
@@ -466,6 +484,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		},
 	};
 	towers = createTowers({
+		ally: allyPort(() => link), allows, asks,
 		slot, cfg, env, connect: () => mod.connect(), log, pid, startedAt, enabled: () => readTowerRuns(slot.stateDir).enabled, server: serverTools,
 		link: async (body, from) => (!slot.primary ? { ok: false, code: "no_link", error: NO_LINK } : link ? link.request(body, from) : { ok: false, code: "no_holder", error: "The link holder is not running in the sb server yet; ask again in a moment" }),
 		sessions: () => (client ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))), ...o.towers,
@@ -492,6 +511,8 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		link = createLinkService({
 			kit, stateDir: slot.stateDir, version, pid, started: () => own.started,
 			notify: (text, level = "info") => log.line("link-notice", { level, text: phrase(text, 300) }), deps: o.link,
+			// The tower service takes part in the holder's work (B6): an ask answered by a `tower-reply` is the main's, messages for a tower identity the server runs wake an ally run, and a `forward` answer reaches its run.
+			tower: { asks: { take: (q) => asks.take(q) }, served: (identity) => towers?.allyWaiting(identity), confirmed: (to, dialogId, allow) => towers?.runs.confirmed(dialogId, allow) ?? false },
 		});
 		linkFirst = link.start();
 	};

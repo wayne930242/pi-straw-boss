@@ -7,15 +7,18 @@ import { headReader } from "../headwatch.ts";
 import { createTab, headOf, isSub, type Pane, panes, parentOf, type Place, report, type Session, tabs, TOWER_LABEL, towerModel, type Workspace, workspaces } from "../herdr.ts";
 import { type Opened, opener } from "../opener.ts";
 import { netTokens } from "../order.ts";
-import { createReach, type Reach } from "../reach.ts";
+import { stamp } from "../header.ts";
+import { createReach, nameOf, type Reach } from "../reach.ts";
 import type { HerdrEvents } from "../server-watch.ts";
 import type { Config } from "../state.ts";
 import { trustDir } from "../trust/files.ts";
 import type { IntercomModule } from "./intercom.ts";
 import type { Log } from "./log.ts";
 import { secretDir, type Slot, towerId, towerName } from "./record.ts";
-import { ageOf, buildBrief, gatherMains, LOCAL_TOOLS } from "./towerbrief.ts";
-import { createRuns, type Runs, type RunsOptions, type ServiceRef, type ServiceStatus } from "./runs.ts";
+import type { Allows } from "./allows.ts";
+import type { Asks } from "./asks.ts";
+import { ageOf, allyTools, buildAllyBrief, buildBrief, gatherMains, LOCAL_TOOLS } from "./towerbrief.ts";
+import { type AllyPort, createRuns, type Runs, type RunsOptions, type ServiceRef, type ServiceStatus } from "./runs.ts";
 import { addExpect, clearExpect, lastNote, readExpects, readTimer } from "./towerrunstore.ts";
 import { runTool, type ServerTools } from "./runtools.ts";
 import { openSeen, type Seen } from "./towerseen.ts";
@@ -67,6 +70,12 @@ export interface TowersOptions {
 	link?: (body: unknown, from: string) => Promise<unknown>;
 	/** The server's own part of `boss_server` for a run. */
 	server?: ServerTools;
+	/** The link holder's messages for the tower identities, as an ally run takes them (B6; absent in a world without a holder). */
+	ally?: AllyPort;
+	/** The Allows the dialog hub holds, against which an ally run's gated tool call (and a local run's approved `link_request`) is taken. */
+	allows?: Allows;
+	/** The asks the towers made for their mains. */
+	asks?: Asks;
 	/** Hands the service to a test as soon as it is built. */
 	expose?: (towers: Towers) => void;
 }
@@ -90,6 +99,8 @@ export interface Towers {
 	status(): TowerRow[];
 	/** The runs of the services (runs.ts): claims, the run's requests, the boss's events. */
 	runs: Runs;
+	/** Messages wait in the link inbox for this tower identity: ally runs are started for them. */
+	allyWaiting(identity: string): void;
 	/** A tool a run calls (`run-tool`): checked against the token's kind, done as the tower identity. */
 	runTool(request: Record<string, unknown>): Promise<{ text: string; details?: unknown }>;
 	/** The identities leave the broker; tokens and files stay. */
@@ -110,6 +121,8 @@ interface Live {
 	stopped: boolean;
 	/** The messages taken, for dedupe (towerseen.ts); opened when the first message comes. */
 	seen?: Seen;
+	/** What `request-open` answered for the `link_request`s of local runs that are not yet run or dropped: request id → the lines the holder said the request does. */
+	requests: Map<string, string[]>;
 }
 
 export function createTowers(o: TowersOptions): Towers {
@@ -132,6 +145,29 @@ export function createTowers(o: TowersOptions): Towers {
 		live: () => l.state === "live" && Boolean(l.client?.isConnected()),
 		cwd: async () => (await panes(run, l.record.workspace).catch(() => [])).find((p) => p.pane_id === l.record.pane)?.cwd ?? l.record.cwd ?? slot.stateDir,
 		clearDigest: (keys) => digest.drop(l.record.workspace, keys),
+		allyLine: (item) => {
+			const mine = { name: l.record.name, id: l.record.id, role: "tower" as const, workspace: l.record.label };
+			const from = { name: item.label, id: `link:${item.device}`, role: "tower" as const, ...(item.fromWorkspace ? { workspace: item.fromWorkspace } : {}) };
+			return stamp({ from, kind: "tower_send", scope: "tower", to: [mine], reply: item.replyExpected, remote: { device: item.label, short: item.short, team: item.teamName }, ...(item.awaitsReply ? { asks: item.awaitsReply } : {}) }, item.text);
+		},
+		async allyBrief({ run: rec, items, woken }) {
+			const ws = l.record.workspace, all = await workspaces(run), target = all.find((w) => w.workspace_id === ws);
+			if (!target || !l.client) throw new Error("the tower's workspace or its intercom connection is gone");
+			const first = items[0], device = rec.device ?? "";
+			const mains = await gatherMains({ run, now, sessions: () => l.client!.listSessions(), boardDir: join(slot.stateDir, "board"), workspace: target, ledger: [] });
+			const note = lastNote(slot, ws, "ally", device), at = new Date(woken);
+			const line = (text: string) => text.split("\n").find((x) => x.trim()) ?? "";
+			return {
+				text: buildAllyBrief({
+					device: { label: rec.deviceLabel ?? first?.label ?? device.slice(0, 6), short: first?.short ?? device.slice(0, 6), team: first?.teamName ?? rec.team?.slice(0, 6) ?? "", level: rec.level ?? "reply" },
+					workspace: ws, label: l.record.label, woken: `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`, seen: mains.rows,
+					...(note ? { note: { text: note.note, age: ageOf(now() - Date.parse(note.at)) } } : {}),
+					asks: items.filter((i) => i.awaitsReply || i.askedBy).map((i) => ({ ...(i.awaitsReply ? { id: i.awaitsReply } : {}), first: line(i.text), ...(i.askedBy ? { askedBy: i.askedBy } : {}) })),
+					thread: (o.ally?.thread(device) ?? []).map((m) => ({ dir: m.dir, kind: m.kind, text: m.text, age: ageOf(now() - m.at) })),
+					tools: allyTools(rec.level ?? "reply"),
+				}),
+			};
+		},
 		async brief({ events, woken }) {
 			const ws = l.record.workspace, all = await workspaces(run), target = all.find((w) => w.workspace_id === ws);
 			if (!target || !l.client) throw new Error("the tower's workspace or its intercom connection is gone");
@@ -145,7 +181,7 @@ export function createTowers(o: TowersOptions): Towers {
 				digestKeys: lines.map((x) => x.key),
 				text: buildBrief({
 					label: l.record.label, workspace: ws, head: mains.head, woken: `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`, counts, identity: l.record.id,
-					mains: mains.rows, obligations: [...mains.opened, ...readExpects(slot, ws, now()).map((e) => `waiting for a reply from ${e.name} (asked ${ageOf(now() - e.at)} ago): ${e.first}`), ...(timer && timer.at <= now() ? ["your wakeAfter follow-up is due"] : [])], digest: lines.map((x) => x.line),
+					mains: mains.rows, obligations: [...mains.opened, ...(o.asks?.openOf(ws) ?? []).map((a) => `an ask for the main ${a.forName} is open (sent ${ageOf(now() - a.at)} ago): its answer goes to that main, not to you`), ...readExpects(slot, ws, now()).map((e) => `waiting for a reply from ${e.name} (asked ${ageOf(now() - e.at)} ago): ${e.first}`), ...(timer && timer.at <= now() ? ["your wakeAfter follow-up is due"] : [])], digest: lines.map((x) => x.line),
 					...(note ? { note: { text: note.note, age: ageOf(now() - Date.parse(note.at)) } } : {}),
 					flags: [
 						...(crashed.length ? [`${crashed.length} event${crashed.length > 1 ? "s were" : " was"} possibly handled by a run that crashed: check before acting.`] : []),
@@ -156,7 +192,7 @@ export function createTowers(o: TowersOptions): Towers {
 			};
 		},
 	});
-	const runs: Runs = createRuns({ slot, run, sleep, now, log, enabled: o.enabled, max: () => readTowerRuns(slot.stateDir).max, trustDir: trustDir(slot.stateDir), model: () => towerModel(slot.stateDir), ...o.runs });
+	const runs: Runs = createRuns({ slot, run, sleep, now, log, enabled: o.enabled, max: () => readTowerRuns(slot.stateDir).max, trustDir: trustDir(slot.stateDir), model: () => towerModel(slot.stateDir), ...(o.ally ? { ally: o.ally } : {}), ...o.runs });
 
 	const place = (l: Live): Place => ({ paneId: l.record.pane, tabId: l.record.tab, workspaceId: l.record.workspace });
 	const dirOf = (workspace: string) => join(towerDir(slot, workspace));
@@ -347,7 +383,7 @@ export function createTowers(o: TowersOptions): Towers {
 		return !sessions || sessions.some((x) => x.id === held) ? held : undefined;
 	};
 	const adopt = (record: ServiceRecord): Live => {
-		const l: Live = { record, state: "registering", stopped: false };
+		const l: Live = { record, state: "registering", stopped: false, requests: new Map() };
 		const prior = services.get(record.workspace);
 		if (prior && !prior.stopped) return prior;
 		services.set(record.workspace, l);
@@ -485,7 +521,7 @@ export function createTowers(o: TowersOptions): Towers {
 			await lose(existing, "its tab is gone");
 		}
 		// A resident tower of an older build keeps its workspace; it is the tower until it leaves.
-		const draft: Live = { record: { workspace: ws, label: target.label, id: towerId(slot, ws), name: towerName(slot, target.label), pane: "", tab: "", created: "", seq: 0 }, state: "registering", stopped: false };
+		const draft: Live = { record: { workspace: ws, label: target.label, id: towerId(slot, ws), name: towerName(slot, target.label), pane: "", tab: "", created: "", seq: 0 }, state: "registering", stopped: false, requests: new Map() };
 		const resident = await residentOf(draft);
 		if (resident) return { id: resident, workspace: ws, label: target.label, opened: false, resident: true, live: true };
 
@@ -553,9 +589,27 @@ export function createTowers(o: TowersOptions): Towers {
 			link: async (body: Record<string, unknown>) => ((await o.link?.(body, l.record.id)) ?? { ok: false, code: "no_holder", error: "The link holder is not running in the sb server" }) as { ok: boolean; error?: string },
 			server: o.server ?? { status: () => ({}), logs: () => [], restart: () => Promise.reject(new Error("The server cannot restart itself here")) },
 			expect: (to: string, who: string, text: string) => { try { addExpect(slot, ws, { to, name: who, at: now(), first: phrase(text, 80) }, now()); } catch (cause) { error("expects", (cause as Error).message); } },
+			who, identity: l.record.id, requests: l.requests,
+			allow: (q: { toolCallId: string; tool: string; args: unknown }) => (o.allows ? o.allows.take({ pane: who.pane, ...q, sessions: () => l.client!.listSessions() }) : Promise.resolve({ ok: false as const, reason: "this server holds no Allows" })),
+			allowRequest: (q: { toolCallId: string; lines: string[] }) => (o.allows ? o.allows.takeRequest({ pane: who.pane, ...q, sessions: () => l.client!.listSessions() }) : Promise.resolve({ ok: false as const, reason: "this server holds no Allows" })),
+			asks: o.asks ?? { open: () => { throw new Error("this server keeps no asks"); } },
+			...(who.team && o.ally?.project(who.team) ? { project: o.ally.project(who.team)! } : {}),
+			isTower: async (query: string) => {
+				// A tower identity of this server by its id or name, whether or not the broker lists it just now; or any session whose pane is a tower's (a resident tower of the previous build).
+				if ([...services.values()].some((x) => x.record.id === query || x.record.name === query)) return true;
+				const net = await l.reach!.read(), named = net.sessions.filter((x) => x.id === query || x.name === query);
+				return named.some((x) => /^sb-tower-/.test(x.id) || net.ps.find((p) => p.pane_id === x.herdrLocation?.paneId)?.tokens?.sb_role === "tower");
+			},
+			mainOf: async (query: string) => {
+				const net = await l.reach!.read(), named = net.sessions.filter((x) => x.id === query || nameOf(x) === query);
+				if (named.length !== 1) throw new Error(`${named.length ? "Several sessions are named" : "No live session is named or has the id"} "${query}"`);
+				const pane = net.ps.find((p) => p.pane_id === named[0]!.herdrLocation?.paneId);
+				if (pane?.tokens?.sb_role !== "main" || pane.workspace_id !== ws) throw new Error(`${query} is not a main of workspace ${l.record.label}: an ask for a main names one of its mains`);
+				return { id: named[0]!.id, name: phrase(nameOf(named[0]!), 40) };
+			},
 		};
 		try {
-			return await runTool(host, who.kind, name, args);
+			return await runTool(host, who.kind, name, args, typeof request.toolCallId === "string" ? { toolCallId: request.toolCallId } : {});
 		} catch (cause) {
 			// The run was released while the call was under way (a /new, an end): nobody is left to read the failure, so the next run does.
 			if (!runs.runOf(request.token) && who.kind === "local") runs.notice(ws, `${name} failed after your run ended: ${(cause as Error).message}`, `${name}:${phrase((cause as Error).message, 80)}`);
@@ -565,6 +619,7 @@ export function createTowers(o: TowersOptions): Towers {
 
 	const api: Towers = {
 		runTool: runToolFor,
+		allyWaiting: (identity) => runs.pokeAllies(identity),
 		activate,
 		loaded: () => !o.enabled() || loadedAll,
 		ensure,

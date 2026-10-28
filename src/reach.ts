@@ -158,14 +158,14 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit, server:
 		return { name: nameOf(mine) || s.ownName || me(), id: me(), role: role() ?? "session", ...(s.isTower && workspace && workspace === headOf(net.all) ? { head: true } : {}), ...(workspace ? { workspace: workspace.label } : {}) };
 	};
 	/** The message under its header, once for the whole audience: every recipient reads the same line, with the others named in it. */
-	const deliver = async (targets: Session[], message: string, kind: Kind, scope: string, reply: boolean, net: Net) => {
-		const line = stamp({ from: selfParty(net), kind, scope, to: targets.map((x) => partyOf(x, net)), reply, ...(s.remoteOrigin ? { origin: s.remoteOrigin } : {}) }, message);
+	const deliver = async (targets: Session[], message: string, kind: Kind, scope: string, reply: boolean, net: Net, origin?: string) => {
+		const line = stamp({ from: selfParty(net), kind, scope, to: targets.map((x) => partyOf(x, net)), reply, ...(origin ?? s.remoteOrigin ? { origin: (origin ?? s.remoteOrigin)! } : {}) }, message);
 		return Promise.all(targets.map(async (x) => ({ id: x.id, name: nameOf(x), ...(await send(x.id, line)) })));
 	};
 	/** One session by id, with a header. The result is intercom's. */
-	const post = async (to: string, message: string, kind: Kind, scope: string, reply: boolean): Promise<SendResult> => {
+	const post = async (to: string, message: string, kind: Kind, scope: string, reply: boolean, origin?: string): Promise<SendResult> => {
 		const net = await read();
-		const [result] = await deliver([net.sessions.find((x) => x.id === to) ?? { id: to }], message, kind, scope, reply, net);
+		const [result] = await deliver([net.sessions.find((x) => x.id === to) ?? { id: to }], message, kind, scope, reply, net, origin);
 		return result!;
 	};
 	const callTower = async (message: string, workspace: string | undefined, reply = true) => {

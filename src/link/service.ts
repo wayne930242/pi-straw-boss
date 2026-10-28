@@ -59,7 +59,10 @@ export interface ServiceOptions {
 	notify: (text: string, level?: "info" | "warning" | "error") => void;
 	deps?: ServiceDeps;
 	/** The tower service of the same server (towers.ts), when it runs: the asks local towers made for their mains, and what to tell when messages wait for a tower identity it runs. */
-	tower?: Pick<HolderOptions, "asks" | "served">;
+	tower?: Pick<HolderOptions, "asks" | "served"> & {
+		/** An answer to a `forward` confirm for a tower identity the server runs (an ally run waits for it): true when the server took it, so it is not published on the channel. */
+		confirmed?: (tower: string, dialogId: string, allow: boolean) => boolean;
+	};
 }
 
 const NOTICES = 10;
@@ -136,7 +139,9 @@ export function createLinkService({ kit, stateDir, version, started, pid = proce
 			store, boardDir: join(stateDir, "board"), isHolder: () => Boolean(election?.isHolder()), config, stateDir, home, agentDir, attended, net, offer, notify: note,
 			relay: opts.relay ?? ((url, device) => new RelayClient({ url, device })),
 			onDisplaced: () => void look().catch(() => undefined),
-			confirmed: (tower, dialogId, allow) => void publish({ version: 1, type: "confirmed", to: tower, id: dialogId, allow }),
+			confirmed: (to, dialogId, allow) => {
+				if (!tower?.confirmed?.(to, dialogId, allow)) void publish({ version: 1, type: "confirmed", to, id: dialogId, allow });
+			},
 			drainMs: opts.drainMs, presenceMs: opts.presenceMs, boardMinMs: opts.boardMs, offerAgainMs: opts.offerAgainMs, capsMs: opts.capsMs, capsMinMs: opts.capsMinMs,
 			...(tower?.asks ? { asks: tower.asks } : {}), ...(tower?.served ? { served: tower.served } : {}),
 		});
@@ -281,6 +286,8 @@ export function createLinkService({ kit, stateDir, version, started, pid = proce
 			return store;
 		},
 		attended,
+		/** The teams and projects of config.json, read fresh. */
+		config,
 		/** The level this computer gives a device (the policy file's, else `link.trust`, else `reply`): an ally run is claimed at it. */
 		levelOf: createLevelOf({ config, policy: opts.policy, log: (event) => store.log(event), tell: (text, level) => note(text, level) }),
 	};
