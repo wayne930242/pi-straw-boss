@@ -103,6 +103,7 @@ svg { display: block; }
 #done-clear, #sound-try { width: 100%; }
 .lang { text-transform: none; } .lang option { background: var(--bg); color: var(--text); }
 .pair { display: grid; justify-items: center; gap: 12px; text-align: center; color: var(--dim); font-size: 13px; }
+.pair-code { color: var(--text); font: 600 22px var(--mono); letter-spacing: 0.12em; user-select: all; }
 .qr { width: min(100%, 300px); border-radius: 12px; shape-rendering: crispEdges; }
 .devices { display: grid; gap: 8px; width: 100%; text-align: left; border-top: 1px solid var(--line); padding-top: 12px; } .devices h4 { margin: 0; font: 600 12px var(--sans); letter-spacing: 0.08em; text-transform: uppercase; }
 .devices ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; } .devices li { display: flex; align-items: center; justify-content: space-between; gap: 10px; } .devices li span { display: grid; min-width: 0; } .devices li b { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

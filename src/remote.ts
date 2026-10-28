@@ -4,6 +4,7 @@ import { readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { join } from "node:path";
 import { createDevices, SESSION_MS, labelOf } from "./devices.ts";
+import { createTypedCodes } from "./paircode.ts";
 import { qr, qrLines } from "./qr.ts";
 import { forgetStart, startedLater, startOf } from "./startof.ts";
 
@@ -15,18 +16,25 @@ import { forgetStart, startedLater, startOf } from "./startof.ts";
 // headers serve always adds (X-Forwarded-*, Tailscale-*), a second guard, and refuses anything else, so an entry that still points at the
 // local port cannot reach the server at all. A remote request needs Host exactly <MagicDNS name>:8443,
 // no Funnel marker, Tailscale-User-Login equal to this machine's user, and a session cookie (HttpOnly, Secure, SameSite=Strict, scoped to
-// the token path) that only a one-time pairing code from the QR gets: a code works once, within ten minutes. A pairing is durable
+// the token path, and a second copy scoped to the fixed app entry) that only a one-time pairing code from the QR gets: a code works once, within ten minutes. The same pairing can be made by typing a short code into the fixed entry
+// of the installed app (APP, `/sb-app/`, remote listener only: no token, no secret on its pages; see `entry` and `redeem`), because an app has its own cookie jar and its start URL cannot follow the token. A pairing is durable
 // (devices.ts): it survives remote off and on, and ends when the GUI listener ends (a new listener has a new token, so `guihost` unpairs every device), when the desktop unpairs the device, the Tailscale
 // identity changes, or 90 days pass without a use (each use slides the expiry). Remote access is remembered as wanted until turned off
 // explicitly: stopping the server removes the serve entry but not the wish, so the next server turns it on again.
 
 export const PORT = 8443;
+/** The fixed, token-free entry of the installed app on the remote listener (the manifest's start_url there). */
+export const APP = "/sb-app/";
 /** The line under the QR that names the **o** key; a desk shell shows the page itself, so its sessions drop the line with the key (host.ts). */
 export const OPEN_LINE = "o  open one in this computer's browser";
 const CODE_MS = 10 * 60_000, MAX_CODES = 16;
 const FORWARDED = ["x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "forwarded", "via", "tailscale-headers-info", "tailscale-user-login", "tailscale-user-name", "tailscale-funnel-request"];
 export type Run = (args: string[]) => Promise<string>;
 export interface Identity { host: string; login: string }
+/** What the fixed entry says of a GET: `cookie` for a paired device (its cookie's value), `unpaired` for this machine's user without a pairing, `status` for a refusal. */
+export type Entry = { cookie: string } | { unpaired: true } | { status: 403 };
+/** What a typed code did: `cookie` is the new pairing, `wrong` a code that did not work, `status` a refusal (429: too many wrong codes). */
+export type Redeemed = { cookie: string } | { wrong: true } | { status: 403 | 429 };
 /** `origin` for a request let in (`device` the paired device it came from, `reissue` its cookie when the pairing was just renewed); `cookie` for a pairing code just exchanged; `status` for a refusal. */
 export type Verdict = { origin: string; remote: boolean; device?: string; reissue?: string } | { cookie: string } | { status: 401 | 403 };
 
@@ -92,7 +100,11 @@ export async function serveOff(run: Run, host: string, targets: (string | undefi
  *  `ended(device)` is told when a device's streams must end (all of them when it names none). */
 export function createAccess(token: string, ended: (device?: string) => void = () => {}, file?: string) {
 	let remote: Identity | undefined;
-	const codes = new Map<string, number>(), devices = createDevices(file), hash = (c: string) => createHash("sha256").update(c).digest("hex");
+	const codes = new Map<string, number>(), typed = createTypedCodes(CODE_MS, MAX_CODES), devices = createDevices(file), hash = (c: string) => createHash("sha256").update(c).digest("hex");
+	/** A request that comes through `tailscale serve` for this machine's identity: remote on, the exact host, no Funnel marker, this machine's user. */
+	const admitted = (h: IncomingMessage["headers"]) => Boolean(remote) && h.host === remote!.host && !("tailscale-funnel-request" in h) && h["tailscale-user-login"] === remote!.login;
+	const cookieOf = (h: IncomingMessage["headers"]) => /(?:^|;\s*)sb_remote=([0-9a-f]{64})(?:;|$)/.exec(h.cookie ?? "")?.[1];
+	const forget = () => (codes.clear(), typed.clear());
 	const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 	return {
 		get remote() { return remote; },
@@ -118,14 +130,14 @@ export function createAccess(token: string, ended: (device?: string) => void = (
 		enable(id: Identity) {
 			// Another identity voids what the old one paired, and ends its streams.
 			const was = remote ?? devices.identity;
-			if (was?.host !== id.host || was.login !== id.login) (remote && ended(), codes.clear(), devices.clear());
+			if (was?.host !== id.host || was.login !== id.login) (remote && ended(), forget(), devices.clear());
 			remote = id;
 			devices.set({ identity: id, wanted: true });
 		},
 		/** `stop`: the server is going away (a stop, a takeover, the session's end), so remote stays wanted; otherwise it was turned off. Paired devices are kept either way. */
 		disable(stop = false) {
 			remote = undefined;
-			codes.clear();
+			forget();
 			if (!stop) devices.set({ wanted: false });
 			ended();
 		},
@@ -138,6 +150,29 @@ export function createAccess(token: string, ended: (device?: string) => void = (
 			for (const old of codes.keys()) if (codes.size > MAX_CODES) codes.delete(old);
 			return code;
 		},
+		/** A short one-time code to type into the installed app's entry (paircode.ts): shown beside the QR; a new one gives the five tries back. */
+		pairCode(): string | undefined { return remote && typed.issue(); },
+		/** Whether a request has this machine's identity (remote on, the exact host, no Funnel marker, this machine's user), whatever else it carries. */
+		admits: (req: IncomingMessage) => admitted(req.headers),
+		/** The fixed entry's GET (a document load of `/sb-app/`): the same identity checks as a page, then whether this device holds a pairing. No token or secret is needed or given. */
+		entry(req: IncomingMessage): Entry {
+			if (!admitted(req.headers)) return { status: 403 };
+			const cookie = cookieOf(req.headers);
+			return cookie && devices.use(hash(cookie)) ? { cookie } : { unpaired: true };
+		},
+		/**
+		 * The fixed entry's POST: a typed code pairs this device as a scanned QR does (the identity checks, one use, ten minutes). The request must be a form post from the entry's own page
+		 * (`Origin` is the https name, `Sec-Fetch-Site` same-origin when sent), which never counts against the tries.
+		 */
+		redeem(req: IncomingMessage, text: string): Redeemed {
+			const h = req.headers;
+			if (!admitted(h) || req.method !== "POST" || h.origin !== `https://${remote!.host}` || (h["sec-fetch-site"] ?? "same-origin") !== "same-origin" || !String(h["content-type"] ?? "").toLowerCase().startsWith("application/x-www-form-urlencoded")) return { status: 403 };
+			const got = typed.take(new URLSearchParams(text).get("code") ?? "");
+			if (got !== "ok") return got === "locked" ? { status: 429 } : { wrong: true };
+			const cookie = randomBytes(32).toString("hex");
+			devices.add(hash(cookie), labelOf(String(h["user-agent"] ?? "")));
+			return { cookie };
+		},
 		/**
 		 * `path` is the URL path after the token; `listener` is the one the request arrived on, `port` that listener's port. Only the local listener
 		 * lets a request in as local, and only without a forwarding header; a request on the remote listener is remote whatever it claims, and
@@ -147,7 +182,7 @@ export function createAccess(token: string, ended: (device?: string) => void = (
 			const h = req.headers;
 			if (!same(given ?? "", token)) return { status: 403 };
 			if (listener === "local") return h.host === `127.0.0.1:${port}` && !FORWARDED.some((name) => name in h) ? { origin: `http://127.0.0.1:${port}`, remote: false } : { status: 403 };
-			if (!remote || h.host !== remote.host || "tailscale-funnel-request" in h || h["tailscale-user-login"] !== remote.login) return { status: 403 };
+			if (!remote || !admitted(h)) return { status: 403 };
 			const now = Date.now();
 			if (path[0] === "pair" && path.length === 2 && req.method === "GET") {
 				const until = codes.get(path[1]!) ?? 0;
@@ -157,7 +192,7 @@ export function createAccess(token: string, ended: (device?: string) => void = (
 				devices.add(hash(cookie), labelOf(String(h["user-agent"] ?? "")));
 				return { cookie };
 			}
-			const cookie = /(?:^|;\s*)sb_remote=([0-9a-f]{64})(?:;|$)/.exec(h.cookie ?? "")?.[1], used = cookie ? devices.use(hash(cookie)) : undefined; // a document's own requests (/doc/) come without it from Chrome's sandboxed frame: docs.ts takes the capability instead
+			const cookie = cookieOf(h), used = cookie ? devices.use(hash(cookie)) : undefined; // a document's own requests (/doc/) come without it from Chrome's sandboxed frame: docs.ts takes the capability instead
 			if (cookie && used) return { origin: `https://${remote.host}`, remote: true, device: hash(cookie), ...(used.renewed && { reissue: cookie }) };
 			return path[0] === "doc" ? { origin: `https://${remote.host}`, remote: true } : { status: 401 };
 		},
@@ -184,6 +219,8 @@ export function runs({ pid, started }: { pid?: unknown; started?: string }, wrot
 }
 /** The session cookie, good for 90 days from now: issued at pairing and again each time a use renews the pairing. */
 export const cookieFor = (token: string, value: string) => `sb_remote=${value}; Path=/${token}/; Max-Age=${SESSION_MS / 1000}; HttpOnly; Secure; SameSite=Strict`;
+/** The same cookie for the fixed entry (`/sb-app/`): the path does not change with the token, and no other path is covered, so a pairing is never sent to anything else on the host. */
+export const appCookieFor = (value: string) => `sb_remote=${value}; Path=${APP}; Max-Age=${SESSION_MS / 1000}; HttpOnly; Secure; SameSite=Strict`;
 
 /**
  * `/boss gui remote` and `/boss gui remote off` in the session that runs the server. On: Tailscale's identity, the serve entry (pointed at
@@ -223,7 +260,8 @@ export async function switchRemote(gui: { port: number; remotePort: number; toke
 	gui.access.enable(id);
 	// Every link is a new one-time pairing URL: the QR's own, and one per press of c or o in the overlay.
 	const link = () => `https://${id.host}/${gui.token}/pair/${gui.access.pair()}`;
-	const lines = [...qrLines(qr(link())), "", "Scan with a device signed in to Tailscale as", id.login, "", "c  copy a new one-time link", OPEN_LINE, "Esc or q  close"];
+	const code = gui.access.pairCode();
+	const lines = [...qrLines(qr(link())), "", "Scan with a device signed in to Tailscale as", id.login, "", "Or in an installed app, type this code (it works once, within ten minutes):", code!, "", "c  copy a new one-time link", OPEN_LINE, "Esc or q  close"];
 	const plain = `Remote access is on for ${id.login}, tailnet only: https://${id.host}/${gui.token}/`; // `plain`: for a server that starts again, where no QR is shown
 	return { text: `${plain} (scan the QR; it works once, within ten minutes)`, plain, lines, link, changed: true };
 }

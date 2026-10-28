@@ -326,6 +326,7 @@
 	"new_code": "New code",
 	"asking_code": "Asking for a pairing code…",
 	"pair_scan": "Scan it with a phone signed in to Tailscale as this machine's user. It works once, within ten minutes.",
+	"pair_code": "Or, in an installed app, type this code. It works once, within ten minutes.",
 	"no_answer": "The server did not answer.",
 	"remote_off_ask": "Remote access is off. Turn it on so a phone on your tailnet can open this page? Only devices signed in to Tailscale as this machine's user can pair; Funnel is never used.",
 	"remote_turn_on": "Turn on remote access",

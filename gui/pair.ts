@@ -1,5 +1,5 @@
 import { deviceList } from "./devices.ts";
-import { h } from "./dom.ts";
+import { h, nodes } from "./dom.ts";
 import type { Tile } from "./layer.ts";
 import { m } from "./paraglide/messages.js";
 import { post } from "./post.ts";
@@ -30,10 +30,10 @@ export function pairTile(): Tile {
 			code.replaceChildren(h("p", { class: "chat-empty" }, waiting));
 			void post(path, {}).then((r) => {
 				void devices.refresh(); // turning remote on shows Turn off, and a code asked for after a restart may follow a pairing
-				const rows = r.body.rows, url = String(r.body.url ?? "");
+				const rows = r.body.rows, url = String(r.body.url ?? ""), typed = r.body.code;
 				if (r.body.error === "remote_off") return code.replaceChildren(h("p", null, m.remote_off_ask()), on);
 				if (!r.ok || !Array.isArray(rows)) return code.replaceChildren(h("p", null, r.body.reason ?? m.refused({ status: r.status })), path === "remote/on" ? on : again);
-				code.replaceChildren(square(rows.map(String)), h("p", null, m.pair_scan()), h("p", null, h("code", null, new URL(url).host)), again);
+				code.replaceChildren(...nodes(square(rows.map(String)), h("p", null, m.pair_scan()), h("p", null, h("code", null, new URL(url).host)), typeof typed === "string" && h("p", null, m.pair_code(), h("br", null), h("code", { class: "pair-code" }, typed)), again));
 			}, () => code.replaceChildren(h("p", null, m.no_answer()), again));
 		};
 		on.onclick = () => ask("remote/on", m.remote_turning_on());

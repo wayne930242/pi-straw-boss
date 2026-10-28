@@ -729,9 +729,11 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
   the carried-over `gui` block of a starting record still holds the old token and means nothing until then. The costs, accepted:
   - a page or a desk webview left open stops working at every restart or crash (its stream's reconnects meet 403) and has to load the
     new URL: the shell reads the record again at every Moved (a changed `port` or `token`), and a session reads `gui.json` at each use;
-  - a paired phone scans a new QR code, because its cookie is scoped to `Path=/<token>/`; the entries stay in `paired.json`, and remote
+  - a paired phone pairs again, because its cookie is scoped to `Path=/<token>/`: by scanning a new QR code in a browser, or, in an installed
+    app, by typing the short pairing code into the fixed entry `/sb-app/` (decision D25, **Remote app entry**); the entries stay in `paired.json`, and remote
     access, when wanted, comes back by itself with the serve entry pointed at the new remote listener and links that carry the new token;
-  - an installed iOS or Android home-screen app keeps its old start URL and is removed and installed again.
+  - an installed iOS or Android home-screen app no longer has to be removed and installed again: its start URL is the fixed entry (the manifest
+    of a remote page says so), and an app installed before that, with a tokened start URL, is sent there from its dead address.
   Asks while the same listener runs give the same URL. The sessions' restart confirms and the page's Restart button say that the page's
   address is replaced.
 - Upgrades:
@@ -1449,6 +1451,27 @@ What changes:
 - A session in a tower pane whose id is not the workspace's `tower` token is the tower's run. `net.ts`, the dashboard, and `tower_list`
   fold it into the tower unit and never list it as a unit of its own.
 
+### Remote app entry
+
+Decision D25 (boss, 2026-10-28): "固定 app 入口＋在 app 裡輸配對碼". The token rotation and the unpairing on restart (RC3-F002) stay as decided; what changes is
+how an installed app pairs again. Everything below is on the remote listener; the local listener answers `/sb-app/` as any wrong token (403).
+
+- **Entry.** `GET /sb-app/` passes the identity checks of a remote page (remote on, exact MagicDNS host, no Funnel marker, this machine's
+  `Tailscale-User-Login`), else 403. With a device cookie (`sb_remote`, `Path=/sb-app/`) that is a live pairing it answers 302 to the current
+  `/<token>/` and sets both cookies again, but only to a navigation (`Sec-Fetch-Mode` navigate and `Sec-Fetch-Dest` document, or neither sent): a script's fetch gets 403 and no token (RR-F001); without one it answers a page with a code field (no token, no secret, no script, CSP `form-action 'self'`);
+  a document load whose `Sec-Fetch-Site` is not `same-origin` gets the one-time self-reload of a tokened page first, because Android launching the
+  app leaves the SameSite=Strict cookie behind.
+- **Manifest.** A remote page's `manifest.webmanifest` has `start_url` `/sb-app/` and `scope` `/` (the page it leads to must be in scope); the local one is unchanged.
+- **Code.** `access.pairCode()`: 8 characters of a 32-symbol alphabet without I, L, O, U (40 bits), once, 10 minutes, at most 16 waiting, void with remote off or
+  another identity. Shown beside the QR on this computer's page (`remote/pair` and `remote/on` answer `code`) and in the `/boss gui remote` overlay, not in the text
+  the conversation shows. `POST /sb-app/pair` (`application/x-www-form-urlencoded`, 1 KB) is a form post from the entry's own page: `Origin` is the https name and
+  `Sec-Fetch-Site` is `same-origin` when sent, else 403 and nothing counted. Five wrong codes void every waiting code and the entry answers 429 until `pairCode()` is
+  asked again, which only this computer can do (the Phone tile, `/boss gui remote`).
+- **Cookies.** A pairing, by QR or code, and each renewal set the cookie twice: `Path=/<token>/` and `Path=/sb-app/`, never `Path=/`, so the pairing is not
+  sent to other paths on the host (a cookie has no port).
+- **Old installs.** A document load at a dead token by this machine's user, or at the current token with no pairing and `Sec-Fetch-Site: same-origin`, answers 302 to
+  `/sb-app/`: an app installed before the entry (start URL a tokened address) finds it by itself.
+
 ## `gui.json` and its successor (for straw-boss-desk's owner)
 
 This section stands alone, so straw-boss-desk's owner can review it without the rest. The owner agreed to it on 2026-10-26 (D11).
@@ -1800,7 +1823,11 @@ trials), unchanged otherwise.
 ## Risks
 
 - **Model-written text to an ally is not scrubbed.** `allyLabel` covers the labels and names the code reads from Herdr and the board. What a model writes itself (a `tower_send` body, the args of a confirm request) leaves as written; the scrub cannot tell a path in prose from one the boss meant to send. `boss_status`, `tower_list`, `board_read`, presence, and the brief show an ally only the workspaces and sessions inside the project its sender's team binds.
-- **A squatter that lets the port go (RC3-F002, closed by rotating the token on every new listener).** Another account that binds the port during a crash or restart gap receives the open page's reconnect (token in the path, CSRF secret in its requests) and can free the port again. The GUI therefore keeps no token across a gap: every listener that starts has a token and CSRF secret of its own (**GUI token and CSRF secret**), the old ones answer 403, and the remote serve entry is pointed at the new remote listener. The cost, decided by the user, is that every crash, restart, or upgrade ends the open pages (reopen `/boss gui`) and a paired phone scans the QR code again.
+- **Remote entry residuals (D25, RR-F002, RR-F003, crash-gap SW).**
+  - *Loopback forger.* Another local account can reach `127.0.0.1:<remotePort>` and send the Host and `Tailscale-User-Login` it reads from `tailscale status`; loopback trust of those headers is the existing design and cannot be improved there. It can POST wrong codes and hold the typing lock (429) until the next `pairCode()`, and 302-vs-403 at a dead token or `/sb-app/` tells it whether a host and login pair is live. It cannot guess a code: 5 tries per issued code against at most 16 live codes (about 7e-11 per issue), and a lock never blocks a code issued later because `pairCode()` gives the tries back. Accepted: denial of the typed pairing only (QR pairing still works), plus an identity oracle.
+  - *Cookie port.* The cookie at `Path=/sb-app/` has no port, so any other HTTPS service on this MagicDNS name (another `tailscale serve` entry) sees the pairing cookie; no cookie attribute fixes this (`__Host-` needs `Path=/`). Anything that can also reach the remote listener on loopback can then obtain the token.
+  - *Remote origin SW squatter (open; ticket note "remote origin SW squatter").* A crash-gap squatter on the remote port can register a service worker or keep a script on `https://<host>:8443`, which RC3-F002's token rotation does not remove. It sees every later URL, including `/<token>/pair/<code>` and `/<token>/`. D25 adds no reach (the old tokened start URL already led to it), though an open page there is now enough to see the entry. Open: answer a service-worker script update with 404, or send `Clear-Site-Data: "storage"` on the entry. No code yet.
+- **A squatter that lets the port go (RC3-F002, closed by rotating the token on every new listener).** Another account that binds the port during a crash or restart gap receives the open page's reconnect (token in the path, CSRF secret in its requests) and can free the port again. The GUI therefore keeps no token across a gap: every listener that starts has a token and CSRF secret of its own (**GUI token and CSRF secret**), the old ones answer 403, and the remote serve entry is pointed at the new remote listener. The cost, decided by the user, is that every crash, restart, or upgrade ends the open pages (reopen `/boss gui`) and a paired phone pairs again (a QR code in a browser; in an installed app a typed code at the fixed entry, D25), where it first also meant removing and installing a home-screen app again.
 - **The server is now a single point.** While it is down, every workspace lacks a live tower. Mains survive a restart while `restarting`
   is fresh and through the guard's 15 s grace after that, and the broker keeps mail for 24 h, but a server that stays down demotes mains.
   The session looks and the supervisor keep that window short, and `boss_server status` and the log say why it is down.
@@ -1859,6 +1886,7 @@ straw-boss-desk's owner also agreed to D11.
 | D20 | The work board fills itself | The board fills itself from the main's todo list and name, and `board_set` overrides it (2026-10-28, tower experience; D16 and D17 belong to the standing prompt, D18 to D24 to the tower delta). A main writes its own entry from its todo list and its name, scrubbed of paths outside the project, URLs, emails, and token shapes; `board_set` stands until the todos or the name move, and `board_set { auto: true }` hands it back. Q1 = A ("allies get `now` and the done count of an auto entry only") is **superseded** by the boss on 2026-10-28: "收緊：自動的只給名字＋進度": an auto entry gives allies the main's name and the done count (`<name> (3/5)`), no task text; a `board_set` entry goes whole (Straw Link spec, **Auto-fill**; built in T2). |
 | D22 | Event runs stay fresh; the tower's memory is bounded and the boss's | "event runs stay fresh. A bounded tower memory (the boss's standing instructions, decisions, and open waits), editable in the GUI, sits beside the handoff note." Q3 = A (a run keeps one by a verbatim quote of the boss's words, checked by the server) is replaced on 2026-10-28: "改成提議＋你確認". A tower run can only **propose** a standing instruction or a decision (and retiring one); it takes effect only when the boss confirms it, with `/boss memory` or in the GUI. Waits stay run-written. Ally runs never see memory (**Tower memory**). |
 | D23 | pi first, the GUI mirrors | "不該把 GUI 當成必備的，所有操作都應該走 pi 介面，GUI 只是接這個行為": every memory operation is a `/boss memory` command in any joined pi session, and the GUI's panel and card call the same server function with the same rev check and add nothing of their own. A slash command is the boss's typed input only: no tool, run token, ally, or link reaches it (**Tower memory**). |
+| D25 | An installed app after a restart (remote access; boss, 2026-10-28) | Live on 0.46.0: the GUI token rotates on every new listener and paired devices are cleared (RC3-F002), so a phone's home-screen app kept the old tokened start URL, got 403 for good, and on iOS (the app has its own cookie jar) scanning the QR in Safari never paired it. The boss: "固定 app 入口＋在 app 裡輸配對碼". The rotation and the unpairing on restart stay. The remote listener gets a fixed, token-free entry `/sb-app/` (the remote manifest's `start_url`); with a valid device cookie it redirects to the current page, without one it shows a field for a short pairing code (8 characters, 40 bits, once, 10 minutes, void after 5 wrong tries until a new code is asked for on this computer, the same identity checks as the QR, a CSRF-checked POST); the pairing sets the device cookie for `Path=/<token>/` and for `Path=/sb-app/` (never `Path=/`, so it is not sent to other paths on the host). The code is shown beside the QR on this computer's page and in the `/boss gui remote` overlay. The local listener is unchanged, and no token or secret is on the entry's pages (**Remote app entry**). |
 | D26 | The GUI composer continues the boss conversation | Q2 = A, 2026-10-28: "The GUI composer continues the same boss conversation as `tower>` (one per workspace)." The GUI, the prompt, and `/boss tower` call one server function; a conversation resumes the last boss session under the checks of **The boss conversation**, and an event run stays fresh. |
 
 ## Review record
