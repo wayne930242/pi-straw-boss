@@ -36,7 +36,7 @@ export function drawWorkspace(host: HTMLElement, scene: Readonly<Scene>) {
 	text(root, ".title .tstate", base.tower ? m.control_tower({ state: statusLine(base.tower.service, base.tower.mark, (mk) => LABEL[mk]()) }) : m.no_tower());
 	text(root, ".title .tqueue", queueChip(base.tower?.service) ?? "");
 	fillAllies(root.querySelector(".title .allies")!, base.id, base.tower?.service);
-	fillNotices(root.querySelector(".tower-notices")!, base.id, base.tower?.service);
+	fillNotices(root.querySelector(".tower-notices")!, base.id, base.tower?.service, base.tower?.key);
 	sync(root.querySelector(".tower-drones")!, base.tower?.subs ?? [], tokenEl, (el, s) => (el.classList.add("drone"), fillToken(el, s, base.id)));
 	const all = [...(base.tower?.subs ?? []), ...base.tabs.flatMap((t) => t.units.flatMap((u) => [u, ...u.subs]))];
 	[base.tabs.length, all.length, all.filter((u) => u.mark === "working").length, all.filter((u) => u.mark === "waiting").length].forEach((n, i) => (root.querySelectorAll("dd")[i]!.textContent = String(n)));

@@ -409,6 +409,8 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 				if (!workspace || typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return Promise.resolve({ ok: false, error: `${request.cmd} needs a workspace and the prompt's pid` });
 				return towers.prompt(request.cmd, workspace, pid);
 			}
+			// The boss's memory (towermemory.ts `memoryRequest`): `/boss memory` in a pi session is the GUI panel's request on the same function. A run's token never gets here (rungate.ts refuses it).
+			case "tower-memory": return workspace && typeof request.json === "object" && request.json !== null ? answer(async (t) => ({ ...t.memory(workspace, request.json as Record<string, unknown>) })) : Promise.resolve({ ok: false, error: "tower-memory needs a workspace and a request" });
 			case "tower-retry": return workspace ? answer(async (t) => (t.runs.retry(workspace), {})) : Promise.resolve({ ok: false, error: "tower-retry needs a workspace" });
 			case "tower-deliver": case "tower-drop": {
 				const id = text(request.id, 64);
@@ -484,6 +486,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			has: (workspace) => towers?.runs.view(workspace) !== undefined,
 			live: (workspace) => Boolean(towers?.runs.status(workspace)?.run),
 			event: async (workspace, text) => { try { return (towers!.runs.boss(workspace, text, "the boss (GUI)"), { ok: true }); } catch (error) { return { ok: false, error: (error as Error).message }; } },
+			memory: (workspace, json) => towers!.memory(workspace, json),
 			act: async (workspace, what, id) => { try { return (what === "retry" ? towers!.runs.retry(workspace) : what === "deliver" ? towers!.runs.deliverAgain(workspace, id!) : towers!.runs.dropParked(workspace, id!), { ok: true }); } catch (error) { return { ok: false, error: (error as Error).message }; } },
 		},
 	});

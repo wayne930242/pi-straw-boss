@@ -57,12 +57,14 @@ export interface ToolHost {
 	isTower(session: string): Promise<boolean>;
 	/** The live main of this tower's workspace named by id or name (a local run asks for it); throws when there is none or it is ambiguous. */
 	mainOf(query: string): Promise<{ id: string; name: string }>;
+	/** `tower_memory` of a local run (towermemory.ts): it proposes, and the boss confirms elsewhere. */
+	memory(args: Record<string, unknown>): Promise<ToolResult>;
 	now(): number;
 }
 
 /** The tools an ally run may call at all; `call_tower`, `boss_server`, and `link_request` are refused by its kind. */
 const ALLY = new Set(["boss_status", "tower_list", "board_read", "tower_send", "tower_reply", "boss_open_main", "boss_close_main"]);
-export const TOOLS = ["boss_status", "tower_list", "board_read", "call_tower", "tower_send", "tower_reply", "boss_open_main", "boss_close_main", "boss_server", "link_request"] as const;
+export const TOOLS = ["boss_status", "tower_list", "board_read", "call_tower", "tower_send", "tower_reply", "boss_open_main", "boss_close_main", "boss_server", "link_request", "tower_memory"] as const;
 /** The tools an ally run's gate lets through without a confirm below `dispatch`: reading, and writing to its sender (checked below). */
 const FREE = new Set(["boss_status", "tower_list", "board_read"]);
 
@@ -231,6 +233,8 @@ async function localTool(host: ToolHost, name: string, args: Record<string, unkn
 		}
 		case "link_request":
 			return linkRequest(host, args, extra);
+		case "tower_memory":
+			return host.memory(args);
 		default: {
 			// boss_server
 			const action = args.action;

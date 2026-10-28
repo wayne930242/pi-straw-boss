@@ -7,7 +7,7 @@ import { alive as pidAlive } from "../remote.ts";
 import { rememberStart, startOf as processStartOf, startedLater as processStartedLater } from "../startof.ts";
 import { assertSettingsSafe } from "../trust/settings.ts";
 import { waitPastTrust } from "../trust/wait.ts";
-import type { TowerView } from "../net.ts";
+import type { MemorySummary, TowerView } from "../net.ts";
 import { herdrCode } from "./herdrcode.ts";
 import { chain, isWrapper, leafOf, type Proc, type Procs, readProcs } from "./lineage.ts";
 import type { Log } from "./log.ts";
@@ -123,7 +123,9 @@ export interface ServiceRef {
 	/** A local run ended: the pane is free for the prompt again. */
 	freed(): void;
 	/** The brief for a run: the server builds it from the net, the opener's ledger, the digest, and the last note. */
-	brief(input: { events: QueuedEvent[]; woken: number; run: RunRecord }): Promise<{ text: string; digestKeys: string[] }>;
+	brief(input: { events: QueuedEvent[]; woken: number; run: RunRecord }): Promise<{ text: string; digestKeys: string[]; expired?: string[] }>;
+	/** The expired waits a brief showed are shown now: the run took its first poll. */
+	shown?(ids: string[]): void;
 	/** Drops the digest lines a run's brief showed. */
 	clearDigest(keys: string[]): Promise<void>;
 	/** The brief for an ally run: the server builds it from the sender, what the sender may see, the device's last ally note, the run's asks, and the thread with the device. */
@@ -134,6 +136,8 @@ export interface ServiceRef {
 	renewPane?(runId: string): Promise<string | undefined>;
 	/** Whether the standing pane is being replaced: a pi that turns up in it meanwhile is not admitted. */
 	renewing?(): boolean;
+	/** The tower's memory in counts for the GUI's snapshot (towermemory.ts). */
+	memory?(): MemorySummary;
 }
 
 interface Active {
@@ -162,6 +166,8 @@ interface Active {
 	/** When the process start time was last compared with the recorded one (a `ps` call on macOS and Linux): once at first, then every `lost`. */
 	startChecked?: number;
 	digestKeys: string[];
+	/** The expired waits of memory its brief showed, marked shown at its first poll (towermemory.ts). */
+	expired?: string[];
 	/** Events handed to the run and not yet confirmed `taken`. */
 	offered: Map<string, QueuedEvent>;
 	/** A run found on disk after a server restart that has not reconnected yet. */
@@ -781,8 +787,9 @@ export function createRuns(o: RunsOptions) {
 	/** Issues the run's token and its brief. */
 	const issue = async (a: Active, hand?: true): Promise<ClaimReply> => {
 		const svc = a.svc, ally = a.rec.kind === "ally";
-		const built = ally ? { ...(await svc.ref.allyBrief({ run: a.rec, items: itemsOf(a, true), woken: a.started })), digestKeys: [] as string[] } : await svc.ref.brief({ events: waitingOf(svc), woken: a.started, run: a.rec });
+		const built = ally ? { ...(await svc.ref.allyBrief({ run: a.rec, items: itemsOf(a, true), woken: a.started })), digestKeys: [] as string[], expired: [] as string[] } : await svc.ref.brief({ events: waitingOf(svc), woken: a.started, run: a.rec });
 		a.digestKeys = built.digestKeys;
+		a.expired = built.expired?.length ? built.expired : undefined;
 		a.token = randomBytes(24).toString("hex");
 		a.lastPoll = now();
 		a.recovering = undefined;
@@ -874,6 +881,8 @@ export function createRuns(o: RunsOptions) {
 		const a = of(req.token);
 		if (!a || a.ended) return unknown;
 		a.lastPoll = now();
+		// The run is up and asking: what its brief showed as expired is shown (a run that never gets here shows it again to the next).
+		if (a.expired) (a.svc.ref.shown?.(a.expired), (a.expired = undefined));
 		const command = a.commands.shift();
 		if (command) return { ok: true as const, command };
 		if (a.terminating !== undefined || a.closing !== undefined) return { ok: true as const };
@@ -1137,6 +1146,12 @@ export function createRuns(o: RunsOptions) {
 			const svc = find(workspace);
 			return svc?.run?.rec.file ?? listRuns(slot, workspace).filter((r) => r.kind === "local" && r.file).at(-1)?.file;
 		},
+		/** The boss messages a local run took, oldest first: the ones a memory proposal may cite (towermemory.ts). A message offered and not confirmed is not one. */
+		bossEvents(token: unknown): { id: string; text: string }[] {
+			const a = of(token);
+			if (!a || a.ended || a.rec.kind !== "local") return [];
+			return readQueue(slot, a.rec.workspace).filter((e) => e.kind === "boss" && e.taken?.run === a.rec.id).map((e) => ({ id: e.id, text: e.text }));
+		},
 		/**
 		 * The pi session file the run's pane reports, kept in the record. An ally run's file is kept only when it is named for the pi session the run reports (`<time>_<session id>.jsonl`, as pi names it), so a run cannot
 		 * hand the GUI another session's file; the same-user residual (the run reports both) is in docs/how-it-works.md.
@@ -1198,7 +1213,8 @@ export function createRuns(o: RunsOptions) {
 			if (!status) return undefined;
 			const rows = api.queue(workspace).map((e) => ({ text: phrase(`${e.kind}${e.from?.name ?? e.from?.id ? ` · ${e.from?.name ?? e.from?.id}` : ""}: ${e.text.split("\n").find((l) => l.trim()) ?? ""}`, 240), as: "followUp" as const }));
 			const file = api.file(workspace), allyFiles = Object.fromEntries([...(find(workspace)?.allies.values() ?? [])].flatMap((a) => (a.rec.file ? [[a.rec.id, a.rec.file]] : [])));
-			return { ...status, queue: rows, ...(file ? { file } : {}), ...(Object.keys(allyFiles).length ? { allyFiles } : {}) };
+			const memory = find(workspace)?.ref.memory?.();
+			return { ...status, ...(memory ? { memory } : {}), queue: rows, ...(file ? { file } : {}), ...(Object.keys(allyFiles).length ? { allyFiles } : {}) };
 		},
 	};
 	return api;

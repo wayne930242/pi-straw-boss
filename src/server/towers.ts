@@ -24,6 +24,7 @@ import { addAnswer, addRoute, ALLY_LEDGER, type Peer, readAnswers, removeAnswer,
 import { type AllyItem, type AllyPort, createRuns, type Runs, type RunsOptions, type ServiceRef, type ServiceStatus } from "./runs.ts";
 import { addExpect, clearExpect, lastNote, readExpects, readTimer } from "./towerrunstore.ts";
 import { runTool, type ServerTools } from "./runtools.ts";
+import { hasWaitOn, markShown, memoryRequest, memorySection, memorySummary, memoryTool, noteMessage, readMemory } from "./towermemory.ts";
 import { openSeen, type Seen } from "./towerseen.ts";
 import { readTowerRuns } from "./towerruns.ts";
 import { appendEvent, deleteService, listServices, purgeAll, purgeQueues, putLedger, queueLength, readLedger, readService, type ServiceRecord, towerDir, writeService } from "./towerstore.ts";
@@ -112,6 +113,8 @@ export interface Towers {
 	prompt(cmd: "prompt-poll" | "prompt-leave" | "prompt-gone", workspace: string, pid: number): Promise<PromptReply | { ok: true }>;
 	/** Messages wait in the link inbox for this tower identity: ally runs are started for them. */
 	allyWaiting(identity: string): void;
+	/** The GUI panel's request on a workspace's memory (`POST tower/<workspace>/memory`, towermemory.ts `memoryRequest`). */
+	memory(workspace: string, json: Record<string, unknown>): { status: number; body: Record<string, unknown> };
 	/** A tool a run calls (`run-tool`): checked against the token's kind, done as the tower identity. */
 	runTool(request: Record<string, unknown>): Promise<{ text: string; details?: unknown }>;
 	/** The identities leave the broker; tokens and files stay. */
@@ -165,6 +168,12 @@ export function createTowers(o: TowersOptions): Towers {
 		clearDigest: (keys) => digest.drop(l.record.workspace, keys),
 		renewPane: (runId) => renew(l, runId),
 		renewing: () => l.renewing === true,
+		// The run that was shown an expired wait has polled: it will not be shown again (towermemory.ts).
+		shown: (ids) => { try { markShown(slot, l.record.workspace, now(), ids); } catch (cause) { error("memory", (cause as Error).message); } },
+		memory: () => {
+			const { memory, problem } = readMemory(slot, l.record.workspace, now());
+			return { ...memorySummary(memory), ...(problem ? { problem } : {}) };
+		},
 		allyLine: (item) => {
 			const mine = { name: allyLabel(l.record.name), id: l.record.id, role: "tower" as const, workspace: allyLabel(l.record.label) };
 			// An answer a local session gave to what the run asked or opened: no verified peer header, the session is local; the device's next run reads it as data.
@@ -199,11 +208,14 @@ export function createTowers(o: TowersOptions): Towers {
 			for (const e of events) counts[e.kind] = (counts[e.kind] ?? 0) + 1;
 			const crashed = events.filter((e) => e.flag === "crash"), oldest = events.map((e) => now() - Date.parse(e.at)).filter(Number.isFinite).sort((a, b) => b - a)[0];
 			const at = new Date(woken);
+			// The boss's standing instructions and decisions and the open waits (towermemory.ts): a local brief only, never an ally's. An expired wait is shown once.
+			const kept = readMemory(slot, ws, now()), section = memorySection(kept.memory, now(), kept.problem);
 			return {
 				digestKeys: lines.map((x) => x.key),
+				expired: section.expired,
 				text: buildBrief({
 					label: l.record.label, workspace: ws, head: mains.head, woken: `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`, counts, identity: l.record.id,
-					mains: mains.rows, obligations: [...mains.opened, ...(o.asks?.openOf(ws) ?? []).map((a) => `an ask for the main ${a.forName} is open (sent ${ageOf(now() - a.at)} ago): its answer goes to that main, not to you`), ...readExpects(slot, ws, now()).map((e) => `waiting for a reply from ${e.name} (asked ${ageOf(now() - e.at)} ago): ${e.first}`), ...(timer && timer.at <= now() ? ["your wakeAfter follow-up is due"] : [])], digest: lines.map((x) => x.line),
+					memory: section.text, mains: mains.rows, obligations: [...mains.opened, ...(o.asks?.openOf(ws) ?? []).map((a) => `an ask for the main ${a.forName} is open (sent ${ageOf(now() - a.at)} ago): its answer goes to that main, not to you`), ...readExpects(slot, ws, now()).map((e) => `waiting for a reply from ${e.name} (asked ${ageOf(now() - e.at)} ago): ${e.first}`), ...(timer && timer.at <= now() ? ["your wakeAfter follow-up is due"] : [])], digest: lines.map((x) => x.line),
 					...(note ? { note: { text: note.note, age: ageOf(now() - Date.parse(note.at)) } } : {}),
 					flags: [
 						...(crashed.length ? [`${crashed.length} event${crashed.length > 1 ? "s were" : " was"} possibly handled by a run that crashed: check before acting.`] : []),
@@ -240,6 +252,19 @@ export function createTowers(o: TowersOptions): Towers {
 
 	// --- the identity -------------------------------------------------------------------------------------------------------------------------------------------------------------
 
+	/**
+	 * A wait on a session now has a message to look at (whether it answers the wait is the run's to judge). The id on the message is the broker's, so the wait is marked only when the net the server reads
+	 * (Herdr's panes and the broker's sessions) shows a live session with that id in this tower's workspace.
+	 */
+	const markAnswered = async (l: Live, session: string): Promise<void> => {
+		try {
+			const ws = l.record.workspace;
+			if (!hasWaitOn(slot, ws, session)) return;
+			const live = (await l.reach?.read())?.sessions.find((x) => x.id === session);
+			if (live?.herdrLocation?.workspace?.id !== ws) return;
+			for (const id of noteMessage(slot, ws, now(), session)) log.line("tower-memory", { workspace: ws, op: "answered", id });
+		} catch (cause) { error("memory", (cause as Error).message); }
+	};
 	const wire = (l: Live, client: IntercomLike) => {
 		client.on("message", (from: Session, message: Incoming) => {
 			// Written to disk with a flush, then receipted, then remembered (towerseen.ts). The receipt `queued` goes only after the flush: the broker waits for it, and a sender whose message is not
@@ -259,6 +284,7 @@ export function createTowers(o: TowersOptions): Towers {
 					const written = appendEvent(slot, l.record, { kind: "intercom", from: { id: from.id, ...(from.name ? { name: from.name } : {}) }, text: message.content.text, at: new Date(now()).toISOString(), messageId: message.id });
 					seen.add(from.id, message.id, message.content.text);
 					clearExpect(slot, l.record.workspace, from.id, now());
+					void markAnswered(l, from.id);
 					log.line("tower-event", { workspace: l.record.workspace, kind: "intercom", from: from.id, seq: written.seq });
 					runs.poke(l.record.workspace);
 				}
@@ -728,6 +754,14 @@ export function createTowers(o: TowersOptions): Towers {
 				const net = await l.reach!.read(), named = net.sessions.filter((x) => x.id === query || x.name === query);
 				return named.some((x) => /^sb-tower-/.test(x.id) || net.ps.find((p) => p.pane_id === x.herdrLocation?.paneId)?.tokens?.sb_role === "tower");
 			},
+			memory: (margs: Record<string, unknown>) => memoryTool({
+				slot, workspace: ws, run: who.id, now, log, bossEvents: () => runs.bossEvents(request.token),
+				session: async (query: string) => {
+					const net = await l.reach!.read(), named = net.sessions.filter((x) => x.id === query || nameOf(x) === query);
+					if (named.length !== 1) throw new Error(`${named.length ? "Several sessions are named" : "No live session is named or has the id"} "${query}"`);
+					return { id: named[0]!.id, name: phrase(nameOf(named[0]!), 40) };
+				},
+			}, margs),
 			mainOf: async (query: string) => {
 				const net = await l.reach!.read(), named = net.sessions.filter((x) => x.id === query || nameOf(x) === query);
 				if (named.length !== 1) throw new Error(`${named.length ? "Several sessions are named" : "No live session is named or has the id"} "${query}"`);
@@ -747,6 +781,10 @@ export function createTowers(o: TowersOptions): Towers {
 
 	const api: Towers = {
 		runTool: runToolFor,
+		memory: (workspace, json) => {
+			if (!services.has(workspace)) throw new Error(`The sb server stands in for no tower of workspace ${workspace}`);
+			return memoryRequest(slot, workspace, now(), json, log);
+		},
 		allyWaiting: (identity) => runs.pokeAllies(identity),
 		activate,
 		loaded: () => !o.enabled() || loadedAll,

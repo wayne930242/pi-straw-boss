@@ -338,7 +338,7 @@ svg { display: block; }
 .tower-notices .tnote .tnote-fail { flex: 1 1 100%; color: var(--err-soft); font-size: 0.95em; } .tower-notices .tnote .tnote-fail:empty { display: none; }
 .tower-notices .tnote button:disabled { opacity: 0.6; cursor: progress; }
 /* In the comms the same rows sit between the log and the composer. */
-.tower-notes { margin: 0 16px 8px; } .tower-notes:has(> .tower-notices:empty) { display: none; } .tower-notes .tower-notices { display: grid; gap: 6px; min-width: 0; }
+.tower-notes { margin: 0 16px 8px; } .tower-notes:has(> .tower-notices:empty):not(:has(> .tower-memory:not([hidden]))) { display: none; } .tower-notes .tower-notices { display: grid; gap: 6px; min-width: 0; }
 /* The tower's queue on its map card, and the sentence that stands where a standing tower's terminal would be. */
 /* The state line may be long (state, last run, failures), so a base's own line wraps instead of cutting the queue count off. */
 .base:not(.ally) > header .title p { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 0; white-space: normal; overflow: visible; }
@@ -943,3 +943,10 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .link-open-invite { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .teams-tile [data-armed="true"] { color: var(--amber); }
 @media (max-width: 640px) { .link-roster thead { display: none; } .link-roster tr { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 8px; padding: 6px 0; border-bottom: 1px solid var(--line); } }
+
+/* The tower's memory in its comms: the boss's standing instructions and decisions, and the tower's waits (gui/towermemory.ts). */
+.tower-memory .tmem > summary { cursor: pointer; display: flex; gap: 8px; align-items: baseline; font-size: 0.85em; } .tower-memory .tmem-counts { opacity: 0.7; }
+.tmem-body { display: grid; gap: 10px; margin-top: 6px; font-size: 0.85em; min-width: 0; } .tmem-body h4 { margin: 0 0 4px; font-size: 1em; } .tmem-body h4 small { margin-left: 6px; opacity: 0.6; }
+.tmem-body ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; } .tmem-body li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.tmem-body .tmem-text { flex: 1 1 14em; min-width: 0; overflow-wrap: anywhere; } .tmem-body li small { opacity: 0.65; } .tmem-ended .tmem-text { text-decoration: line-through; opacity: 0.6; }
+.tmem-body input { flex: 1 1 12em; min-width: 0; } .tmem-add { display: flex; gap: 6px; margin-top: 4px; } .tmem-empty, .tmem-note { margin: 0; opacity: 0.7; } .tmem-body .tnote-fail { color: var(--err-soft); } .tmem-body .tnote-fail:empty { display: none; }

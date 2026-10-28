@@ -30,6 +30,7 @@ import { qr } from "./qr.ts";
 //   POST /<token>/api/close/stash {workspace, name}                                       checks and records a base, then closes it as close/base does (stash.ts); a paired device may, as it may close/base
 //   POST /<token>/api/dirs, open/base, open/member, open/main                            a folder picker, a new base with a member, a new member, a new main (spawn.ts)
 //   POST /<token>/api/trust/answer {id, digest, choice, answerId}                       answers a project trust question (trust/serve.ts); a paired device may, as it may answer a relayed confirm
+//   POST /<token>/api/tower/<workspace>/memory {op, …}                                   the tower's memory panel (towermemory.ts `memoryRequest`, the very function `/boss memory` reaches over the control socket's `tower-memory`): read, add, edit, delete, resolve, confirm or reject a run's proposal; a write carries the rev it read (409 `rev` when the file moved on); a paired device may, as it may use the composer
 //   POST /<token>/api/link/<name> {…}                                                    Straw Link's team settings, through the link holder (link.ts of the page): state, create, invite, decide, join-start, trust, …
 //                                                                                        This computer's page only, except `state` (without a pending invite's text) and `confirm-answer`, which a paired device may do like it answers any confirm
 //   POST /<token>/api/server/stop {by, take}                                             stops the GUI listeners: an older session's /boss gui stop or takeover (never remote)
@@ -56,6 +57,8 @@ export interface TowerPanel {
 	live(workspace: string): boolean;
 	event(workspace: string, text: string): Promise<{ ok: boolean; error?: string }>;
 	act(workspace: string, what: "retry" | "deliver" | "drop", id?: string): Promise<{ ok: boolean; error?: string }>;
+	/** The memory panel's request (towermemory.ts `memoryRequest`): read the boss's standing instructions, decisions, and waits, or change them as the boss; a write names the rev it read. */
+	memory?(workspace: string, json: Record<string, unknown>): Promise<Reply> | Reply;
 }
 /** What a paired device may ask: read the state, and answer a forwarded confirm. Everything else changes who may command this computer, so only its own page does it. */
 const REMOTE_LINK = ["state", "confirm-answer"];
@@ -169,6 +172,7 @@ export function createControl({ link, server: panel, lookup, call, csrf, canonic
 			return { status: 200, body };
 		}
 		if (scope === "tower") {
+			if (action === "memory") return tower?.memory && tower.has(key) ? tower.memory(key, read.json) : no(404, "not_found", "No such tower.");
 			const what = ["retry", "deliver", "drop"].find((w) => w === action);
 			if (!tower || !what || !tower.has(key)) return no(404, "not_found", "No such tower.");
 			const id = typeof read.json.id === "string" && read.json.id.length <= 64 ? read.json.id : undefined;

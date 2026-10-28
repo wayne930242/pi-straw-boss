@@ -57,6 +57,8 @@ and it runs from the installed pi-straw-boss package.
   boss message from the GUI, or a notice the server raises (**Wake triggers**).
 - **Brief**: the short context a run gets at its start (**The brief**).
 - **Handoff note**: what a run leaves for the next run of the same kind (`tower_done`).
+- **Tower memory**: `tower/<workspace id>/memory.json`. It holds the boss's standing instructions and decisions, the waits the tower keeps, and
+  the proposals runs made that the boss has not answered; every local brief carries it (**Tower memory**).
 
 ## Reality anchor
 
@@ -843,6 +845,8 @@ Between runs the standing pane is not a bare shell, so that the tower keeps its 
   session file, started, ended, outcome (`done`, `timeout`, `crashed`, `quit`, `herdr-restart`), and the event ids it took. The last 50
   are kept.
 - `notes.jsonl`: handoff notes, local ones and each device's ally ones apart, the last 10 of each.
+- `memory.json`: the tower's memory (**Tower memory**): `{ v, rev, next, entries, proposals }`. It is kept when the tower service goes off or
+  its tab is closed, since it is the boss's own text, not a copy of messages; a boss who wants it gone deletes the entries in the GUI.
 - `opened.json`: the opener's ledger (sender, request hash, outcome, tab, main), 24 h.
 - `awaiting.json`: asks sent for a main (**Replies for a main**), 24 h.
 - `ally-routes.json`, `ally-answers.json`, `ally-opened.json`: what ally runs leave for their device apart from the local run's files (**Ally runs**, *Questions to local sessions*): the local sessions an ally run waits on or opened, what they answered until the device's next ally run takes it, and the ledger of the mains ally runs opened. 24 h.
@@ -1035,8 +1039,8 @@ something: the `boss` row. A send on its own wakes nothing.
 
 ## The brief
 
-The brief is plain text in the run's role section. It is built by the server, never by a model, and has a hard cap: **6,000 characters**
-for a local run and **4,000** for an ally run. Each section has its own cap, and a cut section says how much it left out.
+The brief is plain text in the run's role section. It is built by the server, never by a model, and has a hard cap: **8,000 characters**
+for a local run (6,000 before the memory section) and **4,000** for an ally run. Each section has its own cap, and a cut section says how much it left out.
 
 Local run, in this order:
 
@@ -1048,6 +1052,7 @@ Local run, in this order:
 3. **Open obligations** (≤ 10 rows): from the opener's ledger, the run records, and `awaiting.json`. Mains this tower opened that have
    not reported, mains that reported done and wait to be closed, sends that expect a reply and have none, asks for a main still open,
    and a `wakeAfter` that is due.
+3a. **Memory** (≤ 4,900, left out when the memory is empty): the labelled section of **Tower memory**, after the open obligations. It is the first part of the brief to be cut when the whole passes 8,000 (**In the brief and the logs**).
 4. **Since your last run** (≤ 20 lines of 80): the digest, read from the `sbd_` tokens. It is cleared when the run calls `tower_done`,
    not at claim, so a run that crashes does not lose it.
 5. **Handoff note** (≤ 1,200): the last local run's note, with its age.
@@ -1091,6 +1096,7 @@ the run's kind on every request, in addition to the hooks in the run.
 | `boss_open_main`, `boss_close_main` | Run by the server with the persisted ledger and limits; `close-main` goes out from the tower identity | Gate (dispatch: allowed) |
 | `boss_server` | As in any local session (**Seeing and restarting the server**) | Refused by the token's kind, at every level |
 | `link_request` | Unchanged (the boss approves) | Refused at every level, as today |
+| `tower_memory` (new) | Proposes a standing instruction or a decision, or retiring one (the boss confirms; the run cannot), reads the memory, and keeps and ends waits (**Tower memory**) | Refused by the token's kind, at every level; an ally brief never shows memory |
 | `tower_done` | Ends the run | Ends the run; `wakeAfter` refused |
 
 **The gate's Allow, checked by the server.** For a gated call from an ally run, the run sends the server the call's `toolCallId` and the
@@ -1106,6 +1112,107 @@ carry the run's own short-lived id, and the answer would reach a pi that had alr
 `prompts/tower.md` changes in three places: replies go through `tower_reply`; "you are woken for the events below and end with
 tower_done and a handoff note; a main's result comes back as a new event, so do not wait for it"; and "the boss may write to you from the
 GUI; a boss message is an instruction". "Never ask the boss" stays.
+
+## Tower memory
+
+Event runs stay fresh: no persistent session. What has to outlive a run is kept apart, small and bounded, in `tower/<workspace id>/memory.json`
+(mode 600, written by rename, in the 700 service folder). The boss reads and changes it **in pi first**, with `/boss memory`, and the GUI's panel is the same
+operation drawn on the page (D23); every local run sees it in its brief beside the handoff note (D22). `rev` goes up with every write that changes something;
+`next` holds the counters of the ids.
+
+```json
+{ "v": 1, "rev": 17, "next": { "S": 4, "D": 8, "W": 3, "P": 5 }, "entries": [
+  { "id": "S3", "kind": "standing", "text": "部署發版都授權", "by": "boss", "via": "gui", "at": "2026-10-28T09:10:00Z" },
+  { "id": "D7", "kind": "decision", "text": "ws01 先上 beta.67", "by": "boss", "via": "proposal", "at": "…" },
+  { "id": "W2", "kind": "wait", "text": "api-fix asks: deploy ws01?", "for": "boss", "state": "open", "by": "run", "via": "run", "run": "c0ffee12…", "at": "…" }
+], "proposals": [
+  { "id": "P4", "op": "add", "kind": "standing", "text": "Always run the tests first.", "run": "a1b2c3d4…", "event": "e91…", "cites": "…the boss message, as context…", "at": "…" },
+  { "id": "P3", "op": "retire", "kind": "decision", "target": "D2", "text": "the entry as it was", "run": "a1b2c3d4…", "at": "…" }
+] }
+```
+
+- An `id` is a kind letter (`S` standing, `D` decision, `W` wait, `P` proposal) and a counter that is never reused, so `[W2]` in a brief and a
+  deleted `S1` mean one thing for good.
+- Text is cleaned as board text is (control and format characters removed, whitespace folded to one line).
+- A file the server cannot read (not JSON, wrong shape) is reported, shown in the brief and the GUI as unreadable, and never written over. A file an earlier build wrote
+  (a `notices` list, no `proposals`) is read, and the next write leaves the notices out. A change that leaves everything as it was writes nothing and does not move `rev`.
+
+| Kind | Entries | Text | Past the cap |
+|---|---|---|---|
+| standing | 12, and 2,400 characters of brief rows in all | 300 | An add (or an edit that grows one) is refused: "12 standing instructions are kept already: delete one first" at 12; "would not fit the brief" past the 2,400. |
+| decision | 24 | 300 | An add is refused: "24 decisions are kept already: delete one first". Nothing the boss kept is ever dropped to make room, by the boss's own add or by a confirm. |
+| wait (open or answered) | 12 | 200 | An add is refused. |
+| wait (resolved or expired) | kept 24 h | outcome 120 | Shown in the GUI only; an expired one is shown once in the next brief. |
+| proposal (pending) | 12 | 300 | A new one is refused ("12 proposals wait for the boss already"); a pending proposal is never evicted. The same proposal asked again is the one already there. |
+
+An open wait expires 7 days after it was made, and so does a proposal (then it is gone; the cap counts only the live ones).
+
+### Who writes it
+
+| Writer | What it may do |
+|---|---|
+| The boss, with `/boss memory` in any joined pi session | The first interface (D23): list; confirm or reject a proposal; add a standing instruction or a decision; edit or delete any entry; resolve a wait. `by: "boss"`, `via: "gui"` (typed), or `via: "proposal"` (confirmed). |
+| The boss, in the GUI panel and on the tower card | The same operations through the same server function, nothing else: the page mirrors the command. |
+| A local run, through `tower_memory` | **Propose** a standing instruction or a decision (`add`), or retiring one (`retire`), each a pending proposal that changes no live entry. Read the whole memory and the proposals (`read`). Add a `wait` in its own words, and resolve or drop a wait. There is no op that confirms. |
+| An ally run | Nothing: the server refuses the tool by the token's kind. Its brief never shows memory. |
+| Mains, members, sidecars | No tool. They reach memory only through the tower. |
+| The server | Marks a wait `answered` when a message from its `on` session arrives, and expires a wait or a proposal after 7 days. |
+
+**Proposals (D22, replacing Q3 = A).** The boss decided on 2026-10-28: "改成提議＋你確認". A run's `tower_memory { op: "add", kind: "standing" | "decision", text, event? }`
+or `{ op: "retire", id, event? }` leaves a pending proposal: the run's id, its text (a retire holds the entry as it was and its id), and, when `event` names a boss message this run took,
+that message's text as context for the boss (`cites`, at most 300 characters; the server checks that the event is a boss message of this run, and it is shown, never trusted). The server does not
+judge the words, and there is no quote rule any more: what makes an entry the boss's is the boss's confirm. A proposal for text that is kept already is refused ("already kept as S1"); a retire of a wait
+is refused; the same proposal twice is one.
+
+**Only the boss confirms.** `confirm` applies a proposal: an add becomes an entry (`by: "boss"`, `via: "proposal"`) under the caps above, a retire removes the entry (refused when the entry is gone, or
+the boss edited it since the run proposed: "reject the proposal"), and the proposal goes; a confirm the caps refuse leaves the proposal where it is. `reject` removes it. Both are requests to one server function
+(`memoryRequest`) that has exactly two doors, and both are the boss's: the GUI's `POST tower/<workspace>/memory` (page origin and CSRF) and the control socket's `tower-memory` command, which is what
+`/boss memory` sends. `rungate.ts` refuses `tower-memory` to every run token, local or ally, and the tool has no `confirm` or `reject` op; `/boss` takes no command in a run; a link envelope, an
+ally, or an intercom message has no route to either door. That is a guarantee against those routes only: any same-user agent with a shell, a main as well as a run, reaches both doors (the control socket with the
+secret from `server.json`, `pi -p "/boss memory …"`, send-text into a pane, a direct write of `memory.json`). `/boss memory` therefore refuses every write (confirm, reject, add, edit, delete, resolve) in a pi session
+with no screen (`!ctx.hasUI`: print and RPC mode) and allows the list; that closes the `pi -p` door and no other. A confirm names the `rev` it read; a reject names the proposal's id, which is never reused, and takes no rev. Known limit: a run that
+goes around its tools (below, T3R-F005) can also write `memory.json` directly, and that bypasses proposals as it bypassed the quote check.
+
+**`/boss memory`.** In any joined pi session of the workspace (default its own; `-w <workspace id or label>` names another), a command of the boss's own typing:
+`/boss memory` lists (the proposals first, with the boss message each cites, then standing instructions, decisions, and waits);
+`/boss memory confirm P3`, `reject P3`, `add standing|decision <text>`, `edit S2 <text>`, `delete D4`, and `resolve W1 [outcome]`. It reads the memory, then sends the operation with the `rev` it read
+(a reject sends none); the server's refusals print as errors. Its own words come in English or Traditional Chinese by `LC_ALL`, `LC_MESSAGES`, or `LANG` (zh-TW, zh-HK, zh-MO, or zh-Hant selects Traditional Chinese).
+
+**Waits** are the tower's own notes. `tower_memory { op: "add", kind: "wait", text, for: "boss" | "agent", on?, due? }`:
+
+- `for: "boss"`: the tower needs the boss's decision. The GUI shows a notice on the tower card ("waits for you") with an Answer link to the
+  composer. The tower prompt's and the stand-in's lines for it arrive with those pieces (T5/T0).
+- `for: "agent"` names `on`, a live session (by id or name; the server resolves it). When a message from that session arrives, the server marks
+  the wait `answered` and the brief says `answered? message from <name> HH:MM`, but only when the net the server reads (the broker's sessions and
+  Herdr's panes) shows a live session with the sender's id in this tower's workspace: the id on a message is the broker's, and pi-intercom
+  identities are self-reported, so a same-user process that registers under the id still answers the wait. Any message from it counts; the server
+  does not judge the meaning, the run resolves the wait or keeps it.
+- `due` (5 minutes to 7 days) shows `overdue` in the brief when it passes. It wakes nothing; `wakeAfter` is still the only timer (D3).
+- `resolve` keeps the wait 24 h with a one-line outcome; `drop` removes it.
+
+### In the brief and the logs
+
+Section 3a, at most 4,900 characters: a line saying that standing instructions and decisions are what the boss wrote or confirmed, and open waits are
+the run's own notes, not instructions; then every standing instruction (the 2,400-character budget of their rows is what guarantees all fit), the
+open waits (for the boss first), and the newest decisions in the 1,450 characters the standing rows leave on top of their own, each as one line behind
+a code-written id (`- [S3] …`); then, apart and last, **Proposed to the boss** (not confirmed, so not instructions; the run cannot confirm) with one line per pending proposal (`- [P4] add standing: …`,
+`- [P3] retire D2: …`); then what was left out (`(+n older decisions in memory: tower_memory read)`). `tower_memory { op: "read" }` lists the whole
+memory and the proposals, so a run can see what a brief left out. A text is cleaned again as it is read from the file, whatever it holds, so no control, format, or line-break
+character reaches a brief. An expired wait the brief shows is marked shown at the run's first poll, not when the brief is built, so a run that never
+starts shows it again to the next. Memory goes into no ally brief, board, link envelope, or `server.log`: a log line names the op (`propose`, `confirm`, `reject`, `add`, …), the id, the kind, and
+the run, never the text.
+
+**What the whole brief keeps.** The tools block, the `tower_done` line, the crash flags, and the 20-minute line are never cut. When the sections pass 8,000 characters together, the brief gives up
+the memory beyond its first 2,700 characters (the head and the standing instructions) first, then the mains, the digest, the note, the rest of the memory, and the obligations, each at a line with a note of how much was left out
+(`(+n more lines in memory: tower_memory read)`).
+
+### The GUI's memory route
+
+`POST /api/tower/<workspace>/memory { op, … }`, with the page's origin and CSRF like every write, on the local and the remote listener (the paired phone is the boss), and the control socket's `tower-memory
+{ workspace, json }`, are one function. `op` is `read`, `add` (`kind` standing or decision, `text`), `edit` (`id`, `text`), `delete` (`id`), `resolve` (`id`, `outcome?`), `confirm` (`proposal`), or `reject` (`proposal`);
+every write but a reject names the `rev` it read. The answer is `{ rev, entries, proposals }` (a proposal is `{ id, op, kind, text, target?, cites?, at }`). A moved file is 409 `rev` with the current memory in the body; a full cap, a missing entry or
+proposal, or a proposal that no longer applies is 409 `refused`; a bad request is 400. (Every route of the control API is a POST, so the read is `op: "read"`.) The snapshot's `service.memory` carries
+`{ rev, standing, decisions, waits, bossWaits, proposals, problem? }` (`proposals` as `{ id, op, kind, text, target?, cites? }`), so the panel reads again only when `rev` moves.
 
 ## Ally runs
 
@@ -1295,8 +1402,13 @@ What changes:
 - **The standing pane** runs the tower prompt (**The standing pane**), not a shell; the terminal mirror and keys still refuse with 409 `standing`. The tower's row in the Herdr sidebar is the stand-in agent `tower` between runs.
 - **Notices**: a refused settings check, a crash loop with **Retry**, a parked event with **Deliver again** and **Drop**, an ally
   message waiting more than 10 minutes, a server stopped on purpose that an automatic opening found, and a server `lastError`.
+- **Memory** (D22, D23): a panel in the tower's comms that mirrors `/boss memory`: the proposals waiting for the boss first (each with the boss message it cites, **Confirm** and **Reject**), then the
+  standing instructions, the decisions, and the waits (open, and resolved or expired within 24 h, struck through). The boss adds, edits, and deletes there, with the caps shown; every change but a reject
+  names the `rev` it read (**Tower memory**). A wait for the boss is a notice row on the tower card with an **Answer** link to the composer, and so is every pending proposal, with **Confirm** and **Reject**.
+  zh-TW: 常駐指示, 決定, 等待, 確認, 駁回.
 - **The server** in the settings panel: state, version, uptime, last error, **Restart server**, and **Show log**, on this computer's
   page only (**Seeing and restarting the server**).
+- Net snapshot: `service.memory` is `{ rev, standing, decisions, waits, bossWaits: { id, text, at }[], proposals, problem? }`.
 - Net snapshot: `Base.tower` gains `service: { state: "standing" | "waking" | "running" | "closing" | "held", queued: number, run?: { id,
   kind, startedAt }, allyRuns: { device, startedAt }[], lastRun?: { endedAt, outcome } }`. Readers that do not know `service` keep
   working.
@@ -1558,6 +1670,16 @@ trials), unchanged otherwise.
     - the receipt goes only after the fsync;
     - the sender retries any failed send to `sb-tower-*`, `E_TARGET_NOT_FOUND` included, for up to 30 s.
   - The brief builder's caps per section and in total, the ally scope, its asks and thread, and no digest or local note in an ally brief.
+  - Tower memory (`tests/server-memory.test.ts`, `server-memory-run.test.ts`, `tower-memory-gui.test.ts`):
+    - the caps (a full cap refuses and drops nothing of the boss's), ids never reused, `rev` and the 409, an unreadable file never written over, modes 600 and 700, a no-op change that writes nothing;
+    - a run's add and retire are proposals that change no live entry, cite only a boss message of that run (not an intercom message, another run's, or one offered and not taken), and are capped at 12 without evicting one, deduplicated, and expire after 7 days;
+    - a run cannot change the live standing instructions or decisions at all, by any form of the tool, with hostile boss events, 20 add/retire cycles, or a decision flush (T3C-F001, F002, F003 are moot); the tool has no confirm, the control socket refuses `tower-memory` to a run token and an ally token;
+    - confirm and reject through the route and through `/boss memory` (`tests/memory-command.test.ts`, against the real server too): the rev, the refusals (full caps, an entry changed or gone), arguments, and the English and Traditional Chinese output;
+    - every standing instruction fits the brief or the add is refused; `read` lists all, with the proposals; a log line names the op and the id;
+    - an ally token refused the tool by its kind, and no memory in an ally brief or in the log;
+    - waits: expiry after 7 days and shown once, `answered` set by a message from `on`, resolve and drop;
+    - the brief section's order, cap, labels, pending proposals shown apart, and no line, id, or heading forged by an entry or a proposal; the cap of 8,000, and a full memory with 10 obligations, the digest, a note, and 24 mains keeps the tools, the `tower_done` line, the crash flags, and the 20-minute line (T3C-F004);
+    - the GUI route, panel, and card: the rev, the refusals, text set as text, the waits-for-you notice, Confirm and Reject on the card and in the panel.
     The digest is cleared at `tower_done` and kept after a crash.
   - `tower_done` is refused while events are outstanding. `wakeAfter` is refused in an ally run, and a second one replaces the first.
   - Idle, the 18- and 20-minute limits, crash outcomes, flags, parked events after two crashed runs, and the crash-loop hold.
@@ -1662,6 +1784,14 @@ trials), unchanged otherwise.
 - **D4 puts peer text into mains again**, bounded as **Security** says and guarded by the step-4 hooks.
 - **The thread store keeps peer text at rest** (D13): at most 20 messages per device and 7 days, in the folder that holds the team keys.
 - **`tsx` stays at runtime** for pi-intercom's client until pi-intercom ships JavaScript; B1's measurement says what it costs on Windows.
+- **A local run, or any main, can go around the proposal rule (T3R-F005, found in the T3 review, older than T3; ticket: "local run tool restriction", whose scope includes mains and members with a shell: T3P-F001).** A local run
+  keeps `bash`, `write`, and `edit`: `src/runmode.ts` blocks only `intercom` and `subagent*`, `runs.ts` starts pi with no tool restriction, a request without a run
+  token is judged by the hello secret alone (`rungate.ts`), and `tower-event` writes a `boss` event. A run misled by peer text (a remote board entry, a
+  `tower_send`, a main's message) could write `tower/<workspace>/memory.json` itself (same user, so mode 600 stops nothing), which bypasses proposals as it bypassed the quote check,
+  or read the secret from `server.json` and send the control socket a `tower-memory` of its own: `rungate.ts` refuses that command to a *run token*, but a request without one is judged by the hello
+  secret alone. "Only the boss confirms" therefore holds against a run that goes through its tools, not against a hijacked one; T3 adds persistence across runs to what such a run could already do. Not
+  changed here. The fix is outside T3: block `bash`, `write`, and `edit` in run mode for local runs, as `prompts/tower-run.md` already promises, or at least refuse any tool path under the agent
+  directory and the straw-boss state folder, as the ally gate does. It should land before `towerRuns` defaults on. A main misled by peer text (D4) has the same shell and the same doors, so the restriction cannot stop at runs; the ticket decides what a main may do. Entries a run kept in the branch builds (`by: "run"`) load as proposals, never as the boss's own (T3P-F002).
 
 ## Decisions (boss, 2026-10-26)
 
@@ -1690,6 +1820,8 @@ straw-boss-desk's owner also agreed to D11.
 | D18 | Coordination goes through the tower | "統一用塔台" (boss, 2026-10-28). D16 and D17 belong to `feat/sb-net-standin`, so this and the next row keep the numbers of the tower-experience delta. |
 | D19 | When a main calls the tower | The boss's decision, 2026-10-28, after "統一用塔台": a main calls the tower at three points only (a finished milestone; before it changes shared things; when it is blocked or waiting), and routine progress goes on the work board and wakes nothing. `call_tower` carries the reason as `why` in the code-written header (**Wake triggers**), `prompts/main.md`, `member*.md`, and `tower-run.md` say what each reason asks, and a milestone that expects no reply is held up to 30 s to coalesce (**Queueing and concurrency**). |
 | D20 | The work board fills itself | The board fills itself from the main's todo list and name, and `board_set` overrides it (2026-10-28, tower experience; D16 and D17 belong to the standing prompt, D18 to D24 to the tower delta). A main writes its own entry from its todo list and its name, scrubbed of paths outside the project, URLs, emails, and token shapes; `board_set` stands until the todos or the name move, and `board_set { auto: true }` hands it back. Q1 = A ("allies get `now` and the done count of an auto entry only") is **superseded** by the boss on 2026-10-28: "收緊：自動的只給名字＋進度": an auto entry gives allies the main's name and the done count (`<name> (3/5)`), no task text; a `board_set` entry goes whole (Straw Link spec, **Auto-fill**; built in T2). |
+| D22 | Event runs stay fresh; the tower's memory is bounded and the boss's | "event runs stay fresh. A bounded tower memory (the boss's standing instructions, decisions, and open waits), editable in the GUI, sits beside the handoff note." Q3 = A (a run keeps one by a verbatim quote of the boss's words, checked by the server) is replaced on 2026-10-28: "改成提議＋你確認". A tower run can only **propose** a standing instruction or a decision (and retiring one); it takes effect only when the boss confirms it, with `/boss memory` or in the GUI. Waits stay run-written. Ally runs never see memory (**Tower memory**). |
+| D23 | pi first, the GUI mirrors | "不該把 GUI 當成必備的，所有操作都應該走 pi 介面，GUI 只是接這個行為": every memory operation is a `/boss memory` command in any joined pi session, and the GUI's panel and card call the same server function with the same rev check and add nothing of their own. A slash command is the boss's typed input only: no tool, run token, ally, or link reaches it (**Tower memory**). |
 
 ## Review record
 
