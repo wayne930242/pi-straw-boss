@@ -161,7 +161,16 @@ async function allyRunPaths(): Promise<Path[]> {
 	herdr.addPane("wA:p71", "wA:t1", "pi").tokens.sb_role = "main";
 	herdr.pane("wA:p71").cwd = join(proj, "app");
 	herdr.pane("wA:p71").tokens.sb_opened_by = BY;
-	world.sessions = [{ id: "main-1", name: NAME, herdrLocation: { status: "ok", workspace: { id: "wA", label: WS }, tab: { id: "wA:t1", label: TAB }, paneId: "wA:p71" } }];
+	// A member in the same tab, and the tower of another workspace: their names are in tower_list and boss_status.
+	herdr.addPane("wA:p72", "wA:t1", "pi").tokens.sb_role = "member";
+	herdr.pane("wA:p72").cwd = join(proj, "app");
+	herdr.workspaces.find((w) => w.workspace_id === "wB")!.tokens.tower = "tower-b";
+	const at = (paneId: string, workspace: { id: string; label: string }, tab: { id: string; label: string }) => ({ status: "ok" as const, workspace, tab, paneId });
+	world.sessions = [
+		{ id: "main-1", name: NAME, herdrLocation: at("wA:p71", { id: "wA", label: WS }, { id: "wA:t1", label: TAB }) },
+		{ id: "member-1", name: poisoned("mem"), herdrLocation: at("wA:p72", { id: "wA", label: WS }, { id: "wA:t1", label: TAB }) },
+		{ id: "tower-b", name: poisoned("tw"), herdrLocation: at("wB:p1", { id: "wB", label: "Beta" }, { id: "wB:t1", label: "ops" }) },
+	];
 	const derived = deriveBoard({ name: NAME, todos: [{ id: 1, subject: TODO, status: "in_progress" }], root: proj })!;
 	mkdirSync(join(world.stateDir, "board"), { recursive: true });
 	writeEntry(join(world.stateDir, "board"), "main-1", derived.text, Date.now(), { src: "todo", ...(derived.count ? { count: derived.count } : {}), ...(derived.who ? { who: derived.who } : {}) });
