@@ -343,6 +343,15 @@ test("R-F004: a pi in a tower-glyph tab whose pane lost its tokens asks pane-rol
 	assert.match(r.notes.join("\n"), /Herdr restored this pane/);
 });
 
+test("B6 VM F4: a resident tower (STRAW_BOSS_ROLE=tower) in a pane the server marked is never asked pane-role, so a /reload cannot make it a hand run; it stays a normal session that hands over itself", async () => {
+	flagOn();
+	const srv = server();
+	const r = await rig(srv, { flag: null, herdr: herdrWith({ sb_role: "tower" }, TOWER_LABEL), env: { STRAW_BOSS_ROLE: "tower" } });
+	assert.equal(srv.requests.filter((q) => q.cmd === "pane-role").length, 0, "no pane-role from a resident tower");
+	assert.equal(r.shutdowns.length, 0);
+	assert.ok(!r.session.getAllTools().some((t) => t.name === "tower_done"), "not a run");
+});
+
 test("R-F004: an unmarked pane in a tab without the tower label is never asked about", async () => {
 	flagOn();
 	const srv = server();

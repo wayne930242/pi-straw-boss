@@ -129,11 +129,14 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		const pane = env.HERDR_PANE_ID, workspace = env.HERDR_WORKSPACE_ID;
 		// Without the flag file no sb server runs towers, so no pane is one (and a session asks Herdr nothing at its start for this).
 		if (!pane || !workspace || !towerRunsEnabled(guiDir)) return { role: "none" };
+		// A resident tower (it carries STRAW_BOSS_ROLE=tower) is no pi the boss typed into a standing pane: it hands its pane over itself (tower.ts). A /reload right after the server registered its identity finds its pane marked
+		// `tower` already, and asking would make it a hand run that never hands over and never ends (B6 VM F4).
+		if (env.STRAW_BOSS_ROLE === "tower") return { role: "none" };
 		const mine = (await panes(cfg.run, workspace).catch(() => [])).find((p) => p.pane_id === pane);
 		const marked = RUN_PANE_ROLES.has(mine?.tokens?.sb_role ?? "");
 		// Herdr drops the pane tokens at a restart until the server publishes them again, so a pi resumed first finds its pane unmarked: a pane in a tab with the tower label is asked about too (not a resident tower the session started itself, which carries STRAW_BOSS_ROLE=tower), and waits
 		// up to 30 s for a live server and for its takeover (docs/specs/2026-10-26-sb-backend.md, Local runs, step 2).
-		const glyph = !marked && env.STRAW_BOSS_ROLE !== "tower" && mine !== undefined && (await tabs(cfg.run, workspace).catch(() => [])).some((t) => t.tab_id === mine.tab_id && t.label === TOWER_LABEL);
+		const glyph = !marked && mine !== undefined && (await tabs(cfg.run, workspace).catch(() => [])).some((t) => t.tab_id === mine.tab_id && t.label === TOWER_LABEL);
 		if (!marked && !glyph) return { role: "none" };
 		const end = cfg.now() + (glyph ? glyphWaitMs : claimWaitMs), started = startOf(process.pid);
 		for (;;) {
