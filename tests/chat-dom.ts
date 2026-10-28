@@ -20,6 +20,10 @@ export class El {
 		this.attrs.set(name, value);
 		if (name === "class") this.classes = new Set(value.split(" "));
 	}
+	removeAttribute(name: string) {
+		this.attrs.delete(name);
+	}
+	focus() {}
 	private adopt(kids: (El | string)[]) {
 		for (const kid of kids) if (typeof kid !== "string") (kid.remove(), (kid.parent = this));
 	}
@@ -55,7 +59,7 @@ export class El {
 		this.parent = undefined;
 	}
 	querySelector(selector: string) {
-		return this.find((el) => el.tag === selector)[0] ?? null;
+		return this.find((el) => (selector.startsWith(".") ? el.classes.has(selector.slice(1)) : el.tag === selector))[0] ?? null;
 	}
 	get textContent(): string {
 		return this.kids.map((k) => (typeof k === "string" ? k : k.textContent)).join("");

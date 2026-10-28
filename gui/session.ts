@@ -7,7 +7,7 @@ import { docFor, docTile } from "./doc.ts";
 import type { Tile } from "./layer.ts";
 import { m } from "./paraglide/messages.js";
 import { aimSession } from "./quit.ts";
-import { aim, aimOpening, doing, html, LABEL, mark, urgent, text } from "./render.ts";
+import { aim, aimOpening, html, LABEL, liveNote, mark, text } from "./render.ts";
 import { channelOf, closed, locate, type Scene, type Subject, towerBase, wsOf } from "./scene.ts";
 import { linkTo } from "./tokens.ts";
 import { fillAllies } from "./towerallies.ts";
@@ -134,7 +134,7 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 			const notes = view.querySelector<HTMLElement>(".tower-notices");
 			if (notes) (fillConversation(view.querySelector<HTMLElement>(".tower-conv")!, hit?.base.id ?? wsOf(scene), u?.service), fillNotices(notes, hit?.base.id ?? wsOf(scene), u?.service, u?.key), fillMemory(view.querySelector<HTMLElement>(".tower-memory")!, hit?.base.id ?? wsOf(scene), u?.service?.memory));
 			if (shown === "term" && holdOf(u?.key ?? "") !== held) setMode("term"); // the tower woke or went to stand by: the terminal or its sentence changes
-			chat?.setLive(mk === "working" || mk === "commanding" ? `${doing(u!.note, mk)}` : urgent(mk) ? LABEL[mk]() : "", mk);
+			chat?.setLive(liveNote(u, state, mk), mk);
 			composer?.update({ name, control: Boolean(u?.control), agent: u?.agent, live: !closed(u, state), mark: mk, online: online(), answerable: Boolean(u?.pending?.answer), ...wakeOf(u?.service), ally: !u && (scene.info?.role === "ally" || scene.info?.role === "run"), run: !u && scene.info?.role === "run" });
 			asker?.update(u?.pending, mk === "waiting" && Boolean(u?.control) && online()); // its dialog above the composer, answerable or not
 		},

@@ -4,6 +4,7 @@ import type { Base, Net, Unit } from "../src/net.ts";
 import { mountCalm } from "./calm.ts";
 import { replay } from "./dom.ts";
 import { m } from "./paraglide/messages.js";
+import { closed } from "./scene.ts";
 import { allyMark, stateName } from "./linkmodel.ts";
 import { fillAllies } from "./towerallies.ts";
 import { fillNotices } from "./towernotes.ts";
@@ -55,6 +56,8 @@ export const mark = (el: HTMLElement, value: Mark) => {
 /** A failed monitor's alert notes `monitor:<status>:<what>` (alerts.ts). */
 const monitorNote = (note: string) => ((i) => (note.slice(8, i) === "stale" ? m.monitor_stale : m.monitor_failed)({ what: note.slice(i + 1) }))(note.indexOf(":", 8));
 export const doing = (note: string | undefined, mk: Mark) => (note ? (note.startsWith("tool:") ? m.using({ tool: note.slice(5) }) : note.startsWith("monitor:") ? monitorNote(note) : Object.hasOwn(NOTE, note) ? NOTE[note]!() : note) : LABEL[mk]());
+/** The activity line under the last transmission: empty while the session is not live, so an ended session shows no spinner. */
+export const liveNote = (u: { note?: string; control?: boolean; ended?: boolean } | undefined, state: string | undefined, mk: Mark) => (closed(u, state) ? "" : mk === "working" || mk === "commanding" ? doing(u?.note, mk) : urgent(mk) ? LABEL[mk]() : "");
 /** Writes what a unit is doing into `selector`, flagged `data-monitoring` (red in style.css) while it only waits on a running monitor. */
 export const say = (el: Element, selector: string, note: string | undefined, mk: Mark, value = doing(note, mk)) => {
 	text(el, selector, value);

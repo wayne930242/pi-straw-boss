@@ -213,3 +213,26 @@ test("a unit that can never be typed to shows one bar instead of the composer", 
 	assert.equal(m.bar_ended({}, { locale: "zh-TW" }), "這個 session 已經結束");
 	assert.equal(m.bar_ended({}, { locale: "en" }), "This session has ended");
 });
+
+test("a session that is not live shows no live activity line, whatever its last mark", async () => {
+	const { liveNote } = await import("../gui/render.ts");
+	assert.equal(liveNote({ note: "tool:edit", control: false, ended: true }, "live", "working"), "", "an ended unit");
+	assert.equal(liveNote({ note: "tool:edit", control: true }, "recent", "working"), "", "a history that is not live");
+	assert.equal(liveNote({ note: "tool:edit", control: true }, "live", "working"), m.using({ tool: "edit" }), "a live unit keeps it");
+});
+
+test("the mounted composer hides its box and shows the bar for an ended session, and brings the box back when it is live", async () => {
+	const { El } = await import("./chat-dom.ts");
+	Object.assign(globalThis, { matchMedia: () => ({ matches: false }), CSS: { supports: () => true }, window: {} });
+	const { mountComposer } = await import("../gui/composer.ts");
+	const root = new El("div"), composer = mountComposer(root as never, "k", (() => Promise.resolve({ ok: true })) as never);
+	const bar = root.find((el) => el.classes.has("cmp-bar"))[0]!, row = root.find((el) => el.classes.has("cmp-row"))[0]!;
+	const unit = { name: "kid", control: false, live: false, mark: "done" as const, online: true };
+	composer.update(unit);
+	assert.equal(bar.hidden, false);
+	assert.equal(bar.textContent, m.bar_ended());
+	assert.equal(row.hidden, true, "the box is hidden under the bar");
+	composer.update({ ...unit, control: true, live: true });
+	assert.equal(bar.hidden, true);
+	assert.equal(row.hidden, false, "the box comes back with a live session");
+});
