@@ -6,6 +6,7 @@ import { ServerWorld } from "./server-world.ts";
 import type { Session } from "../src/herdr.ts";
 import type { Towers } from "../src/server/towers.ts";
 import { createAllows } from "../src/server/allows.ts";
+import type { Proc } from "../src/server/lineage.ts";
 import type { AllyItem, AllyPort, Timers } from "../src/server/runs.ts";
 
 /** The link holder as the tower service sees it (AllyPort): messages that wait for the tower identity, who has left the roster, and what the server told it was taken. */
@@ -55,6 +56,9 @@ export class TowerWorld extends ServerWorld {
 	/** The pi processes `agent start` made: run id → PID and pane; and the signals the server sent. */
 	pis = new Map<string, { pid: number; pane: string; args: string[] }>();
 	kills: [number, string][] = [];
+	/** What the server's process table read answers (undefined: it cannot be read); a test sets it to put a wrapper above a pi. */
+	procTable: Proc[] | undefined;
+	procReads = 0;
 	/** How often the server asked for a process start time. */
 	startCalls = 0;
 	nextPi = 7000;
@@ -105,7 +109,7 @@ export class TowerWorld extends ServerWorld {
 					return this.linkAnswers.get(String(b.op))?.(b) ?? { ok: false, code: "no_holder", error: "no holder in this world" };
 				},
 				runs: {
-					timers: { ...FAST_RUNS, ...this.runTimers }, alive: (pid) => this.live.has(pid), startOf: (pid) => (this.startCalls++, `T-${pid}`), kill: (pid, signal) => void this.kills.push([pid, signal]),
+					timers: { ...FAST_RUNS, ...this.runTimers }, alive: (pid) => this.live.has(pid), procs: async () => (this.procReads++, this.procTable), startOf: (pid) => (this.startCalls++, `T-${pid}`), kill: (pid, signal) => void this.kills.push([pid, signal]),
 					settings: async () => { await this.settingsHold; if (this.settingsError) throw this.settingsError; },
 					...(this.runMax ? { max: () => this.runMax! } : {}),
 				},

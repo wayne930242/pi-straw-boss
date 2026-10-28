@@ -1,10 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { type HerdrRun, panes, report, result, type Sleep, startPi } from "../herdr.ts";
 import { alive as pidAlive } from "../remote.ts";
-import { startOf as processStartOf, startedLater as processStartedLater } from "../startof.ts";
+import { rememberStart, startOf as processStartOf, startedLater as processStartedLater } from "../startof.ts";
 import { assertSettingsSafe } from "../trust/settings.ts";
 import { waitPastTrust } from "../trust/wait.ts";
 import type { TowerView } from "../net.ts";
+import { below, isWrapper, leafOf, type Procs, readProcs } from "./lineage.ts";
 import type { Log } from "./log.ts";
 import type { Slot } from "./record.ts";
 import { addNote, clearTimer, listRuns, pruneRuns, readNotes, readTimer, type Outcome, type RunRecord, writeRun, writeTimer } from "./towerrunstore.ts";
@@ -46,6 +47,8 @@ export interface Timers {
 }
 export const TIMERS: Timers = { wake: 1000, claim: 60_000, watch: 2000, idleSteer: 60_000, idleEnd: 300_000, steerAt: 18 * 60_000, quitAt: RUN_CAP_MINUTES * 60_000, quitGrace: 10_000, signal: 5000, lost: 30_000, refuse: 60_000, loop: 600_000, restored: 120_000, stopGrace: 1500 };
 const LOOP_MAX = 3;
+/** A wrapper Herdr lists whose child is not in the process table yet is looked at again, this many times, this far apart. */
+const WRAPPER_TRIES = 3, WRAPPER_WAIT_MS = 400;
 const LEVELS = ["reply", "forward", "dispatch"];
 /** The lower of two trust levels (an unknown one counts as `reply`). */
 const lower = (a: string, b: string) => LEVELS[Math.min(Math.max(LEVELS.indexOf(a), 0), Math.max(LEVELS.indexOf(b), 0))]!;
@@ -163,6 +166,8 @@ export interface RunsOptions {
 	settings?: (dirs: string[]) => Promise<void>;
 	alive?: (pid: number) => boolean;
 	startOf?: (pid: number) => string | undefined;
+	/** The process table, to find the pi below a wrapper that Herdr lists instead of it (`cmd.exe /c pi.cmd`); defaults to CIM on Windows and `ps` elsewhere. */
+	procs?: Procs;
 	/** The start time of a process once it is known (Windows reads it in the background); defaults to `startOf` when a test supplies that. */
 	startedLater?: (pid: number) => Promise<string | undefined>;
 	kill?: (pid: number, signal: NodeJS.Signals) => void;
@@ -188,6 +193,7 @@ export function createRuns(o: RunsOptions) {
 	const alive = o.alive ?? pidAlive, startOf = o.startOf ?? processStartOf, kill = o.kill ?? ((pid, signal) => void process.kill(pid, signal));
 	const start = o.startPi ?? startPi, settings = o.settings ?? ((dirs: string[]) => assertSettingsSafe(dirs)), append = o.append ?? appendEvent;
 	const startedLater = o.startedLater ?? (o.startOf ? (pid: number) => Promise.resolve(startOf(pid)) : processStartedLater);
+	const procs = o.procs ?? readProcs();
 	const newId = o.newId ?? (() => randomBytes(8).toString("hex"));
 	const services = new Map<string, Svc>(), byToken = new Map<string, Active>(), byRun = new Map<string, Active>(), blocked = new Set<Svc>();
 	/** The `forward` confirms an ally run waits for: dialog id → run id. */
@@ -258,8 +264,8 @@ export function createRuns(o: RunsOptions) {
 			await start(o.run, o.sleep, rec.agent, rec.pane, ["--name", name, "--sb-run", id, ...(o.model() ? ["--model", o.model()!] : [])]);
 			const found = await procOf(rec.pane, id);
 			if (!found) throw new Error("pi's process was not found in the pane");
-			rec.pid = found;
-			rec.started = await startedLater(found);
+			// A claim is held until the record has pi's own PID: Herdr may list the wrapper that started it.
+			Object.assign(rec, await resolve(found, id));
 			writeRun(slot, rec);
 			const claimed = await waitPastTrust(o.sleep, () => active.token || active.ended, t.claim, 200, o.trustDir ? { dir: o.trustDir, pane: rec.pane } : undefined);
 			if (!claimed) throw new Error(`pi did not claim the run within ${t.claim / 1000} s`);
@@ -268,6 +274,9 @@ export function createRuns(o: RunsOptions) {
 			error("run-start", `${rec.id}: ${(cause as Error).message}`);
 			noticeOf(svc, { id: `start-${rec.id}`, level: "warning", kind: "start", text: `A run could not start: ${(cause as Error).message}` });
 			terminate(active, "crashed");
+			// Herdr may have given up on a pi that is running: it is ended with its wrapper, or it stays in the pane for the next run to meet. What the pane held is logged, for the next start that times out.
+			log.line("run-start-pane", { run: rec.id, foreground: ((await foreground(rec.pane)) ?? []).map((p) => `${p.name ?? p.argv0 ?? "?"} ${p.pid ?? "?"}`).join(", ") });
+			await reap(active).catch(() => {});
 			await finish(active, "crashed", (cause as Error).message);
 		}
 	};
@@ -344,23 +353,61 @@ export function createRuns(o: RunsOptions) {
 	};
 	/** A Herdr agent name is lowercase, up to 32 characters, and unique per run. */
 	const agentName = (s: Slot, workspace: string, id: string, prefix = "tower") => `${prefix}-${s.primary ? "" : `${s.slot8}-`}${workspace.toLowerCase().replace(/[^a-z0-9_-]/g, "")}-${id.slice(0, 8)}`.slice(0, 32).replace(/[-_]+$/, "");
-	/** pi's PID in the pane: the process whose command line holds the run id, else the one named pi. */
-	const pidsOf = async (pane: string): Promise<number[] | undefined> => {
+	/** What Herdr lists in the pane's foreground. On Windows that is one process: the wrapper (`cmd.exe /c pi.cmd`) when pi was started through one. */
+	const foreground = async (pane: string): Promise<{ pid?: number; argv0?: string; name?: string; cmdline?: string }[] | undefined> => {
 		try {
-			const info = JSON.parse(await o.run(["pane", "process-info", "--pane", pane])).result?.process_info?.foreground_processes as { pid?: number }[] | undefined;
-			return info?.flatMap((p) => (typeof p.pid === "number" ? [p.pid] : []));
+			return JSON.parse(await o.run(["pane", "process-info", "--pane", pane])).result?.process_info?.foreground_processes;
 		} catch {
 			return undefined;
 		}
 	};
+	const pidsOf = async (pane: string): Promise<number[] | undefined> => (await foreground(pane))?.flatMap((p) => (typeof p.pid === "number" ? [p.pid] : []));
+	/** The process Herdr lists for the run: the one whose command line holds the run id, else the one named pi. It may be a wrapper that started pi (`resolve`). */
 	const procOf = async (pane: string, runId?: string): Promise<number | undefined> => {
-		try {
-			const info = JSON.parse(await o.run(["pane", "process-info", "--pane", pane])).result?.process_info?.foreground_processes as { pid?: number; argv0?: string; name?: string; cmdline?: string }[] | undefined;
-			const pick = (info ?? []).find((p) => runId && p.cmdline?.includes(runId)) ?? (info ?? []).find((p) => p.argv0 === "pi") ?? (info ?? []).filter((p) => p.name === "node")[0];
-			return typeof pick?.pid === "number" ? pick.pid : undefined;
-		} catch {
-			return undefined;
+		const info = await foreground(pane);
+		const pick = (info ?? []).find((p) => runId && p.cmdline?.includes(runId)) ?? (info ?? []).find((p) => p.argv0 === "pi") ?? (info ?? []).filter((p) => p.name === "node")[0];
+		return typeof pick?.pid === "number" ? pick.pid : undefined;
+	};
+	/**
+	 * pi's own process for the one Herdr lists. A claim carries pi's PID (a pi cannot be started with any other), and the wrapper (`cmd.exe /c pi.cmd`, a `sh -c` or Volta shim) is a different one, so the
+	 * server reads the process table itself and takes the process below the listed one that carries the run id and started after it: the table answers, never a PID or parent that pi reports. A wrapper whose
+	 * child is not there yet is asked again; a table that cannot be read leaves the listed process, as before.
+	 */
+	const resolve = async (listed: number, runId: string): Promise<{ pid: number; started: string | undefined; via?: number[] }> => {
+		for (let attempt = 1; attempt <= WRAPPER_TRIES; attempt++) {
+			const table = await procs(runId);
+			const hit = table && leafOf(table, listed);
+			if (!hit) break;
+			const own = hit.pid === listed;
+			if (own && attempt < WRAPPER_TRIES && isWrapper(table.find((p) => p.pid === listed)?.name ?? "")) {
+				await o.sleep(WRAPPER_WAIT_MS);
+				continue;
+			}
+			if (hit.started && !o.startOf) rememberStart(hit.pid, hit.started);
+			return { pid: hit.pid, started: hit.started ?? (await startedLater(hit.pid)), ...(hit.via.length ? { via: hit.via } : {}) };
 		}
+		return { pid: listed, started: await startedLater(listed) };
+	};
+	/** The listed process that `pid` runs below (a wrapper pi was started through), if any; "0" is no run id, so no process is taken for the run's. */
+	const wrapperOf = async (listed: number[], pid: number): Promise<number | undefined> => {
+		if (!listed.length) return undefined;
+		const table = await procs("0");
+		return table && listed.find((l) => l !== pid && below(table, pid, l));
+	};
+	/**
+	 * Ends the processes of a run's pi: pi's own first, then the one Herdr lists (a wrapper does not take its child with it). The PIDs are read from Herdr now, never taken from a record alone: the
+	 * recorded pi is signalled only while Herdr still lists the process it was started under and it is not gone. Returns the PIDs signalled.
+	 */
+	const reap = async (a: Active): Promise<number[]> => {
+		const listed = await procOf(a.rec.pane, a.rec.id);
+		if (listed === undefined) return [];
+		const known = a.rec.pid, recorded = known !== undefined && (listed === known || (a.rec.via ?? []).includes(listed));
+		const pids = recorded ? (known !== listed && !gone(a) ? [known, listed] : [listed]) : [...new Set([(await resolve(listed, a.rec.id)).pid, listed])];
+		for (const pid of pids) {
+			log.line("run-sigterm", { run: a.rec.id, pid });
+			try { kill(pid, "SIGTERM"); } catch { /* gone */ }
+		}
+		return pids;
 	};
 
 	// --- the end of a run ---------------------------------------------------------------------------------------------------------------------------------------------
@@ -383,12 +430,7 @@ export function createRuns(o: RunsOptions) {
 		}
 		if (!a.signalled && now() - a.escalated >= t.signal) {
 			a.signalled = true;
-			// The PID is read from Herdr now, never taken from a record alone.
-			const pid = await procOf(pane, a.rec.id);
-			if (pid !== undefined) {
-				log.line("run-sigterm", { run: a.rec.id, pid });
-				try { kill(pid, "SIGTERM"); } catch { /* gone */ }
-			}
+			await reap(a);
 		}
 	};
 	const gone = (a: Active) => {
@@ -519,8 +561,7 @@ export function createRuns(o: RunsOptions) {
 						// The server went away while pi was starting, before the record had its PID: the process is looked for by the run id, and a run that shows no process within `lost` is over (B5R-F003).
 						const found = await procOf(a.rec.pane, a.rec.id);
 						if (found !== undefined) {
-							a.rec.pid = found;
-							a.rec.started = await startedLater(found);
+							Object.assign(a.rec, await resolve(found, a.rec.id));
 							writeRun(slot, a.rec);
 						} else if (now() - a.recovering > t.lost) await finish(a, "crashed", "pi was not running after the server restarted");
 						continue;
@@ -621,11 +662,13 @@ export function createRuns(o: RunsOptions) {
 		// The boss started pi by hand in the standing pane: a local run with the brief and no events, under the run cap, and only for a PID Herdr lists in that pane (B5R-F007).
 		if (slots >= o.max()) return { ok: true, role: "quit", reason: "the server's run limit is reached; try again when a run has ended" };
 		const listed = await pidsOf(pane);
-		if (!listed?.includes(pid)) return { ok: true, role: "quit", reason: "the server could not match this pi to the pane" };
+		// Herdr may list the wrapper pi was started through (`cmd.exe /c pi.cmd`): the pi is then the one below a listed process in the process table the server reads, whatever parent it reports.
+		const wrapper = listed?.includes(pid) ? undefined : await wrapperOf(listed ?? [], pid);
+		if (!listed?.includes(pid) && wrapper === undefined) return { ok: true, role: "quit", reason: "the server could not match this pi to the pane" };
 		if (svc.run && !svc.run.ended) return { ok: true, role: "quit", reason: "a run of the tower service holds this pane" };
 		slots++;
 		const woken = now(), id = newId();
-		const rec: RunRecord = { id, workspace: svc.ref.workspace, kind: "local", pane, agent: "hand", pid, ...(typeof req.started === "string" ? { started: req.started } : {}), startedAt: iso(woken), events: [], hand: true };
+		const rec: RunRecord = { id, workspace: svc.ref.workspace, kind: "local", pane, agent: "hand", pid, ...(typeof req.started === "string" ? { started: req.started } : {}), startedAt: iso(woken), events: [], hand: true, ...(wrapper !== undefined ? { via: [wrapper] } : {}) };
 		const a: Active = { rec, svc, commands: [], lastPoll: woken, started: woken, digestKeys: [], offered: new Map() };
 		svc.run = a;
 		byRun.set(id, a);
@@ -909,11 +952,7 @@ export function createRuns(o: RunsOptions) {
 			for (const a of live) terminate(a, "quit");
 			for (let waited = 0; waited < t.stopGrace && live.some((a) => !gone(a)); waited += 200) await o.sleep(200);
 			for (const a of live) {
-				if (!gone(a)) {
-					// The PID is read from Herdr now, never taken from the record alone.
-					const pid = await procOf(a.rec.pane, a.rec.id);
-					if (pid !== undefined) try { kill(pid, "SIGTERM"); } catch { /* gone */ }
-				}
+				if (!gone(a)) await reap(a);
 				// A run cut off mid-turn may have handled what it took: the events come back flagged, as after a Herdr restart (B5R3-F002).
 				// A run that already handed in its tower_done handled what it took: the events are removed.
 				if (a.closing !== undefined) await finish(a, "done");
