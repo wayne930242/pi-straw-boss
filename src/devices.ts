@@ -2,9 +2,9 @@ import { randomBytes } from "node:crypto";
 import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import type { Identity } from "./remote.ts";
 
-// The devices paired over Tailscale, and whether remote access is wanted on, kept in paired.json (mode 600) so they outlive a /reload, a restart,
-// remote off and on, and a takeover. A device is only the SHA-256 of its cookie (the cookie itself is never stored) with when it was paired, last
-// seen, and until when it counts. A pairing ends in three ways: the desktop unpairs it, the Tailscale identity it was paired under changes, or it
+// The devices paired over Tailscale, and whether remote access is wanted on, kept in paired.json (mode 600) so they outlive a /reload and
+// remote off and on (not a new GUI listener: its token is new, so the server unpairs every device when one starts). A device is only the SHA-256 of its cookie (the cookie itself is never stored) with when it was paired, last
+// seen, and until when it counts. A pairing ends in four ways: the GUI listener ends, the desktop unpairs it, the Tailscale identity it was paired under changes, or it
 // goes unused for 90 days; every use renews it (the stored expiry moves at most once an hour, and that response re-issues the cookie).
 
 export const SESSION_MS = 90 * 24 * 3600_000, RENEW_MS = 3600_000;

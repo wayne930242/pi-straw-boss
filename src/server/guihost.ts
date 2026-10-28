@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import type { Bridge } from "../bridge.ts";
 import { createCloser } from "../closer.ts";
@@ -9,7 +8,7 @@ import { createDeploys } from "../deploy.ts";
 import { createHub, type Hub } from "../dialogs.ts";
 import { BUNDLE, type Gui, startGui } from "../gui.ts";
 import { alive } from "../remote.ts";
-import { answers, type GuiRecord, listening, postServer, readRecord as readGuiJson, writeRecordFile } from "../handover.ts";
+import { answers, boundedWait, type GuiRecord, listening, postServer, readRecord as readGuiJson, writeRecordFile } from "../handover.ts";
 import type { Session } from "../herdr.ts";
 import { type GuiLink } from "../link/guiport.ts";
 import { type Net, netSource, type TowerView } from "../net.ts";
@@ -28,7 +27,8 @@ import type { Reply, Request } from "./socket.ts";
 // spawn and deploys, the closer, the mirrors, documents and uploads, and remote access over Tailscale, which a pi session ran until 0.45.0 (host.ts). It runs on the server's own intercom
 // session: the hub owns `straw-boss/gui/<hash of the server's id>` with no local bridge, and the bridges in sessions follow `gui.json`'s `ownerSession` to it as before.
 //
-// The GUI starts when the server does, on the port, token, and CSRF secret the last one recorded (a restart keeps the URL; a port that is not free for 5 s is replaced), unless it was stopped on purpose
+// The GUI starts when the server does, on the port the last one recorded (a port that is not free for 5 s is replaced) under a token and CSRF secret drawn anew: every listener has its own, so a restart,
+// a crash, or a start after a stop is a new address and the old one answers 403 (RC3-F002). It does not start when it was stopped on purpose
 // (`/boss gui stop`: `gui.stopped` in server.json, `stopped` in gui.json). Only the boss's own commands start a GUI that was stopped. gui.json is written by this server under the unchanged contract, and
 // server.json's `gui` is `{ port, token, stopped }`.
 //
@@ -96,11 +96,10 @@ export function createGuiHost(o: GuiHostOptions) {
 	const deploys = createDeploys(), trust = createTrustServe({ dir: trustDir(slot.stateDir), herdr: slot.herdr, world: () => cfg.world(), opening: deploys.openingOf });
 	const live = async (session: string) => (await o.sessions()).some((x) => x.id === session);
 
-	/** What the last GUI recorded, for a restart to keep: server.json's port and token, with the remote port and CSRF secret of gui.json when it is that same GUI. */
+	/** What the last GUI recorded, for a start to prefer: server.json's port, with the remote port of gui.json when that record is of the same local port. The token and the CSRF secret are not carried over: `had` only says there was a GUI before (RC3-F002). */
 	const recorded = () => {
-		const record = readRecord(slot), seen = readGuiJson(dir), was = record?.gui;
-		const same = was && seen && seen.port === was.port && seen.token === was.token;
-		return { port: was?.port ?? seen?.port, token: was?.token ?? seen?.token, remotePort: same || !was ? seen?.remotePort : undefined, csrf: same || !was ? seen?.csrf : undefined, stopped: Boolean(was?.stopped) };
+		const record = readRecord(slot), seen = readGuiJson(dir), was = record?.gui, port = was?.port ?? seen?.port;
+		return { port, remotePort: seen && seen.port === port ? seen.remotePort : undefined, had: Boolean(was?.token ?? seen?.token), stopped: Boolean(was?.stopped) };
 	};
 	const mark = (change: (gui: NonNullable<ServerRecord["gui"]>) => NonNullable<ServerRecord["gui"]> | undefined) => updateRecord(slot, (r) => {
 		if (r.pid !== pid) return undefined;
@@ -146,11 +145,11 @@ export function createGuiHost(o: GuiHostOptions) {
 	/** `pid`'s start time, waited for up to the bound; undefined when it is not told in time. */
 	const startOfLater = (pid: number): Promise<string | undefined> => {
 		if (!o.startedLater) return Promise.resolve(undefined);
-		return Promise.race([o.startedLater(pid).catch(() => undefined), delay<undefined>(o.startWaitMs ?? RECLAIM_START_WAIT_MS, undefined, { ref: false })]);
+		return boundedWait(o.startedLater(pid), o.startWaitMs ?? RECLAIM_START_WAIT_MS);
 	};
 	/**
 	 * A GUI that a live older host still serves (a pi session before 0.46.0, which the first start after an upgrade finds beside it): the host is asked to hand over as an older build's takeover does
-	 * (`server/stop` with `take`; its serve entry goes with it), and waited for until its page stops answering, so this server binds the same port and the open page reconnects. A host that refuses
+	 * (`server/stop` with `take`; its serve entry goes with it), and waited for until its page stops answering, so this server binds the same port (under a token of its own: the host's page does not follow). A host that refuses
 	 * (another sb server, which answers 409) or stays up is left alone, and the bind falls back to another port. Returns whether a host let go.
 	 */
 	const reclaim = async (): Promise<boolean> => {
@@ -183,7 +182,7 @@ export function createGuiHost(o: GuiHostOptions) {
 				const next = await net.read(), summary = await o.link.summary();
 				return summary && (summary.allies.length || summary.alerts.length || summary.confirms.length) ? { ...next, link: summary } : next;
 			},
-			net, call: cfg.call, hub, dir: o.bundle ?? BUNDLE, paired: join(dir, "paired.json"), port: prefer.port, remotePort: prefer.remotePort, token: prefer.token, csrf: prefer.csrf, bindWaitMs: wait,
+			net, call: cfg.call, hub, dir: o.bundle ?? BUNDLE, paired: join(dir, "paired.json"), port: prefer.port, remotePort: prefer.remotePort, bindWaitMs: wait,
 			link: { call: (name, args) => o.link.call(name, args), enable: () => o.link.enable() }, ...(o.tower ? { tower: o.tower } : {}), trust: { answer: trust.answer, watch: trust.watch },
 			server: { status: () => o.status(), log: (lines) => tailLog(fileOf(slot, "log"), lines), restart: async (reason) => (o.restart ? o.restart(reason) : { status: 501, body: { error: "unavailable", reason: "This server cannot restart itself." } }) },
 			// An older build's /boss gui stop: the GUI stops, and nothing starts it again but the boss's own command. Its takeover is refused (409): that build reports the GUI as stale and leaves it alone.
@@ -201,7 +200,7 @@ export function createGuiHost(o: GuiHostOptions) {
 		log.hide(running.token, running.csrf);
 		return running;
 	};
-	/** The GUI on the recorded port and token, or a new one. Two calls in flight share one start. */
+	/** The GUI on the recorded port when it is free, under a token and CSRF secret of its own, or on another port. Two calls in flight share one start. */
 	const up = (wait = 0): Promise<Gui> => {
 		if (gui) return Promise.resolve(gui);
 		return (opening ??= (async () => {
@@ -209,9 +208,14 @@ export function createGuiHost(o: GuiHostOptions) {
 			const reclaimed = await reclaim();
 			const started = await begin(prefer, reclaimed ? Math.max(wait, o.bindWaitMs ?? BIND_WAIT_MS) : wait);
 			gui = started;
+			// A pairing belongs to the listener's token (cookie Path=/<token>/): after a rotation every listed device is dead, so none is kept.
+			// Whether or not a record of the last GUI survived: paired.json alone may hold devices.
+			const n = started.access.devices.unpairAll();
+			if (n) log.line("devices-cleared", { n });
+			if (started.access.saveError) log.line("error", { code: "paired", text: phrase(`paired.json could not be saved (${started.access.saveError}); the cleared devices come back after the next restart`, 200) });
 			writeGuiJson(started);
 			updateRecord(slot, (r) => (r.pid === pid ? { ...r, gui: { port: started.port, token: started.token, stopped: false } } : undefined));
-			log.line("gui-start", { port: started.port, remotePort: started.remotePort, moved: prefer.port !== undefined && prefer.port !== started.port, ...(prefer.token !== undefined && prefer.token !== started.token ? { newToken: true } : {}) });
+			log.line("gui-start", { port: started.port, remotePort: started.remotePort, moved: prefer.port !== undefined && prefer.port !== started.port, ...(prefer.had ? { newToken: true } : {}) });
 			// Remote access comes back with it, but a slow Tailscale does not hold the start: what is not settled in a few seconds goes on in the background.
 			const resuming = resume(started);
 			await Promise.race([resuming, cfg.sleep(RESUME_WAIT_MS)]);

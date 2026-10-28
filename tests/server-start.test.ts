@@ -84,7 +84,8 @@ test("a start over a dead server's record keeps what the record holds (GUI, last
 	assert.deepEqual(atSpawn!.gui, { port, token: "t" });
 	assert.equal(atSpawn!.lastError?.code, "x", "carried while the new server starts");
 	const record = readRecord(world.slot)!;
-	assert.deepEqual([record.gui, record.lastRestart?.reason, record.lastError], [{ port, token: "t", stopped: false }, "r", undefined], "and dropped once it is ready");
+	assert.deepEqual([record.gui?.port, record.gui?.stopped, record.lastRestart?.reason, record.lastError], [port, false, "r", undefined], "and dropped once it is ready");
+	assert.notEqual(record.gui?.token, "t", "the dead server's token is replaced by the new listener's");
 });
 
 test("the server touches restarting from its first line: during a slow ACL call (a PowerShell start) the record says starting, with since moving and no secret", async () => {

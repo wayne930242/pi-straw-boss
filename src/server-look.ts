@@ -220,7 +220,7 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 			}
 			if (sub === "restart") {
 				const downgrade = /(^|\s)--downgrade(?=\s|$)/.test(rest), reason = rest.replace(/(^|\s)--downgrade(?=\s|$)/g, " ").trim() || "restart from /boss server restart";
-				const message = downgrade ? "This starts the server from this session's pi-straw-boss, which is OLDER than the server's. Pages reconnect on the same URL." : "Pages and the desk webview reconnect on the same URL; runs and dialogs carry on.";
+				const message = downgrade ? "This starts the server from this session's pi-straw-boss, which is OLDER than the server's. Its GUI gets a new address (the old one stops working), so reopen it with /boss gui." : "The GUI gets a new address (the old one stops working; the desk shell and a phone have to load it again); runs and dialogs carry on.";
 				if (!(await ask(downgrade ? "Restart the sb server from an older package?" : "Restart the sb server?", message))) return tell("The sb server was not restarted.");
 				const done = await api.restart(reason, { boss: true, downgrade });
 				return tell(`The sb server ${done.server} (pid ${done.pid}, pi-straw-boss ${done.version}).`);

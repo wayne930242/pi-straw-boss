@@ -112,17 +112,19 @@ function navigate(next: Route) {
 
 function report(next: Status) {
 	status = next;
-	const stale = next.state === "reconnecting" || next.state === "offline";
+	const stale = next.state === "reconnecting" || next.state === "offline" || next.state === "replaced";
 	document.body.dataset.stale = el("stage").dataset.stale = String(stale);
 	el("link").dataset.state = next.state;
-	el("link-text").textContent = { connecting: m.link_connecting, live: m.link_live, reconnecting: m.link_reconnecting, offline: m.link_offline }[next.state]();
+	el("link-text").textContent = { connecting: m.link_connecting, live: m.link_live, reconnecting: m.link_reconnecting, offline: m.link_offline, replaced: m.link_offline }[next.state]();
 	if (focus && latest) focus.net(latest); // the composer follows the link state
 	panels?.stack.redraw(); // and so do the dialogs' Focus terminal buttons
 	const banner = el("banner");
 	banner.hidden = !stale && !next.problem;
-	const lead = next.state === "offline"
-		? m.banner_offline({ tries: next.attempt - 1 })
-		: next.state === "reconnecting"
+	const lead = next.state === "replaced"
+		? m.banner_replaced()
+		: next.state === "offline"
+			? m.banner_offline({ tries: next.attempt - 1 })
+			: next.state === "reconnecting"
 			? next.attempt ? m.banner_reconnecting_try({ attempt: next.attempt }) : m.banner_reconnecting()
 			: m.banner_problem({ problem: next.problem ?? "" });
 	const last = document.createElement("b");
@@ -187,6 +189,7 @@ const stream = createStream({
 	hidden: () => document.hidden,
 	onNet: show,
 	onStatus: report,
+	replaced: () => fetch("./", { cache: "no-store" }).then((r) => r.status === 403),
 });
 const resume = () => stream.resume();
 document.addEventListener("visibilitychange", () => {

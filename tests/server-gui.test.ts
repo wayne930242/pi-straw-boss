@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createServer as createHttpServer, get, request } from "node:http";
 import { createServer } from "node:net";
@@ -53,18 +53,60 @@ async function restart(h: Hosted, over: Parameters<typeof startHosted>[1] = {}) 
 	return host(over);
 }
 
-test("a restart keeps the URL an open page has: the new server binds the recorded port, token, and CSRF secret, rewrites gui.json for its own pid, and binds only after its intercom id is registered", async () => {
+/** The status a POST to the page's API answers, with the token in the path and the CSRF secret in the header: what an open page of an earlier GUI sends. */
+const posted = (port: number, token: string, csrf: string) => new Promise<number>((resolve) => {
+	const body = "{}", req = request({ host: "127.0.0.1", port, path: `/${token}/api/server/stop`, method: "POST", agent: false, headers: { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}`, "content-type": "application/json", "x-sb-csrf": csrf, "content-length": body.length } }, (res) => (res.resume(), resolve(res.statusCode!)));
+	req.end(body);
+});
+
+test("RC3-F002: a restart binds the recorded port again but under a new token and CSRF secret: the old ones open nothing, both records carry the new ones, and the token is in no log", async () => {
 	const h = await host();
-	const before = h.gui(), url = h.url;
+	const before = h.gui(), oldUrl = h.url;
+	assert.equal(await status(oldUrl), 200);
 	const next = await restart(h);
 	const after = next.gui();
-	assert.deepEqual([after.port, after.remotePort, after.token, after.csrf], [before.port, before.remotePort, before.token, before.csrf]);
-	assert.equal(next.url, url);
-	assert.notEqual(after.pid, before.pid);
-	assert.deepEqual(next.record().gui, { port: before.port, token: before.token, stopped: false });
-	assert.equal(await status(url), 200);
+	assert.deepEqual([after.port, after.remotePort], [before.port, before.remotePort], "the ports are got back");
+	assert.notEqual(after.token, before.token);
+	assert.notEqual(after.csrf, before.csrf);
+	assert.match(after.token, /^[0-9a-f]{32}$/);
+	assert.notEqual(next.url, oldUrl);
+	assert.equal(next.record().gui?.token, after.token, "server.json carries the new token as gui.json does");
+	assert.deepEqual(next.record().gui, { port: before.port, token: after.token, stopped: false });
+	assert.equal(await status(next.url), 200);
+	assert.equal(await status(oldUrl), 403, "the token an open page (or a squatter that took the port in the gap) holds opens nothing");
+	assert.equal(await posted(after.port, after.token, before.csrf!), 403, "nor does the old CSRF secret");
+	assert.equal(await posted(after.port, before.token, after.csrf!), 403, "nor does the old token with the new secret");
 	const log = readFileSync(fileOf(next.slot, "log"), "utf8");
 	assert.ok(log.indexOf("intercom-connected") < log.indexOf("gui-start"), "the server's ids first, then the GUI's ports");
+	assert.ok(log.split("\n").some((l) => l.includes("gui-start") && l.includes("newToken")), "the start says it is a new token");
+	for (const secret of [before.token, before.csrf!, after.token, after.csrf!]) assert.ok(!log.includes(secret), "no token or secret in the log");
+});
+
+test("RC3-F002: a server that crashed (its records left as it wrote them, no clean leave) is followed by a GUI on the recorded port under a new token", async () => {
+	const h = await host();
+	const before = h.gui(), dir = h.slot.dir, oldUrl = h.url;
+	await h.stop();
+	writeRecordFile(dir, before);
+	assert.equal(h.gui().started, `T-${h.pid}`, "gui.json is as a crash leaves it, with the dead server's start time");
+	const next = await host();
+	assert.equal(next.gui().port, before.port);
+	assert.notEqual(next.gui().token, before.token);
+	assert.notEqual(next.gui().csrf, before.csrf);
+	assert.equal(next.record().gui?.token, next.gui().token);
+	assert.equal(await status(next.url), 200);
+	assert.equal(await status(oldUrl), 403);
+});
+
+test("RC3-F002: the token lasts as long as the listener does: asks while the GUI runs give the same URL, and a stop and a start is a new listener", async () => {
+	const h = await host();
+	const first = await h.ask("gui", { boss: true }), again = await h.ask("gui", { boss: false });
+	assert.deepEqual([first.port, first.token], [h.gui().port, h.gui().token]);
+	assert.deepEqual([again.port, again.token], [first.port, first.token], "the same listener keeps its token");
+	await h.ask("gui-stop");
+	const started = await h.ask("gui", { boss: true });
+	assert.equal(started.port, first.port);
+	assert.notEqual(started.token, first.token);
+	assert.equal(h.record().gui?.token, started.token);
 });
 
 test("RC3-F004: a squatter on the remote port alone moves only the remote port, and the token and CSRF secret still change", async () => {
@@ -100,14 +142,10 @@ test("RC2-F001: a port another process took meanwhile moves the GUI to a new tok
 	assert.equal(await status(next.url), 200);
 	assert.equal(await status(`http://127.0.0.1:${after.port}/${before.token}/`), 403, "the token the squatter was sent opens nothing on the new port");
 	assert.deepEqual(seen, [], "and the squatter was sent nothing by the server");
-	const posted = await new Promise<number>((resolve) => {
-		const body = "{}", req = request({ host: "127.0.0.1", port: after.port, path: `/${after.token}/api/server/stop`, method: "POST", agent: false, headers: { host: `127.0.0.1:${after.port}`, origin: `http://127.0.0.1:${after.port}`, "content-type": "application/json", "x-sb-csrf": before.csrf!, "content-length": body.length } }, (res) => (res.resume(), resolve(res.statusCode!)));
-		req.end(body);
-	});
-	assert.equal(posted, 403, "nor does the old CSRF secret");
+	assert.equal(await posted(after.port, after.token, before.csrf!), 403, "nor does the old CSRF secret");
 });
 
-test("gui-stop stops the listeners and marks the GUI stopped on purpose in both records while the server runs on; a restart leaves it stopped; an automatic ask is refused, and the boss's own starts it on the same URL and clears both marks", async () => {
+test("gui-stop stops the listeners and marks the GUI stopped on purpose in both records while the server runs on; a restart leaves it stopped; an automatic ask is refused, and the boss's own starts it on the same port under a new token and clears both marks", async () => {
 	const h = await host();
 	const url = h.url, before = h.gui();
 	assert.deepEqual(await h.ask("gui-stop"), { ok: true, was: true });
@@ -125,8 +163,9 @@ test("gui-stop stops the listeners and marks the GUI stopped on purpose in both 
 	const started = await next.ask("gui", { boss: true });
 	assert.equal(started.ok, true);
 	assert.equal(started.port, before.port);
-	assert.equal(started.token, before.token);
-	assert.equal(await status(url), 200);
+	assert.notEqual(started.token, before.token, "a GUI that starts again is a new listener");
+	assert.equal(await status(`http://127.0.0.1:${started.port}/${started.token}/`), 200);
+	assert.equal(await status(url), 403, "the old token opens nothing");
 	assert.equal(next.record().gui?.stopped, false);
 	assert.equal(next.gui().stopped, undefined);
 });
@@ -177,6 +216,58 @@ test("a server that starts again turns remote on by itself when it was wanted (n
 	await again.handle.done;
 	const last = await host({ tailscale: ts.run });
 	assert.deepEqual(((await last.ask("status")).gui as { remote: unknown }).remote, { wanted: false, on: false }, "turned off, it stays off");
+});
+
+test("RC3-F002: a restart with remote on re-points the serve entry at the new listener, and a phone's old pairing link or an old token on the remote listener is refused", async () => {
+	const ts = fakeTailscale();
+	const h = await host({ tailscale: ts.run });
+	await h.ask("gui-remote", { on: true });
+	const before = h.gui(), oldLink = String((await h.ask("gui-pair")).url);
+	assert.ok(oldLink.includes(`/${before.token}/pair/`));
+	const next = await restart(h, { tailscale: ts.run });
+	const after = next.gui(), proxy = () => (ts.config() as { Web: Record<string, { Handlers: { "/": { Proxy: string } } }> }).Web["box.tail1.ts.net:8443"]!.Handlers["/"].Proxy;
+	assert.notEqual(after.token, before.token);
+	assert.equal(proxy(), `http://127.0.0.1:${after.remotePort}`, "the entry points at the new server's remote listener");
+	const link = String((await next.ask("gui-pair")).url);
+	assert.ok(link.includes(`/${after.token}/pair/`) && !link.includes(before.token), "a new pairing link carries the new token");
+	const remote = (path: string) => new Promise<number>((resolve, reject) => void get({ host: "127.0.0.1", port: after.remotePort, path, agent: false, headers: { host: "box.tail1.ts.net:8443", "tailscale-user-login": "me@example.com", "x-forwarded-for": "100.87.7.97" } }, (res) => (res.resume(), resolve(res.statusCode!))).on("error", reject));
+	assert.equal(await remote(new URL(oldLink).pathname), 403, "the old pairing link opens nothing");
+	assert.equal(await remote(`/${before.token}/`), 403, "nor does the old token");
+	assert.equal(await remote(new URL(link).pathname), 200, "the new link pairs");
+});
+
+test("R-F004: a restart that gives the GUI a new token unpairs the devices of the old one (identity and the wish stay), and logs how many", async () => {
+	const ts = fakeTailscale();
+	const h = await host({ tailscale: ts.run });
+	await h.ask("gui-remote", { on: true });
+	const link = new URL(String((await h.ask("gui-pair")).url));
+	const first = await new Promise<number>((resolve, reject) => void get({ host: "127.0.0.1", port: h.gui().remotePort, path: link.pathname, agent: false, headers: { host: "box.tail1.ts.net:8443", "tailscale-user-login": "me@example.com", "x-forwarded-for": "100.87.7.97", "user-agent": "Mozilla/5.0 (iPhone)" } }, (res) => (res.resume(), resolve(res.statusCode!))).on("error", reject));
+	assert.equal(first, 200);
+	const paired = (x: Hosted) => Object.keys((JSON.parse(readFileSync(join(x.slot.dir, "paired.json"), "utf8")) as { devices: object }).devices).length;
+	assert.equal(paired(h), 1, "one device paired");
+	const next = await restart(h, { tailscale: ts.run });
+	assert.equal(paired(next), 0, "the old pairing is dead with the old token, so it is not kept");
+	assert.equal(((await next.ask("status")).gui as { remote: { wanted: boolean } }).remote.wanted, true, "the wish stays");
+	assert.match(readFileSync(fileOf(next.slot, "log"), "utf8"), /devices-cleared n=1/);
+});
+
+test("IRQ-F004: a listener that starts with no GUI record still unpairs the devices paired.json holds", async () => {
+	const ts = fakeTailscale();
+	const h = await host({ tailscale: ts.run });
+	await h.ask("gui-remote", { on: true });
+	const link = new URL(String((await h.ask("gui-pair")).url));
+	await new Promise<number>((resolve, reject) => void get({ host: "127.0.0.1", port: h.gui().remotePort, path: link.pathname, agent: false, headers: { host: "box.tail1.ts.net:8443", "tailscale-user-login": "me@example.com", "x-forwarded-for": "100.87.7.97", "user-agent": "Mozilla/5.0 (iPhone)" } }, (res) => (res.resume(), resolve(res.statusCode!))).on("error", reject));
+	const paired = (x: Hosted) => Object.keys((JSON.parse(readFileSync(join(x.slot.dir, "paired.json"), "utf8")) as { devices: object }).devices).length;
+	assert.equal(paired(h), 1);
+	assert.equal((await h.ask("restart", { reason: "test", by: "test" })).ok, true);
+	await h.handle.done;
+	rmSync(join(h.slot.dir, "gui.json"), { force: true });
+	const record = JSON.parse(readFileSync(fileOf(h.slot, "record"), "utf8")) as Record<string, unknown>;
+	delete record.gui;
+	writeFileSync(fileOf(h.slot, "record"), JSON.stringify(record));
+	const next = await host({ tailscale: ts.run });
+	assert.equal(paired(next), 0, "no record of the last GUI, yet the pairing is not kept");
+	assert.match(readFileSync(fileOf(next.slot, "log"), "utf8"), /devices-cleared n=1/);
 });
 
 test("remote access that cannot resume says why in the server's status and leaves the wish; another Tailscale identity leaves it off and keeps the old devices' wish", async () => {
@@ -275,23 +366,26 @@ test("how-it-works carries States for a shell with each state `status` can give,
 
 /** What a pi session before 0.46.0 runs at gui.ts's level: the page on the recorded ports, a serve entry of its own, and a stop that takes its entry down first (host.ts `onStop`). */
 async function olderHost(h: Hosted, ts: ReturnType<typeof fakeTailscale>, over: { refuse?: boolean } = {}) {
-	const before = h.gui(), dir = h.slot.dir, stops: { by: string; take: boolean }[] = [];
+	const first = h.gui(), dir = h.slot.dir, stops: { by: string; take: boolean }[] = [];
 	await h.ask("restart", { reason: "test", by: "test" });
 	await h.handle.done;
 	let old!: Awaited<ReturnType<typeof startGui>>;
 	old = await startGui({
-		read: async () => ({ bases: [] }), dir: bundle, paired: join(dir, "paired.json"), port: before.port, remotePort: before.remotePort, token: before.token, csrf: before.csrf, bindWaitMs: 2000,
+		read: async () => ({ bases: [] }), dir: bundle, paired: join(dir, "paired.json"), port: first.port, remotePort: first.remotePort, bindWaitMs: 2000,
 		onStop: (asked) => { stops.push(asked); void switchRemote(old, false, dir, ts.run, true).then(() => old.stop()); },
 	});
 	cleanups.push(() => old.stop());
 	markAlive(4242);
+	// The older host serves the first server's ports under a token of its own, which is what gui.json records.
+	assert.deepEqual([old.port, old.remotePort], [first.port, first.remotePort]);
+	const before = { ...first, token: old.token, csrf: old.csrf };
 	// What 0.45 wrote: gui.json names the session (a live pid that is not the server's), with its start time.
 	writeRecordFile(dir, { ...before, pid: 4242, started: "T-old", owner: "pi session (pid 4242)", ownerSession: "pi-old", version: "0.45.0" });
 	if (!over.refuse) await switchRemote(old, true, dir, ts.run);
 	return { before, old, stops, dir };
 }
 
-test("the first server after an upgrade takes the GUI from the 0.45 session that still hosts it: it asks for the hand-over, binds the same port and token, and remote comes back on its listener", async () => {
+test("the first server after an upgrade takes the GUI from the 0.45 session that still hosts it: it asks for the hand-over, binds the same ports under a new token, and remote comes back on its listener", async () => {
 	const ts = fakeTailscale(), h = await host({ tailscale: ts.run });
 	const { before, old, stops } = await olderHost(h, ts);
 	assert.equal(await status(`http://127.0.0.1:${before.port}/${before.token}/`), 200, "the older host answers");
@@ -299,9 +393,12 @@ test("the first server after an upgrade takes the GUI from the 0.45 session that
 	const next = await host({ tailscale: ts.run, options: { startOf: (p) => (p === 4242 ? "T-old" : undefined) } });
 	assert.deepEqual(stops, [{ by: `sb server (pid ${next.pid})`, take: true }]);
 	const after = next.gui();
-	assert.deepEqual([after.port, after.remotePort, after.token, after.csrf, after.pid], [before.port, before.remotePort, before.token, before.csrf, next.pid], "the URL is kept");
+	assert.deepEqual([after.port, after.remotePort, after.pid], [before.port, before.remotePort, next.pid], "the ports are kept");
+	assert.notEqual(after.token, before.token, "a listener that starts after another one has a token of its own");
+	assert.notEqual(after.csrf, before.csrf);
 	assert.equal(await status(next.url), 200);
-	assert.deepEqual(next.record().gui, { port: before.port, token: before.token, stopped: false });
+	assert.equal(await status(`http://127.0.0.1:${before.port}/${before.token}/`), 403, "the page the older host served opens nothing");
+	assert.deepEqual(next.record().gui, { port: before.port, token: after.token, stopped: false });
 	assert.deepEqual(((await next.ask("status")).gui as { remote: unknown }).remote, { wanted: true, on: true }, "remote is back");
 	assert.equal((ts.config() as { Web: Record<string, { Handlers: { "/": { Proxy: string } } }> }).Web["box.tail1.ts.net:8443"]!.Handlers["/"].Proxy, `http://127.0.0.1:${next.gui().remotePort}`);
 	assert.ok(readFileSync(fileOf(next.slot, "log"), "utf8").includes("gui-reclaim"));
@@ -315,14 +412,14 @@ test("a live host that does not hand over is left alone: the server's GUI moves 
 	await old.stop();
 	markAlive(4243);
 	cleanups.push(() => markGone(4243));
-	const stubborn = await startGui({ read: async () => ({ bases: [] }), dir: bundle, port: before.port, remotePort: before.remotePort, token: before.token, csrf: before.csrf, refuseTake: true, onStop: (a) => void asked.push(a) });
+	const stubborn = await startGui({ read: async () => ({ bases: [] }), dir: bundle, port: before.port, remotePort: before.remotePort, refuseTake: true, onStop: (a) => void asked.push(a) });
 	cleanups.push(() => stubborn.stop());
-	writeRecordFile(dir, { ...before, pid: 4243, started: "T-other", owner: "sb server (pid 4243)", version: "0.46.0" });
+	writeRecordFile(dir, { ...before, token: stubborn.token, csrf: stubborn.csrf, port: stubborn.port, remotePort: stubborn.remotePort, pid: 4243, started: "T-other", owner: "sb server (pid 4243)", version: "0.46.0" });
 	{
 		const next = await host({ tailscale: ts.run, options: { startOf: (p) => (p === 4243 ? "T-other" : undefined) } });
-		assert.equal(await status(`http://127.0.0.1:${before.port}/${before.token}/`), 200, "the other GUI still answers");
+		assert.equal(await status(`http://127.0.0.1:${stubborn.port}/${stubborn.token}/`), 200, "the other GUI still answers");
 		assert.notEqual(next.gui().port, before.port);
-		assert.notEqual(next.gui().token, before.token);
+		assert.notEqual(next.gui().token, stubborn.token);
 		assert.equal(await status(next.url), 200);
 		assert.deepEqual(asked, [], "nothing stopped it");
 	}
@@ -421,16 +518,16 @@ test("RC2-F001: a squatter that binds the port the old host just freed is sent n
 	let old!: Awaited<ReturnType<typeof startGui>>;
 	// The older host lets go of its port on the take, and a foreign web server binds that port at once.
 	old = await startGui({
-		read: async () => ({ bases: [] }), dir: bundle, paired: join(dir, "paired.json"), port: before.port, remotePort: before.remotePort, token: before.token, csrf: before.csrf, bindWaitMs: 2000,
+		read: async () => ({ bases: [] }), dir: bundle, paired: join(dir, "paired.json"), port: before.port, remotePort: before.remotePort, bindWaitMs: 2000,
 		onStop: () => void old.stop().then(async () => void (seen = await squatter(before.port))),
 	});
 	cleanups.push(() => old.stop());
 	markAlive(4242);
 	cleanups.push(() => markGone(4242));
-	writeRecordFile(dir, { ...before, pid: 4242, started: "T-old", owner: "pi session (pid 4242)", ownerSession: "pi-old", version: "0.45.0" });
+	writeRecordFile(dir, { ...before, token: old.token, csrf: old.csrf, pid: 4242, started: "T-old", owner: "pi session (pid 4242)", ownerSession: "pi-old", version: "0.45.0" });
 	const next = await host({ tailscale: ts.run, options: { startOf: (p) => (p === 4242 ? "T-old" : undefined) } });
 	assert.notEqual(next.gui().port, before.port, "the port is taken, so the GUI moves");
-	assert.notEqual(next.gui().token, before.token);
+	assert.notEqual(next.gui().token, old.token);
 	assert.equal(await status(next.url), 200);
 	assert.deepEqual(seen, [], "the squatter received no request, so no token");
 });
@@ -478,7 +575,8 @@ test("an old-build session neither adopts the GUI nor takes it: a restart leaves
 	const next = await host();
 	assert.equal(next.gui().started, `T-${next.pid}`, "the next server writes its start time again");
 	assert.equal(adoptable(next.gui()), true);
-	assert.deepEqual([next.gui().port, next.gui().token], [before.port, before.token]);
+	assert.equal(next.gui().port, before.port);
+	assert.notEqual(next.gui().token, before.token, "a new listener has a new token");
 });
 
 // --- The paired device's limits, GUI commands while leaving, and the record (B2R-F003, F007) ---

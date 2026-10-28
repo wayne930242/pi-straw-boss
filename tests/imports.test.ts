@@ -82,8 +82,10 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased (project trust) to 361 (on top of Straw Link's summary and channel): the snapshot's `trust` (net.ts: the type, the asks read with the world, the field), and the server's trust option (gui.ts: the answer route, the directory watch, its stop).
 	// Unreleased (GUI in the sb server) to 376: gui.ts answers the server panel (server/status, server/log, server/restart) and the remote and stop options the server passes.
 	// Unreleased (RC2-F001) to 387: gui.ts binds its ports first and keeps the token and CSRF secret only when it got the recorded ports back; on another port both are new.
-	// Unreleased to 405 (sb server B5, GUI): net.ts (the tower service in the snapshot: TowerService, TowerView, the unit it makes of a standing tower) and gui.ts (the `tower` option and its route scope).
-	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 405, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
+	// Unreleased (R-F001) to 389: gui.ts answers a page load at a replaced address with a short HTML 403 and the words of the page's banner.
+	// Unreleased (IRQ-F001, F003) to 390: the page-load 403's note in Traditional Chinese when Accept-Language asks for it.
+	// Unreleased to 408 (sb server B5, GUI): net.ts (the tower service in the snapshot: TowerService, TowerView, the unit it makes of a standing tower) and gui.ts (the `tower` option and its route scope).
+	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 408, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
 	// Input (the spec's figure), remote access over Tailscale, its terminal pairing panel (QR, c copies, o opens), and the QR encoder each have their own.
 	// What a waiting session waits on (0.5.0, read for display only; answering is deferred) has its own as well.
 	// 0.5.1 raised remote.ts from 165 to 185 (a recorded server counts as running only if its process started when the entry says: a reused PID
@@ -317,6 +319,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased (sb server B4): towers.ts (the tower service: identities, tabs, tokens, conversion), towerstore.ts (service.json, the queue, the opener's ledger), towerruns.ts (the `towerRuns` switch), towerclient.ts (how a session asks for a tower); version.ts gains serverCli; main.ts the service's wiring and its four commands.
 	// Review fixes of the 0.46.0 integration (SBIR-F002): testguard.ts 115 (`guarded` notes the start time WMI told and lets a note with none go at `release`; a pid of 0 is never noted).
 	// Test isolation merged with B4: server-look.ts 197 (deps.track and the reach context); client.ts 647 (testguard.ts, new, checks a real spawn).
+	// Unreleased (R-F002): client.ts 697 to 698 for the ready server's record read again in waitReady.
 	for (const [name, max] of [["record.ts", 472], ["log.ts", 135], ["version.ts", 28], ["acl.ts", 398], ["socket.ts", 220], ["client.ts", 699], ["intercom.ts", 102], ["main.ts", 560], ["cli.ts", 362], ["winprep.ts", 492], ["breakaway.ts", 251], ["testguard.ts", 115], ["towers.ts", 607], ["towerstore.ts", 264], ["towerruns.ts", 21], ["towerclient.ts", 70]] as const) assert.ok(count(`src/server/${name}`) <= max, `src/server/${name} has ${count(`src/server/${name}`)} lines`);
 	// The page: the files the spec budgets one by one, then this round's own figures (no figure in the spec): the focus views, the overlay
 	// layer (alert spotting and the stack model in the map's chunk, the layer's DOM and tiles in a chunk of their own), the dev-only demo, and everything else.
@@ -461,8 +464,10 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased to 906: quit.ts aimSession, the Quit in a unit's comms header (leave exported for its test).
 	// Unreleased (settings check) to 1404: gui/refusal.ts (the refusal worded from the server's facts, 12 lines with its import in deploy.ts and quit.ts's Pop).
 	// Unreleased (GUI in the sb server) to 1461: gui/server.ts (55: the server panel, a lazy tile) and main.ts (2: the header button, this computer's page only).
+	// Unreleased (R-F001) to 1472: the stream's `replaced` state (stream.ts: the look at the page's address, no resume once replaced) and its banner (main.ts).
+	// After the merge with 0.46.0 (the stream's `replaced` state and its banner) the page is 1498.
 	// Unreleased to 1486 (sb server B5, GUI): render.ts (the tower's standing-by state and the service's notices with their buttons), composer.ts (wakes), chat.ts, scene.ts, and session.ts (the tower unit's service and queue).
-	assert.ok(page <= 1487, `the page's TypeScript has ${page} lines`);
+	assert.ok(page <= 1498, `the page's TypeScript has ${page} lines`);
 });
 
 test("the built page is small, self-contained (no remote URLs, fonts, or imports), and carries no demo fixture", { skip: !existsSync(join(root, "dist/gui/index.html")) && "run npm run gui:build first" }, () => {
@@ -531,8 +536,11 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Unreleased (project trust) to 53.65 KB / 19.3 KB gzipped: a trust question as an alert (alerts.ts), its reminder and its place in the HUD and the tab badge (notify.ts, main.ts), with the messages the map uses in both languages.
 	// Unreleased (GUI in the sb server) to 54.35 KB / 19.5 KB gzipped: the header's Server button (this computer's page only) and its two messages in both languages; the panel itself is a lazy chunk (gui/server.ts).
 	// Unreleased (settings check) to 53.85 KB: quit.ts's Pop reads the refusal facts of a folder pi must not start in (the words are in the lazy deploy chunk, gui/refusal.ts).
+	// Unreleased (R-F001) to 54.95 KB / 19.7 KB gzipped: the `replaced` state of the stream (one look at the page's address after an error) and its banner in both languages.
+	// Unreleased (IRQ-F001) to 55.0 KB / 19.75 KB gzipped: the longer banner words in both languages (and the `replaced` dot's colour in the stylesheet).
 	// Unreleased (sb server B5, GUI) to 56.4 KB / 20.2 KB gzipped: the tower unit of the service (standing by, the notices with Retry, Deliver again, and Drop in render.ts, the composer's wake line, the served-inbox notice) and its messages in both languages.
-	assert.ok(size(entry).length <= 56_400 && gz(entry) <= 20_200, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// After the merge with 0.46.0 (its `replaced` state and banner, 55.0 KB / 19.75 KB alone) to 56.95 KB / 20.4 KB.
+	assert.ok(size(entry).length <= 56_950 && gz(entry) <= 20_400, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).

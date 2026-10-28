@@ -4,12 +4,12 @@ import { request } from "node:http";
 import { connect } from "node:net";
 import { join } from "node:path";
 import { alive } from "./remote.ts";
-import { setTimeout as delay } from "node:timers/promises";
 import { startedLater } from "./startof.ts";
 
 // gui.json in the state directory records the GUI the sb server serves (src/server/guihost.ts): its pid and start time, the local and remote port, the token, and the server's
 // intercom session. It is the contract straw-boss-desk and the sessions' dialog bridges read (docs/how-it-works.md, `gui.json` is a contract). The server writes it by rename
-// when its GUI starts, and a restart or upgrade writes it again with the same port and token, so a page left open reconnects to its successor. Sessions only read it.
+// when its GUI starts, and a restart or upgrade writes it again with the same port when it is free and a new token and CSRF secret (every listener has its own; RC3-F002), which a reader that
+// watches the file picks up. Sessions only read it.
 /**
  * `pid` and `started` name the sb server, the process that serves the GUI (a pi session before 0.46.0); `owner` is `sb server (pid N)` and `ownerSession` the server's intercom session id: dialog bridges
  * follow it to the server's dialog channel. `herdr` is the socket of the Herdr server the server's net is read from. `stopped` marks a GUI stopped on purpose (`/boss gui stop`) or the whole server stopped on purpose.
@@ -88,11 +88,17 @@ export const listening = (port: number) =>
 		socket.once("connect", () => (socket.destroy(), done(true))).once("error", () => done(false)).once("timeout", () => (socket.destroy(), done(false)));
 	});
 
+/** `read` raced against `ms`, holding the event loop for the bound: the reads are unref'd so that pi may leave with one pending, but an awaiting caller (pi's `project_trust` handler holds nothing else) must not see the loop drain and the process exit at the question. The timer is cleared when the read settles. */
+export const boundedWait = <T>(read: Promise<T>, ms: number): Promise<T | undefined> => {
+	let timer: NodeJS.Timeout | undefined;
+	const bound = new Promise<undefined>((done) => (timer = setTimeout(done, ms, undefined)));
+	return Promise.race([read.catch(() => undefined), bound]).finally(() => clearTimeout(timer));
+};
 const START_WAIT_MS = 6000;
 /** Where a session reads another process's start time and how long it waits: the process's own cache and 6 s unless a test (or a caller) says otherwise. */
 export interface StartRead { later?: (pid: number, o: { hold: false }) => Promise<string | undefined>; waitMs?: number }
 /** Another process's start time, waited for up to 6 s: a Windows read is 3.5 to 5 s on a cold cache, and a new pi asks its trust question once, at its start. Unknown after the bound stays unknown (nothing is sent). */
-export const startBounded = (pid: number, waitMs = START_WAIT_MS, later: NonNullable<StartRead["later"]> = startedLater): Promise<string | undefined> => Promise.race([later(pid, { hold: false }).catch(() => undefined), delay<undefined>(waitMs, undefined, { ref: false })]);
+export const startBounded = (pid: number, waitMs = START_WAIT_MS, later: NonNullable<StartRead["later"]> = startedLater): Promise<string | undefined> => boundedWait(later(pid, { hold: false }), waitMs);
 
 /**
  * Whether the recorded server runs and answers its page, for a session that is not the server (the tower's dashboard, a trust question). The token goes to the port only after the process that
@@ -100,3 +106,8 @@ export const startBounded = (pid: number, waitMs = START_WAIT_MS, later: NonNull
  * and nothing is sent: another account's process may hold the port a crashed server left (RC2-F001). `read` is where the start time comes from; the callers pass the session's own (`cfg.startRead`), which is the process's cache by default.
  */
 export const answersLive = async (r: GuiRecord, { later, waitMs }: StartRead = {}): Promise<boolean> => Boolean(r.started) && alive(r.pid) && (await startBounded(r.pid, waitMs, later)) === r.started && answers(r);
+/** The page's URL the dashboard shows: a recorded GUI that was not stopped on purpose and is shown to be that process's, answering. A stopped record takes no request (it carries the live server's pid, and its port may be someone else's now). */
+export const liveUrl = async (dir: string, read?: StartRead): Promise<string | undefined> => {
+	const r = readRecord(dir);
+	return r && !r.stopped && (await answersLive(r, read)) ? urlOf(r) : undefined;
+};

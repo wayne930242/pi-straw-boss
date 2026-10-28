@@ -301,7 +301,7 @@ export async function waitReady(ctx: Ctx, ms: number, { old, keeps = old, exited
 	void exited?.then((code) => (gone = code));
 	for (;;) {
 		const found = await probe(ctx, end, pidUnknown?.() === true);
-		if (found.live && found.hello?.ready === true && found.record && found.record.pid !== old?.pid) return found.record;
+		if (found.live && found.hello?.ready === true && found.record && found.record.pid !== old?.pid) return [readRecord(ctx.slot)].find((again) => again?.pid === found.record!.pid) ?? found.record; // read again: the one before the hello may predate the GUI token (R-F002)
 		// A child that exited is told once the probe has had a last look at the record it may have written.
 		if (gone !== undefined) return { exit: gone };
 		if (ctx.now() >= end) return undefined;
@@ -510,7 +510,7 @@ export interface RestartOptions {
 /**
  * Every restart goes the same way (`restart`, `upgrade`, `up`'s desk restart): the requester takes `server.lock` and holds it until the new server answers hello; asks the old
  * server to restart with a reason; touches `restarting.since` every 2 s; and starts the new server from its own package, never from one older than the recorded `version`
- * (unless `downgrade`). A server that is down is started instead. The new one keeps the GUI port and token of the record (B2), registers its identities, and clears `restarting`.
+ * (unless `downgrade`). A server that is down is started instead. The new one binds the GUI port of the record when it is free, under a token of its own (B2, RC3-F002), registers its identities, and clears `restarting`.
  */
 export async function restart(ctx: Ctx, { reason, downgrade = false, upgrade = false, lockWaitMs = lockWaitFor(ctx), deadline, boss = false, limit = false, counts = !upgrade }: RestartOptions): Promise<Restarted> {
 	const gate = needsGate(await probe(ctx, deadline));

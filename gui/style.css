@@ -240,7 +240,7 @@ svg { display: block; }
 .link[data-state="live"] i { background: var(--ok); animation: blink 2.4s ease-in-out infinite; }
 .link[data-state="live"] { color: var(--ok); }
 .link[data-state="reconnecting"] i, .link[data-state="connecting"] i { background: var(--amber); animation: blink 1s ease-in-out infinite; }
-.link[data-state="offline"] i { background: var(--err); }
+.link[data-state="offline"] i, .link[data-state="replaced"] i { background: var(--err); }
 .banner { margin: 14px 0 0; padding: 10px 16px; border-radius: 14px; background: color-mix(in srgb, var(--idle) 16%, transparent); color: var(--text); font-size: 13px; }
 .banner b { font-family: var(--mono); font-weight: 600; }
 
