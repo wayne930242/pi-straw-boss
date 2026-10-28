@@ -309,6 +309,24 @@ test("R-F003: a run whose server does not answer (or only refuses) for lostMs en
 	assert.match(r.notes.join("\n"), /out of reach/);
 });
 
+test("B6 VM F9: a run in the middle of a turn whose server stays out of reach for lostMs aborts the turn before it leaves, since pi keeps a shutdown until its next idle moment", async () => {
+	const srv = server();
+	let down = false;
+	const inner = srv.ask.bind(srv);
+	srv.ask = async (request: Request): Promise<Answer> => (request.cmd === "run-poll" && down ? { ok: false, error: "no server" } : inner(request));
+	const r = await rig(srv);
+	await until(() => srv.requests.some((q) => q.cmd === "run-file"), "the run to be set up");
+	let aborts = 0;
+	const abort = r.session.abort.bind(r.session);
+	r.session.abort = async () => (aborts++, abort());
+	const busy = await busyTurn(r);
+	down = true;
+	await until(() => r.shutdowns.length === 1, "the busy run to give up", 3000);
+	assert.equal(aborts, 1, "the model call is aborted so pi reaches its idle moment");
+	busy.release();
+	await busy.turn.catch(() => {});
+});
+
 test("B5R-F002: a re-claim that the starting server refuses is waited for, not the end of the run", async () => {
 	const srv = server();
 	const inner = srv.ask.bind(srv);

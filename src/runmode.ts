@@ -293,7 +293,10 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	/** The server did not answer, or refused: the run waits for it (a restart takes up to 30 s) and ends when `lostMs` has passed without an answer. */
 	function unreachable(why: string) {
 		outOfReach ??= cfg.now();
-		if (cfg.now() - outOfReach > lostMs) end(`the sb server has been out of reach for ${Math.round(lostMs / 1000)} s; this run ends: ${why}`);
+		if (cfg.now() - outOfReach <= lostMs) return;
+		// pi keeps a shutdown until its next idle moment, and a model call can last many minutes: an orphaned run in the middle of a turn aborts it first (B6 VM F9).
+		if (!ending) try { if (ctx && !ctx.isIdle()) ctx.abort(); } catch { /* the session is already gone */ }
+		end(`the sb server has been out of reach for ${Math.round(lostMs / 1000)} s; this run ends: ${why}`);
 	}
 	async function reclaim() {
 		try {
