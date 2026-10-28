@@ -27,7 +27,9 @@ export function createEntry(access: Access, token: string, headers: Record<strin
 		if (req.method === "GET" && path.length === 1 && path[0] === "") {
 			const who = access.entry(req), site = req.headers["sec-fetch-site"];
 			if ("status" in who) return void refuse();
-			if ("cookie" in who) return void send(302, "text/plain", "", { location: `/${token}/`, ...cookies(who.cookie) });
+			// Only a navigation gets the token-bearing redirect: a script's same-origin fetch would read the token off the followed URL (fetch cannot forge Sec-Fetch-*; a browser without them is allowed).
+			const mode = req.headers["sec-fetch-mode"], dest = req.headers["sec-fetch-dest"];
+			if ("cookie" in who) return void ((mode === undefined || mode === "navigate") && (dest === undefined || dest === "document") ? send(302, "text/plain", "", { location: `/${token}/`, ...cookies(who.cookie) }) : refuse());
 			// The same bounce as a tokened page's: a launch from another site leaves the SameSite=Strict cookie behind, and the same-origin reload carries it.
 			if (req.headers["sec-fetch-dest"] === "document" && typeof site === "string" && site !== "same-origin") return void send(200, HTML, `<!doctype html><meta http-equiv="refresh" content="0"><p><a href="">Open the straw net</a></p>`);
 			return void send(200, HTML, page(zh));

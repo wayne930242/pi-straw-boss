@@ -760,6 +760,11 @@ test("a typed pairing code pairs like a scanned one: once, within ten minutes, f
 	assert.deepEqual(access.redeem(reqOf({ "tailscale-user-login": "other@example.com" }), `code=${mine}`), { wrong: true }, "another identity voids it");
 	// Sixteen waiting at most: the oldest goes first.
 	access.enable(ID);
+	// A lockout voids the codes that waited before it: a later issue does not bring them back.
+	const before = access.pairCode()!;
+	for (let i = 0; i < 5; i++) access.redeem(reqOf(), "code=AAAA-AAAA");
+	access.pairCode();
+	assert.deepEqual(access.redeem(reqOf(), `code=${before}`), { wrong: true }, "a code issued before a lockout stays void");
 	const oldest = access.pairCode()!;
 	for (let i = 0; i < 16; i++) access.pairCode();
 	assert.deepEqual(access.redeem(reqOf(), `code=${oldest}`), { wrong: true });
@@ -774,6 +779,8 @@ test("the fixed entry (/sb-app/) is on the remote listener only, holds no token 
 	assert.equal((await remoteGet(gui, entry, doc)).status, 403, "remote is off: no entry");
 	gui.access.enable(ID);
 	assert.equal((await local(entry, doc)).status, 403, "the local listener has no entry");
+	assert.equal((await remoteGet(gui, entry, doc, "GET", undefined, gui.port)).status, 403, "the local listener has no entry even for a request that forges the remote Host and login");
+	assert.equal((await remoteGet(gui, `${entry}pair`, form(), "POST", "code=AAAA-AAAA", gui.port)).status, 403, "nor a pair post with forged headers");
 	assert.equal((await remoteGet(gui, "/sb-app", doc)).status, 308);
 	for (const headers of [{ "tailscale-user-login": undefined }, { "tailscale-user-login": "other@example.com" }, { "tailscale-funnel-request": "?1" }, { host: "box.tail1.ts.net" }, { host: "evil.example:8443" }]) {
 		assert.equal((await remoteGet(gui, entry, { ...doc, ...headers })).status, 403, `GET ${JSON.stringify(headers)}`);
@@ -828,6 +835,12 @@ test("the fixed entry (/sb-app/) is on the remote listener only, holds no token 
 	assert.deepEqual([on.status, on.headers.location, on.body], [302, page, ""]);
 	assert.equal((on.headers["set-cookie"] as string[]).length, 2);
 	assert.match((on.headers["set-cookie"] as string[])[0]!, new RegExp(`Path=/${gui.token}/`));
+	for (const [mode, dest] of [["cors", "empty"], ["same-origin", "empty"], ["no-cors", "image"], ["navigate", "iframe"]]) {
+		const r = await remoteGet(gui, entry, { cookie: jar, "sec-fetch-site": "same-origin", "sec-fetch-mode": mode, "sec-fetch-dest": dest });
+		assert.deepEqual([r.status, r.headers.location, r.headers["set-cookie"], secrets(r.body)], [403, undefined, undefined, false], `a ${mode}/${dest} request gets no token-bearing redirect`);
+	}
+	assert.equal((await remoteGet(gui, entry, { cookie: jar, "sec-fetch-mode": "navigate", "sec-fetch-dest": "document", "sec-fetch-site": "same-origin" })).status, 302, "a navigation does");
+	assert.equal((await remoteGet(gui, entry, { cookie: jar })).status, 302, "a browser that sends no Sec-Fetch headers does too");
 	assert.equal((await remoteGet(gui, page, { cookie: jar })).status, 200, "and the page lets it in");
 	assert.equal((await remoteGet(gui, entry, { ...doc, cookie: jar, "tailscale-user-login": "other@example.com" })).status, 403, "a cookie alone is not enough");
 	assert.equal(gui.access.devices.list()[0]!.label, "Android · Chrome");
