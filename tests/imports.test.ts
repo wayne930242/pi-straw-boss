@@ -522,7 +522,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// T3 review fixes to 1756: the notices a run's change leaves (Undo and Dismiss on the card and in the panel: towermodel.ts, towernotes.ts, towermemory.ts).
 	// Tower memory, pi first (D23): the notices' Undo and Dismiss give way to Confirm and Reject on a run's proposals (towermodel.ts, towernotes.ts, towermemory.ts), the panel's pending section, and the chip's count.
 	// Boss conversation (T4) to 1819: towerconv.ts (the comms' box, dividers, chips, Leave and New), the conversation fields in towermodel.ts, and the composer's /quit and /new.
-	assert.ok(page <= 1819, `the page's TypeScript has ${page} lines`);
+	// T4 visual fix to 1820: the in-event-run row (towerconv.ts) and the composer line.
+	assert.ok(page <= 1820, `the page's TypeScript has ${page} lines`);
 });
 
 test("the built page is small, self-contained (no remote URLs, fonts, or imports), and carries no demo fixture", { skip: !existsSync(join(root, "dist/gui/index.html")) && "run npm run gui:build first" }, () => {
