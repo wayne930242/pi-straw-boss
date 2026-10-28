@@ -60,18 +60,24 @@ export function underRoot(file: string, root: string): string | undefined {
 
 /** Whether any component of `file` below `root` is a symlink (each is lstat'ed; a missing one is not a link). */
 function linkIn(file: string, root: string): boolean {
-	const base = resolve(root), rel = relative(base, resolve(file));
-	if (rel.startsWith("..") || isAbsolute(rel)) return false;
-	let at = base;
-	for (const part of rel.split(sep)) {
-		at = join(at, part);
-		try {
-			if (lstatSync(at).isSymbolicLink()) return true;
-		} catch {
-			return false;
+	const abs = resolve(file);
+	// The pointer holds a real path, so the root is also tried by its real path: a link inside the root's own path must not hide the check.
+	const bases = [resolve(root), real(root)].filter((b): b is string => b !== undefined);
+	for (const base of bases) {
+		const rel = relative(base, abs);
+		if (rel.startsWith("..") || isAbsolute(rel)) continue;
+		let at = base;
+		for (const part of rel.split(sep)) {
+			at = join(at, part);
+			try {
+				if (lstatSync(at).isSymbolicLink()) return true;
+			} catch {
+				return false;
+			}
 		}
+		return false;
 	}
-	return false;
+	return false; // outside both spellings of the root: not a link, and underRoot refuses it
 }
 
 export type Resume = { ok: true; file: string } | { ok: false; why: string };

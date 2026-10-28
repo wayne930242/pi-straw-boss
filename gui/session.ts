@@ -2,7 +2,7 @@ import type { Mark } from "../src/netdata.ts";
 import type { Chat, Data, Who } from "./chat.ts";
 import { mountAsk } from "./ask.ts";
 import { drawMonitors, drawQueued, drawTodos, mountQueueEdit } from "./bars.ts";
-import { mountComposer, postTo } from "./composer.ts";
+import { mountComposer, wakeOf, postTo } from "./composer.ts";
 import { docFor, docTile } from "./doc.ts";
 import type { Tile } from "./layer.ts";
 import { m } from "./paraglide/messages.js";
@@ -135,7 +135,7 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 			if (notes) (fillConversation(view.querySelector<HTMLElement>(".tower-conv")!, hit?.base.id ?? wsOf(scene), u?.service), fillNotices(notes, hit?.base.id ?? wsOf(scene), u?.service, u?.key), fillMemory(view.querySelector<HTMLElement>(".tower-memory")!, hit?.base.id ?? wsOf(scene), u?.service?.memory));
 			if (shown === "term" && holdOf(u?.key ?? "") !== held) setMode("term"); // the tower woke or went to stand by: the terminal or its sentence changes
 			chat?.setLive(mk === "working" || mk === "commanding" ? `${doing(u!.note, mk)}` : urgent(mk) ? LABEL[mk]() : "", mk);
-			composer?.update({ name, control: Boolean(u?.control), agent: u?.agent, live: !closed(u, state), mark: mk, online: online(), answerable: Boolean(u?.pending?.answer), wakes: Boolean(u?.service), held: u?.service?.state === "held", conversation: Boolean(u?.service?.conversation && !u.service.conversation.closing), allyLive: Boolean(u?.service?.allyRuns.length && !u.service.run), ally: !u && (scene.info?.role === "ally" || scene.info?.role === "run") });
+			composer?.update({ name, control: Boolean(u?.control), agent: u?.agent, live: !closed(u, state), mark: mk, online: online(), answerable: Boolean(u?.pending?.answer), ...wakeOf(u?.service), ally: !u && (scene.info?.role === "ally" || scene.info?.role === "run"), run: !u && scene.info?.role === "run" });
 			asker?.update(u?.pending, mk === "waiting" && Boolean(u?.control) && online()); // its dialog above the composer, answerable or not
 		},
 	};

@@ -328,3 +328,20 @@ test("a live ally run whose session file is its own is a read-only unit of the n
 		rmSync(root, { recursive: true, force: true });
 	}
 });
+
+test("an event run whose session file is its own is a unit with the role run, not ally (R5-F006 M7)", async () => {
+	const root = realpathSync(mkdtempSync(join(tmpdir(), "psb-net-run-")));
+	try {
+		const dir = join(root, "sessions"), mine = join(dir, "2026_run-1.jsonl");
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(mine, "");
+		const view: TowerView = { state: "standing", queued: 0, allyRuns: [], notices: [], parked: [], queue: [], localRuns: [{ id: "e1abcdef0", kind: "event", startedAt: "2026-10-28T08:00:00Z" }], eventFiles: { e1abcdef0: mine } };
+		const ps = panes.map((p) => (p.pane_id === "wA:p5" ? { ...p, agent: "pi", agent_session: { value: join(dir, "2026_tower-a.jsonl") } } : p));
+		const herdr = async (args: string[]) => JSON.stringify({ result: args[0] === "pane" ? { panes: ps } : { workspaces } });
+		const source = netSource({ run: herdr, sessions: async () => sessions, sessionDir: dir, services: (w) => (w === "wA" ? view : undefined) });
+		await source.read();
+		assert.equal(source.lookup("run-e1abcdef0")?.role, "run");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});

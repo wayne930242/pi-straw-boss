@@ -600,6 +600,7 @@
 	"event_run_state": "塔台為事件啟動的 run・唯讀",
 	"tower_empty": "這座塔台正在待命。有訊息進來時，sb server 會喚醒它跑一個 run；你在這裡送出的第一則訊息就會啟動它。",
 	"placeholder_ally": "隊友的 run 正在回應・送出訊息會另外喚醒塔台跑你自己的 run",
+	"blocked_run": "這個 run 是塔台為事件啟動的。你可以在這裡看它的通訊；要跟它說話，請寫給塔台。",
 	"blocked_ally": "這個隊友 run 由隊友的訊息驅動。你可以在這裡看它的通訊，但不能寫給它。",
 	"link_show_towers": "查看塔台",
 	"link_a_confirm_plain": "{label}（{short}）請你確認它塔台的一次 {tool} 呼叫",

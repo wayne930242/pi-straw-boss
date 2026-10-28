@@ -740,6 +740,7 @@
 	"event_run_state": "a run the tower started for events · read only",
 	"tower_empty": "This tower stands by. The sb server wakes it for a run when a message arrives; your first message here starts that run.",
 	"placeholder_ally": "An ally run is answering a teammate · a message wakes a run of your own",
+	"blocked_run": "The tower started this run for events. You can read its comms here; to talk to it, write to the tower.",
 	"blocked_ally": "A teammate's message drives this ally run. You can read its comms here; you cannot write to it.",
 	"link_show_towers": "Show towers",
 	"link_a_confirm_plain": "{label} ({short}) asks you to confirm a {tool} call from its tower",

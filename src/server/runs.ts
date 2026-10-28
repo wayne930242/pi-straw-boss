@@ -864,6 +864,7 @@ export function createRuns(o: RunsOptions) {
 		if (!ally && (hand || a.rec.conversation || bossWake(svc))) {
 			a.boss = now();
 			a.bossSince = a.boss;
+			if (hand) markBossIn(a);
 		}
 		if (!ally) svc.bossAt = undefined;
 		log.line("run-claim", { workspace: a.rec.workspace, run: a.rec.id, ...(hand ? { hand: true } : {}) });
@@ -1226,7 +1227,7 @@ export function createRuns(o: RunsOptions) {
 			// At the tower prompt the boss is at the pane: the run this wakes is one they are in, from its claim (or from now, when a run is live already).
 			if (opts.present) {
 				svc.bossAt = now();
-				if (svc.run?.token && !svc.run.ended && svc.run.rec.kind === "local" && !bossOver(svc.run)) (svc.run.boss = now(), (svc.run.bossSince ??= svc.run.boss), markBossIn(svc.run));
+				if (svc.run?.token && !svc.run.ended && svc.run.rec.kind === "local" && svc.run.closing === undefined && !bossOver(svc.run)) (svc.run.boss = now(), (svc.run.bossSince ??= svc.run.boss), markBossIn(svc.run));
 			}
 			poke(svc);
 			return written;
@@ -1312,7 +1313,7 @@ export function createRuns(o: RunsOptions) {
 		 * session yet it is the live run's, else the last local run's, as before.
 		 */
 		file: (workspace: string): string | undefined => {
-			const svc = find(workspace), run = svc?.run, live = run && !run.ended && run.rec.kind === "local" && (run.rec.conversation || run.boss !== undefined) ? run.rec.file : undefined;
+			const svc = find(workspace), run = svc?.run, live = run && !run.ended && run.rec.kind === "local" && (run.rec.conversation || run.rec.bossIn !== undefined || run.boss !== undefined) ? run.rec.file : undefined;
 			return live ?? readPointer(slot, workspace)?.file ?? svc?.run?.rec.file ?? listRuns(slot, workspace).filter((r) => r.kind === "local" && r.file).at(-1)?.file;
 		},
 		/** The boss messages a local run took, oldest first: the ones a memory proposal may cite (towermemory.ts). A message offered and not confirmed is not one. */

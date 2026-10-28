@@ -257,7 +257,7 @@ export function createTowers(o: TowersOptions): Towers {
 		// An event run the boss spoke in after their last conversation turn is named with when, so the resumed session knows who said what to whom.
 		const spoke = (id: string) => { const at = events.get(id)?.bossIn; return at !== undefined && (!Number.isFinite(after) || Date.parse(at) > after) ? at : undefined; };
 		const notes = readNotes(slot, ws).filter((n) => n.kind === "local" && events.has(n.run) && (spoke(n.run) !== undefined || (Number.isFinite(after) && Date.parse(n.at) > after))).slice(-3);
-		const rows = notes.map((n) => `- ${ageOf(now() - Date.parse(n.at))} ago${spoke(n.run) ? ` (the boss spoke in this run ${ageOf(now() - Date.parse(spoke(n.run)!))} ago, so what they said is in that run's session, not in yours)` : ""}: ${phrase(n.note.split("\n")[0], 380)}`);
+		const rows = notes.map((n) => `- ${ageOf(now() - Date.parse(n.at))} ago${spoke(n.run) ? ` (the boss spoke in this run ${ageOf(now() - Date.parse(spoke(n.run)!))} ago, so what they said is in that run's session, not in yours)` : ""}: that run's own handoff note, not the boss's words: «${phrase(n.note.split("\n")[0], 340).replace(/[«»]/g, "")}»`);
 		return { line, since: rows };
 	};
 	const runs: Runs = createRuns({ slot, run, sleep, now, log, sessions: sessionsRoot(o.env), enabled: o.enabled, max: () => readTowerRuns(slot.stateDir).max, trustDir: trustDir(slot.stateDir), model: () => towerModel(slot.stateDir), ...(allyPort ? { ally: allyPort } : {}), ...o.runs });

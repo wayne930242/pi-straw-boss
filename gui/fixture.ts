@@ -40,10 +40,19 @@ const units = (net: Net) => net.bases.flatMap((b) => [...(b.tower?.subs ?? []), 
 // The harbor tower as the sb server's service shows it in each state of the boss conversation (src/server/runs.ts): `?tower=<state>` starts the demo in one, and the toolbar's "tower" button steps through them.
 // The runs' times match the demo history of the tower's comms (demo-chat.ts), so the dividers fall between its rounds.
 const stamp = (n: number) => new Date(Date.UTC(2026, 9, 17, 8, 0, 0) + n * 47_000).toISOString();
-const TOWER_STATES = ["working", "waiting", "new", "closing", "standing", "off"] as const;
+const TOWER_STATES = ["working", "waiting", "new", "closing", "inrun", "standing", "off"] as const;
 type TowerState = (typeof TOWER_STATES)[number];
+/** The boss spoke to an event run that is still live: no conversation, the run's own chip is the comms, and its heading names it. */
+const inRun = (): TowerService => ({
+	state: "running", queued: 0, notices: [], parked: [], allyRuns: [], run: { id: "e3", kind: "local", startedAt: stamp(420) },
+	localRuns: [
+		{ id: "c2", kind: "conversation", resumed: true, startedAt: stamp(204), endedAt: stamp(380), outcome: "quit", note: "(ended idle)" },
+		{ id: "e3", kind: "event", startedAt: stamp(420), key: "run-e3" },
+	],
+});
 function towerService(state: TowerState): { service?: TowerService; mark: Mark } {
 	if (state === "off") return { mark: "working" };
+	if (state === "inrun") return { mark: "working", service: inRun() };
 	const live = state !== "standing", idle = state === "waiting", began = stamp(420);
 	const localRuns: NonNullable<TowerService["localRuns"]> = [
 		{ id: "c1", kind: "conversation", resumed: false, why: "no earlier boss session", startedAt: stamp(5), endedAt: stamp(150), outcome: "done", note: "(boss quit)" },
@@ -85,7 +94,7 @@ export function createFixture({ resume, tick = 2500 }: { resume(): void; tick?: 
 			if (dropped) return;
 			if (watch?.startsWith("w:")) this.timers.push(setTimeout(() => this.send("cards", { a1: "I merged the billing branch and the tests pass.", a3: "Waiting for your answer about the deploy window." }), 250));
 			else if (watch) {
-				this.timers.push(setTimeout(() => this.send("history", { key: watch, state: "live", reset: true, ...page(), header: { id: watch, cwd: "/work/harbor-api" }, unreadable: 0, todos: [{ id: 1, subject: "Find where the rounding happens", status: "completed" }, { id: 2, subject: "Fix the ledger rounding before tax", status: "in_progress", activeForm: "fixing the ledger rounding" }, { id: 3, subject: "Add a regression test for credit notes", status: "pending" }] }), 250));
+				this.timers.push(setTimeout(() => this.send("history", { key: watch, state: "live", reset: true, ...page(), ...(watch.startsWith("run-") ? { role: "run", name: watch.slice(4, 12) } : {}), header: { id: watch, cwd: "/work/harbor-api" }, unreadable: 0, todos: [{ id: 1, subject: "Find where the rounding happens", status: "completed" }, { id: 2, subject: "Fix the ledger rounding before tax", status: "in_progress", activeForm: "fixing the ledger rounding" }, { id: 3, subject: "Add a regression test for credit notes", status: "pending" }] }), 250));
 				// A new reply every few seconds, so the page shows a live chat.
 				this.timers.push(setInterval(() => {
 					const n = ++live, call = `live-c${n}`;
