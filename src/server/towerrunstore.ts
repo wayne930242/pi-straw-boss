@@ -49,6 +49,12 @@ export interface RunRecord {
 	conversation?: ConversationInfo;
 	/** An event run the boss spoke in (a present boss event reached it, or they typed in it): when they first did. The next conversation's brief names the run. */
 	bossIn?: string;
+	/** A conversation whose session file was reported before pi wrote it: still waiting for the file. A server restart takes the wait up again (a refused file is not waited for). */
+	deferred?: true;
+	/** The boss turns of that conversation so far, kept while the file is awaited (no pointer is the run's yet to hold them). */
+	turns?: number;
+	/** The boss asked for a new session while the file was awaited: the pointer is marked fresh when it is kept, also after a restart. */
+	fresh?: true;
 	/** A short word on why it ended (the quit failed, the pane vanished). */
 	detail?: string;
 }

@@ -613,3 +613,107 @@ test("the deferred path keeps every guard: a file that shows up outside the sess
 	await outsideRun(join(sessions(), "never.jsonl"), () => {});
 	assert.equal(before(), 3, "a file that never appears is no error");
 });
+
+// New (tower-new, the GUI's New, the tower prompt's /new: all `runs.fresh`) and pi's own /new while the file is deferred (CF-F001, M6, M5; red on 26dee25).
+const nextIsNew = async (s: Running, run: { id: string; token: string }, file: string) => {
+	const next = await conversation(s, 2, sessionFile(file));
+	assert.ok(!argsOf(next.id).includes("--session"), `${run.id}'s deferred file is not resumed`);
+	assert.match(next.brief, /New session: the boss asked for a new one/);
+};
+for (const [name, entry] of [
+	["tower-new (the tower prompt's /new and /boss tower new)", (s: Running) => ask(s, { cmd: "tower-new", workspace: "wA" }).then((r) => r.left)],
+	["the GUI's New", (s: Running) => towerPanel(() => world.expose).conversation!("wA", "new").then((r) => r.left)],
+] as const) {
+	test(`${name} while the conversation's file is deferred: the file, once pi writes it, is not what the next conversation resumes (CF-F001; red on 26dee25)`, async () => {
+		const s = await setup();
+		const run = await unwritten(s, "2026-10-28_r1b.jsonl");
+		assert.equal(await entry(s), true);
+		write(run.file);
+		assert.equal(((await poll(s, run.token)).command as { type: string }).type, "quit");
+		exit(run.id);
+		await until(() => readRun(world.slot, "wA", run.id)?.outcome === "done", "the conversation to end");
+		assert.equal(readPointer(world.slot, "wA")?.fresh, true, "the kept file carries the mark");
+		await nextIsNew(s, run, "2026-10-28_r1c.jsonl");
+	});
+}
+
+test("pi's own /new while the conversation's file is deferred: the next conversation is new (M6: releaseRun's deferred branch; red on 26dee25 with the branch reverted)", async () => {
+	const s = await setup();
+	const run = await unwritten(s, "2026-10-28_rel.jsonl");
+	assert.equal(readRun(world.slot, "wA", run.id)?.file, run.file);
+	write(run.file);
+	assert.equal((await ask(s, { cmd: "run-release", token: run.token, reason: "new" })).ok, true);
+	await until(() => readRun(world.slot, "wA", run.id)?.outcome === "quit", "the released run");
+	assert.equal(readPointer(world.slot, "wA")?.file, realpathSync(run.file));
+	assert.equal(readPointer(world.slot, "wA")?.fresh, true);
+	await nextIsNew(s, run, "2026-10-28_rel2.jsonl");
+});
+
+const restart = async (s: Running) => {
+	await s.handle.shutdown(0);
+	await s.handle.done;
+	world.clients.length = 0;
+	const again = await world.start();
+	await again.handle.ready;
+	return again;
+};
+
+test("a server restart while the file is deferred keeps waiting for it (M5) and keeps the turns taken so far (CF-F002); red on 26dee25 for the turns", async () => {
+	const s = await setup();
+	const run = await unwritten(s, "2026-10-28_rs.jsonl");
+	assert.equal((await ask(s, { cmd: "run-boss", token: run.token })).ok, true);
+	const second = await restart(s);
+	write(run.file);
+	const again = await claimRun(second, run.id);
+	assert.equal((await poll(second, again.token, false)).ok, true);
+	const pointer = readPointer(world.slot, "wA")!;
+	assert.equal(pointer.file, realpathSync(run.file), "the recovered wait kept the file");
+	assert.equal(pointer.turns, 2, "both boss turns of before the file existed");
+	exit(run.id);
+});
+
+test("a server restart while New is held for a deferred file: the kept file is marked fresh (CF-F003; red on 26dee25)", async () => {
+	const s = await setup();
+	const run = await unwritten(s, "2026-10-28_rf.jsonl");
+	assert.equal((await ask(s, { cmd: "tower-new", workspace: "wA" })).left, true);
+	const second = await restart(s);
+	write(run.file);
+	const again = await claimRun(second, run.id);
+	assert.equal((await poll(second, again.token, false)).ok, true);
+	assert.equal(readPointer(world.slot, "wA")?.file, realpathSync(run.file));
+	assert.equal(readPointer(world.slot, "wA")?.fresh, true);
+	exit(run.id);
+});
+
+test("a missing file that can never qualify is refused and logged when it is reported, once, also across a restart (CF-F004, CF-F005; red on 26dee25)", async () => {
+	const s = await setup();
+	const count = () => (logText().match(/error code=conversation/g) ?? []).length;
+	assert.equal((await ask(s, { cmd: "tower-event", workspace: "wA", text: "hello", present: true })).ok, true);
+	const id = await nthRun(1);
+	const { token } = await claimRun(s, id);
+	assert.equal((await ask(s, { cmd: "run-file", token, file: join(world.root, "elsewhere.jsonl") })).ok, true);
+	assert.equal(count(), 1, "logged at the report, not when it might have appeared");
+	await drain(s, token);
+	await poll(s, token, false);
+	assert.equal(count(), 1);
+	const second = await restart(s);
+	const again = await claimRun(second, id);
+	await poll(second, again.token, false);
+	assert.equal(count(), 1, "the restart does not log it again");
+	assert.equal(noPointer(), true);
+	exit(id);
+});
+
+test("a symlink put at the deferred path after the report is refused and logged, as a dangling one too (lstat, not stat)", async () => {
+	const s = await setup();
+	const run = await unwritten(s, "2026-10-28_dangling.jsonl");
+	const count = () => (logText().match(/error code=conversation/g) ?? []).length;
+	assert.equal(count(), 0);
+	mkdirSync(sessions(), { recursive: true });
+	symlinkSync(join(world.root, "no-such-target.jsonl"), run.file);
+	await poll(s, run.token, false);
+	assert.equal(count(), 1, "the link is something, so it is judged now, not waited for");
+	assert.equal(noPointer(), true);
+	await quit(s, run);
+	assert.equal(count(), 1);
+});
