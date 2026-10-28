@@ -12,6 +12,7 @@ import type { ServerLook } from "./server-look.ts";
 import { towerRunsEnabled } from "./server/towerruns.ts";
 import { startOf } from "./startof.ts";
 import { ENTRY, type Kit } from "./state.ts";
+import { MEMORY_DESCRIPTION, memoryParameters } from "./memorytool.ts";
 import { createTools, LINK_REQUEST_DESCRIPTION, linkRequestParameters } from "./tools.ts";
 
 // A pi the sb server started for a tower run (docs/specs/2026-10-26-sb-backend.md, Local runs): it is a short life of its own and no part of a tab's net. At its start it claims its run over the
@@ -176,6 +177,8 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		tools.addOpenMain();
 		tools.addTowerComms();
 		if (claim!.kind === "local") registerLinkRequest();
+		// The memory of the tower (towermemory.ts) is a local run's: the server refuses the tool to an ally run by its kind as well.
+		if (claim!.kind === "local") pi.registerTool({ name: "tower_memory", label: "tower_memory", description: MEMORY_DESCRIPTION, parameters: memoryParameters(), execute: async (id, params) => ({ content: [{ type: "text", text: (await tool("tower_memory", params, id)).text }], details: undefined }) });
 		pi.registerTool({
 			name: "tower_reply", label: "tower_reply",
 			description: "Answer one local session (a main or a member) by its intercom name or session id. It goes out under the tower's header, as the tower identity, so the answer reaches the session that asked. In a run this replaces intercom send.",

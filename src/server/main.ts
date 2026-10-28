@@ -471,6 +471,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			has: (workspace) => towers?.runs.view(workspace) !== undefined,
 			live: (workspace) => Boolean(towers?.runs.status(workspace)?.run),
 			event: async (workspace, text) => { try { return (towers!.runs.boss(workspace, text, "the boss (GUI)"), { ok: true }); } catch (error) { return { ok: false, error: (error as Error).message }; } },
+			memory: (workspace, json) => towers!.memory(workspace, json),
 			act: async (workspace, what, id) => { try { return (what === "retry" ? towers!.runs.retry(workspace) : what === "deliver" ? towers!.runs.deliverAgain(workspace, id!) : towers!.runs.dropParked(workspace, id!), { ok: true }); } catch (error) { return { ok: false, error: (error as Error).message }; } },
 		},
 	});

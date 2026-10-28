@@ -4,7 +4,7 @@ import { alive as pidAlive } from "../remote.ts";
 import { startOf as processStartOf, startedLater as processStartedLater } from "../startof.ts";
 import { assertSettingsSafe } from "../trust/settings.ts";
 import { waitPastTrust } from "../trust/wait.ts";
-import type { TowerView } from "../net.ts";
+import type { MemorySummary, TowerView } from "../net.ts";
 import type { Log } from "./log.ts";
 import type { Slot } from "./record.ts";
 import { addNote, clearTimer, listRuns, pruneRuns, readNotes, readTimer, type Outcome, type RunRecord, writeRun, writeTimer } from "./towerrunstore.ts";
@@ -100,6 +100,8 @@ export interface ServiceRef {
 	allyBrief(input: { run: RunRecord; items: AllyItem[]; woken: number }): Promise<{ text: string }>;
 	/** The message as an ally run reads it: the verified header the server writes, then the peer's text. */
 	allyLine(item: AllyItem): string;
+	/** The tower's memory in counts for the GUI's snapshot (towermemory.ts). */
+	memory?(): MemorySummary;
 }
 
 interface Active {
@@ -880,6 +882,12 @@ export function createRuns(o: RunsOptions) {
 			const svc = find(workspace);
 			return svc?.run?.rec.file ?? listRuns(slot, workspace).filter((r) => r.kind === "local" && r.file).at(-1)?.file;
 		},
+		/** The boss messages a local run took, oldest first: the evidence the memory's quote rule checks against (towermemory.ts). A message offered and not confirmed is not one. */
+		bossEvents(token: unknown): { id: string; text: string }[] {
+			const a = of(token);
+			if (!a || a.ended || a.rec.kind !== "local") return [];
+			return readQueue(slot, a.rec.workspace).filter((e) => e.kind === "boss" && e.taken?.run === a.rec.id).map((e) => ({ id: e.id, text: e.text }));
+		},
 		/** The pi session file the run's pane reports, kept in the record. */
 		setFile(token: unknown, file: unknown) {
 			const a = of(token);
@@ -931,7 +939,8 @@ export function createRuns(o: RunsOptions) {
 			if (!status) return undefined;
 			const rows = api.queue(workspace).map((e) => ({ text: phrase(`${e.kind}${e.from?.name ?? e.from?.id ? ` · ${e.from?.name ?? e.from?.id}` : ""}: ${e.text.split("\n").find((l) => l.trim()) ?? ""}`, 240), as: "followUp" as const }));
 			const file = api.file(workspace), allyFiles = Object.fromEntries([...(find(workspace)?.allies.values() ?? [])].flatMap((a) => (a.rec.file ? [[a.rec.id, a.rec.file]] : [])));
-			return { ...status, queue: rows, ...(file ? { file } : {}), ...(Object.keys(allyFiles).length ? { allyFiles } : {}) };
+			const memory = find(workspace)?.ref.memory?.();
+			return { ...status, ...(memory ? { memory } : {}), queue: rows, ...(file ? { file } : {}), ...(Object.keys(allyFiles).length ? { allyFiles } : {}) };
 		},
 	};
 	return api;

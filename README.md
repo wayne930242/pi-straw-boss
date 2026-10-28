@@ -77,7 +77,7 @@ Any extension's `select` and `confirm` (an `mp-infra` command review, say) can b
 3. Type `/boss tower` to open the workspace's tower and watch its dashboard. It also opens by itself when agents start to collide.
 4. Type `/boss gui` from any session to see the whole net in your browser.
 
-The tower only routes and coordinates, so it can run a lighter model: set `towerModel` in `~/.pi/agent/straw-boss/config.json` ([how it works](docs/how-it-works.md#how-it-works)). The tower service of the sb server is on by default: the tower is a run that wakes for the events it gets and ends with a handoff note (`/boss tower <prompt>` writes to it), and a teammate's Straw Link message gets an ally run of its own. Set `{ "towerRuns": { "enabled": false } }` there to keep resident towers ([how it works](docs/how-it-works.md#the-tower-service-b4)).
+The tower only routes and coordinates, so it can run a lighter model: set `towerModel` in `~/.pi/agent/straw-boss/config.json` ([how it works](docs/how-it-works.md#how-it-works)). The tower service of the sb server is on by default: the tower is a run that wakes for the events it gets and ends with a handoff note (`/boss tower <prompt>` writes to it), and a teammate's Straw Link message gets an ally run of its own. Each run starts fresh; what has to outlive it (your standing instructions and decisions, verbatim, and the tower's open waits) sits in a small memory you edit in the tower's comms in the GUI ([how it works](docs/how-it-works.md#tower-memory)). Set `{ "towerRuns": { "enabled": false } }` there to keep resident towers ([how it works](docs/how-it-works.md#the-tower-service-b4)).
 
 ## Tools and commands
 

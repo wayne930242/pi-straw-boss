@@ -57,6 +57,7 @@ async function setup(over: Partial<TowerPanel> & { runLive?: boolean } = {}) {
 		has: (ws) => ws === "wA", live: () => over.runLive ?? false,
 		event: over.event ?? (async (ws, text) => (events.push([ws, text]), { ok: true })),
 		act: over.act ?? (async (ws, what, id) => (acts.push([ws, what, id]), { ok: true })),
+		...(over.memory ? { memory: over.memory } : {}),
 	};
 	const lookup = (key: string): Found | undefined => (key === "ally-r1" ? { key, base: "wA", name: "Laptop", role: "ally", file: FILE, live: true } : key === "sb-tower-wa" ? { key, base: "wA", name: "tower", role: "tower", ...(over.runLive ? { file: FILE, pane: "wA:p1" } : {}), live: true } : key === "main-1" ? { key, base: "wA", name: "docs", role: "main", file: FILE, pane: "wA:p2", live: true } : undefined);
 	const call = async (method: string) => (calls.push(method), method === "pane.get" ? { pane: { pane_id: "wA:p2", agent: "pi", agent_session: { value: FILE } } } : {});
@@ -133,4 +134,17 @@ test("an ally run's comms take nothing: no input, keys, or focus (no pane backs 
 	assert.equal((await send(s.gui, "sessions/ally-zz/input", { text: "hello", as: "send" })).status, 404);
 	assert.deepEqual(s.events, [], "no boss event was made of it");
 	assert.deepEqual(s.calls, [], "nothing reached Herdr");
+});
+
+test("the memory panel's route: its request reaches the service with the workspace and the body, whatever status it answers; an unknown tower, or a service without the panel, is 404", async () => {
+	const seen: [string, Record<string, unknown>][] = [];
+	const s = await setup({ memory: (ws, json) => (seen.push([ws, json]), json.op === "read" ? { status: 200, body: { rev: 1, entries: [], notices: [] } } : { status: 409, body: { error: "rev", reason: "moved" } }) });
+	const read = await send(s.gui, "tower/wA/memory", { op: "read" });
+	assert.deepEqual([read.status, (read.body as { rev?: number }).rev], [200, 1]);
+	const stale = await send(s.gui, "tower/wA/memory", { op: "add", kind: "standing", text: "x", rev: 0 });
+	assert.deepEqual([stale.status, stale.body.error], [409, "rev"]);
+	assert.deepEqual(seen, [["wA", { op: "read" }], ["wA", { op: "add", kind: "standing", text: "x", rev: 0 }]]);
+	assert.equal((await send(s.gui, "tower/wZ/memory", { op: "read" })).status, 404);
+	const bare = await setup();
+	assert.equal((await send(bare.gui, "tower/wA/memory", { op: "read" })).status, 404);
 });

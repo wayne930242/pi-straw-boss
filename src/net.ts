@@ -24,11 +24,14 @@ export interface Queued { text: string; as: "steer" | "followUp" }
 export interface Unit extends Shelf, Lately { queued?: Queued[]; monitors?: Monitor[]; id: string; key: string; control: boolean; agent?: "claude" | "codex"; name: string; role: "main" | "member" | "subagent" | "outside"; mark: Mark; note?: string; subs: Unit[]; pending?: Pending; ended?: boolean }
 export interface Tab { id: string; label: string; units: Unit[] }
 export interface Outpost extends Lately { id: string; label: string; mark: Mark }
+export interface MemorySummary { rev: number; standing: number; decisions: number; waits: number; /** The open waits for the boss, with their text. */ bossWaits: { id: string; text: string; at: string }[]; notices: string[] }
 /**
  * The sb server's tower service of a workspace (docs/specs/2026-10-26-sb-backend.md, GUI): what the tower unit shows while no pi session is the tower. `queue` and `file` come with the reading and are not part of the
  * snapshot's `service` (the page sees them as the unit's `queued` rows and its comms).
  */
 export interface TowerService {
+	/** The tower's memory in counts (src/server/towermemory.ts): the standing instructions, decisions, and waits the panel opens. */
+	memory?: MemorySummary;
 	state: "standing" | "waking" | "running" | "closing" | "held";
 	queued: number;
 	run?: { id: string; kind: "local" | "ally"; startedAt: string };

@@ -22,6 +22,7 @@ import { addAnswer, addRoute, ALLY_LEDGER, type Peer, readAnswers, removeAnswer,
 import { type AllyItem, type AllyPort, createRuns, type Runs, type RunsOptions, type ServiceRef, type ServiceStatus } from "./runs.ts";
 import { addExpect, clearExpect, lastNote, readExpects, readTimer } from "./towerrunstore.ts";
 import { runTool, type ServerTools } from "./runtools.ts";
+import { markShown, memoryRequest, memorySection, memorySummary, memoryTool, noteMessage, readMemory } from "./towermemory.ts";
 import { openSeen, type Seen } from "./towerseen.ts";
 import { readTowerRuns } from "./towerruns.ts";
 import { appendEvent, deleteService, listServices, purgeAll, purgeQueues, putLedger, queueLength, readLedger, readService, type ServiceRecord, towerDir, writeService } from "./towerstore.ts";
@@ -102,6 +103,8 @@ export interface Towers {
 	runs: Runs;
 	/** Messages wait in the link inbox for this tower identity: ally runs are started for them. */
 	allyWaiting(identity: string): void;
+	/** The GUI panel's request on a workspace's memory (`POST tower/<workspace>/memory`, towermemory.ts `memoryRequest`). */
+	memory(workspace: string, json: Record<string, unknown>): { status: number; body: Record<string, unknown> };
 	/** A tool a run calls (`run-tool`): checked against the token's kind, done as the tower identity. */
 	runTool(request: Record<string, unknown>): Promise<{ text: string; details?: unknown }>;
 	/** The identities leave the broker; tokens and files stay. */
@@ -148,6 +151,10 @@ export function createTowers(o: TowersOptions): Towers {
 		live: () => l.state === "live" && Boolean(l.client?.isConnected()),
 		cwd: async () => (await panes(run, l.record.workspace).catch(() => [])).find((p) => p.pane_id === l.record.pane)?.cwd ?? l.record.cwd ?? slot.stateDir,
 		clearDigest: (keys) => digest.drop(l.record.workspace, keys),
+		memory: () => {
+			const { memory, problem } = readMemory(slot, l.record.workspace, now());
+			return { ...memorySummary(memory, now()), ...(problem ? { notices: [problem] } : {}) };
+		},
 		allyLine: (item) => {
 			const mine = { name: l.record.name, id: l.record.id, role: "tower" as const, workspace: l.record.label };
 			// An answer a local session gave to what the run asked or opened: no verified peer header, the session is local; the device's next run reads it as data.
@@ -182,11 +189,14 @@ export function createTowers(o: TowersOptions): Towers {
 			for (const e of events) counts[e.kind] = (counts[e.kind] ?? 0) + 1;
 			const crashed = events.filter((e) => e.flag === "crash"), oldest = events.map((e) => now() - Date.parse(e.at)).filter(Number.isFinite).sort((a, b) => b - a)[0];
 			const at = new Date(woken);
+			// The boss's standing instructions and decisions and the open waits (towermemory.ts): a local brief only, never an ally's. An expired wait is shown once.
+			const kept = readMemory(slot, ws, now()), section = memorySection(kept.memory, now(), kept.problem);
+			if (section.expired.length) try { markShown(slot, ws, now(), section.expired); } catch (cause) { error("memory", (cause as Error).message); }
 			return {
 				digestKeys: lines.map((x) => x.key),
 				text: buildBrief({
 					label: l.record.label, workspace: ws, head: mains.head, woken: `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`, counts, identity: l.record.id,
-					mains: mains.rows, obligations: [...mains.opened, ...(o.asks?.openOf(ws) ?? []).map((a) => `an ask for the main ${a.forName} is open (sent ${ageOf(now() - a.at)} ago): its answer goes to that main, not to you`), ...readExpects(slot, ws, now()).map((e) => `waiting for a reply from ${e.name} (asked ${ageOf(now() - e.at)} ago): ${e.first}`), ...(timer && timer.at <= now() ? ["your wakeAfter follow-up is due"] : [])], digest: lines.map((x) => x.line),
+					memory: section.text, mains: mains.rows, obligations: [...mains.opened, ...(o.asks?.openOf(ws) ?? []).map((a) => `an ask for the main ${a.forName} is open (sent ${ageOf(now() - a.at)} ago): its answer goes to that main, not to you`), ...readExpects(slot, ws, now()).map((e) => `waiting for a reply from ${e.name} (asked ${ageOf(now() - e.at)} ago): ${e.first}`), ...(timer && timer.at <= now() ? ["your wakeAfter follow-up is due"] : [])], digest: lines.map((x) => x.line),
 					...(note ? { note: { text: note.note, age: ageOf(now() - Date.parse(note.at)) } } : {}),
 					flags: [
 						...(crashed.length ? [`${crashed.length} event${crashed.length > 1 ? "s were" : " was"} possibly handled by a run that crashed: check before acting.`] : []),
@@ -241,6 +251,10 @@ export function createTowers(o: TowersOptions): Towers {
 					const written = appendEvent(slot, l.record, { kind: "intercom", from: { id: from.id, ...(from.name ? { name: from.name } : {}) }, text: message.content.text, at: new Date(now()).toISOString(), messageId: message.id });
 					seen.add(from.id, message.id, message.content.text);
 					clearExpect(slot, l.record.workspace, from.id, now());
+					// A wait on this session now has a message to look at; whether it answers the wait is the run's to judge.
+					try {
+						for (const id of noteMessage(slot, l.record.workspace, now(), from.id)) log.line("tower-memory", { workspace: l.record.workspace, op: "answered", id });
+					} catch (cause) { error("memory", (cause as Error).message); }
 					log.line("tower-event", { workspace: l.record.workspace, kind: "intercom", from: from.id, seq: written.seq });
 					runs.poke(l.record.workspace);
 				}
@@ -636,6 +650,14 @@ export function createTowers(o: TowersOptions): Towers {
 				const net = await l.reach!.read(), named = net.sessions.filter((x) => x.id === query || x.name === query);
 				return named.some((x) => /^sb-tower-/.test(x.id) || net.ps.find((p) => p.pane_id === x.herdrLocation?.paneId)?.tokens?.sb_role === "tower");
 			},
+			memory: (margs: Record<string, unknown>) => memoryTool({
+				slot, workspace: ws, run: who.id, now, log, bossEvents: () => runs.bossEvents(request.token),
+				session: async (query: string) => {
+					const net = await l.reach!.read(), named = net.sessions.filter((x) => x.id === query || nameOf(x) === query);
+					if (named.length !== 1) throw new Error(`${named.length ? "Several sessions are named" : "No live session is named or has the id"} "${query}"`);
+					return { id: named[0]!.id, name: phrase(nameOf(named[0]!), 40) };
+				},
+			}, margs),
 			mainOf: async (query: string) => {
 				const net = await l.reach!.read(), named = net.sessions.filter((x) => x.id === query || nameOf(x) === query);
 				if (named.length !== 1) throw new Error(`${named.length ? "Several sessions are named" : "No live session is named or has the id"} "${query}"`);
@@ -655,6 +677,10 @@ export function createTowers(o: TowersOptions): Towers {
 
 	const api: Towers = {
 		runTool: runToolFor,
+		memory: (workspace, json) => {
+			if (!services.has(workspace)) throw new Error(`The sb server stands in for no tower of workspace ${workspace}`);
+			return memoryRequest(slot, workspace, now(), json, log);
+		},
 		allyWaiting: (identity) => runs.pokeAllies(identity),
 		activate,
 		loaded: () => !o.enabled() || loadedAll,

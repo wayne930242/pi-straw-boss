@@ -178,7 +178,7 @@ function fillBase(el: HTMLElement, b: Base) {
 	aimTower(el.querySelector(".tower-quit")!, b.tower);
 	sync(el.querySelector(".tower-subs")!, b.tower?.subs ?? [], unitEl, fillUnit);
 	fillAllies(el.querySelector(".title .allies")!, b.id, b.tower?.service);
-	fillNotices(el.querySelector(".tower-notices")!, b.id, b.tower?.service);
+	fillNotices(el.querySelector(".tower-notices")!, b.id, b.tower?.service, b.tower?.key);
 	sync(el.querySelector(".tabs")!, b.tabs, () => html(`<div class="tab"><h3><span></span><button type="button" class="tab-add"></button><button type="button" class="quit-btn" data-close="tab"></button></h3><div class="units"></div></div>`), (tab, t) => {
 		text(tab, "h3 span", m.tab_label({ label: t.label }));
 		aimSquad(tab.querySelector(".quit-btn")!, b, t);

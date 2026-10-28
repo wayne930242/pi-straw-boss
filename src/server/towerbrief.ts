@@ -6,10 +6,10 @@ import type { HerdrRun } from "../herdr.ts";
 import type { LedgerRow } from "../opener.ts";
 import { inside } from "../link/routing.ts";
 
-// The brief of a local run (docs/specs/2026-10-26-sb-backend.md, The brief): short plain text in the run's role section, built by the server and never by a model, with a hard cap of 6,000
+// The brief of a local run (docs/specs/2026-10-26-sb-backend.md, The brief): short plain text in the run's role section, built by the server and never by a model, with a hard cap of 8,000
 // characters. Each section has its own cap, and a section that was cut says how much it left out. The events are not part of it: they arrive as messages.
 
-export const BRIEF_MAX = 6000;
+export const BRIEF_MAX = 8000;
 const CAPS = { who: 300, mains: 24, mainRow: 200, obligations: 10, digest: 20, digestLine: 80, note: 1200, tools: 900 } as const;
 export const RUN_CAP_MINUTES = 20;
 
@@ -26,6 +26,8 @@ export interface BriefInput {
 	identity: string;
 	mains: MainRow[];
 	obligations: string[];
+	/** The Memory section (towermemory.ts `memorySection`): the boss's standing instructions and decisions, verbatim, and the open waits; empty when there is none. */
+	memory?: string;
 	digest: string[];
 	note?: { text: string; age: string };
 	/** Events a crashed run had taken: the run checks before it acts. */
@@ -53,11 +55,12 @@ export function buildBrief(i: BriefInput): string {
 	const woke = (["intercom", "boss", "notice", "timer"] as const).flatMap((k) => (i.counts[k] ? [`${i.counts[k]} ${k}`] : []));
 	const who = cut(`You are a run of the tower of workspace ${i.label} (${i.workspace}); head tower: ${i.head || "none"}. Woken ${i.woken} by: ${woke.join(", ") || "nothing queued"}. Your identity for replies is ${i.identity}; everything you send leaves under it.`, CAPS.who);
 	const obligations = i.obligations.length ? ["Open obligations:", ...rowsOf(i.obligations, CAPS.obligations, 200, 2300)] : [];
+	const memory = i.memory ?? "";
 	const digest = i.digest.length ? ["Since your last run:", ...i.digest.slice(-CAPS.digest).map((l) => `- ${cut(one(l), CAPS.digestLine)}`), ...(i.digest.length > CAPS.digest ? [`(+${i.digest.length - CAPS.digest} older lines left out)`] : [])] : [];
 	const note = i.note ? [`Handoff note from the last run (${i.note.age} ago):`, cut(i.note.text, CAPS.note)] : [];
 	const tools = ["Tools:", ...i.tools, "Call tower_done with a handoff note when nothing is left for you."].join("\n");
 	const flags = [...i.flags, `A run ends after ${RUN_CAP_MINUTES} minutes.`];
-	const rest = [who, obligations.join("\n"), digest.join("\n"), note.join("\n"), cut(tools, 4 * CAPS.tools), flags.join("\n")].filter(Boolean);
+	const rest = [who, obligations.join("\n"), memory, digest.join("\n"), note.join("\n"), cut(tools, 4 * CAPS.tools), flags.join("\n")].filter(Boolean);
 	// The mains section takes what the others leave of the cap.
 	const room = Math.max(0, BRIEF_MAX - rest.join("\n\n").length - 2 - 24);
 	const mainLines = i.mains.map((m) => (m.main ? `${m.tab}: main ${m.main.name} (${m.main.id.slice(0, 8)}) ${m.main.state}${m.main.openedBy ? `, opened by ${m.main.openedBy}` : ""}${m.main.now ? `; now: ${m.main.now}` : ""}${m.main.open ? ` (${m.main.open} open)` : ""}${m.members ? `; ${m.members} members` : ""}` : `${m.tab}: no main${m.members ? `; ${m.members} members` : ""}`));
@@ -115,6 +118,7 @@ export const LOCAL_TOOLS = [
 	"- boss_status and call_tower route inside your workspace; tower_send writes to another tower (workspace) or, with device, to a teammate's tower; tower_reply answers one local session by id or name.",
 	"- boss_open_main opens a main for a request no session owns; boss_close_main closes one you opened, after its done report.",
 	"- boss_server: the sb server's status, its log, and its restart.",
+	"- tower_memory keeps what outlives runs: a boss's standing instruction or decision only as a verbatim quote of a boss message you took, and your waits (add, resolve, drop).",
 	"- tower_done ends your run. A main's result comes back as a new event, so do not wait for it.",
 ];
 

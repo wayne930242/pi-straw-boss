@@ -26,7 +26,7 @@ test("the sections come in the spec's order: who, mains, obligations, digest, no
 	assert.match(text, /Call tower_done with a handoff note when nothing is left for you\./);
 });
 
-test("the total is capped at 6,000 characters, with the mains cut to what the rest leaves and the cut counted", () => {
+test("the total is capped at 8,000 characters, with the mains cut to what the rest leaves and the cut counted", () => {
 	const mains = Array.from({ length: 60 }, (_, n) => ({ tab: `tab ${n}`, main: { name: `main-with-a-long-name-${n}-${"x".repeat(100)}`, id: `id${n}`.padEnd(12, "0"), state: "working", now: "y".repeat(150), open: 3 }, members: 2 }));
 	const text = buildBrief({ ...base(), mains, obligations: Array.from({ length: 30 }, (_, n) => `obligation ${n} ${"z".repeat(300)}`), digest: Array.from({ length: 40 }, (_, n) => `line ${n} ${"d".repeat(200)}`), note: { text: "n".repeat(5000), age: "1m" } });
 	assert.ok(text.length <= BRIEF_MAX, `${text.length}`);
