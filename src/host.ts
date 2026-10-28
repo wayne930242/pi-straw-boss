@@ -1,6 +1,7 @@
 import { type GuiRecord, readRecord, urlOf } from "./handover.ts";
 import type { Membership } from "./membership.ts";
 import { pairingKeys, showLines } from "./pairing.ts";
+import { OPEN_LINE } from "./remote.ts";
 import { slotOf } from "./server/record.ts";
 import { type Channel, type Kit, REGISTER } from "./state.ts";
 
@@ -66,7 +67,9 @@ export function createHost({ pi, cfg, s, guiDir, tell }: Kit, { connected, ask }
 					if (!next.ok) throw new Error(`The server gave no pairing link: ${next.error}`);
 					return String(next.url);
 				};
-				return void (Array.isArray(r.lines) && s.ui && (await showLines(s.ui, r.lines as string[], { block, keys: pairingKeys(link, copy, openUrl) })));
+				// A desk shell shows the page itself, so the overlay has no o key and does not list one.
+				const desk = cfg.env.STRAW_BOSS_DESK === "1";
+				return void (Array.isArray(r.lines) && s.ui && (await showLines(s.ui, (r.lines as string[]).filter((line) => !desk || line !== OPEN_LINE), { block, keys: pairingKeys(link, copy, desk ? undefined : openUrl) })));
 			}
 			const r = await send({ cmd: "gui", boss: true }, "boss");
 			if (!r.ok) return fail(r);

@@ -1,5 +1,6 @@
 import type { Base, Net, Unit } from "../src/net.ts";
 import { m } from "./paraglide/messages.js";
+import { desk } from "./desk.ts";
 import type { Route } from "./router.ts";
 
 // Quit: the buttons on the map that close a unit, a tower, a squad, or a base, and what a click on one does; a finished subagent's Dismiss, and the HUD's Dismiss finished (every one at once). A button's data-close names what it closes and its data
@@ -26,8 +27,8 @@ export function aimSession(button: HTMLElement, hit: { u: { key: string; name: s
 	button.hidden = !hit || button.dataset.close !== "unit" || button.hidden;
 }
 export const aimBase = (button: HTMLElement, b: Base) => aim(button, { ws: b.id, name: b.label }, m.quit(), m.close_base({ name: b.label }));
-/** The base's Stash: its tower, mains, and members quit, to come back with Pop (the server names the stash after the base). */
-export const aimStash = (button: HTMLElement, b: Base) => aim(button, { ws: b.id, name: b.label }, m.stash(), m.stash_base({ name: b.label }));
+/** The base's Stash: its tower, mains, and members quit, to come back with Pop (the server names the stash after the base). A desk window (`off`) hides it. */
+export const aimStash = (button: HTMLElement, b: Base, off = desk) => aim(button, { ws: b.id, name: b.label }, m.stash(), m.stash_base({ name: b.label }), off);
 export const aimSquad = (button: HTMLElement, b: Base, t: { id: string; label: string }) => aim(button, { ws: b.id, name: t.label, tab: t.id }, m.quit(), m.close_squad({ name: t.label }));
 
 const sheet = (text: string, yes?: string): Promise<boolean> => new Promise((done) => {
@@ -51,8 +52,9 @@ export function showDismissAll(button: HTMLElement, net: Net) {
 	if (n) button.textContent = m.dismiss_all({ count: n });
 }
 
-/** The HUD's Stashed button and its list, each stash with its Pop: shown only while something is stashed. */
-export function showStashed(button: HTMLElement, list: HTMLElement, net: Net) {
+/** The HUD's Stashed button and its list, each stash with its Pop: shown only while something is stashed, and never in a desk window (`off`). */
+export function showStashed(button: HTMLElement, list: HTMLElement, net: Net, off = desk) {
+	if (off) return void (button.hidden = true);
 	const all = net.stashed ?? [], key = JSON.stringify(all);
 	button.hidden = !all.length;
 	const box = list.closest<HTMLElement>("[popover]");

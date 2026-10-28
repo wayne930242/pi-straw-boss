@@ -6,6 +6,7 @@ import type { Digest } from "./digest.ts";
 import type { Guard } from "./guard.ts";
 import { isSub, type Place, panes, place, report, waitFor, workspaces } from "./herdr.ts";
 import type { createHost } from "./host.ts";
+import type { IntegrationWatch } from "./integration.ts";
 import { CONNECT_MS, type Membership } from "./membership.ts";
 import { orphans } from "./orphan.ts";
 import type { RunMode } from "./runmode.ts";
@@ -19,7 +20,7 @@ const SUBAGENT_TOOLS = ["subagent", "subagent_resume"];
 const CHECKING = "Straw Boss is still asking Herdr whether this is a sub workspace; try again in a moment";
 
 /** What the session does at its start, around each run, and at its end. */
-export function registerSession(kit: Kit, { runMode, briefing, roles, presence, membership, guard, host, reach, digest, control, startTower }: { runMode: RunMode; briefing: Briefing; roles: Roles; presence: Presence; membership: Membership; guard: Guard; host: ReturnType<typeof createHost>; reach: Reach; digest: Digest; control: Control; startTower(): Promise<void> }) {
+export function registerSession(kit: Kit, { runMode, briefing, roles, presence, membership, guard, host, reach, digest, control, integration, startTower }: { runMode: RunMode; briefing: Briefing; roles: Roles; presence: Presence; membership: Membership; guard: Guard; host: ReturnType<typeof createHost>; reach: Reach; digest: Digest; control: Control; integration: IntegrationWatch; startTower(): Promise<void> }) {
 	const { pi, cfg, s, guiDir, me, role, tell } = kit;
 	const { run, env, version } = cfg;
 	const who = () => pi.getSessionName() || s.ownName || me().slice(0, 8);
@@ -67,6 +68,7 @@ export function registerSession(kit: Kit, { runMode, briefing, roles, presence, 
 		if (runMode.mode !== "normal") return;
 		const start = (started = {});
 		s.stopped = false;
+		integration.arm();
 		s.ui = ctx.ui;
 		s.hasUI = ctx.hasUI;
 		s.quit = () => ctx.shutdown();
@@ -184,6 +186,7 @@ export function registerSession(kit: Kit, { runMode, briefing, roles, presence, 
 		presence.stop();
 		guard.stop();
 		stopWatching();
+		integration.stop();
 		s.stopped = true; // a refresh still in flight must not write tokens after they are cleared
 		await presence.settled();
 		const held = s.holdsTower;

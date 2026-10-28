@@ -410,6 +410,8 @@
 	"deploy_ready": "單位就緒",
 	"new_folder": "新資料夾",
 	"new_folder_name": "新資料夾的名稱",
+	"picker_choose": "選擇…",
+	"picker_choose_title": "選擇資料夾",
 	"picker_back": "上一步",
 	"picker_forward": "下一步",
 	"picker_path": "路徑",

@@ -31,6 +31,20 @@ const host = async (over: Parameters<typeof startHosted>[1] = {}) => {
 };
 const status = (url: string) => new Promise<number>((resolve, reject) => void get(url, { agent: false }, (res) => (res.resume(), resolve(res.statusCode!))).on("error", reject));
 
+/** The served page of a server's GUI, as this computer's browser gets it. */
+const pageOf = (h: Hosted) => new Promise<string>((resolve, reject) => void get(h.url, { agent: false }, (res) => { let body = ""; res.on("data", (c) => (body += c)).on("end", () => resolve(body)); }).on("error", reject));
+
+test("the served page carries <meta name=\"sb-desk\" content=\"1\"> only when the server runs with STRAW_BOSS_DESK=1, next to sb-csrf", async () => {
+	const first = await host(), plain = await pageOf(first);
+	assert.match(plain, /<meta name="sb-csrf" content="[0-9a-f]{32}">/);
+	assert.ok(!plain.includes("sb-desk"), "no marker without the switch");
+	await first.stop();
+	const desk = await host({ env: { STRAW_BOSS_DESK: "1" }, pid: 7777 });
+	const page = await pageOf(desk);
+	assert.match(page, /<meta name="sb-csrf" content="[0-9a-f]{32}">\n<meta name="sb-desk" content="1">/, "beside sb-csrf");
+	assert.equal(desk.record().desk, true);
+});
+
 test("the server serves the page from its start: server.json says where (gui: port and token), gui.json is the unchanged contract naming the server, and the log has no token", async () => {
 	const h = await host();
 	assert.equal(await status(h.url), 200);

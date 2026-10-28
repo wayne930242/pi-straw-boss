@@ -12,6 +12,7 @@ import { mountLinkBar } from "./linkbar.ts";
 import { mountNotify } from "./notify.ts";
 import { mountQuit, showDismissAll, showStashed } from "./quit.ts";
 import { hang, mountPage } from "./render.ts";
+import { phoneHidden } from "./desk.ts";
 import { createRouter, parseRoute, type Route, upOf, watchOf } from "./router.ts";
 import { createStream, type Source, type Status } from "./stream.ts";
 import { mountTimeline } from "./timeline.ts";
@@ -207,7 +208,7 @@ addEventListener("keydown", (event) => {
 });
 mountHotkeys((hotkey) => panels?.hotkey(hotkey) ?? false); // Space opens the next alert, F enlarges the top dialog; nothing before the overlay layer has loaded
 el("teams").addEventListener("click", openTeams);
-el("pair").hidden = location.hostname !== "127.0.0.1"; // pairing is this computer's: a paired device comes in by its tailnet name (remote.ts)
+el("pair").hidden = phoneHidden(location.hostname); // pairing is this computer's, and a desk window has none (desk.ts)
 el("pair").addEventListener("click", () => void import("./pair.ts").then(({ pairTile }) => openTile(pairTile(), true)));
 el("server").hidden = location.hostname !== "127.0.0.1"; // restarting the server and reading its log are this computer's too (the server answers 403 local_only to a paired device)
 el("server").addEventListener("click", () => void import("./server.ts").then(({ serverTile }) => openTile(serverTile(), true)));
