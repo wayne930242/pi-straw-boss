@@ -220,6 +220,27 @@ test("Ctrl+D leaves the pane to the boss for good: the stand-in goes and nothing
 	await until(() => world.herdr.typed.length === 2, "the prompt after the run");
 });
 
+test("B6 VM F6: when the next run is about to start (its event waits and the wake is due within a few seconds), the pane freed by a run gets no prompt typed, since the run would wait for it to start and leave", async () => {
+	world.runTimers = { wake: 900 };
+	const { s, pane } = await setup();
+	await until(() => world.herdr.typed.length === 1, "the first typing");
+	const prompt = new FakePrompt(s, pane);
+	await until(() => world.herdr.pane(pane).agent === "tower", "the stand-in");
+	await ask(s, { cmd: "tower-event", workspace: "wA", text: "first" });
+	await prompt.exit(true); // the prompt leaves for the run
+	const id = await nthRun();
+	await work(s, id);
+	await ask(s, { cmd: "tower-event", workspace: "wA", text: "second", present: false }); // arrives as the first run ends
+	exit(id);
+	await until(() => readRun(world.slot, "wA", id)?.outcome === "done", "the run to end");
+	const pi = world.herdr.pane(pane);
+	pi.agent = undefined;
+	pi.processes = [];
+	await sleep(500);
+	assert.equal(world.herdr.typed.length, 1, "no prompt into the pane the next run is about to take");
+	await nthRun(2);
+});
+
 test("a Herdr restart ends the boss's Ctrl+D too: every pane is a fresh shell", async () => {
 	const { s, pane } = await setup();
 	const prompt = new FakePrompt(s, pane);

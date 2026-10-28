@@ -27,6 +27,8 @@ export const STANDING: StandingTimers = { intervalMs: 3000, presentMs: 6000, lau
 const MISSES = 3;
 /** Typings of the command with no poll after any of them, in a row, before the server says so (once); it goes on at the capped pace. */
 const NO_START = 3;
+/** A run whose wake is due within this long is about to take the standing pane: the prompt is not typed into it (it starts slower than the run waits, a cold PowerShell and node: 29 s on the VM). */
+const RUN_SOON_MS = 5000;
 const SHELLS = new Set(["zsh", "bash", "fish", "sh", "dash", "ksh", "tcsh", "csh", "nu", "login", "pwsh", "powershell", "cmd"]);
 
 /** What the standing logic needs of one tower service (towers.ts builds it). */
@@ -38,6 +40,8 @@ export interface StandingTarget {
 	/** Whether the identity is registered: nothing is typed or reported before. */
 	live(): boolean;
 	status(): ServiceStatus | undefined;
+	/** Whether a run starts in the pane within `ms`: a prompt typed now would only have to start, poll, and leave before the run's pi can. */
+	runWithin?(ms: number): boolean;
 }
 export interface StandingOptions {
 	run: HerdrRun;
@@ -174,6 +178,8 @@ export function createStanding(o: StandingOptions) {
 		await unreport(m);
 		// The boss's Ctrl+D leaves the shell to them until a run takes the pane or Herdr restarts: no clock gives it back, since a prompt typed over their half-written line or the command they are about to run would run it.
 		if (m.parked) return;
+		// A run is about to take the pane (an event waits and its wake is due): the prompt is not typed, and the stand-in stays as it is.
+		if (!present(m) && target.runWithin?.(RUN_SOON_MS)) return;
 		// A wake is coming (the prompt posted the boss's words and left): a run takes the pane in a moment, and a prompt typed now would only have to leave again.
 		if (m.launched !== undefined && now() - m.launched < Math.min(t.launchMs * 2 ** Math.max(0, m.typings - 1), t.launchMaxMs)) return;
 		if (pane.agent) return;

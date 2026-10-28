@@ -1214,6 +1214,8 @@ export function createRuns(o: RunsOptions) {
 
 	const api = {
 		attach, detach, poke: (workspace: string) => { const s = services.get(workspace); if (s) poke(s); },
+		/** Whether a run of this workspace starts within `ms`: its wake is due by then (the standing pane types no prompt that run would have to wait for, B6 VM F6). */
+		startsWithin: (workspace: string, ms: number) => { const s = services.get(workspace); return Boolean(s && !s.run && s.wake && s.wakeAt !== undefined && s.wakeAt - now() <= ms); },
 		/** An ally run asked its sender's device to confirm a call at `forward`: the answer is handed to it at its next poll. */
 		watchConfirm(token: unknown, dialogId: string) {
 			const a = of(token);
