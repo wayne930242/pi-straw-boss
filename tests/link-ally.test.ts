@@ -205,10 +205,16 @@ test("a reply offered to a main that does not take it (an older build, a main th
 	await until(() => b.offers.filter((x) => x.tower === "main-1").length >= 2, 3000, "the offer again");
 	assert.deepEqual(b.store.readInbox(item.id)!.reply, { ask: ASK, main: "main-1", mainName: "docs-main", tower: "sb-tower-wb" });
 	b.skew += 2 * 60_000;
+	b.net = { ...b.net, panes: b.net.panes.filter((p) => p.pane_id === "p9") }; // no tower is open, so the fallback item is not offered to one (which would answer a late `taken` of the main by itself)
 	void b.holder.drain();
 	await until(() => b.store.readInbox(item.id)?.reply === undefined, 3000, "the fallback");
 	assert.equal(b.store.readInbox(item.id)!.askedBy, "docs-main", "the ally run is told which main asked");
 	assert.ok(events(b).some((e) => e.event === "reply-fallback" && e.why === "not-taken"));
+	// The main's `taken` comes after the fallback (it read the item just before): it no longer takes the item out, so an ally run still gets it.
+	await b.holder.taken(item.id, "main-1");
+	assert.ok(b.store.readInbox(item.id), "a taken from the main whose offer fell back leaves the item in the inbox");
+	await b.holder.taken(item.id, "tower-b");
+	assert.equal(b.store.readInbox(item.id), undefined, "any other taker (an ally run's) removes it");
 });
 
 test("the thread store keeps both directions per device, mode 600, the last 20 messages, none older than 7 days", async () => {

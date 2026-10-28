@@ -303,6 +303,20 @@ test("no channel is joined for a server whose process is already gone: the survi
 	assert.deepEqual(s.regs.map((r) => r.namespace), [guiNamespace("E")]);
 });
 
+test("no gui.json (a server with no GUI, or a fresh state folder where it could not bind): hub.json names the server's session, and a gui.json that exists wins", () => {
+	const s = session({ gui: "" });
+	const hub = (ownerSession: string, pid = process.pid) => writeFileSync(join(s.dir, "hub.json"), JSON.stringify({ pid, ownerSession }));
+	s.bridge.sync();
+	assert.equal(s.regs.length, 0, "neither file: no server");
+	hub("H");
+	s.bridge.sync();
+	assert.deepEqual(s.regs.map((r) => r.namespace), [guiNamespace("H")]);
+	s.record("G");
+	utimesSync(join(s.dir, "gui.json"), new Date(), new Date(Date.now() + 5000));
+	s.bridge.sync();
+	assert.deepEqual(s.regs.map((r) => r.namespace), [guiNamespace("H"), guiNamespace("G")], "gui.json names the server now");
+});
+
 test("once gui.json names another server, the one it named before can no longer answer, even while it still owns its channel", async () => {
 	const s = session(), seen: string[] = [];
 	s.open();

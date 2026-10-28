@@ -189,6 +189,8 @@ export class LinkHolder {
 	private draining: Promise<void> | undefined;
 	private again = false;
 	/** Inbox messages no tower has taken yet: no tower open, or offered and not taken. For the GUI's notices. */
+	/** The main whose reply fell back to an ally run, per inbox id: a `taken` of that main that arrives afterwards (it read the item before the rewrite) does not remove the item an ally run is to get. */
+	private replyFellBack = new Map<string, string>();
 	private waiting = new Map<string, { team: string; from: string; since: number; offered: boolean; served?: boolean; identity?: string }>();
 	/** When a `tower-reply` last fell back to a plain `tower`, by device, so the log tells it once an hour. */
 	private fellBack = new Map<string, number>();
@@ -645,6 +647,7 @@ export class LinkHolder {
 				if (!main || mainPane?.tokens?.sb_role !== "main") {
 					const { reply, ...plain } = item;
 					await store.withLock(() => store.putInbox({ ...plain, askedBy: reply!.mainName }));
+					if (main) this.noteReplyFallback(id, main.id);
 					store.log({ event: "reply-fallback", id, why: main ? "not-main" : "gone" });
 					this.again = true;
 					continue;
@@ -654,6 +657,7 @@ export class LinkHolder {
 					const { reply, ...plain } = item;
 					this.offered.delete(id);
 					await store.withLock(() => store.putInbox({ ...plain, askedBy: reply!.mainName }));
+					this.noteReplyFallback(id, main.id);
 					store.log({ event: "reply-fallback", id, why: "not-taken" });
 					this.again = true;
 					continue;
@@ -708,10 +712,17 @@ export class LinkHolder {
 		for (const device of store.threadDevices()) if (!members.has(device)) store.removeThread(device);
 	}
 
+	private noteReplyFallback(id: string, main: string): void {
+		this.replyFellBack.set(id, main);
+		for (const old of this.replyFellBack.keys()) if (this.replyFellBack.size > 200) this.replyFellBack.delete(old); else break;
+	}
+
 	/** The tower that was offered a message has put it into its session: it leaves the inbox. */
 	async taken(id: string, tower: string): Promise<void> {
 		const was = this.offered.get(id);
 		if (was && was.tower !== tower) return;
+		if (this.replyFellBack.get(id) === tower) return;
+		this.replyFellBack.delete(id);
 		this.offered.delete(id);
 		this.waiting.delete(id);
 		await this.o.store.withLock(() => this.o.store.removeInbox(id));

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { createServer as createHttpServer, get, request } from "node:http";
 import { createServer } from "node:net";
 import { afterEach, test } from "node:test";
+import { guiNamespace } from "../src/bridgewire.ts";
 import { startGui } from "../src/gui.ts";
 import { writeRecordFile } from "../src/handover.ts";
 import { switchRemote } from "../src/remote.ts";
@@ -668,4 +669,19 @@ test("gui.json is created by a temporary file under a random name, created new: 
 	assert.equal(readFileSync(planted, "utf8"), "planted");
 	assert.equal(existsSync(join(dir, "gui.json")), true);
 	assert.deepEqual(readdirSync(dir).filter((f) => f.startsWith("gui.json.") && f !== planted.split("/").pop()), [], "no temporary file is left");
+});
+
+test("RV6-F004/RV7: a server with no GUI (gui: false) or none that could bind still builds the hub, tracks the gates, and names its session in hub.json for the bridges, with no gui.json", async () => {
+	world.herdr.addTab("wA:t1", "work");
+	const h = await host({ gui: false, pid: process.pid }), id = h.record().intercomId!;
+	assert.equal(existsSync(join(h.slot.dir, "gui.json")), false, "no GUI, no gui.json");
+	const hub = JSON.parse(readFileSync(join(h.slot.dir, "hub.json"), "utf8")) as { pid: number; ownerSession: string };
+	assert.deepEqual([hub.pid, hub.ownerSession], [h.pid, id]);
+	assert.ok(world.broker.registrations.some((r) => r.namespace === guiNamespace(id)), "the hub's channel is up: removing track() from the GUI host's start leaves it down");
+	// A pi session's bridge follows hub.json to it, so the terminal's yes of a gated call reaches the hub.
+	const b = world.agent({ id: "B", pane: "wA:p2", tab: "wA:t1" });
+	await b.start();
+	await until(() => b.regs.get(guiNamespace(id)), "B's bridge on the server's channel");
+	assert.equal((await h.ask("status")).gui, undefined, "status says nothing of a GUI this server does not serve");
+	assert.equal((await h.ask("gui", { boss: true })).ok, false, "and the boss's gui command is refused as before");
 });

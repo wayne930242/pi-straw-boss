@@ -1048,7 +1048,7 @@ SHA-256 of its canonical arguments, with its token. The server takes it only whe
 `toolCallId`, opened by this run's token, over arguments with that digest, and not yet used. The Allow is then used up. A second call
 with the same id, other arguments, or another run's token is refused. The Allow is used up in the same turn of the event loop as the check, so two calls that take it at once get it once.
 
-The hub notes Allows from the server's start, whether or not a page listens: a GUI stopped on purpose, or one that could not bind, does not stop the boss's yes in the terminal from being the Allow (the hub keeps its channel and its gate tracking through the page's stop, and asks the bridges for their open dialogs again).
+The hub notes Allows from the server's start, whether or not a page listens: a GUI stopped on purpose, or one that could not bind, does not stop the boss's yes in the terminal from being the Allow (the hub keeps its channel and its gate tracking through the page's stop, and asks the bridges for their open dialogs again). This holds with no gui.json too (`gui: false`, or a fresh state folder where the GUI could not bind): the server always builds the hub and tracks, and writes `hub.json` (`{ pid, ownerSession }`) in its folder. A bridge follows gui.json to the server's session and, when gui.json names none, hub.json.
 
 pi-intercom's `intercom` tool is blocked in runs with a pointer to `tower_reply` and `tower_send`. Without the block, a reply would
 carry the run's own short-lived id, and the answer would reach a pi that had already exited.
@@ -1083,7 +1083,7 @@ An ally run may write to a local session (`tower_reply`, at `dispatch` or agains
 
 - **Waits.** `tower_reply` with `reply: true` in an ally run records a route (`ally-routes.json`) for the session and the device, not an expectation of the local brief. A main the run opened is a route too, for all its reports.
 - **Answers.** A message from a session with a route does not become a local event. It is stored as an answer for the device (`ally-answers.json`) and wakes an ally run for that device like a link message: it waits for the device's next fresh run, is read by it under a header with `kind=tower_reply` and no `verified=yes` (the session is local; the words are still data), and leaves the store when that run ends well. A route made by `tower_reply` is spent by its first answer. When the local run also waits on the same session, the newer wait wins.
-- **Ledger.** The mains an ally run opened have a ledger of their own (`ally-opened.json`), so the local brief's "opened for" lines never name a peer's text.
+- **Ledger.** The mains an ally run opened have a ledger of their own (`ally-opened.json`), so the local brief's "opened for" lines never name a peer's text. A route for an opened main captures every report from that main for 24 h, not only the answer to one ask; a local run gets those reports back only if it records a newer expectation on that main.
 
 ### Replies for a main (D4)
 

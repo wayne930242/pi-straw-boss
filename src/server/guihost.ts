@@ -20,7 +20,7 @@ import { trustDir } from "../trust/files.ts";
 import { createTrustServe } from "../trust/serve.ts";
 import type { Kit } from "../state.ts";
 import { type Log, tailLog } from "./log.ts";
-import { fileOf, readRecord, type ServerRecord, type Slot, updateRecord } from "./record.ts";
+import { fileOf, readRecord, type ServerRecord, type Slot, updateRecord, writeJson } from "./record.ts";
 import type { Reply, Request } from "./socket.ts";
 
 // The GUI inside the sb server (docs/specs/2026-10-26-sb-backend.md, What moves out of pi sessions, GUI, `gui.json` and its successor): the page's server (gui.ts), the dialog hub, trust questions,
@@ -66,6 +66,8 @@ export interface GuiHostOptions {
 	startedLater?(pid: number): Promise<string | undefined>;
 	/** How long the hand-over waits for it; `RECLAIM_START_WAIT_MS` by default. */
 	startWaitMs?: number;
+	/** Whether the GUI listens; false (`gui: false`) keeps only the hub and its gate tracking, which the terminal's yes of an ally run's gated call needs. */
+	listen?: boolean;
 	/** The GUI's way to the link holder. */
 	link: GuiLink;
 	/** The tower service of a workspace for the net, and the composer's and notices' way to it (towers.ts). */
@@ -264,6 +266,9 @@ export function createGuiHost(o: GuiHostOptions) {
 		async start(): Promise<void> {
 			// The gates' tracking does not depend on the page: a GUI stopped on purpose, or one that could not bind, still has the Allows of the boss's yes in the terminal.
 			theHub().track();
+			// The bridges follow gui.json to the hub; a server with no gui.json (no GUI served, or one that could not bind on a fresh state folder) names its session in hub.json.
+			writeJson(join(dir, "hub.json"), { pid, ownerSession: id });
+			if (o.listen === false) return;
 			const prefer = recorded();
 			if (prefer.stopped) {
 				// The record keeps the port and token, and gui.json says whose it is now.
@@ -304,7 +309,7 @@ export function createGuiHost(o: GuiHostOptions) {
 		},
 		/** The control requests that concern the GUI; undefined for any other. */
 		async handle(request: Request): Promise<Reply | undefined> {
-			if (!["gui", "gui-stop", "gui-remote", "gui-pair"].includes(request.cmd)) return undefined;
+			if (o.listen === false || !["gui", "gui-stop", "gui-remote", "gui-pair"].includes(request.cmd)) return undefined;
 			if (closing) return { ok: false, error: "restarting" };
 			if (request.cmd === "gui-stop") {
 				const was = await stop();

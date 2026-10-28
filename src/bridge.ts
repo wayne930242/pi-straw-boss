@@ -102,16 +102,20 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close, platform
 	};
 	// gui.json names the server's session; it is read at the session's start and then on every mtime change, checked every 2 s (unref'd).
 	const follow = () => {
-		const at = statSync(join(dir, "gui.json"), { throwIfNoEntry: false })?.mtimeMs ?? 0;
+		const at = (statSync(join(dir, "gui.json"), { throwIfNoEntry: false })?.mtimeMs ?? 0) + (statSync(join(dir, "hub.json"), { throwIfNoEntry: false })?.mtimeMs ?? 0);
 		if (queued.length && !waits()) requeue([]); // pi emptied its queue without delivering (Esc, Alt+Up)
 		if (at === seen) return false;
 		seen = at;
-		try {
-			const r = JSON.parse(readFileSync(join(dir, "gui.json"), "utf8")) as { pid?: number; ownerSession?: string };
-			[g, gpid] = [r.ownerSession || undefined, Number(r.pid) || 0];
-		} catch {
-			g = undefined;
-		}
+		// gui.json names the server when it has a GUI; hub.json when it has none (`gui: false`, or a fresh state folder where the GUI could not bind) but still keeps the hub for the gates' Allows.
+		const named = (file: string) => {
+			try {
+				const r = JSON.parse(readFileSync(join(dir, file), "utf8")) as { pid?: number; ownerSession?: string };
+				return r.ownerSession ? ([r.ownerSession, Number(r.pid) || 0] as const) : undefined;
+			} catch {
+				return undefined;
+			}
+		};
+		[g, gpid] = named("gui.json") ?? named("hub.json") ?? [undefined, 0];
 		if (g && g !== me() && !chans.has(g) && alive()) join_(g); // a host whose process is gone is not joined: the survivor that takes over rewrites gui.json within moments
 		push();
 		return true;

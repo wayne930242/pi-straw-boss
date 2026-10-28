@@ -305,7 +305,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			const verdict = run ? gateRun({ cmd: request.cmd, workspace: request.workspace, body: request.body }, run) : { ok: false as const, error: "unknown_token" };
 			if (!verdict.ok) return { ok: false, error: verdict.error };
 		}
-		if (request.cmd === "status") return { ok: true, ...facts(), uptimeMs: now() - startedAt, ...(own.lastError ? { lastError: own.lastError } : {}), towers: towers?.status() ?? [], link: link?.status() ?? null, ...(guiHost ? { gui: guiHost.facts() } : {}) };
+		if (request.cmd === "status") return { ok: true, ...facts(), uptimeMs: now() - startedAt, ...(own.lastError ? { lastError: own.lastError } : {}), towers: towers?.status() ?? [], link: link?.status() ?? null, ...(guiHost && o.gui !== false ? { gui: guiHost.facts() } : {}) };
 		if (phase === "restarting" || (phase === "stopping" && request.cmd !== "run-poll")) return { ok: false, error: "restarting" };
 		if (request.cmd === "link") {
 			// A request of a session to the link holder (service.ts): the answer is the holder's own, in `answer`; `ok` is only whether the server took the request. Only the primary server holds the link.
@@ -455,9 +455,9 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	const cfg = headlessConfig({ ...herdrCfg, run: o.herdr?.run ?? socketRun(herdrRun, herdrCfg.call, undefined) }, kitEnv);
 	// SAFETY: the kit hands a client to the modules that run the net; it is attached at the first connection, before any of them is built (the link holder is built right after it).
 	const kit = createHeadlessKit({ client: OFFLINE, env: kitEnv, cfg, log: () => {} });
-	const gui = o.gui === false ? undefined : o.gui ?? {};
-	guiHost = gui && createGuiHost({
-		onAllow: (note) => allows.note(note),
+	const gui = o.gui === false ? {} : o.gui ?? {};
+	guiHost = createGuiHost({
+		listen: o.gui !== false, onAllow: (note) => allows.note(note),
 		slot, kit, log, pid, version, started: () => own.started, runs: (record) => runsAs({ alive, startOf }, record), startedLater: gui.startedLater ?? (o.startOf ? async (other) => o.startOf!(other) : (other) => startedLater(other, { hold: false })), startWaitMs: gui.startWaitMs,
 		sessions: async () => (client?.isConnected() ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))),
 		// The primary server holds the link itself (B3), so the GUI asks the holder in this process as the server, which the holder takes GUI requests from; before it runs, the channel reaches the holder's session. A secondary server holds none and its GUI says so (`no_link`, as its `link` request does): the channel would ask the primary's holder as a session that is not the GUI's host.
