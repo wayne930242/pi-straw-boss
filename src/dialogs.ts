@@ -81,7 +81,9 @@ export function checkAnswer(t: Answerable, json: Record<string, unknown>): { cho
 }
 
 export function createHub(pi: ExtensionAPI, me: string, local: Bridge, onAllow?: (note: AllowNote) => void) {
-	let channel: Channel | undefined, epoch: string | undefined, active = false, change = () => {};
+	// `active`: a page listens (start/stop). `tracking`: the sb server keeps the hub's channel and gate tracking up whether or not a page listens, so the Allows of an ally run's gated calls (allows.ts)
+	// are noted after `/boss gui stop` and when no GUI could start (track()).
+	let channel: Channel | undefined, epoch: string | undefined, active = false, tracking = false, change = () => {};
 	let bound = new Map<string, { from: string; b: Dialogs }>(), targets = new Map<string, Target>(), reach = new Map<string, { from: string; bridgeId: string }>();
 	const bridges = new Map<string, Dialogs>(), waiting = new Map<string, (ack?: Ack) => void>(), done = new Map<string, { key: string; at: number; sent: Sent }>(), probes = new Map<string, (e?: Editor) => void>(), lists = new Map<string, (c?: Cmd[]) => void>(), pulls = new Map<string, (p?: Pull) => void>();
 	const closes = new Map<string, (r?: Pick<CloseResult, "accepted" | "reason">) => void>(), checks = new Map<string, (r?: { reason?: string }) => void>();
@@ -110,8 +112,17 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge, onAllow?:
 		local.sync();
 		if (owner()) try { channel!.publish({ version: 1, type: "sync" }, { audience: "capable", ownerOnly: true }); } catch {} // a broker that dropped meanwhile elects again, which syncs
 	};
+	const join = () => {
+		try {
+			if (!channel && me) pi.events.emit(REGISTER, { namespace: guiNamespace(me), ownerEligible: true, onReady: (c: Channel) => (channel = c), onEvent });
+		} catch {
+			// No channel: only this session's own dialogs can be answered (in-process), every other one stays read-only.
+		}
+		epoch = channel?.snapshot().owner?.epoch;
+		sync();
+	};
 	const receive = (from: string, msg: ToHub) => {
-		if (!active || msg?.version !== 1 || !str(msg.bridgeId)) return;
+		if (!(active || tracking) || msg?.version !== 1 || !str(msg.bridgeId)) return;
 		const closed = msg.type === "dialogs" && Array.isArray(msg.closed) && msg.closed.length <= 16 && msg.closed.every((c) => str(c?.id) && str(c.by) && opt(c.answerId) && (c.allow === undefined || c.allow === true));
 		const docs = msg.type === "dialogs" && (msg.documents === undefined ? [] : docsOf({ version: 1, documents: msg.documents })); // documents out of shape go alone, as if cut
 		// A queue out of shape is left out; the dialogs and documents still go.
@@ -128,7 +139,7 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge, onAllow?:
 		if (msg.type === "form-result" && typeof msg.accepted === "boolean" && opt(msg.reason) && (msg.reason?.length ?? 0) <= 512) forms.get([from, msg.bridgeId, msg.id, msg.answerId].join("\n"))?.(msg);
 	};
 	const onEvent = (e: Event) => {
-		if (e.type === "owner" && e.owner?.sessionId === me && e.owner.epoch !== epoch && (epoch = e.owner.epoch) && active) sync();
+		if (e.type === "owner" && e.owner?.sessionId === me && e.owner.epoch !== epoch && (epoch = e.owner.epoch) && (active || tracking)) sync();
 		if (e.type === "message" && e.fromSessionId) receive(e.fromSessionId, e.payload as ToHub);
 		if (e.type === "session_left" && e.sessionId) {
 			gates.delete(e.sessionId);
@@ -168,7 +179,7 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge, onAllow?:
 		return d.busy ? terminal("An answer is on its way; check the terminal.") : { ...rest, answer };
 	};
 	const hub: LocalHub & {
-		readonly running: boolean; readonly me: string; start(onChange: () => void): void; stop(): void; relayed(sessions: Session[], refs: Map<string, Ref>): Relayed; target(key: string): Target | undefined;
+		readonly running: boolean; readonly me: string; start(onChange: () => void): void; track(): void; stop(): void; relayed(sessions: Session[], refs: Map<string, Ref>): Relayed; target(key: string): Target | undefined;
 		has(key: string, owner: string, at?: { pane?: string; file?: string }): boolean; replay(answerId: string, key: string): Sent | undefined; ended(key: string, dialog: string, answerId: string): Sent | undefined; send(key: string, t: Target, a: Answer): Promise<Sent>;
 		probe(key: string): Promise<Editor | undefined>; pull(key: string, step: "begin" | "finish", ref?: string): Promise<Pull | undefined>; commands(key: string, prefix: string): Promise<Cmd[] | undefined>; close(key: string, keepPane: boolean, ifStashable?: boolean): Promise<{ accepted: boolean; reason?: string } | undefined>; stashCheck(key: string): Promise<{ reason?: string } | undefined>; doc(cap: string): { key: string; doc: Doc } | undefined; form(cap: string, answerId: string, fields: Fields): Promise<FormResult | undefined>;
 	} = {
@@ -180,19 +191,21 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge, onAllow?:
 		/** The channel is registered at the first start, before gui.json names this session; later starts in this process reuse it. */
 		start(onChange) {
 			[change, active] = [onChange, true];
-			try {
-				if (!channel && me) pi.events.emit(REGISTER, { namespace: guiNamespace(me), ownerEligible: true, onReady: (c: Channel) => (channel = c), onEvent });
-			} catch {
-				// No channel: only this session's own dialogs can be answered (in-process), every other one stays read-only.
-			}
-			epoch = channel?.snapshot().owner?.epoch;
-			sync();
+			join();
+		},
+		/** The server keeps the channel and the gates' tracking up with no page listening, and through a page's stop; bridges relay to it as soon as it owns the channel. */
+		track() {
+			tracking = true;
+			join();
 		},
 		stop() {
 			active = false;
+			change = () => {};
 			[bridges, bound, targets, reach, shelves, gates].forEach((m) => m.clear());
 			caps.clear(); // a capability lives as long as its server
 			[...waiting.values(), ...probes.values(), ...lists.values(), ...pulls.values(), ...forms.values(), ...closes.values(), ...checks.values()].forEach((w) => w());
+			// What was relayed is gone with the page's state: the bridges are asked for their open dialogs again, so a gate still open is known when it closes.
+			if (tracking) sync();
 		},
 		/** Binds each relayed list to a unit, from this net reading's sessions and registry. */
 		relayed(sessions, refs) {

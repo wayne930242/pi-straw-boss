@@ -98,6 +98,9 @@ export function createGuiHost(o: GuiHostOptions) {
 	const deploys = createDeploys(), trust = createTrustServe({ dir: trustDir(slot.stateDir), herdr: slot.herdr, world: () => cfg.world(), opening: deploys.openingOf });
 	const live = async (session: string) => (await o.sessions()).some((x) => x.id === session);
 
+	/** The hub, built when the server starts and kept for the process: it tracks the gates for the tower service whether or not a page listens (dialogs.ts `track`). */
+	const theHub = () => (hub ??= createHub(kit.pi, id, NO_BRIDGE, o.onAllow));
+
 	/** What the last GUI recorded, for a start to prefer: server.json's port, with the remote port of gui.json when that record is of the same local port. The token and the CSRF secret are not carried over: `had` only says there was a GUI before (RC3-F002). */
 	const recorded = () => {
 		const record = readRecord(slot), seen = readGuiJson(dir), was = record?.gui, port = was?.port ?? seen?.port;
@@ -175,7 +178,7 @@ export function createGuiHost(o: GuiHostOptions) {
 		return false;
 	};
 	const begin = async (prefer: ReturnType<typeof recorded>, wait: number): Promise<Gui> => {
-		hub ??= createHub(kit.pi, id, NO_BRIDGE, o.onAllow);
+		theHub();
 		const net = netSource({ ...(o.tower ? { services: (workspace: string) => o.tower!.view(workspace) } : {}), run: cfg.run, world: cfg.world, sessions, stashed: () => stashedList(slot.stateDir), trust, hub });
 		// `running` is read by the page's remote buttons, which only come once the server is up.
 		let running!: Gui;
@@ -259,6 +262,8 @@ export function createGuiHost(o: GuiHostOptions) {
 	return {
 		/** At the server's start: the GUI on the recorded ports unless it was stopped on purpose (which only the boss's own command undoes). */
 		async start(): Promise<void> {
+			// The gates' tracking does not depend on the page: a GUI stopped on purpose, or one that could not bind, still has the Allows of the boss's yes in the terminal.
+			theHub().track();
 			const prefer = recorded();
 			if (prefer.stopped) {
 				// The record keeps the port and token, and gui.json says whose it is now.

@@ -562,3 +562,38 @@ test("a gate or approval that closes with an explicit yes is told to the server,
 	h.receive("S2", list([], [{ id: "r1", by: "remote", allow: true }]));
 	assert.equal(notes.length, 1, "other owners' dialogs are no Allow");
 });
+
+test("RV6-F004: a hub that only tracks (no page listening) still notes a gate closing with a yes, keeps doing so across the page's stop and start, and one that never tracked notes nothing after its stop", () => {
+	const mk = () => {
+		const notes: unknown[] = [], published: unknown[] = [];
+		const events = { emit: (ch: string, r: never) => ch === REGISTER && (r as { onReady(c: unknown): void }).onReady({ snapshot: () => ({ connected: true, owner: { sessionId: "G", epoch: "e1" } }), publish: (p: unknown) => published.push(p) }), on: () => () => {} };
+		const local = { deliver() {}, sync() {}, probe: () => ({ editor: "empty" as const }), commands: () => [], close: () => ({ accepted: true }), stashCheck: () => undefined, pull: async () => ({ reason: "no_editor" as const }), form() {} };
+		return { notes, published, h: createHub({ events } as unknown as ExtensionAPI, "G", local as never, (note) => void notes.push(note)) };
+	};
+	const GATE = { title: "Remote request from bob-mac (abcdef): bash\n\n{\n  \"command\": \"ls\"\n}", choices: [{ label: "Allow" }, { label: "Deny" }] };
+	const gate = (id: string, call: string): Dialog => ({ owner: "straw-link-gate", id, toolCallId: call, digest: selectDigest(GATE), select: GATE });
+	const list = (dialogs: Dialog[], closed: { id: string; by: string; allow?: true }[] = []): Dialogs => ({ version: 1, type: "dialogs", bridgeId: "B", pane: "wA:p9", file: null, dialogs, closed });
+	const yes = (h: ReturnType<typeof mk>["h"], id: string, call: string) => (h.receive("S1", list([gate(id, call)])), h.receive("S1", list([], [{ id, by: "terminal", allow: true }])));
+
+	const tracked = mk();
+	tracked.h.track();
+	yes(tracked.h, "g1", "tc-1");
+	assert.deepEqual(tracked.notes.map((n) => (n as { toolCallId: string }).toolCallId), ["tc-1"], "no page was ever started");
+	assert.ok(tracked.published.some((p) => (p as { type?: string }).type === "sync"), "bridges are asked to relay again");
+	// The page starts and stops: the hub keeps tracking, and asks the bridges to relay what is open now.
+	tracked.h.start(() => {});
+	yes(tracked.h, "g2", "tc-2");
+	tracked.published.length = 0;
+	tracked.h.receive("S1", list([gate("g3", "tc-3")]));
+	tracked.h.stop();
+	assert.ok(tracked.published.some((p) => (p as { type?: string }).type === "sync"), "a stop that goes on tracking asks for the open dialogs again");
+	tracked.h.receive("S1", list([gate("g4", "tc-4")]));
+	tracked.h.receive("S1", list([], [{ id: "g4", by: "terminal", allow: true }]));
+	assert.deepEqual(tracked.notes.map((n) => (n as { toolCallId: string }).toolCallId), ["tc-1", "tc-2", "tc-4"]);
+
+	const plain = mk();
+	plain.h.start(() => {});
+	plain.h.stop();
+	yes(plain.h, "g1", "tc-1");
+	assert.equal(plain.notes.length, 0, "a hub that only served a page listens to nothing once it stopped");
+});
