@@ -389,6 +389,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			case "run-poll": return answer(async (t) => ({ ...t.runs.poll(request) }));
 			case "run-taken": return answer(async (t) => ({ ...t.runs.taken(request) }));
 			case "run-done": return answer(async (t) => ({ ...(await t.runs.done(request)) }));
+			case "run-boss": return answer(async (t) => ({ ...t.runs.present(request) }));
 			case "run-release": return answer(async (t) => ({ ...(await t.runs.release(request)) }));
 			case "run-tool": return answer(async (t) => ({ ...(await t.runTool(request)) }));
 			case "run-file": return answer(async (t) => (t.runs.setFile(request.token, request.file), {}));

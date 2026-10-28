@@ -33,6 +33,8 @@ function server() {
 		command: (c: unknown) => void commands.push(c),
 		refuseClaim: (error: string) => void (claimAnswer = { ok: false, error }),
 		refuseDone: (error: string) => void (doneAnswer = { ok: false, error }),
+		/** The boss is in the run: the server answers tower_done with a stay. */
+		stayDone: (text: string) => void (doneAnswer = { ok: true, stay: true, text }),
 		toolAnswers: (a: Answer) => void (toolAnswer = a),
 		async ask(request: Request): Promise<Answer> {
 			requests.push(request);
@@ -91,8 +93,13 @@ test("B5R3: idle and an empty message queue are read again at delivery: an event
 			if (r && request.cmd === "run-poll" && answer.event && !busied) {
 				busied = true;
 				offeredAt = srv.requests.length - 1;
-				r.faux.setResponses([fauxAssistantMessage("busy done"), fauxAssistantMessage("event done")]);
+				// The busy turn is held until the answer has gone back: a handler of the input event (the run mode has one) makes pi take the words a tick later, so "busy" is when the model is asked.
+				let asked!: () => void, release!: () => void;
+				const modelAsked = new Promise<void>((resolve) => (asked = resolve)), gate = new Promise<void>((resolve) => (release = resolve));
+				r.faux.setResponses([(async () => (asked(), await gate, fauxAssistantMessage("busy done"))) as never, fauxAssistantMessage("event done")]);
 				void r.session.prompt("something else");
+				await modelAsked;
+				setTimeout(release, 150);
 			}
 			return answer;
 		},
@@ -294,4 +301,68 @@ test("B5R3-F001: the sender line is written from the broker's name and id with c
 	for (const look of ["\ua4b0real\ua4b1", "\u239breal\u239e", "\u2e1creal\u2e1d", "\u00abreal\u00bb", "\u201creal\u201d", "r\u0332eal"]) assert.equal(eventText({ kind: "intercom", text: "t", from: { id: "m", name: `boss ${look}` } }).split("\n")[0], "[intercom from boss real (m)]", `only letters, digits, spaces and ._-@ are kept: ${look}`);
 	assert.equal(eventText({ kind: "intercom", text: "t", from: { id: "m", name: "Jose\u0301 \u540d\u524d docs-bot_1.2@x" } }).split("\n")[0], "[intercom from Jos\u00e9 \u540d\u524d docs-bot_1.2@x (m)]", "names keep their letters (NFC)");
 	assert.equal(eventText({ kind: "intercom", text: "t", from: { id: "m-1", name: "docs" } }), "[intercom from docs (m-1)]\nt");
+});
+
+// --- The boss in the run (docs/how-it-works.md, The boss in a run) ---
+
+const settled = (r: Awaited<ReturnType<typeof rig>>) => until(() => !r.session.isStreaming, "the turn to settle");
+const quit = (r: Awaited<ReturnType<typeof rig>>) => (r.session as unknown as { extensionRunner: { emit(e: unknown): Promise<unknown> } }).extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+
+test("the boss typing into the run's session tells the server before the turn, and not more often than every 15 s; the run's own events and steers are no such sign", async () => {
+	const srv = server();
+	srv.push("e1", "go");
+	const r = await rig(srv);
+	let toldFirst: boolean | undefined;
+	const hello = () => (toldFirst = srv.requests.some((q) => q.cmd === "run-boss"), fauxAssistantMessage("two"));
+	r.faux.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("steered"), hello as never, fauxAssistantMessage("three")]);
+	await until(() => srv.taken.length === 1, "the event");
+	await settled(r);
+	srv.command({ type: "steer", text: "a steer from the server" });
+	await until(() => r.session.messages.some((m) => JSON.stringify(m).includes("a steer from the server")), "the steer");
+	await settled(r);
+	assert.equal(srv.requests.filter((q) => q.cmd === "run-boss").length, 0, "events and steers are the server's words");
+	await r.session.prompt("hello run");
+	const sign = srv.requests.filter((q) => q.cmd === "run-boss");
+	assert.equal(sign.length, 1);
+	assert.equal(sign[0]!.token, "TOKEN");
+	assert.equal(toldFirst, true, "told before the turn the words start");
+	await r.session.prompt("and another");
+	assert.equal(srv.requests.filter((q) => q.cmd === "run-boss").length, 1, "throttled");
+});
+
+test("tower_done answered with a stay is the tool's result: the run goes on, the model is told why", async () => {
+	const srv = server();
+	srv.push("e1", "go");
+	srv.stayDone("The boss is in this session: stay.");
+	const r = await rig(srv);
+	r.faux.setResponses([call("tower_done", { note: "routed" }), fauxAssistantMessage("staying")]);
+	await until(() => results(r.session).length === 1, "the result");
+	assert.match(results(r.session)[0]!, /The boss is in this session: stay\./);
+	assert.equal(r.shutdowns.length, 0, "no shutdown");
+	// A quit now is not after a tower_done: the server is told the run was quit.
+	await settled(r);
+	await quit(r);
+	assert.equal(srv.requests.filter((q) => q.cmd === "run-done" && q.left === true).length, 1);
+});
+
+test("a quit that is not after tower_done tells the server the run was quit (run-done with left), and a quit after tower_done does not", async () => {
+	const srv = server();
+	const r = await rig(srv);
+	await until(() => srv.requests.some((q) => q.cmd === "run-file"), "the run to be set up");
+	await quit(r);
+	const left = srv.requests.filter((q) => q.cmd === "run-done");
+	assert.equal(left.length, 1);
+	assert.equal(left[0]!.left, true);
+	assert.equal(left[0]!.token, "TOKEN");
+	assert.equal(srv.requests.filter((q) => q.cmd === "run-release").length, 0, "a quit is not a release");
+});
+
+test("after tower_done ends the run, the quit that follows tells the server nothing more", async () => {
+	const srv = server();
+	srv.push("e1", "go");
+	const r = await rig(srv);
+	r.faux.setResponses([call("tower_done", { note: "routed" }), fauxAssistantMessage("bye")]);
+	await until(() => r.shutdowns.length === 1, "shutdown");
+	await quit(r);
+	assert.equal(srv.requests.filter((q) => q.cmd === "run-done").length, 1, "the tower_done alone");
 });
