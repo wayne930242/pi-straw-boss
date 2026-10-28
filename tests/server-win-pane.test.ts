@@ -18,6 +18,7 @@ beforeEach(() => {
 	world = new TowerWorld();
 	world.setFlag(true);
 	world.runPlatform = "win32";
+	world.herdr.shellForeground = true;
 });
 afterEach(() => world.close());
 
@@ -59,8 +60,10 @@ const drain = async (s: Running, token: string) => {
 		assert.equal((await ask(s, { cmd: "run-taken", token, id: event.id })).ok, true);
 	}
 };
-/** What Herdr's `agent start` says when the agent does not come up: the code first on stderr, and the command line (with its own `--timeout 30000`) in the message. */
-const startTimeout = () => Object.assign(new Error("herdr agent start --kind pi --timeout 30000 failed: timeout: timed out waiting for agent startup"), { stderr: "timeout: timed out waiting for agent startup" });
+/** What Herdr's `agent start` says when the agent does not come up: JSON on stderr with the code (VM ev x6e, x6h), and the command line (with its own `--timeout 30000`) in the message. */
+const startTimeout = () => Object.assign(new Error("herdr agent start --kind pi --timeout 30000 failed: timeout: timed out waiting for agent startup"), { stderr: JSON.stringify({ error: { code: "timeout", message: "timed out waiting for agent startup" }, id: "cli:agent:start" }) });
+/** The plain-text form (`timeout: ...`) some Herdr versions print. */
+const plainTimeout = () => Object.assign(new Error("herdr agent start failed"), { stderr: "timeout: timed out waiting for agent startup" });
 const exit = (id: string) => world.live.delete(world.pis.get(id)!.pid);
 
 test("win32: a stop tells the run to quit at its poll and waits for pi to leave; a pi that leaves is not killed", async () => {
@@ -216,21 +219,33 @@ test("RV2-F001: a start that fails with another code than timeout (its message s
 	assert.deepEqual(world.herdr.closed, []);
 });
 
-test("RV2-F001: a timeout reported as JSON on stderr is the timeout code as well", async () => {
-	await setup();
-	const base = world.herdr.onAgentStart!;
-	let first = true;
-	world.herdr.onAgentStart = (pane, args) => {
-		if (first) {
-			first = false;
-			throw Object.assign(new Error("herdr agent start failed"), { stderr: JSON.stringify({ error: { code: "timeout", message: "timed out waiting for agent startup" } }) });
-		}
-		base(pane, args);
-	};
-	tower().incoming(from, msg("m1", "one"));
-	await nthRun();
-	assert.equal(starts(), 2);
-});
+const retriedOnce = async (failure: () => Error) => {
+	{
+		const { s, ensured } = await setup();
+		const base = world.herdr.onAgentStart!;
+		const seen: { id: string; pane: string }[] = [];
+		let first = true;
+		world.herdr.onAgentStart = (pane, args) => {
+			seen.push({ id: args[args.indexOf("--sb-run") + 1]!, pane: pane.pane_id });
+			if (first) {
+				first = false;
+				throw failure();
+			}
+			base(pane, args);
+		};
+		tower().incoming(from, msg("m1", "one"));
+		await nthRun();
+		assert.equal(starts(), 2);
+		assert.equal(seen[0]!.id, seen[1]!.id, "the second start is the same run's");
+		assert.equal(seen[0]!.pane, ensured.pane);
+		assert.notEqual(seen[1]!.pane, ensured.pane, "in a new pane");
+		const service = (await status(s)) as { crashes?: number; notices?: { kind: string }[] };
+		assert.equal(service.crashes, undefined);
+		assert.ok(!service.notices?.some((n) => n.kind === "start"));
+	}
+};
+test("RV2-F001: a timeout reported as JSON on stderr (the format real Herdr prints) is retried once in a new pane of the same run, without a crash", () => retriedOnce(startTimeout));
+test("RV2-F001: a timeout reported as plain text on stderr is retried the same way", () => retriedOnce(plainTimeout));
 
 test("RV2-F001: a start timeout renews the pane, but a pane running the user's program (not a shell, not this run's pi) is kept: it loses the tower marks and its tab the tower label, and the run starts in a new pane", async () => {
 	const { ensured } = await setup();
@@ -562,4 +577,84 @@ test("RV2-M24: a start that fails does not get Escape and /quit typed into the p
 	await until(() => world.kills.length >= 1, "the leftover to be ended", 10_000);
 	await sleep(100);
 	assert.deepEqual(world.herdr.keys, [], "nothing is typed into a pane whose pi never claimed");
+});
+
+// --- review 3 (sb-wincmd-review3) ---------------------------------------------------------------------------------------------------------------------------------
+
+const renewOnTimeout = (pane: string, processes: { name?: string; argv0?: string; pid?: number; cmdline?: string }[] | "unreadable") => {
+	const base = world.herdr.onAgentStart!;
+	let first = true;
+	world.herdr.onAgentStart = (p, args) => {
+		if (first) {
+			first = false;
+			if (processes === "unreadable") Object.defineProperty(world.herdr.pane(pane), "processes", { get: () => { throw new Error("herdr pane process-info failed: not answering"); }, configurable: true });
+			else p.processes = processes;
+			throw startTimeout();
+		}
+		base(p, args);
+	};
+};
+
+test("RV3-F002: an interpreter in the standing pane is not its shell: `pwsh -File x.ps1` and `bash x.sh` keep the pane, only the process Herdr names as the pane's shell_pid counts", async () => {
+	for (const user of [{ name: "pwsh.exe", argv0: "pwsh.exe", pid: 5151, cmdline: "pwsh.exe -File C:\\me\\build.ps1" }, { name: "bash", argv0: "bash", pid: 5152, cmdline: "bash deploy.sh" }]) {
+		await world.close();
+		world = new TowerWorld();
+		world.setFlag(true);
+		world.runPlatform = "win32";
+		world.herdr.shellForeground = true;
+		const { ensured } = await setup();
+		renewOnTimeout(ensured.pane!, [user]);
+		tower().incoming(from, msg("m1", "one"));
+		await nthRun();
+		assert.ok(!world.herdr.closed.includes(ensured.pane!), `${user.cmdline} keeps its pane`);
+	}
+});
+
+test("RV3-F004: a pane whose foreground is empty or cannot be read is kept (unknown is not a shell)", async () => {
+	for (const processes of [[], "unreadable"] as ("unreadable" | never[])[]) {
+		await world.close();
+		world = new TowerWorld();
+		world.setFlag(true);
+		world.runPlatform = "win32";
+		world.herdr.shellForeground = true;
+		const { ensured } = await setup();
+		renewOnTimeout(ensured.pane!, processes);
+		tower().incoming(from, msg("m1", "one"));
+		await nthRun();
+		assert.ok(!world.herdr.closed.includes(ensured.pane!), `${JSON.stringify(processes)} keeps its pane`);
+	}
+});
+
+test("RV3-F003: a server stop that lands after the record moved to the new tab leaves the new tab for the next server", async () => {
+	const { s, ensured } = await setup();
+	let open!: () => void;
+	const base = world.herdr.onAgentStart!;
+	let first = true;
+	world.herdr.onAgentStart = (p, args) => {
+		if (first) {
+			first = false;
+			// The first read of the old pane by renew's closable (the record already names the new pane) holds the next pane list.
+			Object.defineProperty(world.herdr.pane(ensured.pane!), "processes", {
+				get: () => {
+					world.herdr.paneListGate = new Promise<void>((resolve) => (open = resolve));
+					return undefined;
+				},
+				configurable: true,
+			});
+			throw startTimeout();
+		}
+		base(p, args);
+	};
+	tower().incoming(from, msg("m1", "one"));
+	await until(() => world.herdr.gated > 0, "renew to reach the pane list after its close", 5000);
+	const stopping = ask(s, { cmd: "stop" });
+	await sleep(100);
+	world.herdr.paneListGate = undefined;
+	open();
+	await stopping;
+	await s.handle.done;
+	await sleep(300); // renew resumes after the gate opened
+	const tabs = world.herdr.tabs.filter((t) => t.workspace_id === "wA" && t.label === TOWER_LABEL);
+	assert.equal(tabs.length, 1, "the tower's new tab is still there");
+	assert.notEqual(tabs[0]!.tab_id, ensured.tab);
 });

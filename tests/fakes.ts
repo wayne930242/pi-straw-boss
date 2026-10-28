@@ -45,6 +45,8 @@ export const settle = async () => {
 };
 
 interface Tokens { [name: string]: string }
+/** The pid of the shell Herdr started in every fake pane (process-info `shell_pid`). */
+export const SHELL_PID = 79748;
 interface FakePane { pane_id: string; tab_id: string; workspace_id: string; terminal_id: string; agent?: string; agent_status?: string; agent_session?: { value: string }; label?: string; tokens: Tokens; env?: string[]; cwd?: string; processes?: { argv?: string[]; argv0?: string; name?: string; pid?: number; cmdline?: string }[] }
 interface FakeWorkspace { workspace_id: string; label: string; agent_status?: string; focused?: boolean; active_tab_id?: string; tokens: Tokens; worktree?: { checkout_path?: string; is_linked_worktree?: boolean; repo_key?: string } }
 
@@ -75,6 +77,8 @@ export class FakeHerdr {
 	/** Pane lists fail while this is set (the workspace and tab lists still answer). */
 	failPanes = false;
 	/** While set, `pane list` answers only after it resolves. */
+	/** A pane with no processes of its own shows its shell in the foreground (the pane at its prompt). */
+	shellForeground = false;
 	paneListGate: Promise<void> | undefined;
 	gated = 0;
 	wsTokenHistory: (string | undefined)[] = [];
@@ -158,7 +162,7 @@ export class FakeHerdr {
 		if (this.failPanes && group === "pane" && cmd === "list") throw new Error("herdr pane list failed: not answering");
 		if (group === "pane" && cmd === "current") return out({ pane: this.pane(self) });
 		// The foreground processes of a pane, as Herdr lists them (a launch script shows its argv; pi shows only its argv0).
-		if (group === "pane" && cmd === "process-info") return out({ process_info: { pane_id: flag("--pane"), foreground_processes: this.pane(flag("--pane")!).processes ?? [] } });
+		if (group === "pane" && cmd === "process-info") return out({ process_info: { pane_id: flag("--pane"), shell_pid: SHELL_PID, foreground_processes: this.pane(flag("--pane")!).processes ?? (this.shellForeground ? [{ pid: SHELL_PID, name: "powershell.exe", argv0: "powershell.exe", cmdline: "powershell.exe -NoExit" }] : []) } });
 		if (group === "workspace" && cmd === "list") return out({ workspaces: this.workspaces });
 		if (group === "pane" && cmd === "list") return out({ panes: this.panes.filter((p) => !flag("--workspace") || p.workspace_id === flag("--workspace")) });
 		if (group === "tab" && cmd === "list") return out({ tabs: this.tabs.filter((t) => t.workspace_id === flag("--workspace")) });

@@ -375,13 +375,13 @@ export function createTowers(o: TowersOptions): Towers {
 		deleteService(slot, l.record.workspace);
 	};
 
-	/** What the old standing pane may lose: a shell at its prompt, or a process that carries the run's id (its pi or the wrapper that started it). Anything else is the boss's own program. */
-	const SHELL = /^-?(?:ba|z|fi|da|k|c|tc|a)?sh(?:\.exe)?$|^(?:pwsh|powershell|cmd)(?:\.exe)?$/i;
+	/** What the old standing pane may lose: its own shell (the process Herdr started there, `shell_pid`) or a process that carries the run's id (its pi or the wrapper that started it). Anything else, an interpreter running the boss's script included, is the boss's own program. Unknown (an unreadable or empty list) is kept. */
 	const closable = async (pane: string, runId: string): Promise<boolean> => {
 		try {
-			const info = JSON.parse(await run(["pane", "process-info", "--pane", pane])).result?.process_info?.foreground_processes as { name?: string; argv0?: string; cmdline?: string }[] | undefined;
-			if (!Array.isArray(info)) return false;
-			return info.every((p) => p.cmdline?.includes(`--sb-run ${runId}`) || (SHELL.test(p.name ?? p.argv0 ?? "?") && !/\s(?:-c|\/c)\s/i.test(p.cmdline ?? "")));
+			const info = JSON.parse(await run(["pane", "process-info", "--pane", pane])).result?.process_info as { shell_pid?: number; foreground_processes?: { pid?: number; cmdline?: string }[] } | undefined;
+			const list = info?.foreground_processes;
+			if (!Array.isArray(list) || !list.length) return false;
+			return list.every((p) => p.cmdline?.includes(`--sb-run ${runId}`) || (typeof info?.shell_pid === "number" && p.pid === info.shell_pid));
 		} catch {
 			return false; // unknown is not a shell
 		}
@@ -422,9 +422,12 @@ export function createTowers(o: TowersOptions): Towers {
 			if (!closed) await report(run, "pane", old.pane, CLEAR).catch(() => {});
 			// A tab that keeps a pane (ally runs, the boss's splits, the pane that was kept) is no longer the tower's.
 			if ((await panes(run, ws).catch(() => [])).some((p) => p.tab_id === old.tab)) await run(["tab", "rename", old.tab, FORMER_LABEL]).catch(() => {});
-			if (gone() || l.stopped) return await abandon();
+			// The record names the new pane now: a server stop leaves it for the next server; only a service that was lost or retired (gone from the map) takes it down. A stop marks `l` stopped as well, so that flag does not tell the two apart.
+			if (services.get(ws) !== l) return await abandon();
+			if (stopped || l.stopped) return undefined;
 			await release(l);
-			if (gone()) return await abandon();
+			if (services.get(ws) !== l) return await abandon();
+			if (stopped) return undefined;
 			services.set(ws, adopt(l.record));
 			return made.paneId;
 		} catch (cause) {
