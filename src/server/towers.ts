@@ -154,7 +154,7 @@ export function createTowers(o: TowersOptions): Towers {
 			const ws = l.record.workspace, all = await workspaces(run), target = all.find((w) => w.workspace_id === ws);
 			if (!target || !l.client) throw new Error("the tower's workspace or its intercom connection is gone");
 			const first = items[0], device = rec.device ?? "";
-			const mains = await gatherMains({ run, now, sessions: () => l.client!.listSessions(), boardDir: join(slot.stateDir, "board"), workspace: target, ledger: [] });
+			const mains = await gatherMains({ run, now, sessions: () => l.client!.listSessions(), boardDir: join(slot.stateDir, "board"), workspace: target, ledger: [], within: { project: rec.team ? o.ally?.project(rec.team) : undefined } });
 			const note = lastNote(slot, ws, "ally", device), at = new Date(woken);
 			const line = (text: string) => text.split("\n").find((x) => x.trim()) ?? "";
 			return {

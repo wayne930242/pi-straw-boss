@@ -4,6 +4,7 @@ import { sessionMark } from "../netdata.ts";
 import { nameOf, netMembers } from "../reach.ts";
 import type { HerdrRun } from "../herdr.ts";
 import type { LedgerRow } from "../opener.ts";
+import { inside } from "../link/routing.ts";
 
 // The brief of a local run (docs/specs/2026-10-26-sb-backend.md, The brief): short plain text in the run's role section, built by the server and never by a model, with a hard cap of 6,000
 // characters. Each section has its own cap, and a section that was cut says how much it left out. The events are not part of it: they arrive as messages.
@@ -81,11 +82,15 @@ export interface GatherDeps {
 	workspace: Workspace;
 	/** The opener's ledger: mains this tower opened. */
 	ledger: LedgerRow[];
+	/** An ally run's scope, as `tower_list` shows a remote turn: only the sessions whose pane directory is inside the project the sender's team binds (nothing when it binds none). */
+	within?: { project: string | undefined };
 }
 /** The mains of a workspace as the brief shows them: per tab, the main with its state and board entry, and how many members the tab has. */
 export async function gatherMains(d: GatherDeps): Promise<{ rows: MainRow[]; opened: string[]; head: string }> {
 	const [sessions, ps, all] = await Promise.all([d.sessions(), panes(d.run), workspaces(d.run)]);
-	const ws = d.workspace.workspace_id, here = netMembers(sessions, ps).filter((m) => m.workspace.id === ws && m.role !== "tower");
+	const ws = d.workspace.workspace_id, project = d.within?.project;
+	const scoped = (m: { s: Session }) => !d.within || (project !== undefined && ps.some((p) => p.pane_id === m.s.herdrLocation?.paneId && p.cwd && inside(p.cwd, project)));
+	const here = netMembers(sessions, ps).filter((m) => m.workspace.id === ws && m.role !== "tower" && scoped(m));
 	const paneOf = (s: Session): Pane | undefined => ps.find((p) => p.pane_id === s.herdrLocation?.paneId);
 	const live: LiveMain[] = here.filter((m) => m.role === "main").map((m) => ({ session: m.s.id, name: clean(nameOf(m.s), 40), workspaceId: ws, workspace: clean(d.workspace.label, 40), tab: clean(m.tab.label, 40), state: sessionMark(m.s, paneOf(m.s)) }));
 	const board = joinLocal(readEntries(d.boardDir), live, d.now());

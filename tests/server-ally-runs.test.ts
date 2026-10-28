@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { TowerWorld } from "./tower-world.ts";
 import { type Running, sleep, until } from "./server-world.ts";
@@ -102,6 +104,33 @@ test("the claim of an ally run answers its kind, level, sender, and an ally brie
 	assert.ok(!/head tower: /.test(brief), "an ally run names no head tower");
 	assert.ok(!/Your identity for replies/.test(brief), "and no identity of its own");
 	assert.ok(brief.length <= 4000);
+});
+
+test("the ally brief shows the mains inside the project the sender's team binds and no other tab of the workspace; with no project bound it shows none (RV6-F001)", async () => {
+	const place = (id: string, name: string, pane: string, tab: string, label: string, cwd: string) => {
+		world.herdr.addPane(pane, tab, "pi").tokens.sb_role = "main";
+		world.herdr.pane(pane).cwd = cwd;
+		return { id, name, herdrLocation: { status: "ok" as const, workspace: { id: "wA", label: "Alpha" }, tab: { id: tab, label }, paneId: pane } };
+	};
+	const proj = join(world.stateDir, "proj"), elsewhere = join(world.stateDir, "elsewhere");
+	mkdirSync(join(proj, "app"), { recursive: true });
+	mkdirSync(elsewhere, { recursive: true });
+	world.sessions = [place("in-main-1", "inside-main", "wA:p71", "wA:t1", "work", join(proj, "app")), place("out-main-1", "outside-main", "wA:p72", "wA:t2", "docs", elsewhere)];
+	const briefFor = async (device: string, project: string | undefined) => {
+		if (project) world.ally.projects.set("team-1", project);
+		else world.ally.projects.delete("team-1");
+		world.ally.add(`m-${device}`, device, "hello");
+		world.expose?.allyWaiting("sb-tower-wa");
+		const got = await claimed(s, await nthRun(world.pis.size + 1));
+		return String(got.brief);
+	};
+	const { s } = await setup();
+	const bound = await briefFor(DEV1, proj);
+	assert.match(bound, /inside-main/);
+	assert.doesNotMatch(bound, /outside-main|docs: /, "a tab outside the project shows nothing of itself");
+	const none = await briefFor(DEV2, undefined);
+	assert.doesNotMatch(none, /inside-main|outside-main/);
+	assert.match(none, /What your sender may see[^]*no tab of this workspace has joined/);
 });
 
 test("the run's events are its device's messages, up to 5 oldest first, with the verified header and the ask id; one that arrives meanwhile waits for the next run", async () => {
@@ -241,9 +270,9 @@ test("an ally run's tools: tower_send goes to its sender's full id only, inReply
 	assert.match(String((await run("tower_send", { device: DEV1, message: "hi", inReplyTo: "f".repeat(32) })).error), /ask id of one of this run's messages/);
 	assert.equal((await run("tower_send", { device: DEV1, message: "answer", inReplyTo: "e".repeat(32) })).ok, true);
 	assert.equal(world.linkCalls.at(-1)!.body.inReplyTo, "e".repeat(32));
-	// Another device: gated.
+	// Another device: refused outright, whatever the call id (RV6-F007).
 	const other = await run("tower_send", { device: DEV2, message: "hi" }, "tc-1");
-	assert.match(String(other.error), /was not allowed/);
+	assert.match(String(other.error), /sender only/);
 	// A local session reached with tower_reply: Allow tied to the pane, call id, and arguments; used once.
 	world.sessions = [{ id: "main-1", name: "docs-main", herdrLocation: { paneId: "wA:p1" } } as never, { id: "bridge-1", herdrLocation: { paneId: readRun(world.slot, "wA", id)!.pane } } as never];
 	const args = { to: "main-1", message: "please look" };
