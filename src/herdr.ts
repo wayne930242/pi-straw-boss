@@ -62,6 +62,8 @@ export function towerModel(stateDir: string): string | undefined {
 export const TOWER_LABEL = "\u{f043b}";
 export const MARK = { main: "\uf005", member: "\uf007" } as const;
 export const ARROW = "[sub]";
+/** The `sb_mark` prefix of an ally run's pane; the device's label follows it. */
+export const ALLY_MARK = "[ally]";
 
 export async function place(run: HerdrRun): Promise<Place> {
 	const pane = (await result(run, ["pane", "current"])).pane;

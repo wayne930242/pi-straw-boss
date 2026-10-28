@@ -147,6 +147,7 @@ export function createTowers(o: TowersOptions): Towers {
 		record: () => l.record,
 		live: () => l.state === "live" && Boolean(l.client?.isConnected()),
 		cwd: async () => (await panes(run, l.record.workspace).catch(() => [])).find((p) => p.pane_id === l.record.pane)?.cwd ?? l.record.cwd ?? slot.stateDir,
+		towerKey: async () => (await netTokens(run, place(l), "tower", l.record.name, now(), cfg.world)).own.sb_order ?? undefined,
 		clearDigest: (keys) => digest.drop(l.record.workspace, keys),
 		allyLine: (item) => {
 			const mine = { name: l.record.name, id: l.record.id, role: "tower" as const, workspace: l.record.label };
@@ -316,11 +317,13 @@ export function createTowers(o: TowersOptions): Towers {
 		// A live foreign holder keeps the workspace: this service steps back and waits for it (a hand-over whose reply was lost leaves the resident running and publishing its own token).
 		const foreign = await residentOf(l);
 		if (foreign) return void (await yieldTo(l, foreign));
-		const own = await netTokens(run, place(l), "tower", l.record.name, now(), cfg.world).then((net) => net.own, () => ({}));
+		const own: Record<string, string | null> = await netTokens(run, place(l), "tower", l.record.name, now(), cfg.world).then((net) => net.own, () => ({}));
 		await Promise.all([
 			report(run, "workspace", l.record.workspace, { tower: l.record.id, sb_tower_quit: null }),
 			report(run, "pane", l.record.pane, { sb_role: "tower", ...own }),
 		]).catch((cause: Error) => error("tokens", `${l.record.id}: ${cause.message}`));
+		// The panes of its ally runs are keyed after it.
+		await runs.markAllies(l.record.workspace, own.sb_order ?? null);
 	};
 	const yieldTo = async (l: Live, holder: string) => {
 		if (l.stopped || services.get(l.record.workspace) !== l) return;

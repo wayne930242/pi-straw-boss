@@ -461,3 +461,44 @@ test("a forward confirm: the ally run asks its own sender's device, whatever the
 	// Anything else of the link is not an ally run's.
 	for (const op of ["list", "send", "taken", "gui", "request-run"]) assert.match(String((await ask(s, { cmd: "link", token, body: { op } })).error), /ally run/, op);
 });
+
+// The net view sorts the Agents list by `sb_order` and draws the branches from `sb_indent` (herdr-plugin/net-view.mjs): an ally run's pane is a row among the tower's, keyed after the tower like a subagent
+// is after its launcher. Its tokens last 10 minutes and a run may last 20, so the tower's 4 minute publish writes them again.
+const cut = (v: string) => (v.length > 24 ? `${v.slice(0, 23)}…` : v);
+const NET = ["sb_role", "sb_order", "sb_mark", "sb_indent", "sb_name"] as const;
+const netTokens = (pane: string) => Object.fromEntries(NET.flatMap((k) => (world.herdr.pane(pane).tokens[k] === undefined ? [] : [[k, world.herdr.pane(pane).tokens[k]]])));
+
+test("an ally run's pane is keyed after its tower, marked [ally] with the device's label, drawn as a branch among its siblings, written again with the tower's publish, and cleared when the run ends", async () => {
+	world.refreshMs = 100;
+	const { s, ensured } = await setup();
+	await until(() => world.herdr.pane(ensured.pane as string).tokens.sb_order, "the tower's order key");
+	const tower = world.herdr.pane(ensured.pane as string).tokens.sb_order!;
+	world.ally.add("m1", DEV1, "one");
+	world.expose?.allyWaiting("sb-tower-wa");
+	const id1 = await nthRun();
+	const pane1 = readRun(world.slot, "wA", id1)!.pane;
+	assert.deepEqual(netTokens(pane1), { sb_role: "ally", sb_order: `${tower}.000`, sb_mark: `[ally] ${cut(`label-${DEV1}`)}`, sb_indent: "└─", sb_name: "ally run" }, "one ally: the last branch");
+	// A second device's run is a sibling after it, and the first gets the branch that has a later sibling.
+	world.ally.add("m2", DEV2, "two");
+	world.expose?.allyWaiting("sb-tower-wa");
+	const id2 = await nthRun(2);
+	const pane2 = readRun(world.slot, "wA", id2)!.pane;
+	assert.deepEqual(netTokens(pane2), { sb_role: "ally", sb_order: `${tower}.001`, sb_mark: `[ally] ${cut(`label-${DEV2}`)}`, sb_indent: "└─", sb_name: "ally run" });
+	await until(() => world.herdr.pane(pane1).tokens.sb_indent === "├─", "the first ally to show a later sibling");
+	// Herdr lets the tokens lapse after 10 minutes: the tower's publish writes them again.
+	for (const k of NET) delete world.herdr.pane(pane1).tokens[k];
+	await until(() => world.herdr.pane(pane1).tokens.sb_order === `${tower}.000`, "the refresh to write the ally pane's tokens again");
+	assert.equal(world.herdr.pane(pane1).tokens.sb_role, "ally");
+	// The first run ends: its tokens are cleared before its pane closes, and the sibling takes its place in the order.
+	const token = String((await claimed(s, id1)).token);
+	await drain(s, token);
+	await ask(s, { cmd: "run-done", token, note: "n" });
+	exit(id1);
+	await until(() => readRun(world.slot, "wA", id1)?.outcome === "done", "the first run to end");
+	const calls = world.herdr.calls;
+	const cleared = calls.findIndex((c) => c[0] === "pane" && c[1] === "report-metadata" && c[2] === pane1 && c.includes("--clear-token") && c.includes("sb_order"));
+	const closed = calls.findIndex((c) => c[0] === "pane" && c[1] === "close" && c[2] === pane1);
+	assert.ok(cleared >= 0 && closed > cleared, `cleared ${cleared}, closed ${closed}`);
+	await until(() => world.herdr.pane(pane2).tokens.sb_order === `${tower}.000`, "the remaining ally to move up");
+	assert.equal(world.herdr.pane(pane2).tokens.sb_indent, "└─");
+});

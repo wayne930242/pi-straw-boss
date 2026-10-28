@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { type HerdrRun, panes, report, result, type Sleep, startPi } from "../herdr.ts";
+import { allyKids, clearOrder } from "../order.ts";
 import { alive as pidAlive } from "../remote.ts";
 import { startOf as processStartOf, startedLater as processStartedLater } from "../startof.ts";
 import { assertSettingsSafe } from "../trust/settings.ts";
@@ -91,6 +92,8 @@ export interface ServiceRef {
 	live(): boolean;
 	/** The folder the settings check looks at: the standing pane's, else the workspace's checkout path. */
 	cwd(): Promise<string>;
+	/** The tower's `sb_order` key, which the panes of its ally runs are keyed after; undefined when Herdr cannot place the tower. */
+	towerKey(): Promise<string | undefined>;
 	/** The brief for a run: the server builds it from the net, the opener's ledger, the digest, and the last note. */
 	brief(input: { events: QueuedEvent[]; woken: number; run: RunRecord }): Promise<{ text: string; digestKeys: string[] }>;
 	/** Drops the digest lines a run's brief showed. */
@@ -327,7 +330,7 @@ export function createRuns(o: RunsOptions) {
 			const lead = svc.ref.record().pane, dir = await svc.ref.cwd();
 			const made = await result(o.run, ["pane", "split", lead, "--direction", "right", "--cwd", dir, "--no-focus"]);
 			rec.pane = made.pane.pane_id as string;
-			await report(o.run, "pane", rec.pane, { sb_role: "ally" }).catch(() => {});
+			await markAllies(svc);
 		} catch (cause) {
 			if (active.ended) return;
 			error("run-start", `${rec.id}: the pane could not be split: ${(cause as Error).message}`);
@@ -341,6 +344,20 @@ export function createRuns(o: RunsOptions) {
 		ensureWatcher();
 		// The claim is waited for in the background: the next device's run starts meanwhile.
 		void launch(active, `ally run · ${first.label} · ${id.slice(0, 8)}`).catch((cause: Error) => error("run-start", `${id}: ${cause.message}`));
+	};
+	/**
+	 * Writes the tokens of the panes the service's ally runs live in (order.ts `allyKids`): `sb_role`, and the row's place, mark, branch and name in the net view. The tokens last 10 minutes and a run may last 20, so the
+	 * tower's publish writes them again (`markAllies`); a pane that cannot be placed (Herdr does not know the tower) keeps its role alone. A failed write waits for the next one.
+	 */
+	const markAllies = async (svc: Svc, towerKey?: string | null) => {
+		const live = [...svc.allies.values()].filter((a) => a.rec.pane && !a.ended);
+		if (!live.length) return;
+		const key = towerKey === undefined ? await svc.ref.towerKey().catch(() => undefined) : towerKey ?? undefined;
+		const kids = key ? allyKids(key, live.map((a) => ({ pane: a.rec.pane, label: a.rec.deviceLabel ?? a.rec.device ?? "?" }))) : [];
+		for (const a of live) {
+			const kid = kids.find((k) => k.pane === a.rec.pane);
+			await report(o.run, "pane", a.rec.pane, { sb_role: "ally", sb_order: kid?.order ?? null, sb_mark: kid?.mark ?? null, sb_indent: kid?.indent ?? null, sb_name: kid?.name ?? null }).catch(() => {});
+		}
 	};
 	/** A Herdr agent name is lowercase, up to 32 characters, and unique per run. */
 	const agentName = (s: Slot, workspace: string, id: string, prefix = "tower") => `${prefix}-${s.primary ? "" : `${s.slot8}-`}${workspace.toLowerCase().replace(/[^a-z0-9_-]/g, "")}-${id.slice(0, 8)}`.slice(0, 32).replace(/[-_]+$/, "");
@@ -462,7 +479,12 @@ export function createRuns(o: RunsOptions) {
 	async function finishAlly(a: Active, outcome: Outcome, failed: boolean, keepTaken: boolean) {
 		const svc = a.svc, identity = svc.ref.record().id;
 		// The pane is closed once pi has exited: a pane that pi leaves returns to its shell and would stay (a started pi that is still there goes with it).
-		if (a.rec.pane) await o.run(["pane", "close", a.rec.pane]).catch(() => {});
+		if (a.rec.pane) {
+			await clearOrder(o.run, [a.rec.pane]);
+			await o.run(["pane", "close", a.rec.pane]).catch(() => {});
+			// The panes of the device's siblings move up in the order, and the branch of the last one is drawn.
+			await markAllies(svc);
+		}
 		for (const id of a.rec.events) {
 			try {
 				if (!failed && outcome !== "herdr-restart" && !keepTaken) {
@@ -797,6 +819,8 @@ export function createRuns(o: RunsOptions) {
 		/** Messages wait in the link inbox for the tower identity: the service of that identity starts ally runs for them. */
 		pokeAllies: (identity: string) => { for (const s of services.values()) if (s.ref.record().id === identity) pokeAlly(s); },
 		claim, paneRole, poll, taken, done, release: releaseRun,
+		/** Writes the tokens of the service's ally panes again (the tower's publish, with its own `sb_order` as the key). */
+		markAllies: (workspace: string, towerKey?: string | null) => { const s = services.get(workspace); return s ? markAllies(s, towerKey) : Promise.resolve(); },
 		/** The run behind a token, or undefined. */
 		runOf: (token: unknown): RunWho | undefined => {
 			const a = of(token);

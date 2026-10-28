@@ -64,6 +64,8 @@ export class TowerWorld extends ServerWorld {
 	settingsHold: Promise<void> | undefined;
 	runTimers: Partial<Timers> = {};
 	runMax: number | undefined;
+	/** How often the service writes its tokens again (the server's 4 minutes), when a test wants to see a refresh. */
+	refreshMs: number | undefined;
 	/** The tower service of the last server started in this world, once it is built. */
 	expose: Towers | undefined;
 	ally = new FakeAlly();
@@ -98,7 +100,7 @@ export class TowerWorld extends ServerWorld {
 			} }),
 			herdr: { run: this.herdr.runFor("none"), events: this.herdr.events, api: this.herdr.api, watch: (cb: () => void) => (this.takeovers.push(cb), () => {}) },
 			towers: {
-				recoverMs: 150, registerMs: 500, residentMs: 20, retryMs: [20], ally: this.ally, ...(this.serverAllows ? {} : { allows: this.allows }), expose: (t: Towers) => void (this.expose = t),
+				recoverMs: 150, registerMs: 500, residentMs: 20, retryMs: [20], ally: this.ally, ...(this.refreshMs ? { refreshMs: this.refreshMs } : {}), ...(this.serverAllows ? {} : { allows: this.allows }), expose: (t: Towers) => void (this.expose = t),
 				link: async (body, from) => {
 					const b = body as Record<string, unknown>;
 					this.linkCalls.push({ body: b, from });

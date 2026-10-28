@@ -1,5 +1,5 @@
 import { subagents } from "./netdata.ts";
-import { ARROW, type HerdrRun, type HerdrTab, type HerdrWorld, isSub, MARK, type Pane, type Place, report, type Workspace, worldOf } from "./herdr.ts";
+import { ALLY_MARK, ARROW, type HerdrRun, type HerdrTab, type HerdrWorld, isSub, MARK, type Pane, type Place, report, type Workspace, worldOf } from "./herdr.ts";
 
 // Five display tokens for the sidebar plugin and for Herdr's own Agents rows, written next to `sb_role`:
 //  - `sb_order`: a sort key that lays the net out as the head tower's workspace first, then the other workspaces in Herdr's order, in each the tower
@@ -67,6 +67,14 @@ export function unplaced(parent: Pane | undefined, ps: Pane[], now: number, seen
 
 /** The subagent panes a session marks: each gets `sb_order`, `sb_mark`, `sb_indent` and `sb_name`. */
 export interface Kid { pane: string; order: string; mark: string; indent: string; name: string }
+
+/**
+ * The tokens of the panes the tower's ally runs live in, in the order the runs were started: each is keyed after the tower like a subagent after its launcher
+ * (the tower's key plus one segment), marked `[ally]` with the device's label, and drawn as a branch (`├─` while a later ally pane is marked, `└─` on the last).
+ */
+export function allyKids(towerKey: string, allies: { pane: string; label: string }[]): Kid[] {
+	return allies.map((ally, i) => ({ pane: ally.pane, order: `${towerKey}.${part(i)}`, mark: `${ALLY_MARK} ${short(ally.label)}`, indent: i < allies.length - 1 ? INDENT.more : INDENT.last, name: "ally run" }));
+}
 
 /**
  * What a session publishes besides its role: its own tokens (null clears them when Herdr cannot place the session, a tower has no mark, and none
