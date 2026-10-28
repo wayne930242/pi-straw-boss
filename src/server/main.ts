@@ -24,6 +24,7 @@ import {
 } from "./record.ts";
 import { AFTER, endpointFor, helloOf, listenControl, newSecret, type Reply, type Request } from "./socket.ts";
 import { createTowers, type Towers, type TowersOptions } from "./towers.ts";
+import { runsStopMs } from "./runs.ts";
 import { readTowerRuns } from "./towerruns.ts";
 import { packageRoot, VERSION } from "./version.ts";
 
@@ -268,7 +269,8 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		// The GUI listeners and the remote entry go before the intercom ids are released.
 		await Promise.race([guiHost?.leave(phase === "stopping").catch(() => {}), sleep(GUI_LEAVE_MS)]);
 		// The tower identities leave the broker with the server's own session; their tokens and files stay for the server that comes next.
-		await Promise.race([Promise.all([towers?.stop({ quitRuns: phase === "stopping" }), client?.disconnect().catch(() => {})]), sleep(LEAVE_MS)]);
+		// A stop on purpose waits for its runs to quit (and, off Windows, for the signal to a pi that stays): the exit does not come before it has either happened or been decided, however long the process table read takes.
+		await Promise.race([Promise.all([towers?.stop({ quitRuns: phase === "stopping" }), client?.disconnect().catch(() => {})]), sleep(LEAVE_MS + (phase === "stopping" ? runsStopMs() : 0))]);
 		const disconnected = now();
 		await control?.close();
 		log.line("exit", { code, disconnectMs: disconnected - began, closeMs: now() - disconnected });

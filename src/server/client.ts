@@ -619,7 +619,7 @@ export async function stop(ctx: Ctx): Promise<Stopped> {
 			throw new ServerError("unreachable", `the sb server did not take the stop: ${(error as Error).message}`);
 		}
 		if (reply && !reply.ok) throw new ServerError(reply.error === "serve" ? "serve" : "unreachable", `the sb server refused the stop: ${String(reply.error)}`);
-		const replied = ctx.now(), end = replied + ctx.timers.exit;
+		const replied = ctx.now(), end = replied + ctx.timers.exit + (ctx.platform === "win32" ? 8000 : 0); // Windows: the server waits 8 s more for its runs' pi to leave on its own (runs.ts runTimersFor)
 		while (ctx.alive(seen.record.pid) && ctx.now() < end) await ctx.sleep(50);
 		if (ctx.alive(seen.record.pid)) throw new ServerError("exit-timeout", `the sb server (pid ${seen.record.pid}) did not exit after the stop was asked`);
 		// The server marks it itself on its way out; a server that died first leaves the mark to this requester.

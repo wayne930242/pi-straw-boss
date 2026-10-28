@@ -990,6 +990,16 @@ something: the `boss` row. A send on its own wakes nothing.
   process the pane holds is not the run's and is left alone. The process table read for a signal runs beside the watcher's tick, one at a
   time per run (a PowerShell read on Windows takes seconds, and every run's watch waits on the tick); a table that cannot be read leaves the
   pi Herdr lists itself checked against its start time alone, and a pi below a wrapper unsignalled.
+- **Windows ends nothing by force if it can help it** (VM pass B6, `ev/x6a`-`x6i`). A pi ended with `TerminateProcess` (what `process.kill` is there) leaves its pane's console in an input mode where
+  the next `herdr agent start` into the same pane types a mangled command (`[f((Get-Command …`, a PowerShell ParserError) and times out: 5 of 5 starts after a kill, 0 of 5 after a graceful `/quit`.
+  Therefore on Windows: (1) a run that has to leave gets the quit command at its poll and then Escape and `/quit` through Herdr as above, with 30 s and then 20 s before any signal (10 s and 5 s elsewhere);
+  (2) a **stop** of the server tells its runs to quit and waits 8 s (1.5 s elsewhere) for them to exit, the server's exit waiting for that decision however long a process table read takes (the stop
+  window is the leave time plus the grace plus 1 s on Windows, 6 s elsewhere for the table read and the signal), and a pi that stays is **not signalled**: its run is left without an outcome, as a restart leaves it, and the pi reclaims
+  the run from the next server or ends itself when the server stays away for `lostMs`; a run whose `tower_done` is in is recorded `done` and its pi leaves by itself; the client's stop waits 8 s longer
+  for the exit; (3) after any signal to a run's processes the standing pane is **not used again**: when the run is recorded, the service makes a fresh tab as `ensure-tower` does (marked `sb_role=tower`,
+  moved to the front), moves its record to it as the reconcile does when Herdr kept neither id, closes the old tab, and registers the identity again; the service keeps its runs, queue, and notices and
+  wakes no run until the new identity is live; (4) a local run's `agent start` that times out is taken for the pane's doing the first time: the leftovers of the start are ended, the pane is renewed, and
+  the start is tried once more; that first timeout leaves no notice and no crash, and a second one is the run's crash like any other (counted once toward the crash loop and the hold).
 - **Crash.** The pi exits without `tower_done`: its socket closes and Herdr reports the pane at its shell or the agent gone. Its offered
   events go back to the queue. Its taken events go back too, flagged `possibly handled by a run that crashed: check before acting` in the
   next brief, so delivery is at least once. The note is `(crashed)` with the last outcome. The digest lines it was shown stay for the next

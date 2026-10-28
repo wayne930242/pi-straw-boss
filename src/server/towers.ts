@@ -148,6 +148,7 @@ export function createTowers(o: TowersOptions): Towers {
 		live: () => l.state === "live" && Boolean(l.client?.isConnected()),
 		cwd: async () => (await panes(run, l.record.workspace).catch(() => [])).find((p) => p.pane_id === l.record.pane)?.cwd ?? l.record.cwd ?? slot.stateDir,
 		clearDigest: (keys) => digest.drop(l.record.workspace, keys),
+		renewPane: () => renew(l),
 		allyLine: (item) => {
 			const mine = { name: l.record.name, id: l.record.id, role: "tower" as const, workspace: l.record.label };
 			// An answer a local session gave to what the run asked or opened: no verified peer header, the session is local; the device's next run reads it as data.
@@ -367,6 +368,37 @@ export function createTowers(o: TowersOptions): Towers {
 			error("tower-closed", (cause as Error).message);
 		}
 		deleteService(slot, l.record.workspace);
+	};
+
+	/**
+	 * A fresh standing pane for a service whose pane a forced kill left unusable (Windows: a pi ended with TerminateProcess leaves the console in a mode where the next `agent start` there types a mangled command and
+	 * times out). The tab is made and marked as `openFor` makes one, the record moves to it as `reconcile` moves it when Herdr kept neither id, and the old tab is closed; the service keeps its runs, queue, and notices.
+	 * The identity is not live while this runs, so no run wakes in the old pane. Returns the new pane.
+	 */
+	const renew = async (l: Live): Promise<string | undefined> => {
+		const ws = l.record.workspace, old = l.record, was = l.state;
+		if (l.stopped || stopped || services.get(ws) !== l) return undefined;
+		l.state = "registering";
+		try {
+			const target = (await workspaces(run)).find((w) => w.workspace_id === ws);
+			if (!target) throw new Error("its workspace is gone");
+			const dir = old.cwd ?? target.worktree?.checkout_path ?? slot.stateDir;
+			const made = await createTab(run, ws, dir, [], TOWER_LABEL);
+			await report(run, "pane", made.paneId, { sb_role: "tower" });
+			await cfg.api("tab.move", { tab_id: made.tabId, insert_index: 0 }).catch((cause: Error) => error("tab-move", cause.message));
+			l.record = { ...old, pane: made.paneId, tab: made.tabId, cwd: dir };
+			writeService(slot, l.record);
+			log.line("tower-renewed", { workspace: ws, pane: made.paneId, was: old.pane });
+			// A tab that will not close loses its marker, so it is not taken for the standing pane.
+			await run(["tab", "close", old.tab]).catch(() => report(run, "pane", old.pane, CLEAR).catch(() => {}));
+			await release(l);
+			services.set(ws, adopt(l.record));
+			return made.paneId;
+		} catch (cause) {
+			error("tower-renew", `${old.id}: ${(cause as Error).message}`);
+			if (l.record === old && !l.stopped) l.state = was;
+			return undefined;
+		}
 	};
 
 	/** One look at every service's tab. A tab that is gone ends its service, except in the minute after a Herdr restart (or this server's start), when it is looked for again. */

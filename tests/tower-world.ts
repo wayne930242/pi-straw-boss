@@ -70,6 +70,8 @@ export class TowerWorld extends ServerWorld {
 	settingsHold: Promise<void> | undefined;
 	runTimers: Partial<Timers> = {};
 	runMax: number | undefined;
+	/** The platform the runs are ended for (win32: no signal where it can be avoided, and a pane whose pi was signalled is replaced). */
+	runPlatform: NodeJS.Platform | undefined;
 	/** The tower service of the last server started in this world, once it is built. */
 	expose: Towers | undefined;
 	ally = new FakeAlly();
@@ -114,6 +116,7 @@ export class TowerWorld extends ServerWorld {
 					timers: { ...FAST_RUNS, ...this.runTimers }, alive: (pid) => this.live.has(pid), procs: async (runId) => (this.procReads++, await this.procGate?.(runId), this.procTable), startOf: (pid) => (this.startCalls++, `T-${pid}`), kill: (pid, signal) => void this.kills.push([pid, signal]),
 					settings: async () => { await this.settingsHold; if (this.settingsError) throw this.settingsError; },
 					...(this.runMax ? { max: () => this.runMax! } : {}),
+					...(this.runPlatform ? { platform: this.runPlatform } : {}),
 				},
 			},
 			...over,
