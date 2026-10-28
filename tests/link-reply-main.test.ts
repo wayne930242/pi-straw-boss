@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
+import { NAMESPACE } from "../src/link/wire.ts";
 import { until } from "./fakes.ts";
 import { FakeRelay } from "./link/fake-relay.ts";
 import { alice, bob, type Computer, computer, TEAM_HEX } from "./link/remote-world.ts";
@@ -36,6 +37,9 @@ test("the reply to an ask goes to the main that asked, as a straw-link message w
 	await other.promote();
 	open.set(ASK, { main: "main-b", mainName: "api main", tower: "tower-b", workspace: "Beta" });
 	await until(() => a.server.service.holder?.capsFor(TEAM_HEX, bob.id).includes("tower-reply"), "A to know B takes replies");
+	// A main joins the link channel on its next tick after it is promoted, not within `promote`; the server's offer goes only to the sessions on the channel then, and is not made again for `offerAgainMs`.
+	const listening = (id: string) => b.world.broker.registrations.some((r) => r.id === id && r.namespace === NAMESPACE);
+	await until(() => listening(main.id) && listening(other.id), "both mains to be on the link channel");
 	const sent = await a.server.ask({ op: "send", device: "bob-mac", text: "yes, the deploy is green", reply: false, inReplyTo: ASK }, a.tower.id);
 	assert.equal(sent.ok, true, JSON.stringify(sent));
 	assert.equal((sent.details as { as: string }).as, "tower-reply");
