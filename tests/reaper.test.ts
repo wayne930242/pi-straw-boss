@@ -914,6 +914,10 @@ test("The parent shell stays while a worktree remains, has an agent, is pinned, 
 		["its shell runs something", { infos: { "m:p1": busy } }, /vite is running in m:p1/],
 		["its pane is focused", { parentPane: { focused: true } }, /focused pane/],
 		["a second pane runs something", { extraPane: true, infos: { "m:p2": busy } }, /vite is running in m:p2/],
+		["a tower stands in it (the workspace token)", { parent: { tokens: { tower: "sb-tower-m" } } }, /its tower \(sb-tower-m\) stands in it/],
+		["its standing pane is marked as a tower's", { parentPane: { tokens: { sb_role: "tower" } } }, /pane m:p1 is a tower's standing pane/],
+		["a tower's stand-in agent is on the standing pane", { parentPane: { agent: "letta", tokens: { sb_role: "tower" } } }, /pane m:p1 is a tower's standing pane/],
+		["an ally run's pane is in it", { extraPane: { tokens: { sb_role: "ally" } } }, /pane m:p2 is an ally run's pane/],
 	];
 	for (const [name, setup, expected] of cases) {
 		const dir = await tempDir();
@@ -921,7 +925,7 @@ test("The parent shell stays while a worktree remains, has an agent, is pinned, 
 			const parent = parentShell("m", setup.parent);
 			const w = parentWorld({
 				workspaces: [parent, ...(setup.children ? [childOf()] : [])],
-				panes: [pane("m:p1", "m", setup.parentPane), ...(setup.extraPane ? [pane("m:p2", "m")] : [])],
+				panes: [pane("m:p1", "m", setup.parentPane), ...(setup.extraPane ? [pane("m:p2", "m", setup.extraPane === true ? {} : setup.extraPane)] : [])],
 				infos: setup.infos,
 			});
 			const store = createStore(dir);
