@@ -32,7 +32,7 @@ async function turn(o: { gateMs?: number } = {}) {
 	const c = computer(root, relay, "a", { ui: true, gateMs: o.gateMs ?? 5000 });
 	computers.push(c);
 	await c.tower.start();
-	const pending: Pending[] = [], closed: { id: string; by: string; answerId?: string }[] = [], results: { id: string; answerId: string; accepted: boolean; reason?: string }[] = [];
+	const pending: Pending[] = [], closed: { id: string; by: string; answerId?: string; allow?: boolean }[] = [], results: { id: string; answerId: string; accepted: boolean; reason?: string }[] = [];
 	c.tower.on("straw-link:gate:pending", (d) => void pending.push(d as Pending));
 	c.tower.on("straw-link:gate:closed", (d) => void closed.push(d as (typeof closed)[number]));
 	c.tower.on("straw-link:gate:answer-result", (d) => void results.push(d as (typeof results)[number]));
@@ -189,4 +189,27 @@ test("a call the gate let through keeps its whole output; a grep outside the pro
 	assert.equal(await held, undefined);
 	const out = await c.tower.fireResult("tool_result", { toolName: "grep", toolCallId: "tc-1", input: { pattern: "x", path: "/" }, content: [{ type: "text", text: "etc/hosts:1: x" }], isError: false });
 	assert.equal(out, undefined, "the boss allowed it");
+});
+
+test("the gate's close says whether it ended with an explicit yes, whoever gave it: the page, the terminal, and a deny are told apart (the sb server's Allow check relies on it)", async () => {
+	const { c, pending, closed, call, answer } = await turn();
+	const page = call("bash", { command: "ls" }, "tc-1");
+	await until(() => pending.length === 1, "the gate");
+	answer(pending[0]!, 0);
+	await page;
+	const local = call("bash", { command: "ls" }, "tc-2");
+	await until(() => pending.length === 2 && c.tower.dialogs.length === 2, "the terminal confirm");
+	c.tower.dialogs.at(-1)!.settle(true);
+	await local;
+	const denied = call("bash", { command: "ls" }, "tc-3");
+	await until(() => pending.length === 3, "the third gate");
+	answer(pending[2]!, 1);
+	await denied;
+	assert.deepEqual(closed.map((x) => [x.by, x.allow]), [["remote", true], ["local", true], ["remote", false]]);
+});
+
+test("the gate's close after a timeout says no", async () => {
+	const { closed, call } = await turn({ gateMs: 60 });
+	await call("bash", { command: "ls" }, "tc-4");
+	assert.deepEqual(closed.map((x) => [x.by, x.allow]), [["timeout", false]]);
 });

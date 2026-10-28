@@ -536,3 +536,29 @@ test("RR3-F001: a relayed link-request dialog counts for has() at once, before a
 	assert.equal(x.h.has("S", "straw-link-request", { pane: "wA:p1", file: join(scratch, "elsewhere_S.jsonl") }), false, "another file");
 	assert.equal(x.h.has("S", "robot-hand", { pane: "wA:p1", file: path }), false, "another owner");
 });
+
+test("a gate or approval that closes with an explicit yes is told to the server, with what it was about; a deny, a close without a verdict, another pane, and a session that left are not", () => {
+	const notes: unknown[] = [];
+	const published: unknown[] = [];
+	const events = { emit: (ch: string, r: never) => ch === REGISTER && (r as { onReady(c: unknown): void }).onReady({ snapshot: () => ({ connected: true, owner: { sessionId: "G", epoch: "e1" } }), publish: (p: unknown) => published.push(p) }), on: () => () => {} };
+	const local = { deliver() {}, sync() {}, probe: () => ({ editor: "empty" as const }), commands: () => [], close: () => ({ accepted: true }), stashCheck: () => undefined, pull: async () => ({ reason: "no_editor" as const }), form() {} };
+	const h = createHub({ events } as unknown as ExtensionAPI, "G", local as never, (note) => void notes.push(note));
+	h.start(() => {});
+	const GATE = { title: "Remote request from bob-mac (abcdef): bash\n\n{\n  \"command\": \"ls\"\n}", choices: [{ label: "Allow" }, { label: "Deny" }] };
+	const gate = (id: string, call: string): Dialog => ({ owner: "straw-link-gate", id, toolCallId: call, digest: selectDigest(GATE), select: GATE });
+	const list = (dialogs: Dialog[], closed: { id: string; by: string; allow?: true }[] = [], pane = "wA:p9"): Dialogs => ({ version: 1, type: "dialogs", bridgeId: "B", pane, file: null, dialogs, closed });
+	h.receive("S1", list([gate("g1", "tc-1"), gate("g2", "tc-2"), gate("g3", "tc-3")]));
+	h.receive("S1", list([], [{ id: "g1", by: "remote", allow: true }, { id: "g2", by: "remote" }]));
+	assert.deepEqual(notes.map((n) => (n as { dialogId: string }).dialogId), ["g1"], "only the yes");
+	assert.deepEqual(notes[0], { from: "S1", pane: "wA:p9", owner: "straw-link-gate", dialogId: "g1", toolCallId: "tc-1", title: GATE.title, at: (notes[0] as { at: number }).at });
+	h.receive("S1", list([], [{ id: "g1", by: "remote", allow: true }]));
+	assert.equal(notes.length, 1, "a close is told once: the dialog is no longer open here");
+	h.receive("S1", list([], [{ id: "g3", by: "remote", allow: true }], "wA:p1"));
+	assert.equal(notes.length, 1, "a close that names another pane than the dialog was relayed for");
+	h.receive("S1", list([gate("g4", "tc-4")]));
+	h.receive("S1", { ...list([], [{ id: "g4", by: "remote", allow: "yes" as never }]) });
+	assert.equal(notes.length, 1, "an allow that is not true malforms the list");
+	h.receive("S2", list([{ owner: "robot-hand", id: "r1", toolCallId: "c1", digest: selectDigest(SELECT), select: SELECT }]));
+	h.receive("S2", list([], [{ id: "r1", by: "remote", allow: true }]));
+	assert.equal(notes.length, 1, "other owners' dialogs are no Allow");
+});

@@ -49,7 +49,8 @@ export interface Ack { version: 1; type: "ack"; bridgeId: string; id: string; an
 /** `closed`: dialogs closed in the last 2 minutes (at most 16), so an answer that comes late hears who closed it, and a resent one that won, that it won. */
 /** `documents`: what the document owner lists now; `docsCut` when they did not fit the message (they are dropped first). `queued`: the session's queue, oldest first. `monitors`: its background monitors. `todo`: its todo list in short. */
 export interface Dialogs { version: 1; type: "dialogs"; bridgeId: string; pane: string; file: string | null; dialogs: Dialog[]; closed: Closed[]; documents?: Doc[]; docsCut?: true; queued?: Queued[]; monitors?: Monitor[]; todo?: TodoSum }
-export interface Closed { id: string; by: string; answerId?: string }
+/** `allow`: the dialog was a gate or an approval and ended with an explicit yes, whoever gave it (the page, the terminal, the sender's device). */
+export interface Closed { id: string; by: string; answerId?: string; allow?: true }
 export interface ProbeResult extends Editor { version: 1; type: "probe-result"; bridgeId: string; probeId: string }
 export interface CommandsResult { version: 1; type: "commands-result"; bridgeId: string; reqId: string; commands: Cmd[] }
 export interface FormReply { version: 1; type: "form-result"; bridgeId: string; id: string; answerId: string; accepted: boolean; reason?: string }
@@ -66,7 +67,7 @@ export interface LocalHub { receive(from: string, msg: ToHub): void }
 /** What the hub calls on the bridge of its own session. */
 export interface Bridge { deliver(msg: AnswerMessage, reply: (ack: Ack) => void): void; sync(): void; probe(): Editor; commands(prefix: string): Cmd[]; form(msg: FormMessage, reply: (r: FormReply) => void): void; close(keepPane: boolean, ifStashable?: boolean): { accepted: boolean; reason?: string }; stashCheck(): string | undefined; pull(step: "begin" | "finish", ref?: string, deadline?: number): Pull | Promise<Pull> }
 interface Channel { snapshot(): { connected: boolean; owner?: { sessionId: string; epoch: string } }; publish(payload: unknown, options?: { audience?: "owner" | "capable" }): void }
-interface Rec { adapter: OwnerAdapter; d: Dialog; state: "open" | "settling" | "unknown" | "closed"; answerId?: string; accepted?: boolean; by?: string; at?: number; last?: Ack; waiting: ((ack: Ack) => void)[] }
+interface Rec { adapter: OwnerAdapter; d: Dialog; state: "open" | "settling" | "unknown" | "closed"; answerId?: string; accepted?: boolean; by?: string; allow?: true; at?: number; last?: Ack; waiting: ((ack: Ack) => void)[] }
 type Event = { type: string; fromSessionId?: string; owner?: { sessionId: string; epoch: string }; payload?: Record<string, unknown> };
 
 /** `close` quits the session (keeping its pane when `keepPane`), or says why it cannot. */
@@ -90,7 +91,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close, platform
 	const push = (final = false) => {
 		if (!target()) return;
 		const dialogs = final ? [] : open().filter((r) => !r.d.secret).map((r) => ({ ...r.d, ...(r.state !== "open" ? { busy: true as const } : {}) }));
-		const closed = final ? [] : [...recs.values()].filter((r) => r.state === "closed").map((r) => ({ id: r.d.id, by: r.by!, ...(r.by === "remote" && r.answerId ? { answerId: r.answerId } : {}) }));
+		const closed = final ? [] : [...recs.values()].filter((r) => r.state === "closed").map((r) => ({ id: r.d.id, by: r.by!, ...(r.by === "remote" && r.answerId ? { answerId: r.answerId } : {}), ...(r.allow ? { allow: true as const } : {}) }));
 		const queue = final ? [] : queued.slice(0, MAX_QUEUED).map((q) => ({ ...q, text: clipQueued(q.text) }));
 		const mons = final ? [] : (monitors?.list() ?? []);
 		let msg: Dialogs = { version: 1, type: "dialogs", bridgeId, pane: env.HERDR_PANE_ID!, file: file() ?? null, dialogs, closed, documents: final ? [] : docs, ...(queue.length ? { queued: queue } : {}), ...(mons.length ? { monitors: mons } : {}), ...(todo && !final ? { todo } : {}) };
@@ -200,10 +201,11 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close, platform
 			if (call?.signal?.aborted) adapter.cancel?.(bus, d);
 			changed();
 		},
-		closed(id: string, by?: string) {
+		closed(id: string, by?: string, allow?: true) {
 			const r = recs.get(id);
 			if (!r || r.state === "closed") return;
 			[r.state, r.at, r.by] = ["closed", Date.now(), by ?? (r.accepted ? "remote" : "local")];
+			if (allow) r.allow = true;
 			changed();
 		},
 	};

@@ -24,7 +24,8 @@ export interface Reply { choices?: number[]; text?: string; note?: string }
 export interface Answer { id: string; answerId: string; digest: string; choice?: number; answers?: Reply[]; value?: string }
 export interface Verdict { accepted: boolean; reason?: string }
 /** `closed` without `by` leaves it to the bridge (remote when its answer was taken, else local). */
-export interface Report { open(adapter: OwnerAdapter, d: Dialog): void; closed(id: string, by?: string): void }
+/** `closed`'s `allow` is the verdict of a gate or an approval that ended with an explicit yes (src/link/gate.ts, approval.ts): the sb server takes an ally run's gated tool call only against one (src/server/allows.ts). */
+export interface Report { open(adapter: OwnerAdapter, d: Dialog): void; closed(id: string, by?: string, allow?: true): void }
 export interface OwnerAdapter {
 	name: string;
 	/** The tool whose call opens the dialog; a dialog naming a toolCallId must belong to a call of this tool in flight. */
@@ -77,7 +78,7 @@ const contract = (name: string, prefix: string, tool?: string, gate?: true, shap
 	listen(bus, report) {
 		const self = this, offs = [
 			bus.on(`${prefix}:pending`, (raw) => { const d = shape.parse(name, raw); if (d) report.open(self, d); }),
-			bus.on(`${prefix}:closed`, (raw) => { const c = raw as { version?: unknown; id?: unknown; by?: unknown }; if (c?.version === 1 && str(c.id)) report.closed(c.id, str(c.by) ? c.by : "error"); }),
+			bus.on(`${prefix}:closed`, (raw) => { const c = raw as { version?: unknown; id?: unknown; by?: unknown; allow?: unknown }; if (c?.version === 1 && str(c.id)) report.closed(c.id, str(c.by) ? c.by : "error", c.allow === true ? true : undefined); }),
 		];
 		return () => offs.forEach((off) => off());
 	},

@@ -62,7 +62,7 @@ export function createApproval({ bus, timeoutMs = REQUEST_MS, terminalDelayMs = 
 				served.push(id);
 				if (served.length > SERVED) served.shift();
 				terminal.abort();
-				tell("closed", { version: 1, id, by, ...(answerId ? { answerId } : {}) });
+				tell("closed", { version: 1, id, by, allow: approved, ...(answerId ? { answerId } : {}) });
 				resolve({ approved, by, reason });
 			};
 			const declined = (why: string) => `the boss declined the link request${why ? `: ${why}` : ""}`;

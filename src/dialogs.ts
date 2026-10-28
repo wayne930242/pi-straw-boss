@@ -34,6 +34,14 @@ type Event = { type: string; fromSessionId?: string; sessionId?: string; owner?:
 export interface Target { from: string; bridgeId: string; answer: Answerable }
 export interface Sent { status: number; body: { outcome: string; reason?: string; by?: string } }
 export type Hub = ReturnType<typeof createHub>;
+/**
+ * A gate (src/link/gate.ts) or an approval (src/link/approval.ts) that the hub saw open on a bridge and then close with an explicit yes: the sb server takes an ally run's gated tool call only against one
+ * (docs/specs/2026-10-26-sb-backend.md, Tower tools in a run, The gate's Allow). `from` is the bridge's session and `pane` the pane it relays for; the server checks that the broker places that session on the run's pane.
+ */
+export interface AllowNote { from: string; pane: string; owner: string; dialogId: string; toolCallId: string; title: string; at: number }
+/** The owners whose explicit yes is an Allow, and how many open ones the hub remembers per bridge. */
+const ALLOWING = new Set(["straw-link-gate", "straw-link-request"]);
+const KEEP_OPEN = 32;
 
 const str = (v: unknown): v is string => typeof v === "string";
 const opt = (v: unknown) => v === undefined || str(v);
@@ -72,12 +80,30 @@ export function checkAnswer(t: Answerable, json: Record<string, unknown>): { cho
 	return Buffer.byteLength(JSON.stringify(out)) > MAX_ALL ? "The answers are too long together." : { answers: out };
 }
 
-export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
+export function createHub(pi: ExtensionAPI, me: string, local: Bridge, onAllow?: (note: AllowNote) => void) {
 	let channel: Channel | undefined, epoch: string | undefined, active = false, change = () => {};
 	let bound = new Map<string, { from: string; b: Dialogs }>(), targets = new Map<string, Target>(), reach = new Map<string, { from: string; bridgeId: string }>();
 	const bridges = new Map<string, Dialogs>(), waiting = new Map<string, (ack?: Ack) => void>(), done = new Map<string, { key: string; at: number; sent: Sent }>(), probes = new Map<string, (e?: Editor) => void>(), lists = new Map<string, (c?: Cmd[]) => void>(), pulls = new Map<string, (p?: Pull) => void>();
 	const closes = new Map<string, (r?: Pick<CloseResult, "accepted" | "reason">) => void>(), checks = new Map<string, (r?: { reason?: string }) => void>();
 	const caps = createCaps(), forms = new Map<string, (r?: FormReply) => void>();
+	/** The gates and approvals each bridge has open (the last lists), so a close with `allow` can be told what it allowed. */
+	const gates = new Map<string, Map<string, AllowNote>>();
+	const noteAllows = (from: string, msg: Dialogs) => {
+		const open = gates.get(from) ?? new Map<string, AllowNote>();
+		for (const c of msg.closed) {
+			const n = open.get(c.id);
+			if (n && c.allow === true && n.pane === msg.pane) try { onAllow?.(n); } catch { /* the server's registry must not break the relay */ }
+			open.delete(c.id);
+		}
+		for (const d of msg.dialogs) {
+			if (!ALLOWING.has(d.owner) || !d.toolCallId || !d.select) continue;
+			open.delete(d.id);
+			open.set(d.id, { from, pane: msg.pane, owner: d.owner, dialogId: d.id, toolCallId: d.toolCallId, title: d.select.title, at: Date.now() });
+		}
+		while (open.size > KEEP_OPEN) open.delete(open.keys().next().value!);
+		if (open.size) gates.set(from, open);
+		else gates.delete(from);
+	};
 	let shelves = new Map<string, Shelf>();
 	const owner = () => channel?.snapshot().owner?.sessionId === me;
 	const sync = () => {
@@ -86,13 +112,13 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 	};
 	const receive = (from: string, msg: ToHub) => {
 		if (!active || msg?.version !== 1 || !str(msg.bridgeId)) return;
-		const closed = msg.type === "dialogs" && Array.isArray(msg.closed) && msg.closed.length <= 16 && msg.closed.every((c) => str(c?.id) && str(c.by) && opt(c.answerId));
+		const closed = msg.type === "dialogs" && Array.isArray(msg.closed) && msg.closed.length <= 16 && msg.closed.every((c) => str(c?.id) && str(c.by) && opt(c.answerId) && (c.allow === undefined || c.allow === true));
 		const docs = msg.type === "dialogs" && (msg.documents === undefined ? [] : docsOf({ version: 1, documents: msg.documents })); // documents out of shape go alone, as if cut
 		// A queue out of shape is left out; the dialogs and documents still go.
 		const queued = msg.type === "dialogs" && Array.isArray(msg.queued) && msg.queued.length <= MAX_QUEUED && msg.queued.every((q) => typeof q?.text === "string" && q.text.length <= QUEUED_TEXT && (q.as === "steer" || q.as === "followUp")) ? msg.queued.map(({ text, as }) => ({ text, as })) : undefined;
 		const monitors = msg.type === "dialogs" && monitorsOk(msg.monitors) ? msg.monitors.map(({ id, what, status, exit, last, lines, at, ended }) => ({ id, what, status, exit, last, lines, at, ended })) : undefined;
 		const todo = msg.type === "dialogs" && todoOk(msg.todo) ? { done: msg.todo.done, total: msg.todo.total, ...(msg.todo.now && { now: msg.todo.now }) } : undefined;
-		if (closed && str(msg.pane) && (msg.file === null || str(msg.file)) && Array.isArray(msg.dialogs) && msg.dialogs.every(valid)) (bridges.set(from, { ...msg, ...(docs ? { documents: docs } : { documents: [], docsCut: true as const }), queued, monitors, todo }), change());
+		if (closed && str(msg.pane) && (msg.file === null || str(msg.file)) && Array.isArray(msg.dialogs) && msg.dialogs.every(valid)) (noteAllows(from, msg), bridges.set(from, { ...msg, ...(docs ? { documents: docs } : { documents: [], docsCut: true as const }), queued, monitors, todo }), change());
 		if (msg.type === "ack") waiting.get([from, msg.bridgeId, msg.id, msg.answerId].join("\n"))?.(msg);
 		if (msg.type === "probe-result") probes.get([from, msg.bridgeId, msg.probeId].join("\n"))?.(checkProbe({ ...msg }));
 		if (msg.type === "pull-result" && str(msg.reqId)) pulls.get([from, msg.bridgeId, msg.reqId].join("\n"))?.(checkPull({ ...msg }));
@@ -105,6 +131,7 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 		if (e.type === "owner" && e.owner?.sessionId === me && e.owner.epoch !== epoch && (epoch = e.owner.epoch) && active) sync();
 		if (e.type === "message" && e.fromSessionId) receive(e.fromSessionId, e.payload as ToHub);
 		if (e.type === "session_left" && e.sessionId) {
+			gates.delete(e.sessionId);
 			if (bridges.delete(e.sessionId)) change();
 		}
 	};
@@ -163,7 +190,7 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge) {
 		},
 		stop() {
 			active = false;
-			[bridges, bound, targets, reach, shelves].forEach((m) => m.clear());
+			[bridges, bound, targets, reach, shelves, gates].forEach((m) => m.clear());
 			caps.clear(); // a capability lives as long as its server
 			[...waiting.values(), ...probes.values(), ...lists.values(), ...pulls.values(), ...forms.values(), ...closes.values(), ...checks.values()].forEach((w) => w());
 		},

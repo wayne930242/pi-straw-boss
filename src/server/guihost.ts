@@ -5,7 +5,7 @@ import type { Bridge } from "../bridge.ts";
 import { createCloser } from "../closer.ts";
 import type { Reply as HttpReply } from "../control.ts";
 import { createDeploys } from "../deploy.ts";
-import { createHub, type Hub } from "../dialogs.ts";
+import { type AllowNote, createHub, type Hub } from "../dialogs.ts";
 import { BUNDLE, type Gui, startGui } from "../gui.ts";
 import { alive } from "../remote.ts";
 import { answers, boundedWait, type GuiRecord, listening, postServer, readRecord as readGuiJson, writeRecordFile } from "../handover.ts";
@@ -58,6 +58,8 @@ export interface GuiHostOptions {
 	started(): string | undefined;
 	/** The server's intercom session, listed sessions included. */
 	sessions(): Promise<Session[]>;
+	/** A gate or an approval that closed with an explicit yes, as the dialog hub saw it (allows.ts): the tower service takes an ally run's gated tool call only against one. */
+	onAllow?(note: AllowNote): void;
 	/** Whether the process a gui.json names still runs as that process (pid alive, started when the record says): only then is it asked for anything. */
 	runs?(record: Pick<GuiRecord, "pid" | "started">): boolean;
 	/** A process's start time once it is known (Windows: a background read; `startOf` is undefined until it is in); undefined when it cannot be told. */
@@ -173,7 +175,7 @@ export function createGuiHost(o: GuiHostOptions) {
 		return false;
 	};
 	const begin = async (prefer: ReturnType<typeof recorded>, wait: number): Promise<Gui> => {
-		hub ??= createHub(kit.pi, id, NO_BRIDGE);
+		hub ??= createHub(kit.pi, id, NO_BRIDGE, o.onAllow);
 		const net = netSource({ ...(o.tower ? { services: (workspace: string) => o.tower!.view(workspace) } : {}), run: cfg.run, world: cfg.world, sessions, stashed: () => stashedList(slot.stateDir), trust, hub });
 		// `running` is read by the page's remote buttons, which only come once the server is up.
 		let running!: Gui;

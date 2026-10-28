@@ -34,7 +34,7 @@ async function rig(o: { requestMs?: number; policy?: Parameters<typeof computer>
 	computers.push(c);
 	await c.tower.start();
 	await until(() => c.server.service.status().active, "the holder");
-	const pending: Pending[] = [], closed: { id: string; by: string }[] = [];
+	const pending: Pending[] = [], closed: { id: string; by: string; allow?: boolean }[] = [];
 	c.tower.on("straw-link:request:pending", (d) => void pending.push(d as Pending));
 	c.tower.on("straw-link:request:closed", (d) => void closed.push(d as (typeof closed)[number]));
 	const ask = (params: Record<string, unknown>, id = "tc-1") => c.tower.tool("link_request", params, { id });
@@ -86,6 +86,7 @@ test("a request never runs unasked: the dialog shows the action, every argument,
 	assert.match(done, /^Invite \(valid until [^)]+\): strawlink1:[A-Za-z0-9_-]+$/);
 	assert.equal(relay.invites.size, 1);
 	assert.deepEqual(closed.map((x) => x.id), [p.id]);
+	assert.equal(closed[0]!.allow, true, "the close says it ended with a yes (the sb server's check of a run's link_request relies on it)");
 });
 
 test("Deny and the terminal's No refuse the request, and nothing is done", async () => {

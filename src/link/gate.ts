@@ -86,7 +86,7 @@ export function createGate({ bus, forward, timeoutMs = GATE_MS, onError = () => 
 				served.push(id);
 				if (served.length > SERVED) served.shift();
 				terminal.abort(); // the terminal's confirm goes with the first answer from elsewhere; an answer from the terminal has settled it already
-				tell("closed", { version: 1, id, by, ...(answerId ? { answerId } : {}) });
+				tell("closed", { version: 1, id, by, allow, ...(answerId ? { answerId } : {}) });
 				resolve({ allow, by, reason });
 			};
 			open.set(id, { digest, count: 2, take: (choice, answerId) => finish(choice === 0, "remote", choice === 0 ? "allowed from a page" : DECLINED, answerId) });
