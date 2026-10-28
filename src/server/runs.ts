@@ -94,6 +94,10 @@ export interface ServiceRef {
 	cwd(): Promise<string>;
 	/** The tower's `sb_order` key, which the panes of its ally runs are keyed after; undefined when Herdr cannot place the tower. */
 	towerKey(): Promise<string | undefined>;
+	/** A local run is about to start pi in the standing pane: the stand-in goes and the tower prompt leaves (standing.ts); resolves once the pane is free. */
+	yieldPane(): Promise<void>;
+	/** A local run ended: the pane is free for the prompt again. */
+	freed(): void;
 	/** The brief for a run: the server builds it from the net, the opener's ledger, the digest, and the last note. */
 	brief(input: { events: QueuedEvent[]; woken: number; run: RunRecord }): Promise<{ text: string; digestKeys: string[] }>;
 	/** Drops the digest lines a run's brief showed. */
@@ -258,6 +262,8 @@ export function createRuns(o: RunsOptions) {
 	const launch = async (active: Active, name: string) => {
 		const { rec, svc } = active, id = rec.id;
 		try {
+			// The standing pane shows the tower prompt between runs; Herdr starts an agent only in an available shell, so the prompt leaves first. An ally run has a pane of its own.
+			if (rec.kind === "local") await svc.ref.yieldPane().catch((cause: Error) => error("run-yield", `${rec.id}: ${cause.message}`));
 			await start(o.run, o.sleep, rec.agent, rec.pane, ["--name", name, "--sb-run", id, ...(o.model() ? ["--model", o.model()!] : [])]);
 			const found = await procOf(rec.pane, id);
 			if (!found) throw new Error("pi's process was not found in the pane");
@@ -452,6 +458,7 @@ export function createRuns(o: RunsOptions) {
 		if (!ally) {
 			svc.lastRun = { endedAt: a.rec.endedAt, outcome };
 			svc.state = svc.state === "held" ? "held" : "standing";
+			svc.ref.freed();
 		}
 		log.line("run-end", { workspace: ws, run: a.rec.id, kind: a.rec.kind, outcome, ...(detail ? { detail: phrase(detail, 120) } : {}) });
 		if (failed && ally) {
@@ -842,8 +849,8 @@ export function createRuns(o: RunsOptions) {
 			for (const a of runs) await finish(a, "herdr-restart");
 			pendingTakeovers = Math.max(0, pendingTakeovers - 1);
 		},
-		/** The boss writes to the tower (the GUI's composer, `/boss tower <prompt>`): an event ahead of the rest; a held service wakes again. */
-		boss(workspace: string, text: string, from = "the boss"): QueuedEvent {
+		/** The boss writes to the tower (the GUI's composer, `/boss tower <prompt>`, the tower prompt): an event ahead of the rest; a held service wakes again. */
+		boss(workspace: string, text: string, from = "the boss", opts: { present?: boolean } = {}): QueuedEvent {
 			const svc = services.get(workspace);
 			if (!svc) throw new Error(`The sb server stands in for no tower of workspace ${workspace}`);
 			const written = append(slot, svc.ref.record(), { kind: "boss", from: { id: "boss", name: from }, text, at: iso(now()) });

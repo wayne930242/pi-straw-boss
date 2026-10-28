@@ -65,6 +65,21 @@ export const ARROW = "[sub]";
 /** The `sb_mark` prefix of an ally run's pane; the device's label follows it. */
 export const ALLY_MARK = "[ally]";
 
+// The stand-in agent: the sb server reports `tower` on a standing pane while the tower prompt runs there, so the tower keeps its row in Herdr's Agents list between runs (docs/how-it-works.md,
+// The standing pane). Herdr clears a reported agent about a second after the pane's foreground is back at its idle shell prompt, whatever the label, which is why the prompt is a process of its
+// own that stays in the foreground; and it takes the pane back from a real agent that starts in it by itself (checked on Herdr 0.9.5).
+export const STANDIN_AGENT = "tower";
+export const STANDIN_SOURCE = "straw-boss";
+/** Whether the pane shows the stand-in. The label alone: the tokens that name the pane's role lapse after 10 minutes while the prompt goes on. */
+export const isStandin = (pane: Pick<Pane, "agent">) => pane.agent === STANDIN_AGENT;
+let lastSeq = 0;
+/** A `seq` Herdr takes: above the last one this process sent and in the space of Herdr's own pi integration (the clock in microseconds), since Herdr ignores a report or release whose seq is not above the last one it took. */
+export const nextSeq = (now = Date.now()) => (lastSeq = Math.max(lastSeq + 1, now * 1000));
+/** Reports the stand-in: idle, with a short state as the message. No resume command and no session, so a restart of Herdr never relaunches it. */
+export const reportStandin = (api: HerdrApi, paneId: string, message: string) =>
+	api("pane.report_agent", { pane_id: paneId, source: STANDIN_SOURCE, agent: STANDIN_AGENT, state: "idle", message, seq: nextSeq() });
+export const releaseStandin = (api: HerdrApi, paneId: string) => api("pane.release_agent", { pane_id: paneId, source: STANDIN_SOURCE, agent: STANDIN_AGENT, seq: nextSeq() });
+
 export async function place(run: HerdrRun): Promise<Place> {
 	const pane = (await result(run, ["pane", "current"])).pane;
 	return { paneId: pane.pane_id, tabId: pane.tab_id, workspaceId: pane.workspace_id, ...(pane.terminal_id ? { terminalId: pane.terminal_id } : {}) };

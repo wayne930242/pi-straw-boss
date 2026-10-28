@@ -1,4 +1,5 @@
 import { existsSync, realpathSync } from "node:fs";
+import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { stateDirOf } from "../agent/paths.ts";
 import { answers as pageAnswers } from "../handover.ts";
@@ -12,20 +13,25 @@ import { logSize, readFrom, tailLog } from "./log.ts";
 import { clearStartError, clearStopped, fileOf, readRecord, readStartError, type ServerRecord, slotOf, type StartError } from "./record.ts";
 import type { ServerHandle, ServerOptions } from "./main.ts";
 import { VERSION } from "./version.ts";
+import { localeOf } from "../towerprompt/messages.ts";
+import { runPrompt } from "../towerprompt/prompt.ts";
+import { serverSource } from "../towerprompt/serversource.ts";
 
 // `cli.mjs` is what shells, supervisors, and the server's own start run (docs/specs/2026-10-26-sb-backend.md, Process model and lifecycle): `up`, `serve`, `stop`, `status`,
 // `restart`, `logs`, and the internal `run --detached` that every detached start spawns. Exit codes: 0 done; 1 a step failed (one JSON line on stderr); 2 usage; 3 the server
 // cannot run (`start-error.json` says `loader`, `intercom`, or `acl`); 4 `serve` found a live `serve` server; 5 `stop` found a `serve` server (stop its supervisor).
+// `prompt` is the one command nobody types: the server types it into a tower's standing pane (towerprompt/), and once it runs it ends with 0 however it ends (a usage error is 2).
 
 const USAGE = `usage: cli.mjs up [--timeout SECONDS] [--exact]
        cli.mjs serve
        cli.mjs stop | status
        cli.mjs restart [--reason TEXT] [--by TEXT] [--downgrade]
-       cli.mjs logs [--lines N] [--follow]`;
+       cli.mjs logs [--lines N] [--follow]
+       cli.mjs prompt --workspace ID [--state-dir DIR]   (the tower prompt of a standing pane: the server types it)`;
 export class UsageError extends Error {}
 const FLAGS: Record<string, { value: string[]; switch: string[] }> = {
 	up: { value: ["timeout"], switch: ["exact"] }, serve: { value: [], switch: [] }, stop: { value: [], switch: [] }, status: { value: [], switch: [] },
-	restart: { value: ["reason", "by"], switch: ["downgrade"] }, logs: { value: ["lines"], switch: ["follow"] }, run: { value: ["by", "detach", "detach-reason", "acl-token"], switch: ["detached"] },
+	restart: { value: ["reason", "by"], switch: ["downgrade"] }, logs: { value: ["lines"], switch: ["follow"] }, prompt: { value: ["workspace", "state-dir"], switch: [] }, run: { value: ["by", "detach", "detach-reason", "acl-token"], switch: ["detached"] },
 };
 export interface Args { command: string; flags: Record<string, string | true> }
 export function parseArgs(argv: string[]): Args {
@@ -61,6 +67,9 @@ export interface CliDeps {
 	/** The server process itself, which `run` and `serve` start in this process. */
 	server?: (options: ServerOptions) => Promise<ServerHandle>;
 	signal?: AbortSignal; // ends a `logs --follow`
+	/** The keyboard and the screen of `prompt`. */
+	stdin?: Readable;
+	stdout?: Writable;
 	/** Where the server in this process hears that it is asked to end (SIGTERM, SIGINT, SIGHUP); a kill or a reboot is not a stop, so it only leaves. */
 	signals?: (leave: () => void) => void;
 	herdrListens?: (ctx: Ctx, ms?: number) => Promise<boolean>;
@@ -109,7 +118,8 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 		err(`--detach is wmi, wmi-in-job, or direct\n${USAGE}\n`);
 		return 2;
 	}
-	const slot = slotOf(deps.stateDir ?? stateDirOf(env), env);
+	// `prompt` gets its state folder by flag: the pane's environment is the boss's, not the server's.
+	const slot = slotOf(deps.stateDir ?? (typeof flags["state-dir"] === "string" ? flags["state-dir"] : stateDirOf(env)), env);
 	const version = deps.version ?? VERSION;
 	// `restart --by` is how the GUI's Restart button names itself (the server starts this CLI as the requester of its own restart).
 	const by = command === "run" ? String(flags.by ?? "detached start") : command === "restart" && typeof flags.by === "string" ? flags.by.replace(/[\r\n]+/g, " ").slice(0, 120) : `cli ${command}`;
@@ -126,6 +136,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 			case "up": return await up();
 			case "serve": return await serve();
 			case "run": return await runDetached();
+			case "prompt": return await promptCommand();
 		}
 	} catch (error) {
 		if (error instanceof ServerError) return fail(error);
@@ -137,6 +148,15 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 	function fail(error: ServerError) {
 		err(`${error.message}\n`);
 		return error.startError && CANNOT_RUN.has(error.startError.code) ? 3 : 1;
+	}
+
+	/** The tower prompt of a standing pane (towerprompt/): it ends with 0 when the boss wrote, a run starts, the boss left, the server has no tower here, or the process is told to end. */
+	async function promptCommand() {
+		const workspace = flags.workspace;
+		if (typeof workspace !== "string" || !/^[\w.:-]+$/.test(workspace)) throw new UsageError(`prompt needs --workspace <id> (letters, digits, and . : _ -)\n${USAGE}`);
+		const ended = new AbortController();
+		(deps.signals ?? ((leave) => (["SIGTERM", "SIGINT", "SIGHUP"] as const).forEach((signal) => process.once(signal, leave))))(() => ended.abort());
+		return await runPrompt({ workspace, source: serverSource(ctx, workspace), input: deps.stdin ?? process.stdin, output: deps.stdout ?? process.stdout, locale: localeOf(env), signal: ended.signal });
 	}
 
 	async function status() {

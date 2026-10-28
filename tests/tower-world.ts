@@ -7,6 +7,7 @@ import type { Session } from "../src/herdr.ts";
 import type { Towers } from "../src/server/towers.ts";
 import { createAllows } from "../src/server/allows.ts";
 import type { AllyItem, AllyPort, Timers } from "../src/server/runs.ts";
+import type { StandingTimers } from "../src/server/standing.ts";
 
 /** The link holder as the tower service sees it (AllyPort): messages that wait for the tower identity, who has left the roster, and what the server told it was taken. */
 export class FakeAlly implements AllyPort {
@@ -46,6 +47,9 @@ export class FakeAlly implements AllyPort {
 /** Short run timers: a wake after 40 ms, the watcher every 20 ms. A test overrides what it is about. */
 export const FAST_RUNS: Partial<Timers> = { wake: 40, claim: 3000, watch: 20, idleSteer: 60_000, idleEnd: 300_000, steerAt: 600_000, quitAt: 1_200_000, quitGrace: 200, signal: 100, lost: 60_000, refuse: 150, loop: 60_000, restored: 400, stopGrace: 300 };
 
+/** Short timers for the standing pane: a look every 30 ms, a prompt counts as there for 400 ms after its poll, the boss's Ctrl+D lasts 500 ms. A test overrides what it is about. */
+export const FAST_STANDING: Partial<StandingTimers> = { intervalMs: 30, presentMs: 400, parkMs: 500, launchMs: 250, leaveMs: 400, refreshMs: 60_000 };
+
 export class TowerWorld extends ServerWorld {
 	herdr = new FakeHerdr();
 	clients: StubClient[] = [];
@@ -63,6 +67,7 @@ export class TowerWorld extends ServerWorld {
 	/** While set, the settings check waits for it (a pi started by hand meanwhile). */
 	settingsHold: Promise<void> | undefined;
 	runTimers: Partial<Timers> = {};
+	standingTimers: Partial<StandingTimers> = {};
 	runMax: number | undefined;
 	/** How often the service writes its tokens again (the server's 4 minutes), when a test wants to see a refresh. */
 	refreshMs: number | undefined;
@@ -100,7 +105,7 @@ export class TowerWorld extends ServerWorld {
 			} }),
 			herdr: { run: this.herdr.runFor("none"), events: this.herdr.events, api: this.herdr.api, watch: (cb: () => void) => (this.takeovers.push(cb), () => {}) },
 			towers: {
-				recoverMs: 150, registerMs: 500, residentMs: 20, retryMs: [20], ally: this.ally, ...(this.refreshMs ? { refreshMs: this.refreshMs } : {}), ...(this.serverAllows ? {} : { allows: this.allows }), expose: (t: Towers) => void (this.expose = t),
+				recoverMs: 150, registerMs: 500, residentMs: 20, retryMs: [20], ally: this.ally, ...(this.refreshMs ? { refreshMs: this.refreshMs } : {}), standing: { ...FAST_STANDING, ...this.standingTimers }, ...(this.serverAllows ? {} : { allows: this.allows }), expose: (t: Towers) => void (this.expose = t),
 				link: async (body, from) => {
 					const b = body as Record<string, unknown>;
 					this.linkCalls.push({ body: b, from });
