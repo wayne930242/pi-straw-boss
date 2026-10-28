@@ -732,7 +732,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 @keyframes term-engage { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 80%, transparent), 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); } 60% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 0%, transparent), 0 0 34px color-mix(in srgb, var(--accent) 40%, transparent); } 100% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent), 0 0 22px color-mix(in srgb, var(--accent) 18%, transparent); } }
 @keyframes term-blip { 0% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-hi) 80%, transparent), 0 0 32px color-mix(in srgb, var(--accent) 53%, transparent); } 100% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent), 0 0 22px color-mix(in srgb, var(--accent) 18%, transparent); } }
 @keyframes term-blip-b { 0% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-hi) 80%, transparent), 0 0 32px color-mix(in srgb, var(--accent) 53%, transparent); } 100% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent), 0 0 22px color-mix(in srgb, var(--accent) 18%, transparent); } }
-.term-sink { position: fixed; width: 1px; height: 18px; padding: 0; border: 0; opacity: 0; resize: none; overflow: hidden; pointer-events: none; }
+.term-sink { position: fixed; width: 1px; height: 18px; padding: 0; border: 0; opacity: 0; resize: none; overflow: hidden; pointer-events: none; font-size: 16px; } /* 16px: iOS zooms the page to a smaller one on focus */
 .term-typing { margin-left: auto; color: var(--accent); font-weight: 600; animation: term-note 1.6s ease-in-out infinite; }
 @keyframes term-note { 50% { opacity: 0.55; text-shadow: 0 0 10px color-mix(in srgb, var(--accent) 60%, transparent); } }
 .term-state { color: var(--dim); } .term-state[data-tone="ok"] { color: var(--ok); } .term-state[data-tone="error"] { color: var(--err-soft); }
@@ -962,3 +962,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .tower-conv .conv-done { color: var(--dim); } .tower-conv .conv-done:empty, .tower-conv .tnote-fail:empty { display: none; } .tower-conv .tnote-fail { color: var(--err-soft); }
 .tower-conv .conv-runs { display: flex; flex-wrap: wrap; gap: 4px 6px; }
 .tx.conv-rule { display: flex; justify-content: center; padding: 6px 0; } .tx.conv-rule > div { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 10px; padding: 2px 12px; border-top: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); color: var(--accent); font-size: 0.8em; text-align: center; } .tx.conv-rule small { color: var(--dim); }
+/* The terminal's Keyboard button: a key cap, lit while the keyboard goes to the pane (on a narrow screen it replaces the note that says so). */
+.term-bar .term-kb { padding: 4px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-0); font-weight: 600; }
+.term-bar .term-kb[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--surface-0)); }
+@media (max-width: 640px) { .term-typing { display: none; } }

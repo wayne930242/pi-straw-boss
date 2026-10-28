@@ -69,7 +69,12 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 		if (!root) return void (pendingMode = mode === "term" ? "term" : undefined);
 		shown = mode;
 		root.querySelectorAll<HTMLButtonElement>(".modes button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
-		for (const sel of [".chat-root", ".ask-root", ".composer-root"]) root.querySelector<HTMLElement>(sel)!.hidden = mode === "term";
+		for (const sel of [".chat-root", ".ask-root", ".composer-root"]) {
+			const part = root.querySelector<HTMLElement>(sel)!, at = document.activeElement as HTMLElement | null;
+			// The terminal has the keys now: whatever the chat held (the composer's box) lets go, or a soft keyboard stays open for a hidden box and keys typed go there.
+			if (mode === "term" && at && part.contains(at)) at.blur();
+			part.hidden = mode === "term";
+		}
 		const host = root.querySelector<HTMLElement>(".term-root")!;
 		host.hidden = mode !== "term";
 		root.classList.toggle("in-term", mode === "term");
@@ -78,8 +83,8 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 		if (mode !== "term") return claim();
 		const turn = ++modeTurn, name = locate(scene.net, key)?.u.name ?? scene.info?.name ?? key;
 		if ((held = holdOf(key))) return host.replaceChildren(h("p", { class: "term-hold", role: "status" }, held));
-		// Switching to the terminal gives it the keyboard once, on a desktop (only a desktop's mirror has the text box that takes it).
-		void embedTerminal(key, name, host).then((off) => (turn === modeTurn && scene.route.view === "session" && scene.route.key === key ? ((unembed = off), host.querySelector<HTMLElement>(".term-sink")?.focus({ preventScroll: true })) : off()));
+		// Switching to the terminal gives it the keyboard once, on a desktop; a phone opens its soft keyboard with the terminal's Keyboard button (a focus without a tap does not open it).
+		void embedTerminal(key, name, host).then((off) => (turn === modeTurn && scene.route.view === "session" && scene.route.key === key ? ((unembed = off), matchMedia("(pointer: fine)").matches && host.querySelector<HTMLElement>(".term-sink")?.focus({ preventScroll: true })) : off()));
 	}
 	return {
 		get chat() { return chat; },

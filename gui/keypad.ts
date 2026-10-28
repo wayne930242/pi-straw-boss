@@ -95,6 +95,13 @@ export function keypad({ name, state, post, stream, blip }: { name: string; stat
 		pump();
 		return true;
 	}
+	/** A pad key the keyboard names (Backspace or Enter from a soft keyboard's beforeinput), under the same rules as a keydown. */
+	function key(name: string) {
+		if (!open(name)) return;
+		queue.push({ key: name });
+		blip?.();
+		pump();
+	}
 	/** Characters the keyboard typed (an input method's too): joined to typed text still queued, in pieces the server takes. */
 	function text(typed: string) {
 		const chars = [...typed.replace(/[\u0000-\u001f\u007f-\u009f]/g, "")];
@@ -120,5 +127,5 @@ export function keypad({ name, state, post, stream, blip }: { name: string; stat
 		for (const b of buttons) b.disabled = s === "off" || (s === "hidden" && b.dataset.key !== "esc"); // not while a write is on its way: the keys would flicker as you type
 	}
 	update();
-	return { el, update, type, text, paste };
+	return { el, update, type, key, text, paste };
 }

@@ -218,6 +218,7 @@
 	"paused_hidden": "此分頁隱藏時暫停。",
 	"terminal_of": "{name} 的終端機，唯讀",
 	"connecting": "連線中…",
+	"keyboard": "鍵盤",
 	"fit_width": "符合寬度",
 	"terminal_title": "終端機 · {name}",
 	"mirror_ended": "鏡像已結束：{why}",

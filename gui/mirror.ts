@@ -7,6 +7,8 @@ import type { Answer } from "./post.ts";
 // display only: each becomes spans of text nodes, SGR colours and attributes as classes or checked colour styles, never markup, and the
 // mirror takes no input. A tile attaches the stream when it opens and again on a new stream's `hello`, detaches 5 s after the tab is hidden
 // (attaching again when it shows) and when it closes. Fit width scales the font to the tile and goes to the bottom; otherwise rows keep their size and scroll sideways.
+// The keyboard: a pane is not a text field, so a phone's soft keyboard never opens on a tap into it. The tile has a hidden text box (the sink) and a
+// Keyboard button that focuses it (a second tap, or the tile closing, blurs it); on a desktop a click into the mirror focuses it too.
 
 export interface Span { text: string; cls: string; fg?: string; bg?: string }
 export interface Frame { key: string; seq?: number; rows?: number; cols?: number; whole?: boolean; set?: [number, string][]; hidden?: boolean; ended?: string }
@@ -82,9 +84,9 @@ export function applyFrame(box: HTMLElement, f: Frame) {
 
 /** `state` is what the pad may do: send keys (`live`), only Escape (`hidden`, a secret), or nothing (`off`: stale, ended, parked, connecting). */
 export type TermState = "live" | "hidden" | "off";
-interface Term { key: string; box: HTMLElement; scroll: HTMLElement; state: HTMLElement; fit: HTMLButtonElement; typing: HTMLElement; sink: HTMLTextAreaElement; post: Post; cols: number; seen: number; away?: ReturnType<typeof setTimeout>; parked: boolean; first: boolean; ended: boolean; tile?: Tile; queue: Promise<unknown>; pad?: Pad }
+interface Term { key: string; box: HTMLElement; scroll: HTMLElement; state: HTMLElement; fit: HTMLButtonElement; kb: HTMLButtonElement; typing: HTMLElement; sink: HTMLTextAreaElement; post: Post; cols: number; seen: number; away?: ReturnType<typeof setTimeout>; parked: boolean; first: boolean; ended: boolean; tile?: Tile; queue: Promise<unknown>; pad?: Pad }
 /** The key pad under a mirror (keypad.ts): its element, and `update` when what the pad may do changes. */
-export interface Pad { el: HTMLElement; update(): void; type?(e: KeyboardEvent): boolean; text?(typed: string): void; paste?(pasted: string): void }
+export interface Pad { el: HTMLElement; update(): void; type?(e: KeyboardEvent): boolean; key?(key: string): void; text?(typed: string): void; paste?(pasted: string): void }
 /** The terminal tiles of this page: `stream()` is the newest `hello` as it came (JSON); `pad` puts the key pad under a mirror. */
 export function mountTerminals({ tiles, post, stream, pad }: { tiles: { open(tile: Tile, focus?: boolean): void }; post(key: string): Post; stream(): string; pad?(t: { name: string; state(): TermState; post: Post; stream(): string; blip(): void }): Pad }) {
 	const open = new Map<string, Term>();
@@ -106,28 +108,44 @@ export function mountTerminals({ tiles, post, stream, pad }: { tiles: { open(til
 		else if (t.parked) void ((t.parked = false), attach(t, true));
 	})));
 	const make = (key: string, name: string): Tile => {
-		const t: Term = { key, box: h("div", { class: "term", role: "group", "aria-label": m.terminal_of({ name }) }), scroll: h("div", { class: "term-scroll", tabindex: "0" }), state: h("p", { class: "term-state", role: "status" }, m.connecting()), fit: h("button", { type: "button", class: "cmp-link", "aria-pressed": "false" }, m.fit_width()), typing: h("span", { class: "term-typing", hidden: "" }, m.typing_direct()), sink: h("textarea", { class: "term-sink", rows: "1", "aria-label": m.typing_hint(), autocomplete: "off", autocapitalize: "off", autocorrect: "off", spellcheck: "false" }) as HTMLTextAreaElement, post: post(key), cols: 0, seen: 0, parked: false, first: true, ended: false, queue: Promise.resolve() };
+		const t: Term = { key, box: h("div", { class: "term", role: "group", "aria-label": m.terminal_of({ name }) }), scroll: h("div", { class: "term-scroll", tabindex: "0" }), state: h("p", { class: "term-state", role: "status" }, m.connecting()), fit: h("button", { type: "button", class: "cmp-link", "aria-pressed": "false" }, m.fit_width()), kb: h("button", { type: "button", class: "cmp-link term-kb", "aria-pressed": "false" }, m.keyboard()), typing: h("span", { class: "term-typing", hidden: "" }, m.typing_direct()), sink: h("textarea", { class: "term-sink", rows: "1", "aria-label": m.typing_hint(), inputmode: "text", enterkeyhint: "enter", autocomplete: "off", autocapitalize: "off", autocorrect: "off", spellcheck: "false" }) as HTMLTextAreaElement, post: post(key), cols: 0, seen: 0, parked: false, first: true, ended: false, queue: Promise.resolve() };
 		// The font changes size, so the rows move: the view goes to the bottom, where pi's editor is, once the new size is laid out.
 		t.fit.onclick = () => (t.fit.setAttribute("aria-pressed", String(t.fit.getAttribute("aria-pressed") !== "true")), fit(t), requestAnimationFrame(() => (t.scroll.scrollTop = t.scroll.scrollHeight)));
 		t.scroll.append(t.box);
-		// A desktop's keyboard goes to the pane while the terminal has it: a click into the mirror (not a drag that selects text to copy) focuses
-		// a hidden text box under it, until a click elsewhere. Keys and chords go from its keydown, characters from its input (so an input
-		// method and dead keys work), a paste from its paste. The mirror lights up as it takes the keyboard and flashes with each key. A phone keeps the pad.
-		if (globalThis.matchMedia?.("(pointer: fine)").matches) {
+		// The keyboard goes to the pane while the sink has the focus: a click into the mirror on a desktop (not a drag that selects text to copy), or
+		// the Keyboard button on any screen (a phone's soft keyboard opens for it). Keys and chords go from its keydown, characters from its input (so
+		// an input method and dead keys work), a paste from its paste. A soft keyboard sends no key for Backspace or Enter on some phones (keydown
+		// is "Unidentified", keyCode 229) but a beforeinput that names it, so that is read too, once: a keydown the pad took never reaches beforeinput.
+		// A composition goes as one write when it ends. The mirror lights up as it takes the keyboard and flashes with each key.
+		{
 			const { sink } = t, flush = () => ((typed) => ((sink.value = ""), typed && t.pad?.text?.(typed)))(sink.value);
-			t.scroll.title = m.typing_hint();
-			t.scroll.addEventListener("click", () => getSelection()?.isCollapsed !== false && sink.focus({ preventScroll: true }));
+			let on = false;
+			if (globalThis.matchMedia?.("(pointer: fine)").matches) {
+				t.scroll.title = m.typing_hint();
+				t.scroll.addEventListener("click", () => getSelection()?.isCollapsed !== false && sink.focus({ preventScroll: true }));
+			}
+			t.kb.addEventListener("mousedown", (e) => e.preventDefault()); // the button does not take the focus from the sink, so a second tap sees it open and closes it
+			t.kb.addEventListener("click", () => (on ? sink.blur() : sink.focus({ preventScroll: true })));
 			sink.addEventListener("keydown", (e) => t.pad?.type?.(e) && e.preventDefault());
+			sink.addEventListener("beforeinput", (e) => {
+				const { inputType, isComposing } = e as InputEvent, key = inputType === "deleteContentBackward" && !sink.value ? "backspace" : inputType === "insertLineBreak" || inputType === "insertParagraph" ? "enter" : undefined;
+				if (isComposing || !key) return;
+				e.preventDefault();
+				flush();
+				t.pad?.key?.(key);
+			});
 			sink.addEventListener("input", (e) => !(e as InputEvent).isComposing && flush());
 			sink.addEventListener("compositionend", flush);
 			sink.addEventListener("paste", (e) => (e.preventDefault(), t.pad?.paste?.(e.clipboardData?.getData("text/plain") ?? "")));
 			sink.addEventListener("focus", () => {
 				const at = t.scroll.getBoundingClientRect(); // an input method's candidates show by the mirror's bottom-left corner
 				Object.assign(sink.style, { left: `${at.left + 12}px`, top: `${Math.min(at.bottom, innerHeight) - 28}px` });
+				on = true;
+				t.kb.setAttribute("aria-pressed", "true");
 				t.typing.hidden = false;
 				t.scroll.classList.add("typing", "engage");
 			});
-			sink.addEventListener("blur", () => ((t.typing.hidden = true), t.scroll.classList.remove("typing", "engage", "blip"), flush()));
+			sink.addEventListener("blur", () => ((on = false), t.kb.setAttribute("aria-pressed", "false"), (t.typing.hidden = true), t.scroll.classList.remove("typing", "engage", "blip"), flush()));
 			t.scroll.addEventListener("animationend", (e) => t.scroll.classList.remove(e.animationName === "term-engage" ? "engage" : "blip"));
 		}
 		new ResizeObserver(() => fit(t)).observe(t.scroll);
@@ -136,7 +154,7 @@ export function mountTerminals({ tiles, post, stream, pad }: { tiles: { open(til
 		watch();
 		const state = (): TermState => (t.parked || t.ended || stale(t) ? "off" : t.box.classList.contains("hidden") ? "hidden" : "live");
 		t.pad = pad?.({ name, state, post: t.post, stream: id, blip: () => replay(t.scroll, "blip") });
-		return (t.tile = { id: `term:${key}`, title: m.terminal_title({ name }), icon: "i-comms", body: () => h("div", { class: "term-tile" }, h("div", { class: "term-bar" }, t.state, t.typing, t.fit), t.scroll, t.sink, t.pad?.el), closed: () => (clearTimeout(t.away), attach(t, false), open.delete(key), watch()) });
+		return (t.tile = { id: `term:${key}`, title: m.terminal_title({ name }), icon: "i-comms", body: () => h("div", { class: "term-tile" }, h("div", { class: "term-bar" }, t.state, t.typing, t.kb, t.fit), t.scroll, t.sink, t.pad?.el), closed: () => (clearTimeout(t.away), t.sink.blur(), attach(t, false), open.delete(key), watch()) });
 	};
 	return {
 		/** Opens (or brings forward) the tile of a session's terminal, the user's own act, so it takes focus; a mirror that ended tries again. */

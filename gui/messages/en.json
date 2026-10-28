@@ -274,6 +274,7 @@
 	"paused_hidden": "Paused while this tab is hidden.",
 	"terminal_of": "Terminal of {name}, read only",
 	"connecting": "Connecting…",
+	"keyboard": "Keyboard",
 	"fit_width": "Fit width",
 	"terminal_title": "Terminal · {name}",
 	"mirror_ended": "The mirror ended: {why}",
