@@ -40,6 +40,8 @@ const UNKNOWN = "(unknown)";
 export const RUN_SEND_CAP_MS = 20_000;
 const RETRY_MS = [1000, 2000, 5000, 10_000, 30_000];
 const REFRESH_MS = 4 * 60_000, RECOVER_MS = 60_000, RECOVER_POLL_MS = 2000, RESIDENT_MS = 2000, REGISTER_WAIT_MS = 3000, LEAVE_MS = 2000;
+/** What a tab is called once its standing pane was replaced and it kept other panes. */
+const FORMER_LABEL = "former tower";
 /** What Herdr reports that ends a tower's tab, or moves the head: any of them makes the service look again. */
 const WATCHED = ["workspace.created", "workspace.closed", "workspace.moved", "workspace.reordered", "pane.closed", "tab.closed"];
 const HEAD_EVENTS = new Set(["workspace_created", "workspace_closed", "workspace_moved", "workspace_reordered"]);
@@ -121,6 +123,8 @@ interface Live {
 	/** The start in flight: the wait for a resident tower, then the registration, then the tokens. */
 	starting?: Promise<void>;
 	registered?: Promise<boolean>;
+	/** The standing pane is being replaced (`renew`). */
+	renewing?: boolean;
 	stopped: boolean;
 	/** The messages taken, for dedupe (towerseen.ts); opened when the first message comes. */
 	seen?: Seen;
@@ -148,7 +152,8 @@ export function createTowers(o: TowersOptions): Towers {
 		live: () => l.state === "live" && Boolean(l.client?.isConnected()),
 		cwd: async () => (await panes(run, l.record.workspace).catch(() => [])).find((p) => p.pane_id === l.record.pane)?.cwd ?? l.record.cwd ?? slot.stateDir,
 		clearDigest: (keys) => digest.drop(l.record.workspace, keys),
-		renewPane: () => renew(l),
+		renewPane: (runId) => renew(l, runId),
+		renewing: () => l.renewing === true,
 		allyLine: (item) => {
 			const mine = { name: l.record.name, id: l.record.id, role: "tower" as const, workspace: l.record.label };
 			// An answer a local session gave to what the run asked or opened: no verified peer header, the session is local; the device's next run reads it as data.
@@ -370,34 +375,64 @@ export function createTowers(o: TowersOptions): Towers {
 		deleteService(slot, l.record.workspace);
 	};
 
+	/** What the old standing pane may lose: a shell at its prompt, or a process that carries the run's id (its pi or the wrapper that started it). Anything else is the boss's own program. */
+	const SHELL = /^-?(?:ba|z|fi|da|k|c|tc|a)?sh(?:\.exe)?$|^(?:pwsh|powershell|cmd)(?:\.exe)?$/i;
+	const closable = async (pane: string, runId: string): Promise<boolean> => {
+		try {
+			const info = JSON.parse(await run(["pane", "process-info", "--pane", pane])).result?.process_info?.foreground_processes as { name?: string; argv0?: string; cmdline?: string }[] | undefined;
+			if (!Array.isArray(info)) return false;
+			return info.every((p) => p.cmdline?.includes(`--sb-run ${runId}`) || (SHELL.test(p.name ?? p.argv0 ?? "?") && !/\s(?:-c|\/c)\s/i.test(p.cmdline ?? "")));
+		} catch {
+			return false; // unknown is not a shell
+		}
+	};
 	/**
 	 * A fresh standing pane for a service whose pane a forced kill left unusable (Windows: a pi ended with TerminateProcess leaves the console in a mode where the next `agent start` there types a mangled command and
-	 * times out). The tab is made and marked as `openFor` makes one, the record moves to it as `reconcile` moves it when Herdr kept neither id, and the old tab is closed; the service keeps its runs, queue, and notices.
-	 * The identity is not live while this runs, so no run wakes in the old pane. Returns the new pane.
+	 * times out). The tab is made and marked as `openFor` makes one, the record moves to it as `reconcile` moves it when Herdr kept neither id, and the old standing pane is closed when it holds nothing but a shell or
+	 * the run's own pi (never the tab, which may hold ally panes and the boss's splits; never a pane running the boss's program, which only loses its marks); a tab that keeps panes loses the tower label. The service
+	 * keeps its runs, queue, and notices. The identity is not live while this runs, so no run wakes in the old pane, and a pi typed into it is told to quit. Returns the new pane.
 	 */
-	const renew = async (l: Live): Promise<string | undefined> => {
+	const renew = async (l: Live, runId: string): Promise<string | undefined> => {
 		const ws = l.record.workspace, old = l.record, was = l.state;
-		if (l.stopped || stopped || services.get(ws) !== l) return undefined;
+		const gone = () => stopped || services.get(ws) !== l;
+		if (l.stopped || gone() || l.renewing) return undefined;
 		l.state = "registering";
+		l.renewing = true;
+		let made: Awaited<ReturnType<typeof createTab>> | undefined;
+		// The service was closed (or retired) while this ran: the new tab is not left standing.
+		const abandon = async () => {
+			if (made) await run(["tab", "close", made.tabId]).catch(() => {});
+			return undefined;
+		};
 		try {
 			const target = (await workspaces(run)).find((w) => w.workspace_id === ws);
 			if (!target) throw new Error("its workspace is gone");
 			const dir = old.cwd ?? target.worktree?.checkout_path ?? slot.stateDir;
-			const made = await createTab(run, ws, dir, [], TOWER_LABEL);
+			made = await createTab(run, ws, dir, [], TOWER_LABEL);
+			if (gone() || l.stopped) return await abandon();
 			await report(run, "pane", made.paneId, { sb_role: "tower" });
+			if (gone() || l.stopped) return await abandon();
 			await cfg.api("tab.move", { tab_id: made.tabId, insert_index: 0 }).catch((cause: Error) => error("tab-move", cause.message));
+			if (gone() || l.stopped) return await abandon();
 			l.record = { ...old, pane: made.paneId, tab: made.tabId, cwd: dir };
 			writeService(slot, l.record);
 			log.line("tower-renewed", { workspace: ws, pane: made.paneId, was: old.pane });
-			// A tab that will not close loses its marker, so it is not taken for the standing pane.
-			await run(["tab", "close", old.tab]).catch(() => report(run, "pane", old.pane, CLEAR).catch(() => {}));
+			// The old pane is looked at last: whatever was typed into it meanwhile is seen.
+			const closed = (await closable(old.pane, runId)) && (await run(["pane", "close", old.pane]).then(() => true, () => false));
+			if (!closed) await report(run, "pane", old.pane, CLEAR).catch(() => {});
+			// A tab that keeps a pane (ally runs, the boss's splits, the pane that was kept) is no longer the tower's.
+			if ((await panes(run, ws).catch(() => [])).some((p) => p.tab_id === old.tab)) await run(["tab", "rename", old.tab, FORMER_LABEL]).catch(() => {});
+			if (gone() || l.stopped) return await abandon();
 			await release(l);
+			if (gone()) return await abandon();
 			services.set(ws, adopt(l.record));
 			return made.paneId;
 		} catch (cause) {
 			error("tower-renew", `${old.id}: ${(cause as Error).message}`);
 			if (l.record === old && !l.stopped) l.state = was;
 			return undefined;
+		} finally {
+			l.renewing = false;
 		}
 	};
 
