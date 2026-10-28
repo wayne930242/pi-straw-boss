@@ -54,10 +54,20 @@ const claim = (s: Running, id: string, over: Record<string, unknown> = {}) => {
 	return ask(s, { cmd: "claim", runId: id, pane: pi.pane, pid: pi.pid, started: `T-${pi.pid}`, ...over });
 };
 
-test("lineage: the pi is the deepest process below the listed one that carries the run id; a link that starts before its parent is not a link", () => {
+/** Takes every event the run is offered, as a run does before its tower_done. */
+const drain = async (s: Running, token: string) => {
+	for (;;) {
+		const event = (await ask(s, { cmd: "run-poll", token, idle: true })).event as { id: string } | undefined;
+		if (!event) return;
+		assert.equal((await ask(s, { cmd: "run-taken", token, id: event.id })).ok, true);
+	}
+};
+
+test("lineage: the pi is the first process below the listed wrappers that carries the run id and is not a wrapper; what pi started is never pi; a link that starts before its parent is not a link", () => {
 	const table = [proc(10, 1, "cmd.exe", true, WRAPPER_AT), proc(11, 10, "node.exe", true, PI_AT), proc(12, 11, "powershell.exe", false, "2026-10-28T09:39:20.000Z"), proc(13, 11, "node.exe", true, "2026-10-28T09:39:21.000Z")];
-	assert.deepEqual(leafOf(table, 10), { pid: 13, started: "2026-10-28T09:39:21.000Z", via: [10, 11] }, "the deepest carrier");
-	assert.deepEqual(leafOf(table, 11), { pid: 13, started: "2026-10-28T09:39:21.000Z", via: [11] });
+	assert.deepEqual(leafOf(table, 10), { pid: 11, started: PI_AT, via: [10] }, "a node that pi started carries the id too, and does not displace pi (WC-F003)");
+	assert.deepEqual(leafOf(table, 11), { pid: 11, started: PI_AT, via: [] }, "a pi Herdr lists itself stays pi, whatever below it carries the id");
+	assert.deepEqual(leafOf([proc(10, 1, "cmd.exe", true, WRAPPER_AT), proc(11, 10, "sh", true, PI_AT), proc(12, 11, "node", true, "2026-10-28T09:39:14.000Z"), proc(13, 12, "bash", true, "2026-10-28T09:39:15.000Z")], 10), { pid: 12, started: "2026-10-28T09:39:14.000Z", via: [10, 11] }, "wrappers are passed through to the first pi");
 	assert.deepEqual(leafOf([proc(10, 1, "node.exe", true, PI_AT)], 10), { pid: 10, started: PI_AT, via: [] }, "pi listed itself");
 	assert.equal(leafOf(table, 99), undefined, "the listed process is not in the table");
 	// A ppid outlives its process: a child that started before its "parent" belongs to a PID that was reused.
@@ -67,7 +77,7 @@ test("lineage: the pi is the deepest process below the listed one that carries t
 	assert.equal(below([proc(10, 1, "cmd.exe", true, PI_AT), proc(11, 10, "node.exe", true, WRAPPER_AT)], 11, 10), false);
 	// A cycle (PID reuse made a process its own ancestor) ends the walk.
 	assert.equal(below([proc(10, 11, "a", false), proc(11, 10, "b", false)], 10, 99), false);
-	assert.deepEqual(leafOf([proc(10, 11, "a", true), proc(11, 10, "b", true)], 10)?.pid, 11);
+	assert.deepEqual(leafOf([proc(10, 11, "cmd", true), proc(11, 10, "cmd", true)], 10)?.pid, 11);
 });
 
 test("lineage: the CIM answer (TAB-separated, UTC start) and the ps answer parse; garbage lines are skipped", () => {
@@ -174,4 +184,108 @@ test("a pi the boss started by hand through a wrapper is matched to the pane by 
 	assert.match(String(stranger.reason), /could not match/);
 	const hand = await role(5101);
 	assert.equal(hand.role, "hand", JSON.stringify(hand));
+});
+
+// --- the kill paths (review WC-F001, F002) ---------------------------------------------------------------------------------------------------------------------
+
+test("WC-F001: a start that failed ends no process of the pane that does not carry the run id (a user's node in the busy pane)", async () => {
+	const base = world.herdr.onAgentStart!;
+	world.herdr.onAgentStart = (pane, args) => {
+		base(pane, args);
+		pane.processes = [{ name: "node", argv0: "node", pid: 4242, cmdline: "node /home/me/devserver.js" }, { name: "pi", argv0: "pi", pid: 4243, cmdline: "pi --session other" }];
+		throw new Error("herdr agent start failed: agent_pane_busy");
+	};
+	await setup();
+	tower().incoming(from, msg("m1", "one"));
+	const id = await runOf();
+	await until(() => readRun(world.slot, "wA", id)?.outcome === "crashed", "the run to end crashed");
+	assert.deepEqual(world.kills, [], "neither the node nor the hand pi in the pane is the run's");
+});
+
+test("a start that failed with the wrapper's own command line in the pane ends the wrapper and the pi below it, and only those", async () => {
+	wrapped((wrapper, pi) => [proc(wrapper, 100, "cmd.exe", true, WRAPPER_AT), proc(pi, wrapper, "node.exe", true, `T-${pi}`), proc(pi + 1, pi, "node.exe", true, "2026-10-28T09:39:20.000Z"), proc(4242, 1, "node.exe", false, WRAPPER_AT)], { fail: true });
+	await setup();
+	tower().incoming(from, msg("m1", "one"));
+	const id = await runOf();
+	const pi = world.pis.get(id)!.pid;
+	await until(() => readRun(world.slot, "wA", id)?.outcome === "crashed", "the run to end crashed");
+	assert.deepEqual(world.kills, [[pi, "SIGTERM"], [pi + 500, "SIGTERM"]], "pi, not what pi started, then the wrapper");
+});
+
+test("WC-F002: the kill checks the recorded pi in the process table now: a PID another program holds is not signalled, whatever the throttled liveness check says", async () => {
+	wrapped();
+	const s = await setup();
+	tower().incoming(from, msg("m1", "one"));
+	const id = await runOf();
+	await until(() => readRun(world.slot, "wA", id)?.pid, "the pid to be recorded");
+	assert.equal((await claim(s, id)).ok, true);
+	const pi = world.pis.get(id)!.pid;
+	// pi died and its PID went to another program that started later; the process is alive for the liveness check and `startOf` still answers the recorded time.
+	world.procTable = [proc(pi + 500, 100, "cmd.exe", true, WRAPPER_AT), proc(pi, pi + 500, "calc.exe", false, "2026-10-28T11:00:00.000Z")];
+	assert.equal((await ask(s, { cmd: "stop" })).ok, true);
+	await s.handle.done;
+	assert.deepEqual(world.kills, [[pi + 500, "SIGTERM"]], "only the wrapper that still carries the run id");
+});
+
+test("WC-F002: a PID that is no longer below the process Herdr lists is not signalled either", async () => {
+	wrapped();
+	const s = await setup();
+	tower().incoming(from, msg("m1", "one"));
+	const id = await runOf();
+	await until(() => readRun(world.slot, "wA", id)?.pid, "the pid to be recorded");
+	assert.equal((await claim(s, id)).ok, true);
+	const pi = world.pis.get(id)!.pid;
+	world.procTable = [proc(pi + 500, 100, "cmd.exe", true, WRAPPER_AT), proc(pi, 1, "node.exe", false, `T-${pi}`)];
+	assert.equal((await ask(s, { cmd: "stop" })).ok, true);
+	await s.handle.done;
+	assert.deepEqual(world.kills, [[pi + 500, "SIGTERM"]]);
+});
+
+test("WC-F005: the kill of a stuck pi waits for the process table beside the watcher: another run's exit is seen meanwhile", async () => {
+	world.runTimers = { quitGrace: 60, signal: 60 };
+	wrapped();
+	const s = await setup();
+	world.herdr.workspaces[1]!.worktree = { checkout_path: "/w/beta" };
+	await ask(s, { cmd: "ensure-tower", workspace: "wB" });
+	tower().incoming(from, msg("m1", "a"));
+	const a = await runOf();
+	await until(() => readRun(world.slot, "wA", a)?.pid, "run A's pid");
+	const tokenA = String((await claim(s, a)).token);
+	world.client("sb-tower-wb")!.incoming(from, msg("m1", "b"));
+	await until(() => world.pis.size === 2, "run B to start");
+	const b = [...world.pis.keys()][1]!;
+	await until(() => readRun(world.slot, "wB", b)?.pid, "run B's pid");
+	assert.equal((await claim(s, b)).ok, true);
+	let release!: () => void;
+	const gate = new Promise<void>((done) => (release = done));
+	let held = false;
+	world.procGate = (runId) => (runId === a ? ((held = true), gate) : undefined);
+	// A hands in its note and stays: the server asks it to leave, then types /quit, then signals it.
+	await drain(s, tokenA);
+	const done = await ask(s, { cmd: "run-done", token: tokenA, note: "ok" });
+	assert.equal(done.ok, true, JSON.stringify(done));
+	await until(() => held, "the table read for the signal stage", 5000);
+	world.live.delete(world.pis.get(b)!.pid);
+	await until(() => readRun(world.slot, "wB", b)?.outcome === "crashed", "B's exit to be seen while A's table read is held", 3000);
+	assert.deepEqual(world.kills, []);
+	release();
+	await until(() => world.kills.length >= 2, "A's pi and wrapper to be signalled");
+});
+
+// --- pane-role (review WC-F004, F005) ---------------------------------------------------------------------------------------------------------------------------
+
+test("WC-F004/F005: a hand pi below a listed wrapper is recorded with the table's start time, not the one it reports; unlisted pi processes that ask together share one table read", async () => {
+	const s = await setup();
+	const pane = world.herdr.panes.find((p) => p.tokens.sb_role === "tower")!;
+	pane.processes = [{ name: "cmd.exe", argv0: "cmd.exe", pid: 5100, cmdline: "cmd.exe /c pi.cmd" }];
+	world.procTable = [proc(5100, 100, "cmd.exe", false, WRAPPER_AT), proc(5101, 5100, "node.exe", false, PI_AT), proc(6000, 1, "node.exe", false, PI_AT)];
+	const before = world.procReads;
+	const role = (pid: number, started: string) => ask(s, { cmd: "pane-role", pane: pane.pane_id, pid, started });
+	const [stranger, hand] = await Promise.all([role(6000, PI_AT), role(5101, "2026-10-28T08:00:00.000Z")]);
+	assert.equal(stranger.role, "quit");
+	assert.equal(hand.role, "hand", JSON.stringify(hand));
+	assert.equal(world.procReads - before, 1, "one read for both");
+	const run = (hand.claim as { run: string }).run;
+	assert.equal(readRun(world.slot, "wA", run)?.started, PI_AT, "the table's start time");
+	assert.deepEqual(readRun(world.slot, "wA", run)?.via, [5100]);
 });

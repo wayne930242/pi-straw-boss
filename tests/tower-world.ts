@@ -59,6 +59,8 @@ export class TowerWorld extends ServerWorld {
 	/** What the server's process table read answers (undefined: it cannot be read); a test sets it to put a wrapper above a pi. */
 	procTable: Proc[] | undefined;
 	procReads = 0;
+	/** While set, the process table read for that run id waits for it. */
+	procGate: ((runId: string) => Promise<void> | undefined) | undefined;
 	/** How often the server asked for a process start time. */
 	startCalls = 0;
 	nextPi = 7000;
@@ -109,7 +111,7 @@ export class TowerWorld extends ServerWorld {
 					return this.linkAnswers.get(String(b.op))?.(b) ?? { ok: false, code: "no_holder", error: "no holder in this world" };
 				},
 				runs: {
-					timers: { ...FAST_RUNS, ...this.runTimers }, alive: (pid) => this.live.has(pid), procs: async () => (this.procReads++, this.procTable), startOf: (pid) => (this.startCalls++, `T-${pid}`), kill: (pid, signal) => void this.kills.push([pid, signal]),
+					timers: { ...FAST_RUNS, ...this.runTimers }, alive: (pid) => this.live.has(pid), procs: async (runId) => (this.procReads++, await this.procGate?.(runId), this.procTable), startOf: (pid) => (this.startCalls++, `T-${pid}`), kill: (pid, signal) => void this.kills.push([pid, signal]),
 					settings: async () => { await this.settingsHold; if (this.settingsError) throw this.settingsError; },
 					...(this.runMax ? { max: () => this.runMax! } : {}),
 				},

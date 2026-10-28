@@ -5,7 +5,8 @@ import { powershellPath, system32 } from "../winpath.ts";
 
 // Which process is pi. `herdr pane process-info` lists what runs in a pane's foreground, and when pi is started through a wrapper (`cmd.exe /c pi.cmd` on Windows, a `sh -c` or Volta shim elsewhere)
 // that is the wrapper, not pi: pi claims its run with its own PID, which is a child of the wrapper's. The server settles the relation itself, from the process table (CIM on Windows, `ps`
-// elsewhere), and never from a PID or parent a pi reports: the pi of a run is the process below the listed one that carries the run's `--sb-run <id>`, and it started no earlier than its parent.
+// elsewhere), and never from a PID or parent a pi reports: the pi of a run is the first process below the listed one that carries the run's `--sb-run <id>` and is not itself a wrapper, reached through wrappers
+// only, and it started no earlier than its parent.
 
 /** One process of the table: its parent, start time (UTC ISO on Windows, `ps` lstart text elsewhere), program name, and whether its command line carries the run's `--sb-run <id>`. */
 export interface Proc { pid: number; ppid: number; started?: string; name: string; carries: boolean }
@@ -28,8 +29,9 @@ const after = (child: Proc, parent: Proc) => {
 };
 
 /**
- * The pi below `root` (the PID Herdr lists): the deepest process below it that carries the run id, the earliest started among equals; `root` itself when none does. Undefined when `root` is not in the table.
- * Only parent links that agree with the start times count.
+ * The pi below `root` (the PID Herdr lists): the first process below it that carries the run id and is not a wrapper, reached only through wrappers (a process of pi's own, such as a tool that carries the id
+ * in its command line, is never taken for pi); the deepest wrapper that carries the id when no pi is there yet, the earliest started among equals; `root` itself when none does. Undefined when `root` is
+ * not in the table. Only parent links that agree with the start times count.
  */
 export function leafOf(table: Proc[], root: number): Lineage | undefined {
 	const byParent = new Map<number, Proc[]>();
@@ -41,7 +43,8 @@ export function leafOf(table: Proc[], root: number): Lineage | undefined {
 	const walk = (path: Proc[]) => {
 		const here = path[path.length - 1]!;
 		if (path.length > 1 && here.carries && (path.length > best.path.length || (path.length === best.path.length && (ms(here.started) < ms(best.proc.started) || here.pid < best.proc.pid && Number.isNaN(ms(here.started)))))) best = { proc: here, path };
-		if (path.length > MAX_DEPTH) return;
+		// Only a wrapper has a pi below it: what a pi started is not pi.
+		if (path.length > MAX_DEPTH || !isWrapper(here.name)) return;
 		for (const kid of byParent.get(here.pid) ?? []) {
 			if (seen.has(kid.pid) || !after(kid, here)) continue;
 			seen.add(kid.pid);
@@ -52,18 +55,22 @@ export function leafOf(table: Proc[], root: number): Lineage | undefined {
 	return { pid: best.proc.pid, ...(best.proc.started ? { started: best.proc.started } : {}), via: best.path.slice(0, -1).map((p) => p.pid) };
 }
 
-/** Whether `pid` is `root` or has it as an ancestor in the table (the walk is bounded, and each link must agree with the start times). */
-export function below(table: Proc[], pid: number, root: number): boolean {
+/** The processes from `pid` up to `root` in the table (`pid` first), or undefined when `pid` is not `root` or below it (the walk is bounded, and each link must agree with the start times). */
+export function chain(table: Proc[], pid: number, root: number): number[] | undefined {
 	const by = new Map(table.map((p) => [p.pid, p]));
+	const path: number[] = [];
 	let here = by.get(pid);
 	for (let hops = 0; here && hops <= MAX_DEPTH; hops++) {
-		if (here.pid === root) return true;
+		path.push(here.pid);
+		if (here.pid === root) return path;
 		const up = by.get(here.ppid);
-		if (!up || !after(here, up)) return false;
+		if (!up || !after(here, up)) return undefined;
 		here = up;
 	}
-	return false;
+	return undefined;
 }
+/** Whether `pid` is `root` or has it as an ancestor in the table. */
+export const below = (table: Proc[], pid: number, root: number): boolean => chain(table, pid, root) !== undefined;
 
 const TAB = "\t";
 const ISO_START = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;

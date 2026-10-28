@@ -931,9 +931,10 @@ something: the `boss` row. A send on its own wakes nothing.
      `foreground_processes` hold only the `cmd.exe` whose command line carries `--sb-run <id>`, with pi's `node.exe` as its child, so
      the PID and start time recorded from the list never matched pi's own claim (every run "crashed", `pi exited without tower_done`).
      The server therefore reads the process table itself (`src/server/lineage.ts`: one PowerShell CIM query on Windows, `ps -A -ww` elsewhere)
-     and records the deepest process below the listed one whose command line carries the run id and that started no earlier than its
-     parent (a reused PID is not a parent). Its PID and start time go in `pid` and `started`; the processes between go in `via` (the listed
-     one first). A pi's own report (`ppid`, an argument) is never read: the claim still has to carry the recorded PID and start time. A
+     and records the first process below the listed one whose command line carries the run id and that is not a wrapper (`cmd`, `sh`, `bash`,
+     `env`, `npm`, `volta`, `powershell` and the like), reached through wrappers only and started no earlier than its parent (a reused PID
+     is not a parent). What pi itself started, such as a tool whose command line also holds the id, is never taken for pi. Its PID and start
+     time go in `pid` and `started`; the processes between go in `via` (the listed one first). A pi's own report (`ppid`, an argument) is never read: the claim still has to carry the recorded PID and start time. A
      wrapper whose child is not in the table yet is looked at again (3 reads, 400 ms apart); a table that cannot be read leaves the listed
      process, as before. The cost is the one PowerShell start that read the start time before (the table gives it too);
    - the server has processed every Herdr takeover it has seen (**A Herdr restart**). Until then every claim is held the same way. A pi
@@ -978,10 +979,17 @@ something: the `boss` row. A send on its own wakes nothing.
   waits on work: a main's result comes back as a new event. So a long run is a fault, and the cap keeps a stuck run from holding the
   queue.
 - **Quit fails.** If pi has not exited 10 s after `quit`, the server sends Escape and `/quit` through Herdr, then SIGTERM to the PID read
-  from `herdr pane process-info`, never one from a record alone. When pi runs below a wrapper (`via`), pi's own PID gets the signal first
-  and the listed wrapper second, because ending a wrapper does not end its child (on Windows `process.kill` is `TerminateProcess` of that
-  one process). The same holds for a stop of the server, and for a start that failed after pi was running: a `herdr agent start` that
-  timed out may still have left pi (and its wrapper) in the pane, so the run's end looks for it by the run id and ends it.
+  from `herdr pane process-info`, never one from a record alone. Every PID is verified at the moment of the signal: the server lists the
+  pane's foreground and reads the process table then (not the throttled liveness check, not the start-time cache), and the recorded pi is
+  signalled only while it is in the table with the start time recorded and below the process Herdr lists. When pi runs below a wrapper
+  (`via`), pi's own PID gets the signal first and the wrappers between it and the listed one after it, because ending a wrapper does not
+  end its child (on Windows `process.kill` is `TerminateProcess` of that one process). The same holds for a stop of the server, and for a
+  start that failed after pi was running: a `herdr agent start` that timed out may still have left pi (and its wrapper) in the pane, so the
+  run's end looks for it by the run id. **A run with no recorded pi (the start failed) or a record that no longer checks out ends only a
+  listed process whose command line carries `--sb-run <id>`, with the wrappers down to the pi below it;** a node, a hand pi, or any other
+  process the pane holds is not the run's and is left alone. The process table read for a signal runs beside the watcher's tick, one at a
+  time per run (a PowerShell read on Windows takes seconds, and every run's watch waits on the tick); a table that cannot be read leaves the
+  pi Herdr lists itself checked against its start time alone, and a pi below a wrapper unsignalled.
 - **Crash.** The pi exits without `tower_done`: its socket closes and Herdr reports the pane at its shell or the agent gone. Its offered
   events go back to the queue. Its taken events go back too, flagged `possibly handled by a run that crashed: check before acting` in the
   next brief, so delivery is at least once. The note is `(crashed)` with the last outcome. The digest lines it was shown stay for the next
