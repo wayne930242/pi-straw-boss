@@ -50,7 +50,7 @@ test("call_tower without a tower opens a tower tab without focus, starts pi in i
 
 test("the tower starts with the user's towerModel from config.json, and with pi's default model without one", async () => {
 	world.autoTowers();
-	writeFileSync(join(world.stateDir, "config.json"), JSON.stringify({ towerModel: " claude-bridge/claude-sonnet-5-5 " }));
+	writeFileSync(join(world.stateDir, "config.json"), JSON.stringify({ towerRuns: { enabled: false }, towerModel: " claude-bridge/claude-sonnet-5-5 " }));
 	const a = await main();
 	await a.tool("call_tower", { message: "need the tower" });
 	assert.deepEqual(world.herdr.commands("agent", "start")[0]?.slice(-4), ["--name", "tower · Alpha", "--model", "claude-bridge/claude-sonnet-5-5"]);

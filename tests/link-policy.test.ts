@@ -68,7 +68,7 @@ test("attended trust comes from config.json's link.trust; a sender with no entry
 	const dir = mkdtempSync(join(tmpdir(), "psb-link-trust-"));
 	try {
 		mkdirSync(dir, { recursive: true });
-		writeFileSync(join(dir, "config.json"), JSON.stringify({ link: { trust: { [ctrl]: "forward", [other]: "dispatch", "short-id": "dispatch", ffffffffffffffffffffffffff: "root", gggggggggggggggggggggggggg: true } } }));
+		writeFileSync(join(dir, "config.json"), JSON.stringify({ towerRuns: { enabled: false }, link: { trust: { [ctrl]: "forward", [other]: "dispatch", "short-id": "dispatch", ffffffffffffffffffffffffff: "root", gggggggggggggggggggggggggg: true } } }));
 		const c = readLinkConfig(dir, { home: dir, agentDir: dir });
 		assert.deepEqual([...c.trust], [[ctrl, "forward"], [other, "dispatch"]]);
 		assert.equal(c.problems.length, 3);

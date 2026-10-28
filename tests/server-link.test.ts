@@ -27,7 +27,7 @@ function team(project = join(sw.root, "home", "project")) {
 	const real = realpathSync(project), store = new LinkStore(join(sw.stateDir, "link")), entries = rosterOf();
 	writeDevice(store, alice, "alice-mac");
 	writeTeam(store, entries, alice);
-	writeFileSync(join(sw.stateDir, "config.json"), JSON.stringify({ link: { relay: "http://relay.test", teams: { [TEAM_HEX]: { project: real, share: "status" } } } }));
+	writeFileSync(join(sw.stateDir, "config.json"), JSON.stringify({ towerRuns: { enabled: false }, link: { relay: "http://relay.test", teams: { [TEAM_HEX]: { project: real, share: "status" } } } }));
 	relay.addTeam(TEAM, [alice.id, bob.id], entries);
 	return { store, project: real };
 }
@@ -154,7 +154,7 @@ test("B3R-F001: a notice is stored and logged on the label character set, cut at
 test("B3R-F002: the server's home is opts.home ?? homedir(), not HOME or USERPROFILE of the injected env", async () => {
 	mkdirSync(join(sw.root, "home", "project"), { recursive: true });
 	mkdirSync(sw.stateDir, { recursive: true });
-	writeFileSync(join(sw.stateDir, "config.json"), JSON.stringify({ link: { relay: "http://relay.test", teams: { [TEAM_HEX]: { project: "~/project", share: "status" } } } }));
+	writeFileSync(join(sw.stateDir, "config.json"), JSON.stringify({ towerRuns: { enabled: false }, link: { relay: "http://relay.test", teams: { [TEAM_HEX]: { project: "~/project", share: "status" } } } }));
 	sw.env.USERPROFILE = join(sw.root, "home");
 	const s = await sw.start({ link: { tickMs: 15, relay: clientFor(relay) } });
 	await s.handle.ready;

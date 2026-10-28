@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { until, World } from "./fakes.ts";
 import { TowerWorld } from "./tower-world.ts";
@@ -6,6 +9,7 @@ import { stop } from "../src/server/client.ts";
 import { readRecord, slotOf, writeRecord } from "../src/server/record.ts";
 import { ensureTowerVia, STOPPED } from "../src/server/towerclient.ts";
 import { readQueue, readService } from "../src/server/towerstore.ts";
+import { readTowerRuns, towerRunsEnabled } from "../src/server/towerruns.ts";
 
 // The session side of the tower service (docs/specs/2026-10-26-sb-backend.md, A workspace gets one, Migration from resident towers, Restarts and upgrades): openTower asks the
 // server, a resident tower of this build hands over, and the guard counts a tower identity as live through its own server's restart. The server in these tests is the real one
@@ -58,7 +62,7 @@ test("/boss tower <prompt> (D15) ensures the tower, posts the prompt as a boss e
 });
 
 test("/boss tower <prompt> with the flag off says what it needs and writes nothing", async () => {
-	sw.setFlag(undefined);
+	sw.setFlag(false);
 	const a = world.agent({ id: "a", name: "docs", pane: "wA:p1", tab: "wA:t1", env: envOf(), deps: { server: server() } });
 	await a.start();
 	await a.command("tower do it");
@@ -76,7 +80,7 @@ test("a live tower is the tower: a session does not ask the server for it", asyn
 });
 
 test("with the flag off a session opens the tower as before, and never asks the server", async () => {
-	sw.setFlag(undefined);
+	sw.setFlag(false);
 	world.autoTowers();
 	const a = world.agent({ id: "a", name: "docs", pane: "wA:p1", tab: "wA:t1", env: envOf(), deps: { server: server() } });
 	await a.start();
@@ -105,7 +109,7 @@ test("ensureTowerVia gives the server's own words when it refuses", async () => 
 	const ctx = sw.ctx();
 	await ensureTowerVia(ctx, { workspace: "wA" });
 	await assert.rejects(ensureTowerVia(ctx, { workspace: "nowhere" }), /No workspace matches "nowhere"/);
-	sw.setFlag(undefined);
+	sw.setFlag(false);
 	await assert.rejects(ensureTowerVia(ctx, { workspace: "wA" }), /towerRuns\.enabled is off/);
 });
 
@@ -132,8 +136,55 @@ test("a resident tower the server cannot take stays resident, and says why", asy
 	assert.ok(tower.notices.some((n) => /stays resident/.test(n.text)), JSON.stringify(tower.notices));
 });
 
+for (const reason of ["reload", "resume", "new", "fork"]) {
+	test(`a live resident tower is retired by its own ${reason}: with the service on, session_start asks the server, which takes the pane, and the tower quits`, async () => {
+		sw.setFlag(false);
+		const tower = world.tower("tower-wA", "wA:t7", "wA:p7", false, { server: server() });
+		sw.herdr.addTab("wA:t7", "work", "wA:p7", "pi");
+		await tower.start();
+		assert.equal(tower.stopped, false, "resident while the service is off");
+		assert.equal(world.herdr.workspace("wA").tokens.tower, "tower-wA");
+		sw.setFlag(true);
+		await tower.stop(reason); // pi ends the old session with this reason and starts the new one in the same process
+		await tower.fire("session_start", { reason });
+		await until(() => readService(sw.slot, "wA")?.pane === "wA:p7", `the server to take the pane on ${reason}`);
+		await until(() => tower.notices.some((n) => /sb server stands in for this workspace's tower/.test(n.text)), "the resident tower to say it quits");
+		assert.equal(sw.herdr.workspace("wA").tokens.tower, "sb-tower-wa");
+		assert.deepEqual(world.herdr.commands("pane", "close"), [], "its pane stays");
+	});
+}
+
+test("with the service on, call_tower and a broadcast to towers open no resident tower: the server stands in, and no pi starts in a tower tab", async () => {
+	const main = world.agent({ id: "m", name: "docs", pane: "wA:p1", tab: "wA:t1", env: envOf(), deps: { server: server() } });
+	await main.start();
+	await main.promote();
+	await main.tool("call_tower", { message: "status?", reply: false }).catch(() => undefined);
+	await main.tool("boss_broadcast", { scope: "towers", message: "heads up" }).catch(() => undefined);
+	await world.quiet();
+	assert.deepEqual(world.herdr.commands("agent", "start"), [], "no pi started in this Herdr");
+	assert.deepEqual(world.herdr.commands("tab", "create"), [], "and no tower tab made by the session");
+	assert.deepEqual(sw.herdr.commands("agent", "start"), [], "the server starts no pi either, until an event wakes a run");
+});
+
+test("a towerRuns section without enabled, and no config file at all, mean the service is on; only an explicit false keeps towers resident", () => {
+	const dir = mkdtempSync(join(tmpdir(), "psb-towerruns-"));
+	try {
+		assert.equal(towerRunsEnabled(dir), true, "no config.json");
+		writeFileSync(join(dir, "config.json"), "{ not json");
+		assert.equal(towerRunsEnabled(dir), true, "an unreadable config.json");
+		writeFileSync(join(dir, "config.json"), JSON.stringify({ towerRuns: { max: 2 } }));
+		assert.deepEqual(readTowerRuns(dir), { enabled: true, max: 2 });
+		writeFileSync(join(dir, "config.json"), JSON.stringify({ towerRuns: { enabled: false } }));
+		assert.equal(towerRunsEnabled(dir), false);
+		writeFileSync(join(dir, "config.json"), JSON.stringify({ towerRuns: { enabled: "no" } }));
+		assert.equal(towerRunsEnabled(dir), true, "only the boolean false turns it off");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test("with the flag off a resident tower runs as before and asks nothing", async () => {
-	sw.setFlag(undefined);
+	sw.setFlag(false);
 	const tower = world.tower("tower-wA", "wA:t7", "wA:p7", false, { server: server() });
 	await tower.start();
 	assert.equal(tower.stopped, false);

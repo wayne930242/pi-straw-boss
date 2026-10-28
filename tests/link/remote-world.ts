@@ -49,7 +49,7 @@ export function computer(root: string, relay: FakeRelay, who: "a" | "b", o: { tr
 	const store = new LinkStore(join(world.stateDir, "link"));
 	writeDevice(store, keys, who === "a" ? "alice-mac" : "bob-mac");
 	writeTeam(store, entries, keys, o.url ? { relay: o.url } : {});
-	writeFileSync(join(world.stateDir, "config.json"), JSON.stringify({ link: { relay: o.url ?? "http://relay.test", teams: { [TEAM_HEX]: { project, share: "status" } }, trust: o.trust ?? {} } }));
+	writeFileSync(join(world.stateDir, "config.json"), JSON.stringify({ towerRuns: { enabled: false }, link: { relay: o.url ?? "http://relay.test", teams: { [TEAM_HEX]: { project, share: "status" } }, trust: o.trust ?? {} } }));
 	relay.addTeam(TEAM, [alice.id, bob.id], entries);
 	let link: Link | undefined;
 	const service = { ...FAST, home, relay: o.client ?? clientFor(relay), alive: (r: { session: string }) => !world.gone.has(r.session), policy: o.policy ?? { read: () => { throw Object.assign(new Error("none"), { code: "ENOENT" }); } } };

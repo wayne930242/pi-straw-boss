@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -78,6 +78,7 @@ const scratch = mkdtempSync(join(tmpdir(), "psb-live-"));
 /** A state directory whose gui.json names a server that reads trust requests for this Herdr, running as process.ppid since T0 unless said otherwise. */
 const stateWith = (port: number, over: Partial<GuiRecord> | null = {}) => {
 	const dir = mkdtempSync(join(scratch, "state-"));
+	writeFileSync(join(dir, "config.json"), JSON.stringify({ towerRuns: { enabled: false } })); // a resident tower: the tower service (on by default) would ask the squatter too
 	if (over) writeRecordFile(dir, record(port, { pid: process.ppid, started: T0, trust: 1, herdr: SOCKET, ...over }));
 	return dir;
 };

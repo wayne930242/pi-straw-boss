@@ -130,7 +130,7 @@ test("the config: teams with a project and a share, bad ones listed as problems 
 	assert.deepEqual(readLinkConfig(state, { home, agentDir: agent }).teams.size, 0);
 	writeFileSync(join(state, "config.json"), "{broken");
 	assert.deepEqual(readLinkConfig(state, { home, agentDir: agent }).teams.size, 0);
-	writeFileSync(join(state, "config.json"), JSON.stringify({ towerModel: "x", link: { relay: "https://r.example", teams: { [T1]: { project: "~/projects/moldplan", share: "presence" }, [T2]: { project: proj }, [T3]: { project: home }, [T4]: { share: "status" }, nothex: { project: proj } } } }));
+	writeFileSync(join(state, "config.json"), JSON.stringify({ towerRuns: { enabled: false }, towerModel: "x", link: { relay: "https://r.example", teams: { [T1]: { project: "~/projects/moldplan", share: "presence" }, [T2]: { project: proj }, [T3]: { project: home }, [T4]: { share: "status" }, nothex: { project: proj } } } }));
 	const cfg = readLinkConfig(state, { home, agentDir: agent });
 	assert.deepEqual([...cfg.teams.keys()], [T1, T2]);
 	assert.deepEqual(cfg.teams.get(T1), { project: proj, share: "presence", name: "moldplan" });

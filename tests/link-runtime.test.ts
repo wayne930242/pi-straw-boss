@@ -46,7 +46,7 @@ function computer(name: "a" | "b", o: { configured?: boolean; entries?: ReturnTy
 		const store = new LinkStore(join(world.stateDir, "link"));
 		writeDevice(store, keys, name === "a" ? "alice-mac" : "bob-mac");
 		writeTeam(store, entries, keys);
-		writeFileSync(join(world.stateDir, "config.json"), JSON.stringify({ link: { relay: "http://relay.test", teams: { [TEAM_HEX]: { project, share: "status" } } } }));
+		writeFileSync(join(world.stateDir, "config.json"), JSON.stringify({ towerRuns: { enabled: false }, link: { relay: "http://relay.test", teams: { [TEAM_HEX]: { project, share: "status" } } } }));
 	}
 	relay.addTeam(TEAM, [alice.id, bob.id], entries);
 	const service = { ...FAST, home, relay: clientFor(relay), alive: (r: { session: string }) => !world.gone.has(r.session) };

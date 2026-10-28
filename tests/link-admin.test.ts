@@ -74,7 +74,7 @@ const rightPick = (a: Computer, words: string[]) => {
 test("a team is made on the relay with its token, written to the team file and config.json, and started; a used token, a bad relay, and the home folder are refused", async () => {
 	const a = await computer("a", "alice-mac");
 	relay.tokens.add(TOKEN);
-	writeFileSync(join(a.stateDir, "config.json"), JSON.stringify({ towerModel: "keep-me", link: { trust: {} } }));
+	writeFileSync(join(a.stateDir, "config.json"), JSON.stringify({ towerRuns: { enabled: false }, towerModel: "keep-me", link: { trust: {} } }));
 	assert.equal((await a.holder.admin.createTeam({ relay: "http://example.org", token: TOKEN, project: a.project })).ok, false, "plain http only on this computer");
 	assert.equal((await a.holder.admin.createTeam({ relay: "https://example.org/path", token: TOKEN, project: a.project })).ok, false, "a relay URL is an origin");
 	const home = await a.holder.admin.createTeam({ relay: "http://127.0.0.1:9", token: TOKEN, project: a.home });

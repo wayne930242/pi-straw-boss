@@ -1,5 +1,5 @@
 import "./setup.ts"; // a run without --import ./tests/setup.ts is isolated too, once this module is imported (setup.ts)
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -589,6 +589,8 @@ export class World {
 	stateDir = (() => {
 		const dir = mkdtempSync(join(tmpdir(), "psb-state-test-"));
 		stateDirs.add(dir);
+		// The tower service is on by default (sb server B6); the sessions of a plain world are the resident towers of before, so a test that wants the service writes its own config.json.
+		writeFileSync(join(dir, "config.json"), JSON.stringify({ towerRuns: { enabled: false } }));
 		return dir;
 	})();
 

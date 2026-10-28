@@ -33,7 +33,7 @@ describe("two sb servers against the real relay", { skip: relaySkip }, () => {
 		const real = realpathSync(project), store = new LinkStore(join(sw.stateDir, "link"));
 		writeDevice(store, keys, `${who === "a" ? "alice" : "bob"}-mac`);
 		writeTeam(store, entries, keys, { relay: relay.url });
-		writeFileSync(join(sw.stateDir, "config.json"), JSON.stringify({ link: { relay: relay.url, teams: { [TEAM_HEX]: { project: real, share: "status" } } } }));
+		writeFileSync(join(sw.stateDir, "config.json"), JSON.stringify({ towerRuns: { enabled: false }, link: { relay: relay.url, teams: { [TEAM_HEX]: { project: real, share: "status" } } } }));
 		herdr.herdr.addTab("wA:t7", TOWER_LABEL);
 		herdr.herdr.addPane("wA:p7", "wA:t7");
 		Object.assign(herdr.herdr.pane("wA:p7"), { cwd: real, tokens: { sb_role: "tower" } });

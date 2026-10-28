@@ -107,7 +107,7 @@ test("a sub workspace has no tower: the parent's answers", async () => {
 });
 
 test("with towerRuns.enabled off nothing happens: ensure-tower is refused, no identity registers, and resident-tower records are not converted", async () => {
-	world.setFlag(undefined);
+	world.setFlag(false);
 	world.herdr.addTab("wA:t7", TOWER_LABEL, "wA:p7", "pi");
 	const roles = join(world.stateDir, "roles");
 	mkdirSync(roles, { recursive: true });
