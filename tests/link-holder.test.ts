@@ -62,7 +62,7 @@ function rig(name: "a" | "b", o: { entries?: ReturnType<typeof rosterOf>; seed?:
 	r.net = o.towers === false ? netOf([]) : netOf([[`tower-${name}`, `w-${name}`, `label-${name}`, project]]);
 	const stateDir = join(root, name, "state");
 	mkdirSync(stateDir, { recursive: true });
-	writeFileSync(join(stateDir, "config.json"), JSON.stringify(o.runs ? { towerRuns: { enabled: true } } : {}));
+	writeFileSync(join(stateDir, "config.json"), JSON.stringify({ towerRuns: { enabled: Boolean(o.runs) } }));
 	const build = (store: LinkStore) => new LinkHolder({
 		store, stateDir, isHolder: () => r.isHolder, config: () => config(project, r.share)(), net: async () => r.net, relay: clientFor(relay),
 		offer: (tower, id) => void r.offers.push({ tower: tower.id, id }), notify: (text) => void r.notices.push(text), onDisplaced: () => void r.displaced++,
