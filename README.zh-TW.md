@@ -96,6 +96,7 @@ pi install npm:pi-straw-boss
 | `boss_rename` | 用一個短語替這個 session 命名，說明它現在在做什麼；net 與 GUI 會顯示它，主智慧體的分頁也會改成這個名稱。主智慧體換工作時會呼叫它。 |
 | `/boss` | 接手成為這個分頁的主智慧體。 |
 | `/boss status`、`/boss tower` | 顯示狀態；開啟塔台並切換過去。 |
+| `/boss memory [-w workspace]`、`/boss memory confirm P1`、`reject P1`、`add standing\|decision <內容>`、`edit S1 <內容>`、`delete D1`、`resolve W1` | 在 pi 裡讀取與修改塔台的記憶（常駐指示、決定、等待），並回應塔台的提議；塔台只能提議，你確認才生效。GUI 的記憶面板是同一個操作。見 [Tower memory](docs/how-it-works.md#tower-memory)。 |
 | `/boss close all` | 讓這個基地的塔台、主智慧體和成員結束，連同 shell 一起關掉，不存 stash。會先用 stash 的同一套檢查；有會遺失的東西（正在跑的回合、排隊中的訊息、對話框、Monitor、子智慧體、前景有程式的 shell）就什麼都不關，並列出所有原因。其他基地完全不碰。 |
 | 網頁上的「收起」「已收起」「接回」 | 基地的「收起」以基地名稱收起它；上方的「已收起」列出收起的基地，按「接回」打開。基地的「關掉」會先檢查，和 `/boss close all` 一樣。 |
 | `/boss stash [名稱]`、`/boss pop [名稱]` | 把整個基地（塔台、主智慧體、成員和閒置的 shell）收起來並關掉；之後再打開，每個 pi 都從自己的 session 檔接回原本的角色。只要有接回後會遺失的東西就拒絕並說明原因：正在跑的回合、排隊中的訊息、開著的對話框、執行中的 Monitor、子智慧體，或前景有程式在跑的 shell。 |

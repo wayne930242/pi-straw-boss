@@ -499,6 +499,23 @@ test("T3C-F004 a full memory (12 standing, 12 waits, 24 decisions, 12 proposals)
 	assert.ok(small.includes("[S12]") && small.includes("Call tower_done") && !/more lines in memory/.test(small));
 });
 
+test("when the brief is a little over, the memory beyond its floor is what gives: the mains, the digest, and the note stay whole", () => {
+	const m = emptyMemory();
+	for (let n = 1; n <= 12; n++) addText(m, NOW, boss, "standing", `rule ${n} `.padEnd(190, "s"));
+	for (let n = 1; n <= 24; n++) addText(m, NOW, boss, "decision", `decision ${n} ${"d".repeat(250)}`);
+	const memory = memorySection(m, NOW).text;
+	const input = { ...base(), memory, digest: Array.from({ length: 20 }, (_, n) => `line ${n} ${"d".repeat(120)}`), note: { text: "n".repeat(1200), age: "1m" }, mains: [{ tab: "work", main: { name: "docs", id: "abcdef123456", state: "working", now: "writing", open: 1 }, members: 1 }] };
+	const uncut = [memory, ...input.digest, input.note.text].join("\n").length;
+	assert.ok(uncut + 1400 > BRIEF_MAX && uncut < BRIEF_MAX + 1500, `the case is a little over: ${uncut}`);
+	const text = buildBrief(input);
+	assert.ok(text.length <= BRIEF_MAX);
+	assert.equal(text.split("\n").filter((l) => /^- line \d+ /.test(l)).length, 20, "the digest is whole");
+	assert.ok(text.includes("n".repeat(1200)), "so is the note");
+	assert.ok(text.includes("work: main docs (abcdef12) working"), "and the mains");
+	assert.match(text, /\(\+\d+ more lines in memory: tower_memory read\)/, "the memory gave the room");
+	for (let n = 1; n <= 12; n++) assert.ok(text.includes(`[S${n}]`), `S${n}`);
+});
+
 test("T3R-F004 the brief shows every standing instruction the memory can hold, an add that would not fit is refused, and a run has a read op for the rest", async () => {
 	const m = emptyMemory();
 	for (let n = 1; n <= 8; n++) addText(m, NOW, boss, "standing", `rule ${n} `.padEnd(290, "s"));
