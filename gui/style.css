@@ -560,6 +560,8 @@ a.tower:hover::before { border-color: var(--c); }
 .composer textarea { flex: 1; min-width: 0; resize: none; padding: 9px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--sunken); color: var(--text); font: 14px/1.4 var(--sans); }
 @supports (field-sizing: content) { .composer textarea { field-sizing: content; max-height: 220px; } .composer { grid-template-columns: minmax(0, 1fr); } } /* a long URL wraps instead of widening the column */
 .composer textarea:focus { outline: none; border-color: color-mix(in srgb, var(--accent) 50%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent); }
+.composer.ended { padding: 12px 18px calc(12px + env(safe-area-inset-bottom)); }
+.cmp-bar { margin: 0; text-align: center; font-size: 13px; color: var(--dim); }
 .composer button:disabled { opacity: 0.45; cursor: default; }
 .cmp-note { flex: 1; flex-wrap: wrap; min-height: 18px; }
 .cmp-note[data-tone="error"], .cmp-alt.cmp-stop { color: var(--err-soft); }

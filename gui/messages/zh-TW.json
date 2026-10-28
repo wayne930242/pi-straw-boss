@@ -163,6 +163,7 @@
 	"unsure": "未確認。再次送出前請先查看終端機。",
 	"went": "原文已送到 session；這裡是你編輯過、尚未送出的副本。",
 	"sent_edited": "已照原文送出；你的修改留在這裡，尚未送出。",
+	"bar_ended": "這個 session 已經結束",
 	"blocked_offline": "串流中斷；要等它恢復才能送出。",
 	"blocked_ended": "這個 session 已不再即時；紀錄仍可閱讀。",
 	"blocked_no_pane": "這個單位沒有即時的 pi 窗格，無處可輸入。",

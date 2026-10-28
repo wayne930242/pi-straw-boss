@@ -219,6 +219,7 @@
 	"unsure": "Not confirmed. Check the terminal before sending again.",
 	"went": "The original already went to the session; what is here is your edited copy, unsent.",
 	"sent_edited": "Sent as it was; your edits stayed here, unsent.",
+	"bar_ended": "This session has ended",
 	"blocked_offline": "The stream is down; sending waits for it to come back.",
 	"blocked_ended": "This session is no longer live; its history stays readable.",
 	"blocked_no_pane": "No live pi pane backs this unit, so there is nothing to type into.",

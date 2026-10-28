@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { wakeOf, placeholderOf, aftermath, blocked, confirmed, deposit, endTake, recall, recallTake, rescue, settleTake, startTake, takeWhy, typable, withPulled } from "../gui/composer.ts";
+import { wakeOf, placeholderOf, aftermath, barOf, blocked, confirmed, deposit, endTake, recall, recallTake, rescue, settleTake, startTake, takeWhy, typable, withPulled } from "../gui/composer.ts";
 import { m } from "../gui/paraglide/messages.js";
 import { channelOf, closed } from "../gui/scene.ts";
 import type { Answer } from "../gui/post.ts";
@@ -200,4 +200,16 @@ test("an event run's comms say it is the tower's run, not a teammate's ally run 
 	assert.equal(blocked({ ...unit, run: true }), m.blocked_run());
 	assert.notEqual(m.blocked_run(), m.blocked_ally());
 	assert.match(m.blocked_run({}, { locale: "zh-TW" }), /塔台/);
+});
+
+test("a unit that can never be typed to shows one bar instead of the composer", () => {
+	const unit = { name: "kid", control: false, live: false, mark: "done" as const, online: true };
+	assert.equal(barOf(unit), m.bar_ended(), "an ended session");
+	assert.equal(barOf({ ...unit, control: true }), m.bar_ended(), "ended, whatever its pane");
+	assert.equal(barOf({ ...unit, live: true, run: true }), m.blocked_run(), "an event run keeps its short reason");
+	assert.equal(barOf({ ...unit, live: true, ally: true }), m.blocked_ally(), "an ally run too");
+	assert.equal(barOf({ ...unit, live: true, control: true }), undefined, "a live session gets its composer back");
+	assert.equal(barOf({ ...unit, online: false }), undefined, "a stream that is down keeps the composer");
+	assert.equal(m.bar_ended({}, { locale: "zh-TW" }), "這個 session 已經結束");
+	assert.equal(m.bar_ended({}, { locale: "en" }), "This session has ended");
 });

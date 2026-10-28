@@ -129,6 +129,13 @@ export function blocked(u: Unit): string | undefined {
 	if (u.mark === "waiting") return u.answerable ? m.blocked_answer_above() : m.blocked_answer_terminal();
 }
 
+/** The one line that replaces the whole composer when nothing can ever be typed here: the session has ended, or the unit is an event or ally run, read and never written to. Undefined keeps the composer. */
+export function barOf(u: Unit): string | undefined {
+	if (!u.online) return undefined; // a stream that is down comes back: the box keeps the draft
+	if (!u.live) return m.bar_ended();
+	if (!u.control && (u.run || u.ally)) return u.run ? m.blocked_run() : m.blocked_ally();
+}
+
 /** What the empty box says: a tower is woken (or continued, while the boss conversation is live), any other unit is written to. */
 export const placeholderOf = (unit: Unit) => (unit.wakes ? (unit.held ? m.placeholder_held() : unit.allyLive ? m.placeholder_ally() : unit.eventRun ? m.placeholder_event_run() : unit.conversation ? m.placeholder_conversation() : m.placeholder_wake()) : m.placeholder({ name: unit.name }));
 /** What a tower's service tells the composer: it wakes (never steers), is held, continues a live boss conversation that is not ending, or has only an ally run live. */
@@ -141,7 +148,9 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 	const picker = h("input", { type: "file", multiple: "", hidden: "" }) as HTMLInputElement, attach = h("button", { type: "button", class: "cmp-alt", "aria-label": m.attach() }, "+");
 	const note = h("p", { class: "cmp-note", role: "status", "aria-live": "polite" });
 	const menu = mountSlash(box, (prefix) => post("commands", { prefix })); // before the composer's own keys, so Enter on the menu picks
-	const form = h("form", { class: "composer" }, menu, h("div", { class: "cmp-row" }, attach, picker, box, h("div", { class: "cmp-acts" }, send, follow, stop)), h("div", { class: "cmp-foot" }, note));
+	const bar = h("p", { class: "cmp-bar", role: "status" });
+	bar.hidden = true;
+	const form = h("form", { class: "composer" }, menu, h("div", { class: "cmp-row" }, attach, picker, box, h("div", { class: "cmp-acts" }, send, follow, stop)), h("div", { class: "cmp-foot" }, note), bar);
 	root.replaceChildren(form);
 	let unit: Unit = { name: "", control: false, live: false, mark: "unknown", online: false }, busy = false, asking = false;
 	const keep = (use: () => void) => {
@@ -209,6 +218,9 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 		void call("input", { text, as, confirmed }, text);
 	}
 	function draw() {
+		const line = barOf(unit), parts = [menu, form.querySelector(".cmp-row"), form.querySelector(".cmp-foot")] as HTMLElement[];
+		bar.hidden = line === undefined, bar.textContent = line ?? "", form.classList.toggle("ended", line !== undefined);
+		for (const part of parts) part.hidden = line !== undefined;
 		const why = blocked(unit), working = unit.mark === "working";
 		box.placeholder = why ?? placeholderOf(unit);
 		box.disabled = attach.disabled = !typable(unit); // a closed channel (the session left the net, or a finished subagent's pi exited) takes no typing at all, as it takes no sending
