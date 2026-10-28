@@ -204,7 +204,7 @@ test("win32: the fresh standing pane made after a forced kill gets the tower pro
 	assert.equal((await ask(s, { cmd: "run-done", token, note: "ok" })).ok, true);
 	await until(() => world.kills.length >= 1, "the signal");
 	exit(id);
-	await until(() => world.herdr.closed.includes(ensured.tab!), "the old standing tab to be closed");
+	await until(() => world.herdr.closed.includes(ensured.pane!), "the old standing pane to be closed");
 	const again = await ask(s, { cmd: "ensure-tower", workspace: "wA" });
 	assert.notEqual(again.pane, ensured.pane);
 	await until(() => world.herdr.typed.some((t) => t.pane === again.pane && /prompt --workspace wA/.test(t.text)), "the prompt typed into the renewed pane");
@@ -675,4 +675,33 @@ test("RV3-F003: a server stop that lands after the record moved to the new tab l
 	const tabs = world.herdr.tabs.filter((t) => t.workspace_id === "wA" && t.label === TOWER_LABEL);
 	assert.equal(tabs.length, 1, "the tower's new tab is still there");
 	assert.notEqual(tabs[0]!.tab_id, ensured.tab);
+});
+
+test("N13: a second renew while one is running is refused and makes no tab of its own", async () => {
+	const s = await world.start();
+	await s.handle.ready;
+	let ref: { renewPane?(runId: string): Promise<string | undefined> } | undefined;
+	const runs = world.expose!.runs;
+	const attach = runs.attach.bind(runs);
+	runs.attach = (r) => ((ref = r), attach(r));
+	const ensured = await ask(s, { cmd: "ensure-tower", workspace: "wA" });
+	assert.ok(ref?.renewPane, "the service's ref was seen");
+	let open!: () => void;
+	// The first read of the old pane by renew's closable (the record already names the new pane) holds the next pane list: the first renew is in flight.
+	Object.defineProperty(world.herdr.pane(ensured.pane!), "processes", {
+		get: () => {
+			world.herdr.paneListGate = new Promise<void>((resolve) => (open = resolve));
+			return undefined;
+		},
+		configurable: true,
+	});
+	const first = ref!.renewPane!("run-1");
+	await until(() => world.herdr.gated > 0, "the first renew to reach the pane list after its close", 5000);
+	const second = await Promise.race([ref!.renewPane!("run-2"), sleep(2000).then(() => "still running" as const)]);
+	assert.equal(second, undefined, "the second renew is refused at once");
+	assert.equal(world.herdr.tabs.filter((t) => t.workspace_id === "wA" && t.label === TOWER_LABEL).length, 1, "the refused renew made no tab");
+	world.herdr.paneListGate = undefined;
+	open();
+	const pane = await first;
+	assert.ok(pane && pane !== ensured.pane, "the first renew finished in a new pane");
 });
