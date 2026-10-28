@@ -7,7 +7,7 @@ import { type Act, guarded, noticeRows } from "./towermodel.ts";
 
 // The tower service's notices and parked events with their buttons, drawn in the map's base card and again in the tower's comms, so a held tower shows its Retry wherever the boss looks.
 
-const LABEL: Record<Act, () => string> = { retry: m.tower_notice_retry, deliver: m.tower_deliver, drop: m.tower_drop, answer: m.tower_answer, undo: m.memory_undo, dismiss: m.memory_dismiss };
+const LABEL: Record<Act, () => string> = { retry: m.tower_notice_retry, deliver: m.tower_deliver, drop: m.tower_drop, answer: m.tower_answer, confirm: m.memory_confirm, reject: m.memory_reject };
 
 /** Redrawn only when the rows change, so a click never lands on a button that was replaced. */
 export function fillNotices(box: HTMLElement, ws: string, service: TowerService | undefined, key?: string) {
@@ -25,8 +25,8 @@ export function fillNotices(box: HTMLElement, ws: string, service: TowerService 
 				continue;
 			}
 			const button = h("button", { type: "button", class: "pair-btn" }, LABEL[action]());
-			// A run's change to the memory is undone or dismissed by the notice's id, at the memory route.
-			const [path, body] = r.notice && (action === "undo" || action === "dismiss") ? ["memory", { op: action, notice: r.notice }] : [action, r.event ? { id: r.event } : {}];
+			// A run's proposal is answered at the memory route, by its id (a confirm names the rev the snapshot carried).
+			const [path, body] = r.proposal && (action === "confirm" || action === "reject") ? ["memory", action === "confirm" ? { op: "confirm", proposal: r.proposal, rev: r.rev } : { op: "reject", proposal: r.proposal }] : [action, r.event ? { id: r.event } : {}];
 			button.onclick = () => void guarded(button, (text) => (fail.textContent = text ?? ""), () => post(`tower/${encodeURIComponent(ws)}/${path}`, body));
 			row.append(button);
 		}

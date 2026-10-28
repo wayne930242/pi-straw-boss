@@ -1,4 +1,4 @@
-import type { MemoryNotice, MemorySummary, TowerService } from "../src/net.ts";
+import type { MemoryProposal, MemorySummary, TowerService } from "../src/net.ts";
 import type { Mark } from "../src/netdata.ts";
 import { m } from "./paraglide/messages.js";
 import type { Answer } from "./post.ts";
@@ -40,9 +40,9 @@ export const statusLine = (service: TowerService | undefined, mk: Mark, word: Wo
 /** The count of messages the service holds for the next run. */
 export const queueChip = (service: TowerService | undefined, o?: Opts): string | undefined => (service?.queued ? m.tower_queued({ count: service.queued }, o) : undefined);
 
-export type Act = "retry" | "deliver" | "drop" | "answer" | "undo" | "dismiss";
-/** `notice`: a memory notice's id, which its Undo and Dismiss buttons name to the memory route. */
-export interface Row { id: string; level: "info" | "warning" | "error"; text: string; event?: string; notice?: string; actions: Act[] }
+export type Act = "retry" | "deliver" | "drop" | "answer" | "confirm" | "reject";
+/** `proposal`: a memory proposal's id and `rev` the snapshot carried, which its Confirm and Reject buttons name to the memory route. */
+export interface Row { id: string; level: "info" | "warning" | "error"; text: string; event?: string; proposal?: string; rev?: number; actions: Act[] }
 const START = "A run could not start: ", LATE = "An event was parked after two runs crashed with it: ";
 /** A notice the server wrote (English, src/server/runs.ts) in the page's language; one it does not know stays as written. The reasons inside (a path, a Herdr error) are the server's own text. */
 function noticeText(n: TowerService["notices"][number], o?: Opts): string {
@@ -56,7 +56,8 @@ export function noticeRows(service: TowerService | undefined, o?: Opts): Row[] {
 	return [
 		...(service?.notices ?? []).filter((n) => !n.id.startsWith("parked-")).map((n): Row => ({ id: n.id, level: n.level, text: noticeText(n, o), actions: n.kind === "loop" ? ["retry"] : [] })),
 		...(service?.memory?.bossWaits ?? []).map((w): Row => ({ id: `wait-${w.id}`, level: "warning", text: m.tower_waits_for_you({ text: w.text }, o), actions: ["answer"] })),
-		...(service?.memory?.notices ?? []).map((n): Row => ({ id: `memory-${n.id}`, level: "warning", text: memoryNoticeText(n, o), notice: n.id, actions: n.run ? ["undo", "dismiss"] : n.id === "unreadable" ? [] : ["dismiss"] })),
+		...(service?.memory?.proposals ?? []).map((p): Row => ({ id: `proposal-${p.id}`, level: "warning", text: proposalText(p, o), proposal: p.id, rev: service!.memory!.rev, actions: ["confirm", "reject"] })),
+		...(service?.memory?.problem ? [{ id: "memory-unreadable", level: "warning" as const, text: service.memory.problem, actions: [] }] : []),
 		...(service?.parked ?? []).map((p): Row => ({ id: `parked-${p.id}`, level: "warning", text: p.from ? m.tower_parked({ kind: p.kind, from: p.from, first: p.first }, o) : m.tower_parked_anon({ kind: p.kind, first: p.first }, o), event: p.id, actions: ["deliver", "drop"] })),
 	];
 }
@@ -89,8 +90,8 @@ export async function guarded(button: { disabled: boolean; textContent: string |
 // --- the tower's memory panel (src/server/towermemory.ts): the boss's standing instructions and decisions, verbatim, and the waits ------------------------------------------------------------
 
 /** An entry as the memory route answers it (`view` in towermemory.ts). */
-export interface MemoryEntry { id: string; kind: "standing" | "decision" | "wait"; text: string; by: "boss" | "run"; via: "gui" | "prompt" | "run"; at: string; for?: "boss" | "agent"; on?: string; state?: "open" | "answered" | "resolved" | "expired"; due?: string; answered?: string; outcome?: string; ended?: string }
-export interface MemoryView { rev: number; entries: MemoryEntry[]; notices: (MemoryNotice & { at: string })[] }
+export interface MemoryEntry { id: string; kind: "standing" | "decision" | "wait"; text: string; by: "boss" | "run"; via: "gui" | "proposal" | "run"; at: string; for?: "boss" | "agent"; on?: string; state?: "open" | "answered" | "resolved" | "expired"; due?: string; answered?: string; outcome?: string; ended?: string }
+export interface MemoryView { rev: number; entries: MemoryEntry[]; proposals: (MemoryProposal & { at: string })[] }
 /** The caps the server holds to (towermemory.ts MEM), shown beside the inputs. */
 export const MEMORY_CAP = { standing: 12, decision: 24 } as const;
 /** The memory in its three lists: standing in the order kept, decisions newest first, waits with the live ones before the ended. */
@@ -102,13 +103,13 @@ export function memoryGroups(entries: MemoryEntry[]) {
 		waits: entries.filter((e) => e.kind === "wait").sort((a, b) => Number(ended(a)) - Number(ended(b))),
 	};
 }
-/** What a run did to the memory, in the page's language; a notice that is not a run's change stays as the server wrote it. */
-export const memoryNoticeText = (n: Pick<MemoryNotice, "text" | "run">, o?: Opts): string => (n.run ? (n.run.op === "added" ? m.memory_note_added : m.memory_note_retired)({ id: n.run.entry, text: n.run.text }, o) : n.text);
+/** What a run proposes, in the page's language. */
+export const proposalText = (p: Pick<MemoryProposal, "op" | "kind" | "text" | "target">, o?: Opts): string => (p.op === "retire" ? m.memory_proposal_retire({ id: p.target ?? "", text: p.text }, o) : (p.kind === "standing" ? m.memory_proposal_add_standing : m.memory_proposal_add_decision)({ text: p.text }, o));
 /** The summary line of the closed panel. */
-export const memoryChip = (s: MemorySummary, o?: Opts) => m.memory_counts({ standing: s.standing, decisions: s.decisions, waits: s.waits }, o);
-/** Where an entry came from, and for a wait its state: a run's entry is a quote of the boss's words, a wait is the tower's own note. */
+export const memoryChip = (s: MemorySummary, o?: Opts) => (s.proposals.length ? m.memory_counts_pending({ standing: s.standing, decisions: s.decisions, waits: s.waits, proposals: s.proposals.length }, o) : m.memory_counts({ standing: s.standing, decisions: s.decisions, waits: s.waits }, o));
+/** Where an entry came from, and for a wait its state: an entry is the boss's words or a proposal the boss confirmed, a wait is the tower's own note. */
 export function memoryMeta(e: MemoryEntry, o?: Opts): string {
-	const from = e.kind === "wait" ? m.memory_by_run_note({}, o) : e.by === "run" ? m.memory_by_run({}, o) : m.memory_by_boss({}, o);
+	const from = e.kind === "wait" ? m.memory_by_run_note({}, o) : e.via === "proposal" ? m.memory_by_proposal({}, o) : m.memory_by_boss({}, o);
 	const who = e.kind !== "wait" ? undefined : e.for === "boss" ? m.memory_wait_boss({}, o) : m.memory_wait_agent({ who: e.on ?? "" }, o);
 	const state = e.state === "answered" ? m.memory_wait_answered({ who: e.on ?? "" }, o) : e.state === "resolved" ? m.memory_wait_resolved({ outcome: e.outcome ?? "" }, o) : e.state === "expired" ? m.memory_wait_expired({}, o) : undefined;
 	return [from, who, state].filter(Boolean).join(" · ");

@@ -51,21 +51,43 @@ function rowsOf(list: string[], rows: number, rowMax: number, budget: number): s
 	return out.length < list.length ? [...out, `(+${list.length - out.length} more)`] : out;
 }
 
+/** The room the memory keeps when the brief has to give up characters: the standing instructions and the head of the memory, which come first in its section. */
+export const MEMORY_FLOOR = 2700;
+/** A section cut to `limit` characters at a line, with `marker(n)` standing for the n lines left out; when not even its first line and the marker fit, `none` stands for all of it. */
+function shrink(text: string, limit: number, marker: (n: number) => string, none: string): string {
+	if (text.length <= limit) return text;
+	const lines = text.split("\n");
+	let kept = 0, used = 0;
+	while (kept < lines.length - 1 && used + lines[kept]!.length + 1 + marker(lines.length - kept).length <= limit) used += lines[kept++]!.length + 1;
+	return kept > 1 ? [...lines.slice(0, kept), marker(lines.length - kept)].join("\n") : none;
+}
+
 export function buildBrief(i: BriefInput): string {
 	const woke = (["intercom", "boss", "notice", "timer"] as const).flatMap((k) => (i.counts[k] ? [`${i.counts[k]} ${k}`] : []));
 	const who = cut(`You are a run of the tower of workspace ${i.label} (${i.workspace}); head tower: ${i.head || "none"}. Woken ${i.woken} by: ${woke.join(", ") || "nothing queued"}. Your identity for replies is ${i.identity}; everything you send leaves under it.`, CAPS.who);
-	const obligations = i.obligations.length ? ["Open obligations:", ...rowsOf(i.obligations, CAPS.obligations, 200, 2300)] : [];
-	const memory = i.memory ?? "";
-	const digest = i.digest.length ? ["Since your last run:", ...i.digest.slice(-CAPS.digest).map((l) => `- ${cut(one(l), CAPS.digestLine)}`), ...(i.digest.length > CAPS.digest ? [`(+${i.digest.length - CAPS.digest} older lines left out)`] : [])] : [];
-	const note = i.note ? [`Handoff note from the last run (${i.note.age} ago):`, cut(i.note.text, CAPS.note)] : [];
-	const tools = ["Tools:", ...i.tools, "Call tower_done with a handoff note when nothing is left for you."].join("\n");
-	const flags = [...i.flags, `A run ends after ${RUN_CAP_MINUTES} minutes.`];
-	const rest = [who, obligations.join("\n"), memory, digest.join("\n"), note.join("\n"), cut(tools, 4 * CAPS.tools), flags.join("\n")].filter(Boolean);
-	// The mains section takes what the others leave of the cap.
-	const room = Math.max(0, BRIEF_MAX - rest.join("\n\n").length - 2 - 24);
+	const obligations = i.obligations.length ? ["Open obligations:", ...rowsOf(i.obligations, CAPS.obligations, 200, 2300)].join("\n") : "";
+	const digest = i.digest.length ? ["Since your last run:", ...i.digest.slice(-CAPS.digest).map((l) => `- ${cut(one(l), CAPS.digestLine)}`), ...(i.digest.length > CAPS.digest ? [`(+${i.digest.length - CAPS.digest} older lines left out)`] : [])].join("\n") : "";
+	const note = i.note ? [`Handoff note from the last run (${i.note.age} ago):`, cut(i.note.text, CAPS.note)].join("\n") : "";
+	const tools = cut(["Tools:", ...i.tools, "Call tower_done with a handoff note when nothing is left for you."].join("\n"), 4 * CAPS.tools);
+	const flags = [...i.flags, `A run ends after ${RUN_CAP_MINUTES} minutes.`].join("\n");
 	const mainLines = i.mains.map((m) => (m.main ? `${m.tab}: main ${m.main.name} (${m.main.id.slice(0, 8)}) ${m.main.state}${m.main.openedBy ? `, opened by ${m.main.openedBy}` : ""}${m.main.now ? `; now: ${m.main.now}` : ""}${m.main.open ? ` (${m.main.open} open)` : ""}${m.members ? `; ${m.members} members` : ""}` : `${m.tab}: no main${m.members ? `; ${m.members} members` : ""}`));
-	const mains = ["Mains you supervise:", ...(mainLines.length ? rowsOf(mainLines, CAPS.mains, CAPS.mainRow, room) : ["- none: no tab of this workspace has joined"])];
-	return cut([who, mains.join("\n"), ...rest.slice(1)].join("\n\n"), BRIEF_MAX);
+	const mains = ["Mains you supervise:", ...(mainLines.length ? rowsOf(mainLines, CAPS.mains, CAPS.mainRow, 2400) : ["- none: no tab of this workspace has joined"])].join("\n");
+	// The tools, the tower_done line, the crash flags, and the 20-minute line are never cut. When the rest does not fit, the memory beyond its floor goes first, then the mains, the digest, the note, the rest of the memory, and the obligations.
+	const parts: Record<string, string> = { mains, obligations, memory: i.memory ?? "", digest, note };
+	const size = () => [who, ...Object.values(parts), tools, flags].filter(Boolean).join("\n\n").length;
+	const MORE = (n: number) => `(+${n} more)`, left = (what: string) => `${what}: left out to fit the brief.`;
+	const pass = (name: string, floor: number, marker: (n: number) => string, none: string) => {
+		const over = size() - BRIEF_MAX;
+		if (over > 0 && parts[name]) parts[name] = shrink(parts[name]!, Math.max(floor, parts[name]!.length - over), marker, none);
+	};
+	const memoryMarker = (n: number) => `(+${n} more lines in memory: tower_memory read)`, memoryNone = "Memory: left out to fit the brief; call tower_memory read.";
+	pass("memory", MEMORY_FLOOR, memoryMarker, memoryNone);
+	pass("mains", 0, MORE, left("Mains you supervise"));
+	pass("digest", 0, MORE, left("Since your last run"));
+	pass("note", 0, MORE, left("Handoff note"));
+	pass("memory", 0, memoryMarker, memoryNone);
+	pass("obligations", 0, MORE, left("Open obligations"));
+	return cut([who, parts.mains, parts.obligations, parts.memory, parts.digest, parts.note, tools, flags].filter(Boolean).join("\n\n"), BRIEF_MAX);
 }
 
 /** `3m`, `2h`, `1d 4h`: how long ago, for a note or an event. */
@@ -118,7 +140,7 @@ export const LOCAL_TOOLS = [
 	"- boss_status and call_tower route inside your workspace; tower_send writes to another tower (workspace) or, with device, to a teammate's tower; tower_reply answers one local session by id or name.",
 	"- boss_open_main opens a main for a request no session owns; boss_close_main closes one you opened, after its done report.",
 	"- boss_server: the sb server's status, its log, and its restart.",
-	"- tower_memory keeps what outlives runs: a boss's standing instruction or decision only as a verbatim quote of a boss message you took, and your waits (add, resolve, drop).",
+	"- tower_memory keeps what outlives runs: you only propose the boss's standing instruction or decision (the boss confirms it in the GUI or /boss memory), and you keep your waits (add, resolve, drop); read lists it all.",
 	"- tower_done ends your run. A main's result comes back as a new event, so do not wait for it.",
 ];
 

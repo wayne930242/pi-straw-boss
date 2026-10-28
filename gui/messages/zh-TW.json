@@ -615,9 +615,7 @@
 	"memory_cancel": "取消",
 	"memory_delete": "刪除",
 	"memory_resolve": "標為已處理",
-	"memory_ack": "清除通知",
 	"memory_by_boss": "你的原話",
-	"memory_by_run": "run 引述你的原話保存",
 	"memory_by_run_note": "塔台自己的備註",
 	"memory_wait_boss": "等你決定",
 	"memory_wait_agent": "等 {who}",
@@ -627,8 +625,13 @@
 	"memory_rev": "你讀到記憶之後它又有變動，所以重新顯示了。請再試一次。",
 	"memory_failed": "記憶拒絕了：{reason}",
 	"memory_counts": "{standing} 常駐指示・{decisions} 決定・{waits} 等待",
-	"memory_note_added": "塔台從你的訊息保存了 {id}：{text}",
-	"memory_note_retired": "塔台依你的話撤掉了 {id}：{text}",
-	"memory_undo": "復原",
-	"memory_dismiss": "知道了"
+	"memory_pending": "塔台提議，等你確認",
+	"memory_confirm": "確認",
+	"memory_reject": "駁回",
+	"memory_proposal_add_standing": "塔台提議一則常駐指示：{text}",
+	"memory_proposal_add_decision": "塔台提議一項決定：{text}",
+	"memory_proposal_retire": "塔台提議撤掉 {id}：{text}",
+	"memory_cites": "引自你的訊息：{text}",
+	"memory_by_proposal": "塔台提議，你確認",
+	"memory_counts_pending": "{standing} 常駐指示・{decisions} 決定・{waits} 等待・{proposals} 則待你確認"
 }

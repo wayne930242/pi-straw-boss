@@ -889,7 +889,7 @@ export function createRuns(o: RunsOptions) {
 			const svc = find(workspace);
 			return svc?.run?.rec.file ?? listRuns(slot, workspace).filter((r) => r.kind === "local" && r.file).at(-1)?.file;
 		},
-		/** The boss messages a local run took, oldest first: the evidence the memory's quote rule checks against (towermemory.ts). A message offered and not confirmed is not one. */
+		/** The boss messages a local run took, oldest first: the ones a memory proposal may cite (towermemory.ts). A message offered and not confirmed is not one. */
 		bossEvents(token: unknown): { id: string; text: string }[] {
 			const a = of(token);
 			if (!a || a.ended || a.rec.kind !== "local") return [];

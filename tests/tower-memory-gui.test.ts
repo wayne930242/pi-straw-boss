@@ -13,7 +13,8 @@ const { m } = await import("../gui/paraglide/messages.js");
 
 interface Sent { path: string; body: Record<string, unknown>; csrf: string }
 type Entry = { id: string; kind: string; text: string; by: string; via: string; at: string; for?: string; on?: string; state?: string; outcome?: string };
-let memory: { rev: number; entries: Entry[]; notices: { id: string; text: string; at: string; run?: { op: string; entry: string; kind: string; text: string } }[] };
+type Proposal = { id: string; op: "add" | "retire"; kind: "standing" | "decision"; text: string; target?: string; cites?: string; at: string };
+let memory: { rev: number; entries: Entry[]; proposals: Proposal[] };
 let sent: Sent[];
 let lag: "rev" | undefined;
 const entry = (id: string, kind: string, text: string, over: Partial<Entry> = {}): Entry => ({ id, kind, text, by: "boss", via: "gui", at: "2026-10-28T10:00:00Z", ...over });
@@ -24,20 +25,24 @@ Object.assign(globalThis, {
 		const body = JSON.parse(init.body) as Record<string, unknown>;
 		sent.push({ path, body, csrf: init.headers["x-sb-csrf"]! });
 		if (body.op === "read") return answer(200, memory);
-		if (body.op === "undo" || body.op === "dismiss") return answer(200, (memory.notices = memory.notices.filter((n) => n.id !== body.notice)) && memory);
+		if (body.op === "reject") return answer(200, (memory.proposals = memory.proposals.filter((p) => p.id !== body.proposal)) && memory);
 		if (lag === "rev" || body.rev !== memory.rev) return answer(409, { error: "rev", reason: "The memory changed since you read it", ...memory });
 		if (body.op === "add") memory.entries.push(entry(`${body.kind === "standing" ? "S" : "D"}${memory.entries.length + 1}`, String(body.kind), String(body.text).trim()));
 		if (body.op === "delete") memory.entries = memory.entries.filter((e) => e.id !== body.id);
 		if (body.op === "edit") memory.entries = memory.entries.map((e) => (e.id === body.id ? { ...e, text: String(body.text) } : e));
 		if (body.op === "resolve") memory.entries = memory.entries.map((e) => (e.id === body.id ? { ...e, state: "resolved", outcome: String(body.outcome ?? "") } : e));
-		if (body.op === "ack") memory.notices = [];
+		if (body.op === "confirm") {
+			const p = memory.proposals.find((x) => x.id === body.proposal)!;
+			memory.proposals = memory.proposals.filter((x) => x !== p);
+			memory.entries = p.op === "retire" ? memory.entries.filter((e) => e.id !== p.target) : [...memory.entries, entry(`${p.kind === "standing" ? "S" : "D"}${memory.entries.length + 1}`, p.kind, p.text, { via: "proposal" })];
+		}
 		memory.rev++;
 		return answer(200, memory);
 	},
 });
 afterEach(() => void (sent = []));
-const reset = () => ((sent = []), (lag = undefined), (memory = { rev: 3, entries: [entry("S1", "standing", "部署發版都授權"), entry("D1", "decision", "ws01 先上 beta.67"), entry("D2", "decision", "正式區等週一", { by: "run" }), entry("W1", "wait", "api-fix asks: deploy?", { by: "run", via: "run", for: "boss", state: "open" })], notices: [] }));
-const summary = (over: Partial<MemorySummary> = {}): MemorySummary => ({ rev: 3, standing: 1, decisions: 2, waits: 1, bossWaits: [], notices: [], ...over });
+const reset = () => ((sent = []), (lag = undefined), (memory = { rev: 3, entries: [entry("S1", "standing", "部署發版都授權"), entry("D1", "decision", "ws01 先上 beta.67"), entry("D2", "decision", "正式區等週一", { via: "proposal" }), entry("W1", "wait", "api-fix asks: deploy?", { by: "run", via: "run", for: "boss", state: "open" })], proposals: [] }));
+const summary = (over: Partial<MemorySummary> = {}): MemorySummary => ({ rev: 3, standing: 1, decisions: 2, waits: 1, bossWaits: [], proposals: [], ...over });
 const settle = () => new Promise((done) => setTimeout(done, 5));
 const open = async (box: El) => {
 	const details = box.find((el) => el.tag === "details")[0]!;
@@ -61,7 +66,7 @@ test("the closed panel is one line of counts from the snapshot's summary, nothin
 	assert.equal(box.hidden, true);
 });
 
-test("opening reads the memory: standing in the order kept, decisions newest first, waits; the caps beside the lists; each text only text; a run's entry says it is the boss's words kept by a run", async () => {
+test("opening reads the memory: standing in the order kept, decisions newest first, waits; the caps beside the lists; each text only text; an entry confirmed from a proposal says so", async () => {
 	reset();
 	memory.entries.push(entry("S2", "standing", "<img src=x onerror=alert(1)>"));
 	const box = new El("div");
@@ -71,8 +76,8 @@ test("opening reads the memory: standing in the order kept, decisions newest fir
 	assert.deepEqual(texts(box, "tmem-text"), ["部署發版都授權", "<img src=x onerror=alert(1)>", "正式區等週一", "ws01 先上 beta.67", "api-fix asks: deploy?"]);
 	assert.equal(box.find((el) => el.tag === "img").length, 0, "no markup from a text");
 	assert.deepEqual(box.find((el) => el.tag === "h4").map((h) => h.textContent), [`${m.memory_standing()}2/12`, `${m.memory_decisions()}2/24`, m.memory_waits()]);
-	const meta = box.find((el) => el.tag === "small" && el.kids.length === 1 && /·|your|你/.test(el.textContent)).map((e) => e.textContent);
-	assert.ok(meta.includes(m.memory_by_run()), "the quote a run kept is marked");
+	const meta = box.find((el) => el.tag === "small" && el.kids.length === 1 && /·|your|你|proposed/.test(el.textContent)).map((e) => e.textContent);
+	assert.ok(meta.includes(m.memory_by_proposal()), "an entry the boss confirmed from a proposal is marked");
 });
 
 test("a change names the rev the panel read and the panel shows what the server answered", async () => {
@@ -147,55 +152,54 @@ test("while it is open the panel reads again only when the snapshot's rev moved"
 	assert.ok(texts(box, "tmem-text").includes("from the terminal"));
 });
 
-test("a dropped decision's notice shows with a button that dismisses it", async () => {
+const adds: Proposal = { id: "P1", op: "add", kind: "standing", text: "never force push", cites: "Never force push, please. Thanks.", at: "2026-10-28T10:00:00Z" };
+const retires: Proposal = { id: "P2", op: "retire", kind: "decision", text: "ws01 先上 beta.67", target: "D1", at: "2026-10-28T10:00:00Z" };
+const card = (over: Partial<MemorySummary> = {}): TowerService => ({ state: "standing", queued: 0, allyRuns: [], notices: [], parked: [], memory: summary({ proposals: [adds, retires], ...over }) });
+test("a run's proposal is a row on the tower card with Confirm and Reject, in the page's language; Confirm posts the rev the snapshot carries, Reject only the proposal's id", async () => {
 	reset();
-	memory.notices = [{ id: "D1", text: "Decision D1 was dropped to keep 24: old", at: "2026-10-28T10:00:00Z" }];
-	const box = new El("div");
-	draw(box, summary({ notices: [{ id: "D1", text: "Decision D1 was dropped to keep 24: old" }] }));
-	await open(box);
-	assert.ok(box.find((el) => el.attrs.get("class") === "tmem-note")[0]!.textContent.includes("Decision D1 was dropped"));
-	click(box, m.memory_ack());
-	await settle();
-	assert.deepEqual(sent.at(-1)!.body, { op: "ack", rev: 3 });
-	assert.equal(box.find((el) => el.attrs.get("class") === "tmem-note").length, 0);
-});
-
-const kept = { id: "n-1", text: "The tower kept S2 from your message: never force push", at: "2026-10-28T10:00:00Z", run: { op: "added", entry: "S2", kind: "standing", text: "never force push" } } as const;
-test("T3R-F001 a run's change is a notice on the tower card with Undo and Dismiss, in the page's language; both post to the memory route with the notice's id", async () => {
-	reset();
-	const service: TowerService = { state: "standing", queued: 0, allyRuns: [], notices: [], parked: [], memory: summary({ notices: [kept, { id: "n-2", text: "The tower retired D1 on your words: old", run: { op: "retired", entry: "D1", kind: "decision", text: "old" } as const }] }) };
+	memory.proposals = [adds, retires];
+	const service = card();
 	assert.deepEqual(noticeRows(service).map((r) => [r.id, r.text, r.actions]), [
-		["memory-n-1", m.memory_note_added({ id: "S2", text: "never force push" }), ["undo", "dismiss"]],
-		["memory-n-2", m.memory_note_retired({ id: "D1", text: "old" }), ["undo", "dismiss"]],
+		["proposal-P1", m.memory_proposal_add_standing({ text: "never force push" }), ["confirm", "reject"]],
+		["proposal-P2", m.memory_proposal_retire({ id: "D1", text: "ws01 先上 beta.67" }), ["confirm", "reject"]],
 	]);
-	assert.equal(noticeRows(service, { locale: "zh-TW" })[0]!.text, "塔台從你的訊息保存了 S2：never force push");
-	memory.notices = [kept];
+	assert.equal(noticeRows(service, { locale: "zh-TW" })[0]!.text, "塔台提議一則常駐指示：never force push");
+	assert.equal(noticeRows(service, { locale: "zh-TW" })[1]!.text, "塔台提議撤掉 D1：ws01 先上 beta.67");
 	const box = new El("div");
 	fillNotices(box as unknown as HTMLElement, "wA", service, "sb-tower-wa");
-	click(box, m.memory_undo());
+	click(box, m.memory_confirm());
 	await settle();
-	assert.deepEqual(sent.map((x) => [x.path, x.body]), [["api/tower/wA/memory", { op: "undo", notice: "n-1" }]]);
-	click(box, m.memory_dismiss());
+	assert.deepEqual(sent.map((x) => [x.path, x.body]), [["api/tower/wA/memory", { op: "confirm", proposal: "P1", rev: 3 }]]);
+	assert.deepEqual(memory.entries.at(-1)!.text, "never force push", "it took effect through the memory route");
+	click(box, m.memory_reject());
 	await settle();
-	assert.deepEqual(sent.at(-1)!.body, { op: "dismiss", notice: "n-1" });
+	assert.deepEqual(sent.at(-1)!.body, { op: "reject", proposal: "P1" });
 });
 
-test("a memory file the server cannot read is a row on the card with no button: nothing in it can be dismissed", () => {
-	const service: TowerService = { state: "standing", queued: 0, allyRuns: [], notices: [], parked: [], memory: summary({ notices: [{ id: "unreadable", text: "memory.json cannot be read (EACCES)" }] }) };
+test("a memory file the server cannot read is a row on the card with no button", () => {
+	const service: TowerService = { state: "standing", queued: 0, allyRuns: [], notices: [], parked: [], memory: summary({ problem: "memory.json cannot be read (EACCES)" }) };
 	assert.deepEqual(noticeRows(service).map((r) => [r.text, r.actions]), [["memory.json cannot be read (EACCES)", []]]);
 });
 
-test("T3R-F001 the open panel lists a run's change with Undo and Dismiss beside it", async () => {
+test("the open panel lists the proposals first, each with what it cites, Confirm and Reject; Confirm names the rev the panel read, Reject does not, and the panel is drawn again from the answer", async () => {
 	reset();
-	memory.notices = [kept];
+	memory.proposals = [adds, retires];
 	const box = new El("div");
-	draw(box, summary({ notices: [kept] }));
+	draw(box, summary({ proposals: [adds, retires] }));
 	await open(box);
-	assert.ok(texts(box, "tmem-note").some((t) => t.includes(m.memory_note_added({ id: "S2", text: "never force push" }))));
-	click(box, m.memory_undo());
+	assert.deepEqual(box.find((el) => el.tag === "h4").map((h) => h.textContent)[0], m.memory_pending());
+	assert.ok(texts(box, "tmem-text").slice(0, 2).join("|").includes("never force push"));
+	assert.ok(texts(box, "tmem-note").concat(box.find((el) => el.tag === "small").map((e) => e.textContent)).some((t) => t.includes(m.memory_cites({ text: "Never force push, please. Thanks." }))));
+	click(box, m.memory_confirm());
 	await settle();
-	assert.deepEqual(sent.at(-1)!.body, { op: "undo", notice: "n-1" });
-	assert.equal(box.find((el) => el.attrs.get("class") === "tmem-note").length, 0, "the panel is drawn again from the answer");
+	assert.deepEqual(sent.at(-1)!.body, { op: "confirm", proposal: "P1", rev: 3 });
+	assert.ok(texts(box, "tmem-text").includes("never force push"));
+	assert.equal(box.find((el) => el.tag === "button" && el.textContent === m.memory_confirm()).length, 1, "only P2 is left");
+	click(box, m.memory_reject());
+	await settle();
+	assert.deepEqual(sent.at(-1)!.body, { op: "reject", proposal: "P2" });
+	assert.equal(box.find((el) => el.tag === "button" && el.textContent === m.memory_confirm()).length, 0);
+	assert.equal(box.find((el) => el.tag === "h4" && el.textContent === m.memory_pending()).length, 0, "no pending section without proposals");
 });
 
 test("a wait for the boss is a notice on the tower card with an Answer link to the comms; waits for agents are not", () => {
@@ -215,8 +219,9 @@ test("the model: groups, the chip, the words for where an entry came from, and t
 	const groups = memoryGroups([entry("S1", "standing", "a") as never, entry("D1", "decision", "b") as never, entry("D2", "decision", "c") as never, entry("W1", "wait", "d", { state: "resolved" }) as never, entry("W2", "wait", "e", { state: "open" }) as never]);
 	assert.deepEqual([groups.standing.length, groups.decisions.map((e) => e.id), groups.waits.map((e) => e.id)], [1, ["D2", "D1"], ["W2", "W1"]]);
 	assert.equal(memoryChip(summary(), { locale: "zh-TW" }), "1 常駐指示・2 決定・1 等待");
+	assert.equal(memoryChip(summary({ proposals: [adds] }), { locale: "zh-TW" }), "1 常駐指示・2 決定・1 等待・1 則待你確認");
 	assert.equal(memoryMeta(entry("S1", "standing", "a") as never), "your words");
-	assert.equal(memoryMeta(entry("D1", "decision", "a", { by: "run" }) as never, { locale: "zh-TW" }), "run 引述你的原話保存");
+	assert.equal(memoryMeta(entry("D1", "decision", "a", { via: "proposal" }) as never, { locale: "zh-TW" }), "塔台提議，你確認");
 	assert.match(memoryMeta(entry("W1", "wait", "a", { for: "agent", on: "docs-main", state: "answered" }) as never), /the tower's note · waits for docs-main · answered\? a message came from docs-main/);
 	assert.equal(memoryWhy({ status: 409, body: { error: "rev", reason: "x" } }), m.memory_rev());
 	assert.equal(memoryWhy({ status: 409, body: { error: "refused", reason: "12 standing instructions are kept already" } }), "12 standing instructions are kept already");

@@ -396,6 +396,8 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 				const body = text(request.text, 16_384);
 				return workspace && body ? answer(async (t) => ({ queued: t.runs.boss(workspace, body).id })) : Promise.resolve({ ok: false, error: "tower-event needs a workspace and text" });
 			}
+			// The boss's memory (towermemory.ts `memoryRequest`): `/boss memory` in a pi session is the GUI panel's request on the same function. A run's token never gets here (rungate.ts refuses it).
+			case "tower-memory": return workspace && typeof request.json === "object" && request.json !== null ? answer(async (t) => ({ ...t.memory(workspace, request.json as Record<string, unknown>) })) : Promise.resolve({ ok: false, error: "tower-memory needs a workspace and a request" });
 			case "tower-retry": return workspace ? answer(async (t) => (t.runs.retry(workspace), {})) : Promise.resolve({ ok: false, error: "tower-retry needs a workspace" });
 			case "tower-deliver": case "tower-drop": {
 				const id = text(request.id, 64);

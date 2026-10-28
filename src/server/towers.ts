@@ -155,7 +155,7 @@ export function createTowers(o: TowersOptions): Towers {
 		shown: (ids) => { try { markShown(slot, l.record.workspace, now(), ids); } catch (cause) { error("memory", (cause as Error).message); } },
 		memory: () => {
 			const { memory, problem } = readMemory(slot, l.record.workspace, now());
-			return { ...memorySummary(memory, now()), ...(problem ? { notices: [{ id: "unreadable", text: problem }] } : {}) };
+			return { ...memorySummary(memory), ...(problem ? { problem } : {}) };
 		},
 		allyLine: (item) => {
 			const mine = { name: l.record.name, id: l.record.id, role: "tower" as const, workspace: l.record.label };

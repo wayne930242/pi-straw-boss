@@ -2,10 +2,11 @@ import type { MemorySummary } from "../src/net.ts";
 import { h } from "./dom.ts";
 import { m } from "./paraglide/messages.js";
 import { post } from "./post.ts";
-import { MEMORY_CAP, type MemoryEntry, type MemoryView, memoryChip, memoryGroups, memoryMeta, memoryNoticeText, memoryWhy } from "./towermodel.ts";
+import { MEMORY_CAP, type MemoryEntry, type MemoryView, memoryChip, memoryGroups, memoryMeta, memoryWhy, proposalText } from "./towermodel.ts";
 
-// The tower's memory in its comms (src/server/towermemory.ts): the boss's standing instructions and decisions, verbatim, and the tower's waits. The boss adds, edits, and deletes here; every change names the rev it
-// read, and a memory that moved on is shown again with a line saying so. All text is set as text: no Markdown, no links, no HTML.
+// The tower's memory in its comms (src/server/towermemory.ts): the boss's standing instructions and decisions, the tower's waits, and what runs propose. It mirrors `/boss memory` (src/memorycmd.ts): the same server op,
+// nothing of its own. The boss confirms or rejects a proposal, adds, edits, and deletes here; every change but a reject names the rev it read, and a memory that moved on is shown again with a line saying so.
+// All text is set as text: no Markdown, no links, no HTML.
 
 interface Panel { ws: string; details: HTMLDetailsElement; label: HTMLElement; body: HTMLElement; view?: MemoryView; seen?: number; note: string; edit?: string }
 const panels = new WeakMap<HTMLElement, Panel>();
@@ -41,15 +42,15 @@ async function load(p: Panel, answer?: { ok: boolean; status: number; body: Reco
 const change = async (p: Panel, body: Record<string, unknown>) => {
 	p.note = "";
 	p.edit = undefined;
-	// A notice is named by its id and needs no rev: it stays the same whatever else moved.
-	const r = await post(`tower/${encodeURIComponent(p.ws)}/memory`, body.op === "undo" || body.op === "dismiss" ? body : { ...body, rev: p.view?.rev ?? 0 }).catch(() => undefined);
+	// A proposal is rejected by its id (never reused), which needs no rev.
+	const r = await post(`tower/${encodeURIComponent(p.ws)}/memory`, body.op === "reject" ? body : { ...body, rev: p.view?.rev ?? 0 }).catch(() => undefined);
 	return load(p, r ?? { ok: false, status: 0, body: { reason: m.unreachable() } });
 };
 
 function draw(p: Panel) {
 	const view = p.view;
 	if (!view) return;
-	const groups = memoryGroups(view.entries), line = (text: string, ...kids: Node[]) => h("p", { class: "tmem-note" }, h("span", null, text), ...kids);
+	const groups = memoryGroups(view.entries);
 	const button = (label: string, run: () => void) => Object.assign(h("button", { type: "button", class: "pair-btn" }, label), { onclick: run });
 	const row = (e: MemoryEntry) => {
 		const ended = e.state === "resolved" || e.state === "expired", li = h("li", { class: ended ? "tmem-ended" : "" });
@@ -68,9 +69,10 @@ function draw(p: Panel) {
 		return h("div", { class: "tmem-add" }, input, button(m.memory_add(), () => input.value.trim() && void change(p, { op: "add", kind, text: input.value })));
 	};
 	const section = (title: string, rows: MemoryEntry[], more: Node[], cap?: string) => h("section", null, h("h4", null, title, cap && h("small", null, cap)), rows.length ? h("ul", null, ...rows.map(row)) : h("p", { class: "tmem-empty" }, m.memory_empty()), ...more);
+	const proposals = view.proposals ?? [];
+	const proposal = (x: (typeof proposals)[number]) => h("li", null, h("span", { class: "tmem-text" }, proposalText(x)), ...(x.cites ? [h("small", null, m.memory_cites({ text: x.cites }))] : []), button(m.memory_confirm(), () => void change(p, { op: "confirm", proposal: x.id })), button(m.memory_reject(), () => void change(p, { op: "reject", proposal: x.id })));
 	p.body.replaceChildren(
-		...view.notices.map((n) => line(memoryNoticeText(n), ...(n.run ? [button(m.memory_undo(), () => void change(p, { op: "undo", notice: n.id }))] : []), button(m.memory_dismiss(), () => void change(p, { op: "dismiss", notice: n.id })))),
-		...(view.notices.length ? [button(m.memory_ack(), () => void change(p, { op: "ack" }))] : []),
+		...(proposals.length ? [h("section", null, h("h4", null, m.memory_pending()), h("ul", null, ...proposals.map(proposal)))] : []),
 		section(m.memory_standing(), groups.standing, [add("standing")], `${groups.standing.length}/${MEMORY_CAP.standing}`),
 		section(m.memory_decisions(), groups.decisions, [add("decision")], `${groups.decisions.length}/${MEMORY_CAP.decision}`),
 		section(m.memory_waits(), groups.waits, []),

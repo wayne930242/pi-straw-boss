@@ -755,9 +755,7 @@
 	"memory_cancel": "Cancel",
 	"memory_delete": "Delete",
 	"memory_resolve": "Resolve",
-	"memory_ack": "Dismiss notices",
 	"memory_by_boss": "your words",
-	"memory_by_run": "a run kept your words",
 	"memory_by_run_note": "the tower's note",
 	"memory_wait_boss": "waits for you",
 	"memory_wait_agent": "waits for {who}",
@@ -767,8 +765,13 @@
 	"memory_rev": "The memory changed since you read it, so it is shown again. Try once more.",
 	"memory_failed": "The memory refused it: {reason}",
 	"memory_counts": "{standing} standing · {decisions} decisions · {waits} waits",
-	"memory_note_added": "The tower kept {id} from your message: {text}",
-	"memory_note_retired": "The tower retired {id} on your words: {text}",
-	"memory_undo": "Undo",
-	"memory_dismiss": "Dismiss"
+	"memory_pending": "Proposed by the tower, waiting for you",
+	"memory_confirm": "Confirm",
+	"memory_reject": "Reject",
+	"memory_proposal_add_standing": "The tower proposes a standing instruction: {text}",
+	"memory_proposal_add_decision": "The tower proposes a decision: {text}",
+	"memory_proposal_retire": "The tower proposes to retire {id}: {text}",
+	"memory_cites": "From your message: {text}",
+	"memory_by_proposal": "proposed by the tower, confirmed by you",
+	"memory_counts_pending": "{standing} standing · {decisions} decisions · {waits} waits · {proposals} to confirm"
 }

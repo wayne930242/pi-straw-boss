@@ -57,7 +57,7 @@ export interface ToolHost {
 	isTower(session: string): Promise<boolean>;
 	/** The live main of this tower's workspace named by id or name (a local run asks for it); throws when there is none or it is ambiguous. */
 	mainOf(query: string): Promise<{ id: string; name: string }>;
-	/** `tower_memory` of a local run (towermemory.ts): the quote rule is checked there against the boss messages this run took. */
+	/** `tower_memory` of a local run (towermemory.ts): it proposes, and the boss confirms elsewhere. */
 	memory(args: Record<string, unknown>): Promise<ToolResult>;
 	now(): number;
 }
