@@ -34,7 +34,7 @@ export async function readBoard(o: BoardReadInput): Promise<Record<string, unkno
 		// In a remote turn: only entries of mains inside the project the senders' teams bind. An ended entry has no directory to prove it, so it stays out.
 		// And as the allies get them: an auto-filled entry as the main's name and done count only.
 		if (scope) rows = rows.filter((r) => scope.project !== undefined && r.cwd !== undefined && inside(r.cwd, scope.project)).map((r) => (r.now === undefined ? r : { ...r, ...forAllies({ now: r.now, items: r.items, src: r.src ?? "set", count: r.count, who: r.who }) }));
-		out.local = rows.map((r) => ({ workspace: r.workspace, tab: r.tab, main: scope ? clean(scrubBoard(r.main), 40) : r.main, state: r.state, ...(r.now ? { now: r.now } : {}), items: r.items, ...(r.updatedSecondsAgo !== undefined ? { updatedSecondsAgo: r.updatedSecondsAgo } : {}) }));
+		out.local = rows.map((r) => ({ workspace: scope ? clean(scrubBoard(r.workspace), 40) : r.workspace, tab: scope ? clean(scrubBoard(r.tab), 40) : r.tab, main: scope ? clean(scrubBoard(r.main), 40) : r.main, state: r.state, ...(r.now ? { now: r.now } : {}), items: r.items, ...(r.updatedSecondsAgo !== undefined ? { updatedSecondsAgo: r.updatedSecondsAgo } : {}) }));
 	}
 	if (o.scope !== "local" || o.device !== undefined) {
 		// Senders of several teams get no ally rows, the same rule as for the local part.

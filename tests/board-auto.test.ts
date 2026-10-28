@@ -373,6 +373,9 @@ test("board_read in a remote turn and an ally run's brief show an auto entry as 
 		const gather = (within?: { project: string }) => gatherMains({ run, now: Date.now, sessions: () => world.broker.sessionList(), boardDir: boardDir(), workspace: { workspace_id: "wA", label: "Alpha" } as never, ledger: [], ...(within ? { within } : {}) });
 		const nowOf = (g: Awaited<ReturnType<typeof gatherMains>>) => g.rows.flatMap((r) => (r.main ? [[r.main.name, r.main.now, r.main.open]] : [])).sort();
 		assert.deepEqual(nowOf(await gather()), [["api-main", "api-main: Writing the CSV writer", 2], ["set-main", "manual line", 1]], "the local run: the line and the open count");
+		world.herdr.tabs.find((t) => t.tab_id === "wA:t1")!.label = "tab /etc/secret";
+		assert.ok(!JSON.stringify((await gather({ project })).rows).includes("/etc/secret"), "an ally run: no path in a tab label");
+		assert.ok(JSON.stringify((await gather()).rows).includes("/etc/secret"), "the local run keeps the raw tab label");
 		assert.deepEqual(nowOf(await gather({ project })), [["api-main", "api-main (1/3)", 0], ["set-main", "manual line", 1]], "an ally run: the name and the done count, and no open count (the brief omits a zero)");
 	} finally {
 		rmSync(project, { recursive: true, force: true });

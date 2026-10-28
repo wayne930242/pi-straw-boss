@@ -1006,7 +1006,7 @@ export class LinkHolder {
 			const pane = panes.get(x.herdrLocation?.paneId ?? "");
 			if (pane?.tokens?.sb_role !== "main" || !pane.cwd || !inside(pane.cwd, project)) return [];
 			const e = byId.get(x.id), shown = e && forAllies(e); // an auto-filled entry leaves as the main's name and done count only (spec, Work board, Sharing)
-			return [{ id: wireId(device, x.id), workspace: x.herdrLocation?.workspace?.label ?? "", tab: x.herdrLocation?.tab?.label ?? "", name: clean(scrubBoard(x.name ?? ""), 40), now: shown?.now ?? "", updated: e?.updated ?? 0, items: shown?.items ?? [] }];
+			return [{ id: wireId(device, x.id), workspace: clean(scrubBoard(x.herdrLocation?.workspace?.label ?? ""), BOARD.label), tab: clean(scrubBoard(x.herdrLocation?.tab?.label ?? ""), BOARD.label), name: clean(scrubBoard(x.name ?? ""), 40), now: shown?.now ?? "", updated: e?.updated ?? 0, items: shown?.items ?? [] }];
 		}).sort((a, b) => b.updated - a.updated).slice(0, LIMITS.boardEntries);
 	}
 

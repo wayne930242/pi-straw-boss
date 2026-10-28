@@ -150,3 +150,15 @@ test("senders of two teams in one remote turn get no ally rows from board_read o
 	assert.deepEqual((await read(b.c.tower)).remote, [], "two teams: no ally rows");
 	assert.deepEqual((await listOf()).remote, [], "two teams: no ally towers");
 });
+
+test("tab and workspace labels with a path never reach the wire or a remote turn", async () => {
+	const a = await setup("a", [{ id: "lbl-a", name: "lbl main", inside: true }]);
+	const b = await setup("b", []);
+	await until(() => a.c.server.service.status().active && b.c.server.service.status().active, "both holders");
+	await a.agents[0]!.tool("board_set", { now: "MP-3 line", items: [{ t: "x", done: false }] });
+	a.c.world.herdr.tabs.find((t) => t.tab_id === "wA:t1")!.label = "tab /etc/secret";
+	a.c.world.herdr.workspaces.find((w) => w.workspace_id === "wA")!.label = "ws /etc/secret";
+	let rows: Row[] = [];
+	await until(async () => ((rows = (await read(b.c.tower)).remote?.[0]?.entries ?? []), rows.length === 1 && Boolean(rows[0]!.now)), "the entry at B");
+	assert.ok(!JSON.stringify(rows).includes("/etc/secret"), "no path in any label at B");
+});
