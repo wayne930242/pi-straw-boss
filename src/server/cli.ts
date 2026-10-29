@@ -260,7 +260,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 				let kept: DeskRecord | undefined;
 				if (typeof known === "object" && (await workspaces(herdr)).some((w) => w.workspace_id === known.workspace)) {
 					if (await stillBase(herdr, known)) kept = known;
-					else warnings.push({ code: "desk_base_replaced", text: `workspace ${known.workspace} is no longer the home base recorded in ${fileOf(slot, "desk")} (no tower tab, none of its panes in ${known.dir}); a new base is made` });
+					else warnings.push({ code: "desk_base_replaced", text: `workspace ${known.workspace} is no longer the home base recorded in ${fileOf(slot, "desk")} (not labelled "${known.label}", none of its panes in ${known.dir}); a new base is made` });
 				}
 				// The folder is judged only for a base that is made; a kept base keeps its own.
 				const base = kept ?? (await makeBase(herdr, ctx, baseFolder(dirFlag), label));

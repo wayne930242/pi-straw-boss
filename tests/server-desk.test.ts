@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, rmdirSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, rmdirSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
@@ -225,6 +225,12 @@ test("a second run while one holds desk.lock is exit 1 at base with busy; a lock
 	assert.match(String(busy.errJson?.reason), /busy/);
 	assert.equal(created().length, 0);
 	assert.ok(existsSync(lock), "another run's lock is left alone");
+	// Five minutes old and its process runs: still held (the age bound is ten minutes, not the server lock's two).
+	writeFileSync(lock, JSON.stringify({ pid: holder, by: "up --dir", since: new Date(Date.now() - 5 * 60_000).toISOString() }));
+	const young = await up();
+	assert.equal(young.code, 1);
+	assert.match(String(young.errJson?.reason), /busy/);
+	assert.ok(existsSync(lock), "a live holder's lock of five minutes is left alone");
 	// Older than ten minutes, though its process still runs.
 	writeFileSync(lock, JSON.stringify({ pid: holder, by: "up --dir", since: new Date(Date.now() - 11 * 60_000).toISOString() }));
 	const old = await up();
@@ -389,7 +395,7 @@ test("desk.lock across processes: several node processes at once never hold it t
 
 // --- a recorded id that is not the base any more (RVB7-F002) ---
 
-test("a workspace that has the recorded id but is not the base (no tower tab, no pane in the folder) is not adopted: a new base is made, with a warning", async () => {
+test("a workspace that has the recorded id but is not the base (another label, no pane in the folder) is not adopted: a new base is made, with a warning", async () => {
 	const first = await up();
 	const id = String(first.json?.workspace), ws = world.herdr.workspace(id);
 	// Herdr restarted and numbered a workspace of the person's with the freed id.
@@ -407,17 +413,60 @@ test("a workspace that has the recorded id but is not the base (no tower tab, no
 	assert.equal(world.herdr.workspace(id).label, "My project");
 });
 
-test("a recorded workspace is the base while it keeps the tower tab or a pane in the folder", async () => {
+test("a recorded workspace is the base while it keeps its label or a pane in the folder", async () => {
 	const first = await up();
-	const id = String(first.json?.workspace);
-	world.herdr.tabs.filter((t) => t.workspace_id === id).forEach((t) => (t.label = "renamed")); // the pane is still in the folder
+	const id = String(first.json?.workspace), ws = world.herdr.workspace(id);
+	const elsewhere = join(world.root, "moved");
+	ws.label = "renamed"; // the pane is still in the folder
 	const byFolder = await up();
 	assert.deepEqual([byFolder.json?.workspace, byFolder.json?.created, byFolder.json?.warnings], [id, false, []]);
-	world.herdr.tabs.filter((t) => t.workspace_id === id).forEach((t) => (t.label = TOWER_LABEL));
-	world.herdr.panes.filter((p) => p.workspace_id === id).forEach((p) => (p.cwd = join(world.root, "moved"))); // the tab is still labelled
+	ws.label = "Desk";
+	world.herdr.panes.filter((p) => p.workspace_id === id).forEach((p) => (p.cwd = elsewhere)); // the label is still the recorded one
 	const byLabel = await up();
 	assert.deepEqual([byLabel.json?.workspace, byLabel.json?.created, byLabel.json?.warnings], [id, false, []]);
 	assert.equal(created().length, 1);
+});
+
+test("a base whose tower was quit and whose other tab works elsewhere is still the base: the next up opens a new tower in it, no second base (RVB7B-F001)", async () => {
+	const first = await up();
+	const id = String(first.json?.workspace);
+	shellTab(id, join(world.root, "proj"));
+	const record = world.record()!;
+	assert.equal((await callControl(record.socket, record.secret, { cmd: "close-tower", workspace: id })).reply?.ok, true);
+	assert.equal(world.herdr.tabs.some((t) => t.workspace_id === id && t.label === TOWER_LABEL), false, "no tower tab is left");
+	for (let i = 0; i < 2; i++) {
+		const again = await up();
+		assert.equal(again.code, 0, again.err);
+		assert.deepEqual([again.json?.workspace, again.json?.created, again.json?.warnings], [id, i === 0, []]);
+	}
+	assert.equal(created().length, 1, "one base, however many ups");
+});
+
+test("a workspace of the person's that took the recorded id and has a tower tab of its own is not the base (RVB7B-F002)", async () => {
+	const first = await up();
+	const id = String(first.json?.workspace), ws = world.herdr.workspace(id), elsewhere = join(world.root, "proj");
+	world.herdr.tabs.filter((t) => t.workspace_id === id).forEach((t) => (t.label = TOWER_LABEL)); // its own tower, in its own folder
+	world.herdr.panes.filter((p) => p.workspace_id === id).forEach((p) => (p.cwd = elsewhere));
+	ws.label = "My project";
+	const again = await up();
+	assert.equal(again.code, 0, again.err);
+	assert.equal(again.json?.created, true);
+	assert.notEqual(again.json?.workspace, id);
+	assert.ok((again.json?.warnings as { code: string }[]).some((w) => w.code === "desk_base_replaced"));
+	assert.equal(world.herdr.workspace(id).label, "My project");
+});
+
+test("the pane's folder is compared as a real path: a base made under a link is still the base when Herdr reports the real path (RVB7B-F003)", async (t) => {
+	const real = join(world.root, "real-home"), link = join(world.root, "link-home");
+	mkdirSync(real);
+	try { symlinkSync(real, link, "dir"); } catch { return t.skip("no symlinks here"); }
+	const first = await up(["--dir", link, "--label", "Desk"]);
+	assert.equal(first.code, 0, first.err);
+	const id = String(first.json?.workspace), ws = world.herdr.workspace(id);
+	ws.label = "renamed"; // only the pane tells now
+	world.herdr.panes.filter((p) => p.workspace_id === id).forEach((p) => (p.cwd = realpathSync(real)));
+	const again = await up(["--dir", link, "--label", "Desk"]);
+	assert.deepEqual([again.json?.workspace, again.json?.created, again.json?.warnings], [id, false, []]);
 });
 
 // --- a kept base keeps its folder (RVB7-F003) ---
