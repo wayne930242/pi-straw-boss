@@ -11,6 +11,7 @@ import { waitPastTrust } from "../trust/wait.ts";
 import type { MemorySummary, TowerView } from "../net.ts";
 import { type BossPointer, type ConversationInfo, readPointer, resumable, sessionsRoot, underRoot, writePointer } from "./bossconv.ts";
 import { herdrCode } from "./herdrcode.ts";
+import { programsIn } from "./standing.ts";
 import { chain, isWrapper, leafOf, type Proc, type Procs, readProcs } from "./lineage.ts";
 import type { Log } from "./log.ts";
 import type { Slot } from "./record.ts";
@@ -248,6 +249,8 @@ interface Svc {
 	wakeAt?: number;
 	timer?: ReturnType<typeof setTimeout>;
 	crashes: number[];
+	/** The last local start failed because the standing pane runs a program of the boss's (its names): a held service starts again when the pane is free (standing.ts). */
+	paneBusy?: string[];
 	notices: Notice[];
 	lastRun?: { endedAt: string; outcome: Outcome };
 	refusedAt?: number;
@@ -365,6 +368,7 @@ export function createRuns(o: RunsOptions) {
 		if (slots >= o.max()) return void blocked.add(svc);
 		slots++;
 		svc.state = "waking";
+		svc.paneBusy = undefined;
 		const id = newId(), woken = now();
 		const rec: RunRecord = { id, workspace: svc.ref.workspace, kind: "local", pane: svc.ref.record().pane, agent: agentName(slot, svc.ref.workspace, id), startedAt: iso(woken), events: [] };
 		const active: Active = { rec, svc, commands: [], lastPoll: woken, started: woken, digestKeys: [], offered: new Map() };
@@ -425,6 +429,8 @@ export function createRuns(o: RunsOptions) {
 				return;
 			} catch (cause) {
 				if (active.ended) return;
+				// A start that failed with a program of the boss's in the pane's foreground (not a shell, not the tower prompt) is the pane's doing (RV2-F001: nothing of theirs is closed, and a start that is not Herdr's timeout code is no reason for a new pane): the notice names the program and the service starts again when the pane is free.
+				const busy = started || rec.kind !== "local" ? [] : programsIn({ foreground_processes: await foreground(rec.pane) });
 				// Windows, the standing pane: a start that timed out is taken for the pane's doing (a console a killed pi left in a mode that mangles what Herdr types), so the run is tried once more in a fresh pane and the
 				// first timeout is not counted. A second timeout is the run's own failure.
 				if (attempt === 1 && win && rec.kind === "local" && !started && herdrCode(cause) === "timeout") {
@@ -439,7 +445,8 @@ export function createRuns(o: RunsOptions) {
 					}
 				}
 				error("run-start", `${rec.id}: ${(cause as Error).message}`);
-				noticeOf(svc, { id: `start-${rec.id}`, level: "warning", kind: "start", text: `A run could not start: ${(cause as Error).message}` });
+				svc.paneBusy = busy.length ? busy : undefined;
+				noticeOf(svc, { id: "start", level: "warning", kind: "start", text: `A run could not start: ${busy.length ? `the standing pane is busy with ${busy.join(", ")}; the tower starts again when it has ended, or on Retry` : (cause as Error).message}` });
 				terminate(active, "crashed");
 				// The tick does not type /quit into a pane whose pi never claimed: what the pane holds of this run is ended below.
 				active.escalated ??= now();
@@ -1267,7 +1274,7 @@ export function createRuns(o: RunsOptions) {
 			const svc = services.get(workspace);
 			if (!svc) throw new Error(`The sb server stands in for no tower of workspace ${workspace}`);
 			const written = append(slot, svc.ref.record(), { kind: "boss", from: { id: "boss", name: from }, text, at: iso(now()) });
-			if (svc.state === "held") (svc.state = svc.run ? "running" : "standing", (svc.crashes = []), (svc.notices = svc.notices.filter((n) => n.id !== "loop")));
+			if (svc.state === "held") (svc.state = svc.run ? "running" : "standing", (svc.crashes = []), (svc.paneBusy = undefined), (svc.notices = svc.notices.filter((n) => n.id !== "loop" && n.id !== "start")));
 			// At the tower prompt the boss is at the pane: the run this wakes is one they are in, from its claim (or from now, when a run is live already).
 			if (opts.present) {
 				svc.bossAt = now();
@@ -1284,12 +1291,18 @@ export function createRuns(o: RunsOptions) {
 			append(slot, svc.ref.record(), { kind: "notice", text, at: iso(now()), messageId: key });
 			poke(svc);
 		},
+		/** The service is held because the standing pane runs a program of the boss's: it is Retried by itself once the pane is free (standing.ts). */
+		paneBusy(workspace: string) {
+			const svc = services.get(workspace);
+			return svc?.state === "held" && svc.paneBusy !== undefined;
+		},
 		/** Retry on the crash-loop notice. */
 		retry(workspace: string) {
 			const svc = services.get(workspace);
 			if (!svc) throw new Error(`The sb server stands in for no tower of workspace ${workspace}`);
 			svc.crashes = [];
-			svc.notices = svc.notices.filter((n) => n.id !== "loop");
+			svc.paneBusy = undefined;
+			svc.notices = svc.notices.filter((n) => n.id !== "loop" && n.id !== "start");
 			if (svc.state === "held") svc.state = "standing";
 			poke(svc);
 		},

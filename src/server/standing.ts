@@ -42,6 +42,9 @@ export interface StandingTarget {
 	status(): ServiceStatus | undefined;
 	/** Whether a run starts in the pane within `ms`: a prompt typed now would only have to start, poll, and leave before the run's pi can. */
 	runWithin?(ms: number): boolean;
+	/** The service is held because the pane runs a program of the boss's (runs.ts), and the call that starts it again. */
+	paneBusy?(): boolean;
+	paneFree?(): void;
 }
 export interface StandingOptions {
 	run: HerdrRun;
@@ -89,6 +92,13 @@ export function standinMessage(status: Pick<ServiceStatus, "state" | "queued"> |
 	return status && status.queued > 0 ? `${status.queued} queued` : "standing by";
 }
 
+const nameOf = (p: { argv0?: string; name?: string }) => String(p.argv0 ?? p.name ?? "").replace(/^-/, "").split(/[\\/]/).pop()!.toLowerCase().replace(/\.exe$/, "");
+/** The programs in the pane's foreground that are no shell and not the tower prompt: what the boss runs there. Empty when none is listed or all are shells. */
+export function programsIn(info: { foreground_processes?: unknown } | undefined): string[] {
+	const procs = Array.isArray(info?.foreground_processes) ? (info!.foreground_processes as { name?: string; argv0?: string; cmdline?: string }[]) : [];
+	return procs.filter((p) => !SHELLS.has(nameOf(p)) && !/\bprompt --workspace\b/.test(p.cmdline ?? "")).map((p) => String(p.argv0 ?? p.name ?? "?"));
+}
+
 /**
  * Whether Herdr's process info positively says the pane's foreground is its shell at an idle prompt. With the shell's pid and the foreground group (macOS, Linux) the groups decide. Without them (Windows lists the
  * shell alone whether a build runs under it or not) a list of shells is no proof of an idle prompt: it counts only for a pane the server knows is fresh (`fresh`), and an empty or missing list is unknown, never idle.
@@ -98,7 +108,7 @@ export function idleShell(info: { shell_pid?: unknown; foreground_process_group_
 	if (!info) return false;
 	if (groups && typeof info.shell_pid === "number" && typeof info.foreground_process_group_id === "number") return info.foreground_process_group_id === info.shell_pid;
 	const procs = Array.isArray(info.foreground_processes) ? (info.foreground_processes as { name?: string; argv0?: string }[]) : [];
-	return fresh && procs.length > 0 && procs.every((p) => SHELLS.has(String(p.argv0 ?? p.name ?? "").replace(/^-/, "").split(/[\\/]/).pop()!.toLowerCase().replace(/\.exe$/, "")));
+	return fresh && procs.length > 0 && procs.every((p) => SHELLS.has(nameOf(p)));
 }
 
 /** What the shells the panes run can take unquoted inside double quotes: letters, digits, spaces, and the punctuation of a path. A path with a quote, `$`, a backtick, `%`, or `!` makes no command. */
@@ -157,6 +167,11 @@ export function createStanding(o: StandingOptions) {
 		const target = m.target, pane = panes.find((p) => p.pane_id === target.pane());
 		if (!pane || !target.live()) return;
 		const status = target.status();
+		// A held service waits for the boss's program to end: the pane's foreground is looked at, and the runs start again once it is back at its shell.
+		if (target.paneBusy?.()) {
+			if (idleShell(await processInfo(pane.pane_id), true, groups)) target.paneFree?.();
+			return;
+		}
 		// A run holds the pane (or is about to): the prompt has left or is leaving, and no stand-in stands over the run's pi.
 		if (m.leaving || (status && ["waking", "running", "closing"].includes(status.state))) {
 			if (m.reported && !isStandin(pane)) m.reported = undefined;
