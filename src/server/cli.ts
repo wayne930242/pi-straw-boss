@@ -8,6 +8,7 @@ import {
 	type Ctx, unreachableText, describe, ensure, guiUrl, herdrListens, isIdentity, detachWarning, lockFor, lockWaitFor, makeCtx, passGate, probe, restart, ServerError, serverEnv, stop, takeOver, trusted, type Wait, waitReady, within,
 } from "./client.ts";
 import { ACL_TOKEN } from "./acl.ts";
+import { onFatal } from "./fatal.ts";
 import { callControl, ControlError } from "./socket.ts";
 import { logSize, readFrom, tailLog } from "./log.ts";
 import { clearStartError, clearStopped, fileOf, readRecord, readStartError, type ServerRecord, slotOf, type StartError } from "./record.ts";
@@ -359,7 +360,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 	async function foreground(handle: ServerHandle, ready: () => void) {
 		(deps.signals ?? ((leave) => (["SIGTERM", "SIGINT", "SIGHUP"] as const).forEach((signal) => process.once(signal, leave))))(() => void handle.shutdown(0).catch(() => {}));
 		// A crash that leaves the remote serve entry up lets a process that binds the dead remote port see the paired phones' tokens (RVD27-F002): a fatal JS error takes the entry down on the way out, as a signal does.
-		(deps.fatal ?? defaultFatal)((error) => {
+		(deps.fatal ?? onFatal)((error) => {
 			err(`fatal: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
 			void handle.shutdown(1).catch(() => {});
 		});
@@ -370,20 +371,6 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 	function scrubIdentity() {
 		for (const key of Object.keys(env)) if (isIdentity(key)) delete env[key];
 	}
-}
-
-/** The leave is bounded: a server that cannot leave in time is ended, so a fatal error does not leave a half-working process. */
-const FATAL_EXIT_MS = 20_000;
-function defaultFatal(leave: (error: unknown) => void) {
-	let once = false;
-	const fatal = (error: unknown) => {
-		if (once) return;
-		once = true;
-		leave(error);
-		setTimeout(() => process.exit(1), FATAL_EXIT_MS).unref();
-	};
-	process.on("uncaughtException", fatal);
-	process.on("unhandledRejection", fatal);
 }
 
 let main: Promise<typeof import("./main.ts")> | undefined;
