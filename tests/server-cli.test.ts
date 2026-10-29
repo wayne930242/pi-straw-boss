@@ -392,7 +392,8 @@ function fakeServer(done = Promise.resolve(0)) {
 		calls.push(options);
 		return { ready: Promise.resolve(true), done, endpoint: "/x", shutdown: async (code = 0) => void shutdowns.push(code) };
 	};
-	return { server, calls, signals: (leave: () => void) => void handlers.push(leave), handlers, shutdowns };
+	const fatals: ((error: unknown) => void)[] = [];
+	return { server, calls, signals: (leave: () => void) => void handlers.push(leave), fatal: (leave: (error: unknown) => void) => void fatals.push(leave), fatals, handlers, shutdowns };
 }
 
 test("run --detached starts the server in this process as a detached server, with the identity of the shell stripped, and exits with its code", async () => {
@@ -408,6 +409,19 @@ test("run --detached starts the server in this process as a detached server, wit
 	assert.equal(env.PI_INTERCOM_SESSION_ID, undefined, "the process's own environment is cleaned too, for the broker client that reads it");
 	f.handlers[0]?.();
 	assert.deepEqual(f.shutdowns, [0], "a signal ends the server without a stop");
+});
+
+test("RVD27-F002: a fatal JavaScript error (an uncaught exception or an unhandled rejection) makes the server leave with code 1, which takes the remote serve entry down, in the detached server and in serve", async () => {
+	for (const argv of [["run", "--detached"], ["serve"]]) {
+		const f = fakeServer();
+		let said = "";
+		const r = await cli(argv, { server: f.server, signals: f.signals, fatal: f.fatal, err: (t) => (said += t) });
+		assert.equal(r.code, 0);
+		assert.equal(f.fatals.length, 1, `${argv[0]}: the server listens for fatal errors`);
+		f.fatals[0]?.(new Error("boom"));
+		assert.deepEqual(f.shutdowns, [1], `${argv[0]}: it leaves with code 1`);
+		assert.match(said, /fatal: Error: boom/);
+	}
 });
 
 test("serve with nothing running runs a serve server in the foreground, clears a stopped left by a detached server, and releases the lock once it is ready", async () => {

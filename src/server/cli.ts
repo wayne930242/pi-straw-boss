@@ -72,6 +72,8 @@ export interface CliDeps {
 	stdout?: Writable;
 	/** Where the server in this process hears that it is asked to end (SIGTERM, SIGINT, SIGHUP); a kill or a reboot is not a stop, so it only leaves. */
 	signals?: (leave: () => void) => void;
+	/** Where the server in this process hears of a fatal JavaScript error (an uncaught exception or an unhandled rejection); it leaves as a signal makes it leave, but with exit code 1, so the remote serve entry goes before the process does. */
+	fatal?: (leave: (error: unknown) => void) => void;
 	herdrListens?: (ctx: Ctx, ms?: number) => Promise<boolean>;
 	/** Whether the GUI's page answers 200, which `up` waits for. */
 	pageAnswers?: (gui: { port: number; token: string }) => Promise<boolean>;
@@ -356,6 +358,11 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 	/** The server in this process: signals end it without marking a stop (a kill or a reboot is not a stop), and the exit code is its own. */
 	async function foreground(handle: ServerHandle, ready: () => void) {
 		(deps.signals ?? ((leave) => (["SIGTERM", "SIGINT", "SIGHUP"] as const).forEach((signal) => process.once(signal, leave))))(() => void handle.shutdown(0).catch(() => {}));
+		// A crash that leaves the remote serve entry up lets a process that binds the dead remote port see the paired phones' tokens (RVD27-F002): a fatal JS error takes the entry down on the way out, as a signal does.
+		(deps.fatal ?? defaultFatal)((error) => {
+			err(`fatal: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
+			void handle.shutdown(1).catch(() => {});
+		});
 		void handle.ready.then(ready);
 		return handle.done;
 	}
@@ -363,6 +370,20 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 	function scrubIdentity() {
 		for (const key of Object.keys(env)) if (isIdentity(key)) delete env[key];
 	}
+}
+
+/** The leave is bounded: a server that cannot leave in time is ended, so a fatal error does not leave a half-working process. */
+const FATAL_EXIT_MS = 20_000;
+function defaultFatal(leave: (error: unknown) => void) {
+	let once = false;
+	const fatal = (error: unknown) => {
+		if (once) return;
+		once = true;
+		leave(error);
+		setTimeout(() => process.exit(1), FATAL_EXIT_MS).unref();
+	};
+	process.on("uncaughtException", fatal);
+	process.on("unhandledRejection", fatal);
 }
 
 let main: Promise<typeof import("./main.ts")> | undefined;
