@@ -11,7 +11,7 @@ import { HERE_ONLY } from "./link/request.ts";
 import type { ServerLook } from "./server-look.ts";
 import { towerRunsEnabled } from "./server/towerruns.ts";
 import { markRun } from "./runmark.ts";
-import { startOf } from "./startof.ts";
+import { startOf as processStart } from "./startof.ts";
 import { ENTRY, type Kit } from "./state.ts";
 import { MEMORY_DESCRIPTION, memoryParameters } from "./memorytool.ts";
 import { createTools, LINK_REQUEST_DESCRIPTION, linkRequestParameters } from "./tools.ts";
@@ -31,6 +31,8 @@ export interface RunSideDeps {
 	lostMs?: number;
 	startMs?: number;
 	glyphWaitMs?: number;
+	/** Reads a process's start time (a test counts the reads); `startOf` by default. */
+	startOf?: (pid: number) => string | undefined;
 }
 export const MESSAGE = "straw-tower";
 const POLL_MS = 1000, CLAIM_WAIT_MS = 10_000, LOST_MS = 30_000, TURN_START_MS = 15_000, GLYPH_WAIT_MS = 30_000;
@@ -72,7 +74,7 @@ export function eventText(e: Pick<Event, "kind" | "text" | "flag" | "from">): st
 export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunSideDeps = {}, link?: Link) {
 	const { pi, cfg, s, guiDir, tell } = kit;
 	const { env } = cfg;
-	const { pollMs = POLL_MS, claimWaitMs = CLAIM_WAIT_MS, lostMs = LOST_MS, startMs = TURN_START_MS, glyphWaitMs = GLYPH_WAIT_MS, towerAskMs = 2500 } = deps;
+	const { pollMs = POLL_MS, claimWaitMs = CLAIM_WAIT_MS, lostMs = LOST_MS, startMs = TURN_START_MS, glyphWaitMs = GLYPH_WAIT_MS, towerAskMs = 2500, startOf = processStart } = deps;
 	pi.registerFlag("sb-run", { description: "The id of the tower run this pi was started for (set by the sb server; do not pass it by hand)", type: "string" });
 
 	let mode: "unknown" | "run" | "normal" = "unknown", claim: Claim | undefined, ctx: ExtensionContext | undefined;
@@ -82,6 +84,9 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	// A quit the server ordered while the turn runs. pi would keep `ctx.shutdown()` itself and honour it at its next idle moment with no way to take it back, so the run holds the order instead: a server that restarted meanwhile (the run claims again) never ordered it, and the run goes on.
 	let quitOrdered = false;
 	let registered = false, bossSign: number | undefined, signing: Promise<unknown> | undefined;
+	// The pane-role ask of a pi with STRAW_BOSS_ROLE=tower that did not come back within `towerAskMs` is still in flight: the session is undecided, neither a run nor a normal session (so it joins nothing, hands nothing
+	// over and quits nothing) until the answer comes. `epoch` counts session starts and shutdowns, so an answer for a session that is gone is released instead of acted on; `afterNormal` holds the session start that waits for a `none`.
+	let epoch = 0, deciding: (() => void)[] | undefined;
 
 	// Every request goes through the session's look at the server (server-look.ts), which passes the record through the owner gate before it is trusted or a secret is sent to its socket (R13-F003):
 	// a run never reads the record itself. It starts nothing: a run of a server that is gone has nothing to run for.
@@ -129,7 +134,8 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		try { return context.sessionManager.getBranch().some((e) => e.type === "custom" && e.customType === ENTRY && (e.data as { tower?: unknown } | undefined)?.tower === true); } catch { return false; }
 	}
 	/** A pi without the flag in a standing pane: the server says whether to quit, wait, or take the pane as a run of the boss's own. */
-	async function paneRole(context: ExtensionContext, reload: boolean): Promise<{ role: "none" | "quit" | "hand"; reason?: string; claim?: Claim }> {
+	type Found = { role: "none" | "quit" | "hand"; reason?: string; claim?: Claim };
+	async function paneRole(context: ExtensionContext, reload: boolean): Promise<Found | { role: "late"; settle: Promise<Found | undefined> }> {
 		const pane = env.HERDR_PANE_ID, workspace = env.HERDR_WORKSPACE_ID;
 		// Without the flag file no sb server runs towers, so no pane is one (and a session asks Herdr nothing at its start for this).
 		if (!pane || !workspace || !towerRunsEnabled(guiDir)) return { role: "none" };
@@ -137,11 +143,20 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		// `tower` already, and asking would make it a hand run that never hands over and never ends (B6 VM F4).
 		// Only a session that already wrote its tower entry is one: the env alone stays in a migrated standing pane's tab, and a pi the boss types there is a hand run.
 		if (env.STRAW_BOSS_ROLE === "tower" && (reload || residentTower(context))) return { role: "none" };
-		// The env alone may be a fresh resident (it hands over itself) or a pi the boss typed in a migrated standing pane: the server knows which pane it holds. One short ask; no answer, an error, or an older server means resident.
+		// The env alone may be a fresh resident (it hands over itself) or a pi the boss typed in a migrated standing pane: the server knows which pane it holds. An error or an older server means resident. An answer
+		// that does not come within `towerAskMs` (a cold Windows server took 3.9 s) decides nothing: quitting or handing over on a guess ended a hand pi that was only waiting, so the ask stays in flight and the
+		// answer is acted on when it comes (`late`). The start time is read once, before the clock starts (the read is a sync PowerShell call of seconds there).
 		if (env.STRAW_BOSS_ROLE === "tower") {
-			const answer = await Promise.race([ask({ cmd: "pane-role", pane, pid: process.pid, ...(startOf(process.pid) ? { started: startOf(process.pid) } : {}) }).catch(() => undefined), sleep(towerAskMs).then(() => undefined)]);
-			// SAFETY: same `pane-role` answer shape as below (runs.ts, paneRole).
-			return answer?.ok && (answer.role === "hand" || answer.role === "quit") ? (answer as unknown as { role: "quit" | "hand"; reason?: string; claim?: Claim }) : { role: "none" };
+			const started = startOf(process.pid);
+			// An ask that fails is no answer: resident when it fails within the bound (no server), a plain session when it fails after it (`late` settles undefined).
+			const asked = ask({ cmd: "pane-role", pane, pid: process.pid, ...(started ? { started } : {}) }).then((answer): Found | undefined => {
+				// SAFETY: same `pane-role` answer shape as below (runs.ts, paneRole).
+				return answer?.ok && (answer.role === "hand" || answer.role === "quit") ? (answer as unknown as Found) : { role: "none" };
+			}, () => undefined);
+			const quick = await Promise.race([asked.then((found) => ({ found })), sleep(towerAskMs).then(() => undefined)]);
+			if (quick) return quick.found ?? { role: "none" };
+			tell("Straw Boss: the sb server has not said yet whether this pane is the tower's; this session does nothing and stays a plain session until it answers", "warning");
+			return { role: "late", settle: asked };
 		}
 		const mine = (await panes(cfg.run, workspace).catch(() => [])).find((p) => p.pane_id === pane);
 		const marked = RUN_PANE_ROLES.has(mine?.tokens?.sb_role ?? "");
@@ -368,34 +383,16 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		const role = readFileSync(join(cfg.promptDir, claim.kind === "ally" ? "ally-run.md" : "tower-run.md"), "utf8").trim().replace(/\{\{(\w+)\}\}/g, (_, key: string) => ({ workspace: claim!.label, head })[key] ?? "none yet");
 		sections[ENTRY] = `${role}\n\n${claim.brief}`;
 	});
-	pi.on("session_start", async (event, context) => {
-		ctx = context;
-		s.ui = context.ui; // the notices of a run (a refused claim, a lost server) reach the terminal
-		if (mode === "run") return; // a /reload of a run: the claim is kept
-		const kept = (globalThis as Record<symbol, { claim?: Claim } | undefined>)[KEPT]?.claim;
-		const flag = pi.getFlag("sb-run");
-		try {
-			if (kept && typeof flag === "string" && kept.run === flag && event.reason === "reload") claim = kept;
-			else if (typeof flag === "string" && flag) claim = await claimRun(flag);
-			else {
-				const found = await paneRole(context, event.reason === "reload");
-				if (found.role === "none") return void (mode = "normal");
-				if (found.role === "quit") {
-					mode = "run";
-					markRun();
-					ending = true;
-					tell(`Straw Boss: ${found.reason ?? "this pane belongs to the sb server"}`, "warning");
-					return void context.shutdown();
-				}
-				claim = found.claim;
-			}
-		} catch (error) {
-			mode = "run";
-			markRun();
-			ending = true;
-			tell(`Straw Boss: this run cannot start: ${(error as Error).message}`, "error");
-			return void context.shutdown();
-		}
+	/** A pane the server owns: this pi quits with the server's reason. */
+	const quitPane = (context: ExtensionContext, reason?: string) => {
+		mode = "run";
+		markRun();
+		ending = true;
+		tell(`Straw Boss: ${reason ?? "this pane belongs to the sb server"}`, "warning");
+		return void context.shutdown();
+	};
+	/** The session is a run (the claim is held): its tools, its file, and its poll. */
+	const enterRun = async (context: ExtensionContext) => {
 		mode = "run";
 		markRun(claim?.kind); // balance.ts reads it at the quit
 		keep();
@@ -405,8 +402,58 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		timer = setInterval(() => void tick(), pollMs);
 		timer.unref();
 		void tick();
+	};
+	/** The pane-role answer that came after the bound: acted on if this session is still the one that asked, else a claim it carries is released. */
+	const decideLate = async (context: ExtensionContext, mine: number, found: Found | undefined) => {
+		const waiting = deciding;
+		if (mine !== epoch || mode !== "unknown") {
+			if (found?.role === "hand" && found.claim) await ask({ cmd: "run-release", token: found.claim.token, reason: "the session ended before the server answered" }).catch(() => {});
+			return;
+		}
+		deciding = undefined;
+		if (!found) return void tell("Straw Boss: the sb server did not answer, so this session stays a plain session", "warning");
+		if (found.role === "none") {
+			mode = "normal";
+			return void waiting?.forEach((start) => start());
+		}
+		if (found.role === "quit") return quitPane(context, found.reason);
+		claim = found.claim;
+		await enterRun(context);
+	};
+	pi.on("session_start", async (event, context) => {
+		ctx = context;
+		s.ui = context.ui; // the notices of a run (a refused claim, a lost server) reach the terminal
+		epoch++;
+		deciding = undefined;
+		if (mode === "run") return; // a /reload of a run: the claim is kept
+		const kept = (globalThis as Record<symbol, { claim?: Claim } | undefined>)[KEPT]?.claim;
+		const flag = pi.getFlag("sb-run");
+		try {
+			if (kept && typeof flag === "string" && kept.run === flag && event.reason === "reload") claim = kept;
+			else if (typeof flag === "string" && flag) claim = await claimRun(flag);
+			else {
+				const found = await paneRole(context, event.reason === "reload");
+				if (found.role === "late") {
+					deciding = [];
+					const mine = epoch;
+					return void found.settle.then((late) => decideLate(context, mine, late)).catch((cause: Error) => tell(`Straw Boss: ${cause.message}`, "error"));
+				}
+				if (found.role === "none") return void (mode = "normal");
+				if (found.role === "quit") return quitPane(context, found.reason);
+				claim = found.claim;
+			}
+		} catch (error) {
+			mode = "run";
+			markRun();
+			ending = true;
+			tell(`Straw Boss: this run cannot start: ${(error as Error).message}`, "error");
+			return void context.shutdown();
+		}
+		await enterRun(context);
 	});
 	pi.on("session_shutdown", async (event) => {
+		epoch++;
+		deciding = undefined;
 		clearInterval(timer);
 		timer = undefined;
 		if (mode !== "run" || !claim || ending) return;
@@ -422,6 +469,10 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		/** Whether this session is a run (or leaves as one): nothing of the net starts then. `unknown` before `session_start` has decided. */
 		get mode() { return mode; },
 		active: () => mode === "run",
+		/** Whether the pane-role answer is still awaited: the session start (session.ts) waits for it (`afterNormal`). */
+		get deciding() { return deciding !== undefined; },
+		/** Runs `start` once the late answer makes this a normal session; never when it becomes a run or stays plain. */
+		afterNormal: (start: () => void) => void deciding?.push(start),
 	};
 }
 export type RunMode = ReturnType<typeof createRunMode>;

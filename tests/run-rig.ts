@@ -16,7 +16,7 @@ export type Answer = { ok: boolean; [key: string]: unknown };
 /** The scratch folder of one rig: made by `scratchRoot()`, removed by the caller with `rmSync`. */
 export const scratchRoot = () => realpathSync(mkdtempSync(join(tmpdir(), "psb-run-session-")));
 
-export async function rig(root: string, ask: (request: Request) => Promise<Answer>, sessions: AgentSession[], { flag = "RUN", herdr, glyphWaitMs = 300, lostMs = 300, gateMs = 60, sessionDir, env, entries, towerAskMs = 300 }: { towerAskMs?: number; entries?: unknown[]; env?: Record<string, string>; flag?: string | null; herdr?: (args: string[]) => Promise<string>; glyphWaitMs?: number; lostMs?: number; gateMs?: number; /** Keep the session in a file of this folder, as pi does (its file appears at the first assistant message); in memory by default. */ sessionDir?: string } = {}) {
+export async function rig(root: string, ask: (request: Request) => Promise<Answer>, sessions: AgentSession[], { flag = "RUN", herdr, glyphWaitMs = 300, lostMs = 300, gateMs = 60, sessionDir, env, entries, towerAskMs = 300, startOf, realSleep }: { towerAskMs?: number; /** Replaces the process start time read (a test counts the reads). */ startOf?: (pid: number) => string | undefined; /** The run mode's sleeps are real timers (the bound of the pane-role ask is a race against one). */ realSleep?: boolean; entries?: unknown[]; env?: Record<string, string>; flag?: string | null; herdr?: (args: string[]) => Promise<string>; glyphWaitMs?: number; lostMs?: number; gateMs?: number; /** Keep the session in a file of this folder, as pi does (its file appears at the first assistant message); in memory by default. */ sessionDir?: string } = {}) {
 	const agentDir = join(root, "agent"), project = join(root, "project");
 	mkdirSync(agentDir, { recursive: true });
 	mkdirSync(project, { recursive: true });
@@ -24,7 +24,7 @@ export async function rig(root: string, ask: (request: Request) => Promise<Answe
 	const runtime = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: null, refreshOnCreate: false });
 	runtime.registerProvider("faux", { api: faux.api as never, baseUrl: "http://faux.invalid", apiKey: "x", streamSimple: faux.streamSimple as never, models: [{ id: "faux-1", name: "faux", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100_000, maxTokens: 4000 }] });
 	const notes: string[] = [], shutdowns: number[] = [];
-	let api!: ExtensionAPI;
+	let api!: ExtensionAPI, runMode!: ReturnType<typeof createRunMode>;
 	const loader = new DefaultResourceLoader({
 		cwd: project, agentDir, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
 		extensionFactories: [(pi) => {
@@ -35,8 +35,8 @@ export async function rig(root: string, ask: (request: Request) => Promise<Answe
 			// A tool the remote-turn hooks of an ally run hold to its sender's level (neither on the allowlist nor free).
 			pi.registerTool({ name: "bash", label: "bash", description: "run", parameters: Type.Object({}), execute: async () => ({ content: [{ type: "text", text: "RAN" }], details: undefined }) });
 			// SAFETY: the run mode reads only these fields of the kit (pi, cfg.env/now/sleep/promptDir/run, s, guiDir, tell).
-			const kit = { pi, cfg: { env: { HERDR_PANE_ID: "wA:p1", HERDR_WORKSPACE_ID: "wA", HERDR_TAB_ID: "wA:t1", ...env }, now: Date.now, sleep: async () => {}, promptDir: join(import.meta.dirname, "..", "prompts"), run: herdr ?? (async () => { throw new Error("no herdr"); }), link: { gateMs, home: join(root, "home"), policy: { read: () => { throw Object.assign(new Error("none"), { code: "ENOENT" }); } } } }, s: {}, guiDir: join(root, "straw-boss"), me: () => "", role: () => undefined, tell: (text: string) => void notes.push(text) } as unknown as Kit;
-			createRunMode(kit, undefined, { ask, pollMs: 20, claimWaitMs: 200, startMs: 500, lostMs, glyphWaitMs, towerAskMs }, createLink(kit));
+			const kit = { pi, cfg: { env: { HERDR_PANE_ID: "wA:p1", HERDR_WORKSPACE_ID: "wA", HERDR_TAB_ID: "wA:t1", ...env }, now: Date.now, sleep: realSleep ? (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms).unref()) : async () => {}, promptDir: join(import.meta.dirname, "..", "prompts"), run: herdr ?? (async () => { throw new Error("no herdr"); }), link: { gateMs, home: join(root, "home"), policy: { read: () => { throw Object.assign(new Error("none"), { code: "ENOENT" }); } } } }, s: {}, guiDir: join(root, "straw-boss"), me: () => "", role: () => undefined, tell: (text: string) => void notes.push(text) } as unknown as Kit;
+			runMode = createRunMode(kit, undefined, { ask, pollMs: 20, claimWaitMs: 200, startMs: 500, lostMs, glyphWaitMs, towerAskMs, ...(startOf ? { startOf } : {}) }, createLink(kit));
 		}],
 	});
 	await loader.reload();
@@ -47,7 +47,7 @@ export async function rig(root: string, ask: (request: Request) => Promise<Answe
 	} as never);
 	sessions.push(session);
 	await session.bindExtensions({ shutdownHandler: () => void shutdowns.push(Date.now()) } as never);
-	return { faux, session, notes, shutdowns, api: () => api };
+	return { faux, session, notes, shutdowns, api: () => api, runMode };
 }
 
 export const call = (name: string, args: Record<string, string | number | boolean>) => fauxAssistantMessage([fauxToolCall(name, args)]);

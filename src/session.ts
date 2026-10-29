@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import type { ExtensionContext, SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import { removeEntry } from "./board.ts";
 import type { Briefing } from "./briefing.ts";
 import type { Control } from "./closemain.ts";
@@ -63,9 +64,7 @@ export function registerSession(kit: Kit, { runMode, briefing, roles, presence, 
 		return true;
 	};
 
-	pi.on("session_start", async (event, ctx) => {
-		// The run mode's own handler ran before this one (registered first, and pi awaits them in turn): a run or a pane it quits has no net to join.
-		if (runMode.mode !== "normal") return;
+	const begin = async (event: SessionStartEvent, ctx: ExtensionContext) => {
 		const start = (started = {});
 		s.stopped = false;
 		integration.arm();
@@ -132,6 +131,13 @@ export function registerSession(kit: Kit, { runMode, briefing, roles, presence, 
 			});
 		}
 		starting?.catch((error: Error) => tell(`Straw Boss: ${error.message}`, "error"));
+	};
+	pi.on("session_start", async (event, ctx) => {
+		// The run mode's own handler ran before this one (registered first, and pi awaits them in turn): a run or a pane it quits has no net to join. A pi still waiting for the server's pane-role answer
+		// (a resident tower's, runmode.ts) neither runs nor starts yet: its start comes with a `none` answer, and never with a hand run, a quit, or no answer.
+		if (runMode.deciding) return void runMode.afterNormal(() => void begin(event, ctx).catch((error: Error) => tell(`Straw Boss: ${error.message}`, "error")));
+		if (runMode.mode !== "normal") return;
+		await begin(event, ctx);
 	});
 
 	// The tower's run starts with what happened in its workspace since its last run, and the digest is cleared as it is read.
