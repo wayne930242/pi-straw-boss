@@ -433,8 +433,7 @@ export function createRuns(o: RunsOptions) {
 	const proveEmpty = async (svc: Svc) => {
 		if (svc.proving) return;
 		svc.proving = true;
-		// The mark that lets the prompt be typed is off while the table is read: the look's own proof marked the pane fresh before it asked for Retry.
-		svc.ref.freed({ fresh: false, keepParked: true });
+		// The pane is not marked fresh before the read: the unstarted run left it unmarked, the look's proof sets no mark (RV13-F002), and a give-back here would clear what is known of a prompt that polls (RV14-F001).
 		try {
 			const found = await belowShell(svc.ref.record().pane, newId()).catch(() => undefined);
 			if (stopped || svc.run || waitingOf(svc).length) return; // a run is about to take the pane: its start decides
@@ -963,7 +962,8 @@ export function createRuns(o: RunsOptions) {
 		a.rec.claimed = true;
 		writeRun(slot, a.rec);
 		byToken.set(a.token, a);
-		if (!ally) svc.state = "running";
+		// A run that claims ends the notices of a start that failed before: they would offer Retry over a pane that works.
+		if (!ally) (svc.state = "running", (svc.notices = svc.notices.filter((n) => n.id !== "start")));
 		// A pi the boss started by hand is a run they are in; so is the run a boss event from the tower prompt wakes (they are at the pane).
 		if (!ally && (hand || a.rec.conversation || bossWake(svc))) {
 			a.boss = now();

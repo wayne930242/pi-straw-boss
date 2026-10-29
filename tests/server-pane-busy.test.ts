@@ -522,7 +522,7 @@ test("RV13-C win32: Retry with an unreadable table (nothing believed of the pane
 	assert.equal(typedPrompts(), 1, "nothing typed on a failed read");
 });
 
-test("win32: Retry with nothing queued and a clean table read types the prompt again once (mutation M6)", async () => {
+test("win32: Retry with nothing queued and a clean table read types the prompt again once", async () => {
 	const s = await winFirst();
 	world.procTable = [row(SHELL_PID, 1, "powershell.exe")];
 	assert.equal((await ask(s, { cmd: "tower-retry", workspace: "wA" })).ok, true);
@@ -577,4 +577,93 @@ test("win32: two Retries while the table read is pending make one read (mutation
 	world.procGate = undefined;
 	release();
 	await until(() => typedPrompts() === 2, "typed once after the proof");
+});
+
+test("RV14-A win32: Retry with nothing queued while the tower prompt runs and polls in the pane types nothing into the prompt", async () => {
+	const s = await winFirst();
+	assert.equal((await ask(s, { cmd: "prompt-poll", workspace: "wA", pid: 4321 })).ok, true);
+	world.procTable = [row(SHELL_PID, 1, "powershell.exe"), { ...row(4321, SHELL_PID, "node.exe"), prompt: true }];
+	world.live.add(4321);
+	await sleep(300);
+	assert.equal((await ask(s, { cmd: "tower-retry", workspace: "wA" })).ok, true);
+	await sleep(800);
+	console.log("RV14-A typed:", typedPrompts(), "reads:", world.procReads);
+	assert.equal(typedPrompts(), 1, "the prompt that runs is not typed into");
+});
+
+test("RV14-A2 win32: the same with a Herdr that does not keep the stand-in label", async () => {
+	world.herdr.refuseStandin = true;
+	const s = await winFirst();
+	assert.equal((await ask(s, { cmd: "prompt-poll", workspace: "wA", pid: 4321 })).ok, true);
+	world.procTable = [row(SHELL_PID, 1, "powershell.exe"), { ...row(4321, SHELL_PID, "node.exe"), prompt: true }];
+	world.live.add(4321);
+	await sleep(300);
+	assert.equal((await ask(s, { cmd: "tower-retry", workspace: "wA" })).ok, true);
+	await sleep(800);
+	console.log("RV14-A2 typed:", typedPrompts(), "reads:", world.procReads);
+	assert.equal(typedPrompts(), 1, "the prompt that runs is not typed into");
+});
+
+test("RV14-C win32: a parked pane's clean Retry leaves a fresh mark that outlives the park", async () => {
+	const s = await winFirst();
+	await park(s);
+	world.procTable = [row(SHELL_PID, 1, "powershell.exe")];
+	assert.equal((await ask(s, { cmd: "tower-retry", workspace: "wA" })).ok, true);
+	await sleep(700);
+	assert.equal(typedPrompts(), 1, "parked");
+	// the boss later starts the prompt by hand; it polls once and then dies without Ctrl+D (a crash)
+	assert.equal((await ask(s, { cmd: "prompt-poll", workspace: "wA", pid: 5555 })).ok, true);
+	await sleep(8000);
+	console.log("RV14-C typed:", typedPrompts());
+	assert.equal(typedPrompts(), 1, "no type on a mark from before the boss's own prompt");
+});
+
+test("RV14-F001 darwin: Retry with nothing queued while the tower prompt polls gives nothing back and types nothing", async () => {
+	world.herdr.shellPids = true;
+	world.herdr.refuseStandin = true;
+	world.standingTimers = { launchMs: 60_000, launchMaxMs: 60_000 };
+	const s = await world.start();
+	await s.handle.ready;
+	await ask(s, { cmd: "ensure-tower", workspace: "wA" });
+	await until(() => typedPrompts() === 1, "the first prompt");
+	assert.equal((await ask(s, { cmd: "prompt-poll", workspace: "wA", pid: 4321 })).ok, true);
+	assert.equal((await ask(s, { cmd: "tower-retry", workspace: "wA" })).ok, true);
+	await sleep(800);
+	assert.equal(typedPrompts(), 1, "the prompt that runs is not typed into");
+});
+
+test("RV14-F001 win32: a start notice from an earlier failed run does not outlive a run that claims", async () => {
+	const s = await winFirst();
+	world.procTable = [row(SHELL_PID, 1, "powershell.exe")];
+	const real = world.herdr.onAgentStart;
+	let failed = false;
+	world.herdr.onAgentStart = (pane, args) => {
+		if (!failed) {
+			failed = true;
+			throw new Error("boom");
+		}
+		return real?.(pane, args);
+	};
+	tower().incoming(from, { id: "m1", content: { text: "one" } });
+	await until(async () => (await startNotices(s)).length > 0, "the start notice");
+	await until(() => world.pis.size >= 1, "the next run to start", 8000);
+	const id = [...world.pis.keys()][0]!, pi = world.pis.get(id)!;
+	await until(async () => (await ask(s, { cmd: "claim", runId: id, pane: pi.pane, pid: pi.pid, started: `T-${pi.pid}` })).ok === true, "the claim", 5000);
+	assert.deepEqual(await startNotices(s), [], "no stale start notice with a Retry");
+});
+
+test("RV14-F004: the program-found notice is translated too", async () => {
+	const { noticeRows } = await import("../gui/towermodel.ts");
+	const s = await winFirst();
+	world.procTable = [row(SHELL_PID, 1, "powershell.exe"), row(7777, SHELL_PID, "node.exe")];
+	world.live.add(7777);
+	await ask(s, { cmd: "tower-retry", workspace: "wA" });
+	await until(async () => (await status(s)).state === "held", "held on the program found");
+	const service = await status(s);
+	for (const o of [undefined, { locale: "zh-TW" }] as const) {
+		const rows = noticeRows(service as never, o as never).filter((r) => r.id === "start");
+		assert.equal(rows.length, 1);
+		if (o) assert.ok(!/The tower types nothing/.test(rows[0]!.text) && /node\.exe/.test(rows[0]!.text), rows[0]!.text);
+		else assert.match(rows[0]!.text, /The tower types nothing/);
+	}
 });

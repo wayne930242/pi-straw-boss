@@ -380,12 +380,18 @@ export function createStanding(o: StandingOptions) {
 				await run(["pane", "send-keys", m.target.pane(), "ctrl+c"]).catch(() => {});
 			}
 		},
-		/** A local run ended: the pane is free for the prompt again, and the boss's Ctrl+D is over. `fresh` false: the run's pi never started in it, so it is not known to be a bare shell (a program of the boss's may run there). */
+		/**
+		 * A local run ended: the pane is free for the prompt again, and the boss's Ctrl+D is over. `fresh` false: the run's pi never started in it, so it is not known to be a bare shell (a program of the boss's may run there).
+		 * `keepParked`: the give-back of a Retry or of the tower's own proof. It never ends the boss's Ctrl+D park, changes nothing while the prompt polls (the pane is not free: clearing what is known of the prompt would let the look
+		 * type the command into it, RV14-F001), marks no parked pane fresh (RV14-F002), and its mark expires like a hand-over's.
+		 */
 		freed(workspace: string, fresh = true, keepParked = false) {
 			const m = mines.get(workspace);
 			if (!m) return;
+			if (keepParked && present(m)) return;
+			const marked = fresh && !(keepParked && m.parked);
 			m.leaving = false;
-			Object.assign(m, { ...(keepParked ? {} : { parked: false }), launched: undefined, seen: undefined, reported: undefined, misses: 0, typings: 0, fresh, noStart: false, lost: false, hand: undefined, freshUntil: undefined, failures: 0, giveUp: false });
+			Object.assign(m, { ...(keepParked ? {} : { parked: false }), launched: undefined, seen: undefined, reported: undefined, misses: 0, typings: 0, fresh: marked, noStart: false, lost: false, hand: undefined, freshUntil: keepParked && marked ? now() + t.handMs : undefined, failures: 0, giveUp: false });
 			void tick(workspace);
 		},
 		/** A resident tower (its pi has `pid`) handed this pane over and is quitting: once that process is gone the pane is a bare shell the server just got back, as after a run. The look proves it (`proveHand`); nothing is believed on the word of the hand-over alone. A prompt that polls is left alone. */
