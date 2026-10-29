@@ -232,6 +232,55 @@ test("a post that leaves the tower standing with nothing queued ends the fast as
 	assert.equal(await ended(done), 0);
 });
 
+/** A prompt that has just posted a line while the server shows `answer`: the fast asking has started. Returns what a test needs to watch it. */
+async function afterPost(answer: PollAnswer) {
+	const source = new FakeSource();
+	const input = new PassThrough(), output = new PassThrough();
+	let text = "";
+	output.on("data", (chunk) => void (text += String(chunk)));
+	const done = runPrompt({ workspace: "wA", source, input, output, locale: "en", pollMs: 5000, wakingPollMs: 10 });
+	await until(() => text.includes("tower> "), "the prompt");
+	source.answers = [{ kind: "state", answer }];
+	input.write("hello\n");
+	await until(() => source.posted.length === 1, "the post");
+	return { source, input, done };
+}
+
+test("RV7-F006: a held service starts no run, so the prompt does not ask fast for it: back to the slow poll at the first held answer", async () => {
+	const { source, input, done } = await afterPost({ ...STATE, state: "waking", queued: 1 });
+	const fast = source.polls;
+	await until(() => source.polls >= fast + 5, "fast polls while the wake is pending");
+	source.answers = [{ kind: "state", answer: { ...STATE, state: "held", queued: 1 } }];
+	await until(() => source.answers[0]!.kind === "state" && source.polls > fast + 5, "polls");
+	await sleep(50); // the held answer is seen by the next poll at the latest
+	const mark = source.polls;
+	await sleep(150);
+	assert.ok(source.polls - mark <= 1, `slow again: ${source.polls - mark} polls in 150 ms`);
+	starting(source);
+	input.write("\n");
+	assert.equal(await ended(done), 0);
+});
+
+test("RV7-F006: a wake that is queued and never starts (a settings refusal keeps the queue and the standing state) is asked for fast for a bounded time only", async () => {
+	const { source, input, done } = await afterPost({ ...STATE, state: "standing", queued: 1 });
+	mock.timers.enable({ apis: ["Date"], now: Date.now() });
+	try {
+		const mark = source.polls;
+		await until(() => source.polls >= mark + 5, "fast polls while it may still start");
+		mock.timers.tick(100_000);
+		await until(() => source.polls >= mark + 10, "polls past the cap");
+		await sleep(50);
+		const slow = source.polls;
+		await sleep(150);
+		assert.ok(source.polls - slow <= 1, `slow again: ${source.polls - slow} polls in 150 ms`);
+	} finally {
+		mock.timers.reset();
+	}
+	starting(source);
+	input.write("\n");
+	assert.equal(await ended(done), 0);
+});
+
 test("Enter alone wakes the tower with a line that says the boss is at the keyboard and said nothing yet", async () => {
 	const source = new FakeSource();
 	const p = screen(source);

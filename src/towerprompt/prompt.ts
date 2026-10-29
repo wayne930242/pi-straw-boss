@@ -17,6 +17,8 @@ const POLL_MS = 2000;
 const WAKING_POLL_MS = 250;
 /** The server needs this long after a post to show it as queued before a standing, empty tower ends the fast asking. */
 const WAKING_GRACE_MS = 3000;
+/** The longest the prompt asks fast for one post: past a claim that took 46 s, a wake that has not started is not coming soon (a settings refusal keeps the queue and the standing state). */
+const WAKING_MAX_MS = 90_000;
 /** Lines that arrive this close together are one paste, one message. */
 const PASTE_MS = 40;
 /** What a message with no words says to the tower. */
@@ -96,7 +98,10 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 			const words = [...batch, rl?.line ?? ""].join("\n").trim();
 			// The boss wrote a while ago and the prompt said so then: the line is only cleared.
 			if (wokeAt === undefined) say(text.waking, false);
-			else if (terminal) (cursorTo(o.output, 0), clearLine(o.output, 0));
+			else if (terminal) {
+				cursorTo(o.output, 0);
+				clearLine(o.output, 0);
+			}
 			await end(async () => {
 				if (words) {
 					try {
@@ -110,7 +115,8 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 			return false;
 		}
 		// The boss wrote and the run has not taken the pane: the order to leave comes with its start, so the prompt asks fast until then. A tower that stands by with nothing queued, a moment after the post, has no wake pending.
-		if (wokeAt !== undefined && polled.answer.state === "standing" && polled.answer.queued === 0 && Date.now() - wokeAt > WAKING_GRACE_MS) wokeAt = undefined;
+		// A held service starts no run, and a wake that is not seen to start within the cap is not asked for fast for ever.
+		if (wokeAt !== undefined && ((polled.answer.state === "standing" && polled.answer.queued === 0 && Date.now() - wokeAt > WAKING_GRACE_MS) || polled.answer.state === "held" || Date.now() - wokeAt > WAKING_MAX_MS)) wokeAt = undefined;
 		const line = header(polled.answer);
 		if (line !== shown) {
 			shown = line;

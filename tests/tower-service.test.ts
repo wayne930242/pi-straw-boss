@@ -144,6 +144,20 @@ for (const how of ["undecided", "plain"] as const) {
 	});
 }
 
+test("B6 VM review RV7-F005: a resident whose pane-role answer is late starts its tower session only when the answer is none: nothing is published before it, and the tower role is taken after it", async () => {
+	let answer!: (reply: { ok: boolean; role: string }) => void;
+	const gate = new Promise<{ ok: boolean; role: string }>((resolve) => (answer = resolve));
+	sw.crashWith = 1; // no server can be started: the resident stays resident after its hand-over fails
+	const pi = world.tower("tower-wA", "wA:t7", "wA:p7", false, { server: server(), runSide: { ask: () => gate } });
+	await pi.start();
+	await until(() => pi.notices.some((n) => /has not said yet whether this pane is the tower's/.test(n.text)), "the ask to pass its bound");
+	await world.quiet();
+	assert.equal(world.herdr.workspace("wA").tokens.tower, undefined, "undecided: the session start has not run, so no tower role is published");
+	answer({ ok: true, role: "none" });
+	await until(() => world.herdr.workspace("wA").tokens.tower === "tower-wA", "the session start to run after the late none");
+	assert.equal(pi.stopped, false);
+});
+
 test("a resident tower the server cannot take stays resident, and says why", async () => {
 	sw.crashWith = 1; // no server can be started
 	const tower = world.tower("tower-wA", "wA:t7", "wA:p7", false, { server: server() });
