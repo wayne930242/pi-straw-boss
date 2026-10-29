@@ -277,6 +277,25 @@ test("a pane whose processes cannot be read is unknown, not restored, and is loo
 	assert.equal(state.resumed.length, 1, "a miss is only a count, and the run had not been given up on");
 });
 
+test("RV2-F003: a run that can never qualify does not keep the pane list read, one that can still be noted does", async () => {
+	registry(KID);
+	const persistent = rig(), ordinary = rig();
+	persistent.header("w:p2", persistent.kidFile, "PI_SUBAGENT_PERSISTENT=1 ");
+	for (const r of [persistent, ordinary]) {
+		r.state.panes.length = 0;
+		r.state.transcript.length = 0; // never seen running
+	}
+	await persistent.polls(10, persistent.watch());
+	await ordinary.polls(10, ordinary.watch());
+	assert.equal(persistent.state.lists, 0, "a persistent specialist cannot be resumed, so no sighting of it is worth a list");
+	assert.equal(ordinary.state.lists, 10, "a running child not yet seen is looked for on every look");
+	const foreign = rig();
+	foreign.header("w:p2", "/elsewhere/not-this-run.jsonl");
+	foreign.state.transcript.length = 0;
+	await foreign.polls(10, foreign.watch());
+	assert.equal(foreign.state.lists, 0, "a script that names another run's session is no run");
+});
+
 test("a run without a restored pane is given up on after a few looks", async () => {
 	registry();
 	const { state, polls } = rig();
@@ -401,13 +420,31 @@ test("RV-F004: a run cut off between the close and the request is asked for by t
 	assert.equal(state.resumed.length, 1);
 });
 
-test("RV-F004: a closing record whose pane is still there asks for nothing", async () => {
+test("RV2-F002: a closing record whose pane is still open was never closed, so the run goes through the proof of a restore again", async () => {
 	registry();
-	const { state, polls, watch } = rig();
+	const { state, polls, watch, closes } = rig();
 	state.transcript.push({ type: "custom", customType: "straw-boss", data: { closing: KID } });
-	await polls(4, watch());
+	await polls(1, watch());
+	assert.equal(state.resumed.length, 0, "the first look only notes it, as for any run");
+	assert.deepEqual(state.transcript.slice(-1).map((e) => e.data), [{ unclosed: KID }]);
+	await polls(2, watch()); // a reload reads `unclosed` back and does not take the run for cut off
+	assert.deepEqual(closes(), [["pane", "close", "w:p2"]], "the restored pane is closed now, once");
+	assert.equal(state.resumed.length, 1);
+	assert.deepEqual(state.transcript.slice(-2).map((e) => e.data), [{ closing: KID }, { resumed: KID }]);
+	assert.deepEqual(state.notes.map((n) => n.level), [undefined]);
+});
+
+test("RV2-F002: a closing record whose pane no longer qualifies is given up on with one warning that names the session", async () => {
+	registry();
+	const { state, polls, watch, kidFile, closes } = rig();
+	state.transcript.length = 0; // the restart came before the first look: nothing proves a restore
+	state.transcript.push({ type: "custom", customType: "straw-boss", data: { closing: KID } });
+	await polls(20, watch());
+	assert.equal(closes().length, 0);
 	assert.equal(state.resumed.length, 0);
-	assert.equal(state.commands.filter((c) => c[1] === "close").length, 0);
+	assert.deepEqual(state.notes.map((n) => n.level), ["warning"]);
+	assert.ok(state.notes[0]!.text.includes(kidFile));
+	assert.equal(state.lists, 8, "eight looks, then it is left alone");
 });
 
 test("RV-F004: a watcher stopped during the close sends nothing, and leaves `closing` without `resumed`", async () => {

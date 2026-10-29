@@ -69,20 +69,31 @@ function policyOf(file: string): { owner?: unknown; persistent?: unknown } | und
 export function restored(d: Restored) {
 	// The runs already acted on (this module's `resumed`) or already asked to report (orphan.ts's `nudged`) are read back from the session.
 	// `closing` is written before a pane is closed and `resumed` once the launcher has the request, so a run with the first and not the second was cut off in between.
+	// `unclosed` takes `closing` back, for a run whose pane was found open: the close never took effect.
 	// `seen` is the terminal a run's pane had while the child ran as pi-herdr-agents started it: Herdr gives a restored pane a new terminal, so a pane in another one is proof of a restore.
 	const done = new Set<string>(), closing = new Set<string>(), terminals = new Map<string, string>();
 	for (const e of d.entries()) {
 		if (e.type !== "custom" || e.customType !== d.type) continue;
-		const { resumed, nudged, gaveUp, closing: closed, seen, terminal } = (e.data ?? {}) as Record<string, unknown>;
+		const { resumed, nudged, gaveUp, closing: closed, unclosed, seen, terminal } = (e.data ?? {}) as Record<string, unknown>;
 		for (const key of [resumed, nudged, gaveUp]) if (typeof key === "string") done.add(key);
 		if (typeof closed === "string") closing.add(closed);
+		if (typeof unclosed === "string") closing.delete(unclosed);
 		if (typeof seen === "string" && typeof terminal === "string") terminals.set(seen, terminal);
 	}
 	const windows = (d.platform ?? process.platform) === "win32";
 	// A run counts as a miss when no pane of Herdr is the restored one; after GIVE_UP misses it is left alone until the next session start (a reload counts).
-	const misses = new Map<string, number>(), launches = new Map<string, Launch | undefined>();
+	// A run whose `closing` was taken back (`reopened`) was meant to be closed, so giving up on it is said.
+	const misses = new Map<string, number>(), launches = new Map<string, Launch | undefined>(), reopened = new Set<string>();
 	let before = new Set<string>(), busy = false, stopped = false;
-	const miss = (id: string) => void misses.set(id, (misses.get(id) ?? 0) + 1);
+	const launchFor = (file: string, id: string) => {
+		if (!launches.has(id)) launches.set(id, launchOf(file, id));
+		return launches.get(id);
+	};
+	const miss = (id: string) => {
+		const n = (misses.get(id) ?? 0) + 1;
+		misses.set(id, n);
+		if (n === GIVE_UP && reopened.has(id)) d.tell(`Straw Boss: the pane of a restored subagent run was meant to be closed, but the close did not take effect and the pane no longer qualifies, so it is left open and not resumed: ${launches.get(id)?.session ?? id}`, "warning");
+	};
 
 	/**
 	 * What runs in the foreground of `pane`: a launch script (the child as pi-herdr-agents started it, or a run someone resumed), a pi on its own, or unknown.
@@ -107,8 +118,7 @@ export function restored(d: Restored) {
 	async function observe(file: string, ids: string[], ps: Awaited<ReturnType<typeof panes>>): Promise<void> {
 		for (const id of ids) {
 			if (terminals.has(id)) continue;
-			if (!launches.has(id)) launches.set(id, launchOf(file, id));
-			const launch = launches.get(id);
+			const launch = launchFor(file, id);
 			const pane = launch && ps.find((p) => p.pane_id === launch.surface && p.agent === "pi" && ownFile(p.agent_session?.value, id));
 			if (!pane?.terminal_id || await shape(pane.pane_id) !== "script") continue;
 			terminals.set(id, pane.terminal_id);
@@ -132,7 +142,11 @@ export function restored(d: Restored) {
 			const reported = open.length ? d.entries().flatMap((e) => (e.type === "custom_message" && FINAL.includes(e.customType ?? "") ? [String((e.details as { sessionFile?: unknown } | undefined)?.sessionFile ?? "")] : [])) : [];
 			const unfinished = open.filter((id) => !reported.some((f) => ownFile(f, id)));
 			// The terminal of a running child's pane is noted while it runs as pi-herdr-agents started it; that is what a restored pane is told apart by.
-			const unseen = unfinished.filter((id) => !terminals.has(id) && !(launches.get(id) && existsSync(`${launches.get(id)!.session}.exit`)));
+			// A run that cannot be resumed (a persistent specialist, a script or session that is not the run's own) can never be noted, so it does not keep the pane list read.
+			const unseen = unfinished.filter((id) => {
+				const launch = terminals.has(id) ? undefined : launchFor(file, id);
+				return launch && !existsSync(`${launch.session}.exit`);
+			});
 			let ps: Awaited<ReturnType<typeof panes>> | undefined;
 			if (unseen.length) {
 				ps = await panes(d.run);
@@ -140,23 +154,27 @@ export function restored(d: Restored) {
 			}
 			const candidates: (Launch & { id: string })[] = [];
 			for (const id of unfinished.filter((id) => !live.has(id))) {
-				if (!launches.has(id)) launches.set(id, launchOf(file, id));
-				const launch = launches.get(id);
+				const launch = launchFor(file, id);
 				// A child that wrote its exit sidecar has finished: it is no stranded run, and its result is not ours to repeat.
 				if (!launch || existsSync(`${launch.session}.exit`)) miss(id);
 				else candidates.push({ id, ...launch });
 			}
 			if (!candidates.length) return void (before = new Set());
-			if (!ps || unseen.length !== unfinished.length) ps = await panes(d.run);
+			if (!ps) ps = await panes(d.run);
 			const found: Found[] = [], recovered: Found[] = [];
 			for (const c of candidates) {
 				// The restored pane keeps the pane id the launch script recorded; a run another session resumed, or a pi someone started on the file, sits in a pane of its own.
 				const pane = ps.find((p) => p.pane_id === c.surface && p.agent === "pi" && ownFile(p.agent_session?.value, c.id));
 				// Cut off between the close and the request (a reload, a quit): the pane is gone and the launcher was never asked.
 				if (closing.has(c.id)) {
-					if (ps.some((p) => p.pane_id === c.surface || ownFile(p.agent_session?.value, c.id))) miss(c.id);
-					else recovered.push({ ...c, pane: c.surface });
-					continue;
+					if (!ps.some((p) => p.pane_id === c.surface || ownFile(p.agent_session?.value, c.id))) {
+						recovered.push({ ...c, pane: c.surface });
+						continue;
+					}
+					// The pane is still open: the process died before the close took effect, so nothing was closed. The run goes through the proof of a restore again.
+					closing.delete(c.id);
+					reopened.add(c.id);
+					d.remember({ unclosed: c.id });
 				}
 				if (!pane) {
 					miss(c.id);
