@@ -241,10 +241,11 @@ test("RV7-F003: where Herdr gives the foreground group the held service starts a
 test("RV10-F002: a held service on Windows with no busy proof types nothing, however fresh the pane is marked; Retry (the service no longer held) gives the pane back", async () => {
 	const r = rig("win32");
 	r.state = "held";
-	r.standing.freed("wA");
+	r.standing.freed("wA", false);
 	await looks(r, 5);
 	assert.deepEqual(r.typed, [], "held, no busy list: no typing into the boss's program");
 	r.state = "standing";
+	r.standing.freed("wA"); // what the service's Retry does with no event waiting (runs.ts retry)
 	await looks(r, 1);
 	assert.equal(r.typed.length, 1, "the service is no longer held: the fresh pane is typed into");
 	const unix = rig("darwin");
@@ -266,6 +267,31 @@ test("RV10-F002: a pane freed by a run whose pi never started in it is not marke
 	unix.standing.freed("wA", false);
 	await looks(unix, 1);
 	assert.equal(unix.typed.length, 1, "where Herdr gives the foreground group the group decides");
+});
+
+// RV11-F001: the real path of an unstarted run: freed with fresh false, then the hold ends with no event waiting (nothing starts a run to mark the pane fresh).
+test("RV11-F001: the shell alone at two looks with the holding program gone gives the pane back fresh, and the prompt is typed with no run to start", async () => {
+	const r = rig("win32");
+	r.standing.freed("wA", false);
+	r.state = "held";
+	r.busy = true;
+	r.busyPids = [4242];
+	await looks(r, 6);
+	assert.ok(r.freed > 0, "the proof frees the pane");
+	assert.deepEqual(r.typed, [], "held: nothing typed while the service is held");
+	r.state = "standing";
+	r.busy = false;
+	await looks(r, 2);
+	assert.equal(r.typed.length, 1, "retyped though no run starts");
+	const live = rig("win32");
+	live.standing.freed("wA", false);
+	live.state = "held";
+	live.busy = true;
+	live.busyPids = [4242];
+	live.live.add(4242);
+	await looks(live, 6);
+	assert.equal(live.freed, 0, "never while the program lives");
+	assert.deepEqual(live.typed, []);
 });
 
 test("idleShell is unchanged: a shells-only list is idle only for a pane known fresh", () => {

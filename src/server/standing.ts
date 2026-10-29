@@ -211,6 +211,8 @@ export function createStanding(o: StandingOptions) {
 			m.busyClear = pids.length > 0 && pids.every((pid) => !alive(pid) && !listed.includes(pid)) && idleShell(info, true, groups) ? m.busyClear + 1 : 0;
 			if (m.busyClear >= 2) {
 				m.busyClear = 0;
+				// Two looks of the shell alone with the holding programs gone are proof enough for a pane whose run never started pi: it gives the prompt back even when no event waits to start a run (RV11-F001).
+				Object.assign(m, { fresh: true, freshUntil: now() + t.handMs });
 				target.paneFree?.();
 			}
 			return;

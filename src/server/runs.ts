@@ -1336,10 +1336,13 @@ export function createRuns(o: RunsOptions) {
 		retry(workspace: string) {
 			const svc = services.get(workspace);
 			if (!svc) throw new Error(`The sb server stands in for no tower of workspace ${workspace}`);
+			const wasBusy = svc.paneBusy !== undefined;
 			svc.crashes = [];
 			svc.paneBusy = undefined;
 			svc.notices = svc.notices.filter((n) => n.id !== "loop" && n.id !== "start");
 			if (svc.state === "held") svc.state = "standing";
+			// With no event to start a run the boss's Retry gives the pane back as the run's end would: the prompt is typed again (RV11-F001). Where a program of the boss's holds the pane (`wasBusy`) only the look's proof does.
+			if (!wasBusy && !svc.run && !waitingOf(svc).length) svc.ref.freed();
 			poke(svc);
 		},
 		/**
