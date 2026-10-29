@@ -419,3 +419,84 @@ test("`/new` alone at the prompt asks the server for a new boss session and goes
 	assert.equal(await ended(p.done), 0);
 	assert.deepEqual(source.posted, ["please /new that"], "only a line that is exactly /new is the command");
 });
+
+test("a line that starts with / and is not a command of the prompt's (a `/reload` typed from habit) is refused on the spot with one line that lists what tower> takes; nothing is posted", async () => {
+	const source = new FakeSource();
+	const p = screen(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("/reload\n");
+	await until(() => /\/reload is not a command here/.test(p.text()), "the refusal");
+	await sleep(80); // longer than the paste window: a post would be in by now
+	assert.deepEqual(source.posted, [], "it did not reach the tower");
+	assert.equal(source.freshed, 0);
+	assert.equal(source.left, 0);
+	const refusals = p.text().split("\n").filter((l) => /is not a command here/.test(l));
+	assert.equal(refusals.length, 1, "one line");
+	assert.match(refusals[0]!, /\/new/);
+	assert.match(refusals[0]!, /\/quit/);
+	assert.match(refusals[0]!, /space/, "and how to send a message that starts with /");
+	// `/new` with words after it is not the command either; the line is refused, not posted.
+	p.input.write("/new please\n");
+	await until(() => p.text().split("\n").filter((l) => /is not a command here/.test(l)).length === 2, "the second refusal");
+	assert.deepEqual(source.posted, []);
+	assert.equal(source.freshed, 0);
+	starting(source);
+	assert.equal(await ended(p.done), 0);
+});
+
+test("a terminal escape in the refused word never reaches the screen", async () => {
+	const source = new FakeSource();
+	const p = screen(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("/\u001b[31mred\n");
+	await until(() => /is not a command here/.test(p.text()), "the refusal");
+	assert.ok(!p.text().includes("\u001b"));
+	p.input.end();
+	await p.done;
+});
+
+test("`//` at the start and a space at the start keep a line a message: `//share/x` is posted as typed, ` /reload` is posted as `/reload`", async () => {
+	const source = new FakeSource();
+	const p = screen(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("//share/x is down\n");
+	await until(() => source.posted.length === 1, "the first post");
+	p.input.write(" /reload the config\n");
+	await until(() => source.posted.length === 2, "the second post");
+	assert.deepEqual(source.posted, ["//share/x is down", "/reload the config"]);
+	assert.ok(!/is not a command here/.test(p.text()));
+	starting(source);
+	assert.equal(await ended(p.done), 0);
+});
+
+test("`/quit` alone at the prompt leaves the pane to the shell, as Ctrl+D does: the server is told, nothing is posted, the exit is 0", async () => {
+	const source = new FakeSource();
+	const p = screen(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("/quit\n");
+	assert.equal(await ended(p.done), 0);
+	assert.equal(source.left, 1);
+	assert.deepEqual(source.posted, []);
+	assert.match(p.text(), /leaving this pane to your shell/);
+});
+
+test("in the middle of a pasted message a line that starts with / is part of it", async () => {
+	const source = new FakeSource();
+	const p = screen(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("look at this\n/etc/hosts\n/quit\n");
+	await until(() => source.posted.length === 1, "the post");
+	assert.deepEqual(source.posted, ["look at this\n/etc/hosts\n/quit"]);
+	assert.equal(source.left, 0);
+	starting(source);
+	assert.equal(await ended(p.done), 0);
+});
+
+test("the prompt's words for the refusal exist in Traditional Chinese too", () => {
+	const text = textsFor("zh-TW").unknownCommand("/reload");
+	assert.match(text, /\/reload/);
+	assert.match(text, /\/new/);
+	assert.match(text, /\/quit/);
+	assert.match(text, /空格/);
+	assert.ok(!text.includes("\n"));
+});

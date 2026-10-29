@@ -172,8 +172,14 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 	rl = createInterface({ input: o.input, output: o.output, prompt: PROMPT, terminal });
 	rl.on("line", (raw) => {
 		if (finished || posting) return;
-		// `/new` alone is the prompt's own command, not a message: the next boss conversation starts a new session.
-		if (!batch.length && raw.trim() === "/new") return void startOver();
+		// A first line that starts with `/` is for the prompt, never the tower (a `/reload` typed from habit is no message): `/new` alone starts a new boss session, `/quit` alone leaves the pane to the shell as Ctrl+D does,
+		// and any other is refused here with what the prompt takes. `//` at the start, or a space before the `/`, keeps the line a message (posted as typed; the space is trimmed with the rest of the message's edges).
+		if (!batch.length && raw.startsWith("/") && !raw.startsWith("//")) {
+			const word = raw.trim();
+			if (word === "/new") return void startOver();
+			if (word === "/quit") return leave();
+			return void say(text.unknownCommand(clean(word.split(/\s+/)[0], 40)));
+		}
 		batch.push(raw);
 		clearTimeout(batchTimer);
 		batchTimer = setTimeout(() => void flush(), PASTE_MS);
