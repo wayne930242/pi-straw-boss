@@ -196,6 +196,8 @@ interface Active {
 	/** Commands for the run, handed out at its next poll. */
 	commands: ({ type: "steer"; text: string } | { type: "quit" } | { type: "confirmed"; dialogId: string; allow: boolean })[];
 	lastPoll: number;
+	/** The run has polled at least once (a hand run whose pi is gone before that was never seen alive). */
+	polled?: true;
 	idleSince?: number;
 	started: number;
 	closing?: number;
@@ -814,8 +816,10 @@ export function createRuns(o: RunsOptions) {
 				const age = now() - a.started;
 				const exited = gone(a) || (a.rec.pid === undefined && a.token !== undefined && (await panes(o.run, a.rec.workspace).catch(() => undefined))?.every((p) => p.pane_id !== a.rec.pane) === true);
 				if (exited) {
-					const outcome = a.pending ?? (a.closing !== undefined ? "done" : "crashed");
-					await finish(a, outcome, outcome === "crashed" ? "pi exited without tower_done" : undefined, a.left === true);
+					// A hand run whose pi left before it ever polled was an orphan claim (the pi quit while the pane-role answer was late, and nothing released it): the boss left, nothing crashed.
+					const orphan = a.rec.hand === true && !a.polled && a.pending === undefined && a.closing === undefined;
+					const outcome = a.pending ?? (a.closing !== undefined ? "done" : orphan ? "quit" : "crashed");
+					await finish(a, outcome, outcome === "crashed" ? "pi exited without tower_done" : orphan ? "the pi left before its first poll" : undefined, a.left === true);
 					continue;
 				}
 				if (a.recovering !== undefined) {
@@ -1011,6 +1015,7 @@ export function createRuns(o: RunsOptions) {
 		const a = of(req.token);
 		if (!a || a.ended) return unknown;
 		a.lastPoll = now();
+		a.polled = true;
 		settlePointer(a);
 		// The run is up and asking: what its brief showed as expired is shown (a run that never gets here shows it again to the next).
 		// Marking them shown moves the memory, which is the brief's own doing: the run has that brief already.
@@ -1188,7 +1193,7 @@ export function createRuns(o: RunsOptions) {
 		for (const rec of listRuns(slot, ws).filter((r) => !r.outcome)) {
 			// A run of a server that went away: it has `lost` to reconnect with its run id; until then it is the service's run.
 			// A conversation of the last server is still the boss's: its time counts from its start (the boss's presence is memory only, and their next word tells it again).
-			const a: Active = { rec, svc, commands: [], lastPoll: now(), started: Date.parse(rec.startedAt) || now(), digestKeys: [], offered: new Map(), recovering: now(), ...(rec.left ? { left: true, pending: "quit" as Outcome } : {}), ...(rec.conversation ? { boss: now(), bossSince: Date.parse(rec.startedAt) || now(), turns: ((p) => (p?.run === rec.id ? p.turns : rec.turns ?? rec.conversation!.turns))(readPointer(slot, ws)), ...(rec.fresh ? { fresh: true } : {}), ...(rec.deferred && rec.file && readPointer(slot, ws)?.run !== rec.id ? { pendingFile: rec.file } : {}) } : {}) };
+			const a: Active = { rec, svc, commands: [], lastPoll: now(), started: Date.parse(rec.startedAt) || now(), digestKeys: [], offered: new Map(), polled: true, recovering: now(), ...(rec.left ? { left: true, pending: "quit" as Outcome } : {}), ...(rec.conversation ? { boss: now(), bossSince: Date.parse(rec.startedAt) || now(), turns: ((p) => (p?.run === rec.id ? p.turns : rec.turns ?? rec.conversation!.turns))(readPointer(slot, ws)), ...(rec.fresh ? { fresh: true } : {}), ...(rec.deferred && rec.file && readPointer(slot, ws)?.run !== rec.id ? { pendingFile: rec.file } : {}) } : {}) };
 			if (rec.kind === "ally" && rec.device) svc.allies.set(rec.device, a);
 			else {
 				svc.run = svc.run ?? a;

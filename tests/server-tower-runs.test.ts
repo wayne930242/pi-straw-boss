@@ -444,6 +444,29 @@ test("pane-role: a pane the server does not list is none; a standing pane that h
 	await until(() => listRuns(world.slot, "wA").some((r) => r.hand && r.outcome === "done"), "done");
 });
 
+test("RV8-F004: a hand run whose pi is gone before its first poll (it quit while the pane-role answer was late, and nothing released the claim) is released, not counted as a crash; one that polled and then vanished is still a crash", async () => {
+	const { s, ensured } = await setup();
+	const crashes = async () => ((await ask(s, { cmd: "status" })).towers as { service: { crashes?: number } }[])[0]!.service.crashes ?? 0;
+	const handRun = async (pid: number) => {
+		world.herdr.pane(String(ensured.pane)).processes = [{ argv0: "pi", name: "node", pid }];
+		world.live.add(pid);
+		const hand = await ask(s, { cmd: "pane-role", pane: ensured.pane, pid, started: `T-${pid}` });
+		assert.equal(hand.role, "hand");
+		return String((hand.claim as { token: string }).token);
+	};
+	await handRun(5555);
+	world.live.delete(5555); // never polled
+	await until(() => listRuns(world.slot, "wA").some((r) => r.hand && r.outcome !== undefined), "the orphan hand run to end");
+	assert.equal(listRuns(world.slot, "wA").find((r) => r.hand)!.outcome, "quit");
+	assert.equal(await crashes(), 0, "an orphan claim is no crash");
+	const token = await handRun(5557);
+	assert.equal((await poll(s, token)).ok, true);
+	world.live.delete(5557);
+	await until(() => listRuns(world.slot, "wA").filter((r) => r.hand).length === 2 && listRuns(world.slot, "wA").every((r) => r.outcome !== undefined), "the second hand run to end");
+	assert.equal(listRuns(world.slot, "wA").filter((r) => r.outcome === "crashed").length, 1, "a pi that polled and vanished crashed");
+	assert.equal(await crashes(), 1);
+});
+
 test("wakeAfter: 5 to 240 minutes, one pending per workspace (a later one replaces it), refused outside the range; a due timer wakes a run after a server restart", async () => {
 	const { s } = await setup();
 	tower().incoming(from, msg("m1", "one"));
