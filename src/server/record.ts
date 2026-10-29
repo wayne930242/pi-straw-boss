@@ -10,7 +10,7 @@ import { protectFolder, refuseLink, resetFileAcl, type RunNative } from "./winpr
 // `server.lock`, which makes check-and-start atomic; `start-error.json`, why the last start attempt failed. One server serves one (state directory, Herdr socket)
 // pair, its slot: the primary slot, for the default Herdr, keeps its files in the state directory itself, any other Herdr's in `servers/<hash>/`.
 
-export const FILES = { record: "server.json", lock: "server.lock", stale: "server.lock.stale", startError: "start-error.json", log: "server.log", socket: "server.sock" } as const;
+export const FILES = { record: "server.json", lock: "server.lock", stale: "server.lock.stale", startError: "start-error.json", log: "server.log", socket: "server.sock", desk: "desk.json", deskLock: "desk.lock", deskLockStale: "desk.lock.stale" } as const;
 /** A restart record counts as under way while its `since` is no older than this (the starting server touches it every TOUCH_MS). */
 export const FRESH_MS = 10_000;
 export const TOUCH_MS = 2000;
@@ -327,6 +327,10 @@ export interface LockDeps {
 	repair?: (file: string) => void;
 	/** Whether a file exists (`existsSync`); a seam for the delete-pending case. */
 	exists?: (file: string) => boolean;
+	/** Another lock than `server.lock`: its file and the marker its stale-removal lookers take turns by (`desk.lock`). */
+	files?: { lock: string; marker: string };
+	/** How old a lock may be before it is taken over from a live holder; LOCK_MAX_MS by default. */
+	maxMs?: number;
 }
 /** `server.lock` cannot be opened (access denied): not a start under way. Told as it is, never waited for as a held lock. */
 export class LockUnreadable extends Error {
@@ -370,7 +374,7 @@ const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
  * Waits up to `waitMs` for a busy lock, then throws LockBusy.
  */
 export async function takeLock(slot: Slot, by: string, deps: LockDeps = {}, waitMs = 0): Promise<Lock> {
-	const now = deps.now ?? Date.now, sleep = deps.sleep ?? pause, lock = fileOf(slot, "lock"), marker = fileOf(slot, "stale");
+	const now = deps.now ?? Date.now, sleep = deps.sleep ?? pause, lock = deps.files?.lock ?? fileOf(slot, "lock"), marker = deps.files?.marker ?? fileOf(slot, "stale"), maxMs = deps.maxMs ?? LOCK_MAX_MS;
 	// Waits a few seconds for the launch PowerShell to tell this process's start time (a cold start on Windows makes one PowerShell start, not two) before reading it with one of its own.
 	const self = deps.self ?? { pid: process.pid, started: () => startedOrWait(process.pid, SELF_START_GRACE_MS) };
 	// The start time is taken if it is known now (macOS and Linux: always); on Windows it takes seconds (a PowerShell start), and a cold start does not wait for it: the lock is
@@ -425,7 +429,7 @@ export async function takeLock(slot: Slot, by: string, deps: LockDeps = {}, wait
 			// A lock that cannot be read was caught being written, or is garbage a crash left: it is garbage once it is a few seconds old.
 			const stale = raw === undefined ? false
 				: !held || typeof held.pid !== "number" ? now() - (statSync(lock, { throwIfNoEntry: false })?.mtimeMs ?? 0) > MARKER_MAX_MS
-				: !holderAlive(held, deps) || now() - Date.parse(held.since) > LOCK_MAX_MS;
+				: !holderAlive(held, deps) || now() - Date.parse(held.since) > maxMs;
 			if (stale && raw !== undefined && removeStale(lock, marker, raw, now)) {
 				deps.note?.("lock-taken-over", { holder: held?.pid ?? 0, by: held?.by ?? "unknown", since: held?.since ?? "unknown" });
 				continue;

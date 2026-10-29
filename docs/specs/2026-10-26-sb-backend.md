@@ -1557,7 +1557,7 @@ spec replaces:
 | S2, no browser | Stays: `/boss gui` prints the URL and opens nothing in desk mode. The server itself never opens a browser. |
 | S3, the state path | Stays. |
 | S4, `gui.json` as contract | Stays, extended by **`gui.json` and its successor** and **States for a shell**. |
-| S5, `desk up` | **Replaced by `cli.mjs up --dir <folder> --label <name> [--timeout s] [--exact]`** at the path of **What the server runs from**. Steps: `herdr`, `integration` (S6), `version`, `server` (start, find, restart for the switch, or upgrade), `base` (`desk.json`, as specified), `tower` (`ensure-tower`, no pi, no 90 s restore wait: a restored run is quit rather than kept), `gui` (the URL answers). With `--dir`, `up` refuses with exit 2 when the switch is missing, as specified. Without `--dir`, `up` only makes sure the server runs. |
+| S5, `desk up` | **Replaced by `cli.mjs up --dir <folder> --label <name> [--timeout s] [--exact]`** at the path of **What the server runs from**. Steps: `herdr`, `integration` (S6), `version`, `server` (start, find, restart for the switch, or upgrade), `base` (`desk.json`, as specified, except that the recorded workspace id is the base only while the workspace still matches the record: Herdr numbers a new workspace from the highest id it restored, so a quit base's id can come back as someone's project; a match is the recorded label or a pane whose real path is the recorded folder (a tower tab is no match: every workspace's tower tab has the same label), else a new base is made with the `desk_base_replaced` warning. A kept base opens its tower in the recorded folder, and `--dir` is checked only when a base is made), `tower` (`ensure-tower`, no pi, no 90 s restore wait: a restored run is quit rather than kept; when `up` made the base in this run, the ask carries `made {pane, at}`, believed only for the workspace's sole pane, marked as a tower, without an agent, made within 30 s: that pane counts as a fresh shell, so on Windows the `tower>` prompt is typed into it once, and a tower service still registered for the id of a lost workspace is dropped at once), `gui` (the URL answers). With `--dir`, `up` refuses with exit 2 when the switch is missing, as specified. Without `--dir`, `up` only makes sure the server runs. |
 | S6, Herdr's pi integration | Stays, installed by `up`. |
 | S7, S8 | On `main` (R1). The detached start adds `windowsHide` too (**Starting**). |
 | S9, hidden features | Stays. The server reads the switch and tells the page. |
@@ -1595,7 +1595,8 @@ One JSON line on stdout:
 - `steps` lists every step that ran, in order: `herdr`, `integration` (with `--dir`), `version`, `server`, then `base`, `tower`, and
   `gui` with `--dir`, or `gui` alone without it.
 - `warnings` codes: `server_newer`, `desk_on` (a desk server found by an `up` without the switch), `remote_off` (remote access did not
-  resume, with the reason), and `integration_installed`.
+  resume, with the reason), `integration_installed`, `desk_json_unreadable` (`desk.json` is no record of the home base; a new one is made), and
+  `desk_base_replaced` (the workspace with the recorded id is no longer the base; a new one is made).
 - The last five fields come only with `--dir`.
 - Exit codes:
   - 0: done.

@@ -45,6 +45,8 @@ const UNKNOWN = "(unknown)";
 export const RUN_SEND_CAP_MS = 20_000;
 const RETRY_MS = [1000, 2000, 5000, 10_000, 30_000];
 const REFRESH_MS = 4 * 60_000, RECOVER_MS = 60_000, RECOVER_POLL_MS = 2000, RESIDENT_MS = 2000, REGISTER_WAIT_MS = 3000, LEAVE_MS = 2000;
+/** How old a caller's "I just made this pane" may be and still be believed (the desk step asks within a second or two of making the base). */
+const MADE_WITHIN_MS = 30_000;
 /** What a tab is called once its standing pane was replaced and it kept other panes. */
 const FORMER_LABEL = "former tower";
 /** What Herdr reports that ends a tower's tab, or moves the head: any of them makes the service look again. */
@@ -99,7 +101,7 @@ export interface Towers {
 	/** Whether the runs of the last server are loaded and the identities adopted (true when the tower runs are off: there is nothing to load). */
 	loaded(): boolean;
 	/** Gives a workspace its tower (a promotion, `/boss tower`, a handover from a resident tower of this build). */
-	ensure(request: { workspace: string; pane?: string; cwd?: string; pid?: number }): Promise<Ensured>;
+	ensure(request: { workspace: string; pane?: string; cwd?: string; pid?: number; made?: { pane: string; at: number } }): Promise<Ensured>;
 	/** The boss closed the tower: its tab goes, and the service with it. */
 	close(workspace: string): Promise<{ workspace: string; id: string }>;
 	/** The opener, with the persisted ledger, for the workspace's tower. */
@@ -735,9 +737,27 @@ export function createTowers(o: TowersOptions): Towers {
 
 	const answer = (l: Live, opened: boolean): Ensured => ({ id: l.record.id, workspace: l.record.workspace, label: l.record.label, tab: l.record.tab, pane: l.record.pane, opened, live: l.state === "live" });
 
-	const openFor = async (target: Workspace, hint: string | undefined, cwd: string | undefined, handedBy?: number): Promise<Ensured> => {
+	/**
+	 * Whether the pane the desk step says it just made (`up --dir`, desk.ts `makeBase`) is a bare shell nobody has used, so the prompt may be typed into it where Herdr cannot tell an idle shell from a busy one (F10 holds for
+	 * every other pane). The claim is believed only as far as the server can see it: the pane is the workspace's only pane, it is marked as a tower and holds no agent, and the claim is seconds old.
+	 */
+	const justMade = async (ws: string, claim: { pane: string; at: number } | undefined): Promise<boolean> => {
+		if (!claim || Math.abs(now() - claim.at) > MADE_WITHIN_MS) return false;
+		const here = await panes(run, ws).catch(() => []);
+		return here.length === 1 && here[0]!.pane_id === claim.pane && here[0]!.tokens?.sb_role === "tower" && !here[0]!.agent;
+	};
+
+	const openFor = async (target: Workspace, hint: string | undefined, cwd: string | undefined, handedBy?: number, claim?: { pane: string; at: number }): Promise<Ensured> => {
 		const ws = target.workspace_id;
-		const existing = services.get(ws);
+		let existing = services.get(ws);
+		// A base the caller made a moment ago is new to the server: a service still registered for its id belongs to a workspace that was lost (Herdr was killed with its session unsaved and numbered the new one alike), and it is
+		// dropped now instead of at the next refresh, so the new tower gets its tokens at once.
+		// A claim is used once: a service opened for this pane after the claim was made has used it, and a replay would drop the live tower and type the prompt again.
+		const fresh = !(claim && existing && !existing.stopped && existing.record.pane === claim.pane && Date.parse(existing.record.created) >= claim.at) && (await justMade(ws, claim));
+		if (fresh && existing && !existing.stopped) {
+			await lose(existing, "its workspace was made again");
+			existing = undefined;
+		}
 		if (existing && !existing.stopped) {
 			// A pane list that fails is unknown: the ask fails, the service stays.
 			const here = await locate(existing, false);
@@ -783,7 +803,8 @@ export function createTowers(o: TowersOptions): Towers {
 		const record: ServiceRecord = { ...draft.record, pane: pane.pane_id, tab: pane.tab_id, ...(pane.cwd ?? dir ? { cwd: pane.cwd ?? dir } : {}), created: new Date(now()).toISOString() };
 		writeService(slot, record);
 		// This call chose the pane (a tab it made, a leftover tower tab, or the pane it was handed): it is the tower's seat.
-		const l = adopt(record, made, true);
+		// A claim the server believes (`justMade`) is a fact the pane is a shell nobody has used, as a pane this call made is.
+		const l = adopt(record, made || (fresh && pane.pane_id === claim?.pane), true);
 		// A pane a resident tower hands over is a shell nobody has used once that tower's pi has left it (standing.ts).
 		if (given && !made) standing.handed(ws, handedBy);
 		log.line("tower-opened", { workspace: ws, id: record.id, pane: record.pane, tab: record.tab });
@@ -791,7 +812,7 @@ export function createTowers(o: TowersOptions): Towers {
 		return answer(l, true);
 	};
 
-	const ensure: Towers["ensure"] = async ({ workspace, pane, cwd, pid }) => {
+	const ensure: Towers["ensure"] = async ({ workspace, pane, cwd, pid, made }) => {
 		if (!o.enabled()) throw new Error("towerRuns.enabled is off in config.json, so the sb server stands in for no tower");
 		if (stopped) throw new Error("the sb server is stopping");
 		await activate();
@@ -801,7 +822,7 @@ export function createTowers(o: TowersOptions): Towers {
 		// A sub workspace never has a tower: its parent workspace's tower serves it.
 		const target = isSub(asked) ? parentOf(all, asked) : asked;
 		if (!target) throw new Error(`${asked.label} is a sub workspace with no open parent workspace, so it has no tower; open the parent workspace first`);
-		const pending = opening.get(target.workspace_id) ?? openFor(target, target === asked ? pane : undefined, cwd, pid).finally(() => opening.delete(target.workspace_id));
+		const pending = opening.get(target.workspace_id) ?? openFor(target, target === asked ? pane : undefined, cwd, pid, target === asked ? made : undefined).finally(() => opening.delete(target.workspace_id));
 		opening.set(target.workspace_id, pending);
 		return pending;
 	};
