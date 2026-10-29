@@ -235,7 +235,8 @@ test("a run past the steer time is told to wrap up, past the cap it is told to q
 	// The run's clock is the test's: the watcher sees an age only when the test sets it, one step at a time, so a tick that comes seconds late under load (a load average of 70 was seen) cannot find the run already past the cap and skip the steer (B5 review F013).
 	const clock = (world.runClock = fakeClock());
 	// The times are ones the real clock cannot reach during the test: a run that stops reading the test's clock times out instead of passing.
-	world.runTimers = { steerAt: 600_000, quitAt: 1_200_000, quitGrace: 60_000, signal: 30_000 };
+	// `lost` is one of them too: the test polls between its steps, but a watcher tick that comes before the poll after a step of minutes would find the run silent for that long and end it as lost.
+	world.runTimers = { steerAt: 600_000, quitAt: 1_200_000, quitGrace: 60_000, signal: 30_000, lost: 100_000_000 };
 	const { s } = await setup();
 	tower().incoming(from, msg("m1", "slow"));
 	const id = await nthRun();
@@ -273,7 +274,7 @@ test("a run past the steer time is told to wrap up, past the cap it is told to q
 	await until(() => world.kills.length === 1, "SIGTERM", 20_000);
 	assert.deepEqual(world.kills[0], [world.pis.get(id)!.pid, "SIGTERM"]);
 	exit(id);
-	await until(() => readRun(world.slot, "wA", id)?.outcome === "timeout", "the outcome");
+	await until(() => readRun(world.slot, "wA", id)?.outcome === "timeout", "the outcome", 20_000);
 	assert.match(readNotes(world.slot, "wA").at(-1)!.note, /timed out/);
 	assert.equal(readQueue(world.slot, "wA")[0]?.flag, "crash", "its events return");
 });
@@ -281,7 +282,8 @@ const ensureedPane = () => world.herdr.panes.find((p) => p.tokens.sb_role === "t
 
 test("a run idle with nothing pending and no tower_done gets one steer, then is ended with the note (ended without a note)", async () => {
 	const clock = (world.runClock = fakeClock());
-	world.runTimers = { idleSteer: 60_000, idleEnd: 300_000 };
+	// Not lost: the steps of the clock are minutes, and a watcher tick that comes before the poll after a step would find the run silent for that long and end it as lost, not as quit.
+	world.runTimers = { idleSteer: 60_000, idleEnd: 300_000, lost: 100_000_000 };
 	const { s } = await setup();
 	tower().incoming(from, msg("m1", "quick"));
 	const id = await nthRun();
@@ -307,7 +309,8 @@ test("a run idle with nothing pending and no tower_done gets one steer, then is 
 	clock.advance(300_000);
 	assert.equal(await nextCommand("the quit"), "quit");
 	exit(id);
-	await until(() => readRun(world.slot, "wA", id)?.outcome === "quit", "the outcome");
+	// The watcher notices the exit at one of its ticks (real I/O on a timer): a process that the machine starved for seconds needs more than the default five.
+	await until(() => readRun(world.slot, "wA", id)?.outcome === "quit", "the outcome", 20_000);
 	assert.equal(readNotes(world.slot, "wA").at(-1)!.note, "(ended without a note)");
 	assert.deepEqual(readQueue(world.slot, "wA"), [], "it handled its events: nothing returns");
 });
@@ -348,6 +351,8 @@ test("a refused settings check starts no run, keeps the queue, raises a notice, 
 });
 
 test("a Herdr restart ends the live run (herdr-restart), its events return flagged, a resumed pi with the old run id is refused, a pi in the pane is quit for a while, and the event wakes a fresh run", async () => {
+	// The runs' clock is the test's: "for a while" (the restored window) and the fresh run's wake are its ages, so a pi that asks before the fresh run wakes always finds the window open, however long the machine stood still (it did, at load 60).
+	const clock = (world.runClock = fakeClock());
 	const { s, ensured } = await setup();
 	tower().incoming(from, msg("m1", "one"));
 	const id = await nthRun();
@@ -363,6 +368,7 @@ test("a Herdr restart ends the live run (herdr-restart), its events return flagg
 	assert.equal(quit.role, "quit");
 	assert.match(String(quit.reason), /restored/);
 	// The event goes back flagged, and wakes a fresh run in the restored standing pane, which claims and gets it with the flag.
+	clock.advance(100);
 	const second = await nthRun(2);
 	const got = await claim(s, second);
 	assert.equal(got.ok, true);

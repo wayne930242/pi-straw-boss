@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { cpus, loadavg, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -80,8 +80,10 @@ test("packaged: the packed package installs with pi's npm flags (no pi packages 
 		await assert.rejects(fetch(url), "the page goes with the server");
 		const stopMs = Date.now() - stopping;
 		console.log(`packaged: up ${upMs} ms, stop ${stopMs} ms`);
-		// The VM found a stop taking 7 to 12 s on Windows (it was waiting on PowerShell reads); here the whole command, node's start included, is well under 2 s.
-		assert.ok(stopMs < 2000, `stop took ${stopMs} ms: ${readFileSync(join(agent, "straw-boss", "server.log"), "utf8").split("\n").filter((l) => /stop-done|phase|exit/.test(l)).join(" | ")}`);
+		// The VM found a stop taking 7 to 12 s on Windows (it was waiting on PowerShell reads); here the whole command, node's start included, is well under 2 s. The command is a child process that the machine may starve
+		// (a load average of 60 on 12 cores stretched it to 2.3 s), so the bound is 2 s scaled by how many times over the machine was booked while it ran, never less than 2 s: a stop that waits on a slow read still exceeds it.
+		const crowded = Math.max(1, loadavg()[0]! / cpus().length);
+		assert.ok(stopMs < 2000 * crowded, `stop took ${stopMs} ms: ${readFileSync(join(agent, "straw-boss", "server.log"), "utf8").split("\n").filter((l) => /stop-done|phase|exit/.test(l)).join(" | ")}`);
 		await until(() => !alive(up.pid as number), "the server to leave");
 	} finally {
 		for (const pid of started.reverse()) if (Number.isInteger(pid) && pid > 1 && alive(pid)) process.kill(pid, "SIGTERM");
