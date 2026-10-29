@@ -293,6 +293,23 @@ test("B4R-F002: a hand-over whose first ask failed asks once more before the tow
 	assert.equal(readService(sw.slot, "wA")?.pane, "wA:p7");
 });
 
+test("RV8-F005: a resident tower's hand-over carries its own pid from the session through reach and the client to the server: on Windows the pane is not typed into while that process lives, and is once it is gone (RV7-F004)", async () => {
+	sw.runPlatform = "win32";
+	sw.herdr.winShell = true;
+	sw.herdr.shellForeground = true;
+	sw.live.add(process.pid); // the resident's process, as the server's process check sees it
+	const tower = world.tower("tower-wA", "wA:t7", "wA:p7", false, { server: { ctx: sw.ctx(), cli: "/fake/cli.mjs" } });
+	sw.herdr.addTab("wA:t7", "work", "wA:p7", "shell"); // the resident has quit, so no agent holds the pane
+	await tower.start();
+	await until(() => tower.stopped, "the resident tower to hand over and quit");
+	const calls = sw.aliveCalls;
+	await until(() => sw.aliveCalls >= calls + 5, "five looks at the pane");
+	assert.equal(sw.herdr.typed.length, 0, "the resident's process lives: the server types nothing into its pane");
+	sw.live.delete(process.pid);
+	await until(() => sw.herdr.typed.length === 1, "the prompt typed once the resident is gone");
+	assert.equal(sw.herdr.typed[0]!.pane, "wA:p7");
+});
+
 test("B4R-F005: a server on an older package is upgraded by the ask, and the ask goes to the new server's record", async () => {
 	const first = await ensureTowerVia(sw.ctx({ version: "0.44.0" }), { workspace: "wA" });
 	assert.equal(first.id, "sb-tower-wa");

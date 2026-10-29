@@ -35,17 +35,25 @@ export interface PromptOptions {
 	wakingPollMs?: number;
 	/** Ends the prompt as a run's start does (the pane is closing, the process is told to end). */
 	signal?: AbortSignal;
+	/** The clock of the polling (tests set it): the time of a post and the timer of the next poll. The real clock by default. */
+	clock?: PromptClock;
 }
+export interface PromptClock {
+	now(): number;
+	after(fn: () => void, ms: number): object;
+	cancel(handle: object): void;
+}
+const REAL_CLOCK: PromptClock = { now: () => Date.now(), after: (fn, ms) => setTimeout(fn, ms), cancel: (handle) => clearTimeout(handle as NodeJS.Timeout) };
 
 /** Nothing the server sends reaches the terminal as a control sequence. */
 const clean = (value: unknown, max = 200) => String(value).replace(/[\u0000-\u001f\u007f-\u009f]/g, "").slice(0, max);
 
 /** Runs the prompt until it ends; resolves the exit code. */
 export async function runPrompt(o: PromptOptions): Promise<number> {
-	const text = textsFor(o.locale), pollMs = o.pollMs ?? POLL_MS, wakingMs = Math.min(pollMs, o.wakingPollMs ?? WAKING_POLL_MS), source = o.source;
+	const clock = o.clock ?? REAL_CLOCK, text = textsFor(o.locale), pollMs = o.pollMs ?? POLL_MS, wakingMs = Math.min(pollMs, o.wakingPollMs ?? WAKING_POLL_MS), source = o.source;
 	const terminal = (o.output as Partial<NodeJS.WriteStream>).isTTY === true;
 	let rl: Interface | undefined, closed = false, finished = false, posting = false, silent = false, shown: string | undefined, wokeAt: number | undefined;
-	let timer: ReturnType<typeof setTimeout> | undefined, batch: string[] = [], batchTimer: ReturnType<typeof setTimeout> | undefined;
+	let timer: object | undefined, batch: string[] = [], batchTimer: ReturnType<typeof setTimeout> | undefined;
 	let finish!: (code: number) => void;
 	const done = new Promise<number>((resolve) => (finish = resolve));
 
@@ -65,7 +73,7 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 	const end = async (after: () => Promise<void>) => {
 		if (finished) return;
 		finished = true;
-		clearTimeout(timer);
+		if (timer) clock.cancel(timer);
 		clearTimeout(batchTimer);
 		rl?.close();
 		try {
@@ -116,7 +124,7 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 		}
 		// The boss wrote and the run has not taken the pane: the order to leave comes with its start, so the prompt asks fast until then. A tower that stands by with nothing queued, a moment after the post, has no wake pending.
 		// A held service starts no run, and a wake that is not seen to start within the cap is not asked for fast for ever.
-		if (wokeAt !== undefined && ((polled.answer.state === "standing" && polled.answer.queued === 0 && Date.now() - wokeAt > WAKING_GRACE_MS) || polled.answer.state === "held" || Date.now() - wokeAt > WAKING_MAX_MS)) wokeAt = undefined;
+		if (wokeAt !== undefined && ((polled.answer.state === "standing" && polled.answer.queued === 0 && clock.now() - wokeAt > WAKING_GRACE_MS) || polled.answer.state === "held" || clock.now() - wokeAt > WAKING_MAX_MS)) wokeAt = undefined;
 		const line = header(polled.answer);
 		if (line !== shown) {
 			shown = line;
@@ -128,7 +136,7 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 		if (finished) return;
 		const polled = await source.poll().catch((cause: Error) => ({ kind: "wait" as const, why: cause.message }));
 		if (finished || !(await handle(polled))) return;
-		timer = setTimeout(() => void poll(), nextPoll());
+		timer = clock.after(() => void poll(), nextPoll());
 	};
 	/** Fast while a wake is pending: the run starts in about a second, and the prompt must be told to leave then, not seconds later. */
 	const nextPoll = () => (wokeAt !== undefined ? wakingMs : pollMs);
@@ -148,9 +156,9 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 		}
 		// The prompt stays (see the top): the order to leave comes with the run's start, and what the boss types meanwhile is held in the line and posted then.
 		posting = false;
-		wokeAt = Date.now();
-		clearTimeout(timer);
-		timer = setTimeout(() => void poll(), nextPoll());
+		wokeAt = clock.now();
+		if (timer) clock.cancel(timer);
+		timer = clock.after(() => void poll(), nextPoll());
 		say(text.waking);
 		if (!terminal) rl?.prompt();
 	};
@@ -193,6 +201,6 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 	rl.on("close", () => void ((closed = true), leave()));
 	rl.on("SIGINT", leave);
 	rl.prompt();
-	if (!finished) timer = setTimeout(() => void poll(), pollMs);
+	if (!finished) timer = clock.after(() => void poll(), pollMs);
 	return done;
 }

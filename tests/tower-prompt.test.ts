@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
 import { mock, test } from "node:test";
 import { localeOf, textsFor } from "../src/towerprompt/messages.ts";
-import { runPrompt } from "../src/towerprompt/prompt.ts";
+import { type PromptClock, runPrompt } from "../src/towerprompt/prompt.ts";
 import type { PollAnswer, Polled, PromptSource } from "../src/towerprompt/source.ts";
 import { sleep, until } from "./server-world.ts";
 
@@ -208,76 +208,94 @@ test("a second line after the first is posted as a second event, and the prompt 
 	assert.equal(source.gones, 1);
 });
 
+/** A clock the test owns: the prompt's poll timers wait here, with the delay they were set for, until `fire` runs the one set last; time moves only with `advance`. */
+function manualClock(start = 1_000_000) {
+	let at = start;
+	const timers: { fn: () => void; ms: number; live: boolean }[] = [];
+	const clock: PromptClock & { advance(ms: number): void; next(): { ms: number } | undefined; fire(): Promise<void>; run(): void } = {
+		now: () => at,
+		after(fn, ms) {
+			const timer = { fn, ms, live: true };
+			timers.push(timer);
+			return timer;
+		},
+		cancel: (handle) => void ((handle as { live: boolean }).live = false),
+		advance: (ms) => void (at += ms),
+		next: () => timers.filter((t) => t.live).at(-1),
+		/** Runs the poll that is waiting, without waiting for another to be set (the poll that ends the prompt sets none). */
+		run() {
+			const timer = timers.filter((t) => t.live).at(-1);
+			assert.ok(timer, "the prompt has a poll waiting");
+			timer.live = false;
+			timer.fn();
+		},
+		async fire() {
+			const timer = timers.filter((t) => t.live).at(-1);
+			assert.ok(timer, "the prompt has a poll waiting");
+			timer.live = false;
+			timer.fn();
+			await until(() => clock.next() !== undefined, "the poll to set the next one");
+		},
+	};
+	return clock;
+}
+
 test("a post that leaves the tower standing with nothing queued ends the fast asking after the grace, so a run that never comes costs the server no more than the slow poll", async () => {
-	const source = new FakeSource();
-	const input = new PassThrough(), output = new PassThrough();
-	let text = "";
-	output.on("data", (chunk) => void (text += String(chunk)));
-	const done = runPrompt({ workspace: "wA", source, input, output, locale: "en", pollMs: 5000, wakingPollMs: 10 });
-	await until(() => text.includes("tower> "), "the prompt");
-	mock.timers.enable({ apis: ["Date"], now: Date.now() });
-	try {
-		input.write("hello\n");
-		await until(() => source.posted.length === 1, "the post");
-		mock.timers.tick(4000);
-		await until(() => source.polls >= 8, "polls");
-		const mark = source.polls;
-		await sleep(150);
-		assert.ok(source.polls - mark <= 2, `slow again: ${source.polls - mark} polls in 150 ms`);
-	} finally {
-		mock.timers.reset();
-	}
+	const clock = manualClock();
+	const { source, done } = await afterPost({ ...STATE, state: "standing", queued: 0 }, clock);
+	assert.equal(clock.next()!.ms, 10, "asks fast after the post");
+	await clock.fire();
+	assert.equal(clock.next()!.ms, 10, "inside the grace the server may not show the post as queued yet");
+	clock.advance(4000);
+	await clock.fire();
+	assert.equal(clock.next()!.ms, 5000, "past the grace: slow again");
 	starting(source);
-	input.write("\n");
+	clock.run();
 	assert.equal(await ended(done), 0);
 });
 
 /** A prompt that has just posted a line while the server shows `answer`: the fast asking has started. Returns what a test needs to watch it. */
-async function afterPost(answer: PollAnswer) {
+async function afterPost(answer: PollAnswer, clock?: PromptClock) {
 	const source = new FakeSource();
 	const input = new PassThrough(), output = new PassThrough();
 	let text = "";
 	output.on("data", (chunk) => void (text += String(chunk)));
-	const done = runPrompt({ workspace: "wA", source, input, output, locale: "en", pollMs: 5000, wakingPollMs: 10 });
+	const done = runPrompt({ workspace: "wA", source, input, output, locale: "en", pollMs: 5000, wakingPollMs: 10, ...(clock ? { clock } : {}) });
 	await until(() => text.includes("tower> "), "the prompt");
 	source.answers = [{ kind: "state", answer }];
 	input.write("hello\n");
 	await until(() => source.posted.length === 1, "the post");
+	if (clock) await until(() => (clock as ReturnType<typeof manualClock>).next()?.ms === 10, "the fast asking to be set");
 	return { source, input, done };
 }
 
 test("RV7-F006: a held service starts no run, so the prompt does not ask fast for it: back to the slow poll at the first held answer", async () => {
-	const { source, input, done } = await afterPost({ ...STATE, state: "waking", queued: 1 });
-	const fast = source.polls;
-	await until(() => source.polls >= fast + 5, "fast polls while the wake is pending");
+	const clock = manualClock();
+	const { source, done } = await afterPost({ ...STATE, state: "waking", queued: 1 }, clock);
+	for (let i = 0; i < 5; i++) {
+		await clock.fire();
+		assert.equal(clock.next()!.ms, 10, "fast while the wake is pending");
+	}
 	source.answers = [{ kind: "state", answer: { ...STATE, state: "held", queued: 1 } }];
-	await until(() => source.answers[0]!.kind === "state" && source.polls > fast + 5, "polls");
-	await sleep(50); // the held answer is seen by the next poll at the latest
-	const mark = source.polls;
-	await sleep(150);
-	assert.ok(source.polls - mark <= 1, `slow again: ${source.polls - mark} polls in 150 ms`);
+	await clock.fire();
+	assert.equal(clock.next()!.ms, 5000, "slow again at the first held answer");
 	starting(source);
-	input.write("\n");
+	clock.run();
 	assert.equal(await ended(done), 0);
 });
 
 test("RV7-F006: a wake that is queued and never starts (a settings refusal keeps the queue and the standing state) is asked for fast for a bounded time only", async () => {
-	const { source, input, done } = await afterPost({ ...STATE, state: "standing", queued: 1 });
-	mock.timers.enable({ apis: ["Date"], now: Date.now() });
-	try {
-		const mark = source.polls;
-		await until(() => source.polls >= mark + 5, "fast polls while it may still start");
-		mock.timers.tick(100_000);
-		await until(() => source.polls >= mark + 10, "polls past the cap");
-		await sleep(50);
-		const slow = source.polls;
-		await sleep(150);
-		assert.ok(source.polls - slow <= 1, `slow again: ${source.polls - slow} polls in 150 ms`);
-	} finally {
-		mock.timers.reset();
+	const clock = manualClock();
+	const { source, done } = await afterPost({ ...STATE, state: "standing", queued: 1 }, clock);
+	for (let i = 0; i < 5; i++) {
+		await clock.fire();
+		assert.equal(clock.next()!.ms, 10, "fast while it may still start");
 	}
+	clock.advance(100_000);
+	await clock.fire();
+	assert.equal(clock.next()!.ms, 5000, "past the cap: slow again");
 	starting(source);
-	input.write("\n");
+	clock.run();
 	assert.equal(await ended(done), 0);
 });
 
