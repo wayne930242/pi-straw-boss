@@ -39,6 +39,19 @@ test("a herdr reply that is not JSON, and a herdr binary that fails, name the co
 	}
 });
 
+test("RV8-F001: a herdr command cut off by the timeout rejects as killed with its signal, and one that exited rejects with its exit code", { skip: process.platform === "win32" }, async () => {
+	const before = process.env.HERDR_BIN_PATH;
+	try {
+		process.env.HERDR_BIN_PATH = "/bin/sleep";
+		await assert.rejects(herdrRun(["30"], 100), (error: { killed?: boolean; signal?: string; code?: unknown }) => error.killed === true && error.signal === "SIGTERM" && typeof error.code !== "number");
+		process.env.HERDR_BIN_PATH = "/usr/bin/false";
+		await assert.rejects(herdrRun([]), (error: { killed?: boolean; signal?: unknown; code?: unknown }) => error.killed === false && error.signal === undefined && error.code === 1);
+	} finally {
+		if (before === undefined) delete process.env.HERDR_BIN_PATH;
+		else process.env.HERDR_BIN_PATH = before;
+	}
+});
+
 /** A fake Herdr socket: each connection gets `answer` with the request it read. */
 async function socket(answer: (request: { id: string; method: string; params: unknown }, reply: (chunk: Buffer | string) => void, end: () => void) => void) {
 	const dir = mkdtempSync(join(tmpdir(), "psb-sock-")), path = join(dir, "herdr.sock");

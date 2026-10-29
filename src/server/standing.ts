@@ -90,6 +90,8 @@ interface Mine {
 	freshUntil?: number;
 	/** Typings Herdr refused in a row. */
 	failures: number;
+	/** Herdr refused the command `TYPE_TRIES` times in a row: nothing is typed (on any platform) until a run frees the pane, a resident tower hands it over, or Herdr restarts. */
+	giveUp: boolean;
 	/** Looks in a row at which a held pane's busy programs were gone and the list showed shells only (Windows). */
 	busyClear: number;
 	/** The server said the prompt does not start. */
@@ -244,6 +246,8 @@ export function createStanding(o: StandingOptions) {
 		proveHand(m);
 		// The resident tower's pi may still run in the pane: nothing is typed, and nothing is said about a prompt that is lost, until it has gone or the hand-over's time is up.
 		if (m.hand) return;
+		// Herdr refused the command a few times in a row: it was said once, and nothing more is typed.
+		if (m.giveUp) return;
 		// Where Herdr gives no foreground group (Windows) only a fresh pane is typed into; a prompt that died in any other is said once, and the pane waits for the next run or Herdr restart.
 		if (!groups && !m.fresh) {
 			if (!m.lost) {
@@ -270,17 +274,25 @@ export function createStanding(o: StandingOptions) {
 			m.failures = 0;
 			log.line("prompt-typed", { workspace: target.workspace, pane: pane.pane_id });
 		} catch (cause) {
+			const why = cause as Error & { stderr?: string; code?: unknown; killed?: boolean; signal?: unknown };
+			// A command cut off before it ended (the timeout kills the CLI, with no exit code and nothing on stderr) may well have been typed already: it counts as typed, and a pane that runs a prompt is not typed into again (a Windows
+			// pane lists the shell alone whatever runs under it). Only an exit code Herdr itself gave is a refusal, with nothing typed.
+			if (why.killed || why.signal || typeof why.code !== "number") {
+				error("prompt-typed", `${target.workspace}: herdr pane run ${pane.pane_id} did not answer in time (${why.signal ? `signal ${String(why.signal)}` : why.killed ? "killed" : `code ${String(why.code)}`}); the command may have been typed, so it counts as typed: ${why.stderr || why.message}`, 1000);
+				m.freshUntil = undefined;
+				m.failures = 0;
+				return;
+			}
 			// Herdr refused: nothing was typed, so this is no prompt that failed to start. Its own words are logged in full (code, stderr), and the typing is tried again one `launchMs` later, a few times, while the pane is still believed fresh.
-			const why = cause as Error & { stderr?: string; code?: unknown };
-			error("prompt-typed", `${target.workspace}: herdr pane run ${pane.pane_id} failed${why.code !== undefined ? ` (exit ${String(why.code)})` : ""}: ${why.stderr || why.message}`, 4000);
+			error("prompt-typed", `${target.workspace}: herdr pane run ${pane.pane_id} failed (exit ${String(why.code)}): ${why.stderr || why.message}`, 4000);
 			m.typings = Math.max(0, m.typings - 1);
 			m.failures++;
 			if (m.failures < TYPE_TRIES) {
 				m.fresh = wasFresh;
 				if (m.freshUntil !== undefined) m.freshUntil = now() + t.handMs;
 			} else if (m.failures === TYPE_TRIES) {
-				log.line("prompt-not-typed", { workspace: target.workspace, pane: pane.pane_id, text: `Herdr refused the command ${TYPE_TRIES} times in a row; the server types nothing more until a run frees the pane or Herdr restarts` });
-				Object.assign(m, { freshUntil: undefined, lost: true });
+				log.line("prompt-not-typed", { workspace: target.workspace, pane: pane.pane_id, text: `Herdr refused the command ${TYPE_TRIES} times in a row; the server types nothing more until a run frees the pane, a resident tower hands it over, or Herdr restarts` });
+				Object.assign(m, { freshUntil: undefined, lost: true, giveUp: true });
 			}
 		}
 	};
@@ -309,7 +321,7 @@ export function createStanding(o: StandingOptions) {
 		attach(target: StandingTarget, fresh = false) {
 			const m = mines.get(target.workspace);
 			if (m) m.target = target;
-			else mines.set(target.workspace, { target, leaving: false, misses: 0, parked: false, typings: 0, fresh, noStart: false, lost: false, failures: 0, busyClear: 0 });
+			else mines.set(target.workspace, { target, leaving: false, misses: 0, parked: false, typings: 0, fresh, noStart: false, lost: false, failures: 0, giveUp: false, busyClear: 0 });
 		},
 		/** The service is gone: the stand-in is taken away, and the prompt, which polls a tower that is no more, leaves by itself. */
 		async detach(workspace: string) {
@@ -369,7 +381,7 @@ export function createStanding(o: StandingOptions) {
 			const m = mines.get(workspace);
 			if (!m) return;
 			m.leaving = false;
-			Object.assign(m, { parked: false, launched: undefined, seen: undefined, reported: undefined, misses: 0, typings: 0, fresh: true, noStart: false, lost: false, hand: undefined, freshUntil: undefined, failures: 0 });
+			Object.assign(m, { parked: false, launched: undefined, seen: undefined, reported: undefined, misses: 0, typings: 0, fresh: true, noStart: false, lost: false, hand: undefined, freshUntil: undefined, failures: 0, giveUp: false });
 			void tick(workspace);
 		},
 		/** A resident tower (its pi has `pid`) handed this pane over and is quitting: once that process is gone the pane is a bare shell the server just got back, as after a run. The look proves it (`proveHand`); nothing is believed on the word of the hand-over alone. A prompt that polls is left alone. */
@@ -378,11 +390,13 @@ export function createStanding(o: StandingOptions) {
 			if (!m || present(m)) return;
 			m.hand = { ...(pid !== undefined ? { pid } : {}), at: now() };
 			m.lost = false;
+			m.giveUp = false;
+			m.failures = 0;
 			void tick(workspace);
 		},
 		/** A new Herdr server: every pane is a fresh shell, so nothing is believed of what was there. */
 		reset() {
-			for (const m of mines.values()) Object.assign(m, { seen: undefined, leaving: false, parked: false, launched: undefined, reported: undefined, misses: 0, unsupported: undefined, typings: 0, fresh: true, noStart: false, lost: false, hand: undefined, freshUntil: undefined, failures: 0 });
+			for (const m of mines.values()) Object.assign(m, { seen: undefined, leaving: false, parked: false, launched: undefined, reported: undefined, misses: 0, unsupported: undefined, typings: 0, fresh: true, noStart: false, lost: false, hand: undefined, freshUntil: undefined, failures: 0, giveUp: false });
 		},
 		/** The look at once (a service just went live), without waiting for the interval. */
 		kick: (workspace: string) => void tick(workspace),

@@ -34,8 +34,8 @@ const START_ATTEMPTS = 20;
 export const herdrRun: HerdrRun = (args, timeoutMs = 5000) =>
 	new Promise((resolve, reject) => {
 		execFileExe(process.env.HERDR_BIN_PATH || "herdr", args, { timeout: timeoutMs }, (error, stdout, stderr) => {
-			// `stderr` is what Herdr itself said (its error code first), apart from the command line the message repeats.
-			if (error) reject(Object.assign(new Error(`herdr ${args.join(" ")} failed: ${stderr.trim() || error.message}`), { stderr: stderr.trim(), code: (error as { code?: unknown }).code }));
+			// `stderr` is what Herdr itself said (its error code first), apart from the command line the message repeats. `killed` and `signal` say the command was cut off (the timeout) before it ended: what it was doing is unknown.
+			if (error) reject(Object.assign(new Error(`herdr ${args.join(" ")} failed: ${stderr.trim() || error.message}`), { stderr: stderr.trim(), code: (error as { code?: unknown }).code, killed: (error as { killed?: unknown }).killed === true, signal: (error as { signal?: unknown }).signal ?? undefined }));
 			else resolve(stdout);
 		});
 	});

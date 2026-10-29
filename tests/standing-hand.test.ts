@@ -17,7 +17,9 @@ interface Rig {
 	/** Pids that run. */
 	live: Set<number>;
 	/** The refusal Herdr gives to the next `pane run`s, if any. */
-	refuse: (Error & { stderr?: string; code?: unknown })[];
+	refuse: (Error & { stderr?: string; code?: unknown; killed?: boolean; signal?: string })[];
+	/** How many `pane run` calls reached Herdr (refused or not). */
+	attempts: number;
 	freed: number;
 	busy: boolean;
 	/** The PIDs of the boss's programs that held the pane when the start failed. */
@@ -27,7 +29,7 @@ const SHELL = { pid: 900, name: "powershell.exe", cmdline: "powershell.exe -NoEx
 
 function rig(platform: NodeJS.Platform = "win32", timers: Record<string, number> = {}): Rig {
 	const clock = fakeClock(1_000_000);
-	const r: Rig = { clock, typed: [], lines: [], pane: { processes: [SHELL] }, live: new Set(), refuse: [], freed: 0, busy: false, busyPids: [] } as unknown as Rig;
+	const r: Rig = { clock, typed: [], lines: [], pane: { processes: [SHELL] }, live: new Set(), refuse: [], attempts: 0, freed: 0, busy: false, busyPids: [] } as unknown as Rig;
 	const target: StandingTarget = {
 		workspace: "wA", label: () => "Alpha", pane: () => "p1", live: () => true, status: () => undefined,
 		paneBusy: () => r.busy, busyPids: () => r.busyPids, paneFree: () => void r.freed++,
@@ -38,6 +40,7 @@ function rig(platform: NodeJS.Platform = "win32", timers: Record<string, number>
 			return JSON.stringify({ result: { process_info: { shell_pid: 900, foreground_process_group_id: win || r.pane.processes.every((p) => p.pid === 900) ? 900 : 7777, foreground_processes: r.pane.processes } } });
 		}
 		if (args[1] === "run") {
+			r.attempts++;
 			const refusal = r.refuse.shift();
 			if (refusal) throw refusal;
 			r.typed.push(args[3]!);
@@ -130,6 +133,49 @@ test("VM round 3: three refusals in a row end the retries with one line, and the
 	r.standing.freed("wA");
 	r.refuse.length = 0;
 	await looks(r, 2);
+	assert.equal(r.typed.length, 1, "a run's end gives the pane back");
+});
+
+test("RV8-F001: a `pane run` killed by the timeout (no exit code, no stderr) may have typed the command: it counts as typed and is not typed again, said once", async () => {
+	const r = rig();
+	r.standing.handed("wA");
+	r.refuse.push(Object.assign(new Error("herdr pane run p1 node prompt failed: Command failed"), { stderr: "", code: undefined, killed: true, signal: "SIGTERM" }));
+	await r.standing.tick();
+	await looks(r, 10);
+	assert.equal(r.attempts, 1, "the command is not typed a second time into a prompt that may be running");
+	assert.deepEqual(r.typed, []);
+	const err = said(r, "error").filter((l) => l.facts.code === "prompt-typed");
+	assert.equal(err.length, 1, "said once");
+	assert.match(String(err[0]!.facts.text), /SIGTERM|killed/);
+	assert.equal(said(r, "prompt-not-typed").length, 0, "that is no run of refusals");
+});
+
+test("RV8-F001: a kill with no signal name (killed alone) and a refusal Herdr coded as a non-zero exit are told apart", async () => {
+	const killed = rig();
+	killed.standing.handed("wA");
+	killed.refuse.push(Object.assign(new Error("failed"), { stderr: "", killed: true }));
+	await killed.standing.tick();
+	await looks(killed, 5);
+	assert.equal(killed.attempts, 1);
+	const refused = rig();
+	refused.standing.handed("wA");
+	refused.refuse.push(Object.assign(new Error("failed"), { stderr: "pane_busy", code: 3 }));
+	await refused.standing.tick();
+	await looks(refused, 2);
+	assert.equal(refused.typed.length, 1, "a coded refusal is tried again");
+});
+
+test("RV8-F003: where Herdr gives the foreground group (macOS, Linux) three refusals end the typing too: one line, and no more attempts, until a run frees the pane", async () => {
+	const r = rig("darwin");
+	for (let i = 0; i < 50; i++) r.refuse.push(Object.assign(new Error("herdr failed"), { stderr: "pane_busy", code: 2 }));
+	await looks(r, 40);
+	assert.equal(r.attempts, 3, "three tries, then nothing");
+	assert.equal(said(r, "error").filter((l) => l.facts.code === "prompt-typed").length, 3);
+	assert.equal(said(r, "prompt-not-typed").length, 1);
+	assert.match(String(said(r, "prompt-not-typed")[0]!.facts.text), /until a run frees the pane/);
+	r.standing.freed("wA");
+	r.refuse.length = 0;
+	await r.standing.tick();
 	assert.equal(r.typed.length, 1, "a run's end gives the pane back");
 });
 
