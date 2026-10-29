@@ -2,12 +2,15 @@ import { existsSync, realpathSync } from "node:fs";
 import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { stateDirOf } from "../agent/paths.ts";
+import { herdrRun, type HerdrRun, workspaces } from "../herdr.ts";
 import { answers as pageAnswers } from "../handover.ts";
 import { newer } from "../semver.ts";
 import {
 	type Ctx, unreachableText, describe, ensure, guiUrl, herdrListens, isIdentity, detachWarning, lockFor, lockWaitFor, makeCtx, passGate, probe, restart, ServerError, serverEnv, stop, takeOver, trusted, type Wait, waitReady, within,
 } from "./client.ts";
 import { ACL_TOKEN } from "./acl.ts";
+import { baseFolder, deskLockFor, ensureIntegration, makeBase, readDesk } from "./desk.ts";
+import { ensureTowerVia } from "./towerclient.ts";
 import { onFatal } from "./fatal.ts";
 import { callControl, ControlError } from "./socket.ts";
 import { logSize, readFrom, tailLog } from "./log.ts";
@@ -18,12 +21,13 @@ import { localeOf } from "../towerprompt/messages.ts";
 import { runPrompt } from "../towerprompt/prompt.ts";
 import { serverSource } from "../towerprompt/serversource.ts";
 
+// `up --dir <folder> --label <name>` adds the desk steps (docs/specs/2026-10-26-desk-mode.md S5, S6; desk.ts): Herdr's pi integration, the home base, and its tower, which the server makes.
 // `cli.mjs` is what shells, supervisors, and the server's own start run (docs/specs/2026-10-26-sb-backend.md, Process model and lifecycle): `up`, `serve`, `stop`, `status`,
 // `restart`, `logs`, and the internal `run --detached` that every detached start spawns. Exit codes: 0 done; 1 a step failed (one JSON line on stderr); 2 usage; 3 the server
 // cannot run (`start-error.json` says `loader`, `intercom`, or `acl`); 4 `serve` found a live `serve` server; 5 `stop` found a `serve` server (stop its supervisor).
 // `prompt` is the one command nobody types: the server types it into a tower's standing pane (towerprompt/), and once it runs it ends with 0 however it ends (a usage error is 2).
 
-const USAGE = `usage: cli.mjs up [--timeout SECONDS] [--exact]
+const USAGE = `usage: cli.mjs up [--dir FOLDER --label NAME] [--timeout SECONDS] [--exact]   (--dir and --label are the desk steps and need STRAW_BOSS_DESK=1)
        cli.mjs serve
        cli.mjs stop | status
        cli.mjs restart [--reason TEXT] [--by TEXT] [--downgrade]
@@ -31,7 +35,7 @@ const USAGE = `usage: cli.mjs up [--timeout SECONDS] [--exact]
        cli.mjs prompt --workspace ID [--state-dir DIR]   (the tower prompt of a standing pane: the server types it)`;
 export class UsageError extends Error {}
 const FLAGS: Record<string, { value: string[]; switch: string[] }> = {
-	up: { value: ["timeout"], switch: ["exact"] }, serve: { value: [], switch: [] }, stop: { value: [], switch: [] }, status: { value: [], switch: [] },
+	up: { value: ["timeout", "dir", "label"], switch: ["exact"] }, serve: { value: [], switch: [] }, stop: { value: [], switch: [] }, status: { value: [], switch: [] },
 	restart: { value: ["reason", "by"], switch: ["downgrade"] }, logs: { value: ["lines"], switch: ["follow"] }, prompt: { value: ["workspace", "state-dir"], switch: [] }, run: { value: ["by", "detach", "detach-reason", "acl-token"], switch: ["detached"] },
 };
 export interface Args { command: string; flags: Record<string, string | true> }
@@ -44,13 +48,14 @@ export function parseArgs(argv: string[]): Args {
 	for (let i = 0; i < rest.length; i++) {
 		const flag = rest[i]!.replace(/^--/, "");
 		if (!rest[i]!.startsWith("--")) throw new UsageError(`unexpected argument ${rest[i]}\n${USAGE}`);
-		if (flag === "dir" || flag === "label") throw new UsageError(`--${flag} belongs to the desk steps of up, which come with a later step of the sb server (B7); this build's up only makes sure the server runs`);
 		if (allowed.switch.includes(flag)) flags[flag] = true;
 		else if (allowed.value.includes(flag)) {
 			if (rest[i + 1] === undefined || rest[i + 1]!.startsWith("--")) throw new UsageError(`--${flag} needs a value`);
 			flags[flag] = rest[++i]!;
 		} else throw new UsageError(`unknown option ${rest[i]}\n${USAGE}`);
 	}
+	if ((flags.dir === undefined) !== (flags.label === undefined)) throw new UsageError(`--dir and --label go together: the desk steps need both\n${USAGE}`);
+	if (flags.dir !== undefined && (!String(flags.dir).trim() || !String(flags.label).trim())) throw new UsageError("--dir and --label are not empty");
 	if (flags.timeout !== undefined && !(Number(flags.timeout) > 0)) throw new UsageError("--timeout is a number of seconds");
 	if (flags.lines !== undefined && !(Number.isInteger(Number(flags.lines)) && Number(flags.lines) > 0)) throw new UsageError("--lines is a positive whole number");
 	return { command, flags };
@@ -76,6 +81,8 @@ export interface CliDeps {
 	/** Where the server in this process hears of a fatal JavaScript error (an uncaught exception or an unhandled rejection); it leaves as a signal makes it leave, but with exit code 1, so the remote serve entry goes before the process does. */
 	fatal?: (leave: (error: unknown) => void) => void;
 	herdrListens?: (ctx: Ctx, ms?: number) => Promise<boolean>;
+	/** Herdr's CLI, which the desk steps ask (the integration, the home base). */
+	herdrCli?: HerdrRun;
 	/** Whether the GUI's page answers 200, which `up` waits for. */
 	pageAnswers?: (gui: { port: number; token: string }) => Promise<boolean>;
 }
@@ -119,6 +126,10 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 	}
 	if (command === "run" && flags.detach !== undefined && flags.detach !== "wmi" && flags.detach !== "wmi-in-job" && flags.detach !== "direct") {
 		err(`--detach is wmi, wmi-in-job, or direct\n${USAGE}\n`);
+		return 2;
+	}
+	if (command === "up" && flags.dir !== undefined && env.STRAW_BOSS_DESK !== "1") {
+		err("--dir and --label are the desk steps of up: they need STRAW_BOSS_DESK=1 in the environment that started `herdr server` and in this one, which catches a shell that forgot the switch\n");
 		return 2;
 	}
 	// `prompt` gets its state folder by flag: the pane's environment is the boss's, not the server's.
@@ -225,6 +236,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 	async function up() {
 		// One time limit for the whole call: the lock wait, the start wait, and the wait for another's start together (the start wait itself is the platform's, 60 s on Windows and 20 s elsewhere, within it).
 		const steps: Step[] = [], warnings: Warning[] = [], timeoutMs = Number(flags.timeout ?? UP_SECONDS[ctx.platform === "win32" ? "win32" : "other"]) * 1000, deadline = ctx.now() + timeoutMs, desk = env.STRAW_BOSS_DESK === "1";
+		let unlock = () => {};
 		const stepOf = async <T>(name: string, body: () => Promise<{ value: T; detail?: string }>): Promise<T> => {
 			const began = ctx.now();
 			try {
@@ -236,6 +248,23 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 				throw error instanceof StepError ? error : new StepError(name, (error as Error).message, error instanceof ServerError && error.startError && CANNOT_RUN.has(error.startError.code) ? 3 : 1, error instanceof ServerError ? error.wait : undefined, error instanceof ServerError ? error.startError : undefined);
 			}
 		};
+		/** The `base` and `tower` steps of a desk `up`. */
+		const homeBase = async (herdr: HerdrRun, dirFlag: string, label: string) => {
+			const { workspace, created, dir } = await stepOf("base", async () => {
+				const dir = baseFolder(dirFlag), release = deskLockFor(ctx);
+				if (!release) throw new Error(`busy: another \`up --dir\` holds ${fileOf(slot, "deskLock")}`);
+				unlock = release;
+				const known = readDesk(slot);
+				if (known === "unreadable") warnings.push({ code: "desk_json_unreadable", text: `${fileOf(slot, "desk")} is no record of the home base; a new base is made` });
+				const kept = typeof known === "object" && (await workspaces(herdr)).some((w) => w.workspace_id === known.workspace) ? known.workspace : undefined;
+				return { value: { workspace: kept ?? (await makeBase(herdr, ctx, dir, label)).workspace, created: kept === undefined, dir }, detail: kept === undefined ? "made" : "found" };
+			});
+			const answer = await stepOf("tower", async () => {
+				const found = await ensureTowerVia(ctx, { workspace, cwd: dir, boss: true, ms: within(ctx, deadline, 30_000) });
+				return { value: found, detail: found.opened ? "opened" : "found" };
+			});
+			return { workspace, pane: answer.pane, tower: answer.id, created: created || answer.opened };
+		};
 		try {
 			await stepOf("herdr", async () => {
 				if (!(await (deps.herdrListens ?? herdrListens)(ctx, within(ctx, deadline, 2000)))) throw new StepError("herdr", `no Herdr server answers at ${slot.herdr}`);
@@ -244,6 +273,12 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 				if (found && found.herdr !== slot.herdr) throw new StepError("herdr", `the record in ${slot.dir} serves ${found.herdr}, not ${slot.herdr}`);
 				return { value: undefined };
 			});
+			const herdr = deps.herdrCli ?? herdrRun, deskSteps = flags.dir !== undefined;
+			const integration = deskSteps ? await stepOf("integration", async () => {
+				const state = await ensureIntegration(herdr, env).catch((error: Error) => { throw new StepError("integration", error.message); });
+				if (state === "installed") warnings.push({ code: "integration_installed", text: "installed Herdr's pi integration for this agent directory (herdr integration install pi)" });
+				return { value: state, detail: state };
+			}) : undefined;
 			const plan = await stepOf("version", async () => {
 				const seen = await probe(ctx, deadline), record = seen.record;
 				if (seen.denied && record) {
@@ -277,9 +312,14 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 			});
 			const loud = detachWarning(record);
 			if (loud) warnings.push({ code: "breakaway_failed", text: loud });
+			// The home base and its tower (S5 steps `base` and `tower`), under `desk.lock`: the base in `desk.json` while Herdr lists it, else a new one; its tower is the server's `ensure-tower`,
+			// which starts no pi. `created` says whether this run made the base or the tower.
+			const base = deskSteps ? await homeBase(herdr, String(flags.dir), String(flags.label)) : undefined;
+			unlock();
 			const url = await stepOf("gui", async () => ({ value: await guiStep(record, warnings, deadline) }));
 			json({
 				url, pid: record.pid, started: record.started, version: record.version, package: version, mode: record.mode, desk: record.desk, server: how, log: record.log, steps, warnings,
+				...(base ? { workspace: base.workspace, pane: base.pane ?? null, tower: base.tower, created: base.created, integration } : {}),
 			});
 			return 0;
 		} catch (error) {
@@ -288,6 +328,8 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 			const startError = error.startError?.code === "acl" ? error.startError : (await filed()) ?? error.startError;
 			err(`${JSON.stringify({ step: error.step, ...(error.wait ? { wait: error.wait } : {}), reason: error.message, steps, warnings, log: fileOf(slot, "log"), ...(startError ? { startError } : {}) })}\n`);
 			return error.exit;
+		} finally {
+			unlock();
 		}
 	}
 

@@ -32,17 +32,17 @@ async function cli(argv: string[], over: Partial<CliDeps> & { version?: string; 
 
 // --- usage ---
 
-test("a bad command line is exit 2 with the usage; --dir and --label belong to a later step and are refused", async () => {
+test("a bad command line is exit 2 with the usage; --dir and --label go together and need the desk switch", async () => {
 	for (const argv of [[], ["bogus"], ["up", "--nope"], ["up", "stray"], ["up", "--timeout"], ["up", "--timeout", "-1"], ["logs", "--lines", "0"], ["restart", "--reason"], ["status", "--exact"]]) {
 		const r = await cli(argv);
 		assert.equal(r.code, 2, argv.join(" "));
 		assert.match(r.err, /usage:|--|unknown/);
 	}
 	const dir = await cli(["up", "--dir", "/x", "--label", "y"]);
-	assert.equal(dir.code, 2);
-	assert.match(dir.err, /--dir belongs to the desk steps/);
+	assert.equal(dir.code, 2, "the desk steps need the switch (tests/server-desk.test.ts runs them)");
+	assert.match(dir.err, /STRAW_BOSS_DESK=1/);
 	assert.equal((await cli(["run"])).code, 2, "run is the server's own start");
-	assert.throws(() => parseArgs(["up", "--dir", "x"]), UsageError);
+	assert.throws(() => parseArgs(["up", "--dir", "x"]), UsageError, "--dir without --label");
 	assert.deepEqual(parseArgs(["restart", "--reason", "why", "--downgrade"]), { command: "restart", flags: { reason: "why", downgrade: true } });
 });
 

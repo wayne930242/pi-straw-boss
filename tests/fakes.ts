@@ -1,7 +1,7 @@
 import "./setup.ts"; // a run without --import ./tests/setup.ts is isolated too, once this module is imported (setup.ts)
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import jsqr from "jsqr";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -142,6 +142,11 @@ export class FakeHerdr {
 	shellPids = false;
 	/** Answers `pane process-info` as Windows does (see `shellForeground`): `shell_pid` and a `foreground_process_group_id` that is always the shell's pid, whatever runs under it (the VM's shape, B6 F10). */
 	winShell = false;
+	/**
+	 * Herdr's pi integration (`herdr integration status|install`): the text of the `pi:` line's state, the file it would write, and the install that did nothing because the extensions folder
+	 * was missing (the real CLI says so and exits 0). `installs` counts the installs that wrote the file.
+	 */
+	integration = { state: "not installed", file: "/nowhere/extensions/herdr-agent-state.ts", installs: 0, onInstall: undefined as (() => void) | undefined, refuse: false };
 	/** What `pane run` typed into a pane (the sb server types the tower prompt's command into a standing pane's shell). */
 	typed: { pane: string; text: string }[] = [];
 	/** The reports and releases of agents the socket API took (`pane.report_agent`, `pane.release_agent`), as sent. */
@@ -205,6 +210,12 @@ export class FakeHerdr {
 			if (this.winShell) return out({ process_info: { pane_id: flag("--pane"), shell_pid: SHELL_PID, foreground_process_group_id: SHELL_PID, foreground_processes: running.length ? running : this.shellForeground ? [{ pid: SHELL_PID, name: "powershell.exe", argv0: "powershell.exe", cmdline: "powershell.exe -NoExit" }] : [] } });
 			const foreground = running.length ? running : [{ pid: FAKE_SHELL, name: "zsh", argv0: "zsh" }];
 			return out({ process_info: { pane_id: flag("--pane"), foreground_processes: foreground, ...(this.shellPids ? { shell_pid: FAKE_SHELL, foreground_process_group_id: running.length ? (running[0]!.pid ?? 0) : FAKE_SHELL } : {}) } });
+		}
+		if (group === "integration" && cmd === "status") return `pi: ${this.integration.state} (${this.integration.file})\nomp: not installed (/nowhere/extensions/herdr-omp-agent-state.ts)\n`;
+		if (group === "integration" && cmd === "install") {
+			if (!existsSync(dirname(this.integration.file))) return `pi extension directory not found at ${dirname(this.integration.file)}. install pi first\n`;
+			if (!this.integration.refuse) (this.integration.state = "current (v9)", this.integration.installs++, this.integration.onInstall?.());
+			return `installed pi integration to ${this.integration.file}\n`;
 		}
 		if (group === "workspace" && cmd === "list") return out({ workspaces: this.workspaces });
 		if (group === "pane" && cmd === "list") return out({ panes: this.panes.filter((p) => !flag("--workspace") || p.workspace_id === flag("--workspace")) });

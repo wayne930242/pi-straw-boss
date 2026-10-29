@@ -10,7 +10,7 @@ import { protectFolder, refuseLink, resetFileAcl, type RunNative } from "./winpr
 // `server.lock`, which makes check-and-start atomic; `start-error.json`, why the last start attempt failed. One server serves one (state directory, Herdr socket)
 // pair, its slot: the primary slot, for the default Herdr, keeps its files in the state directory itself, any other Herdr's in `servers/<hash>/`.
 
-export const FILES = { record: "server.json", lock: "server.lock", stale: "server.lock.stale", startError: "start-error.json", log: "server.log", socket: "server.sock" } as const;
+export const FILES = { record: "server.json", lock: "server.lock", stale: "server.lock.stale", startError: "start-error.json", log: "server.log", socket: "server.sock", desk: "desk.json", deskLock: "desk.lock" } as const;
 /** A restart record counts as under way while its `since` is no older than this (the starting server touches it every TOUCH_MS). */
 export const FRESH_MS = 10_000;
 export const TOUCH_MS = 2000;
