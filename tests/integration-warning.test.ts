@@ -42,10 +42,12 @@ test("a session whose pane has its agent_session does not warn, and neither does
 });
 
 test("a session that ended before the grace warns of nothing", async () => {
-	const a = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1", deps: { integrationMs: GRACE } });
+	// The grace starts at the session's start and must outlast the start itself: under load a start took longer than 60 ms, and the warning came before the stop.
+	const grace = 1500;
+	const a = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1", deps: { integrationMs: grace } });
 	await a.start();
 	await a.stop("reload");
-	await nap(GRACE * 3);
+	await nap(grace * 2);
 	assert.deepEqual(warnings(a), []);
 });
 
