@@ -28,7 +28,7 @@ export interface Orphans {
 
 const REGISTRY = Symbol.for("pi-subagents/runtime");
 // The messages that carry a finished child's result into the launcher's transcript; their details name the child's session file.
-const FINAL = ["subagent_result", "subagent_ping"];
+export const FINAL = ["subagent_result", "subagent_ping"];
 const GIVE_UP = 4;
 
 /** The ids of the runs this process's pi-herdr-agents still tracks, or undefined when the registry cannot be read. */

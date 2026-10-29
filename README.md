@@ -38,6 +38,7 @@ Run a few agents on the same project and they start stepping on each other: two 
 - **Broadcast** to a tab, a workspace, every tower (a workspace without one, through its mains or members), or every session.
 - **Tidy tabs.** When a pi starts in a tab or quits out of it, the tab's panes are made equal again, so workers split off one by one don't leave a chain of halves.
 - **Stranded subagents are asked to report.** A subagent that stays open after finishing, while the pi that launched it was restarted and no longer receives its result, is asked once over intercom to send its final report there ([how it works](docs/how-it-works.md#orphaned-subagents)).
+- **Subagents a Herdr restart brought back as plain pi sessions are resumed.** A restart (`resume_agents_on_restore`) starts a plain `pi --session` in each subagent's pane, without what makes it a child, so its result never arrives. Straw Boss closes that restored pane and asks the launching session to resume the run with pi-herdr-agents' `subagent_resume`; a managed-worktree run keeps its pane and is reported instead ([how it works](docs/how-it-works.md#subagents-a-herdr-restore-brought-back-plain)).
 - **A net view in Herdr's sidebar.** An optional plugin turns the Agents list into the net, towers first and each subagent under its launcher, on by default and switched by one key.
 - **A reaper for leftover worktree panes.** A second optional plugin closes the panes agents leave behind in worktree workspaces, removes the clean checkouts nothing holds, and keeps the workspaces you pin.
 

@@ -10,12 +10,15 @@ import type { createHost } from "./host.ts";
 import type { IntegrationWatch } from "./integration.ts";
 import { CONNECT_MS, type Membership } from "./membership.ts";
 import { orphans } from "./orphan.ts";
+import { restored } from "./restored.ts";
 import type { RunMode } from "./runmode.ts";
 import type { Presence } from "./presence.ts";
 import type { Reach } from "./reach.ts";
 import type { Roles } from "./roles.ts";
 import { ENTRY, type Kit } from "./state.ts";
 
+/** The custom message that asks the launcher to resume the subagents a Herdr restore brought back plain. */
+const RESUME = "straw-boss-resume";
 const KID_MARK_MS = [3_000, 15_000];
 const SUBAGENT_TOOLS = ["subagent", "subagent_resume"];
 const CHECKING = "Straw Boss is still asking Herdr whether this is a sub workspace; try again in a moment";
@@ -28,10 +31,11 @@ export function registerSession(kit: Kit, { runMode, briefing, roles, presence, 
 	// What the tower learns at its next run (digest.ts); a line that cannot be written is not worth failing anything for.
 	const note = (text: string) => void digest.note(s.at.workspaceId, text).catch(() => {});
 	// Watches for subagents this session launched whose result can no longer reach it (orphan.ts), and the watch on the Herdr server.
-	let nudges: ReturnType<typeof orphans> | undefined, nudgeTimer: ReturnType<typeof setInterval> | undefined, unwatch: (() => void) | undefined;
+	let nudges: ReturnType<typeof orphans> | undefined, restores: ReturnType<typeof restored> | undefined, nudgeTimer: ReturnType<typeof setInterval> | undefined, unwatch: (() => void) | undefined;
 	const stopWatching = () => {
 		clearInterval(nudgeTimer);
 		nudges?.stop();
+		restores?.stop();
 		unwatch?.();
 		unwatch = undefined;
 	};
@@ -80,7 +84,9 @@ export function registerSession(kit: Kit, { runMode, briefing, roles, presence, 
 		const log = ctx.sessionManager;
 		stopWatching();
 		nudges = orphans({ run, file: () => log.getSessionFile(), entries: () => log.getEntries(), sessions: host.sessions, send: reach.send, type: ENTRY, remember: (key) => pi.appendEntry(ENTRY, { nudged: key }), me, tell });
-		nudgeTimer = setInterval(() => void nudges?.poll().catch(() => {}), cfg.nudgeMs).unref();
+		// Subagents a Herdr restart brought back as plain pi sessions are closed, and this session is asked to resume them (restored.ts).
+		restores = restored({ run, sleep: cfg.sleep, file: () => log.getSessionFile(), entries: () => log.getEntries(), active: () => !s.isTower, type: ENTRY, remember: (data) => pi.appendEntry(ENTRY, data), resume: (text, details) => pi.sendMessage({ customType: RESUME, content: text, display: true, details }, { triggerTurn: true, deliverAs: "steer" }), tell });
+		nudgeTimer = setInterval(() => void Promise.allSettled([nudges?.poll(), restores?.poll()]), cfg.nudgeMs).unref();
 		// Starting runs in the background: pi awaits session_start handlers in turn, and pi-intercom connects in its own, after this one.
 		let starting: Promise<void> | undefined;
 		if (s.isTower) {
