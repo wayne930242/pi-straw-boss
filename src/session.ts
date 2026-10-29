@@ -175,7 +175,9 @@ export function registerSession(kit: Kit, { runMode, briefing, roles, presence, 
 	});
 
 	pi.on("session_shutdown", async (event) => {
-		if (runMode.mode === "run") return; // a run's own shutdown is runmode.ts's: it joined nothing and holds no pane, tokens, or board entry
+		// A run's own shutdown is runmode.ts's: it joined nothing and holds no pane, tokens, or board entry. So is that of a pi that never became a normal session (undecided, or plain after no answer from the server):
+		// the standing pane it sits in is the server's, and a quit of it leaves the pane as it found it (RV7-F002).
+		if (runMode.mode !== "normal") return;
 		// This session's board entry goes with the session on quit, new, resume, and fork (its id is done in this process); a reload keeps it.
 		if (event.reason !== "reload" && s.boardId) removeEntry(join(guiDir, "board"), s.boardId);
 		s.boardId = undefined;

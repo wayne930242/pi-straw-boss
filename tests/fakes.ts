@@ -618,6 +618,8 @@ process.once("exit", () => {
 });
 
 export class World {
+	/** A world is a computer of its own: the process-wide marks of the run mode (runmode.ts: the claim a /reload keeps, the resident mark, the pane-role ask in flight) belong to no other test's sessions. */
+	private marks = ["run", "resident", "pane-ask"].forEach((name) => ((globalThis as Record<symbol, unknown>)[Symbol.for(`pi-straw-boss.${name}`)] = undefined));
 	herdr = new FakeHerdr();
 	broker = new FakeBroker(this.herdr);
 	agents: Agent[] = [];

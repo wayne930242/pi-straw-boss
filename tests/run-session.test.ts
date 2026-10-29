@@ -399,6 +399,14 @@ const slowRole = (srv: ReturnType<typeof server>, ms: number, answer: Answer | "
 		return answer;
 	};
 };
+/** A pane-role the test answers itself, when it chooses: the ask stays in flight until `answer` is called (no wall clock to race). */
+const gatedRole = (srv: ReturnType<typeof server>) => {
+	const inner = srv.ask.bind(srv);
+	let open!: (answer: Answer) => void;
+	const gate = new Promise<Answer>((resolve) => (open = resolve));
+	srv.ask = async (request: Request): Promise<Answer> => (request.cmd === "pane-role" ? (srv.requests.push(request), gate) : inner(request));
+	return { answer: (a: Answer) => open(a) };
+};
 const asked = (srv: ReturnType<typeof server>) => srv.requests.filter((q) => q.cmd === "pane-role").length;
 
 test("B6 VM RV-F001: a fresh resident tower (env tower, no entry, not a reload) whose server answers none, or errors, or does not know the command, is a normal session at once", { timeout: 20_000 }, async () => {
@@ -495,19 +503,118 @@ test("B6 VM round 2: the process start time is read once for the pane-role ask, 
 	await rig(srv, { ...resident, startOf: () => (reads++, "T-1") });
 	assert.equal(reads, 1);
 	assert.equal(srv.requests.find((q) => q.cmd === "pane-role")!.started, "T-1");
+	// The late answer is part of this test: a process-wide mark it sets after the test ended would be the next test's.
+	await until(() => srv.requests.some((q) => q.cmd === "run-file"), "the late answer to be acted on");
 });
 
-test("B6 VM review RV6B-F001/F004: a resident tower's /reload, /new, /resume or /fork (not a startup, and no tower entry on the new branch) is never asked pane-role, so it cannot become a hand run", { timeout: 20_000 }, async () => {
+/** pi's own switch of the session in the same process: the old session ends with `reason`, the new one starts with it (the rig's run mode is one instance for both, as a /reload makes a new one in a real pi: the marks are the process's). */
+const switchTo = async (r: Awaited<ReturnType<typeof rig>>, reason: "reload" | "new" | "resume" | "fork") => {
+	const emit = (e: Record<string, unknown>) => (r.session as unknown as { extensionRunner: { emit(e: unknown): Promise<unknown> } }).extensionRunner.emit(e);
+	await emit({ type: "session_shutdown", reason });
+	await emit({ type: "session_start", reason });
+};
+
+test("B6 VM review RV6B-F001/F004: a resident tower's /reload, /new, /resume or /fork (not a startup, and no tower entry on the new branch) is never asked pane-role again, so it cannot become a hand run", { timeout: 20_000 }, async () => {
 	for (const reason of ["reload", "new", "resume", "fork"] as const) {
 		flagOn();
 		const srv = server();
+		slowRole(srv, 0, { ok: true, role: "none" });
+		const r = await rig(srv, resident);
+		assert.equal(r.runMode.mode, "normal", `${reason}: the process became a resident at its start`);
 		slowRole(srv, 0, HAND);
-		const r = await rig(srv, { ...resident, reason });
-		assert.equal(asked(srv), 0, reason);
+		await switchTo(r, reason);
+		assert.equal(asked(srv), 1, `${reason}: only the start asked`);
 		assert.equal(r.runMode.mode, "normal", reason);
 		assert.equal(r.shutdowns.length, 0, reason);
 		assert.ok(!r.session.getAllTools().some((t) => t.name === "tower_done"), `${reason}: not a run`);
 	}
+});
+
+test("B6 VM review RV7-F001: an undecided pi (the pane-role answer is past the bound) that the boss /reloads, /news, /resumes or /forks is not a resident: it stays undecided, keeps its one ask, and acts on the late answer", { timeout: 30_000 }, async () => {
+	for (const reason of ["reload", "new", "resume", "fork"] as const) {
+		flagOn();
+		const srv = server();
+		const role = gatedRole(srv);
+		const r = await rig(srv, resident);
+		assert.equal(r.runMode.mode, "unknown", `${reason}: undecided past the bound`);
+		await switchTo(r, reason);
+		assert.equal(r.runMode.mode, "unknown", `${reason}: not the resident path (it would hand over and quit)`);
+		assert.equal(r.runMode.deciding, true, `${reason}: still waiting for the answer`);
+		assert.equal(r.shutdowns.length, 0, `${reason}: not quit`);
+		assert.equal(asked(srv), 1, `${reason}: the ask in flight is carried, a second ask would be told the pane is held`);
+		role.answer(HAND);
+		await until(() => srv.requests.some((q) => q.cmd === "run-file"), `${reason}: the late hand claim to be used by the new session`);
+		assert.equal(r.runMode.mode, "run", reason);
+		assert.ok(!srv.requests.some((q) => q.cmd === "run-release"), `${reason}: nothing released`);
+		assert.equal(r.shutdowns.length, 0, reason);
+		await quit(r); // the next round is another process: this one's claim is not kept for it
+	}
+});
+
+test("B6 VM review RV7-F001: an undecided pi switched twice, and one whose late answer is none, becomes the normal session of the last switch", { timeout: 20_000 }, async () => {
+	flagOn();
+	const srv = server();
+	const role = gatedRole(srv);
+	const r = await rig(srv, resident);
+	let started = 0;
+	await switchTo(r, "new");
+	await switchTo(r, "resume");
+	r.runMode.afterNormal(() => void started++);
+	assert.equal(r.runMode.mode, "unknown");
+	role.answer({ ok: true, role: "none" });
+	await until(() => r.runMode.mode === "normal", "the late none");
+	assert.equal(started, 1, "the session start of the last switch runs once, after the answer");
+	assert.equal(asked(srv), 1);
+	await switchTo(r, "fork");
+	assert.equal(r.runMode.mode, "normal", "and now it is a resident: its switch is not asked again");
+	assert.equal(asked(srv), 1);
+});
+
+test("B6 VM review RV7-F001: a pi left plain by no answer stays plain through a /reload, /new, /resume or /fork: it joins nothing, hands nothing over, and is not asked again", { timeout: 30_000 }, async () => {
+	for (const reason of ["reload", "new", "resume", "fork"] as const) {
+		flagOn();
+		const srv = server();
+		const inner = srv.ask.bind(srv);
+		// The ask fails after the bound: no answer.
+		srv.ask = async (request: Request): Promise<Answer> => {
+			if (request.cmd !== "pane-role") return inner(request);
+			srv.requests.push(request);
+			await new Promise((resolve) => setTimeout(resolve, 300));
+			throw new Error("no server");
+		};
+		const r = await rig(srv, resident);
+		await until(() => r.notes.some((n) => /did not answer, so this session stays a plain session/.test(n)), `${reason}: the ask to end without an answer`);
+		let started = 0;
+		await switchTo(r, reason);
+		r.runMode.afterNormal(() => void started++);
+		assert.equal(r.runMode.mode, "unknown", `${reason}: still plain`);
+		assert.equal(r.runMode.deciding, false, reason);
+		assert.equal(asked(srv), 1, `${reason}: not asked again`);
+		assert.equal(r.shutdowns.length, 0, reason);
+		assert.equal(started, 0, reason);
+	}
+});
+
+test("B6 VM review RV7-F002: a quit while the pane-role ask is in flight releases the hand claim its late answer carries, so no run is left for the server's watcher to end as lost", { timeout: 20_000 }, async () => {
+	flagOn();
+	const srv = server();
+	const role = gatedRole(srv);
+	const r = await rig(srv, resident);
+	assert.equal(r.runMode.mode, "unknown");
+	// The answer comes while the quit waits for it: a quit that did not wait would be done before the claim existed.
+	setTimeout(() => role.answer(HAND), 30);
+	await quit(r);
+	assert.ok(srv.requests.some((q) => q.cmd === "run-release" && q.token === "TOKEN"), "released before the quit returns (the process exits after it)");
+	assert.ok(!srv.requests.some((q) => q.cmd === "run-file"), "no run was set up");
+});
+
+test("B6 VM review RV7-F002: a quit does not wait longer than the bound for an answer that never comes", { timeout: 20_000 }, async () => {
+	flagOn();
+	const srv = server();
+	slowRole(srv, 0, "hang");
+	const r = await rig(srv, { ...resident, exitWaitMs: 50 });
+	await quit(r);
+	assert.ok(!srv.requests.some((q) => q.cmd === "run-release"));
 });
 
 /** The server out of reach for the run's polls (and for its `run-boss`), switched on by the test. */

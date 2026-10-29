@@ -33,6 +33,8 @@ export interface RunSideDeps {
 	glyphWaitMs?: number;
 	/** Reads a process's start time (a test counts the reads); `startOf` by default. */
 	startOf?: (pid: number) => string | undefined;
+	/** How long a quit waits for a pane-role answer still in flight, so that a hand claim it carries is released instead of left to the server's watcher. */
+	exitWaitMs?: number;
 }
 export const MESSAGE = "straw-tower";
 const POLL_MS = 1000, CLAIM_WAIT_MS = 10_000, LOST_MS = 30_000, TURN_START_MS = 15_000, GLYPH_WAIT_MS = 30_000;
@@ -42,8 +44,16 @@ const BOSS_SIGN_MS = 15_000;
 const RUN_PANE_ROLES = new Set(["tower", "ally"]);
 /** A `/reload` makes a new instance of the extension in the same process: the claim stays with the process. */
 const KEPT = Symbol.for("pi-straw-boss.run");
+/** Set once this process really became a resident tower (the server said the pane is no run's, or no server was there to say): only such a process skips the pane-role ask at a /reload, /new, /resume, or /fork. */
+const RESIDENT = Symbol.for("pi-straw-boss.resident");
+/** The pane-role ask of an undecided pi that is still in flight (or ended without an answer): it belongs to the process, so a /reload, /new, /resume, or /fork carries it instead of asking again (the server answers a second ask of a pane it gave a hand claim with `quit`). */
+const PANE_ASK = Symbol.for("pi-straw-boss.pane-ask");
+interface PaneAsk { asked: Promise<Found | undefined>; /** The session start that acts on the answer: an earlier one has ended and leaves it alone. */ owner?: symbol; /** That session's handling of the answer, which a quit waits for. */ settled?: Promise<void>; /** The ask ended without an answer: the process stays a plain session. */ plain?: boolean }
+const globalMarks = globalThis as Record<symbol, unknown>;
 interface Peer { device: string; label: string; short: string; team: string; teamName: string }
 interface Claim { token: string; kind: "local" | "ally"; level?: string; peer?: Peer; run: string; workspace: string; identity: string; label: string; brief: string; hand?: boolean }
+/** A pi without the flag in a standing pane: the server says whether to quit, wait, or take the pane as a run of the boss's own. */
+type Found = { role: "none" | "quit" | "hand"; reason?: string; claim?: Claim };
 interface Event { id: string; kind: string; text: string; from?: { id: string; name?: string }; flag?: string }
 type Command = { type: "steer"; text: string } | { type: "quit" } | { type: "confirmed"; dialogId: string; allow: boolean };
 
@@ -74,7 +84,7 @@ export function eventText(e: Pick<Event, "kind" | "text" | "flag" | "from">): st
 export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunSideDeps = {}, link?: Link) {
 	const { pi, cfg, s, guiDir, tell } = kit;
 	const { env } = cfg;
-	const { pollMs = POLL_MS, claimWaitMs = CLAIM_WAIT_MS, lostMs = LOST_MS, startMs = TURN_START_MS, glyphWaitMs = GLYPH_WAIT_MS, towerAskMs = 2500, startOf = processStart } = deps;
+	const { pollMs = POLL_MS, claimWaitMs = CLAIM_WAIT_MS, lostMs = LOST_MS, startMs = TURN_START_MS, glyphWaitMs = GLYPH_WAIT_MS, towerAskMs = 2500, startOf = processStart, exitWaitMs = 2000 } = deps;
 	pi.registerFlag("sb-run", { description: "The id of the tower run this pi was started for (set by the sb server; do not pass it by hand)", type: "string" });
 
 	let mode: "unknown" | "run" | "normal" = "unknown", claim: Claim | undefined, ctx: ExtensionContext | undefined;
@@ -135,21 +145,23 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	function residentTower(context: ExtensionContext): boolean {
 		try { return context.sessionManager.getBranch().some((e) => e.type === "custom" && e.customType === ENTRY && (e.data as { tower?: unknown } | undefined)?.tower === true); } catch { return false; }
 	}
-	/** A pi without the flag in a standing pane: the server says whether to quit, wait, or take the pane as a run of the boss's own. */
-	type Found = { role: "none" | "quit" | "hand"; reason?: string; claim?: Claim };
-	async function paneRole(context: ExtensionContext, reason: string): Promise<Found | { role: "late"; settle: Promise<Found | undefined> }> {
+	async function paneRole(context: ExtensionContext): Promise<Found | { role: "late"; ask: PaneAsk }> {
 		const pane = env.HERDR_PANE_ID, workspace = env.HERDR_WORKSPACE_ID;
 		// Without the flag file no sb server runs towers, so no pane is one (and a session asks Herdr nothing at its start for this).
 		if (!pane || !workspace || !towerRunsEnabled(guiDir)) return { role: "none" };
 		// A resident tower (it carries STRAW_BOSS_ROLE=tower) is no pi the boss typed into a standing pane: it hands its pane over itself (tower.ts). A /reload right after the server registered its identity finds its pane marked
 		// `tower` already, and asking would make it a hand run that never hands over and never ends (B6 VM F4).
-		// Only a session that already wrote its tower entry is one: the env alone stays in a migrated standing pane's tab, and a pi the boss types there is a hand run. That pi always starts with `startup`: a /reload, /new,
-		// /resume, or /fork of a resident tower is its in-process switch (the server holds the pane for it while it lives), and the new branch has no entry yet (B6 VM review RV6B-F001).
-		if (env.STRAW_BOSS_ROLE === "tower" && (reason !== "startup" || residentTower(context))) return { role: "none" };
+		// Only a session that already wrote its tower entry, or a process that already became a resident, is one: the env alone stays in a migrated standing pane's tab, and a pi the boss types there is a hand run. A resident's
+		// /reload, /new, /resume, or /fork is its in-process switch (the server holds the pane for it while it lives) and the new branch has no entry yet (B6 VM review RV6B-F001); a pi that is undecided or plain
+		// is no resident, and its switch is no sign of one (RV7-F001).
+		if (env.STRAW_BOSS_ROLE === "tower" && (globalMarks[RESIDENT] === true || residentTower(context))) return { role: "none" };
 		// The env alone may be a fresh resident (it hands over itself) or a pi the boss typed in a migrated standing pane: the server knows which pane it holds. An error or an older server means resident. An answer
 		// that does not come within `towerAskMs` (a cold Windows server took 3.9 s) decides nothing: quitting or handing over on a guess ended a hand pi that was only waiting, so the ask stays in flight and the
 		// answer is acted on when it comes (`late`). The start time is read once, before the clock starts (the read is a sync PowerShell call of seconds there).
 		if (env.STRAW_BOSS_ROLE === "tower") {
+			// An ask still in flight (or ended without an answer) is this process's: the session that follows a switch takes it over.
+			const carried = globalMarks[PANE_ASK] as PaneAsk | undefined;
+			if (carried) return { role: "late", ask: carried };
 			const started = startOf(process.pid);
 			// An ask that fails is no answer: resident when it fails within the bound (no server), a plain session when it fails after it (`late` settles undefined).
 			const asked = ask({ cmd: "pane-role", pane, pid: process.pid, ...(started ? { started } : {}) }).then((answer): Found | undefined => {
@@ -159,7 +171,9 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 			const quick = await Promise.race([asked.then((found) => ({ found })), sleep(towerAskMs).then(() => undefined)]);
 			if (quick) return quick.found ?? { role: "none" };
 			tell("Straw Boss: the sb server has not said yet whether this pane is the tower's; this session does nothing and stays a plain session until it answers", "warning");
-			return { role: "late", settle: asked };
+			const pending: PaneAsk = { asked };
+			globalMarks[PANE_ASK] = pending;
+			return { role: "late", ask: pending };
 		}
 		const mine = (await panes(cfg.run, workspace).catch(() => [])).find((p) => p.pane_id === pane);
 		const marked = RUN_PANE_ROLES.has(mine?.tokens?.sb_role ?? "");
@@ -410,8 +424,15 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		timer.unref();
 		void tick();
 	};
-	/** The pane-role answer that came after the bound: acted on if this session is still the one that asked, else a claim it carries is released. */
-	const decideLate = async (context: ExtensionContext, mine: number, found: Found | undefined) => {
+	/** The pane-role answer that came after the bound: acted on if the session that adopted the ask is still the one, else a claim it carries is released. */
+	const decideLate = async (context: ExtensionContext, mine: number, pending: PaneAsk, owner: symbol, found: Found | undefined) => {
+		// A later session start took the ask over (a /reload, /new, /resume, /fork meanwhile): the answer is its to act on.
+		if (pending.owner !== owner) return;
+		// An answer ends the ask; no answer leaves it in place as the mark of a plain session.
+		if (!found) pending.plain = true;
+		else if (globalMarks[PANE_ASK] === pending) globalMarks[PANE_ASK] = undefined;
+		// The answer says what the process is whether or not the session that asked is still here.
+		if (found?.role === "none") globalMarks[RESIDENT] = true;
 		const waiting = deciding;
 		if (mine !== epoch || mode !== "unknown") {
 			if (found?.role === "hand" && found.claim) await ask({ cmd: "run-release", token: found.claim.token, reason: "the session ended before the server answered" }).catch(() => {});
@@ -427,6 +448,14 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		claim = found.claim;
 		await enterRun(context);
 	};
+	/** An undecided session waits for the ask it carries: the process's own, which an earlier session of it may have begun. */
+	const adopt = (context: ExtensionContext, pending: PaneAsk) => {
+		// Plain after an ask that ended without an answer: nothing joins, and nothing is asked again.
+		if (pending.plain) return;
+		deciding = [];
+		const mine = epoch, owner = (pending.owner = Symbol("session"));
+		pending.settled = pending.asked.then((late) => decideLate(context, mine, pending, owner, late)).catch((cause: Error) => tell(`Straw Boss: ${cause.message}`, "error"));
+	};
 	pi.on("session_start", async (event, context) => {
 		ctx = context;
 		s.ui = context.ui; // the notices of a run (a refused claim, a lost server) reach the terminal
@@ -441,13 +470,12 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 			else if (kept?.hand && !flag && event.reason !== "startup") claim = kept;
 			else if (typeof flag === "string" && flag) claim = await claimRun(flag);
 			else {
-				const found = await paneRole(context, event.reason);
-				if (found.role === "late") {
-					deciding = [];
-					const mine = epoch;
-					return void found.settle.then((late) => decideLate(context, mine, late)).catch((cause: Error) => tell(`Straw Boss: ${cause.message}`, "error"));
+				const found = await paneRole(context);
+				if (found.role === "late") return void adopt(context, found.ask);
+				if (found.role === "none") {
+					if (env.STRAW_BOSS_ROLE === "tower") globalMarks[RESIDENT] = true;
+					return void (mode = "normal");
 				}
-				if (found.role === "none") return void (mode = "normal");
 				if (found.role === "quit") return quitPane(context, found.reason);
 				claim = found.claim;
 			}
@@ -465,6 +493,9 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		deciding = undefined;
 		clearInterval(timer);
 		timer = undefined;
+		// A quit while the pane-role ask is in flight: the answer may still carry a hand claim, which is released when it comes (the process is gone after this, and nobody else would release it).
+		const pending = globalMarks[PANE_ASK] as PaneAsk | undefined;
+		if (event.reason === "quit" && mode === "unknown" && pending?.settled) await Promise.race([pending.settled, sleep(exitWaitMs)]);
 		if (mode !== "run" || !claim || ending) return;
 		// /new, /resume, and /fork end the claim; a /reload keeps it, and a quit after tower_done or by the server's command is the server's own.
 		if (event.reason === "reload" || (claim.hand && event.reason !== "quit")) return void (mode = "unknown");

@@ -127,6 +127,23 @@ test("a resident tower of this build hands its pane to the server at its start a
 	assert.ok(tower.notices.some((n) => /sb server stands in for this workspace's tower/.test(n.text)));
 });
 
+for (const how of ["undecided", "plain"] as const) {
+	test(`B6 VM review RV7-F002: a /quit of a pi in a standing pane that never became a normal session (${how === "undecided" ? "the pane-role answer is still awaited" : "no answer came"}) leaves the server's pane open`, async () => {
+		// STRAW_BOSS_ROLE=tower stays in a migrated standing pane's tab: the boss typed pi there, and the pane is the server's.
+		let fail!: (cause: Error) => void;
+		const hang = new Promise<never>((_resolve, reject) => (fail = reject));
+		const pi = world.tower("tower-wA", "wA:t7", "wA:p7", false, { runSide: { ask: () => hang, exitWaitMs: 1 } });
+		await pi.start();
+		console.error("DBG", JSON.stringify(pi.notices), pi.stopped);
+		await until(() => pi.notices.some((n) => /has not said yet whether this pane is the tower's/.test(n.text)), "the ask to pass its bound");
+		if (how === "plain") fail(new Error("no server"));
+		if (how === "plain") await until(() => pi.notices.some((n) => /did not answer, so this session stays a plain session/.test(n.text)), "the ask to end without an answer");
+		await pi.stop("quit");
+		await world.quiet();
+		assert.deepEqual(world.herdr.commands("pane", "close"), [], "the standing pane is left as it was found");
+	});
+}
+
 test("a resident tower the server cannot take stays resident, and says why", async () => {
 	sw.crashWith = 1; // no server can be started
 	const tower = world.tower("tower-wA", "wA:t7", "wA:p7", false, { server: server() });
