@@ -888,15 +888,29 @@ test("RVD27-F001: a store an older build left behind is not revived: when the re
 	assert.match(starts(next).at(-1)!, /newToken=true why=stale/);
 });
 
+test("RVD27B-F001: a 0.45 host that rewrote only gui.json (server.json still carries the older token) makes the store stale too: a new token, why=stale", async () => {
+	const ts = fakeTailscale(), h = await host({ tailscale: ts.run });
+	const before = h.gui(), cookie = await pairPhone(h);
+	await h.ask("restart", { reason: "test", by: "test" });
+	await h.handle.done;
+	writeRecordFile(h.slot.dir, { ...h.gui(), token: "e".repeat(32), csrf: "f".repeat(32) }); // what a 0.45 host writes: gui.json only
+	const next = await host({ tailscale: ts.run });
+	assert.notEqual(next.gui().token, before.token, "the store's token is not brought back");
+	assert.notEqual(next.gui().token, "e".repeat(32));
+	assert.equal(pairedCount(next), 0);
+	assert.equal((await remoteGet(next.gui().remotePort, `/${next.gui().token}/`, cookie)).status, 401);
+	assert.match(starts(next).at(-1)!, /newToken=true why=stale/);
+});
+
 test("RVD27-F006: GUI commands wait for a rotation in flight: a gui and a gui-stop asked meanwhile neither move the ports nor leave a second listener", async () => {
 	const ts = fakeTailscale(), h = await host({ tailscale: ts.run });
 	await pairPhone(h);
 	const before = h.gui();
-	let release!: () => void, hold: Promise<void> | undefined;
-	const gate = new Promise<void>((r) => (release = r));
-	ts.hold = () => (hold ??= gate);
+	let release!: () => void, reach!: () => void, hold: Promise<void> | undefined;
+	const gate = new Promise<void>((r) => (release = r)), reached = new Promise<void>((r) => (reach = r));
+	ts.hold = () => (reach(), (hold ??= gate));
 	const rotating = h.ask("gui-rotate");
-	await new Promise((r) => setTimeout(r, 50));
+	await reached;
 	const meanwhile = Promise.all([h.ask("gui", { boss: true }), h.ask("gui-stop")]);
 	await new Promise((r) => setTimeout(r, 50));
 	release();

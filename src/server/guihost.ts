@@ -114,8 +114,8 @@ export function createGuiHost(o: GuiHostOptions) {
 	 */
 	const recorded = () => {
 		const record = readRecord(slot), seen = readGuiJson(dir), was = record?.gui, read = readSecrets(dir);
-		// A record that names another token than the store's was written by a build that ignores the store (a downgrade, a 0.45 host) on these ports: its token is the one the boss last saw, and the store is of an older listener (RVD27-F001).
-		const last = was?.token ?? seen?.token, stored = "secrets" in read && last !== undefined && last !== read.secrets.token ? { lost: "stale" as Lost } : read;
+		// A record that names another token than the store's was written by a build that ignores the store (a downgrade, a 0.45 host) on these ports, either record naming it: its token is the one the boss last saw, and the store is of an older listener (RVD27-F001).
+		const stored = "secrets" in read && [was?.token, seen?.token].some((t) => t !== undefined && t !== read.secrets.token) ? { lost: "stale" as Lost } : read;
 		const keep = "secrets" in stored ? stored.secrets : undefined;
 		const port = was?.port ?? seen?.port ?? keep?.port;
 		return { port, remotePort: (seen && seen.port === port ? seen.remotePort : undefined) ?? (keep && keep.port === port ? keep.remotePort : undefined), keep, lost: "lost" in stored ? stored.lost : undefined, stopped: Boolean(was?.stopped) };

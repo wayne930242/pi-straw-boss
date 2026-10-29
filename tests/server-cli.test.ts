@@ -424,6 +424,28 @@ test("RVD27-F002: a fatal JavaScript error (an uncaught exception or an unhandle
 	}
 });
 
+test("RVD27B-F002/F003: onFatal listens to both events, leaves once, arms the exit timer before leaving (so a leave that throws is still bounded), and the cli handler survives a reason it cannot print", async () => {
+	const { onFatal } = await import("../src/server/fatal.ts");
+	const { EventEmitter } = await import("node:events");
+	const proc = new EventEmitter(), left: unknown[] = [], timers: number[] = [], exits: number[] = [];
+	onFatal((e) => (left.push(e), assert.equal(timers.length, 1, "the timer is armed before leave")), { proc: proc as never, exit: (c) => exits.push(c), after: (run, ms) => (timers.push(ms), run()) });
+	proc.emit("unhandledRejection", "a");
+	proc.emit("uncaughtException", "b");
+	assert.deepEqual(left, ["a"], "once");
+	assert.equal(timers.length, 1);
+	assert.deepEqual(exits, [1]);
+	const thrower = new EventEmitter(), tm: number[] = [];
+	onFatal(() => { throw new Error("x"); }, { proc: thrower as never, exit() {}, after: (_r, ms) => void tm.push(ms) });
+	assert.throws(() => thrower.emit("uncaughtException", 1));
+	assert.equal(tm.length, 1, "armed although leave threw");
+	const f = fakeServer();
+	let said = "";
+	await cli(["serve"], { server: f.server, signals: f.signals, fatal: f.fatal, err: (t) => (said += t) });
+	f.fatals[0]?.(Object.create(null));
+	assert.deepEqual(f.shutdowns, [1], "the shutdown starts although the reason cannot be printed");
+	assert.match(said, /fatal: <unprintable>/);
+});
+
 test("serve with nothing running runs a serve server in the foreground, clears a stopped left by a detached server, and releases the lock once it is ready", async () => {
 	mkdirSync(world.slot.dir, { recursive: true });
 	writeRecord(world.slot, { pid: 7, version: "0.44.0", herdr: world.slot.herdr, mode: "detached", desk: false, intercom: {}, log: "/l", socket: "/nowhere", secret: "s".repeat(64), intercomId: "sb-server-00000000", stopped: true });
