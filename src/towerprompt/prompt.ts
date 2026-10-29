@@ -13,8 +13,10 @@ import type { PollAnswer, PromptSource } from "./source.ts";
 
 export const PROMPT = "tower> ";
 const POLL_MS = 2000;
-/** After the boss wrote, how often the prompt asks whether the run starts, and for how long it asks that often. */
-const WAKING_POLL_MS = 250, WAKING_FOR_MS = 15_000;
+/** After the boss wrote, how often the prompt asks whether the run starts: for as long as the server shows a wake pending (events queued, or a run waking), however long the start takes (a Windows claim took 10 to 46 s). */
+const WAKING_POLL_MS = 250;
+/** The server needs this long after a post to show it as queued before a standing, empty tower ends the fast asking. */
+const WAKING_GRACE_MS = 3000;
 /** Lines that arrive this close together are one paste, one message. */
 const PASTE_MS = 40;
 /** What a message with no words says to the tower. */
@@ -27,6 +29,8 @@ export interface PromptOptions {
 	output: Writable;
 	locale: Locale;
 	pollMs?: number;
+	/** How often it asks while a wake is pending (tests set it); `WAKING_POLL_MS` by default. */
+	wakingPollMs?: number;
 	/** Ends the prompt as a run's start does (the pane is closing, the process is told to end). */
 	signal?: AbortSignal;
 }
@@ -36,7 +40,7 @@ const clean = (value: unknown, max = 200) => String(value).replace(/[\u0000-\u00
 
 /** Runs the prompt until it ends; resolves the exit code. */
 export async function runPrompt(o: PromptOptions): Promise<number> {
-	const text = textsFor(o.locale), pollMs = o.pollMs ?? POLL_MS, source = o.source;
+	const text = textsFor(o.locale), pollMs = o.pollMs ?? POLL_MS, wakingMs = Math.min(pollMs, o.wakingPollMs ?? WAKING_POLL_MS), source = o.source;
 	const terminal = (o.output as Partial<NodeJS.WriteStream>).isTTY === true;
 	let rl: Interface | undefined, closed = false, finished = false, posting = false, silent = false, shown: string | undefined, wokeAt: number | undefined;
 	let timer: ReturnType<typeof setTimeout> | undefined, batch: string[] = [], batchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -105,6 +109,8 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 			});
 			return false;
 		}
+		// The boss wrote and the run has not taken the pane: the order to leave comes with its start, so the prompt asks fast until then. A tower that stands by with nothing queued, a moment after the post, has no wake pending.
+		if (wokeAt !== undefined && polled.answer.state === "standing" && polled.answer.queued === 0 && Date.now() - wokeAt > WAKING_GRACE_MS) wokeAt = undefined;
 		const line = header(polled.answer);
 		if (line !== shown) {
 			shown = line;
@@ -118,8 +124,8 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 		if (finished || !(await handle(polled))) return;
 		timer = setTimeout(() => void poll(), nextPoll());
 	};
-	/** Fast for a while after the boss wrote: the run starts in about a second, and the prompt must be told to leave then. */
-	const nextPoll = () => (wokeAt !== undefined && Date.now() - wokeAt < WAKING_FOR_MS ? Math.min(pollMs, WAKING_POLL_MS) : pollMs);
+	/** Fast while a wake is pending: the run starts in about a second, and the prompt must be told to leave then, not seconds later. */
+	const nextPoll = () => (wokeAt !== undefined ? wakingMs : pollMs);
 
 	/** The boss wrote: what arrived together is one message; an empty one wakes the tower without words. */
 	const flush = async () => {

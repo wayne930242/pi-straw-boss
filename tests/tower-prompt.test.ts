@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
-import { test } from "node:test";
+import { mock, test } from "node:test";
 import { localeOf, textsFor } from "../src/towerprompt/messages.ts";
 import { runPrompt } from "../src/towerprompt/prompt.ts";
 import type { PollAnswer, Polled, PromptSource } from "../src/towerprompt/source.ts";
@@ -176,19 +176,60 @@ test("keys typed after Enter, before the run starts, are held by the prompt and 
 	assert.equal(source.gones, 1);
 });
 
-test("a second line after the first is posted as a second event, and the prompt asks fast after a post but not forever", async () => {
+test("a second line after the first is posted as a second event, and the prompt asks fast while a wake is pending, however long the start takes, and slow again when nothing is", async () => {
 	const source = new FakeSource();
-	const p = screen(source, { pollMs: 5000 });
+	const waking: Polled = { kind: "state", answer: { ...STATE, state: "waking", queued: 1 } };
+	const p = (() => {
+		const input = new PassThrough(), output = new PassThrough();
+		let text = "";
+		output.on("data", (chunk) => void (text += String(chunk)));
+		return { input, text: () => text, done: runPrompt({ workspace: "wA", source, input, output, locale: "en", pollMs: 5000, wakingPollMs: 10 }) };
+	})();
 	await until(() => p.text().includes("tower> "), "the prompt");
 	const before = source.polls;
+	source.answers = [waking];
 	p.input.write("one\n");
 	await until(() => source.posted.length === 1, "the post");
-	await until(() => source.polls >= before + 3, "fast polls after the post, though the pace is 5 s");
-	p.input.write("two\n");
-	await until(() => source.posted.length === 2, "the second post");
-	starting(source);
-	assert.equal(await ended(p.done), 0);
+	await until(() => source.polls >= before + 5, "fast polls after the post, though the pace is 5 s");
+	// A start that takes long (a Windows claim: 10 to 46 s) is no reason to stop asking: the clock is moved 20 s and the prompt still asks fast and has not exited.
+	mock.timers.enable({ apis: ["Date"], now: Date.now() });
+	try {
+		mock.timers.tick(20_000);
+		const mark = source.polls;
+		await until(() => source.polls >= mark + 5, "still fast polls 20 s later");
+		p.input.write("two\n");
+		await until(() => source.posted.length === 2, "the second post");
+		starting(source);
+		assert.equal(await ended(p.done), 0);
+	} finally {
+		mock.timers.reset();
+	}
 	assert.deepEqual(source.posted, ["one", "two"]);
+	assert.equal(source.gones, 1);
+});
+
+test("a post that leaves the tower standing with nothing queued ends the fast asking after the grace, so a run that never comes costs the server no more than the slow poll", async () => {
+	const source = new FakeSource();
+	const input = new PassThrough(), output = new PassThrough();
+	let text = "";
+	output.on("data", (chunk) => void (text += String(chunk)));
+	const done = runPrompt({ workspace: "wA", source, input, output, locale: "en", pollMs: 5000, wakingPollMs: 10 });
+	await until(() => text.includes("tower> "), "the prompt");
+	mock.timers.enable({ apis: ["Date"], now: Date.now() });
+	try {
+		input.write("hello\n");
+		await until(() => source.posted.length === 1, "the post");
+		mock.timers.tick(4000);
+		await until(() => source.polls >= 8, "polls");
+		const mark = source.polls;
+		await sleep(150);
+		assert.ok(source.polls - mark <= 2, `slow again: ${source.polls - mark} polls in 150 ms`);
+	} finally {
+		mock.timers.reset();
+	}
+	starting(source);
+	input.write("\n");
+	assert.equal(await ended(done), 0);
 });
 
 test("Enter alone wakes the tower with a line that says the boss is at the keyboard and said nothing yet", async () => {
