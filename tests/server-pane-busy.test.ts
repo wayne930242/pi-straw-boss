@@ -160,6 +160,21 @@ test("win32: a crash-loop hold with another cause (the pane has no program below
 	await until(() => world.pis.size === 1, "Retry starts a run");
 });
 
+test("RV11-F001 win32: Retry with no event waiting gives the unstarted run's pane back, and the prompt is typed again", async () => {
+	const { s } = await winSetup();
+	world.live.delete(7777);
+	world.procTable = [row(SHELL_PID, 1, "powershell.exe")];
+	tower().incoming(from, { id: "m1", content: { text: "one" } });
+	await until(async () => (await status(s)).state === "held", "the service to be held");
+	for (const e of readQueue(world.slot, "wA")) removeEvent(world.slot, "wA", e);
+	world.herdr.onAgentStart = real;
+	const typed = () => world.herdr.commands("pane", "run").length;
+	const before = typed();
+	assert.equal((await ask(s, { cmd: "tower-retry", workspace: "wA" })).ok, true);
+	await until(() => typed() > before, "the prompt typed again with no run to start");
+	assert.equal(world.pis.size, 0, "no run started");
+});
+
 test("the notice names the program by its executable's name only: no path, no arguments", async () => {
 	world.herdr.shellPids = true;
 	const { s, pane } = await setup();
@@ -327,5 +342,9 @@ test("RV10-F003: the process table marks the tower prompt (CIM's sixth field, `p
 	assert.equal(old!.prompt, undefined);
 	const ps = parsePs([" 4000 1 Wed Oct 28 09:40:00 2026 node /p/cli.mjs prompt --workspace wA --state-dir /s", " 4001 1 Wed Oct 28 09:40:01 2026 node server.js --prompt"].join("\n"), "abc");
 	assert.deepEqual(ps.map((p) => p.prompt), [true, undefined]);
-	assert.match(cimCommand("abc").args.join(" "), /Contains\(' prompt --workspace '\)/);
+	const cim = cimCommand("abc").args.join(" ");
+	assert.match(cim, /Contains\(' prompt --workspace '\)/);
+	// The flag is set by that test and is the sixth column of the row (RV11-F003, mutation N9: `$q='1'` to `$q='0'` survived).
+	assert.match(cim, /Contains\(' prompt --workspace '\)\) \{ \$q='1' \}/);
+	assert.match(cim, /\$c,\$q\) -join/);
 });
