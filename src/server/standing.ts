@@ -189,7 +189,9 @@ export function createStanding(o: StandingOptions) {
 		if (!groups && !m.fresh) {
 			if (!m.lost) {
 				m.lost = true;
-				log.line("prompt-lost", { workspace: target.workspace, pane: pane.pane_id, text: "The tower prompt is gone from this pane and Herdr cannot tell an idle shell from a running program here, so the server types nothing; the prompt comes back after the next run or a Herdr restart" });
+				// A prompt that never started is no prompt that was lost: it is said as not starting (same once-only rule as elsewhere).
+				if (m.typings > 0) log.line("prompt-not-starting", { workspace: target.workspace, pane: pane.pane_id, text: "The tower prompt did not start in this pane and Herdr cannot tell an idle shell from a running program here, so the server types nothing more; the prompt comes back after the next run or a Herdr restart" });
+				else log.line("prompt-lost", { workspace: target.workspace, pane: pane.pane_id, text: "The tower prompt is gone from this pane and Herdr cannot tell an idle shell from a running program here, so the server types nothing; the prompt comes back after the next run or a Herdr restart" });
 			}
 			return;
 		}

@@ -273,11 +273,26 @@ test("Windows gives shell_pid and a foreground group that are always the shell's
 	const { s, pane } = await setup();
 	await until(() => world.herdr.typed.length === 1, "the first typing into the new tab");
 	// The prompt is gone and `ping -t localhost` runs in the shell: process-info lists the shell alone, the group is the shell's pid.
-	new FakePrompt(s, pane).stop();
+	const prompt = new FakePrompt(s, pane);
+	await until(() => prompt.polls > 0, "the prompt to poll");
+	prompt.stop();
 	await sleep(1500);
 	assert.equal(world.herdr.typed.length, 1, "the pane is not fresh: no typing, whatever the group says");
 	const lost = () => readFileSync(fileOf(world.slot, "log"), "utf8").split("\n").filter((l) => /prompt-lost/.test(l));
 	assert.equal(lost().length, 1, "said once, not at every look");
+});
+
+test("on Windows a prompt that was typed once and never started is logged prompt-not-starting, not prompt-lost (RV-F002)", async () => {
+	world.runPlatform = "win32";
+	world.herdr.winShell = true;
+	world.herdr.shellForeground = true;
+	await setup();
+	await until(() => world.herdr.typed.length === 1, "the first typing");
+	await sleep(1500);
+	const log = readFileSync(fileOf(world.slot, "log"), "utf8");
+	assert.equal(world.herdr.typed.length, 1, "typed once");
+	assert.match(log, /prompt-not-starting/);
+	assert.doesNotMatch(log, /prompt-lost/);
 });
 
 test("where Herdr gives the shell's pid and the foreground group, a prompt that died is typed again when the foreground is the shell itself, and not while something else holds it (SR-F003)", async () => {
