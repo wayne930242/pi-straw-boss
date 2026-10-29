@@ -3,7 +3,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { TowerWorld } from "./tower-world.ts";
 import { type Running, sleep, until } from "./server-world.ts";
 import { callControl } from "../src/server/socket.ts";
-import { readQueue } from "../src/server/towerstore.ts";
+import { readQueue, removeEvent } from "../src/server/towerstore.ts";
 import { programsIn } from "../src/server/standing.ts";
 import type { Proc } from "../src/server/lineage.ts";
 import { SHELL_PID } from "./fakes.ts";
@@ -168,4 +168,76 @@ test("the notice names the program by its executable's name only: no path, no ar
 	await until(async () => (await status(s)).state === "held", "the service to be held");
 	const texts = (await status(s)).notices.filter((n) => n.kind === "start").map((n) => n.text);
 	assert.deepEqual(texts, ["A run could not start: the standing pane is busy with node.exe; the tower starts again when it has ended, or on Retry"]);
+});
+
+// RV10-F002 (the boss's rule F10: never type into a pane that runs a program): a start Herdr refused leaves no pi in the pane, so the run's end must not mark the pane a fresh shell, and a held service on Windows whose
+// busy list is empty or unreadable types nothing: the list of shells it would see is the one a running program leaves too.
+const typedPrompts = () => world.herdr.typed.filter((t) => /prompt --workspace/.test(t.text)).length;
+const heldWithNoProof = async (table: Proc[] | undefined) => {
+	const { s, pane } = await winSetup();
+	world.procTable = table;
+	await until(() => typedPrompts() === 1, "the first prompt typed into the new pane");
+	tower().incoming(from, { id: "m1", content: { text: "one" } });
+	await until(async () => (await status(s)).state === "held", "the service to be held");
+	assert.equal(starts(), 3);
+	await sleep(500);
+	return { s, pane, held: await status(s) };
+};
+
+test("RV10-F002 win32: the process table cannot be read (CIM failed), the start was refused as busy: the service is held and the prompt command is not typed into the boss's program", async () => {
+	const { held } = await heldWithNoProof(undefined);
+	assert.equal(held.notices.filter((n) => n.kind === "start").every((n) => !/busy with/.test(n.text)), true, "no program could be named");
+	assert.equal(typedPrompts(), 1, "nothing typed after the first prompt");
+});
+
+test("RV10-F002 win32: the program below the shell is a nested shell (bash.exe, which is no program to name): held, and nothing is typed into it", async () => {
+	const { held } = await heldWithNoProof([row(SHELL_PID, 1, "powershell.exe"), row(1234, SHELL_PID, "conhost.exe"), row(7777, SHELL_PID, "bash.exe")]);
+	assert.equal(held.notices.filter((n) => n.kind === "start").every((n) => !/busy with/.test(n.text)), true);
+	assert.equal(typedPrompts(), 1);
+});
+
+test("RV10-F002 win32: Herdr refused the start with a code other than agent_pane_busy: held, nothing typed", async () => {
+	const { s } = await winSetup();
+	world.procTable = [row(SHELL_PID, 1, "powershell.exe"), row(7777, SHELL_PID, "node.exe")];
+	world.herdr.onAgentStart = () => {
+		throw Object.assign(new Error("herdr agent start failed"), { stderr: JSON.stringify({ error: { code: "not_available", message: "the pane is not an available shell" } }) });
+	};
+	await until(() => typedPrompts() === 1, "the first prompt typed into the new pane");
+	tower().incoming(from, { id: "m1", content: { text: "one" } });
+	await until(async () => (await status(s)).state === "held", "the service to be held");
+	await sleep(500);
+	assert.equal(typedPrompts(), 1);
+});
+
+test("RV10-F002 win32: with the program found (node.exe below the shell) nothing is typed either, and the pane is not marked fresh by the runs that never started pi in it", async () => {
+	const { s } = await winSetup();
+	await until(() => typedPrompts() === 1, "the first prompt typed into the new pane");
+	tower().incoming(from, { id: "m1", content: { text: "one" } });
+	await until(async () => (await status(s)).state === "held", "the service to be held");
+	await sleep(500);
+	assert.equal(typedPrompts(), 1);
+	assert.equal((await status(s)).state, "held");
+});
+
+test("RV10-F002 win32: a refused start leaves no pi in the fake's pane (the stock fake used to keep `agent: pi` there and hide the path)", async () => {
+	const { s, pane } = await winSetup();
+	tower().incoming(from, { id: "m1", content: { text: "one" } });
+	await until(async () => (await status(s)).state === "held", "the service to be held");
+	assert.equal(world.herdr.pane(pane).agent, undefined);
+});
+
+test("RV10-F002 win32: a refused start whose event is gone leaves the service standing (one crash, not held): the pane it ended in is not marked fresh, so the prompt command is not typed into the boss's program", async () => {
+	await winSetup();
+	world.procTable = undefined;
+	await until(() => typedPrompts() === 1, "the first prompt typed into the new pane");
+	world.herdr.onAgentStart = () => {
+		for (const e of readQueue(world.slot, "wA")) removeEvent(world.slot, "wA", e);
+		throw paneBusyError();
+	};
+	tower().incoming(from, { id: "m1", content: { text: "one" } });
+	await until(() => starts() === 1, "the start");
+	await until(() => readQueue(world.slot, "wA").length === 0, "the queue to be empty");
+	await sleep(700);
+	assert.equal(starts(), 1, "no second run: the service stands, not held");
+	assert.equal(typedPrompts(), 1, "nothing typed after the run that never started pi");
 });

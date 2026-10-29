@@ -22,6 +22,8 @@ interface Rig {
 	attempts: number;
 	freed: number;
 	busy: boolean;
+	/** The state the service reports (`held`: its start failed and it waits). */
+	state: "standing" | "held";
 	/** The PIDs of the boss's programs that held the pane when the start failed. */
 	busyPids: number[];
 }
@@ -29,9 +31,9 @@ const SHELL = { pid: 900, name: "powershell.exe", cmdline: "powershell.exe -NoEx
 
 function rig(platform: NodeJS.Platform = "win32", timers: Record<string, number> = {}): Rig {
 	const clock = fakeClock(1_000_000);
-	const r: Rig = { clock, typed: [], lines: [], pane: { processes: [SHELL] }, live: new Set(), refuse: [], attempts: 0, freed: 0, busy: false, busyPids: [] } as unknown as Rig;
+	const r: Rig = { clock, typed: [], lines: [], pane: { processes: [SHELL] }, live: new Set(), refuse: [], attempts: 0, freed: 0, busy: false, state: "standing", busyPids: [] } as unknown as Rig;
 	const target: StandingTarget = {
-		workspace: "wA", label: () => "Alpha", pane: () => "p1", live: () => true, status: () => undefined,
+		workspace: "wA", label: () => "Alpha", pane: () => "p1", live: () => true, status: () => ({ state: r.state, queued: 0 }) as never,
 		paneBusy: () => r.busy, busyPids: () => r.busyPids, paneFree: () => void r.freed++,
 	};
 	const run = async (args: string[]) => {
@@ -208,6 +210,38 @@ test("RV7-F003: where Herdr gives the foreground group the held service starts a
 	unix.busy = true;
 	await looks(unix, 2);
 	assert.ok(unix.freed > 0);
+});
+
+// RV10-F002 (the boss's rule F10: never type into a pane that runs a program). The run whose agent start Herdr refused frees its pane, and the service is held with no busy list (the process table did not answer, the program
+// is a nested shell, Herdr's code was another one): the list of shells the look sees is the one a running program leaves too.
+test("RV10-F002: a held service on Windows with no busy proof types nothing, however fresh the pane is marked; Retry (the service no longer held) gives the pane back", async () => {
+	const r = rig("win32");
+	r.state = "held";
+	r.standing.freed("wA");
+	await looks(r, 5);
+	assert.deepEqual(r.typed, [], "held, no busy list: no typing into the boss's program");
+	r.state = "standing";
+	await looks(r, 1);
+	assert.equal(r.typed.length, 1, "the service is no longer held: the fresh pane is typed into");
+	const unix = rig("darwin");
+	unix.state = "held";
+	await looks(unix, 1);
+	assert.equal(unix.typed.length, 1, "where Herdr gives the foreground group the group decides, held or not");
+});
+
+test("RV10-F002: a pane freed by a run whose pi never started in it is not marked fresh: on Windows the prompt is not typed into it, and the next run's end that did start pi marks it fresh again", async () => {
+	const r = rig("win32");
+	r.standing.freed("wA", false);
+	await looks(r, 5);
+	assert.deepEqual(r.typed, [], "the shells-only list is no proof that nothing runs below the shell");
+	assert.equal(said(r, "prompt-lost").length, 1, "said once");
+	r.standing.freed("wA");
+	await looks(r, 1);
+	assert.equal(r.typed.length, 1);
+	const unix = rig("darwin");
+	unix.standing.freed("wA", false);
+	await looks(unix, 1);
+	assert.equal(unix.typed.length, 1, "where Herdr gives the foreground group the group decides");
 });
 
 test("idleShell is unchanged: a shells-only list is idle only for a pane known fresh", () => {

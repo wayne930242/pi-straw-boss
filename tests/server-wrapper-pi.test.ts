@@ -193,7 +193,8 @@ test("WC-F001: a start that failed ends no process of the pane that does not car
 	world.herdr.onAgentStart = (pane, args) => {
 		base(pane, args);
 		pane.processes = [{ name: "node", argv0: "node", pid: 4242, cmdline: "node /home/me/devserver.js" }, { name: "pi", argv0: "pi", pid: 4243, cmdline: "pi --session other" }];
-		throw new Error("herdr agent start failed: agent_pane_busy");
+		// Not `agent_pane_busy`: Herdr's CLI asks again for that one (a new tab's shell may not be at its prompt yet), and a refused start leaves no agent behind that would make the second ask fail by name.
+		throw new Error("herdr agent start failed: not_available: the pane's foreground is not a shell");
 	};
 	await setup();
 	tower().incoming(from, msg("m1", "one"));

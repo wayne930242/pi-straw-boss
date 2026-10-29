@@ -267,10 +267,19 @@ export class FakeHerdr {
 			if (!/^[a-z][a-z0-9_-]{0,31}$/.test(args[2]!)) throw new Error(`herdr agent start failed: invalid_agent_name: ${args[2]}`);
 			if (this.panes.some((p) => p.pane_id === this.agentNames.get(args[2]!))) throw new Error(`herdr agent start failed: agent_name_taken: agent name ${args[2]} is already used`);
 			this.agentNames.set(args[2]!, flag("--pane")!);
-			const pane = this.pane(flag("--pane")!);
+			const pane = this.pane(flag("--pane")!), was = pane.agent;
 			pane.agent = "pi";
 			this.emit("pane.agent_detected", "pane_agent_detected", { pane_id: pane.pane_id, workspace_id: pane.workspace_id, agent: "pi" });
-			this.onAgentStart?.(pane, args);
+			try {
+				this.onAgentStart?.(pane, args);
+			} catch (cause) {
+				// A start Herdr refused (the pane is busy, not an available shell) leaves no agent in the pane; one that timed out may have started it (RV10-F002: a refused start used to leave `agent: pi` behind and hid what the server does with a pane no agent runs in).
+				if (/agent_pane_busy|not_available/.test(`${(cause as Error).message} ${(cause as { stderr?: string }).stderr ?? ""}`)) {
+					pane.agent = was;
+					this.agentNames.delete(args[2]!);
+				}
+				throw cause;
+			}
 			return out({});
 		}
 		if (cmd === "report-metadata") {

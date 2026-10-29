@@ -248,6 +248,9 @@ export function createStanding(o: StandingOptions) {
 		if (m.hand) return;
 		// Herdr refused the command a few times in a row: it was said once, and nothing more is typed.
 		if (m.giveUp) return;
+		// Windows, a held service: the start failed and the list of busy programs is empty or unreadable (the process table did not answer, the program is a nested shell, Herdr's code was another), which is no proof that the pane
+		// is a bare shell. Nothing is typed into it: the service starts again on Retry, or when the programs it named are gone (RV10-F002).
+		if (!groups && status?.state === "held") return;
 		// Where Herdr gives no foreground group (Windows) only a fresh pane is typed into; a prompt that died in any other is said once, and the pane waits for the next run or Herdr restart.
 		if (!groups && !m.fresh) {
 			if (!m.lost) {
@@ -376,12 +379,12 @@ export function createStanding(o: StandingOptions) {
 				await run(["pane", "send-keys", m.target.pane(), "ctrl+c"]).catch(() => {});
 			}
 		},
-		/** A local run ended: the pane is free for the prompt again, and the boss's Ctrl+D is over. */
-		freed(workspace: string) {
+		/** A local run ended: the pane is free for the prompt again, and the boss's Ctrl+D is over. `fresh` false: the run's pi never started in it, so it is not known to be a bare shell (a program of the boss's may run there). */
+		freed(workspace: string, fresh = true) {
 			const m = mines.get(workspace);
 			if (!m) return;
 			m.leaving = false;
-			Object.assign(m, { parked: false, launched: undefined, seen: undefined, reported: undefined, misses: 0, typings: 0, fresh: true, noStart: false, lost: false, hand: undefined, freshUntil: undefined, failures: 0, giveUp: false });
+			Object.assign(m, { parked: false, launched: undefined, seen: undefined, reported: undefined, misses: 0, typings: 0, fresh, noStart: false, lost: false, hand: undefined, freshUntil: undefined, failures: 0, giveUp: false });
 			void tick(workspace);
 		},
 		/** A resident tower (its pi has `pid`) handed this pane over and is quitting: once that process is gone the pane is a bare shell the server just got back, as after a run. The look proves it (`proveHand`); nothing is believed on the word of the hand-over alone. A prompt that polls is left alone. */

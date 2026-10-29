@@ -149,8 +149,8 @@ export interface ServiceRef {
 	towerKey(): Promise<string | undefined>;
 	/** A local run is about to start pi in the standing pane: the stand-in goes and the tower prompt leaves (standing.ts); resolves once the pane is free. */
 	yieldPane(): Promise<void>;
-	/** A local run ended: the pane is free for the prompt again. */
-	freed(): void;
+	/** A local run ended: the pane is free for the prompt again. `fresh: false`: pi was never started in it (Herdr refused the start), so it is not known to be a bare shell, and on Windows nothing is typed into it. */
+	freed(over?: { fresh: boolean }): void;
 	/** The brief for a run: the server builds it from the net, the opener's ledger, the digest, and the last note. `refresh`: a live run is given the newest, not a new one. */
 	brief(input: { events: QueuedEvent[]; woken: number; run: RunRecord; refresh?: true }): Promise<{ text: string; digestKeys: string[]; expired?: string[] }>;
 	/** What a refreshed brief would differ by, cheap to compute: a live run is given a new brief when it moves (the memory, a handoff note). */
@@ -198,6 +198,8 @@ interface Active {
 	lastPoll: number;
 	/** The run has polled at least once (a hand run whose pi is gone before that was never seen alive). */
 	polled?: true;
+	/** A local run whose `agent start` did not complete (Herdr refused it or it timed out): its pane may hold a program of the boss's, so it is not marked a fresh shell when the run ends (RV10-F002). */
+	unstarted?: true;
 	idleSince?: number;
 	started: number;
 	closing?: number;
@@ -451,6 +453,7 @@ export function createRuns(o: RunsOptions) {
 						continue;
 					}
 				}
+				if (!started && rec.kind === "local") active.unstarted = true;
 				error("run-start", `${rec.id}: ${(cause as Error).message}`);
 				svc.paneBusy = busy.length ? busy : undefined;
 				svc.busyPids = busy.length ? programs.flatMap((p) => (typeof p.pid === "number" ? [p.pid] : [])) : undefined;
@@ -728,7 +731,7 @@ export function createRuns(o: RunsOptions) {
 		if (!ally) {
 			svc.lastRun = { endedAt: a.rec.endedAt, outcome };
 			svc.state = svc.state === "held" ? "held" : "standing";
-			svc.ref.freed();
+			svc.ref.freed(a.unstarted ? { fresh: false } : undefined);
 		}
 		log.line("run-end", { workspace: ws, run: a.rec.id, kind: a.rec.kind, outcome, ...(detail ? { detail: phrase(detail, 120) } : {}) });
 		if (failed && ally) {
