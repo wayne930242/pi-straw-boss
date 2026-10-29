@@ -627,7 +627,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Boss conversation (T4) to 71,362 bytes / 24.91 KB gzipped: the state words, the box above the composer, Leave and New, the dividers, and the event-run chips in both languages.
 	// T4 review fix 1 to 71,500 bytes / 25.0 KB gzipped: the conversation placeholder and the event-run words in both languages; towers.ts to 855 (the brief names an event run the boss spoke in).
 	// Ended bar (sb server B6) to 72,700 bytes / 25.5 KB gzipped: the bar's message in both languages (the map chunk carries every message), barOf, and liveNote.
-	assert.ok(size(entry).length <= 72_700 && gz(entry) <= 25_500, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// Start notices with Retry (sb server B6, RV13-F003, the nested-shell notice, RV14-F004) to 74,000 bytes / 25.8 KB gzipped: the empty-pane, could-not-check, types-nothing and not-at-its-own-shell notices in both languages.
+	assert.ok(size(entry).length <= 74_000 && gz(entry) <= 25_800, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).

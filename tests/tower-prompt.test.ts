@@ -62,11 +62,11 @@ function screen(source: PromptSource, over: { locale?: "en" | "zh-TW"; pollMs?: 
 const ended = (done: Promise<number>) => Promise.race([done, new Promise<number>((_, reject) => setTimeout(() => reject(new Error("the prompt did not end")), 3000).unref())]);
 
 /** A screen that is a terminal: readline then edits the line itself, and the prompt must never touch it after it closed. */
-function terminal(source: PromptSource) {
+function terminal(source: PromptSource, over: { pasteCapMs?: number } = {}) {
 	const input = new PassThrough(), output = Object.assign(new PassThrough(), { isTTY: true, columns: 80, rows: 24 });
 	let text = "";
 	output.on("data", (chunk) => void (text += String(chunk)));
-	const done = runPrompt({ workspace: "wA", source, input, output, signal: stop(), locale: "en", pollMs: 15 });
+	const done = runPrompt({ workspace: "wA", source, input, output, signal: stop(), locale: "en", pollMs: 15, ...over });
 	return { input, done, text: () => text };
 }
 
@@ -626,6 +626,134 @@ test("VM 3c: a paste that ends in a line end is posted when the paste ends, with
 	assert.deepEqual(source.posted, ["a\nb"]);
 });
 
+// RV16 (vmfix16 review): a held paste, a paste that never ends, and a typed `/quit` followed by a key.
+test("RV16-F001: Ctrl+C with a paste held (its last line has no line end) leaves the pane to the shell and drops the paste: nothing is posted, not by the next Enter either", async () => {
+	const source = new FakeSource();
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("a\nb");
+	await settle();
+	assert.deepEqual(source.posted, []);
+	p.input.write("\x03");
+	assert.equal(await ended(p.done), 0);
+	assert.equal(source.left, 1);
+	assert.deepEqual(source.posted, [], "the cancelled paste is never posted");
+	p.input.write("\r");
+	await settle();
+	assert.deepEqual(source.posted, []);
+});
+
+test("RV16-F001: Backspace over the held last line and Ctrl+D on the empty line end the prompt as a park: the pane is left, nothing is posted, no prompt goes on polling with dead input", async () => {
+	const source = new FakeSource();
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("a\nb");
+	await settle();
+	p.input.write("\x7f");
+	p.input.write("\x04");
+	assert.equal(await ended(p.done), 0);
+	assert.equal(source.left, 1);
+	assert.deepEqual(source.posted, []);
+	const polls = source.polls;
+	await settle();
+	assert.equal(source.polls, polls, "the prompt does not poll any more");
+});
+
+test("RV16-F001: Ctrl+D while a post is on its way still ends the prompt as a park", async () => {
+	const source = new FakeSource();
+	let release!: () => void;
+	const post = source.post.bind(source);
+	source.post = async (text: string) => {
+		await new Promise<void>((resolve) => (release = resolve));
+		await post(text);
+	};
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("one\r");
+	await until(() => release !== undefined, "the post to start");
+	p.input.write("\x04");
+	assert.equal(await ended(p.done), 0);
+	assert.equal(source.left, 1);
+	release();
+	await settle();
+	assert.equal(source.gones, 0);
+});
+
+test("RV16-F001: a leave order while a paste is held posts it once, with the pane handed over", async () => {
+	const source = new FakeSource();
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("a\nb");
+	await settle();
+	starting(source);
+	assert.equal(await ended(p.done), 0);
+	assert.deepEqual(source.posted, ["a\nb"]);
+	assert.equal(source.gones, 1);
+});
+
+test("RV16-F002: a paste-start that never ends is closed after the cap with no new paste data: the lines are posted, and Ctrl+C works meanwhile", async () => {
+	const source = new FakeSource();
+	const p = terminal(source, { pasteCapMs: 150 });
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("\x1b[200~hello\r");
+	await sleep(60);
+	p.input.write("more\r");
+	await sleep(100);
+	assert.deepEqual(source.posted, [], "still inside the cap of the last piece");
+	await until(() => source.posted.length === 1, "the post after the cap");
+	assert.deepEqual(source.posted, ["hello\nmore"]);
+});
+
+test("RV16-F002: Ctrl+C inside an unended paste leaves the pane at once and posts nothing", async () => {
+	const source = new FakeSource();
+	const p = terminal(source, { pasteCapMs: 60_000 });
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("\x1b[200~hello\r");
+	await settle();
+	p.input.write("\x03");
+	assert.equal(await ended(p.done), 0);
+	assert.equal(source.left, 1);
+	assert.deepEqual(source.posted, []);
+});
+
+test("RV16-F002: a paste that does end is not cut by the cap while its pieces keep coming", async () => {
+	const source = new FakeSource();
+	const p = terminal(source, { pasteCapMs: 150 });
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("\x1b[200~one\r");
+	await sleep(100);
+	p.input.write("two\r");
+	await sleep(100);
+	p.input.write("three\r\x1b[201~");
+	await until(() => source.posted.length === 1, "the post");
+	assert.deepEqual(source.posted, ["one\ntwo\nthree"]);
+});
+
+test("RV16-F003: a typed `/quit` followed by another key within the paste window is obeyed; the key is not joined to it", async () => {
+	const source = new FakeSource();
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("/quit\r");
+	p.input.write("x");
+	assert.equal(await ended(p.done), 0);
+	assert.equal(source.left, 1);
+	assert.deepEqual(source.posted, []);
+});
+
+test("RV16-F003: a lone typed `/foo` is refused, and `/quit` typed after a paste was posted still leaves", async () => {
+	const source = new FakeSource();
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("/foo\r");
+	await until(() => /is not a command here/.test(p.text()), "the refusal");
+	p.input.write("\x1b[200~a\nb\n\x1b[201~");
+	await until(() => source.posted.length === 1, "the post");
+	p.input.write("/quit\r");
+	assert.equal(await ended(p.done), 0);
+	assert.deepEqual(source.posted, ["a\nb"]);
+	assert.equal(source.left, 1);
+});
+
 test("a single line that starts with / is judged on its own even when more lines follow after the paste window: /new, /quit, and a refusal each act once", async () => {
 	const source = new FakeSource();
 	const p = screen(source);
@@ -648,4 +776,159 @@ test("the prompt's words for the refusal exist in Traditional Chinese too", () =
 	assert.match(text, /\/quit/);
 	assert.match(text, /空格/);
 	assert.ok(!text.includes("\n"));
+});
+
+// RV17 (vmfix17 review): a paste read in several chunks is one message; a refusal that comes after the prompt left is not printed.
+test("RV17-F001: a bracketed paste whose unended last line finishes in a later chunk is one message", async () => {
+	const source = new FakeSource();
+	const p = terminal(source, { pasteCapMs: 2000 });
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("\x1b[200~/first line\r\nsecond line\r\n");
+	await sleep(10);
+	p.input.write("third line\x1b[201~");
+	await settle();
+	assert.deepEqual(source.posted, [], "held for the Enter that ends the last line");
+	p.input.write("\r");
+	await until(() => source.posted.length === 1, "the post");
+	await settle();
+	assert.deepEqual(source.posted, ["/first line\nsecond line\nthird line"]);
+});
+
+test("RV17-F001: a bracketed paste whose last line is split across chunks is one message", async () => {
+	const source = new FakeSource();
+	const p = terminal(source, { pasteCapMs: 2000 });
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("\x1b[200~a\nb\nth");
+	await sleep(5);
+	p.input.write("ird\x1b[201~");
+	await settle();
+	assert.deepEqual(source.posted, []);
+	p.input.write("\r");
+	await until(() => source.posted.length === 1, "the post");
+	await settle();
+	assert.deepEqual(source.posted, ["a\nb\nthird"]);
+});
+
+test("RV17-F002: an unmarked paste read in two chunks inside the paste window, the last without a line end, is one message", async () => {
+	for (const [first, second, whole] of [["a\r\nb\r\nth", "ird", "a\nb\nthird"], ["a\r\nb\r\n", "third", "a\nb\nthird"]]) {
+		const source = new FakeSource();
+		const p = terminal(source);
+		await until(() => p.text().includes("tower> "), "the prompt");
+		p.input.write(first);
+		await sleep(5);
+		p.input.write(second);
+		await settle();
+		assert.deepEqual(source.posted, [], first);
+		p.input.write("\r");
+		await until(() => source.posted.length === 1, "the post");
+		await settle();
+		assert.deepEqual(source.posted, [whole]);
+	}
+});
+
+test("RV17-F002: a typed `/quit⏎` and a key typed a few ms later are still two groups: `/quit` is obeyed", async () => {
+	const source = new FakeSource();
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("/quit\r");
+	await sleep(5);
+	p.input.write("x");
+	assert.equal(await ended(p.done), 0);
+	assert.equal(source.left, 1);
+	assert.deepEqual(source.posted, []);
+});
+
+test("RV17-F003: a refusal that comes after the boss left is not printed", async () => {
+	const source = new FakeSource();
+	let reject!: (e: Error) => void;
+	source.post = () => new Promise<void>((_, r) => (reject = r));
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("hello\r");
+	await until(() => reject !== undefined, "the post in flight");
+	p.input.write("\x04");
+	assert.equal(await ended(p.done), 0);
+	const before = p.text();
+	reject(new Error("server said no"));
+	await settle();
+	assert.equal(p.text(), before);
+	assert.doesNotMatch(p.text(), /did not take it/);
+});
+
+// RV18 (vmfix18 review): a typed key is one code point or one escape sequence, however many bytes it takes; a read that continues an unfinished line or a split character joins its group.
+test("RV18-F001: a typed `/quit⏎` and one key typed a few ms later are two groups however many bytes the key takes (é, an IME character, an arrow, Alt+b): `/quit` is obeyed", async () => {
+	for (const key of ["é", "中", "😀", "\x1b[A", "\x1b[1;5C", "\x1bb", Buffer.from("é"), Buffer.from("\x1b[A")]) {
+		const source = new FakeSource();
+		const p = terminal(source);
+		await until(() => p.text().includes("tower> "), "the prompt");
+		p.input.write("/quit\r");
+		await sleep(5);
+		p.input.write(key);
+		assert.equal(await ended(p.done), 0, JSON.stringify(String(key)));
+		assert.equal(source.left, 1, JSON.stringify(String(key)));
+		assert.deepEqual(source.posted, [], JSON.stringify(String(key)));
+	}
+});
+
+test("RV18-F001: a message and a non-ASCII key typed a few ms later are two groups: the message is posted without waiting for the next Enter", async () => {
+	const source = new FakeSource();
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("hello\r");
+	await sleep(5);
+	p.input.write(Buffer.from("中"));
+	await until(() => source.posted.length === 1, "the post");
+	assert.deepEqual(source.posted, ["hello"]);
+});
+
+test("RV18-F002: a bracketed paste whose tail chunk comes after the paste window (100 ms) is still one message: the open paste, not the clock, joins it", async () => {
+	const source = new FakeSource();
+	const p = terminal(source, { pasteCapMs: 2000 });
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("\x1b[200~a\r\nb\r\n");
+	await sleep(100);
+	p.input.write("third\x1b[201~");
+	await settle();
+	assert.deepEqual(source.posted, [], "held for the Enter that ends the last line");
+	p.input.write("\r");
+	await until(() => source.posted.length === 1, "the post");
+	await settle();
+	assert.deepEqual(source.posted, ["a\nb\nthird"]);
+});
+
+test("RV18-F003: an unmarked paste whose read after the last newline is one character, or one byte of a split character, is one message", async () => {
+	const zh = Buffer.from("中");
+	const cases: [string, (string | Buffer)[], string][] = [
+		["one char tail", ["a\r\nb\r\nthir", "d"], "a\nb\nthird"],
+		["one char tail, CJK", ["你好\r\n世界\r\n再", "見"], "你好\n世界\n再見"],
+		["split character, last byte alone", [Buffer.concat([Buffer.from("a\r\nb\r\n"), zh.subarray(0, 2)]), zh.subarray(2)], "a\nb\n中"],
+		["split character in three reads", [Buffer.from("a\r\nb\r\nth"), zh.subarray(0, 1), zh.subarray(1, 2), zh.subarray(2)], "a\nb\nth中"],
+		["tail in two short reads", ["a\r\nb\r\nth", "i", "rd"], "a\nb\nthird"],
+	];
+	for (const [name, parts, whole] of cases) {
+		const source = new FakeSource();
+		const p = terminal(source);
+		await until(() => p.text().includes("tower> "), "the prompt");
+		for (const [i, part] of parts.entries()) {
+			if (i) await sleep(5);
+			p.input.write(part);
+		}
+		await settle();
+		assert.deepEqual(source.posted, [], name);
+		p.input.write("\r");
+		await until(() => source.posted.length === 1, `the post: ${name}`);
+		await settle();
+		assert.deepEqual(source.posted, [whole], name);
+	}
+});
+
+test("RV18-F003: a character typed after a pasted line that ended with a line end is a group of its own: the paste is posted without it", async () => {
+	const source = new FakeSource();
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("a\r\nb\r\n");
+	await sleep(5);
+	p.input.write("x");
+	await until(() => source.posted.length === 1, "the post");
+	assert.deepEqual(source.posted, ["a\nb"]);
 });

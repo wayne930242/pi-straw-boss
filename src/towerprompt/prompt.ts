@@ -21,6 +21,8 @@ const WAKING_GRACE_MS = 3000;
 const WAKING_MAX_MS = 90_000;
 /** Lines that arrive this close together are one paste, one message. */
 const PASTE_MS = 40;
+/** A bracketed paste that has not ended (its end marker was lost, or its start was a stray escape) is closed after this long with no new paste data: Ctrl+C and Ctrl+D never wait for it, and nothing stays held for ever (RV16-F002). */
+const PASTE_CAP_MS = 2000;
 /** What a terminal that has bracketed paste on sends around a paste; readline reports them as the keys `paste-start` and `paste-end`. */
 const PASTE_START = "paste-start", PASTE_END = "paste-end";
 /** What a message with no words says to the tower. */
@@ -37,6 +39,8 @@ export interface PromptOptions {
 	wakingPollMs?: number;
 	/** Ends the prompt as a run's start does (the pane is closing, the process is told to end). */
 	signal?: AbortSignal;
+	/** How long a bracketed paste may go without new data before it counts as ended (tests set it); `PASTE_CAP_MS` by default. */
+	pasteCapMs?: number;
 	/** The clock of the polling (tests set it): the time of a post and the timer of the next poll. The real clock by default. */
 	clock?: PromptClock;
 }
@@ -52,6 +56,20 @@ const REAL_CLOCK: PromptClock = { now: () => Date.now(), after: (fn, ms) => setT
 /** Nothing the server sends reaches the terminal as a control sequence. */
 const clean = (value: unknown, max = 200) => String(value).replace(/[\u0000-\u001f\u007f-\u009f]/g, "").slice(0, max);
 
+/** One key: one code point, or one complete escape sequence (CSI such as an arrow, SS3, or Alt plus a key). */
+const isOneKey = (decoded: string) => [...decoded].length === 1 || /^\x1b(?:\[[0-?]*[ -/]*[@-~]|O.|.)$/su.test(decoded);
+
+/** How many bytes at the end of `bytes` are the start of a UTF-8 character that the read did not finish. */
+const openTail = (bytes: Buffer): number => {
+	for (let i = bytes.length - 1; i >= 0 && i >= bytes.length - 3; i--) {
+		const b = bytes[i]!;
+		if ((b & 0xc0) === 0x80) continue;
+		const need = b >= 0xf0 ? 4 : b >= 0xe0 ? 3 : b >= 0xc0 ? 2 : 1;
+		return bytes.length - i < need ? bytes.length - i : 0;
+	}
+	return 0;
+};
+
 /** A batch of one line that starts with `/` (and not `//`) is for the prompt, never the tower. */
 const commandOf = (lines: string[]): string | undefined => {
 	const [only] = lines;
@@ -63,7 +81,10 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 	const clock = o.clock ?? REAL_CLOCK, text = textsFor(o.locale), pollMs = o.pollMs ?? POLL_MS, wakingMs = Math.min(pollMs, o.wakingPollMs ?? WAKING_POLL_MS), source = o.source;
 	const terminal = (o.output as Partial<NodeJS.WriteStream>).isTTY === true;
 	let rl: Interface | undefined, closed = false, finished = false, posting = false, silent = false, shown: string | undefined, wokeAt: number | undefined;
-	let timer: object | undefined, batch: string[] = [], batchTimer: ReturnType<typeof setTimeout> | undefined, pasting = false;
+	let timer: object | undefined, batch: string[] = [], batchTimer: ReturnType<typeof setTimeout> | undefined, pasteTimer: ReturnType<typeof setTimeout> | undefined, pasting = false;
+	// Input chunks grouped, and the group the last line came in: a paste is one group however many reads carry it, typed keys are groups of their own (RV16-F003, RV17-F001, RV17-F002).
+	let chunks = 0, lineChunk = 0, lastDataAt = -Infinity;
+	const pasteCapMs = o.pasteCapMs ?? PASTE_CAP_MS;
 	let finish!: (code: number) => void;
 	const done = new Promise<number>((resolve) => (finish = resolve));
 
@@ -85,6 +106,7 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 		finished = true;
 		if (timer) clock.cancel(timer);
 		clearTimeout(batchTimer);
+		clearTimeout(pasteTimer);
 		rl?.close();
 		try {
 			await after();
@@ -172,13 +194,15 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 		try {
 			await source.post(message);
 		} catch (cause) {
-			say(text.refused(clean((cause as Error).message, 400)));
 			posting = false;
-			if (!finished && !terminal) rl?.prompt(); // a terminal drew it already, with what the boss typed
+			if (finished) return; // the boss left while the post was on its way
+			say(text.refused(clean((cause as Error).message, 400)));
+			if (!terminal) rl?.prompt(); // a terminal drew it already, with what the boss typed
 			return;
 		}
 		// The prompt stays (see the top): the order to leave comes with the run's start, and what the boss types meanwhile is held in the line and posted then.
 		posting = false;
+		if (finished) return;
 		wokeAt = clock.now();
 		if (timer) clock.cancel(timer);
 		timer = clock.after(() => void poll(), nextPoll());
@@ -200,20 +224,59 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 	const first = await source.poll().catch((cause: Error) => ({ kind: "wait" as const, why: cause.message }));
 	if (!(await handle(first))) return done;
 	for (const line of text.hint) o.output.write(`${line}\n`);
+	// Counted before readline reads the chunk, so the lines it makes from it are in the chunk's count.
+	// A read is a typed key when it is one code point or one complete escape sequence (an arrow, Alt+b), however many bytes that takes, and not a piece of a character split across reads (its bytes are carried to the
+	// next read, so a split character is never a key). A read joins the group before it when a bracketed paste is open (up to its end marker, which is in the read that ends it), or when it follows the one before
+	// within the paste window and is more than one key; a typed key joins only when the last read left a line unfinished (the last characters of a paste, alone in a read). So a typed `/quit⏎` and a key typed after
+	// it, even a few ms later, are two groups (RV16-F003, RV18-F001), and a paste split by the pty into reads is one (RV17-F001, RV17-F002, RV18-F003).
+	let carry = Buffer.alloc(0), unfinished = false;
+	o.input.on("data", (data: string | Buffer) => {
+		const at = clock.now();
+		let decoded: string, continuing = false, open = false;
+		if (typeof data === "string") decoded = data;
+		else {
+			const bytes = Buffer.concat([carry, data]), cut = bytes.length - openTail(bytes);
+			continuing = carry.length > 0;
+			open = cut < bytes.length;
+			decoded = bytes.subarray(0, cut).toString("utf8");
+			carry = bytes.subarray(cut);
+		}
+		const typed = !continuing && !open && isOneKey(decoded), near = at - lastDataAt < PASTE_MS;
+		const joins = pasting || (near && (typed ? unfinished : true));
+		if (!joins) chunks++;
+		if (decoded !== "") unfinished = typed && !joins ? false : !/[\r\n]$/.test(decoded);
+		lastDataAt = at;
+		if (pasting) armPasteCap();
+	});
 	rl = createInterface({ input: o.input, output: o.output, prompt: PROMPT, terminal });
 	/**
 	 * The paste window closes: what was entered goes as one message. Two things keep it open (B6 VM round 3c, Windows PowerShell: a paste of three lines and the Enter sent a moment later were two messages): a bracketed
 	 * paste that has not ended (the terminal says where it ends, however far apart its pieces arrive), and a line the boss is still writing after lines that arrived with it (a paste whose last line has no line end yet;
 	 * the Enter that ends it comes later and joins the batch). The run's start does not wait for either: `handle` takes the batch and the line together.
+	 * A line is held as part of a paste only when it came in the same group of input chunks as the line being written (a group: the reads of an open bracketed paste, and reads that follow within the paste window with
+	 * more than one key each, and a single key after a read that left a line unfinished); a line typed on its own (`/quit⏎`) and a key typed after it are groups apart (RV16-F003, RV17-F001, RV17-F002). A paste that
+	 * has not ended is closed `pasteCapMs` after its last data (RV16-F002). The prompt does not turn bracketed paste on (`ESC[?2004h`): the shell sets that mode for itself at each of its prompts, a prompt that is
+	 * killed before it could turn it off would leave the boss's shell with a mode it did not ask for, and a Windows console that does not know the mode would show the sequence; the markers are honoured when the terminal
+	 * sends them, and the cap and the chunk rule cover the pastes that come without.
 	 */
 	const armFlush = () => {
 		clearTimeout(batchTimer);
 		if (pasting) return;
-		batchTimer = setTimeout(() => (batch.length && (rl?.line ?? "") !== "" ? undefined : void flush()), PASTE_MS);
+		batchTimer = setTimeout(() => (batch.length && (rl?.line ?? "") !== "" && chunks === lineChunk ? undefined : void flush()), PASTE_MS);
+	};
+	const endPaste = () => {
+		pasting = false;
+		clearTimeout(pasteTimer);
+		if (batch.length && !finished && !posting) armFlush();
+	};
+	const armPasteCap = () => {
+		clearTimeout(pasteTimer);
+		pasteTimer = setTimeout(endPaste, pasteCapMs);
 	};
 	rl.on("line", (raw) => {
 		if (finished || posting) return;
 		batch.push(raw);
+		lineChunk = chunks;
 		armFlush();
 	});
 	// Only a terminal's readline reports keys; a piped input has no markers to honour.
@@ -222,14 +285,15 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 		if (key?.name === PASTE_START) {
 			pasting = true;
 			clearTimeout(batchTimer);
-		} else if (key?.name === PASTE_END) {
-			pasting = false;
-			if (batch.length) armFlush();
-		}
+			armPasteCap();
+		} else if (key?.name === PASTE_END) endPaste();
 	});
 	// Ctrl+D (the end of the input) and Ctrl+C both leave the pane to the boss: a prompt that came back at once would be in the way of whatever they wanted a shell for.
+	// It always ends the prompt as a park, whatever is held: a paste or a line the boss has not sent is dropped with the pane (Ctrl+C cancels it, nothing is posted later), and a close of the input is the same end, since a
+	// prompt that went on with dead input would be killed by the next Ctrl+C without the server being told (RV16-F001).
 	const leave = () => {
-		if (finished || posting || batch.length) return;
+		if (finished) return;
+		batch = [];
 		say(text.leaving, false);
 		void end(() => source.leave());
 	};

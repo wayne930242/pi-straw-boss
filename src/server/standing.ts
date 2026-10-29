@@ -117,6 +117,13 @@ export function programProcs(info: { foreground_processes?: unknown } | undefine
 	const procs = Array.isArray(info?.foreground_processes) ? (info!.foreground_processes as { pid?: number; name?: string; argv0?: string; cmdline?: string }[]) : [];
 	return procs.filter((p) => !SHELLS.has(nameOf(p)) && !/\bprompt --workspace\b/.test(p.cmdline ?? ""));
 }
+/** Whether the process is a shell by its name (a nested shell, git-bash or cmd started inside the pane's own). */
+export const isShell = (p: { argv0?: string; name?: string }): boolean => SHELLS.has(nameOf(p));
+/** The nested shells in a pane's foreground: shells other than the pane's own (`shell_pid`). Empty when Herdr does not give the pane's shell, since then a nested shell cannot be told from the pane's own. */
+export function nestedShells(info: { shell_pid?: unknown; foreground_processes?: unknown } | undefined): { pid?: number; name?: string }[] {
+	const procs = Array.isArray(info?.foreground_processes) ? (info!.foreground_processes as { pid?: number; name?: string; argv0?: string }[]) : [];
+	return typeof info?.shell_pid === "number" ? procs.filter((p) => isShell(p) && p.pid !== info.shell_pid) : [];
+}
 /** What a notice calls a program: its executable's file name, never the path it ran from or the arguments it was given. */
 export const programName = (p: { argv0?: string; name?: string }): string => String(p.argv0 ?? p.name ?? "").trim().split(/[\\/]/).pop()!.replace(/[\u0000-\u001f\u007f-\u009f\s]+/g, " ").split(" ")[0]!.slice(0, 60) || "?";
 export const programsIn = (info: { foreground_processes?: unknown } | undefined): string[] => programProcs(info).map(programName);

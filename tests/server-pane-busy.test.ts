@@ -308,6 +308,41 @@ test("VM 3c win32: a nested shell in the standing pane: Herdr's refusal becomes 
 	}
 });
 
+// RV16-F004: Herdr also calls the pane busy while the tower's own prompt or its stand-in label is still there (the yield failed, or a slow prompt outlived its time); no nested shell is seen then, and the notice must not say there is one.
+test("RV16-F004 win32: Herdr refuses the start as busy and the process table shows the pane's shell alone: no nested-shell notice, Herdr's own message is shown", async () => {
+	const { s } = await winSetup();
+	world.procTable = [row(SHELL_PID, 1, "powershell.exe"), row(1234, SHELL_PID, "conhost.exe"), { ...row(4321, SHELL_PID, "node.exe"), prompt: true }];
+	await until(() => typedPrompts() === 1, "the first prompt typed into the new pane");
+	tower().incoming(from, { id: "m1", content: { text: "one" } });
+	await until(async () => (await status(s)).state === "held", "the service to be held");
+	const texts = (await status(s)).notices.filter((n) => n.kind === "start").map((n) => n.text);
+	assert.deepEqual(texts, ["A run could not start: herdr agent start failed"]);
+});
+
+test("RV16-F004 darwin: a nested shell in the foreground (besides the pane's own) gets the nested-shell notice", async () => {
+	world.herdr.shellPids = true;
+	const { s, pane } = await setup();
+	world.herdr.onAgentStart = () => {
+		throw paneBusyError();
+	};
+	world.herdr.pane(pane).processes = [{ name: "zsh", argv0: "zsh", pid: 9999 }];
+	tower().incoming(from, { id: "m1", content: { text: "one" } });
+	await until(async () => (await status(s)).state === "held", "the service to be held");
+	assert.deepEqual((await status(s)).notices.filter((n) => n.kind === "start").map((n) => n.text), [NOT_AT_SHELL]);
+});
+
+test("RV16-F004 darwin: Herdr says busy and the foreground shows the pane's own shell alone (the tower prompt or its label is what Herdr means): Herdr's own message, no nested shell", async () => {
+	world.herdr.shellPids = true;
+	const { s, pane } = await setup();
+	world.herdr.onAgentStart = () => {
+		throw paneBusyError();
+	};
+	world.herdr.pane(pane).processes = [{ name: "zsh", argv0: "zsh", pid: FAKE_SHELL }];
+	tower().incoming(from, { id: "m1", content: { text: "one" } });
+	await until(async () => (await status(s)).notices.some((n) => n.kind === "start"), "the start notice");
+	assert.deepEqual((await status(s)).notices.filter((n) => n.kind === "start").map((n) => n.text), ["A run could not start: herdr agent start failed"]);
+});
+
 test("VM 3c: a program that is named keeps its own notice, not the nested-shell one", async () => {
 	const { s } = await winSetup();
 	tower().incoming(from, { id: "m1", content: { text: "one" } });

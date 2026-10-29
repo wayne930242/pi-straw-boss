@@ -103,6 +103,28 @@ test("RV7-F004: a fresh mark that came from a hand-over lapses after handMs if n
 	assert.deepEqual(r.typed, [], "the hand-over is old: the pane is no longer believed to be a bare shell");
 });
 
+// RV16-F005: the fresh mark a Retry or proof give-back leaves (`freed` with keepParked) lapses after handMs like a hand-over's.
+const heldBack = async (waitMs: number) => {
+	const r = rig();
+	r.pane.agent = "pi"; // an agent of the boss's holds the pane: nothing is typed while it does
+	r.standing.freed("wA", true, true);
+	await looks(r, 2);
+	assert.deepEqual(r.typed, [], "held off");
+	r.clock.advance(waitMs);
+	delete r.pane.agent;
+	r.pane.processes = [SHELL]; // Windows lists the shell alone, whatever runs under it
+	await looks(r, 3);
+	return r;
+};
+
+test("RV16-F005: a Retry give-back's fresh mark lapses after handMs: typing that was held off for longer is not done on a mark that old", async () => {
+	assert.deepEqual((await heldBack(20_000)).typed, [], "the mark is old: the pane is no longer believed to be a bare shell");
+});
+
+test("RV16-F005: and within handMs the same mark types once", async () => {
+	assert.equal((await heldBack(2_000)).typed.length, 1);
+});
+
 test("VM round 3: Herdr refusing `pane run` once is logged with its code and its whole stderr (not cut at 300 characters), and the command is typed again one launchMs later, not reported as a prompt that does not start", async () => {
 	const r = rig();
 	r.standing.handed("wA", 7001);
