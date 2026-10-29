@@ -230,7 +230,8 @@ test("a boss event wakes a service the loop held, and Retry does too", async () 
 
 test("a run past the steer time is told to wrap up, past the cap it is told to quit, and a pi that stays gets Escape and /quit, then SIGTERM from a PID read from Herdr", async () => {
 	// A wide window between the steer and the quit: under load (a load average of 70 was seen) a watcher tick can come seconds late, and the steer is skipped when the first tick that sees the run is already past the cap (B5 review F013).
-	world.runTimers = { steerAt: 150, quitAt: 3000, quitGrace: 60, signal: 60 };
+	// 3 s was not wide enough: at a load of 38 the first tick that saw the run was past it. CI's Publish job runs this suite, so the window is one no tick misses.
+	world.runTimers = { steerAt: 150, quitAt: 15_000, quitGrace: 60, signal: 60 };
 	const { s } = await setup();
 	tower().incoming(from, msg("m1", "slow"));
 	const id = await nthRun();
@@ -242,7 +243,7 @@ test("a run past the steer time is told to wrap up, past the cap it is told to q
 		const command = got.command as { type: string; text?: string } | undefined;
 		if (command) seen.push(command.type);
 		return seen.includes("quit");
-	}, "the quit command", 15_000);
+	}, "the quit command", 45_000);
 	assert.deepEqual(seen, ["steer", "quit"]);
 	await until(() => world.herdr.keys.some((k) => k.includes("/quit")), "Escape and /quit through Herdr");
 	assert.deepEqual(world.herdr.keys.slice(0, 3).map((k) => k.slice(1)), [["send-keys", ensureedPane(), "esc"], ["send-text", ensureedPane(), "/quit"], ["send-keys", ensureedPane(), "enter"]]);
@@ -256,17 +257,26 @@ test("a run past the steer time is told to wrap up, past the cap it is told to q
 const ensureedPane = () => world.herdr.panes.find((p) => p.tokens.sb_role === "tower")!.pane_id;
 
 test("a run idle with nothing pending and no tower_done gets one steer, then is ended with the note (ended without a note)", async () => {
-	world.runTimers = { idleSteer: 80, idleEnd: 100 };
+	// The run polls as an idle run does until each command comes, rather than once after a fixed sleep: under load a watcher tick comes seconds late,
+	// and a short gap between the steer and the end would let one late tick skip the steer. The gap is one no tick misses.
+	world.runTimers = { idleSteer: 80, idleEnd: 15_000 };
 	const { s } = await setup();
 	tower().incoming(from, msg("m1", "quick"));
 	const id = await nthRun();
 	const token = await claimed(s, id);
 	await drain(s, token);
 	assert.equal((await poll(s, token)).command, undefined);
-	await sleep(120);
-	assert.equal(((await poll(s, token)).command as { type: string; text: string }).type, "steer");
-	await sleep(130);
-	assert.equal(((await poll(s, token)).command as { type: string }).type, "quit");
+	const seen: string[] = [];
+	const nextCommand = async (what: string, ms: number) => {
+		await until(async () => {
+			const command = (await poll(s, token)).command as { type: string } | undefined;
+			if (command) seen.push(command.type);
+			return command;
+		}, what, ms);
+	};
+	await nextCommand("the steer", 20_000);
+	await nextCommand("the quit", 45_000);
+	assert.deepEqual(seen, ["steer", "quit"]);
 	exit(id);
 	await until(() => readRun(world.slot, "wA", id)?.outcome === "quit", "the outcome");
 	assert.equal(readNotes(world.slot, "wA").at(-1)!.note, "(ended without a note)");
