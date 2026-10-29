@@ -11,6 +11,8 @@ import { sleep, until } from "./server-world.ts";
 // from the state source (src/towerprompt/), so the screen can grow into a view of the tower's net later.
 
 const STATE: PollAnswer = { label: "Alpha", state: "standing", queued: 0, leave: false };
+const starting = (source: FakeSource) => void (source.answers = [{ kind: "state", answer: { ...STATE, state: "waking", leave: true } }]);
+
 class FakeSource implements PromptSource {
 	answers: Polled[] = [{ kind: "state", answer: STATE }];
 	polls = 0;
@@ -88,6 +90,8 @@ test("on a terminal, a line wakes the tower and a state change redraws the promp
 	await until(() => /3 queued/.test(p.text()), "the changed state");
 	assert.match(p.text().slice(p.text().lastIndexOf("3 queued")), /tower> half a mess/, "the prompt comes back with the typed text");
 	p.input.write("age\r");
+	await until(() => source.posted.length === 1, "the post");
+	starting(source);
 	assert.equal(await ended(p.done), 0);
 	assert.deepEqual(source.posted, ["half a message"]);
 });
@@ -140,16 +144,51 @@ test("the prompt shows the tower's state and a hint, and waits at `tower>`", asy
 	await p.done;
 });
 
-test("a line is posted as the boss's event, then the prompt says it is waking the tower, tells the server it is gone, and exits 0", async () => {
+test("a line is posted as the boss's event and the prompt says it is waking the tower; it stays until the run starts, then tells the server it is gone and exits 0", async () => {
 	const source = new FakeSource();
 	const p = screen(source);
 	await until(() => p.text().includes("tower> "), "the prompt");
 	p.input.write("  check the build on main  \n");
-	assert.equal(await p.done, 0);
+	await until(() => /waking the tower…/.test(p.text()), "the waking line");
 	assert.deepEqual(source.posted, ["check the build on main"]);
-	assert.match(p.text(), /waking the tower…/);
+	await sleep(100);
+	assert.equal(source.gones, 0, "the prompt is still there: keys typed now would land in the shell's line");
+	starting(source);
+	assert.equal(await ended(p.done), 0);
+	assert.deepEqual(source.posted, ["check the build on main"]);
 	assert.equal(source.gones, 1);
 	assert.equal(source.left, 0);
+	assert.equal(p.text().match(/waking the tower…/g)?.length, 1, "said once");
+});
+
+test("keys typed after Enter, before the run starts, are held by the prompt and go to the tower when it is told to leave (B6 VM round 2: they landed in the shell line and the first start timed out)", async () => {
+	const source = new FakeSource();
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("first\r");
+	await until(() => source.posted.length === 1, "the first post");
+	p.input.write("and then this");
+	await until(() => p.text().includes("and then this"), "the typed text to be held by the prompt");
+	assert.equal(source.gones, 0);
+	starting(source);
+	assert.equal(await ended(p.done), 0);
+	assert.deepEqual(source.posted, ["first", "and then this"]);
+	assert.equal(source.gones, 1);
+});
+
+test("a second line after the first is posted as a second event, and the prompt asks fast after a post but not forever", async () => {
+	const source = new FakeSource();
+	const p = screen(source, { pollMs: 5000 });
+	await until(() => p.text().includes("tower> "), "the prompt");
+	const before = source.polls;
+	p.input.write("one\n");
+	await until(() => source.posted.length === 1, "the post");
+	await until(() => source.polls >= before + 3, "fast polls after the post, though the pace is 5 s");
+	p.input.write("two\n");
+	await until(() => source.posted.length === 2, "the second post");
+	starting(source);
+	assert.equal(await ended(p.done), 0);
+	assert.deepEqual(source.posted, ["one", "two"]);
 });
 
 test("Enter alone wakes the tower with a line that says the boss is at the keyboard and said nothing yet", async () => {
@@ -157,7 +196,9 @@ test("Enter alone wakes the tower with a line that says the boss is at the keybo
 	const p = screen(source);
 	await until(() => p.text().includes("tower> "), "the prompt");
 	p.input.write("\n");
-	assert.equal(await p.done, 0);
+	await until(() => source.posted.length === 1, "the post");
+	starting(source);
+	assert.equal(await ended(p.done), 0);
 	assert.equal(source.posted.length, 1);
 	assert.match(source.posted[0]!, /at the keyboard/);
 	assert.match(source.posted[0]!, /without a message/);
@@ -203,7 +244,9 @@ test("a server that does not answer is waited for, said once, and said again whe
 	assert.equal(p.text().match(/does not answer/g)?.length, 1, "said once");
 	assert.match(p.text(), /tower> /);
 	p.input.write("hello\n");
-	assert.equal(await p.done, 0);
+	await until(() => source.posted.length === 1, "the post");
+	starting(source);
+	assert.equal(await ended(p.done), 0);
 	assert.deepEqual(source.posted, ["hello"]);
 });
 
@@ -217,7 +260,9 @@ test("a post the server refuses is told and the prompt stays for the next line",
 	assert.match(p.text(), /stands in for no tower/);
 	source.failPost = undefined;
 	p.input.write("two\n");
-	assert.equal(await p.done, 0);
+	await until(() => source.posted.length === 1, "the post");
+	starting(source);
+	assert.equal(await ended(p.done), 0);
 	assert.deepEqual(source.posted, ["two"]);
 });
 
@@ -238,8 +283,9 @@ test("the words follow the boss's language: Traditional Chinese for zh-TW, Engli
 	assert.match(p.text(), /塔台 · Alpha：待命中/);
 	assert.match(p.text(), /Ctrl\+D/);
 	p.input.write("好\n");
-	assert.equal(await p.done, 0);
-	assert.match(p.text(), /正在喚醒塔台…/);
+	await until(() => /正在喚醒塔台…/.test(p.text()), "the waking line");
+	starting(source);
+	assert.equal(await ended(p.done), 0);
 	assert.equal(textsFor("en").waking, "waking the tower…");
 });
 
@@ -278,6 +324,8 @@ test("`/new` alone at the prompt asks the server for a new boss session and goes
 	await until(() => /the tower did not take it: the server is busy/.test(p.text()), "the refusal is shown");
 	assert.deepEqual(source.posted, []);
 	p.input.write("please /new that\n");
+	await until(() => source.posted.length === 1, "the post");
+	starting(source);
 	assert.equal(await ended(p.done), 0);
 	assert.deepEqual(source.posted, ["please /new that"], "only a line that is exactly /new is the command");
 });

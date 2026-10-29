@@ -124,8 +124,10 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		for (;;) {
 			const answer = await ask({ cmd: "claim", runId, pane: env.HERDR_PANE_ID ?? "", pid: process.pid, ...(started ? { started } : {}) });
 			if (!answer.ok) throw new Error(String(answer.error ?? "the claim was refused"));
-			// SAFETY: a claim answered `ok` and not `wait` carries the Claim fields (runs.ts, ClaimReply).
-			if (!answer.wait) return answer as unknown as Claim;
+			if (!answer.wait) {
+				// SAFETY: a claim answered `ok` and not `wait` carries the Claim fields (runs.ts, ClaimReply).
+				return answer as unknown as Claim;
+			}
 			if (cfg.now() >= end) throw new Error("the sb server did not settle the claim in time");
 			await sleep(1000);
 		}
@@ -169,8 +171,10 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 			const answer = await ask({ cmd: "pane-role", pane, pid: process.pid, ...(started ? { started } : {}) }).catch(() => undefined);
 			// No server to ask: a marked pane's pi is what it was before; one in a tower tab keeps asking until its wait is over.
 			if (!answer?.ok && !glyph) return { role: "none" };
-			// SAFETY: a `pane-role` answer carries the role, and a claim when the role is `hand` (runs.ts, paneRole).
-			if (answer?.ok && answer.role !== "wait") return answer as unknown as { role: "none" | "quit" | "hand"; reason?: string; claim?: Claim };
+			if (answer?.ok && answer.role !== "wait") {
+				// SAFETY: a `pane-role` answer carries the role, and a claim when the role is `hand` (runs.ts, paneRole).
+				return answer as unknown as Found;
+			}
 			if (cfg.now() >= end) return { role: "none" };
 			await sleep(1000);
 		}

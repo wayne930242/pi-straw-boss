@@ -4,13 +4,17 @@ import { type Locale, textsFor } from "./messages.ts";
 import type { PollAnswer, PromptSource } from "./source.ts";
 
 // The screen of the tower prompt (docs/how-it-works.md, The standing pane): the tower's state on one line, a hint, and a line to write at `tower> `. It polls its source for the state and for the order to
-// leave, posts what the boss writes as a `boss` event, and ends in one of four ways: the boss wrote (the tower is waking: exit 0, the server starts the run in this pane), a run is starting (the same),
-// the boss pressed Ctrl+D or Ctrl+C (the pane is theirs, the server is told), or the server stands in for no tower here any more. Every exit is 0: what the shell does next is not an error.
+// leave, posts what the boss writes as a `boss` event, and ends in one of three ways: a run is starting (the server starts it in this pane; what the boss has typed since goes to the tower first), the boss
+// pressed Ctrl+D or Ctrl+C (the pane is theirs, the server is told), or the server stands in for no tower here any more. Every exit is 0: what the shell does next is not an error. A line the boss wrote does
+// not end the prompt: the run starts about a second later, and keys typed in that second would land in the shell's line, where the start of the run's pi types over them (B6 VM round 2: the first start timed out).
+// The prompt stays, polling fast, and holds what is typed until the order to leave.
 // It is plain readline on purpose: cli.mjs runs under plain node, where pi's own packages (pi-tui) are not on disk, and scripts/build-server.mjs fails the bundle that imports one. A fuller screen (the net's rows, the
 // board) goes through the same two seams, the PromptSource and the injected streams, but needs its own way to draw.
 
 export const PROMPT = "tower> ";
 const POLL_MS = 2000;
+/** After the boss wrote, how often the prompt asks whether the run starts, and for how long it asks that often. */
+const WAKING_POLL_MS = 250, WAKING_FOR_MS = 15_000;
 /** Lines that arrive this close together are one paste, one message. */
 const PASTE_MS = 40;
 /** What a message with no words says to the tower. */
@@ -34,7 +38,7 @@ const clean = (value: unknown, max = 200) => String(value).replace(/[\u0000-\u00
 export async function runPrompt(o: PromptOptions): Promise<number> {
 	const text = textsFor(o.locale), pollMs = o.pollMs ?? POLL_MS, source = o.source;
 	const terminal = (o.output as Partial<NodeJS.WriteStream>).isTTY === true;
-	let rl: Interface | undefined, closed = false, finished = false, posting = false, silent = false, shown: string | undefined;
+	let rl: Interface | undefined, closed = false, finished = false, posting = false, silent = false, shown: string | undefined, wokeAt: number | undefined;
 	let timer: ReturnType<typeof setTimeout> | undefined, batch: string[] = [], batchTimer: ReturnType<typeof setTimeout> | undefined;
 	let finish!: (code: number) => void;
 	const done = new Promise<number>((resolve) => (finish = resolve));
@@ -86,7 +90,9 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 			if (posting) return true;
 			// A run is starting in this pane while the boss is typing: their words are for the tower, and the pane is a shell in a moment, where they must not land. What they entered (the paste window) and what is on the line go first.
 			const words = [...batch, rl?.line ?? ""].join("\n").trim();
-			say(text.waking, false);
+			// The boss wrote a while ago and the prompt said so then: the line is only cleared.
+			if (wokeAt === undefined) say(text.waking, false);
+			else if (terminal) (cursorTo(o.output, 0), clearLine(o.output, 0));
 			await end(async () => {
 				if (words) {
 					try {
@@ -110,8 +116,10 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 		if (finished) return;
 		const polled = await source.poll().catch((cause: Error) => ({ kind: "wait" as const, why: cause.message }));
 		if (finished || !(await handle(polled))) return;
-		timer = setTimeout(() => void poll(), pollMs);
+		timer = setTimeout(() => void poll(), nextPoll());
 	};
+	/** Fast for a while after the boss wrote: the run starts in about a second, and the prompt must be told to leave then. */
+	const nextPoll = () => (wokeAt !== undefined && Date.now() - wokeAt < WAKING_FOR_MS ? Math.min(pollMs, WAKING_POLL_MS) : pollMs);
 
 	/** The boss wrote: what arrived together is one message; an empty one wakes the tower without words. */
 	const flush = async () => {
@@ -126,8 +134,13 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 			if (!finished && !terminal) rl?.prompt(); // a terminal drew it already, with what the boss typed
 			return;
 		}
-		say(text.waking, false);
-		await end(() => source.gone());
+		// The prompt stays (see the top): the order to leave comes with the run's start, and what the boss types meanwhile is held in the line and posted then.
+		posting = false;
+		wokeAt = Date.now();
+		clearTimeout(timer);
+		timer = setTimeout(() => void poll(), nextPoll());
+		say(text.waking);
+		if (!terminal) rl?.prompt();
 	};
 
 	const startOver = async () => {
