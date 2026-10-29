@@ -175,6 +175,75 @@ test("RV11-F001 win32: Retry with no event waiting gives the unstarted run's pan
 	assert.equal(world.pis.size, 0, "no run started");
 });
 
+// RV12-F001 (rule F10): an empty busy list is not the proof that the pane holds nothing. Retry on Windows types the prompt command again only after a fresh read of the process table that succeeds and finds no program
+// below the shell; a read that fails or finds a program types nothing, and the service says why, once.
+const startNotices = async (s: Running) => (await status(s)).notices.filter((n) => n.kind === "start").map((n) => n.text);
+/** A Windows service whose start was refused and whose event is gone, so Retry has no run to start; `table` is what the process table answers when the start fails, `after` when Retry reads it. */
+const retryRig = async (table: Proc[] | undefined, after: Proc[] | undefined, code?: string) => {
+	const { s } = await winSetup();
+	world.procTable = table;
+	if (code) {
+		world.herdr.onAgentStart = () => {
+			throw Object.assign(new Error("herdr agent start failed"), { stderr: JSON.stringify({ error: { code, message: "the pane is not an available shell" } }) });
+		};
+	}
+	await until(() => typedPrompts() === 1, "the first prompt typed into the new pane");
+	tower().incoming(from, { id: "m1", content: { text: "one" } });
+	await until(async () => (await status(s)).state === "held", "the service to be held");
+	for (const e of readQueue(world.slot, "wA")) removeEvent(world.slot, "wA", e);
+	world.herdr.onAgentStart = real;
+	world.procTable = after;
+	return s;
+};
+const afterRetry = async (s: Running) => {
+	assert.equal((await ask(s, { cmd: "tower-retry", workspace: "wA" })).ok, true);
+	await sleep(600);
+	return typedPrompts();
+};
+
+test("RV12-F001 win32 (a): the process table cannot be read when Retry looks: nothing is typed, and the notice says the pane could not be checked", async () => {
+	const s = await retryRig(undefined, undefined);
+	assert.equal(await afterRetry(s), 1, "nothing typed after the first prompt");
+	const texts = await startNotices(s);
+	assert.equal(texts.length, 1);
+	assert.match(texts[0]!, /could not check the standing pane/);
+	assert.equal((await status(s)).state, "standing");
+	assert.equal(world.pis.size, 0);
+});
+
+test("RV12-F001 win32 (b): a nested shell holds a node (the first read named nothing): Retry types nothing and names node.exe", async () => {
+	const nested = row(5555, SHELL_PID, "bash.exe");
+	const s = await retryRig([row(SHELL_PID, 1, "powershell.exe"), nested], [row(SHELL_PID, 1, "powershell.exe"), nested, row(7777, 5555, "node.exe")]);
+	assert.equal(await afterRetry(s), 1, "nothing typed into the node");
+	const texts = await startNotices(s);
+	assert.equal(texts.length, 1);
+	assert.match(texts[0]!, /busy with node\.exe/);
+});
+
+test("RV12-F001 win32 (c): Herdr's code was not agent_pane_busy (no program looked for at the start) and node runs: Retry types nothing", async () => {
+	const table = [row(SHELL_PID, 1, "powershell.exe"), row(7777, SHELL_PID, "node.exe")];
+	const s = await retryRig(table, table, "not_available");
+	assert.equal(await afterRetry(s), 1, "nothing typed into the node");
+	assert.match((await startNotices(s)).join("\n"), /busy with node\.exe/);
+});
+
+test("RV12-F001 win32 (d): a clean read below the shell (the tower prompt aside): Retry types the prompt command once", async () => {
+	const prompt: Proc = { ...row(6666, SHELL_PID, "node.exe"), prompt: true };
+	const s = await retryRig(undefined, [row(SHELL_PID, 1, "powershell.exe"), row(1234, SHELL_PID, "conhost.exe"), prompt]);
+	assert.equal(await afterRetry(s), 2, "typed once");
+	assert.deepEqual(await startNotices(s), []);
+});
+
+test("RV12-F001 win32: Retry while a program is found holds the service on the program, and its end (gone and the shell alone at two looks) gives the pane back by itself", async () => {
+	const s = await retryRig([row(SHELL_PID, 1, "powershell.exe")], [row(SHELL_PID, 1, "powershell.exe"), row(7777, SHELL_PID, "node.exe")]);
+	world.live.add(7777);
+	assert.equal(await afterRetry(s), 1);
+	assert.equal((await status(s)).state, "held");
+	world.live.delete(7777);
+	world.procTable = [row(SHELL_PID, 1, "powershell.exe")];
+	await until(() => typedPrompts() === 2, "the pane given back once the program has gone");
+});
+
 test("the notice names the program by its executable's name only: no path, no arguments", async () => {
 	world.herdr.shellPids = true;
 	const { s, pane } = await setup();

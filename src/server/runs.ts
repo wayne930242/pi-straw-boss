@@ -257,6 +257,10 @@ interface Svc {
 	crashes: number[];
 	/** The last local start failed because the standing pane runs a program of the boss's (its names): a held service starts again when the pane is free (standing.ts). */
 	paneBusy?: string[];
+	/** Windows: the last local start failed without pi starting, so the pane is not known to be empty, whatever `paneBusy` says (the program may not have been found: the process table did not answer, a nested shell, another Herdr code). Only a read of the process table that succeeds and finds no program clears it (`proveEmpty`); `paneBusy` empty never does. */
+	paneUnproven?: boolean;
+	/** `proveEmpty` is reading the process table for this service. */
+	proving?: boolean;
 	/** And the PIDs of those programs (a start that fails on Windows is retried by itself only once these are gone). */
 	busyPids?: number[];
 	notices: Notice[];
@@ -377,6 +381,7 @@ export function createRuns(o: RunsOptions) {
 		slots++;
 		svc.state = "waking";
 		svc.paneBusy = undefined;
+		svc.paneUnproven = undefined;
 		const id = newId(), woken = now();
 		const rec: RunRecord = { id, workspace: svc.ref.workspace, kind: "local", pane: svc.ref.record().pane, agent: agentName(slot, svc.ref.workspace, id), startedAt: iso(woken), events: [] };
 		const active: Active = { rec, svc, commands: [], lastPoll: woken, started: woken, digestKeys: [], offered: new Map() };
@@ -417,6 +422,34 @@ export function createRuns(o: RunsOptions) {
 		const base = pointer ? { from: pointer.startedAt, after: pointer.lastAt } : {};
 		return got.ok ? { file: got.file, info: { resumed: true, ...base, turns: pointer!.turns } } : { info: { resumed: false, ...(pointer ? { after: pointer.lastAt } : {}), turns: 0, why: got.why } };
 	};
+	const busyText = (busy: string[]) => `the standing pane is busy with ${busy.slice(0, NAMED_MAX).join(", ")}${busy.length > NAMED_MAX ? ` and ${busy.length - NAMED_MAX} more` : ""}; the tower starts again when it has ended, or on Retry`;
+	/**
+	 * Windows, after a start that never started pi: the foreground list shows the shell alone whatever runs under it, so the prompt command is typed again only on a fresh read of the process table that succeeds and
+	 * finds no program of the boss's below the pane's shell (the tower prompt excepted). A read that fails or finds a program types nothing: a program found holds the service again (the look's own proof, the shell
+	 * alone at two looks with the program gone, applies), a read that failed says so, and Retry asks again (F10: never type into a pane that runs a program; RV12-F001).
+	 */
+	const proveEmpty = async (svc: Svc) => {
+		if (svc.proving) return;
+		svc.proving = true;
+		// The mark that lets the prompt be typed is off while the table is read: the look's own proof marked the pane fresh before it asked for Retry.
+		svc.ref.freed({ fresh: false });
+		try {
+			const found = await belowShell(svc.ref.record().pane, newId()).catch(() => undefined);
+			if (stopped || svc.run || waitingOf(svc).length) return; // a run is about to take the pane: its start decides
+			if (found === undefined) return void noticeOf(svc, { id: "start", level: "warning", kind: "start", text: "The tower could not check the standing pane for a program of yours, so it types nothing there; press Retry when it is free" });
+			const busy = [...new Set(found.map(programName))];
+			if (busy.length) {
+				svc.paneBusy = busy;
+				svc.busyPids = found.flatMap((p) => (typeof p.pid === "number" ? [p.pid] : []));
+				svc.state = "held";
+				return void noticeOf(svc, { id: "start", level: "warning", kind: "start", text: `The tower types nothing in the standing pane: ${busyText(busy)}` });
+			}
+			svc.paneUnproven = undefined;
+			svc.ref.freed();
+		} finally {
+			svc.proving = false;
+		}
+	};
 	/** Starts pi in the run's pane, finds its process, and waits for its claim; a start that fails ends the run as crashed. */
 	const launch = async (active: Active, name: string, extra: string[] = []) => {
 		const { rec, svc } = active, id = rec.id;
@@ -440,7 +473,7 @@ export function createRuns(o: RunsOptions) {
 				// A start that failed with a program of the boss's in the pane's foreground (not a shell, not the tower prompt) is the pane's doing (RV2-F001: nothing of theirs is closed, and a start that is not Herdr's timeout code is no reason for a new pane): the notice names the program and the service starts again when the pane is free.
 				let programs: { pid?: number; argv0?: string; name?: string }[] = started || rec.kind !== "local" ? [] : programProcs({ foreground_processes: await foreground(rec.pane) });
 				// Windows lists the shell alone in the foreground: when Herdr says the pane is busy, the program is looked for below the shell.
-				if (!programs.length && win && !started && rec.kind === "local" && herdrCode(cause) === "agent_pane_busy") programs = await belowShell(rec.pane, id).catch(() => []);
+				if (!programs.length && win && !started && rec.kind === "local" && herdrCode(cause) === "agent_pane_busy") programs = (await belowShell(rec.pane, id).catch(() => undefined)) ?? [];
 				// The same name once (an `npm run dev` is several node.exe), and three of them at most in the notice.
 				const busy = [...new Set(programs.map(programName))];
 				// Windows, the standing pane: a start that timed out is taken for the pane's doing (a console a killed pi left in a mode that mangles what Herdr types), so the run is tried once more in a fresh pane and the
@@ -456,11 +489,14 @@ export function createRuns(o: RunsOptions) {
 						continue;
 					}
 				}
-				if (!started && rec.kind === "local") active.unstarted = true;
+				if (!started && rec.kind === "local") {
+					active.unstarted = true;
+					if (win) svc.paneUnproven = true;
+				}
 				error("run-start", `${rec.id}: ${(cause as Error).message}`);
 				svc.paneBusy = busy.length ? busy : undefined;
 				svc.busyPids = busy.length ? programs.flatMap((p) => (typeof p.pid === "number" ? [p.pid] : [])) : undefined;
-				noticeOf(svc, { id: "start", level: "warning", kind: "start", text: `A run could not start: ${busy.length ? `the standing pane is busy with ${busy.slice(0, NAMED_MAX).join(", ")}${busy.length > NAMED_MAX ? ` and ${busy.length - NAMED_MAX} more` : ""}; the tower starts again when it has ended, or on Retry` : (cause as Error).message}` });
+				noticeOf(svc, { id: "start", level: "warning", kind: "start", text: `A run could not start: ${busy.length ? busyText(busy) : (cause as Error).message}` });
 				terminate(active, "crashed");
 				// The tick does not type /quit into a pane whose pi never claimed: what the pane holds of this run is ended below.
 				active.escalated ??= now();
@@ -573,9 +609,10 @@ export function createRuns(o: RunsOptions) {
 	 * The boss's programs below the pane's shell in the process table, for a platform whose foreground list shows the shell alone whatever runs under it (Windows; B6 VM round 3b, N1). Not the run's own processes
 	 * (those carrying its `--sb-run`, and what they started), the tower prompt (the table marks it, RV10-F003), what the prompt started, the console hosts, or shells. Every process below the shell is named; the notice dedupes and caps the names.
 	 */
-	const belowShell = async (pane: string, runId: string): Promise<{ pid?: number; name?: string }[]> => {
+	const belowShell = async (pane: string, runId: string): Promise<{ pid?: number; name?: string }[] | undefined> => {
 		const shell = (await paneInfo(pane))?.shell_pid, table = typeof shell === "number" ? await procs(runId) : undefined;
-		if (typeof shell !== "number" || !table) return [];
+		// Undefined is a read that failed (no shell PID from Herdr, the process table did not answer); an empty list is a read that found nothing.
+		if (typeof shell !== "number" || !table) return undefined;
 		const own = (pid: number) => chain(table, pid, shell)?.some((up) => table.find((p) => p.pid === up)?.carries || table.find((p) => p.pid === up)?.prompt) === true;
 		const found = table.filter((p) => p.pid !== shell && !/^(conhost|openconsole)(\.exe)?$/i.test(p.name) && chain(table, p.pid, shell) !== undefined && !own(p.pid)).map((p) => ({ pid: p.pid, name: p.name }));
 		return programProcs({ foreground_processes: found });
@@ -1336,13 +1373,17 @@ export function createRuns(o: RunsOptions) {
 		retry(workspace: string) {
 			const svc = services.get(workspace);
 			if (!svc) throw new Error(`The sb server stands in for no tower of workspace ${workspace}`);
-			const wasBusy = svc.paneBusy !== undefined;
+			const wasBusy = svc.paneBusy !== undefined, unproven = win && svc.paneUnproven === true;
 			svc.crashes = [];
 			svc.paneBusy = undefined;
 			svc.notices = svc.notices.filter((n) => n.id !== "loop" && n.id !== "start");
 			if (svc.state === "held") svc.state = "standing";
 			// With no event to start a run the boss's Retry gives the pane back as the run's end would: the prompt is typed again (RV11-F001). Where a program of the boss's holds the pane (`wasBusy`) only the look's proof does.
-			if (!wasBusy && !svc.run && !waitingOf(svc).length) svc.ref.freed();
+			// Windows after an unstarted run: not before the process table shows the pane holds nothing (`proveEmpty`), whether or not a program was named (RV12-F001).
+			if (!svc.run && !waitingOf(svc).length) {
+				if (unproven) void proveEmpty(svc).catch((cause: Error) => error("run-prove", cause.message));
+				else if (!wasBusy) svc.ref.freed();
+			}
 			poke(svc);
 		},
 		/**
