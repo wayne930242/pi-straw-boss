@@ -696,7 +696,8 @@ export function createTowers(o: TowersOptions): Towers {
 		let existing = services.get(ws);
 		// A base the caller made a moment ago is new to the server: a service still registered for its id belongs to a workspace that was lost (Herdr was killed with its session unsaved and numbered the new one alike), and it is
 		// dropped now instead of at the next refresh, so the new tower gets its tokens at once.
-		const fresh = await justMade(ws, claim);
+		// A claim is used once: a service opened for this pane after the claim was made has used it, and a replay would drop the live tower and type the prompt again.
+		const fresh = !(claim && existing && !existing.stopped && existing.record.pane === claim.pane && Date.parse(existing.record.created) >= claim.at) && (await justMade(ws, claim));
 		if (fresh && existing && !existing.stopped) {
 			await lose(existing, "its workspace was made again");
 			existing = undefined;

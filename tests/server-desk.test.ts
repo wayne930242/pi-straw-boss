@@ -569,57 +569,112 @@ const askTower = async (cmd: Record<string, unknown>) => {
 	return (await callControl(record.socket, record.secret, { cmd: "ensure-tower", ...cmd } as { cmd: string })).reply as Record<string, any>;
 };
 
+const logText = () => readFileSync(fileOf(world.slot, "log"), "utf8");
+/** The standing look reached the pane and refused it: it said once that the prompt is lost or not starting (a pane that is not fresh), which is the signal that a look ran and typed nothing. */
+const refused = (ws: string) => until(() => new RegExp(`prompt-(lost|not-starting)[^\\n]*${ws}`).test(logText()), `the look refused ${ws}`);
+
 test("Windows (F1): the first up --dir types the tower prompt once into the base pane it just made, and a later up types nothing more", async () => {
 	windows();
 	const first = await up();
 	assert.equal(first.code, 0, first.err);
 	await until(() => world.herdr.typed.length === 1, "the prompt typed into the base pane");
 	assert.equal(world.herdr.typed[0]!.pane, String(first.json?.pane));
-	assert.doesNotMatch(readFileSync(fileOf(world.slot, "log"), "utf8"), /prompt-lost/);
-	await sleep(300);
+	assert.doesNotMatch(logText(), /prompt-lost/);
+	// The pane now runs the prompt: it is no longer fresh, so the next look says it is lost (the signal that a look ran) and types nothing.
+	await until(() => world.herdr.pane(String(first.json?.pane)).agent !== undefined || /prompt-typed/.test(logText()), "the first typing logged");
 	assert.equal((await up()).code, 0);
-	await sleep(300);
 	assert.equal(world.herdr.typed.length, 1, "typed once, not again");
 });
 
-test("Windows (F1, rule F10): a pane the desk step did not just make is never typed into: a marked pane with a program, a claim of another pane, a claim that is old, a pane with an agent", async () => {
+/** A workspace of one bare tab holding one pane, as Windows lists it: the shell alone in the foreground, whatever runs under it (F10). */
+const lone = (ws: string, over: { agent?: string; role?: boolean } = {}) => {
+	world.herdr.workspaces.push({ workspace_id: ws, label: ws, tokens: {} });
+	world.herdr.addTab(`${ws}:t1`, TOWER_LABEL, `${ws}:p1`, over.agent ?? "shell");
+	world.herdr.panes.at(-1)!.workspace_id = ws;
+	world.herdr.tabs.at(-1)!.workspace_id = ws;
+	world.herdr.pane(`${ws}:p1`).tokens = over.role === false ? {} : { sb_role: "tower" };
+	world.herdr.pane(`${ws}:p1`).processes = [];
+};
+const claimed = (ws: string, over: Record<string, unknown> = {}) => askTower({ workspace: ws, made: { pane: `${ws}:p1`, at: Date.now(), ...over } });
+
+// Each case leaves exactly one guard of towers.ts `justMade` between the claim and the typing; the claim is believed only when all of them hold.
+test("Windows (F1, rule F10): the desk's own pane is the baseline: sole pane, tower marker, no agent, claimed in time, is typed into", async () => {
 	windows();
-	const s = await world.start();
-	await s.handle.ready;
-	const lone = (ws: string, tab: string, pane: string, agent?: string) => {
-		world.herdr.workspaces.push({ workspace_id: ws, label: ws, tokens: {} });
-		world.herdr.addTab(tab, TOWER_LABEL, pane, agent ?? "shell");
-		world.herdr.panes.at(-1)!.workspace_id = ws;
-		world.herdr.tabs.at(-1)!.workspace_id = ws;
-		world.herdr.pane(pane).tokens = { sb_role: "tower" };
-		world.herdr.pane(pane).processes = [{ name: "node.exe", argv0: "node.exe", pid: 7001, cmdline: "node build" }];
-	};
-	// No claim at all: a marked pane of the person's with a program in it.
-	lone("wP1", "wP1:t1", "wP1:p1");
+	await (await world.start()).handle.ready;
+	lone("wP0");
+	assert.equal((await claimed("wP0")).ok, true);
+	await until(() => world.herdr.typed.length === 1, "the claimed pane typed into");
+	assert.deepEqual((world.herdr.typed as { pane: string }[]).map((t) => t.pane), ["wP0:p1"]);
+});
+test("Windows (F10): without a claim a bare marked pane is not typed into", async () => {
+	windows();
+	await (await world.start()).handle.ready;
+	lone("wP1");
 	assert.equal((await askTower({ workspace: "wP1" })).ok, true);
-	// A claim for another pane than the one adopted.
-	lone("wP2", "wP2:t1", "wP2:p1");
-	assert.equal((await askTower({ workspace: "wP2", made: { pane: "wP2:p9", at: Date.now() } })).ok, true);
-	// A claim for the right pane that is minutes old.
-	lone("wP3", "wP3:t1", "wP3:p1");
-	assert.equal((await askTower({ workspace: "wP3", made: { pane: "wP3:p1", at: Date.now() - 5 * 60_000 } })).ok, true);
-	// A claim for a pane that holds an agent.
-	lone("wP4", "wP4:t1", "wP4:p1", "pi");
-	assert.equal((await askTower({ workspace: "wP4", made: { pane: "wP4:p1", at: Date.now() } })).ok, true);
-	// A claim for a workspace that has other panes: it was not just made.
-	lone("wP5", "wP5:t1", "wP5:p1");
+	await refused("wP1");
+	assert.deepEqual(world.herdr.typed, []);
+});
+test("Windows (F10): a claim of another pane is not believed", async () => {
+	windows();
+	await (await world.start()).handle.ready;
+	lone("wP2");
+	assert.equal((await claimed("wP2", { pane: "wP2:p9" })).ok, true);
+	await refused("wP2");
+	assert.deepEqual(world.herdr.typed, []);
+});
+test("Windows (F10): a claim that is minutes old is not believed", async () => {
+	windows();
+	await (await world.start()).handle.ready;
+	lone("wP3");
+	assert.equal((await claimed("wP3", { at: Date.now() - 5 * 60_000 })).ok, true);
+	await refused("wP3");
+	assert.deepEqual(world.herdr.typed, []);
+});
+test("Windows (F10): a claim for a pane that holds an agent is not believed, and the pane is not typed into once the agent has left", async () => {
+	windows();
+	await (await world.start()).handle.ready;
+	lone("wP4", { agent: "pi" });
+	assert.equal((await claimed("wP4")).ok, true);
+	assert.deepEqual(world.herdr.typed, []);
+	world.herdr.pane("wP4:p1").agent = undefined;
+	await refused("wP4");
+	assert.deepEqual(world.herdr.typed, []);
+});
+test("Windows (F10): a claim for a workspace with other panes is not believed", async () => {
+	windows();
+	await (await world.start()).handle.ready;
+	lone("wP5");
 	world.herdr.addTab("wP5:t2", "docs", "wP5:p2", "shell");
 	world.herdr.panes.at(-1)!.workspace_id = "wP5";
 	world.herdr.tabs.at(-1)!.workspace_id = "wP5";
-	assert.equal((await askTower({ workspace: "wP5", made: { pane: "wP5:p1", at: Date.now() } })).ok, true);
-	await sleep(600);
-	assert.deepEqual(world.herdr.typed, [], "nothing is typed into any of them");
-	// The same pane, claimed in time as the only pane of a workspace with no agent, is the desk's own and is typed into.
-	lone("wP6", "wP6:t1", "wP6:p1");
-	world.herdr.pane("wP6:p1").processes = [];
-	assert.equal((await askTower({ workspace: "wP6", made: { pane: "wP6:p1", at: Date.now() } })).ok, true);
+	assert.equal((await claimed("wP5")).ok, true);
+	await refused("wP5");
+	assert.deepEqual(world.herdr.typed, []);
+});
+test("Windows (F10): a claim for a pane the server did not mark as a tower is not believed", async () => {
+	windows();
+	await (await world.start()).handle.ready;
+	lone("wP6", { role: false });
+	assert.equal((await claimed("wP6")).ok, true);
+	await refused("wP6");
+	assert.deepEqual(world.herdr.typed, []);
+});
+
+test("Windows (F002): a claim is used once: sent again, it does not drop the live tower or type the prompt a second time", async () => {
+	windows();
+	await (await world.start()).handle.ready;
+	lone("wP7");
+	const at = Date.now();
+	const first = await claimed("wP7", { at });
+	assert.equal(first.ok, true);
 	await until(() => world.herdr.typed.length === 1, "the claimed pane typed into");
-	assert.deepEqual((world.herdr.typed as { pane: string }[]).map((t) => t.pane), ["wP6:p1"]);
+	world.herdr.pane("wP7:p1").agent = undefined;
+	const again = await claimed("wP7", { at });
+	assert.equal(again.ok, true);
+	assert.equal(again.id, first.id);
+	await refused("wP7");
+	assert.equal(world.herdr.typed.length, 1, "typed once");
+	assert.doesNotMatch(logText(), /tower-closed[^\n]*made again/);
 });
 
 // --- A base made again after a lost Herdr session (F3) ---
