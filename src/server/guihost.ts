@@ -110,10 +110,13 @@ export function createGuiHost(o: GuiHostOptions) {
 
 	/**
 	 * What the last GUI recorded, for a start to prefer: server.json's port (else gui.json's, else the stored secrets'), with the remote port of gui.json when that record is of the same local port (else the stored secrets' when they
-	 * are of it). `keep` is the stored token and CSRF secret with the pair of ports they belong to, and `lost` says why there are none: the listener keeps them only when it binds that pair.
+	 * are of it). `keep` is the stored token and CSRF secret with the pair of ports they belong to, kept only while no record names another token, and `lost` says why there are none: the listener keeps them only when it binds that pair.
 	 */
 	const recorded = () => {
-		const record = readRecord(slot), seen = readGuiJson(dir), was = record?.gui, stored = readSecrets(dir), keep = "secrets" in stored ? stored.secrets : undefined;
+		const record = readRecord(slot), seen = readGuiJson(dir), was = record?.gui, read = readSecrets(dir);
+		// A record that names another token than the store's was written by a build that ignores the store (a downgrade, a 0.45 host) on these ports: its token is the one the boss last saw, and the store is of an older listener (RVD27-F001).
+		const last = was?.token ?? seen?.token, stored = "secrets" in read && last !== undefined && last !== read.secrets.token ? { lost: "stale" as Lost } : read;
+		const keep = "secrets" in stored ? stored.secrets : undefined;
 		const port = was?.port ?? seen?.port ?? keep?.port;
 		return { port, remotePort: (seen && seen.port === port ? seen.remotePort : undefined) ?? (keep && keep.port === port ? keep.remotePort : undefined), keep, lost: "lost" in stored ? stored.lost : undefined, stopped: Boolean(was?.stopped) };
 	};

@@ -20,14 +20,17 @@ export const noTailscale: Run = async () => { throw new Error("Tailscale is not 
 export function fakeTailscale(login = "me@example.com") {
 	let config: Record<string, unknown> = {};
 	const calls: string[][] = [];
+	/** A test sets this to hold a `serve ... off` until its promise settles (a slow Tailscale). */
+	const held: { hold?: () => Promise<void> | undefined } = {};
 	const run: Run = async (args) => {
 		calls.push(args);
+		if (args.join(" ") === "serve --https=8443 off") await held.hold?.();
 		if (args[0] === "status") return JSON.stringify({ BackendState: "Running", Self: { DNSName: "box.tail1.ts.net.", UserID: 7 }, User: { "7": { LoginName: login } } });
 		if (args.join(" ") === "serve status --json") return JSON.stringify(config);
 		if (args[1] === "--bg") config = { TCP: { "8443": { HTTPS: true } }, Web: { "box.tail1.ts.net:8443": { Handlers: { "/": { Proxy: args[3] } } } } };
 		if (args.join(" ") === "serve --https=8443 off") config = {};
 		return "";
 	};
-	return { run, config: () => config, calls };
+	return Object.assign(held, { run, config: () => config, calls });
 }
 

@@ -1,4 +1,4 @@
-import { rmSync } from "node:fs";
+import { lstatSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { readOwnedText, writeJson } from "./record.ts";
 
@@ -8,16 +8,19 @@ import { readOwnedText, writeJson } from "./record.ts";
 
 export const SECRETS_FILE = "gui-secrets.json";
 export interface GuiSecrets { token: string; csrf: string; port: number; remotePort: number }
-/** Why a start has no secrets to keep: nothing was stored, the file is not one this code wrote, or the boss rotated on purpose (the file is removed then, so that reads as missing). */
-export type Lost = "missing" | "corrupt";
+/** Why a start has no secrets to keep: nothing was stored (the boss's rotation removes the file too, so that reads as missing), something is there that this code did not write, or the store is not the token the last records name (`stale`, told by the host). */
+export type Lost = "missing" | "corrupt" | "stale";
 
 const HEX = /^[0-9a-f]{32}$/;
 const port = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v > 0 && v < 65536;
 
+const present = (file: string) => { try { return Boolean(lstatSync(file)); } catch { return false; } };
+
 /** The stored secrets, or why there are none. A file another account owns, a link, or text that is not exactly what `keepSecrets` writes is corrupt. */
 export function readSecrets(dir: string): { secrets: GuiSecrets } | { lost: Lost } {
 	const text = readOwnedText(join(dir, SECRETS_FILE));
-	if (text === undefined) return { lost: "missing" };
+	// readOwnedText gives nothing for a file that is absent, and also for a link or a file another account owns: that something is there at all is a tamper signal, so it is told as corrupt.
+	if (text === undefined) return { lost: present(join(dir, SECRETS_FILE)) ? "corrupt" : "missing" };
 	try {
 		const v = JSON.parse(text) as Record<string, unknown>;
 		if (v && typeof v === "object" && v.v === 1 && typeof v.token === "string" && HEX.test(v.token) && typeof v.csrf === "string" && HEX.test(v.csrf) && port(v.port) && port(v.remotePort) && v.token !== v.csrf) {

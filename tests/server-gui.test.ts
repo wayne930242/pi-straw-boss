@@ -439,7 +439,7 @@ test("D27: the store is protected as paired.json is: mode 600 in the owner-only 
 	symlinkSync(real, file);
 	const next = await host();
 	assert.notEqual(next.gui().token, before.token, "the linked store was taken for none");
-	assert.match(starts(next).join("\n"), /why=(missing|corrupt)/);
+	assert.match(starts(next).join("\n"), /why=corrupt/, "a link or a file another account owns is not the ordinary first start");
 	assert.equal(lstatSync(file).isSymbolicLink(), false, "and a store of its own took its place");
 });
 
@@ -867,4 +867,42 @@ test("RV8-F002: a hub.json that cannot be written is logged and recorded as last
 	const h = await host({ gui: false, pid: process.pid });
 	assert.equal(h.record().lastError?.code, "hub.json");
 	assert.equal(h.record().pid, h.pid, "the server is up");
+});
+
+test("RVD27-F001: a store an older build left behind is not revived: when the records name another token than the store's (a build that ignores the store ran on the same ports), the start is a new token with why=stale and the devices cleared", async () => {
+	const ts = fakeTailscale(), h = await host({ tailscale: ts.run });
+	const before = h.gui(), cookie = await pairPhone(h);
+	await h.ask("restart", { reason: "test", by: "test" });
+	await h.handle.done;
+	const older = { token: "c".repeat(32), csrf: "d".repeat(32) }; // what a pre-D27 listener drew at its start on the same ports
+	writeRecordFile(h.slot.dir, { ...h.gui(), ...older });
+	const record = JSON.parse(readFileSync(fileOf(h.slot, "record"), "utf8")) as { gui: Record<string, unknown> };
+	writeFileSync(fileOf(h.slot, "record"), JSON.stringify({ ...record, gui: { ...record.gui, token: older.token } }));
+	const next = await host({ tailscale: ts.run });
+	assert.notEqual(next.gui().token, before.token, "the token from before the older build is not brought back");
+	assert.notEqual(next.gui().token, older.token);
+	assert.deepEqual([next.gui().port, next.gui().remotePort], [before.port, before.remotePort], "the ports still are");
+	assert.equal(await status(`http://127.0.0.1:${before.port}/${before.token}/`), 403);
+	assert.equal(pairedCount(next), 0);
+	assert.equal((await remoteGet(next.gui().remotePort, `/${next.gui().token}/`, cookie)).status, 401);
+	assert.match(starts(next).at(-1)!, /newToken=true why=stale/);
+});
+
+test("RVD27-F006: GUI commands wait for a rotation in flight: a gui and a gui-stop asked meanwhile neither move the ports nor leave a second listener", async () => {
+	const ts = fakeTailscale(), h = await host({ tailscale: ts.run });
+	await pairPhone(h);
+	const before = h.gui();
+	let release!: () => void, hold: Promise<void> | undefined;
+	const gate = new Promise<void>((r) => (release = r));
+	ts.hold = () => (hold ??= gate);
+	const rotating = h.ask("gui-rotate");
+	await new Promise((r) => setTimeout(r, 50));
+	const meanwhile = Promise.all([h.ask("gui", { boss: true }), h.ask("gui-stop")]);
+	await new Promise((r) => setTimeout(r, 50));
+	release();
+	const [rotated, [shown, stopped]] = [await rotating, await meanwhile];
+	assert.equal(rotated.ok, true);
+	assert.equal(shown?.port, before.port, "the ports did not move");
+	assert.equal(stopped?.ok, true);
+	assert.equal(shown?.token, rotated.token, "the ask saw the rotated listener, not one beside it");
 });
