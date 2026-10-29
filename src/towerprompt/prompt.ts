@@ -21,6 +21,8 @@ const WAKING_GRACE_MS = 3000;
 const WAKING_MAX_MS = 90_000;
 /** Lines that arrive this close together are one paste, one message. */
 const PASTE_MS = 40;
+/** What a terminal that has bracketed paste on sends around a paste; readline reports them as the keys `paste-start` and `paste-end`. */
+const PASTE_START = "paste-start", PASTE_END = "paste-end";
 /** What a message with no words says to the tower. */
 export const NO_MESSAGE = "The boss is at the keyboard in the tower's pane and woke it without a message. They will write in this run's session if they have something to say.";
 
@@ -61,7 +63,7 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 	const clock = o.clock ?? REAL_CLOCK, text = textsFor(o.locale), pollMs = o.pollMs ?? POLL_MS, wakingMs = Math.min(pollMs, o.wakingPollMs ?? WAKING_POLL_MS), source = o.source;
 	const terminal = (o.output as Partial<NodeJS.WriteStream>).isTTY === true;
 	let rl: Interface | undefined, closed = false, finished = false, posting = false, silent = false, shown: string | undefined, wokeAt: number | undefined;
-	let timer: object | undefined, batch: string[] = [], batchTimer: ReturnType<typeof setTimeout> | undefined;
+	let timer: object | undefined, batch: string[] = [], batchTimer: ReturnType<typeof setTimeout> | undefined, pasting = false;
 	let finish!: (code: number) => void;
 	const done = new Promise<number>((resolve) => (finish = resolve));
 
@@ -199,11 +201,31 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 	if (!(await handle(first))) return done;
 	for (const line of text.hint) o.output.write(`${line}\n`);
 	rl = createInterface({ input: o.input, output: o.output, prompt: PROMPT, terminal });
+	/**
+	 * The paste window closes: what was entered goes as one message. Two things keep it open (B6 VM round 3c, Windows PowerShell: a paste of three lines and the Enter sent a moment later were two messages): a bracketed
+	 * paste that has not ended (the terminal says where it ends, however far apart its pieces arrive), and a line the boss is still writing after lines that arrived with it (a paste whose last line has no line end yet;
+	 * the Enter that ends it comes later and joins the batch). The run's start does not wait for either: `handle` takes the batch and the line together.
+	 */
+	const armFlush = () => {
+		clearTimeout(batchTimer);
+		if (pasting) return;
+		batchTimer = setTimeout(() => (batch.length && (rl?.line ?? "") !== "" ? undefined : void flush()), PASTE_MS);
+	};
 	rl.on("line", (raw) => {
 		if (finished || posting) return;
 		batch.push(raw);
-		clearTimeout(batchTimer);
-		batchTimer = setTimeout(() => void flush(), PASTE_MS);
+		armFlush();
+	});
+	// Only a terminal's readline reports keys; a piped input has no markers to honour.
+	o.input.on("keypress", (_text: string | undefined, key?: { name?: string }) => {
+		if (finished || posting) return;
+		if (key?.name === PASTE_START) {
+			pasting = true;
+			clearTimeout(batchTimer);
+		} else if (key?.name === PASTE_END) {
+			pasting = false;
+			if (batch.length) armFlush();
+		}
 	});
 	// Ctrl+D (the end of the input) and Ctrl+C both leave the pane to the boss: a prompt that came back at once would be in the way of whatever they wanted a shell for.
 	const leave = () => {

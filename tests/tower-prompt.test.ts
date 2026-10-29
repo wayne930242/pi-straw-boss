@@ -556,6 +556,76 @@ test("a paste of several lines is one message whatever its first line is: a log 
 	assert.equal(await ended(p.done), 0);
 });
 
+// B6 VM round 3c (Windows PowerShell): the paste is sent in one chunk and the Enter a moment later, so the last line of the paste has no line end yet when the paste window closes. It is part of the paste, not a second message.
+const PASTE = "/first line\nsecond line\nthird line";
+const settle = () => sleep(120); // longer than the paste window: a post would be in by now
+
+test("VM 3c: a bracketed paste whose last line has no line end yet is held, and the Enter that follows makes it one message, its / line never obeyed", async () => {
+	const source = new FakeSource();
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write(`\x1b[200~${PASTE}\x1b[201~`);
+	await settle();
+	assert.deepEqual(source.posted, [], "nothing is posted before the Enter: the last line is still being written");
+	assert.ok(!/is not a command here/.test(p.text()));
+	p.input.write("\r");
+	await until(() => source.posted.length === 1, "the post");
+	await settle();
+	assert.deepEqual(source.posted, [PASTE]);
+	assert.equal(source.left, 0);
+	assert.equal(source.freshed, 0);
+});
+
+test("VM 3c: a raw CRLF paste with no markers, its last line without a line end, and the Enter sent separately are one message", async () => {
+	const source = new FakeSource();
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write(PASTE.replaceAll("\n", "\r\n"));
+	await settle();
+	assert.deepEqual(source.posted, []);
+	p.input.write("\r");
+	await until(() => source.posted.length === 1, "the post");
+	await settle();
+	assert.deepEqual(source.posted, [PASTE]);
+});
+
+test("VM 3c: a bracketed paste that reaches the prompt in pieces further apart than the paste window is still one message (ConPTY chunking)", async () => {
+	const source = new FakeSource();
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("\x1b[200~/first line\r\n");
+	await settle();
+	p.input.write("second line\r\n");
+	await settle();
+	p.input.write("third line\r\n\x1b[201~");
+	await until(() => source.posted.length === 1, "the post at the end of the paste");
+	await settle();
+	assert.deepEqual(source.posted, [PASTE]);
+});
+
+test("VM 3c: a paste whose last line is `/quit` is held for its Enter and posted whole; the line is never obeyed", async () => {
+	const source = new FakeSource();
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("look at this\n/quit");
+	await settle();
+	assert.deepEqual(source.posted, []);
+	assert.equal(source.left, 0);
+	p.input.write("\r");
+	await until(() => source.posted.length === 1, "the post");
+	assert.deepEqual(source.posted, ["look at this\n/quit"]);
+	assert.equal(source.left, 0);
+});
+
+test("VM 3c: a paste that ends in a line end is posted when the paste ends, with no Enter", async () => {
+	const source = new FakeSource();
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("\x1b[200~a\nb\n\x1b[201~");
+	await until(() => source.posted.length === 1, "the post");
+	assert.deepEqual(source.posted, ["a\nb"]);
+});
+
 test("a single line that starts with / is judged on its own even when more lines follow after the paste window: /new, /quit, and a refusal each act once", async () => {
 	const source = new FakeSource();
 	const p = screen(source);
