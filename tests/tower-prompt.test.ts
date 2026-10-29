@@ -777,3 +777,80 @@ test("the prompt's words for the refusal exist in Traditional Chinese too", () =
 	assert.match(text, /空格/);
 	assert.ok(!text.includes("\n"));
 });
+
+// RV17 (vmfix17 review): a paste read in several chunks is one message; a refusal that comes after the prompt left is not printed.
+test("RV17-F001: a bracketed paste whose unended last line finishes in a later chunk is one message", async () => {
+	const source = new FakeSource();
+	const p = terminal(source, { pasteCapMs: 2000 });
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("\x1b[200~/first line\r\nsecond line\r\n");
+	await sleep(10);
+	p.input.write("third line\x1b[201~");
+	await settle();
+	assert.deepEqual(source.posted, [], "held for the Enter that ends the last line");
+	p.input.write("\r");
+	await until(() => source.posted.length === 1, "the post");
+	await settle();
+	assert.deepEqual(source.posted, ["/first line\nsecond line\nthird line"]);
+});
+
+test("RV17-F001: a bracketed paste whose last line is split across chunks is one message", async () => {
+	const source = new FakeSource();
+	const p = terminal(source, { pasteCapMs: 2000 });
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("\x1b[200~a\nb\nth");
+	await sleep(5);
+	p.input.write("ird\x1b[201~");
+	await settle();
+	assert.deepEqual(source.posted, []);
+	p.input.write("\r");
+	await until(() => source.posted.length === 1, "the post");
+	await settle();
+	assert.deepEqual(source.posted, ["a\nb\nthird"]);
+});
+
+test("RV17-F002: an unmarked paste read in two chunks inside the paste window, the last without a line end, is one message", async () => {
+	for (const [first, second, whole] of [["a\r\nb\r\nth", "ird", "a\nb\nthird"], ["a\r\nb\r\n", "third", "a\nb\nthird"]]) {
+		const source = new FakeSource();
+		const p = terminal(source);
+		await until(() => p.text().includes("tower> "), "the prompt");
+		p.input.write(first);
+		await sleep(5);
+		p.input.write(second);
+		await settle();
+		assert.deepEqual(source.posted, [], first);
+		p.input.write("\r");
+		await until(() => source.posted.length === 1, "the post");
+		await settle();
+		assert.deepEqual(source.posted, [whole]);
+	}
+});
+
+test("RV17-F002: a typed `/quit⏎` and a key typed a few ms later are still two groups: `/quit` is obeyed", async () => {
+	const source = new FakeSource();
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("/quit\r");
+	await sleep(5);
+	p.input.write("x");
+	assert.equal(await ended(p.done), 0);
+	assert.equal(source.left, 1);
+	assert.deepEqual(source.posted, []);
+});
+
+test("RV17-F003: a refusal that comes after the boss left is not printed", async () => {
+	const source = new FakeSource();
+	let reject!: (e: Error) => void;
+	source.post = () => new Promise<void>((_, r) => (reject = r));
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("hello\r");
+	await until(() => reject !== undefined, "the post in flight");
+	p.input.write("\x04");
+	assert.equal(await ended(p.done), 0);
+	const before = p.text();
+	reject(new Error("server said no"));
+	await settle();
+	assert.equal(p.text(), before);
+	assert.doesNotMatch(p.text(), /did not take it/);
+});

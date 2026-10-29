@@ -68,8 +68,8 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 	const terminal = (o.output as Partial<NodeJS.WriteStream>).isTTY === true;
 	let rl: Interface | undefined, closed = false, finished = false, posting = false, silent = false, shown: string | undefined, wokeAt: number | undefined;
 	let timer: object | undefined, batch: string[] = [], batchTimer: ReturnType<typeof setTimeout> | undefined, pasteTimer: ReturnType<typeof setTimeout> | undefined, pasting = false;
-	// Input chunks counted, and the chunk the last line came in: a paste arrives in one chunk, typed keys in chunks of their own (RV16-F003).
-	let chunks = 0, lineChunk = 0;
+	// Input chunks grouped, and the group the last line came in: a paste is one group however many reads carry it, typed keys are groups of their own (RV16-F003, RV17-F001, RV17-F002).
+	let chunks = 0, lineChunk = 0, lastDataAt = -Infinity;
 	const pasteCapMs = o.pasteCapMs ?? PASTE_CAP_MS;
 	let finish!: (code: number) => void;
 	const done = new Promise<number>((resolve) => (finish = resolve));
@@ -211,8 +211,12 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 	if (!(await handle(first))) return done;
 	for (const line of text.hint) o.output.write(`${line}\n`);
 	// Counted before readline reads the chunk, so the lines it makes from it are in the chunk's count.
-	o.input.on("data", () => {
-		chunks++;
+	// A chunk joins the group before it when a bracketed paste is open (up to its end marker, which is in the chunk that ends it), or when it follows the one before within the paste window and carries more than one
+	// character: a typed key is one character in a read of its own, so a typed `/quit⏎` and a key typed after it, even a few ms later, are two groups (RV16-F003), and a paste split by the pty into reads is one.
+	o.input.on("data", (data: string | Buffer) => {
+		const at = clock.now();
+		if (!(pasting || (at - lastDataAt < PASTE_MS && data.length > 1))) chunks++;
+		lastDataAt = at;
 		if (pasting) armPasteCap();
 	});
 	rl = createInterface({ input: o.input, output: o.output, prompt: PROMPT, terminal });
@@ -220,7 +224,8 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 	 * The paste window closes: what was entered goes as one message. Two things keep it open (B6 VM round 3c, Windows PowerShell: a paste of three lines and the Enter sent a moment later were two messages): a bracketed
 	 * paste that has not ended (the terminal says where it ends, however far apart its pieces arrive), and a line the boss is still writing after lines that arrived with it (a paste whose last line has no line end yet;
 	 * the Enter that ends it comes later and joins the batch). The run's start does not wait for either: `handle` takes the batch and the line together.
-	 * A line is held as part of a paste only when it came in the chunk of input that the line being written is in; a line typed on its own (`/quit⏎`) and a key typed after it are chunks apart (RV16-F003). A paste that
+	 * A line is held as part of a paste only when it came in the same group of input chunks as the line being written (a group: the reads of an open bracketed paste, and reads that follow within the paste window with
+	 * more than one character each); a line typed on its own (`/quit⏎`) and a key typed after it are groups apart (RV16-F003, RV17-F001, RV17-F002). A paste that
 	 * has not ended is closed `pasteCapMs` after its last data (RV16-F002). The prompt does not turn bracketed paste on (`ESC[?2004h`): the shell sets that mode for itself at each of its prompts, a prompt that is
 	 * killed before it could turn it off would leave the boss's shell with a mode it did not ask for, and a Windows console that does not know the mode would show the sequence; the markers are honoured when the terminal
 	 * sends them, and the cap and the chunk rule cover the pastes that come without.
