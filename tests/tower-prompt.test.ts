@@ -62,11 +62,11 @@ function screen(source: PromptSource, over: { locale?: "en" | "zh-TW"; pollMs?: 
 const ended = (done: Promise<number>) => Promise.race([done, new Promise<number>((_, reject) => setTimeout(() => reject(new Error("the prompt did not end")), 3000).unref())]);
 
 /** A screen that is a terminal: readline then edits the line itself, and the prompt must never touch it after it closed. */
-function terminal(source: PromptSource) {
+function terminal(source: PromptSource, over: { pasteCapMs?: number } = {}) {
 	const input = new PassThrough(), output = Object.assign(new PassThrough(), { isTTY: true, columns: 80, rows: 24 });
 	let text = "";
 	output.on("data", (chunk) => void (text += String(chunk)));
-	const done = runPrompt({ workspace: "wA", source, input, output, signal: stop(), locale: "en", pollMs: 15 });
+	const done = runPrompt({ workspace: "wA", source, input, output, signal: stop(), locale: "en", pollMs: 15, ...over });
 	return { input, done, text: () => text };
 }
 
@@ -624,6 +624,134 @@ test("VM 3c: a paste that ends in a line end is posted when the paste ends, with
 	p.input.write("\x1b[200~a\nb\n\x1b[201~");
 	await until(() => source.posted.length === 1, "the post");
 	assert.deepEqual(source.posted, ["a\nb"]);
+});
+
+// RV16 (vmfix16 review): a held paste, a paste that never ends, and a typed `/quit` followed by a key.
+test("RV16-F001: Ctrl+C with a paste held (its last line has no line end) leaves the pane to the shell and drops the paste: nothing is posted, not by the next Enter either", async () => {
+	const source = new FakeSource();
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("a\nb");
+	await settle();
+	assert.deepEqual(source.posted, []);
+	p.input.write("\x03");
+	assert.equal(await ended(p.done), 0);
+	assert.equal(source.left, 1);
+	assert.deepEqual(source.posted, [], "the cancelled paste is never posted");
+	p.input.write("\r");
+	await settle();
+	assert.deepEqual(source.posted, []);
+});
+
+test("RV16-F001: Backspace over the held last line and Ctrl+D on the empty line end the prompt as a park: the pane is left, nothing is posted, no prompt goes on polling with dead input", async () => {
+	const source = new FakeSource();
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("a\nb");
+	await settle();
+	p.input.write("\x7f");
+	p.input.write("\x04");
+	assert.equal(await ended(p.done), 0);
+	assert.equal(source.left, 1);
+	assert.deepEqual(source.posted, []);
+	const polls = source.polls;
+	await settle();
+	assert.equal(source.polls, polls, "the prompt does not poll any more");
+});
+
+test("RV16-F001: Ctrl+D while a post is on its way still ends the prompt as a park", async () => {
+	const source = new FakeSource();
+	let release!: () => void;
+	const post = source.post.bind(source);
+	source.post = async (text: string) => {
+		await new Promise<void>((resolve) => (release = resolve));
+		await post(text);
+	};
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("one\r");
+	await until(() => release !== undefined, "the post to start");
+	p.input.write("\x04");
+	assert.equal(await ended(p.done), 0);
+	assert.equal(source.left, 1);
+	release();
+	await settle();
+	assert.equal(source.gones, 0);
+});
+
+test("RV16-F001: a leave order while a paste is held posts it once, with the pane handed over", async () => {
+	const source = new FakeSource();
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("a\nb");
+	await settle();
+	starting(source);
+	assert.equal(await ended(p.done), 0);
+	assert.deepEqual(source.posted, ["a\nb"]);
+	assert.equal(source.gones, 1);
+});
+
+test("RV16-F002: a paste-start that never ends is closed after the cap with no new paste data: the lines are posted, and Ctrl+C works meanwhile", async () => {
+	const source = new FakeSource();
+	const p = terminal(source, { pasteCapMs: 150 });
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("\x1b[200~hello\r");
+	await sleep(60);
+	p.input.write("more\r");
+	await sleep(100);
+	assert.deepEqual(source.posted, [], "still inside the cap of the last piece");
+	await until(() => source.posted.length === 1, "the post after the cap");
+	assert.deepEqual(source.posted, ["hello\nmore"]);
+});
+
+test("RV16-F002: Ctrl+C inside an unended paste leaves the pane at once and posts nothing", async () => {
+	const source = new FakeSource();
+	const p = terminal(source, { pasteCapMs: 60_000 });
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("\x1b[200~hello\r");
+	await settle();
+	p.input.write("\x03");
+	assert.equal(await ended(p.done), 0);
+	assert.equal(source.left, 1);
+	assert.deepEqual(source.posted, []);
+});
+
+test("RV16-F002: a paste that does end is not cut by the cap while its pieces keep coming", async () => {
+	const source = new FakeSource();
+	const p = terminal(source, { pasteCapMs: 150 });
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("\x1b[200~one\r");
+	await sleep(100);
+	p.input.write("two\r");
+	await sleep(100);
+	p.input.write("three\r\x1b[201~");
+	await until(() => source.posted.length === 1, "the post");
+	assert.deepEqual(source.posted, ["one\ntwo\nthree"]);
+});
+
+test("RV16-F003: a typed `/quit` followed by another key within the paste window is obeyed; the key is not joined to it", async () => {
+	const source = new FakeSource();
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("/quit\r");
+	p.input.write("x");
+	assert.equal(await ended(p.done), 0);
+	assert.equal(source.left, 1);
+	assert.deepEqual(source.posted, []);
+});
+
+test("RV16-F003: a lone typed `/foo` is refused, and `/quit` typed after a paste was posted still leaves", async () => {
+	const source = new FakeSource();
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("/foo\r");
+	await until(() => /is not a command here/.test(p.text()), "the refusal");
+	p.input.write("\x1b[200~a\nb\n\x1b[201~");
+	await until(() => source.posted.length === 1, "the post");
+	p.input.write("/quit\r");
+	assert.equal(await ended(p.done), 0);
+	assert.deepEqual(source.posted, ["a\nb"]);
+	assert.equal(source.left, 1);
 });
 
 test("a single line that starts with / is judged on its own even when more lines follow after the paste window: /new, /quit, and a refusal each act once", async () => {
