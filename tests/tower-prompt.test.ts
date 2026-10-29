@@ -128,6 +128,25 @@ test("a line the boss has entered but the prompt has not posted yet (the paste w
 	assert.deepEqual(source.posted, ["one"], "once, not by both the paste timer and the leave");
 });
 
+test("RV11-F002: a lone `/` line entered just before the order to leave is never posted as the boss's words", async () => {
+	for (const word of ["/quit", "/new", "/reload"]) {
+		const source = new FakeSource();
+		const p = terminal(source);
+		await until(() => p.text().includes("tower> "), "the prompt");
+		p.input.write(`${word}\n`);
+		source.answers = [{ kind: "state", answer: { ...STATE, state: "waking", leave: true } }];
+		assert.equal(await ended(p.done), 0);
+		assert.deepEqual(source.posted, [], word);
+	}
+	const source = new FakeSource();
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("/quit\nand then\n");
+	source.answers = [{ kind: "state", answer: { ...STATE, state: "waking", leave: true } }];
+	assert.equal(await ended(p.done), 0);
+	assert.deepEqual(source.posted, ["/quit\nand then"], "two lines are one message");
+});
+
 test("when the server does not take the half-written line at the start of a run, the prompt shows it so the boss can send it again", async () => {
 	const source = new FakeSource();
 	source.failPost = new Error("no server");

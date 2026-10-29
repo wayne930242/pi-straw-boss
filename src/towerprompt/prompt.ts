@@ -38,15 +38,23 @@ export interface PromptOptions {
 	/** The clock of the polling (tests set it): the time of a post and the timer of the next poll. The real clock by default. */
 	clock?: PromptClock;
 }
+/** What `after` returns: the clock's own timer, given back to `cancel`. */
+type ClockHandle = object;
 export interface PromptClock {
 	now(): number;
-	after(fn: () => void, ms: number): object;
-	cancel(handle: object): void;
+	after(fn: () => void, ms: number): ClockHandle;
+	cancel(handle: ClockHandle): void;
 }
 const REAL_CLOCK: PromptClock = { now: () => Date.now(), after: (fn, ms) => setTimeout(fn, ms), cancel: (handle) => clearTimeout(handle as NodeJS.Timeout) };
 
 /** Nothing the server sends reaches the terminal as a control sequence. */
 const clean = (value: unknown, max = 200) => String(value).replace(/[\u0000-\u001f\u007f-\u009f]/g, "").slice(0, max);
+
+/** A batch of one line that starts with `/` (and not `//`) is for the prompt, never the tower. */
+const commandOf = (lines: string[]): string | undefined => {
+	const [only] = lines;
+	return lines.length === 1 && only !== undefined && only.startsWith("/") && !only.startsWith("//") ? only.trim() : undefined;
+};
 
 /** Runs the prompt until it ends; resolves the exit code. */
 export async function runPrompt(o: PromptOptions): Promise<number> {
@@ -103,7 +111,10 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 			// The boss's line is on its way (the post ends the prompt, or refuses and the prompt goes on).
 			if (posting) return true;
 			// A run is starting in this pane while the boss is typing: their words are for the tower, and the pane is a shell in a moment, where they must not land. What they entered (the paste window) and what is on the line go first.
-			const words = [...batch, rl?.line ?? ""].join("\n").trim();
+			const entered = [...batch, rl?.line ?? ""];
+			if (entered.at(-1) === "" && entered.length > 1) entered.pop();
+			// The batch rule of `flush` holds here too: a lone `/` line (`/quit`, `/new`, `/reload` typed a moment before the order came) is a command or refused, never the boss's words (RV11-F002). The pane is leaving, so there is nothing to start over or quit.
+			const words = commandOf(entered) !== undefined ? "" : entered.join("\n").trim();
 			// The boss wrote a while ago and the prompt said so then: the line is only cleared.
 			if (wokeAt === undefined) say(text.waking, false);
 			else if (terminal) {
@@ -148,8 +159,8 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 		// A batch of one line that starts with `/` is for the prompt, never the tower (a `/reload` typed from habit is no message): `/new` alone starts a new boss session, `/quit` alone leaves the pane to the shell
 		// as Ctrl+D does, and any other is refused with what the prompt takes. `//` at the start, or a space before the `/`, keeps the line a message (posted as typed; the space is trimmed with the rest of the message's
 		// edges). A paste of several lines is one message whatever its first line is, and its `/` lines are never obeyed (a log that starts with a path, a file list with `/quit` in it).
-		if (lines.length === 1 && lines[0]!.startsWith("/") && !lines[0]!.startsWith("//")) {
-			const word = lines[0]!.trim();
+		const word = commandOf(lines);
+		if (word !== undefined) {
 			if (word === "/new") return void (await startOver());
 			if (word === "/quit") return leave();
 			return void say(text.unknownCommand(clean(word.split(/\s+/)[0], 40)));
