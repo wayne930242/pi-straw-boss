@@ -701,7 +701,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// T4 visual fix to 172,700 bytes / 69.5 KB gzipped: the in-event-run row and the composer line, in both languages.
 	// Remote app entry (D25) to 163.1 KB / 66.4 KB gzipped: the pairing tile shows the code to type in an installed app (gui/pair.ts, one message in both languages).
 	// Ended bar (sb server B6) to 173,100 bytes / 69.6 KB gzipped: the bar line and its message in both languages.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 173_100 && total(chunks, gz) <= 69_600, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// Kept GUI address (D27) to 173,300 bytes / 69.7 KB gzipped: the Restart panel's confirm and note say the address is kept, in both languages.
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 173_300 && total(chunks, gz) <= 69_700, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
