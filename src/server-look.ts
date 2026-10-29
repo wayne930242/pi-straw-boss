@@ -220,7 +220,7 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 			}
 			if (sub === "restart") {
 				const downgrade = /(^|\s)--downgrade(?=\s|$)/.test(rest), reason = rest.replace(/(^|\s)--downgrade(?=\s|$)/g, " ").trim() || "restart from /boss server restart";
-				const message = downgrade ? "This starts the server from this session's pi-straw-boss, which is OLDER than the server's. Its GUI keeps its address, unless a port is taken (then reopen it with /boss gui)." : "The GUI keeps its address (open pages, the desk shell, and paired phones reconnect by themselves) unless a port is taken; runs and dialogs carry on.";
+				const message = downgrade ? "This starts the server from this session's pi-straw-boss, which is OLDER than the server's. Its GUI keeps its address only if that older package keeps the GUI token too (a build with D27); an older one draws a new address at its start and unpairs every phone (reopen it with /boss gui)." : "The GUI keeps its address (open pages, the desk shell, and paired phones reconnect by themselves) unless a port is taken; runs and dialogs carry on.";
 				if (!(await ask(downgrade ? "Restart the sb server from an older package?" : "Restart the sb server?", message))) return tell("The sb server was not restarted.");
 				const done = await api.restart(reason, { boss: true, downgrade });
 				return tell(`The sb server ${done.server} (pid ${done.pid}, pi-straw-boss ${done.version}).`);
