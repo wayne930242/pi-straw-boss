@@ -6,9 +6,13 @@
 //
 // The gate has one question and the proofs that feed it:
 // - `typeGate`: may the look type the command now (type / no, with the rule that said no).
-// - the marks the typing rests on, which a caller may only set through these: `giveBackGate` (a run ended, a Retry, the table proof), `settleGate` (a hand-over's proof and the lapse of a mark), `handGate` (a hand-over is
-//   believed), `holdGate` (a held pane is free again), `retryGate` and `tableGate` (what a Retry may do, and what a read of the process table proves), `runEndGate` (what a run's end says of the pane).
-// All of them are pure: the facts come in, the answer goes out, and the caller changes its own state by it.
+// - the marks the typing rests on, which a caller sets by these: `giveBackGate` (a run ended, a Retry, the table proof), `settleGate` (a hand-over's proof and the lapse of a mark), `handGate` (a hand-over is
+//   believed), `refusedGate` (what Herdr's refusal of the typing leaves of the mark), `holdGate` (a held pane is free again), `retryGate` and `tableGate` (what a Retry may do, and what a read of the process
+//   table proves; the proof asks `retryGate` again after its read), `runEndGate` (what a run's end says of the pane).
+// Two marks are facts, not typing decisions, and are set where the fact happens: `fresh: true` at `attach(target, fresh)` (Herdr just made the pane, so it is a shell nobody has used) and at `reset()` (a new Herdr
+// server: every pane is a fresh shell). Neither depends on what the pane did, so no rule could be wrong there; they only start the clock that `typeGate` and `settleGate` then judge.
+// The gates other than `typeGate` are pure: the facts come in, the answer goes out, and the caller changes its own state by it. `typeGate`'s facts are not: `gone` takes the stand-in away, `settle` upkeeps the caller's
+// marks, and `read` asks Herdr; they are asked in the gate's order and only when the rules before them passed.
 
 export const SHELLS = new Set(["zsh", "bash", "fish", "sh", "dash", "ksh", "tcsh", "csh", "nu", "login", "pwsh", "powershell", "cmd"]);
 export const nameOf = (p: { argv0?: string; name?: string }) => String(p.argv0 ?? p.name ?? "").replace(/^-/, "").split(/[\\/]/).pop()!.toLowerCase().replace(/\.exe$/, "");
@@ -81,8 +85,8 @@ export interface TypeFacts {
 	run: boolean;
 	/** The agent Herdr shows on the pane: none, the server's stand-in `tower`, or another. */
 	agent: "none" | "stand-in" | "other";
-	/** The prompt polled lately. */
-	prompt: boolean;
+	/** The prompt polled lately. Asked again after every await (`gone`, `read`): a poll that lands while Herdr answers means the prompt is there (RVTG-F002). */
+	prompt(): boolean;
 	/** Called once, when the prompt is not there and nothing above said no: the caller takes the stand-in away. The facts below are read after it. */
 	gone(): Promise<void>;
 	parked(): boolean;
@@ -105,8 +109,9 @@ export async function typeGate(f: TypeFacts): Promise<TypeVerdict> {
 	if (f.busy) return no("busy");
 	if (f.run) return no("run");
 	if (f.agent === "other") return no("agent");
-	if (f.prompt) return no("prompt");
+	if (f.prompt()) return no("prompt");
 	await f.gone();
+	if (f.prompt()) return no("prompt");
 	if (f.parked()) return no("parked");
 	if (f.runSoon()) return no("run-soon");
 	if (f.launchWait()) return no("launch-wait");
@@ -117,7 +122,9 @@ export async function typeGate(f: TypeFacts): Promise<TypeVerdict> {
 	if (settled.giveUp) return no("gave-up");
 	if (!f.groups && f.held) return no("held");
 	if (!f.groups && !f.fresh()) return no("unproven");
-	if (!idleShell(await f.read(), f.fresh(), f.groups)) return no("not-idle");
+	const info = await f.read();
+	if (f.prompt()) return no("prompt");
+	if (!idleShell(info, f.fresh(), f.groups)) return no("not-idle");
 	return { type: true };
 }
 
@@ -155,6 +162,18 @@ export function giveBackGate(f: GiveBackFacts): GiveBackVerdict {
 	if (f.keepParked && f.prompt) return { apply: false };
 	const fresh = f.fresh && !(f.keepParked && f.parked);
 	return { apply: true, unpark: !f.keepParked, fresh, freshUntil: f.keepParked && fresh ? f.now + f.markMs : undefined };
+}
+
+export interface RefusedFacts { wasFresh: boolean; freshUntil: number | undefined; failures: number; tries: number; now: number; handMs: number }
+/** The mark after Herdr refused `pane run` (nothing was typed). `failures` counts this refusal. */
+export interface RefusedVerdict { fresh: boolean; freshUntil: number | undefined; giveUp: boolean }
+/**
+ * A refused typing is no try: while fewer than `tries` refusals came in a row the pane keeps the mark it had (a mark that lapses is pushed a `handMs` on, so the retry one `launchMs` later still finds it). At the
+ * `tries`th the server gives up (`giveUp`, the caller says so once); nothing more is typed until a run frees the pane, a hand-over, or a Herdr restart. Past it the mark is as typing left it.
+ */
+export function refusedGate(f: RefusedFacts): RefusedVerdict {
+	if (f.failures < f.tries) return { fresh: f.wasFresh, freshUntil: f.freshUntil !== undefined ? f.now + f.handMs : undefined, giveUp: false };
+	return { fresh: false, freshUntil: undefined, giveUp: f.failures === f.tries };
 }
 
 /** What a run's end says of the standing pane: a local run whose pi never started there leaves it unmarked (RV10-F002). */

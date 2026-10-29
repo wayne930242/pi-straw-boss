@@ -2,7 +2,7 @@ import { type HerdrApi, type HerdrRun, type HerdrWorld, isStandin, type Pane, re
 import { alive as pidAlive } from "../remote.ts";
 import type { Log } from "./log.ts";
 import type { ServiceStatus } from "./runs.ts";
-import { giveBackGate, handGate, holdGate, idleShell, nameOf, SHELLS, settleGate, typeGate } from "./typegate.ts";
+import { giveBackGate, handGate, holdGate, idleShell, nameOf, refusedGate, SHELLS, settleGate, typeGate } from "./typegate.ts";
 
 export { idleShell };
 
@@ -211,7 +211,7 @@ export function createStanding(o: StandingOptions) {
 			held: status?.state === "held",
 			run: m.leaving || (status !== undefined && ["waking", "running", "closing"].includes(status.state)),
 			agent: !pane?.agent ? "none" : isStandin(pane) ? "stand-in" : "other",
-			prompt: present(m),
+			prompt: () => present(m),
 			// The prompt is not there. Herdr clears its label itself a moment after; a release makes it at once.
 			gone: () => unreport(m),
 			parked: () => m.parked,
@@ -282,12 +282,11 @@ export function createStanding(o: StandingOptions) {
 			error("prompt-typed", `${target.workspace}: herdr pane run ${pane.pane_id} failed (exit ${String(why.code)}): ${why.stderr || why.message}`, 4000);
 			m.typings = Math.max(0, m.typings - 1);
 			m.failures++;
-			if (m.failures < TYPE_TRIES) {
-				m.fresh = wasFresh;
-				if (m.freshUntil !== undefined) m.freshUntil = now() + t.handMs;
-			} else if (m.failures === TYPE_TRIES) {
+			const back = refusedGate({ wasFresh, freshUntil: m.freshUntil, failures: m.failures, tries: TYPE_TRIES, now: now(), handMs: t.handMs });
+			Object.assign(m, { fresh: back.fresh, freshUntil: back.freshUntil });
+			if (back.giveUp) {
 				log.line("prompt-not-typed", { workspace: target.workspace, pane: pane.pane_id, text: `Herdr refused the command ${TYPE_TRIES} times in a row; the server types nothing more until a run frees the pane, a resident tower hands it over, or Herdr restarts` });
-				Object.assign(m, { freshUntil: undefined, lost: true, giveUp: true });
+				Object.assign(m, { lost: true, giveUp: true });
 			}
 		}
 	};

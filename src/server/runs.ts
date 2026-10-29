@@ -437,7 +437,7 @@ export function createRuns(o: RunsOptions) {
 		// The pane is not marked fresh before the read: the unstarted run left it unmarked, the look's proof sets no mark (RV13-F002), and a give-back here would clear what is known of a prompt that polls (RV14-F001).
 		try {
 			const found = await belowShell(svc.ref.record().pane, newId()).catch(() => undefined);
-			if (stopped || svc.run || waitingOf(svc).length) return; // a run is about to take the pane: its start decides
+			if (stopped || retryGate({ win, run: Boolean(svc.run), queued: waitingOf(svc).length > 0, wasBusy: false }) !== "prove") return; // a run is about to take the pane: its start decides (the gate's rule, asked again after the read)
 			const proof = tableGate(found);
 			if (proof === "unreadable") return void noticeOf(svc, { id: "start", level: "warning", kind: "start", text: "The tower could not check the standing pane for a program of yours, so it types nothing there; press Retry when it is free" });
 			const busy = [...new Set((found ?? []).map(programName))];
