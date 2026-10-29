@@ -61,10 +61,12 @@ export const queueChip = (service: TowerService | undefined, o?: Opts): string |
 export type Act = "retry" | "deliver" | "drop" | "answer" | "confirm" | "reject";
 /** `proposal`: a memory proposal's id and `rev` the snapshot carried, which its Confirm and Reject buttons name to the memory route. */
 export interface Row { id: string; level: "info" | "warning" | "error"; text: string; event?: string; proposal?: string; rev?: number; actions: Act[] }
-const START = "A run could not start: ", LATE = "An event was parked after two runs crashed with it: ";
+const START = "A run could not start: ", UNCHECKED = "The tower could not check the standing pane for a program of yours, so it types nothing there; press Retry when it is free", NOTHING_TYPED = "The tower types nothing in the standing pane: ", LATE = "An event was parked after two runs crashed with it: ";
 /** A notice the server wrote (English, src/server/runs.ts) in the page's language; one it does not know stays as written. The reasons inside (a path, a Herdr error) are the server's own text. */
 function noticeText(n: TowerService["notices"][number], o?: Opts): string {
 	if ((n.kind === "settings" || n.kind === "start") && n.text.startsWith(START)) return m.tower_notice_start({ reason: n.text.slice(START.length) }, o);
+	if (n.kind === "start" && n.text === UNCHECKED) return m.tower_notice_unchecked({}, o);
+	if (n.kind === "start" && n.text.startsWith(NOTHING_TYPED)) return m.tower_notice_nothing_typed({ reason: n.text.slice(NOTHING_TYPED.length) }, o);
 	if (n.kind === "loop") return m.tower_notice_loop({}, o);
 	if (n.kind === "late" && n.text.startsWith(LATE)) return m.tower_notice_late({ what: n.text.slice(LATE.length) }, o);
 	return n.text;
@@ -72,7 +74,7 @@ function noticeText(n: TowerService["notices"][number], o?: Opts): string {
 /** The service's notices (a refused settings check, a crash loop) and its parked events, each with its buttons. A notice about a parked event is its parked row's, so it is not drawn twice. */
 export function noticeRows(service: TowerService | undefined, o?: Opts): Row[] {
 	return [
-		...(service?.notices ?? []).filter((n) => !n.id.startsWith("parked-")).map((n): Row => ({ id: n.id, level: n.level, text: noticeText(n, o), actions: n.kind === "loop" ? ["retry"] : [] })),
+		...(service?.notices ?? []).filter((n) => !n.id.startsWith("parked-")).map((n): Row => ({ id: n.id, level: n.level, text: noticeText(n, o), actions: n.kind === "loop" || (n.kind === "start" && n.id === "start") ? ["retry"] : [] })),
 		...(service?.memory?.bossWaits ?? []).map((w): Row => ({ id: `wait-${w.id}`, level: "warning", text: m.tower_waits_for_you({ text: w.text }, o), actions: ["answer"] })),
 		...(service?.memory?.proposals ?? []).map((p): Row => ({ id: `proposal-${p.id}`, level: "warning", text: proposalText(p, o), proposal: p.id, rev: service!.memory!.rev, actions: ["confirm", "reject"] })),
 		...(service?.memory?.problem ? [{ id: "memory-unreadable", level: "warning" as const, text: service.memory.problem, actions: [] }] : []),

@@ -701,6 +701,8 @@
 	"tower_working": "Working…",
 	"tower_notice_start": "A run could not start: {reason}",
 	"tower_notice_loop": "Runs crashed or timed out again and again, so the tower stops waking. The queue is kept; Retry, or a message from the boss, wakes it again.",
+	"tower_notice_unchecked": "The tower could not check the standing pane for a program of yours, so it types nothing there; press Retry when it is free",
+	"tower_notice_nothing_typed": "The tower types nothing in the standing pane: {reason}",
 	"tower_notice_late": "An event was parked after two runs crashed with it: {what}",
 	"tower_parked_anon": "Parked: {kind}: {first}",
 	"tower_err_standing": "The tower is standing by: no run is live, so there is no terminal. Write to it in the composer; that wakes it.",
