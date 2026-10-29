@@ -283,6 +283,38 @@ test("RV10-F002 win32: the program below the shell is a nested shell (bash.exe, 
 	assert.equal(typedPrompts(), 1);
 });
 
+// B6 VM round 3c: with a nested shell (cmd, git-bash) in the standing pane Herdr refuses `agent start` (agent_pane_busy, "not an available shell") and no program is named, so the notice was Herdr's raw error.
+const NOT_AT_SHELL = "The standing pane is not at its own shell: a nested shell or a program runs there. Leave it, then press Retry";
+
+test("VM 3c win32: a nested shell in the standing pane: Herdr's refusal becomes one plain notice (no raw error, no program named) with Retry, translated; the hold and F10 stay", async () => {
+	const { noticeRows } = await import("../gui/towermodel.ts");
+	const { s } = await winSetup();
+	world.procTable = [row(SHELL_PID, 1, "powershell.exe"), row(1234, SHELL_PID, "conhost.exe"), row(7777, SHELL_PID, "bash.exe")];
+	await until(() => typedPrompts() === 1, "the first prompt typed into the new pane");
+	tower().incoming(from, { id: "m1", content: { text: "one" } });
+	await until(async () => (await status(s)).state === "held", "the service to be held");
+	const service = await status(s);
+	assert.equal(starts(), 3);
+	assert.deepEqual(service.notices.filter((n) => n.kind === "start").map((n) => n.text), [NOT_AT_SHELL]);
+	assert.ok(!service.notices.some((n) => /agent_pane_busy|busy with/.test(n.text)));
+	await sleep(300);
+	assert.equal(typedPrompts(), 1, "F10: nothing typed into the nested shell");
+	for (const o of [undefined, { locale: "zh-TW" }] as const) {
+		const rows = noticeRows(service as never, o as never).filter((r) => r.id === "start");
+		assert.equal(rows.length, 1);
+		assert.deepEqual(rows[0]!.actions, ["retry"]);
+		if (o) assert.ok(!/press Retry|nested shell/.test(rows[0]!.text) && /[\u4e00-\u9fff]/.test(rows[0]!.text), "translated");
+		else assert.equal(rows[0]!.text, NOT_AT_SHELL);
+	}
+});
+
+test("VM 3c: a program that is named keeps its own notice, not the nested-shell one", async () => {
+	const { s } = await winSetup();
+	tower().incoming(from, { id: "m1", content: { text: "one" } });
+	await until(async () => (await status(s)).state === "held", "the service to be held");
+	assert.deepEqual((await status(s)).notices.filter((n) => n.kind === "start").map((n) => n.text), ["A run could not start: the standing pane is busy with node.exe; the tower starts again when it has ended, or on Retry"]);
+});
+
 test("RV10-F002 win32: Herdr refused the start with a code other than agent_pane_busy: held, nothing typed", async () => {
 	const { s } = await winSetup();
 	world.procTable = [row(SHELL_PID, 1, "powershell.exe"), row(7777, SHELL_PID, "node.exe")];

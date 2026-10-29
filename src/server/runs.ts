@@ -422,6 +422,8 @@ export function createRuns(o: RunsOptions) {
 		const base = pointer ? { from: pointer.startedAt, after: pointer.lastAt } : {};
 		return got.ok ? { file: got.file, info: { resumed: true, ...base, turns: pointer!.turns } } : { info: { resumed: false, ...(pointer ? { after: pointer.lastAt } : {}), turns: 0, why: got.why } };
 	};
+	/** The start notice for a pane Herdr calls busy with no program to name (the GUI translates this exact text, gui/towermodel.ts). */
+	const NOT_AT_SHELL = "The standing pane is not at its own shell: a nested shell or a program runs there. Leave it, then press Retry";
 	const busyText = (busy: string[]) => `the standing pane is busy with ${busy.slice(0, NAMED_MAX).join(", ")}${busy.length > NAMED_MAX ? ` and ${busy.length - NAMED_MAX} more` : ""}; the tower starts again when it has ended, or on Retry`;
 	/**
 	 * Windows, after a start that never started pi: the foreground list shows the shell alone whatever runs under it, so the prompt command is typed again only on a fresh read of the process table that succeeds and
@@ -496,7 +498,9 @@ export function createRuns(o: RunsOptions) {
 				error("run-start", `${rec.id}: ${(cause as Error).message}`);
 				svc.paneBusy = busy.length ? busy : undefined;
 				svc.busyPids = busy.length ? programs.flatMap((p) => (typeof p.pid === "number" ? [p.pid] : [])) : undefined;
-				noticeOf(svc, { id: "start", level: "warning", kind: "start", text: `A run could not start: ${busy.length ? busyText(busy) : (cause as Error).message}` });
+				// Herdr refused the start as busy and no program of the boss's is named: a nested shell (cmd, git-bash) holds the pane, which is no program to name; the notice says so, not Herdr's raw error.
+				const nested = !started && rec.kind === "local" && !busy.length && herdrCode(cause) === "agent_pane_busy";
+				noticeOf(svc, { id: "start", level: "warning", kind: "start", text: nested ? NOT_AT_SHELL : `A run could not start: ${busy.length ? busyText(busy) : (cause as Error).message}` });
 				terminate(active, "crashed");
 				// The tick does not type /quit into a pane whose pi never claimed: what the pane holds of this run is ended below.
 				active.escalated ??= now();

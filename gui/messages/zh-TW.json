@@ -575,6 +575,7 @@
 	"tower_working": "處理中…",
 	"tower_notice_start": "run 無法啟動：{reason}",
 	"tower_notice_loop": "run 一再當機或逾時，所以塔台不再自動喚醒。佇列仍保留；按重試，或由老闆送一則訊息，就會再喚醒它。",
+	"tower_notice_not_at_shell": "常駐窗格不在它自己的 shell：裡面有巢狀 shell 或程式在跑。請先離開它，再按重試",
 	"tower_notice_unchecked": "塔台無法檢查常駐窗格裡有沒有你的程式，所以不在那裡輸入任何東西；窗格空出來後請按重試",
 	"tower_notice_nothing_typed": "塔台不在常駐窗格輸入任何東西：{reason}",
 	"tower_notice_late": "有一則事件在兩個 run 都當機後被擱置：{what}",

@@ -701,6 +701,7 @@
 	"tower_working": "Working…",
 	"tower_notice_start": "A run could not start: {reason}",
 	"tower_notice_loop": "Runs crashed or timed out again and again, so the tower stops waking. The queue is kept; Retry, or a message from the boss, wakes it again.",
+	"tower_notice_not_at_shell": "The standing pane is not at its own shell: a nested shell or a program runs there. Leave it, then press Retry",
 	"tower_notice_unchecked": "The tower could not check the standing pane for a program of yours, so it types nothing there; press Retry when it is free",
 	"tower_notice_nothing_typed": "The tower types nothing in the standing pane: {reason}",
 	"tower_notice_late": "An event was parked after two runs crashed with it: {what}",
