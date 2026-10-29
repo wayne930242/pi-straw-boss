@@ -7,6 +7,7 @@ import { fileOf } from "../src/server/record.ts";
 import { callControl } from "../src/server/socket.ts";
 import { readRun } from "../src/server/towerrunstore.ts";
 import { deleteService } from "../src/server/towerstore.ts";
+import { TOWER_LABEL } from "../src/herdr.ts";
 import { idleShell, standinMessage } from "../src/server/standing.ts";
 
 // The standing pane between runs (docs/specs/2026-10-26-sb-backend.md, The tower service, The standing pane): the sb server types the tower prompt's command into the pane's shell, and while that
@@ -280,6 +281,43 @@ test("Windows gives shell_pid and a foreground group that are always the shell's
 	assert.equal(world.herdr.typed.length, 1, "the pane is not fresh: no typing, whatever the group says");
 	const lost = () => readFileSync(fileOf(world.slot, "log"), "utf8").split("\n").filter((l) => /prompt-lost/.test(l));
 	assert.equal(lost().length, 1, "said once, not at every look");
+});
+
+test("a resident tower's hand-over frees its own pane: on Windows the prompt is typed once when the resident pi has quit, and never while it still runs there (VM round 2)", async () => {
+	world.runPlatform = "win32";
+	world.herdr.winShell = true;
+	world.herdr.shellForeground = true;
+	const s = await world.start();
+	await s.handle.ready;
+	// The resident's pi runs in its pane (a node program in the foreground); it hands the pane over and quits.
+	world.herdr.addTab("wA:t9", TOWER_LABEL, "wA:p9", "shell");
+	world.herdr.pane("wA:p9").processes = [{ name: "node.exe", argv0: "node.exe", pid: 7001, cmdline: "node pi" }];
+	const ensured = await ask(s, { cmd: "ensure-tower", workspace: "wA", pane: "wA:p9" });
+	assert.equal(ensured.ok, true);
+	assert.equal(ensured.pane, "wA:p9");
+	await sleep(300);
+	assert.equal(world.herdr.typed.length, 0, "nothing is typed while the resident pi runs in the pane");
+	world.herdr.pane("wA:p9").processes = [];
+	await until(() => world.herdr.typed.length === 1, "the prompt typed into the freed pane");
+	assert.equal(world.herdr.typed[0]!.pane, "wA:p9");
+	await sleep(300);
+	assert.equal(world.herdr.typed.length, 1, "typed once");
+	assert.doesNotMatch(readFileSync(fileOf(world.slot, "log"), "utf8"), /prompt-lost/);
+});
+
+test("a hand-over that finds the service already adopted (a retry, or a server that waited for the resident) still marks the freed pane fresh, and does not disturb a prompt that polls", async () => {
+	world.runPlatform = "win32";
+	world.herdr.winShell = true;
+	world.herdr.shellForeground = true;
+	const { s, pane } = await setup();
+	await until(() => world.herdr.typed.length === 1, "the first typing");
+	const prompt = new FakePrompt(s, pane);
+	await until(() => world.herdr.pane(pane).agent === "tower", "the stand-in");
+	assert.equal((await ask(s, { cmd: "ensure-tower", workspace: "wA", pane })).ok, true);
+	await sleep(300);
+	assert.equal(world.herdr.pane(pane).agent, "tower", "the stand-in stays");
+	assert.equal(world.herdr.typed.length, 1, "the prompt that polls is not typed over");
+	prompt.stop();
 });
 
 test("on Windows a prompt that was typed once and never started is logged prompt-not-starting, not prompt-lost (RV-F002)", async () => {

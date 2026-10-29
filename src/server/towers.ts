@@ -547,7 +547,7 @@ export function createTowers(o: TowersOptions): Towers {
 		const sessions = await o.sessions().catch(() => undefined);
 		return !sessions || sessions.some((x) => x.id === held) ? held : undefined;
 	};
-	/** `fresh`: the standing pane was made by this call, so it is known to be a shell nobody has used (standing.ts types into it where Herdr cannot tell an idle shell from a busy one). */
+	/** `fresh`: the standing pane was made by this call, or handed over by a resident tower that is quitting, so it is known to be a shell nobody has used (standing.ts types into it where Herdr cannot tell an idle shell from a busy one). */
 	const adopt = (record: ServiceRecord, fresh = false): Live => {
 		const l: Live = { record, state: "registering", stopped: false, requests: new Map() };
 		const prior = services.get(record.workspace);
@@ -685,6 +685,7 @@ export function createTowers(o: TowersOptions): Towers {
 		if (existing && !existing.stopped) {
 			// A pane list that fails is unknown: the ask fails, the service stays.
 			if (await locate(existing, false)) {
+				if (hint === existing.record.pane) standing.handed(ws);
 				if (existing.state !== "waiting") await Promise.race([existing.starting, sleep(o.registerMs ?? REGISTER_WAIT_MS)]);
 				return answer(existing, false);
 			}
@@ -722,7 +723,7 @@ export function createTowers(o: TowersOptions): Towers {
 		await cfg.api("tab.move", { tab_id: pane.tab_id, insert_index: 0 }).catch((cause: Error) => error("tab-move", cause.message));
 		const record: ServiceRecord = { ...draft.record, pane: pane.pane_id, tab: pane.tab_id, ...(pane.cwd ?? dir ? { cwd: pane.cwd ?? dir } : {}), created: new Date(now()).toISOString() };
 		writeService(slot, record);
-		const l = adopt(record, made);
+		const l = adopt(record, made || Boolean(given));
 		log.line("tower-opened", { workspace: ws, id: record.id, pane: record.pane, tab: record.tab });
 		await Promise.race([l.starting, sleep(o.registerMs ?? REGISTER_WAIT_MS)]);
 		return answer(l, true);

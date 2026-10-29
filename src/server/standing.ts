@@ -296,6 +296,14 @@ export function createStanding(o: StandingOptions) {
 			Object.assign(m, { parked: false, launched: undefined, seen: undefined, reported: undefined, misses: 0, typings: 0, fresh: true, noStart: false, lost: false });
 			void tick(workspace);
 		},
+		/** A resident tower handed this pane over and is quitting: once its pi is gone the pane is a bare shell the server just got back, as after a run. A prompt that polls is left alone. */
+		handed(workspace: string) {
+			const m = mines.get(workspace);
+			if (!m || present(m)) return;
+			m.fresh = true;
+			m.lost = false;
+			void tick(workspace);
+		},
 		/** A new Herdr server: every pane is a fresh shell, so nothing is believed of what was there. */
 		reset() {
 			for (const m of mines.values()) Object.assign(m, { seen: undefined, leaving: false, parked: false, launched: undefined, reported: undefined, misses: 0, unsupported: undefined, typings: 0, fresh: true, noStart: false, lost: false });
