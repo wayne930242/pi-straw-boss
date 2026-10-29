@@ -143,8 +143,18 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 
 	/** The boss wrote: what arrived together is one message; an empty one wakes the tower without words. */
 	const flush = async () => {
-		const message = batch.join("\n").trim() || NO_MESSAGE;
+		const lines = batch;
 		batch = [];
+		// A batch of one line that starts with `/` is for the prompt, never the tower (a `/reload` typed from habit is no message): `/new` alone starts a new boss session, `/quit` alone leaves the pane to the shell
+		// as Ctrl+D does, and any other is refused with what the prompt takes. `//` at the start, or a space before the `/`, keeps the line a message (posted as typed; the space is trimmed with the rest of the message's
+		// edges). A paste of several lines is one message whatever its first line is, and its `/` lines are never obeyed (a log that starts with a path, a file list with `/quit` in it).
+		if (lines.length === 1 && lines[0]!.startsWith("/") && !lines[0]!.startsWith("//")) {
+			const word = lines[0]!.trim();
+			if (word === "/new") return void (await startOver());
+			if (word === "/quit") return leave();
+			return void say(text.unknownCommand(clean(word.split(/\s+/)[0], 40)));
+		}
+		const message = lines.join("\n").trim() || NO_MESSAGE;
 		posting = true;
 		try {
 			await source.post(message);
@@ -180,14 +190,6 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 	rl = createInterface({ input: o.input, output: o.output, prompt: PROMPT, terminal });
 	rl.on("line", (raw) => {
 		if (finished || posting) return;
-		// A first line that starts with `/` is for the prompt, never the tower (a `/reload` typed from habit is no message): `/new` alone starts a new boss session, `/quit` alone leaves the pane to the shell as Ctrl+D does,
-		// and any other is refused here with what the prompt takes. `//` at the start, or a space before the `/`, keeps the line a message (posted as typed; the space is trimmed with the rest of the message's edges).
-		if (!batch.length && raw.startsWith("/") && !raw.startsWith("//")) {
-			const word = raw.trim();
-			if (word === "/new") return void startOver();
-			if (word === "/quit") return leave();
-			return void say(text.unknownCommand(clean(word.split(/\s+/)[0], 40)));
-		}
 		batch.push(raw);
 		clearTimeout(batchTimer);
 		batchTimer = setTimeout(() => void flush(), PASTE_MS);

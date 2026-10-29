@@ -510,6 +510,39 @@ test("in the middle of a pasted message a line that starts with / is part of it"
 	assert.equal(await ended(p.done), 0);
 });
 
+test("a paste of several lines is one message whatever its first line is: a log that starts with a path is posted whole, and a /quit or /new line inside it is never obeyed (RV10-F001)", async () => {
+	const source = new FakeSource();
+	const p = screen(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("/usr/local/bin/foo exited 1:\nTraceback line 2\nline 3\n");
+	await until(() => source.posted.length === 1, "the first post");
+	p.input.write("/var/log/x.log is full\n/quit\nmore text\n");
+	await until(() => source.posted.length === 2, "the second post");
+	p.input.write("/new\nplease look at X\n");
+	await until(() => source.posted.length === 3, "the third post");
+	assert.deepEqual(source.posted, ["/usr/local/bin/foo exited 1:\nTraceback line 2\nline 3", "/var/log/x.log is full\n/quit\nmore text", "/new\nplease look at X"]);
+	assert.equal(source.left, 0, "no /quit inside a paste leaves the pane");
+	assert.equal(source.freshed, 0, "no /new inside a paste starts a session");
+	assert.ok(!/is not a command here/.test(p.text()), "a paste is not refused either");
+	starting(source);
+	assert.equal(await ended(p.done), 0);
+});
+
+test("a single line that starts with / is judged on its own even when more lines follow after the paste window: /new, /quit, and a refusal each act once", async () => {
+	const source = new FakeSource();
+	const p = screen(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	p.input.write("/new\n");
+	await until(() => source.freshed === 1, "the new session");
+	p.input.write("/reload\n");
+	await until(() => /\/reload is not a command here/.test(p.text()), "the refusal");
+	assert.deepEqual(source.posted, []);
+	p.input.write("/quit\n");
+	assert.equal(await ended(p.done), 0);
+	assert.equal(source.left, 1);
+	assert.deepEqual(source.posted, []);
+});
+
 test("the prompt's words for the refusal exist in Traditional Chinese too", () => {
 	const text = textsFor("zh-TW").unknownCommand("/reload");
 	assert.match(text, /\/reload/);
