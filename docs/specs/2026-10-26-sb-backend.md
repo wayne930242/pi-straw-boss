@@ -730,9 +730,9 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
     cookie, and remote access, when wanted, comes back with the serve entry pointed at the new remote listener. A one-time pairing link or code in
     flight dies with the old process (they are in memory);
   - **the store is missing, corrupt or stale, or a port could not be got back and the listener moved** (a holder kept it, the remote port too). *Corrupt*
-    is a link or a file another account owns, text that is not JSON, or text that is not exactly this shape. *Stale* is a good store whose token is not the one
-    `server.json`'s `gui` block (else `gui.json`) names: a build that ignores the store (a downgrade, or a 0.45 host's hand-over) ran on these ports in
-    between and drew a token of its own, and that one is the token the boss last saw (RVD27-F001). With neither record the store alone is kept: the listener draws a new token and CSRF secret, unpairs every device (a device's cookie is scoped to
+    is a link or a file another account owns, text that is not JSON, or text that is not exactly this shape. *Stale* is a good store whose token is not the token
+    either record (`server.json`'s `gui` block or `gui.json`) names: a build that ignores the store (a downgrade, or a 0.45 host's hand-over) ran on these ports in
+    between and drew a token of its own, and that one is the token the boss last saw (RVD27-F001). With neither record the store alone is kept. In these cases the listener draws a new token and CSRF secret, unpairs every device (a device's cookie is scoped to
     `Path=/<token>/`; the count is logged as `devices-cleared`), and writes the store anew. The log has one `gui-start` line with `newToken=true` and
     `why=missing`, `corrupt`, `stale` or `moved`, and never the secrets (a link or foreign-owned file in the store's place is `corrupt`, not `missing`, since something is there). The first start after an upgrade from 0.47 has no store, so it rotates once;
   - **the boss rotates on purpose:** `/boss gui rotate` (after a confirm that says what it costs) sends the control request `gui-rotate`, the boss's own

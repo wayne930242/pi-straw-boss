@@ -902,8 +902,24 @@ test("RVD27B-F001: a 0.45 host that rewrote only gui.json (server.json still car
 	assert.match(starts(next).at(-1)!, /newToken=true why=stale/);
 });
 
-test("RVD27-F006: GUI commands wait for a rotation in flight: a gui and a gui-stop asked meanwhile neither move the ports nor leave a second listener", async () => {
+test("RVD27C-F003: a server.json that names another token than the store's makes the store stale although gui.json matches: a new token, why=stale", async () => {
 	const ts = fakeTailscale(), h = await host({ tailscale: ts.run });
+	const before = h.gui(), cookie = await pairPhone(h);
+	await h.ask("restart", { reason: "test", by: "test" });
+	await h.handle.done;
+	const record = JSON.parse(readFileSync(fileOf(h.slot, "record"), "utf8")) as { gui: Record<string, unknown> };
+	writeFileSync(fileOf(h.slot, "record"), JSON.stringify({ ...record, gui: { ...record.gui, token: "c".repeat(32) } })); // gui.json still carries the store's token
+	const next = await host({ tailscale: ts.run });
+	assert.notEqual(next.gui().token, before.token, "the store's token is not brought back");
+	assert.equal(pairedCount(next), 0);
+	assert.equal((await remoteGet(next.gui().remotePort, `/${next.gui().token}/`, cookie)).status, 401);
+	assert.match(starts(next).at(-1)!, /newToken=true why=stale/);
+});
+
+test("RVD27-F006: GUI commands wait for a rotation in flight: a gui and a gui-stop asked meanwhile neither move the ports nor leave a second listener", async () => {
+	let waiters = 0, arrive!: () => void;
+	const both = new Promise<void>((r) => (arrive = r));
+	const ts = fakeTailscale(), h = await host({ tailscale: ts.run, gui: { waiting: () => void (++waiters === 2 && arrive()) } });
 	await pairPhone(h);
 	const before = h.gui();
 	let release!: () => void, reach!: () => void, hold: Promise<void> | undefined;
@@ -912,7 +928,7 @@ test("RVD27-F006: GUI commands wait for a rotation in flight: a gui and a gui-st
 	const rotating = h.ask("gui-rotate");
 	await reached;
 	const meanwhile = Promise.all([h.ask("gui", { boss: true }), h.ask("gui-stop")]);
-	await new Promise((r) => setTimeout(r, 50));
+	await both;
 	release();
 	const [rotated, [shown, stopped]] = [await rotating, await meanwhile];
 	assert.equal(rotated.ok, true);

@@ -63,6 +63,8 @@ export interface GuiHostOptions {
 	sessions(): Promise<Session[]>;
 	/** A gate or an approval that closed with an explicit yes, as the dialog hub saw it (allows.ts): the tower service takes an ally run's gated tool call only against one. */
 	onAllow?(note: AllowNote): void;
+	/** Called each time a GUI request starts waiting for a rotation in flight (a test orders its asks by it). */
+	waiting?(): void;
 	/** Whether the process a gui.json names still runs as that process (pid alive, started when the record says): only then is it asked for anything. */
 	runs?(record: Pick<GuiRecord, "pid" | "started">): boolean;
 	/** A process's start time once it is known (Windows: a background read; `startOf` is undefined until it is in); undefined when it cannot be told. */
@@ -353,7 +355,10 @@ export function createGuiHost(o: GuiHostOptions) {
 			if (o.listen === false || !["gui", "gui-stop", "gui-remote", "gui-pair", "gui-rotate"].includes(request.cmd)) return undefined;
 			if (closing) return { ok: false, error: "restarting" };
 			// A rotation in flight is finished first: a start meanwhile would bind the ports before the old listener let go, or read the secrets that are being dropped.
-			while (rotating) await rotating.catch(() => {});
+			while (rotating) {
+				o.waiting?.();
+				await rotating.catch(() => {});
+			}
 			if (request.cmd === "gui-rotate") {
 				const done = (rotating = rotate().finally(() => (rotating = undefined)));
 				return done.catch(gone);

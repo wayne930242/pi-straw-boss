@@ -361,8 +361,10 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 		(deps.signals ?? ((leave) => (["SIGTERM", "SIGINT", "SIGHUP"] as const).forEach((signal) => process.once(signal, leave))))(() => void handle.shutdown(0).catch(() => {}));
 		// A crash that leaves the remote serve entry up lets a process that binds the dead remote port see the paired phones' tokens (RVD27-F002): a fatal JS error takes the entry down on the way out, as a signal does.
 		(deps.fatal ?? onFatal)((error) => {
-			void handle.shutdown(1).catch(() => {});const text = (() => { try { return error instanceof Error ? error.stack ?? error.message : String(error); } catch { return "<unprintable>"; } })();
-			err(`fatal: ${text}\n`);});
+			void handle.shutdown(1).catch(() => {});
+			const text = (() => { try { return error instanceof Error ? error.stack ?? error.message : String(error); } catch { return "<unprintable>"; } })();
+			err(`fatal: ${text}\n`);
+		});
 		void handle.ready.then(ready);
 		return handle.done;
 	}

@@ -446,6 +446,30 @@ test("RVD27B-F002/F003: onFatal listens to both events, leaves once, arms the ex
 	assert.match(said, /fatal: <unprintable>/);
 });
 
+test("RVD27C-F002: without a fatal dependency cli listens through onFatal on the process, and onFatal's own defaults end the process with code 1 after the bound", async (t) => {
+	const before = { x: process.listenerCount("uncaughtException"), r: process.listenerCount("unhandledRejection") };
+	const f = fakeServer();
+	await cli(["serve"], { server: f.server, signals: f.signals, err: () => {} });
+	assert.equal(process.listenerCount("uncaughtException"), before.x + 1, "the default wiring listens for uncaught exceptions");
+	assert.equal(process.listenerCount("unhandledRejection"), before.r + 1, "and for unhandled rejections");
+	for (const event of ["uncaughtException", "unhandledRejection"] as const) process.removeListener(event, process.listeners(event).at(-1)!);
+	const { onFatal } = await import("../src/server/fatal.ts");
+	const { EventEmitter } = await import("node:events");
+	const proc = new EventEmitter(), exits: unknown[] = [], realExit = process.exit;
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	process.exit = ((code?: number) => void exits.push(code)) as never;
+	try {
+		onFatal(() => {}, { proc: proc as never });
+		proc.emit("uncaughtException", new Error("x"));
+		t.mock.timers.tick(19_999);
+		assert.deepEqual(exits, [], "not before the bound");
+		t.mock.timers.tick(1);
+		assert.deepEqual(exits, [1], "the process ends with code 1 at the bound");
+	} finally {
+		process.exit = realExit;
+	}
+});
+
 test("serve with nothing running runs a serve server in the foreground, clears a stopped left by a detached server, and releases the lock once it is ready", async () => {
 	mkdirSync(world.slot.dir, { recursive: true });
 	writeRecord(world.slot, { pid: 7, version: "0.44.0", herdr: world.slot.herdr, mode: "detached", desk: false, intercom: {}, log: "/l", socket: "/nowhere", secret: "s".repeat(64), intercomId: "sb-server-00000000", stopped: true });
