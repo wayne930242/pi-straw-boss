@@ -72,14 +72,14 @@ export function proofGate(f: { terminal: string | undefined; pane: { terminal_id
 
 /**
  * An ally run's pane is ours to close and unmark when its terminal still holds the proof (`holds`; `bind`, a terminal not known at the split, only where no Herdr restart came between). After a Herdr restart every pane has
- * a new terminal, so a restored pane is told by three facts together: the tower's seat is proven again on this Herdr (`seated`), the pane is listed in the tab the tower's record names (`inTowerTab`), and it lists the agent
- * Herdr resumed in it (`resumed`). A lost session's stranger under a reused id has none of the last; a pane that fails any of these is not touched (F10).
+ * a new terminal, so a restored pane is told by three facts together: the tower's seat is proven again on this Herdr (`seated`), the pane is listed in the tab the tower's record names (`inTowerTab`), and the pane's agent session is
+ * the run's own session file (`resumed`: Herdr resumed that very pi in it; any other agent, even the boss's own pi, is not). A lost session's stranger under a reused id has none of the last; a pane that fails any of these is not touched (F10).
  */
 export const allyCloseGate = (f: { proof: ProofVerdict; restart: boolean; seated: boolean; inTowerTab: boolean; resumed: boolean }): boolean =>
 	f.proof === "holds" || (f.proof === "bind" && !f.restart) || (f.seated && f.inTowerTab && f.resumed && f.proof !== "absent");
 
-/** Whether `markAllies` may write the ally mark to a pane: only a pane still in the terminal the run's split made. */
-export const allyMarkGate = (proof: ProofVerdict): boolean => proof === "holds" || proof === "bind";
+/** Whether `markAllies` may write the ally mark to a pane: only a pane still in the terminal the run's split made (`bind` only where the run knows no Herdr restart may have come between: not for a run recovered without a terminal). */
+export const allyMarkGate = (proof: ProofVerdict, unbound = false): boolean => proof === "holds" || (proof === "bind" && !unbound);
 
 /** What the desk's claim saw of the pane it names (`ensure-tower {made}`; towers.ts reads it from Herdr and from its own services). */
 export interface ClaimFacts {

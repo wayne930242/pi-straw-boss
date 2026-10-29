@@ -7,6 +7,19 @@ import { TOWER_LABEL, startPi } from "../src/herdr.ts";
 import { readFileSync } from "node:fs";
 import { fileOf } from "../src/server/record.ts";
 import { callControl } from "../src/server/socket.ts";
+import { readRun, writeRun } from "../src/server/towerrunstore.ts";
+
+const SESSION = "2026-10-29T00-00-00Z_sess1.jsonl";
+/** The ally pi claims its run and names its session file (Herdr lists it as the pane's `agent_session`), as a started pi does. */
+async function ownSession(s: Running, h: TowerWorld["herdr"], pane: string) {
+	await until(() => [...world.pis.values()].some((p) => p.pane === pane), "the ally pi");
+	const [id, pi] = [...world.pis.entries()].find(([, p]) => p.pane === pane)!;
+	await until(() => readRun(world.slot, "wA", id)?.pid, "the pid");
+	const got = await callControl(s.handle.endpoint, world.record()!.secret, { cmd: "claim", runId: id, pane, pid: pi.pid, started: `T-${pi.pid}` } as { cmd: string });
+	const token = String((got.reply as { token?: string }).token);
+	await callControl(s.handle.endpoint, world.record()!.secret, { cmd: "run-file", token, file: `/fake/${SESSION}`, session: "sess1" } as { cmd: string });
+	h.pane(pane).agent_session = { value: `/fake/${SESSION}` };
+}
 
 // RVSEAT2-F002, D2, D3: the acts that rested on a proof made earlier ask it again (startPi's retries, the ally pane's close and unmark after a Herdr restart, the boss's close of the tower tab).
 
@@ -60,6 +73,7 @@ async function allyRun(restore: boolean, platform: "darwin" | "win32") {
 	await until(() => world.herdr.commands("agent", "start").length === 1, "its start");
 	const h = world.herdr;
 	const pane = h.panes.find((p) => p.tokens?.sb_role === "ally")?.pane_id ?? h.panes.at(-1)!.pane_id;
+	await ownSession(s, h, pane);
 	if (restore) h.restart(false);
 	else { h.lose(); h.addPane(pane, "wA:t999", "shell"); }
 	h.calls.length = 0;
@@ -163,6 +177,7 @@ async function liveAlly(platform: "darwin" | "win32", opts: { busy?: number } = 
 	await until(() => world.herdr.commands("agent", "start").length >= 1, "its start");
 	const h = world.herdr;
 	const pane = h.panes.find((p) => p.tokens?.sb_role === "ally")?.pane_id ?? h.panes.at(-1)!.pane_id;
+	if (!opts.busy) await ownSession(s, h, pane);
 	return { s, h, pane, tab: String(ensured.tab), tower: String(ensured.pane) };
 }
 const touches = (h: TowerWorld["herdr"], pane: string) => h.calls.filter((a) => a.includes(pane) && (a[1] === "close" || a[1] === "report" || a[1] === "report-metadata" || a[1] === "clear-token"));
@@ -261,4 +276,148 @@ for (const where of ["record-ids", "fresh-ids"] as const) test(`RVSEAT4-F003 dar
 	await sleep(600);
 	assert.deepEqual(touches(h, pane), []);
 	assert.ok(!h.closed.includes(pane), "closed the stranger's pane");
+});
+
+// RVSEAT5-F001: a restored pane is the run's own only when its agent session is the run's session file; the boss's own pi or claude at the old ally id is not.
+for (const platform of ["darwin", "win32"] as const) for (const agent of ["pi", "claude"]) {
+	test(`RVSEAT5-F001 ${platform} ${agent}: lost session, the boss's ${agent} at the ally id in the glyph tab at the recorded ids: untouched`, async () => {
+		const { h, pane, tab, tower } = await liveAlly(platform);
+		h.lose();
+		h.workspaces.push({ workspace_id: "wA", label: "Desk", tokens: {} } as never);
+		h.addTab(tab, TOWER_LABEL, tower, "shell");
+		h.addPane(pane, tab, agent);
+		if (agent === "pi") h.pane(pane).agent_session = { value: "/fake/2026-10-29T00-00-01Z_boss.jsonl" };
+		h.calls.length = 0;
+		world.takeovers.forEach((cb) => cb());
+		await sleep(800);
+		assert.deepEqual(touches(h, pane), []);
+		assert.ok(!h.closed.includes(pane), "closed the boss's agent pane");
+	});
+}
+test("RVSEAT5-F001: a restored pane whose agent session is not the run's file is not closed", async () => {
+	const { h, pane } = await liveAlly("darwin");
+	h.restart(false);
+	h.pane(pane).agent_session = { value: "/fake/2026-10-29T00-00-01Z_boss.jsonl" };
+	h.calls.length = 0;
+	world.takeovers.forEach((cb) => cb());
+	await sleep(800);
+	assert.ok(!h.closed.includes(pane));
+});
+test("RVSEAT5-F001: a restored pane that lists no session is not closed, and none later by the sweep", async () => {
+	const { h, pane } = await liveAlly("darwin");
+	h.restart(false);
+	delete h.pane(pane).agent_session;
+	h.calls.length = 0;
+	world.takeovers.forEach((cb) => cb());
+	await sleep(1000);
+	assert.ok(!h.closed.includes(pane));
+});
+
+// RVSEAT5-F002: an ally run recovered after an sb server restart proves its pane by the terminal its record names; a lost session's stranger at its id is not marked or closed.
+for (const glyph of [true, false]) for (const agent of ["shell", "pi"]) test(`RVSEAT5-F002 glyph=${glyph} ${agent}: server restart + lost session, recovered ally run ends, stranger at the ally id: untouched`, async () => {
+	world.runTimers = { lost: 300 } as never;
+	const { s, h, pane, tab, tower } = await liveAlly("darwin");
+	await s.handle.shutdown(0);
+	h.lose();
+	h.workspaces.push({ workspace_id: "wA", label: "Desk", tokens: {} } as never);
+	if (glyph) h.addTab(tab, TOWER_LABEL, tower, "shell");
+	else h.addTab("wA:t1", "1", "wA:p1", "shell");
+	h.addTab("wA:t5", "1");
+	h.addPane(pane, "wA:t5", agent);
+	for (const p of world.pis.values()) world.live.delete(p.pid);
+	h.calls.length = 0;
+	const s2 = await world.start();
+	await s2.handle.ready;
+	await sleep(4500);
+	assert.ok(!h.closed.includes(pane));
+	assert.deepEqual(touches(h, pane), []);
+});
+test("RVSEAT5-F002 control: server restart, Herdr kept: the recovered ally run's pane is closed at its end", async () => {
+	world.runTimers = { lost: 300 } as never;
+	const { s, h, pane } = await liveAlly("darwin");
+	await s.handle.shutdown(0);
+	for (const p of world.pis.values()) world.live.delete(p.pid);
+	const s2 = await world.start();
+	await s2.handle.ready;
+	await until(() => h.closed.includes(pane), "the pane closed", 6000);
+});
+test("RVSEAT5-F002 control: server restart, Herdr kept, the pi gone: the recorded terminal still proves the pane, and it is closed", async () => {
+	world.runTimers = { lost: 300 } as never;
+	const { s, h, pane } = await liveAlly("darwin");
+	await s.handle.shutdown(0);
+	Object.assign(h.pane(pane), { agent: undefined, agent_session: undefined, processes: [] });
+	for (const p of world.pis.values()) world.live.delete(p.pid);
+	const s2 = await world.start();
+	await s2.handle.ready;
+	await until(() => h.closed.includes(pane), "the pane closed", 6000);
+});
+test("RVSEAT5-F002: a recovered ally run whose record names no terminal is never bound by id alone: no mark, no close", async () => {
+	world.runTimers = { lost: 300 } as never;
+	const { s, h, pane, tab, tower } = await liveAlly("darwin");
+	await s.handle.shutdown(0);
+	const rec = readRun(world.slot, "wA", [...world.pis.keys()][0]!)!;
+	delete rec.terminal;
+	writeRun(world.slot, rec);
+	h.lose();
+	h.workspaces.push({ workspace_id: "wA", label: "Desk", tokens: {} } as never);
+	h.addTab(tab, TOWER_LABEL, tower, "shell");
+	h.addTab("wA:t5", "1");
+	h.addPane(pane, "wA:t5", "shell");
+	for (const p of world.pis.values()) world.live.delete(p.pid);
+	h.calls.length = 0;
+	const s2 = await world.start();
+	await s2.handle.ready;
+	await sleep(4500);
+	assert.ok(!h.closed.includes(pane));
+	assert.deepEqual(touches(h, pane), []);
+});
+
+// RVSEAT5-F003: the ally start's busy retries stop when the run has ended or the pane is no longer in the terminal its split made.
+for (const where of ["glyph-tab", "other-tab"] as const) for (const takeover of [true, false]) test(`RVSEAT5-F003 ${where} takeover=${takeover}: lost session during the ally's busy start retries: no pi is started in the stranger's shell`, async () => {
+	const { h, pane, tab, tower } = await liveAlly("darwin", { busy: 1000 });
+	await sleep(100);
+	h.lose();
+	h.workspaces.push({ workspace_id: "wA", label: "Desk", tokens: {} } as never);
+	h.addTab(tab, TOWER_LABEL, tower, "shell");
+	if (where === "glyph-tab") h.addPane(pane, tab, "shell");
+	else { h.addTab("wA:t5", "1"); h.addPane(pane, "wA:t5", "shell"); }
+	await sleep(takeover ? 800 : 300);
+	h.busy = 0;
+	if (takeover) world.takeovers.forEach((cb) => cb());
+	await sleep(2500);
+	assert.equal(h.pane(pane).agent, undefined, "a pi was started in the stranger's pane");
+	assert.deepEqual(touches(h, pane), []);
+});
+test("RVSEAT5-F003: the ally start's retries stop when its run has ended", async () => {
+	const { h, pane } = await liveAlly("darwin", { busy: 1000 });
+	await sleep(100);
+	const starts = () => h.commands("agent", "start").filter((a) => a.includes(pane)).length;
+	const before = starts();
+	world.takeovers.forEach((cb) => cb());
+	await sleep(1500);
+	assert.ok(starts() <= before + 1, "retries went on after the run ended");
+});
+
+// RVSEAT5-F004: Herdr lists an agent only while it runs (scratch Herdr: a restored pane lists none until the resumed pi reports, and none after it leaves); the resumed pi is told to quit, so the fact is read at the takeover's start and kept.
+test("RVSEAT5-F004: a restored pane that listed the run's session at the takeover's start is closed though the resumed pi has left by the end", async () => {
+	const { h, pane } = await liveAlly("darwin");
+	h.restart(false);
+	let armed = true, cleared = false;
+	const push = h.calls.push.bind(h.calls);
+	h.calls.push = (...a: string[][]) => {
+		if (armed && a[0]?.[0] === "pane" && a[0][1] === "list") (armed = false, queueMicrotask(() => { cleared = !h.closed.includes(pane); Object.assign(h.panes.find((p) => p.pane_id === pane) ?? {}, { agent: undefined, agent_session: undefined }); }));
+		return push(...a);
+	};
+	world.takeovers.forEach((cb) => cb());
+	await until(() => h.closed.includes(pane), "the pane closed", 3000);
+	assert.ok(cleared, "the pi left before the run ended");
+});
+test("RVSEAT5-F004: a restored pane that never listed the run's session is left", async () => {
+	const { h, pane } = await liveAlly("darwin");
+	h.restart(false);
+	Object.assign(h.pane(pane), { agent: undefined, agent_session: undefined });
+	h.calls.length = 0;
+	world.takeovers.forEach((cb) => cb());
+	await sleep(1000);
+	assert.ok(!h.closed.includes(pane));
 });

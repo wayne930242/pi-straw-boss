@@ -306,7 +306,8 @@ test("allyCloseGate: holds, or a re-proven seat with a resumed pane in the tower
 });
 import { allyMarkGate } from "../src/server/typegate.ts";
 test("allyMarkGate: only a pane in its run's own terminal is marked", () => {
-	assert.deepEqual((["holds", "bind", "moved", "absent"] as const).map(allyMarkGate), [true, true, false, false]);
+	assert.deepEqual((["holds", "bind", "moved", "absent"] as const).map((p) => allyMarkGate(p)), [true, true, false, false]);
+	assert.deepEqual((["holds", "bind", "moved", "absent"] as const).map((p) => allyMarkGate(p, true)), [true, false, false, false], "a run recovered without a terminal is never bound by id alone");
 });
 test("tableGate: unreadable, program, prompt (below the shell, no program), empty", () => {
 	assert.equal(tableGate(undefined), "unreadable");
