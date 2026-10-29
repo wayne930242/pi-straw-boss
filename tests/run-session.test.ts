@@ -319,7 +319,13 @@ test("B6 VM F9: a run in the middle of a turn whose server stays out of reach fo
 	let aborts = 0;
 	const abort = r.session.abort.bind(r.session);
 	r.session.abort = async () => (aborts++, abort());
-	const busy = await busyTurn(r);
+	// The turn is the run's own (an event), not the boss's words: the boss typing would keep it (RV-F003).
+	let asked!: () => void, release!: () => void;
+	const modelAsked = new Promise<void>((resolve) => (asked = resolve)), gate = new Promise<void>((resolve) => (release = resolve));
+	r.faux.setResponses([(async () => (asked(), await gate, fauxAssistantMessage("busy done"))) as never]);
+	srv.push("e1", "EVENT");
+	await modelAsked;
+	const busy = { release, turn: Promise.resolve() };
 	down = true;
 	await until(() => r.shutdowns.length === 1, "the busy run to give up", 3000);
 	assert.equal(aborts, 1, "the model call is aborted so pi reaches its idle moment");
@@ -364,10 +370,61 @@ test("R-F004: a pi in a tower-glyph tab whose pane lost its tokens asks pane-rol
 test("B6 VM F4: a resident tower (STRAW_BOSS_ROLE=tower) in a pane the server marked is never asked pane-role, so a /reload cannot make it a hand run; it stays a normal session that hands over itself", async () => {
 	flagOn();
 	const srv = server();
-	const r = await rig(srv, { flag: null, herdr: herdrWith({ sb_role: "tower" }, TOWER_LABEL), env: { STRAW_BOSS_ROLE: "tower" } });
+	const r = await rig(srv, { flag: null, herdr: herdrWith({ sb_role: "tower" }, TOWER_LABEL), env: { STRAW_BOSS_ROLE: "tower" }, entries: [{ tower: true, workspaceId: "wA" }] });
 	assert.equal(srv.requests.filter((q) => q.cmd === "pane-role").length, 0, "no pane-role from a resident tower");
 	assert.equal(r.shutdowns.length, 0);
 	assert.ok(!r.session.getAllTools().some((t) => t.name === "tower_done"), "not a run");
+});
+
+test("B6 VM RV-F001: STRAW_BOSS_ROLE=tower alone (a migrated standing pane's tab env) does not make a pi the boss types there a resident tower: it asks pane-role and becomes a hand run", async () => {
+	flagOn();
+	const srv = server();
+	const inner = srv.ask.bind(srv);
+	srv.ask = async (request: Request): Promise<Answer> => (request.cmd === "pane-role" ? (srv.requests.push(request), { ok: true, role: "hand", claim: { ok: true, token: "TOKEN", kind: "local", run: "RUN", workspace: "wA", identity: "sb-tower-wa", label: "Alpha", brief: BRIEF, hand: true } }) : inner(request));
+	await rig(srv, { flag: null, herdr: herdrWith({ sb_role: "tower" }, TOWER_LABEL), env: { STRAW_BOSS_ROLE: "tower" } });
+	assert.equal(srv.requests.filter((q) => q.cmd === "pane-role").length, 1, "asked");
+});
+
+test("B6 VM RV-F001: a fresh resident tower (env tower, no entry, not a reload) whose server answers none stays a normal session; one whose server never answers, errors, or does not know the command is resident after the bound, not hung", async () => {
+	for (const how of ["none", "hang", "error"]) {
+		flagOn();
+		const srv = server();
+		srv.ask = async (request: Request): Promise<Answer> => {
+			if (request.cmd !== "pane-role") return { ok: true };
+			srv.requests.push(request);
+			if (how === "hang") return new Promise<Answer>(() => {});
+			return how === "error" ? { ok: false, error: "unknown command" } : { ok: true, role: "none" };
+		};
+		const began = Date.now();
+		const r = await rig(srv, { flag: null, herdr: herdrWith({ sb_role: "tower" }, TOWER_LABEL), env: { STRAW_BOSS_ROLE: "tower" }, towerAskMs: 150 });
+		assert.equal(srv.requests.filter((q) => q.cmd === "pane-role").length, 1, how);
+		assert.equal(r.shutdowns.length, 0, how);
+		assert.ok(!r.session.getAllTools().some((t) => t.name === "tower_done"), `${how}: not a run`);
+		assert.ok(Date.now() - began < 5000, `${how}: bounded`);
+	}
+});
+
+test("B6 VM RV-F003: a hand run whose server stays out of reach does not abort a turn the boss is in", async () => {
+	flagOn();
+	const srv = server();
+	const inner = srv.ask.bind(srv);
+	let down = false;
+	srv.ask = async (request: Request): Promise<Answer> => {
+		if (request.cmd === "run-poll" && down) return { ok: false, error: "no server" };
+		if (request.cmd === "pane-role") return (srv.requests.push(request), { ok: true, role: "hand", claim: { ok: true, token: "TOKEN", kind: "local", run: "RUN", workspace: "wA", identity: "sb-tower-wa", label: "Alpha", brief: BRIEF, hand: true } });
+		return inner(request);
+	};
+	const r = await rig(srv, { flag: null, herdr: herdrWith({ sb_role: "tower" }, TOWER_LABEL) });
+	await until(() => srv.requests.some((q) => q.cmd === "run-file"), "the run to be set up");
+	let aborts = 0;
+	const abort = r.session.abort.bind(r.session);
+	r.session.abort = async () => (aborts++, abort());
+	const busy = await busyTurn(r);
+	down = true;
+	await until(() => r.shutdowns.length === 1 || aborts > 0, "the run to give up", 1500).catch(() => {});
+	assert.equal(aborts, 0, "the boss's turn is not cut");
+	busy.release();
+	await busy.turn.catch(() => {});
 });
 
 test("R-F004: an unmarked pane in a tab without the tower label is never asked about", async () => {

@@ -27,6 +27,7 @@ export interface RunSideDeps {
 	/** How often a run polls, how long its claim is held, how long the server may stay out of reach (no answer, or a refusal) before the run gives up, how long a trigger may take to start the turn, and how long a pi in a tower-glyph tab waits for a server. */
 	pollMs?: number;
 	claimWaitMs?: number;
+	towerAskMs?: number;
 	lostMs?: number;
 	startMs?: number;
 	glyphWaitMs?: number;
@@ -71,7 +72,7 @@ export function eventText(e: Pick<Event, "kind" | "text" | "flag" | "from">): st
 export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunSideDeps = {}, link?: Link) {
 	const { pi, cfg, s, guiDir, tell } = kit;
 	const { env } = cfg;
-	const { pollMs = POLL_MS, claimWaitMs = CLAIM_WAIT_MS, lostMs = LOST_MS, startMs = TURN_START_MS, glyphWaitMs = GLYPH_WAIT_MS } = deps;
+	const { pollMs = POLL_MS, claimWaitMs = CLAIM_WAIT_MS, lostMs = LOST_MS, startMs = TURN_START_MS, glyphWaitMs = GLYPH_WAIT_MS, towerAskMs = 2500 } = deps;
 	pi.registerFlag("sb-run", { description: "The id of the tower run this pi was started for (set by the sb server; do not pass it by hand)", type: "string" });
 
 	let mode: "unknown" | "run" | "normal" = "unknown", claim: Claim | undefined, ctx: ExtensionContext | undefined;
@@ -124,14 +125,24 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 			await sleep(1000);
 		}
 	}
+	function residentTower(context: ExtensionContext): boolean {
+		try { return context.sessionManager.getBranch().some((e) => e.type === "custom" && e.customType === ENTRY && (e.data as { tower?: unknown } | undefined)?.tower === true); } catch { return false; }
+	}
 	/** A pi without the flag in a standing pane: the server says whether to quit, wait, or take the pane as a run of the boss's own. */
-	async function paneRole(): Promise<{ role: "none" | "quit" | "hand"; reason?: string; claim?: Claim }> {
+	async function paneRole(context: ExtensionContext, reload: boolean): Promise<{ role: "none" | "quit" | "hand"; reason?: string; claim?: Claim }> {
 		const pane = env.HERDR_PANE_ID, workspace = env.HERDR_WORKSPACE_ID;
 		// Without the flag file no sb server runs towers, so no pane is one (and a session asks Herdr nothing at its start for this).
 		if (!pane || !workspace || !towerRunsEnabled(guiDir)) return { role: "none" };
 		// A resident tower (it carries STRAW_BOSS_ROLE=tower) is no pi the boss typed into a standing pane: it hands its pane over itself (tower.ts). A /reload right after the server registered its identity finds its pane marked
 		// `tower` already, and asking would make it a hand run that never hands over and never ends (B6 VM F4).
-		if (env.STRAW_BOSS_ROLE === "tower") return { role: "none" };
+		// Only a session that already wrote its tower entry is one: the env alone stays in a migrated standing pane's tab, and a pi the boss types there is a hand run.
+		if (env.STRAW_BOSS_ROLE === "tower" && (reload || residentTower(context))) return { role: "none" };
+		// The env alone may be a fresh resident (it hands over itself) or a pi the boss typed in a migrated standing pane: the server knows which pane it holds. One short ask; no answer, an error, or an older server means resident.
+		if (env.STRAW_BOSS_ROLE === "tower") {
+			const answer = await Promise.race([ask({ cmd: "pane-role", pane, pid: process.pid, ...(startOf(process.pid) ? { started: startOf(process.pid) } : {}) }).catch(() => undefined), sleep(towerAskMs).then(() => undefined)]);
+			// SAFETY: same `pane-role` answer shape as below (runs.ts, paneRole).
+			return answer?.ok && (answer.role === "hand" || answer.role === "quit") ? (answer as unknown as { role: "quit" | "hand"; reason?: string; claim?: Claim }) : { role: "none" };
+		}
 		const mine = (await panes(cfg.run, workspace).catch(() => [])).find((p) => p.pane_id === pane);
 		const marked = RUN_PANE_ROLES.has(mine?.tokens?.sb_role ?? "");
 		// Herdr drops the pane tokens at a restart until the server publishes them again, so a pi resumed first finds its pane unmarked: a pane in a tab with the tower label is asked about too (not a resident tower the session started itself, which carries STRAW_BOSS_ROLE=tower), and waits
@@ -294,8 +305,8 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	function unreachable(why: string) {
 		outOfReach ??= cfg.now();
 		if (cfg.now() - outOfReach <= lostMs) return;
-		// pi keeps a shutdown until its next idle moment, and a model call can last many minutes: an orphaned run in the middle of a turn aborts it first (B6 VM F9).
-		if (!ending) try { if (ctx && !ctx.isIdle()) ctx.abort(); } catch { /* the session is already gone */ }
+		// A turn the boss is in (a hand run, or their words in the run) is not cut: it waits for idle as before. pi keeps a shutdown until its next idle moment, and a model call can last many minutes: an orphaned run in the middle of a turn aborts it first (B6 VM F9).
+		if (!ending && !(claim?.hand || bossSign !== undefined)) try { if (ctx && !ctx.isIdle()) ctx.abort(); } catch { /* the session is already gone */ }
 		end(`the sb server has been out of reach for ${Math.round(lostMs / 1000)} s; this run ends: ${why}`);
 	}
 	async function reclaim() {
@@ -367,7 +378,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 			if (kept && typeof flag === "string" && kept.run === flag && event.reason === "reload") claim = kept;
 			else if (typeof flag === "string" && flag) claim = await claimRun(flag);
 			else {
-				const found = await paneRole();
+				const found = await paneRole(context, event.reason === "reload");
 				if (found.role === "none") return void (mode = "normal");
 				if (found.role === "quit") {
 					mode = "run";

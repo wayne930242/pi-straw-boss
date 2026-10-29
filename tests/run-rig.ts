@@ -16,7 +16,7 @@ export type Answer = { ok: boolean; [key: string]: unknown };
 /** The scratch folder of one rig: made by `scratchRoot()`, removed by the caller with `rmSync`. */
 export const scratchRoot = () => realpathSync(mkdtempSync(join(tmpdir(), "psb-run-session-")));
 
-export async function rig(root: string, ask: (request: Request) => Promise<Answer>, sessions: AgentSession[], { flag = "RUN", herdr, glyphWaitMs = 300, lostMs = 300, gateMs = 60, sessionDir, env }: { env?: Record<string, string>; flag?: string | null; herdr?: (args: string[]) => Promise<string>; glyphWaitMs?: number; lostMs?: number; gateMs?: number; /** Keep the session in a file of this folder, as pi does (its file appears at the first assistant message); in memory by default. */ sessionDir?: string } = {}) {
+export async function rig(root: string, ask: (request: Request) => Promise<Answer>, sessions: AgentSession[], { flag = "RUN", herdr, glyphWaitMs = 300, lostMs = 300, gateMs = 60, sessionDir, env, entries, towerAskMs = 300 }: { towerAskMs?: number; entries?: unknown[]; env?: Record<string, string>; flag?: string | null; herdr?: (args: string[]) => Promise<string>; glyphWaitMs?: number; lostMs?: number; gateMs?: number; /** Keep the session in a file of this folder, as pi does (its file appears at the first assistant message); in memory by default. */ sessionDir?: string } = {}) {
 	const agentDir = join(root, "agent"), project = join(root, "project");
 	mkdirSync(agentDir, { recursive: true });
 	mkdirSync(project, { recursive: true });
@@ -36,13 +36,13 @@ export async function rig(root: string, ask: (request: Request) => Promise<Answe
 			pi.registerTool({ name: "bash", label: "bash", description: "run", parameters: Type.Object({}), execute: async () => ({ content: [{ type: "text", text: "RAN" }], details: undefined }) });
 			// SAFETY: the run mode reads only these fields of the kit (pi, cfg.env/now/sleep/promptDir/run, s, guiDir, tell).
 			const kit = { pi, cfg: { env: { HERDR_PANE_ID: "wA:p1", HERDR_WORKSPACE_ID: "wA", HERDR_TAB_ID: "wA:t1", ...env }, now: Date.now, sleep: async () => {}, promptDir: join(import.meta.dirname, "..", "prompts"), run: herdr ?? (async () => { throw new Error("no herdr"); }), link: { gateMs, home: join(root, "home"), policy: { read: () => { throw Object.assign(new Error("none"), { code: "ENOENT" }); } } } }, s: {}, guiDir: join(root, "straw-boss"), me: () => "", role: () => undefined, tell: (text: string) => void notes.push(text) } as unknown as Kit;
-			createRunMode(kit, undefined, { ask, pollMs: 20, claimWaitMs: 200, startMs: 500, lostMs, glyphWaitMs }, createLink(kit));
+			createRunMode(kit, undefined, { ask, pollMs: 20, claimWaitMs: 200, startMs: 500, lostMs, glyphWaitMs, towerAskMs }, createLink(kit));
 		}],
 	});
 	await loader.reload();
 	if (flag !== null) loader.getExtensions().runtime.flagValues.set("sb-run", flag);
 	const { session } = await createAgentSession({
-		cwd: project, agentDir, modelRuntime: runtime, model: runtime.getModel("faux", "faux-1")!, resourceLoader: loader, sessionManager: sessionDir ? SessionManager.create(project, sessionDir) : SessionManager.inMemory(),
+		cwd: project, agentDir, modelRuntime: runtime, model: runtime.getModel("faux", "faux-1")!, resourceLoader: loader, sessionManager: (() => { const sm = sessionDir ? SessionManager.create(project, sessionDir) : SessionManager.inMemory(); for (const data of entries ?? []) sm.appendCustomEntry("straw-boss", data); return sm; })(),
 		settingsManager: SettingsManager.inMemory({}),
 	} as never);
 	sessions.push(session);
