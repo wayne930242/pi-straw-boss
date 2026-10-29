@@ -71,10 +71,15 @@ export function proofGate(f: { terminal: string | undefined; pane: { terminal_id
 }
 
 /**
- * An ally run's pane after a Herdr restart: ours to close and unmark when its terminal still holds the proof (`holds`), or when the tower's seat is proven again on this Herdr and the pane is listed in the tab the tower's record names.
- * A restart always gives the pane a new terminal, so the second is the case a restored session meets; a lost session's stranger is in no proven tower tab, and is left alone.
+ * An ally run's pane is ours to close and unmark when its terminal still holds the proof (`holds`; `bind`, a terminal not known at the split, only where no Herdr restart came between). After a Herdr restart every pane has
+ * a new terminal, so a restored pane is told by three facts together: the tower's seat is proven again on this Herdr (`seated`), the pane is listed in the tab the tower's record names (`inTowerTab`), and it lists the agent
+ * Herdr resumed in it (`resumed`). A lost session's stranger under a reused id has none of the last; a pane that fails any of these is not touched (F10).
  */
-export const allyCloseGate = (f: { proof: ProofVerdict; seated: boolean; inTowerTab: boolean }): boolean => f.proof === "holds" || (f.seated && f.inTowerTab);
+export const allyCloseGate = (f: { proof: ProofVerdict; restart: boolean; seated: boolean; inTowerTab: boolean; resumed: boolean }): boolean =>
+	f.proof === "holds" || (f.proof === "bind" && !f.restart) || (f.seated && f.inTowerTab && f.resumed && f.proof !== "absent");
+
+/** Whether `markAllies` may write the ally mark to a pane: only a pane still in the terminal the run's split made. */
+export const allyMarkGate = (proof: ProofVerdict): boolean => proof === "holds" || proof === "bind";
 
 /** What the desk's claim saw of the pane it names (`ensure-tower {made}`; towers.ts reads it from Herdr and from its own services). */
 export interface ClaimFacts {
@@ -288,9 +293,9 @@ export function settleGate(f: SettleFacts): SettleVerdict {
 }
 
 /** What a read of the process table proves of the pane (Windows). */
-export type TableVerdict = "unreadable" | "program" | "empty";
-/** A read that failed proves nothing; a program of the boss's found below the shell holds the pane; only a read that succeeds and finds none proves it empty (RV12-F001). */
-export const tableGate = (found: readonly unknown[] | undefined): TableVerdict => (found === undefined ? "unreadable" : found.length ? "program" : "empty");
+export type TableVerdict = "unreadable" | "program" | "prompt" | "empty";
+/** A read that failed proves nothing; a program of the boss's found below the shell holds the pane; a tower prompt below the shell (not a program of the boss's) is there or still starting, so whatever its age the pane is not given back to be typed into (RVSEAT3-F002, RVSEAT4-F004); only a read that succeeds and finds neither proves it empty (RV12-F001). */
+export const tableGate = (found: readonly unknown[] | undefined, prompt = false): TableVerdict => (found === undefined ? "unreadable" : found.length ? "program" : prompt ? "prompt" : "empty");
 
 /** What Retry does to the pane: read the process table first (Windows), give the pane back, or leave it to the run (or the program) that holds it. */
 export type RetryPlan = "prove" | "give-back" | "none";

@@ -11,7 +11,7 @@ import { waitPastTrust } from "../trust/wait.ts";
 import type { MemorySummary, TowerView } from "../net.ts";
 import { type BossPointer, type ConversationInfo, readPointer, resumable, sessionsRoot, underRoot, writePointer } from "./bossconv.ts";
 import { herdrCode } from "./herdrcode.ts";
-import { allyCloseGate, proofGate } from "./typegate.ts";
+import { allyCloseGate, allyMarkGate, proofGate } from "./typegate.ts";
 import { isShell, nestedShells, programName, programProcs } from "./standing.ts";
 import { retryGate, runEndGate, tableGate } from "./typegate.ts";
 import { chain, isWrapper, leafOf, type Proc, type Procs, readProcs } from "./lineage.ts";
@@ -278,6 +278,8 @@ interface Svc {
 	bossAt?: number;
 	/** The ally runs of the service: one per device. */
 	allies: Map<string, Active>;
+	/** Ally panes of runs that ended with a Herdr restart while the seat was not proven (or the pane not listed) yet: asked again at the next publish, for `t.restored` after the restart (RVSEAT4-F001). */
+	leftAllies: { pane: string; until: number }[];
 	allyWake?: ReturnType<typeof setTimeout>;
 	/** Crashes and timeouts of a device's ally runs inside the loop window: three hold that device. */
 	allyCrashes: Map<string, number[]>;
@@ -454,7 +456,7 @@ export function createRuns(o: RunsOptions) {
 		try {
 			const scan = await scanBelow(svc.ref.record().pane, newId()).catch(() => undefined), found = scan?.programs;
 			if (stopped || retryGate({ win, run: Boolean(svc.run), queued: waitingOf(svc).length > 0, wasBusy: false }) !== "prove") return; // a run is about to take the pane: its start decides (the gate's rule, asked again after the read)
-			const proof = tableGate(found);
+			const proof = tableGate(found, scan?.prompt === true);
 			if (proof === "unreadable") return void noticeOf(svc, { id: "start", level: "warning", kind: "start", text: "The tower could not check the standing pane for a program of yours, so it types nothing there; press Retry when it is free" });
 			const busy = [...new Set((found ?? []).map(programName))];
 			if (proof === "program") {
@@ -463,8 +465,7 @@ export function createRuns(o: RunsOptions) {
 				svc.state = "held";
 				return void noticeOf(svc, { id: "start", level: "warning", kind: "start", text: `The tower types nothing in the standing pane: ${busyText(busy)}` });
 			}
-			// The tower prompt is below the shell: whatever its age, the pane is not given back to be typed into (F10; RVSEAT3-F002).
-			if (scan?.prompt) return;
+			if (proof === "prompt") return;
 			svc.paneUnproven = undefined;
 			svc.ref.freed({ keepParked: true });
 		} finally {
@@ -638,13 +639,42 @@ export function createRuns(o: RunsOptions) {
 	 * tower's publish writes them again (`markAllies`); a pane that cannot be placed (Herdr does not know the tower) keeps its role alone. A failed write waits for the next one.
 	 */
 	const markAllies = async (svc: Svc, towerKey?: string | null) => {
+		await sweepAllies(svc);
 		const live = [...svc.allies.values()].filter((a) => a.rec.pane && !a.ended);
 		if (!live.length) return;
 		const key = towerKey === undefined ? await svc.ref.towerKey().catch(() => undefined) : towerKey ?? undefined;
 		const kids = key ? allyKids(key, live.map((a) => ({ pane: a.rec.pane, label: a.rec.deviceLabel ?? a.rec.device ?? "?" }))) : [];
+		// Only a pane still in the terminal its run's split made is marked: after a Herdr restart an id may name a pane of the boss's own (F10).
+		const listed = await panes(o.run, svc.ref.workspace).catch(() => undefined);
 		for (const a of live) {
+			if (!listed || !allyMarkGate(proofGate({ terminal: a.terminal, pane: listed.find((p) => p.pane_id === a.rec.pane) }))) continue;
 			const kid = kids.find((k) => k.pane === a.rec.pane);
 			await report(o.run, "pane", a.rec.pane, { sb_role: "ally", sb_order: kid?.order ?? null, sb_mark: kid?.mark ?? null, sb_indent: kid?.indent ?? null, sb_name: kid?.name ?? null }).catch(() => {});
+		}
+	};
+	/** Whether an ally run's pane is ours to close now (typegate.ts `allyCloseGate`), and whether a later look may still prove it (`wait`: the pane is not listed, or the seat is not proven yet). */
+	const allyVerdict = async (svc: Svc, pane: string, terminal: string | undefined, restart: boolean): Promise<{ ours: boolean; wait: boolean }> => {
+		try {
+			const listed = (await panes(o.run, svc.ref.workspace)).find((p) => p.pane_id === pane);
+			const proof = proofGate({ terminal, pane: listed });
+			const seated = !!listed && proof !== "holds" && await svc.ref.proven();
+			const ours = allyCloseGate({ proof, restart, seated, inTowerTab: !!listed && listed.tab_id === svc.ref.record().tab, resumed: !!listed?.agent });
+			return { ours, wait: !ours && (!listed || !seated) };
+		} catch {
+			return { ours: false, wait: true };
+		}
+	};
+	/** Asks again for the ally panes a restart left undecided (RVSEAT4-F001): at each publish, until the recover time has passed. */
+	const sweepAllies = async (svc: Svc) => {
+		if (!svc.leftAllies.length) return;
+		const at = now(), rest = svc.leftAllies.filter((l) => l.until > at).slice(0, 16);
+		svc.leftAllies = [];
+		for (const l of rest) {
+			const v = await allyVerdict(svc, l.pane, undefined, true);
+			if (v.ours) {
+				await clearOrder(o.run, [l.pane]);
+				await o.run(["pane", "close", l.pane]).catch(() => {});
+			} else if (v.wait) svc.leftAllies.push(l);
 		}
 	};
 	/** A Herdr agent name is lowercase, up to 32 characters, and unique per run. */
@@ -859,10 +889,9 @@ export function createRuns(o: RunsOptions) {
 		const svc = a.svc, identity = svc.ref.record().id;
 		// The pane is closed once pi has exited: a pane that pi leaves returns to its shell and would stay (a started pi that is still there goes with it).
 		// After a new Herdr came back the id may name a pane of the boss's own: the pane is closed and unmarked only when it is listed in the terminal the ally run's pane ran in (typegate.ts `proofGate`).
-		const ours = a.rec.pane && (outcome !== "herdr-restart" || (await panes(o.run, svc.ref.workspace).then(async (list) => {
-			const pane = list.find((p) => p.pane_id === a.rec.pane);
-			return allyCloseGate({ proof: proofGate({ terminal: a.terminal, pane }), seated: !!pane && await svc.ref.proven(), inTowerTab: !!pane && pane.tab_id === svc.ref.record().tab });
-		}, () => false)));
+		const pane = a.rec.pane, verdict = pane ? await allyVerdict(svc, pane, a.terminal, outcome === "herdr-restart") : { ours: false, wait: false };
+		if (pane && verdict.wait && outcome === "herdr-restart") (svc.leftAllies.push({ pane, until: now() + t.restored }), ensureWatcher());
+		const ours = verdict.ours;
 		if (ours) {
 			await clearOrder(o.run, [a.rec.pane]);
 			await o.run(["pane", "close", a.rec.pane]).catch(() => {});
@@ -992,7 +1021,8 @@ export function createRuns(o: RunsOptions) {
 					}
 				}
 			}
-			if (!byRun.size) (clearInterval(watcher), (watcher = undefined));
+			for (const svc of services.values()) await sweepAllies(svc);
+			if (!byRun.size && ![...services.values()].some((v) => v.leftAllies.length)) (clearInterval(watcher), (watcher = undefined));
 		} finally {
 			lastTick = now();
 			ticking = false;
@@ -1293,7 +1323,7 @@ export function createRuns(o: RunsOptions) {
 	function attach(ref: ServiceRef): Svc {
 		const prior = services.get(ref.workspace);
 		if (prior) return (prior.ref = ref, prior);
-		const svc: Svc = { ref, state: "standing", crashes: [], notices: [], allies: new Map(), allyCrashes: new Map() };
+		const svc: Svc = { ref, state: "standing", crashes: [], notices: [], allies: new Map(), leftAllies: [], allyCrashes: new Map() };
 		services.set(ref.workspace, svc);
 		const ws = ref.workspace, live = new Set<string>();
 		for (const rec of listRuns(slot, ws).filter((r) => !r.outcome)) {

@@ -287,14 +287,33 @@ test("refusedGate: a refusal keeps the mark the pane had (a lapsing one is pushe
 });
 
 import { allyCloseGate } from "../src/server/typegate.ts";
-test("allyCloseGate: holds, or a re-proven seat with the pane in the tower's tab", () => {
+test("allyCloseGate: holds, or a re-proven seat with a resumed pane in the tower's tab", () => {
+	const yes = { seated: true, inTowerTab: true, resumed: true, restart: true };
 	const rows: [Parameters<typeof allyCloseGate>[0], boolean][] = [
-		[{ proof: "holds", seated: false, inTowerTab: false }, true],
-		[{ proof: "moved", seated: true, inTowerTab: true }, true],
-		[{ proof: "bind", seated: true, inTowerTab: true }, true],
-		[{ proof: "moved", seated: false, inTowerTab: true }, false],
-		[{ proof: "moved", seated: true, inTowerTab: false }, false],
-		[{ proof: "absent", seated: false, inTowerTab: false }, false],
+		[{ proof: "holds", seated: false, inTowerTab: false, resumed: false, restart: true }, true],
+		[{ proof: "moved", ...yes }, true],
+		[{ proof: "bind", ...yes }, true],
+		[{ proof: "bind", seated: false, inTowerTab: false, resumed: false, restart: false }, true],
+		[{ proof: "bind", seated: false, inTowerTab: false, resumed: false, restart: true }, false],
+		[{ proof: "moved", ...yes, seated: false }, false],
+		[{ proof: "moved", ...yes, inTowerTab: false }, false],
+		[{ proof: "moved", ...yes, resumed: false }, false],
+		[{ proof: "moved", seated: true, inTowerTab: true, resumed: true, restart: false }, true],
+		[{ proof: "absent", ...yes }, false],
+		[{ proof: "absent", seated: false, inTowerTab: false, resumed: false, restart: false }, false],
 	];
 	for (const [f, want] of rows) assert.equal(allyCloseGate(f), want, JSON.stringify(f));
 });
+import { allyMarkGate } from "../src/server/typegate.ts";
+test("allyMarkGate: only a pane in its run's own terminal is marked", () => {
+	assert.deepEqual((["holds", "bind", "moved", "absent"] as const).map(allyMarkGate), [true, true, false, false]);
+});
+test("tableGate: unreadable, program, prompt (below the shell, no program), empty", () => {
+	assert.equal(tableGate(undefined), "unreadable");
+	assert.equal(tableGate(undefined, true), "unreadable");
+	assert.equal(tableGate([{}]), "program");
+	assert.equal(tableGate([{}], true), "program");
+	assert.equal(tableGate([], true), "prompt");
+	assert.equal(tableGate([]), "empty");
+});
+

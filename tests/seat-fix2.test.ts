@@ -3,7 +3,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { TowerWorld } from "./tower-world.ts";
 import { type Running, sleep, until } from "./server-world.ts";
 import { SHELL_PID } from "./fakes.ts";
-import { startPi } from "../src/herdr.ts";
+import { TOWER_LABEL, startPi } from "../src/herdr.ts";
 import { readFileSync } from "node:fs";
 import { fileOf } from "../src/server/record.ts";
 import { callControl } from "../src/server/socket.ts";
@@ -147,4 +147,118 @@ test("RVSEAT3-F002 win32: Retry after the starting window, the prompt below the 
 	assert.equal((await ask(s, { cmd: "tower-retry", workspace: "wA" })).ok, true);
 	await sleep(500);
 	assert.equal(typedPrompts(), 1);
+});
+
+// RVSEAT4: the ally pane's close and mark rest on facts a lost session's stranger cannot have (probes of the third re-review).
+async function liveAlly(platform: "darwin" | "win32", opts: { busy?: number } = {}) {
+	if (platform === "win32") { world.runPlatform = "win32"; world.herdr.winShell = true; }
+	const s = await world.start();
+	await s.handle.ready;
+	const ensured = await ask(s, { cmd: "ensure-tower", workspace: "wA" });
+	if (opts.busy) world.herdr.busy = opts.busy;
+	world.ally.add("m1", "a".repeat(26), "hello");
+	world.ally.level.set("a".repeat(26), "forward");
+	world.expose?.allyWaiting("sb-tower-wa");
+	await until(() => world.herdr.commands("pane", "split").length === 1, "the ally pane");
+	await until(() => world.herdr.commands("agent", "start").length >= 1, "its start");
+	const h = world.herdr;
+	const pane = h.panes.find((p) => p.tokens?.sb_role === "ally")?.pane_id ?? h.panes.at(-1)!.pane_id;
+	return { s, h, pane, tab: String(ensured.tab), tower: String(ensured.pane) };
+}
+const touches = (h: TowerWorld["herdr"], pane: string) => h.calls.filter((a) => a.includes(pane) && (a[1] === "close" || a[1] === "report" || a[1] === "report-metadata" || a[1] === "clear-token"));
+
+for (const platform of ["darwin", "win32"] as const) {
+	// L1: a restore whose tower tab is not listed yet when the takeover's look runs (the restore brings tabs back one by one, towers.ts takeover).
+	test(`RVSEAT4-F001 ${platform}: restore, tower tab listed only after the takeover: ally pane closed`, async () => {
+		const { h, pane, tab } = await liveAlly(platform);
+		h.restart(false);
+		const savedTabs = h.tabs.filter((t) => t.tab_id === tab), savedPanes = h.panes.filter((p) => p.tab_id === tab);
+		h.tabs = h.tabs.filter((t) => t.tab_id !== tab);
+		h.panes = h.panes.filter((p) => p.tab_id !== tab);
+		h.calls.length = 0;
+		world.takeovers.forEach((cb) => cb());
+		await sleep(300);
+		h.tabs.push(...savedTabs);
+		h.panes.push(...savedPanes);
+		h.emit("tab.closed", "tab_closed", {}); // Herdr's events make the server look again; the look proves the seat
+		await sleep(500);
+		assert.ok(h.closed.includes(pane), "ally pane leaked after a late restore");
+	});
+
+	// S1: lost session; the desk made a new tower tab (glyph) whose base got the recorded tower pane id, and a pane of the boss's in that tab holds the old ally id.
+	test(`RVSEAT4-F002 ${platform}: lost session, stranger at the ally id inside a glyph tab holding the recorded tower id: untouched`, async () => {
+		const { h, pane, tab, tower } = await liveAlly(platform);
+		h.lose();
+		h.workspaces.push({ workspace_id: "wA", label: "Desk", tokens: {} } as never);
+		h.addTab(tab, TOWER_LABEL, tower, "shell");
+		h.addPane(pane, tab, "shell");
+		h.calls.length = 0;
+		world.takeovers.forEach((cb) => cb());
+		await sleep(600);
+		assert.ok(!h.closed.includes(pane), "closed the stranger's pane");
+	});
+
+	// S2: lost session; stranger at the ally id inside a glyph tab that is not the recorded tab.
+	test(`RVSEAT4-S2 ${platform}: lost session, stranger at the ally id in another glyph tab: untouched`, async () => {
+		const { h, pane } = await liveAlly(platform);
+		h.lose();
+		h.workspaces.push({ workspace_id: "wA", label: "Desk", tokens: {} } as never);
+		h.addTab("wA:t77", TOWER_LABEL, pane, "shell");
+		h.calls.length = 0;
+		world.takeovers.forEach((cb) => cb());
+		await sleep(600);
+		assert.ok(!h.closed.includes(pane), "closed the stranger's pane");
+	});
+}
+
+// L2: a restore during the ally's start retries (agent_pane_busy): the run ends herdr-restart before the takeover, while unseated.
+// A restore during the ally's start retries: the pane never listed a resumed pi, so a bare shell at the old id is no pane we can tell from the boss's own; it is left (F10).
+test("RVSEAT4-L2 darwin: restore while the ally start retries on busy: the bare shell is not touched", async () => {
+	const { h, pane } = await liveAlly("darwin", { busy: 1000 });
+	await sleep(100);
+	h.restart(false);
+	await sleep(800);
+	h.busy = 0;
+	world.takeovers.forEach((cb) => cb());
+	await sleep(1500);
+	assert.ok(!h.closed.includes(pane));
+	assert.deepEqual(touches(h, pane).filter((a) => a[1] !== "report-metadata"), []);
+});
+
+// RVSEAT4-F005: the gate's seat and tab facts are asked, not assumed.
+test("RVSEAT4-F005: a restored ally pane in another tab than the tower's is not closed (the proven seat alone is no proof)", async () => {
+	const { h, pane } = await liveAlly("darwin");
+	h.restart(false);
+	h.pane(pane).tab_id = "wA:t77";
+	h.tabs.push({ tab_id: "wA:t77", label: "1", workspace_id: "wA" });
+	h.calls.length = 0;
+	world.takeovers.forEach((cb) => cb());
+	await sleep(600);
+	assert.ok(!h.closed.includes(pane));
+});
+test("RVSEAT4-F005: a restored ally pane in the recorded tab is not closed while the tower's seat is unproven", async () => {
+	const { h, pane, tab } = await liveAlly("darwin");
+	h.restart(false);
+	h.tabs.find((t) => t.tab_id === tab)!.label = "1"; // a stranger's tab under the reused id
+	h.calls.length = 0;
+	world.takeovers.forEach((cb) => cb());
+	await sleep(600);
+	assert.ok(!h.closed.includes(pane));
+});
+
+
+// S3: lost session; the desk's claim for its new base (reused ids) reaches the server before the takeover: the old service ends (detach → finishAlly "quit").
+for (const where of ["record-ids", "fresh-ids"] as const) test(`RVSEAT4-F003 darwin ${where}: lost session, claim before takeover, stranger at the ally id: untouched`, async () => {
+	const { s, h, pane, tab, tower } = await liveAlly("darwin");
+	h.lose();
+	h.workspaces.push({ workspace_id: "wA", label: "Desk", tokens: {} } as never);
+	const base = where === "record-ids" ? tower : "wA:p1";
+	h.addTab(where === "record-ids" ? tab : "wA:t1", TOWER_LABEL, base, "shell");
+	h.addPane(pane, "wA:t5", "shell");
+	h.addTab("wA:t5", "1");
+	h.calls.length = 0;
+	await ask(s, { cmd: "ensure-tower", workspace: "wA", made: { pane: base, at: Date.now() } });
+	await sleep(600);
+	assert.deepEqual(touches(h, pane), []);
+	assert.ok(!h.closed.includes(pane), "closed the stranger's pane");
 });
