@@ -115,7 +115,9 @@ export function programProcs(info: { foreground_processes?: unknown } | undefine
 	const procs = Array.isArray(info?.foreground_processes) ? (info!.foreground_processes as { pid?: number; name?: string; argv0?: string; cmdline?: string }[]) : [];
 	return procs.filter((p) => !SHELLS.has(nameOf(p)) && !/\bprompt --workspace\b/.test(p.cmdline ?? ""));
 }
-export const programsIn = (info: { foreground_processes?: unknown } | undefined): string[] => programProcs(info).map((p) => String(p.argv0 ?? p.name ?? "?"));
+/** What a notice calls a program: its executable's file name, never the path it ran from or the arguments it was given. */
+export const programName = (p: { argv0?: string; name?: string }): string => String(p.argv0 ?? p.name ?? "").trim().split(/[\\/]/).pop()!.replace(/[\u0000-\u001f\u007f-\u009f\s]+/g, " ").split(" ")[0]!.slice(0, 60) || "?";
+export const programsIn = (info: { foreground_processes?: unknown } | undefined): string[] => programProcs(info).map(programName);
 
 /**
  * Whether Herdr's process info positively says the pane's foreground is its shell at an idle prompt. With the shell's pid and the foreground group (macOS, Linux) the groups decide. Without them (Windows lists the

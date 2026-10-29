@@ -11,7 +11,7 @@ import { waitPastTrust } from "../trust/wait.ts";
 import type { MemorySummary, TowerView } from "../net.ts";
 import { type BossPointer, type ConversationInfo, readPointer, resumable, sessionsRoot, underRoot, writePointer } from "./bossconv.ts";
 import { herdrCode } from "./herdrcode.ts";
-import { programProcs } from "./standing.ts";
+import { programName, programProcs } from "./standing.ts";
 import { chain, isWrapper, leafOf, type Proc, type Procs, readProcs } from "./lineage.ts";
 import type { Log } from "./log.ts";
 import type { Slot } from "./record.ts";
@@ -432,8 +432,10 @@ export function createRuns(o: RunsOptions) {
 			} catch (cause) {
 				if (active.ended) return;
 				// A start that failed with a program of the boss's in the pane's foreground (not a shell, not the tower prompt) is the pane's doing (RV2-F001: nothing of theirs is closed, and a start that is not Herdr's timeout code is no reason for a new pane): the notice names the program and the service starts again when the pane is free.
-				const procs = started || rec.kind !== "local" ? [] : programProcs({ foreground_processes: await foreground(rec.pane) });
-				const busy = procs.map((p) => String(p.argv0 ?? p.name ?? "?"));
+				let programs: { pid?: number; argv0?: string; name?: string }[] = started || rec.kind !== "local" ? [] : programProcs({ foreground_processes: await foreground(rec.pane) });
+				// Windows lists the shell alone in the foreground: when Herdr says the pane is busy, the program is looked for below the shell.
+				if (!programs.length && win && !started && rec.kind === "local" && herdrCode(cause) === "agent_pane_busy") programs = await belowShell(rec.pane, id).catch(() => []);
+				const busy = programs.map(programName);
 				// Windows, the standing pane: a start that timed out is taken for the pane's doing (a console a killed pi left in a mode that mangles what Herdr types), so the run is tried once more in a fresh pane and the
 				// first timeout is not counted. A second timeout is the run's own failure.
 				if (attempt === 1 && win && rec.kind === "local" && !started && herdrCode(cause) === "timeout") {
@@ -449,7 +451,7 @@ export function createRuns(o: RunsOptions) {
 				}
 				error("run-start", `${rec.id}: ${(cause as Error).message}`);
 				svc.paneBusy = busy.length ? busy : undefined;
-				svc.busyPids = busy.length ? procs.flatMap((p) => (typeof p.pid === "number" ? [p.pid] : [])) : undefined;
+				svc.busyPids = busy.length ? programs.flatMap((p) => (typeof p.pid === "number" ? [p.pid] : [])) : undefined;
 				noticeOf(svc, { id: "start", level: "warning", kind: "start", text: `A run could not start: ${busy.length ? `the standing pane is busy with ${busy.join(", ")}; the tower starts again when it has ended, or on Retry` : (cause as Error).message}` });
 				terminate(active, "crashed");
 				// The tick does not type /quit into a pane whose pi never claimed: what the pane holds of this run is ended below.
@@ -551,12 +553,24 @@ export function createRuns(o: RunsOptions) {
 	/** A Herdr agent name is lowercase, up to 32 characters, and unique per run. */
 	const agentName = (s: Slot, workspace: string, id: string, prefix = "tower") => `${prefix}-${s.primary ? "" : `${s.slot8}-`}${workspace.toLowerCase().replace(/[^a-z0-9_-]/g, "")}-${id.slice(0, 8)}`.slice(0, 32).replace(/[-_]+$/, "");
 	/** What Herdr lists in the pane's foreground. On Windows that is one process: the wrapper (`cmd.exe /c pi.cmd`) when pi was started through one. */
-	const foreground = async (pane: string): Promise<{ pid?: number; argv0?: string; name?: string; cmdline?: string }[] | undefined> => {
+	const paneInfo = async (pane: string): Promise<{ shell_pid?: unknown; foreground_processes?: { pid?: number; argv0?: string; name?: string; cmdline?: string }[] } | undefined> => {
 		try {
-			return JSON.parse(await o.run(["pane", "process-info", "--pane", pane])).result?.process_info?.foreground_processes;
+			return JSON.parse(await o.run(["pane", "process-info", "--pane", pane])).result?.process_info;
 		} catch {
 			return undefined;
 		}
+	};
+	const foreground = async (pane: string) => (await paneInfo(pane))?.foreground_processes;
+	/**
+	 * The boss's programs below the pane's shell in the process table, for a platform whose foreground list shows the shell alone whatever runs under it (Windows; B6 VM round 3b, N1). Not the run's own processes
+	 * (those carrying its `--sb-run`, and what they started), the console hosts, or shells.
+	 */
+	const belowShell = async (pane: string, runId: string): Promise<{ pid?: number; name?: string }[]> => {
+		const shell = (await paneInfo(pane))?.shell_pid, table = typeof shell === "number" ? await procs(runId) : undefined;
+		if (typeof shell !== "number" || !table) return [];
+		const own = (pid: number) => chain(table, pid, shell)?.some((up) => table.find((p) => p.pid === up)?.carries) === true;
+		const found = table.filter((p) => p.pid !== shell && !/^(conhost|openconsole)(\.exe)?$/i.test(p.name) && chain(table, p.pid, shell) !== undefined && !own(p.pid)).map((p) => ({ pid: p.pid, name: p.name }));
+		return programProcs({ foreground_processes: found });
 	};
 	const pidsOf = async (pane: string): Promise<number[] | undefined> => (await foreground(pane))?.flatMap((p) => (typeof p.pid === "number" ? [p.pid] : []));
 	/** The process Herdr lists for the run: the one whose command line holds the run id, else the one named pi. It may be a wrapper that started pi (`resolve`). */
