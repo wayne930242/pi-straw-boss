@@ -340,6 +340,30 @@ test("the computer slept: a clock step longer than `lost` between two watcher ti
 	await until(() => readRun(world.slot, "wA", id)?.outcome === "crashed", "the lost run's outcome", 20_000);
 });
 
+test("RV8-F002: a slow watcher tick is not a sleep: two runs, one silent and one whose pid check takes 70 s of the clock inside each tick, and the silent one is still lost after the second tick", async () => {
+	const clock = (world.runClock = fakeClock());
+	// Nothing but the lost rule can end a run in the ticks that follow (70 s each on the clock): the idle, steer, and cap times are out of reach.
+	world.runTimers = { idleSteer: 1e9, idleEnd: 1e9, steerAt: 1e9, quitAt: 1e9 };
+	const { s } = await setup();
+	world.herdr.workspaces[1]!.worktree = { checkout_path: "/w/beta" };
+	await ask(s, { cmd: "ensure-tower", workspace: "wB" });
+	tower().incoming(from, msg("m1", "silent"));
+	const silent = await nthRun();
+	const silentToken = await claimed(s, silent);
+	await drain(s, silentToken);
+	tower("wb").incoming(from, msg("m1", "slow"));
+	const slow = await nthRun(2, "wB");
+	await claimed(s, slow);
+	const slowPid = world.pis.get(slow)!.pid;
+	// From now on the slow run's check inside a tick takes 70 s on the test's clock, more than `lost` (60 s): between the starts of two ticks that is a gap of more than `lost`, between the end of one and the start of the next it is none.
+	world.aliveHook = (pid) => void (pid === slowPid && clock.advance(70_000));
+	// The silent run is lost at the second tick (its silence is then 70 s): the server has the pi quit, which is Escape and /quit through Herdr once the grace is over on the clock.
+	const pane = world.pis.get(silent)!.pane;
+	await until(() => world.herdr.keys.some((k) => k.includes(pane) && k.includes("/quit")), "the silent run to be ended as lost", 20_000);
+	exit(silent);
+	await until(() => readRun(world.slot, "wA", silent)?.outcome === "crashed", "its outcome", 20_000);
+});
+
 test("towerRuns.max bounds the pi runs on the machine; the rest wait in their queues and start when a slot frees", async () => {
 	world.runMax = 1;
 	const { s } = await setup();

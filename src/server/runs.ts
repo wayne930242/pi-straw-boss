@@ -804,11 +804,11 @@ export function createRuns(o: RunsOptions) {
 		if (ticking) return;
 		ticking = true;
 		try {
-			// The computer slept (or the server stood still as long): a gap between two ticks of more than `lost` is time in which no run could poll, so no run was silent for it. Each run gets its silence counted from now, and the
-			// poll that follows is what shows it alive; a run that is really gone is still found, one `lost` later.
+			// The computer slept (or the server stood still as long): a gap between the end of one tick and the start of the next of more than `lost` is time in which no run could poll, so no run was silent for it. Each run gets its
+			// silence counted from now, and the poll that follows is what shows it alive; a run that is really gone is still found, one `lost` later. The gap is measured from the end of the last tick: a tick that was slow
+			// (Herdr hanging, calls of 5 s one after another) is no sleep, and slow ticks in a row must not keep a hung pi from ever being lost (RV8-F002).
 			const at = now();
 			if (lastTick !== undefined && at - lastTick > Math.max(t.lost, 10 * t.watch)) for (const a of byRun.values()) if (!a.ended && a.lastPoll < at) a.lastPoll = at;
-			lastTick = at;
 			for (const a of [...byRun.values()]) {
 				if (a.ended) continue;
 				const age = now() - a.started;
@@ -885,6 +885,7 @@ export function createRuns(o: RunsOptions) {
 			}
 			if (!byRun.size) (clearInterval(watcher), (watcher = undefined));
 		} finally {
+			lastTick = now();
 			ticking = false;
 		}
 	};
