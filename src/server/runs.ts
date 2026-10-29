@@ -67,6 +67,8 @@ export const runTimersFor = (platform: NodeJS.Platform = process.platform): Time
 /** The most a stopping server spends on its runs after the quit: the grace, and then a process table read and the signal (elsewhere than Windows; Windows signals nothing). The server's exit waits this long beyond its usual leave time. */
 export const runsStopMs = (platform: NodeJS.Platform = process.platform) => runTimersFor(platform).stopGrace + (platform === "win32" ? 1000 : 6000);
 const LOOP_MAX = 3;
+/** How many programs a "pane is busy" notice names; the rest is counted. */
+const NAMED_MAX = 3;
 /** A wrapper Herdr lists whose child is not in the process table yet is looked at again, this many times, this far apart. */
 const WRAPPER_TRIES = 3, WRAPPER_WAIT_MS = 400;
 /** How long a process table read for `pane-role` answers the requests that follow it. */
@@ -439,7 +441,8 @@ export function createRuns(o: RunsOptions) {
 				let programs: { pid?: number; argv0?: string; name?: string }[] = started || rec.kind !== "local" ? [] : programProcs({ foreground_processes: await foreground(rec.pane) });
 				// Windows lists the shell alone in the foreground: when Herdr says the pane is busy, the program is looked for below the shell.
 				if (!programs.length && win && !started && rec.kind === "local" && herdrCode(cause) === "agent_pane_busy") programs = await belowShell(rec.pane, id).catch(() => []);
-				const busy = programs.map(programName);
+				// The same name once (an `npm run dev` is several node.exe), and three of them at most in the notice.
+				const busy = [...new Set(programs.map(programName))];
 				// Windows, the standing pane: a start that timed out is taken for the pane's doing (a console a killed pi left in a mode that mangles what Herdr types), so the run is tried once more in a fresh pane and the
 				// first timeout is not counted. A second timeout is the run's own failure.
 				if (attempt === 1 && win && rec.kind === "local" && !started && herdrCode(cause) === "timeout") {
@@ -457,7 +460,7 @@ export function createRuns(o: RunsOptions) {
 				error("run-start", `${rec.id}: ${(cause as Error).message}`);
 				svc.paneBusy = busy.length ? busy : undefined;
 				svc.busyPids = busy.length ? programs.flatMap((p) => (typeof p.pid === "number" ? [p.pid] : [])) : undefined;
-				noticeOf(svc, { id: "start", level: "warning", kind: "start", text: `A run could not start: ${busy.length ? `the standing pane is busy with ${busy.join(", ")}; the tower starts again when it has ended, or on Retry` : (cause as Error).message}` });
+				noticeOf(svc, { id: "start", level: "warning", kind: "start", text: `A run could not start: ${busy.length ? `the standing pane is busy with ${busy.slice(0, NAMED_MAX).join(", ")}${busy.length > NAMED_MAX ? ` and ${busy.length - NAMED_MAX} more` : ""}; the tower starts again when it has ended, or on Retry` : (cause as Error).message}` });
 				terminate(active, "crashed");
 				// The tick does not type /quit into a pane whose pi never claimed: what the pane holds of this run is ended below.
 				active.escalated ??= now();
@@ -568,12 +571,12 @@ export function createRuns(o: RunsOptions) {
 	const foreground = async (pane: string) => (await paneInfo(pane))?.foreground_processes;
 	/**
 	 * The boss's programs below the pane's shell in the process table, for a platform whose foreground list shows the shell alone whatever runs under it (Windows; B6 VM round 3b, N1). Not the run's own processes
-	 * (those carrying its `--sb-run`, and what they started), the console hosts, or shells.
+	 * (those carrying its `--sb-run`, and what they started), the tower prompt (the table marks it, RV10-F003), what the prompt started, the console hosts, or shells. Every process below the shell is named; the notice dedupes and caps the names.
 	 */
 	const belowShell = async (pane: string, runId: string): Promise<{ pid?: number; name?: string }[]> => {
 		const shell = (await paneInfo(pane))?.shell_pid, table = typeof shell === "number" ? await procs(runId) : undefined;
 		if (typeof shell !== "number" || !table) return [];
-		const own = (pid: number) => chain(table, pid, shell)?.some((up) => table.find((p) => p.pid === up)?.carries) === true;
+		const own = (pid: number) => chain(table, pid, shell)?.some((up) => table.find((p) => p.pid === up)?.carries || table.find((p) => p.pid === up)?.prompt) === true;
 		const found = table.filter((p) => p.pid !== shell && !/^(conhost|openconsole)(\.exe)?$/i.test(p.name) && chain(table, p.pid, shell) !== undefined && !own(p.pid)).map((p) => ({ pid: p.pid, name: p.name }));
 		return programProcs({ foreground_processes: found });
 	};

@@ -5,7 +5,7 @@ import { type Running, sleep, until } from "./server-world.ts";
 import { callControl } from "../src/server/socket.ts";
 import { readQueue, removeEvent } from "../src/server/towerstore.ts";
 import { programsIn } from "../src/server/standing.ts";
-import type { Proc } from "../src/server/lineage.ts";
+import { cimCommand, parseCim, parsePs, type Proc } from "../src/server/lineage.ts";
 import { SHELL_PID } from "./fakes.ts";
 
 // A program of the boss's in the standing pane (B6 VM round 2: a node.exe there made every run crash at its start, a new run every 30 s). The failed start is the crash-loop rule's: the service is held
@@ -240,4 +240,58 @@ test("RV10-F002 win32: a refused start whose event is gone leaves the service st
 	await sleep(700);
 	assert.equal(starts(), 1, "no second run: the service stands, not held");
 	assert.equal(typedPrompts(), 1, "nothing typed after the run that never started pi");
+});
+
+// RV10-F003: what the notice names. The process table carries the tower prompt's mark (the table has no command line to filter by), a program that starts others is named once, and the list is capped.
+const promptRow = (pid: number, ppid: number): Proc => ({ ...row(pid, ppid, "node.exe"), prompt: true });
+const startNotice = async (s: Running) => (await status(s)).notices.filter((n) => n.kind === "start").map((n) => n.text);
+
+test("RV10-F003 win32: the tower prompt that is still in the pane (and what it started) is not the boss's program: it is not named and does not keep the hold; the boss's program is, and its end frees the service", async () => {
+	const { s } = await winSetup();
+	world.live.add(5000);
+	world.procTable = [row(SHELL_PID, 1, "powershell.exe"), promptRow(5000, SHELL_PID), row(5001, 5000, "esbuild.exe"), row(7777, SHELL_PID, "python.exe")];
+	tower().incoming(from, { id: "m1", content: { text: "one" } });
+	await until(async () => (await status(s)).state === "held", "the service to be held");
+	assert.deepEqual(await startNotice(s), ["A run could not start: the standing pane is busy with python.exe; the tower starts again when it has ended, or on Retry"]);
+	// The program ends while the (hung) prompt lives: the prompt is not in the busy list, so it does not hold the pane.
+	world.live.delete(7777);
+	world.procTable = [row(SHELL_PID, 1, "powershell.exe"), promptRow(5000, SHELL_PID), row(5001, 5000, "esbuild.exe")];
+	world.herdr.onAgentStart = real;
+	await until(() => world.pis.size === 1, "a run to start once the program has gone");
+});
+
+test("RV10-F003 win32: only the tower prompt below the shell: no program to name, and the hold waits for Retry", async () => {
+	const { s } = await winSetup();
+	world.procTable = [row(SHELL_PID, 1, "powershell.exe"), promptRow(5000, SHELL_PID)];
+	tower().incoming(from, { id: "m1", content: { text: "one" } });
+	await until(async () => (await status(s)).state === "held", "the service to be held");
+	assert.equal((await startNotice(s)).every((t) => !/busy with/.test(t)), true);
+});
+
+test("RV10-F003 win32: a program that starts others is named once, and at most three programs are named, the rest counted", async () => {
+	const { s } = await winSetup();
+	world.procTable = [row(SHELL_PID, 1, "powershell.exe"), row(7001, SHELL_PID, "node.exe"), row(7002, 7001, "node.exe"), row(7003, 7002, "esbuild.exe"), row(7004, 7001, "python.exe"), row(7005, 7001, "cl.exe"), row(7006, 7001, "git.exe")];
+	for (const pid of [7001, 7002, 7003, 7004, 7005, 7006]) world.live.add(pid);
+	tower().incoming(from, { id: "m1", content: { text: "one" } });
+	await until(async () => (await status(s)).state === "held", "the service to be held");
+	assert.deepEqual(await startNotice(s), ["A run could not start: the standing pane is busy with node.exe, esbuild.exe, python.exe and 2 more; the tower starts again when it has ended, or on Retry"]);
+	// All of them keep the hold, not only the named ones.
+	world.procTable = [row(SHELL_PID, 1, "powershell.exe"), row(7006, SHELL_PID, "git.exe")];
+	world.herdr.onAgentStart = real;
+	for (const pid of [7001, 7002, 7003, 7004, 7005]) world.live.delete(pid);
+	const before = starts();
+	await sleep(400);
+	assert.equal(starts(), before, "git.exe, the sixth, still holds the pane");
+	world.live.delete(7006);
+	await until(() => world.pis.size === 1, "a run to start once every program has gone");
+});
+
+test("RV10-F003: the process table marks the tower prompt (CIM's sixth field, `ps`'s command line); an older five-field row has no mark", () => {
+	const [prompt, plain, old] = parseCim(["5000\t900\t2026-10-28T09:40:00.123Z\tnode.exe\t0\t1", "7777\t900\t2026-10-28T09:40:01.123Z\tnode.exe\t0\t0", "7778\t900\t2026-10-28T09:40:02.123Z\tnode.exe\t0"].join("\r\n"));
+	assert.equal(prompt!.prompt, true);
+	assert.equal(plain!.prompt, undefined);
+	assert.equal(old!.prompt, undefined);
+	const ps = parsePs([" 4000 1 Wed Oct 28 09:40:00 2026 node /p/cli.mjs prompt --workspace wA --state-dir /s", " 4001 1 Wed Oct 28 09:40:01 2026 node server.js --prompt"].join("\n"), "abc");
+	assert.deepEqual(ps.map((p) => p.prompt), [true, undefined]);
+	assert.match(cimCommand("abc").args.join(" "), /Contains\(' prompt --workspace '\)/);
 });

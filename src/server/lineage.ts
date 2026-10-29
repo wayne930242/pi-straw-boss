@@ -8,8 +8,13 @@ import { powershellPath, system32 } from "../winpath.ts";
 // elsewhere), and never from a PID or parent a pi reports: the pi of a run is the first process below the listed one that carries the run's `--sb-run <id>` and is not itself a wrapper, reached through wrappers
 // only, and it started no earlier than its parent.
 
-/** One process of the table: its parent, start time (UTC ISO on Windows, `ps` lstart text elsewhere), program name, and whether its command line carries the run's `--sb-run <id>`. */
-export interface Proc { pid: number; ppid: number; started?: string; name: string; carries: boolean }
+/**
+ * One process of the table: its parent, start time (UTC ISO on Windows, `ps` lstart text elsewhere), program name, and whether its command line carries the run's `--sb-run <id>`. `prompt`: its command line is the
+ * tower prompt's (`... prompt --workspace ...`), the one program of the server's own that stands in the standing pane between runs; the table carries no command line, so this is the mark.
+ */
+export interface Proc { pid: number; ppid: number; started?: string; name: string; carries: boolean; prompt?: true }
+/** What a command line holding this is the tower prompt (standing.ts `programProcs` filters the foreground list by the same words). */
+const PROMPT_WORDS = ' prompt --workspace ';
 /** The process table, with `carries` set for the run id; undefined when it cannot be read. */
 export type Procs = (runId: string) => Promise<Proc[] | undefined>;
 /** pi's process below a listed one: its PID and start time, and the processes between (the listed one first), which a kill must also take. */
@@ -74,18 +79,18 @@ export const below = (table: Proc[], pid: number, root: number): boolean => chai
 
 const TAB = "\t";
 const ISO_START = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
-/** The Windows command: every process as `pid TAB ppid TAB UTC start TAB name TAB 1|0` (1: its command line holds `--sb-run <id>`). One PowerShell start. */
+/** The Windows command: every process as `pid TAB ppid TAB UTC start TAB name TAB 1|0 TAB 1|0` (the first flag: its command line holds `--sb-run <id>`; the second: it holds the tower prompt's ` prompt --workspace `). One PowerShell start. */
 export const cimCommand = (runId: string, env: NodeJS.ProcessEnv = process.env) => ({
 	file: powershellPath(env),
-	args: [...POWERSHELL_FLAGS, "-Command", `${PROGRESS_OFF}; $ErrorActionPreference='Stop'; $id='${runId}'; $inv=[cultureinfo]::InvariantCulture; Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate,Name,CommandLine | ForEach-Object { $d=''; if ($_.CreationDate) { $d=$_.CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ',$inv) }; $c='0'; if ($_.CommandLine -and $_.CommandLine.Contains('--sb-run ' + $id)) { $c='1' }; (@($_.ProcessId,$_.ParentProcessId,$d,$_.Name,$c) -join [char]9) }`],
+	args: [...POWERSHELL_FLAGS, "-Command", `${PROGRESS_OFF}; $ErrorActionPreference='Stop'; $id='${runId}'; $inv=[cultureinfo]::InvariantCulture; Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate,Name,CommandLine | ForEach-Object { $d=''; if ($_.CreationDate) { $d=$_.CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ',$inv) }; $c='0'; if ($_.CommandLine -and $_.CommandLine.Contains('--sb-run ' + $id)) { $c='1' }; $q='0'; if ($_.CommandLine -and $_.CommandLine.Contains('${PROMPT_WORDS}')) { $q='1' }; (@($_.ProcessId,$_.ParentProcessId,$d,$_.Name,$c,$q) -join [char]9) }`],
 	options: { encoding: "utf8" as const, timeout: READ_MS, windowsHide: true, cwd: system32(env), maxBuffer: 16 * 1024 * 1024 },
 });
 export function parseCim(text: string): Proc[] {
 	return text.split(/\r?\n/).flatMap((line) => {
-		const [pid, ppid, started, name, carries] = line.split(TAB);
+		const [pid, ppid, started, name, carries, prompt] = line.split(TAB);
 		const a = Number(pid), b = Number(ppid);
 		if (!Number.isSafeInteger(a) || !Number.isSafeInteger(b) || name === undefined || carries === undefined) return [];
-		return [{ pid: a, ppid: b, ...(started && ISO_START.test(started) ? { started } : {}), name, carries: carries === "1" }];
+		return [{ pid: a, ppid: b, ...(started && ISO_START.test(started) ? { started } : {}), name, carries: carries === "1", ...(prompt === "1" ? { prompt: true as const } : {}) }];
 	});
 }
 const PS_LINE = /^\s*(\d+)\s+(\d+)\s+(\w{3} \w{3} [ \d]\d \d\d:\d\d:\d\d \d{4})\s+(.*)$/;
@@ -95,7 +100,7 @@ export function parsePs(text: string, runId: string): Proc[] {
 		const m = PS_LINE.exec(line);
 		if (!m) return [];
 		const command = m[4]!, program = command.split(/\s+/)[0] ?? "";
-		return [{ pid: Number(m[1]), ppid: Number(m[2]), started: m[3]!, name: program.slice(program.lastIndexOf("/") + 1), carries: command.includes(`--sb-run ${runId}`) }];
+		return [{ pid: Number(m[1]), ppid: Number(m[2]), started: m[3]!, name: program.slice(program.lastIndexOf("/") + 1), carries: command.includes(`--sb-run ${runId}`), ...(command.includes(PROMPT_WORDS) ? { prompt: true as const } : {}) }];
 	});
 }
 
