@@ -45,7 +45,7 @@ export const settle = async () => {
 };
 
 interface Tokens { [name: string]: string }
-const FAKE_SHELL = 4;
+export const FAKE_SHELL = 4;
 /** The pid of the shell Herdr started in every fake pane on Windows (process-info `shell_pid`). */
 export const SHELL_PID = 79748;
 interface FakePane { pane_id: string; tab_id: string; workspace_id: string; terminal_id: string; agent?: string; agent_status?: string; reportSeq?: number; standinMessage?: string; agent_session?: { value: string }; label?: string; tokens: Tokens; env?: string[]; cwd?: string; processes?: { argv?: string[]; argv0?: string; name?: string; pid?: number; cmdline?: string }[] }

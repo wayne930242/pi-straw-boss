@@ -467,6 +467,24 @@ test("RV8-F004: a hand run whose pi is gone before its first poll (it quit while
 	assert.equal(await crashes(), 1);
 });
 
+test("RV10-F004 (M7): a hand run restored after a server restart was seen alive before it: a pi that vanishes then crashed, it is no orphan claim that is released as quit", async () => {
+	const { s, ensured } = await setup();
+	world.herdr.pane(String(ensured.pane)).processes = [{ argv0: "pi", name: "node", pid: 5555 }];
+	world.live.add(5555);
+	const hand = await ask(s, { cmd: "pane-role", pane: ensured.pane, pid: 5555, started: "T-5555" });
+	assert.equal(hand.role, "hand");
+	assert.equal((await poll(s, String((hand.claim as { token: string }).token))).ok, true);
+	await s.handle.shutdown(0);
+	await s.handle.done;
+	assert.equal(listRuns(world.slot, "wA").find((r) => r.hand)?.outcome, undefined, "still live in the records");
+	world.clients.length = 0;
+	const second = await world.start();
+	await second.handle.ready;
+	world.live.delete(5555);
+	await until(() => listRuns(world.slot, "wA").some((r) => r.hand && r.outcome !== undefined), "the restored hand run to end");
+	assert.equal(listRuns(world.slot, "wA").find((r) => r.hand)!.outcome, "crashed");
+});
+
 test("wakeAfter: 5 to 240 minutes, one pending per workspace (a later one replaces it), refused outside the range; a due timer wakes a run after a server restart", async () => {
 	const { s } = await setup();
 	tower().incoming(from, msg("m1", "one"));

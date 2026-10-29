@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
-import { mock, test } from "node:test";
+import { afterEach, mock, test } from "node:test";
 import { localeOf, textsFor } from "../src/towerprompt/messages.ts";
 import { type PromptClock, runPrompt } from "../src/towerprompt/prompt.ts";
 import type { PollAnswer, Polled, PromptSource } from "../src/towerprompt/source.ts";
@@ -12,6 +12,15 @@ import { sleep, until } from "./server-world.ts";
 
 const STATE: PollAnswer = { label: "Alpha", state: "standing", queued: 0, leave: false };
 const starting = (source: FakeSource) => void (source.answers = [{ kind: "state", answer: { ...STATE, state: "waking", leave: true } }]);
+
+/** Every prompt a test opens ends with the test, however the test ends: a prompt that a failed assertion leaves running keeps its timers, and so the whole file, alive until the runner's kill (RV10-F004). */
+const stops: AbortController[] = [];
+const stop = () => {
+	const c = new AbortController();
+	stops.push(c);
+	return c.signal;
+};
+afterEach(() => void stops.splice(0).forEach((c) => c.abort()));
 
 class FakeSource implements PromptSource {
 	answers: Polled[] = [{ kind: "state", answer: STATE }];
@@ -45,7 +54,7 @@ function screen(source: PromptSource, over: { locale?: "en" | "zh-TW"; pollMs?: 
 	const input = new PassThrough(), output = new PassThrough();
 	let text = "";
 	output.on("data", (chunk) => void (text += String(chunk)));
-	const done = runPrompt({ workspace: "wA", source, input, output, locale: over.locale ?? "en", pollMs: over.pollMs ?? 15 });
+	const done = runPrompt({ workspace: "wA", source, input, output, signal: stop(), locale: over.locale ?? "en", pollMs: over.pollMs ?? 15 });
 	return { input, done, text: () => text };
 }
 
@@ -57,7 +66,7 @@ function terminal(source: PromptSource) {
 	const input = new PassThrough(), output = Object.assign(new PassThrough(), { isTTY: true, columns: 80, rows: 24 });
 	let text = "";
 	output.on("data", (chunk) => void (text += String(chunk)));
-	const done = runPrompt({ workspace: "wA", source, input, output, locale: "en", pollMs: 15 });
+	const done = runPrompt({ workspace: "wA", source, input, output, signal: stop(), locale: "en", pollMs: 15 });
 	return { input, done, text: () => text };
 }
 
@@ -183,7 +192,7 @@ test("a second line after the first is posted as a second event, and the prompt 
 		const input = new PassThrough(), output = new PassThrough();
 		let text = "";
 		output.on("data", (chunk) => void (text += String(chunk)));
-		return { input, text: () => text, done: runPrompt({ workspace: "wA", source, input, output, locale: "en", pollMs: 5000, wakingPollMs: 10 }) };
+		return { input, text: () => text, done: runPrompt({ workspace: "wA", source, input, output, signal: stop(), locale: "en", pollMs: 5000, wakingPollMs: 10 }) };
 	})();
 	await until(() => p.text().includes("tower> "), "the prompt");
 	const before = source.polls;
@@ -260,7 +269,7 @@ async function afterPost(answer: PollAnswer, clock?: PromptClock) {
 	const input = new PassThrough(), output = new PassThrough();
 	let text = "";
 	output.on("data", (chunk) => void (text += String(chunk)));
-	const done = runPrompt({ workspace: "wA", source, input, output, locale: "en", pollMs: 5000, wakingPollMs: 10, ...(clock ? { clock } : {}) });
+	const done = runPrompt({ workspace: "wA", source, input, output, signal: stop(), locale: "en", pollMs: 5000, wakingPollMs: 10, ...(clock ? { clock } : {}) });
 	await until(() => text.includes("tower> "), "the prompt");
 	source.answers = [{ kind: "state", answer }];
 	input.write("hello\n");

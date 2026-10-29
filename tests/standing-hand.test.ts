@@ -167,6 +167,30 @@ test("RV8-F001: a kill with no signal name (killed alone) and a refusal Herdr co
 	assert.equal(refused.typed.length, 1, "a coded refusal is tried again");
 });
 
+test("RV10-F004 (M11): a hand-over after three refusals ends the give-up: the resident's pi is gone, so the pane is typed into again", async () => {
+	const r = rig();
+	r.standing.handed("wA");
+	for (let i = 0; i < 3; i++) r.refuse.push(Object.assign(new Error("herdr failed"), { stderr: "pane_busy", code: 2 }));
+	await r.standing.tick();
+	await looks(r, 10);
+	assert.equal(said(r, "prompt-not-typed").length, 1, "gave up");
+	assert.equal(r.attempts, 3);
+	r.standing.handed("wA");
+	await looks(r, 3);
+	assert.equal(r.typed.length, 1, "a resident handed the pane over again: the give-up is over");
+});
+
+test("RV10-F004 (M12): a `pane run` that failed with a string code (ENOENT: the CLI was not found; a full output buffer) and no kill is not a refusal Herdr gave: it counts as typed and is not typed again", async () => {
+	const r = rig();
+	r.standing.handed("wA");
+	r.refuse.push(Object.assign(new Error("spawn herdr ENOENT"), { stderr: "", code: "ENOENT" }));
+	await r.standing.tick();
+	await looks(r, 10);
+	assert.equal(r.attempts, 1, "no second typing into a pane the first may have reached");
+	assert.deepEqual(r.typed, []);
+	assert.equal(said(r, "prompt-not-typed").length, 0, "that is no run of refusals");
+});
+
 test("RV8-F003: where Herdr gives the foreground group (macOS, Linux) three refusals end the typing too: one line, and no more attempts, until a run frees the pane", async () => {
 	const r = rig("darwin");
 	for (let i = 0; i < 50; i++) r.refuse.push(Object.assign(new Error("herdr failed"), { stderr: "pane_busy", code: 2 }));

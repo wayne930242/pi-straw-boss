@@ -6,7 +6,7 @@ import { callControl } from "../src/server/socket.ts";
 import { readQueue, removeEvent } from "../src/server/towerstore.ts";
 import { programsIn } from "../src/server/standing.ts";
 import { cimCommand, parseCim, parsePs, type Proc } from "../src/server/lineage.ts";
-import { SHELL_PID } from "./fakes.ts";
+import { FAKE_SHELL, SHELL_PID } from "./fakes.ts";
 
 // A program of the boss's in the standing pane (B6 VM round 2: a node.exe there made every run crash at its start, a new run every 30 s). The failed start is the crash-loop rule's: the service is held
 // after the limit with one notice that names the program, the pane is not replaced, and the service starts again by itself when the pane is back at its shell.
@@ -40,6 +40,9 @@ test("programsIn: the boss's programs in the foreground, not a shell and not the
 	assert.deepEqual(programsIn({ foreground_processes: [{ name: "powershell.exe", argv0: "powershell.exe" }] }), []);
 	assert.deepEqual(programsIn({ foreground_processes: [{ name: "node", cmdline: 'node "/p/cli.mjs" prompt --workspace wA --state-dir "/s"' }] }), []);
 	assert.deepEqual(programsIn({ foreground_processes: [{ name: "zsh" }, { name: "node.exe", argv0: "node.exe" }] }), ["node.exe"]);
+	// Only the first word of a name, so that a name that holds arguments (some platforms list the command line as the name) never reaches the notice (RV10-F004, M5).
+	assert.deepEqual(programsIn({ foreground_processes: [{ name: "node secret-server.js --token abc" }] }), ["node"]);
+	assert.deepEqual(programsIn({ foreground_processes: [{ argv0: "C:\\tools\\my tool.exe", name: "my tool.exe" }] }), ["my"]);
 });
 
 test("a start that fails with a program of the boss's in the pane is held after the limit with one notice naming it, and starts again by itself when the pane is free", async () => {
@@ -284,6 +287,37 @@ test("RV10-F003 win32: a program that starts others is named once, and at most t
 	assert.equal(starts(), before, "git.exe, the sixth, still holds the pane");
 	world.live.delete(7006);
 	await until(() => world.pis.size === 1, "a run to start once every program has gone");
+});
+
+test("RV10-F004 win32 (M1): a leftover of the failed run itself below the shell (it carries the run id), and what it started, is not the boss's program: not named, and no busy list", async () => {
+	const { s } = await winSetup();
+	world.procTable = [row(SHELL_PID, 1, "powershell.exe"), row(7001, SHELL_PID, "cmd.exe", true), row(7002, 7001, "node.exe")];
+	tower().incoming(from, { id: "m1", content: { text: "one" } });
+	await until(async () => (await status(s)).state === "held", "the service to be held");
+	assert.equal((await startNotice(s)).every((t) => !/busy with/.test(t)), true, "the run's own processes are not the boss's");
+});
+
+test("RV10-F004 win32 (M3): the process table is read only when Herdr says the pane is busy: another code names no program below the shell", async () => {
+	const { s } = await winSetup();
+	world.procTable = [row(SHELL_PID, 1, "powershell.exe"), row(7777, SHELL_PID, "node.exe")];
+	world.herdr.onAgentStart = () => {
+		throw Object.assign(new Error("herdr agent start failed"), { stderr: JSON.stringify({ error: { code: "not_available", message: "the pane is not an available shell" } }) });
+	};
+	tower().incoming(from, { id: "m1", content: { text: "one" } });
+	await until(async () => (await status(s)).state === "held", "the service to be held");
+	assert.equal((await startNotice(s)).every((t) => !/busy with/.test(t)), true);
+});
+
+test("RV10-F004 (M4): where Herdr lists the foreground (not Windows) the process table is not read for a pane that is busy: a node below the shell is not named from it", async () => {
+	world.herdr.shellPids = true;
+	const { s } = await setup();
+	world.procTable = [row(FAKE_SHELL, 1, "zsh"), row(7777, FAKE_SHELL, "node")];
+	world.herdr.onAgentStart = () => {
+		throw paneBusyError();
+	};
+	tower().incoming(from, { id: "m1", content: { text: "one" } });
+	await until(async () => (await status(s)).state === "held", "the service to be held");
+	assert.equal((await startNotice(s)).every((t) => !/busy with/.test(t)), true, "the foreground list is the source there");
 });
 
 test("RV10-F003: the process table marks the tower prompt (CIM's sixth field, `ps`'s command line); an older five-field row has no mark", () => {
