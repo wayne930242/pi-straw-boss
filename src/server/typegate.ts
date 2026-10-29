@@ -70,6 +70,12 @@ export function proofGate(f: { terminal: string | undefined; pane: { terminal_id
 	return f.pane.terminal_id === f.terminal ? "holds" : "moved";
 }
 
+/**
+ * An ally run's pane after a Herdr restart: ours to close and unmark when its terminal still holds the proof (`holds`), or when the tower's seat is proven again on this Herdr and the pane is listed in the tab the tower's record names.
+ * A restart always gives the pane a new terminal, so the second is the case a restored session meets; a lost session's stranger is in no proven tower tab, and is left alone.
+ */
+export const allyCloseGate = (f: { proof: ProofVerdict; seated: boolean; inTowerTab: boolean }): boolean => f.proof === "holds" || (f.seated && f.inTowerTab);
+
 /** What the desk's claim saw of the pane it names (`ensure-tower {made}`; towers.ts reads it from Herdr and from its own services). */
 export interface ClaimFacts {
 	/** The claim is a few seconds old and names the only pane of the workspace: a base the desk made a moment ago. */

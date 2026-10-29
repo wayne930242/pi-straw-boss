@@ -285,3 +285,16 @@ test("refusedGate: a refusal keeps the mark the pane had (a lapsing one is pushe
 	assert.deepEqual(refusedGate({ ...base, freshUntil: 100, failures: 3 }), { fresh: false, freshUntil: undefined, giveUp: true });
 	assert.deepEqual(refusedGate({ ...base, failures: 4 }), { fresh: false, freshUntil: undefined, giveUp: false });
 });
+
+import { allyCloseGate } from "../src/server/typegate.ts";
+test("allyCloseGate: holds, or a re-proven seat with the pane in the tower's tab", () => {
+	const rows: [Parameters<typeof allyCloseGate>[0], boolean][] = [
+		[{ proof: "holds", seated: false, inTowerTab: false }, true],
+		[{ proof: "moved", seated: true, inTowerTab: true }, true],
+		[{ proof: "bind", seated: true, inTowerTab: true }, true],
+		[{ proof: "moved", seated: false, inTowerTab: true }, false],
+		[{ proof: "moved", seated: true, inTowerTab: false }, false],
+		[{ proof: "absent", seated: false, inTowerTab: false }, false],
+	];
+	for (const [f, want] of rows) assert.equal(allyCloseGate(f), want, JSON.stringify(f));
+});

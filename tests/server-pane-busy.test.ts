@@ -227,10 +227,11 @@ test("RV12-F001 win32 (c): Herdr's code was not agent_pane_busy (no program look
 	assert.match((await startNotices(s)).join("\n"), /busy with node\.exe/);
 });
 
-test("RV12-F001 win32 (d): a clean read below the shell (the tower prompt aside): Retry types the prompt command once", async () => {
+// RVSEAT3-F002 changes this expectation: a prompt process below the shell is a program in the pane whatever its age (it may be starting or hung), so Retry types nothing into it (F10); it used to type once more.
+test("RV12-F001 win32 (d): a clean read below the shell with the tower prompt there: Retry types nothing more", async () => {
 	const prompt: Proc = { ...row(6666, SHELL_PID, "node.exe"), prompt: true };
 	const s = await retryRig(undefined, [row(SHELL_PID, 1, "powershell.exe"), row(1234, SHELL_PID, "conhost.exe"), prompt]);
-	assert.equal(await afterRetry(s), 2, "typed once");
+	assert.equal(await afterRetry(s), 1, "not typed again");
 	assert.deepEqual(await startNotices(s), []);
 });
 

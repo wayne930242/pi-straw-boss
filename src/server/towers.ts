@@ -179,7 +179,6 @@ export function createTowers(o: TowersOptions): Towers {
 		cwd: async () => (await panes(run, l.record.workspace).catch(() => [])).find((p) => p.pane_id === l.record.pane)?.cwd ?? l.record.cwd ?? slot.stateDir,
 		towerKey: async () => (await netTokens(run, place(l), "tower", l.record.name, now(), cfg.world)).own.sb_order ?? undefined,
 		yieldPane: () => standing.yieldPane(l.record.workspace),
-		starting: () => standing.starting(l.record.workspace),
 		freed: (over) => standing.freed(l.record.workspace, over?.fresh, over?.keepParked),
 		clearDigest: (keys) => digest.drop(l.record.workspace, keys),
 		renewPane: (runId) => renew(l, runId),

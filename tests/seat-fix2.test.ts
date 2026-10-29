@@ -47,7 +47,9 @@ test("RVSEAT2-D3 control: a proven tower's tab is closed", async () => {
 	assert.ok(world.herdr.closed.includes(String(ensured.tab)));
 });
 
-test("RVSEAT2-D2: an ally run that ends with the Herdr restart closes and unmarks no pane the new Herdr gives the old id", async () => {
+// RVSEAT3-F001: after a Herdr restart the ally pane is ours to close when the tower's seat is proven again and the pane is in the tower's tab; a lost session's stranger under a reused id is not.
+async function allyRun(restore: boolean, platform: "darwin" | "win32") {
+	if (platform === "win32") { world.runPlatform = "win32"; world.herdr.winShell = true; }
 	const s = await world.start();
 	await s.handle.ready;
 	await ask(s, { cmd: "ensure-tower", workspace: "wA" });
@@ -56,15 +58,26 @@ test("RVSEAT2-D2: an ally run that ends with the Herdr restart closes and unmark
 	world.expose?.allyWaiting("sb-tower-wa");
 	await until(() => world.herdr.commands("pane", "split").length === 1, "the ally pane");
 	await until(() => world.herdr.commands("agent", "start").length === 1, "its start");
-	const ally = world.herdr.panes.find((p) => p.pane_id !== world.herdr.commands("pane", "split")[0]![2] && p.tokens?.sb_role === "ally")?.pane_id ?? world.herdr.panes.at(-1)!.pane_id;
 	const h = world.herdr;
-	h.restart(false); // the pane is in a new terminal: a stranger's under the old id
+	const pane = h.panes.find((p) => p.tokens?.sb_role === "ally")?.pane_id ?? h.panes.at(-1)!.pane_id;
+	if (restore) h.restart(false);
+	else { h.lose(); h.addPane(pane, "wA:t999", "shell"); }
 	h.calls.length = 0;
 	world.takeovers.forEach((cb) => cb());
 	await sleep(400);
-	assert.deepEqual(h.calls.filter((a) => a.includes(ally) && (a[0] === "pane" && a[1] === "close" || a[1] === "report" || a[0] === "pane" && a[1] === "report")), []);
-	assert.ok(!h.closed.includes(ally), "closed the stranger's pane");
-});
+	return { h, pane };
+}
+for (const platform of ["darwin", "win32"] as const) {
+	test(`RVSEAT3-F001 ${platform}: a restored session closes and unmarks the live ally run's pane`, async () => {
+		const { h, pane } = await allyRun(true, platform);
+		assert.ok(h.closed.includes(pane), "the ally pane stays");
+	});
+	test(`RVSEAT3-F001 ${platform}: a lost session leaves a stranger under the old pane id untouched`, async () => {
+		const { h, pane } = await allyRun(false, platform);
+		assert.deepEqual(h.calls.filter((a) => a.includes(pane) && (a[1] === "close" || a[1] === "report")), []);
+		assert.ok(!h.closed.includes(pane), "closed the stranger's pane");
+	});
+}
 
 for (const order of ["listing-then-takeover", "events-then-takeover"] as const) test(`RVSEAT2-F001 darwin restored session, ${order}: the command is typed once into the new terminal`, async () => {
 	world.herdr.shellPids = true;
@@ -117,4 +130,21 @@ test("RVSEAT2-F002: a run's start that waits on a busy pane asks the seat before
 	const after = h.commands("agent", "start").length;
 	await sleep(1500);
 	assert.ok(h.commands("agent", "start").length <= after + 1, "no start is tried after the seat is lost");
+});
+
+test("RVSEAT3-F002 win32: Retry after the starting window, the prompt below the shell and not polling: typed once", async () => {
+	world.runPlatform = "win32";
+	world.herdr.winShell = true;
+	world.herdr.shellForeground = true;
+	world.standingTimers = { launchMs: 200, launchMaxMs: 200 };
+	const s = await world.start();
+	await s.handle.ready;
+	const ensured = await ask(s, { cmd: "ensure-tower", workspace: "wA" });
+	await until(() => typedPrompts() === 1, "the first prompt");
+	world.herdr.pane(String(ensured.pane)).processes = [{ name: "powershell.exe", argv0: "powershell.exe", pid: SHELL_PID }];
+	world.procTable = [{ pid: SHELL_PID, ppid: 1, name: "powershell.exe", carries: false }, { pid: 6100, ppid: SHELL_PID, name: "node.exe", carries: false, prompt: true } as never];
+	await sleep(500);
+	assert.equal((await ask(s, { cmd: "tower-retry", workspace: "wA" })).ok, true);
+	await sleep(500);
+	assert.equal(typedPrompts(), 1);
 });

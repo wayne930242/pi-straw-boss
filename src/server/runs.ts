@@ -11,7 +11,7 @@ import { waitPastTrust } from "../trust/wait.ts";
 import type { MemorySummary, TowerView } from "../net.ts";
 import { type BossPointer, type ConversationInfo, readPointer, resumable, sessionsRoot, underRoot, writePointer } from "./bossconv.ts";
 import { herdrCode } from "./herdrcode.ts";
-import { proofGate } from "./typegate.ts";
+import { allyCloseGate, proofGate } from "./typegate.ts";
 import { isShell, nestedShells, programName, programProcs } from "./standing.ts";
 import { retryGate, runEndGate, tableGate } from "./typegate.ts";
 import { chain, isWrapper, leafOf, type Proc, type Procs, readProcs } from "./lineage.ts";
@@ -155,8 +155,6 @@ export interface ServiceRef {
 	towerKey(): Promise<string | undefined>;
 	/** A local run is about to start pi in the standing pane: the stand-in goes and the tower prompt leaves (standing.ts); resolves once the pane is free. */
 	yieldPane(): Promise<void>;
-	/** The tower prompt was typed into the pane lately and has not polled yet: it is starting there (standing.ts). */
-	starting?(): boolean;
 	/** A local run ended: the pane is free for the prompt again. `keepParked`: the give-back of a Retry or of the tower's own proof, which never ends the boss's Ctrl+D park. `fresh: false`: pi was never started in it (Herdr refused the start), so it is not known to be a bare shell, and on Windows nothing is typed into it. */
 	freed(over?: { fresh?: boolean; keepParked?: boolean }): void;
 	/** The brief for a run: the server builds it from the net, the opener's ledger, the digest, and the last note. `refresh`: a live run is given the newest, not a new one. */
@@ -465,8 +463,8 @@ export function createRuns(o: RunsOptions) {
 				svc.state = "held";
 				return void noticeOf(svc, { id: "start", level: "warning", kind: "start", text: `The tower types nothing in the standing pane: ${busyText(busy)}` });
 			}
-			// The tower prompt is below the shell, not polling yet: the command was typed and the prompt is starting, so the pane is not given back to be typed into a second time (RVSEAT2-D1).
-			if (scan?.prompt && svc.ref.starting?.()) return;
+			// The tower prompt is below the shell: whatever its age, the pane is not given back to be typed into (F10; RVSEAT3-F002).
+			if (scan?.prompt) return;
 			svc.paneUnproven = undefined;
 			svc.ref.freed({ keepParked: true });
 		} finally {
@@ -861,7 +859,10 @@ export function createRuns(o: RunsOptions) {
 		const svc = a.svc, identity = svc.ref.record().id;
 		// The pane is closed once pi has exited: a pane that pi leaves returns to its shell and would stay (a started pi that is still there goes with it).
 		// After a new Herdr came back the id may name a pane of the boss's own: the pane is closed and unmarked only when it is listed in the terminal the ally run's pane ran in (typegate.ts `proofGate`).
-		const ours = a.rec.pane && (outcome !== "herdr-restart" || (await panes(o.run, svc.ref.workspace).then((list) => proofGate({ terminal: a.terminal, pane: list.find((p) => p.pane_id === a.rec.pane) }) === "holds", () => false)));
+		const ours = a.rec.pane && (outcome !== "herdr-restart" || (await panes(o.run, svc.ref.workspace).then(async (list) => {
+			const pane = list.find((p) => p.pane_id === a.rec.pane);
+			return allyCloseGate({ proof: proofGate({ terminal: a.terminal, pane }), seated: !!pane && await svc.ref.proven(), inTowerTab: !!pane && pane.tab_id === svc.ref.record().tab });
+		}, () => false)));
 		if (ours) {
 			await clearOrder(o.run, [a.rec.pane]);
 			await o.run(["pane", "close", a.rec.pane]).catch(() => {});

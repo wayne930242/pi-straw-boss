@@ -442,12 +442,6 @@ export function createStanding(o: StandingOptions) {
 			for (const [id, record] of typed) if (record.terminal === undefined) typed.delete(id);
 			for (const m of mines.values()) Object.assign(m, { seen: undefined, leaving: false, parked: false, launched: undefined, reported: undefined, misses: 0, unsupported: undefined, typings: 0, fresh: true, noStart: false, lost: false, hand: undefined, freshUntil: undefined, failures: 0, giveUp: false });
 		},
-		/** Whether the command was typed into the pane lately and its prompt has not polled since: it is starting, and the wait before the next typing still runs. */
-		starting(workspace: string): boolean {
-			const m = mines.get(workspace);
-			if (!m || present(m) || m.launched === undefined) return false;
-			return now() - m.launched < Math.min(t.launchMs * 2 ** Math.max(0, m.typings - 1), t.launchMaxMs);
-		},
 		/** The look at once (a service just went live), without waiting for the interval. */
 		kick: (workspace: string) => void tick(workspace),
 		tick,
