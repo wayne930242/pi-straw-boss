@@ -91,13 +91,16 @@ export const fileStore = (dir) => ({
 
 /**
  * What Herdr's active Agents view is now, without changing it. Herdr has no query for it, but `agent.view.clear` with a source that owns nothing
- * "leaves the active view unchanged" and answers with it (checked on Herdr 0.9.5: `active`, `source`, `label`; clearing the view's own source answers
- * inactive whether or not it was there, which is why the saved state could not be trusted).
+ * "leaves the active view unchanged" and answers with it (checked on Herdr 0.9.5, with a plugin's source and with sources of no plugin: `active`, `source`,
+ * `label`; clearing the view's own source answers inactive whether or not it was there, which is why the saved state could not be trusted). That is why the
+ * plugin needs Herdr 0.9.5. The probe's source is outside the `plugin:` namespace and unique to each probe, so it can never be the source of a view someone
+ * owns (a plugin whose id is `<this id>-probe` owns `plugin:<this id>-probe`).
  * @param {{ call: Call, source: string }} deps
  * @returns {Promise<{ active: boolean, source?: string }>}
  */
 export const activeView = async ({ call, source }) => {
-	const view = await call("agent.view.clear", { source: `${source}-probe` });
+	const probe = `straw-boss-probe:${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+	const view = await call("agent.view.clear", { source: probe });
 	return { active: Boolean(view.active), source: view.source };
 };
 
@@ -132,8 +135,16 @@ export async function toggle(deps) {
 	const { call, store, source, instance } = deps;
 	const now = await activeView(deps);
 	if (now.active && now.source === source) {
-		if ((await call("agent.view.clear", { source })).active) throw new Error("herdr agent.view.clear did not clear the view");
+		// The wish is written first: an event hook that sees the view gone must also see the off, and a wish that cannot be written clears nothing (the view stays and the press says why).
+		const before = await store.read();
 		await store.write({ on: false, instance });
+		try {
+			if ((await call("agent.view.clear", { source })).active) throw new Error("herdr agent.view.clear did not clear the view");
+		} catch (error) {
+			// The view is still there: the wish goes back to what it was, so the next agent's reapply and the next press agree with what shows.
+			await store.write(before ?? { on: true, instance }).catch(() => {});
+			throw error;
+		}
 		return { on: false };
 	}
 	return install(deps);
@@ -151,6 +162,9 @@ export async function reapply(deps) {
 	if (state?.on === false && state.instance === deps.instance) return { on: false };
 	const now = await activeView(deps);
 	if (now.active) return { on: now.source === deps.source };
+	// A press may have cleared the view between the first read and the probe: it wrote its off before it cleared, so the wish is read again before anything is installed.
+	const again = await deps.store.read();
+	if (again?.on === false && again.instance === deps.instance) return { on: false };
 	return install(deps);
 }
 

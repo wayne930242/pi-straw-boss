@@ -111,7 +111,7 @@ pi install npm:pi-straw-boss
 它先列出首席塔台（head tower）所在的工作區；每個工作區裡先列塔台，再列各分頁的主智慧體和成員，每個子智慧體緊接在開出它的 session 底下，即使它在 worktree 工作區裡也一樣。
 Herdr server 啟動時這個檢視就會打開，按一個鍵可以關掉，再按一次打開。
 pi-straw-boss 會寫入排序鍵（`sb_order`）、角色標記（`sb_mark`），子智慧體另外有樹狀分支（`sb_indent`）和它的名稱（`sb_name`），網路檢視和你自己的側邊欄列設定都可以用。
-需要 Herdr 0.9.3 以上和 node。
+需要 Herdr 0.9.5 以上和 node。
 在 Windows 上，切換動作是 `wayne930242.straw-boss.net-windows`（Herdr 要求動作 id 在各平台之間不能重複）。
 
 <p align="center"><img src="docs/sidebar-net-view.png" width="308" alt="Herdr 側邊欄的網路檢視：每個工作區的塔台排第一，前面是訊號塔圖示；每個主智慧體佔兩列，有星號和它的分頁名稱；每個子智慧體以樹狀分支排在開出它的 session 底下"></p>

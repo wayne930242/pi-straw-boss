@@ -13,8 +13,10 @@ import { activeView, fileStore, instanceOf, main, netView, reapply, socketCall, 
 const PLUGIN = fileURLToPath(new URL("../herdr-plugin/", import.meta.url));
 
 const SOURCE = "plugin:wayne930242.straw-boss";
-/** The clears that took a view away: a clear naming another source is the probe (Herdr 0.9.5 answers it with the active view and changes nothing). */
-const wiping = (herdr) => herdr.clears.filter((params) => params.source !== `${SOURCE}-probe`);
+/** The probe: a clear naming a source nobody owns (Herdr 0.9.5 answers it with the active view and changes nothing). Its source is outside the `plugin:` namespace, so no plugin id can produce it. */
+const PROBE = /^straw-boss-probe:/;
+/** The clears that took a view away: every clear but the probe. */
+const wiping = (herdr) => herdr.clears.filter((params) => !PROBE.test(params.source));
 
 /** A Herdr that keeps the one active Agents view, with the guard of `agent.view.clear`: a named source clears only its own view. */
 function fakeHerdr({ failView = false } = {}) {
@@ -108,6 +110,51 @@ test("activeView reads the active view with a clear that names a source nobody o
 	assert.deepEqual(await activeView({ call: (m, p) => herdr.handle(m, p), source: SOURCE }), { active: true, source: "plugin:someone.else" });
 	assert.equal(herdr.view.source, "plugin:someone.else", "the view is untouched");
 	assert.ok(herdr.clears.every((params) => /^[A-Za-z0-9:._-]{1,120}$/.test(params.source)), "a source Herdr accepts: ASCII letters, digits, colon, dot, underscore, hyphen");
+});
+
+test("RV7-F008: the probe's source is outside the plugin namespace: a plugin whose id is <this id>-probe owns plugin:<this id>-probe, and probing never clears its view", async () => {
+	const herdr = fakeHerdr(), store = memoryStore();
+	herdr.view = { source: `${SOURCE}-probe`, label: "theirs" };
+	assert.deepEqual(await activeView(deps(herdr, store)), { active: true, source: `${SOURCE}-probe` });
+	assert.equal(herdr.view?.source, `${SOURCE}-probe`, "the other plugin's view is untouched by a probe");
+	await reapply(deps(herdr, store));
+	await toggle(deps(herdr, store)); // installs over it, as a press does: that is the press, not the probe
+	assert.ok(herdr.clears.length >= 2 && herdr.clears.filter((params) => PROBE.test(params.source)).length === herdr.clears.length - wiping(herdr).length);
+	for (const params of herdr.clears.filter((p) => PROBE.test(p.source))) {
+		assert.ok(!params.source.startsWith("plugin:"), params.source);
+		assert.match(params.source, /^[A-Za-z0-9:._-]{1,120}$/);
+	}
+});
+
+test("RV7-F007: a press that turns the view off writes the off before it clears, so a reapply that sees the cleared view also sees the off; a state that cannot be written clears nothing", async () => {
+	const herdr = fakeHerdr(), order = [];
+	const store = { state: undefined, read: async () => store.state, write: async (state) => (order.push(`write:${state.on}`), void (store.state = state)) };
+	const call = herdr.handle.bind(herdr);
+	herdr.handle = async (method, params) => (!PROBE.test(params.source ?? "") && method === "agent.view.clear" && order.push("clear"), call(method, params));
+	await toggle(deps(herdr, store));
+	order.length = 0;
+	await toggle(deps(herdr, store));
+	assert.deepEqual(order, ["write:false", "clear"], "off is on disk before the view goes");
+	// The write fails: the view stays, nothing is cleared, the press says why.
+	await toggle(deps(herdr, store)); // on again
+	store.write = async () => { throw new Error("disk full"); };
+	herdr.clears.length = 0;
+	await assert.rejects(toggle(deps(herdr, store)), /disk full/);
+	assert.ok(herdr.view, "the view stays");
+	assert.deepEqual(wiping(herdr), [], "and was not cleared");
+	// The clear fails after the off was written: the wish goes back to on, so the next agent's reapply and the next press agree with what shows.
+	store.write = async (state) => void (store.state = state);
+	herdr.handle = async (method, params) => { if (method === "agent.view.clear" && !PROBE.test(params.source ?? "")) throw new Error("socket gone"); return call(method, params); };
+	await assert.rejects(toggle(deps(herdr, store)), /socket gone/);
+	assert.equal(store.state.on, true);
+});
+
+test("RV7-F007: reapply reads the wish again after it sees no view, so an off pressed between its first read and its install stands", async () => {
+	const herdr = fakeHerdr();
+	const reads = [{ on: true, instance: "server-1" }, { on: false, instance: "server-1" }];
+	const store = { read: async () => reads.length > 1 ? reads.shift() : reads[0], write: async () => {} };
+	assert.deepEqual(await reapply(deps(herdr, store)), { on: false });
+	assert.equal(herdr.view, undefined, "nothing was installed over the press");
 });
 
 test("reapply puts the view back when none is active and the wish is not this server's off; it leaves an active view, its own or another's, and a pressed off alone", async () => {
@@ -307,7 +354,7 @@ test("main runs the action against a real socket: on, then off, with its state u
 test("the manifest declares the startup hook and the action, the minimum Herdr version, and commands whose files exist", () => {
 	const manifest = readFileSync(join(PLUGIN, "herdr-plugin.toml"), "utf8");
 	assert.match(manifest, /^id = "wayne930242\.straw-boss"$/m, "the view's source is plugin:<this id>");
-	assert.match(manifest, /^min_herdr_version = "0\.9\.3"$/m);
+	assert.match(manifest, /^min_herdr_version = "0\.9\.5"$/m, "the probe's answer was checked on 0.9.5");
 	assert.match(manifest, /^platforms = \["macos", "linux", "windows"\]$/m);
 	assert.match(manifest, /\[\[startup\]\]\nplatforms = \["macos", "linux"\]\ncommand = \["\/bin\/bash", "run\.sh", "net-view\.mjs", "startup"\]/);
 	assert.match(manifest, /\[\[startup\]\]\nplatforms = \["windows"\]\ncommand = \["node", "net-view\.mjs", "startup"\]/, "Windows has no bash: its twin runs node");
