@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { giveBackGate, handGate, holdGate, idleShell, type NoReason, refusedGate, retryGate, runEndGate, settleGate, tableGate, type TypeFacts, typeGate } from "../src/server/typegate.ts";
+import { giveBackGate, handGate, holdGate, idleShell, type NoReason, refusedGate, retryGate, runEndGate, seatGate, settleGate, tableGate, type TypeFacts, typeGate } from "../src/server/typegate.ts";
+import { TOWER_LABEL } from "../src/herdr.ts";
 
 // The gate (src/server/typegate.ts) is the one place that says whether the server may type the tower prompt's command into a standing pane. Each rule is pinned alone here: a case in which only that rule says no
 // (a rule dropped fails its case), and the order in which the rules are asked (a rule moved fails the case that has two of them say no).
@@ -15,6 +16,7 @@ function facts(over: Partial<TypeFacts> = {}, win = false): { f: TypeFacts; call
 	const calls: string[] = [];
 	const f: TypeFacts = {
 		attached: true,
+		seated: () => true,
 		groups: !win,
 		busy: false,
 		held: false,
@@ -42,6 +44,7 @@ test("typeGate: a pane no rule says no to is typed into, on macOS by the groups 
 // One row per rule: the facts that make only that rule say no.
 const rules: [NoReason, Partial<TypeFacts>, boolean?][] = [
 	["absent", { attached: false }],
+	["unseated", { seated: () => false }],
 	["busy", { busy: true }],
 	["run", { run: true }],
 	["agent", { agent: "other" }],
@@ -81,20 +84,21 @@ test("typeGate: a held or unmarked Windows pane is never read, so nothing is ask
 
 test("typeGate: the rules are asked in order, and a fact is read only when every rule before it passed", async () => {
 	// Every rule from the nth on says no at once: the nth is the answer, whatever the later ones say.
-	const all: Partial<TypeFacts> = { attached: false, busy: true, run: true, agent: "other", prompt: () => true, parked: () => true, runSoon: () => true, launchWait: () => true, command: () => false, settle: () => ({ hand: true, giveUp: true }), held: true, fresh: () => false, read: async () => runningDarwin };
+	const all: Partial<TypeFacts> = { attached: false, seated: () => false, busy: true, run: true, agent: "other", prompt: () => true, parked: () => true, runSoon: () => true, launchWait: () => true, command: () => false, settle: () => ({ hand: true, giveUp: true }), held: true, fresh: () => false, read: async () => runningDarwin };
 	const expected: [Partial<TypeFacts>, NoReason][] = [
 		[all, "absent"],
-		[{ ...all, attached: true }, "busy"],
-		[{ ...all, attached: true, busy: false }, "run"],
-		[{ ...all, attached: true, busy: false, run: false }, "agent"],
-		[{ ...all, attached: true, busy: false, run: false, agent: "stand-in" }, "prompt"],
-		[{ ...all, attached: true, busy: false, run: false, agent: "stand-in", prompt: () => false }, "parked"],
-		[{ ...all, attached: true, busy: false, run: false, agent: "stand-in", prompt: () => false, parked: () => false }, "run-soon"],
-		[{ ...all, attached: true, busy: false, run: false, agent: "stand-in", prompt: () => false, parked: () => false, runSoon: () => false }, "launch-wait"],
-		[{ ...all, attached: true, busy: false, run: false, agent: "stand-in", prompt: () => false, parked: () => false, runSoon: () => false, launchWait: () => false }, "stand-in"],
-		[{ ...all, attached: true, busy: false, run: false, agent: "none", prompt: () => false, parked: () => false, runSoon: () => false, launchWait: () => false }, "no-command"],
-		[{ ...all, attached: true, busy: false, run: false, agent: "none", prompt: () => false, parked: () => false, runSoon: () => false, launchWait: () => false, command: () => true }, "hand"],
-		[{ ...all, attached: true, busy: false, run: false, agent: "none", prompt: () => false, parked: () => false, runSoon: () => false, launchWait: () => false, command: () => true, settle: () => ({ hand: false, giveUp: true }) }, "gave-up"],
+		[{ ...all, attached: true }, "unseated"],
+		[{ ...all, attached: true, seated: () => true }, "busy"],
+		[{ ...all, attached: true, seated: () => true, busy: false }, "run"],
+		[{ ...all, attached: true, seated: () => true, busy: false, run: false }, "agent"],
+		[{ ...all, attached: true, seated: () => true, busy: false, run: false, agent: "stand-in" }, "prompt"],
+		[{ ...all, attached: true, seated: () => true, busy: false, run: false, agent: "stand-in", prompt: () => false }, "parked"],
+		[{ ...all, attached: true, seated: () => true, busy: false, run: false, agent: "stand-in", prompt: () => false, parked: () => false }, "run-soon"],
+		[{ ...all, attached: true, seated: () => true, busy: false, run: false, agent: "stand-in", prompt: () => false, parked: () => false, runSoon: () => false }, "launch-wait"],
+		[{ ...all, attached: true, seated: () => true, busy: false, run: false, agent: "stand-in", prompt: () => false, parked: () => false, runSoon: () => false, launchWait: () => false }, "stand-in"],
+		[{ ...all, attached: true, seated: () => true, busy: false, run: false, agent: "none", prompt: () => false, parked: () => false, runSoon: () => false, launchWait: () => false }, "no-command"],
+		[{ ...all, attached: true, seated: () => true, busy: false, run: false, agent: "none", prompt: () => false, parked: () => false, runSoon: () => false, launchWait: () => false, command: () => true }, "hand"],
+		[{ ...all, attached: true, seated: () => true, busy: false, run: false, agent: "none", prompt: () => false, parked: () => false, runSoon: () => false, launchWait: () => false, command: () => true, settle: () => ({ hand: false, giveUp: true }) }, "gave-up"],
 	];
 	for (const [over, reason] of expected) assert.deepEqual(await typeGate(facts(over).f), { type: false, reason }, reason);
 	// Windows: held before unproven before the read.
@@ -105,6 +109,7 @@ test("typeGate: the rules are asked in order, and a fact is read only when every
 
 	// Lazy: the stand-in is taken away only when the prompt is not there, and nothing after a no is asked.
 	for (const [over, asked] of [
+		[{ seated: () => false }, []],
 		[{ prompt: () => true }, []],
 		[{ run: true }, []],
 		[{ parked: () => true }, ["gone"]],
@@ -135,6 +140,27 @@ test("typeGate: the prompt is asked again after every await, so a poll that land
 	let asked = 0;
 	assert.deepEqual(await typeGate(facts({ prompt: () => (asked++, false) }).f), { type: true });
 	assert.equal(asked, 3);
+});
+
+test("typeGate: the seat is asked again after every await, so a Herdr that comes back while the look waits is not typed into", async () => {
+	for (const [name, over] of [
+		["gone", (void_: () => void) => ({ gone: async () => void_() })],
+		["read", (void_: () => void) => ({ read: async () => (void_(), idleDarwin) })],
+	] as const) {
+		let voided = false;
+		const { f } = facts({ seated: () => !voided, ...over(() => (voided = true)) });
+		assert.deepEqual(await typeGate(f), { type: false, reason: "unseated" }, name);
+	}
+});
+
+test("seatGate: a pane in a tab labelled with the tower glyph is the tower's own; a pane in any other tab is a stranger's, whatever its id; a pane or tab not listed proves nothing", () => {
+	const pane = { pane_id: "w1:p1" };
+	assert.equal(seatGate({ pane, tab: { label: TOWER_LABEL } }), "ours");
+	assert.equal(seatGate({ pane, tab: { label: "1" } }), "stranger");
+	assert.equal(seatGate({ pane, tab: { label: "tower" } }), "stranger", "the word is no proof: a subagent can be called tower");
+	assert.equal(seatGate({ pane, tab: {} }), "stranger");
+	assert.equal(seatGate({ pane: undefined, tab: { label: TOWER_LABEL } }), "absent");
+	assert.equal(seatGate({ pane, tab: undefined }), "absent");
 });
 
 test("typeGate: the freshness a Windows pane is typed on is read after Herdr answered, not before", async () => {

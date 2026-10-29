@@ -11,8 +11,11 @@
 //   table proves; the proof asks `retryGate` again after its read), `runEndGate` (what a run's end says of the pane).
 // Two marks are facts, not typing decisions, and are set where the fact happens: `fresh: true` at `attach(target, fresh)` (Herdr just made the pane, so it is a shell nobody has used) and at `reset()` (a new Herdr
 // server: every pane is a fresh shell). Neither depends on what the pane did, so no rule could be wrong there; they only start the clock that `typeGate` and `settleGate` then judge.
+// - `seatGate`: whether the pane a service recorded is still the tower's own seat after a Herdr came back or a server started. `typeGate` asks it as a fact (`seated`), and the callers that mark a pane or wake a run in it ask the same fact.
 // The gates other than `typeGate` are pure: the facts come in, the answer goes out, and the caller changes its own state by it. `typeGate`'s facts are not: `gone` takes the stand-in away, `settle` upkeeps the caller's
 // marks, and `read` asks Herdr; they are asked in the gate's order and only when the rules before them passed.
+
+import { TOWER_LABEL } from "../herdr.ts";
 
 export const SHELLS = new Set(["zsh", "bash", "fish", "sh", "dash", "ksh", "tcsh", "csh", "nu", "login", "pwsh", "powershell", "cmd"]);
 export const nameOf = (p: { argv0?: string; name?: string }) => String(p.argv0 ?? p.name ?? "").replace(/^-/, "").split(/[\\/]/).pop()!.toLowerCase().replace(/\.exe$/, "");
@@ -32,12 +35,31 @@ export function idleShell(info: ProcessInfo | undefined, fresh = false, groups =
 	return fresh && procs.length > 0 && procs.every((p) => SHELLS.has(nameOf(p)));
 }
 
+// --- the seat: is the recorded pane still the tower's -----------------------------------------------------------------------------------------------------------------------
+
+/** What Herdr lists of the recorded pane and of the tab that pane is in; undefined when it lists none. */
+export interface SeatFacts { pane: { pane_id: string } | undefined; tab: { label?: string } | undefined }
+/** `absent`: the pane or its tab is not listed (a restore that is not done, or a pane that is gone): there is nothing to prove or refute yet. */
+export type SeatVerdict = "ours" | "stranger" | "absent";
+/**
+ * A service records the workspace, tab and pane it made; Herdr numbers them with short counters that repeat across Herdr servers. After a Herdr came back (a restore, or a session that was lost) or a server started, the
+ * ids alone prove nothing: a lost session's counters can name the boss's own workspace, a plain shell the server would type the tower prompt's command into, mark, and start a run in (VM pass B7, F10). What Herdr
+ * keeps of a restored session is its layout and labels, never the tokens or the pane's environment (a new server begins with none), so the proof is the one thing a restore keeps of the tab the service made: its
+ * label, the tower glyph (`createTab` gives it, `openFor` gives it to a tab it adopts, and the leftover-tab rule already recognises a tower tab by it). A pane in a tab with another label is a stranger's.
+ */
+export function seatGate(f: SeatFacts): SeatVerdict {
+	if (!f.pane || !f.tab) return "absent";
+	return f.tab.label === TOWER_LABEL ? "ours" : "stranger";
+}
+
 // --- the question: may the look type now ------------------------------------------------------------------------------------------------------------------------------------
 
 /** The rule that said no, in the order the gate asks them. */
 export type NoReason =
 	/** The pane is not listed, or the service's identity is not registered: there is nothing to type into. */
 	| "absent"
+	/** The pane is not proven to be the tower's own seat (`seatGate`): after a Herdr came back a reused id may name the boss's shell. Only a proof, or the service's end, changes that. */
+	| "unseated"
 	/** The service is held because the pane runs a program of the boss's (runs.ts): only `holdGate` may end that. */
 	| "busy"
 	/** A run holds the pane or is about to: the prompt has left or is leaving. */
@@ -75,6 +97,8 @@ export type TypeVerdict = { type: true } | { type: false; reason: NoReason };
 export interface TypeFacts {
 	/** The pane is listed and the service's identity is registered. */
 	attached: boolean;
+	/** The pane is proven to be the tower's own seat (`seatGate`). Asked again after every await: a Herdr that comes back while the look waits voids the proof. */
+	seated(): boolean;
 	/** Herdr gives the foreground group (false on win32). */
 	groups: boolean;
 	/** The service is held because the pane runs a program of the boss's. */
@@ -106,11 +130,13 @@ export interface TypeFacts {
 export async function typeGate(f: TypeFacts): Promise<TypeVerdict> {
 	const no = (reason: NoReason): TypeVerdict => ({ type: false, reason });
 	if (!f.attached) return no("absent");
+	if (!f.seated()) return no("unseated");
 	if (f.busy) return no("busy");
 	if (f.run) return no("run");
 	if (f.agent === "other") return no("agent");
 	if (f.prompt()) return no("prompt");
 	await f.gone();
+	if (!f.seated()) return no("unseated");
 	if (f.prompt()) return no("prompt");
 	if (f.parked()) return no("parked");
 	if (f.runSoon()) return no("run-soon");
@@ -123,6 +149,7 @@ export async function typeGate(f: TypeFacts): Promise<TypeVerdict> {
 	if (!f.groups && f.held) return no("held");
 	if (!f.groups && !f.fresh()) return no("unproven");
 	const info = await f.read();
+	if (!f.seated()) return no("unseated");
 	if (f.prompt()) return no("prompt");
 	if (!idleShell(info, f.fresh(), f.groups)) return no("not-idle");
 	return { type: true };

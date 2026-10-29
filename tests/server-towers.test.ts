@@ -258,6 +258,18 @@ test("resident towers: a record in roles/ whose pane is in this Herdr becomes se
 	assert.equal(s.client.connected, true);
 });
 
+test("resident towers: a record whose pane runs its own session file in a tab without the glyph becomes a service, and the tab gets the glyph that proves its seat after a Herdr restart", async () => {
+	world.herdr.addTab("wA:t7", "my tower", "wA:p7", "pi");
+	pane("wA:p7").agent_session = { value: "/sessions/tower.jsonl" };
+	const roles = join(world.stateDir, "roles");
+	mkdirSync(roles, { recursive: true });
+	writeFileSync(join(roles, "tower.json"), JSON.stringify({ role: "tower", pane: "wA:p7", tab: "wA:t7", workspace: "wA", file: "/sessions/tower.jsonl", at: 1 }));
+	await started();
+	assert.deepEqual(readdirSync(roles), []);
+	assert.equal(world.herdr.tabs.find((t) => t.tab_id === "wA:t7")?.label, TOWER_LABEL);
+	await until(() => tokens().tower === "sb-tower-wa" && pane("wA:p7").tokens.sb_role === "tower", "the marks of a seated service");
+});
+
 test("a live resident tower of an older build keeps its workspace: the service waits, writes nothing, and registers once that session leaves", async () => {
 	world.herdr.addTab("wA:t7", TOWER_LABEL, "wA:p7", "pi");
 	world.herdr.workspace("wA").tokens.tower = "old-tower";
@@ -413,13 +425,14 @@ const resident = (id = "old-tower") => {
 };
 const standing = () => writeService(world.slot, { workspace: "wA", label: "Alpha", id: "sb-tower-wa", name: "tower · Alpha", pane: "wA:p7", tab: "wA:t7", created: "x", seq: 0 });
 
-test("VM #35: a service whose pane is gone when it publishes (the pane a handover replaced, a closed workspace) logs no tokens error: the stale report is dropped with a debug line", async () => {
+test("VM #35: a service whose pane is gone (the pane a handover replaced, a closed workspace) is not written to at all: no tokens error, no report to a pane that is not proven the tower's own", async () => {
 	standing(); // wA:p7 is in no tab of this Herdr
 	const s = await world.start({ towers: { recoverMs: 5000, registerMs: 500, residentMs: 20, retryMs: [20] } });
 	await s.handle.ready;
-	await until(() => /tower-registered/.test(logText()) && /tokens-dropped/.test(logText()), "the registration and the dropped report");
+	await until(() => /tower-registered/.test(logText()), "the registration");
+	await sleep(150);
 	assert.doesNotMatch(logText(), /code=tokens/, "no error line for a pane that is not there");
-	assert.match(logText(), /tokens-dropped[^\n]*pane=wA:p7/);
+	assert.deepEqual(world.herdr.calls.filter((args) => args[1] === "report-metadata"), [], "nothing is written before the pane is proven to be the tower's own");
 	assert.ok(readService(world.slot, "wA"), "the service stays: the tab is looked for within the recovery window");
 });
 

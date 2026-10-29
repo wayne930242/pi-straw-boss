@@ -46,6 +46,8 @@ export interface StandingTarget {
 	pane(): string;
 	/** Whether the identity is registered: nothing is typed or reported before. */
 	live(): boolean;
+	/** Whether the pane is proven to be the tower's own seat (typegate.ts `seatGate`); nothing is typed before. Absent: proven (a target that needs no proof). */
+	seated?(): boolean;
 	status(): ServiceStatus | undefined;
 	/** Whether a run starts in the pane within `ms`: a prompt typed now would only have to start, poll, and leave before the run's pi can. */
 	runWithin?(ms: number): boolean;
@@ -206,6 +208,7 @@ export function createStanding(o: StandingOptions) {
 		let command = "";
 		const verdict = await typeGate({
 			attached,
+			seated: () => target.seated?.() ?? true,
 			groups,
 			busy: attached && Boolean(target.paneBusy?.()),
 			held: status?.state === "held",
