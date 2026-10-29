@@ -10,6 +10,7 @@ import { fileOf, slotOf } from "../src/server/record.ts";
 import { callControl } from "../src/server/socket.ts";
 import { TOWER_LABEL } from "../src/herdr.ts";
 import { TowerWorld } from "./tower-world.ts";
+import { sleep, until } from "./server-world.ts";
 
 // docs/specs/2026-10-26-desk-mode.md S5 and S6 as docs/specs/2026-10-26-sb-backend.md, Desk mode: what changes, has them: `cli.mjs up --dir <folder> --label <name>` makes the home base
 // and finds its tower through the sb server, installs Herdr's pi integration, and prints the GUI's address. The Herdr is the fake one; the server and its tower service are the real ones.
@@ -527,4 +528,114 @@ test("--timeout bounds the time of every Herdr call of the desk steps", async ()
 	assert.equal(r.code, 0, r.err);
 	assert.ok(asked.length >= 5, String(asked.length));
 	assert.ok(asked.every((ms) => ms >= 0 && ms <= 5000), asked.join(","));
+});
+
+// --- A reused pid on Windows (F2) ---
+
+test("F2: a lock whose pid a live process holds under another start time is taken over where the start time is known; where it is not yet (Windows: the background read is seconds late) the lock holds until the ten minutes are up", async () => {
+	mkdirSync(world.slot.dir, { recursive: true });
+	const lock = fileOf(world.slot, "deskLock"), holder = 4242;
+	world.live.add(holder);
+	let at = Date.parse("2026-10-29T12:00:00Z");
+	const ctx = { slot: world.slot, now: () => at, alive: (pid: number) => world.live.has(pid) || pid === process.pid };
+	const write = (since: number) => writeFileSync(lock, JSON.stringify({ pid: holder, started: "Thu Jan  1 00:00:00 2020", by: "up --dir", since: new Date(since).toISOString() }));
+	// macOS and Linux: the start time is read at once, it is not the lock's, so the pid was reused and the lock is taken over.
+	write(at);
+	const taken = await deskLockFor(ctx, { startOf: () => "Fri Oct 30 09:00:00 2026" });
+	assert.ok(taken, "another start time: taken over");
+	taken();
+	// Windows: no start time within a short `up`. The server does not wait for the read (it takes 2 to 4 s, 5 s and more under load, and every busy `up --dir` would pay it); the live pid holds the lock.
+	write(at);
+	assert.equal(await deskLockFor(ctx, { startOf: () => undefined }), undefined, "start time unknown: the live pid holds it");
+	assert.ok(existsSync(lock));
+	at += 9 * 60_000;
+	assert.equal(await deskLockFor(ctx, { startOf: () => undefined }), undefined, "still held at nine minutes");
+	at += 2 * 60_000;
+	const old = await deskLockFor(ctx, { startOf: () => undefined });
+	assert.ok(old, "past ten minutes the age rule takes it over");
+	old();
+});
+
+// --- Windows: the pane the desk step made is fresh (VM round B7, F1) ---
+
+/** Herdr gives no foreground group on Windows: the server types the tower prompt only into a pane it knows is a shell nobody has used. */
+const windows = () => {
+	world.runPlatform = "win32";
+	world.herdr.winShell = true;
+	world.herdr.shellForeground = true;
+};
+const askTower = async (cmd: Record<string, unknown>) => {
+	const record = world.record()!;
+	return (await callControl(record.socket, record.secret, { cmd: "ensure-tower", ...cmd } as { cmd: string })).reply as Record<string, any>;
+};
+
+test("Windows (F1): the first up --dir types the tower prompt once into the base pane it just made, and a later up types nothing more", async () => {
+	windows();
+	const first = await up();
+	assert.equal(first.code, 0, first.err);
+	await until(() => world.herdr.typed.length === 1, "the prompt typed into the base pane");
+	assert.equal(world.herdr.typed[0]!.pane, String(first.json?.pane));
+	assert.doesNotMatch(readFileSync(fileOf(world.slot, "log"), "utf8"), /prompt-lost/);
+	await sleep(300);
+	assert.equal((await up()).code, 0);
+	await sleep(300);
+	assert.equal(world.herdr.typed.length, 1, "typed once, not again");
+});
+
+test("Windows (F1, rule F10): a pane the desk step did not just make is never typed into: a marked pane with a program, a claim of another pane, a claim that is old, a pane with an agent", async () => {
+	windows();
+	const s = await world.start();
+	await s.handle.ready;
+	const lone = (ws: string, tab: string, pane: string, agent?: string) => {
+		world.herdr.workspaces.push({ workspace_id: ws, label: ws, tokens: {} });
+		world.herdr.addTab(tab, TOWER_LABEL, pane, agent ?? "shell");
+		world.herdr.panes.at(-1)!.workspace_id = ws;
+		world.herdr.tabs.at(-1)!.workspace_id = ws;
+		world.herdr.pane(pane).tokens = { sb_role: "tower" };
+		world.herdr.pane(pane).processes = [{ name: "node.exe", argv0: "node.exe", pid: 7001, cmdline: "node build" }];
+	};
+	// No claim at all: a marked pane of the person's with a program in it.
+	lone("wP1", "wP1:t1", "wP1:p1");
+	assert.equal((await askTower({ workspace: "wP1" })).ok, true);
+	// A claim for another pane than the one adopted.
+	lone("wP2", "wP2:t1", "wP2:p1");
+	assert.equal((await askTower({ workspace: "wP2", made: { pane: "wP2:p9", at: Date.now() } })).ok, true);
+	// A claim for the right pane that is minutes old.
+	lone("wP3", "wP3:t1", "wP3:p1");
+	assert.equal((await askTower({ workspace: "wP3", made: { pane: "wP3:p1", at: Date.now() - 5 * 60_000 } })).ok, true);
+	// A claim for a pane that holds an agent.
+	lone("wP4", "wP4:t1", "wP4:p1", "pi");
+	assert.equal((await askTower({ workspace: "wP4", made: { pane: "wP4:p1", at: Date.now() } })).ok, true);
+	// A claim for a workspace that has other panes: it was not just made.
+	lone("wP5", "wP5:t1", "wP5:p1");
+	world.herdr.addTab("wP5:t2", "docs", "wP5:p2", "shell");
+	world.herdr.panes.at(-1)!.workspace_id = "wP5";
+	world.herdr.tabs.at(-1)!.workspace_id = "wP5";
+	assert.equal((await askTower({ workspace: "wP5", made: { pane: "wP5:p1", at: Date.now() } })).ok, true);
+	await sleep(600);
+	assert.deepEqual(world.herdr.typed, [], "nothing is typed into any of them");
+	// The same pane, claimed in time as the only pane of a workspace with no agent, is the desk's own and is typed into.
+	lone("wP6", "wP6:t1", "wP6:p1");
+	world.herdr.pane("wP6:p1").processes = [];
+	assert.equal((await askTower({ workspace: "wP6", made: { pane: "wP6:p1", at: Date.now() } })).ok, true);
+	await until(() => world.herdr.typed.length === 1, "the claimed pane typed into");
+	assert.deepEqual((world.herdr.typed as { pane: string }[]).map((t) => t.pane), ["wP6:p1"]);
+});
+
+// --- A base made again after a lost Herdr session (F3) ---
+
+test("F3: a base made in this run under the id of a lost one gets its tower at once: the stale service is replaced, tokens written, no wait for the refresh", async () => {
+	const first = await up();
+	assert.equal(first.code, 0, first.err);
+	// Herdr was killed, its session not saved: nothing comes back, the server's service still stands, and the new base numbers like the old one.
+	world.herdr.lose();
+	const again = await up();
+	assert.equal(again.code, 0, again.err);
+	assert.equal(again.json?.created, true);
+	assert.deepEqual([again.json?.workspace, again.json?.pane, again.json?.tower], [first.json?.workspace, first.json?.pane, first.json?.tower], "the ids came round again");
+	assert.equal(world.herdr.workspace(String(again.json?.workspace)).tokens.tower, again.json?.tower, "the workspace holds the tower token now");
+	assert.equal(world.herdr.pane(String(again.json?.pane)).tokens.sb_role, "tower");
+	assert.ok(world.herdr.pane(String(again.json?.pane)).tokens.sb_order, "the pane is ordered");
+	assert.equal(world.herdr.commands("tab", "create").length, 0, "the base's own tab is the tower's");
+	assert.match(readFileSync(fileOf(world.slot, "log"), "utf8"), /tower-closed[^\n]*made again/);
 });

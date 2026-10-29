@@ -113,6 +113,15 @@ export class FakeHerdr {
 		// Every events connection reconnects to the new server and is acknowledged again (`on(null)`), as `events.subscribe` does.
 		if (reconnect) for (const l of [...this.listeners]) queueMicrotask(() => this.listeners.has(l) && l.on(null));
 	}
+	/** Herdr killed with its session unsaved: nothing is restored, and a new server numbers workspaces, tabs and panes from the start again (a new base gets the id of the one that was lost). */
+	lose(): void {
+		this.workspaces = [];
+		this.tabs = [];
+		this.panes = [];
+		this.next = 100;
+		this.wsTokenHistory.length = 0;
+		this.calls.length = 0;
+	}
 	private agentNames = new Map<string, string>(); // name → pane: Herdr frees a name with its pane (checked on Herdr itself)
 	/** The next this-many `agent start` calls fail with agent_pane_busy, as a new tab's shell does before its prompt. */
 	busy = 0;

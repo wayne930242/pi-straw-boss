@@ -8,6 +8,9 @@ import { fileOf, LockBusy, type LockDeps, readOwnedText, takeLock, writeJson } f
 // Herdr's pi integration, the shell's home base (`desk.json`), and the lock that keeps two runs from making two bases. The tower itself is the server's (`ensure-tower`): this file starts no pi.
 
 export interface DeskRecord { workspace: string; dir: string; label: string }
+/** What a run that made the base tells `ensure-tower`: the root pane it just made and when, so the server knows that pane is a bare shell nobody has used (towers.ts `ensure`, `made`). */
+export interface MadePane { pane: string; at: number }
+export interface MadeBase { record: DeskRecord; made: MadePane }
 
 // --- Herdr's pi integration ---
 
@@ -88,9 +91,9 @@ export function baseFolder(dir: string): string {
 /**
  * Makes the home base: a workspace in `dir` with `label`, its first tab labelled as a tower tab and its root pane marked `sb_role=tower`, so the base has no stray shell tab and the
  * server's `ensure-tower` takes that pane as the standing pane. The shell gets no Straw Boss environment (a Herdr restore would drop it anyway). It is recorded by rename only once it is
- * marked; a base that could not be marked is closed again, so a failed run leaves no stray workspace.
+ * marked; a base that could not be marked is closed again, so a failed run leaves no stray workspace. The answer carries the root pane and the time it was made, for `ensure-tower`.
  */
-export async function makeBase(run: HerdrRun, ctx: Pick<Ctx, "slot">, dir: string, label: string): Promise<DeskRecord> {
+export async function makeBase(run: HerdrRun, ctx: Pick<Ctx, "slot" | "now">, dir: string, label: string): Promise<MadeBase> {
 	const made = await result(run, ["workspace", "create", "--cwd", dir, "--label", label, "--no-focus"]);
 	const workspace: string = made.workspace.workspace_id;
 	try {
@@ -98,7 +101,7 @@ export async function makeBase(run: HerdrRun, ctx: Pick<Ctx, "slot">, dir: strin
 		await report(run, "pane", made.root_pane.pane_id, { sb_role: "tower" });
 		const record: DeskRecord = { workspace, dir, label };
 		writeJson(fileOf(ctx.slot, "desk"), record);
-		return record;
+		return { record, made: { pane: made.root_pane.pane_id, at: ctx.now() } };
 	} catch (cause) {
 		await run(["workspace", "close", workspace]).catch(() => {});
 		throw cause;

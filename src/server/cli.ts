@@ -250,7 +250,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 		};
 		/** The `base` and `tower` steps of a desk `up`. */
 		const homeBase = async (herdr: HerdrRun, dirFlag: string, label: string) => {
-			const { workspace, created, dir } = await stepOf("base", async () => {
+			const { workspace, created, dir, made } = await stepOf("base", async () => {
 				const release = await deskLockFor(ctx);
 				if (!release) throw new Error(`busy: another \`up --dir\` holds ${fileOf(slot, "deskLock")}`);
 				unlock = release;
@@ -263,11 +263,11 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 					else warnings.push({ code: "desk_base_replaced", text: `workspace ${known.workspace} is no longer the home base recorded in ${fileOf(slot, "desk")} (not labelled "${known.label}", none of its panes in ${known.dir}); a new base is made` });
 				}
 				// The folder is judged only for a base that is made; a kept base keeps its own.
-				const base = kept ?? (await makeBase(herdr, ctx, baseFolder(dirFlag), label));
-				return { value: { workspace: base.workspace, created: kept === undefined, dir: base.dir }, detail: kept === undefined ? "made" : "found" };
+				const base = kept ? { record: kept, made: undefined } : await makeBase(herdr, ctx, baseFolder(dirFlag), label);
+				return { value: { workspace: base.record.workspace, created: kept === undefined, dir: base.record.dir, made: base.made }, detail: kept === undefined ? "made" : "found" };
 			});
 			const answer = await stepOf("tower", async () => {
-				const found = await ensureTowerVia(ctx, { workspace, cwd: dir, boss: true, ms: within(ctx, deadline, 30_000) });
+				const found = await ensureTowerVia(ctx, { workspace, cwd: dir, boss: true, ...(made ? { made } : {}), ms: within(ctx, deadline, 30_000) });
 				return { value: found, detail: found.opened ? "opened" : "found" };
 			});
 			return { workspace, pane: answer.pane, tower: answer.id, created: created || answer.opened };
