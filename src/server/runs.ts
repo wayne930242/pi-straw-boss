@@ -11,7 +11,7 @@ import { waitPastTrust } from "../trust/wait.ts";
 import type { MemorySummary, TowerView } from "../net.ts";
 import { type BossPointer, type ConversationInfo, readPointer, resumable, sessionsRoot, underRoot, writePointer } from "./bossconv.ts";
 import { herdrCode } from "./herdrcode.ts";
-import { programsIn } from "./standing.ts";
+import { programProcs } from "./standing.ts";
 import { chain, isWrapper, leafOf, type Proc, type Procs, readProcs } from "./lineage.ts";
 import type { Log } from "./log.ts";
 import type { Slot } from "./record.ts";
@@ -251,6 +251,8 @@ interface Svc {
 	crashes: number[];
 	/** The last local start failed because the standing pane runs a program of the boss's (its names): a held service starts again when the pane is free (standing.ts). */
 	paneBusy?: string[];
+	/** And the PIDs of those programs (a start that fails on Windows is retried by itself only once these are gone). */
+	busyPids?: number[];
 	notices: Notice[];
 	lastRun?: { endedAt: string; outcome: Outcome };
 	refusedAt?: number;
@@ -430,7 +432,8 @@ export function createRuns(o: RunsOptions) {
 			} catch (cause) {
 				if (active.ended) return;
 				// A start that failed with a program of the boss's in the pane's foreground (not a shell, not the tower prompt) is the pane's doing (RV2-F001: nothing of theirs is closed, and a start that is not Herdr's timeout code is no reason for a new pane): the notice names the program and the service starts again when the pane is free.
-				const busy = started || rec.kind !== "local" ? [] : programsIn({ foreground_processes: await foreground(rec.pane) });
+				const procs = started || rec.kind !== "local" ? [] : programProcs({ foreground_processes: await foreground(rec.pane) });
+				const busy = procs.map((p) => String(p.argv0 ?? p.name ?? "?"));
 				// Windows, the standing pane: a start that timed out is taken for the pane's doing (a console a killed pi left in a mode that mangles what Herdr types), so the run is tried once more in a fresh pane and the
 				// first timeout is not counted. A second timeout is the run's own failure.
 				if (attempt === 1 && win && rec.kind === "local" && !started && herdrCode(cause) === "timeout") {
@@ -446,6 +449,7 @@ export function createRuns(o: RunsOptions) {
 				}
 				error("run-start", `${rec.id}: ${(cause as Error).message}`);
 				svc.paneBusy = busy.length ? busy : undefined;
+				svc.busyPids = busy.length ? procs.flatMap((p) => (typeof p.pid === "number" ? [p.pid] : [])) : undefined;
 				noticeOf(svc, { id: "start", level: "warning", kind: "start", text: `A run could not start: ${busy.length ? `the standing pane is busy with ${busy.join(", ")}; the tower starts again when it has ended, or on Retry` : (cause as Error).message}` });
 				terminate(active, "crashed");
 				// The tick does not type /quit into a pane whose pi never claimed: what the pane holds of this run is ended below.
@@ -781,11 +785,16 @@ export function createRuns(o: RunsOptions) {
 		watcher = setInterval(() => void tick().catch((cause: Error) => error("run-watch", cause.message)), t.watch);
 		watcher.unref();
 	};
-	let ticking = false;
+	let ticking = false, lastTick: number | undefined;
 	const tick = async () => {
 		if (ticking) return;
 		ticking = true;
 		try {
+			// The computer slept (or the server stood still as long): a gap between two ticks of more than `lost` is time in which no run could poll, so no run was silent for it. Each run gets its silence counted from now, and the
+			// poll that follows is what shows it alive; a run that is really gone is still found, one `lost` later.
+			const at = now();
+			if (lastTick !== undefined && at - lastTick > Math.max(t.lost, 10 * t.watch)) for (const a of byRun.values()) if (!a.ended && a.lastPoll < at) a.lastPoll = at;
+			lastTick = at;
 			for (const a of [...byRun.values()]) {
 				if (a.ended) continue;
 				const age = now() - a.started;
@@ -1296,6 +1305,7 @@ export function createRuns(o: RunsOptions) {
 			const svc = services.get(workspace);
 			return svc?.state === "held" && svc.paneBusy !== undefined;
 		},
+		busyPids: (workspace: string): number[] => services.get(workspace)?.busyPids ?? [],
 		/** Retry on the crash-loop notice. */
 		retry(workspace: string) {
 			const svc = services.get(workspace);

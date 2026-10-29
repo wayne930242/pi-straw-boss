@@ -20,15 +20,17 @@ interface Rig {
 	refuse: (Error & { stderr?: string; code?: unknown })[];
 	freed: number;
 	busy: boolean;
+	/** The PIDs of the boss's programs that held the pane when the start failed. */
+	busyPids: number[];
 }
 const SHELL = { pid: 900, name: "powershell.exe", cmdline: "powershell.exe -NoExit" };
 
 function rig(platform: NodeJS.Platform = "win32", timers: Record<string, number> = {}): Rig {
 	const clock = fakeClock(1_000_000);
-	const r: Rig = { clock, typed: [], lines: [], pane: { processes: [SHELL] }, live: new Set(), refuse: [], freed: 0, busy: false } as unknown as Rig;
+	const r: Rig = { clock, typed: [], lines: [], pane: { processes: [SHELL] }, live: new Set(), refuse: [], freed: 0, busy: false, busyPids: [] } as unknown as Rig;
 	const target: StandingTarget = {
 		workspace: "wA", label: () => "Alpha", pane: () => "p1", live: () => true, status: () => undefined,
-		paneBusy: () => r.busy, paneFree: () => void r.freed++,
+		paneBusy: () => r.busy, busyPids: () => r.busyPids, paneFree: () => void r.freed++,
 	};
 	const run = async (args: string[]) => {
 		if (args[1] === "process-info") {
@@ -131,15 +133,35 @@ test("VM round 3: three refusals in a row end the retries with one line, and the
 	assert.equal(r.typed.length, 1, "a run's end gives the pane back");
 });
 
-test("RV7-F003: a held service whose pane lists only shells (Windows) is not retried by the server: that list does not say the boss's program ended; where Herdr gives the foreground group the retry is automatic", async () => {
-	const win = rig("win32");
-	win.busy = true;
-	await looks(win, 4);
-	assert.equal(win.freed, 0, "Windows: left to Retry or a word to the tower");
+test("RV7-F003: a held service on Windows starts again by itself only when the programs that held the pane are gone themselves (not alive, not listed) and the list shows the shell alone at two looks in a row", async () => {
+	const r = rig("win32");
+	r.busy = true;
+	r.busyPids = [5000];
+	r.live.add(5000);
+	r.pane.processes = [SHELL]; // Windows lists the shell alone while the boss's build goes on
+	await looks(r, 4);
+	assert.equal(r.freed, 0, "the program lives: a shells-only list is no proof that it ended");
+	r.live.delete(5000);
+	r.pane.processes = [SHELL, { pid: 5000, name: "node.exe" }];
+	await looks(r, 3);
+	assert.equal(r.freed, 0, "still listed");
+	r.pane.processes = [SHELL];
+	await looks(r, 1);
+	assert.equal(r.freed, 0, "one look is not two");
+	await looks(r, 1);
+	assert.equal(r.freed, 1, "gone, and the shell alone twice");
+	const none = rig("win32");
+	none.busy = true;
+	none.pane.processes = [SHELL];
+	await looks(none, 4);
+	assert.equal(none.freed, 0, "a hold that named no PID is left to Retry or a word to the tower");
+});
+
+test("RV7-F003: where Herdr gives the foreground group the held service starts again as soon as the group is the shell's", async () => {
 	const unix = rig("darwin");
 	unix.busy = true;
 	await looks(unix, 2);
-	assert.ok(unix.freed > 0, "macOS and Linux: the group says the shell is back");
+	assert.ok(unix.freed > 0);
 });
 
 test("idleShell is unchanged: a shells-only list is idle only for a pane known fresh", () => {

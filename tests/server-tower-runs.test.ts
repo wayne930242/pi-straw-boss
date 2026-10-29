@@ -235,8 +235,7 @@ test("a run past the steer time is told to wrap up, past the cap it is told to q
 	// The run's clock is the test's: the watcher sees an age only when the test sets it, one step at a time, so a tick that comes seconds late under load (a load average of 70 was seen) cannot find the run already past the cap and skip the steer (B5 review F013).
 	const clock = (world.runClock = fakeClock());
 	// The times are ones the real clock cannot reach during the test: a run that stops reading the test's clock times out instead of passing.
-	// `lost` is one of them too: the test polls between its steps, but a watcher tick that comes before the poll after a step of minutes would find the run silent for that long and end it as lost.
-	world.runTimers = { steerAt: 600_000, quitAt: 1_200_000, quitGrace: 60_000, signal: 30_000, lost: 100_000_000 };
+	world.runTimers = { steerAt: 600_000, quitAt: 1_200_000, quitGrace: 60_000, signal: 30_000 };
 	const { s } = await setup();
 	tower().incoming(from, msg("m1", "slow"));
 	const id = await nthRun();
@@ -282,8 +281,7 @@ const ensureedPane = () => world.herdr.panes.find((p) => p.tokens.sb_role === "t
 
 test("a run idle with nothing pending and no tower_done gets one steer, then is ended with the note (ended without a note)", async () => {
 	const clock = (world.runClock = fakeClock());
-	// Not lost: the steps of the clock are minutes, and a watcher tick that comes before the poll after a step would find the run silent for that long and end it as lost, not as quit.
-	world.runTimers = { idleSteer: 60_000, idleEnd: 300_000, lost: 100_000_000 };
+	world.runTimers = { idleSteer: 60_000, idleEnd: 300_000 };
 	const { s } = await setup();
 	tower().incoming(from, msg("m1", "quick"));
 	const id = await nthRun();
@@ -313,6 +311,33 @@ test("a run idle with nothing pending and no tower_done gets one steer, then is 
 	await until(() => readRun(world.slot, "wA", id)?.outcome === "quit", "the outcome", 20_000);
 	assert.equal(readNotes(world.slot, "wA").at(-1)!.note, "(ended without a note)");
 	assert.deepEqual(readQueue(world.slot, "wA"), [], "it handled its events: nothing returns");
+});
+
+test("the computer slept: a clock step longer than `lost` between two watcher ticks does not end a live run as lost, since no run could poll in it; a run that is silent in steps shorter than that still is", async () => {
+	const clock = (world.runClock = fakeClock());
+	const { s } = await setup();
+	tower().incoming(from, msg("m1", "quick"));
+	const id = await nthRun();
+	const token = await claimed(s, id);
+	await drain(s, token);
+	const ticks = async () => {
+		const from = world.aliveCalls;
+		await until(() => world.aliveCalls >= from + 2, "two watcher ticks", 20_000);
+	};
+	// A Mac wakes after five minutes: the first tick that runs sees the run silent for that long, whatever the order of the run's own poll.
+	clock.advance(300_000);
+	await ticks();
+	const awake = await poll(s, token);
+	assert.equal(awake.ok, true, "the run's next poll finds the server there");
+	assert.notEqual((awake.command as { type: string } | undefined)?.type, "quit", "and is not told to quit: the server did not take it for lost (it may be told to wrap up: it was idle for five minutes)");
+	// A run that really stopped polling while the clock ran in ordinary steps is lost once `lost` has passed (60 s here), as before.
+	clock.advance(40_000);
+	await ticks();
+	clock.advance(40_000);
+	await ticks();
+	assert.equal(((await poll(s, token)).command as { type: string } | undefined)?.type, "quit", "80 s without a poll: the server is ending it");
+	exit(id);
+	await until(() => readRun(world.slot, "wA", id)?.outcome === "crashed", "the lost run's outcome", 20_000);
 });
 
 test("towerRuns.max bounds the pi runs on the machine; the rest wait in their queues and start when a slot frees", async () => {

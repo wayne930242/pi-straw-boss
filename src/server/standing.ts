@@ -49,6 +49,8 @@ export interface StandingTarget {
 	runWithin?(ms: number): boolean;
 	/** The service is held because the pane runs a program of the boss's (runs.ts), and the call that starts it again. */
 	paneBusy?(): boolean;
+	/** The PIDs of the boss's programs that held the pane when the start failed (Windows proves the pane free by these being gone). */
+	busyPids?(): number[];
 	paneFree?(): void;
 }
 export interface StandingOptions {
@@ -88,6 +90,8 @@ interface Mine {
 	freshUntil?: number;
 	/** Typings Herdr refused in a row. */
 	failures: number;
+	/** Looks in a row at which a held pane's busy programs were gone and the list showed shells only (Windows). */
+	busyClear: number;
 	/** The server said the prompt does not start. */
 	noStart: boolean;
 	/** The server said, once, that the prompt is gone from a pane it cannot type into (Windows, a pane that is not fresh). */
@@ -107,10 +111,11 @@ export function standinMessage(status: Pick<ServiceStatus, "state" | "queued"> |
 
 const nameOf = (p: { argv0?: string; name?: string }) => String(p.argv0 ?? p.name ?? "").replace(/^-/, "").split(/[\\/]/).pop()!.toLowerCase().replace(/\.exe$/, "");
 /** The programs in the pane's foreground that are no shell and not the tower prompt: what the boss runs there. Empty when none is listed or all are shells. */
-export function programsIn(info: { foreground_processes?: unknown } | undefined): string[] {
-	const procs = Array.isArray(info?.foreground_processes) ? (info!.foreground_processes as { name?: string; argv0?: string; cmdline?: string }[]) : [];
-	return procs.filter((p) => !SHELLS.has(nameOf(p)) && !/\bprompt --workspace\b/.test(p.cmdline ?? "")).map((p) => String(p.argv0 ?? p.name ?? "?"));
+export function programProcs(info: { foreground_processes?: unknown } | undefined): { pid?: number; name?: string; argv0?: string; cmdline?: string }[] {
+	const procs = Array.isArray(info?.foreground_processes) ? (info!.foreground_processes as { pid?: number; name?: string; argv0?: string; cmdline?: string }[]) : [];
+	return procs.filter((p) => !SHELLS.has(nameOf(p)) && !/\bprompt --workspace\b/.test(p.cmdline ?? ""));
 }
+export const programsIn = (info: { foreground_processes?: unknown } | undefined): string[] => programProcs(info).map((p) => String(p.argv0 ?? p.name ?? "?"));
 
 /**
  * Whether Herdr's process info positively says the pane's foreground is its shell at an idle prompt. With the shell's pid and the foreground group (macOS, Linux) the groups decide. Without them (Windows lists the
@@ -191,8 +196,19 @@ export function createStanding(o: StandingOptions) {
 		const status = target.status();
 		// A held service waits for the boss's program to end: the pane's foreground is looked at, and the runs start again once it is back at its shell.
 		if (target.paneBusy?.()) {
-			// Without foreground groups (Windows) a list of shells is no proof that the program ended: the retry is the boss's (the Retry button, or a word to the tower), never a guess typed into their build (RV7-F003).
-			if (idleShell(await processInfo(pane.pane_id), false, groups)) target.paneFree?.();
+			const info = await processInfo(pane.pane_id);
+			if (groups) {
+				if (idleShell(info, true, groups)) target.paneFree?.();
+				return;
+			}
+			// Without foreground groups (Windows) a list of shells is no proof that the program ended: the programs that held the pane must be gone themselves (not alive, not listed), and the list must show the shell alone
+			// at two looks in a row. A build the boss started after the first ended is still invisible there; that is what the second look and the pane's own `Retry` are for (RV7-F003).
+			const pids = target.busyPids?.() ?? [], listed = Array.isArray(info?.foreground_processes) ? (info!.foreground_processes as { pid?: number }[]).map((p) => p.pid) : [];
+			m.busyClear = pids.length > 0 && pids.every((pid) => !alive(pid) && !listed.includes(pid)) && idleShell(info, true, groups) ? m.busyClear + 1 : 0;
+			if (m.busyClear >= 2) {
+				m.busyClear = 0;
+				target.paneFree?.();
+			}
 			return;
 		}
 		// A run holds the pane (or is about to): the prompt has left or is leaving, and no stand-in stands over the run's pi.
@@ -291,7 +307,7 @@ export function createStanding(o: StandingOptions) {
 		attach(target: StandingTarget, fresh = false) {
 			const m = mines.get(target.workspace);
 			if (m) m.target = target;
-			else mines.set(target.workspace, { target, leaving: false, misses: 0, parked: false, typings: 0, fresh, noStart: false, lost: false, failures: 0 });
+			else mines.set(target.workspace, { target, leaving: false, misses: 0, parked: false, typings: 0, fresh, noStart: false, lost: false, failures: 0, busyClear: 0 });
 		},
 		/** The service is gone: the stand-in is taken away, and the prompt, which polls a tower that is no more, leaves by itself. */
 		async detach(workspace: string) {
@@ -325,7 +341,10 @@ export function createStanding(o: StandingOptions) {
 		gone(workspace: string, pid: number) {
 			const m = mines.get(workspace);
 			if (m?.seen?.pid === pid) m.seen = undefined;
-			if (m) (m.launched = now(), (m.typings = 0));
+			if (m) {
+				m.launched = now();
+				m.typings = 0;
+			}
 			return { ok: true as const };
 		},
 		/** A run is about to start pi in the pane: the stand-in is taken away and the prompt told to leave; returns once it has gone, after Ctrl+C if it must (the prompt itself only). */
