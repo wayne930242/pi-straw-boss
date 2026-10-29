@@ -2,6 +2,9 @@ import { type HerdrApi, type HerdrRun, type HerdrWorld, isStandin, type Pane, re
 import { alive as pidAlive } from "../remote.ts";
 import type { Log } from "./log.ts";
 import type { ServiceStatus } from "./runs.ts";
+import { giveBackGate, handGate, holdGate, idleShell, nameOf, SHELLS, settleGate, typeGate } from "./typegate.ts";
+
+export { idleShell };
 
 // The standing pane between runs (docs/how-it-works.md, The standing pane; docs/specs/2026-10-26-sb-backend.md, The tower service). A tower's standing pane is no bare shell: the server types the tower prompt's
 // command into it (`cli.mjs prompt`, src/towerprompt/), and while that process polls, it reports a stand-in agent `tower` on the pane, so the tower keeps its row in Herdr's Agents list (and in the
@@ -34,7 +37,6 @@ const MISSES = 3;
 const NO_START = 3;
 /** A run whose wake is due within this long is about to take the standing pane: the prompt is not typed into it (it starts slower than the run waits, a cold PowerShell and node: 29 s on the VM). */
 const RUN_SOON_MS = 5000;
-const SHELLS = new Set(["zsh", "bash", "fish", "sh", "dash", "ksh", "tcsh", "csh", "nu", "login", "pwsh", "powershell", "cmd"]);
 
 /** What the standing logic needs of one tower service (towers.ts builds it). */
 export interface StandingTarget {
@@ -111,7 +113,6 @@ export function standinMessage(status: Pick<ServiceStatus, "state" | "queued"> |
 	return status && status.queued > 0 ? `${status.queued} queued` : "standing by";
 }
 
-const nameOf = (p: { argv0?: string; name?: string }) => String(p.argv0 ?? p.name ?? "").replace(/^-/, "").split(/[\\/]/).pop()!.toLowerCase().replace(/\.exe$/, "");
 /** The programs in the pane's foreground that are no shell and not the tower prompt: what the boss runs there. Empty when none is listed or all are shells. */
 export function programProcs(info: { foreground_processes?: unknown } | undefined): { pid?: number; name?: string; argv0?: string; cmdline?: string }[] {
 	const procs = Array.isArray(info?.foreground_processes) ? (info!.foreground_processes as { pid?: number; name?: string; argv0?: string; cmdline?: string }[]) : [];
@@ -127,18 +128,6 @@ export function nestedShells(info: { shell_pid?: unknown; foreground_processes?:
 /** What a notice calls a program: its executable's file name, never the path it ran from or the arguments it was given. */
 export const programName = (p: { argv0?: string; name?: string }): string => String(p.argv0 ?? p.name ?? "").trim().split(/[\\/]/).pop()!.replace(/[\u0000-\u001f\u007f-\u009f\s]+/g, " ").split(" ")[0]!.slice(0, 60) || "?";
 export const programsIn = (info: { foreground_processes?: unknown } | undefined): string[] => programProcs(info).map(programName);
-
-/**
- * Whether Herdr's process info positively says the pane's foreground is its shell at an idle prompt. With the shell's pid and the foreground group (macOS, Linux) the groups decide. Without them (Windows lists the
- * shell alone whether a build runs under it or not) a list of shells is no proof of an idle prompt: it counts only for a pane the server knows is fresh (`fresh`), and an empty or missing list is unknown, never idle.
- * `groups: false` is Windows: Herdr's process-info there carries both numbers, but the group is always the shell's pid (B6 VM, F10: `ping -t` in the pane still said idle), so they prove nothing.
- */
-export function idleShell(info: { shell_pid?: unknown; foreground_process_group_id?: unknown; foreground_processes?: unknown } | undefined, fresh = false, groups = true): boolean {
-	if (!info) return false;
-	if (groups && typeof info.shell_pid === "number" && typeof info.foreground_process_group_id === "number") return info.foreground_process_group_id === info.shell_pid;
-	const procs = Array.isArray(info.foreground_processes) ? (info.foreground_processes as { name?: string; argv0?: string }[]) : [];
-	return fresh && procs.length > 0 && procs.every((p) => SHELLS.has(nameOf(p)));
-}
 
 /** What the shells the panes run can take unquoted inside double quotes: letters, digits, spaces, and the punctuation of a path. A path with a quote, `$`, a backtick, `%`, or `!` makes no command. */
 const SAFE = /^[\p{L}\p{N} ._:/\\@+=~,()-]+$/u;
@@ -192,85 +181,80 @@ export function createStanding(o: StandingOptions) {
 		}
 	};
 
-	/** A resident tower's hand-over frees the pane when its pi has left it: the process is gone (it said which), within `handMs`. The mark then lasts `handMs` more, or until the command is typed. */
-	const proveHand = (m: Mine) => {
-		if (m.freshUntil !== undefined && now() > m.freshUntil) Object.assign(m, { fresh: false, freshUntil: undefined });
-		if (!m.hand) return;
-		if (now() - m.hand.at > t.handMs) m.hand = undefined;
-		else if (m.hand.pid === undefined || !alive(m.hand.pid)) Object.assign(m, { hand: undefined, fresh: true, freshUntil: now() + t.handMs, failures: 0 });
+	/** The marks that settle with time and with a resident tower's hand-over (`settleGate`); tells whether its pi may still run in the pane and whether the typing was given up. */
+	const settle = (m: Mine) => {
+		const s = settleGate({ fresh: m.fresh, freshUntil: m.freshUntil, hand: m.hand, now: now(), handMs: t.handMs, alive });
+		Object.assign(m, { fresh: s.fresh, freshUntil: s.freshUntil, hand: s.hand, ...(s.failures0 ? { failures: 0 } : {}) });
+		return { hand: m.hand !== undefined, giveUp: m.giveUp };
 	};
 
-	/** One look at one standing pane. */
+	/** A held service waits for the boss's program to end: the pane's foreground is looked at, and the runs start again once `holdGate` says the pane is free. */
+	const lookHeld = async (m: Mine, paneId: string) => {
+		const target = m.target, info = await processInfo(paneId);
+		const pids = target.busyPids?.() ?? [], listed = Array.isArray(info?.foreground_processes) ? (info!.foreground_processes as { pid?: number }[]).map((p) => p.pid) : [];
+		const held = holdGate({ groups, idle: idleShell(info, true, groups), gone: !groups && pids.length > 0 && pids.every((pid) => !alive(pid) && !listed.includes(pid)), clear: m.busyClear });
+		m.busyClear = held.clear;
+		// With no event waiting `paneFree` → Retry proves the pane empty by a table read, with one waiting the run's start decides (RV13-F002): no mark is set here.
+		if (held.free) target.paneFree?.();
+	};
+
+	/** One look at one standing pane: it gathers the facts, the gate (typegate.ts) says whether the command may be typed, and what else the pane needs (the stand-in, a notice) follows from the rule that said no. */
 	const look = async (m: Mine, panes: Pane[]) => {
-		const target = m.target, pane = panes.find((p) => p.pane_id === target.pane());
-		if (!pane || !target.live()) return;
-		const status = target.status();
-		// A held service waits for the boss's program to end: the pane's foreground is looked at, and the runs start again once it is back at its shell.
-		if (target.paneBusy?.()) {
-			const info = await processInfo(pane.pane_id);
-			if (groups) {
-				if (idleShell(info, true, groups)) target.paneFree?.();
-				return;
+		const target = m.target, paneId = target.pane(), pane = panes.find((p) => p.pane_id === paneId);
+		const attached = Boolean(pane) && target.live();
+		const status = attached ? target.status() : undefined;
+		let command = "";
+		const verdict = await typeGate({
+			attached,
+			groups,
+			busy: attached && Boolean(target.paneBusy?.()),
+			held: status?.state === "held",
+			run: m.leaving || (status !== undefined && ["waking", "running", "closing"].includes(status.state)),
+			agent: !pane?.agent ? "none" : isStandin(pane) ? "stand-in" : "other",
+			prompt: present(m),
+			// The prompt is not there. Herdr clears its label itself a moment after; a release makes it at once.
+			gone: () => unreport(m),
+			parked: () => m.parked,
+			runSoon: () => Boolean(target.runWithin?.(RUN_SOON_MS)),
+			launchWait: () => m.launched !== undefined && now() - m.launched < Math.min(t.launchMs * 2 ** Math.max(0, m.typings - 1), t.launchMaxMs),
+			command: () => Boolean((command = o.command(target.workspace) ?? "")),
+			settle: () => settle(m),
+			fresh: () => m.fresh,
+			read: () => processInfo(paneId),
+		});
+		if (!pane) return;
+		if (!verdict.type) {
+			switch (verdict.reason) {
+				case "busy":
+					return await lookHeld(m, paneId);
+				case "run":
+					// A run holds the pane (or is about to): the prompt has left or is leaving, and no stand-in stands over the run's pi.
+					if (m.reported && !isStandin(pane)) m.reported = undefined;
+					return;
+				case "agent":
+					// Another agent holds the pane (a pi of the boss's own): the stand-in is not reported over it, and Herdr would not take it.
+					m.reported = undefined;
+					return;
+				case "prompt": {
+					m.parked = false;
+					if (isStandin(pane)) m.misses = 0;
+					const message = standinMessage(status);
+					if (!isStandin(pane) || !m.reported || m.reported.message !== message || now() - m.reported.at >= t.refreshMs) await report(m, pane, message);
+					return;
+				}
+				case "unproven":
+					// A prompt that died in any pane the server does not know to be fresh is said once, and the pane waits for the next run or Herdr restart.
+					if (!m.lost) {
+						m.lost = true;
+						// A prompt that never started is no prompt that was lost: it is said as not starting (same once-only rule as elsewhere).
+						if (m.typings > 0) log.line("prompt-not-starting", { workspace: target.workspace, pane: pane.pane_id, text: "The tower prompt did not start in this pane and Herdr cannot tell an idle shell from a running program here, so the server types nothing more; the prompt comes back after the next run or a Herdr restart" });
+						else log.line("prompt-lost", { workspace: target.workspace, pane: pane.pane_id, text: "The tower prompt is gone from this pane and Herdr cannot tell an idle shell from a running program here, so the server types nothing; the prompt comes back after the next run or a Herdr restart" });
+					}
+					return;
+				default:
+					return;
 			}
-			// Without foreground groups (Windows) a list of shells is no proof that the program ended: the programs that held the pane must be gone themselves (not alive, not listed), and the list must show the shell alone
-			// at two looks in a row. A build the boss started after the first ended is still invisible there; that is what the second look and the pane's own `Retry` are for (RV7-F003).
-			const pids = target.busyPids?.() ?? [], listed = Array.isArray(info?.foreground_processes) ? (info!.foreground_processes as { pid?: number }[]).map((p) => p.pid) : [];
-			m.busyClear = pids.length > 0 && pids.every((pid) => !alive(pid) && !listed.includes(pid)) && idleShell(info, true, groups) ? m.busyClear + 1 : 0;
-			if (m.busyClear >= 2) {
-				m.busyClear = 0;
-				// Two looks of the shell alone with the holding programs gone ask for the pane back; no mark is set here: with no event waiting `paneFree` → Retry proves the pane empty by a table read, with one waiting the run's start decides (RV13-F002).
-				target.paneFree?.();
-			}
-			return;
 		}
-		// A run holds the pane (or is about to): the prompt has left or is leaving, and no stand-in stands over the run's pi.
-		if (m.leaving || (status && ["waking", "running", "closing"].includes(status.state))) {
-			if (m.reported && !isStandin(pane)) m.reported = undefined;
-			return;
-		}
-		// Another agent holds the pane (a pi of the boss's own): the stand-in is not reported over it, and Herdr would not take it.
-		if (pane.agent && !isStandin(pane)) {
-			m.reported = undefined;
-			return;
-		}
-		if (present(m)) {
-			m.parked = false;
-			if (isStandin(pane)) m.misses = 0;
-			const message = standinMessage(status);
-			if (!isStandin(pane) || !m.reported || m.reported.message !== message || now() - m.reported.at >= t.refreshMs) await report(m, pane, message);
-			return;
-		}
-		// The prompt is not there. Herdr clears its label itself a moment after; a release makes it at once.
-		await unreport(m);
-		// The boss's Ctrl+D leaves the shell to them until a run takes the pane or Herdr restarts: no clock gives it back, since a prompt typed over their half-written line or the command they are about to run would run it.
-		if (m.parked) return;
-		// A run is about to take the pane (an event waits and its wake is due): the prompt is not typed, and the stand-in stays as it is.
-		if (!present(m) && target.runWithin?.(RUN_SOON_MS)) return;
-		// A wake is coming (the prompt posted the boss's words and left): a run takes the pane in a moment, and a prompt typed now would only have to leave again.
-		if (m.launched !== undefined && now() - m.launched < Math.min(t.launchMs * 2 ** Math.max(0, m.typings - 1), t.launchMaxMs)) return;
-		if (pane.agent) return;
-		const command = o.command(target.workspace);
-		if (!command) return;
-		proveHand(m);
-		// The resident tower's pi may still run in the pane: nothing is typed, and nothing is said about a prompt that is lost, until it has gone or the hand-over's time is up.
-		if (m.hand) return;
-		// Herdr refused the command a few times in a row: it was said once, and nothing more is typed.
-		if (m.giveUp) return;
-		// Windows, a held service: the start failed and the list of busy programs is empty or unreadable (the process table did not answer, the program is a nested shell, Herdr's code was another), which is no proof that the pane
-		// is a bare shell. Nothing is typed into it: the service starts again on Retry, or when the programs it named are gone (RV10-F002).
-		if (!groups && status?.state === "held") return;
-		// Where Herdr gives no foreground group (Windows) only a fresh pane is typed into; a prompt that died in any other is said once, and the pane waits for the next run or Herdr restart.
-		if (!groups && !m.fresh) {
-			if (!m.lost) {
-				m.lost = true;
-				// A prompt that never started is no prompt that was lost: it is said as not starting (same once-only rule as elsewhere).
-				if (m.typings > 0) log.line("prompt-not-starting", { workspace: target.workspace, pane: pane.pane_id, text: "The tower prompt did not start in this pane and Herdr cannot tell an idle shell from a running program here, so the server types nothing more; the prompt comes back after the next run or a Herdr restart" });
-				else log.line("prompt-lost", { workspace: target.workspace, pane: pane.pane_id, text: "The tower prompt is gone from this pane and Herdr cannot tell an idle shell from a running program here, so the server types nothing; the prompt comes back after the next run or a Herdr restart" });
-			}
-			return;
-		}
-		// Typed only into a shell that waits at its prompt: a build the boss left running there, or an editor, is theirs.
-		if (!idleShell(await processInfo(pane.pane_id), m.fresh, groups)) return;
 		const wasFresh = m.fresh;
 		m.launched = now();
 		m.fresh = false;
@@ -395,16 +379,16 @@ export function createStanding(o: StandingOptions) {
 		freed(workspace: string, fresh = true, keepParked = false) {
 			const m = mines.get(workspace);
 			if (!m) return;
-			if (keepParked && present(m)) return;
-			const marked = fresh && !(keepParked && m.parked);
+			const back = giveBackGate({ fresh, keepParked, parked: m.parked, prompt: present(m), now: now(), markMs: t.handMs });
+			if (!back.apply) return;
 			m.leaving = false;
-			Object.assign(m, { ...(keepParked ? {} : { parked: false }), launched: undefined, seen: undefined, reported: undefined, misses: 0, typings: 0, fresh: marked, noStart: false, lost: false, hand: undefined, freshUntil: keepParked && marked ? now() + t.handMs : undefined, failures: 0, giveUp: false });
+			Object.assign(m, { ...(back.unpark ? { parked: false } : {}), launched: undefined, seen: undefined, reported: undefined, misses: 0, typings: 0, fresh: back.fresh, noStart: false, lost: false, hand: undefined, freshUntil: back.freshUntil, failures: 0, giveUp: false });
 			void tick(workspace);
 		},
-		/** A resident tower (its pi has `pid`) handed this pane over and is quitting: once that process is gone the pane is a bare shell the server just got back, as after a run. The look proves it (`proveHand`); nothing is believed on the word of the hand-over alone. A prompt that polls is left alone. */
+		/** A resident tower (its pi has `pid`) handed this pane over and is quitting: once that process is gone the pane is a bare shell the server just got back, as after a run. The look proves it (`settleGate`); nothing is believed on the word of the hand-over alone. A prompt that polls is left alone. */
 		handed(workspace: string, pid?: number) {
 			const m = mines.get(workspace);
-			if (!m || present(m)) return;
+			if (!m || !handGate(present(m))) return;
 			m.hand = { ...(pid !== undefined ? { pid } : {}), at: now() };
 			m.lost = false;
 			m.giveUp = false;

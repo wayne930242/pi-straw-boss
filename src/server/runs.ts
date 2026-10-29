@@ -12,6 +12,7 @@ import type { MemorySummary, TowerView } from "../net.ts";
 import { type BossPointer, type ConversationInfo, readPointer, resumable, sessionsRoot, underRoot, writePointer } from "./bossconv.ts";
 import { herdrCode } from "./herdrcode.ts";
 import { isShell, nestedShells, programName, programProcs } from "./standing.ts";
+import { retryGate, runEndGate, tableGate } from "./typegate.ts";
 import { chain, isWrapper, leafOf, type Proc, type Procs, readProcs } from "./lineage.ts";
 import type { Log } from "./log.ts";
 import type { Slot } from "./record.ts";
@@ -437,9 +438,10 @@ export function createRuns(o: RunsOptions) {
 		try {
 			const found = await belowShell(svc.ref.record().pane, newId()).catch(() => undefined);
 			if (stopped || svc.run || waitingOf(svc).length) return; // a run is about to take the pane: its start decides
-			if (found === undefined) return void noticeOf(svc, { id: "start", level: "warning", kind: "start", text: "The tower could not check the standing pane for a program of yours, so it types nothing there; press Retry when it is free" });
+			const proof = tableGate(found);
+			if (found === undefined || proof === "unreadable") return void noticeOf(svc, { id: "start", level: "warning", kind: "start", text: "The tower could not check the standing pane for a program of yours, so it types nothing there; press Retry when it is free" });
 			const busy = [...new Set(found.map(programName))];
-			if (busy.length) {
+			if (proof === "program") {
 				svc.paneBusy = busy;
 				svc.busyPids = found.flatMap((p) => (typeof p.pid === "number" ? [p.pid] : []));
 				svc.state = "held";
@@ -783,7 +785,7 @@ export function createRuns(o: RunsOptions) {
 		if (!ally) {
 			svc.lastRun = { endedAt: a.rec.endedAt, outcome };
 			svc.state = svc.state === "held" ? "held" : "standing";
-			svc.ref.freed(a.unstarted ? { fresh: false } : undefined);
+			svc.ref.freed(runEndGate(Boolean(a.unstarted)));
 		}
 		log.line("run-end", { workspace: ws, run: a.rec.id, kind: a.rec.kind, outcome, ...(detail ? { detail: phrase(detail, 120) } : {}) });
 		if (failed && ally) {
@@ -1391,12 +1393,10 @@ export function createRuns(o: RunsOptions) {
 			svc.paneBusy = undefined;
 			svc.notices = svc.notices.filter((n) => n.id !== "loop" && n.id !== "start");
 			if (svc.state === "held") svc.state = "standing";
-			// With no event to start a run the boss's Retry gives the pane back as the run's end would: the prompt is typed again (RV11-F001). Where a program of the boss's holds the pane (`wasBusy`) only the look's proof does.
-			// Windows: never before the process table shows the pane holds nothing (`proveEmpty`), whatever the service believes of the pane (RV12-F001, RV13-F001). The give-back keeps the boss's Ctrl+D park.
-			if (!svc.run && !waitingOf(svc).length) {
-				if (win) void proveEmpty(svc).catch((cause: Error) => error("run-prove", cause.message));
-				else if (!wasBusy) svc.ref.freed({ keepParked: true });
-			}
+			// What Retry may do to the pane is the gate's to say (typegate.ts `retryGate`); the give-back keeps the boss's Ctrl+D park.
+			const plan = retryGate({ win, run: Boolean(svc.run), queued: waitingOf(svc).length > 0, wasBusy });
+			if (plan === "prove") void proveEmpty(svc).catch((cause: Error) => error("run-prove", cause.message));
+			else if (plan === "give-back") svc.ref.freed({ keepParked: true });
 			poke(svc);
 		},
 		/**
