@@ -434,7 +434,7 @@ The token colours take hex values only, so add an `fg` to a token or a rule to t
 
 **Install.**
 Link the plugin from a checkout and bind the action to a key.
-Herdr runs the startup hook when a server starts, not when a plugin is linked, so a server that is already running shows the view after one press of the key, or after a restart:
+Herdr runs the startup hook when a server starts, not when a plugin is linked, so a server that is already running shows the view after one press of the key, after the next agent Herdr detects (the `reapply` event hook, below), or after a restart:
 
 ```bash
 herdr plugin link /path/to/pi-straw-boss/herdr-plugin
@@ -467,9 +467,9 @@ Every server start turns the view on, whatever an earlier server left: a press t
 The one exception is a startup that runs again in the same server, which leaves that server's own "off" alone.
 
 **The toggle.**
-Herdr cannot say whether a view is active, so the action records "on" and the identity of the running server (the socket file's inode and creation time) in `net-view.json` in the plugin's state directory.
+Herdr has no query for the active view, but `agent.view.clear` with a source that owns nothing (`<plugin source>-probe`; Herdr accepts only ASCII letters, digits, colon, dot, underscore and hyphen in a source) leaves the view unchanged and answers with it (checked on Herdr 0.9.5), so the action reads what is shown instead of trusting what it saved: it clears when its own view is the active one and installs otherwise. A plugin unlinked and linked again, or disabled and enabled, in one server run loses its view without a startup hook, and the first press used to record "off" and change nothing; now one press always changes the sidebar. The state in `net-view.json` in the plugin's state directory ("on" or "off" and the identity of the running server, the socket file's inode and creation time) is only the wish the hooks read.
 The next press clears the view with `agent.view.clear` named to this plugin's own source, so it never clears a view that another owner installed.
-A restarted server drops its view, and its different identity makes the stored state count as off; the startup hook then turns the view on and records it, so the first press switches it off.
+A restarted server drops its view; the startup hook turns the view on and records it, so the first press switches it off. `[[events]] on = "pane.agent_detected"` runs `net-view.mjs reapply` (Herdr has no hook for a link or an enable): it installs the view when no view is active and this server's own "off" has not been pressed, and leaves any active view, this plugin's or another owner's, and a pressed off alone; so after a relink the net view is back at the next agent Herdr detects.
 A view another owner installed over this one also counts as off: the press installs this one again.
 
 **Limits.**

@@ -8,11 +8,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { fileStore, instanceOf, main, netView, socketCall, startup, toggle } from "../herdr-plugin/net-view.mjs";
+import { activeView, fileStore, instanceOf, main, netView, reapply, socketCall, startup, toggle } from "../herdr-plugin/net-view.mjs";
 
 const PLUGIN = fileURLToPath(new URL("../herdr-plugin/", import.meta.url));
 
 const SOURCE = "plugin:wayne930242.straw-boss";
+/** The clears that took a view away: a clear naming another source is the probe (Herdr 0.9.5 answers it with the active view and changes nothing). */
+const wiping = (herdr) => herdr.clears.filter((params) => params.source !== `${SOURCE}-probe`);
 
 /** A Herdr that keeps the one active Agents view, with the guard of `agent.view.clear`: a named source clears only its own view. */
 function fakeHerdr({ failView = false } = {}) {
@@ -67,7 +69,7 @@ test("the first press installs the view as plugin:<id>, the second clears it, th
 	assert.deepEqual(await toggle(deps(herdr, store)), { on: false });
 	assert.equal(herdr.view, undefined);
 	assert.deepEqual(store.state, { on: false, instance: "server-1" });
-	assert.ok(herdr.clears.every((params) => params.source === SOURCE), "every clear names this plugin, so it never wipes another owner's view");
+	assert.ok(wiping(herdr).every((params) => params.source === SOURCE), "every clear names this plugin, so it never wipes another owner's view");
 
 	assert.deepEqual(await toggle(deps(herdr, store)), { on: true });
 	assert.ok(herdr.view);
@@ -84,7 +86,53 @@ test("a state left by an earlier server, or a view another owner installed over 
 	herdr.view = { source: "plugin:someone.else", label: "theirs" };
 	assert.deepEqual(await toggle(deps(herdr, store, "server-2")), { on: true }, "the stored on is stale, so the press brings this view back");
 	assert.equal(herdr.view.source, SOURCE);
-	assert.ok(herdr.clears.every((params) => params.source === SOURCE));
+	assert.ok(wiping(herdr).every((params) => params.source === SOURCE));
+});
+
+test("the view dropped inside one server run (the plugin unlinked and linked, or disabled and enabled) while the state still says on: the first press turns it on, the second off (B6 VM, #40)", async () => {
+	const herdr = fakeHerdr(), store = memoryStore();
+	await startup(deps(herdr, store));
+	herdr.view = undefined; // Herdr dropped the view with the plugin; no startup hook ran; the state still says on for this server
+	assert.deepEqual(store.state, { on: true, instance: "server-1" });
+	assert.deepEqual(await toggle(deps(herdr, store)), { on: true }, "one press gives a visible change");
+	assert.equal(herdr.view.source, SOURCE);
+	assert.deepEqual(await toggle(deps(herdr, store)), { on: false });
+	assert.equal(herdr.view, undefined);
+	assert.deepEqual(store.state, { on: false, instance: "server-1" });
+});
+
+test("activeView reads the active view with a clear that names a source nobody owns, which changes nothing", async () => {
+	const herdr = fakeHerdr();
+	assert.deepEqual(await activeView({ call: (m, p) => herdr.handle(m, p), source: SOURCE }), { active: false, source: undefined });
+	herdr.view = { source: "plugin:someone.else", label: "theirs" };
+	assert.deepEqual(await activeView({ call: (m, p) => herdr.handle(m, p), source: SOURCE }), { active: true, source: "plugin:someone.else" });
+	assert.equal(herdr.view.source, "plugin:someone.else", "the view is untouched");
+	assert.ok(herdr.clears.every((params) => /^[A-Za-z0-9:._-]{1,120}$/.test(params.source)), "a source Herdr accepts: ASCII letters, digits, colon, dot, underscore, hyphen");
+});
+
+test("reapply puts the view back when none is active and the wish is not this server's off; it leaves an active view, its own or another's, and a pressed off alone", async () => {
+	const herdr = fakeHerdr(), store = memoryStore();
+	assert.deepEqual(await reapply(deps(herdr, store)), { on: true }, "a plugin installed into a running server, with no state yet, gets the default");
+	assert.equal(herdr.view.source, SOURCE);
+	herdr.calls.length = 0;
+	assert.deepEqual(await reapply(deps(herdr, store)), { on: true });
+	assert.deepEqual(herdr.calls, ["agent.view.clear"], "an active view of its own is only probed, never replaced");
+
+	herdr.view = undefined; // the relink dropped it
+	assert.deepEqual(await reapply(deps(herdr, store)), { on: true });
+	assert.equal(herdr.view.source, SOURCE);
+
+	herdr.view = { source: "plugin:someone.else", label: "theirs" };
+	assert.deepEqual(await reapply(deps(herdr, store)), { on: false }, "another owner's view stays");
+	assert.equal(herdr.view.source, "plugin:someone.else");
+
+	herdr.view = undefined;
+	await toggle(deps(herdr, store)); // installs
+	await toggle(deps(herdr, store)); // off
+	herdr.calls.length = 0;
+	assert.deepEqual(await reapply(deps(herdr, store)), { on: false }, "this server's own off stands");
+	assert.deepEqual(herdr.calls, []);
+	assert.deepEqual(await reapply(deps(herdr, store, "server-2")), { on: true }, "a new server's wish is the default");
 });
 
 test("startup turns the view on without a press, and the key then toggles it off and on again", async () => {
@@ -149,14 +197,14 @@ test("a failed install leaves no state behind and is rethrown", async () => {
 
 	const refused = fakeHerdr(), unsaved = memoryStore();
 	await assert.rejects(toggle({ ...deps(refused, unsaved), call: async (method, params) => (method === "agent.view.set" ? { type: "agent_view", active: false } : refused.handle(method, params)) }), /did not install the view/);
-	assert.ok(refused.clears.length === 1 && refused.clears[0].source === SOURCE, "a view that may be installed is cleared before the error goes out");
+	assert.ok(wiping(refused).length === 1 && wiping(refused)[0].source === SOURCE, "a view that may be installed is cleared before the error goes out");
 });
 
 test("a view that was installed but whose state could not be saved is cleared, so a later press cannot lose track of it", async () => {
 	const herdr = fakeHerdr(), store = { read: async () => undefined, write: async () => Promise.reject(new Error("ENOSPC")) };
 	await assert.rejects(toggle(deps(herdr, store)), /ENOSPC/);
 	assert.equal(herdr.view, undefined);
-	assert.deepEqual(herdr.clears, [{ source: SOURCE }]);
+	assert.deepEqual(wiping(herdr), [{ source: SOURCE }]);
 });
 
 /** A fake Herdr socket: each connection gets `answer` with the request it read. */
@@ -240,6 +288,14 @@ test("main runs the action against a real socket: on, then off, with its state u
 		await main(env, ["startup"]);
 		assert.equal(herdr.view, undefined, "a startup that runs again in this server leaves its off alone");
 		assert.deepEqual(lines.slice(2), ["net view on", "net view off", "net view off"]);
+		// The event hook: the view is back when nothing shows it, and left alone when this server's off stands.
+		rmSync(join(fake.dir, "state", "net-view.json"));
+		await main(env, ["reapply"]);
+		assert.equal(herdr.view.source, SOURCE);
+		await main(env); // off
+		await main(env, ["reapply"]);
+		assert.equal(herdr.view, undefined);
+		assert.deepEqual(lines.slice(5), ["net view on", "net view off", "net view off"]);
 		await assert.rejects(main(env, ["start"]), /takes no argument/);
 		await assert.rejects(main(env, ["startup", "now"]), /takes no argument/);
 	} finally {
@@ -256,6 +312,9 @@ test("the manifest declares the startup hook and the action, the minimum Herdr v
 	assert.match(manifest, /\[\[startup\]\]\nplatforms = \["macos", "linux"\]\ncommand = \["\/bin\/bash", "run\.sh", "net-view\.mjs", "startup"\]/);
 	assert.match(manifest, /\[\[startup\]\]\nplatforms = \["windows"\]\ncommand = \["node", "net-view\.mjs", "startup"\]/, "Windows has no bash: its twin runs node");
 	assert.equal(manifest.match(/\[\[startup\]\]/g).length, 2, "one hook per platform, and it is the one-shot startup of net-view.mjs");
+	assert.match(manifest, /\[\[events\]\]\non = "pane\.agent_detected"\nplatforms = \["macos", "linux"\]\ncommand = \["\/bin\/bash", "run\.sh", "net-view\.mjs", "reapply"\]/, "Herdr runs no startup hook at a link: the next agent it detects puts the view back");
+	assert.match(manifest, /\[\[events\]\]\non = "pane\.agent_detected"\nplatforms = \["windows"\]\ncommand = \["node", "net-view\.mjs", "reapply"\]/);
+	assert.equal(manifest.match(/\[\[events\]\]/g).length, 2);
 	assert.match(manifest, /\[\[actions\]\]\nid = "net"\ntitle = .*\ncontexts = \["global"\]\nplatforms = \["macos", "linux"\]\ncommand = \["\/bin\/bash", "run\.sh", "net-view\.mjs"\]/);
 	assert.match(manifest, /\[\[actions\]\]\nid = "net-windows"\ntitle = .*\ncontexts = \["global"\]\nplatforms = \["windows"\]\ncommand = \["node", "net-view\.mjs"\]/, "an action id is unique across platforms");
 	for (const file of ["run.sh", "net-view.mjs"]) assert.ok(existsSync(join(PLUGIN, file)), file);

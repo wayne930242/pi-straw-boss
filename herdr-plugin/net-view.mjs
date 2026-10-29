@@ -1,7 +1,8 @@
 // The Herdr plugin action `net`: toggles the sidebar Agents list into a straw net view and back. The view is one `agent.view.set`
 // on Herdr's socket, which the CLI cannot send, sorted by the `sb_order` pane token that pi-straw-boss writes: towers first, then
 // each workspace's main agents and members, every subagent right under its launcher, and any agent without the token after them.
-// `net-view.mjs startup`, the plugin's startup hook, turns the view on once when a Herdr server starts and exits.
+// `net-view.mjs startup`, the plugin's startup hook, turns the view on once when a Herdr server starts and exits. `net-view.mjs reapply`, the plugin's
+// event hook (a pane's agent detected), puts the view back when the plugin was unlinked and linked again inside one server run, which drops the view and runs no startup hook.
 // Plain JavaScript with no imports from the extension, so the folder works wherever Herdr links or installs it.
 import { statSync, realpathSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -89,6 +90,18 @@ export const fileStore = (dir) => ({
 });
 
 /**
+ * What Herdr's active Agents view is now, without changing it. Herdr has no query for it, but `agent.view.clear` with a source that owns nothing
+ * "leaves the active view unchanged" and answers with it (checked on Herdr 0.9.5: `active`, `source`, `label`; clearing the view's own source answers
+ * inactive whether or not it was there, which is why the saved state could not be trusted).
+ * @param {{ call: Call, source: string }} deps
+ * @returns {Promise<{ active: boolean, source?: string }>}
+ */
+export const activeView = async ({ call, source }) => {
+	const view = await call("agent.view.clear", { source: `${source}-probe` });
+	return { active: Boolean(view.active), source: view.source };
+};
+
+/**
  * Installs the net view as `source` and records it as on. A view that was installed but whose state cannot be saved is cleared again:
  * without the state a later press would install the view again and never clear it.
  * @param {{ call: Call, store: Store, source: string, instance: string }} deps
@@ -107,18 +120,37 @@ async function install({ call, store, source, instance }) {
 }
 
 /**
- * Flips the net view: off when this plugin's view is on in the running server, otherwise on. A view another owner installed
- * over this one counts as off (clearing by this plugin's source leaves it alone), so one press brings the net view back.
+ * Flips the net view by what Herdr shows now, not by what was saved: off when this plugin's view is the active one, otherwise on, so one press always
+ * changes what the sidebar shows. A saved "on" can be wrong after the plugin was unlinked and linked again, or disabled and enabled, in one server run
+ * (Herdr drops the view and runs no startup hook), and the first press then only recorded "off". A view another owner installed over this one counts
+ * as off (clearing by this plugin's source leaves it alone), so one press brings the net view back. The state file keeps only the wish (on or off) for
+ * the startup and reapply hooks.
  * @param {{ call: Call, store: Store, source: string, instance: string }} deps
  * @returns {Promise<{ on: boolean }>}
  */
 export async function toggle(deps) {
 	const { call, store, source, instance } = deps;
-	const state = await store.read();
-	if (state?.on && state.instance === instance && !(await call("agent.view.clear", { source })).active) {
+	const now = await activeView(deps);
+	if (now.active && now.source === source) {
+		if ((await call("agent.view.clear", { source })).active) throw new Error("herdr agent.view.clear did not clear the view");
 		await store.write({ on: false, instance });
 		return { on: false };
 	}
+	return install(deps);
+}
+
+/**
+ * The reapply rule, for an event in a server that is already running: the net view is on by default and by the saved wish, so when nothing shows it
+ * (the plugin was linked again, or enabled again, and Herdr dropped the view), it is installed. This server's own "off" stands, and any active view
+ * stays: this plugin's own, or another owner's, which only a startup or a press replaces.
+ * @param {{ call: Call, store: Store, source: string, instance: string }} deps
+ * @returns {Promise<{ on: boolean }>}
+ */
+export async function reapply(deps) {
+	const state = await deps.store.read();
+	if (state?.on === false && state.instance === deps.instance) return { on: false };
+	const now = await activeView(deps);
+	if (now.active) return { on: now.source === deps.source };
 	return install(deps);
 }
 
@@ -143,8 +175,8 @@ export async function startup(deps) {
 export async function main(env = process.env, args = process.argv.slice(2)) {
 	const { HERDR_PLUGIN_ID: id, HERDR_PLUGIN_STATE_DIR: dir, HERDR_SOCKET_PATH: socket } = env;
 	if (!id || !dir || !socket) throw new Error("net-view.mjs is a Herdr plugin action: HERDR_PLUGIN_ID, HERDR_PLUGIN_STATE_DIR and HERDR_SOCKET_PATH must be set");
-	if (args.length > 1 || (args.length === 1 && args[0] !== "startup")) throw new Error(`net-view.mjs takes no argument (the action) or "startup" (the hook), not: ${args.join(" ")}`);
-	const result = await (args[0] === "startup" ? startup : toggle)({ call: socketCall(socket), store: fileStore(dir), source: `plugin:${id}`, instance: instanceOf(socket) });
+	if (args.length > 1 || (args.length === 1 && args[0] !== "startup" && args[0] !== "reapply")) throw new Error(`net-view.mjs takes no argument (the action), "startup" or "reapply" (the hooks), not: ${args.join(" ")}`);
+	const result = await ({ startup, reapply }[args[0]] ?? toggle)({ call: socketCall(socket), store: fileStore(dir), source: `plugin:${id}`, instance: instanceOf(socket) });
 	console.log(result.on ? "net view on" : "net view off");
 }
 

@@ -1,6 +1,6 @@
 id = "wayne930242.straw-boss"
 name = "Straw Boss"
-version = "0.4.0"
+version = "0.5.0"
 min_herdr_version = "0.9.3"
 description = "Turn the sidebar Agents list into a straw net view when Herdr starts, and toggle it by key: towers first, then main agents, then members"
 # agent.view.set is a socket method, which the CLI cannot send: the script reaches it over Herdr's Unix socket, or its named pipe on Windows.
@@ -15,6 +15,18 @@ command = ["/bin/bash", "run.sh", "net-view.mjs", "startup"]
 [[startup]]
 platforms = ["windows"]
 command = ["node", "net-view.mjs", "startup"]
+
+# Herdr runs no startup hook when a plugin is linked or enabled, and drops the view of a plugin that is unlinked or disabled: a relink inside one server run leaves the sidebar without the net view
+# until something puts it back. The next agent Herdr detects does: `reapply` installs the view only when no view is active and this server's own "off" has not been pressed, and exits.
+[[events]]
+on = "pane.agent_detected"
+platforms = ["macos", "linux"]
+command = ["/bin/bash", "run.sh", "net-view.mjs", "reapply"]
+
+[[events]]
+on = "pane.agent_detected"
+platforms = ["windows"]
+command = ["node", "net-view.mjs", "reapply"]
 
 # Action ids are unique across platforms, so the Windows command is its own action: bind `wayne930242.straw-boss.net-windows` there.
 [[actions]]
