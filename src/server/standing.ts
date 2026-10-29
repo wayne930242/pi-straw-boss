@@ -37,6 +37,8 @@ const MISSES = 3;
 const NO_START = 3;
 /** A run whose wake is due within this long is about to take the standing pane: the prompt is not typed into it (it starts slower than the run waits, a cold PowerShell and node: 29 s on the VM). */
 const RUN_SOON_MS = 5000;
+/** How long the record of a typing is kept: the desk's claim is believed for 30 seconds, and a typed command stops being waited on after at most `launchMaxMs`. */
+const TYPED_KEEP_MS = 15 * 60_000;
 
 /** What the standing logic needs of one tower service (towers.ts builds it). */
 export interface StandingTarget {
@@ -46,8 +48,8 @@ export interface StandingTarget {
 	pane(): string;
 	/** Whether the identity is registered: nothing is typed or reported before. */
 	live(): boolean;
-	/** Whether the pane is proven to be the tower's own seat (typegate.ts `seatGate`); nothing is typed before. Absent: proven (a target that needs no proof). */
-	seated?(): boolean;
+	/** Whether the pane is proven to be the tower's own seat (typegate.ts `seatGate`, `proofGate`) for the pane as Herdr lists it in `pane` (the look's own reading); nothing is typed before. Absent: proven (a target that needs no proof). */
+	seated?(pane: Pane | undefined): boolean;
 	status(): ServiceStatus | undefined;
 	/** Whether a run starts in the pane within `ms`: a prompt typed now would only have to start, poll, and leave before the run's pi can. */
 	runWithin?(ms: number): boolean;
@@ -148,6 +150,17 @@ export function createStanding(o: StandingOptions) {
 	const alive = o.alive ?? pidAlive;
 	const groups = (o.platform ?? process.platform) !== "win32";
 	const mines = new Map<string, Mine>();
+	/**
+	 * When the command was last typed into each pane, and the terminal the pane was in (by whichever service stood for it). A service that is lost and replaced for the same pane (the desk made the base again after a lost
+	 * session) starts with none of its own, and the pane must not be typed into a second time because of it (F10): the replacement waits as the first would, and the desk's claim asks `typedSince`. The record is of the terminal:
+	 * a pane id that a new Herdr gave to another terminal has not been typed into. A refused typing is not on record, a new Herdr clears it all.
+	 */
+	const typed = new Map<string, { at: number; terminal?: string }>();
+	/** The typing on record for the pane as it is listed now: none when it was in another terminal. */
+	const typingIn = (pane: string, terminal: string | undefined) => {
+		const record = typed.get(pane);
+		return record && (record.terminal === undefined || terminal === undefined || record.terminal === terminal) ? record : undefined;
+	};
 	let timer: ReturnType<typeof setInterval> | undefined, ticking: Promise<void> = Promise.resolve(), stopped = false;
 	const error = (code: string, text: string, max = 300) => log.line("error", { code, text: text.slice(0, max) });
 
@@ -206,9 +219,12 @@ export function createStanding(o: StandingOptions) {
 		const attached = Boolean(pane) && target.live();
 		const status = attached ? target.status() : undefined;
 		let command = "";
+		// The pane as Herdr lists it at the latest reading: the tick's, and then (just before the typing) a reading of its own, since the tick's may be old by the time an earlier look of the same tick is done.
+		let seat = pane;
 		const verdict = await typeGate({
 			attached,
-			seated: () => target.seated?.() ?? true,
+			// A service that was detached while this look waited (lost, retired) is no seat: it types nothing from a look it had in flight.
+			seated: () => mines.get(target.workspace) === m && (target.seated?.(seat) ?? true),
 			groups,
 			busy: attached && Boolean(target.paneBusy?.()),
 			held: status?.state === "held",
@@ -219,11 +235,19 @@ export function createStanding(o: StandingOptions) {
 			gone: () => unreport(m),
 			parked: () => m.parked,
 			runSoon: () => Boolean(target.runWithin?.(RUN_SOON_MS)),
-			launchWait: () => m.launched !== undefined && now() - m.launched < Math.min(t.launchMs * 2 ** Math.max(0, m.typings - 1), t.launchMaxMs),
+			launchWait: () => {
+				// The command typed into this pane by a service that stood for it before this one counts as this one's own typing.
+				const last = Math.max(m.launched ?? -Infinity, typingIn(paneId, seat?.terminal_id)?.at ?? -Infinity);
+				return last > -Infinity && now() - last < Math.min(t.launchMs * 2 ** Math.max(0, m.typings - 1), t.launchMaxMs);
+			},
 			command: () => Boolean((command = o.command(target.workspace) ?? "")),
 			settle: () => settle(m),
 			fresh: () => m.fresh,
-			read: () => processInfo(paneId),
+			read: async () => {
+				const [info, again] = await Promise.all([processInfo(paneId), world().then((w) => w.panes.find((p) => p.pane_id === paneId), () => undefined)]);
+				seat = again;
+				return info;
+			},
 		});
 		if (!pane) return;
 		if (!verdict.type) {
@@ -266,6 +290,9 @@ export function createStanding(o: StandingOptions) {
 			m.noStart = true;
 			log.line("prompt-not-starting", { workspace: target.workspace, pane: pane.pane_id, text: `The tower prompt did not start after ${NO_START} tries (is node on the PATH of the shell in that pane, and can the shell take the command?); the server tries again at a slower pace, up to every ${Math.round(t.launchMaxMs / 60_000)} minutes` });
 		}
+		const before = typed.get(pane.pane_id), at = m.launched;
+		typed.set(pane.pane_id, { at, ...(seat?.terminal_id ? { terminal: seat.terminal_id } : {}) });
+		for (const [id, record] of typed) if (at - record.at > TYPED_KEEP_MS) typed.delete(id);
 		try {
 			await run(["pane", "run", pane.pane_id, command]);
 			m.freshUntil = undefined;
@@ -283,6 +310,7 @@ export function createStanding(o: StandingOptions) {
 			}
 			// Herdr refused: nothing was typed, so this is no prompt that failed to start. Its own words are logged in full (code, stderr), and the typing is tried again one `launchMs` later, a few times, while the pane is still believed fresh.
 			error("prompt-typed", `${target.workspace}: herdr pane run ${pane.pane_id} failed (exit ${String(why.code)}): ${why.stderr || why.message}`, 4000);
+			before === undefined ? typed.delete(pane.pane_id) : typed.set(pane.pane_id, before);
 			m.typings = Math.max(0, m.typings - 1);
 			m.failures++;
 			const back = refusedGate({ wasFresh, freshUntil: m.freshUntil, failures: m.failures, tries: TYPE_TRIES, now: now(), handMs: t.handMs });
@@ -385,6 +413,8 @@ export function createStanding(o: StandingOptions) {
 			if (!back.apply) return;
 			m.leaving = false;
 			Object.assign(m, { ...(back.unpark ? { parked: false } : {}), launched: undefined, seen: undefined, reported: undefined, misses: 0, typings: 0, fresh: back.fresh, noStart: false, lost: false, hand: undefined, freshUntil: back.freshUntil, failures: 0, giveUp: false });
+			// A give-back ends the wait on the command typed before it (a run's pi was in the pane since, or the boss pressed Retry): the pane's record of that typing goes with it.
+			typed.delete(m.target.pane());
 			void tick(workspace);
 		},
 		/** A resident tower (its pi has `pid`) handed this pane over and is quitting: once that process is gone the pane is a bare shell the server just got back, as after a run. The look proves it (`settleGate`); nothing is believed on the word of the hand-over alone. A prompt that polls is left alone. */
@@ -397,8 +427,14 @@ export function createStanding(o: StandingOptions) {
 			m.failures = 0;
 			void tick(workspace);
 		},
+		/** Whether the command was typed into the pane in this terminal (a typing in flight counts); where Herdr lists no terminal, whether it was at or after `at`. */
+		typedSince: (pane: string, terminal: string | undefined, at: number): boolean => {
+			const record = typingIn(pane, terminal);
+			return record !== undefined && (record.terminal !== undefined && terminal !== undefined ? true : record.at >= at);
+		},
 		/** A new Herdr server: every pane is a fresh shell, so nothing is believed of what was there. */
 		reset() {
+			typed.clear();
 			for (const m of mines.values()) Object.assign(m, { seen: undefined, leaving: false, parked: false, launched: undefined, reported: undefined, misses: 0, unsupported: undefined, typings: 0, fresh: true, noStart: false, lost: false, hand: undefined, freshUntil: undefined, failures: 0, giveUp: false });
 		},
 		/** The look at once (a service just went live), without waiting for the interval. */

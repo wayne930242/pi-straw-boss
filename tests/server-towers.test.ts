@@ -487,7 +487,8 @@ test("B4R-F002: a waiting service whose pane Herdr renumbered after a restart pu
 });
 
 test("B4R-F002: a live service yields to a resident that holds the workspace at its next refresh, and registers again once it leaves", async () => {
-	const s = await started({ towers: { recoverMs: 150, registerMs: 500, residentMs: 20, retryMs: [20], refreshMs: 60 } });
+	// The minute after the server's start (40 ms here, looking at the tabs every 20 ms) is over before the service yields: only the yielded service's own proof (`adopt`) can seat it again, as it must outside that minute.
+	const s = await started({ towers: { recoverMs: 20, registerMs: 500, residentMs: 20, retryMs: [20], refreshMs: 60, recoverPollMs: 20 } });
 	await ask(s, { cmd: "ensure-tower", workspace: "wA" });
 	const first = world.client("sb-tower-wa")!;
 	assert.equal(first.connected, true);

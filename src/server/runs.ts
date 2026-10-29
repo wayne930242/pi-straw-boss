@@ -146,6 +146,8 @@ export interface ServiceRef {
 	record(): ServiceRecord;
 	/** Whether the identity is registered with pi-intercom: runs reply under it. */
 	live(): boolean;
+	/** Whether the standing pane is still the tower's own seat, proven on a listing read now (towers.ts `proven`): a run starts pi in no pane that is not. A listing that fails is no proof. */
+	proven(): Promise<boolean>;
 	/** The folder the settings check looks at: the standing pane's, else the workspace's checkout path. */
 	cwd(): Promise<string>;
 	/** The tower's `sb_order` key, which the panes of its ally runs are keyed after; undefined when Herdr cannot place the tower. */
@@ -403,6 +405,17 @@ export function createRuns(o: RunsOptions) {
 		if (active.ended) return; // the service was detached during the check
 		svc.refusedAt = undefined;
 		svc.notices = svc.notices.filter((n) => n.id !== "settings");
+		// The seat is proven on a listing read now, not on the flag the last Herdr left: a new Herdr that answers before the server's connections are acknowledged again may hold the pane's id for the boss's own shell (F10).
+		// A refused wake is made again when the seat is proven (the look pokes) or at the service's next refresh.
+		if (!(await svc.ref.proven())) {
+			if (active.ended) return;
+			slots--;
+			svc.run = undefined;
+			svc.state = "standing";
+			log.line("run-refused", { workspace: svc.ref.workspace, why: "seat" });
+			return;
+		}
+		if (active.ended) return;
 		// A boss event written at the tower prompt (or the GUI's composer) with no local run live starts the boss conversation: it resumes the boss session when bossconv.ts says it may, else begins a new one.
 		const resume = bossWake(svc) ? await conversationOf(svc) : undefined;
 		if (active.ended) return;
@@ -461,6 +474,13 @@ export function createRuns(o: RunsOptions) {
 			try {
 				// The standing pane shows the tower prompt between runs; Herdr starts an agent only in an available shell, so the prompt leaves first. An ally run has a pane of its own.
 				if (rec.kind === "local") await svc.ref.yieldPane().catch((cause: Error) => error("run-yield", `${rec.id}: ${cause.message}`));
+				// The wait above (the prompt leaving, up to seconds) may have outlasted the seat: pi starts in the pane only while it is proven now. A run that ends here never started pi, so the pane is not marked fresh.
+				if (!(await svc.ref.proven())) {
+					if (active.ended) return;
+					log.line("run-refused", { workspace: svc.ref.workspace, why: "seat", run: id });
+					active.unstarted = true;
+					return void (await finish(active, "herdr-restart", "the standing pane is no longer proven to be the tower's"));
+				}
 				await start(o.run, o.sleep, rec.agent, rec.pane, ["--name", name, "--sb-run", id, ...extra, ...(o.model() ? ["--model", o.model()!] : [])]);
 				started = true;
 				const found = await procOf(rec.pane, id);
@@ -573,6 +593,15 @@ export function createRuns(o: RunsOptions) {
 		if (active.ended) return;
 		svc.refusedAt = undefined;
 		svc.notices = svc.notices.filter((n) => n.id !== "settings");
+		// The ally pane is split off the standing pane: not while the seat is unproven (the tab may be a stranger's).
+		if (!(await svc.ref.proven())) {
+			if (active.ended) return;
+			slots--;
+			svc.allies.delete(device);
+			log.line("run-refused", { workspace: svc.ref.workspace, why: "seat", kind: "ally" });
+			return;
+		}
+		if (active.ended) return;
 		try {
 			const lead = svc.ref.record().pane, dir = await svc.ref.cwd();
 			const made = await result(o.run, ["pane", "split", lead, "--direction", "right", "--cwd", dir, "--no-focus"]);

@@ -12,6 +12,8 @@
 // Two marks are facts, not typing decisions, and are set where the fact happens: `fresh: true` at `attach(target, fresh)` (Herdr just made the pane, so it is a shell nobody has used) and at `reset()` (a new Herdr
 // server: every pane is a fresh shell). Neither depends on what the pane did, so no rule could be wrong there; they only start the clock that `typeGate` and `settleGate` then judge.
 // - `seatGate`: whether the pane a service recorded is still the tower's own seat after a Herdr came back or a server started. `typeGate` asks it as a fact (`seated`), and the callers that mark a pane or wake a run in it ask the same fact.
+// - `proofGate`: whether a proof made earlier still holds for the pane as Herdr lists it now (the terminal it was made for); asked at each act, so a new Herdr that answers before the server's connections are acknowledged again voids it.
+// - `claimGate`: what the desk's claim ("I made this pane a moment ago") does to the service already standing for the workspace's id, and whether it makes the pane a fresh shell.
 // The gates other than `typeGate` are pure: the facts come in, the answer goes out, and the caller changes its own state by it. `typeGate`'s facts are not: `gone` takes the stand-in away, `settle` upkeeps the caller's
 // marks, and `read` asks Herdr; they are asked in the gate's order and only when the rules before them passed.
 
@@ -50,6 +52,47 @@ export type SeatVerdict = "ours" | "stranger" | "absent";
 export function seatGate(f: SeatFacts): SeatVerdict {
 	if (!f.pane || !f.tab) return "absent";
 	return f.tab.label === TOWER_LABEL ? "ours" : "stranger";
+}
+
+/**
+ * The proof `seatGate` gives is for one Herdr's pane: the terminal it ran in. Herdr gives every pane of a new server a new `terminal_id`, and tells the server of the new server only by its connections acknowledging again, a
+ * moment (up to 2 s) after it answers. Until they do, a pane listed under the recorded id in another terminal is a stranger's whatever the old proof says. So each act that rests on the proof (a typing, the marks, a run's start)
+ * asks this of a listing it has just read.
+ * - `holds`: the pane is listed in the terminal the proof was made for, or Herdr gives no terminal id at all (the proof is then as `seatGate` left it).
+ * - `bind`: the proof was made for a pane whose terminal was not known (a tab the server made a moment ago): the terminal Herdr lists now is the one it is for.
+ * - `moved`: the pane is in another terminal: a new Herdr server holds the ids, and every proof is void.
+ * - `absent`: the pane is not listed: the proof can be neither confirmed nor refuted, and the act waits.
+ */
+export type ProofVerdict = "holds" | "bind" | "moved" | "absent";
+export function proofGate(f: { terminal: string | undefined; pane: { terminal_id?: string } | undefined }): ProofVerdict {
+	if (!f.pane) return "absent";
+	if (f.terminal === undefined) return f.pane.terminal_id === undefined ? "holds" : "bind";
+	return f.pane.terminal_id === f.terminal ? "holds" : "moved";
+}
+
+/** What the desk's claim saw of the pane it names (`ensure-tower {made}`; towers.ts reads it from Herdr and from its own services). */
+export interface ClaimFacts {
+	/** The claim is a few seconds old and names the only pane of the workspace: a base the desk made a moment ago. */
+	base: boolean;
+	/** The pane is marked as a tower and holds no agent: nothing has run in it but the server's own marks. */
+	bare: boolean;
+	/** A service was opened for this pane after the claim was made: the claim is used, and a replay of it changes nothing. */
+	used: boolean;
+	/** Called once, when the claim ends the service that stands for the workspace's id: the caller loses it, so its looks stop. */
+	end(): Promise<void>;
+	/** Whether the server typed into the pane since the claim was made. Read after `end`: what a look of the service just lost had in flight is on record by then. */
+	typed(): boolean;
+}
+/**
+ * A base the desk made a moment ago is new to the server: a service still registered for its workspace id belongs to a workspace that was lost (Herdr killed with its session unsaved numbers the new one alike), so the claim
+ * ends it whatever the pane shows (the lost workspace's service may have proven the new base by its glyph and started its prompt there already: the glyph is any tower's, `seatGate`). The pane counts as a fresh shell, which
+ * a Windows pane is typed into on, only while nothing but the marks has been there (`bare`) and the server has typed nothing into it since the claim: a prompt that is starting there is the one typing there will
+ * ever be (F10: once per pane).
+ */
+export async function claimGate(f: ClaimFacts): Promise<{ claimed: boolean; fresh: boolean }> {
+	if (f.used || !f.base) return { claimed: false, fresh: false };
+	await f.end();
+	return { claimed: true, fresh: f.bare && !f.typed() };
 }
 
 // --- the question: may the look type now ------------------------------------------------------------------------------------------------------------------------------------
@@ -97,7 +140,7 @@ export type TypeVerdict = { type: true } | { type: false; reason: NoReason };
 export interface TypeFacts {
 	/** The pane is listed and the service's identity is registered. */
 	attached: boolean;
-	/** The pane is proven to be the tower's own seat (`seatGate`). Asked again after every await: a Herdr that comes back while the look waits voids the proof. */
+	/** The pane is proven to be the tower's own seat (`seatGate`) in the terminal it was proven for (`proofGate`). Asked again after every await, on the latest listing of the pane the look has read (the last is read together with the process info, just before the typing): a Herdr that comes back while the look waits voids the proof. */
 	seated(): boolean;
 	/** Herdr gives the foreground group (false on win32). */
 	groups: boolean;

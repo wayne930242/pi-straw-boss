@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { giveBackGate, handGate, holdGate, idleShell, type NoReason, refusedGate, retryGate, runEndGate, seatGate, settleGate, tableGate, type TypeFacts, typeGate } from "../src/server/typegate.ts";
+import { claimGate, giveBackGate, handGate, holdGate, idleShell, type NoReason, proofGate, refusedGate, retryGate, runEndGate, seatGate, settleGate, tableGate, type TypeFacts, typeGate } from "../src/server/typegate.ts";
 import { TOWER_LABEL } from "../src/herdr.ts";
 
 // The gate (src/server/typegate.ts) is the one place that says whether the server may type the tower prompt's command into a standing pane. Each rule is pinned alone here: a case in which only that rule says no
@@ -161,6 +161,39 @@ test("seatGate: a pane in a tab labelled with the tower glyph is the tower's own
 	assert.equal(seatGate({ pane, tab: {} }), "stranger");
 	assert.equal(seatGate({ pane: undefined, tab: { label: TOWER_LABEL } }), "absent");
 	assert.equal(seatGate({ pane, tab: undefined }), "absent");
+});
+
+test("proofGate: a proof holds for the terminal it was made for; another terminal under the same pane id is a new Herdr; an unknown terminal binds at the first listing; no listing proves nothing", () => {
+	assert.equal(proofGate({ terminal: "term_1", pane: { terminal_id: "term_1" } }), "holds");
+	assert.equal(proofGate({ terminal: "term_1", pane: { terminal_id: "term_2" } }), "moved", "Herdr gives every pane of a new server a new terminal id");
+	assert.equal(proofGate({ terminal: "term_1", pane: {} }), "moved", "a terminal the proof was made for and that is no longer listed is not the same terminal");
+	assert.equal(proofGate({ terminal: undefined, pane: { terminal_id: "term_2" } }), "bind", "a proof made for a pane just made takes the terminal it is listed in");
+	assert.equal(proofGate({ terminal: undefined, pane: {} }), "holds", "a Herdr that lists no terminal ids leaves the proof as the glyph made it");
+	assert.equal(proofGate({ terminal: "term_1", pane: undefined }), "absent");
+	assert.equal(proofGate({ terminal: undefined, pane: undefined }), "absent");
+});
+
+/** The facts of a claim for a base the desk made a moment ago; `log` lists what the gate asked, in order. */
+function claim(over: Partial<Parameters<typeof claimGate>[0]> = {}) {
+	const log: string[] = [];
+	return { log, f: { base: true, bare: true, used: false, end: async () => void log.push("end"), typed: () => (log.push("typed"), false), ...over } };
+}
+
+test("claimGate: a base the desk just made ends the service of the lost workspace and is a fresh shell only while it is bare and nothing was typed into it since", async () => {
+	const fresh = claim();
+	assert.deepEqual(await claimGate(fresh.f), { claimed: true, fresh: true });
+	assert.deepEqual(fresh.log, ["end", "typed"], "the service is ended first: what its looks had in flight is on record when the typing is asked");
+	const typed = claim({ typed: () => true });
+	assert.deepEqual(await claimGate(typed.f), { claimed: true, fresh: false }, "F10: one typing per pane; the prompt a lost workspace's service started there is the one");
+	assert.deepEqual(await claimGate(claim({ bare: false }).f), { claimed: true, fresh: false }, "an agent or no tower mark: the stand-in of the lost service shows, the service still ends");
+});
+
+test("claimGate: a claim that names no base, or that a service was opened for already, ends nothing and marks nothing", async () => {
+	for (const over of [{ base: false }, { used: true }, { base: false, bare: true, used: true }]) {
+		const { f, log } = claim(over);
+		assert.deepEqual(await claimGate(f), { claimed: false, fresh: false });
+		assert.deepEqual(log, [], "neither the end nor the typing is asked");
+	}
 });
 
 test("typeGate: the freshness a Windows pane is typed on is read after Herdr answered, not before", async () => {
