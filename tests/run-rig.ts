@@ -16,7 +16,9 @@ export type Answer = { ok: boolean; [key: string]: unknown };
 /** The scratch folder of one rig: made by `scratchRoot()`, removed by the caller with `rmSync`. */
 export const scratchRoot = () => realpathSync(mkdtempSync(join(tmpdir(), "psb-run-session-")));
 
-export async function rig(root: string, ask: (request: Request) => Promise<Answer>, sessions: AgentSession[], { flag = "RUN", herdr, glyphWaitMs = 300, lostMs = 300, gateMs = 60, sessionDir, env, entries, towerAskMs = 300, startOf, realSleep }: { towerAskMs?: number; /** Replaces the process start time read (a test counts the reads). */ startOf?: (pid: number) => string | undefined; /** The run mode's sleeps are real timers (the bound of the pane-role ask is a race against one). */ realSleep?: boolean; entries?: unknown[]; env?: Record<string, string>; flag?: string | null; herdr?: (args: string[]) => Promise<string>; glyphWaitMs?: number; lostMs?: number; gateMs?: number; /** Keep the session in a file of this folder, as pi does (its file appears at the first assistant message); in memory by default. */ sessionDir?: string } = {}) {
+export async function rig(root: string, ask: (request: Request) => Promise<Answer>, sessions: AgentSession[], { flag = "RUN", herdr, glyphWaitMs = 300, lostMs = 300, gateMs = 60, sessionDir, env, entries, towerAskMs = 300, startOf, realSleep, reason }: { towerAskMs?: number; /** Why the session starts (pi's `session_start` reason); startup by default. */ reason?: "startup" | "reload" | "new" | "resume" | "fork"; /** Replaces the process start time read (a test counts the reads). */ startOf?: (pid: number) => string | undefined; /** The run mode's sleeps are real timers (the bound of the pane-role ask is a race against one). */ realSleep?: boolean; entries?: unknown[]; env?: Record<string, string>; flag?: string | null; herdr?: (args: string[]) => Promise<string>; glyphWaitMs?: number; lostMs?: number; gateMs?: number; /** Keep the session in a file of this folder, as pi does (its file appears at the first assistant message); in memory by default. */ sessionDir?: string } = {}) {
+	// A run in this process that was not shut down by a quit leaves its claim for a /reload (runmode.ts KEPT): a rig is a new process.
+	(globalThis as Record<symbol, unknown>)[Symbol.for("pi-straw-boss.run")] = undefined;
 	const agentDir = join(root, "agent"), project = join(root, "project");
 	mkdirSync(agentDir, { recursive: true });
 	mkdirSync(project, { recursive: true });
@@ -44,6 +46,7 @@ export async function rig(root: string, ask: (request: Request) => Promise<Answe
 	const { session } = await createAgentSession({
 		cwd: project, agentDir, modelRuntime: runtime, model: runtime.getModel("faux", "faux-1")!, resourceLoader: loader, sessionManager: (() => { const sm = sessionDir ? SessionManager.create(project, sessionDir) : SessionManager.inMemory(); for (const data of entries ?? []) sm.appendCustomEntry("straw-boss", data); return sm; })(),
 		settingsManager: SettingsManager.inMemory({}),
+		...(reason ? { sessionStartEvent: { type: "session_start", reason } } : {}),
 	} as never);
 	sessions.push(session);
 	await session.bindExtensions({ shutdownHandler: () => void shutdowns.push(Date.now()) } as never);

@@ -401,7 +401,7 @@ const slowRole = (srv: ReturnType<typeof server>, ms: number, answer: Answer | "
 };
 const asked = (srv: ReturnType<typeof server>) => srv.requests.filter((q) => q.cmd === "pane-role").length;
 
-test("B6 VM RV-F001: a fresh resident tower (env tower, no entry, not a reload) whose server answers none, or errors, or does not know the command, is a normal session at once", async () => {
+test("B6 VM RV-F001: a fresh resident tower (env tower, no entry, not a reload) whose server answers none, or errors, or does not know the command, is a normal session at once", { timeout: 20_000 }, async () => {
 	for (const how of ["none", "error"]) {
 		flagOn();
 		const srv = server();
@@ -418,7 +418,7 @@ test("B6 VM RV-F001: a fresh resident tower (env tower, no entry, not a reload) 
 	}
 });
 
-test("B6 VM round 2: a pane-role answer that comes after the bound makes a pi in a migrated standing pane the hand run it is: nothing quits meanwhile, and the late answer's claim is used", async () => {
+test("B6 VM round 2: a pane-role answer that comes after the bound makes a pi in a migrated standing pane the hand run it is: nothing quits meanwhile, and the late answer's claim is used", { timeout: 20_000 }, async () => {
 	flagOn();
 	const srv = server();
 	slowRole(srv, 500, HAND);
@@ -430,9 +430,12 @@ test("B6 VM round 2: a pane-role answer that comes after the bound makes a pi in
 	assert.ok(r.session.getAllTools().some((t) => t.name === "tower_done"));
 	assert.equal(asked(srv), 1, "one ask, kept in flight");
 	assert.equal(r.shutdowns.length, 0);
+	// The claim the late answer carried is the one in use (no orphan claim for the server's watcher to end as lost after 30 s): the run polls with its token.
+	await until(() => srv.requests.some((q) => q.cmd === "run-poll" && q.token === "TOKEN"), "the hand run to poll with the late claim's token");
+	assert.ok(!srv.requests.some((q) => q.cmd === "run-release"), "and nothing is released");
 });
 
-test("B6 VM round 2: a late none for a fresh resident tower makes it a normal session after the answer, and the session's own start runs then, not before", async () => {
+test("B6 VM round 2: a late none for a fresh resident tower makes it a normal session after the answer, and the session's own start runs then, not before", { timeout: 20_000 }, async () => {
 	flagOn();
 	const srv = server();
 	slowRole(srv, 500, { ok: true, role: "none" });
@@ -447,7 +450,7 @@ test("B6 VM round 2: a late none for a fresh resident tower makes it a normal se
 	assert.equal(asked(srv), 1);
 });
 
-test("B6 VM round 2: a late quit still quits (the pane is the server's), with its reason", async () => {
+test("B6 VM round 2: a late quit still quits (the pane is the server's), with its reason", { timeout: 20_000 }, async () => {
 	flagOn();
 	const srv = server();
 	slowRole(srv, 300, { ok: true, role: "quit", reason: "Herdr restored this pane" });
@@ -457,7 +460,7 @@ test("B6 VM round 2: a late quit still quits (the pane is the server's), with it
 	assert.match(r.notes.join("\n"), /Herdr restored this pane/);
 });
 
-test("B6 VM round 2: a pane-role that never answers leaves a plain session: no quit, no hand run, no hang, the session start never runs, and one line says so", async () => {
+test("B6 VM round 2: a pane-role that never answers leaves a plain session: no quit, no hand run, no hang, the session start never runs, and one line says so", { timeout: 20_000 }, async () => {
 	flagOn();
 	const srv = server();
 	slowRole(srv, 0, "hang");
@@ -472,7 +475,7 @@ test("B6 VM round 2: a pane-role that never answers leaves a plain session: no q
 	assert.equal(r.notes.filter((n) => /whether this pane is the tower's/.test(n)).length, 1, "said once");
 });
 
-test("B6 VM round 2: a late hand answer for a session that ended meanwhile is released, not left as an orphan claim", async () => {
+test("B6 VM round 2: a late hand answer for a session that ended meanwhile is released, not left as an orphan claim", { timeout: 20_000 }, async () => {
 	flagOn();
 	const srv = server();
 	slowRole(srv, 400, HAND);
@@ -484,7 +487,7 @@ test("B6 VM round 2: a late hand answer for a session that ended meanwhile is re
 	assert.ok(!r.session.getAllTools().some((t) => t.name === "tower_done"));
 });
 
-test("B6 VM round 2: the process start time is read once for the pane-role ask, before its clock starts", async () => {
+test("B6 VM round 2: the process start time is read once for the pane-role ask, before its clock starts", { timeout: 20_000 }, async () => {
 	flagOn();
 	const srv = server();
 	slowRole(srv, 300, HAND);
@@ -492,6 +495,99 @@ test("B6 VM round 2: the process start time is read once for the pane-role ask, 
 	await rig(srv, { ...resident, startOf: () => (reads++, "T-1") });
 	assert.equal(reads, 1);
 	assert.equal(srv.requests.find((q) => q.cmd === "pane-role")!.started, "T-1");
+});
+
+test("B6 VM review RV6B-F001/F004: a resident tower's /reload, /new, /resume or /fork (not a startup, and no tower entry on the new branch) is never asked pane-role, so it cannot become a hand run", { timeout: 20_000 }, async () => {
+	for (const reason of ["reload", "new", "resume", "fork"] as const) {
+		flagOn();
+		const srv = server();
+		slowRole(srv, 0, HAND);
+		const r = await rig(srv, { ...resident, reason });
+		assert.equal(asked(srv), 0, reason);
+		assert.equal(r.runMode.mode, "normal", reason);
+		assert.equal(r.shutdowns.length, 0, reason);
+		assert.ok(!r.session.getAllTools().some((t) => t.name === "tower_done"), `${reason}: not a run`);
+	}
+});
+
+/** The server out of reach for the run's polls (and for its `run-boss`), switched on by the test. */
+const outage = (srv: ReturnType<typeof server>, answers: { paneRole?: Answer } = {}) => {
+	const inner = srv.ask.bind(srv), state = { down: false };
+	srv.ask = async (request: Request): Promise<Answer> => {
+		if ((request.cmd === "run-poll" || request.cmd === "run-boss") && state.down) return (srv.requests.push(request), { ok: false, error: "no server" });
+		if (request.cmd === "pane-role" && answers.paneRole) return (srv.requests.push(request), answers.paneRole);
+		return inner(request);
+	};
+	return state;
+};
+const countAborts = (r: Awaited<ReturnType<typeof rig>>) => {
+	const count = { n: 0 }, abort = r.session.abort.bind(r.session);
+	r.session.abort = async () => (count.n++, abort());
+	return count;
+};
+
+test("B6 VM review RV6B-F003/F004: the boss's words in a run whose server is away protect their turn from the abort even though the server never heard them (run-boss failed)", { timeout: 20_000 }, async () => {
+	const srv = server();
+	const out = outage(srv);
+	const r = await rig(srv);
+	await until(() => srv.requests.some((q) => q.cmd === "run-file"), "the run to be set up");
+	const aborts = countAborts(r);
+	out.down = true;
+	const busy = await busyTurn(r); // session.prompt: interactive, the boss's own words
+	await until(() => srv.requests.some((q) => q.cmd === "run-boss"), "the sign to be tried");
+	await until(() => r.shutdowns.length === 1, "the run to give up");
+	assert.equal(aborts.n, 0, "the boss's turn is not cut: waits for idle");
+	busy.release();
+	await busy.turn.catch(() => {});
+});
+
+test("B6 VM review RV6B-F004: a hand run's turn that the boss did not type is not aborted either (the hand claim alone protects it)", { timeout: 20_000 }, async () => {
+	flagOn();
+	const srv = server();
+	const out = outage(srv, { paneRole: HAND });
+	const r = await rig(srv, { flag: null, herdr: herdrWith({ sb_role: "tower" }, TOWER_LABEL) });
+	await until(() => srv.requests.some((q) => q.cmd === "run-file"), "the run to be set up");
+	const aborts = countAborts(r);
+	let asked!: () => void, release!: () => void;
+	const modelAsked = new Promise<void>((resolve) => (asked = resolve)), gate = new Promise<void>((resolve) => (release = resolve));
+	r.faux.setResponses([(async () => (asked(), await gate, fauxAssistantMessage("busy done"))) as never]);
+	const turn = r.session.prompt("an extension's turn", { source: "extension" });
+	await modelAsked;
+	out.down = true;
+	await until(() => r.shutdowns.length === 1, "the run to give up");
+	assert.ok(!srv.requests.some((q) => q.cmd === "run-boss"), "no word of the boss's was involved");
+	assert.equal(aborts.n, 0, "the hand run's turn is not cut");
+	release();
+	await turn.catch(() => {});
+});
+
+test("B6 VM review: a hand run keeps its claim across /reload, /new, /resume and /fork: same pane, same run, no second pane-role, no release, and it goes on polling with its token", { timeout: 30_000 }, async () => {
+	for (const reason of ["reload", "new", "resume", "fork"] as const) {
+		flagOn();
+		const srv = server();
+		// The real server answers a second pane-role of this pane with `quit`: its own run holds it.
+		let first = true;
+		const inner = srv.ask.bind(srv);
+		srv.ask = async (request: Request): Promise<Answer> => {
+			if (request.cmd !== "pane-role") return inner(request);
+			srv.requests.push(request);
+			return first ? ((first = false), HAND) : { ok: true, role: "quit", reason: "this pane holds a run" };
+		};
+		const r = await rig(srv, { flag: null, herdr: herdrWith({ sb_role: "tower" }, TOWER_LABEL) });
+		await until(() => srv.requests.some((q) => q.cmd === "run-file"), `${reason}: the run to be set up`);
+		const emit = (e: Record<string, unknown>) => (r.session as unknown as { extensionRunner: { emit(e: unknown): Promise<unknown> } }).extensionRunner.emit(e);
+		await emit({ type: "session_shutdown", reason });
+		await emit({ type: "session_start", reason });
+		const files = srv.requests.filter((q) => q.cmd === "run-file").length;
+		await until(() => srv.requests.filter((q) => q.cmd === "run-file").length > files - 1 && srv.requests.filter((q) => q.cmd === "run-file").length >= 2, `${reason}: the run to report its file again`);
+		const marks = srv.requests.length;
+		await polls(srv, 3);
+		assert.equal(asked(srv), 1, `${reason}: pane-role asked once`);
+		assert.ok(!srv.requests.some((q) => q.cmd === "run-release"), `${reason}: not released`);
+		assert.equal(r.shutdowns.length, 0, `${reason}: not quit`);
+		assert.equal(r.runMode.mode, "run", reason);
+		assert.ok(srv.requests.slice(marks).some((q) => q.cmd === "run-poll" && q.token === "TOKEN"), `${reason}: polling with the same token`);
+	}
 });
 
 test("B6 VM RV-F003: a hand run whose server stays out of reach does not abort a turn the boss is in", async () => {

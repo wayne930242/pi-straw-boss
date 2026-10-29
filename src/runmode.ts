@@ -83,7 +83,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	let inTurn = false, triggered: number | undefined, outOfReach: number | undefined;
 	// A quit the server ordered while the turn runs. pi would keep `ctx.shutdown()` itself and honour it at its next idle moment with no way to take it back, so the run holds the order instead: a server that restarted meanwhile (the run claims again) never ordered it, and the run goes on.
 	let quitOrdered = false;
-	let registered = false, bossSign: number | undefined, signing: Promise<unknown> | undefined;
+	let registered = false, bossSign: number | undefined, bossTyped = false, signing: Promise<unknown> | undefined;
 	// The pane-role ask of a pi with STRAW_BOSS_ROLE=tower that did not come back within `towerAskMs` is still in flight: the session is undecided, neither a run nor a normal session (so it joins nothing, hands nothing
 	// over and quits nothing) until the answer comes. `epoch` counts session starts and shutdowns, so an answer for a session that is gone is released instead of acted on; `afterNormal` holds the session start that waits for a `none`.
 	let epoch = 0, deciding: (() => void)[] | undefined;
@@ -137,14 +137,15 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	}
 	/** A pi without the flag in a standing pane: the server says whether to quit, wait, or take the pane as a run of the boss's own. */
 	type Found = { role: "none" | "quit" | "hand"; reason?: string; claim?: Claim };
-	async function paneRole(context: ExtensionContext, reload: boolean): Promise<Found | { role: "late"; settle: Promise<Found | undefined> }> {
+	async function paneRole(context: ExtensionContext, reason: string): Promise<Found | { role: "late"; settle: Promise<Found | undefined> }> {
 		const pane = env.HERDR_PANE_ID, workspace = env.HERDR_WORKSPACE_ID;
 		// Without the flag file no sb server runs towers, so no pane is one (and a session asks Herdr nothing at its start for this).
 		if (!pane || !workspace || !towerRunsEnabled(guiDir)) return { role: "none" };
 		// A resident tower (it carries STRAW_BOSS_ROLE=tower) is no pi the boss typed into a standing pane: it hands its pane over itself (tower.ts). A /reload right after the server registered its identity finds its pane marked
 		// `tower` already, and asking would make it a hand run that never hands over and never ends (B6 VM F4).
-		// Only a session that already wrote its tower entry is one: the env alone stays in a migrated standing pane's tab, and a pi the boss types there is a hand run.
-		if (env.STRAW_BOSS_ROLE === "tower" && (reload || residentTower(context))) return { role: "none" };
+		// Only a session that already wrote its tower entry is one: the env alone stays in a migrated standing pane's tab, and a pi the boss types there is a hand run. That pi always starts with `startup`: a /reload, /new,
+		// /resume, or /fork of a resident tower is its in-process switch (the server holds the pane for it while it lives), and the new branch has no entry yet (B6 VM review RV6B-F001).
+		if (env.STRAW_BOSS_ROLE === "tower" && (reason !== "startup" || residentTower(context))) return { role: "none" };
 		// The env alone may be a fresh resident (it hands over itself) or a pi the boss typed in a migrated standing pane: the server knows which pane it holds. An error or an older server means resident. An answer
 		// that does not come within `towerAskMs` (a cold Windows server took 3.9 s) decides nothing: quitting or handing over on a guess ended a hand pi that was only waiting, so the ask stays in flight and the
 		// answer is acted on when it comes (`late`). The start time is read once, before the clock starts (the read is a sync PowerShell call of seconds there).
@@ -325,7 +326,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		outOfReach ??= cfg.now();
 		if (cfg.now() - outOfReach <= lostMs) return;
 		// A turn the boss is in (a hand run, or their words in the run) is not cut: it waits for idle as before. pi keeps a shutdown until its next idle moment, and a model call can last many minutes: an orphaned run in the middle of a turn aborts it first (B6 VM F9).
-		if (!ending && !(claim?.hand || bossSign !== undefined)) try { if (ctx && !ctx.isIdle()) ctx.abort(); } catch { /* the session is already gone */ }
+		if (!ending && !(claim?.hand || bossTyped)) try { if (ctx && !ctx.isIdle()) ctx.abort(); } catch { /* the session is already gone */ }
 		end(`the sb server has been out of reach for ${Math.round(lostMs / 1000)} s; this run ends: ${why}`);
 	}
 	async function reclaim() {
@@ -360,6 +361,8 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	// The boss's own words in this session (the keyboard, not an event or a steer of the server's) make them part of the run: the server then keeps it until they leave (docs/how-it-works.md, The boss in a run).
 	pi.on("input", (event) => {
 		if (mode !== "run" || claim?.kind !== "local" || event.source !== "interactive") return;
+		// Their words protect the turn from the abort whether or not the server heard them (it may be the very thing that is away): the flag is not undone by a failed request, the rate-limit mark is.
+		bossTyped = true;
 		if (bossSign !== undefined && cfg.now() - bossSign < BOSS_SIGN_MS) return;
 		bossSign = cfg.now();
 		// Not waited for: pi takes the boss's words only after this handler, and a round trip here would let the run's own event start a turn first and the words be refused as "already processing". The request goes out now;
@@ -433,10 +436,12 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		const kept = (globalThis as Record<symbol, { claim?: Claim } | undefined>)[KEPT]?.claim;
 		const flag = pi.getFlag("sb-run");
 		try {
+			// A hand run (no flag: the boss started pi in the standing pane) keeps its claim across /reload, /new, /resume and /fork: it is the same process in the same pane, and asking again would be told the pane is taken.
 			if (kept && typeof flag === "string" && kept.run === flag && event.reason === "reload") claim = kept;
+			else if (kept?.hand && !flag && event.reason !== "startup") claim = kept;
 			else if (typeof flag === "string" && flag) claim = await claimRun(flag);
 			else {
-				const found = await paneRole(context, event.reason === "reload");
+				const found = await paneRole(context, event.reason);
 				if (found.role === "late") {
 					deciding = [];
 					const mine = epoch;
@@ -462,7 +467,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		timer = undefined;
 		if (mode !== "run" || !claim || ending) return;
 		// /new, /resume, and /fork end the claim; a /reload keeps it, and a quit after tower_done or by the server's command is the server's own.
-		if (event.reason === "reload") return void (mode = "unknown");
+		if (event.reason === "reload" || (claim.hand && event.reason !== "quit")) return void (mode = "unknown");
 		if (!closing && event.reason !== "quit") await ask({ cmd: "run-release", token: claim.token, reason: event.reason }).catch(() => {});
 		// A quit that tower_done did not come before is the boss's /quit or the server's own order; the server knows which (a run it is ending ignores this) and ends a run the boss was in as done, not crashed.
 		if (!closing && event.reason === "quit" && claim.kind === "local") await ask({ cmd: "run-done", token: claim.token, left: true }).catch(() => {});
