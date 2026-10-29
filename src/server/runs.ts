@@ -11,7 +11,7 @@ import { waitPastTrust } from "../trust/wait.ts";
 import type { MemorySummary, TowerView } from "../net.ts";
 import { type BossPointer, type ConversationInfo, readPointer, resumable, sessionsRoot, underRoot, writePointer } from "./bossconv.ts";
 import { herdrCode } from "./herdrcode.ts";
-import { programName, programProcs } from "./standing.ts";
+import { isShell, nestedShells, programName, programProcs } from "./standing.ts";
 import { chain, isWrapper, leafOf, type Proc, type Procs, readProcs } from "./lineage.ts";
 import type { Log } from "./log.ts";
 import type { Slot } from "./record.ts";
@@ -472,9 +472,16 @@ export function createRuns(o: RunsOptions) {
 			} catch (cause) {
 				if (active.ended) return;
 				// A start that failed with a program of the boss's in the pane's foreground (not a shell, not the tower prompt) is the pane's doing (RV2-F001: nothing of theirs is closed, and a start that is not Herdr's timeout code is no reason for a new pane): the notice names the program and the service starts again when the pane is free.
-				let programs: { pid?: number; argv0?: string; name?: string }[] = started || rec.kind !== "local" ? [] : programProcs({ foreground_processes: await foreground(rec.pane) });
+				const info = started || rec.kind !== "local" ? undefined : await paneInfo(rec.pane);
+				let programs: { pid?: number; argv0?: string; name?: string }[] = programProcs(info);
+				// A nested shell is seen only as a shell besides the pane's own in the foreground, or (Windows) below it in the process table: what Herdr calls busy may also be the tower's own prompt or its stand-in label (RV16-F004).
+				let nestedSeen = nestedShells(info).length > 0;
 				// Windows lists the shell alone in the foreground: when Herdr says the pane is busy, the program is looked for below the shell.
-				if (!programs.length && win && !started && rec.kind === "local" && herdrCode(cause) === "agent_pane_busy") programs = (await belowShell(rec.pane, id).catch(() => undefined)) ?? [];
+				if (!programs.length && win && !started && rec.kind === "local" && herdrCode(cause) === "agent_pane_busy") {
+					const below = await scanBelow(rec.pane, id).catch(() => undefined);
+					programs = below?.programs ?? [];
+					nestedSeen ||= (below?.shells.length ?? 0) > 0;
+				}
 				// The same name once (an `npm run dev` is several node.exe), and three of them at most in the notice.
 				const busy = [...new Set(programs.map(programName))];
 				// Windows, the standing pane: a start that timed out is taken for the pane's doing (a console a killed pi left in a mode that mangles what Herdr types), so the run is tried once more in a fresh pane and the
@@ -497,8 +504,8 @@ export function createRuns(o: RunsOptions) {
 				error("run-start", `${rec.id}: ${(cause as Error).message}`);
 				svc.paneBusy = busy.length ? busy : undefined;
 				svc.busyPids = busy.length ? programs.flatMap((p) => (typeof p.pid === "number" ? [p.pid] : [])) : undefined;
-				// Herdr refused the start as busy and no program of the boss's is named: a nested shell (cmd, git-bash) holds the pane, which is no program to name; the notice says so, not Herdr's raw error.
-				const nested = !started && rec.kind === "local" && !busy.length && herdrCode(cause) === "agent_pane_busy";
+				// Herdr refused the start as busy, no program of the boss's is named, and a nested shell (cmd, git-bash) is seen in the pane: it is no program to name, and the notice says so, not Herdr's raw error.
+				const nested = !started && rec.kind === "local" && !busy.length && nestedSeen && herdrCode(cause) === "agent_pane_busy";
 				noticeOf(svc, { id: "start", level: "warning", kind: "start", text: nested ? NOT_AT_SHELL : `A run could not start: ${busy.length ? busyText(busy) : (cause as Error).message}` });
 				terminate(active, "crashed");
 				// The tick does not type /quit into a pane whose pi never claimed: what the pane holds of this run is ended below.
@@ -612,13 +619,15 @@ export function createRuns(o: RunsOptions) {
 	 * The boss's programs below the pane's shell in the process table, for a platform whose foreground list shows the shell alone whatever runs under it (Windows; B6 VM round 3b, N1). Not the run's own processes
 	 * (those carrying its `--sb-run`, and what they started), the tower prompt (the table marks it, RV10-F003), what the prompt started, the console hosts, or shells. Every process below the shell is named; the notice dedupes and caps the names.
 	 */
-	const belowShell = async (pane: string, runId: string): Promise<{ pid?: number; name?: string }[] | undefined> => {
+	const belowShell = async (pane: string, runId: string): Promise<{ pid?: number; name?: string }[] | undefined> => (await scanBelow(pane, runId))?.programs;
+	/** The same read, with the nested shells it found below the pane's shell besides (they are no program to name, but a start that Herdr refused as busy has them for its cause). */
+	const scanBelow = async (pane: string, runId: string): Promise<{ programs: { pid?: number; name?: string }[]; shells: { pid?: number; name?: string }[] } | undefined> => {
 		const shell = (await paneInfo(pane))?.shell_pid, table = typeof shell === "number" ? await procs(runId) : undefined;
 		// Undefined is a read that failed (no shell PID from Herdr, the process table did not answer); an empty list is a read that found nothing.
 		if (typeof shell !== "number" || !table) return undefined;
 		const own = (pid: number) => chain(table, pid, shell)?.some((up) => table.find((p) => p.pid === up)?.carries || table.find((p) => p.pid === up)?.prompt) === true;
 		const found = table.filter((p) => p.pid !== shell && !/^(conhost|openconsole)(\.exe)?$/i.test(p.name) && chain(table, p.pid, shell) !== undefined && !own(p.pid)).map((p) => ({ pid: p.pid, name: p.name }));
-		return programProcs({ foreground_processes: found });
+		return { programs: programProcs({ foreground_processes: found }), shells: found.filter(isShell) };
 	};
 	const pidsOf = async (pane: string): Promise<number[] | undefined> => (await foreground(pane))?.flatMap((p) => (typeof p.pid === "number" ? [p.pid] : []));
 	/** The process Herdr lists for the run: the one whose command line holds the run id, else the one named pi. It may be a wrapper that started pi (`resolve`). */
