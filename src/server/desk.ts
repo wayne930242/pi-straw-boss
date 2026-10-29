@@ -1,9 +1,8 @@
-import { mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
-import { type HerdrRun, report, result, TOWER_LABEL } from "../herdr.ts";
+import { mkdirSync, realpathSync, statSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { type HerdrRun, panes, report, result, tabs, TOWER_LABEL } from "../herdr.ts";
 import type { Ctx } from "./client.ts";
-import { fileOf, readOwnedText, writeJson } from "./record.ts";
+import { fileOf, LockBusy, type LockDeps, readOwnedText, takeLock, writeJson } from "./record.ts";
 
 // The desk steps of `cli.mjs up --dir <folder> --label <name>` (docs/specs/2026-10-26-desk-mode.md S5 and S6, as docs/specs/2026-10-26-sb-backend.md, Desk mode: what changes, has them):
 // Herdr's pi integration, the shell's home base (`desk.json`), and the lock that keeps two runs from making two bases. The tower itself is the server's (`ensure-tower`): this file starts no pi.
@@ -18,20 +17,29 @@ export function integrationState(output: string): string | undefined {
 	return line ? line.slice(3).replace(/\s*\(.*$/, "").trim() || undefined : undefined;
 }
 
+/** The path in the last parentheses of the `pi:` line of `herdr integration status`: the file Herdr installs to, or undefined when the line has none. */
+export function integrationPath(output: string): string | undefined {
+	const line = output.split(/\r?\n/).find((l) => l.startsWith("pi:"));
+	return line?.match(/\(([^()]*)\)\s*$/)?.[1]?.trim() || undefined;
+}
+
 /**
  * Makes sure Herdr's pi integration is in place for the agent directory (S6). In desk mode that directory is the shell's own, so writing to its `extensions/` touches nothing of the user's.
- * Herdr's install does nothing, and exits 0, when `extensions/` is not there (a fresh agent directory), so the folder is made first and the line is read again after the install.
+ * Herdr's install fails (exit 1, "extension directory not found") when `extensions/` is not there (a fresh agent directory), so the folder is made first, and the line is read again after the install.
+ * The folder is the one Herdr names in its own `pi:` line (the directory of that path), so it is where Herdr installs whatever the environment says. `within` bounds each Herdr call by the run's deadline.
  */
-export async function ensureIntegration(run: HerdrRun, env: NodeJS.ProcessEnv): Promise<"current" | "installed"> {
+export async function ensureIntegration(run: HerdrRun, within: (ms: number) => number = (ms) => ms): Promise<"current" | "installed"> {
 	const status = async () => {
-		const state = integrationState(await run(["integration", "status"], 10_000));
+		const output = await run(["integration", "status"], within(10_000)), state = integrationState(output);
 		if (state === undefined) throw new Error("`herdr integration status` has no pi line");
-		return state;
+		return { state, path: integrationPath(output) };
 	};
-	if ((await status()) === "current") return "current";
-	mkdirSync(join(env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "extensions"), { recursive: true });
-	await run(["integration", "install", "pi"], 30_000);
-	const after = await status();
+	const before = await status();
+	if (before.state === "current") return "current";
+	if (!before.path) throw new Error("`herdr integration status` names no file for the pi integration");
+	mkdirSync(dirname(before.path), { recursive: true });
+	await run(["integration", "install", "pi"], within(30_000));
+	const after = (await status()).state;
 	if (after !== "current") throw new Error(`Herdr's pi integration is still ${after} after \`herdr integration install pi\``);
 	return "installed";
 }
@@ -52,24 +60,18 @@ export function readDesk(slot: Ctx["slot"]): DeskRecord | "unreadable" | undefin
 
 export const DESK_LOCK_MS = 10 * 60_000;
 /**
- * `desk.lock`, created new (`wx`) with the run's pid and time. Another run's lock stands unless its process is gone or it is older than ten minutes. Returns the release (which removes
- * the file only while it is still this run's), or undefined when another run holds it.
+ * `desk.lock`, taken the way `server.lock` is (record.ts `takeLock`): created whole and linked into place, so it is never seen half written; a stale one (its process gone or started at another time than
+ * recorded, or older than ten minutes) is removed by one looker at a time, under `desk.lock.stale`, and only while it still holds the text that looker read. Returns the release (which removes the file
+ * only while it is still this run's), or undefined when another run holds it.
  */
-export function deskLockFor(ctx: Pick<Ctx, "slot" | "now" | "alive">): (() => void) | undefined {
-	const file = fileOf(ctx.slot, "deskLock"), body = JSON.stringify({ pid: process.pid, at: ctx.now() });
-	for (let attempt = 0; attempt < 2; attempt++) {
-		try {
-			writeFileSync(file, body, { flag: "wx", mode: 0o600 });
-			return () => { if (readOwnedText(file) === body) rmSync(file, { force: true }); };
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-			const held = ((text) => { try { return text === undefined ? undefined : (JSON.parse(text) as { pid?: unknown; at?: unknown }); } catch { return undefined; } })(readOwnedText(file));
-			const live = typeof held?.pid === "number" && typeof held.at === "number" && ctx.now() - held.at <= DESK_LOCK_MS && ctx.alive(held.pid);
-			if (live) return undefined;
-			rmSync(file, { force: true });
-		}
+export async function deskLockFor(ctx: Pick<Ctx, "slot" | "now" | "alive">, deps: Pick<LockDeps, "self" | "startOf"> = {}): Promise<(() => void) | undefined> {
+	try {
+		const lock = await takeLock(ctx.slot, "up --dir", { ...deps, now: ctx.now, alive: ctx.alive, files: { lock: fileOf(ctx.slot, "deskLock"), marker: fileOf(ctx.slot, "deskLockStale") }, maxMs: DESK_LOCK_MS });
+		return lock.release;
+	} catch (error) {
+		if (error instanceof LockBusy) return undefined;
+		throw error;
 	}
-	return undefined;
 }
 
 /** The base's folder as the run gives it, absolute; a folder that is not there is the caller's to make (the notes for the shell say where to put it). */
@@ -101,4 +103,17 @@ export async function makeBase(run: HerdrRun, ctx: Pick<Ctx, "slot">, dir: strin
 		await run(["workspace", "close", workspace]).catch(() => {});
 		throw cause;
 	}
+}
+
+const same = (a: string, b: string) => (process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b);
+const real = (path: string) => { try { return realpathSync(path); } catch { return resolve(path); } };
+
+/**
+ * Whether `workspace`, which Herdr lists under the recorded id, is still the home base the record describes. Herdr numbers workspaces from the highest it restored, so a base that was quit can have
+ * its id given to a workspace of the person's. The base keeps a tab labelled as a tower tab (the label survives a restore) and its panes start in the recorded folder (Herdr reports real paths).
+ */
+export async function stillBase(run: HerdrRun, record: DeskRecord): Promise<boolean> {
+	if ((await tabs(run, record.workspace)).some((t) => t.label === TOWER_LABEL)) return true;
+	const dir = real(record.dir);
+	return (await panes(run, record.workspace)).some((p) => p.cwd !== undefined && same(real(p.cwd), dir));
 }

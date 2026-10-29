@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, rmdirSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { type CliDeps, parseArgs, run, UsageError } from "../src/server/cli.ts";
-import { deskLockFor, integrationState, readDesk } from "../src/server/desk.ts";
-import { fileOf } from "../src/server/record.ts";
+import { deskLockFor, integrationPath, integrationState, readDesk } from "../src/server/desk.ts";
+import { fileOf, slotOf } from "../src/server/record.ts";
 import { callControl } from "../src/server/socket.ts";
 import { TOWER_LABEL } from "../src/herdr.ts";
 import { TowerWorld } from "./tower-world.ts";
@@ -36,6 +38,11 @@ async function up(argv: string[] = ["--dir", home, "--label", "Desk"], over: Par
 	});
 	const parse = (text: string) => { try { return JSON.parse(text.trim().split("\n").filter((l) => l.startsWith("{")).at(-1) ?? "") as Record<string, any>; } catch { return undefined; } };
 	return { code, out, err, json: parse(out), errJson: parse(err) };
+}
+/** The person's own shell tab in the base, so the workspace outlives its tower tab (Herdr closes a workspace that has no tab left). */
+function shellTab(workspace: string, cwd: string) {
+	world.herdr.tabs.push({ tab_id: `${workspace}:tshell`, label: "shell", workspace_id: workspace });
+	world.herdr.panes.push({ pane_id: `${workspace}:pshell`, tab_id: `${workspace}:tshell`, workspace_id: workspace, terminal_id: "term_shell", tokens: {}, cwd } as (typeof world.herdr.panes)[number]);
 }
 const desk = () => { const found = readDesk(world.slot); return typeof found === "object" ? found : undefined; };
 const created = () => world.herdr.commands("workspace", "create");
@@ -142,6 +149,7 @@ test("the recorded workspace is used whatever its label is now; one that is gone
 
 test("a tower the person closed is opened again in the same base, and a base never gets a second tab for it while its tower stands", async () => {
 	const first = await up();
+	shellTab(String(first.json?.workspace), home);
 	const record = world.record()!;
 	assert.equal((await callControl(record.socket, record.secret, { cmd: "close-tower", workspace: String(first.json?.workspace) })).reply?.ok, true);
 	const again = await up();
@@ -210,7 +218,7 @@ test("a second run while one holds desk.lock is exit 1 at base with busy; a lock
 	mkdirSync(world.slot.dir, { recursive: true });
 	const lock = fileOf(world.slot, "deskLock"), holder = 4242;
 	world.live.add(holder);
-	writeFileSync(lock, JSON.stringify({ pid: holder, at: Date.now() }));
+	writeFileSync(lock, JSON.stringify({ pid: holder, by: "up --dir", since: new Date().toISOString() }));
 	const busy = await up();
 	assert.equal(busy.code, 1);
 	assert.equal(busy.errJson?.step, "base");
@@ -218,31 +226,32 @@ test("a second run while one holds desk.lock is exit 1 at base with busy; a lock
 	assert.equal(created().length, 0);
 	assert.ok(existsSync(lock), "another run's lock is left alone");
 	// Older than ten minutes, though its process still runs.
-	writeFileSync(lock, JSON.stringify({ pid: holder, at: Date.now() - 11 * 60_000 }));
+	writeFileSync(lock, JSON.stringify({ pid: holder, by: "up --dir", since: new Date(Date.now() - 11 * 60_000).toISOString() }));
 	const old = await up();
 	assert.equal(old.code, 0, old.err);
 	assert.equal(created().length, 1);
 	assert.equal(existsSync(lock), false);
 	// A holder that is gone.
-	writeFileSync(lock, JSON.stringify({ pid: 4243, at: Date.now() }));
+	writeFileSync(lock, JSON.stringify({ pid: 4243, by: "up --dir", since: new Date().toISOString() }));
 	const dead = await up();
 	assert.equal(dead.code, 0, dead.err);
 	assert.equal(created().length, 1, "the base exists, so it is used");
 	// A lock that is not a record of ours is stale too.
 	writeFileSync(lock, "garbage");
+	utimesSync(lock, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
 	assert.equal((await up()).code, 0);
 });
 
-test("the lock: taken once, released once, and a release never removes a lock another run holds now", () => {
+test("the lock: taken once, released once, and a release never removes a lock another run holds now", async () => {
 	mkdirSync(world.slot.dir, { recursive: true });
 	let at = 1000;
 	const ctx = { slot: world.slot, now: () => at, alive: (pid: number) => pid === process.pid || world.live.has(pid) };
 	world.live.add(process.pid);
-	const mine = deskLockFor(ctx);
+	const mine = await deskLockFor(ctx);
 	assert.ok(mine);
-	assert.equal(deskLockFor(ctx), undefined);
+	assert.equal(await deskLockFor(ctx), undefined);
 	at += 11 * 60_000;
-	const other = deskLockFor(ctx);
+	const other = await deskLockFor(ctx);
 	assert.ok(other, "past ten minutes it is taken over");
 	mine!();
 	assert.ok(existsSync(fileOf(world.slot, "deskLock")), "the first holder's release leaves the second's lock");
@@ -330,3 +339,130 @@ test("an unreadable desk.json is told in a warning and the base is made again", 
 	assert.equal(desk()?.workspace, r.json?.workspace);
 });
 
+
+// --- desk.lock across processes (RVB7-F001) ---
+
+const CHILD = join(import.meta.dirname, "desk-lock-child.ts");
+/** `n` node processes take desk.lock at the same moment, each holding it `holdMs` and trying again while busy; returns the log lines. */
+async function race(stateDir: string, n: number, holdMs: number): Promise<string[]> {
+	const log = join(stateDir, "race.log"), startAt = Date.now() + 400;
+	writeFileSync(log, "");
+	await Promise.all(Array.from({ length: n }, () => new Promise<void>((resolve, reject) => {
+		const child = spawn(process.execPath, [CHILD, stateDir, log, String(startAt), String(holdMs)], { stdio: ["ignore", "ignore", "pipe"] });
+		let text = "";
+		child.stderr.on("data", (d) => void (text += d));
+		child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`child exited ${code}: ${text}`))));
+	})));
+	return readFileSync(log, "utf8").split("\n").filter(Boolean);
+}
+/** Whether the log never shows two holders at once, and every process held the lock. */
+function exclusive(lines: string[], n: number): string | undefined {
+	let held = 0, taken = 0;
+	for (const line of lines) {
+		if (line.startsWith("in ")) { taken++; if (++held > 1) return `two holders at once: ${lines.join(" | ")}`; } else held--;
+	}
+	return taken === n && held === 0 ? undefined : `${taken} of ${n} held it: ${lines.join(" | ")}`;
+}
+
+test("desk.lock across processes: several node processes at once never hold it together, from no lock and from a stale one", { timeout: 120_000 }, async () => {
+	const dir = mkdtempSync(join(tmpdir(), "psb-desk-lock-"));
+	try {
+		const slot = slotOf(dir, { ...process.env, HERDR_SOCKET_PATH: undefined, HERDR_SESSION: undefined });
+		assert.equal(slot.dir, dir);
+		const lock = fileOf(slot, "deskLock");
+		const dead = spawn(process.execPath, ["-e", ""]);
+		await new Promise((resolve) => dead.on("exit", resolve));
+		for (let trial = 0; trial < 12; trial++) {
+			for (const before of ["none", "dead"] as const) {
+				rmSync(lock, { force: true });
+				if (before === "dead") writeFileSync(lock, JSON.stringify({ pid: dead.pid, by: "up --dir", since: new Date().toISOString() }));
+				const problem = exclusive(await race(dir, 4, 30), 4);
+				assert.equal(problem, undefined, `trial ${trial}, before ${before}`);
+				assert.equal(existsSync(lock), false, "released");
+			}
+		}
+	} finally {
+		for (const f of ["race.log", "desk.lock", "desk.lock.stale"]) rmSync(join(dir, f), { force: true });
+		rmdirSync(dir);
+	}
+});
+
+// --- a recorded id that is not the base any more (RVB7-F002) ---
+
+test("a workspace that has the recorded id but is not the base (no tower tab, no pane in the folder) is not adopted: a new base is made, with a warning", async () => {
+	const first = await up();
+	const id = String(first.json?.workspace), ws = world.herdr.workspace(id);
+	// Herdr restarted and numbered a workspace of the person's with the freed id.
+	const elsewhere = join(world.root, "proj");
+	world.herdr.tabs.filter((t) => t.workspace_id === id).forEach((t) => (t.label = "work"));
+	world.herdr.panes.filter((p) => p.workspace_id === id).forEach((p) => (p.cwd = elsewhere));
+	ws.label = "My project";
+	const again = await up();
+	assert.equal(again.code, 0, again.err);
+	assert.equal(again.json?.created, true);
+	assert.notEqual(again.json?.workspace, id);
+	assert.ok((again.json?.warnings as { code: string }[]).some((w) => w.code === "desk_base_replaced"));
+	assert.equal(desk()?.workspace, again.json?.workspace);
+	assert.equal(world.herdr.tabs.filter((t) => t.workspace_id === id).length, 1, "the person's workspace got no tab");
+	assert.equal(world.herdr.workspace(id).label, "My project");
+});
+
+test("a recorded workspace is the base while it keeps the tower tab or a pane in the folder", async () => {
+	const first = await up();
+	const id = String(first.json?.workspace);
+	world.herdr.tabs.filter((t) => t.workspace_id === id).forEach((t) => (t.label = "renamed")); // the pane is still in the folder
+	const byFolder = await up();
+	assert.deepEqual([byFolder.json?.workspace, byFolder.json?.created, byFolder.json?.warnings], [id, false, []]);
+	world.herdr.tabs.filter((t) => t.workspace_id === id).forEach((t) => (t.label = TOWER_LABEL));
+	world.herdr.panes.filter((p) => p.workspace_id === id).forEach((p) => (p.cwd = join(world.root, "moved"))); // the tab is still labelled
+	const byLabel = await up();
+	assert.deepEqual([byLabel.json?.workspace, byLabel.json?.created, byLabel.json?.warnings], [id, false, []]);
+	assert.equal(created().length, 1);
+});
+
+// --- a kept base keeps its folder (RVB7-F003) ---
+
+test("a kept base opens its tower in the recorded folder, whatever --dir says now, and --dir is checked only when a base is made", async () => {
+	const first = await up();
+	shellTab(String(first.json?.workspace), home);
+	const record = world.record()!;
+	assert.equal((await callControl(record.socket, record.secret, { cmd: "close-tower", workspace: String(first.json?.workspace) })).reply?.ok, true);
+	const other = join(world.root, "home", "Other");
+	mkdirSync(other);
+	const before = world.herdr.commands("tab", "create").length;
+	const again = await up(["--dir", other, "--label", "Desk"]);
+	assert.equal(again.code, 0, again.err);
+	const opened = world.herdr.commands("tab", "create").slice(before);
+	assert.equal(opened.length, 1);
+	assert.equal(opened[0]![opened[0]!.indexOf("--cwd") + 1], home);
+	// A folder that is gone is no matter to a base that is kept.
+	const gone = await up(["--dir", join(world.root, "home", "nowhere"), "--label", "Desk"]);
+	assert.equal(gone.code, 0, gone.err);
+	assert.equal(gone.json?.workspace, first.json?.workspace);
+});
+
+// --- the extensions folder and the time (RVB7-F004, F006) ---
+
+test("the extensions folder is where Herdr's own status line says, whatever PI_CODING_AGENT_DIR says", async () => {
+	assert.equal(integrationPath("pi: not installed (/a b/extensions/herdr-agent-state.ts)\nomp: not installed (/c)\n"), "/a b/extensions/herdr-agent-state.ts");
+	assert.equal(integrationPath("pi: current (v9) (/a/extensions/x.ts)\n"), "/a/extensions/x.ts");
+	assert.equal(integrationPath("pi: not installed\n"), undefined);
+	for (const odd of ["", "~/x"]) {
+		world.env.PI_CODING_AGENT_DIR = odd;
+		rmSync(dirname(world.herdr.integration.file), { recursive: true, force: true });
+		world.herdr.integration.state = "not installed";
+		const r = await up();
+		assert.equal(r.code, 0, `${odd}: ${r.err}`);
+		assert.ok(existsSync(dirname(world.herdr.integration.file)));
+		assert.equal(existsSync(join(process.cwd(), "extensions")) && statSync(join(process.cwd(), "extensions")).mtimeMs > Date.now() - 60_000, false, "nothing made in the working folder");
+	}
+});
+
+test("--timeout bounds the time of every Herdr call of the desk steps", async () => {
+	world.herdr.integration.state = "not installed";
+	const asked: number[] = [], inner = world.herdr.runFor("cli");
+	const r = await up(["--dir", home, "--label", "Desk", "--timeout", "5"], { herdrCli: async (args, ms) => { asked.push(ms ?? -1); return inner(args); } });
+	assert.equal(r.code, 0, r.err);
+	assert.ok(asked.length >= 5, String(asked.length));
+	assert.ok(asked.every((ms) => ms >= 0 && ms <= 5000), asked.join(","));
+});

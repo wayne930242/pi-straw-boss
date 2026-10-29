@@ -213,7 +213,7 @@ export class FakeHerdr {
 		}
 		if (group === "integration" && cmd === "status") return `pi: ${this.integration.state} (${this.integration.file})\nomp: not installed (/nowhere/extensions/herdr-omp-agent-state.ts)\n`;
 		if (group === "integration" && cmd === "install") {
-			if (!existsSync(dirname(this.integration.file))) return `pi extension directory not found at ${dirname(this.integration.file)}. install pi first\n`;
+			if (!existsSync(dirname(this.integration.file))) throw new Error(`herdr integration install pi failed: pi extension directory not found at ${dirname(this.integration.file)}. install pi first`);
 			if (!this.integration.refuse) (this.integration.state = "current (v9)", this.integration.installs++, this.integration.onInstall?.());
 			return `installed pi integration to ${this.integration.file}\n`;
 		}

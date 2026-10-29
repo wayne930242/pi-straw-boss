@@ -9,7 +9,7 @@ import {
 	type Ctx, unreachableText, describe, ensure, guiUrl, herdrListens, isIdentity, detachWarning, lockFor, lockWaitFor, makeCtx, passGate, probe, restart, ServerError, serverEnv, stop, takeOver, trusted, type Wait, waitReady, within,
 } from "./client.ts";
 import { ACL_TOKEN } from "./acl.ts";
-import { baseFolder, deskLockFor, ensureIntegration, makeBase, readDesk } from "./desk.ts";
+import { baseFolder, type DeskRecord, deskLockFor, ensureIntegration, makeBase, readDesk, stillBase } from "./desk.ts";
 import { ensureTowerVia } from "./towerclient.ts";
 import { onFatal } from "./fatal.ts";
 import { callControl, ControlError } from "./socket.ts";
@@ -251,13 +251,20 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 		/** The `base` and `tower` steps of a desk `up`. */
 		const homeBase = async (herdr: HerdrRun, dirFlag: string, label: string) => {
 			const { workspace, created, dir } = await stepOf("base", async () => {
-				const dir = baseFolder(dirFlag), release = deskLockFor(ctx);
+				const release = await deskLockFor(ctx);
 				if (!release) throw new Error(`busy: another \`up --dir\` holds ${fileOf(slot, "deskLock")}`);
 				unlock = release;
 				const known = readDesk(slot);
 				if (known === "unreadable") warnings.push({ code: "desk_json_unreadable", text: `${fileOf(slot, "desk")} is no record of the home base; a new base is made` });
-				const kept = typeof known === "object" && (await workspaces(herdr)).some((w) => w.workspace_id === known.workspace) ? known.workspace : undefined;
-				return { value: { workspace: kept ?? (await makeBase(herdr, ctx, dir, label)).workspace, created: kept === undefined, dir }, detail: kept === undefined ? "made" : "found" };
+				// The recorded id is the base only while that workspace is still the base: Herdr gives a quit base's id to the next workspace it numbers.
+				let kept: DeskRecord | undefined;
+				if (typeof known === "object" && (await workspaces(herdr)).some((w) => w.workspace_id === known.workspace)) {
+					if (await stillBase(herdr, known)) kept = known;
+					else warnings.push({ code: "desk_base_replaced", text: `workspace ${known.workspace} is no longer the home base recorded in ${fileOf(slot, "desk")} (no tower tab, none of its panes in ${known.dir}); a new base is made` });
+				}
+				// The folder is judged only for a base that is made; a kept base keeps its own.
+				const base = kept ?? (await makeBase(herdr, ctx, baseFolder(dirFlag), label));
+				return { value: { workspace: base.workspace, created: kept === undefined, dir: base.dir }, detail: kept === undefined ? "made" : "found" };
 			});
 			const answer = await stepOf("tower", async () => {
 				const found = await ensureTowerVia(ctx, { workspace, cwd: dir, boss: true, ms: within(ctx, deadline, 30_000) });
@@ -273,9 +280,9 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 				if (found && found.herdr !== slot.herdr) throw new StepError("herdr", `the record in ${slot.dir} serves ${found.herdr}, not ${slot.herdr}`);
 				return { value: undefined };
 			});
-			const herdr = deps.herdrCli ?? herdrRun, deskSteps = flags.dir !== undefined;
+			const cli = deps.herdrCli ?? herdrRun, herdr: HerdrRun = (args, ms) => cli(args, within(ctx, deadline, ms ?? 5000)), deskSteps = flags.dir !== undefined;
 			const integration = deskSteps ? await stepOf("integration", async () => {
-				const state = await ensureIntegration(herdr, env).catch((error: Error) => { throw new StepError("integration", error.message); });
+				const state = await ensureIntegration(herdr, (ms) => within(ctx, deadline, ms)).catch((error: Error) => { throw new StepError("integration", error.message); });
 				if (state === "installed") warnings.push({ code: "integration_installed", text: "installed Herdr's pi integration for this agent directory (herdr integration install pi)" });
 				return { value: state, detail: state };
 			}) : undefined;
