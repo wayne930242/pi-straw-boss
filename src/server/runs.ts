@@ -439,11 +439,11 @@ export function createRuns(o: RunsOptions) {
 			const found = await belowShell(svc.ref.record().pane, newId()).catch(() => undefined);
 			if (stopped || svc.run || waitingOf(svc).length) return; // a run is about to take the pane: its start decides
 			const proof = tableGate(found);
-			if (found === undefined || proof === "unreadable") return void noticeOf(svc, { id: "start", level: "warning", kind: "start", text: "The tower could not check the standing pane for a program of yours, so it types nothing there; press Retry when it is free" });
-			const busy = [...new Set(found.map(programName))];
+			if (proof === "unreadable") return void noticeOf(svc, { id: "start", level: "warning", kind: "start", text: "The tower could not check the standing pane for a program of yours, so it types nothing there; press Retry when it is free" });
+			const busy = [...new Set((found ?? []).map(programName))];
 			if (proof === "program") {
 				svc.paneBusy = busy;
-				svc.busyPids = found.flatMap((p) => (typeof p.pid === "number" ? [p.pid] : []));
+				svc.busyPids = (found ?? []).flatMap((p) => (typeof p.pid === "number" ? [p.pid] : []));
 				svc.state = "held";
 				return void noticeOf(svc, { id: "start", level: "warning", kind: "start", text: `The tower types nothing in the standing pane: ${busyText(busy)}` });
 			}
