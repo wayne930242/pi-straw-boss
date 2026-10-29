@@ -456,6 +456,19 @@ test("a workspace of the person's that took the recorded id and has a tower tab 
 	assert.equal(world.herdr.workspace(id).label, "My project");
 });
 
+test("an unlabelled workspace of the person's that took the recorded id and sits in a folder named like the base label is not the base (RVB7C-F001)", async () => {
+	const first = await up();
+	const id = String(first.json?.workspace), ws = world.herdr.workspace(id);
+	const same = join(world.root, "x", "Desk"); // Herdr's own label for such a workspace is the folder's name
+	world.herdr.panes.filter((p) => p.workspace_id === id).forEach((p) => (p.cwd = same));
+	ws.label = "Desk";
+	const again = await up();
+	assert.equal(again.code, 0, again.err);
+	assert.equal(again.json?.created, true);
+	assert.notEqual(again.json?.workspace, id);
+	assert.ok((again.json?.warnings as { code: string }[]).some((w) => w.code === "desk_base_replaced"));
+});
+
 test("the pane's folder is compared as a real path: a base made under a link is still the base when Herdr reports the real path (RVB7B-F003)", async (t) => {
 	const real = join(world.root, "real-home"), link = join(world.root, "link-home");
 	mkdirSync(real);

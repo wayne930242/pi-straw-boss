@@ -1,5 +1,5 @@
 import { mkdirSync, realpathSync, statSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { type HerdrRun, panes, report, result, TOWER_LABEL, workspaces } from "../herdr.ts";
 import type { Ctx } from "./client.ts";
 import { fileOf, LockBusy, type LockDeps, readOwnedText, takeLock, writeJson } from "./record.ts";
@@ -112,11 +112,11 @@ const real = (path: string) => { try { return realpathSync(path); } catch { retu
  * Whether `workspace`, which Herdr lists under the recorded id, is still the home base the record describes. Herdr numbers workspaces from the highest it restored, so a base that was quit can have
  * its id given to a workspace of the person's. The base is told by what such a workspace does not share by accident: its label is the recorded one (a restore keeps it), or one of its panes starts
  * in the recorded folder (Herdr reports real paths, so both sides are compared as real paths; case-folded on Windows, which is not verified on a real machine: Herdr's Windows cwd form and the
- * case `realpathSync` gives are unknown). A tower tab alone says nothing: every workspace's tower tab carries the same label, so a workspace of the person's with a tower of its own would pass.
+ * case `realpathSync` gives are unknown). A label counts only when it is not the basename of one of the workspace\'s pane folders (Herdr gives an unlabelled workspace that name and follows a `cd`). A tower tab alone says nothing: every workspace's tower tab carries the same label, so a workspace of the person's with a tower of its own would pass.
  * A base whose tower was quit and whose other tabs work elsewhere keeps its label, so it is still the base; one renamed by hand and left with no pane in the folder is not.
  */
 export async function stillBase(run: HerdrRun, record: DeskRecord): Promise<boolean> {
-	if ((await workspaces(run)).some((w) => w.workspace_id === record.workspace && w.label === record.label)) return true;
-	const dir = real(record.dir);
-	return (await panes(run, record.workspace)).some((p) => p.cwd !== undefined && same(real(p.cwd), dir));
+	const cwds = (await panes(run, record.workspace)).flatMap((p) => (p.cwd === undefined ? [] : [p.cwd])), dir = real(record.dir);
+	const auto = cwds.some((c) => [basename(c), basename(real(c))].includes(record.label)); // Herdr's own label for an unlabelled workspace: no evidence
+	return (!auto && (await workspaces(run)).some((w) => w.workspace_id === record.workspace && w.label === record.label)) || cwds.some((c) => same(real(c), dir));
 }
