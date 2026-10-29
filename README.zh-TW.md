@@ -38,6 +38,7 @@
 - **廣播**給一個分頁、一個工作區、所有塔台（沒有塔台的工作區改送主智慧體或成員），或所有 session。
 - **分頁保持整齊。** pi 在分頁裡啟動或結束時，分頁裡的 pane 會重新平均分配，一個一個切出來的 worker 就不會留下一長串對半切的窄 pane。
 - **斷線的子智慧體會被提醒回報。** 子智慧體做完後還開著，但開出它的 pi 已經重開、收不到它的結果時，它會收到一則 intercom，請它把最終報告送回去，只會送一次（[運作方式](docs/how-it-works.md#orphaned-subagents)）。
+- **Herdr 重啟後被還原成一般 pi 的子智慧體會被接回來。** Herdr 重啟時（`resume_agents_on_restore`）會在每個子智慧體的 pane 裡重開一個普通的 `pi --session`，少了讓它成為子智慧體的設定，結果永遠送不回來。Straw Boss 會關掉那個被還原的 pane，並請開出它的 session 用 pi-herdr-agents 的 `subagent_resume` 重新接手；受管 worktree 的子智慧體則保留原 pane，只回報給開出它的 session（[運作方式](docs/how-it-works.md#subagents-a-herdr-restore-brought-back-plain)，英文）。
 - **Herdr 側邊欄的網路檢視。** 一個選用的 plugin 會把 Agents 清單排成網的樣子：塔台在前，每個子智慧體排在開出它的人底下。預設開啟，按一個鍵就能切換。
 - **清理閒置的 worktree pane。** 另一個選用的 plugin 會關掉智慧體在 worktree 工作區留下的 pane，移除乾淨且沒有東西在用的 checkout，並保留你釘選的工作區。
 

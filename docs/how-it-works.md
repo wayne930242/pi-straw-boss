@@ -212,6 +212,28 @@ A subagent whose process has exited cannot be asked; its result stays in its ses
 A resumed run (`subagent_resume`) has an id of its own that nothing in its pane's session file names, so it is never found and never asked.
 The subagent's own launcher does this, not a tower: only the launcher's process knows what it tracks, so a tower never nudges the subagents of other sessions, and a subagent that launches subagents of its own does not (it runs no Straw Boss).
 
+### Subagents a Herdr restore brought back plain
+
+The nudge above needs the child to still be what pi-herdr-agents started. A Herdr restart does not leave that: with `resume_agents_on_restore` (on by default) Herdr starts a plain `pi --session <file>` in every pane that had reported an agent session, subagent panes included.
+That pi has none of the child's setup (no `subagent-done.ts` extension, no `PI_SUBAGENT_*` environment, no `caller_ping`, no auto-exit, no `<session>.exit` sidecar), so it sits idle at its prompt with the task unfinished and will never report, and the restored launcher's registry is empty and is never filled again.
+Nothing can ask it to report by itself, so the launcher resumes the run instead, through pi-herdr-agents' public `subagent_resume`.
+The same check every 15 seconds (`restored.ts`) finds such a run when all of these hold:
+
+- **The launcher does not track it, and its result is not in the transcript.** As for the nudge: its id is not in the registry, and no `subagent_result` or `subagent_ping` names the child's session file. It is not a persistent specialist (`PI_SUBAGENT_PERSISTENT=1` in its launch script), which pi-herdr-agents cannot resume.
+- **It never ended.** There is no `<session>.exit` beside its session file, and Straw Boss has not acted on it before (no `resumed` or `nudged` key for it in the `straw-boss` session entries).
+- **Its pane is the restored one.** The launch script's header (`# Session:` and `# Surface:`) names the child's session file and the pane it ran in, and a restore keeps pane ids. Herdr lists that same pane with agent `pi` on that session file, `idle` or `done`, and its foreground processes (`herdr pane process-info`) are readable and run no launch or resume script. A pane that still runs the launch script is the nudge's case; a run another session resumed sits in a pane of its own and runs a resume script; a pi someone started on the file elsewhere is in another pane; none of them is touched.
+- **It was found so twice in a row,** 15 seconds apart, because a pane may still be coming up after the restart. A run with no such pane is given up on after eight looks, until the next session start.
+
+Then, in this order: the run is written to the launcher's session (a `straw-boss` entry with a `resumed` key), the restored pane, and only that pane, is closed with `herdr pane close` (the old pi must not hold the session file beside the resumed one) and Straw Boss waits up to five seconds for it to be gone, and the launcher gets one custom message.
+The message names each run with its `sessionPath` and name, quotes the follow-up to pass (finish the task you were given, and report your result), and tells the model to call `subagent_resume` once per run; the resumed run then reports as a normal `subagent_result`.
+It is a steering message that triggers a turn, the way pi-herdr-agents delivers `subagent_result` itself and the way a tower run is driven: an idle launcher wakes at once and a busy one gets it at its next step.
+Straw Boss does not call the tool, import pi-herdr-agents, or write a result for the child: whether and how the run is resumed stays pi-herdr-agents' and the model's.
+A launcher that is a tower does none of this (a tower is driven by the server's queue, not by messages of this kind).
+Each step that fails is shown as a warning and is not tried again: a pane that cannot be closed (or stays open) is not resumed, and a message that cannot be put into the session is shown with the sessions it would have named, so they can be resumed by hand.
+
+A **managed-worktree** run (it has a manifest under `artifacts/<session id>/worktree-runs/`) is the exception. Its pane is the root pane of the retained worktree workspace, so Straw Boss does not close it, and pi-herdr-agents' `subagent_resume` neither reattaches the worktree's lifecycle nor accepts such a session. The message says so, names the pane, worktree and branch, tells the model not to call `subagent_resume` for it, and leaves the restored pi waiting at its prompt for the user to continue.
+Not covered: a run that was itself resumed has a launch script named by the resume time, not by its id, so a second restart does not find it; and a `.exit` sidecar left unconsumed means the child finished, so the run is left alone and its result has to be read from the session file.
+
 ## Browser view
 
 `/boss gui` shows the whole net in your default browser: a game-style map, live and animated, where you can read any unit's comms and type into its session.
@@ -387,6 +409,7 @@ A record untouched for 90 days is deleted when another is written; that tidying,
 The connection and the retry timer never keep pi alive, and `session_shutdown` closes them: a `/reload` leaves one connection, the new instance's, and a session started again in the same instance replaces its connection.
 A server that refuses `events.subscribe` is treated like one that is gone, so the session retries every 2 s without effect and keeps the 4 minute refresh as before.
 The sidebar plugin needs nothing more: its startup hook turns the view on when the server starts (before any token exists), and Herdr 0.9.4 and later sort the view again when tokens change.
+The subagents a restore brings back are another matter: each comes back as a plain pi without the extension that makes it a child, and its launcher is asked to resume it (see [Subagents a Herdr restore brought back plain](#subagents-a-herdr-restore-brought-back-plain)).
 
 **Sidebar rows.**
 The tokens also show the roles in Herdr's own grouped view, which a plugin cannot reorder.
@@ -686,7 +709,7 @@ With `towerRuns.enabled` on, an event for a tower identity wakes a pi in the tow
 - Herdr pane tokens `sb_opened_by` (the sender's intercom session id, on a pane a tower opened for a request; refreshed by its main and cleared at shutdown, so the open limits count only live opened mains) and `sb_open_main` (a one-time mark the opener sets, consumed by the first pi that promotes itself from it).
 - Pane tokens `sb_order` (a sort key), `sb_mark` (a role label) and, on subagents, `sb_indent` (a tree branch) and `sb_name` (the subagent's name) next to `sb_role`, and the subagent ones on the panes of the subagents the session launched, with the same refresh, TTL and takeover rewrite; they feed the sidebar net view and the optional rows below (see [Sidebar net view](#sidebar-net-view)).
 - `roles/<hash>.json` in the state directory, one record per tower or main by pi session file: its role, pane, tab, and workspace, so a Herdr restore gives the role back (see [A Herdr restore](#sidebar-net-view)).
-- A pi session entry `straw-boss` (`tower`) so a resumed tower keeps its role. Members write no entry for their role: every session joins at start, so entries saved by 0.4.0 (`asked`, `joined`) are ignored. The one other entry carries `nudged`, a subagent run that was asked to report (see [Orphaned subagents](#orphaned-subagents)).
+- A pi session entry `straw-boss` (`tower`) so a resumed tower keeps its role. Members write no entry for their role: every session joins at start, so entries saved by 0.4.0 (`asked`, `joined`) are ignored. The other entries carry `nudged`, a subagent run that was asked to report, or `resumed`, a restored subagent run that was closed and handed to the launcher for resuming (see [Orphaned subagents](#orphaned-subagents)).
 - When a team is set up: the files under `<pi agent dir>/straw-boss/link/` and the intercom channel `straw-boss/link` (not owner-eligible), registered by the sb server and by every tower ([the link holder](#straw-link-towers-across-computers-the-link-holder)).
 - The control channel `straw-boss/control` (not owner-eligible, so it has no owner): registered by every tower and by a main a tower opened, and used for the `close-main` ask and its answer ([Closing an opened main](#closing-an-opened-main)).
 - Every message it sends through intercom (`boss_broadcast`, `call_tower`, `tower_send`, the nudge, the request handed to an opened main) has a message id with a nonce of the current process: pi-intercom refuses an id it saw from a session again with other content, and a restarted pi keeps its session id.
