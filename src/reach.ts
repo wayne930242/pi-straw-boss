@@ -261,7 +261,7 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit, server:
 		return report(await deliver(targets, message, "tower_send", workspace === undefined ? "towers" : "tower", reply, net), notes, workspace === undefined ? "towers" : "tower");
 	};
 	/** A resident tower of this build hands its workspace to the sb server (docs/specs/2026-10-26-sb-backend.md, Migration from resident towers): the server takes this pane as the standing pane. */
-	const handOver = (workspace: string, pane: string): Promise<TowerAnswer> => ensureTowerVia(server.ctx(), { workspace, pane, cwd: process.cwd() });
+	const handOver = (workspace: string, pane: string): Promise<TowerAnswer> => ensureTowerVia(server.ctx(), { workspace, pane, cwd: process.cwd(), pid: process.pid });
 	return { send, post, callTower, openTower, handOver, status, broadcast, towerList, towerSend, read };
 }
 export type Reach = ReturnType<typeof createReach>;

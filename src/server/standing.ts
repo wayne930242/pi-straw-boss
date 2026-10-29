@@ -1,4 +1,5 @@
 import { type HerdrApi, type HerdrRun, type HerdrWorld, isStandin, type Pane, releaseStandin, reportStandin, type Sleep } from "../herdr.ts";
+import { alive as pidAlive } from "../remote.ts";
 import type { Log } from "./log.ts";
 import type { ServiceStatus } from "./runs.ts";
 
@@ -21,8 +22,12 @@ export interface StandingTimers {
 	leaveMs: number;
 	/** How long a reported stand-in stands before it is reported again (Herdr keeps it without a refresh; the report also repairs a label Herdr lost). */
 	refreshMs: number;
+	/** How long a resident tower's hand-over is waited on for its pi to leave the pane, and how long the pane it freed is believed to be a bare shell after that (Windows lists the shell alone whatever runs under it). */
+	handMs: number;
 }
-export const STANDING: StandingTimers = { intervalMs: 3000, presentMs: 6000, launchMs: 15_000, launchMaxMs: 10 * 60_000, leaveMs: 3000, refreshMs: 4 * 60_000 };
+export const STANDING: StandingTimers = { intervalMs: 3000, presentMs: 6000, launchMs: 15_000, launchMaxMs: 10 * 60_000, leaveMs: 3000, refreshMs: 4 * 60_000, handMs: 60_000 };
+/** Failed typings of the command (Herdr refused `pane run`) in a row, retried one `launchMs` apart, before the server says so (once) and waits for the pane's next fresh start. */
+const TYPE_TRIES = 3;
 /** Reports of the stand-in that Herdr did not keep, in a row, before the server says so (once) and stops asking for this prompt. */
 const MISSES = 3;
 /** Typings of the command with no poll after any of them, in a row, before the server says so (once); it goes on at the capped pace. */
@@ -58,6 +63,8 @@ export interface StandingOptions {
 	timers?: Partial<StandingTimers>;
 	/** The platform of the Herdr the panes belong to (tests set it); on win32 the foreground group is not believed. */
 	platform?: NodeJS.Platform;
+	/** Whether a process runs (the resident tower that handed a pane over); the PID check of `remote.ts` by default. */
+	alive?: (pid: number) => boolean;
 }
 /** What a prompt's poll is answered. */
 export type PromptReply = { ok: true; label: string; state: ServiceStatus["state"]; queued: number; leave: boolean } | { ok: false; error: string; gone?: true };
@@ -73,8 +80,14 @@ interface Mine {
 	launched?: number;
 	/** Typings since the last poll: the wait before the next one doubles with each. */
 	typings: number;
-	/** The server knows the pane is a fresh shell: just made, just freed by a run, or after a Herdr restart. Where Herdr gives no foreground group, this is the only time the server types. */
+	/** The server knows the pane is a fresh shell: just made, just freed by a run, a resident tower's pane once its pi is gone, or after a Herdr restart. Where Herdr gives no foreground group, this is the only time the server types. */
 	fresh: boolean;
+	/** A resident tower handed this pane over and its pi may still run there: the pane counts as fresh only once that process is gone (`pid`, when the tower said it), and for no longer than `handMs` after the hand-over. */
+	hand?: { pid?: number; at: number };
+	/** When a fresh mark that came from a hand-over lapses (the pane is not believed to be a bare shell for ever on the word of a hand-over). */
+	freshUntil?: number;
+	/** Typings Herdr refused in a row. */
+	failures: number;
 	/** The server said the prompt does not start. */
 	noStart: boolean;
 	/** The server said, once, that the prompt is gone from a pane it cannot type into (Windows, a pane that is not fresh). */
@@ -125,10 +138,11 @@ export function promptCommand(cli: string, stateDir: string, workspace: string):
 export function createStanding(o: StandingOptions) {
 	const t: StandingTimers = { ...STANDING, ...o.timers };
 	const { run, api, world, sleep, now, log } = o;
+	const alive = o.alive ?? pidAlive;
 	const groups = (o.platform ?? process.platform) !== "win32";
 	const mines = new Map<string, Mine>();
 	let timer: ReturnType<typeof setInterval> | undefined, ticking: Promise<void> = Promise.resolve(), stopped = false;
-	const error = (code: string, text: string) => log.line("error", { code, text: text.slice(0, 300) });
+	const error = (code: string, text: string, max = 300) => log.line("error", { code, text: text.slice(0, max) });
 
 	const present = (m: Mine) => m.seen !== undefined && now() - m.seen.at < t.presentMs;
 	const processInfo = async (pane: string) => {
@@ -162,6 +176,14 @@ export function createStanding(o: StandingOptions) {
 		}
 	};
 
+	/** A resident tower's hand-over frees the pane when its pi has left it: the process is gone (it said which), within `handMs`. The mark then lasts `handMs` more, or until the command is typed. */
+	const proveHand = (m: Mine) => {
+		if (m.freshUntil !== undefined && now() > m.freshUntil) Object.assign(m, { fresh: false, freshUntil: undefined });
+		if (!m.hand) return;
+		if (now() - m.hand.at > t.handMs) m.hand = undefined;
+		else if (m.hand.pid === undefined || !alive(m.hand.pid)) Object.assign(m, { hand: undefined, fresh: true, freshUntil: now() + t.handMs, failures: 0 });
+	};
+
 	/** One look at one standing pane. */
 	const look = async (m: Mine, panes: Pane[]) => {
 		const target = m.target, pane = panes.find((p) => p.pane_id === target.pane());
@@ -169,7 +191,8 @@ export function createStanding(o: StandingOptions) {
 		const status = target.status();
 		// A held service waits for the boss's program to end: the pane's foreground is looked at, and the runs start again once it is back at its shell.
 		if (target.paneBusy?.()) {
-			if (idleShell(await processInfo(pane.pane_id), true, groups)) target.paneFree?.();
+			// Without foreground groups (Windows) a list of shells is no proof that the program ended: the retry is the boss's (the Retry button, or a word to the tower), never a guess typed into their build (RV7-F003).
+			if (idleShell(await processInfo(pane.pane_id), false, groups)) target.paneFree?.();
 			return;
 		}
 		// A run holds the pane (or is about to): the prompt has left or is leaving, and no stand-in stands over the run's pi.
@@ -200,6 +223,9 @@ export function createStanding(o: StandingOptions) {
 		if (pane.agent) return;
 		const command = o.command(target.workspace);
 		if (!command) return;
+		proveHand(m);
+		// The resident tower's pi may still run in the pane: nothing is typed, and nothing is said about a prompt that is lost, until it has gone or the hand-over's time is up.
+		if (m.hand) return;
 		// Where Herdr gives no foreground group (Windows) only a fresh pane is typed into; a prompt that died in any other is said once, and the pane waits for the next run or Herdr restart.
 		if (!groups && !m.fresh) {
 			if (!m.lost) {
@@ -212,6 +238,7 @@ export function createStanding(o: StandingOptions) {
 		}
 		// Typed only into a shell that waits at its prompt: a build the boss left running there, or an editor, is theirs.
 		if (!idleShell(await processInfo(pane.pane_id), m.fresh, groups)) return;
+		const wasFresh = m.fresh;
 		m.launched = now();
 		m.fresh = false;
 		m.typings++;
@@ -221,9 +248,22 @@ export function createStanding(o: StandingOptions) {
 		}
 		try {
 			await run(["pane", "run", pane.pane_id, command]);
+			m.freshUntil = undefined;
+			m.failures = 0;
 			log.line("prompt-typed", { workspace: target.workspace, pane: pane.pane_id });
 		} catch (cause) {
-			error("prompt-typed", `${target.workspace}: ${(cause as Error).message}`);
+			// Herdr refused: nothing was typed, so this is no prompt that failed to start. Its own words are logged in full (code, stderr), and the typing is tried again one `launchMs` later, a few times, while the pane is still believed fresh.
+			const why = cause as Error & { stderr?: string; code?: unknown };
+			error("prompt-typed", `${target.workspace}: herdr pane run ${pane.pane_id} failed${why.code !== undefined ? ` (exit ${String(why.code)})` : ""}: ${why.stderr || why.message}`, 4000);
+			m.typings = Math.max(0, m.typings - 1);
+			m.failures++;
+			if (m.failures < TYPE_TRIES) {
+				m.fresh = wasFresh;
+				if (m.freshUntil !== undefined) m.freshUntil = now() + t.handMs;
+			} else if (m.failures === TYPE_TRIES) {
+				log.line("prompt-not-typed", { workspace: target.workspace, pane: pane.pane_id, text: `Herdr refused the command ${TYPE_TRIES} times in a row; the server types nothing more until a run frees the pane or Herdr restarts` });
+				Object.assign(m, { freshUntil: undefined, lost: true });
+			}
 		}
 	};
 
@@ -251,7 +291,7 @@ export function createStanding(o: StandingOptions) {
 		attach(target: StandingTarget, fresh = false) {
 			const m = mines.get(target.workspace);
 			if (m) m.target = target;
-			else mines.set(target.workspace, { target, leaving: false, misses: 0, parked: false, typings: 0, fresh, noStart: false, lost: false });
+			else mines.set(target.workspace, { target, leaving: false, misses: 0, parked: false, typings: 0, fresh, noStart: false, lost: false, failures: 0 });
 		},
 		/** The service is gone: the stand-in is taken away, and the prompt, which polls a tower that is no more, leaves by itself. */
 		async detach(workspace: string) {
@@ -308,20 +348,20 @@ export function createStanding(o: StandingOptions) {
 			const m = mines.get(workspace);
 			if (!m) return;
 			m.leaving = false;
-			Object.assign(m, { parked: false, launched: undefined, seen: undefined, reported: undefined, misses: 0, typings: 0, fresh: true, noStart: false, lost: false });
+			Object.assign(m, { parked: false, launched: undefined, seen: undefined, reported: undefined, misses: 0, typings: 0, fresh: true, noStart: false, lost: false, hand: undefined, freshUntil: undefined, failures: 0 });
 			void tick(workspace);
 		},
-		/** A resident tower handed this pane over and is quitting: once its pi is gone the pane is a bare shell the server just got back, as after a run. A prompt that polls is left alone. */
-		handed(workspace: string) {
+		/** A resident tower (its pi has `pid`) handed this pane over and is quitting: once that process is gone the pane is a bare shell the server just got back, as after a run. The look proves it (`proveHand`); nothing is believed on the word of the hand-over alone. A prompt that polls is left alone. */
+		handed(workspace: string, pid?: number) {
 			const m = mines.get(workspace);
 			if (!m || present(m)) return;
-			m.fresh = true;
+			m.hand = { ...(pid !== undefined ? { pid } : {}), at: now() };
 			m.lost = false;
 			void tick(workspace);
 		},
 		/** A new Herdr server: every pane is a fresh shell, so nothing is believed of what was there. */
 		reset() {
-			for (const m of mines.values()) Object.assign(m, { seen: undefined, leaving: false, parked: false, launched: undefined, reported: undefined, misses: 0, unsupported: undefined, typings: 0, fresh: true, noStart: false, lost: false });
+			for (const m of mines.values()) Object.assign(m, { seen: undefined, leaving: false, parked: false, launched: undefined, reported: undefined, misses: 0, unsupported: undefined, typings: 0, fresh: true, noStart: false, lost: false, hand: undefined, freshUntil: undefined, failures: 0 });
 		},
 		/** The look at once (a service just went live), without waiting for the interval. */
 		kick: (workspace: string) => void tick(workspace),

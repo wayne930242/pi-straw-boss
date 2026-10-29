@@ -35,7 +35,7 @@ export const herdrRun: HerdrRun = (args, timeoutMs = 5000) =>
 	new Promise((resolve, reject) => {
 		execFileExe(process.env.HERDR_BIN_PATH || "herdr", args, { timeout: timeoutMs }, (error, stdout, stderr) => {
 			// `stderr` is what Herdr itself said (its error code first), apart from the command line the message repeats.
-			if (error) reject(Object.assign(new Error(`herdr ${args.join(" ")} failed: ${stderr.trim() || error.message}`), { stderr: stderr.trim() }));
+			if (error) reject(Object.assign(new Error(`herdr ${args.join(" ")} failed: ${stderr.trim() || error.message}`), { stderr: stderr.trim(), code: (error as { code?: unknown }).code }));
 			else resolve(stdout);
 		});
 	});

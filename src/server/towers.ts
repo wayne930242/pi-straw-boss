@@ -98,7 +98,7 @@ export interface Towers {
 	/** Whether the runs of the last server are loaded and the identities adopted (true when the tower runs are off: there is nothing to load). */
 	loaded(): boolean;
 	/** Gives a workspace its tower (a promotion, `/boss tower`, a handover from a resident tower of this build). */
-	ensure(request: { workspace: string; pane?: string; cwd?: string }): Promise<Ensured>;
+	ensure(request: { workspace: string; pane?: string; cwd?: string; pid?: number }): Promise<Ensured>;
 	/** The boss closed the tower: its tab goes, and the service with it. */
 	close(workspace: string): Promise<{ workspace: string; id: string }>;
 	/** The opener, with the persisted ledger, for the workspace's tower. */
@@ -262,7 +262,7 @@ export function createTowers(o: TowersOptions): Towers {
 	};
 	const runs: Runs = createRuns({ slot, run, sleep, now, log, sessions: sessionsRoot(o.env), enabled: o.enabled, max: () => readTowerRuns(slot.stateDir).max, trustDir: trustDir(slot.stateDir), model: () => towerModel(slot.stateDir), ...(allyPort ? { ally: allyPort } : {}), ...o.runs });
 
-	const standing = createStanding({ run, api: cfg.api, world: cfg.world, sleep, now, log, command: o.promptCommand ?? (() => undefined), timers: o.standing, ...(o.runs?.platform ? { platform: o.runs.platform } : {}) });
+	const standing = createStanding({ run, api: cfg.api, world: cfg.world, sleep, now, log, command: o.promptCommand ?? (() => undefined), timers: o.standing, ...(o.runs?.platform ? { platform: o.runs.platform } : {}), ...(o.runs?.alive ? { alive: o.runs.alive } : {}) });
 	const place = (l: Live): Place => ({ paneId: l.record.pane, tabId: l.record.tab, workspaceId: l.record.workspace });
 	const dirOf = (workspace: string) => join(towerDir(slot, workspace));
 	const error = (code: string, text: string) => log.line("error", { code, text: phrase(text, 300) });
@@ -547,7 +547,7 @@ export function createTowers(o: TowersOptions): Towers {
 		const sessions = await o.sessions().catch(() => undefined);
 		return !sessions || sessions.some((x) => x.id === held) ? held : undefined;
 	};
-	/** `fresh`: the standing pane was made by this call, or handed over by a resident tower that is quitting, so it is known to be a shell nobody has used (standing.ts types into it where Herdr cannot tell an idle shell from a busy one). */
+	/** `fresh`: the standing pane was made by this call, so it is known to be a shell nobody has used (standing.ts types into it where Herdr cannot tell an idle shell from a busy one). A pane a resident tower hands over is marked by `standing.handed` once that tower's pi has left it. */
 	const adopt = (record: ServiceRecord, fresh = false): Live => {
 		const l: Live = { record, state: "registering", stopped: false, requests: new Map() };
 		const prior = services.get(record.workspace);
@@ -679,13 +679,13 @@ export function createTowers(o: TowersOptions): Towers {
 
 	const answer = (l: Live, opened: boolean): Ensured => ({ id: l.record.id, workspace: l.record.workspace, label: l.record.label, tab: l.record.tab, pane: l.record.pane, opened, live: l.state === "live" });
 
-	const openFor = async (target: Workspace, hint: string | undefined, cwd: string | undefined): Promise<Ensured> => {
+	const openFor = async (target: Workspace, hint: string | undefined, cwd: string | undefined, handedBy?: number): Promise<Ensured> => {
 		const ws = target.workspace_id;
 		const existing = services.get(ws);
 		if (existing && !existing.stopped) {
 			// A pane list that fails is unknown: the ask fails, the service stays.
 			if (await locate(existing, false)) {
-				if (hint === existing.record.pane) standing.handed(ws);
+				if (hint === existing.record.pane) standing.handed(ws, handedBy);
 				if (existing.state !== "waiting") await Promise.race([existing.starting, sleep(o.registerMs ?? REGISTER_WAIT_MS)]);
 				return answer(existing, false);
 			}
@@ -723,13 +723,15 @@ export function createTowers(o: TowersOptions): Towers {
 		await cfg.api("tab.move", { tab_id: pane.tab_id, insert_index: 0 }).catch((cause: Error) => error("tab-move", cause.message));
 		const record: ServiceRecord = { ...draft.record, pane: pane.pane_id, tab: pane.tab_id, ...(pane.cwd ?? dir ? { cwd: pane.cwd ?? dir } : {}), created: new Date(now()).toISOString() };
 		writeService(slot, record);
-		const l = adopt(record, made || Boolean(given));
+		const l = adopt(record, made);
+		// A pane a resident tower hands over is a shell nobody has used once that tower's pi has left it (standing.ts).
+		if (given && !made) standing.handed(ws, handedBy);
 		log.line("tower-opened", { workspace: ws, id: record.id, pane: record.pane, tab: record.tab });
 		await Promise.race([l.starting, sleep(o.registerMs ?? REGISTER_WAIT_MS)]);
 		return answer(l, true);
 	};
 
-	const ensure: Towers["ensure"] = async ({ workspace, pane, cwd }) => {
+	const ensure: Towers["ensure"] = async ({ workspace, pane, cwd, pid }) => {
 		if (!o.enabled()) throw new Error("towerRuns.enabled is off in config.json, so the sb server stands in for no tower");
 		if (stopped) throw new Error("the sb server is stopping");
 		await activate();
@@ -739,7 +741,7 @@ export function createTowers(o: TowersOptions): Towers {
 		// A sub workspace never has a tower: its parent workspace's tower serves it.
 		const target = isSub(asked) ? parentOf(all, asked) : asked;
 		if (!target) throw new Error(`${asked.label} is a sub workspace with no open parent workspace, so it has no tower; open the parent workspace first`);
-		const pending = opening.get(target.workspace_id) ?? openFor(target, target === asked ? pane : undefined, cwd).finally(() => opening.delete(target.workspace_id));
+		const pending = opening.get(target.workspace_id) ?? openFor(target, target === asked ? pane : undefined, cwd, pid).finally(() => opening.delete(target.workspace_id));
 		opening.set(target.workspace_id, pending);
 		return pending;
 	};

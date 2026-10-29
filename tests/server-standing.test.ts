@@ -320,6 +320,41 @@ test("a hand-over that finds the service already adopted (a retry, or a server t
 	prompt.stop();
 });
 
+test("RV7-F004: a resident tower's hand-over carries its pid: behind a cmd wrapper the list shows the shell alone, and the prompt is typed only once that process is gone", async () => {
+	world.runPlatform = "win32";
+	world.herdr.winShell = true;
+	world.herdr.shellForeground = true;
+	const s = await world.start();
+	await s.handle.ready;
+	world.herdr.addTab("wA:t9", TOWER_LABEL, "wA:p9", "shell");
+	world.live.add(7001);
+	const ensured = await ask(s, { cmd: "ensure-tower", workspace: "wA", pane: "wA:p9", pid: 7001 });
+	assert.equal(ensured.ok, true);
+	// The pane's list is the shell alone (the wrapper), as on the VM, while the pi still runs: five looks, nothing typed.
+	const calls = world.aliveCalls;
+	await until(() => world.aliveCalls >= calls + 5, "five looks at the pane");
+	assert.equal(world.herdr.typed.length, 0, "the pi's process is alive: nothing is typed");
+	world.live.delete(7001);
+	await until(() => world.herdr.typed.length === 1, "the prompt typed once the pi is gone");
+	assert.equal(world.herdr.typed[0]!.pane, "wA:p9");
+});
+
+test("RV7-F005: a hand-over that finds the service already adopted marks the pane freed once the resident's pid is gone: the prompt is typed again, and not while the resident lives", async () => {
+	world.runPlatform = "win32";
+	world.herdr.winShell = true;
+	world.herdr.shellForeground = true;
+	const { s, pane } = await setup();
+	await until(() => world.herdr.typed.length === 1, "the first typing");
+	// That prompt never started (no prompt polls), so the pane is no longer known to be fresh: only a hand-over gives it back.
+	world.live.add(7002);
+	assert.equal((await ask(s, { cmd: "ensure-tower", workspace: "wA", pane, pid: 7002 })).ok, true);
+	const calls = world.aliveCalls;
+	await until(() => world.aliveCalls >= calls + 5, "five looks at the pane");
+	assert.equal(world.herdr.typed.length, 1, "the resident still lives");
+	world.live.delete(7002);
+	await until(() => world.herdr.typed.length === 2, "the prompt typed again into the freed pane");
+});
+
 test("on Windows a prompt that was typed once and never started is logged prompt-not-starting, not prompt-lost (RV-F002)", async () => {
 	world.runPlatform = "win32";
 	world.herdr.winShell = true;
