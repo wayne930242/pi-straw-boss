@@ -8,6 +8,9 @@ import { type Channel, type Kit, REGISTER } from "./state.ts";
 /** How a session reaches the sb server: one JSON request over its control socket. `start` says whether an absent server is started for it (the boss's own command), only when the rules allow (an automatic ask), or not at all. */
 export type Ask = (request: Record<string, unknown>, options: { start: "boss" | "auto" | "never" }) => Promise<{ ok: boolean; error?: string; [key: string]: unknown }>;
 
+/** What `/boss gui rotate` tells before it does anything. */
+const ROTATE_WARNING = "The GUI gets a new address and a new CSRF secret: every open page stops working, and every paired phone is unpaired (a phone pairs again with a QR code or the pairing code). Use it when the address may have leaked.";
+
 /**
  * The session's side of the GUI. The GUI itself runs in the sb server (src/server/guihost.ts), one for the machine, and this session no longer hosts it, adopts it, or holds a dialog hub: `/boss gui` and its
  * variants ask the server over the control socket (server-look.ts), and the pairing overlay for `/boss gui remote` is drawn here from the server's answer, so the QR never reaches the server's log
@@ -45,7 +48,7 @@ export function createHost({ pi, cfg, s, guiDir, tell }: Kit, { connected, ask }
 			const found = r.ok ? record() : undefined;
 			return found ? { record: found } : { error: r.error ?? "the server wrote no gui.json" };
 		},
-		/** `mode` is "", "stop", "remote", or "remote off", and works from any session: the GUI and remote access are the server's. */
+		/** `mode` is "", "stop", "rotate", "remote", or "remote off", and works from any session: the GUI and remote access are the server's. */
 		async command(mode: string) {
 			const send = (request: Record<string, unknown>, start: "boss" | "never") => asking()(request, { start }).catch((error: Error) => ({ ok: false as const, error: error.message }));
 			if (mode === "stop") {
@@ -71,10 +74,11 @@ export function createHost({ pi, cfg, s, guiDir, tell }: Kit, { connected, ask }
 				const desk = cfg.env.STRAW_BOSS_DESK === "1";
 				return void (Array.isArray(r.lines) && s.ui && (await showLines(s.ui, (r.lines as string[]).filter((line) => !desk || line !== OPEN_LINE), { block, keys: pairingKeys(link, copy, desk ? undefined : openUrl) })));
 			}
-			const r = await send({ cmd: "gui", boss: true }, "boss");
+			if (mode === "rotate" && (await s.ui?.confirm("Rotate the GUI's address?", ROTATE_WARNING)) !== true) return tell("The GUI's address was not rotated.");
+			const r = await send(mode === "rotate" ? { cmd: "gui-rotate" } : { cmd: "gui", boss: true }, "boss");
 			if (!r.ok) return fail(r);
 			const url = urlOf({ port: Number(r.port), token: String(r.token) } as GuiRecord);
-			tell(`Straw net GUI: ${url}`);
+			tell(mode === "rotate" ? `Straw net GUI: ${url} (a new address; every paired device is unpaired)` : `Straw net GUI: ${url}`);
 			if (typeof r.remoteNote === "string") tell(r.remoteNote, "warning");
 			// A desk shell (STRAW_BOSS_DESK=1) shows the page itself; the URL is still told.
 			if (cfg.env.STRAW_BOSS_DESK !== "1") await openUrl(url).catch((error: Error) => tell(`Could not open a browser (${error.message}); open the URL above yourself`, "warning"));

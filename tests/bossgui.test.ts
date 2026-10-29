@@ -109,7 +109,36 @@ test("when no server answers, the command says so as an error and opens nothing"
 	assert.equal(opened.length, before);
 });
 
-test("/boss gui stop from any session stops the GUI and says when none runs; /boss gui starts it again on the same port under a new token, and an automatic ask is told it was stopped on purpose", async () => {
+test("/boss gui rotate asks to confirm with what it costs; declined it changes nothing, confirmed it gives the same port a new token, opens it, and the old address opens nothing", async () => {
+	const hosted = await startHosted(world);
+	const a = world.agent({ id: "viewer-a", pane: "wA:p1", tab: "wA:t1", deps });
+	await a.start();
+	await a.command("gui");
+	const url = urlOf(a), before = hosted.gui(), count = opened.length;
+	const declined = a.command("gui rotate");
+	await until(() => a.dialogs.some((d) => !d.settled), "a confirm");
+	const dialog = a.dialogs.find((d) => !d.settled)!;
+	dialog.settle(false);
+	await declined;
+	assert.match(String(dialog.second), /every paired phone is unpaired/);
+	assert.equal(a.notices.at(-1)!.text, "The GUI's address was not rotated.");
+	assert.equal(hosted.gui().token, before.token);
+	assert.equal(opened.length, count, "nothing was opened");
+	const rotating = a.command("gui rotate");
+	await until(() => a.dialogs.some((d) => !d.settled), "a second confirm");
+	a.dialogs.find((d) => !d.settled)!.settle(true);
+	await rotating;
+	const again = new URL(urlOf(a));
+	assert.equal(again.port, new URL(url).port, "same port");
+	assert.notEqual(again.pathname, new URL(url).pathname, "a new token");
+	assert.match(a.notices.at(-1)!.text, /\(a new address; every paired device is unpaired\)/);
+	assert.equal(hosted.gui().token, again.pathname.replaceAll("/", ""));
+	assert.equal(opened.at(-1), urlOf(a), "the new address is opened");
+	assert.equal(await status(urlOf(a)), 200);
+	assert.equal(await status(url), 403);
+});
+
+test("/boss gui stop from any session stops the GUI and says when none runs; /boss gui starts it again on the same port under the same token, and an automatic ask is told it was stopped on purpose", async () => {
 	const hosted = await startHosted(world);
 	const a = world.agent({ id: "viewer-a", pane: "wA:p1", tab: "wA:t1", deps });
 	const b = world.agent({ id: "viewer-b", pane: "wB:p1", tab: "wB:t1", deps });
@@ -125,9 +154,9 @@ test("/boss gui stop from any session stops the GUI and says when none runs; /bo
 	await b.command("gui");
 	const again = new URL(urlOf(b));
 	assert.equal(again.port, new URL(url).port, "same port after the stop");
-	assert.notEqual(again.pathname, new URL(url).pathname, "and a new token: the GUI that starts again is a new listener");
+	assert.equal(again.pathname, new URL(url).pathname, "and the same token: only /boss gui rotate gives a new one (D27)");
 	assert.equal(await status(urlOf(b)), 200);
-	assert.equal(await status(url), 403);
+	assert.equal(await status(url), 200);
 });
 
 test("/boss gui in a session on a stopped server asks the server to start it only when it is the boss's own ask", async () => {

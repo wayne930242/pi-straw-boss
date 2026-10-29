@@ -46,15 +46,16 @@ const HEADERS = {
 /** What a page at a dead address says: the same words as the open page's banner. */
 const REPLACED = "This address does not work here (the sb server may have restarted, or the link expired): on this computer open /boss gui; on a phone scan a new QR code.";
 const REPLACED_ZH = "這個網址在這裡無法使用（sb server 可能重新啟動過，或連結已過期）：在這台電腦請開啟 /boss gui；在手機請重新掃描新的 QR code。";
-export interface Gui { url: string; port: number; remotePort: number; token: string; csrf: string; access: Access; stop(): Promise<void> }
+/** `kept` says the listener runs under the `keep` secrets it was given (it got both of their ports back); otherwise its token and CSRF secret are new. */
+export interface Gui { url: string; port: number; remotePort: number; token: string; csrf: string; kept: boolean; access: Access; stop(): Promise<void> }
 /** `net` is the registry behind the net reading (the allow list of session keys); without it no session can be watched. `call` reaches Herdr for input. */
 /** `hub` carries answers to the dialogs bridges relay (dialogs.ts); it runs exactly as long as the server. */
 /** `onRemote` and `onRemoteOff` turn remote access on and off from the page, in the session that runs the server. `onStop` takes another session's stop request (requestStop), so the owner also takes its remote entry down; without it the server stops itself. */
-export interface GuiOptions { read(): Promise<Net>; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[]; dismiss?(key: string): boolean; dismissAll?(): number }; call?: HerdrCall; hub?: Hub; dir?: string; paired?: string; port?: number; remotePort?: number; pollMs?: number; idleMs?: number; pingMs?: number; onStop?(asked: Asked): void; /** A takeover is refused with 409 (the sb server is never taken over by a session of an older build, which then leaves its GUI alone). */ refuseTake?: boolean; onRemote?(): Promise<void>; onRemoteOff?(): Promise<void>; onSaveFailed?(reason: string): void; spawn?: ControlDeps["spawn"]; close?: ControlDeps["close"]; trust?: { answer: NonNullable<ControlDeps["trust"]>; watch(poke: () => void): () => void }; link?: ControlDeps["link"]; server?: ControlDeps["server"]; tower?: ControlDeps["tower"]; /** How long a preferred port that is still held (by the server this one replaces) is retried before another is taken. */ bindWaitMs?: number; /** The server runs with the desk switch (STRAW_BOSS_DESK=1): the page carries `<meta name="sb-desk">` and hides GUI remote access and stash (gui/desk.ts). */ desk?: boolean }
+export interface GuiOptions { read(): Promise<Net>; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[]; dismiss?(key: string): boolean; dismissAll?(): number }; call?: HerdrCall; hub?: Hub; dir?: string; paired?: string; port?: number; remotePort?: number; pollMs?: number; idleMs?: number; pingMs?: number; onStop?(asked: Asked): void; /** A takeover is refused with 409 (the sb server is never taken over by a session of an older build, which then leaves its GUI alone). */ refuseTake?: boolean; onRemote?(): Promise<void>; onRemoteOff?(): Promise<void>; onSaveFailed?(reason: string): void; spawn?: ControlDeps["spawn"]; close?: ControlDeps["close"]; trust?: { answer: NonNullable<ControlDeps["trust"]>; watch(poke: () => void): () => void }; link?: ControlDeps["link"]; server?: ControlDeps["server"]; tower?: ControlDeps["tower"]; /** How long a preferred port that is still held (by the server this one replaces) is retried before another is taken. */ bindWaitMs?: number; /** The token and CSRF secret of the last listener with the two ports they belong to (server/guisecrets.ts): kept only when both ports are bound again; otherwise they are drawn anew. */ keep?: { token: string; csrf: string; port: number; remotePort: number }; /** The server runs with the desk switch (STRAW_BOSS_DESK=1): the page carries `<meta name="sb-desk">` and hides GUI remote access and stash (gui/desk.ts). */ desk?: boolean }
 export interface Asked { by: string; take: boolean }
 
-/** Starts the server. A preferred `port` and `remotePort` are reused when free. The token and the CSRF secret are drawn anew for every listener that starts: a page an open tab already has, or whatever else holds the old ones, opens nothing here. */
-export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, port = 0, remotePort = 0, pollMs = 2000, idleMs = 10_000, pingMs = 15_000, onStop, refuseTake, onRemote, onRemoteOff, onSaveFailed, spawn, close, trust, link, server: panel, tower, bindWaitMs = 0, desk = false }: GuiOptions): Promise<Gui> {
+/** Starts the server. A preferred `port` and `remotePort` are reused when free. The token and the CSRF secret are drawn anew unless `keep` names them and both of its ports are bound again (D27): a listener that had to move to another port is a new one, and a page an open tab already has, or whatever else holds the old secrets, opens nothing here. */
+export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, port = 0, remotePort = 0, pollMs = 2000, idleMs = 10_000, pingMs = 15_000, onStop, refuseTake, onRemote, onRemoteOff, onSaveFailed, spawn, close, trust, link, server: panel, tower, bindWaitMs = 0, keep, desk = false }: GuiOptions): Promise<Gui> {
 	try {
 		if (!statSync(join(dir, "index.html")).isFile()) throw new Error();
 	} catch {
@@ -64,9 +65,9 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 	const bundle = new Map(readdirSync(dir, { recursive: true, encoding: "utf8" }).filter((f) => statSync(join(dir, f)).isFile()).map((f) => [f.split("\\").join("/"), readFileSync(join(dir, f))]));
 	// `build` names this bundle in the page and in each stream's hello: a page from another build, reconnecting to this server, reloads itself.
 	const html = bundle.get("index.html")!, build = createHash("sha256").update(html).digest("hex").slice(0, 16);
-	// The token and the CSRF secret belong to this listener alone, whether or not its ports are the earlier GUI's: another account may have bound a port in the gap between two servers, and an open page of the earlier GUI
-	// reconnects to whatever answers there with the token in its URL and the CSRF secret in its requests, so a token that outlived its listener could be one that process holds (RC3-F002). The local listener answers while the remote
-	// one binds, and a request is refused until the routes are set.
+	// The token and the CSRF secret outlive a listener that gets both of its ports back (D27, the boss's choice: a restart keeps the address, so an open page and an installed app go on). A listener that had to move to
+	// another port is a new one: another account may have bound the port in the gap, and an open page reconnects to whatever answers there with the token in its URL and the CSRF secret in its requests (RC3-F002).
+	// The local listener answers while the remote one binds, and a request is refused until the routes are set.
 	let routes: { local: RequestListener; remote: RequestListener } | undefined;
 	const refuse: RequestListener = (_req, res) => void res.writeHead(503, { ...HEADERS, "content-type": "text/plain" }).end("starting");
 	const server: Server = createServer((req, res) => (routes?.local ?? refuse)(req, res)), remoteServer: Server = createServer((req, res) => (routes?.remote ?? refuse)(req, res));
@@ -101,7 +102,8 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 		server.close();
 		throw error;
 	}
-	const token = randomBytes(16).toString("hex"), csrf = randomBytes(16).toString("hex");
+	const kept = Boolean(keep && keep.port === bound && keep.remotePort === boundRemote);
+	const token = kept ? keep!.token : randomBytes(16).toString("hex"), csrf = kept ? keep!.csrf : randomBytes(16).toString("hex");
 	const page = html.toString("utf8").replace("<head>", `<head>\n<base href="/${token}/">\n<meta name="sb-csrf" content="${csrf}">${desk ? '\n<meta name="sb-desk" content="1">' : ""}\n<meta name="sb-build" content="${build}">`);
 	const remoteManifest = (() => {
 		try {
@@ -180,7 +182,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 		const who = access.check(req, kind, (own().address() as AddressInfo).port, given, path);
 		if ("status" in who) {
 			// A page load at a dead address (the token was replaced by a restart) says so, without a secret in it; a script's request gets the plain refusal. On the remote listener a document load by this machine's user goes
-			// on to the fixed entry instead: an installed app's start URL is a dead address after every restart, and the entry is where it pairs again.
+			// on to the fixed entry instead: an installed app's start URL is a dead address after a new token (a rotation, a lost store, a moved port), and the entry is where it pairs again.
 			const document = req.method === "GET" && req.headers["sec-fetch-dest"] === "document";
 			if (who.status === 403) return void (document && kind === "remote" && access.admits(req) ? res.writeHead(302, { ...HEADERS, location: APP }).end() : document ? res.writeHead(403, { ...HEADERS, "content-type": TYPES[".html"] }).end(`<!doctype html><meta charset="utf-8"><p>${zhOf(req) ? REPLACED_ZH : REPLACED}</p>`) : fail(403));
 			// The SameSite=Strict cookie stays behind on a navigation from another site, and Android counts launching the installed app as one: such a
@@ -253,7 +255,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 		});
 	}
 	return {
-		url: `http://127.0.0.1:${bound}/${token}/`, port: bound, remotePort: boundRemote, token, csrf, access, stop: halt,
+		url: `http://127.0.0.1:${bound}/${token}/`, port: bound, remotePort: boundRemote, token, csrf, kept, access, stop: halt,
 	};
 }
 

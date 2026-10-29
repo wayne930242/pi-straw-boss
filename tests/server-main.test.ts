@@ -89,7 +89,7 @@ test("a restart that began keeps its began, reason, and by through the new serve
 	await second;
 });
 
-test("a restart keeps the record's gui port and gives it a new token; the last error of the server before is dropped once the new one is ready", async () => {
+test("a restart keeps the record's gui port and, with no stored secrets, gives it a new token; the last error of the server before is dropped once the new one is ready", async () => {
 	const slot = world.slot, port = await freePort();
 	mkdirSync(slot.dir, { recursive: true });
 	writeRecord(slot, { pid: 7, version: "0.43.0", herdr: slot.herdr, mode: "detached", desk: false, intercom: {}, log: "/l", socket: "/nowhere", secret: "s".repeat(64), intercomId: "sb-server-00000000", gui: { port, token: "tok-abc", stopped: false }, lastError: { at: "2026-10-26T00:00:00.000Z", code: "x", text: "earlier" }, stopped: true });

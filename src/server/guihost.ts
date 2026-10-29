@@ -20,6 +20,7 @@ import { trustDir } from "../trust/files.ts";
 import { createTrustServe } from "../trust/serve.ts";
 import type { Kit } from "../state.ts";
 import { type Log, tailLog } from "./log.ts";
+import { dropSecrets, keepSecrets, type Lost, readSecrets } from "./guisecrets.ts";
 import { fileOf, readRecord, type ServerRecord, type Slot, updateRecord, writeJson } from "./record.ts";
 import type { Reply, Request } from "./socket.ts";
 
@@ -27,8 +28,9 @@ import type { Reply, Request } from "./socket.ts";
 // spawn and deploys, the closer, the mirrors, documents and uploads, and remote access over Tailscale, which a pi session ran until 0.45.0 (host.ts). It runs on the server's own intercom
 // session: the hub owns `straw-boss/gui/<hash of the server's id>` with no local bridge, and the bridges in sessions follow `gui.json`'s `ownerSession` to it as before.
 //
-// The GUI starts when the server does, on the port the last one recorded (a port that is not free for 5 s is replaced) under a token and CSRF secret drawn anew: every listener has its own, so a restart,
-// a crash, or a start after a stop is a new address and the old one answers 403 (RC3-F002). It does not start when it was stopped on purpose
+// The GUI starts when the server does, on the ports the last one recorded (a port that is not free for 5 s is replaced) under the token and CSRF secret the last listener stored in gui-secrets.json (guisecrets.ts):
+// a restart, an upgrade, a crash, a reboot, or a start after a stop keeps the address, the CSRF secret and the paired devices (D27, the boss's choice; the risk it accepts is RC3-F002's, in the spec). A new token, with the paired
+// devices cleared, comes only when the store is missing or corrupt, when a listener could not get both of its ports back, and when the boss rotates on purpose (`/boss gui rotate`, `gui-rotate`). It does not start when it was stopped on purpose
 // (`/boss gui stop`: `gui.stopped` in server.json, `stopped` in gui.json). Only the boss's own commands start a GUI that was stopped. gui.json is written by this server under the unchanged contract, and
 // server.json's `gui` is `{ port, token, stopped }`.
 //
@@ -37,6 +39,7 @@ import type { Reply, Request } from "./socket.ts";
 //   gui-stop              stops the GUI listeners and takes the remote entry down (remote stays wanted); marks the GUI stopped on purpose
 //   gui-remote {on}       turns remote access on (answers the lines of the pairing QR) or off; the boss's own, so it starts a stopped GUI
 //   gui-pair              a new one-time pairing link while remote access is on
+//   gui-rotate            a new token and CSRF secret, every paired device unpaired; the boss's own, so it starts a stopped GUI (answers like `gui`)
 // and what the page asks of the server panel (this computer's page only): status, restart, and the log (control.ts `server`).
 
 /** Binding the recorded ports: a restart's old server is still letting go of them for a moment. */
@@ -96,6 +99,8 @@ export function createGuiHost(o: GuiHostOptions) {
 	let gui: Gui | undefined, hub: Hub | undefined, opening: Promise<Gui> | undefined, closing = false;
 	/** Why remote access is off though the boss wanted it on, told by `up` and the panel. */
 	let remoteNote: string | undefined;
+	/** Set while the boss's rotation runs: the GUI commands wait for it, and the start it makes says why its token is new. */
+	let rotating: Promise<unknown> | undefined;
 	// Built once for this process: pi-intercom has no unregister, so a channel the hub registered stays, and the same hub serves the GUI again after a stop.
 	const deploys = createDeploys(), trust = createTrustServe({ dir: trustDir(slot.stateDir), herdr: slot.herdr, world: () => cfg.world(), opening: deploys.openingOf });
 	const live = async (session: string) => (await o.sessions()).some((x) => x.id === session);
@@ -103,10 +108,14 @@ export function createGuiHost(o: GuiHostOptions) {
 	/** The hub, built when the server starts and kept for the process: it tracks the gates for the tower service whether or not a page listens (dialogs.ts `track`). */
 	const theHub = () => (hub ??= createHub(kit.pi, id, NO_BRIDGE, o.onAllow));
 
-	/** What the last GUI recorded, for a start to prefer: server.json's port, with the remote port of gui.json when that record is of the same local port. The token and the CSRF secret are not carried over: `had` only says there was a GUI before (RC3-F002). */
+	/**
+	 * What the last GUI recorded, for a start to prefer: server.json's port (else gui.json's, else the stored secrets'), with the remote port of gui.json when that record is of the same local port (else the stored secrets' when they
+	 * are of it). `keep` is the stored token and CSRF secret with the pair of ports they belong to, and `lost` says why there are none: the listener keeps them only when it binds that pair.
+	 */
 	const recorded = () => {
-		const record = readRecord(slot), seen = readGuiJson(dir), was = record?.gui, port = was?.port ?? seen?.port;
-		return { port, remotePort: seen && seen.port === port ? seen.remotePort : undefined, had: Boolean(was?.token ?? seen?.token), stopped: Boolean(was?.stopped) };
+		const record = readRecord(slot), seen = readGuiJson(dir), was = record?.gui, stored = readSecrets(dir), keep = "secrets" in stored ? stored.secrets : undefined;
+		const port = was?.port ?? seen?.port ?? keep?.port;
+		return { port, remotePort: (seen && seen.port === port ? seen.remotePort : undefined) ?? (keep && keep.port === port ? keep.remotePort : undefined), keep, lost: "lost" in stored ? stored.lost : undefined, stopped: Boolean(was?.stopped) };
 	};
 	const mark = (change: (gui: NonNullable<ServerRecord["gui"]>) => NonNullable<ServerRecord["gui"]> | undefined) => updateRecord(slot, (r) => {
 		if (r.pid !== pid) return undefined;
@@ -189,7 +198,7 @@ export function createGuiHost(o: GuiHostOptions) {
 				const next = await net.read(), summary = await o.link.summary();
 				return summary && (summary.allies.length || summary.alerts.length || summary.confirms.length) ? { ...next, link: summary } : next;
 			},
-			net, call: cfg.call, hub, dir: o.bundle ?? BUNDLE, paired: join(dir, "paired.json"), port: prefer.port, remotePort: prefer.remotePort, bindWaitMs: wait, desk: cfg.env.STRAW_BOSS_DESK === "1",
+			net, call: cfg.call, hub, dir: o.bundle ?? BUNDLE, paired: join(dir, "paired.json"), port: prefer.port, remotePort: prefer.remotePort, ...(prefer.keep ? { keep: prefer.keep } : {}), bindWaitMs: wait, desk: cfg.env.STRAW_BOSS_DESK === "1",
 			link: { call: (name, args) => o.link.call(name, args), enable: () => o.link.enable() }, ...(o.tower ? { tower: o.tower } : {}), trust: { answer: trust.answer, watch: trust.watch },
 			server: { status: () => o.status(), log: (lines) => tailLog(fileOf(slot, "log"), lines), restart: async (reason) => (o.restart ? o.restart(reason) : { status: 501, body: { error: "unavailable", reason: "This server cannot restart itself." } }) },
 			// An older build's /boss gui stop: the GUI stops, and nothing starts it again but the boss's own command. Its takeover is refused (409): that build reports the GUI as stale and leaves it alone.
@@ -215,14 +224,21 @@ export function createGuiHost(o: GuiHostOptions) {
 			const reclaimed = await reclaim();
 			const started = await begin(prefer, reclaimed ? Math.max(wait, o.bindWaitMs ?? BIND_WAIT_MS) : wait);
 			gui = started;
-			// A pairing belongs to the listener's token (cookie Path=/<token>/): after a rotation every listed device is dead, so none is kept.
-			// Whether or not a record of the last GUI survived: paired.json alone may hold devices.
-			const n = started.access.devices.unpairAll();
+			// A listener that keeps its token keeps the devices paired under it (D27). A new token voids every pairing (cookie Path=/<token>/), so none is kept, whether or not a record of the last GUI survived: paired.json alone may hold devices.
+			const why: Lost | "moved" | "rotate" = rotating ? "rotate" : prefer.keep ? "moved" : (prefer.lost ?? "missing");
+			const n = started.kept ? 0 : started.access.devices.unpairAll();
 			if (n) log.line("devices-cleared", { n });
 			if (started.access.saveError) log.line("error", { code: "paired", text: phrase(`paired.json could not be saved (${started.access.saveError}); the cleared devices come back after the next restart`, 200) });
+			// The store is dropped before the new secrets are written, so a failed write leaves none (a start with no store rotates) and never the secrets this listener replaced.
+			if (!started.kept) try {
+				dropSecrets(dir);
+				keepSecrets(dir, { token: started.token, csrf: started.csrf, port: started.port, remotePort: started.remotePort });
+			} catch (error) {
+				log.line("error", { code: "gui-secrets", text: phrase(`${(error as Error).message}; the GUI runs, and the next start gets a new address`, 200) });
+			}
 			writeGuiJson(started);
 			updateRecord(slot, (r) => (r.pid === pid ? { ...r, gui: { port: started.port, token: started.token, stopped: false } } : undefined));
-			log.line("gui-start", { port: started.port, remotePort: started.remotePort, moved: prefer.port !== undefined && prefer.port !== started.port, ...(prefer.had ? { newToken: true } : {}) });
+			log.line("gui-start", { port: started.port, remotePort: started.remotePort, moved: prefer.port !== undefined && prefer.port !== started.port, ...(started.kept ? { kept: true } : { newToken: true, why }) });
 			// Remote access comes back with it, but a slow Tailscale does not hold the start: what is not settled in a few seconds goes on in the background.
 			const resuming = resume(started);
 			await Promise.race([resuming, cfg.sleep(RESUME_WAIT_MS)]);
@@ -244,13 +260,30 @@ export function createGuiHost(o: GuiHostOptions) {
 		return true;
 	}
 
+	/**
+	 * The boss's rotation (`/boss gui rotate`): the stored secrets go first (so any start from here on draws new ones), then the listeners and the remote entry come down, and the GUI starts again on the same ports under a new token and
+	 * CSRF secret with every paired device unpaired. It is the boss's own, so a GUI stopped on purpose starts too.
+	 */
+	const rotate = async (): Promise<Reply> => {
+		await opening?.catch(() => {});
+		dropSecrets(dir);
+		const running = gui;
+		if (running) {
+			gui = undefined;
+			await switchRemote(running, false, dir, ts, true).catch(() => {});
+			await running.stop();
+		}
+		log.line("gui-rotate", { running: Boolean(running) });
+		const got = await ensure(true, BIND_WAIT_MS);
+		return "reply" in got ? got.reply : { ok: true, ...guiFacts(got.running), ...(remoteNote ? { remoteNote } : {}) };
+	};
 	const gone = (error: unknown): Reply => ({ ok: false, error: (error as Error).message });
 	const guiFacts = (g: Gui) => ({ url: g.url, port: g.port, remotePort: g.remotePort, token: g.token });
 	/** The boss's own command starts a GUI that was stopped; an automatic ask leaves it. */
-	const ensure = async (boss: boolean): Promise<{ running: Gui } | { reply: Reply }> => {
+	const ensure = async (boss: boolean, wait = 0): Promise<{ running: Gui } | { reply: Reply }> => {
 		if (!gui && recorded().stopped && !boss) return { reply: { ok: false, error: "stopped" } };
 		try {
-			const running = gui ?? (await up());
+			const running = gui ?? (await up(wait));
 			if (boss) mark((g) => (g.stopped ? { ...g, stopped: false } : undefined));
 			if (boss && readGuiJson(dir)?.stopped) writeGuiJson(running);
 			return { running };
@@ -314,8 +347,14 @@ export function createGuiHost(o: GuiHostOptions) {
 		},
 		/** The control requests that concern the GUI; undefined for any other. */
 		async handle(request: Request): Promise<Reply | undefined> {
-			if (o.listen === false || !["gui", "gui-stop", "gui-remote", "gui-pair"].includes(request.cmd)) return undefined;
+			if (o.listen === false || !["gui", "gui-stop", "gui-remote", "gui-pair", "gui-rotate"].includes(request.cmd)) return undefined;
 			if (closing) return { ok: false, error: "restarting" };
+			// A rotation in flight is finished first: a start meanwhile would bind the ports before the old listener let go, or read the secrets that are being dropped.
+			while (rotating) await rotating.catch(() => {});
+			if (request.cmd === "gui-rotate") {
+				const done = (rotating = rotate().finally(() => (rotating = undefined)));
+				return done.catch(gone);
+			}
 			if (request.cmd === "gui-stop") {
 				const was = await stop();
 				if (!was) mark((g) => ({ ...g, stopped: true }));

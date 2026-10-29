@@ -18,7 +18,7 @@ import { forgetStart, startedLater, startOf } from "./startof.ts";
 // no Funnel marker, Tailscale-User-Login equal to this machine's user, and a session cookie (HttpOnly, Secure, SameSite=Strict, scoped to
 // the token path, and a second copy scoped to the fixed app entry) that only a one-time pairing code from the QR gets: a code works once, within ten minutes. The same pairing can be made by typing a short code into the fixed entry
 // of the installed app (APP, `/sb-app/`, remote listener only: no token, no secret on its pages; see `entry` and `redeem`), because an app has its own cookie jar and its start URL cannot follow the token. A pairing is durable
-// (devices.ts): it survives remote off and on, and ends when the GUI listener ends (a new listener has a new token, so `guihost` unpairs every device), when the desktop unpairs the device, the Tailscale
+// (devices.ts): it survives remote off and on, and ends when the GUI gets a new token (a listener that could not bind its stored ports, a missing or corrupt gui-secrets.json, or `/boss gui rotate`: `guihost` unpairs every device then), when the desktop unpairs the device, the Tailscale
 // identity changes, or 90 days pass without a use (each use slides the expiry). Remote access is remembered as wanted until turned off
 // explicitly: stopping the server removes the serve entry but not the wish, so the next server turns it on again.
 

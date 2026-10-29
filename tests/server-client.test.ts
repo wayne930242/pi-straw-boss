@@ -353,17 +353,19 @@ test("a restart holds the lock until hello, and the new server is a new process 
 	assert.match(logText(), /restart reason="for testing" by="cli restart"/);
 });
 
-test("every kind of restart keeps the gui port the old server ran and gives it a new token: restart, upgrade, and the desk switch", async () => {
+test("every kind of restart keeps the gui port the old server ran and its token (D27): restart, upgrade, and the desk switch", async () => {
 	for (const how of [{ reason: "restart" }, { reason: "upgrade", upgrade: true }, { reason: "desk switch", boss: true }] as const) {
 		const s = await world.start({ version: "0.43.0" });
 		await s.handle.ready;
-		const { port, token } = world.record()!.gui!;
+		const { port, token } = world.record()!.gui!, csrf = JSON.parse(readFileSync(join(world.slot.dir, "gui.json"), "utf8")).csrf as string;
 		assert.ok(port > 0 && token, "the server serves the page from its start");
 		const done = await restart(world.ctx({ version: "0.44.0" }), how);
 		assert.equal(done.record.gui?.port, port, how.reason);
 		assert.deepEqual(done.record.gui, world.record()?.gui, `${how.reason}: the record restart returns is the ready server's own, read again after its hello (R-F002)`);
 		assert.match(String(done.record.gui?.token), /^[0-9a-f]{32}$/, how.reason);
-		assert.notEqual(done.record.gui?.token, token, `${how.reason}: every listener has a token of its own`);
+		assert.equal(done.record.gui?.token, token, `${how.reason}: the new listener keeps the stored token`);
+		assert.equal(JSON.parse(readFileSync(join(world.slot.dir, "gui.json"), "utf8")).csrf, csrf, `${how.reason}: and the CSRF secret`);
+		assert.equal(JSON.parse(readFileSync(join(world.slot.dir, "gui-secrets.json"), "utf8")).token, token, `${how.reason}: from the store`);
 		assert.equal(done.server, "upgrade" in how ? "upgraded" : "restarted");
 		await world.running.find((r) => r.pid === done.record.pid)!.handle.shutdown(0);
 		rmSync(fileOf(world.slot, "record"), { force: true });

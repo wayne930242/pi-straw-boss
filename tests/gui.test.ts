@@ -30,7 +30,7 @@ after(async () => {
 });
 
 const net = (label: string): Net => ({ bases: [{ id: "w", label, mark: "idle", head: true, tower: null, tabs: [], outposts: [], outside: [] }] });
-async function serve(read: () => Promise<Net>, options: { pollMs?: number; idleMs?: number; pingMs?: number; port?: number; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] }; call?: (method: string, params: Record<string, unknown>) => Promise<unknown>; onStop?(asked: Asked): void; onRemote?(): Promise<void> } = {}, bundle = dir) {
+async function serve(read: () => Promise<Net>, options: { pollMs?: number; idleMs?: number; pingMs?: number; port?: number; remotePort?: number; bindWaitMs?: number; keep?: { token: string; csrf: string; port: number; remotePort: number }; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] }; call?: (method: string, params: Record<string, unknown>) => Promise<unknown>; onStop?(asked: Asked): void; onRemote?(): Promise<void> } = {}, bundle = dir) {
 	const gui = await startGui({ read, dir: bundle, pollMs: 20, pingMs: 50, ...options });
 	running.push(gui);
 	return gui;
@@ -236,6 +236,23 @@ test("stop ends open streams and frees the port, and a start on the same port is
 	assert.notEqual(again.csrf, gui.csrf);
 	assert.equal((await raw(again, `/${again.token}/`)).status, 200);
 	assert.equal((await raw(again, `/${gui.token}/`)).status, 403, "the earlier token opens nothing");
+});
+
+test("D27: a start given `keep` keeps its token and CSRF secret only when it binds both of the ports they belong to; on any other port both are new", async () => {
+	const first = await serve(async () => net("a"));
+	const keep = { token: first.token, csrf: first.csrf, port: first.port, remotePort: first.remotePort };
+	await first.stop();
+	assert.equal(first.kept, false, "a start with nothing to keep draws its own");
+	const same = await serve(async () => net("b"), { port: keep.port, remotePort: keep.remotePort, keep });
+	assert.deepEqual([same.kept, same.token, same.csrf, same.port, same.remotePort], [true, keep.token, keep.csrf, keep.port, keep.remotePort]);
+	assert.equal((await raw(same, `/${keep.token}/`)).status, 200, "the address from before opens");
+	// Holding the local port makes the next start move to another one: it is a new listener whatever the remote port did.
+	const moved = await serve(async () => net("c"), { port: keep.port, remotePort: keep.remotePort, keep, bindWaitMs: 0 });
+	assert.deepEqual([moved.kept, moved.port === keep.port, moved.token === keep.token, moved.csrf === keep.csrf], [false, false, false, false]);
+	assert.equal((await raw(moved, `/${keep.token}/`)).status, 403, "the kept token opens nothing on the moved listener");
+	await same.stop();
+	const remoteMoved = await serve(async () => net("d"), { port: keep.port, remotePort: keep.remotePort + 1, keep });
+	assert.deepEqual([remoteMoved.kept, remoteMoved.token === keep.token], [false, false], "a remote port that differs from the stored one is a new listener too");
 });
 
 test("a page load at a replaced address gets a short HTML 403 that says so and holds no secret; any other request gets the plain refusal", async () => {

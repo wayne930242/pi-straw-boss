@@ -241,7 +241,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	log.hide(secret);
 	const own: ServerRecord = {
 		pid, version, herdr: slot.herdr, mode, desk, intercom: intercomOf(env, platform),
-		// What the new server keeps from the one before it: the GUI's port and whether it was stopped on purpose, and the last error. The GUI's token is the old listener's and goes when the new one starts (guihost.ts writes the new token to both records before `restarting` is cleared).
+		// What the new server keeps from the one before it: the GUI's port and whether it was stopped on purpose, and the last error. The GUI's token comes from gui-secrets.json, not from this record: the new listener keeps it when it binds the stored ports and draws a new one when it does not (guihost.ts writes the token to both records before `restarting` is cleared).
 		...(prior?.gui ? { gui: prior.gui } : {}), ...(prior?.lastError ? { lastError: prior.lastError } : {}), ...(prior?.lastRestart ? { lastRestart: prior.lastRestart } : {}),
 		...(aclStarted ? { started: aclStarted } : {}), ...detachOf, log: fileOf(slot, "log"), socket: endpoint, secret, intercomId: serverId(slot),
 	};
@@ -252,7 +252,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	const writeOwn = () => {
 		if (rival()) return;
 		const current = readRecord(slot);
-		// The GUI the record already holds is this server's own once it has started (guihost.ts records its port and its new token as it starts).
+		// The GUI the record already holds is this server's own once it has started (guihost.ts records its port and its token as it starts).
 		writeRecord(slot, { ...own, ...(current?.pid === pid && current.gui ? { gui: current.gui } : {}), ...(phase === "starting" ? { restarting: restartingNow(current?.restarting, now(), { reason: "starting", by }) } : {}) });
 	};
 	const recordError = (code: string, text: string) => {
@@ -583,7 +583,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	// Every tower identity registers before the server answers as ready (and before the GUI ports are bound, B2), so the guard sees live towers again as early as it can after a restart.
 	await Promise.race([towers.activate().catch((error: Error) => recordError("towers", error.message)), sleep(o.brokerMs ?? BROKER_MS)]);
 
-	// The GUI binds the recorded ports last (under a new token), after the intercom ids are as registered as they can be and, with the link holder in the server, after that.
+	// The GUI binds the recorded ports last (under the stored token), after the intercom ids are as registered as they can be and, with the link holder in the server, after that.
 	await guiHost?.start();
 
 	// Ready: `restarting` goes, and the start-error of this attempt (and any before it) with it.

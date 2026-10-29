@@ -197,6 +197,8 @@ function readOwned(file: string): { text: string; id: string } | undefined {
 		if (fd !== undefined) closeSync(fd);
 	}
 }
+/** The text of a file this account owns (a link is not followed): undefined when it is absent, foreign, or unreadable. */
+export const readOwnedText = (file: string): string | undefined => readOwned(file)?.text;
 const parse = <T>(raw: string | undefined): T | undefined => { try { return raw === undefined ? undefined : (JSON.parse(raw) as T); } catch { return undefined; } };
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 

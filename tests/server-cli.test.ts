@@ -67,7 +67,7 @@ test("status says gone with no server, and never prints the secret or the socket
 	assert.ok(!live.out.includes(world.record()!.secret) && !live.out.includes(world.record()!.socket) && !live.out.includes("secret"));
 });
 
-test("status carries the GUI's url from the record; a GUI stopped on purpose is gui-stopped while the server runs, and up starts it again on the same port under a new token and it answers 200", async () => {
+test("status carries the GUI's url from the record; a GUI stopped on purpose is gui-stopped while the server runs, and up starts it again on the same port under the same token and it answers 200", async () => {
 	const s = await world.start();
 	await s.handle.ready;
 	const gui = world.record()!.gui!, url = `http://127.0.0.1:${gui.port}/${gui.token}/`;
@@ -81,9 +81,9 @@ test("status carries the GUI's url from the record; a GUI stopped on purpose is 
 	assert.equal(up.code, 0, up.err);
 	const again = world.record()!.gui!, fresh = `http://127.0.0.1:${gui.port}/${again.token}/`;
 	assert.deepEqual([up.json?.server, up.json?.url, again.port], ["found", fresh, gui.port]);
-	assert.notEqual(again.token, gui.token);
+	assert.equal(again.token, gui.token, "a stop on purpose does not rotate (D27)");
 	assert.equal((await fetch(fresh)).status, 200);
-	assert.equal((await fetch(url)).status, 403, "the old token opens nothing");
+	assert.equal((await fetch(url)).status, 200, "the address from before the stop opens again");
 	assert.equal((await cli(["status"])).json?.state, "live");
 	assert.equal(world.record()?.gui?.stopped, false);
 });

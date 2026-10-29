@@ -227,7 +227,7 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
     Accounts are named by SID only, never by a localized account or group name. SYSTEM is `S-1-5-18`.
   - It is checked by SID through `(Get-Acl <path>).Sddl`. No localized text is parsed.
     - The folder's DACL must be protected (`D:P`), with exactly two allow ACEs, the owner SID and `SY`, and no inherited ACE.
-    - Each secret file (`server.json` of the slot and of every secondary slot in `servers/<hash>/`, `gui.json`, `paired.json`, everything under `link/`) must hold allow ACEs for the owner SID and
+    - Each secret file (`server.json` of the slot and of every secondary slot in `servers/<hash>/`, `gui.json`, `paired.json`, `gui-secrets.json`, everything under `link/`) must hold allow ACEs for the owner SID and
       `SY` only, explicit or inherited. A file written by rename after the `icacls` run inherits exactly those two from the protected
       folder, which is just as safe, so an inherited ACE is accepted on files.
   - **The folder is protected before the first file is created in it, at every start.** The second Windows pass found `server.lock`, the
@@ -378,7 +378,7 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
         being walked (the link stale-lock guard, `outbox\<team>`) is skipped; one that is there and cannot be listed is thrown.
       - **Everything below is the user's too** (R7-F002, R8-F001, R8-F002): `/reset` and `/inheritance` replace DACLs and never owners, so after the reset one
         call, `icacls "<dir>\*" /setowner *<sid> /T /C /L /Q`, makes the folders below (`servers\<hash>`, `link\…`) the user's, and the
-        read-back lists every folder below and the files it names (`server.json`, `server.lock`, `server.log`, `gui.json`, `paired.json`, every file under `link\`,
+        read-back lists every folder below and the files it names (`server.json`, `server.lock`, `server.log`, `gui.json`, `paired.json`, `gui-secrets.json`, every file under `link\`,
         and each `servers\<hash>\server.json`; not the files in `board\`, `stash\`, `agents\` or the other files of a secondary slot), and each must be the user's (`O:`) with allow ACEs for the user and SYSTEM only,
         inherited ones allowed (`folders` and `files` in the answer; a folder that another account owns would keep an owner's implicit
         WRITE_DAC over what is written in it later). The owner is taken BEFORE the reset, so the reset can use the owner's WRITE_DAC; an
@@ -440,7 +440,7 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
     SYSTEM grant of the folder again, files and folders alike. It is one process whatever the number of items (a call per item took a
     process each, and `link/inbox/` alone holds up to 500 files); `/C` goes on past an item that vanishes meanwhile, and the call's exit
     code is not the check, the read-back is. The check reads `server.json` (of every slot), `server.lock`, `server.log`, `gui.json`,
-    `paired.json`, and everything under `link/`.
+    `paired.json`, `gui-secrets.json`, and everything under `link/`.
   - If setting or checking fails, the server does not start. It writes `start-error.json` (`code: "acl"`, the reason, the SDDL it read)
     and exits 3. `up` and the session looks read that file (**Starting**).
   - macOS and Linux keep the 700 directory and 600 files they have today.
@@ -644,7 +644,7 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
   - **None runs:** it starts one detached, as a pi session would, and waits for `hello`.
   - **Stopped on purpose:** `up` is the boss's own start, so it clears `stopped` in `server.json` and in `gui.json` (and `gui.stopped`)
     under the lock, then starts one.
-  - **Live, GUI stopped:** it starts the GUI listener again on the recorded port when it is free, under a new token (a listener that starts has a token of its own, **GUI token and CSRF secret**).
+  - **Live, GUI stopped:** it starts the GUI listener again on the recorded port when it is free, under the stored token (**GUI token and CSRF secret**).
   - **Live on an older version than the package `up` runs from:** step `version` asks for `upgrade` and starts the new server from its
     own package.
   - **Live on a newer version:** step `version` leaves the server alone and warns `server_newer` (exit 0), or, with `--exact`, exits 1
@@ -657,7 +657,7 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
 - **`cli.mjs serve`** runs in the foreground with `mode: serve`, for launchd and systemd (unattended devices).
   - **None runs:** it runs. A `stopped` it finds is cleared: a supervisor's start is the infra's explicit choice, and a stop is never
     left on a `serve` server (**Stopping**), so such a mark can only come from an earlier detached server.
-  - **A live `detached` server:** `serve` takes it over. It asks that server to hand over by the restart path (same port when it is free, a new token,
+  - **A live `detached` server:** `serve` takes it over. It asks that server to hand over by the restart path (same port when it is free, the same token,
     ≤ 10 s) and then runs in the foreground. Exiting instead would make launchd's `KeepAlive` or systemd's `Restart=` start it again and
     again, while the server that actually runs is one no supervisor watches.
   - **A live `serve` server:** two supervisors are a configuration error. `serve` prints that server's record and exits 4.
@@ -712,30 +712,43 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
      - it connects to the broker and registers every tower identity first, so the guard sees live towers again as early as it can;
      - then it starts the link holder;
      - then it binds the recorded local and remote GUI ports, retrying for up to 5 s while the old
-       ports are let go, under a token and CSRF secret drawn anew (**GUI token and CSRF secret**);
+       ports are let go, under the stored token and CSRF secret when it gets both ports back and under new ones when it does not (**GUI token and CSRF secret**);
      - then it writes `gui.json` and `server.json`'s `gui` with that token, and clears `restarting`.
 - **The guard during a restart.** A workspace whose `tower` token names an `sb-tower-*` id counts as having a live tower while
   its own slot's `server.json` has a `restarting` whose `since` is fresh (within 10 s) and whose `began` is less than 30 s ago. A guard
   counts only ids of its own slot (`sb-tower-<ws>` on the primary, `sb-tower-<slot8>-<ws>` on a secondary). So a slow restart, such
   as a cold Windows start, demotes no main. A restart that takes longer than 30 s falls back to the 15 s grace.
-- **GUI token and CSRF secret (RC3-F002, decided by the user: "不正常結束就換 token").** A GUI listener keeps its token and CSRF secret only
-  while it keeps running. A listener that starts after the previous one crashed, exited uncleanly, or restarted (a server restart, a GUI
-  restart, an upgrade, the hand-over from a 0.45 host, or `/boss gui` after `/boss gui stop`) draws a new token and CSRF secret, on the
-  recorded port when it is free and on another port when it is not. Why: another account may bind the port in the gap between two
-  servers; an open page of the old GUI reconnects within about a second to whatever answers there and sends the token in the path and
-  the CSRF secret in its requests, so a token kept across the gap could be one that process holds (a remote serve entry left pointing at
-  the old remote port has the same gap for a paired phone). The new listener answers 403 to the old token and secret. `gui.json` (by
-  rename) and `server.json`'s `gui` carry the new token before `restarting` is cleared, so no reader sees a live server with the old one;
-  the carried-over `gui` block of a starting record still holds the old token and means nothing until then. The costs, accepted:
-  - a page or a desk webview left open stops working at every restart or crash (its stream's reconnects meet 403) and has to load the
-    new URL: the shell reads the record again at every Moved (a changed `port` or `token`), and a session reads `gui.json` at each use;
-  - a paired phone pairs again, because its cookie is scoped to `Path=/<token>/`: by scanning a new QR code in a browser, or, in an installed
-    app, by typing the short pairing code into the fixed entry `/sb-app/` (decision D25, **Remote app entry**); the entries stay in `paired.json`, and remote
-    access, when wanted, comes back by itself with the serve entry pointed at the new remote listener and links that carry the new token;
-  - an installed iOS or Android home-screen app no longer has to be removed and installed again: its start URL is the fixed entry (the manifest
-    of a remote page says so), and an app installed before that, with a tokened start URL, is sent there from its dead address.
-  Asks while the same listener runs give the same URL. The sessions' restart confirms and the page's Restart button say that the page's
-  address is replaced.
+- **GUI token and CSRF secret (D27, decided by the boss: "永久保留 token 和配對"; it replaces RC3-F002's rotation on every listener).** The token, the
+  CSRF secret and the paired devices persist across restarts, crashes, upgrades, a stop and a start of the GUI, and a reboot. The listener that
+  starts reads `gui-secrets.json` in the slot's folder, `{ v: 1, token, csrf, port, remotePort }`: the token and CSRF secret of the last listener with the pair of
+  ports they were bound to. The file is protected as `paired.json` is: written whole to a new temporary file (`wx`, mode 600) and renamed into place,
+  inside the owner-only folder (on Windows the state folder's ACL, and the file is on the ACL check's list); it is read only when this account owns it and it is
+  no link (`O_NOFOLLOW`), and the token and the secret must be 32 lowercase hex characters, different from each other. The recorded ports (`server.json`'s
+  `gui.port`, else `gui.json`'s, else the store's) are asked for first, retrying for up to 5 s; then:
+  - **both ports bound again (the store's own pair):** the listener keeps the token and the CSRF secret, and `paired.json` keeps its devices. Open pages and a
+    desk webview reconnect by themselves, an installed phone app's tokened start URL and the fixed entry `/sb-app/` (D25) keep working with the device's
+    cookie, and remote access, when wanted, comes back with the serve entry pointed at the new remote listener. A one-time pairing link or code in
+    flight dies with the old process (they are in memory);
+  - **the store is missing or corrupt** (not a file this account owns, not JSON, not exactly this shape), **or a port could not be got back and the
+    listener moved** (a holder kept it, the remote port too): the listener draws a new token and CSRF secret, unpairs every device (a device's cookie is scoped to
+    `Path=/<token>/`; the count is logged as `devices-cleared`), and writes the store anew. The log has one `gui-start` line with `newToken=true` and
+    `why=missing`, `corrupt` or `moved`, and never the secrets. The first start after an upgrade from 0.47 has no store, so it rotates once;
+  - **the boss rotates on purpose:** `/boss gui rotate` (after a confirm that says what it costs) sends the control request `gui-rotate`, the boss's own
+    command like `/boss gui`, so it starts a GUI that was stopped on purpose. The server removes the store first (so a start from here on rotates, and a store that
+    cannot be removed refuses the rotation and changes nothing), takes the remote entry and the listeners down, and starts them again on the same ports under a new token
+    and CSRF secret with every device unpaired (`why=rotate`); remote access comes back pointed at the new listener, and the reply carries the new address as `gui`
+    does. Requests of a second GUI command wait for a rotation in flight. A run token is refused `gui-rotate` as it is every other GUI command. There is no
+    GUI button for it: the page's "unpair all" only unpairs.
+  A store that cannot be written (a full disk, a folder gone) is logged once (`gui-secrets`) and the listener runs; the next start then rotates, since the
+  store is removed before the new secrets are written and a failed write leaves none, never the old ones.
+  `gui.json` (by rename) and `server.json`'s `gui` carry the token before `restarting` is cleared, so no reader sees a live server with the old record; the
+  carried-over `gui` block of a starting record means nothing until then. Asks while the same listener runs give the same URL. **Accepted risk (RC3-F002, the
+  boss's choice):** another local account that binds a port in the gap between two servers (a crash, a restart, a reboot before this server is up) receives the
+  reconnect of an open page and of the app, and so sees the token in the path and the CSRF secret in the requests of those pages, which stay valid when it frees the
+  port again. On the remote port the gap is wider than the boss's description: a clean leave takes the serve entry down first, but a crash leaves it pointing at the dead
+  port, so a squatter there is sent the paired phone's requests with the device cookie, which is now still valid, and the remote listener trusts the Tailscale headers a local
+  process can set itself; the squatter can then act as that device until it is unpaired (the Tailscale identity checks do not stop it). The answers are
+  `/boss gui rotate` after a gap the boss does not trust, and the move rule above when a port is held at the next start.
 - Upgrades:
   - A pi session on a newer pi-straw-boss than `server.json`'s `version` asks the live server to `upgrade`, then starts the new server
     from its own package.
@@ -747,7 +760,7 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
   and takes it back (**Crash and timeout**).
 - A session older than the server does nothing. A session from before this change does not know the server. It sees `gui.json` owned by
   a live process and leaves the GUI alone. During a restart `gui.json` has no `started`, which no old build adopts, and a takeover asked of the server is answered 409. The first server after an
-  upgrade asks a live older host to hand over (`server/stop` with `take`) and binds its port under a new token. It sees `holder.json` held by a newer build and does not take it. If it opens a resident
+  upgrade asks a live older host to hand over (`server/stop` with `take`) and binds its port under a token of its own, since the older host never stored one. It sees `holder.json` held by a newer build and does not take it. If it opens a resident
   tower, the pi in that tab runs the installed (new) code and hands over (**Migration from resident towers**).
 
 ### Seeing and restarting the server
@@ -772,7 +785,7 @@ The boss asked for it: "server restart 也要讓 agent 或 user 有辦法做，�
     the restart.
 - **The GUI**: the settings panel shows the server's state, version, uptime, and last error, with **Restart server** and **Show log**
   (the last 200 lines). Both are on this computer's page only: the endpoints answer 403 `local_only` on the remote listener, as pairing
-  does. Restart asks for an optional reason, `from the GUI` by default. Its confirm says that the page's address is replaced (a new token), so the page ends and the boss opens `/boss gui` again.
+  does. Restart asks for an optional reason, `from the GUI` by default. Its confirm says that the page keeps its address and reconnects by itself (D27); only a taken port changes the address, and the boss then opens `/boss gui` again.
 - **Pi**: `/boss server restart [reason]` asks to confirm, then restarts.
 
 ## What moves out of pi sessions
@@ -1453,8 +1466,8 @@ What changes:
 
 ### Remote app entry
 
-Decision D25 (boss, 2026-10-28): "固定 app 入口＋在 app 裡輸配對碼". The token rotation and the unpairing on restart (RC3-F002) stay as decided; what changes is
-how an installed app pairs again. Everything below is on the remote listener; the local listener answers `/sb-app/` as any wrong token (403).
+Decision D25 (boss, 2026-10-28): "固定 app 入口＋在 app 裡輸配對碼". The token rotation and the unpairing on restart (RC3-F002) stood when it was decided and D27 later removed them (the token and the pairing persist); what D25 changes is
+how an installed app pairs, which it still does after `/boss gui rotate`, a lost store, or a moved port. Everything below is on the remote listener; the local listener answers `/sb-app/` as any wrong token (403).
 
 - **Entry.** `GET /sb-app/` passes the identity checks of a remote page (remote on, exact MagicDNS host, no Funnel marker, this machine's
   `Tailscale-User-Login`), else 403. With a device cookie (`sb_remote`, `Path=/sb-app/`) that is a live pairing it answers 302 to the current
@@ -1490,8 +1503,8 @@ and Herdr server**); straw-boss-desk runs its Herdr on the default socket of its
   starts it, which the shell now does itself with `cli.mjs up`.
 - `stopped` in `gui.json` now means that the GUI listener was stopped on purpose (`/boss gui stop`). The server goes on running the
   tower services and the link. The whole server stopped on purpose is `server.json`'s `stopped`. `up` and `serve` clear both.
-- A restart or upgrade keeps the port when it is free and gives the GUI a new token (**GUI token and CSRF secret**), so the shell's webview
-  loads the new URL after every restart: Moved (a changed `port` or `token`) is how the shell reads a record again.
+- A restart or upgrade keeps the port when it is free and keeps the GUI's token (**GUI token and CSRF secret**, D27), so the shell's webview
+  goes on after a restart; a new token comes with a moved port, a lost store, or `/boss gui rotate`: Moved (a changed `port` or `token`) is how the shell reads a record again.
 
 **The successor: `server.json`.** It sits beside `gui.json` and describes the stack, not only the page. The shell may read `pid`,
 `started`, `version`, `herdr`, `mode`, `desk`, `stopped`, `restarting`, `lastError`, `log`, and `gui: { port, token, stopped }`.
@@ -1508,8 +1521,8 @@ touch keeps coming, however long the start takes; there is no fixed overall limi
 | State | How to tell from the files | `cli.mjs status` | What the shell does |
 |---|---|---|---|
 | live | `server.json` has no `stopped` and no `restarting`; its `pid` is alive and started at `started`; a GET of the URL answers 200 | `{"state":"live", …}` | Show the page. |
-| moved | live, but `gui.port` or `gui.token` differs from the URL the shell loaded (every restart changes the token) | `live`, with the new `url` | Load the new URL once it answers 200; the old one answers 403. |
-| restarting | `server.json` has `restarting` whose `since` is within the last 10 s | `restarting`, with `reason` | Keep the page until the restart ends, then load the new URL (moved): the old token answers 403. |
+| moved | live, but `gui.port` or `gui.token` differs from the URL the shell loaded (a taken port, a lost store, or `/boss gui rotate` changes the token; a plain restart does not) | `live`, with the new `url` | Load the new URL once it answers 200; the old one answers 403. |
+| restarting | `server.json` has `restarting` whose `since` is within the last 10 s | `restarting`, with `reason` | Keep the page until the restart ends; it reconnects to the same URL (the token is kept), and a new URL appears as moved only when the token changed (D27). |
 | gui stopped | live, and `gui.stopped` (`gui.json`'s `stopped`) is set | `gui-stopped` | Say the GUI was stopped; `up` starts it again. |
 | server stopped | `server.json` has `stopped` | `stopped` | Run `up` at the next launch (it clears `stopped`). |
 | gone | none of the above: the PID is dead or started at another time, or `restarting.since` is older than 10 s, or the URL has not answered for 10 s while nothing touched `since` | `gone`, with `lastError` and the `start-error.json` reason when there is one | Run `up`. |
@@ -1624,7 +1637,7 @@ removed, with the release that carries B6. A `config.json` that exists but canno
      transport, and the version and `restarting` rules.
    - `serve` (with its take-over), `up` without `--dir` (with `server`, `version`, and desk handling), `stop` (refused for `serve`),
      `status`, `restart`, and `logs`.
-   - The restart path that keeps the port and gives the GUI a new token, with the requester holding `server.lock`, and `upgrade`.
+   - The restart path that keeps the port and the GUI's token (D27), with the requester holding `server.lock`, and `upgrade`.
    - `server.log` with rotation, `lastError`, and `boss_server` and `/boss server`.
    - The intercom connection through the headless kit. pi-intercom ≥ 0.18.1 is required in `README.md` and checked at start.
    - The Windows VM measure of a cold `up`.
@@ -1713,10 +1726,11 @@ trials), unchanged otherwise.
     - `desk_on`;
     - the full JSON shape, the step list, and exit codes 0 to 3 (4 is `serve`'s and 5 is `stop`'s, tested with them);
     - a start that fails with `acl` in `start-error.json` gives exit 3 with the reason.
-  - `serve`: it takes over a detached server on the same port under a new token; a live `serve` exits 4.
-  - Every kind of restart registers the tower identities before binding the GUI ports, binds the recorded port under a new token and CSRF
-    secret (the old ones answer 403; both records carry the new token), and a taken port moves only the port; a crash is followed by the
-    same, and a start after `gui-stop` too (RC3-F002). The guard keeps a main while `restarting` is fresh and less than 30 s old.
+  - `serve`: it takes over a detached server on the same port under the same token; a live `serve` exits 4.
+  - Every kind of restart registers the tower identities before binding the GUI ports, binds the recorded ports under the stored token and CSRF
+    secret (both records carry the token), and a taken port moves the listener to a new token with the devices cleared; a crash is followed by the
+    same, and a start after `gui-stop` too (D27). A corrupt or missing `gui-secrets.json` rotates with one log line, `gui-rotate` rotates on purpose,
+    and the store is a 600 file in the owner-only folder. The guard keeps a main while `restarting` is fresh and less than 30 s old.
   - `status` gives each state of **States for a shell**. `logs` tails the rotated log, and the log holds no message text or secret.
   - `boss_server`: status with the server down, a restart's reason in `restarting.reason` and the log, one a minute, refused while
     stopped, refused for an ally run's token and in a remote turn at every level.
@@ -1795,13 +1809,13 @@ trials), unchanged otherwise.
   1. The first pi of a fresh agent dir starts the server, and the GUI shows each tower standing.
   2. A main's `call_tower` wakes a pane in the existing tower tab, the run answers and exits, and the tab stays.
   3. The GUI composer wakes the tower.
-  4. Killing the server mid-run: the run reconnects to the restarted one and finishes, and the page needs the new URL (`/boss gui`: the old token answers 403).
+  4. Killing the server mid-run: the run reconnects to the restarted one and finishes, and the open page reconnects by itself (the token is kept; D27).
   5. **Herdr restart:** `herdr server stop`, a new `herdr server`, then a `call_tower`. The server finds the tower tab again, a resumed
      run pi is quit, and the event wakes a fresh run in the restored standing pane, which claims and answers.
   6. Two agent dirs and a local relay: an ally message wakes an ally pane at `reply` while a local run works, and its gate shows in the
      GUI. A `tower_send` with `for` gets its reply into the named main. Against a relay without `tower-reply`, the reply arrives as a
      plain `tower` in an ally run.
-  7. `boss_server restart` from a main, and Restart server in the GUI, both restart the server (the GUI under a new token) with their reason in the
+  7. `boss_server restart` from a main, and Restart server in the GUI, both restart the server (the GUI keeps its token) with their reason in the
      log; the GUI's button is absent on a paired device's page and its endpoint answers 403 there.
 - **Windows VM:**
   1. `cli.mjs up` brings the page up without a tower pi, and B1 records the cold `up` time against the 15 s budget (B1 has no page yet: it
@@ -1816,7 +1830,7 @@ trials), unchanged otherwise.
      exactly that account's SID and `SY`, with no inherited ACE; `server.json` written after it holds only those two, inherited; the
      agent dir's ACL is unchanged; and the whole check is one PowerShell start.
   5. A second local account cannot connect to the pipe (closed with no answer) and cannot read `server.json`.
-  6. `up` after `stop` brings the server back; `up` with the switch against a server started without it restarts it (its GUI under a new token).
+  6. `up` after `stop` brings the server back; `up` with the switch against a server started without it restarts it (its GUI keeps its token).
 - **Review.** The change touches a shared contract (`gui.json`, `server.json`, the control socket), security (remote turns, the
   reopened main path), and the process model, so B1, B2, B3, B5, and B6 each get a fresh-context reviewer after their anchor passes.
 
@@ -1826,8 +1840,8 @@ trials), unchanged otherwise.
 - **Remote entry residuals (D25, RR-F002, RR-F003, crash-gap SW).**
   - *Loopback forger.* Another local account can reach `127.0.0.1:<remotePort>` and send the Host and `Tailscale-User-Login` it reads from `tailscale status`; loopback trust of those headers is the existing design and cannot be improved there. It can POST wrong codes and hold the typing lock (429) until the next `pairCode()`, and 302-vs-403 at a dead token or `/sb-app/` tells it whether a host and login pair is live. It cannot guess a code: 5 tries per issued code against at most 16 live codes (about 7e-11 per issue), and a lock never blocks a code issued later because `pairCode()` gives the tries back. Accepted: denial of the typed pairing only (QR pairing still works), plus an identity oracle.
   - *Cookie port.* The cookie at `Path=/sb-app/` has no port, so any other HTTPS service on this MagicDNS name (another `tailscale serve` entry) sees the pairing cookie; no cookie attribute fixes this (`__Host-` needs `Path=/`). Anything that can also reach the remote listener on loopback can then obtain the token.
-  - *Remote origin SW squatter (open; ticket note "remote origin SW squatter").* A crash-gap squatter on the remote port can register a service worker or keep a script on `https://<host>:8443`, which RC3-F002's token rotation does not remove. It sees every later URL, including `/<token>/pair/<code>` and `/<token>/`. D25 adds no reach (the old tokened start URL already led to it), though an open page there is now enough to see the entry. Open: answer a service-worker script update with 404, or send `Clear-Site-Data: "storage"` on the entry. No code yet.
-- **A squatter that lets the port go (RC3-F002, closed by rotating the token on every new listener).** Another account that binds the port during a crash or restart gap receives the open page's reconnect (token in the path, CSRF secret in its requests) and can free the port again. The GUI therefore keeps no token across a gap: every listener that starts has a token and CSRF secret of its own (**GUI token and CSRF secret**), the old ones answer 403, and the remote serve entry is pointed at the new remote listener. The cost, decided by the user, is that every crash, restart, or upgrade ends the open pages (reopen `/boss gui`) and a paired phone pairs again (a QR code in a browser; in an installed app a typed code at the fixed entry, D25), where it first also meant removing and installing a home-screen app again.
+  - *Remote origin SW squatter (open; ticket note "remote origin SW squatter").* A crash-gap squatter on the remote port can register a service worker or keep a script on `https://<host>:8443`, which a token rotation does not remove. It sees every later URL, including `/<token>/pair/<code>` and `/<token>/`. D25 adds no reach (the old tokened start URL already led to it), though an open page there is now enough to see the entry. Open: answer a service-worker script update with 404, or send `Clear-Site-Data: "storage"` on the entry. No code yet.
+- **A squatter that lets the port go (RC3-F002; accepted by the boss with D27).** Another account that binds the port during a crash, restart or reboot gap receives the open page's reconnect (token in the path, CSRF secret in its requests) and can free the port again. Since D27 the GUI keeps its token and CSRF secret across the gap (**GUI token and CSRF secret**), so the secrets that process saw are valid again at the next listener. The boss chose this over rotating at every start ("永久保留 token 和配對"), at the cost that every crash, restart or upgrade ended the open pages and unpaired the phone, and accepts the risk. What stays: a port that is not got back moves the listener to a new token, `/boss gui rotate` is the boss's answer to a gap they do not trust, and the remote serve entry is repointed at the new remote listener at every start. The risk is wider on the remote port than the boss's description: after a crash the serve entry still points at the dead port, so a squatter there is sent the paired phone's requests with the device cookie, which D27 now keeps valid, and can replay it to the real remote listener with Tailscale headers it sets itself (the identity checks read those headers; see **GUI token and CSRF secret**). Reported to the boss with the change.
 - **The server is now a single point.** While it is down, every workspace lacks a live tower. Mains survive a restart while `restarting`
   is fresh and through the guard's 15 s grace after that, and the broker keeps mail for 24 h, but a server that stays down demotes mains.
   The session looks and the supervisor keep that window short, and `boss_server status` and the log say why it is down.
@@ -1886,8 +1900,9 @@ straw-boss-desk's owner also agreed to D11.
 | D20 | The work board fills itself | The board fills itself from the main's todo list and name, and `board_set` overrides it (2026-10-28, tower experience; D16 and D17 belong to the standing prompt, D18 to D24 to the tower delta). A main writes its own entry from its todo list and its name, scrubbed of paths outside the project, URLs, emails, and token shapes; `board_set` stands until the todos or the name move, and `board_set { auto: true }` hands it back. Q1 = A ("allies get `now` and the done count of an auto entry only") is **superseded** by the boss on 2026-10-28: "收緊：自動的只給名字＋進度": an auto entry gives allies the main's name and the done count (`<name> (3/5)`), no task text; a `board_set` entry goes whole (Straw Link spec, **Auto-fill**; built in T2). |
 | D22 | Event runs stay fresh; the tower's memory is bounded and the boss's | "event runs stay fresh. A bounded tower memory (the boss's standing instructions, decisions, and open waits), editable in the GUI, sits beside the handoff note." Q3 = A (a run keeps one by a verbatim quote of the boss's words, checked by the server) is replaced on 2026-10-28: "改成提議＋你確認". A tower run can only **propose** a standing instruction or a decision (and retiring one); it takes effect only when the boss confirms it, with `/boss memory` or in the GUI. Waits stay run-written. Ally runs never see memory (**Tower memory**). |
 | D23 | pi first, the GUI mirrors | "不該把 GUI 當成必備的，所有操作都應該走 pi 介面，GUI 只是接這個行為": every memory operation is a `/boss memory` command in any joined pi session, and the GUI's panel and card call the same server function with the same rev check and add nothing of their own. A slash command is the boss's typed input only: no tool, run token, ally, or link reaches it (**Tower memory**). |
-| D25 | An installed app after a restart (remote access; boss, 2026-10-28) | Live on 0.46.0: the GUI token rotates on every new listener and paired devices are cleared (RC3-F002), so a phone's home-screen app kept the old tokened start URL, got 403 for good, and on iOS (the app has its own cookie jar) scanning the QR in Safari never paired it. The boss: "固定 app 入口＋在 app 裡輸配對碼". The rotation and the unpairing on restart stay. The remote listener gets a fixed, token-free entry `/sb-app/` (the remote manifest's `start_url`); with a valid device cookie it redirects to the current page, without one it shows a field for a short pairing code (8 characters, 40 bits, once, 10 minutes, void after 5 wrong tries until a new code is asked for on this computer, the same identity checks as the QR, a CSRF-checked POST); the pairing sets the device cookie for `Path=/<token>/` and for `Path=/sb-app/` (never `Path=/`, so it is not sent to other paths on the host). The code is shown beside the QR on this computer's page and in the `/boss gui remote` overlay. The local listener is unchanged, and no token or secret is on the entry's pages (**Remote app entry**). |
+| D25 | An installed app after a restart (remote access; boss, 2026-10-28) | Live on 0.46.0: the GUI token rotated on every new listener and paired devices were cleared (RC3-F002), so a phone's home-screen app kept the old tokened start URL, got 403 for good, and on iOS (the app has its own cookie jar) scanning the QR in Safari never paired it. The boss: "固定 app 入口＋在 app 裡輸配對碼". D27 later kept the token and the pairing across restarts, so the entry is now the way back after a rotation, a lost store, or a moved port. The remote listener gets a fixed, token-free entry `/sb-app/` (the remote manifest's `start_url`); with a valid device cookie it redirects to the current page, without one it shows a field for a short pairing code (8 characters, 40 bits, once, 10 minutes, void after 5 wrong tries until a new code is asked for on this computer, the same identity checks as the QR, a CSRF-checked POST); the pairing sets the device cookie for `Path=/<token>/` and for `Path=/sb-app/` (never `Path=/`, so it is not sent to other paths on the host). The code is shown beside the QR on this computer's page and in the `/boss gui remote` overlay. The local listener is unchanged, and no token or secret is on the entry's pages (**Remote app entry**). |
 | D26 | The GUI composer continues the boss conversation | Q2 = A, 2026-10-28: "The GUI composer continues the same boss conversation as `tower>` (one per workspace)." The GUI, the prompt, and `/boss tower` call one server function; a conversation resumes the last boss session under the checks of **The boss conversation**, and an event run stays fresh. |
+| D27 | The GUI token, CSRF secret and paired devices persist (boss, 2026-10-29) | "永久保留 token 和配對": the GUI token, the CSRF secret and the paired devices persist across sb server restarts: crash, upgrade, `boss_server restart`, a reboot. This replaces RC3-F002's rotation and unpairing on every new listener. The boss accepts the risk RC3-F002 guarded against (another local account that binds the port in the restart gap sees the token of the reconnecting pages). The secrets are kept in `gui-secrets.json` with the pair of ports they belong to, protected as `paired.json` is. Rotation stays possible on purpose: `/boss gui rotate` (pi first, the control request `gui-rotate`) makes a new token and secret and unpairs every device; there is no GUI control for it. It also happens when the store is missing or corrupt, and when the listener cannot get both of its ports back and has to move (a holder kept one; the boss's recommendation, not a rule they stated). The remote serve entry comes back pointed at the listener as before (**GUI token and CSRF secret**). |
 
 ## Review record
 
@@ -1906,7 +1921,7 @@ straw-boss-desk's owner also agreed to D11.
 6. **Windows detached start.** It uses `windowsHide`, with a unit test and a VM check.
 7. **Version skew.** `up` reports `version` and `package`; an older server is upgraded; a newer one gets a warning, or exit 1 with
    `--exact`.
-8. **Restart and upgrade keep the port and give the GUI a new token** (RC3-F002). Moved (a changed `port` or `token`) is how a shell reads the record again.
+8. **Restart and upgrade keep the port and the GUI's token** (D27; a new token only with a moved port, a lost store, or `/boss gui rotate`). Moved (a changed `port` or `token`) is how a shell reads the record again.
 9. **`up`'s JSON fields** are listed (**`up`'s output**).
 10. **States for a shell** are in one table, which goes into how-it-works.
 
