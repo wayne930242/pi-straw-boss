@@ -324,7 +324,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased 381 to 382 (work board auto-fill): index.ts (76), boardfill.ts imported and built into the tools.
 	// Unreleased 382 to 398 (tower memory, T3): the rest of src carries the memory's wiring.
 	// Unreleased (sb server B6, VM pass fixes) 398 to 410: runmark.ts (9, new: the run mark balance.ts and runmode.ts share) and balance.ts (the quit of a run starts no helper).
-	assert.ok(rest <= 410, `the rest of src has ${rest} lines`);
+	// Unreleased 410 to 413 (seat, RVSEAT2-F002): herdr.ts, StartUnproven and startPi's seat check before each retry.
+	assert.ok(rest <= 413, `the rest of src has ${rest} lines`);
 	// Unreleased (settings check, probe): settings.ts is the lstat gate, the child's program (refuses a link it cannot follow, stats before opening; review SR5), and its runner (160); it no longer walks links. settings.ts 92 (new: the look before pi starts in a folder), raised 92 to 135 for the link walk (every hop of .pi and settings.json, refusing /proc, /dev, /sys; review SP-R001).
 	// Unreleased raised trust/ask.ts from 182 to 183 (RC3-F001): the recorded server's start time is read when the handler registers.
 	// Unreleased raised trust/ask.ts from 183 to 201 (RC4-F001, F002): `warmServerStart` (the early read only for a live server that reads trust requests) and `guiUp` (what the handler's `up` asks) are exported for their tests, and `registerTrust` takes the terminal it answers on.
@@ -382,7 +383,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// B7 review fixes (RVB7-F001 to F007): record.ts 474 to 478 (`takeLock` takes another lock's files and age: desk.lock), desk.ts 104 to 119 (the lock through `takeLock`, the base matched to its record, the folder from Herdr's status line), cli.ts 433 to 440 (the base kept or replaced, the Herdr calls bounded by `--timeout`).
 	// B7 second review (RVB7B-F001 to F003): desk.ts 114 to 122 (the base matched by its label or a pane in its folder; the Windows case-folding note).
 	// Seat review (RVSEAT-F001 to F004): towers.ts 942 to 1007 (the proof is for a terminal and asked of a listing at each act: `holds`, `proven`, `herdrChanged`; `lose` voids the seat; the claim goes through `claimGate`; `recoverPollMs`); the rules themselves are typegate.ts `proofGate` and `claimGate`.
-	for (const [name, max] of [["record.ts", 478], ["log.ts", 135], ["version.ts", 28], ["acl.ts", 398], ["socket.ts", 220], ["client.ts", 699], ["intercom.ts", 102], ["main.ts", 610], ["cli.ts", 440], ["winprep.ts", 492], ["breakaway.ts", 251], ["testguard.ts", 115], ["towers.ts", 1007], ["towerstore.ts", 267], ["towerruns.ts", 28], ["towerclient.ts", 76], ["desk.ts", 125]] as const) assert.ok(count(`src/server/${name}`) <= max, `src/server/${name} has ${count(`src/server/${name}`)} lines`);
+	// Seat re-review (RVSEAT2-D3): towers.ts 1007 to 1009 (the boss's close of the tower tab asks the seat first).
+	for (const [name, max] of [["record.ts", 478], ["log.ts", 135], ["version.ts", 28], ["acl.ts", 398], ["socket.ts", 220], ["client.ts", 699], ["intercom.ts", 102], ["main.ts", 610], ["cli.ts", 440], ["winprep.ts", 492], ["breakaway.ts", 251], ["testguard.ts", 115], ["towers.ts", 1009], ["towerstore.ts", 267], ["towerruns.ts", 28], ["towerclient.ts", 76], ["desk.ts", 125]] as const) assert.ok(count(`src/server/${name}`) <= max, `src/server/${name} has ${count(`src/server/${name}`)} lines`);
 	// The page: the files the spec budgets one by one, then this round's own figures (no figure in the spec): the focus views, the overlay
 	// layer (alert spotting and the stack model in the map's chunk, the layer's DOM and tiles in a chunk of their own), the dev-only demo, and everything else.
 	// 0.18.1 raised mirror.ts to 154 for embed, a terminal shown inside the session view instead of a tile.

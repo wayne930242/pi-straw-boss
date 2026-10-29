@@ -240,6 +240,7 @@ export function createStanding(o: StandingOptions) {
 				const last = Math.max(m.launched ?? -Infinity, typingIn(paneId, seat?.terminal_id)?.at ?? -Infinity);
 				return last > -Infinity && now() - last < Math.min(t.launchMs * 2 ** Math.max(0, m.typings - 1), t.launchMaxMs);
 			},
+			typedHere: () => typingIn(paneId, seat?.terminal_id) !== undefined,
 			command: () => Boolean((command = o.command(target.workspace) ?? "")),
 			settle: () => settle(m),
 			fresh: () => m.fresh,
@@ -269,6 +270,7 @@ export function createStanding(o: StandingOptions) {
 					if (!isStandin(pane) || !m.reported || m.reported.message !== message || now() - m.reported.at >= t.refreshMs) await report(m, pane, message);
 					return;
 				}
+				case "typed":
 				case "unproven":
 					// A prompt that died in any pane the server does not know to be fresh is said once, and the pane waits for the next run or Herdr restart.
 					if (!m.lost) {
@@ -422,6 +424,8 @@ export function createStanding(o: StandingOptions) {
 			const m = mines.get(workspace);
 			if (!m || !handGate(present(m))) return;
 			m.hand = { ...(pid !== undefined ? { pid } : {}), at: now() };
+			// A resident tower's pi was in the pane since the command was typed: the record of that typing is of an earlier occupant.
+			typed.delete(m.target.pane());
 			m.lost = false;
 			m.giveUp = false;
 			m.failures = 0;
@@ -434,8 +438,15 @@ export function createStanding(o: StandingOptions) {
 		},
 		/** A new Herdr server: every pane is a fresh shell, so nothing is believed of what was there. */
 		reset() {
-			typed.clear();
+			// A typing in a terminal stays on record: a new Herdr's terminals are new, and the take-over may come after the look already typed into the new one (RVSEAT2-F001).
+			for (const [id, record] of typed) if (record.terminal === undefined) typed.delete(id);
 			for (const m of mines.values()) Object.assign(m, { seen: undefined, leaving: false, parked: false, launched: undefined, reported: undefined, misses: 0, unsupported: undefined, typings: 0, fresh: true, noStart: false, lost: false, hand: undefined, freshUntil: undefined, failures: 0, giveUp: false });
+		},
+		/** Whether the command was typed into the pane lately and its prompt has not polled since: it is starting, and the wait before the next typing still runs. */
+		starting(workspace: string): boolean {
+			const m = mines.get(workspace);
+			if (!m || present(m) || m.launched === undefined) return false;
+			return now() - m.launched < Math.min(t.launchMs * 2 ** Math.max(0, m.typings - 1), t.launchMaxMs);
 		},
 		/** The look at once (a service just went live), without waiting for the interval. */
 		kick: (workspace: string) => void tick(workspace),

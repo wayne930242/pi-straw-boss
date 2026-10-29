@@ -179,6 +179,7 @@ export function createTowers(o: TowersOptions): Towers {
 		cwd: async () => (await panes(run, l.record.workspace).catch(() => [])).find((p) => p.pane_id === l.record.pane)?.cwd ?? l.record.cwd ?? slot.stateDir,
 		towerKey: async () => (await netTokens(run, place(l), "tower", l.record.name, now(), cfg.world)).own.sb_order ?? undefined,
 		yieldPane: () => standing.yieldPane(l.record.workspace),
+		starting: () => standing.starting(l.record.workspace),
 		freed: (over) => standing.freed(l.record.workspace, over?.fresh, over?.keepParked),
 		clearDigest: (keys) => digest.drop(l.record.workspace, keys),
 		renewPane: (runId) => renew(l, runId),
@@ -962,7 +963,8 @@ export function createTowers(o: TowersOptions): Towers {
 		async close(workspace) {
 			const l = services.get(workspace);
 			if (!l) throw new Error(`The sb server stands in for no tower of workspace ${workspace}`);
-			await run(["tab", "close", l.record.tab]).catch(() => {});
+			// The tab is closed only while it is proven the tower's own (a new Herdr may have given its id to a tab of the boss's); an unproven one is left, and the service ends all the same.
+			if (l.seated || (await prove(l)) === "ours") if (await proven(l)) await run(["tab", "close", l.record.tab]).catch(() => {});
 			await lose(l, "closed by the boss");
 			return { workspace, id: l.record.id };
 		},

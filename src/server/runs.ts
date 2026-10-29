@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { lstatSync, realpathSync } from "node:fs";
 import { basename, resolve, sep } from "node:path";
 import { fieldsOf } from "../header.ts";
-import { type HerdrRun, panes, report, result, type Sleep, startPi } from "../herdr.ts";
+import { type HerdrRun, panes, report, result, type Sleep, startPi, StartUnproven } from "../herdr.ts";
 import { allyKids, clearOrder } from "../order.ts";
 import { alive as pidAlive } from "../remote.ts";
 import { rememberStart, startOf as processStartOf, startedLater as processStartedLater } from "../startof.ts";
@@ -11,6 +11,7 @@ import { waitPastTrust } from "../trust/wait.ts";
 import type { MemorySummary, TowerView } from "../net.ts";
 import { type BossPointer, type ConversationInfo, readPointer, resumable, sessionsRoot, underRoot, writePointer } from "./bossconv.ts";
 import { herdrCode } from "./herdrcode.ts";
+import { proofGate } from "./typegate.ts";
 import { isShell, nestedShells, programName, programProcs } from "./standing.ts";
 import { retryGate, runEndGate, tableGate } from "./typegate.ts";
 import { chain, isWrapper, leafOf, type Proc, type Procs, readProcs } from "./lineage.ts";
@@ -154,6 +155,8 @@ export interface ServiceRef {
 	towerKey(): Promise<string | undefined>;
 	/** A local run is about to start pi in the standing pane: the stand-in goes and the tower prompt leaves (standing.ts); resolves once the pane is free. */
 	yieldPane(): Promise<void>;
+	/** The tower prompt was typed into the pane lately and has not polled yet: it is starting there (standing.ts). */
+	starting?(): boolean;
 	/** A local run ended: the pane is free for the prompt again. `keepParked`: the give-back of a Retry or of the tower's own proof, which never ends the boss's Ctrl+D park. `fresh: false`: pi was never started in it (Herdr refused the start), so it is not known to be a bare shell, and on Windows nothing is typed into it. */
 	freed(over?: { fresh?: boolean; keepParked?: boolean }): void;
 	/** The brief for a run: the server builds it from the net, the opener's ledger, the digest, and the last note. `refresh`: a live run is given the newest, not a new one. */
@@ -205,6 +208,8 @@ interface Active {
 	polled?: true;
 	/** A local run whose `agent start` did not complete (Herdr refused it or it timed out): its pane may hold a program of the boss's, so it is not marked a fresh shell when the run ends (RV10-F002). */
 	unstarted?: true;
+	/** An ally run: the terminal its pane ran in when it was split off (Herdr lists it), the proof that the pane is still that one after a Herdr came back. */
+	terminal?: string;
 	idleSince?: number;
 	started: number;
 	closing?: number;
@@ -293,7 +298,7 @@ export interface RunsOptions {
 	model(): string | undefined;
 	timers?: Partial<Timers>;
 	// Seams for tests: starting pi, the settings check, process liveness, the start time of a process, signals, and run ids.
-	startPi?: typeof startPi;
+	startPi?: (run: HerdrRun, sleep: Sleep, name: string, paneId: string, piArgs: string[], proven?: () => Promise<boolean>) => Promise<unknown>;
 	settings?: (dirs: string[]) => Promise<void>;
 	alive?: (pid: number) => boolean;
 	startOf?: (pid: number) => string | undefined;
@@ -449,7 +454,7 @@ export function createRuns(o: RunsOptions) {
 		svc.proving = true;
 		// The pane is not marked fresh before the read: the unstarted run left it unmarked, the look's proof sets no mark (RV13-F002), and a give-back here would clear what is known of a prompt that polls (RV14-F001).
 		try {
-			const found = await belowShell(svc.ref.record().pane, newId()).catch(() => undefined);
+			const scan = await scanBelow(svc.ref.record().pane, newId()).catch(() => undefined), found = scan?.programs;
 			if (stopped || retryGate({ win, run: Boolean(svc.run), queued: waitingOf(svc).length > 0, wasBusy: false }) !== "prove") return; // a run is about to take the pane: its start decides (the gate's rule, asked again after the read)
 			const proof = tableGate(found);
 			if (proof === "unreadable") return void noticeOf(svc, { id: "start", level: "warning", kind: "start", text: "The tower could not check the standing pane for a program of yours, so it types nothing there; press Retry when it is free" });
@@ -460,6 +465,8 @@ export function createRuns(o: RunsOptions) {
 				svc.state = "held";
 				return void noticeOf(svc, { id: "start", level: "warning", kind: "start", text: `The tower types nothing in the standing pane: ${busyText(busy)}` });
 			}
+			// The tower prompt is below the shell, not polling yet: the command was typed and the prompt is starting, so the pane is not given back to be typed into a second time (RVSEAT2-D1).
+			if (scan?.prompt && svc.ref.starting?.()) return;
 			svc.paneUnproven = undefined;
 			svc.ref.freed({ keepParked: true });
 		} finally {
@@ -481,7 +488,7 @@ export function createRuns(o: RunsOptions) {
 					active.unstarted = true;
 					return void (await finish(active, "herdr-restart", "the standing pane is no longer proven to be the tower's"));
 				}
-				await start(o.run, o.sleep, rec.agent, rec.pane, ["--name", name, "--sb-run", id, ...extra, ...(o.model() ? ["--model", o.model()!] : [])]);
+				await start(o.run, o.sleep, rec.agent, rec.pane, ["--name", name, "--sb-run", id, ...extra, ...(o.model() ? ["--model", o.model()!] : [])], () => svc.ref.proven());
 				started = true;
 				const found = await procOf(rec.pane, id);
 				if (!found) throw new Error("pi's process was not found in the pane");
@@ -493,6 +500,12 @@ export function createRuns(o: RunsOptions) {
 				return;
 			} catch (cause) {
 				if (active.ended) return;
+				// The seat was lost while the start waited for the pane: pi started in none, and the run ends as one whose seat was lost before it.
+				if (cause instanceof StartUnproven) {
+					log.line("run-refused", { workspace: svc.ref.workspace, why: "seat", run: id });
+					active.unstarted = true;
+					return void (await finish(active, "herdr-restart", "the standing pane is no longer proven to be the tower's"));
+				}
 				// A start that failed with a program of the boss's in the pane's foreground (not a shell, not the tower prompt) is the pane's doing (RV2-F001: nothing of theirs is closed, and a start that is not Herdr's timeout code is no reason for a new pane): the notice names the program and the service starts again when the pane is free.
 				const info = started || rec.kind !== "local" ? undefined : await paneInfo(rec.pane);
 				let programs: { pid?: number; argv0?: string; name?: string }[] = programProcs(info);
@@ -606,6 +619,7 @@ export function createRuns(o: RunsOptions) {
 			const lead = svc.ref.record().pane, dir = await svc.ref.cwd();
 			const made = await result(o.run, ["pane", "split", lead, "--direction", "right", "--cwd", dir, "--no-focus"]);
 			rec.pane = made.pane.pane_id as string;
+			active.terminal = (await panes(o.run, svc.ref.workspace).catch(() => [])).find((p) => p.pane_id === rec.pane)?.terminal_id;
 			await markAllies(svc);
 		} catch (cause) {
 			if (active.ended) return;
@@ -652,13 +666,15 @@ export function createRuns(o: RunsOptions) {
 	 */
 	const belowShell = async (pane: string, runId: string): Promise<{ pid?: number; name?: string }[] | undefined> => (await scanBelow(pane, runId))?.programs;
 	/** The same read, with the nested shells it found below the pane's shell besides (they are no program to name, but a start that Herdr refused as busy has them for its cause). */
-	const scanBelow = async (pane: string, runId: string): Promise<{ programs: { pid?: number; name?: string }[]; shells: { pid?: number; name?: string }[] } | undefined> => {
+	const scanBelow = async (pane: string, runId: string): Promise<{ programs: { pid?: number; name?: string }[]; shells: { pid?: number; name?: string }[]; prompt: boolean } | undefined> => {
 		const shell = (await paneInfo(pane))?.shell_pid, table = typeof shell === "number" ? await procs(runId) : undefined;
 		// Undefined is a read that failed (no shell PID from Herdr, the process table did not answer); an empty list is a read that found nothing.
 		if (typeof shell !== "number" || !table) return undefined;
 		const own = (pid: number) => chain(table, pid, shell)?.some((up) => table.find((p) => p.pid === up)?.carries || table.find((p) => p.pid === up)?.prompt) === true;
 		const found = table.filter((p) => p.pid !== shell && !/^(conhost|openconsole)(\.exe)?$/i.test(p.name) && chain(table, p.pid, shell) !== undefined && !own(p.pid)).map((p) => ({ pid: p.pid, name: p.name }));
-		return { programs: programProcs({ foreground_processes: found }), shells: found.filter(isShell) };
+		// A tower prompt below the shell: it is there, or still starting (not polling yet).
+		const prompt = table.some((p) => p.prompt && chain(table, p.pid, shell) !== undefined);
+		return { programs: programProcs({ foreground_processes: found }), shells: found.filter(isShell), prompt };
 	};
 	const pidsOf = async (pane: string): Promise<number[] | undefined> => (await foreground(pane))?.flatMap((p) => (typeof p.pid === "number" ? [p.pid] : []));
 	/** The process Herdr lists for the run: the one whose command line holds the run id, else the one named pi. It may be a wrapper that started pi (`resolve`). */
@@ -844,7 +860,9 @@ export function createRuns(o: RunsOptions) {
 	async function finishAlly(a: Active, outcome: Outcome, failed: boolean, keepTaken: boolean) {
 		const svc = a.svc, identity = svc.ref.record().id;
 		// The pane is closed once pi has exited: a pane that pi leaves returns to its shell and would stay (a started pi that is still there goes with it).
-		if (a.rec.pane) {
+		// After a new Herdr came back the id may name a pane of the boss's own: the pane is closed and unmarked only when it is listed in the terminal the ally run's pane ran in (typegate.ts `proofGate`).
+		const ours = a.rec.pane && (outcome !== "herdr-restart" || (await panes(o.run, svc.ref.workspace).then((list) => proofGate({ terminal: a.terminal, pane: list.find((p) => p.pane_id === a.rec.pane) }) === "holds", () => false)));
+		if (ours) {
 			await clearOrder(o.run, [a.rec.pane]);
 			await o.run(["pane", "close", a.rec.pane]).catch(() => {});
 			// The panes of the device's siblings move up in the order, and the branch of the last one is drawn.

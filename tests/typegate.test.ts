@@ -27,6 +27,7 @@ function facts(over: Partial<TypeFacts> = {}, win = false): { f: TypeFacts; call
 		parked: () => (calls.push("parked"), false),
 		runSoon: () => (calls.push("runSoon"), false),
 		launchWait: () => (calls.push("launchWait"), false),
+		typedHere: () => false,
 		command: () => (calls.push("command"), true),
 		settle: () => (calls.push("settle"), { hand: false, giveUp: false }),
 		fresh: () => (calls.push("fresh"), true),
@@ -56,6 +57,7 @@ const rules: [NoReason, Partial<TypeFacts>, boolean?][] = [
 	["no-command", { command: () => false }],
 	["hand", { settle: () => ({ hand: true, giveUp: false }) }],
 	["gave-up", { settle: () => ({ hand: false, giveUp: true }) }],
+	["typed", { typedHere: () => true }, true],
 	["held", { held: true }, true],
 	["unproven", { fresh: () => false }, true],
 	["not-idle", { read: async () => runningDarwin }],
@@ -103,6 +105,8 @@ test("typeGate: the rules are asked in order, and a fact is read only when every
 	for (const [over, reason] of expected) assert.deepEqual(await typeGate(facts(over).f), { type: false, reason }, reason);
 	// Windows: held before unproven before the read.
 	const win = { ...expected[expected.length - 1]![0], settle: () => ({ hand: false, giveUp: false }) };
+	assert.deepEqual(await typeGate(facts({ ...win, typedHere: () => true }, true).f), { type: false, reason: "typed" });
+	assert.deepEqual(await typeGate(facts({ ...win, held: false, fresh: () => true, typedHere: () => true }, false).f), { type: false, reason: "not-idle" }, "where Herdr gives the foreground group the record is no rule");
 	assert.deepEqual(await typeGate(facts(win, true).f), { type: false, reason: "held" });
 	assert.deepEqual(await typeGate(facts({ ...win, held: false }, true).f), { type: false, reason: "unproven" });
 	assert.deepEqual(await typeGate(facts({ ...win, held: false, fresh: () => true }, true).f), { type: false, reason: "not-idle" });

@@ -127,6 +127,8 @@ export type NoReason =
 	| "gave-up"
 	/** Windows, a held service: the start failed and nothing proves the pane is a bare shell (RV10-F002). */
 	| "held"
+	/** Windows: the command is on record as typed into this terminal, and the foreground list cannot say whether its prompt runs: once per terminal (RVSEAT2-D1, F001). */
+	| "typed"
 	/** Windows: the pane is not known to be a fresh shell, and the foreground list cannot tell an idle shell from a running program there. */
 	| "unproven"
 	/** The foreground is not a shell at its idle prompt: a build, an editor, a program of the boss's. */
@@ -159,6 +161,8 @@ export interface TypeFacts {
 	parked(): boolean;
 	runSoon(): boolean;
 	launchWait(): boolean;
+	/** Whether the command is on record as typed into the pane in the terminal it is listed in now (any age). */
+	typedHere(): boolean;
 	/** Whether a command can be made. */
 	command(): boolean;
 	/** Upkeeps the hand-over's proof and the lapse of a mark (`settleGate`), and tells whether a resident tower's pi may still run and whether Herdr's refusals ended the typing. */
@@ -189,6 +193,7 @@ export async function typeGate(f: TypeFacts): Promise<TypeVerdict> {
 	const settled = f.settle();
 	if (settled.hand) return no("hand");
 	if (settled.giveUp) return no("gave-up");
+	if (!f.groups && f.typedHere()) return no("typed");
 	if (!f.groups && f.held) return no("held");
 	if (!f.groups && !f.fresh()) return no("unproven");
 	const info = await f.read();

@@ -211,7 +211,9 @@ export async function createTab(run: HerdrRun, workspace: string, dir: string, e
 }
 
 /** Starts pi in the pane under a Herdr agent name. A new tab's shell may not be at its prompt yet: herdr answers agent_pane_busy until it is, and any other failure is final. */
-export async function startPi(run: HerdrRun, sleep: Sleep, name: string, paneId: string, piArgs: string[]) {
+export class StartUnproven extends Error {}
+/** `proven`: asked before each retry after a busy answer; the pane may have changed hands while the start waited. */
+export async function startPi(run: HerdrRun, sleep: Sleep, name: string, paneId: string, piArgs: string[], proven?: () => Promise<boolean>) {
 	const start = ["agent", "start", name, "--kind", "pi", "--pane", paneId, "--timeout", String(START_MS), "--", ...piArgs];
 	for (let attempt = 1; ; attempt++) {
 		try {
@@ -219,6 +221,7 @@ export async function startPi(run: HerdrRun, sleep: Sleep, name: string, paneId:
 		} catch (error) {
 			if (attempt === START_ATTEMPTS || !(error as Error).message.includes("agent_pane_busy")) throw error;
 			await sleep(500);
+			if (proven && !(await proven())) throw new StartUnproven(`the pane ${paneId} is no longer proven to be the one the start was made for`);
 		}
 	}
 }

@@ -7,7 +7,7 @@ import { fakeClock } from "./fake-clock.ts";
 // What the standing look does about the seat (RVSEAT-F001, F002): the proof is asked of a listing read just before the typing, a service that is lost types nothing from a look it had in flight, and the pane is
 // typed into once whoever stands for it. These run the standing logic itself against a clock the test moves (no server, no sleeps).
 
-function rig() {
+function rig(platform: NodeJS.Platform = "darwin") {
 	const clock = fakeClock(1_000_000);
 	const typed: string[] = [], lines: string[] = [];
 	/** The terminal each successive listing of the pane answers; the last one repeats. */
@@ -36,7 +36,7 @@ function rig() {
 	};
 	const standing = createStanding({
 		run, api: async () => undefined, world, sleep: clock.sleep, now: clock.now, log: { line: (event) => void lines.push(event), hide: () => {} },
-		command: () => "node prompt", platform: "darwin", alive: () => false, timers: { launchMs: 250 },
+		command: () => "node prompt", platform, alive: () => false, timers: { launchMs: 250 },
 	});
 	const target = (over: Partial<StandingTarget> = {}): StandingTarget => ({ workspace: "wA", label: () => "Alpha", pane: () => "p1", live: () => true, status: () => ({ state: "standing", queued: 0 }) as never, ...over });
 	return {
@@ -104,7 +104,7 @@ test("RVSEAT-F002: the pane is typed into once whoever stands for it: a service 
 	assert.equal(r.typed.length, 2);
 });
 
-test("RVSEAT-F002: a typing on record belongs to its terminal: a new service for the same pane id in another terminal is not made to wait, and a new Herdr clears the record", async () => {
+test("RVSEAT-F002: a typing on record belongs to its terminal: a new service for the same pane id in another terminal is not made to wait, and a new Herdr keeps the record of a typing in a terminal (RVSEAT2-F001)", async () => {
 	const r = rig();
 	r.standing.attach(r.target({ seated: () => true }), true);
 	await r.standing.tick();
@@ -116,32 +116,31 @@ test("RVSEAT-F002: a typing on record belongs to its terminal: a new service for
 	await r.standing.tick();
 	assert.equal(r.typed.length, 2, "nothing was typed into this terminal yet");
 	r.standing.reset();
-	assert.equal(r.standing.typedSince("p1", "term_9", 0), false);
+	assert.equal(r.standing.typedSince("p1", "term_9", 0), true, "the terminal it was typed into is still that terminal");
+	assert.equal(r.standing.typedSince("p1", "term_10", 0), false, "a new Herdr's terminal has not been typed into");
 });
 
-test("RVSEAT-F002: a typing Herdr refuses is no typing: it is not on record, and the desk's claim is not told the pane was typed into", async () => {
-	const r = rig();
-	r.standing.attach(r.target({ seated: () => true }), true);
-	r.refuse(true);
-	await r.standing.tick();
-	assert.deepEqual(r.typed, []);
-	assert.equal(r.standing.typedSince("p1", "term_1", 0), false);
-	r.refuse(false);
-	r.clock.advance(300);
-	await r.standing.tick();
-	assert.equal(r.typed.length, 1);
-	assert.equal(r.standing.typedSince("p1", "term_1", 0), true);
-});
-
-test("RVSEAT-F002: a give-back (a run's end, Retry) ends the wait on the command typed before it, for the pane as for the service: the prompt is typed again at once", async () => {
+test("RVSEAT2-F001 darwin: the takeover's reset after the look typed into the terminal does not let the next look type into it again", async () => {
 	const r = rig();
 	r.standing.attach(r.target({ seated: () => true }), true);
 	await r.standing.tick();
 	assert.equal(r.typed.length, 1);
-	r.clock.advance(10); // inside the wait on the command typed
+	r.standing.reset();
+	r.clock.advance(10);
 	await r.standing.tick();
-	assert.equal(r.typed.length, 1, "waited on");
-	r.standing.freed("wA");
+	assert.equal(r.typed.length, 1);
+});
+
+test("RVSEAT2-F001 win32: reset believes the pane fresh, but a typing on record in this terminal says no", async () => {
+	const r = rig("win32");
+	r.standing.attach(r.target({ seated: () => true }), true);
 	await r.standing.tick();
-	assert.equal(r.typed.length, 2, "given back: typed again inside the wait");
+	assert.equal(r.typed.length, 1);
+	r.standing.reset();
+	r.clock.advance(60_000);
+	await r.standing.tick();
+	assert.equal(r.typed.length, 1);
+	r.terminals("term_new");
+	await r.standing.tick();
+	assert.equal(r.typed.length, 2, "another terminal is typed into");
 });
