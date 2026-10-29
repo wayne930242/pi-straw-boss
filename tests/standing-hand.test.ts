@@ -270,7 +270,7 @@ test("RV10-F002: a pane freed by a run whose pi never started in it is not marke
 });
 
 // RV11-F001: the real path of an unstarted run: freed with fresh false, then the hold ends with no event waiting (nothing starts a run to mark the pane fresh).
-test("RV11-F001: the shell alone at two looks with the holding program gone gives the pane back fresh, and the prompt is typed with no run to start", async () => {
+test("RV11-F001: the shell alone at two looks with the holding program gone asks for the pane back and types nothing itself", async () => {
 	const r = rig("win32");
 	r.standing.freed("wA", false);
 	r.state = "held";
@@ -282,7 +282,7 @@ test("RV11-F001: the shell alone at two looks with the holding program gone give
 	r.state = "standing";
 	r.busy = false;
 	await looks(r, 2);
-	assert.equal(r.typed.length, 1, "retyped though no run starts");
+	assert.deepEqual(r.typed, [], "the look sets no fresh mark: the give-back is Retry's table read, not the look's typing (RV13-F002)");
 	const live = rig("win32");
 	live.standing.freed("wA", false);
 	live.state = "held";

@@ -211,8 +211,7 @@ export function createStanding(o: StandingOptions) {
 			m.busyClear = pids.length > 0 && pids.every((pid) => !alive(pid) && !listed.includes(pid)) && idleShell(info, true, groups) ? m.busyClear + 1 : 0;
 			if (m.busyClear >= 2) {
 				m.busyClear = 0;
-				// Two looks of the shell alone with the holding programs gone are proof enough for a pane whose run never started pi: it gives the prompt back even when no event waits to start a run (RV11-F001).
-				Object.assign(m, { fresh: true, freshUntil: now() + t.handMs });
+				// Two looks of the shell alone with the holding programs gone ask for the pane back; no mark is set here: with no event waiting `paneFree` → Retry proves the pane empty by a table read, with one waiting the run's start decides (RV13-F002).
 				target.paneFree?.();
 			}
 			return;
@@ -382,11 +381,11 @@ export function createStanding(o: StandingOptions) {
 			}
 		},
 		/** A local run ended: the pane is free for the prompt again, and the boss's Ctrl+D is over. `fresh` false: the run's pi never started in it, so it is not known to be a bare shell (a program of the boss's may run there). */
-		freed(workspace: string, fresh = true) {
+		freed(workspace: string, fresh = true, keepParked = false) {
 			const m = mines.get(workspace);
 			if (!m) return;
 			m.leaving = false;
-			Object.assign(m, { parked: false, launched: undefined, seen: undefined, reported: undefined, misses: 0, typings: 0, fresh, noStart: false, lost: false, hand: undefined, freshUntil: undefined, failures: 0, giveUp: false });
+			Object.assign(m, { ...(keepParked ? {} : { parked: false }), launched: undefined, seen: undefined, reported: undefined, misses: 0, typings: 0, fresh, noStart: false, lost: false, hand: undefined, freshUntil: undefined, failures: 0, giveUp: false });
 			void tick(workspace);
 		},
 		/** A resident tower (its pi has `pid`) handed this pane over and is quitting: once that process is gone the pane is a bare shell the server just got back, as after a run. The look proves it (`proveHand`); nothing is believed on the word of the hand-over alone. A prompt that polls is left alone. */

@@ -151,8 +151,8 @@ export interface ServiceRef {
 	towerKey(): Promise<string | undefined>;
 	/** A local run is about to start pi in the standing pane: the stand-in goes and the tower prompt leaves (standing.ts); resolves once the pane is free. */
 	yieldPane(): Promise<void>;
-	/** A local run ended: the pane is free for the prompt again. `fresh: false`: pi was never started in it (Herdr refused the start), so it is not known to be a bare shell, and on Windows nothing is typed into it. */
-	freed(over?: { fresh: boolean }): void;
+	/** A local run ended: the pane is free for the prompt again. `keepParked`: the give-back of a Retry or of the tower's own proof, which never ends the boss's Ctrl+D park. `fresh: false`: pi was never started in it (Herdr refused the start), so it is not known to be a bare shell, and on Windows nothing is typed into it. */
+	freed(over?: { fresh?: boolean; keepParked?: boolean }): void;
 	/** The brief for a run: the server builds it from the net, the opener's ledger, the digest, and the last note. `refresh`: a live run is given the newest, not a new one. */
 	brief(input: { events: QueuedEvent[]; woken: number; run: RunRecord; refresh?: true }): Promise<{ text: string; digestKeys: string[]; expired?: string[] }>;
 	/** What a refreshed brief would differ by, cheap to compute: a live run is given a new brief when it moves (the memory, a handoff note). */
@@ -432,7 +432,7 @@ export function createRuns(o: RunsOptions) {
 		if (svc.proving) return;
 		svc.proving = true;
 		// The mark that lets the prompt be typed is off while the table is read: the look's own proof marked the pane fresh before it asked for Retry.
-		svc.ref.freed({ fresh: false });
+		svc.ref.freed({ fresh: false, keepParked: true });
 		try {
 			const found = await belowShell(svc.ref.record().pane, newId()).catch(() => undefined);
 			if (stopped || svc.run || waitingOf(svc).length) return; // a run is about to take the pane: its start decides
@@ -445,7 +445,7 @@ export function createRuns(o: RunsOptions) {
 				return void noticeOf(svc, { id: "start", level: "warning", kind: "start", text: `The tower types nothing in the standing pane: ${busyText(busy)}` });
 			}
 			svc.paneUnproven = undefined;
-			svc.ref.freed();
+			svc.ref.freed({ keepParked: true });
 		} finally {
 			svc.proving = false;
 		}
@@ -1373,16 +1373,16 @@ export function createRuns(o: RunsOptions) {
 		retry(workspace: string) {
 			const svc = services.get(workspace);
 			if (!svc) throw new Error(`The sb server stands in for no tower of workspace ${workspace}`);
-			const wasBusy = svc.paneBusy !== undefined, unproven = win && svc.paneUnproven === true;
+			const wasBusy = svc.paneBusy !== undefined;
 			svc.crashes = [];
 			svc.paneBusy = undefined;
 			svc.notices = svc.notices.filter((n) => n.id !== "loop" && n.id !== "start");
 			if (svc.state === "held") svc.state = "standing";
 			// With no event to start a run the boss's Retry gives the pane back as the run's end would: the prompt is typed again (RV11-F001). Where a program of the boss's holds the pane (`wasBusy`) only the look's proof does.
-			// Windows after an unstarted run: not before the process table shows the pane holds nothing (`proveEmpty`), whether or not a program was named (RV12-F001).
+			// Windows: never before the process table shows the pane holds nothing (`proveEmpty`), whatever the service believes of the pane (RV12-F001, RV13-F001). The give-back keeps the boss's Ctrl+D park.
 			if (!svc.run && !waitingOf(svc).length) {
-				if (unproven) void proveEmpty(svc).catch((cause: Error) => error("run-prove", cause.message));
-				else if (!wasBusy) svc.ref.freed();
+				if (win) void proveEmpty(svc).catch((cause: Error) => error("run-prove", cause.message));
+				else if (!wasBusy) svc.ref.freed({ keepParked: true });
 			}
 			poke(svc);
 		},
