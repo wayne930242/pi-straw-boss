@@ -86,7 +86,7 @@ export function registerSession(kit: Kit, { runMode, briefing, roles, presence, 
 		stopWatching();
 		nudges = orphans({ run, file: () => log.getSessionFile(), entries: () => log.getEntries(), sessions: host.sessions, send: reach.send, type: ENTRY, remember: (key) => pi.appendEntry(ENTRY, { nudged: key }), me, tell });
 		// Subagents a Herdr restart brought back as plain pi sessions are closed, and this session is asked to resume them (restored.ts).
-		restores = restored({ run, sleep: cfg.sleep, file: () => log.getSessionFile(), entries: () => log.getEntries(), active: () => !s.isTower, type: ENTRY, remember: (key) => pi.appendEntry(ENTRY, { resumed: key }), resume: (text, details) => pi.sendMessage({ customType: RESUME, content: text, display: true, details }, { triggerTurn: true, deliverAs: "steer" }), tell });
+		restores = restored({ run, sleep: cfg.sleep, file: () => log.getSessionFile(), entries: () => log.getEntries(), active: () => !s.isTower, type: ENTRY, remember: (data) => pi.appendEntry(ENTRY, data), resume: (text, details) => pi.sendMessage({ customType: RESUME, content: text, display: true, details }, { triggerTurn: true, deliverAs: "steer" }), tell });
 		nudgeTimer = setInterval(() => void Promise.allSettled([nudges?.poll(), restores?.poll()]), cfg.nudgeMs).unref();
 		// Starting runs in the background: pi awaits session_start handlers in turn, and pi-intercom connects in its own, after this one.
 		let starting: Promise<void> | undefined;
