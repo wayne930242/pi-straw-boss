@@ -1078,6 +1078,8 @@ export function createRuns(o: RunsOptions) {
 		const pane = phrase(req.pane, 64), pid = req.pid;
 		// A pi is quit only when its own session file is the one an ally run recorded (Herdr resumed that session after a restart). The pane id proves nothing: after a restart it may be the boss's own pi, which is never answered `quit` and never sent keys.
 		const file = typeof req.file === "string" && req.file.length > 0 && req.file.length <= 4096 ? req.file : undefined;
+		// The pi also reports that its own session carries the ally marker (runmode.ts, ALLY_ENTRY), which outlives the run records (KEEP_RUNS). The word of a client is safe here for it can only make its own pi quit: no claim, no side effect, no pane touched.
+		if (req.ally === true) return { ok: true, role: "quit", reason: "this session was an ally run's; only the sb server starts such a run" };
 		if (file && [...byRun.values(), ...[...services.values()].flatMap((s) => listRuns(slot, s.ref.workspace).map((rec) => ({ rec })))].some((a) => a.rec.kind === "ally" && a.rec.file === file)) return { ok: true, role: "quit", reason: "this session was an ally run's; only the sb server starts such a run" };
 		const svc = [...services.values()].find((s) => s.ref.record().pane === pane);
 		if (!svc || typeof pid !== "number") return { ok: true, role: "none" };

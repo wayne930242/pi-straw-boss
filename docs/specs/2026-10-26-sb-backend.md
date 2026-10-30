@@ -855,7 +855,7 @@ Between runs the standing pane is not a bare shell, so that the tower keeps its 
   its events connection and, for each `service.json`, finds the tower tab again: by the recorded tab and pane id when Herdr kept them,
   else by the tower glyph label with a single pane in that workspace. It marks the pane again and republishes the `tower` token.
 - Runs that were live are ended in the records (outcome `herdr-restart`), and their taken events go back to the queue with the crash
-  flag (**Crash and timeout**). Herdr's pi integration may resume their pi in the restored panes. Such a pi is quit at its start only when the session file it sends with its `pane-role` ask is an ally run's recorded file (any other pi in that pane, or one that sends no file, is answered `none`; the server never touches the pane)
+  flag (**Crash and timeout**). Herdr's pi integration may resume their pi in the restored panes. Such a pi is quit at its start only when the session file it sends with its `pane-role` ask is an ally run's recorded file, or when it reports that its session carries the ally marker (any other pi in that pane, or one that sends neither, is answered `none`; the server never touches the pane)
   (**The wake protocol**, step 2).
 - The next event wakes a fresh run in the restored standing pane. A test does exactly that (**Tests and anchor**).
 
@@ -995,6 +995,12 @@ something: the `boss` row. A send on its own wakes nothing.
    - **A pi without the flag** in a pane the server lists as a standing or ally pane asks `pane-role {pane, pid}` at `session_start`,
      before it joins. A pi in a tower glyph tab whose server is not live waits up to 30 s for one before it joins. The server answers:
      - `quit` in an ally pane: only the server starts pi there.
+     - `quit` for a pi that sends the session file of an ally run's record (any pane id; a pi that sends a file no record names is `none`),
+       or `ally: true`: its session carries the `straw-boss-ally` entry an ally run writes into its own session at its start. The marker
+       outlives the run records, which keep only the newest 50 of a workspace, so a session resumed again long after its run is still quit
+       and never runs unpinned at the boss's level with a teammate's text. The server takes the client's word because `quit` grants less than
+       `none` would (the pi shuts itself down; no claim, role, key, or pane action follows), and the marker is never read for anything else.
+       It is persisted by pi's own session (a custom entry written with the first message), not by the server, so no list of files grows.
      - `quit` in a standing pane that held a live run when Herdr went away, for 2 minutes after the restart. That is Herdr's pi
        integration resuming the old run, whatever its session file holds.
      - otherwise, in a standing pane, `hand`: the boss started pi there by hand. It becomes a local run with the brief and no events, gets

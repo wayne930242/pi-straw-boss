@@ -3,7 +3,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { TowerWorld } from "./tower-world.ts";
 import { type Running, sleep, until } from "./server-world.ts";
 import { callControl } from "../src/server/socket.ts";
-import { readRun } from "../src/server/towerrunstore.ts";
+import { listRuns, pruneRuns, readRun, writeRun } from "../src/server/towerrunstore.ts";
 
 // RVAC-F001..F003: a finished ally run closes its pane on the same Herdr whatever the listing, and after a restart only a pi whose own session file is a recorded ally run's is told to quit.
 let world: TowerWorld;
@@ -97,4 +97,36 @@ for (const platform of ["darwin", "win32"] as const) for (const when of ["before
 	await sleep(300);
 	assert.deepEqual(got, { resumed: "quit", boss: "none", bare: "none" });
 	assert.deepEqual(touches(h, pane), []);
+});
+
+// RVAF-F001: a pi whose own session carries the ally marker is told to quit whatever the run records say (they are pruned, KEEP_RUNS = 50), and the marker never grants more than quit.
+async function restarted() {
+	const c = await claimedAlly();
+	c.h.restart(false);
+	world.takeovers.forEach((cb) => cb());
+	await until(() => readRun(world.slot, "wA", c.id)?.outcome === "herdr-restart", "herdr-restart", 3000);
+	return c;
+}
+test("RVAF-F001: the ally record pruned away, a resumed ally session (its marker sent, any file) is still told to quit; the boss's pi and an old client are not", async () => {
+	const { s, pane, h } = await restarted();
+	for (let i = 0; i < 50; i++) writeRun(world.slot, { id: `zz${String(i).padStart(3, "0")}`, workspace: "wA", kind: "local", pane: "px", agent: "a", startedAt: new Date(Date.now() + 60_000 + i * 1000).toISOString(), endedAt: new Date().toISOString(), outcome: "done" } as never);
+	pruneRuns(world.slot, "wA");
+	assert.ok(!listRuns(world.slot, "wA").some((r) => r.file === FILE), "the record is gone");
+	h.calls.length = 0;
+	const roles = {
+		file: await ask(s, { cmd: "pane-role", pane, pid: 4242, file: FILE }),
+		marker: await ask(s, { cmd: "pane-role", pane, pid: 4242, file: FILE, ally: true }),
+		markerOnly: await ask(s, { cmd: "pane-role", pane: "p-nowhere", pid: 4242, ally: true }),
+		boss: await ask(s, { cmd: "pane-role", pane, pid: 4243, file: BOSS }),
+		bare: await ask(s, { cmd: "pane-role", pane, pid: 4244 }),
+	};
+	assert.deepEqual(Object.fromEntries(Object.entries(roles).map(([k, v]) => [k, v.role])), { file: "none", marker: "quit", markerOnly: "quit", boss: "none", bare: "none" });
+	assert.equal(roles.marker.claim, undefined, "the marker grants no claim");
+	assert.deepEqual(touches(h, pane), []);
+});
+test("RVAF-F001: only the boolean true is a marker (other values are no ask for a role)", async () => {
+	const { s, pane } = await restarted();
+	const out: Record<string, unknown> = {};
+	for (const [k, v] of Object.entries({ str: "true", num: 1, arr: [true], obj: { ally: true }, no: false, nul: null })) out[k] = (await ask(s, { cmd: "pane-role", pane, pid: 4242, ally: v })).role;
+	assert.deepEqual(Object.values(out), Object.keys(out).map(() => "none"));
 });
