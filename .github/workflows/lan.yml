@@ -1,0 +1,29 @@
+name: LAN
+
+# The Wi-Fi access listener and its certificates on Linux, on the stated floor (Node 22) and the version the package is built with (Node 24). The first-byte split depends on Node stream internals (`unshift` before `TLSSocket` and `http` take the
+# socket), which differ between majors; the dev Mac's `npm test` and the Windows workflow cover the other two platforms. OpenSSL is on the runner, and a CI run that cannot find it fails (tests/lan-x509.test.ts).
+on:
+  push:
+    branches: [main]
+    paths: ["src/**", "tests/lan-*.test.ts", "tests/fake-clock.ts", "tests/setup.ts", "tests/isolation.ts", "package.json", "package-lock.json", ".github/workflows/lan.yml"]
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lan:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci
+      - run: node --import ./tests/setup.ts --test tests/lan-x509.test.ts tests/lan-ca.test.ts tests/lan-net.test.ts tests/lan-listener.test.ts

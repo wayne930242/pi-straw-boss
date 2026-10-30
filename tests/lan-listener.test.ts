@@ -21,16 +21,35 @@ const v4 = (address: string, prefix: number, o: Partial<InterfaceInfo> = {}): In
 const ca = createCa(NAME, Date.now());
 const nameless = createCa(undefined, Date.now());
 
-/** The clock's timers: a wait of N ms takes none, and the connection timers (first byte, handshake, log lines) fire when the test moves the clock. */
+/**
+ * The clock's timers: a wait of N ms takes none, and the connection timers (first byte, handshake, log lines) fire when the test moves the clock. Every timer the listener arms is recorded with whether it is still live, and a test waits on
+ * those facts (`until`), not on the wall clock: a connection's first-byte timer exists once the listener accepted it, and is cancelled once its socket closed.
+ */
 function timers(clock: ReturnType<typeof fakeClock>) {
+	const armed: { ms: number; live: boolean }[] = [], waiting = new Set<() => boolean>();
+	const poke = () => void [...waiting].forEach((check) => check() && waiting.delete(check));
+	const until = (done: () => boolean) => new Promise<void>((resolve) => {
+		const check = () => done() && (resolve(), true);
+		if (!check()) waiting.add(check);
+	});
 	return {
-		now: clock.now,
-		after: (fn: () => void, ms: number) => {
-			let live = true;
-			clock.at(clock.elapsed() + ms, () => live && fn());
-			return () => void (live = false);
+		armed, poke, until,
+		options: {
+			now: clock.now,
+			after: (fn: () => void, ms: number) => {
+				const timer = { ms, live: true };
+				armed.push(timer);
+				clock.at(clock.elapsed() + ms, () => {
+					if (!timer.live) return;
+					timer.live = false;
+					fn();
+					poke();
+				});
+				poke();
+				return () => (timer.live = false, poke());
+			},
+			sleep: async (ms: number) => clock.advance(ms),
 		},
-		sleep: async (ms: number) => clock.advance(ms),
 	};
 }
 
@@ -48,7 +67,13 @@ const raw = (port: number) => {
 	sockets.add(socket);
 	return socket;
 };
-const closed = (socket: Socket) => new Promise<void>((done) => (socket.destroyed ? done() : void socket.once("close", () => done())));
+/** A socket's close. The wait holds the event loop open: an agent's free socket is unref'd, and on Node 22 nothing else keeps the process alive while a test waits for it (RVL3-F003). */
+const closed = (socket: Socket) => new Promise<void>((done) => {
+	if (socket.destroyed) return done();
+	const hold = setInterval(() => {}, 1000);
+	socket.once("close", () => (clearInterval(hold), done()));
+});
+/** A gap a test client leaves between two writes so they arrive as two segments. Never a wait for the listener to do something: that waits on `World.until`. */
 const pause = (ms: number) => new Promise((done) => setTimeout(done, ms));
 
 interface World {
@@ -62,15 +87,23 @@ interface World {
 	port: number;
 	hostName: string;
 	hostAddress: string;
+	/** Every timer the listener armed, and whether it is live. */
+	armed: { ms: number; live: boolean }[];
+	/** How many connections the listener has judged (its `remoteOf` was asked once per connection, before it admitted or refused it). */
+	accepted: () => number;
+	/** Resolves when `done()` holds, checked at each timer armed or cancelled, each connection judged, and each status published. */
+	until: (done: () => boolean) => Promise<void>;
 }
 async function world(o: Partial<ListenerOptions> & { start?: boolean; address?: string } = {}): Promise<World> {
 	const clock = fakeClock(), address = o.address ?? ADDRESS, { start = true, address: _address, ...rest } = o;
 	const state = { interfaces: { en0: [v4(address, 24)] } as Interfaces, peer: "10.0.0.7" };
 	const logs: World["logs"] = [], calls: World["calls"] = [], statuses: ListenerStatus[] = [], listens: World["listens"] = [];
+	const t = timers(clock), judge = rest.remoteOf ?? (() => state.peer);
+	let accepted = 0;
 	const listener = createLanListener({
-		ca, port: 0, ...timers(clock),
+		ca, port: 0, ...t.options,
 		interfaces: () => state.interfaces, probe: async () => undefined, every: () => () => {},
-		bindAddress: () => "127.0.0.1", remoteOf: () => state.peer,
+		bindAddress: () => "127.0.0.1",
 		listen: (server, port, host) => new Promise<void>((done, fail) => {
 			listens.push({ host, port, server });
 			server.once("error", fail);
@@ -81,13 +114,19 @@ async function world(o: Partial<ListenerOptions> & { start?: boolean; address?: 
 			calls.push({ url: req.url ?? "", host: req.headers.host ?? "", at, paired: req.headers["x-paired"] === "1" });
 			res.writeHead(200, { "content-type": "text/plain" }).end("gui");
 		},
-		log: (event, fields) => logs.push([event, fields]), onStatus: (s) => statuses.push(s),
+		log: (event, fields) => logs.push([event, fields]), onStatus: (s) => (statuses.push(s), t.poke()),
 		...rest,
+		remoteOf: (socket) => {
+			const peer = judge(socket);
+			accepted++;
+			t.poke();
+			return peer;
+		},
 	});
 	open.push(listener);
 	if (start) await listener.start();
 	const port = listener.portOf(address) ?? 0;
-	return { clock, state, logs, calls, statuses, listens, listener, port, hostName: `${NAME}.local:${port}`, hostAddress: `${address}:${port}` };
+	return { clock, state, logs, calls, statuses, listens, listener, port, hostName: `${NAME}.local:${port}`, hostAddress: `${address}:${port}`, armed: t.armed, accepted: () => accepted, until: t.until };
 }
 
 interface Reply { status: number; headers: IncomingMessage["headers"]; body: string; cert?: PeerCertificate; socket: Socket }
@@ -311,16 +350,14 @@ test("a reset or a silent close during the peek raises nothing and frees the slo
 	await new Promise((done) => quiet.once("connect", done));
 	quiet.end(); // a FIN before any byte: the peek reads nothing
 	await closed(quiet);
-	for (let i = 0; ; i++) {
-		const socket = raw(w.port);
-		socket.write(`GET /sb-ca/check HTTP/1.1\r\nHost: ${w.hostName}\r\nConnection: close\r\n\r\n`);
-		const out: Buffer[] = [];
-		socket.on("data", (d: Buffer) => out.push(d));
-		await closed(socket);
-		if (Buffer.concat(out).toString("utf8").startsWith("HTTP/1.1 200")) break;
-		assert.ok(i < 50, "the slot of the reset connection was never freed");
-		await pause(20);
-	}
+	// A connection's first-byte timer is cancelled by its socket's close, which comes after its slot is freed. The two connections were queued in this order, so the reset one (if the system did not drop it) was judged before the quiet one,
+	// whose close this test has seen; the quiet one may have been over the limit while the reset one still held the slot, and then has no timer, only the log line's.
+	await w.until(() => w.armed.filter((t) => t.ms === 10_000).every((t) => !t.live));
+	const socket = raw(w.port), out: Buffer[] = [];
+	socket.write(`GET /sb-ca/check HTTP/1.1\r\nHost: ${w.hostName}\r\nConnection: close\r\n\r\n`);
+	socket.on("data", (d: Buffer) => out.push(d));
+	await closed(socket);
+	assert.match(Buffer.concat(out).toString("utf8"), /^HTTP\/1\.1 200/, "the slot of the reset connection was never freed");
 });
 
 test("a connection that sends no byte is closed at 10 s, and a peer that stops mid-handshake at 10 s", async () => {
@@ -329,7 +366,8 @@ test("a connection that sends no byte is closed at 10 s, and a peer that stops m
 	await new Promise((done) => silent.once("connect", done));
 	const stalled = raw(w.port);
 	stalled.write(Buffer.from([0x16, 0x03, 0x01, 0x00, 0xc8, 0x01])); // a ClientHello that never finishes
-	await pause(60);
+	// three 10 s timers: the two first-byte timers at accept, and the stalled connection's handshake timer once its first byte was read
+	await w.until(() => w.armed.filter((t) => t.ms === 10_000).length === 3);
 	w.clock.advance(9_999);
 	assert.ok(!silent.destroyed && !stalled.destroyed);
 	w.clock.advance(1);
@@ -529,12 +567,8 @@ test("EADDRNOTAVAIL is retried at the next watch without a note; any other bind 
 
 test("a listener that closes without being asked is bound again at once; a wake (a clock jump over 30 s) binds them all again", async () => {
 	const w = await world();
-	const events = () => new Promise<void>((done) => {
-		const seen = w.statuses.length;
-		const poll = setInterval(() => w.statuses.length > seen && w.listener.status().addresses[0]?.state === "open" ? (clearInterval(poll), done()) : undefined, 10);
-	});
-	const before = w.listens.length;
-	const back = events();
+	const before = w.listens.length, seen = w.statuses.length;
+	const back = w.until(() => w.statuses.length > seen && w.listener.status().addresses[0]?.state === "open");
 	w.listens[0]!.server.close(); // nobody asked
 	await back;
 	assert.equal(w.listens.length, before + 1, "rebound by itself, before any watch");
@@ -552,53 +586,167 @@ test("a listener that closes without being asked is bound again at once; a wake 
 	agent.destroy();
 });
 
-// Pools and the log ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-test("at most 8 unpaired connections per peer and 64 in all (here 2 and 3); past them a new one is closed, and a closed one frees its slot", async () => {
-	const peers: string[] = [];
-	const w = await world({ limits: { unpairedPerPeer: 2, unpairedAll: 3 }, remoteOf: () => peers.shift() ?? "10.0.0.7" });
-	const hold = async (peer: string) => {
-		peers.push(peer);
-		const socket = raw(w.port);
-		await new Promise((done) => socket.once("connect", done));
-		socket.write(Buffer.from([0x16, 0x03, 0x01])); // counted from accept, whether or not it ever finishes
-		await pause(40);
-		return socket;
-	};
-	const a1 = await hold("10.0.0.7"), a2 = await hold("10.0.0.7");
-	const a3 = await hold("10.0.0.7");
-	await closed(a3);
-	assert.ok(!a1.destroyed && !a2.destroyed);
-	const b1 = await hold("10.0.0.8");
-	const b2 = await hold("10.0.0.9");
-	await closed(b2);
-	assert.ok(!b1.destroyed);
-	a1.destroy();
-	await closed(a1);
-	await pause(40);
-	const c1 = await hold("10.0.0.9");
-	assert.ok(!c1.destroyed, "the freed slot is usable");
-	assert.deepEqual(w.logs.filter(([e]) => e === "lan-limited"), []);
+test("an accept error on a listening server is counted and logged, the listener goes on serving, and stop still unbinds it (RVL3-F002)", async () => {
+	const w = await world();
+	const server = w.listens[0]!.server, fire = (code: string) => server.emit("error", Object.assign(new Error(`accept ${code}`), { code, syscall: "accept" }));
+	const live = new HttpsAgent({ keepAlive: true });
+	const before = await secure(w.port, { agent: live });
+	fire("EMFILE");
+	fire("EMFILE"); // the second one must not be uncaught either
+	fire("ENFILE");
+	assert.equal(w.listens.length, 1, "no rebind: the server is fine, only one accept failed");
+	assert.equal(server.listening, true);
+	assert.deepEqual(w.listener.status().addresses.map((a) => [a.address, a.state]), [[ADDRESS, "open"]]);
+	assert.equal((await secure(w.port, { agent: live, path: "/again" })).socket, before.socket, "the open connection was not cut");
+	assert.equal((await secure(w.port)).status, 200, "and a new one is served");
+	assert.deepEqual(w.logs.filter(([e]) => e === "lan-accept-error"), [], "counted, not logged per error");
 	w.clock.advance(60_000);
-	assert.deepEqual(w.logs.filter(([e]) => e === "lan-limited"), [["lan-limited", { closed: 2, peers: 2 }]]);
-	assert.equal(w.logs.filter(([e]) => e === "lan-limited").length, 1, "one line a minute");
-	w.clock.advance(120_000);
-	assert.equal(w.logs.filter(([e]) => e === "lan-limited").length, 1, "nothing to say, nothing said");
+	assert.deepEqual(w.logs.filter(([e]) => e === "lan-accept-error"), [["lan-accept-error", { n: 3, codes: ["EMFILE", "ENFILE"] }]]);
+	assert.equal(w.listens.filter((l) => l.server.listening).length, 1, "exactly one bound server");
+	live.destroy();
+	await w.listener.stop();
+	assert.equal(server.listening, false, "stop unbinds it");
+	assert.match(String(((await rejected(secure(w.port))) as NodeJS.ErrnoException).code), /ECONNREFUSED/);
+	assert.doesNotThrow(() => fire("EMFILE"), "an error after stop is still caught");
 });
 
-test("a flood of unpaired connections does not cut or crowd out a connection that carries an allowed device's cookie", async () => {
-	const w = await world({ limits: { unpairedPerPeer: 8, unpairedAll: 2 } });
+// Pools and the log ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+const PHONE = "10.0.0.7";
+/** A world whose connections count as the peers the test names, in the order it dials them (a connection from a peer nobody named counts as the phone). */
+async function crowd(o: Partial<ListenerOptions> = {}) {
+	const peers: string[] = [], w = await world({ remoteOf: () => peers.shift() ?? PHONE, ...o });
+	/** A silent connection, as `peer`, that the listener has judged. */
+	const dial = async (peer: string) => {
+		const before = w.accepted();
+		peers.push(peer);
+		const socket = raw(w.port);
+		await w.until(() => w.accepted() > before);
+		return socket;
+	};
+	/** A plain request on `socket`; the answer is what came back (nothing, when the socket was closed). */
+	const ask = (socket: Socket) => new Promise<string>((done) => {
+		let text = "";
+		const end = () => (socket.off("data", onData), socket.off("close", end), done(text));
+		const onData = (d: Buffer) => ((text += d.toString("latin1")).includes("</html>") ? end() : undefined);
+		socket.on("data", onData).once("close", end);
+		if (socket.destroyed) return end();
+		socket.write(`GET /sb-ca/check HTTP/1.1\r\nHost: ${w.hostName}\r\n\r\n`);
+	});
+	/** A keep-alive connection that has had one request answered, and stays open: what a flood sends to keep its slots. */
+	const busy = async (peer: string) => {
+		const socket = await dial(peer);
+		assert.match(await ask(socket), /^HTTP\/1\.1 200/);
+		return socket;
+	};
+	/** A TLS request as `peer`. */
+	const secureAs = (peer: string, ask: Ask = {}) => (peers.push(peer), secure(w.port, ask));
+	const alive = async (socket: Socket) => /^HTTP\/1\.1 200/.test(await ask(socket));
+	return { w, peers, dial, ask, busy, alive, secureAs };
+}
+const paired = { "x-paired": "1" };
+
+test("at most 8 unpaired connections per peer and 64 in all (here 2 and 3): past the peer's own limit its new connection is closed; past the total, a peer holding fewer evicts the oldest connection of the heaviest, and the log counts both", async () => {
+	const c = await crowd({ limits: { unpairedPerPeer: 2, unpairedAll: 3 } });
+	const a1 = await c.dial("10.0.0.7"), a2 = await c.dial("10.0.0.7");
+	await closed(await c.dial("10.0.0.7")); // a third from one peer
+	const b1 = await c.dial("10.0.0.8");
+	const b2 = await c.dial("10.0.0.9"); // the pool is full and this peer holds none: the heaviest peer (10.0.0.7) gives up its oldest
+	await closed(a1);
+	for (const socket of [a2, b1, b2]) assert.ok(await c.alive(socket));
+	assert.deepEqual(c.w.logs.filter(([e]) => e === "lan-limited"), []);
+	c.w.clock.advance(60_000);
+	assert.deepEqual(c.w.logs.filter(([e]) => e === "lan-limited"), [["lan-limited", { closed: 2, peers: 1 }]]);
+	c.w.clock.advance(120_000);
+	assert.equal(c.w.logs.filter(([e]) => e === "lan-limited").length, 1, "nothing to say, nothing said");
+});
+
+test("a peer that holds as many connections as the heaviest cannot evict, and a new connection takes one that has not yet made a request before one that has", async () => {
+	const c = await crowd({ limits: { unpairedPerPeer: 2, unpairedAll: 3 } });
+	const [x, y, z] = [await c.busy("10.0.0.7"), await c.busy("10.0.0.8"), await c.busy("10.0.0.9")];
+	await closed(await c.dial("10.0.0.7")); // every peer holds one and so does this one: nothing is evicted
+	for (const socket of [x, y, z]) assert.ok(await c.alive(socket));
+	c.w.clock.advance(60_000);
+	assert.deepEqual(c.w.logs.filter(([e]) => e === "lan-limited"), [["lan-limited", { closed: 1, peers: 1 }]]);
+});
+
+test("the connection evicted is one that has made no request, even when it is younger than one that has", async () => {
+	const c = await crowd({ limits: { unpairedPerPeer: 2, unpairedAll: 3 } });
+	const a1 = await c.busy("10.0.0.7"), a2 = await c.dial("10.0.0.7"), b1 = await c.busy("10.0.0.8");
+	const fresh = await c.busy("10.0.0.9"); // 10.0.0.7 holds two, one without a request: that one goes, not the older busy one
+	await closed(a2);
+	for (const socket of [a1, b1, fresh]) assert.ok(await c.alive(socket));
+});
+
+/** The phone proves itself once, so its address is remembered. */
+const remember = async (c: Awaited<ReturnType<typeof crowd>>) => assert.equal((await c.secureAs(PHONE, { headers: paired })).status, 200);
+
+test("an unpaired flood that keeps its connections busy does not keep out the paired phone: its new connections are admitted at once, and the flood is not cut (RVL3-F001)", async () => {
+	const c = await crowd();
+	await remember(c);
+	const flood: Socket[] = [];
+	for (let host = 100; host < 108; host++) for (let n = 0; n < 8; n++) flood.push(await c.busy(`10.0.0.${host}`)); // 8 addresses, 8 connections each: the whole unpaired pool
+	for (let i = 0; i < 3; i++) assert.equal((await c.secureAs(PHONE, { headers: paired, path: `/new/${i}` })).status, 200, "a new connection of the phone");
+	assert.deepEqual(c.w.calls.slice(1).map((call) => call.url), ["/new/0", "/new/1", "/new/2"]);
+	for (const socket of [flood[0]!, flood[9]!, flood[63]!]) assert.ok(await c.alive(socket), "the flood was not cut to make room");
+	c.w.clock.advance(60_000);
+	assert.deepEqual(c.w.logs.filter(([e]) => e === "lan-limited"), []);
+});
+
+test("a phone whose address was never seen paired still gets in during a flood, by evicting from the heaviest peer", async () => {
+	const c = await crowd({ limits: { unpairedPerPeer: 2, unpairedAll: 4 } });
+	const flood = [await c.busy("10.0.0.20"), await c.busy("10.0.0.20"), await c.busy("10.0.0.21"), await c.busy("10.0.0.21")];
+	assert.equal((await c.secureAs("10.0.0.9", { headers: paired })).status, 200);
+	await closed(flood[0]!);
+	for (const socket of flood.slice(1)) assert.ok(await c.alive(socket));
+});
+
+test("a remembered address is let past the unpaired limits up to the paired limits of its own, and is forgotten after the time set", async () => {
+	const c = await crowd({ limits: { unpairedPerPeer: 1, pairedPerPeer: 2 }, timeouts: { pairedPeerMs: 1000 } });
+	await remember(c);
+	await c.dial(PHONE); // the paired pool
+	await c.dial(PHONE); // the paired pool
+	await c.dial(PHONE); // the paired limit of the peer is two: the unpaired pool, which has room for one
+	await c.dial(PHONE); // and that is full
+	c.w.clock.advance(60_000);
+	assert.deepEqual(c.w.logs.filter(([e]) => e === "lan-limited"), [["lan-limited", { closed: 1, peers: 1 }]]);
+	// the 60 s above are past the 1 s it is remembered for: no bypass
+	await c.dial(PHONE);
+	await c.dial(PHONE);
+	c.w.clock.advance(60_000);
+	assert.deepEqual(c.w.logs.filter(([e]) => e === "lan-limited").slice(1), [["lan-limited", { closed: 1, peers: 1 }]], "one admitted, one refused");
+});
+
+test("a remembered address's TLS connection without the cookie is a plain unpaired one from its first request: it counts against the unpaired limits, or is closed before the handler", async () => {
+	const c = await crowd({ limits: { unpairedPerPeer: 1 } });
+	await remember(c);
 	const agent = new HttpsAgent({ keepAlive: true });
-	const paired = await secure(w.port, { agent, headers: { "x-paired": "1" } });
-	assert.equal(paired.status, 200);
-	const flood = [raw(w.port), raw(w.port)];
-	for (const s of flood) s.write(Buffer.from([0x16]));
-	await pause(60);
-	const refused = raw(w.port);
-	await closed(refused);
-	assert.ok(flood.every((s) => !s.destroyed), "two unpaired fill the pool, the paired one is not among them");
-	const again = await secure(w.port, { agent, headers: { "x-paired": "1" }, path: "/more" });
-	assert.equal(again.socket, paired.socket);
+	assert.equal((await c.secureAs(PHONE, { agent })).status, 200);
+	assert.equal(c.w.calls.length, 2);
+	const error = await rejected(c.secureAs(PHONE)); // the peer's one unpaired slot is taken by the connection above
+	assert.ok(error instanceof Error, "closed");
+	assert.equal(c.w.calls.length, 2, "the handler was not asked");
+	assert.equal((await c.secureAs(PHONE, { headers: paired })).status, 200, "with the cookie it is the phone");
+	agent.destroy();
+});
+
+test("a remembered address's plain connection is an unpaired one from its first byte", async () => {
+	const c = await crowd({ limits: { unpairedPerPeer: 1 } });
+	await remember(c);
+	assert.equal(await c.alive(await c.dial(PHONE)), true);
+	assert.equal(await c.alive(await c.dial(PHONE)), false, "a second plain connection of the peer is over its unpaired limit");
+});
+
+test("a flood of unpaired connections does not cut a connection that carries an allowed device's cookie", async () => {
+	const c = await crowd({ limits: { unpairedPerPeer: 8, unpairedAll: 2 } });
+	const agent = new HttpsAgent({ keepAlive: true });
+	const first = await c.secureAs(PHONE, { agent, headers: paired });
+	assert.equal(first.status, 200);
+	const flood = [await c.busy("10.0.0.20"), await c.busy("10.0.0.21")];
+	await closed(await c.dial("10.0.0.20")); // 10.0.0.20 holds one, as does 10.0.0.21: nothing to evict
+	assert.ok(await c.alive(flood[0]!) && await c.alive(flood[1]!));
+	const again = await c.secureAs(PHONE, { agent, headers: paired, path: "/more" });
+	assert.equal(again.socket, first.socket);
 	assert.equal(again.status, 200);
 	agent.destroy();
 });
@@ -612,7 +760,7 @@ test("a connection becomes paired only on a request the handler's test accepts, 
 	const plainKeep = await secure(w.port, { agent: a2 });
 	assert.equal(plainKeep.status, 200);
 	assert.notEqual(plainKeep.socket, first.socket);
-	// a second paired connection from the same peer is over the paired per-peer limit: it stays in the unpaired pool, which is full
+	// a second connection from the same peer is over the paired per-peer limit, so it is judged as an unpaired one, and that pool is full of this peer's own connection
 	const third = raw(w.port);
 	await closed(third);
 	a1.destroy();
@@ -642,7 +790,7 @@ test("start schedules the watch every 5 s, and stop cancels it", async () => {
 	assert.deepEqual(ticks.map((t) => t.ms), [5000]);
 	w.state.interfaces = { en0: [v4(OTHER, 24)] };
 	ticks[0]!.fn();
-	for (let i = 0; i < 100 && w.listener.portOf(OTHER) === undefined; i++) await pause(10);
+	await w.until(() => w.listener.status().addresses[0]?.address === OTHER && w.listener.status().addresses[0]?.state === "open");
 	assert.equal(w.listener.portOf(OTHER), w.port, "the timer's tick moved the listener to the new address");
 	await w.listener.stop();
 	assert.equal(ticks[0]!.cancelled, true);

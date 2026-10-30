@@ -11,8 +11,10 @@ permissions:
 jobs:
   windows:
     uses: ./.github/workflows/windows.yml
+  lan:
+    uses: ./.github/workflows/lan.yml
   publish:
-    needs: windows
+    needs: [windows, lan]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
