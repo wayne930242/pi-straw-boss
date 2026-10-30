@@ -855,7 +855,7 @@ Between runs the standing pane is not a bare shell, so that the tower keeps its 
   its events connection and, for each `service.json`, finds the tower tab again: by the recorded tab and pane id when Herdr kept them,
   else by the tower glyph label with a single pane in that workspace. It marks the pane again and republishes the `tower` token.
 - Runs that were live are ended in the records (outcome `herdr-restart`), and their taken events go back to the queue with the crash
-  flag (**Crash and timeout**). Herdr's pi integration may resume their pi in the restored panes. Such a pi is quit at its start
+  flag (**Crash and timeout**). Herdr's pi integration may resume their pi in the restored panes. Such a pi is quit at its start only when the session file it sends with its `pane-role` ask is an ally run's recorded file (any other pi in that pane, or one that sends no file, is answered `none`; the server never touches the pane)
   (**The wake protocol**, step 2).
 - The next event wakes a fresh run in the restored standing pane. A test does exactly that (**Tests and anchor**).
 

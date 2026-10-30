@@ -477,7 +477,7 @@ test("N3p: as N3, the stranger at the ally id is the boss's pi with its own sess
 	assert.ok(!h.closed.includes(pane), "closed the boss's pi");
 });
 // A pi that Herdr resumed in an old ally pane and asks the server for its role is answered "none": the server sends it no keys and leaves it to the boss.
-test("a pi resumed in an old ally pane after the run ended with the restart is answered none and sent no keys", async () => {
+test("a pi resumed in an old ally pane after the run ended with the restart (the boss's own pi) is answered none and sent no keys", async () => {
 	const { s, h, pane } = await liveAlly("darwin");
 	const id = runOf(pane)!;
 	h.restart(false);
@@ -485,8 +485,9 @@ test("a pi resumed in an old ally pane after the run ended with the restart is a
 	world.takeovers.forEach((cb) => cb());
 	await until(() => readRun(world.slot, "wA", id)?.outcome === "herdr-restart", "the run ended herdr-restart", 3000);
 	await sleep(300);
-	const got = await ask(s, { cmd: "pane-role", pane, pid: 4242 }).catch(() => undefined);
-	if (got) assert.equal((got as { role?: string }).role, "none");
+	// The boss's own pi at the reused id (no session file, or another one) is answered none, also while the takeover is not over.
+	assert.equal((await ask(s, { cmd: "pane-role", pane, pid: 4242 })).role, "none");
+	assert.equal((await ask(s, { cmd: "pane-role", pane, pid: 4242, file: BOSS })).role, "none");
 	assert.deepEqual(touches(h, pane), []);
 });
 

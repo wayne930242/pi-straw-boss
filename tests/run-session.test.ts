@@ -367,6 +367,22 @@ test("R-F004: a pi in a tower-glyph tab whose pane lost its tokens asks pane-rol
 	assert.match(r.notes.join("\n"), /Herdr restored this pane/);
 });
 
+test("RVAC-F003: the pane-role ask carries the pi's own session file (the server quits only a session an ally run recorded), and none for a session with no file", async () => {
+	flagOn();
+	for (const withFile of [true, false]) {
+		const srv = server();
+		const inner = srv.ask.bind(srv);
+		srv.ask = async (request: Request): Promise<Answer> => (request.cmd === "pane-role" ? (srv.requests.push(request), { ok: true, role: "none" }) : inner(request));
+		const dir = join(root, withFile ? "files" : "nofiles");
+		mkdirSync(dir, { recursive: true });
+		await rig(srv, { flag: null, herdr: herdrWith({}, TOWER_LABEL), glyphWaitMs: 5000, ...(withFile ? { sessionDir: dir } : {}) });
+		await until(() => srv.requests.some((q) => q.cmd === "pane-role"), "the pane-role ask");
+		const got = srv.requests.find((q) => q.cmd === "pane-role") as Request & { file?: string };
+		if (withFile) assert.match(String(got.file), new RegExp(`^${dir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*\\.jsonl$`));
+		else assert.equal(got.file, undefined);
+	}
+});
+
 test("B6 VM F4: a resident tower (STRAW_BOSS_ROLE=tower) in a pane the server marked is never asked pane-role, so a /reload cannot make it a hand run; it stays a normal session that hands over itself", async () => {
 	flagOn();
 	const srv = server();

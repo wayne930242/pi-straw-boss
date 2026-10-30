@@ -618,7 +618,7 @@ export function createRuns(o: RunsOptions) {
 			const lead = svc.ref.record().pane, dir = await svc.ref.cwd();
 			const made = await result(o.run, ["pane", "split", lead, "--direction", "right", "--cwd", dir, "--no-focus"]);
 			rec.pane = made.pane.pane_id as string;
-			// A listing that fails is read again: a run whose terminal is not known is treated as unbound (`unboundOf`), and the pane would then be neither marked nor closed.
+			// A listing that fails is read again: a run whose terminal is not known stays without a terminal, and where Herdr lists terminal ids `proofGate` then says `bind`: the pane is neither marked nor closed.
 			for (let read = 0; read < 3 && active.terminal === undefined; read++) active.terminal = (await panes(o.run, svc.ref.workspace).catch(() => [])).find((p) => p.pane_id === rec.pane)?.terminal_id;
 			rec.terminal = active.terminal;
 			await markAllies(svc);
@@ -636,8 +636,6 @@ export function createRuns(o: RunsOptions) {
 		// The claim is waited for in the background: the next device's run starts meanwhile.
 		void launch(active, `ally run · ${first.label} · ${id.slice(0, 8)}`).catch((cause: Error) => error("run-start", `${id}: ${cause.message}`));
 	};
-	/** An ally run whose pane no terminal proves: one recovered without a terminal, or one whose split listing never named it. Where Herdr lists terminal ids it is bound by nothing (`proofGate` says `bind`), so its pane is neither marked nor closed by id after a Herdr restart (RVSEAT6-F002). */
-	const unboundOf = (a: Active) => !!a.unbound || a.terminal === undefined;
 	/**
 	 * Writes the tokens of the panes the service's ally runs live in (order.ts `allyKids`): `sb_role`, and the row's place, mark, branch and name in the net view. The tokens last 10 minutes and a run may last 20, so the
 	 * tower's publish writes them again (`markAllies`); a pane that cannot be placed (Herdr does not know the tower) keeps its role alone. A failed write waits for the next one.
@@ -657,7 +655,7 @@ export function createRuns(o: RunsOptions) {
 	};
 	/** Whether an ally run's pane is ours to close now: only a pane still in the terminal its split made (typegate.ts `allyPaneGate`). After a Herdr restart (or for a run whose pane no terminal proves) it is never ours: the boss closes what is left. */
 	const allyOurs = async (svc: Svc, a: Active, restart: boolean): Promise<boolean> => {
-		if (restart || unboundOf(a)) return false;
+		if (restart) return false;
 		try {
 			const listed = (await panes(o.run, svc.ref.workspace)).find((p) => p.pane_id === a.rec.pane);
 			return allyPaneGate(proofGate({ terminal: a.terminal, pane: listed }));
@@ -1078,8 +1076,9 @@ export function createRuns(o: RunsOptions) {
 	/** A pi without the flag in a pane the server lists as a standing pane (or an ally pane): quit, or take the pane as a run of the boss's own. */
 	async function paneRole(req: Record<string, unknown>): Promise<{ ok: true; role: "none" | "quit" | "wait" | "hand"; reason?: string; claim?: ClaimReply }> {
 		const pane = phrase(req.pane, 64), pid = req.pid;
-		// An ally pane is the server's: it starts pi there itself, so a pi without the flag has no business in it.
-		if ([...byRun.values()].some((a) => a.rec.kind === "ally" && a.rec.pane === pane)) return { ok: true, role: "quit", reason: "this pane belongs to an ally run; only the sb server starts pi there" };
+		// A pi is quit only when its own session file is the one an ally run recorded (Herdr resumed that session after a restart). The pane id proves nothing: after a restart it may be the boss's own pi, which is never answered `quit` and never sent keys.
+		const file = typeof req.file === "string" && req.file.length > 0 && req.file.length <= 4096 ? req.file : undefined;
+		if (file && [...byRun.values(), ...[...services.values()].flatMap((s) => listRuns(slot, s.ref.workspace).map((rec) => ({ rec })))].some((a) => a.rec.kind === "ally" && a.rec.file === file)) return { ok: true, role: "quit", reason: "this session was an ally run's; only the sb server starts such a run" };
 		const svc = [...services.values()].find((s) => s.ref.record().pane === pane);
 		if (!svc || typeof pid !== "number") return { ok: true, role: "none" };
 		if (pendingTakeovers > 0) return { ok: true, role: "wait" };

@@ -271,15 +271,14 @@ test("a sender that left the roster has its messages dropped and no run starts; 
 	await until(() => world.pis.size === 2, "the second run once a slot is free");
 });
 
-test("a pi without the flag in an ally pane is told to quit; the ally pane is not a standing pane", async () => {
+test("a pi without the flag in an ally pane, whose session file is no ally run's, is answered none and the pane is left alone (RVAC-F002); the ally pane is not a standing pane", async () => {
 	const { s } = await setup();
 	world.ally.add("m1", DEV1, "one");
 	world.expose?.allyWaiting("sb-tower-wa");
 	const id = await nthRun();
 	const rec = readRun(world.slot, "wA", id)!;
-	const answer = await ask(s, { cmd: "pane-role", pane: rec.pane, pid: 4242 });
-	assert.equal(answer.role, "quit");
-	assert.match(String(answer.reason), /ally run/);
+	assert.equal((await ask(s, { cmd: "pane-role", pane: rec.pane, pid: 4242 })).role, "none");
+	assert.equal((await ask(s, { cmd: "pane-role", pane: rec.pane, pid: 4242, file: "/fake/boss.jsonl" })).role, "none");
 });
 
 test("an ally run's tools: tower_send goes to its sender's full id only, inReplyTo only for an ask of the run; a gated tool needs the Allow of its call, once; origin is stamped by the server", async () => {

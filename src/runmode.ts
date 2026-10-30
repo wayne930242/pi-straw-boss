@@ -149,6 +149,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		const pane = env.HERDR_PANE_ID, workspace = env.HERDR_WORKSPACE_ID;
 		// Without the flag file no sb server runs towers, so no pane is one (and a session asks Herdr nothing at its start for this).
 		if (!pane || !workspace || !towerRunsEnabled(guiDir)) return { role: "none" };
+		const file = (() => { try { return context.sessionManager.getSessionFile() || undefined; } catch { return undefined; } })();
 		// A resident tower (it carries STRAW_BOSS_ROLE=tower) is no pi the boss typed into a standing pane: it hands its pane over itself (tower.ts). A /reload right after the server registered its identity finds its pane marked
 		// `tower` already, and asking would make it a hand run that never hands over and never ends (B6 VM F4).
 		// Only a session that already wrote its tower entry, or a process that already became a resident, is one: the env alone stays in a migrated standing pane's tab, and a pi the boss types there is a hand run. A resident's
@@ -164,7 +165,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 			if (carried) return { role: "late", ask: carried };
 			const started = startOf(process.pid);
 			// An ask that fails is no answer: resident when it fails within the bound (no server), a plain session when it fails after it (`late` settles undefined).
-			const asked = ask({ cmd: "pane-role", pane, pid: process.pid, ...(started ? { started } : {}) }).then((answer): Found | undefined => {
+			const asked = ask({ cmd: "pane-role", pane, pid: process.pid, ...(started ? { started } : {}), ...(file ? { file } : {}) }).then((answer): Found | undefined => {
 				// SAFETY: same `pane-role` answer shape as below (runs.ts, paneRole).
 				return answer?.ok && (answer.role === "hand" || answer.role === "quit") ? (answer as unknown as Found) : { role: "none" };
 			}, () => undefined);
@@ -183,7 +184,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		if (!marked && !glyph) return { role: "none" };
 		const end = cfg.now() + (glyph ? glyphWaitMs : claimWaitMs), started = startOf(process.pid);
 		for (;;) {
-			const answer = await ask({ cmd: "pane-role", pane, pid: process.pid, ...(started ? { started } : {}) }).catch(() => undefined);
+			const answer = await ask({ cmd: "pane-role", pane, pid: process.pid, ...(started ? { started } : {}), ...(file ? { file } : {}) }).catch(() => undefined);
 			// No server to ask: a marked pane's pi is what it was before; one in a tower tab keeps asking until its wait is over.
 			if (!answer?.ok && !glyph) return { role: "none" };
 			if (answer?.ok && answer.role !== "wait") {
