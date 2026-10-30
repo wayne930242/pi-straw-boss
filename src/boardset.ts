@@ -38,5 +38,5 @@ export function setBoard(o: BoardSetInput): { text: string; details: { now: stri
 	const text = checkEntry(o.input);
 	writeEntry(o.dir, o.session, text, o.now);
 	const sharedWith = whereTo(o);
-	return { text: `Board entry set (${text.items.length} item${text.items.length === 1 ? "" : "s"}). It goes to: ${sharedWith}. Allies' towers read it, so keep secrets, credentials, customer data, and paths outside the project out of it.${o.autoFill ? " It stands until your todo list or your name changes; `board_set { auto: true }` hands the board back to auto-fill at once." : ""}`, details: { now: text.now, items: text.items.length, sharedWith } };
+	return { text: `Board entry set (${text.items.length} item${text.items.length === 1 ? "" : "s"}). It goes to: ${sharedWith}. Allies' towers read it, so keep secrets, credentials, customer data, and paths outside the project out of it.${o.autoFill ? " It stands until your todo list or your name changes; `board_set { auto: true }` hands the board back to auto-fill at once, and `board_set { clear: true }` deletes it when the work is finished." : ""}`, details: { now: text.now, items: text.items.length, sharedWith } };
 }

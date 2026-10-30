@@ -543,11 +543,11 @@ Decided by the boss on 2026-10-28 (D20 in the sb-backend spec): "the work board 
   at once. A session writes only while it is its tab's main: a member, a demoted main, a tower, and a subagent write nothing, and the
   sidecars (Claude Code, Codex) have no rpiv-todo, so `board_set` stays their only writer. The server takes no part.
 - **Derivation** (`src/boardauto.ts`). `now` is `<name>: <task in progress>` (its `activeForm`, else its subject), else
-  `<name>: next <first pending>` (id order), else `<name>: done (n/n)`, and with no todo list `<name>` alone. A name that is pi's default
-  (none, or the session id) is no name: the line has no prefix, and with no name and no list there is no entry. `items` are the tasks in
+  `<name>: next <first pending>` (id order), else `<name>: done (n/n)`; with no todo list there is no entry (2026-10-30: a name alone is no work and stayed on the board after it ended). A name that is pi's default
+  (none, or the session id) is no name: the line has no prefix. A finished list is written once and goes 30 minutes later (the main removes it, readers hide it, a tower's read deletes it). `items` are the tasks in
   progress, then pending in id order, then completed (highest id first), at most 8, each its subject, done when completed. `count` is
-  the whole list's `done` and `total`. `who` is the scrubbed name (what allies get). With no name and no list the entry is removed, so a
-  stale auto line never stays.
+  the whole list's `done` and `total`. `who` is the scrubbed name (what allies get). With no todo list the entry is removed, so a
+  stale auto line never stays. `board_set { clear: true }` deletes the entry and auto-fill leaves it off until the list or the name moves.
 - **Scrub** (`scrubBoard`: the text is cleaned first (NFKC, whitespace folded, control and format characters such as U+200B and U+00AD removed, look-alike slashes made `/`), then scrubbed, and only then cut to the caps, so nothing re-joins a token after the check and a token at the cut cannot leave a prefix; nothing is refused, since no model wrote it for the board):
 
 | Pattern | Becomes |
@@ -573,8 +573,9 @@ Decided by the boss on 2026-10-28 (D20 in the sb-backend spec): "the work board 
 - A file whose session is not live, or whose session is no longer its tab's main, shows with `state: "ended"` until 30 minutes after
   its `updated`, then not at all; the tower sees work that stopped half done without a list of old work.
 - A main's `session_shutdown` deletes its own file on `quit`, `new`, `resume`, and `fork` (the session id is done in this process) and
-  keeps it on `reload`. A crash leaves the file; any `board_set` and any `board_read` delete files whose session is not live and whose
-  `updated` is more than 24 hours old. That is the one write to another session's file, and it only removes a dead one.
+  keeps it on `reload` (the reloaded session takes the file as its own and deletes it at its quit). A crash leaves the file; any `board_read` deletes files whose session is not live and whose
+  `updated` is more than 24 hours old, and a finished auto entry over 30 minutes old. That is the one write to another session's file, and it only removes what has run out. `board_set` does not purge: it does not know which sessions are live.
+- A live main that is idle, whose entry is over 2 hours old, shows the entry as `stale` (2026-10-30).
 
 ### Sharing with allies: the `board` kind
 

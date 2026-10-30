@@ -96,22 +96,29 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { post, callT
 				},
 			});
 			// The work board fills itself from the main's todo list and name (boardfill.ts); board_set overrides it, whole, until the todos move, and `auto` hands it back. Nothing here names another session's file.
-			if (!s.isTower) tool("board_set", "Override this main agent's work board entry. The board fills itself from your todo list and your name; this replaces it with one line of what you work on now and a short checklist with done marks, until your todos move. `auto: true` (with no text) hands the board back to auto-fill at once. Towers on this computer and, for a Straw Link team bound to your project, your teammates' towers read it; allies get an auto-filled entry as its line and done count only, and a board_set entry whole. Terse agent language; no secrets, credentials, customer data, or paths outside the project. It is not a report: the done report still goes to whoever asked. Only a tab's main agent may write.",
+			if (!s.isTower) tool("board_set", "Override this main agent's work board entry. The board fills itself from your todo list and your name; this replaces it with one line of what you work on now and a short checklist with done marks, until your todos move. `auto: true` (with no text) hands the board back to auto-fill at once. `clear: true` (with no text) deletes your entry: use it when your work is finished or shelved, because a line left on the board reads as current work; auto-fill does not write it again until your todo list or name changes. Towers on this computer and, for a Straw Link team bound to your project, your teammates' towers read it; allies get an auto-filled entry as its line and done count only, and a board_set entry whole. Terse agent language; no secrets, credentials, customer data, or paths outside the project. It is not a report: the done report still goes to whoever asked. Only a tab's main agent may write.",
 				Type.Object({
-					now: Type.Optional(Type.String({ description: "What you work on now: 1 to 120 characters, one line. Required unless auto is true." })),
+					now: Type.Optional(Type.String({ description: "What you work on now: 1 to 120 characters, one line. Required unless auto or clear is true." })),
 					items: Type.Optional(Type.Array(Type.Object({ t: Type.String({ description: "1 to 80 characters." }), done: Type.Boolean() }), { description: "At most 8 checklist items; the whole list replaces the old one." })),
 					auto: Type.Optional(Type.Boolean({ description: "true: give the board back to auto-fill (from your todo list and your name); no now or items." })),
+					clear: Type.Optional(Type.Boolean({ description: "true: delete your board entry (your work is finished or shelved); no now, items, or auto. Auto-fill leaves it off until your todo list or name changes." })),
 				}),
-				async ({ now, items, auto }) => {
+				async ({ now, items, auto, clear }) => {
 					const cwd = (await cfg.world().catch(() => undefined))?.panes.find((p) => p.pane_id === s.at?.paneId)?.cwd ?? process.cwd();
 					const home = cfg.link?.home ?? homedir(), agentDir = cfg.env.PI_CODING_AGENT_DIR ?? join(home, ".pi", "agent");
+					if (clear) {
+						if (now !== undefined || items !== undefined || auto) throw new Error("clear: true takes no now, items, or auto");
+						if (role() !== "main") throw new Error(NOT_MAIN);
+						boardFill.clear();
+						return { text: "Board entry cleared. Auto-fill leaves it off until your todo list or your name changes; the towers (and allies' towers) no longer see a line from you.", details: { clear: true } };
+					}
 					if (auto) {
 						if (now !== undefined || items !== undefined) throw new Error("auto: true takes no now or items; the board follows your todo list and your name");
 						if (role() !== "main") throw new Error(NOT_MAIN);
 						const derived = boardFill.handBack(), where = whereTo({ stateDir: guiDir, cwd, home, agentDir });
 						return { text: derived ? `Board handed back to auto-fill (${derived.text.items.length} item${derived.text.items.length === 1 ? "" : "s"}). It goes to: ${where}; allies get its name and done count only.` : "Board handed back to auto-fill. There is nothing to show yet (no todo list and no name); it fills when you have either.", details: { auto: true, now: derived?.text.now ?? null, items: derived?.text.items.length ?? 0, sharedWith: where } };
 					}
-					if (now === undefined) throw new Error("now is required unless auto is true");
+					if (now === undefined) throw new Error("now is required unless auto or clear is true");
 					s.boardId = me();
 					return setBoard({ dir: join(guiDir, "board"), stateDir: guiDir, session: me(), isMain: role() === "main", now: cfg.now(), cwd, input: { now, items }, home, agentDir, autoFill: true });
 				});

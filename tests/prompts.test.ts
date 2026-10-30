@@ -14,7 +14,8 @@ import { PROMPT_DIR } from "./fakes.ts";
 // Board auto-fill: main 335 to 350 (the board fills itself from the todo list and the name; board_set overrides it, `auto: true` hands it back).
 // Tower comms: tower 360 to 380 for never forwarding a main's board items or todo text to an ally (T2 review F009).
 // Merge of call timing (D19) and board auto-fill: main 458 (three call_tower points beside the board line), tower 380.
-const BUDGETS: Record<string, number> = { "main.md": 458, "tower.md": 380, "member.md": 140, "member-no-main.md": 150 };
+// Board clearing: main 458 to 484 (clear the board before stopping when work ends or is shelved; `board_set { clear: true }`; Done-when includes it).
+const BUDGETS: Record<string, number> = { "main.md": 484, "tower.md": 380, "member.md": 140, "member-no-main.md": 150 };
 const PLACEHOLDERS = new Set(["tab", "workspace", "main", "tower", "head", "dir"]);
 const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
 

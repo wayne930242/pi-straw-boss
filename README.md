@@ -92,7 +92,7 @@ The tower only routes and coordinates, so it can run a lighter model: set `tower
 | `tower_list` | Tower only: every workspace's tower, who a message for it reaches, its state, and what its tabs work on. |
 | `tower_send` | Tower only: message one other tower (by workspace id or label), or all of them. |
 | `board_read` | Tower only: the work board: what each main is doing and how far it is, here and on teammates' computers. |
-| `board_set` | A tab's main: override its own board entry (one line of current work, up to 8 checklist items), or `auto: true` to give it back to the auto-fill from its todo list and name. |
+| `board_set` | A tab's main: override its own board entry (one line of current work, up to 8 checklist items), `auto: true` to give it back to the auto-fill from its todo list and name, or `clear: true` to delete it when its work is finished or shelved. |
 | `boss_broadcast` | Message a tab, a workspace, all towers, or every session (under a header). |
 | `boss_server` | See the sb server (status works with the server down), read its log (up to 200 lines), or restart it with a reason. Refused while the boss stopped the server, once a minute at most, and never in a remote turn. |
 | `boss_rename` | Name this session with a short phrase for its current work; the net and the GUI show it, and a main agent's tab takes it as its label. Main agents call it when their work changes. |
