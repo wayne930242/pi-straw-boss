@@ -52,7 +52,7 @@ const RECLAIM_WAIT_MS = 5000;
 /** How long the hand-over waits for the start time of the process gui.json names (Windows: the CIM read takes 3.5 s and more, and the reclaim runs once, after the broker wait). */
 const RECLAIM_START_WAIT_MS = 6000;
 /** The control requests of Wi-Fi access (lanhost.ts), and what a secondary slot's server answers them. */
-const LAN_CMDS = ["gui-lan", "gui-lan-pair", "gui-lan-pending", "gui-lan-approve", "gui-lan-reset", "gui-lan-files", "gui-lan-face"];
+const LAN_CMDS = ["gui-lan", "gui-lan-pair", "gui-lan-pending", "gui-lan-approve", "gui-lan-reset", "gui-lan-files", "gui-lan-face", "gui-lan-ca"];
 const LAN_SECONDARY = "Wi-Fi access is served by the default Herdr's sb server";
 /** How long a start waits for remote access to come back before it goes on. */
 const RESUME_WAIT_MS = 3000;
@@ -417,6 +417,8 @@ export function createGuiHost(o: GuiHostOptions) {
 					if ("reply" in started) return started.reply;
 				}
 				// Off always succeeds: the wish lives in lan.json, so it is cleared there when no GUI runs.
+				// A GUI start in flight has loaded the wish already: wait for it, so the off goes through the running host instead of being written back over.
+				if (request.cmd === "gui-lan" && request.on === false) await opening?.catch(() => {});
 				if (request.cmd === "gui-lan" && request.on === false && !gui && slot.primary) return forgetLan();
 				return lan && gui ? lan.handle(request) : { ok: false, error: "stopped" };
 			}

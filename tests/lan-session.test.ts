@@ -7,7 +7,7 @@ import { until } from "./fakes.ts";
 // The overlay of `/boss gui lan` (src/pairing.ts `showLan`; docs/specs/2026-10-30-sb-gui-lan.md, Steps L6): a stand-in server (a function from request to answer), a clock the test moves, and a ticker it fires by hand. The overlay is the
 // unit under test; tests/lan-session-live.test.ts runs it against the real server.
 
-const ESC = "\x1b", CERT: LanCert = { sha256: "3F 7A 91 C2 B0 4E 55 D1 8A 0C 66 2E 19 F4 73 B5", sha1: "AAAAAAAA BBBBBBBB CCCCCCCC DDDDDDDD EEEEEEEE", validFrom: 1000 };
+const ESC = "\x1b", CERT: LanCert = { sha256: "3F 7A 91 C2 B0 4E 55 D1 8A 0C 66 2E 19 F4 73 B5", sha1: "AAAAAAAA BBBBBBBB CCCCCCCC DDDDDDDD EEEEEEEE", pairedUnder: false };
 const FACTS = { on: true, port: 8445, url: "https://weis-mbp.local:8445/sb-app/", addresses: [{ address: "192.168.1.5", interface: "en0" }, { address: "10.0.0.5", interface: "en1" }] };
 
 type Handler = (request: Record<string, unknown>) => LanReply | undefined | Promise<LanReply | undefined>;
@@ -35,7 +35,7 @@ function rig(over: { handler?: Handler; start?: LanStart; paired?: boolean; cert
 		ask, pane: over.pane === undefined ? "wA:p9" : over.pane, block: (active) => void (blocks.push(active), order.push(`${overlay ? "drawn" : "undrawn"}:block-${active}`)), now: () => t,
 		every: (fn) => (ticks.push(fn), () => void ticks.splice(ticks.indexOf(fn), 1)),
 		copy: async (text) => void copied.push(text), reveal: async (paths) => void revealed.push(paths), tell: (text, level) => void told.push([text, level]),
-		certificate: over.certificate ?? (async () => CERT), paired: () => over.paired === true, signal: controller.signal,
+		certificate: over.certificate ?? (async () => ({ ...CERT, pairedUnder: over.paired === true })), signal: controller.signal,
 	};
 	const ui = { custom: (factory: (tui: unknown, theme: unknown, keys: unknown, done: () => void) => Overlay) => new Promise<void>((resolve, reject) => { rejectUi = reject; overlay = factory({ requestRender() {} }, {}, {}, () => resolve()); }) };
 	const run = showLan(ui as never, deps, over.start ?? { screen: "warning", name: "weis-mbp" });
@@ -276,7 +276,7 @@ test("a code is minted only by a press: a redraw, a resize, a renewal, and a key
 	const shown = () => r.screen().split("\n").filter((line) => /[▀▄█]/.test(line)).join("\n");
 	const first = shown();
 	await r.key("k");
-	assert.deepEqual(r.cmds("gui-lan-pair").at(-1), { cmd: "gui-lan-pair", face: "face-1", form: "typed" });
+	assert.deepEqual(r.cmds("gui-lan-pair").at(-1), { cmd: "gui-lan-pair", face: "face-1", surface: r.cmds("gui-lan-pair")[0]!.surface, form: "typed" });
 	assert.match(r.screen(), /Or in an installed app, type this code \(it works once, within ten minutes\):\nABCD-EFGH/);
 	assert.doesNotMatch(r.screen(), /[▀▄█]{4}/, "the typed code replaces the QR: one code on the screen");
 	assert.match(r.screen(), /p {2}a new QR/);
@@ -289,7 +289,7 @@ test("a code is minted only by a press: a redraw, a resize, a renewal, and a key
 	assert.match(r.copied[0]!, /^https:\/\/[^/]+\/sb-app\/pair\/code-\d+$/, "a link without the token");
 	assert.notEqual(shown(), first);
 	await r.key("i");
-	assert.deepEqual(r.cmds("gui-lan-pair").at(-1), { cmd: "gui-lan-pair", face: "face-1", form: "address", address: "192.168.1.5" });
+	assert.deepEqual(r.cmds("gui-lan-pair").at(-1), { cmd: "gui-lan-pair", face: "face-1", surface: r.cmds("gui-lan-pair")[0]!.surface, form: "address", address: "192.168.1.5" });
 	assert.equal(r.cmds("gui-lan-pair").length, 5, "the QR on entering, k, p, c, and i: one each");
 	r.overlay.handleInput!(ESC);
 	await r.settled;
@@ -403,4 +403,59 @@ test("the files are shown in Finder, Explorer, or the file manager by the platfo
 	assert.deepEqual(revealCommand(files, "darwin"), ["open", ["-R", ...files]]);
 	assert.deepEqual(revealCommand(["C:\\d\\a.crt", "C:\\d\\b.crt"], "win32", { SystemRoot: "C:\\Windows" }), ["C:\\Windows\\explorer.exe", ["/select,C:\\d\\a.crt"]]);
 	assert.deepEqual(revealCommand(files, "linux"), ["xdg-open", ["/d"]]);
+});
+
+test("RVL6-F003: a reopen after typed_into keeps the face dead (Escape only) and clears the digits already typed", async () => {
+	let known = true, taint = false;
+	const r = rig({ start: { screen: "pairing", facts: FACTS }, handler: (req) => {
+		if (req.cmd === "gui-lan-pending") return known ? { ok: true, ...FACTS, pending: [{ id: "a1", label: "iPhone", peer: "192.168.1.23", iface: "en0" }], events: [] } : { ok: false, error: "unknown_face" };
+		if (req.cmd === "gui-lan-approve" && taint) return { ok: false, error: "typed_into", reason: "A paired device typed into this session as this screen opened; press Esc and run /boss gui lan again." };
+	} });
+	await r.ready();
+	await r.settle();
+	await r.tick();
+	await r.key("1");
+	await r.key("2");
+	assert.match(r.screen(), /Number: 12█/);
+	known = false;
+	await r.tick();
+	known = true;
+	await r.settle();
+	await r.tick();
+	assert.equal(r.cmds("gui-lan-face").filter((c) => c.open === true).length, 2, "a second mark was opened");
+	assert.match(r.screen(), /Number: █/, "the reopen cleared the digits");
+	for (const d of ["1", "2", "3", "4"]) await r.key(d);
+	taint = true;
+	assert.equal((await r.key("\r")).length, 1);
+	assert.match(r.screen(), /A paired device typed into this session/);
+	known = false;
+	await r.tick();
+	known = true;
+	await r.settle();
+	await r.tick();
+	assert.equal(r.cmds("gui-lan-face").filter((c) => c.open === true).length, 3);
+	assert.deepEqual(await r.key("p"), [], "dead stays dead after the reopen");
+	assert.deepEqual(await r.key("t"), []);
+	r.overlay.handleInput!(ESC);
+	await r.settled;
+});
+
+test("RVL6-F004: the codes of one overlay share one surface across a reopen, so the face id changing does not leave the earlier code live", async () => {
+	let known = true;
+	const r = rig({ start: { screen: "pairing", facts: FACTS }, handler: (req) => (req.cmd === "gui-lan-pending" && !known ? { ok: false, error: "unknown_face" } : undefined) });
+	await r.ready();
+	await r.settle();
+	const before = r.cmds("gui-lan-pair").at(-1)!;
+	known = false;
+	await r.tick();
+	known = true;
+	await r.settle();
+	await r.tick();
+	await r.key("p");
+	const after = r.cmds("gui-lan-pair").at(-1)!;
+	assert.notEqual(after.face, before.face);
+	assert.match(String(after.surface), /^[0-9a-f]{32}$/);
+	assert.equal(after.surface, before.surface, "same surface: the server voids the earlier code");
+	r.overlay.handleInput!(ESC);
+	await r.settled;
 });

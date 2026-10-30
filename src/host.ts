@@ -1,8 +1,4 @@
-import { X509Certificate } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { type GuiRecord, readRecord, urlOf } from "./handover.ts";
-import { CA_FILES, fingerprints } from "./lan/ca.ts";
 import type { Membership } from "./membership.ts";
 import { every, type LanDeps, type LanReply, revealFiles, showLan } from "./lanface.ts";
 import { pairingKeys, showLines } from "./pairing.ts";
@@ -50,25 +46,10 @@ export function createHost({ pi, cfg, s, guiDir, tell }: Kit, { connected, ask }
 		pane: cfg.env.HERDR_PANE_ID ?? null,
 		block: (active) => pi.events.emit("herdr:blocked", { active, label: "Showing the Wi-Fi pairing screen" }),
 		now: face.now ?? Date.now, every: face.every ?? every, copy, reveal: face.reveal ?? revealFiles, tell, signal,
-		// The fingerprint comes from the public .crt the server writes (no control request returns it).
+		// The server answers with the CA it serves, so nothing is read from a file here.
 		async certificate() {
-			const r = await send({ cmd: "gui-lan-files" }, "never");
-			const file = Array.isArray(r.files) ? (r.files as string[]).find((f) => f.endsWith(CA_FILES.crt)) : undefined;
-			try {
-				const x = new X509Certificate(readFileSync(file!));
-				return { ...fingerprints({ cert: x.toString() }), validFrom: Date.parse(x.validFrom) };
-			} catch {
-				return undefined;
-			}
-		},
-		// lan.json lists the devices allowed over Wi-Fi, each with when; one allowed after this certificate began was paired under it.
-		paired(cert) {
-			try {
-				const { devices } = JSON.parse(readFileSync(join(slotOf(guiDir, cfg.env).dir, "lan.json"), "utf8")) as { devices?: Record<string, { paired?: number }> };
-				return Object.values(devices ?? {}).some((x) => typeof x.paired === "number" && x.paired >= cert.validFrom);
-			} catch {
-				return false;
-			}
+			const r = await send({ cmd: "gui-lan-ca" }, "never");
+			return r.ok && typeof r.sha256 === "string" && typeof r.sha1 === "string" ? { sha256: r.sha256, sha1: r.sha1, pairedUnder: r.pairedUnder === true } : undefined;
 		},
 	});
 
@@ -88,14 +69,20 @@ export function createHost({ pi, cfg, s, guiDir, tell }: Kit, { connected, ask }
 		async command(mode: string) {
 			const send = (request: Record<string, unknown>, start: "boss" | "never"): Promise<LanReply> => asking()(request, { start }).catch((error: Error) => ({ ok: false as const, error: error.message }));
 			if (mode === "lan off") {
-				const r = await send({ cmd: "gui-lan", on: false }, "never");
-				return r.ok ? tell(String(r.text)) : tell(r.error === "no server" ? "Wi-Fi access is off: the straw net GUI is not running" : String(r.reason ?? r.error), r.error === "no server" ? "info" : "error");
+				// Starts a server when none runs, as `remote off` does: the server clears the wish in lan.json, which a later start would otherwise serve again.
+				const r = await send({ cmd: "gui-lan", on: false }, "boss");
+				return r.ok ? tell(String(r.text)) : fail({ error: r.error === "stopped" ? "stopped" : String(r.reason ?? r.error) });
 			}
 			if (mode === "lan" || mode === "lan reset") {
 				if (!s.ui) return tell(`/boss gui ${mode} needs the pi screen: the certificate, the risk, and the numbers of new devices are shown there, never in the conversation.`, "error");
 				if (lanOpen) return tell("The Wi-Fi screen is already open in this session.", "warning");
 				let start: Parameters<typeof showLan>[2];
-				if (mode === "lan reset") start = { screen: "reset" };
+				if (mode === "lan reset") {
+					// A GUI stopped on purpose is started first, as `/boss gui lan` does: the reset face needs it to run, and the boss asked for this by name.
+					const g = await send({ cmd: "gui", boss: true }, "boss");
+					if (!g.ok) return fail(g);
+					start = { screen: "reset" };
+				}
 				else {
 					// Turning it on is the boss's own command: it starts a GUI stopped on purpose. Without a certificate the answer is the warning, and nothing is made before the boss presses y.
 					const r = await send({ cmd: "gui-lan", on: true }, "boss");

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { LanPanel, Reply } from "../control.ts";
 import type { Gui } from "../gui.ts";
 import type { LanEvent, LanPending } from "../lan/access.ts";
-import { CA_FILES, CA_MIME, caStatus, createCa, crt, fingerprints, type LanCa, localName as readLocalName, type LocalName, mobileconfig, readCa, writeCa, type WriteDeps } from "../lan/ca.ts";
+import { CA_FILES, CA_MIME, caStatus, caValidity, createCa, crt, fingerprints, type LanCa, localName as readLocalName, type LocalName, mobileconfig, readCa, writeCa, type WriteDeps } from "../lan/ca.ts";
 import { createFaces } from "../lan/faces.ts";
 import { type FirewallInput, type FirewallRead, readFirewall } from "../lan/firewall.ts";
 import { createLanListener, type ListenerOptions, type ListenerStatus, type LanListener } from "../lan/listener.ts";
@@ -390,7 +390,8 @@ export function createLanHost(o: LanHostOptions) {
 			case "gui-lan-pair": {
 				const refused = faceOk(request.face);
 				if (refused) return asHttp(refused);
-				return asHttp(pairing(`face:${String(request.face)}`, request));
+				// The overlay names one surface for its whole life, so a new code voids the earlier one even across a reopen of its mark.
+				return asHttp(pairing(`face:${typeof request.surface === "string" && /^[0-9a-f]{32}$/.test(request.surface) ? request.surface : String(request.face)}`, request));
 			}
 			case "gui-lan-approve": {
 				const refused = faceOk(request.face);
@@ -406,8 +407,17 @@ export function createLanHost(o: LanHostOptions) {
 				return asHttp(await serial(() => reset(request.unpair as boolean)));
 			}
 			case "gui-lan-files": return asHttp(files());
+			case "gui-lan-ca": return asHttp(certificateOf());
 			default: return { ok: false, error: "unknown request" };
 		}
+	}
+
+	/** The CA this computer serves, for the overlay's fingerprint check (control socket only): public facts, and whether a device was allowed over Wi-Fi under this very certificate (paired at or after it was made). */
+	function certificateOf(): Reply {
+		const found = stored();
+		if ("lost" in found) return bad("no_ca", "There is no Wi-Fi certificate yet; run /boss gui lan first.", 409);
+		const c = ca!, f = fingerprints(c), span = caValidity(c), created = Date.parse(c.created);
+		return reply(200, { name: c.name, sha256: f.sha256, sha1: f.sha1, created, notBefore: span.notBefore, ended: "ended" in found, pairedUnder: lan().store.list().some((d) => d.paired >= created) });
 	}
 
 	function files(): Reply {

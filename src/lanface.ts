@@ -1,5 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { matchesKey } from "@earendil-works/pi-tui";
+import { randomBytes } from "node:crypto";
 import { dirname } from "node:path";
 import { execFileExe } from "./exe.mjs";
 import { qr, qrLines } from "./qr.ts";
@@ -40,7 +41,8 @@ export const revealFiles = (paths: string[]) =>
 		execFileExe(cmd, args, { timeout: 10_000 }, (error) => (error && (error as NodeJS.ErrnoException).code === "ENOENT" ? fail(new Error(`Could not show the files with ${cmd}`)) : done()));
 	});
 
-export interface LanCert { sha256: string; sha1: string; validFrom: number }
+/** The server's CA as the overlay shows it: `pairedUnder` says a device was allowed over Wi-Fi under this very certificate. */
+export interface LanCert { sha256: string; sha1: string; pairedUnder: boolean }
 export interface LanDeps {
 	/** One control request (never starting a server: the command already found it). */
 	ask(request: Record<string, unknown>): Promise<LanReply>;
@@ -52,10 +54,8 @@ export interface LanDeps {
 	copy(text: string): Promise<void>;
 	reveal(paths: string[]): Promise<void>;
 	tell(text: string, level?: "info" | "warning" | "error"): void;
-	/** The CA's public certificate, read from the files the server writes for **f**; undefined when it cannot be read. */
+	/** The CA's fingerprints, from the server (`gui-lan-ca`); undefined when it cannot be had. */
 	certificate(): Promise<LanCert | undefined>;
-	/** Whether a device has been allowed over Wi-Fi under the certificate with this start. */
-	paired(cert: LanCert): boolean;
 	/** The end of the session closes the overlay. */
 	signal?: AbortSignal;
 }
@@ -105,6 +105,8 @@ const hostOf = (url: unknown) => (typeof url === "string" ? /^https:\/\/([^/:]+)
  * mark is dropped on each of those.
  */
 export async function showLan(ui: ExtensionContext["ui"], d: LanDeps, start: LanStart) {
+	// One code surface for the whole overlay, kept across a reopen of its mark: a new code voids the earlier one.
+	const surface = randomBytes(16).toString("hex");
 	let face = "", settleUntil = 0, okSent = -Infinity, dead = "", said = "", busy = false, closed = false, polling = false;
 	let screen: LanScreen = start.screen, facts: Record<string, unknown> = start.facts ?? {}, cert: LanCert | undefined, entered = "", pending: Pending[] = [], events: string[] = [], seen: string[] | undefined;
 	let code: { qr: string[]; url: string } | { typed: string } | undefined, pick = 0;
@@ -116,7 +118,8 @@ export async function showLan(ui: ExtensionContext["ui"], d: LanDeps, start: Lan
 		const sent = d.now();
 		const r = await d.ask({ cmd: "gui-lan-face", pane: d.pane, open: true }).catch((error: Error) => ({ ok: false, error: error.message }) as LanReply);
 		if (!r.ok || typeof r.face !== "string") throw new Error(`${STEP_ANSWER}${r.error ? ` (${r.error})` : ""}`);
-		[face, okSent, settleUntil, dead] = [r.face, sent, d.now() + SETTLE_MS, ""];
+		// `dead` stays: a face a paired device typed into ends only with Escape, and digits typed meanwhile are dropped.
+		[face, okSent, settleUntil, entered] = [r.face, sent, d.now() + SETTLE_MS, ""];
 	}
 	const live = () => !dead && !closed && d.now() >= settleUntil && d.now() - okSent < FRESH_MS;
 	const absorb = (r: LanReply) => {
@@ -143,7 +146,7 @@ export async function showLan(ui: ExtensionContext["ui"], d: LanDeps, start: Lan
 	const mint = async (): Promise<boolean> => {
 		const at = chosen();
 		if (!at) return (said = "This computer has no address Wi-Fi access can serve now.", false);
-		const r = await d.ask({ cmd: "gui-lan-pair", face, form: at.form, ...(at.address ? { address: at.address } : {}) });
+		const r = await d.ask({ cmd: "gui-lan-pair", face, surface, form: at.form, ...(at.address ? { address: at.address } : {}) });
 		if (!r.ok || typeof r.url !== "string" || !Array.isArray(r.rows)) return (said = reply(r, "No code was made."), false);
 		code = { url: r.url, qr: qrLines((r.rows as string[]).map((row) => [...row].map((c) => c === "1"))) };
 		return true;
@@ -154,7 +157,7 @@ export async function showLan(ui: ExtensionContext["ui"], d: LanDeps, start: Lan
 		said = "";
 		if (next === "home") {
 			await load();
-			next = cert && d.paired(cert) ? "pairing" : "certificate";
+			next = cert?.pairedUnder ? "pairing" : "certificate";
 		}
 		if (next === "certificate" && !cert) await load();
 		screen = next;
@@ -224,7 +227,7 @@ export async function showLan(ui: ExtensionContext["ui"], d: LanDeps, start: Lan
 	};
 	const answered = (r: LanReply): boolean => {
 		if (r.ok) return true;
-		if (r.error === "typed_into") dead = reply(r, "A paired device typed into this session as this screen opened; press Esc and run /boss gui lan again.");
+		if (r.error === "typed_into") (entered = ""), dead = reply(r, "A paired device typed into this session as this screen opened; press Esc and run /boss gui lan again.");
 		else said = r.error === "unknown_face" ? "This screen was no longer live; wait a moment and press the key again." : reply(r, "Refused.");
 		return false;
 	};
@@ -292,7 +295,7 @@ export async function showLan(ui: ExtensionContext["ui"], d: LanDeps, start: Lan
 		if (is("p")) return act(async () => void (await mint()));
 		if (is("k")) return act(async () => {
 			const at = chosen();
-			const r = await d.ask({ cmd: "gui-lan-pair", face, form: "typed", ...(at?.address ? { address: at.address } : {}) });
+			const r = await d.ask({ cmd: "gui-lan-pair", face, surface, form: "typed", ...(at?.address ? { address: at.address } : {}) });
 			if (!r.ok || typeof r.code !== "string") return void (said = reply(r, "No code was made."));
 			code = { typed: r.code };
 			said = "";

@@ -137,12 +137,91 @@ test("/boss gui lan off really stops the listeners and keeps the certificate; /b
 	await again;
 });
 
-test("/boss gui lan off with no server or no GUI says so and starts nothing", async () => {
-	const s = session();
+test("RVL6-F001: /boss gui lan off asks with start boss, so a server that is not running is started and the wish is cleared; with the GUI stopped the wish in lan.json is cleared and the next start binds nothing", async () => {
+	const none = session();
+	const asked: unknown[] = [];
+	const base = world.ask;
+	world.ask = async (request, options) => (asked.push([request.cmd, options.start]), base(request, options));
+	await none.a.start();
+	await none.a.command("gui lan off");
+	assert.deepEqual(asked.filter((x) => (x as string[])[0] === "gui-lan"), [["gui-lan", "boss"]], "off may start the server that clears the wish");
+	assert.equal(none.a.overlays.length, 0);
+	world.ask = base;
+	await none.a.stop();
+
+	const { h, port } = await server();
+	const wish = JSON.parse(readFileSync(join(h.slot.dir, "lan.json"), "utf8"));
+	writeFileSync(join(h.slot.dir, "lan.json"), JSON.stringify({ ...wish, wanted: true }), { mode: 0o600 });
+	assert.equal((await h.ask("gui-stop", {})).ok, true);
+	const s = session("viewer-b", "wA:p2");
 	await s.a.start();
 	await s.a.command("gui lan off");
-	assert.match(s.a.notices.at(-1)!.text, /Wi-Fi access is off: the straw net GUI is not running/);
-	assert.equal(s.a.overlays.length, 0);
+	assert.equal(s.a.notices.at(-1)!.text, "Wi-Fi access is off; the devices you allowed stay paired");
+	assert.equal(JSON.parse(readFileSync(join(h.slot.dir, "lan.json"), "utf8")).wanted, false, "the wish is gone");
+	assert.equal((await h.ask("gui", { boss: true })).ok, true);
+	assert.equal(await refused(port), true, "the next start serves nothing over Wi-Fi");
+});
+
+// The window is the length of `begin()` (the lan.json read to `gui = started`), which no seam here can hold open; this checks the end state of an off sent into a start, and the wait itself is the one line `await opening` in guihost.ts.
+test("RVL6-F005: an off sent into a GUI start leaves the wish cleared and nothing bound", async () => {
+	const { h, port } = await server();
+	const wish = JSON.parse(readFileSync(join(h.slot.dir, "lan.json"), "utf8"));
+	writeFileSync(join(h.slot.dir, "lan.json"), JSON.stringify({ ...wish, wanted: true }), { mode: 0o600 });
+	assert.equal((await h.ask("gui-stop", {})).ok, true);
+	const starting = h.ask("gui", { boss: true });
+	const off = h.ask("gui-lan", { on: false });
+	assert.equal((await off).ok, true);
+	assert.equal((await starting).ok, true);
+	assert.equal(await refused(port), true, "nothing binds");
+	assert.equal(JSON.parse(readFileSync(join(h.slot.dir, "lan.json"), "utf8")).wanted, false);
+});
+
+test("RVL6-F006: /boss gui lan reset with the GUI stopped on purpose starts the GUI first and opens the reset face", async () => {
+	const { h } = await server();
+	assert.equal((await h.ask("gui-stop", {})).ok, true);
+	const s = session();
+	await s.a.start();
+	const command = s.a.command("gui lan reset");
+	await until(() => s.a.overlays.length === 1, "the reset face");
+	assert.match(s.screen(), /Make a new Wi-Fi access certificate\?/);
+	assert.doesNotMatch(s.a.notices.map((n) => n.text).join("\n"), /Could not reach/);
+	s.advance(1500);
+	s.overlay().handleInput!(ESC);
+	await command;
+});
+
+test("RVL6-F002: gui-lan-ca answers from the server's CA, and the face is chosen by what was paired under this certificate (not its backdated start): after a renew the old pairing no longer counts", async () => {
+	const { h } = await server();
+	const s = session();
+	await s.a.start();
+	const first = s.a.command("gui lan");
+	await until(() => s.a.overlays.length === 1, "the warning");
+	s.advance(1500);
+	s.overlay().handleInput!("y");
+	await until(() => /Step 1, once per phone/.test(s.screen()), "the certificate face");
+	s.overlay().handleInput!(ESC);
+	await first;
+	const ca1 = await h.ask("gui-lan-ca", {});
+	const stored = JSON.parse(readFileSync(join(h.slot.dir, "lan-ca.json"), "utf8"));
+	assert.equal(ca1.sha256, fingerprints({ cert: stored.cert }).sha256);
+	assert.equal(ca1.sha1, fingerprints({ cert: stored.cert }).sha1);
+	assert.equal(ca1.created, Date.parse(stored.created));
+	assert.ok((ca1.notBefore as number) < (ca1.created as number), "the start is backdated, so it is not the choice");
+	assert.equal(ca1.pairedUnder, false);
+	assert.equal(ca1.ended, false);
+	// a device paired in the hour before the certificate began (an older pairing) is not paired under it
+	const lan = JSON.parse(readFileSync(join(h.slot.dir, "lan.json"), "utf8"));
+	const hash = "a".repeat(64);
+	writeFileSync(join(h.slot.dir, "lan.json"), JSON.stringify({ ...lan, devices: { [hash]: { until: Date.now() + 1e9, label: "old", paired: (ca1.created as number) - 1000, seen: 0 } } }), { mode: 0o600 });
+	await h.ask("gui-stop", {});
+	await h.ask("gui", { boss: true });
+	assert.equal((await h.ask("gui-lan-ca", {})).pairedUnder, false, "paired before this certificate");
+	const state = JSON.parse(readFileSync(join(h.slot.dir, "lan.json"), "utf8"));
+	state.devices[hash].paired = (ca1.created as number) + 1;
+	writeFileSync(join(h.slot.dir, "lan.json"), JSON.stringify(state), { mode: 0o600 });
+	await h.ask("gui-stop", {});
+	await h.ask("gui", { boss: true });
+	assert.equal((await h.ask("gui-lan-ca", {})).pairedUnder, true, "paired under it");
 });
 
 test("/boss gui lan reset asks first: Escape changes nothing, r makes a new certificate and keeps the devices, u unpairs them; the face then shows the new fingerprint", async () => {
@@ -199,6 +278,7 @@ test("/boss gui lan reset asks first: Escape changes nothing, r makes a new cert
 	assert.notEqual(renewed, original, "a new certificate");
 	assert.ok(s.screen(3).includes(`SHA-256 starting: ${fingerprints({ cert: JSON.parse(renewed).cert }).sha256}`), "with its own fingerprint");
 	assert.equal(Object.keys(JSON.parse(readFileSync(join(h.slot.dir, "lan.json"), "utf8")).devices).length, 1, "r keeps the device");
+	assert.equal((await h.ask("gui-lan-ca", {})).pairedUnder, false, "but it was paired under the old certificate: the face opens on the certificate");
 	assert.equal(await refused(port), false, "and Wi-Fi access stays on");
 	s.overlay(3).handleInput!(ESC);
 	await renewing;
