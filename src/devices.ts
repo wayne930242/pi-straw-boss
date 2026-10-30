@@ -21,10 +21,10 @@ export function labelOf(ua = ""): string {
 }
 
 /** A temporary file of its own name, created new (`wx`): one that was already there (another account's, with its owner) is never written to and renamed into place (R8-F002). */
-function writeOwned(file: string, text: string) {
+function writeOwned(file: string, value: unknown) {
 	const temp = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
 	try {
-		writeFileSync(temp, text, { mode: 0o600, flag: "wx" });
+		writeFileSync(temp, JSON.stringify(value), { mode: 0o600, flag: "wx" });
 		renameSync(temp, file);
 	} catch (failure) {
 		rmSync(temp, { force: true });
@@ -53,7 +53,7 @@ export function createDevices(file?: string) {
 		if (!file) return;
 		try {
 			if (!identity || !(devices.size || wanted)) rmSync(file, { force: true });
-			else writeOwned(file, JSON.stringify({ ...identity, wanted, devices: Object.fromEntries(devices) }));
+			else writeOwned(file, { ...identity, wanted, devices: Object.fromEntries(devices) });
 			error = undefined;
 		} catch (e) {
 			error = (e as Error).message;
@@ -136,7 +136,7 @@ export function createLanDevices(file: string | undefined, tokenHash: string, lo
 		if (!file) return;
 		try {
 			if (!devices.size && !wanted && port === LAN_PORT) rmSync(file, { force: true });
-			else writeOwned(file, JSON.stringify({ v: 1, wanted, port, token: tokenHash, devices: Object.fromEntries(devices) }));
+			else writeOwned(file, { v: 1, wanted, port, token: tokenHash, devices: Object.fromEntries(devices) });
 			error = undefined;
 		} catch (e) {
 			error = (e as Error).message;
