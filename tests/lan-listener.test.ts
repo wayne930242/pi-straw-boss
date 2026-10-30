@@ -670,12 +670,34 @@ test("a peer that holds as many connections as the heaviest cannot evict, and a 
 	assert.deepEqual(c.w.logs.filter(([e]) => e === "lan-limited"), [["lan-limited", { closed: 1, peers: 1 }]]);
 });
 
-test("the connection evicted is one that has made no request, even when it is younger than one that has", async () => {
-	const c = await crowd({ limits: { unpairedPerPeer: 2, unpairedAll: 3 } });
+test("the connection evicted is one that has made no request and is past the handshake time, even when it is younger than one that has", async () => {
+	const c = await crowd({ limits: { unpairedPerPeer: 2, unpairedAll: 3 }, timeouts: { firstByteMs: 600_000, handshakeMs: 1000 } });
 	const a1 = await c.busy("10.0.0.7"), a2 = await c.dial("10.0.0.7"), b1 = await c.busy("10.0.0.8");
+	c.w.clock.advance(2000); // a2 has been silent for longer than a handshake takes
 	const fresh = await c.busy("10.0.0.9"); // 10.0.0.7 holds two, one without a request: that one goes, not the older busy one
 	await closed(a2);
 	for (const socket of [a1, b1, fresh]) assert.ok(await c.alive(socket));
+});
+
+test("a request-less connection younger than the handshake time is not evicted in preference to an older one (RVL3R-F001)", async () => {
+	const c = await crowd({ limits: { unpairedPerPeer: 2, unpairedAll: 3 }, timeouts: { firstByteMs: 600_000, handshakeMs: 600_000 } });
+	const a1 = await c.busy("10.0.0.7"), a2 = await c.dial("10.0.0.7"), b1 = await c.busy("10.0.0.8");
+	const fresh = await c.busy("10.0.0.9"); // a2 is still in its handshake window: the oldest of the heaviest peer goes
+	await closed(a1);
+	for (const socket of [a2, b1, fresh]) assert.ok(await c.alive(socket));
+});
+
+test("a churn from more addresses than the pool holds does not evict a phone that is mid-handshake, while the flood's oldest connections go (RVL3R-F001)", async () => {
+	const c = await crowd({ limits: { unpairedPerPeer: 1, unpairedAll: 6 }, timeouts: { firstByteMs: 600_000, handshakeMs: 600_000 } });
+	const flood: Socket[] = [];
+	for (let host = 100; host < 106; host++) flood.push(await c.busy(`10.0.0.${host}`)); // one connection each: the whole pool
+	const phone = await c.dial("10.0.0.9"); // takes the oldest flood connection's place, and holds as many as the heaviest peer
+	const churn = [await c.dial("10.0.0.200"), await c.dial("10.0.0.201")];
+	assert.ok(await c.alive(phone), "the phone's connection survives two churning arrivals");
+	await closed(flood[0]!);
+	await closed(flood[1]!);
+	await closed(flood[2]!);
+	for (const socket of [...flood.slice(3), ...churn]) assert.ok(await c.alive(socket));
 });
 
 /** The phone proves itself once, so its address is remembered. */
@@ -728,6 +750,17 @@ test("a remembered address's TLS connection without the cookie is a plain unpair
 	assert.equal(c.w.calls.length, 2, "the handler was not asked");
 	assert.equal((await c.secureAs(PHONE, { headers: paired })).status, 200, "with the cookie it is the phone");
 	agent.destroy();
+});
+
+test("a remembered address's TLS keep-alive connections that send only an unlisted Host are unpaired ones, closed past the unpaired limits (RVL3R-F002)", async () => {
+	const c = await crowd({ limits: { unpairedPerPeer: 2, pairedPerPeer: 4 } });
+	await remember(c);
+	const agent = new HttpsAgent({ keepAlive: true, maxSockets: 4 });
+	const results = await Promise.allSettled([0, 1, 2, 3].map((n) => c.secureAs(PHONE, { agent, host: "evil.example:1", path: `/bad/${n}` })));
+	agent.destroy();
+	assert.equal(results.filter((r) => r.status === "fulfilled" && r.value.status === 403).length, 2, "two fit the peer's unpaired limit and are refused with 403");
+	assert.equal(results.filter((r) => r.status === "rejected").length, 2, "the other two are closed");
+	assert.equal(c.w.calls.length, 1, "the handler was not asked");
 });
 
 test("a remembered address's plain connection is an unpaired one from its first byte", async () => {
