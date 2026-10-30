@@ -79,12 +79,14 @@ test("merge train: apps-config names the integration fields and the skill headin
 	for (const term of ["`integration`", "`maxCars`", "`maxWaitMin`", "`base`", "## Light checks", "## Train assembly", "## Full gates", "## Merge", "## Post-merge", "## Urgent lane", "## Load", "Format, lint, build, full type-check, full suites, publish"]) assert.ok(cfg.includes(term), `apps-config.md names ${term}`);
 	const integrator = readFileSync(`${PROMPT_DIR}/integrator.md`, "utf8");
 	assert.match(integrator, /^# Integrator/);
-	for (const term of ["`Light checks`, `Full gates`, or `Merge`", "`why=blocked`", "car:", "auth:", "`train/<code>`", "nothing is force pushed", "`maxCars`", "`maxWaitMin`", "`why=milestone`"]) assert.ok(integrator.includes(term), `integrator.md names ${term}`);
+	for (const term of ["`Light checks`, `Full gates`, or `Merge`", "`why=blocked`", "car:", "auth:", "`train/<code>`", "nothing is force pushed", "`maxCars`", "`maxWaitMin`", "`why=milestone`", "(applied to a DB: no|<which>)", "coordinator: <session id>", "apps-config.md beside this file", "~/.pi/agent/straw-boss/trains/<project>/<app>.json", "integ <project>", "never rename again", "reviewer rechecks it (delta brief)"]) assert.ok(integrator.includes(term), `integrator.md names ${term}`);
+	assert.ok(!integrator.includes("{{dir}}") && !integrator.includes("<state dir>") && !integrator.includes("reserve"), "integrator.md has no placeholder, undefined path, or reserve");
+	assert.ok(words(integrator) <= 600, `integrator.md has ${words(integrator)} words`);
 });
 
 test("merge train: main hands integration cars over with why shared, planning states the principle, and the tower forwards a shared merge request to the one integrator", () => {
 	const main = readFileSync(`${PROMPT_DIR}/main.md`, "utf8");
-	for (const term of ["`integration`", "{{dir}}/integrator.md", "never merge to its base or claim a pre-dev branch", "`why: shared`"]) assert.ok(main.includes(term), `main.md names ${term}`);
+	for (const term of ["`integration`", "{{dir}}/integrator.md", "never merge to its base or claim a pre-dev branch, unless you are the project's integrator", "`why: shared`", "waits for the integrator's train answer", "the done report still goes to whoever asked", "paths outside the project"]) assert.ok(main.includes(term), `main.md names ${term}`);
 	const plan = readFileSync(`${PROMPT_DIR}/planning.md`, "utf8");
 	for (const term of ["`Light checks`", "once, by the integrator", "may name exceptions"]) assert.ok(plan.includes(term), `planning.md names ${term}`);
 	for (const file of ["tower.md", "tower-run.md"]) {
@@ -92,4 +94,5 @@ test("merge train: main hands integration cars over with why shared, planning st
 		for (const term of ["`integration`", "integrator", "boss_open_main", "integrator.md"]) assert.ok(text.includes(term), `${file} names ${term}`);
 	}
 	assert.ok(words(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8")) <= 380);
+	assert.ok(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8").includes("finding with evidence"));
 });

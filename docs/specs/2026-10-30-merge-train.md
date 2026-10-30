@@ -23,7 +23,7 @@ A coordinator's anchor before handoff is its review (P0 and P1 clear) plus behav
 
 - `apps.json`: top level `"integration": {"skill", "maxCars", "maxWaitMin"}`; per app `"integration": {"base", "skill"?}`. An app without it keeps today's flow.
 - Skill headings, exactly: `## Light checks`, `## Train assembly`, `## Full gates`, `## Merge`, `## Post-merge`, optional `## Urgent lane`, `## Load`. Missing `Light checks`, `Full gates`, or `Merge`: the integrator does not depart and calls the tower with `why=blocked`.
-- Car slip: car, tickets, branch, head SHA, tested-on base SHA; review with P0=0 P1=0 and a report path; light result; migrations; lane; the boss's authorization quoted; the coordinator. A missing field returns the slip.
+- Car slip: car, tickets, branch, head SHA, tested-on base SHA; review with P0=0 P1=0 and a report path; light result; migrations (`<names or none> (applied to a DB: no|<which>)`; an applied one returns the car); lane; the boss's authorization quoted; the coordinator. A missing field returns the slip.
 
 ## Prompt changes
 
@@ -31,7 +31,7 @@ A coordinator's anchor before handoff is its review (P0 and P1 clear) plus behav
 |---|---|
 | `prompts/apps-config.md` | The two `integration` fields and the heading contract. |
 | `prompts/integrator.md` (new) | The integrator's role, car intake, departure, assembly, red handling, urgent lane, post-merge. Read before the first departure; not in the system prompt. |
-| `prompts/main.md` | An integration app: no own merge or pre-dev claim; send the car slip with `why: shared`; Done when counts the integrator's report. |
+| `prompts/main.md` | An integration app: no own merge or pre-dev claim unless the main is the integrator; a slip waits for the integrator's train answer, not go; send the car slip with `why: shared`; Done when counts the integrator's report. |
 | `prompts/planning.md` | The coordinator's anchor and where the other gates run. |
 | `prompts/tower-run.md`, `prompts/tower.md` | A `shared` merge request from an integration app goes to the project's one integrator, opened when absent, closed when idle. |
 
