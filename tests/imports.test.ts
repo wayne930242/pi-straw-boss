@@ -14,7 +14,7 @@ test("extension code imports relative modules only as .ts", () => {
 	for (const name of readdirSync(join(root, "src/agent")).filter((file) => file.endsWith(".ts"))) {
 		for (const [, specifier] of readFileSync(join(root, "src/agent", name), "utf8").matchAll(/from\s+["'](\.\.\/(?:host|gui|dialogs|bridge|handover|mirror|control)\.ts)["']/g)) assert.fail(`src/agent/${name} imports ${specifier}: a net sidecar never hosts or reaches the GUI`);
 	}
-	for (const dir of ["src", "src/agent", "src/trust"]) {
+	for (const dir of ["src", "src/agent", "src/trust", "src/lan"]) {
 		for (const name of readdirSync(join(root, dir)).filter((file) => file.endsWith(".ts"))) {
 			for (const [, specifier] of readFileSync(join(root, dir, name), "utf8").matchAll(/from\s+["'](\.[^"']*)["']/g)) {
 				// The one plain-JavaScript module the extension loads: exe.mjs finds programs by absolute path, and balance.mjs, which Node runs from node_modules where it will not strip types, needs it too.
