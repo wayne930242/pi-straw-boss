@@ -1,6 +1,6 @@
 import { allyLabel } from "./boardauto.ts";
 import { clean, forAllies, joinLocal, type LiveMain, purge, readEntries } from "./board.ts";
-import { sessionMark } from "./netdata.ts";
+import { commanding, sessionMark, subagents } from "./netdata.ts";
 import type { Pane, Session } from "./herdr.ts";
 import { inside } from "./link/routing.ts";
 import type { Link } from "./link/runtime.ts";
@@ -29,7 +29,7 @@ export async function readBoard(o: BoardReadInput): Promise<Record<string, unkno
 		const label = (t: string) => (scope ? allyLabel(t) : clean(t, 40));
 		const mains = netMembers(o.net.sessions, o.net.ps).filter((m) => m.role === "main").map((m): LiveMain => {
 			const pane = o.net.ps.find((p) => p.pane_id === m.s.herdrLocation?.paneId);
-			return { session: m.s.id, name: label(nameOf(m.s)), workspaceId: m.workspace.id, workspace: label(m.workspace.label), tab: label(m.tab.label), state: sessionMark(m.s, pane), ...(pane?.cwd ? { cwd: pane.cwd } : {}) };
+			return { session: m.s.id, name: label(nameOf(m.s)), workspaceId: m.workspace.id, workspace: label(m.workspace.label), tab: label(m.tab.label), state: sessionMark(m.s, pane), commanding: commanding(sessionMark(m.s, pane), subagents(pane, o.net.ps, o.now).map((r) => r.mark)) === "commanding", ...(pane?.cwd ? { cwd: pane.cwd } : {}) };
 		});
 		purge(o.dir, new Set(o.net.sessions.map((s) => s.id)), o.now);
 		let rows = joinLocal(readEntries(o.dir), mains, o.now);

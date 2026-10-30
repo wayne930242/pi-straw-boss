@@ -11,7 +11,7 @@ export const BOARD = { now: 120, item: 80, items: 8, label: 40 } as const;
 export const ENDED_MS = 30 * 60_000;
 /** The file of a session that is not live is deleted once its last update is older than this. */
 export const DEAD_MS = 24 * 3600_000;
-/** A live main that has been idle this long since its entry was last updated shows the entry as `stale`: the text is probably not what it works on now. */
+/** A live main that is idle now, and whose entry was last updated this long ago, shows the entry as `stale`: the text is probably not what it works on now. A main that commands work (a subagent of it runs) is never stale. */
 export const STALE_MS = 2 * 3600_000;
 
 export interface BoardItem { t: string; done: boolean }
@@ -101,7 +101,10 @@ export function readEntries(dir: string): Entry[] {
 	try {
 		names = readdirSync(dir).filter((n) => n.endsWith(".json"));
 	} catch { /* no board yet */ }
-	return names.flatMap((name): Entry[] => {
+	return names.flatMap((name) => readOne(dir, name));
+}
+function readOne(dir: string, name: string): Entry[] {
+	{
 		try {
 			const raw = JSON.parse(readFileSync(join(dir, name), "utf8")) as Record<string, unknown>;
 			const session = name.slice(0, -".json".length);
@@ -115,7 +118,7 @@ export function readEntries(dir: string): Entry[] {
 		} catch {
 			return [];
 		}
-	});
+	}
 }
 
 /** An auto entry whose todo list is all done (`<name>: done (n/n)`): it is said once, and goes 30 minutes after it was written. */
@@ -123,7 +126,9 @@ export const finished = (e: { src: Src; count?: Count | undefined }): boolean =>
 
 /** Deletes the files of sessions that are not live and whose last update is more than 24 hours old, and a finished auto entry older than 30 minutes, live or not: the one write to another session's file, and it only removes what has run out. */
 export function purge(dir: string, live: ReadonlySet<string>, now: number): void {
-	for (const entry of readEntries(dir)) if ((!live.has(entry.session) && now - entry.updated > DEAD_MS) || (finished(entry) && now - entry.updated > ENDED_MS)) removeEntry(dir, entry.session);
+	const due = (e: Entry) => (!live.has(e.session) && now - e.updated > DEAD_MS) || (finished(e) && now - e.updated > ENDED_MS);
+	// The owner may write its entry again between the listing and the removal: the file is read once more right before it goes.
+	for (const entry of readEntries(dir)) if (due(entry) && readOne(dir, `${entry.session}.json`).every(due)) removeEntry(dir, entry.session);
 	// A file the structure check refuses is no entry; one that stays untouched for a day goes too.
 	try {
 		const known = new Set(readEntries(dir).map((e) => `${e.session}.json`));
@@ -147,7 +152,7 @@ export function forAllies(e: { now: string; items: BoardItem[]; src: Src; count?
 export const wireId = (device: string, session: string): string => createHash("sha256").update(device).update(session).digest().subarray(0, 8).toString("hex");
 
 /** A live main as the join needs it (the net reading `tower_list` already does). */
-export interface LiveMain { session: string; name: string; workspaceId: string; workspace: string; tab: string; state: string; cwd?: string }
+export interface LiveMain { session: string; name: string; workspaceId: string; workspace: string; tab: string; state: string; cwd?: string; /** It commands work (a subagent of it runs): its entry is not stale. */ commanding?: boolean }
 export interface LocalRow {
 	session: string;
 	workspaceId?: string;
@@ -158,7 +163,7 @@ export interface LocalRow {
 	now?: string;
 	items: BoardItem[];
 	updatedSecondsAgo?: number;
-	/** A live main idle for over 2 hours since the entry was written: the text may no longer be true. */
+	/** A live main idle now whose entry is over 2 hours old: the text may no longer be true. */
 	stale?: true;
 	cwd?: string;
 	src?: Src;
@@ -169,7 +174,7 @@ export interface LocalRow {
 /**
  * The local board: the entries joined with the live mains. A live main shows with its name and tab and the entry it wrote, if any; an entry whose session
  * is not a live main shows as `ended` until 30 minutes after its last update, then not at all. A finished auto entry (all todos done) of a live main is not shown
- * 30 minutes after it was written, and the entry of a main that is idle shows as `stale` once it is over 2 hours old.
+ * 30 minutes after it was written, and the entry of a main that is idle now, and commands nothing, shows as `stale` once it is over 2 hours old.
  */
 export function joinLocal(entries: Entry[], mains: LiveMain[], now: number): LocalRow[] {
 	const byId = new Map(entries.map((e) => [e.session, e]));
@@ -177,7 +182,7 @@ export function joinLocal(entries: Entry[], mains: LiveMain[], now: number): Loc
 		const found = byId.get(m.session), e = found && finished(found) && now - found.updated > ENDED_MS ? undefined : found;
 		return {
 			session: m.session, workspaceId: m.workspaceId, workspace: m.workspace, tab: m.tab, main: m.name, state: m.state, items: e?.items ?? [],
-			...(e ? { now: e.now, src: e.src, ...(e.count ? { count: e.count } : {}), ...(e.who ? { who: e.who } : {}), updatedSecondsAgo: Math.max(0, Math.round((now - e.updated) / 1000)), ...(m.state === "idle" && now - e.updated > STALE_MS ? { stale: true as const } : {}) } : {}), ...(m.cwd ? { cwd: m.cwd } : {}),
+			...(e ? { now: e.now, src: e.src, ...(e.count ? { count: e.count } : {}), ...(e.who ? { who: e.who } : {}), updatedSecondsAgo: Math.max(0, Math.round((now - e.updated) / 1000)), ...(m.state === "idle" && !m.commanding && now - e.updated > STALE_MS ? { stale: true as const } : {}) } : {}), ...(m.cwd ? { cwd: m.cwd } : {}),
 		};
 	});
 	const gone = entries.filter((e) => !mains.some((m) => m.session === e.session) && now - e.updated <= ENDED_MS).map((e): LocalRow => ({

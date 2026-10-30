@@ -116,7 +116,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { post, callT
 						if (now !== undefined || items !== undefined) throw new Error("auto: true takes no now or items; the board follows your todo list and your name");
 						if (role() !== "main") throw new Error(NOT_MAIN);
 						const derived = boardFill.handBack(), where = whereTo({ stateDir: guiDir, cwd, home, agentDir });
-						return { text: derived ? `Board handed back to auto-fill (${derived.text.items.length} item${derived.text.items.length === 1 ? "" : "s"}). It goes to: ${where}; allies get its name and done count only.` : "Board handed back to auto-fill. There is nothing to show yet (no todo list and no name); it fills when you have either.", details: { auto: true, now: derived?.text.now ?? null, items: derived?.text.items.length ?? 0, sharedWith: where } };
+						return { text: derived ? `Board handed back to auto-fill (${derived.text.items.length} item${derived.text.items.length === 1 ? "" : "s"}). It goes to: ${where}; allies get its name and done count only.` : "Board handed back to auto-fill. There is nothing to show yet (no todo list); it fills when you have one.", details: { auto: true, now: derived?.text.now ?? null, items: derived?.text.items.length ?? 0, sharedWith: where } };
 					}
 					if (now === undefined) throw new Error("now is required unless auto or clear is true");
 					s.boardId = me();
