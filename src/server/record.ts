@@ -68,6 +68,8 @@ export interface ServerRecord {
 	stopped?: boolean;
 	restarting?: Restarting;
 	lastError?: LastError;
+	/** Pair requests over Wi-Fi access that wait while no overlay or tile of this computer is open: every pi session shows a notice for each (server-look.ts). Ids only identify a request; `peer` is its address. */
+	lanNotice?: { id: string; peer: string }[];
 	/** The last restart that was asked for, kept across restarts: agents may ask for at most one a minute. */
 	lastRestart?: { at: string; reason: string; by: string };
 	log: string;

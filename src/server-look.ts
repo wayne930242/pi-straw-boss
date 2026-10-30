@@ -76,6 +76,8 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 			// A look still in flight when the session shuts down does nothing more: it would make the folder again after the session closed.
 			if (stopped) return;
 			verdictWas = verdict.do;
+			// A pair request over Wi-Fi access waits and the boss has neither this computer's overlay nor its tile open: each session says so once per request (the server's record names them).
+			for (const waiting of seen.record?.lanNotice ?? []) tellOnce(`lan-pending:${waiting.id}`, `Straw Boss: Pair request waiting from ${waiting.peer}: run /boss gui lan`);
 			if (verdict.do === "refuse") return tellOnce(verdict.why, `Straw Boss: ${verdict.text}`);
 			if (verdict.do === "start") {
 				if (failedAt !== undefined && cfg.now() - failedAt < RETRY_FAILED_MS) return;

@@ -365,6 +365,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 			await ctx.sleep(100);
 		}
 		if (typeof reply.remoteNote === "string") warnings.push({ code: "remote_off", text: reply.remoteNote });
+		if (typeof reply.lanNote === "string") warnings.push({ code: "lan_off", text: reply.lanNote });
 		return String(reply.url);
 	}
 

@@ -6,6 +6,7 @@ import { HerdrError, type HerdrCall, type Pane } from "./herdr.ts";
 import { defaultDequeue, keyLabel } from "./dequeuekey.ts";
 import { createKeys } from "./keys.ts";
 import type { Asked } from "./gui.ts";
+import type { Overlay } from "./lan/faces.ts";
 import { linkRequest as linkRequestOwner } from "./owners.ts";
 import type { createMirrors } from "./mirror.ts";
 import type { Found } from "./net.ts";
@@ -25,6 +26,7 @@ import { qr } from "./qr.ts";
 //   POST /<token>/api/remote/pair                                                        a new one-time pairing URL and its QR, while remote access is on (this computer only, never a paired device)
 //   POST /<token>/api/remote/on, remote/off                                              turns remote access on in the server's session, then a pairing URL and its QR, or off (never remote)
 //   POST /<token>/api/remote/devices, remote/unpair {id}, remote/unpair-all             the paired devices, and unpairing one or all (never remote)
+//   POST /<token>/api/lan/on {accept_risk?}, lan/off, lan/pair {surface, form, address?}, lan/approve {number} | {deny}, lan/ca   Wi-Fi access (lan/*, docs/specs/2026-10-30-sb-gui-lan.md; this computer's page only, never a paired device, whatever its network)
 //   POST /<token>/api/dismiss {key} or {all: true}                                       hides one finished subagent, or every finished one, from every page
 //   POST /<token>/api/close/unit, close/tab, close/base                                   quits a session, or every agent of a squad or base, then closes it (closer.ts)
 //   POST /<token>/api/close/stash {workspace, name}                                       checks and records a base, then closes it as close/base does (stash.ts); a paired device may, as it may close/base
@@ -45,6 +47,18 @@ export const MAX_TEXT = 16_384, MAX_BODY = 65_536;
 export { ENDING };
 
 export interface Reply { status: number; body: unknown }
+/** The page's way to Wi-Fi access (server/lanhost.ts): the tile's routes. `surface` is the tile's own id per tab. */
+export interface LanPanel {
+	on(json: Record<string, unknown>): Promise<Reply>;
+	off(): Promise<Reply>;
+	pair(json: Record<string, unknown>): Promise<Reply> | Reply;
+	approve(json: Record<string, unknown>): Promise<Reply> | Reply;
+	ca(): Promise<Reply> | Reply;
+	/** The pending requests (no number), the events, and the notes; the tile polls it. */
+	pending(): Reply;
+	/** A public certificate file for **Share the certificate**: `straw-boss.mobileconfig` or `straw-boss-lan-ca.crt`. */
+	file(name: string): { type: string; bytes: Buffer } | undefined;
+}
 /** The page's way to Straw Link's holder (runtime.ts `gui`): a named request with arguments, and the setup marker that starts the election before any team exists. */
 export interface LinkPort { call(name: string, args: Record<string, unknown>): Promise<{ ok: boolean; error?: string; code?: string; [key: string]: unknown }>; enable(): Promise<void> }
 /** The sb server's panel on the page (server.ts of the page): its state, a restart with a reason, and the last lines of its log. */
@@ -68,7 +82,7 @@ const REMOTE_LINK = ["state", "confirm-answer"];
 const LINK_NAMES = ["enable", "state", "create", "invite", "invite-text", "invite-cancel", "decide", "join-start", "join-project", "join-cancel", "prefill-clear", "remove", "role", "rotate", "trust", "leave", "confirm-answer"];
 /** `tower`: the sb server's tower service, when it runs one (TowerPanel). */
 /** `answers.target` reads the net afresh, so the binding and the dialog are checked again for every answer. */
-export interface ControlDeps { lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; remoteOn?(): Promise<void>; remoteOff?(): Promise<void>; tower?: TowerPanel; paired?: { on(): boolean; list(): unknown; unpair(id: string): boolean; unpairAll(): number; unsaved(): string | undefined }; saveFailed?(reason: string): void; spawn?(parts: string[], json: Record<string, unknown>): Promise<Reply>; close?(kind: string, json: Record<string, unknown>, refresh?: () => Promise<unknown>): Promise<Reply>; dismiss?(key: unknown): Promise<boolean>; dismissAll?(): Promise<number>; stop?(asked: Asked): boolean | void; link?: LinkPort; server?: ServerPanel; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; linkRequest?(file: string): Promise<boolean>; answers?: Pick<Hub, "has" | "replay" | "ended" | "send" | "probe" | "commands" | "pull"> & { target(key: string): Promise<Target | undefined> }; trust?(json: Record<string, unknown>): Promise<Reply> }
+export interface ControlDeps { lan?: LanPanel; /** The marks of the `/boss gui lan` overlay: a paired device's write into a marked pane is Escape only (lan/faces.ts). */ overlay?: Overlay; lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; remoteOn?(): Promise<void>; remoteOff?(): Promise<void>; tower?: TowerPanel; paired?: { on(): boolean; list(): unknown; unpair(id: string): boolean; unpairAll(): number; unsaved(): string | undefined }; saveFailed?(reason: string): void; spawn?(parts: string[], json: Record<string, unknown>): Promise<Reply>; close?(kind: string, json: Record<string, unknown>, refresh?: () => Promise<unknown>): Promise<Reply>; dismiss?(key: unknown): Promise<boolean>; dismissAll?(): Promise<number>; stop?(asked: Asked): boolean | void; link?: LinkPort; server?: ServerPanel; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; linkRequest?(file: string): Promise<boolean>; answers?: Pick<Hub, "has" | "replay" | "ended" | "send" | "probe" | "commands" | "pull"> & { target(key: string): Promise<Target | undefined> }; trust?(json: Record<string, unknown>): Promise<Reply> }
 
 const no = (status: number, error: string, reason: string, extra = {}): Reply => ({ status, body: { error, reason, ...extra } });
 const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -122,8 +136,9 @@ export function checkText(text: unknown): string | Reply {
 	return typed;
 }
 
+const OVERLAY_OPEN = "A /boss gui lan screen is open in this session; only Escape can be sent to it from a paired device.";
 const LINK_LOCAL = "While it waits on a link request, a paired device can only send Escape; approve it on this computer's own page or terminal.";
-export function createControl({ link, server: panel, lookup, call, csrf, canonical, pair, remoteOn, remoteOff, paired, saveFailed, spawn, close, dismiss, dismissAll, stop, mirrors, secret = async () => true, linkRequest = async () => false, answers, trust, tower }: ControlDeps) {
+export function createControl({ lan, overlay, link, server: panel, lookup, call, csrf, canonical, pair, remoteOn, remoteOff, paired, saveFailed, spawn, close, dismiss, dismissAll, stop, mirrors, secret = async () => true, linkRequest = async () => false, answers, trust, tower }: ControlDeps) {
 	const busy = new Set<string>();
 	// A change to the paired devices or the remote wish that could not be written to paired.json took effect in memory only: say so (500), to the page and the session.
 	const lost = (): Reply | undefined => {
@@ -132,7 +147,7 @@ export function createControl({ link, server: panel, lookup, call, csrf, canonic
 	};
 	// A link_request is open when the session file shows its call or the runtime that owns the approval relays its dialog (a call nested in codemode is not in the file).
 	const requested = async (key: string, found: Found) => (await linkRequest(found.file!)) || Boolean(answers?.has(key, linkRequestOwner.name, found));
-	const pad = createKeys({ fresh: (id, key, pane) => mirrors?.fresh(id, key, pane) ?? false, secret, answerable: async (key) => Boolean(await answers?.target(key)), linkRequest: async (found, key) => (await linkRequest(found.file!)) || Boolean(answers?.has(key, linkRequestOwner.name, { pane: found.pane, file: found.file })), probe: async (key) => answers?.probe(key) });
+	const pad = createKeys({ overlay, fresh: (id, key, pane) => mirrors?.fresh(id, key, pane) ?? false, secret, answerable: async (key) => Boolean(await answers?.target(key)), linkRequest: async (found, key) => (await linkRequest(found.file!)) || Boolean(answers?.has(key, linkRequestOwner.name, { pane: found.pane, file: found.file })), probe: async (key) => answers?.probe(key) });
 	/** The origin checks, then the session checks, then one Herdr call. `parts` is the path after api/: sessions/<key>/<action>, remote/pair, or server/stop. */
 	return async function handle(req: IncomingMessage, origin: string, [scope, key = "", action = ""]: string[], remote = false): Promise<Reply> {
 		if (req.method !== "POST") return no(405, "method", "Use POST.");
@@ -206,6 +221,18 @@ export function createControl({ link, server: panel, lookup, call, csrf, canonic
 			if (action === "dequeue") return no(409, "server_queue", "These messages wait in the sb server's queue for the tower's next run; they are taken when it runs.");
 			if (["keys", "mirror", "focus"].includes(action) && !tower.live(ws)) return no(409, "standing", "The tower is standing by: no run is live, so there is no terminal. Write to it in the composer; that wakes it.");
 		}
+		if (scope === "lan") {
+			// Wi-Fi access changes who may command this computer: only its own page does it, and the gui.ts router has refused a paired device already (this is the second lock).
+			if (remote) return no(403, "local_only", "Wi-Fi access is set on this computer's own page.");
+			if (!lan || action) return no(lan ? 404 : 503, lan ? "not_found" : "unavailable", lan ? "No such action." : "This server serves no Wi-Fi access.");
+			const json = read.json;
+			if (key === "on") return lan.on(json);
+			if (key === "off") return lan.off();
+			if (key === "pair") return lan.pair(json);
+			if (key === "approve") return lan.approve(json);
+			if (key === "ca") return lan.ca();
+			return no(404, "not_found", "No such action.");
+		}
 		if (scope === "dismiss" && !key && read.json.all === true) return dismissAll ? { status: 200, body: { dismissed: await dismissAll() } } : no(503, "unavailable", "This server dismisses nothing.");
 		if (scope === "dismiss" && !key) return (await dismiss?.(read.json.key)) ? { status: 200, body: {} } : no(404, "not_found", "Only a finished subagent on the net can be dismissed.");
 		if (scope === "close") return close && !action ? close(key, read.json) : no(close ? 404 : 503, close ? "not_found" : "unavailable", close ? "No such action." : "This server closes nothing.");
@@ -252,6 +279,7 @@ export function createControl({ link, server: panel, lookup, call, csrf, canonic
 				const pane = await live(found);
 				if (remote && (await requested(key, found))) throw no(403, "local_only", LINK_LOCAL); // a prompt's Enter would be taken by its terminal dialog as Yes
 				if (pane.agent_status === "blocked") throw no(409, "blocked", "It is waiting on a dialog; answer it in the terminal.");
+				if (remote) guardOverlay(found); // right before the write: the composer's text and Enter would answer the overlay
 				// Enter sends a prompt when idle and a steering message while it works; Alt+Enter queues a follow-up, which only means something while it works.
 				return json.as === "followUp" && pane.agent_status === "working"
 					? call("pane.send_input", { pane_id: pane.pane_id, text, keys: ["alt+enter"] }, 15_000)
@@ -268,6 +296,7 @@ export function createControl({ link, server: panel, lookup, call, csrf, canonic
 				for (const [i, [method, params]] of plan.calls.entries()) {
 					if (i) await new Promise((r) => setTimeout(r, 60));
 					if (remote && asked.key !== "esc" && (await requested(key, found))) throw no(403, "local_only", LINK_LOCAL);
+					if (remote && asked.key !== "esc") guardOverlay(found); // and the overlay's mark, looked at last with nothing awaited before the write
 					await call(method, params, 15_000);
 				}
 				pad.sent(key, plan);
@@ -289,6 +318,7 @@ export function createControl({ link, server: panel, lookup, call, csrf, canonic
 				await live(found); // the guard took a moment: still pi, on this file
 				for (const [method, params] of plan.calls) {
 					if (remote && (await requested(key, found))) throw no(403, "local_only", LINK_LOCAL); // as in keys: a link_request may have opened since the guard looked
+					if (remote) guardOverlay(found);
 					await call(method, params, 15_000);
 				}
 				const done = await answers.pull(key, "finish", begun.ticket);
@@ -325,6 +355,12 @@ export function createControl({ link, server: panel, lookup, call, csrf, canonic
 		}
 	};
 
+	/** A paired device's write is about to go to `found`'s pane: refused while a `/boss gui lan` face holds a mark on it, else noted (a face that opens within 1.5 s refuses its own answers after it). Nothing is awaited between this and the Herdr call. */
+	function guardOverlay(found: Found) {
+		if (!overlay) return;
+		if (overlay.marked(found.pane)) throw no(409, "lan_overlay_open", OVERLAY_OPEN);
+		overlay.wrote(found.pane);
+	}
 	/** The pane as Herdr has it now: it must still run pi, on this session's file. */
 	async function live(found: Found): Promise<Pane> {
 		const { pane } = (await call!("pane.get", { pane_id: found.pane })) as { pane: Pane };

@@ -20,6 +20,7 @@ import { trustDir } from "../trust/files.ts";
 import { createTrustServe } from "../trust/serve.ts";
 import type { Kit } from "../state.ts";
 import { type Log, tailLog } from "./log.ts";
+import { createLanHost, type LanHost, type LanSeams } from "./lanhost.ts";
 import { dropSecrets, keepSecrets, type Lost, readSecrets } from "./guisecrets.ts";
 import { fileOf, readRecord, type ServerRecord, type Slot, updateRecord, writeJson } from "./record.ts";
 import type { Reply, Request } from "./socket.ts";
@@ -48,6 +49,9 @@ export const BIND_WAIT_MS = 5000;
 const RECLAIM_WAIT_MS = 5000;
 /** How long the hand-over waits for the start time of the process gui.json names (Windows: the CIM read takes 3.5 s and more, and the reclaim runs once, after the broker wait). */
 const RECLAIM_START_WAIT_MS = 6000;
+/** The control requests of Wi-Fi access (lanhost.ts), and what a secondary slot's server answers them. */
+const LAN_CMDS = ["gui-lan", "gui-lan-pair", "gui-lan-pending", "gui-lan-approve", "gui-lan-reset", "gui-lan-files", "gui-lan-face"];
+const LAN_SECONDARY = "Wi-Fi access is served by the default Herdr's sb server";
 /** How long a start waits for remote access to come back before it goes on. */
 const RESUME_WAIT_MS = 3000;
 
@@ -86,6 +90,8 @@ export interface GuiHostOptions {
 	tailscale?: Run;
 	bundle?: string;
 	bindWaitMs?: number;
+	/** Wi-Fi access's seams (tests): the interfaces it reads, the address it binds, the clock and timers, the computer's name. */
+	lan?: LanSeams;
 }
 
 /** The hub of a server has no bridge of its own: no pi session runs in it, so every call that would reach "this session's" bridge finds none. */
@@ -99,6 +105,8 @@ export function createGuiHost(o: GuiHostOptions) {
 	const { slot, kit, log, pid } = o, { cfg } = kit, id = kit.me(), dir = slot.dir, ts = o.tailscale ?? tailscale;
 	const owner = `sb server (pid ${pid})`;
 	let gui: Gui | undefined, hub: Hub | undefined, opening: Promise<Gui> | undefined, closing = false;
+	/** Wi-Fi access of the GUI that runs (lanhost.ts): its listeners, CA, marks, and the control requests that concern them. */
+	let lan: LanHost | undefined;
 	/** Why remote access is off though the boss wanted it on, told by `up` and the panel. */
 	let remoteNote: string | undefined;
 	/** Set while the boss's rotation runs: the GUI commands wait for it, and the start it makes says why its token is new. */
@@ -198,12 +206,15 @@ export function createGuiHost(o: GuiHostOptions) {
 		const net = netSource({ ...(o.tower ? { services: (workspace: string) => o.tower!.view(workspace) } : {}), run: cfg.run, world: cfg.world, sessions, stashed: () => stashedList(slot.stateDir), trust, hub });
 		// `running` is read by the page's remote buttons, which only come once the server is up.
 		let running!: Gui;
+		// Wi-Fi access belongs to the primary slot (one port, one CA, one name per computer): a secondary server builds the host too, to refuse its requests in words, and never writes lan.json.
+		const host = createLanHost({ dir, primary: slot.primary, log, ...(o.lan ? { seams: o.lan } : {}), notice: (waiting) => void updateRecord(slot, (r) => (r.pid === pid ? (({ lanNotice: _gone, ...rest }) => ({ ...rest, ...(waiting.length ? { lanNotice: waiting } : {}) }))(r) : undefined)) });
 		running = await startGui({
 			read: async (): Promise<Net> => {
 				const next = await net.read(), summary = await o.link.summary();
 				return summary && (summary.allies.length || summary.alerts.length || summary.confirms.length) ? { ...next, link: summary } : next;
 			},
 			net, call: cfg.call, hub, dir: o.bundle ?? BUNDLE, paired: join(dir, "paired.json"), port: prefer.port, remotePort: prefer.remotePort, ...(prefer.keep ? { keep: prefer.keep } : {}), bindWaitMs: wait, desk: cfg.env.STRAW_BOSS_DESK === "1",
+			lan: { panel: host.panel, overlay: host.faces, ...(slot.primary ? { file: join(dir, "lan.json") } : {}), notify: host.event, log: (event, fields) => log.line(event, Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, typeof v === "string" || typeof v === "number" || typeof v === "boolean" ? v : JSON.stringify(v)]))) },
 			link: { call: (name, args) => o.link.call(name, args), enable: () => o.link.enable() }, ...(o.tower ? { tower: o.tower } : {}), trust: { answer: trust.answer, watch: trust.watch },
 			server: { status: () => o.status(), log: (lines) => tailLog(fileOf(slot, "log"), lines), restart: async (reason) => (o.restart ? o.restart(reason) : { status: 501, body: { error: "unavailable", reason: "This server cannot restart itself." } }) },
 			// An older build's /boss gui stop: the GUI stops, and nothing starts it again but the boss's own command. Its takeover is refused (409): that build reports the GUI as stale and leaves it alone.
@@ -219,6 +230,8 @@ export function createGuiHost(o: GuiHostOptions) {
 			}),
 		});
 		log.hide(running.token, running.csrf);
+		host.attach(running);
+		lan = host;
 		return running;
 	};
 	/** The GUI on the recorded port when it is free, under a token and CSRF secret of its own, or on another port. Two calls in flight share one start. */
@@ -245,7 +258,7 @@ export function createGuiHost(o: GuiHostOptions) {
 			updateRecord(slot, (r) => (r.pid === pid ? { ...r, gui: { port: started.port, token: started.token, stopped: false } } : undefined));
 			log.line("gui-start", { port: started.port, remotePort: started.remotePort, moved: prefer.port !== undefined && prefer.port !== started.port, ...(started.kept ? { kept: true } : { newToken: true, why }) });
 			// Remote access comes back with it, but a slow Tailscale does not hold the start: what is not settled in a few seconds goes on in the background.
-			const resuming = resume(started);
+			const resuming = Promise.all([resume(started), lan?.resume()]);
 			await Promise.race([resuming, cfg.sleep(RESUME_WAIT_MS)]);
 			return started;
 		})().finally(() => (opening = undefined)));
@@ -260,6 +273,8 @@ export function createGuiHost(o: GuiHostOptions) {
 		guiJsonStopped(true);
 		const off = await switchRemote(running, false, dir, ts, true).catch(() => undefined);
 		if (off?.changed) log.line("remote-off", { why: "gui stop" });
+		await lan?.leave().catch(() => {});
+		lan = undefined;
 		await running.stop();
 		log.line("gui-stop");
 		return true;
@@ -276,14 +291,18 @@ export function createGuiHost(o: GuiHostOptions) {
 		if (running) {
 			gui = undefined;
 			await switchRemote(running, false, dir, ts, true).catch(() => {});
+			await lan?.leave().catch(() => {});
+			lan = undefined;
 			await running.stop();
 		}
 		log.line("gui-rotate", { running: Boolean(running) });
 		const got = await ensure(true, BIND_WAIT_MS);
-		return "reply" in got ? got.reply : { ok: true, ...guiFacts(got.running), ...(remoteNote ? { remoteNote } : {}) };
+		return "reply" in got ? got.reply : { ok: true, ...guiFacts(got.running), ...(remoteNote ? { remoteNote } : {}), ...lanNoteOf() };
 	};
 	const gone = (error: unknown): Reply => ({ ok: false, error: (error as Error).message });
 	const guiFacts = (g: Gui) => ({ url: g.url, port: g.port, remotePort: g.remotePort, token: g.token });
+	/** Wi-Fi access is wanted and does not run: what `up` and a session's /boss gui tell. */
+	const lanNoteOf = () => (lan?.wantedOff && lan.note ? { lanNote: lan.note } : {});
 	/** The boss's own command starts a GUI that was stopped; an automatic ask leaves it. */
 	const ensure = async (boss: boolean, wait = 0): Promise<{ running: Gui } | { reply: Reply }> => {
 		if (!gui && recorded().stopped && !boss) return { reply: { ok: false, error: "stopped" } };
@@ -333,6 +352,8 @@ export function createGuiHost(o: GuiHostOptions) {
 			if (running) {
 				gui = undefined;
 				await switchRemote(running, false, dir, ts, true).catch(() => {});
+				await lan?.leave().catch(() => {});
+				lan = undefined;
 				await running.stop();
 				// A stop on purpose is a stopped GUI to anything that reads gui.json (straw-boss-desk): the record says whose it was.
 				if (onPurpose) guiJsonStopped(true);
@@ -348,11 +369,11 @@ export function createGuiHost(o: GuiHostOptions) {
 		/** What `status` says of the GUI. */
 		facts(): Record<string, unknown> {
 			const was = recorded();
-			return { running: Boolean(gui), stopped: !gui && was.stopped, ...(gui ? { port: gui.port, remotePort: gui.remotePort } : {}), remote: { wanted: gui?.access.wanted ?? false, on: Boolean(gui?.access.remote), ...(remoteNote ? { note: remoteNote } : {}) } };
+			return { running: Boolean(gui), stopped: !gui && was.stopped, ...(gui ? { port: gui.port, remotePort: gui.remotePort } : {}), remote: { wanted: gui?.access.wanted ?? false, on: Boolean(gui?.access.remote), ...(remoteNote ? { note: remoteNote } : {}) }, lan: lan?.facts() ?? { wanted: false, on: false, addresses: [], pending: 0, ...(slot.primary ? {} : { note: LAN_SECONDARY }) } };
 		},
 		/** The control requests that concern the GUI; undefined for any other. */
 		async handle(request: Request): Promise<Reply | undefined> {
-			if (o.listen === false || !["gui", "gui-stop", "gui-remote", "gui-pair", "gui-rotate"].includes(request.cmd)) return undefined;
+			if (o.listen === false || !["gui", "gui-stop", "gui-remote", "gui-pair", "gui-rotate", ...LAN_CMDS].includes(request.cmd)) return undefined;
 			if (closing) return { ok: false, error: "restarting" };
 			// A rotation in flight is finished first: a start meanwhile would bind the ports before the old listener let go, or read the secrets that are being dropped.
 			while (rotating) {
@@ -373,10 +394,19 @@ export function createGuiHost(o: GuiHostOptions) {
 				const link = gui?.access.pair();
 				return gui && link && gui.access.remote ? { ok: true, url: `https://${gui.access.remote.host}/${gui.token}/pair/${link}` } : { ok: false, error: "remote_off" };
 			}
+			if (LAN_CMDS.includes(request.cmd)) {
+				if (!slot.primary) return { ok: false, error: LAN_SECONDARY };
+				// Turning Wi-Fi access on is the boss's own command, so it starts a GUI that was stopped on purpose, as gui-remote does; every other request needs the GUI to run.
+				if (request.cmd === "gui-lan" && request.on === true) {
+					const started = await ensure(true);
+					if ("reply" in started) return started.reply;
+				}
+				return lan && gui ? lan.handle(request) : { ok: false, error: "stopped" };
+			}
 			const got = await ensure(request.boss === true || request.cmd === "gui-remote");
 			if ("reply" in got) return got.reply;
 			const { running } = got;
-			if (request.cmd === "gui") return { ok: true, ...guiFacts(running), ...(remoteNote ? { remoteNote } : {}) };
+			if (request.cmd === "gui") return { ok: true, ...guiFacts(running), ...(remoteNote ? { remoteNote } : {}), ...lanNoteOf() };
 			// gui-remote
 			try {
 				if (request.on === false) {

@@ -85,7 +85,7 @@ export const ACL_STEPS = [
 	// place), and the exit code is not the check, since an empty folder has nothing to match: the read-back below is. A call per item would start a process for each of them (link/inbox holds up to 500).
 	"& $icacls \"$dir\\*\" /reset /T /C /L /Q | Out-Null",
 	"$files = @()",
-	"foreach ($name in 'server.json', 'server.lock', 'server.log', 'gui.json', 'hub.json', 'paired.json', 'gui-secrets.json') { $p = Join-Path $dir $name; if (Test-Path -LiteralPath $p) { $files += $p } }",
+	"foreach ($name in 'server.json', 'server.lock', 'server.log', 'gui.json', 'hub.json', 'paired.json', 'gui-secrets.json', 'lan-ca.json', 'lan.json') { $p = Join-Path $dir $name; if (Test-Path -LiteralPath $p) { $files += $p } }",
 	"$link = Join-Path $dir 'link'",
 	"$files += @($tree.files | Where-Object { $_.StartsWith($link + '\\') })",
 	// A secondary slot's folder holds that slot's secret in its server.json.

@@ -1,4 +1,5 @@
 import { DEQUEUE_KEY } from "./dequeuekey.ts";
+import type { Overlay } from "./lan/faces.ts";
 import type { Found } from "./net.ts";
 import type { Editor } from "./probe.ts";
 
@@ -28,7 +29,7 @@ export const RATE = 8, RATE_MS = 1000, DOUBLE_MS = 1000, PAIR_MS = 450, MAX_TYPE
 /** C0 and C1 controls and DEL: what could end a line, start an escape sequence, or signal; typed text holds none, a paste only line breaks and tabs. */
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/, PASTE_CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/;
 export interface Reply { status: number; body: unknown }
-export interface KeyDeps { fresh(stream: string, key: string, pane: string): boolean; secret(file: string): Promise<boolean>; answerable(key: string): Promise<boolean>; linkRequest?(found: Found, session: string): Promise<boolean>; probe(key: string): Promise<Editor | undefined>; now?(): number }
+export interface KeyDeps { /** The marks of the `/boss gui lan` overlay (lan/faces.ts): a paired device sends Escape only to a marked pane. */ overlay?: Overlay; fresh(stream: string, key: string, pane: string): boolean; secret(file: string): Promise<boolean>; answerable(key: string): Promise<boolean>; linkRequest?(found: Found, session: string): Promise<boolean>; probe(key: string): Promise<Editor | undefined>; now?(): number }
 /** `text`: typed characters, sent as they are, or a paste already inside its markers (key is then "text" or "paste"). */
 export interface Asked { key: string; stream?: string; confirmed?: unknown; text?: string; remote?: boolean }
 type Pane = { pane_id: string; agent_status?: string };
@@ -46,12 +47,14 @@ const ASK: Record<string, string> = {
 };
 const confirm = (token: string) => no(409, "confirm", ASK[token] ?? `Enter would run /${token} (or the command picked in pi's menu, if it is open), which ends or replaces this session. ${FOCUS}`, { confirm: token });
 
-export function createKeys({ fresh, secret, answerable, linkRequest = async () => false, probe, now = Date.now }: KeyDeps) {
+export function createKeys({ overlay, fresh, secret, answerable, linkRequest = async () => false, probe, now = Date.now }: KeyDeps) {
 	const sent = new Map<string, number[]>(), escaped = new Map<string, number>(), interrupted = new Map<string, number>();
 	const guard = async (session: string, found: Found, pane: Pane, a: Asked) => {
 		if (a.stream !== undefined && !fresh(a.stream, session, pane.pane_id)) throw no(409, "no_mirror", "Keys are sent only while this page shows the session's terminal live; open it again.");
 		if (a.key !== "esc" && ((await secret(found.file!)) || (await answerable(session)))) throw no(409, "blocked", "While it waits on a secret or a question only Escape is sent from here; answer the question in its panel or the terminal.");
 		// A link_request's approval dialog in the terminal takes Enter as Yes, and its high-risk actions are approved on this computer only: a paired device sends Escape (No) and nothing else.
+		// A face of /boss gui lan answers on keys: while one is open on this pane, a paired device (either network) sends Escape and nothing else; control.ts looks again right before each write.
+		if (a.key !== "esc" && a.remote && overlay?.marked(found.pane)) throw no(409, "lan_overlay_open", "A /boss gui lan screen is open in this session; only Escape can be sent to it from a paired device.");
 		if (a.key !== "esc" && a.remote && (await linkRequest(found, session))) throw no(403, "local_only", "While it waits on a link request, a paired device can only send Escape; approve it on this computer's own page or terminal.");
 	};
 	/** Counts a key toward the session's rate, or says it is past it. */

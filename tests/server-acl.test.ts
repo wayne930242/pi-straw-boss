@@ -39,7 +39,7 @@ test("the script reads the owner's SID, grants the owner and SYSTEM by SID, inhe
 	assert.match(ACL_SCRIPT, /WindowsIdentity\]::GetCurrent\(\)\.User\.Value/);
 	assert.match(ACL_SCRIPT, /& \$icacls \$dir \/inheritance:r \/grant:r "\*\$\{sid\}:\(OI\)\(CI\)F" '\*S-1-5-18:\(OI\)\(CI\)F' \| Out-Null/);
 	assert.match(ACL_SCRIPT, /Get-Acl -LiteralPath \$dir\)\.Sddl/);
-	for (const name of ["server.json", "server.lock", "server.log", "gui.json", "paired.json", "gui-secrets.json", "link"]) assert.ok(ACL_SCRIPT.includes(name), name);
+	for (const name of ["server.json", "server.lock", "server.log", "gui.json", "paired.json", "gui-secrets.json", "lan-ca.json", "lan.json", "link"]) assert.ok(ACL_SCRIPT.includes(name), name);
 	assert.match(ACL_SCRIPT, /ConvertTo-Json -Compress/);
 	assert.ok(!/\$sid:/.test(ACL_SCRIPT), "$sid: would be read as a variable in a scope named sid");
 });

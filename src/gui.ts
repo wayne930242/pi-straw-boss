@@ -6,7 +6,7 @@ import { createServer, type IncomingMessage, type RequestListener, type Server, 
 import type { AddressInfo } from "node:net";
 import { extname, join } from "node:path";
 import { waitsForLinkRequest, waitsForSecret } from "./ask.ts";
-import { type ControlDeps, createControl, type Reply } from "./control.ts";
+import { type ControlDeps, createControl, type LanPanel, type Reply } from "./control.ts";
 import type { HerdrCall } from "./herdr.ts";
 import type { Hub } from "./dialogs.ts";
 import { createDocs } from "./docs.ts";
@@ -15,7 +15,10 @@ import { createMirrors } from "./mirror.ts";
 import type { Found, Net, Ref } from "./net.ts";
 import { qr } from "./qr.ts";
 import { createEntry, zhOf } from "./appentry.ts";
-import { APP, type Access, appCookieFor, cookieFor, createAccess } from "./remote.ts";
+import { type LanAt, type LanEvent, lanAppCookieFor, lanCookieFor } from "./lan/access.ts";
+import type { Overlay } from "./lan/faces.ts";
+import type { LanHandler } from "./lan/listener.ts";
+import { APP, type Access, appCookieFor, cookieFor, createAccess, type Net as Network } from "./remote.ts";
 import { packageRoot, VERSION as PACKAGE_VERSION } from "./server/version.ts";
 import { api, type Hub as Files, image, watchSession, type Watch, watchWorkspace } from "./watch.ts";
 
@@ -25,6 +28,8 @@ import { api, type Hub as Files, image, watchSession, type Watch, watchWorkspace
 // Every URL starts with a random token (/<token>/index.html, /<token>/events) and a request without it, or with another Host
 // header, is refused, so other local pages cannot read the net. The only writes are POSTs under /api/sessions and /api/remote (control.ts),
 // which also need the page's origin and a second secret the page carries in <meta name="sb-csrf">; every other request must be a GET.
+// A third kind of listener, the LAN's, is not made here: guihost.ts binds them (lan/listener.ts) and hands each request to `Gui.lan`, the handler of kind "lan" (docs/specs/2026-10-30-sb-gui-lan.md). A request on it is remote like one on the
+// remote listener, and what lets it in is lan/access.ts: the Host allow-list, the token, and the cookie of a device the boss allowed on this computer. `lan/*` routes and the `server/*` and `remote/*` ones stay this computer's page only.
 // While remote access is on (remote.ts), paired devices of this machine's Tailscale user reach the same server through `tailscale serve`. The stream sends the full snapshot on connect and on every
 // change, plus a `ping` event every 15 s so a client can tell a silent drop from a quiet net. It polls only while someone listens.
 // The page has routes (/<token>/w/<workspace>[/s/<session>]): any such URL answers the same index.html, which carries a <base href>
@@ -46,16 +51,18 @@ const HEADERS = {
 /** What a page at a dead address says: the same words as the open page's banner. */
 const REPLACED = "This address does not work here (the sb server may have restarted, or the link expired): on this computer open /boss gui; on a phone scan a new QR code.";
 const REPLACED_ZH = "這個網址在這裡無法使用（sb server 可能重新啟動過，或連結已過期）：在這台電腦請開啟 /boss gui；在手機請重新掃描新的 QR code。";
-/** `kept` says the listener runs under the `keep` secrets it was given (it got both of their ports back); otherwise its token and CSRF secret are new. */
-export interface Gui { url: string; port: number; remotePort: number; token: string; csrf: string; kept: boolean; access: Access; stop(): Promise<void> }
+/** `kept` says the listener runs under the `keep` secrets it was given (it got both of their ports back); otherwise its token and CSRF secret are new. `lan` is the handler of kind "lan" for the LAN listeners guihost.ts binds. */
+export interface Gui { url: string; port: number; remotePort: number; token: string; csrf: string; kept: boolean; access: Access; lan: LanHandler; stop(): Promise<void> }
+/** What the sb server hands the GUI for Wi-Fi access: the page's panel (the `lan/*` routes), the overlay marks the writing routes look at, lan.json, and where the access reports to (events, log lines). */
+export interface LanOptions { panel: LanPanel; overlay: Overlay; file?: string; notify?(event: LanEvent): void; log?(event: string, fields: Record<string, unknown>): void }
 /** `net` is the registry behind the net reading (the allow list of session keys); without it no session can be watched. `call` reaches Herdr for input. */
 /** `hub` carries answers to the dialogs bridges relay (dialogs.ts); it runs exactly as long as the server. */
 /** `onRemote` and `onRemoteOff` turn remote access on and off from the page, in the session that runs the server. `onStop` takes another session's stop request (requestStop), so the owner also takes its remote entry down; without it the server stops itself. */
-export interface GuiOptions { read(): Promise<Net>; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[]; dismiss?(key: string): boolean; dismissAll?(): number }; call?: HerdrCall; hub?: Hub; dir?: string; paired?: string; port?: number; remotePort?: number; pollMs?: number; idleMs?: number; pingMs?: number; onStop?(asked: Asked): void; /** A takeover is refused with 409 (the sb server is never taken over by a session of an older build, which then leaves its GUI alone). */ refuseTake?: boolean; onRemote?(): Promise<void>; onRemoteOff?(): Promise<void>; onSaveFailed?(reason: string): void; spawn?: ControlDeps["spawn"]; close?: ControlDeps["close"]; trust?: { answer: NonNullable<ControlDeps["trust"]>; watch(poke: () => void): () => void }; link?: ControlDeps["link"]; server?: ControlDeps["server"]; tower?: ControlDeps["tower"]; /** How long a preferred port that is still held (by the server this one replaces) is retried before another is taken. */ bindWaitMs?: number; /** The token and CSRF secret of the last listener with the two ports they belong to (server/guisecrets.ts): kept only when both ports are bound again; otherwise they are drawn anew. */ keep?: { token: string; csrf: string; port: number; remotePort: number }; /** The server runs with the desk switch (STRAW_BOSS_DESK=1): the page carries `<meta name="sb-desk">` and hides GUI remote access and stash (gui/desk.ts). */ desk?: boolean }
+export interface GuiOptions { read(): Promise<Net>; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[]; dismiss?(key: string): boolean; dismissAll?(): number }; call?: HerdrCall; hub?: Hub; dir?: string; paired?: string; port?: number; remotePort?: number; pollMs?: number; idleMs?: number; pingMs?: number; onStop?(asked: Asked): void; /** A takeover is refused with 409 (the sb server is never taken over by a session of an older build, which then leaves its GUI alone). */ refuseTake?: boolean; onRemote?(): Promise<void>; onRemoteOff?(): Promise<void>; onSaveFailed?(reason: string): void; spawn?: ControlDeps["spawn"]; close?: ControlDeps["close"]; trust?: { answer: NonNullable<ControlDeps["trust"]>; watch(poke: () => void): () => void }; link?: ControlDeps["link"]; server?: ControlDeps["server"]; tower?: ControlDeps["tower"]; /** How long a preferred port that is still held (by the server this one replaces) is retried before another is taken. */ bindWaitMs?: number; /** The token and CSRF secret of the last listener with the two ports they belong to (server/guisecrets.ts): kept only when both ports are bound again; otherwise they are drawn anew. */ keep?: { token: string; csrf: string; port: number; remotePort: number }; /** The server runs with the desk switch (STRAW_BOSS_DESK=1): the page carries `<meta name="sb-desk">` and hides GUI remote access and stash (gui/desk.ts). */ desk?: boolean; /** Wi-Fi access (the primary slot's server only). */ lan?: LanOptions }
 export interface Asked { by: string; take: boolean }
 
 /** Starts the server. A preferred `port` and `remotePort` are reused when free. The token and the CSRF secret are drawn anew unless `keep` names them and both of its ports are bound again (D27): a listener that had to move to another port is a new one, and a page an open tab already has, or whatever else holds the old secrets, opens nothing here. */
-export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, port = 0, remotePort = 0, pollMs = 2000, idleMs = 10_000, pingMs = 15_000, onStop, refuseTake, onRemote, onRemoteOff, onSaveFailed, spawn, close, trust, link, server: panel, tower, bindWaitMs = 0, keep, desk = false }: GuiOptions): Promise<Gui> {
+export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, port = 0, remotePort = 0, pollMs = 2000, idleMs = 10_000, pingMs = 15_000, onStop, refuseTake, onRemote, onRemoteOff, onSaveFailed, spawn, close, trust, link, server: panel, tower, bindWaitMs = 0, keep, desk = false, lan }: GuiOptions): Promise<Gui> {
 	try {
 		if (!statSync(join(dir, "index.html")).isFile()) throw new Error();
 	} catch {
@@ -115,7 +122,9 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 	})();
 	const files: Files = { lookup: (key) => net?.lookup(key), workspace: (id) => net?.workspace(id) ?? [], readers: readers() };
 	// Turning remote access off ends the streams of remote pages, and unpairing a device ends that device's (`remotes` names each stream's device); their next request finds the cookie void.
-	const clients = new Map<ServerResponse, Watch | undefined>(), remotes = new Map<ServerResponse, string>(), access = createAccess(token, (device) => remotes.forEach((d, c) => (!device || d === device) && c.end()), paired);
+	const clients = new Map<ServerResponse, Watch | undefined>(), remotes = new Map<ServerResponse, { device: string; net: Network }>();
+	// A device's streams end with it (`device` names it), or all of a network's when only `net` is named, or every remote one when neither is (a new token).
+	const access = createAccess(token, (device, net) => remotes.forEach((d, c) => (!device || d.device === device) && (!net || d.net === net) && c.end()), paired, { ...(lan ? { file: lan.file } : {}), ...(lan?.notify ? { notify: lan.notify } : {}), ...(lan?.log ? { log: lan.log } : {}) });
 	const pair = (code = access.pair(), host = access.remote?.host, url = `https://${host}/${token}/pair/${code}`) => (code && host ? { url, rows: qr(url).map((row) => row.map(Number).join("")), code: access.pairCode() } : undefined);
 	const entry = createEntry(access, token, HEADERS), mirrors = createMirrors({ call, lookup: (key) => net?.lookup(key), secret: waitsForSecret, canonical }), docs = hub && createDocs(hub, (key) => net?.lookup(key)?.name ?? key);
 	const stop = (asked: Asked) => (refuseTake && asked.take ? false : (setTimeout(() => (onStop ? onStop(asked) : void halt()), 10), true)); // after the reply has gone out
@@ -124,7 +133,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 		if (n) await tick();
 		return n;
 	};
-	const control = createControl({ link, server: panel, tower: tower?.memory ? { ...tower, memory: async (ws, json) => { const done = await tower.memory!(ws, json); await tick(); return done; } } : tower, lookup: (key) => net?.lookup(key), call, csrf, canonical, pair, remoteOn: onRemote, remoteOff: onRemoteOff, paired: { on: () => Boolean(access.remote), ...access.devices, unsaved: access.unsaved }, saveFailed: onSaveFailed, spawn, close: close && (async (kind, json) => (await tick(), close(kind, json, tick))), dismiss: async (key) => typeof key === "string" && Boolean(net?.dismiss?.(key)) && (await tick(), true), dismissAll, mirrors, stop, secret: waitsForSecret, linkRequest: waitsForLinkRequest, trust: trust?.answer, answers: hub && { has: hub.has, replay: hub.replay, ended: hub.ended, send: hub.send, probe: hub.probe, commands: hub.commands, pull: hub.pull, target: async (key) => (await tick(), hub.target(key)) } });
+	const control = createControl({ ...(lan ? { lan: lan.panel, overlay: lan.overlay } : {}), link, server: panel, tower: tower?.memory ? { ...tower, memory: async (ws, json) => { const done = await tower.memory!(ws, json); await tick(); return done; } } : tower, lookup: (key) => net?.lookup(key), call, csrf, canonical, pair, remoteOn: onRemote, remoteOff: onRemoteOff, paired: { on: () => Boolean(access.remote), ...access.devices, unsaved: access.unsaved }, saveFailed: onSaveFailed, spawn, close: close && (async (kind, json) => (await tick(), close(kind, json, tick))), dismiss: async (key) => typeof key === "string" && Boolean(net?.dismiss?.(key)) && (await tick(), true), dismissAll, mirrors, stop, secret: waitsForSecret, linkRequest: waitsForLinkRequest, trust: trust?.answer, answers: hub && { has: hub.has, replay: hub.replay, ended: hub.ended, send: hub.send, probe: hub.probe, commands: hub.commands, pull: hub.pull, target: async (key) => (await tick(), hub.target(key)) } });
 	let last: string | undefined, problem: string | undefined, inflight: Promise<void> | undefined;
 	let poll: ReturnType<typeof setInterval> | undefined, beat: ReturnType<typeof setInterval> | undefined;
 	const send = (to: ServerResponse, data: string, event?: string) => to.writableEnded || to.write(`${event ? `event: ${event}\n` : ""}data: ${data}\n\n`); // a reading in flight at stop ends after the streams
@@ -143,9 +152,9 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 			problem = message;
 		}
 	})().finally(() => (inflight = undefined)));
-	const events = (req: IncomingMessage, res: ServerResponse, target: string | null, device?: string) => {
+	const events = (req: IncomingMessage, res: ServerResponse, target: string | null, remote?: { device: string; net: Network }) => {
 		res.writeHead(200, { ...HEADERS, "content-type": "text/event-stream", connection: "keep-alive" });
-		if (device !== undefined) remotes.set(res, device);
+		if (remote) remotes.set(res, remote);
 		// `hello` names this stream for the terminal mirrors it attaches (mirror.ts), which end with it; before the net's first reading, after it.
 		const to = (event: string, data: unknown) => send(res, JSON.stringify(data), event), stream = randomBytes(16).toString("hex"), hello = () => to("hello", { stream, build });
 		mirrors.open(stream, to);
@@ -171,33 +180,38 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 			}
 		});
 	};
-	// One handler per listener: `kind` is the listener a request arrived on, which alone decides whether it may count as local.
-	const handler = (kind: "local" | "remote", own: () => Server) => (req: IncomingMessage, res: ServerResponse) => {
+	// One handler per listener: `kind` is the listener a request arrived on, which alone decides whether it may count as local. A request of kind "lan" comes from a LAN listener (guihost.ts) with `at`, what that listener tells of it.
+	const handler = (kind: "local" | "remote" | "lan", own: () => Server) => (req: IncomingMessage, res: ServerResponse, at?: LanAt) => {
+		if (kind === "lan" && !at) return void res.writeHead(403, { ...HEADERS, "content-type": "text/plain" }).end("forbidden");
 		const url = new URL(req.url ?? "/", "http://local"), pathname = url.pathname;
 		const [, given, ...path] = pathname.split("/");
 		const fail = (code: number) => res.writeHead(code, { ...HEADERS, "content-type": "text/plain" }).end(code === 403 ? "forbidden" : "not found");
 		const answer = ({ status, body }: Reply) => res.writeHead(status, { ...HEADERS, "content-type": TYPES[".json"] }).end(JSON.stringify(body));
-		// The installed app's fixed entry exists on the remote listener only; on the local one `sb-app` is just a wrong token.
-		if (kind === "remote" && given === APP.slice(1, -1)) return void entry(req, res, path);
-		const who = access.check(req, kind, (own().address() as AddressInfo).port, given, path);
+		// The installed app's fixed entry exists on the remote and the LAN listeners only; on the local one `sb-app` is just a wrong token.
+		if (kind !== "local" && given === APP.slice(1, -1)) return void entry(req, res, path, kind === "lan" ? at : undefined);
+		const who = access.check(req, kind, kind === "lan" ? at!.port : (own().address() as AddressInfo).port, given, path, at);
+		const wifi = kind === "lan", command = wifi ? "/boss gui lan" : "/boss gui remote";
 		if ("status" in who) {
+			if (who.status === 429) return void res.writeHead(429, { ...HEADERS, "content-type": "text/plain" }).end("too many requests");
 			// A page load at a dead address (the token was replaced by a restart) says so, without a secret in it; a script's request gets the plain refusal. On the remote listener a document load by this machine's user goes
 			// on to the fixed entry instead: an installed app's start URL is a dead address after a new token (a rotation, a lost store, a moved port), and the entry is where it pairs again.
 			const document = req.method === "GET" && req.headers["sec-fetch-dest"] === "document";
-			if (who.status === 403) return void (document && kind === "remote" && access.admits(req) ? res.writeHead(302, { ...HEADERS, location: APP }).end() : document ? res.writeHead(403, { ...HEADERS, "content-type": TYPES[".html"] }).end(`<!doctype html><meta charset="utf-8"><p>${zhOf(req) ? REPLACED_ZH : REPLACED}</p>`) : fail(403));
+			if (who.status === 403) return void (document && (kind === "lan" ? access.lan.admits(req, at) : kind === "remote" && access.admits(req)) ? res.writeHead(302, { ...HEADERS, location: APP }).end() : document ? res.writeHead(403, { ...HEADERS, "content-type": TYPES[".html"] }).end(`<!doctype html><meta charset="utf-8"><p>${zhOf(req) ? REPLACED_ZH : REPLACED}</p>`) : fail(403));
 			// The SameSite=Strict cookie stays behind on a navigation from another site, and Android counts launching the installed app as one: such a
 			// page load reloads itself once, a same-origin navigation that carries the cookie when this device has one. Sec-Fetch-Site decides, so the
 			// reload never loops, and a browser that sends no Sec-Fetch-Site gets the plain refusal.
 			const site = req.headers["sec-fetch-site"];
-			if (document && typeof site === "string" && site !== "same-origin") return void res.writeHead(401, { ...HEADERS, "content-type": TYPES[".html"] }).end(`<!doctype html><meta http-equiv="refresh" content="0"><p><a href="">Open the straw net</a></p><p>If it does not open, this device is not paired: scan a new QR code from /boss gui remote.</p>`); // the link, same-origin too, for a browser that blocks refresh
+			if (document && typeof site === "string" && site !== "same-origin") return void res.writeHead(401, { ...HEADERS, "content-type": TYPES[".html"] }).end(`<!doctype html><meta http-equiv="refresh" content="0"><p><a href="">Open the straw net</a></p><p>If it does not open, this device is not paired: scan a new QR code from ${command}.</p>`); // the link, same-origin too, for a browser that blocks refresh
 			// A same-origin page load that still has no pairing (an installed app has no address bar to go anywhere else) goes to the fixed entry, which asks for a pairing code.
 			if (document && site === "same-origin") return void res.writeHead(302, { ...HEADERS, location: APP }).end();
-			return void res.writeHead(401, { ...HEADERS, "content-type": "text/plain" }).end(`This device is not paired. Scan a new QR code from /boss gui remote with this device's camera; it opens in the browser. In an installed app, open the app again and type the pairing code that /boss gui remote shows beside the QR on the page it opens (${APP}); on iOS the app has cookies of its own, so scanning the QR in Safari does not pair it.`);
+			return void res.writeHead(401, { ...HEADERS, "content-type": "text/plain" }).end(wifi ? `This device is not paired. Run ${command} on the computer that runs Straw Boss and scan the new QR code with this device's camera, or open the installed app again and type the pairing code ${command} shows (${APP}); the computer then asks you to allow this device.` : `This device is not paired. Scan a new QR code from ${command} with this device's camera; it opens in the browser. In an installed app, open the app again and type the pairing code that ${command} shows beside the QR on the page it opens (${APP}); on iOS the app has cookies of its own, so scanning the QR in Safari does not pair it.`);
 		}
-		if ("reissue" in who && who.reissue) res.setHeader("set-cookie", [cookieFor(token, who.reissue), appCookieFor(who.reissue)]); // a use renewed the pairing: the browser's cookies last 90 days from now
+		if ("reissue" in who && who.reissue) res.setHeader("set-cookie", wifi ? [lanCookieFor(token, who.reissue), lanAppCookieFor(who.reissue)] : [cookieFor(token, who.reissue), appCookieFor(who.reissue)]); // a use renewed the pairing: the browser's cookies last 90 days from now
 		// A pairing code was just exchanged: the cookies are set, and the page reloads itself, so they also ride on a same-site navigation.
 		if ("cookie" in who) return void res.writeHead(200, { ...HEADERS, "content-type": TYPES[".html"], "set-cookie": [cookieFor(token, who.cookie), appCookieFor(who.cookie)] }).end(`<!doctype html><meta http-equiv="refresh" content="0;url=/${token}/"><p>Paired. Opening the straw net…</p>`);
-		if (path[0] === "doc") return void (docs ? docs.serve(req, res, path.slice(1), who.origin).catch(() => res.destroy()) : fail(404)); // the documents sessions show (docs.ts)
+		// On a LAN listener a document needs the allowed device's cookie, and everything it fetches a ticket that load hands out (docs.ts); the listener's own verdict says whether this request carried the cookie.
+		const wifiDoc = "net" in who && who.net === "lan" ? { token, cookie: Boolean("device" in who && who.device) } : undefined;
+		if (path[0] === "doc") return void (docs ? docs.serve(req, res, path.slice(1), who.origin, wifiDoc).catch(() => res.destroy()) : fail(404)); // the documents sessions show (docs.ts)
 		if (path[0] === "api") {
 			let parts: string[];
 			try {
@@ -206,16 +220,22 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 				return void fail(404);
 			}
 			// Only this machine stops, restarts, or reads the log of the server, opens it to the tailnet or closes it, and lists or unpairs devices.
-			if ((parts[0] === "server" || parts[0] === "remote") && who.remote) return void answer({ status: 403, body: { error: "local_only", reason: "This is done on this computer's own page." } });
-			if (["sessions", "remote", "server", "dirs", "open", "close", "dismiss", "trust", "link", "tower"].includes(parts[0]!)) return void control(req, who.origin, parts, who.remote).then(answer, () => answer({ status: 500, body: { error: "internal", reason: "The request could not be handled." } }));
+			if ((parts[0] === "server" || parts[0] === "remote" || parts[0] === "lan") && who.remote) return void answer({ status: 403, body: { error: "local_only", reason: "This is done on this computer's own page." } });
+			// Wi-Fi access's two reads (this computer's page only, checked above): who is waiting, and the public certificate files to share. Its writes are POSTs to control.ts.
+			if (req.method === "GET" && parts[0] === "lan" && lan) {
+				if (parts.length === 2 && parts[1] === "pending") return void answer(lan.panel.pending());
+				const file = parts.length === 3 && parts[1] === "ca" ? lan.panel.file(parts[2]!) : undefined;
+				return void (file ? res.writeHead(200, { ...HEADERS, "content-type": file.type, "content-disposition": `attachment; filename="${parts[2]}"` }).end(file.bytes) : fail(404));
+			}
+			if (["sessions", "remote", "server", "dirs", "open", "close", "dismiss", "trust", "link", "tower", "lan"].includes(parts[0]!)) return void control(req, who.origin, parts, who.remote).then(answer, () => answer({ status: 500, body: { error: "internal", reason: "The request could not be handled." } }));
 			// An entry never changes once written, so its image is cached for a day; the token in the URL keeps it to this page.
 			if (req.method === "GET" && parts[0] === "image") return void image(files, parts.slice(1)).then((p) => (p ? res.writeHead(200, { ...HEADERS, "content-type": p.type, "cache-control": "private, max-age=86400" }).end(p.bytes) : fail(404)), () => fail(404));
-			if (req.method === "GET") return void (parts[0] === "doc" && docs ? answer(docs.text(parts[1] ?? "")) : api(files, parts, url.searchParams).then(answer, () => fail(404)));
+			if (req.method === "GET") return void (parts[0] === "doc" && docs ? answer(docs.text(parts[1] ?? "", wifiDoc && { cookie: wifiDoc.cookie })) : api(files, parts, url.searchParams).then(answer, () => fail(404)));
 		}
 		if (req.method !== "GET") return void fail(403);
 		// The page loads its assets and the stream relative to its own URL, so that URL must end with a slash.
 		if (path.length === 0) return void res.writeHead(308, { ...HEADERS, location: `${pathname}/` }).end();
-		if (path.join("/") === "events") return events(req, res, url.searchParams.get("watch"), who.remote ? (who.device ?? "") : undefined);
+		if (path.join("/") === "events") return events(req, res, url.searchParams.get("watch"), who.remote ? { device: who.device ?? "", net: wifi ? "lan" : "tailnet" } : undefined);
 		if (path[0] === "w") return void res.writeHead(200, { ...HEADERS, "content-type": TYPES[".html"] }).end(page);
 		let file: string;
 		try {
@@ -232,6 +252,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 		const keep = /\.(woff2|mp3)$/.test(file) ? { "cache-control": "private, max-age=31536000, immutable" } : {};
 		res.writeHead(200, { ...HEADERS, ...keep, "content-type": TYPES[extname(file)] ?? "application/octet-stream" }).end(body);
 	};
+	const lanHandler = handler("lan", () => server) as LanHandler;
 	routes = { local: handler("local", () => server), remote: handler("remote", () => remoteServer) };
 	hub?.start(() => void (clients.size && tick())); // a relayed dialog shows at once, not at the next poll
 	const unwatch = trust?.watch(() => void (clients.size && tick())); // and so does a trust question
@@ -255,7 +276,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 		});
 	}
 	return {
-		url: `http://127.0.0.1:${bound}/${token}/`, port: bound, remotePort: boundRemote, token, csrf, kept, access, stop: halt,
+		url: `http://127.0.0.1:${bound}/${token}/`, port: bound, remotePort: boundRemote, token, csrf, kept, access, lan: lanHandler, stop: halt,
 	};
 }
 

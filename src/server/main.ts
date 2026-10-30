@@ -76,7 +76,7 @@ export interface ServerOptions {
 	/** How the starter started this process (Windows): through WMI, or by a plain spawn after a failure; kept in the record, so `status` and `up` can say so. */
 	detach?: { via: Detach; failure?: string };
 	/** The GUI the server serves (guihost.ts); `false` serves none (the tests of the process itself). `link`, `bundle`, `tailscale`, and `bindWaitMs` replace the machine's. */
-	gui?: false | { link?: GuiLink; bundle?: string; tailscale?: Run; bindWaitMs?: number; /** Another process's start time as the hand-over of the GUI asks for it, and how long it waits (tests; the process's own `startedLater` and 6 s by default). */ startedLater?: (pid: number) => Promise<string | undefined>; startWaitMs?: number; /** Called when a GUI request waits for a rotation in flight (tests). */ waiting?: () => void; /** Asks for a restart as the page's button does; the real one starts `cli.mjs restart`. */ restart?: (reason: string) => { status: number; body: unknown } | Promise<{ status: number; body: unknown }> };
+	gui?: false | { link?: GuiLink; bundle?: string; tailscale?: Run; bindWaitMs?: number; /** Wi-Fi access's seams (tests): see lanhost.ts. */ lan?: import("./lanhost.ts").LanSeams; /** Another process's start time as the hand-over of the GUI asks for it, and how long it waits (tests; the process's own `startedLater` and 6 s by default). */ startedLater?: (pid: number) => Promise<string | undefined>; startWaitMs?: number; /** Called when a GUI request waits for a rotation in flight (tests). */ waiting?: () => void; /** Asks for a restart as the page's button does; the real one starts `cli.mjs restart`. */ restart?: (reason: string) => { status: number; body: unknown } | Promise<{ status: number; body: unknown }> };
 	herdrUp?: () => Promise<boolean>;
 	watch?: HerdrWatch;
 	herdr?: HeadlessDeps;
@@ -486,7 +486,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		link: gui.link ?? (!slot.primary ? elsewhereLink() : inProcessLink(createGuiLink({ events: kit.pi.events, id: () => serverId(slot), stateDir: slot.stateDir, agentDir: env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), log: (text) => log.line("link", { text }) }), () => link, () => serverId(slot))),
 		status: () => ({ state: phase === "ready" ? "live" : phase, version, pid, mode, desk, uptimeMs: now() - startedAt, log: fileOf(slot, "log"), ...(own.lastError ? { lastError: own.lastError } : {}) }),
 		restart: gui.restart ?? ((reason) => spawnRestart(cliBeside(), reason, "the GUI", serverEnv(env), slot.dir)),
-		failed: (code, text) => recordError(code, text), tailscale: gui.tailscale, bundle: gui.bundle, bindWaitMs: gui.bindWaitMs,
+		failed: (code, text) => recordError(code, text), tailscale: gui.tailscale, bundle: gui.bundle, bindWaitMs: gui.bindWaitMs, ...(gui.lan ? { lan: gui.lan } : {}),
 		// The page's tower units: the service's state and queue in the net, the composer as a boss event, and the notices' buttons (towers is built below, after the GUI host, and may be absent).
 		tower: towerPanel(() => towers),
 	});
