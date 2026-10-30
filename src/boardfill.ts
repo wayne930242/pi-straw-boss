@@ -1,11 +1,9 @@
 import { join } from "node:path";
 import { ENDED_MS, finished, readEntries, removeEntry, writeEntry } from "./board.ts";
 import { type Derived, deriveBoard } from "./boardauto.ts";
+import { BOARD_ENTRY, seedBoard, withdrawnKey } from "./boardseed.ts";
 import type { Kit } from "./state.ts";
 import { todosOfBranch } from "./todo.ts";
-
-/** The custom entry a main keeps in its session when it withdraws the line for a derived entry (`board_set { clear }`, or a finished list's 30 minutes): a /reload reads it back, so the line is not written again. */
-const BOARD_ENTRY = "straw-boss-board";
 
 // The work board fills itself (docs/specs/2026-10-25-straw-link.md, Work board, Auto-fill): the main's own session turns its todo list and its name into its entry and writes it
 // with `writeEntry`, as `board_set` does, marked `src: "todo"`. The server takes no part. boardauto.ts is the derivation and the scrub.
@@ -28,19 +26,10 @@ export function createBoardFill({ pi, cfg, s, guiDir, me, role, tell }: Kit): Bo
 		return name === me() || name === me().slice(0, 8) ? "" : name;
 	};
 	const derive = () => {
-		let branch: readonly unknown[] = [];
-		try { branch = ctx?.sessionManager?.getBranch() ?? []; } catch { /* a replaced session's context throws */ }
-		return deriveBoard({ name: named(), todos: todosOfBranch(branch), root: ctx?.cwd ?? process.cwd() });
+		return deriveBoard({ name: named(), todos: todosOfBranch(branchOf()), root: ctx?.cwd ?? process.cwd() });
 	};
-	/** The key of the newest withdrawal this session's branch holds. */
-	const withdrawn = (): string | undefined => {
-		let branch: readonly unknown[] = [];
-		try { branch = ctx?.sessionManager?.getBranch() ?? []; } catch { /* a replaced session's context throws */ }
-		for (let i = branch.length - 1; i >= 0; i--) {
-			const e = branch[i] as { type?: string; customType?: string; data?: { cleared?: unknown } };
-			if (e.type === "custom" && e.customType === BOARD_ENTRY && typeof e.data?.cleared === "string") return e.data.cleared;
-		}
-		return undefined;
+	const branchOf = (): readonly unknown[] => {
+		try { return ctx?.sessionManager?.getBranch() ?? []; } catch { return []; } // a replaced session's context throws
 	};
 	const withdraw = (key: string) => { try { pi.appendEntry(BOARD_ENTRY, { cleared: key }); } catch { /* a replaced session's pi throws */ } };
 	const write = (d: Derived) => {
@@ -57,13 +46,9 @@ export function createBoardFill({ pi, cfg, s, guiDir, me, role, tell }: Kit): Bo
 				seeded = true;
 				const own = readEntries(dir).find((e) => e.session === me());
 				if (own) s.boardId = me();
-				if (own?.src === "set") last = key;
-				// An auto line this reload finds is kept as it stands, with its own age: a finished one is not made fresh for another 30 minutes.
-				else if (own && d && own.now === d.text.now && JSON.stringify(own.items) === JSON.stringify(d.text.items)) {
-					last = key;
-					if (finished(own)) doneAt = own.updated;
-				// No line, and one withdrawn for this very entry: it stays withdrawn.
-				} else if (!own && withdrawn() === key) last = key;
+				const seed = seedBoard({ own, derived: d, key, withdrawn: withdrawnKey(branchOf()) });
+				last = seed.last ?? last; // what the session start seeded (a finished list) stands
+				doneAt = seed.doneAt ?? doneAt;
 			}
 			// A finished list is said once: the line goes 30 minutes after it was written (readers also hide it, and a tower's read deletes it).
 			if (key === last && doneAt !== undefined && cfg.now() - doneAt > ENDED_MS) {
@@ -87,7 +72,14 @@ export function createBoardFill({ pi, cfg, s, guiDir, me, role, tell }: Kit): Bo
 	pi.on("session_start", (_e, c) => {
 		[ctx, last, seeded, doneAt] = [c as typeof ctx, undefined, false, undefined];
 		// A line a reload kept is this session's from the start: a quit before any turn deletes it (s.boardId), as one written here would be.
-		try { if (me() && readEntries(dir).some((e) => e.session === me())) s.boardId = me(); } catch { /* no board yet */ }
+		try {
+			if (!me()) return;
+			const own = readEntries(dir).find((e) => e.session === me());
+			if (own) s.boardId = me();
+			// A finished list this reload carries, whose line a tower's read purged, is not written again.
+			const d = derive();
+			({ last, doneAt } = seedBoard({ own, derived: d, key: JSON.stringify(d ?? null), withdrawn: withdrawnKey(branchOf()), atStart: true }));
+		} catch { /* no board yet */ }
 	});
 	pi.on("turn_end", (_e, c) => again(c));
 	pi.on("session_tree", (_e, c) => again(c));

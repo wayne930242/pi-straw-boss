@@ -100,3 +100,21 @@ test("RV-F004: the stale marker comes before the long now text, so a row cap kee
 	const a = buildAllyBrief({ device: { label: "d", short: "s", team: "t", level: "status" }, workspace: "wA", label: "Alpha", woken: "10:00", seen: [{ ...row, main: { ...row.main, now: "x".repeat(300) } }], asks: [], thread: [], tools: ["- x"] } as never);
 	assert.match(a.split("\n").find((l) => l.startsWith("- PM-1074"))!, /\[stale: idle/);
 });
+
+test("RV2-F001: a finished line purged by a tower's read while the main idles is not rewritten after /reload", async () => {
+	const a = await main();
+	setTodos(a, [todo(1, "x", "completed"), todo(2, "y", "completed")]);
+	await a.fire("turn_end");
+	assert.ok(entryOf("a1"));
+	clock += ENDED_MS + 10_000;
+	purge(boardDir(), new Set(["a1"]), clock);
+	assert.equal(entryOf("a1"), undefined);
+	const carry = [...a.entries];
+	await a.stop("reload");
+	const b = await main(carry);
+	await b.fire("turn_end");
+	assert.equal(entryOf("a1"), undefined);
+	setTodos(b, [todo(1, "x", "completed"), todo(2, "y", "pending")]); // the list moves: the line is back
+	await b.fire("turn_end");
+	assert.ok(entryOf("a1"));
+});

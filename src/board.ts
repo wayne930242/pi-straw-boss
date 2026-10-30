@@ -104,20 +104,18 @@ export function readEntries(dir: string): Entry[] {
 	return names.flatMap((name) => readOne(dir, name));
 }
 function readOne(dir: string, name: string): Entry[] {
-	{
-		try {
-			const raw = JSON.parse(readFileSync(join(dir, name), "utf8")) as Record<string, unknown>;
-			const session = name.slice(0, -".json".length);
-			// The file is named for its session, and says so: a file that disagrees is somebody's copy, not this session's entry.
-			if (raw?.v !== 1 || raw.session !== session || !safeSession(session) || typeof raw.updated !== "number" || !Number.isFinite(raw.updated) || typeof raw.now !== "string" || !Array.isArray(raw.items)) return [];
-			if (!raw.items.every((i) => typeof i === "object" && i !== null && typeof (i as BoardItem).t === "string" && typeof (i as BoardItem).done === "boolean")) return [];
-			const c = raw.count as Partial<Count> | undefined, src: Src = raw.src === "todo" ? "todo" : "set"; // a file without `src` is a board_set entry
-			const count = src === "todo" && Number.isSafeInteger(c?.done) && Number.isSafeInteger(c?.total) && c!.done! >= 0 && c!.done! <= c!.total! && c!.total! <= 200 ? { done: c!.done!, total: c!.total! } : undefined;
-			const who = src === "todo" ? clean(raw.who, BOARD.label) : "";
-			return [{ v: 1, session, updated: raw.updated, src, ...(count ? { count } : {}), ...(who ? { who } : {}), ...cleanText(raw) }];
-		} catch {
-			return [];
-		}
+	try {
+		const raw = JSON.parse(readFileSync(join(dir, name), "utf8")) as Record<string, unknown>;
+		const session = name.slice(0, -".json".length);
+		// The file is named for its session, and says so: a file that disagrees is somebody's copy, not this session's entry.
+		if (raw?.v !== 1 || raw.session !== session || !safeSession(session) || typeof raw.updated !== "number" || !Number.isFinite(raw.updated) || typeof raw.now !== "string" || !Array.isArray(raw.items)) return [];
+		if (!raw.items.every((i) => typeof i === "object" && i !== null && typeof (i as BoardItem).t === "string" && typeof (i as BoardItem).done === "boolean")) return [];
+		const c = raw.count as Partial<Count> | undefined, src: Src = raw.src === "todo" ? "todo" : "set"; // a file without `src` is a board_set entry
+		const count = src === "todo" && Number.isSafeInteger(c?.done) && Number.isSafeInteger(c?.total) && c!.done! >= 0 && c!.done! <= c!.total! && c!.total! <= 200 ? { done: c!.done!, total: c!.total! } : undefined;
+		const who = src === "todo" ? clean(raw.who, BOARD.label) : "";
+		return [{ v: 1, session, updated: raw.updated, src, ...(count ? { count } : {}), ...(who ? { who } : {}), ...cleanText(raw) }];
+	} catch {
+		return [];
 	}
 }
 

@@ -66,6 +66,7 @@ test("arguments: each command takes its own flags, the pane defaults to the one 
 	assert.deepEqual(parseArgs(["board", "--clear", "--pane", "wA:p9"], { HERDR_PANE_ID: PANE }), { command: "board", pane: "wA:p9", clear: "true" });
 	assert.throws(() => parseArgs(["board", "--clear", "--now", "x"], { HERDR_PANE_ID: PANE }), /--clear takes no/);
 	assert.throws(() => parseArgs(["rename", "--name", "n", "--item", "[x] a"], { HERDR_PANE_ID: PANE }), /--item belongs to the board command/);
+	assert.throws(() => parseArgs(["rename", "--name", "n", "--clear"], { HERDR_PANE_ID: PANE }), /unknown option --clear|--clear belongs to the board command/);
 	assert.deepEqual(parseArgs(["promote"], { HERDR_PANE_ID: PANE }), { command: "promote", pane: PANE });
 	assert.deepEqual(parseArgs(["stop"], { HERDR_PANE_ID: PANE }), { command: "stop", pane: PANE });
 	const env = { HERDR_PANE_ID: PANE };

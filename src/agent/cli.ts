@@ -30,6 +30,7 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
 	if (!Object.hasOwn(NEEDS, command)) throw new UsageError(`unknown command ${command}\n${USAGE}`);
 	const given: Record<string, string> = {}, item: string[] = [];
 	for (let i = 0; i < rest.length; i += 2) {
+		if (rest[i] === "--clear" && command !== "board") throw new UsageError("--clear belongs to the board command");
 		if (command === "board" && rest[i] === "--clear") { given.clear = "true"; i -= 1; continue; } // the one option without a value
 		const flag = rest[i]!.replace(/^--/, "");
 		if (!rest[i]!.startsWith("--") || !FLAGS.includes(flag)) throw new UsageError(`unknown option ${rest[i]}`);
