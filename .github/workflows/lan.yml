@@ -4,7 +4,7 @@ name: LAN
 # socket), which differ between majors; the dev Mac's `npm test` and the Windows workflow cover the other two platforms. OpenSSL is on the runner, and a Linux CI run that cannot find it fails (tests/lan-x509.test.ts).
 on:
   push:
-    branches: [main]
+    branches: [main, feat/sb-gui-lan]
     paths: ["src/**", "tests/lan-*.test.ts", "tests/fake-clock.ts", "tests/setup.ts", "tests/isolation.ts", "package.json", "package-lock.json", ".github/workflows/lan.yml"]
   pull_request:
   workflow_call:
