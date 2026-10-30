@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Bridge } from "../bridge.ts";
@@ -14,6 +15,7 @@ import { type GuiLink } from "../link/guiport.ts";
 import { type Net, netSource, type TowerView } from "../net.ts";
 import type { TowerPanel } from "../control.ts";
 import { identity, type Run, switchRemote, tailscale } from "../remote.ts";
+import { createLanDevices } from "../devices.ts";
 import { createSpawn } from "../spawn.ts";
 import { popBase, stashedList } from "../stash.ts";
 import { trustDir } from "../trust/files.ts";
@@ -302,6 +304,19 @@ export function createGuiHost(o: GuiHostOptions) {
 	const gone = (error: unknown): Reply => ({ ok: false, error: (error as Error).message });
 	const guiFacts = (g: Gui) => ({ url: g.url, port: g.port, remotePort: g.remotePort, token: g.token });
 	/** Wi-Fi access is wanted and does not run: what `up` and a session's /boss gui tell. */
+	const lanFile = () => join(dir, "lan.json");
+	const savedLan = (): { token?: unknown; wanted?: unknown } | undefined => {
+		try {
+			const saved = JSON.parse(readFileSync(lanFile(), "utf8"));
+			return saved?.v === 1 ? saved : undefined;
+		} catch { return undefined; }
+	};
+	const savedLanWish = () => slot.primary && savedLan()?.wanted === true;
+	const forgetLan = (): Reply => {
+		const saved = savedLan();
+		if (saved) createLanDevices(lanFile(), typeof saved.token === "string" ? saved.token : "", () => {}).set({ wanted: false });
+		return { ok: true, wanted: false, on: false, text: "Wi-Fi access is off; the devices you allowed stay paired" };
+	};
 	const lanNoteOf = () => (lan?.wantedOff && lan.note ? { lanNote: lan.note } : {});
 	/** The boss's own command starts a GUI that was stopped; an automatic ask leaves it. */
 	const ensure = async (boss: boolean, wait = 0): Promise<{ running: Gui } | { reply: Reply }> => {
@@ -369,7 +384,7 @@ export function createGuiHost(o: GuiHostOptions) {
 		/** What `status` says of the GUI. */
 		facts(): Record<string, unknown> {
 			const was = recorded();
-			return { running: Boolean(gui), stopped: !gui && was.stopped, ...(gui ? { port: gui.port, remotePort: gui.remotePort } : {}), remote: { wanted: gui?.access.wanted ?? false, on: Boolean(gui?.access.remote), ...(remoteNote ? { note: remoteNote } : {}) }, lan: lan?.facts() ?? { wanted: false, on: false, addresses: [], pending: 0, ...(slot.primary ? {} : { note: LAN_SECONDARY }) } };
+			return { running: Boolean(gui), stopped: !gui && was.stopped, ...(gui ? { port: gui.port, remotePort: gui.remotePort } : {}), remote: { wanted: gui?.access.wanted ?? false, on: Boolean(gui?.access.remote), ...(remoteNote ? { note: remoteNote } : {}) }, lan: lan?.facts() ?? { wanted: savedLanWish(), on: false, addresses: [], pending: 0, ...(slot.primary ? {} : { note: LAN_SECONDARY }) } };
 		},
 		/** The control requests that concern the GUI; undefined for any other. */
 		async handle(request: Request): Promise<Reply | undefined> {
@@ -401,6 +416,8 @@ export function createGuiHost(o: GuiHostOptions) {
 					const started = await ensure(true);
 					if ("reply" in started) return started.reply;
 				}
+				// Off always succeeds: the wish lives in lan.json, so it is cleared there when no GUI runs.
+				if (request.cmd === "gui-lan" && request.on === false && !gui && slot.primary) return forgetLan();
 				return lan && gui ? lan.handle(request) : { ok: false, error: "stopped" };
 			}
 			const got = await ensure(request.boss === true || request.cmd === "gui-remote");

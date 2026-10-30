@@ -475,3 +475,34 @@ test("Tailscale access is unchanged: with both on, turning Wi-Fi access off ends
 	assert.equal(((await h.ask("status")).gui as { remote: { on: boolean } }).remote.on, true, "remote access stays on");
 	void bundle;
 });
+
+test("RVL5-F001: Wi-Fi access off works while the GUI is stopped, status and lan.json agree, and the next start binds nothing", async () => {
+	const h = await host(), { face: f } = await turnOn(h);
+	void f;
+	assert.equal((await h.ask("gui-stop")).ok, true);
+	assert.equal((await lanOf(h)).wanted, true, "status reads the wish from lan.json while stopped");
+	const off = await h.ask("gui-lan", { on: false });
+	assert.equal(off.ok, true, JSON.stringify(off));
+	assert.equal(JSON.parse(readFileSync(join(h.slot.dir, "lan.json"), "utf8")).wanted, false);
+	assert.equal((await lanOf(h)).wanted, false);
+	assert.equal((await h.ask("gui", { boss: true })).ok, true);
+	assert.equal((await lanOf(h)).wanted, false);
+	assert.equal((await lanOf(h)).on, false, "nothing binds");
+});
+
+test("RVL5-F002: a face open without a pane field is bad_request; only an explicit null is pane-less", async () => {
+	const h = await host();
+	assert.equal((await h.ask("gui-lan-face", { open: true })).error, "bad_request");
+	assert.equal((await h.ask("gui-lan-face", { open: true, pane: null })).ok, true);
+});
+
+test("RVL5-F003: an unreadable computer name is not cached; the next command reads it again", async () => {
+	let reads = 0;
+	const h = await host({ seams: { localName: () => (reads++ === 0 ? { unreadable: true } as never : { name: NAME }) } });
+	const f = await face(h);
+	const first = await h.ask("gui-lan", { on: true, accept_risk: true, face: f });
+	assert.equal(first.ok, false);
+	assert.equal(first.error, "lan_name_unreadable");
+	const second = await h.ask("gui-lan", { on: true, accept_risk: true, face: f });
+	assert.equal(second.ok, true, JSON.stringify(second));
+});
