@@ -226,7 +226,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 			if ((parts[0] === "server" || parts[0] === "remote" || parts[0] === "lan") && who.remote) return void answer({ status: 403, body: { error: "local_only", reason: "This is done on this computer's own page." } });
 			// Wi-Fi access's two reads (this computer's page only, checked above): who is waiting, and the public certificate files to share. Its writes are POSTs to control.ts.
 			if (req.method === "GET" && parts[0] === "lan" && lan) {
-				if (parts.length === 2 && parts[1] === "pending") return void answer(lan.panel.pending());
+				if (parts.length === 2 && parts[1] === "pending") return void answer(lan.panel.pending(url.searchParams.get("peek") === "1"));
 				const file = parts.length === 3 && parts[1] === "ca" ? lan.panel.file(parts[2]!) : undefined;
 				return void (file ? res.writeHead(200, { ...HEADERS, "content-type": file.type, "content-disposition": `attachment; filename="${parts[2]}"` }).end(file.bytes) : fail(404));
 			}

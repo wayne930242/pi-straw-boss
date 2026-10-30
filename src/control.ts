@@ -54,8 +54,8 @@ export interface LanPanel {
 	pair(json: Record<string, unknown>): Promise<Reply> | Reply;
 	approve(json: Record<string, unknown>): Promise<Reply> | Reply;
 	ca(): Promise<Reply> | Reply;
-	/** The pending requests (no number), the events, and the notes; the tile polls it. */
-	pending(): Reply;
+	/** The pending requests (no number), the events, and the notes; the tile polls it. `peek` reads without counting as an open tile (the page's waiting-request notice, which must not silence the sessions' own). */
+	pending(peek?: boolean): Reply;
 	/** A public certificate file for **Share the certificate**: `straw-boss.mobileconfig` or `straw-boss-lan-ca.crt`. */
 	file(name: string): { type: string; bytes: Buffer } | undefined;
 }

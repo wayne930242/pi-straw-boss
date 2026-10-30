@@ -210,6 +210,8 @@ mountHotkeys((hotkey) => panels?.hotkey(hotkey) ?? false); // Space opens the ne
 el("teams").addEventListener("click", openTeams);
 el("pair").hidden = phoneHidden(location.hostname); // pairing is this computer's, and a desk window has none (desk.ts)
 el("pair").addEventListener("click", () => void import("./pair.ts").then(({ pairTile }) => openTile(pairTile(), true)));
+// A pair request waits while the Same Wi-Fi tab is not open: a header notice that opens the tile on that tab (this computer's page only).
+if (!el("pair").hidden) void import("./lanwait.ts").then(({ mountLanWait }) => mountLanWait(el("lan-wait") as HTMLButtonElement, () => void import("./pair.ts").then(({ pairTile }) => openTile(pairTile("lan"), true))));
 el("server").hidden = location.hostname !== "127.0.0.1"; // restarting the server and reading its log are this computer's too (the server answers 403 local_only to a paired device)
 el("server").addEventListener("click", () => void import("./server.ts").then(({ serverTile }) => openTile(serverTile(), true)));
 // The phone's quick-switch drawer (drawer.ts, swipe.ts): its own chunk, fetched where there is a touch screen or a narrow window, now or once the window narrows.

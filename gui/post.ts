@@ -11,3 +11,7 @@ export const sendFile = (path: string, file: File): Promise<Answer> =>
 export const post = (path: string, body: Record<string, unknown>): Promise<Answer> =>
 	fetch(`api/${path}`, { method: "POST", cache: "no-store", headers: { "content-type": "application/json", "x-sb-csrf": csrf() }, body: JSON.stringify(body) })
 		.then(async (r) => ({ ok: r.ok, status: r.status, body: await r.json().catch(() => ({})) }));
+
+/** A read: the same JSON answer, no body (the Wi-Fi tab polls `lan/pending`). */
+export const get = (path: string): Promise<Answer> =>
+	fetch(`api/${path}`, { cache: "no-store" }).then(async (r) => ({ ok: r.ok, status: r.status, body: await r.json().catch(() => ({})) }));

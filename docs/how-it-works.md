@@ -407,8 +407,11 @@ Not covered: a run that was itself resumed (`subagent_resume`) is not recovered 
   - A document opened on a Wi-Fi device needs the device's cookie for the document itself, and everything the document loads (images, styles, answers) goes through a short-lived ticket in the page's `<base>`, so a leaked link opens nothing.
     Unpairing, switching Wi-Fi access off, or a new token ends the tickets.
   - The Phone tile on this computer's page has a Tailscale tab and a Same Wi-Fi tab and one device list for both, each device labelled with its network.
-    The Wi-Fi tab shows the risk and the hotspot advice, turns Wi-Fi access on only when you press its button, and offers the certificate files, the fingerprint steps, a pairing QR, a code, the address toggle, the pending requests, and the field for the phone's number.
-    Notes from the server (a taken port, the firewall, a renamed computer, no address, the certificate ending) appear in both languages.
+    The Wi-Fi tab shows the risk and the hotspot advice, turns Wi-Fi access on only when you press its button, and offers the certificate files (one link for each file, labelled by the platform it is for), the fingerprint steps, a pairing QR, a code, the address toggle, the pending requests, and the field for the phone's number.
+    Notes and events from the server (a taken port, the firewall, a renamed computer, no address, the certificate ending, a paired or refused device) come with a code and its parameters, and the page words them in English or Traditional Chinese; the PowerShell and macOS commands in a firewall note stay exactly as the server gives them.
+    A note that means a phone cannot connect now (Wi-Fi access held off, a taken port, an ended certificate, a firewall block) is shown as an error; a moved port, a VPN, a certificate that is ending, and the events are only told.
+    Refused pairing codes from one address are one line with a count and the time of the latest.
+    While a pairing request waits and the Wi-Fi tab is not open, the page's header says so, and pressing it opens the tab.
     The tile does not show in a desk window or on a paired device's page.
   - Straw Link is unchanged: the tailnet join stays Tailscale only, and nothing of the link listens on Wi-Fi.
   - Only the default Herdr's sb server offers Wi-Fi access; another slot's server says so.

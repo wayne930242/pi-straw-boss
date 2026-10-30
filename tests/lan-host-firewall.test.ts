@@ -128,3 +128,21 @@ test("a change of the served addresses reads the firewall again", async () => {
 	await until(async () => calls.some((c) => c.served.some((s) => s.address === "10.0.0.77")), "a read for the new address");
 	assert.ok(calls.length > first);
 });
+
+test("the firewall notes reach the page's note list with their codes; a read that gives only text is one note with the code fw_other", async () => {
+	const coded: FirewallRead = { notes: ["No rule"], summary: "s", coded: [{ code: "fw_win_noallow", text: "No rule", params: { port: 1, command: "New-NetFirewallRule" } }] };
+	const { h } = await host(async () => coded);
+	const face = await on(h);
+	const codes = async () => ((await h.ask("gui-lan-pending", { face })).noteList as { code: string; text: string; params?: unknown }[]).map((n) => [n.code, n.text, n.params]);
+	await until(async () => (await codes()).length === 1, "the coded note");
+	assert.deepEqual(await codes(), [["fw_win_noallow", "No rule", { port: 1, command: "New-NetFirewallRule" }]]);
+	assert.equal((await lanOf(h)).note, "No rule", "the TUI keeps the English text");
+});
+
+test("a firewall read without codes still shows as a note, with the code fw_other", async () => {
+	const { h } = await host(async () => read(["plain"]));
+	const face = await on(h);
+	const codes = async () => ((await h.ask("gui-lan-pending", { face })).noteList as { code: string; text: string }[]).map((n) => [n.code, n.text]);
+	await until(async () => (await codes()).length === 1, "the note");
+	assert.deepEqual(await codes(), [["fw_other", "plain"]]);
+});

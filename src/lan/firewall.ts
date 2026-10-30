@@ -11,7 +11,11 @@ import { powershellPath, system32 } from "../winpath.ts";
 /** Which addresses Wi-Fi access serves (the interface is the name `os.networkInterfaces()` gives, which on Windows is the adapter's alias) and the port. */
 export interface FirewallInput { port: number; served: { address: string; iface: string }[] }
 /** `notes` are what the boss sees (none when nothing blocks or the platform has no check); `summary` is one line for the server's log. */
-export interface FirewallRead { notes: string[]; summary: string }
+export interface FirewallRead { notes: string[]; summary: string; coded?: FwNote[] }
+/** A note with the code the page translates it by and the params it fills in (the commands among them, verbatim); `text` is the English the TUI shows. */
+export interface FwNote { text: string; code: string; params?: Record<string, string | number> }
+const fw = (code: string, text: string, params?: FwNote["params"]): FwNote => ({ text, code, ...(params ? { params } : {}) });
+const texts = (list: FwNote[]) => list.map((n) => n.text);
 /** Runs a program with arguments and answers its stdout; rejects when it fails, with `stderr` on the error when there is one. */
 export type FirewallExec = (file: string, args: string[], options: { timeout: number; env: NodeJS.ProcessEnv; cwd?: string }) => Promise<string>;
 export interface FirewallDeps { platform?: NodeJS.Platform; execPath?: string; env?: NodeJS.ProcessEnv; exec?: FirewallExec; realpath?: (path: string) => string }
@@ -67,11 +71,12 @@ export function parseMacApp(text: string): MacApp | undefined {
 	return /\bnot part of the firewall\b/i.test(line) ? "unlisted" : undefined;
 }
 /** The notes: only when the firewall is on, and it blocks all incoming connections or blocks node. */
-export function macNotes(f: MacFirewall): string[] {
-	const out: string[] = [];
+export const macNotes = (f: MacFirewall): string[] => texts(macCoded(f));
+export function macCoded(f: MacFirewall): FwNote[] {
+	const out: FwNote[] = [];
 	if (!f.on) return out;
-	if (f.blockAll) out.push("macOS firewall blocks all incoming connections, so a phone cannot connect: turn off \"Block all incoming connections\" in System Settings, Network, Firewall, Options.");
-	if (f.app === "blocked") out.push("macOS firewall blocks node: allow it in System Settings, Network, Firewall, Options.");
+	if (f.blockAll) out.push(fw("fw_block_all", "macOS firewall blocks all incoming connections, so a phone cannot connect: turn off \"Block all incoming connections\" in System Settings, Network, Firewall, Options."));
+	if (f.app === "blocked") out.push(fw("fw_block_node", "macOS firewall blocks node: allow it in System Settings, Network, Firewall, Options."));
 	return out;
 }
 async function readMac(execPath: string, exec: FirewallExec, env: NodeJS.ProcessEnv): Promise<FirewallRead> {
@@ -82,7 +87,8 @@ async function readMac(execPath: string, exec: FirewallExec, env: NodeJS.Process
 		// Nothing below matters while it is off, and the reads stay read-only: no sudo, no setting changed.
 		if (!state.on) return { notes: [], summary: "macOS firewall: off" };
 		const blockAll = state.blockAll || (parseMacBlockAll(await ask("--getblockall")) ?? false), app = parseMacApp(await ask("--getappblocked", execPath));
-		return { notes: macNotes({ on: true, blockAll, app }), summary: `macOS firewall: on, block all ${blockAll ? "on" : "off"}, node ${app ?? "unknown"}` };
+		const coded = macCoded({ on: true, blockAll, app });
+		return { notes: texts(coded), coded, summary: `macOS firewall: on, block all ${blockAll ? "on" : "off"}, node ${app ?? "unknown"}` };
 	} catch (error) {
 		return { notes: [], summary: `macOS firewall: the state could not be read (${reasonOf(error, 10_000)})` };
 	}
@@ -257,7 +263,8 @@ export const allowCommand = (port: number) => `New-NetFirewallRule -DisplayName 
 const listCommand = "Get-NetFirewallRule -Direction Inbound -Action Block -Enabled True | Get-NetFirewallApplicationFilter | Where-Object { $_.Program -like '*node.exe' } | Select-Object InstanceID, Program";
 
 /** The notes for what the read found: rules that block, no rule that allows, a Public network (in that order). A firewall that is off for a network's profile has none for it. */
-export function windowsNotes(read: WinRead, input: FirewallInput, execPath: string, realPath?: string): string[] {
+export const windowsNotes = (read: WinRead, input: FirewallInput, execPath: string, realPath?: string): string[] => texts(windowsCoded(read, input, execPath, realPath));
+export function windowsCoded(read: WinRead, input: FirewallInput, execPath: string, realPath?: string): FwNote[] {
 	// Node started through a link (nvm-windows, Scoop, fnm) is a rule's program by the link or by its target, depending on how it was started: both are compared.
 	const nodes = new Set([comparable(execPath), realPath ? comparable(realPath) : ""].filter(Boolean)), port = input.port;
 	const byAlias = new Map(read.networks.map((n) => [n.alias.toLowerCase(), n.category]));
@@ -274,14 +281,14 @@ export function windowsNotes(read: WinRead, input: FirewallInput, execPath: stri
 	const forNode = (r: WinRule) => r.program === "any" || nodes.has(r.program);
 	const fits = (r: WinRule) => r.tcp && covers(r.ports, port) && forNode(r);
 	const blocks = read.rules.filter((r) => r.action === "block" && fits(r) && (r.program !== "any" || r.ports !== "any") && (addresses.length ? addresses : [{ profile: undefined, address: undefined, type: undefined }]).some((a) => (a.profile ? [a.profile] : PROFILES).some((p) => live(p) && r.profiles.has(p)) && scoped(r, a, true)));
-	const out: string[] = [];
+	const out: FwNote[] = [];
 	if (blocks.length) {
 		const names = blocks.map((r) => r.name), { command, left } = disableCommand(names);
 		const what = blocks.some((r) => r.program !== "any") ? "node.exe" : `TCP port ${port}`;
 		const parts = [`Windows Firewall has rules that block ${what} (${names.map(shown).join(", ")}); they win over any allow rule.`];
 		if (command) parts.push(`In an elevated PowerShell: \`${command}\`.`);
 		if (left.length) parts.push(`${command ? "Of these, " : ""}${left.map(shown).join(", ")} cannot go in a command (the name holds a control character, an invisible or direction-changing character, or a wildcard): disable ${left.length === 1 ? "it" : "them"} in wf.msc (Inbound Rules, the rule, Disable Rule).`);
-		out.push(parts.join(" "));
+		out.push(fw("fw_win_block", parts.join(" "), { what: what === "node.exe" ? "node.exe" : "", port, names: names.map(shown).join(", "), command: command ?? "", left: left.map(shown).join(", "), leftCount: left.length }));
 	}
 	// An address is allowed when some allow rule fits its profile; a Public network counts a Private rule too, since the note below sends the boss to make it Private.
 	const allowed = (a: { profile: Profile | undefined; address?: string; type?: "wired" | "wireless" | undefined }) => {
@@ -290,11 +297,12 @@ export function windowsNotes(read: WinRead, input: FirewallInput, execPath: stri
 		return read.rules.some((r) => r.action === "allow" && fits(r) && wants.some((p) => r.profiles.has(p)) && scoped(r, a, false));
 	};
 	if (!addresses.length ? !allowed({ profile: undefined }) : addresses.some((a) => !allowed(a))) {
-		out.push(`No Windows Firewall rule allows incoming connections to TCP port ${port}, so a phone cannot connect. In an elevated PowerShell: \`${allowCommand(port)}\`. A port rule survives node upgrades, which a program rule does not.`);
+		out.push(fw("fw_win_noallow", `No Windows Firewall rule allows incoming connections to TCP port ${port}, so a phone cannot connect. In an elevated PowerShell: \`${allowCommand(port)}\`. A port rule survives node upgrades, which a program rule does not.`, { port, command: allowCommand(port) }));
 	}
 	const publics = addresses.filter((a) => a.profile === "Public" && live("Public"));
 	if (publics.length) {
-		out.push(`Windows calls the network of ${publics.map((a) => `${a.address} (${a.iface})`).join(", ")} Public, which blocks incoming connections: Settings, Network & internet, Wi-Fi, the network, Network profile type, Private.`);
+		const where = publics.map((a) => `${a.address} (${a.iface})`).join(", ");
+		out.push(fw("fw_win_public", `Windows calls the network of ${where} Public, which blocks incoming connections: Settings, Network & internet, Wi-Fi, the network, Network profile type, Private.`, { where }));
 	}
 	return out;
 }
@@ -308,13 +316,13 @@ async function readWindows(input: FirewallInput, execPath: string, exec: Firewal
 	try {
 		let real: string | undefined;
 		try { real = realpath(execPath); } catch { /* a path that cannot be resolved is compared as it is */ }
-		const read = parseWindows(await exec(file, args, options)), notes = windowsNotes(read, input, execPath, real);
-		return { notes, summary: `Windows Firewall: ${read.rules.length} enabled inbound rules read, ${notes.length} note${notes.length === 1 ? "" : "s"}` };
+		const read = parseWindows(await exec(file, args, options)), coded = windowsCoded(read, input, execPath, real), notes = texts(coded);
+		return { notes, coded, summary: `Windows Firewall: ${read.rules.length} enabled inbound rules read, ${notes.length} note${notes.length === 1 ? "" : "s"}` };
 	} catch (error) {
 		const e = error as Error & { stderr?: string };
 		// Our own parse failure has a plain message; a failed run is told by `execFailure`, and Constrained Language Mode by its sentence.
 		const why = e.stderr !== undefined || (e as { code?: unknown }).code !== undefined || (e as { killed?: boolean }).killed ? reasonOf(error, options.timeout) : e.message.slice(0, 160);
 		const clm = why.includes(CLM_WORD) ? CLM_TEXT : why;
-		return { notes: [windowsUnknown(input.port, clm)], summary: `Windows Firewall: the state could not be read (${clm})` };
+		return { notes: [windowsUnknown(input.port, clm)], coded: [fw("fw_win_unknown", windowsUnknown(input.port, clm), { why: clm, port: input.port, allow: allowCommand(input.port), list: listCommand })], summary: `Windows Firewall: the state could not be read (${clm})` };
 	}
 }

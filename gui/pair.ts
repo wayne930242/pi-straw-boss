@@ -1,29 +1,24 @@
 import { deviceList } from "./devices.ts";
 import { h, nodes } from "./dom.ts";
+import { lanTab } from "./lan.ts";
 import type { Tile } from "./layer.ts";
 import { m } from "./paraglide/messages.js";
-import { post } from "./post.ts";
+import { get, post } from "./post.ts";
+import { square } from "./qr.ts";
 
-// The phone pairing tile, its own small chunk: a fresh one-time pairing URL from the server as a QR code (dark modules on white, drawn
-// as one SVG path, never markup). While remote access is off the tile asks first; Turn on opens it to the tailnet from the server's session and
-// shows the code it answers with. The code works once, within ten minutes; New code asks for another. Under it, the paired devices (devices.ts).
+// The phone pairing tile, its own small chunk, with two tabs. Tailscale: a fresh one-time pairing URL from the server as a QR code (qr.ts, dark modules on white, drawn
+// as one SVG path, never markup). While remote access is off the tab asks first; Turn on opens it to the tailnet from the server's session and
+// shows the code it answers with. The code works once, within ten minutes; New code asks for another. Same Wi-Fi: lan.ts. Under either, the paired devices of both networks (devices.ts).
 
-const NS = "http://www.w3.org/2000/svg";
-export function square(rows: string[]) {
-	const n = rows.length, svg = document.createElementNS(NS, "svg"), bg = document.createElementNS(NS, "rect"), dots = document.createElementNS(NS, "path");
-	svg.setAttribute("viewBox", `-4 -4 ${n + 8} ${n + 8}`);
-	svg.setAttribute("class", "qr");
-	svg.setAttribute("role", "img");
-	svg.setAttribute("aria-label", m.pair_qr());
-	for (const [k, v] of Object.entries({ x: "-4", y: "-4", width: String(n + 8), height: String(n + 8), fill: "#fff" })) bg.setAttribute(k, v);
-	dots.setAttribute("d", rows.flatMap((row, y) => [...row].flatMap((c, x) => (c === "1" ? [`M${x} ${y}h1v1h-1z`] : []))).join(""));
-	dots.setAttribute("fill", "#06101e");
-	svg.append(bg, dots);
-	return svg;
-}
+export { square };
 
-export function pairTile(): Tile {
-	return { id: "pair", title: m.pair_tile(), body: () => {
+/** The id this tile's Same Wi-Fi tab mints its codes under (the server keeps one live code per id). */
+const surface = () => `tile-${[...crypto.getRandomValues(new Uint8Array(8))].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+
+/** `first` is the tab the tile opens on (the page's waiting-request notice opens the Wi-Fi one). */
+export function pairTile(first: "tailscale" | "lan" = "tailscale"): Tile {
+	let lan: ReturnType<typeof lanTab> | undefined;
+	return { id: "pair", title: m.pair_tile(), closed: () => lan?.end(), body: () => {
 		const code = h("div", { class: "pair" }), again = h("button", { type: "button", class: "later" }, m.new_code());
 		const on = h("button", { type: "button", class: "pair-btn" }, m.remote_turn_on());
 		const ask = (path = "remote/pair", waiting = m.asking_code()) => {
@@ -38,8 +33,36 @@ export function pairTile(): Tile {
 		};
 		on.onclick = () => ask("remote/on", m.remote_turning_on());
 		again.onclick = () => ask();
-		const devices = deviceList(() => code.replaceChildren(h("p", null, m.remote_off_ask()), on));
-		ask();
-		return h("div", { class: "pair" }, code, devices.box);
+		let tab: "tailscale" | "lan" = "tailscale";
+		const devices = deviceList(() => code.replaceChildren(h("p", null, m.remote_off_ask()), on), () => tab === "tailscale");
+		lan = lanTab({ get, post, surface: surface(), changed: () => void devices.refresh(), every: (run, ms) => { const t = setInterval(run, ms); return () => clearInterval(t); } });
+		const ids = ["tailscale", "lan"] as const;
+		const tabs = ids.map((id) => {
+			const b = h("button", { type: "button", role: "tab", class: "later", id: `pair-tab-${id}`, "aria-controls": `pair-panel-${id}` }, id === "lan" ? m.pair_tab_lan() : m.pair_tab_tailscale());
+			b.onclick = () => select(id);
+			// Arrow keys, Home, and End move between the tabs (one tab stop for the list, on the selected tab).
+			b.addEventListener("keydown", (e) => {
+				const key = (e as KeyboardEvent).key, to = key === "ArrowRight" || key === "ArrowLeft" ? (ids.indexOf(id) + (key === "ArrowRight" ? 1 : ids.length - 1)) % ids.length : key === "Home" ? 0 : key === "End" ? ids.length - 1 : -1;
+				if (to < 0) return;
+				e.preventDefault();
+				select(ids[to]!);
+				tabs[to]![1].focus();
+			});
+			return [id, b] as const;
+		});
+		for (const [id, el] of [["tailscale", code], ["lan", lan!.root]] as const) for (const [k, v] of Object.entries({ role: "tabpanel", id: `pair-panel-${id}`, "aria-labelledby": `pair-tab-${id}` })) el.setAttribute(k, v);
+		/** The Tailscale tab asks for a code each time it is shown, as the tile did when it opened; the Wi-Fi tab reads the server and asks when Wi-Fi access is on. */
+		const select = (id: typeof tab, first = false) => {
+			tab = id;
+			for (const [name, b] of tabs) (b.setAttribute("aria-selected", String(name === id)), b.setAttribute("tabindex", name === id ? "0" : "-1"), b.classList.toggle("on", name === id));
+			code.hidden = id !== "tailscale";
+			lan!.root.hidden = id !== "lan";
+			if (id === "lan") lan!.start();
+			else (lan!.end(), first || ask());
+			void devices.refresh();
+		};
+		select(first, true);
+		if (first === "tailscale") ask();
+		return h("div", { class: "pair" }, h("div", { class: "pair-tabs", role: "tablist", "aria-label": m.pair_tabs() }, ...tabs.map(([, b]) => b)), code, lan.root, devices.box);
 	} };
 }

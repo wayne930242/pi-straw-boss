@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { test } from "node:test";
 import { execFileExe, searchPath } from "../src/exe.mjs";
 import {
-	allowCommand, comparable, disableCommand, entryCovers, macNotes, parseMacApp, parseMacBlockAll, parseMacState, parseWindows, psLiteral, readFirewall, SOCKETFILTERFW, windowsCommand, windowsNotes,
+	allowCommand, comparable, disableCommand, entryCovers, macCoded, macNotes, windowsCoded, parseMacApp, parseMacBlockAll, parseMacState, parseWindows, psLiteral, readFirewall, SOCKETFILTERFW, windowsCommand, windowsNotes,
 	windowsUnknown, WINDOWS_SCRIPT, type FirewallExec, type FirewallInput,
 } from "../src/lan/firewall.ts";
 import { asciiJson, CLM_WORD } from "../src/server/acl.ts";
@@ -502,4 +502,18 @@ test("entryCovers: addresses, prefixes, masks, ranges, keywords, and IPv6", () =
 	const no = [["10.0.0.0/8", "11.0.0.1"], ["10.0.0.6", "10.0.0.5"], ["Internet", "10.0.0.5"], ["10.0.0.0/33", "10.0.0.5"], ["fe80::/10", "10.0.0.5"], ["junk", "10.0.0.5"], ["10.0.0.0/8", "not an address"]];
 	for (const [e, a] of yes) assert.equal(entryCovers(e!, a!), true, `${e} ${a}`);
 	for (const [e, a] of no) assert.equal(entryCovers(e!, a!), false, `${e} ${a}`);
+});
+
+test("the notes carry a code and the params the page words them with, and the English text is the one the TUI shows", () => {
+	assert.deepEqual(macCoded({ on: true, blockAll: true, app: "blocked" }).map((n) => n.code), ["fw_block_all", "fw_block_node"]);
+	assert.deepEqual(macCoded({ on: true, blockAll: true, app: "blocked" }).map((n) => n.text), macNotes({ on: true, blockAll: true, app: "blocked" }));
+	const none = windowsCoded(parseWindows(win([])), WIFI, NODE_WIN);
+	assert.deepEqual(none.map((n) => n.code), ["fw_win_noallow"]);
+	assert.deepEqual(none[0]!.params, { port: WIFI.port, command: allowCommand(WIFI.port) });
+	assert.deepEqual(none.map((n) => n.text), notesOf(win([])));
+	const blocked = windowsCoded(parseWindows(win([rule("{b}", { program: NODE_WIN, expanded: NODE_WIN })])), WIFI, NODE_WIN)[0]!;
+	assert.equal(blocked.code, "fw_win_block");
+	assert.equal(blocked.params?.what, "node.exe");
+	const pub = windowsCoded(parseWindows(win([portAllow()], { networks: [{ alias: "Wi-Fi", category: "Public" }] })), WIFI, NODE_WIN);
+	assert.ok(pub.some((n) => n.code === "fw_win_public" && String(n.params?.where).includes("Wi-Fi")));
 });
