@@ -521,7 +521,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	stops.push(cfg.watch(() => {
 		log.line("herdr-takeover");
 		void towers?.takeover().catch((error: Error) => recordError("towers", error.message));
-	}, () => towers?.runs.herdrLost()));
+	}, () => (log.line("herdr-lost", { at: Date.now() }), towers?.runs.herdrLost())));
 	let downSince: number | undefined;
 	const herdrUp = o.herdrUp ?? (() => herdrListens({ slot, platform }));
 	timers.push(setInterval(() => void herdrUp().then((up) => {

@@ -596,6 +596,8 @@ export function createRuns(o: RunsOptions) {
 			log.line("ally-dropped", { workspace: svc.ref.workspace, device, why: "not a member", n: waiting.length });
 			return;
 		}
+		// A stale snapshot of `beginAllies` may name a device whose run another pass has just begun, or one held since (RVAE-F001).
+		if (svc.allies.has(device) || heldDevice(svc, device)) return;
 		const items = waiting.slice(0, ALLY_BATCH), id = newId(), woken = now();
 		slots++;
 		const rec: RunRecord = { id, workspace: svc.ref.workspace, kind: "ally", device, deviceLabel: first.label, deviceShort: first.short, team: first.team, teamName: first.teamName, level: standing.level, pane: "", agent: agentName(slot, svc.ref.workspace, id, "ally"), startedAt: iso(woken), events: [], admitted: items.map((x) => x.id) };
@@ -607,6 +609,7 @@ export function createRuns(o: RunsOptions) {
 			if (active.ended) return;
 			slots--;
 			svc.allies.delete(device);
+			release();
 			svc.refusedAt = now();
 			noticeOf(svc, { id: "settings", level: "error", kind: "settings", text: `A run could not start: ${(cause as Error).message}` });
 			log.line("run-refused", { workspace: svc.ref.workspace, why: "settings", kind: "ally" });
@@ -620,6 +623,7 @@ export function createRuns(o: RunsOptions) {
 			if (active.ended) return;
 			slots--;
 			svc.allies.delete(device);
+			release();
 			log.line("run-refused", { workspace: svc.ref.workspace, why: "seat", kind: "ally" });
 			return;
 		}
@@ -630,6 +634,7 @@ export function createRuns(o: RunsOptions) {
 		if (!rec.admitted.length) {
 			slots--;
 			svc.allies.delete(device);
+			release();
 			log.line("ally-gone", { workspace: svc.ref.workspace, device, run: id, n: items.length });
 			return;
 		}
@@ -971,6 +976,7 @@ export function createRuns(o: RunsOptions) {
 				if (a.ended) continue;
 				const age = now() - a.started;
 				const exited = gone(a) || (a.rec.pid === undefined && a.token !== undefined && (await panes(o.run, a.rec.workspace).catch(() => undefined))?.every((p) => p.pane_id !== a.rec.pane) === true);
+				if (!exited) a.goneSeen = false; // a sighting counts only with the next tick's (RVAE-F002)
 				if (exited) {
 					// A hand run whose pi left before it ever polled was an orphan claim (the pi quit while the pane-role answer was late, and nothing released it): the boss left, nothing crashed.
 					const orphan = a.rec.hand === true && !a.polled && a.pending === undefined && a.closing === undefined;
@@ -1650,7 +1656,7 @@ export function createRuns(o: RunsOptions) {
 			const status = api.status(workspace);
 			if (!status) return undefined;
 			const rows = api.queue(workspace).map((e) => ({ text: phrase(`${e.kind}${e.from?.name ?? e.from?.id ? ` · ${e.from?.name ?? e.from?.id}` : ""}: ${e.text.split("\n").find((l) => l.trim()) ?? ""}`, 240), as: "followUp" as const }));
-			const file = api.file(workspace), allyFiles = Object.fromEntries([...(find(workspace)?.allies.values() ?? [])].flatMap((a) => (a.rec.file ? [[a.rec.id, a.rec.file]] : [])));
+			const file = api.file(workspace), allyFiles = Object.fromEntries([...(find(workspace)?.allies.values() ?? [])].filter((a) => !a.ended).flatMap((a) => (a.rec.file ? [[a.rec.id, a.rec.file]] : [])));
 			// The event runs among the last local runs are read-only units of their own; the conversation's file is the tower unit's.
 			const eventFiles = Object.fromEntries(listRuns(slot, workspace).filter((r) => r.kind === "local" && !r.conversation && r.file).slice(-RUNS_SHOWN).map((r) => [r.id, r.file!]));
 			const memory = find(workspace)?.ref.memory?.();
