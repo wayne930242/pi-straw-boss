@@ -726,6 +726,8 @@
 	"lan_port_taken": "連接埠 {port} 在 {address} 上被其他程式佔用，Wi-Fi 存取不會服務那個位址。請在 pi session 執行 /boss gui lan 換到空的連接埠（已安裝的 app 之後要重新加入）。",
 	"lan_moved": "這台電腦的連接埠 {from} 被佔用，Wi-Fi 存取已改到 {to}。從舊位址安裝的 app 要重新加入。",
 	"lan_stays_off": "Wi-Fi 存取維持關閉：{why}",
+	"lan_stays_off_error": "Wi-Fi 存取維持關閉：{message}。伺服器下次啟動時會再試一次。",
+	"lan_fw_other": "防火牆：{text}",
 	"lan_ca_corrupt": "Wi-Fi 存取維持關閉：憑證檔讀不出來，或其他帳號也讀得到。請在 pi session 執行 /boss gui lan reset 產生新的憑證，每支手機要重新安裝。",
 	"lan_ca_missing": "Wi-Fi 存取維持關閉：這台電腦的 Wi-Fi 憑證不見了。請在 pi session 執行 /boss gui lan 產生新的（每支手機要重新安裝）。",
 	"lan_secondary": "Wi-Fi 存取由預設 Herdr 的 sb server 提供。",

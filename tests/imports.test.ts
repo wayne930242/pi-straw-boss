@@ -502,7 +502,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Review RVL7 (fixes F001 to F011) raised the pair figure to 85 (the tabs' ids, panels, and arrow keys; the tile opening on the Wi-Fi tab) and lan.ts to 232 (rows and live regions drawn by their id and not again, the codes worded in the page's
 	// language, one decision at a time, a link for each certificate file, the name offered only while the server answers to it); qr.ts takes the label; lanwait.ts, 23, is the header's notice for a request that waits while the tab is closed.
 	assert.ok(pairing <= 85, `the pairing tile has ${pairing} lines`);
-	assert.ok(count("gui/lan.ts") <= 250 && count("gui/qr.ts") <= 17 && count("gui/lanwait.ts") <= 23, "the Same Wi-Fi tab, the QR drawing, and the waiting notice stay small");
+	assert.ok(count("gui/lan.ts") <= 253 && count("gui/qr.ts") <= 17 && count("gui/lanwait.ts") <= 23, "the Same Wi-Fi tab, the QR drawing, and the waiting notice stay small");
 	// Unreleased: the answer form's keys (gui/askkeys.ts: arrows, Tab, Enter, and Space between options, questions, own words, and Send, one tab stop per group) have a figure of their own,
 	// and layer.ts went to 249 for the dialog that takes the focus on its first option instead of Open comms (4 lines).
 	// Unreleased: the dialogs' keys (Space opens the next alert, F enlarges the top dialog; gui/hotkeys.ts: the routing and its listeners) have a figure of their own,
@@ -573,7 +573,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Wi-Fi access, the page (L7): lan.ts (163) and qr.ts (16) are new and pair.ts, post.ts, devices.ts grew by the tabs, the poll, and the network label, to 2008.
 	// Review RVL7 (F001 to F011) to 2103: lan.ts 232, lanwait.ts 23, and the tabs' keys and panels in pair.ts.
 	// Merge of the page with the firewall reads to 2120: lan.ts 249 (the notes' style, the firewall words, the refused events collapsed per peer).
-	assert.ok(page <= 2120, `the page's TypeScript has ${page} lines`);
+	// Final review RVLF-F004/F006 to 2122: the two notes worded in zh-TW and the unknown certificate file left out.
+	assert.ok(page <= 2122, `the page's TypeScript has ${page} lines`);
 });
 
 test("the built page is small, self-contained (no remote URLs, fonts, or imports), and carries no demo fixture", { skip: !existsSync(join(root, "dist/gui/index.html")) && "run npm run gui:build first" }, () => {
@@ -736,7 +737,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Wi-Fi access, the page (L7) to 188,400 bytes / 75.1 KB gzipped: the pairing tile's chunk with the Same Wi-Fi tab (gui/lan.ts, gui/qr.ts) and its messages in both languages.
 	// Review RVL7 to 197,700 bytes / 78.4 KB gzipped: the Same Wi-Fi tab's codes worded in both languages (fifteen messages, each a function in the chunk), the waiting notice, and the download links.
 	// Merge of the page with the firewall reads to 202,800 bytes / 80.1 KB gzipped: the firewall notes worded in both languages (ten messages), the notes' error or neutral style, and the refused events collapsed per peer (lan.ts to 250).
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 202_800 && total(chunks, gz) <= 80_100, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// Final review RVLF-F006 to 203,500 bytes / 80.3 KB gzipped: the two notes that showed in English on the zh-TW page (stays_off_error, fw_other) are worded in both languages (lan.ts to 253).
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 203_500 && total(chunks, gz) <= 80_300, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.

@@ -866,6 +866,8 @@
 	"lan_port_taken": "Port {port} is taken on {address} by another program; Wi-Fi access does not serve that address. Run /boss gui lan in a pi session to move to a free port (installed apps then need to be added again).",
 	"lan_moved": "Port {from} was taken on this computer; Wi-Fi access moved to {to}. An app installed from the old address needs adding again.",
 	"lan_stays_off": "Wi-Fi access stays off: {why}",
+	"lan_stays_off_error": "Wi-Fi access stays off: {message}. It is tried again when the server next starts.",
+	"lan_fw_other": "Firewall: {text}",
 	"lan_ca_corrupt": "Wi-Fi access stays off: the certificate file is unreadable or readable by other accounts. Run /boss gui lan reset in a pi session to make a new certificate; each phone installs it again.",
 	"lan_ca_missing": "Wi-Fi access stays off: this computer's Wi-Fi certificate is missing. Run /boss gui lan in a pi session to make a new one (each phone installs it again).",
 	"lan_secondary": "Wi-Fi access is served by the default Herdr's sb server.",

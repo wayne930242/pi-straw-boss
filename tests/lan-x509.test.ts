@@ -13,8 +13,9 @@ import { cidrBytes, ipBytes, issueCa, issueLeaf, type Constraints, type Issued }
 // itself) is read by OpenSSL, a decoder that is not the writer. Keys stay in memory; the only files are public certificates in a folder of this process's temp root.
 
 const openssl = spawnSync("openssl", ["version"]).status === 0;
-// A skip says why in the test output; in CI (the Windows job has no openssl) a missing decoder fails instead, so the check cannot vanish without anyone seeing it.
-const skip = openssl ? false : process.env.CI ? undefined : "openssl is not on PATH (these tests read the certificates with OpenSSL; they run where it is installed)";
+// A skip says why in the test output; in CI on Linux and macOS a missing decoder fails instead, so the check cannot vanish without anyone seeing it.
+// On Windows the runner may have no openssl: the checks skip there with the reason stated; the Node-side certificate checks (lan-ca.test.ts) still run.
+const skip = openssl ? false : process.env.CI && process.platform !== "win32" ? undefined : "openssl is not on PATH (these tests read the certificates with OpenSSL; they run where it is installed)";
 if (!openssl && process.env.CI && process.platform !== "win32") test("openssl is on PATH in CI", () => assert.fail("openssl is not on PATH, so every OpenSSL check was skipped"));
 const text = (pem: string) => execFileSync("openssl", ["x509", "-noout", "-text"], { input: pem }).toString();
 const dir = mkdtempSync(join(tmpdir(), "lan-x509-"));
@@ -117,7 +118,7 @@ test("OpenSSL reads the leaf's extensions: critical CA:FALSE, digitalSignature, 
 test("a leaf for a CA with no name: SAN only IP:<address>, a CN that is no hostname", { skip }, () => {
 	const ca = makeCa(productionConstraints(undefined)), leaf = leafOf(ca, { cn: "Straw Boss LAN (192.168.1.5)", dns: [] });
 	const t = text(leaf.pem);
-	assert.match(t, /Subject: CN=Straw Boss LAN \(192\.168\.1\.5\)\n/);
+	assert.match(t, /Subject: ?CN ?= ?Straw Boss LAN \(192\.168\.1\.5\)\n/);
 	assert.match(t, /X509v3 Subject Alternative Name:\s+IP Address:192\.168\.1\.5\n/);
 	assert.doesNotMatch(t, /DNS:/);
 	assert.match(text(ca.pem), /Permitted:\s+DNS:invalid\s+email:invalid\s+URI:invalid\s+IP:10\.0\.0\.0/);

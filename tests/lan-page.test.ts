@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { CA_FILES } from "../src/lan/ca.ts";
 
 // The pairing tile's Same Wi-Fi tab (gui/lan.ts), the device list's network label (gui/devices.ts), and the tile's tabs (gui/pair.ts) as the page drives them,
 // against a fake server and a hand-made DOM: the waiting requests carry no number and are allowed only by the typed one, the certificate step and its fingerprint
@@ -88,7 +89,7 @@ type Body = Record<string, unknown>;
 interface Call { path: string; body: Body | undefined }
 const ans = (body: Body, status = 200) => ({ ok: status < 300, status, body });
 const PENDING = { id: "aaaaaaaaaaaa", label: "iPhone · Safari", peer: "192.168.1.23", iface: "en0", since: 1, age: "12 s" };
-const CA = { name: "weis-mbp", sha256: "3F 7A 91 C2 B0 4E 55 D1 8A 0C 66 2E 19 F4 73 B5", sha1: "AABBCCDD 11223344 55667788 99AABBCC DDEEFF00", url: "http://weis-mbp.local:8445/sb-ca/", rows: ["101", "010", "101"], files: ["straw-boss.mobileconfig", "straw-boss-lan-ca.crt"], ended: false };
+const CA = { name: "weis-mbp", sha256: "3F 7A 91 C2 B0 4E 55 D1 8A 0C 66 2E 19 F4 73 B5", sha1: "AABBCCDD 11223344 55667788 99AABBCC DDEEFF00", url: "http://weis-mbp.local:8445/sb-ca/", rows: ["101", "010", "101"], files: Object.values(CA_FILES), ended: false };
 
 /** A fake server for the tab: what `lan/pending` answers and how each post is answered; every call is kept. */
 function world(over: { ca?: boolean; on?: boolean; pending?: Body[]; events?: (string | Body)[]; addresses?: Body[]; name?: string | null; notes?: Body[] } = {}) {

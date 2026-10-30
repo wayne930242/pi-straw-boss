@@ -58,6 +58,8 @@ function words(c: Coded): string {
 		case "fw_win_public": return m.lan_fw_win_public({ where: p("where") });
 		case "fw_win_unknown": return m.lan_fw_win_unknown({ why: p("why"), allow: p("allow"), list: p("list") });
 		case "refused_n": return m.lan_refused_n({ peer: p("peer"), count: p("count"), time: new Date(c.at ?? 0).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) });
+		case "stays_off_error": return m.lan_stays_off_error({ message: p("message") });
+		case "fw_other": return m.lan_fw_other({ text: c.text });
 		case "stays_off": return c.of ? m.lan_stays_off({ why: c.of.map(words).join(" ") }) : c.text;
 		default: return c.text;
 	}
@@ -198,7 +200,7 @@ export function lanTab(deps: LanDeps) {
 		const off = h("button", { type: "button", class: "later" }, m.lan_turn_off());
 		off.onclick = () => ((off.disabled = true), void deps.post("lan/off", {}).then(() => poll(), () => say(m.no_answer())));
 		// One link for each public file, so one press is one download (a script that starts two is held by a browser, or dropped).
-		const links = [...(cert.files ?? [])].sort().reverse().map((file) => h("a", { href: `api/lan/ca/${file}`, download: file, class: "go" }, file.endsWith(".crt") ? m.lan_share_crt() : file.endsWith(".mobileconfig") ? m.lan_share_profile() : file));
+		const links = [...(cert.files ?? [])].filter((file) => file.endsWith(".crt") || file.endsWith(".mobileconfig")).sort().reverse().map((file) => h("a", { href: `api/lan/ca/${file}`, download: file, class: "go" }, file.endsWith(".crt") ? m.lan_share_crt() : m.lan_share_profile()));
 		const print = [m.lan_fp_ios(), m.lan_fp_android(), m.lan_fp_mac(), m.lan_fp_windows({ sha1: cert.sha1 })];
 		main.replaceChildren(
 			h("p", { class: "lan-risk" }, m.lan_risk_short()),

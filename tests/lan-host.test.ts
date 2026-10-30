@@ -560,3 +560,17 @@ test("RVL5-F003: an unreadable computer name is not cached; the next command rea
 	const second = await h.ask("gui-lan", { on: true, accept_risk: true, face: f });
 	assert.equal(second.ok, true, JSON.stringify(second));
 });
+
+test("a bring-up that throws leaves Wi-Fi access off with a held note, on turn-on as on resume", async () => {
+	let broken = false;
+	const h = await host({ seams: { interfaces: () => { if (broken) throw new Error("no interface table"); return { en0: [v4(ADDRESS, 24)] }; } } });
+	const id = await face(h);
+	broken = true;
+	const r = await h.ask("gui-lan", { on: true, accept_risk: true, face: id });
+	assert.equal(r.ok, false, JSON.stringify(r));
+	const lan = await lanOf(h);
+	assert.equal(lan.on, false, "nothing is serving");
+	assert.match(JSON.stringify(lan.noteList ?? lan.note), /stays off|no interface table/);
+	broken = false;
+	assert.equal((await h.ask("gui-lan", { on: true, accept_risk: true, face: await face(h) })).ok, true, "a later turn-on works");
+});

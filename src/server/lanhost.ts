@@ -263,6 +263,13 @@ export function createLanHost(o: LanHostOptions) {
 
 	// The switches ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
+	/** A bring-up that threw leaves nothing serving: the listener is dropped, the switch is off, and a note says why; the next start tries again. */
+	async function failed(error: unknown) {
+		await down(false).catch(() => {});
+		held = coded(`Wi-Fi access stays off: ${(error as Error).message}; it is tried again when the server next starts`, "stays_off_error", { message: (error as Error).message });
+		o.log.line("lan-off", { why: String((error as Error).message).slice(0, 200) });
+	}
+
 	async function turnOn(acceptRisk: boolean): Promise<Reply> {
 		if (!o.primary) return bad("secondary", SECONDARY.text, 409);
 		const found = stored();
@@ -286,7 +293,13 @@ export function createLanHost(o: LanHostOptions) {
 		}
 		await down(false, "restart").catch(() => {});
 		lan().enable();
-		const serving = await bringUp(true);
+		let serving: boolean;
+		try {
+			serving = await bringUp(true);
+		} catch (error) {
+			await failed(error);
+			return bad("lan_start_failed", (error as Error).message, 500);
+		}
 		if (!serving) return bad("lan_taken", lanNote() ?? "Wi-Fi access could not be turned on.", 409);
 		return reply(200, { ...factsOf(), text: `Wi-Fi access is on: ${urlOf() ?? "no address is served yet"}` });
 	}
@@ -467,7 +480,14 @@ export function createLanHost(o: LanHostOptions) {
 			status = listener.status();
 		} else if (wanted) {
 			lan().enable();
-			if (!(await bringUp(false))) return bad("lan_taken", lanNote() ?? "Wi-Fi access could not be turned on.", 409);
+			let serving: boolean;
+			try {
+				serving = await bringUp(false);
+			} catch (error) {
+				await failed(error);
+				return bad("lan_start_failed", (error as Error).message, 500);
+			}
+			if (!serving) return bad("lan_taken", lanNote() ?? "Wi-Fi access could not be turned on.", 409);
 		}
 		return reply(200, { ...factsOf(), text: `A new Wi-Fi certificate was made${unpair ? "; every device paired over Wi-Fi is unpaired" : "; the devices stay paired"}` });
 	}
@@ -496,9 +516,7 @@ export function createLanHost(o: LanHostOptions) {
 				lan().enable();
 				await bringUp(false);
 			} catch (error) {
-				await down(false).catch(() => {});
-				held = coded(`Wi-Fi access stays off: ${(error as Error).message}; it is tried again when the server next starts`, "stays_off_error", { message: (error as Error).message });
-				o.log.line("lan-off", { why: String((error as Error).message).slice(0, 200) });
+				await failed(error);
 			}
 		}),
 		/** The GUI stops, rotates, or the server leaves: the listeners close and everything that belonged to them is void; the wish stays. */
