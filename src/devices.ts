@@ -9,8 +9,9 @@ import type { Identity } from "./remote.ts";
 
 export const SESSION_MS = 90 * 24 * 3600_000, RENEW_MS = 3600_000;
 interface Device { until: number; label: string; paired: number; seen: number }
-/** A paired device as the desktop page lists it: `id` is the start of its hash, enough to name it in an unpair. */
-export interface Listed { id: string; label: string; paired: number; seen: number }
+/** A paired device as the desktop page lists it: `id` is the start of its hash, enough to name it in an unpair. `net` says which network it was paired on, and `host` (Wi-Fi access only) the name it uses to reach this computer. */
+export interface Listed { id: string; label: string; paired: number; seen: number; net: "tailnet" | "lan"; host?: string }
+const num = (v: unknown, or: number) => (typeof v === "number" && Number.isFinite(v) ? v : or);
 
 /** A short name for the device from its User-Agent (platform and browser), or "" when the header says neither. Raw header text is never kept. */
 export function labelOf(ua = ""): string {
@@ -19,10 +20,21 @@ export function labelOf(ua = ""): string {
 	return [os, browser].filter(Boolean).join(" · ");
 }
 
+/** A temporary file of its own name, created new (`wx`): one that was already there (another account's, with its owner) is never written to and renamed into place (R8-F002). */
+function writeOwned(file: string, text: string) {
+	const temp = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+	try {
+		writeFileSync(temp, text, { mode: 0o600, flag: "wx" });
+		renameSync(temp, file);
+	} catch (failure) {
+		rmSync(temp, { force: true });
+		throw failure;
+	}
+}
+
 export function createDevices(file?: string) {
 	const devices = new Map<string, Device>();
 	let identity: Identity | undefined, wanted = false, error: string | undefined;
-	const num = (v: unknown, or: number) => (typeof v === "number" && Number.isFinite(v) ? v : or);
 	try {
 		const saved = file && JSON.parse(readFileSync(file, "utf8")), now = Date.now();
 		if (saved?.host && saved.login) identity = { host: String(saved.host), login: String(saved.login) };
@@ -41,17 +53,7 @@ export function createDevices(file?: string) {
 		if (!file) return;
 		try {
 			if (!identity || !(devices.size || wanted)) rmSync(file, { force: true });
-			else {
-				// A temporary file of its own name, created new (`wx`): one that was already there (another account's, with its owner) is never written to and renamed into place (R8-F002).
-				const temp = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-				try {
-					writeFileSync(temp, JSON.stringify({ ...identity, wanted, devices: Object.fromEntries(devices) }), { mode: 0o600, flag: "wx" });
-					renameSync(temp, file);
-				} catch (failure) {
-					rmSync(temp, { force: true });
-					throw failure;
-				}
-			}
+			else writeOwned(file, JSON.stringify({ ...identity, wanted, devices: Object.fromEntries(devices) }));
 			error = undefined;
 		} catch (e) {
 			error = (e as Error).message;
@@ -82,6 +84,8 @@ export function createDevices(file?: string) {
 			if (renewed) (d.until = now + SESSION_MS, save());
 			return { renewed };
 		},
+		/** The hashes of the devices whose id starts with `id` (none for a prefix under 8 characters). */
+		match: (id: string) => (id.length >= 8 ? [...devices.keys()].filter((h) => h.startsWith(id)) : []),
 		/** The full hash of the one device whose id starts with `id`, now removed. */
 		remove(id: string): string | undefined {
 			const found = id.length >= 8 ? [...devices.keys()].filter((h) => h.startsWith(id)) : [];
@@ -97,7 +101,92 @@ export function createDevices(file?: string) {
 			return n;
 		},
 		list(): Listed[] {
-			return [...devices].map(([h, d]) => ({ id: h.slice(0, 16), label: d.label, paired: d.paired, seen: d.seen })).sort((a, b) => b.seen - a.seen);
+			return [...devices].map(([h, d]): Listed => ({ id: h.slice(0, 16), label: d.label, paired: d.paired, seen: d.seen, net: "tailnet" })).sort((a, b) => b.seen - a.seen);
+		},
+	};
+}
+
+/** The port Wi-Fi access asks for first, and the one lan.json is not kept for on its own. */
+export const LAN_PORT = 8445;
+interface LanDevice extends Device { host: string }
+export type Event = (name: string, fields: Record<string, unknown>) => void;
+
+/**
+ * The devices allowed over Wi-Fi access, in lan.json (docs/specs/2026-10-30-sb-gui-lan.md, "Devices"): `{ v: 1, wanted, port, token, devices }`, written like paired.json (mode 600, a new temporary file renamed into place), a device only the
+ * SHA-256 of its cookie. `token` is the SHA-256 of the GUI token the devices were allowed under: a file whose `token` is not `tokenHash` loads with no device (`devices-cleared`), so a token a build without Wi-Fi access rotated cannot leave
+ * them paired. Only allowed devices are written. The file is removed once it holds no device, Wi-Fi access is not wanted, and the port is the default one.
+ */
+export function createLanDevices(file: string | undefined, tokenHash: string, log: Event = () => {}) {
+	const devices = new Map<string, LanDevice>();
+	let wanted = false, port = LAN_PORT, error: string | undefined;
+	let stale = false, dropped = false;
+	try {
+		const saved = file && JSON.parse(readFileSync(file, "utf8")), now = Date.now();
+		if (saved?.v === 1) {
+			wanted = saved.wanted === true;
+			if (Number.isInteger(saved.port) && saved.port > 0 && saved.port < 65536) port = saved.port;
+			for (const [h, d] of Object.entries<Record<string, unknown>>(saved.devices ?? {})) {
+				const until = num(d?.until, 0);
+				if (/^[0-9a-f]{64}$/.test(h) && until > now) devices.set(h, { until, label: typeof d.label === "string" ? d.label.slice(0, 80) : "", paired: num(d.paired, 0), seen: num(d.seen, 0), host: typeof d.host === "string" ? d.host.slice(0, 80) : "" });
+			}
+			if (saved.token !== tokenHash) (stale = true, dropped = devices.size > 0, devices.clear());
+		}
+	} catch {} // none saved
+	const save = () => {
+		if (!file) return;
+		try {
+			if (!devices.size && !wanted && port === LAN_PORT) rmSync(file, { force: true });
+			else writeOwned(file, JSON.stringify({ v: 1, wanted, port, token: tokenHash, devices: Object.fromEntries(devices) }));
+			error = undefined;
+		} catch (e) {
+			error = (e as Error).message;
+		}
+	};
+	if (dropped) log("devices-cleared", { net: "lan" });
+	if (stale) save(); // the file is written again under the running token
+	return {
+		get wanted() { return wanted; },
+		/** The port Wi-Fi access asks for; the one it last bound on stays here even while it is off. */
+		get port() { return port; },
+		/** Why the last save failed (the devices are then kept in memory only), or undefined. */
+		get error() { return error; },
+		set(next: { wanted?: boolean; port?: number }) {
+			({ wanted = wanted, port = port } = next);
+			save();
+		},
+		add(hash: string, label: string, host: string) {
+			const now = Date.now();
+			devices.set(hash, { until: now + SESSION_MS, label, paired: now, seen: now, host });
+			save();
+		},
+		/** Whether `hash` is an allowed device that has not expired; nothing is noted. */
+		has: (hash: string) => (devices.get(hash)?.until ?? 0) > Date.now(),
+		/** As `createDevices(…).use`: noted as seen, renewed at most once an hour (`renewed`). */
+		use(hash: string): { renewed: boolean } | undefined {
+			const d = devices.get(hash), now = Date.now();
+			if (!d) return undefined;
+			if (d.until <= now) return void (devices.delete(hash), save());
+			d.seen = now;
+			const renewed = d.until - now < SESSION_MS - RENEW_MS;
+			if (renewed) (d.until = now + SESSION_MS, save());
+			return { renewed };
+		},
+		match: (id: string) => (id.length >= 8 ? [...devices.keys()].filter((h) => h.startsWith(id)) : []),
+		remove(id: string): string | undefined {
+			const found = id.length >= 8 ? [...devices.keys()].filter((h) => h.startsWith(id)) : [];
+			if (found.length !== 1) return undefined;
+			devices.delete(found[0]!);
+			save();
+			return found[0];
+		},
+		clear(): number {
+			const n = devices.size;
+			devices.clear();
+			if (n) save();
+			return n;
+		},
+		list(): Listed[] {
+			return [...devices].filter(([, d]) => d.until > Date.now()).map(([h, d]): Listed => ({ id: h.slice(0, 16), label: d.label, paired: d.paired, seen: d.seen, net: "lan", host: d.host })).sort((a, b) => b.seen - a.seen);
 		},
 	};
 }

@@ -3,7 +3,8 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { join } from "node:path";
-import { createDevices, SESSION_MS, labelOf } from "./devices.ts";
+import { createDevices, SESSION_MS, labelOf, type Listed } from "./devices.ts";
+import { APP, createLanAccess, type LanAccessDeps, type LanAt } from "./lan/access.ts";
 import { createTypedCodes } from "./paircode.ts";
 import { qr, qrLines } from "./qr.ts";
 import { forgetStart, startedLater, startOf } from "./startof.ts";
@@ -21,10 +22,11 @@ import { forgetStart, startedLater, startOf } from "./startof.ts";
 // (devices.ts): it survives remote off and on, and ends when the GUI gets a new token (a listener that could not bind its stored ports, a missing or corrupt gui-secrets.json, or `/boss gui rotate`: `guihost` unpairs every device then), when the desktop unpairs the device, the Tailscale
 // identity changes, or 90 days pass without a use (each use slides the expiry). Remote access is remembered as wanted until turned off
 // explicitly: stopping the server removes the serve entry but not the wish, so the next server turns it on again.
+// Wi-Fi access (the LAN) shares `createAccess` and nothing else of this: its codes, pending devices, cookie (`__Secure-sb_lan`), and lan.json are src/lan/access.ts (docs/specs/2026-10-30-sb-gui-lan.md).
 
 export const PORT = 8443;
-/** The fixed, token-free entry of the installed app on the remote listener (the manifest's start_url there). */
-export const APP = "/sb-app/";
+/** The fixed, token-free entry of the installed app on the remote and LAN listeners (the manifest's start_url there). */
+export { APP };
 /** The line under the QR that names the **o** key; a desk shell shows the page itself, so its sessions drop the line with the key (host.ts). */
 export const OPEN_LINE = "o  open one in this computer's browser";
 const CODE_MS = 10 * 60_000, MAX_CODES = 16;
@@ -35,8 +37,10 @@ export interface Identity { host: string; login: string }
 export type Entry = { cookie: string } | { unpaired: true } | { status: 403 };
 /** What a typed code did: `cookie` is the new pairing, `wrong` a code that did not work, `status` a refusal (429: too many wrong codes). */
 export type Redeemed = { cookie: string } | { wrong: true } | { status: 403 | 429 };
-/** `origin` for a request let in (`device` the paired device it came from, `reissue` its cookie when the pairing was just renewed); `cookie` for a pairing code just exchanged; `status` for a refusal. */
-export type Verdict = { origin: string; remote: boolean; device?: string; reissue?: string } | { cookie: string } | { status: 401 | 403 };
+/** `origin` for a request let in (`device` the paired device it came from, `reissue` its cookie when the pairing was just renewed, `net` "lan" for one that came over Wi-Fi access); `cookie` for a pairing code just exchanged; `status` for a refusal (429 on the LAN: a peer that made too many). */
+export type Verdict = { origin: string; remote: boolean; device?: string; reissue?: string; net?: "lan" } | { cookie: string } | { status: 401 | 403 | 429 };
+/** A network a device is paired on: Tailscale, or Wi-Fi access (the LAN). */
+export type Net = "tailnet" | "lan";
 
 export const tailscale: Run = (args) =>
 	new Promise((done, fail) => execFileExe("tailscale", args, { timeout: 15_000 }, (error, out, err) => (error ? fail(new Error((error as NodeJS.ErrnoException).code === "ENOENT" ? "Tailscale is not installed (no tailscale command on PATH)" : `tailscale ${args.join(" ")} failed: ${err.trim() || error.message}`)) : done(out))));
@@ -95,12 +99,13 @@ export async function serveOff(run: Run, host: string, targets: (string | undefi
 	return true;
 }
 
-/** Who may in: the local page as today, and while remote is on, paired devices of this machine's Tailscale user. `file` keeps the paired
- *  devices (devices.ts: each cookie's SHA-256, name, and expiry, with the identity that paired them) and whether remote is wanted on.
- *  `ended(device)` is told when a device's streams must end (all of them when it names none). */
-export function createAccess(token: string, ended: (device?: string) => void = () => {}, file?: string) {
+/** Who may in: the local page as today, and while remote is on, paired devices of this machine's Tailscale user; while Wi-Fi access is on, devices the boss allowed over the LAN (lan/access.ts, which holds that half: its own codes, pending devices,
+ *  and lan.json). `file` keeps the paired devices (devices.ts: each cookie's SHA-256, name, and expiry, with the identity that paired them) and whether remote is wanted on.
+ *  `ended(device, net)` is told when a device's streams must end (all of them when it names none, all of a network's when it names only that). */
+export function createAccess(token: string, ended: (device?: string, net?: Net) => void = () => {}, file?: string, lanDeps: Partial<Omit<LanAccessDeps, "token" | "ended">> = {}) {
 	let remote: Identity | undefined;
 	const codes = new Map<string, number>(), typed = createTypedCodes(CODE_MS, MAX_CODES), devices = createDevices(file), hash = (c: string) => createHash("sha256").update(c).digest("hex");
+	const lan = createLanAccess({ ...lanDeps, token, ended: (device) => ended(device, "lan") });
 	/** A request that comes through `tailscale serve` for this machine's identity: remote on, the exact host, no Funnel marker, this machine's user. */
 	const admitted = (h: IncomingMessage["headers"]) => Boolean(remote) && h.host === remote!.host && !("tailscale-funnel-request" in h) && h["tailscale-user-login"] === remote!.login;
 	const cookieOf = (h: IncomingMessage["headers"]) => /(?:^|;\s*)sb_remote=([0-9a-f]{64})(?:;|$)/.exec(h.cookie ?? "")?.[1];
@@ -114,23 +119,31 @@ export function createAccess(token: string, ended: (device?: string) => void = (
 		get remembered() { return remote ?? devices.identity; },
 		/** Why paired.json could not be written last time, or undefined; the devices are then kept in memory only. */
 		get saveError() { return devices.error; },
-		/** What a failed save of paired.json means (the change holds until the server stops), or undefined while the file is current. */
-		unsaved(): string | undefined { return devices.error && `paired.json could not be saved (${devices.error}); the change holds until the server stops, and a restart loses it`; },
+		/** What a failed save of paired.json or lan.json means (the change holds until the server stops), or undefined while the files are current. */
+		unsaved(): string | undefined {
+			const [name, why] = devices.error ? ["paired.json", devices.error] : ["lan.json", lan.error];
+			return why && `${name} could not be saved (${why}); the change holds until the server stops, and a restart loses it`;
+		},
+		/** Wi-Fi access: its switches, codes, pending devices and approval, and the checks the LAN listener's handler makes (lan/access.ts). */
+		lan,
+		/** The devices of both networks: one list, newest use first, and an unpair that names either. */
 		devices: {
-			list: devices.list,
+			list: (): Listed[] => [...devices.list(), ...lan.store.list()].sort((a, b) => b.seen - a.seen),
 			unpair(id: string) {
-				const gone = devices.remove(id);
-				return gone !== undefined && (ended(gone), true);
+				// An id names one device in both stores together: a prefix that fits two, one in each, names none.
+				const [tail, wifi] = [devices.match(id), lan.store.match(id)];
+				if (tail.length + wifi.length !== 1) return false;
+				return (tail.length ? ((gone) => (ended(gone, "tailnet"), gone))(devices.remove(id)) : ((gone) => (ended(gone, "lan"), gone))(lan.store.remove(id))) !== undefined;
 			},
 			unpairAll() {
-				const n = devices.clear();
+				const n = devices.clear() + lan.store.clear();
 				return n > 0 ? (ended(), n) : 0;
 			},
 		},
 		enable(id: Identity) {
 			// Another identity voids what the old one paired, and ends its streams.
 			const was = remote ?? devices.identity;
-			if (was?.host !== id.host || was.login !== id.login) (remote && ended(), forget(), devices.clear());
+			if (was?.host !== id.host || was.login !== id.login) (remote && ended(undefined, "tailnet"), forget(), devices.clear());
 			remote = id;
 			devices.set({ identity: id, wanted: true });
 		},
@@ -139,10 +152,11 @@ export function createAccess(token: string, ended: (device?: string) => void = (
 			remote = undefined;
 			forget();
 			if (!stop) devices.set({ wanted: false });
-			ended();
+			ended(undefined, "tailnet");
 		},
-		/** A one-time pairing code (128 bits, ten minutes); expired codes go first, and past sixteen waiting the oldest goes. */
-		pair(): string | undefined {
+		/** A one-time pairing code (128 bits, ten minutes); expired codes go first, and past sixteen waiting the oldest goes. On the LAN `surface` names the overlay face or tile that shows it: its earlier code is void. */
+		pair(net: Net = "tailnet", surface?: string): string | undefined {
+			if (net === "lan") return lan.pair(surface ?? "");
 			if (!remote) return undefined;
 			const code = randomBytes(16).toString("base64url"), now = Date.now();
 			for (const [old, until] of codes) if (until < now) codes.delete(old);
@@ -151,10 +165,10 @@ export function createAccess(token: string, ended: (device?: string) => void = (
 			return code;
 		},
 		/** A short one-time code to type into the installed app's entry (paircode.ts): shown beside the QR; a new one gives the five tries back. */
-		pairCode(): string | undefined { return remote && typed.issue(); },
+		pairCode(net: Net = "tailnet", surface?: string): string | undefined { return net === "lan" ? lan.pairCode(surface ?? "") : remote && typed.issue(); },
 		/** Whether a request has this machine's identity (remote on, the exact host, no Funnel marker, this machine's user), whatever else it carries. */
 		admits: (req: IncomingMessage) => admitted(req.headers),
-		/** The fixed entry's GET (a document load of `/sb-app/`): the same identity checks as a page, then whether this device holds a pairing. No token or secret is needed or given. */
+		/** The fixed entry's GET (a document load of `/sb-app/`): the same identity checks as a page, then whether this device holds a pairing. No token or secret is needed or given. The LAN's is `lan.entry`. */
 		entry(req: IncomingMessage): Entry {
 			if (!admitted(req.headers)) return { status: 403 };
 			const cookie = cookieOf(req.headers);
@@ -176,10 +190,12 @@ export function createAccess(token: string, ended: (device?: string) => void = (
 		/**
 		 * `path` is the URL path after the token; `listener` is the one the request arrived on, `port` that listener's port. Only the local listener
 		 * lets a request in as local, and only without a forwarding header; a request on the remote listener is remote whatever it claims, and
-		 * the local listener refuses everything else. A pairing code is used up by its first presentation that passes the identity checks.
+		 * the local listener refuses everything else. A pairing code is used up by its first presentation that passes the identity checks. A request on a LAN listener (`at` is what that listener tells of it)
+		 * gets lan/access.ts's judgement: its host, the token, and an allowed device's own cookie.
 		 */
-		check(req: IncomingMessage, listener: "local" | "remote", port: number, given: string | undefined, path: string[]): Verdict {
+		check(req: IncomingMessage, listener: "local" | "remote" | "lan", port: number, given: string | undefined, path: string[], at?: LanAt): Verdict {
 			const h = req.headers;
+			if (listener === "lan") return lan.check(req, port, given, path, at);
 			if (!same(given ?? "", token)) return { status: 403 };
 			if (listener === "local") return h.host === `127.0.0.1:${port}` && !FORWARDED.some((name) => name in h) ? { origin: `http://127.0.0.1:${port}`, remote: false } : { status: 403 };
 			if (!remote || !admitted(h)) return { status: 403 };
