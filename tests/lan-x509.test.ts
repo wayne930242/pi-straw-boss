@@ -38,8 +38,15 @@ function verify(ca: Issued, leaves: Issued[], extra: string[] = ["-x509_strict"]
 		return file;
 	});
 	writeFileSync(caFile, ca.pem);
-	const run = spawnSync("openssl", ["verify", ...extra, "-CAfile", caFile, ...names], { encoding: "utf8" });
-	return { ok: run.status === 0, said: (run.stdout + run.stderr).replaceAll("\r\n", "\n") };
+	// In batches: a Windows command line holds about 32,000 characters, and the 1000-leaf test names a file for each.
+	let ok = true, said = "";
+	for (let at = 0; at < names.length; at += 100) {
+		const run = spawnSync("openssl", ["verify", ...extra, "-CAfile", caFile, ...names.slice(at, at + 100)], { encoding: "utf8" });
+		if (run.error) throw run.error;
+		ok &&= run.status === 0;
+		said += (run.stdout + run.stderr).replaceAll("\r\n", "\n");
+	}
+	return { ok, said };
 }
 
 /** A TLS handshake on the loopback with `leaf` served and `ca` trusted; `identity` is the name the client checks the certificate for (none: only the chain, including its name constraints, is judged). */
