@@ -718,6 +718,7 @@ relay ── SSE ─► link holder ── ally message ── tower service W �
   its own slot's `server.json` has a `restarting` whose `since` is fresh (within 10 s) and whose `began` is less than 30 s ago. A guard
   counts only ids of its own slot (`sb-tower-<ws>` on the primary, `sb-tower-<slot8>-<ws>` on a secondary). So a slow restart, such
   as a cold Windows start, demotes no main. A restart that takes longer than 30 s falls back to the 15 s grace.
+- **Wi-Fi access (since 0.49.0).** The token, the CSRF secret, and these rules apply to the Wi-Fi listeners as [2026-10-30-sb-gui-lan.md](2026-10-30-sb-gui-lan.md) specifies: Wi-Fi devices live in `lan.json` bound to the token's hash, and every start that does not keep the token (`moved`, `missing`, `corrupt`, `stale`) and `/boss gui rotate` clear `lan.json`'s devices together with `paired.json`; the Wi-Fi certificate and port stay.
 - **GUI token and CSRF secret (D27, decided by the boss: "永久保留 token 和配對"; it replaces RC3-F002's rotation on every listener).** The token, the
   CSRF secret and the paired devices persist across restarts, crashes, upgrades, a stop and a start of the GUI, and a reboot. The listener that
   starts reads `gui-secrets.json` in the slot's folder, `{ v: 1, token, csrf, port, remotePort }`: the token and CSRF secret of the last listener with the pair of
@@ -1478,6 +1479,8 @@ What changes:
   fold it into the tower unit and never list it as a unit of its own.
 
 ### Remote app entry
+
+Since 0.49.0 the fixed `/sb-app/` entry is also served on the Wi-Fi listeners ([2026-10-30-sb-gui-lan.md](2026-10-30-sb-gui-lan.md)), with that network's own codes, cookie, and waiting page; everything below describes the remote listener.
 
 Decision D25 (boss, 2026-10-28): "固定 app 入口＋在 app 裡輸配對碼". The token rotation and the unpairing on restart (RC3-F002) stood when it was decided and D27 later removed them (the token and the pairing persist); what D25 changes is
 how an installed app pairs, which it still does after `/boss gui rotate`, a lost store, or a moved port. Everything below is on the remote listener; the local listener answers `/sb-app/` as any wrong token (403).
