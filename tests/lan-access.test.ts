@@ -245,9 +245,37 @@ test("typed codes: five wrong tries lock one peer address only; 200 in all void 
 	for (let n = 0; n < LAN_CODE_MISSES; n++) try_(atOf({ peer: `192.168.${10 + Math.floor(n / LAN_PEER_MISSES / 200)}.${1 + Math.floor(n / LAN_PEER_MISSES)}` }), `ZZZZ-${String(n).padStart(4, "Z")}`);
 	assert.deepEqual(w.events.at(-1), { type: "void", peers: LAN_CODE_MISSES / LAN_PEER_MISSES }, "200 tries from 40 addresses");
 	assert.ok(w.logs.some(([e, f]) => e === "lan-code-void" && f.peers === 40));
-	assert.deepEqual(try_(asB, last), { status: 429 }, "the real code is void for everyone");
+	assert.deepEqual(try_(asB, last), { wrong: true }, "the real code is void for everyone: nothing is left to redeem");
 	const fresh = w.access.pairCode("lan", "tile-5")!;
 	assert.ok("cookie" in try_(asB, fresh), "a new code works again");
+});
+
+test("RVL4-F004: each typed code counts its own wrong tries; a mint elsewhere gives nothing back, and a peer's lock holds across codes", () => {
+	const w = world("typed-own");
+	const try_ = (as: LanAt, text: string) => w.access.lan.redeem(post({}, as), `code=${encodeURIComponent(text)}`, as);
+	const asA = atOf({ peer: "192.168.1.40" }), asB = atOf({ peer: "192.168.1.41" });
+	const first = w.access.pairCode("lan", "overlay-1")!;
+	for (let i = 1; i < LAN_PEER_MISSES; i++) try_(asA, `ZZZZ-ZZZ${i}`);
+	// The tile mints a code of its own: the overlay's code is still live and keeps A's four.
+	const second = w.access.pairCode("lan", "tile-1")!;
+	assert.deepEqual(try_(asA, "ZZZZ-ZZZ9"), { wrong: true }, "A's fifth wrong try");
+	assert.deepEqual(try_(asA, first), { status: 429 }, "A is locked out of the first code: the mint on another surface did not give the tries back");
+	assert.deepEqual(try_(asA, second), { status: 429 }, "and out of the second: the lock is per peer, not per code, so one guess is not five on each");
+	assert.ok("cookie" in try_(asB, second), "another peer is not locked");
+	// A mint on the surface that holds the code does clear that code's counts.
+	w.access.lan.deny("all");
+	const renewed = w.access.pairCode("lan", "overlay-1")!;
+	assert.ok("cookie" in try_(asA, renewed), "the first code's counts went with the code; the second was spent by B, so nothing holds A's lock");
+	// The ceiling is per code: 200 wrong tries void the codes that were live for all of them and not a code minted after.
+	w.access.lan.deny("all");
+	const old = w.access.pairCode("lan", "overlay-1")!;
+	const wrong = (n: number) => try_(atOf({ peer: `192.168.${10 + Math.floor(n / 200)}.${1 + (Math.floor(n / LAN_PEER_MISSES) % 200)}` }), `ZZZZ-${String(n).padStart(4, "Z")}`);
+	for (let n = 0; n < LAN_CODE_MISSES - 1; n++) wrong(n);
+	const young = w.access.pairCode("lan", "tile-2")!;
+	wrong(LAN_CODE_MISSES - 1);
+	assert.equal(w.events.filter((e) => e.type === "void").length, 1, "the older code reached 200 and is void");
+	assert.deepEqual(try_(atOf({ peer: "192.168.1.200" }), old), { wrong: true }, "it does not redeem");
+	assert.ok("cookie" in try_(atOf({ peer: "192.168.1.201" }), young), "the code minted after 199 of them has seen one wrong try, not 200");
 });
 
 test("the typed-code store (createLanCodes): per-peer locks, the per-code ceiling, one live code per surface, expiry", () => {
@@ -283,6 +311,39 @@ test("the typed-code store (createLanCodes): per-peer locks, the per-code ceilin
 	assert.equal(c.takeTyped("0000 0000 0000", "p3").result, "wrong", "a wrong shape is a wrong try");
 	c.clear();
 	assert.equal(c.takeQr(c.qr("s")), true);
+});
+
+test("RVL4-F003: three wrong numbers deny every pending device; a typo costs a re-pair, an enumeration gets nothing", () => {
+	const w = world("approve-budget");
+	const a = w.pend("192.168.1.23"), b = w.pend("192.168.1.24");
+	const wrong = (r: { number: string }) => String((Number(r.number) + 1) % 10000).padStart(4, "0");
+	const miss = [wrong(a) === b.number ? String((Number(b.number) + 1) % 10000).padStart(4, "0") : wrong(a)];
+	assert.equal(w.access.lan.approve(miss[0]!), undefined);
+	assert.equal(w.access.lan.approve(miss[0]!), undefined);
+	assert.equal(w.access.lan.pending().length, 2, "two wrong numbers: everyone still waits");
+	assert.equal(w.access.lan.approve(miss[0]!), undefined);
+	assert.deepEqual(w.access.lan.pending(), [], "the third wrong number denies every pending device");
+	assert.deepEqual(w.events.filter((e) => e.type === "refused").map((e) => (e as { why: string }).why), ["denied", "denied"], "and the computer is told, as for any denial");
+	assert.ok(w.logs.some(([event, fields]) => event === "lan-approve-wrong" && fields.denied === 2));
+	assert.ok(!JSON.stringify(w.logs).includes(a.number) && !JSON.stringify(w.events).includes(a.number), "no number in a log or an event");
+	assert.equal(w.access.lan.approve(a.number), undefined, "the right number is dead after");
+	assert.deepEqual(w.access.lan.waiting(req(jar(a.cookie)), AT), { state: "denied" });
+	// Nothing waiting, nothing to enumerate: a wrong number is not counted then, and the budget starts over with the next request.
+	for (let i = 0; i < 10; i++) w.access.lan.approve("0000");
+	const c = w.pend("192.168.1.25");
+	const off = (x: string) => String((Number(x) + 1) % 10000).padStart(4, "0");
+	w.access.lan.approve(off(c.number));
+	w.access.lan.approve(off(c.number));
+	assert.ok(w.access.lan.approve(c.number), "two wrong numbers and then the right one still allows");
+	// The budget is not refilled by a right number: enumerating with a device of one's own does not extend it.
+	const d = w.pend("192.168.1.26"), e = w.pend("192.168.1.27");
+	w.access.lan.approve(off(d.number) === e.number ? off(e.number) : off(d.number));
+	assert.ok(w.access.lan.approve(d.number));
+	assert.equal(w.access.lan.pending().length, 1);
+	w.access.lan.approve("9999" === e.number ? "9998" : "9999");
+	assert.equal(w.access.lan.pending().length, 1, "that was the second wrong number since the set last emptied");
+	w.access.lan.approve("9999" === e.number ? "9998" : "9999");
+	assert.deepEqual(w.access.lan.pending(), [], "and the third");
 });
 
 test("the noise limit: 20 refusals from one peer in ten minutes give its unpaired requests 429 for ten minutes; an allowed device is never counted", () => {

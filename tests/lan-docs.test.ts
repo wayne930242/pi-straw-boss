@@ -5,8 +5,11 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after as afterAll, afterEach, mock, test } from "node:test";
+import { createHash } from "node:crypto";
 import { createDocs, rewrite } from "../src/docs.ts";
 import type { Doc } from "../src/documents.ts";
+import { LAN_COOKIE, type LanAt } from "../src/lan/access.ts";
+import { createAccess } from "../src/remote.ts";
 
 // Documents over Wi-Fi access (docs/specs/2026-10-30-sb-gui-lan.md, "Documents on the LAN"; Steps L4): the load needs the cookie, everything it fetches or answers a ticket that only such a load hands out. The server below is `docs.serve` behind a
 // plain listener; a test header (`x-cookie: 1`) stands for "this request carried an allowed device's cookie", which remote.ts `check` decides in the real server (lan-access.test.ts tests that half).
@@ -39,10 +42,11 @@ afterAll(async () => {
 });
 
 type Res = { status: number; headers: IncomingMessage["headers"]; body: string };
-async function lanServer(lan = true) {
+async function lanServer(lan = true, docsOf = served) {
 	const server = createServer((req, res) => {
 		const parts = (req.url ?? "").split("?")[0]!.split("/").slice(3); // ["", token, "doc", cap, ...]
-		void served.serve(req, res, parts, ORIGIN, lan ? { token: T, cookie: req.headers["x-cookie"] === "1" } : undefined);
+		const device = req.headers["x-device"];
+		void docsOf.serve(req, res, parts, ORIGIN, lan ? { token: T, cookie: req.headers["x-cookie"] === "1", ...(typeof device === "string" && { device }) } : undefined);
 	});
 	servers.push(server);
 	await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
@@ -145,4 +149,138 @@ test("api/doc answers a text document only to an allowed device's cookie on the 
 	assert.equal(served.text(CAP1, { cookie: false }).status, 401);
 	assert.equal(served.text(CAP1, { cookie: true }).status, 404, "an html document is not text, as before");
 	assert.equal(served.text("x").status, 404, "and without `lan` nothing changes");
+});
+
+// RVL4-F001: a ticket and an answer nonce belong to the device whose load handed them out; they end with that device (Unpair, Unpair all, Wi-Fi access off), not only after thirty minutes.
+function loads(get: Awaited<ReturnType<typeof lanServer>>) {
+	const as = (device?: string) => ({ ...COOKIE, ...(device && { "x-device": device }) });
+	return {
+		load: async (device?: string) => {
+			const res = await get(`/${T}/doc/${CAP1}/`, as(device));
+			assert.equal(res.status, 200, res.body);
+			return { ticket: base(res)![2]!, nonce: /action="answer\/([0-9a-f]{32})"/.exec(res.body)![1]! };
+		},
+		css: (ticket: string) => get(`/${T}/doc/${CAP1}/r/${ticket}/style.css`),
+		answer: (ticket: string, nonce: string) => get(`/${T}/doc/${CAP1}/r/${ticket}/answer/${nonce}?choice=a`, { "sec-fetch-dest": "iframe", "sec-fetch-mode": "navigate" }),
+	};
+}
+
+test("RVL4-F001: revoking a device ends the tickets and nonces its loads handed out, and only those", async () => {
+	const own = createDocs(hub, () => "billing"), { load, css, answer } = loads(await lanServer(true, own));
+	const a = await load("A"), a2 = await load("A"), b = await load("B");
+	assert.equal((await css(a.ticket)).status, 200);
+	own.revoke("A");
+	assert.equal((await css(a.ticket)).status, 401, "A's ticket is dead");
+	assert.equal((await css(a2.ticket)).status, 401, "and every other of A's");
+	assert.equal((await css(b.ticket)).status, 200, "B's is not");
+	answers.length = 0;
+	assert.equal((await answer(a.ticket, a.nonce)).status, 401, "A's page cannot answer any more");
+	assert.equal((await answer(b.ticket, a2.nonce)).status, 409, "nor can B's ticket carry A's nonce");
+	assert.equal(answers.length, 0, "nothing reached the session");
+	const ok = await answer(b.ticket, b.nonce);
+	assert.equal(ok.status, 200, "B's answer still goes through");
+	assert.equal(answers.length, 1);
+});
+
+test("RVL4-F001: a nonce whose ticket survived is still dead after its device is revoked, and revoking none ends every LAN ticket", async () => {
+	const own = createDocs(hub, () => "billing"), { load, css, answer } = loads(await lanServer(true, own));
+	const a = await load("A"), b = await load("B"), loose = await load();
+	own.revoke("C");
+	assert.equal((await css(a.ticket)).status, 200, "another device's revocation leaves a bound ticket");
+	assert.equal((await css(loose.ticket)).status, 401, "but takes a ticket no device was named for (over-ends, never under-ends)");
+	answers.length = 0;
+	own.revoke();
+	for (const t of [a, b]) {
+		assert.equal((await css(t.ticket)).status, 401);
+		assert.equal((await answer(t.ticket, t.nonce)).status, 401);
+	}
+	assert.equal(answers.length, 0);
+	assert.equal((await load("A")).ticket.length, 32, "a new load by an allowed device mints a working one");
+});
+
+test("RVL4-F001 (the reviewer's repro, wired as L5 wires it): Unpair, Unpair all, and Wi-Fi access off end what a loaded document handed out", async () => {
+	const dir2 = join(scratch, "wired");
+	mkdirSync(dir2, { recursive: true });
+	const own = createDocs(hub, () => "billing");
+	const access = createAccess(T, (device, net) => void (net !== "tailnet" && own.revoke(device)), join(dir2, "paired.json"), { file: join(dir2, "lan.json") });
+	access.lan.enable();
+	const at: LanAt = { address: "192.168.1.5", iface: "en0", port: 8445, name: "weis-mbp", host: "weis-mbp.local", origin: "https://weis-mbp.local:8445", peer: "192.168.1.23" };
+	const allow = (n: number) => {
+		const cookie = n.toString(16).padStart(64, "0"), id = createHash("sha256").update(cookie).digest("hex");
+		access.lan.store.add(id, `phone ${n}`, at.host);
+		return cookie;
+	};
+	const server = createServer((req, res) => {
+		const parts = (req.url ?? "").split("?")[0]!.split("/").slice(1); // [token, "doc", cap, ...]
+		const who = access.check(req, "lan", at.port, parts[0], parts.slice(1), at);
+		if ("status" in who || "cookie" in who) return void res.writeHead("status" in who ? who.status : 500).end();
+		void own.serve(req, res, parts.slice(2), who.origin, { token: T, cookie: Boolean(who.device), ...(who.device && { device: who.device }) });
+	});
+	servers.push(server);
+	await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+	const port = (server.address() as AddressInfo).port;
+	const get = (path: string, cookie?: string) => new Promise<Res>((resolve, reject) => {
+		request({ host: "127.0.0.1", port, path, agent: false, headers: { host: `${at.host}:${at.port}`, "sec-fetch-dest": "iframe", "sec-fetch-site": "same-origin", ...(cookie && { cookie: `${LAN_COOKIE}=${cookie}` }) } }, (res) => {
+			let body = "";
+			res.setEncoding("utf8");
+			res.on("data", (c) => (body += c)).on("end", () => resolve({ status: res.statusCode!, headers: res.headers, body }));
+		}).on("error", reject).end();
+	});
+	const open = async (cookie: string) => {
+		const res = await get(`/${T}/doc/${CAP1}/`, cookie);
+		assert.equal(res.status, 200, res.body);
+		return { ticket: base(res)![2]!, nonce: /action="answer\/([0-9a-f]{32})"/.exec(res.body)![1]! };
+	};
+	const alive = async (t: { ticket: string; nonce: string }) => [(await get(`/${T}/doc/${CAP1}/r/${t.ticket}/style.css`)).status, (await get(`/${T}/doc/${CAP1}/r/${t.ticket}/answer/${t.nonce}?choice=a`)).status];
+	// Unpair one phone: its load's ticket and nonce go; the other phone's stay.
+	const [one, two] = [allow(1), allow(2)], [pageOne, pageTwo] = [await open(one), await open(two)];
+	assert.deepEqual((await alive({ ...pageTwo, nonce: "f".repeat(32) }))[0], 200);
+	answers.length = 0;
+	assert.equal(access.devices.unpair(createHash("sha256").update(one).digest("hex")), true);
+	assert.equal((await get(`/${T}/doc/${CAP1}/`, one)).status, 401, "the cookie is dead");
+	assert.deepEqual(await alive(pageOne), [401, 401], "and so is what its load handed out");
+	assert.equal(answers.length, 0);
+	assert.equal((await get(`/${T}/doc/${CAP1}/r/${pageTwo.ticket}/style.css`)).status, 200, "the other phone's document still loads its files");
+	// Unpair all.
+	const three = allow(3), pageThree = await open(three);
+	assert.ok(access.devices.unpairAll() > 0);
+	assert.deepEqual(await alive(pageThree), [401, 401]);
+	assert.deepEqual(await alive(pageTwo), [401, 401]);
+	// Wi-Fi access off and on again: the device is still allowed, its old page is not.
+	const four = allow(4), pageFour = await open(four);
+	access.lan.disable();
+	access.lan.enable();
+	assert.equal((await get(`/${T}/doc/${CAP1}/`, four)).status, 200, "the allowed device stays");
+	assert.deepEqual(await alive(pageFour), [401, 401], "but the page it loaded before is dead");
+	assert.equal(answers.length, 0);
+});
+
+// RVL4-F002: a top-level navigation never lands on a ticket URL (a link in a document opens in a tab of its own).
+test("RVL4-F002: a top-level navigation under a ticket goes to the ticketless URL, where the cookie decides; an embed still takes the ticket", async () => {
+	const get = await lanServer(), ticket = base(await get(`/${T}/doc/${CAP1}/`, COOKIE))![2]!;
+	const under = (path: string) => `/${T}/doc/${CAP1}/r/${ticket}/${path}`;
+	const tab = { "sec-fetch-dest": "document", "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate" };
+	for (const path of ["style.css", "sub/inner.css"]) {
+		const res = await get(under(path), tab);
+		assert.deepEqual([res.status, res.headers.location], [303, `/${T}/doc/${CAP1}/${path}`], path);
+		assert.ok(!res.body.includes(ticket));
+	}
+	assert.equal((await get(`/${T}/doc/${CAP1}/r/${"f".repeat(32)}/style.css`, tab)).status, 303, "whatever the ticket says, so a guess learns nothing");
+	for (const dest of ["image", "style", "font", "iframe", undefined]) {
+		const res = await get(under("style.css"), dest ? { "sec-fetch-dest": dest } : {});
+		assert.equal(res.status, 200, String(dest));
+	}
+	// The ticketless URL: a tab with the cookie gets the file; an embed with it, or a tab without it, does not.
+	const withCookie = { ...tab, "x-cookie": "1", "sec-fetch-site": "same-origin" };
+	const file = await get(`/${T}/doc/${CAP1}/style.css`, withCookie);
+	assert.deepEqual([file.status, file.body], [200, "body{color:red}"]);
+	assert.equal((await get(`/${T}/doc/${CAP1}/style.css`, tab)).status, 401, "no cookie, no file");
+	assert.equal((await get(`/${T}/doc/${CAP1}/style.css`, { ...COOKIE, "sec-fetch-dest": "image" })).status, 401, "an embed with the cookie still needs the ticket");
+	assert.equal((await get(`/${T}/doc/${CAP1}/app.js`, withCookie)).status, 404, "a script is never served");
+	assert.equal((await get(`/${T}/doc/${CAP1}/..%2Fplan.html`, withCookie)).status, 404);
+	// An answer is not redirected (it carries its form fields, and only the ticket route takes it).
+	const load = await get(`/${T}/doc/${CAP1}/`, COOKIE), t2 = base(load)![2]!, nonce = /answer\/([0-9a-f]{32})/.exec(load.body)![1]!;
+	const sent = await get(`/${T}/doc/${CAP1}/r/${t2}/answer/${nonce}?choice=a`, { "sec-fetch-dest": "document", "sec-fetch-mode": "navigate" });
+	assert.equal(sent.status, 200, sent.body);
+	assert.equal((await get(`/${T}/doc/${CAP1}/answer/${nonce}?choice=a`, withCookie)).status, 401, "and the ticketless answer is still 401");
 });
