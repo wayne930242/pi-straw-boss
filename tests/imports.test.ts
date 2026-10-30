@@ -498,8 +498,10 @@ test("the TypeScript source stays within its size budgets", () => {
 	assert.ok(count("gui/devices.ts") <= 31, `gui/devices.ts has ${count("gui/devices.ts")} lines`);
 	// Wi-Fi access, the page (L7, docs/specs/2026-10-30-sb-gui-lan.md): the tile got its two tabs (pair.ts 57 with the tab buttons, the per-tile surface id, and the tab switch; post.ts gained `get` for the poll of `lan/pending`), so the pair
 	// figure is 74; the Same Wi-Fi tab (the risk and the turn-on, the waiting requests with the number field, the certificate step, the pairing QR with its codes and the address toggle) is lan.ts, 163, and the QR drawing moved out of pair.ts into qr.ts, 16.
-	assert.ok(pairing <= 74, `the pairing tile has ${pairing} lines`);
-	assert.ok(count("gui/lan.ts") <= 163 && count("gui/qr.ts") <= 16, "the Same Wi-Fi tab and the QR drawing stay small");
+	// Review RVL7 (fixes F001 to F011) raised the pair figure to 85 (the tabs' ids, panels, and arrow keys; the tile opening on the Wi-Fi tab) and lan.ts to 232 (rows and live regions drawn by their id and not again, the codes worded in the page's
+	// language, one decision at a time, a link for each certificate file, the name offered only while the server answers to it); qr.ts takes the label; lanwait.ts, 23, is the header's notice for a request that waits while the tab is closed.
+	assert.ok(pairing <= 85, `the pairing tile has ${pairing} lines`);
+	assert.ok(count("gui/lan.ts") <= 232 && count("gui/qr.ts") <= 17 && count("gui/lanwait.ts") <= 23, "the Same Wi-Fi tab, the QR drawing, and the waiting notice stay small");
 	// Unreleased: the answer form's keys (gui/askkeys.ts: arrows, Tab, Enter, and Space between options, questions, own words, and Send, one tab stop per group) have a figure of their own,
 	// and layer.ts went to 249 for the dialog that takes the focus on its first option instead of Open comms (4 lines).
 	// Unreleased: the dialogs' keys (Space opens the next alert, F enlarges the top dialog; gui/hotkeys.ts: the routing and its listeners) have a figure of their own,
@@ -568,7 +570,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Phone terminal keyboard (sb server B6) to 1826.
 	// Start notices with Retry (sb server B6, RV13-F003 and the nested-shell notice) to 1829: gui/towermodel.ts maps the empty-pane and nested-shell start notices to Retry and their translations.
 	// Wi-Fi access, the page (L7): lan.ts (163) and qr.ts (16) are new and pair.ts, post.ts, devices.ts grew by the tabs, the poll, and the network label, to 2008.
-	assert.ok(page <= 2008, `the page's TypeScript has ${page} lines`);
+	// Review RVL7 (F001 to F011) to 2103: lan.ts 232, lanwait.ts 23, and the tabs' keys and panels in pair.ts.
+	assert.ok(page <= 2103, `the page's TypeScript has ${page} lines`);
 });
 
 test("the built page is small, self-contained (no remote URLs, fonts, or imports), and carries no demo fixture", { skip: !existsSync(join(root, "dist/gui/index.html")) && "run npm run gui:build first" }, () => {
@@ -653,7 +656,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Ended bar (sb server B6) to 72,700 bytes / 25.5 KB gzipped: the bar's message in both languages (the map chunk carries every message), barOf, and liveNote.
 	// Start notices with Retry (sb server B6, RV13-F003, the nested-shell notice, RV14-F004) to 74,000 bytes / 25.8 KB gzipped: the empty-pane, could-not-check, types-nothing and not-at-its-own-shell notices in both languages.
 	// Wi-Fi access, the page (L7) to 74,100 bytes: the Same Wi-Fi tab's, the device network labels', and the tabs' messages in both languages (the map chunk carries every message).
-	assert.ok(size(entry).length <= 74_100 && gz(entry) <= 25_800, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// Review RVL7 to 74,400 bytes / 25.85 KB gzipped: the page's words for the server's notes and events, the ages, the download links, and the waiting notice in both languages.
+	assert.ok(size(entry).length <= 74_400 && gz(entry) <= 25_850, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).
@@ -728,7 +732,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Ended bar (sb server B6) to 173,100 bytes / 69.6 KB gzipped: the bar line and its message in both languages.
 	// Kept GUI address (D27) to 173,300 bytes / 69.7 KB gzipped: the Restart panel's confirm and note say the address is kept, in both languages.
 	// Wi-Fi access, the page (L7) to 188,400 bytes / 75.1 KB gzipped: the pairing tile's chunk with the Same Wi-Fi tab (gui/lan.ts, gui/qr.ts) and its messages in both languages.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 188_400 && total(chunks, gz) <= 75_100, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// Review RVL7 to 197,700 bytes / 78.4 KB gzipped: the Same Wi-Fi tab's codes worded in both languages (fifteen messages, each a function in the chunk), the waiting notice, and the download links.
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 197_700 && total(chunks, gz) <= 78_400, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
@@ -792,5 +797,6 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Ended bar (sb server B6) to 84.5 KB / 18.2 KB gzipped: the one-line bar that replaces the composer.
 	// Phone terminal keyboard (sb server B6) to 84.8 KB / 18.25 KB gzipped: the Keyboard button, the hidden sink, and the typing state of the mirror.
 	// Wi-Fi access, the page (L7) to 86,900 bytes / 18.6 KB gzipped: the tabs, the waiting requests with the number field, the certificate step, and the Wi-Fi pairing (.lan).
-	assert.ok(total(css, (n) => size(n).length) <= 86_900 && total(css, gz) <= 18_600, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// Review RVL7 to 87,100 bytes / 18.65 KB gzipped: the Deny that keeps its width, the Wi-Fi buttons that are not uppercased, and the header's waiting-request notice that wraps on a narrow screen.
+	assert.ok(total(css, (n) => size(n).length) <= 87_100 && total(css, gz) <= 18_650, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });

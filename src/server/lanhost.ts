@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { LanPanel, Reply } from "../control.ts";
 import type { Gui } from "../gui.ts";
 import type { LanEvent, LanPending } from "../lan/access.ts";
-import { CA_FILES, CA_MIME, caStatus, createCa, crt, fingerprints, type LanCa, localName as readLocalName, type LocalName, mobileconfig, readCa, writeCa, type WriteDeps } from "../lan/ca.ts";
+import { CA_FILES, CA_MIME, caStatus, caValidity, createCa, crt, fingerprints, type LanCa, localName as readLocalName, type LocalName, mobileconfig, readCa, writeCa, type WriteDeps } from "../lan/ca.ts";
 import { createFaces } from "../lan/faces.ts";
 import { createLanListener, type ListenerOptions, type ListenerStatus, type LanListener } from "../lan/listener.ts";
 import { qr } from "../qr.ts";
@@ -16,12 +16,18 @@ import type { Reply as SocketReply } from "./socket.ts";
 // overlay-open marks (`gui-lan-face`, lan/faces.ts). guihost.ts builds one of these for each GUI it starts and routes the control requests here; the page's `lan/*` routes reach the same functions through `panel`.
 // Everything runs one at a time (`serial`): a switch, a reset, and a resume never overlap. Nothing binds unless the boss turned Wi-Fi access on and accepted the risk, and a secondary slot never serves it.
 
-const SECONDARY = "Wi-Fi access is served by the default Herdr's sb server";
-const CORRUPT = "Wi-Fi access stays off: lan-ca.json is unreadable or readable by other accounts; /boss gui lan reset makes a new certificate, and each phone installs it again";
-const MISSING = "Wi-Fi access stays off: this computer's Wi-Fi certificate is missing; run /boss gui lan to make a new one (each phone installs it again)";
-const ENDED = "This computer's Wi-Fi certificate has ended; run /boss gui lan reset in a pi session and choose renew, and each phone installs the new one.";
-const NO_ADDRESS = "This computer has no private network address Wi-Fi access can serve now (a VPN tunnel is not served)";
-const VPN = "A VPN carries this computer's traffic; if the phone cannot connect, allow local network access in the VPN's settings.";
+/**
+ * A note or an event as the page gets it: the English `text` the session and the overlay show, and a machine `code` with its `params` (and, for a note that holds others, `of`) the page words in its own language
+ * (gui/lan.ts; a code it does not know shows the text). Ages are not words here: a pending row carries `ageMs`.
+ */
+export interface Coded { text: string; code: string; params?: Record<string, string | number>; of?: Coded[] }
+const coded = (text: string, code: string, params?: Coded["params"], of?: Coded[]): Coded => ({ text, code, ...(params ? { params } : {}), ...(of ? { of } : {}) });
+const SECONDARY = coded("Wi-Fi access is served by the default Herdr's sb server", "secondary");
+const CORRUPT = coded("Wi-Fi access stays off: lan-ca.json is unreadable or readable by other accounts; /boss gui lan reset makes a new certificate, and each phone installs it again", "ca_corrupt");
+const MISSING = coded("Wi-Fi access stays off: this computer's Wi-Fi certificate is missing; run /boss gui lan to make a new one (each phone installs it again)", "ca_missing");
+const ENDED = coded("This computer's Wi-Fi certificate has ended; run /boss gui lan reset in a pi session and choose renew, and each phone installs the new one.", "ca_ended");
+const NO_ADDRESS = coded("This computer has no private network address Wi-Fi access can serve now (a VPN tunnel is not served)", "no_address");
+const VPN = coded("A VPN carries this computer's traffic; if the phone cannot connect, allow local network access in the VPN's settings.", "vpn");
 const RISK = "Wi-Fi access needs a certificate this computer makes for itself, which each phone then trusts; read the risk and confirm before it is made.";
 /** How long a tile that polled `lan/pending` counts as open, and how many events and notices are kept. */
 const TILE_MS = 5000, EVENTS = 5, NOTICES = 8;
@@ -54,9 +60,9 @@ export function createLanHost(o: LanHostOptions) {
 	const name = () => (seams.localName ?? readLocalName)();
 	let gui: Gui | undefined, ca: LanCa | undefined, listener: LanListener | undefined, status: ListenerStatus | undefined;
 	/** Why Wi-Fi access is off though it is wanted, or what the move of the port was; kept until the next success. */
-	let held: string | undefined, moved: string | undefined;
+	let held: Coded | undefined, moved: Coded | undefined;
 	let tileAt = -Infinity, nameAt = -Infinity, nameNow: LocalName | undefined;
-	const events: { at: number; text: string }[] = [], notices = new Map<string, string>();
+	const events: ({ at: number } & Coded)[] = [], notices = new Map<string, string>();
 	let chain: Promise<unknown> = Promise.resolve();
 	/** One job at a time. A rejected job is its caller's to see; the next one runs regardless. */
 	const serial = <T>(job: () => Promise<T>): Promise<T> => {
@@ -68,7 +74,7 @@ export function createLanHost(o: LanHostOptions) {
 
 	// What the computer is told ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-	const note = (text: string) => void (events.push({ at: now(), text }), events.length > EVENTS && events.shift());
+	const note = (c: Coded) => void (events.push({ at: now(), ...c }), events.length > EVENTS && events.shift());
 	const told = () => o.notice?.([...notices].map(([id, peer]) => ({ id, peer })));
 	/** A request waits and nobody has this computer's overlay or tile open: every session shows a notice (the server record carries it). */
 	const open = () => faces.any() || now() - tileAt < TILE_MS;
@@ -76,15 +82,15 @@ export function createLanHost(o: LanHostOptions) {
 		if (event.type === "pending") {
 			if (!open()) (notices.set(event.id, event.peer), notices.size > NOTICES && notices.delete(notices.keys().next().value!), told());
 		} else if (event.type === "paired") {
-			note(`Paired over Wi-Fi: ${event.label} (${event.peer})`);
+			note(coded(`Paired over Wi-Fi: ${event.label} (${event.peer})`, "paired", { label: event.label, peer: event.peer }));
 			if (notices.delete(event.id)) told();
 		} else if (event.type === "refused") {
-			note(`A Wi-Fi pairing code was used from ${event.peer} and not allowed. If that was not your phone, someone saw the code.`);
+			note(coded(`A Wi-Fi pairing code was used from ${event.peer} and not allowed. If that was not your phone, someone saw the code.`, "refused", { peer: event.peer }));
 			if (notices.delete(event.id)) told();
 		} else if (event.type === "wrong") {
-			note(`${event.count} wrong codes from ${event.peer}`);
+			note(coded(`${event.count} wrong codes from ${event.peer}`, "wrong", { count: event.count, peer: event.peer }));
 		} else {
-			note(`Too many wrong codes from ${event.peers} addresses; this code is void. Press c for a new one (the QR still works). Someone on this network is guessing codes. Pair on your phone's hotspot instead.`);
+			note(coded(`Too many wrong codes from ${event.peers} addresses; this code is void. Press c for a new one (the QR still works). Someone on this network is guessing codes. Pair on your phone's hotspot instead.`, "void", { peers: event.peers }));
 		}
 	}
 	/** The notices of requests that are no longer waiting go (a timeout has its own event; this is the sweep after any change). */
@@ -101,32 +107,32 @@ export function createLanHost(o: LanHostOptions) {
 		if (!nameNow || now() - nameAt > 60_000) (nameNow = name(), (nameAt = now()));
 		return nameNow;
 	};
-	function renamed(): string | undefined {
+	function renamed(): Coded | undefined {
 		if (!ca?.name) return undefined;
 		const current = currentName();
 		if (!("name" in current) || current.name === ca.name) return undefined;
-		if (new RegExp(`^${ca.name}-\\d+$`).test(current.name)) return `Another device on this network answers to ${ca.name}.local, so macOS renamed this computer ${current.name}. Use the address form here (press i), and set the name back in System Settings, General, Sharing, Local hostname.`;
-		return `This computer is now called ${current.name}; the certificate is for ${ca.name}.local. /boss gui lan reset makes a new certificate (each phone installs it again).`;
+		if (new RegExp(`^${ca.name}-\\d+$`).test(current.name)) return coded(`Another device on this network answers to ${ca.name}.local, so macOS renamed this computer ${current.name}. Use the address form here (press i), and set the name back in System Settings, General, Sharing, Local hostname.`, "renamed_n", { caName: ca.name, name: current.name });
+		return coded(`This computer is now called ${current.name}; the certificate is for ${ca.name}.local. /boss gui lan reset makes a new certificate (each phone installs it again).`, "renamed", { caName: ca.name, name: current.name });
 	}
-	const notes = (): string[] => {
-		const out: string[] = [];
+	const notes = (): Coded[] => {
+		const out: Coded[] = [];
 		if (held) out.push(held);
 		if (moved) out.push(moved);
 		if (status && listener) {
 			const taken = status.addresses.filter((a) => a.state === "taken");
-			for (const a of taken) out.push(`Port ${status.port ?? lan().port} is taken on ${a.address} by another program; Wi-Fi access does not serve that address. Run /boss gui lan to move to a free port (installed apps then need to be added again).`);
+			for (const a of taken) out.push(coded(`Port ${status.port ?? lan().port} is taken on ${a.address} by another program; Wi-Fi access does not serve that address. Run /boss gui lan to move to a free port (installed apps then need to be added again).`, "taken", { port: status.port ?? lan().port, address: a.address }));
 			if (status.noAddress) out.push(NO_ADDRESS);
 			if (status.vpn && !status.noAddress) out.push(VPN);
 		}
 		if (ca) {
 			const state = caStatus(ca, now());
-			if (state.state === "ending") out.push(`This computer's Wi-Fi certificate ends in ${state.daysLeft} days. Run /boss gui lan reset in a pi session and choose renew; each phone installs the new one.`);
+			if (state.state === "ending") out.push(coded(`This computer's Wi-Fi certificate ends in ${state.daysLeft} days. Run /boss gui lan reset in a pi session and choose renew; each phone installs the new one.`, "ca_ending", { days: state.daysLeft, until: caValidity(ca).notAfter }));
 			const gone = renamed();
 			if (gone) out.push(gone);
 		}
 		return out;
 	};
-	const lanNote = () => notes().join(" ") || undefined;
+	const lanNote = () => notes().map((n) => n.text).join(" ") || undefined;
 
 	// What the phone is pointed at ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -172,14 +178,14 @@ export function createLanHost(o: LanHostOptions) {
 			listener = make(0, 0);
 			status = await listener.start();
 		}
-		if (boss && status.port && status.port !== wanted) moved = `Port ${wanted} was taken on this computer; Wi-Fi access moved to ${status.port}. An app installed from the old address needs adding again.`;
+		if (boss && status.port && status.port !== wanted) moved = coded(`Port ${wanted} was taken on this computer; Wi-Fi access moved to ${status.port}. An app installed from the old address needs adding again.`, "moved", { from: wanted, to: status.port });
 		else if (status.port === wanted) moved = undefined;
 		const some = status.addresses.some((a) => a.state === "open");
 		// Every address refused for a port that is taken: off, with the note; the next start tries again. Anything else (no address yet, one not ready) is the watch's to settle.
 		if (!some && status.addresses.length && status.addresses.every((a) => a.state === "taken")) {
-			const why = notes().join(" ");
+			const why = notes();
 			await down(false);
-			held = `Wi-Fi access stays off: ${why}`;
+			held = coded(`Wi-Fi access stays off: ${why.map((n) => n.text).join(" ")}`, "stays_off", undefined, why);
 			return false;
 		}
 		if (status.port && status.port !== lan().port) lan().setPort(status.port);
@@ -214,22 +220,25 @@ export function createLanHost(o: LanHostOptions) {
 		const addresses = served().map((a) => ({ address: a.address, interface: a.iface })), g = gui;
 		return {
 			wanted: g ? lan().wanted : false, on: Boolean(g && listener && lan().on), port: status?.port ?? (g ? lan().port : LAN_PORT), ...(urlOf() ? { url: urlOf() } : {}),
-			addresses, pending: g && o.primary ? lan().pending().length : 0, ...(!o.primary ? { note: SECONDARY } : lanNote() ? { note: lanNote() } : {}),
+			addresses, pending: g && o.primary ? lan().pending().length : 0, ...(!o.primary ? { note: SECONDARY.text } : lanNote() ? { note: lanNote() } : {}),
 		};
 	};
 	const pendingBody = () => ({
 		...factsOf(),
-		pending: lan().pending().map(({ id, label, peer, iface, since }: LanPending) => ({ id, label, peer, iface, since, age: age(now() - since) })),
+		pending: lan().pending().map(({ id, label, peer, iface, since }: LanPending) => ({ id, label, peer, iface, since, age: age(now() - since), ageMs: now() - since })),
 		events: events.map((e) => e.text),
+		// The same, with the codes the page words in its own language (gui/lan.ts); `events` and `note` stay the English the overlay shows.
+		noteList: notes(),
+		eventList: events,
 	});
 
 	// The switches ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 	async function turnOn(acceptRisk: boolean): Promise<Reply> {
-		if (!o.primary) return bad("secondary", SECONDARY, 409);
+		if (!o.primary) return bad("secondary", SECONDARY.text, 409);
 		const found = stored();
-		if ("lost" in found && found.lost === "corrupt") return (held = CORRUPT, bad("lan_ca_corrupt", CORRUPT, 409));
-		if ("ended" in found) return bad("lan_ca_ended", ENDED, 409);
+		if ("lost" in found && found.lost === "corrupt") return (held = CORRUPT, bad("lan_ca_corrupt", CORRUPT.text, 409));
+		if ("ended" in found) return bad("lan_ca_ended", ENDED.text, 409);
 		if ("lost" in found) {
 			// No certificate yet: it is made only after the boss read the warning, and never by a resume.
 			const current = currentName(), now_ = names(current);
@@ -250,7 +259,7 @@ export function createLanHost(o: LanHostOptions) {
 	}
 	async function turnOff(): Promise<Reply> {
 		if (!gui) return bad("stopped", "The GUI is not running.", 409);
-		if (!o.primary) return bad("secondary", SECONDARY, 409);
+		if (!o.primary) return bad("secondary", SECONDARY.text, 409);
 		held = moved = undefined;
 		await down(true);
 		return reply(200, { ...factsOf(), text: "Wi-Fi access is off; the devices you allowed stay paired" });
@@ -269,7 +278,7 @@ export function createLanHost(o: LanHostOptions) {
 		if (form !== "name" && form !== "address" && form !== "typed") return bad("bad_request", "form is name, address, or typed.");
 		if (address !== undefined && (typeof address !== "string" || address.length > 45)) return bad("bad_request", "address is one of the served addresses.");
 		const at = hostFor(form === "typed" ? "name" : form, address as string | undefined), port = status?.port;
-		if (!at || !port) return bad("lan_no_address", NO_ADDRESS, 409);
+		if (!at || !port) return bad("lan_no_address", NO_ADDRESS.text, 409);
 		if (form === "typed") {
 			const code = lan().pairCode(surface);
 			return code ? reply(200, { form: at.form, host: at.host, port, code, entry: `https://${at.host}:${port}/sb-app/` }) : bad("lan_off", "Wi-Fi access is off.", 409);
@@ -282,9 +291,11 @@ export function createLanHost(o: LanHostOptions) {
 	function deciding(json: Record<string, unknown>): Reply {
 		const keys = Object.keys(json);
 		if (keys.length === 1 && typeof json.number === "string" && /^\d{4}$/.test(json.number)) {
-			const done = lan().approve(json.number);
+			const before = lan().pending().length, done = lan().approve(json.number);
 			sweep();
-			return done ? reply(200, { paired: { id: done.id, label: done.label, peer: done.peer } }) : bad("no_match", "No request has that number.", 404);
+			// A third wrong number denies every request (access.ts): `denied` says so, so the page can tell the boss plainly.
+			const left = lan().pending().length;
+			return done ? reply(200, { paired: { id: done.id, label: done.label, peer: done.peer } }) : reply(404, { error: "no_match", reason: "No request has that number.", ...(before > 0 && left === 0 ? { denied: before } : {}) });
 		}
 		if (keys.length === 1 && typeof json.deny === "string" && (json.deny === "all" || /^[0-9a-f]{12}$/.test(json.deny))) {
 			const n = lan().deny(json.deny);
@@ -294,9 +305,13 @@ export function createLanHost(o: LanHostOptions) {
 		return bad("bad_request", "Type the number the phone shows, or deny a request by its id (or all); nothing else decides.");
 	}
 	function certificate(): Reply {
-		if (!o.primary) return bad("secondary", SECONDARY, 409);
+		if (!o.primary) return bad("secondary", SECONDARY.text, 409);
 		const found = stored();
-		if ("lost" in found) return bad("no_ca", "There is no Wi-Fi certificate yet; turn Wi-Fi access on first.", 409);
+		if ("lost" in found) {
+			// The name rides on the answer, so the page can word the risk without a write to find it out (RVL7-F001).
+			const mine = names(currentName());
+			return reply(409, { error: "no_ca", reason: "There is no Wi-Fi certificate yet; turn Wi-Fi access on first.", name: mine && mine !== "unreadable" ? mine : null });
+		}
 		const c = ca!, f = fingerprints(c), port = status?.port, at = listener ? hostFor("name") : undefined;
 		const page = at && port ? `http://${at.host}:${port}/sb-ca/` : undefined;
 		return reply(200, { name: c.name, sha256: f.sha256, sha1: f.sha1, ...(page ? { url: page, rows: qr(page).map((row) => row.map(Number).join("")) } : {}), files: Object.values(CA_FILES), ended: "ended" in found });
@@ -310,11 +325,11 @@ export function createLanHost(o: LanHostOptions) {
 			if (typeof surface !== "string" || !/^[A-Za-z0-9_-]{4,64}$/.test(surface)) return bad("bad_request", "Name the tile's surface.");
 			return pairing(`tile:${surface}`, json);
 		},
-		approve: (json) => (gui && o.primary ? deciding(json) : bad("secondary", SECONDARY, 409)),
+		approve: (json) => (gui && o.primary ? deciding(json) : bad("secondary", SECONDARY.text, 409)),
 		ca: () => certificate(),
-		pending() {
-			tileAt = now();
-			return gui && o.primary ? reply(200, pendingBody()) : reply(200, { pending: [], events: [], wanted: false, on: false, addresses: [], ...(o.primary ? {} : { note: SECONDARY }) });
+		pending(peek) {
+			if (!peek) tileAt = now();
+			return gui && o.primary ? reply(200, pendingBody()) : reply(200, { pending: [], events: [], wanted: false, on: false, addresses: [], ...(o.primary ? {} : { note: SECONDARY.text, noteList: [SECONDARY] }) });
 		},
 		file(file) {
 			if (!o.primary || !gui) return undefined;
@@ -330,7 +345,7 @@ export function createLanHost(o: LanHostOptions) {
 			const body = (r.body ?? {}) as Record<string, unknown>;
 			return r.status < 300 ? { ok: true, ...body } : { ok: false, ...body, error: typeof body.error === "string" ? body.error : "refused" };
 		};
-		if (!o.primary) return { ok: false, error: SECONDARY };
+		if (!o.primary) return { ok: false, error: SECONDARY.text };
 		switch (request.cmd) {
 			case "gui-lan-face": {
 				if (request.open === true) {
@@ -439,7 +454,7 @@ export function createLanHost(o: LanHostOptions) {
 				await bringUp(false);
 			} catch (error) {
 				await down(false).catch(() => {});
-				held = `Wi-Fi access stays off: ${(error as Error).message}; it is tried again when the server next starts`;
+				held = coded(`Wi-Fi access stays off: ${(error as Error).message}; it is tried again when the server next starts`, "stays_off_error", { message: (error as Error).message });
 				o.log.line("lan-off", { why: String((error as Error).message).slice(0, 200) });
 			}
 		}),

@@ -215,7 +215,7 @@ test("the tile's reads and writes: pending lists no number, approve takes the nu
 	const pending = JSON.parse((await get("lan/pending")).body) as { pending: Record<string, unknown>[] };
 	assert.equal(pending.pending.length, 1);
 	assert.ok(!JSON.stringify(pending).includes(r.number!), "the tile shows no number");
-	assert.deepEqual(Object.keys(pending.pending[0]!).sort(), ["age", "iface", "id", "label", "peer", "since"].sort());
+	assert.deepEqual(Object.keys(pending.pending[0]!).sort(), ["age", "ageMs", "iface", "id", "label", "peer", "since"].sort());
 	const ca = await h.post("lan/ca");
 	assert.equal(ca.status, 200);
 	assert.match(String(ca.body.sha256), /^([0-9A-F]{2} ){15}[0-9A-F]{2}$/);
@@ -283,6 +283,57 @@ test("a request waiting with no overlay or tile open becomes a notice every sess
 	const again = await h.ask("gui-lan-pair", { face: open, form: "name" });
 	await redeem0(h, String(again.url)).catch(() => undefined);
 	assert.equal(h.record().lanNotice, undefined);
+});
+
+/** A GET of the page's API as this computer's page makes it. */
+const getApi = (h: Hosted, path: string) => new Promise<{ status: number; body: Record<string, any> }>((resolve, reject) => {
+	void import("node:http").then(({ request }) => request({ host: "127.0.0.1", port: h.gui().port, path: `/${h.gui().token}/api/${path}`, agent: false, headers: { host: `127.0.0.1:${h.gui().port}` } }, (res) => {
+		let text = "";
+		res.on("data", (c) => (text += c)).on("end", () => resolve({ status: res.statusCode!, body: JSON.parse(text) }));
+	}).on("error", reject).end());
+});
+
+test("RVL7 the tile's words travel as codes: events and notes carry a code with params beside the English text, a request has its age in ms, no_ca carries the name, and the third wrong number says it denied the rest", async () => {
+	const h = await host();
+	const none = await h.post("lan/ca");
+	assert.deepEqual([none.status, none.body.error, none.body.name], [409, "no_ca", NAME], "the off page words the risk from this answer, with no write to find the name");
+	const { face: f } = await turnOn(h);
+	const r = await redeem(h, f);
+	const listed = (await getApi(h, "lan/pending")).body;
+	assert.equal(typeof listed.pending[0].ageMs, "number");
+	assert.equal(listed.pending[0].age.endsWith(" s"), true, "the English age stays for the overlay");
+	assert.ok(Array.isArray(listed.noteList) && Array.isArray(listed.eventList));
+	assert.equal((await h.ask("gui-lan-approve", { face: f, number: r.number })).ok, true);
+	const after = (await getApi(h, "lan/pending")).body;
+	const paired = after.eventList.at(-1);
+	assert.deepEqual([paired.code, paired.params, paired.text, typeof paired.at], ["paired", { label: "iPhone · Safari", peer: PEER }, `Paired over Wi-Fi: iPhone · Safari (${PEER})`, "number"]);
+	assert.equal(after.events.at(-1), paired.text, "`events` stays the English list the overlay shows");
+	// Three wrong numbers deny everything that waits; the third answer says how many.
+	await redeem(h, f);
+	const wrong = async () => h.post("lan/approve", { number: "0000" });
+	assert.equal((await wrong()).body.denied, undefined);
+	assert.equal((await wrong()).body.denied, undefined);
+	const third = await wrong();
+	assert.deepEqual([third.status, third.body.error, third.body.denied], [404, "no_match", 1]);
+	assert.equal(((await getApi(h, "lan/pending")).body.pending as unknown[]).length, 0);
+	const void_ = (await getApi(h, "lan/pending")).body.eventList.find((e: { code: string }) => e.code === "refused");
+	assert.deepEqual([void_.code, void_.params], ["refused", { peer: PEER }]);
+});
+
+test("RVL7 a peek at the waiting requests does not count as an open tile, so the sessions still get their notice; a read of the tile does", async () => {
+	const h = await host(), { face: f } = await turnOn(h);
+	const made = await h.ask("gui-lan-pair", { face: f, form: "name" });
+	await h.ask("gui-lan-face", { face: f, open: false });
+	assert.equal((await getApi(h, "lan/pending?peek=1")).status, 200);
+	await redeem0(h, String(made.url));
+	await until(() => h.record().lanNotice?.length === 1, "the peek left the notice to the sessions");
+	await h.post("lan/approve", { deny: "all" });
+	await until(() => h.record().lanNotice === undefined, "and it goes with the answer");
+	const open = await face(h), again = await h.ask("gui-lan-pair", { face: open, form: "name" });
+	await h.ask("gui-lan-face", { face: open, open: false });
+	assert.equal((await getApi(h, "lan/pending")).status, 200); // the open tile's own poll
+	await redeem0(h, String(again.url)).catch(() => undefined);
+	assert.equal(h.record().lanNotice, undefined, "a tile that polled is open: no notice");
 });
 
 test("/boss gui lan while it is already serving leaves the listeners and the paired phone's connections alone (it restarts only to move a taken port)", async () => {
@@ -373,6 +424,7 @@ test("a taken port: the boss's command moves it to a free one and says so; a res
 	const moved = portOf(h);
 	assert.notEqual(moved, taken, "the system picked a free port and it was recorded");
 	assert.match(String((await lanOf(h)).note), new RegExp(`Port ${taken} was taken on this computer; Wi-Fi access moved to ${moved}`));
+	assert.deepEqual(((await getApi(h, "lan/pending")).body.noteList as { code: string; params?: unknown }[]).find((n) => n.code === "moved")?.params, { from: taken, to: moved });
 	await h.stop();
 	// A resume does not move it: with the remembered port taken, the address is unserved, the server stays up, and the note says what to do.
 	rmSync(join(world.stateDir, "lan.json"), { force: true });
@@ -384,6 +436,8 @@ test("a taken port: the boss's command moves it to a free one and says so; a res
 	assert.deepEqual([lan.wanted, lan.on, lan.addresses], [true, false, []]);
 	assert.match(String(lan.note), new RegExp(`Port ${stuck} is taken on ${ADDRESS} by another program; Wi-Fi access does not serve that address\\. Run /boss gui lan to move to a free port`));
 	assert.equal((await next.ask("gui", { boss: true })).lanNote, lan.note, "`up` and /boss gui carry it");
+	const stays = ((await getApi(next, "lan/pending")).body.noteList as { code: string; of?: { code: string; params?: Record<string, unknown> }[] }[]).find((n) => n.code === "stays_off");
+	assert.ok(stays?.of?.some((n) => n.code === "taken" && n.params?.address === ADDRESS && n.params?.port === stuck), "the page words the held note from the codes inside it");
 });
 
 test("resume with the certificate missing or unreadable stays off with a note and makes no certificate; a corrupt store is not replaced by `gui-lan on`", async () => {
