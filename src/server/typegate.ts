@@ -71,15 +71,10 @@ export function proofGate(f: { terminal: string | undefined; pane: { terminal_id
 }
 
 /**
- * An ally run's pane is ours to close and unmark when its terminal still holds the proof (`holds`; `bind`, a terminal not known at the split, only where no Herdr restart came between). After a Herdr restart every pane has
- * a new terminal, so a restored pane is told by three facts together: the tower's seat is proven again on this Herdr (`seated`), the pane is listed in the tab the tower's record names (`inTowerTab`), and the pane's agent session is
- * the run's own session file (`resumed`: Herdr resumed that very pi in it; any other agent, even the boss's own pi, is not). A lost session's stranger under a reused id has none of the last; a pane that fails any of these is not touched (F10).
+ * An ally run's pane is touched by the server (closed, marked, unmarked, started in, sent quit keys) only when its terminal still holds the proof (`proofGate` says `holds`). After a Herdr restart every pane has a
+ * new terminal, so the old ally panes are never touched: no key, no close, no mark. An ally run without a terminal (`bind`, or one recovered without it) is not held either. The leftover panes are the boss's to close.
  */
-export const allyCloseGate = (f: { proof: ProofVerdict; restart: boolean; seated: boolean; inTowerTab: boolean; resumed: boolean }): boolean =>
-	f.proof === "holds" || (f.proof === "bind" && !f.restart) || (f.seated && f.inTowerTab && f.resumed && f.proof !== "absent");
-
-/** Whether `markAllies` may write the ally mark to a pane: only a pane still in the terminal the run's split made (`bind` only where the run knows no Herdr restart may have come between: not for a run recovered without a terminal). */
-export const allyMarkGate = (proof: ProofVerdict, unbound = false): boolean => proof === "holds" || (proof === "bind" && !unbound);
+export const allyPaneGate = (proof: ProofVerdict): boolean => proof === "holds";
 
 /** What the desk's claim saw of the pane it names (`ensure-tower {made}`; towers.ts reads it from Herdr and from its own services). */
 export interface ClaimFacts {

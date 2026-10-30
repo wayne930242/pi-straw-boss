@@ -60,7 +60,7 @@ test("RVSEAT2-D3 control: a proven tower's tab is closed", async () => {
 	assert.ok(world.herdr.closed.includes(String(ensured.tab)));
 });
 
-// RVSEAT3-F001: after a Herdr restart the ally pane is ours to close when the tower's seat is proven again and the pane is in the tower's tab; a lost session's stranger under a reused id is not.
+// After a Herdr restart the server never touches an old ally pane (no close, mark, start or key); a lost session's stranger under a reused id is left as well.
 async function allyRun(restore: boolean, platform: "darwin" | "win32") {
 	if (platform === "win32") { world.runPlatform = "win32"; world.herdr.winShell = true; }
 	const s = await world.start();
@@ -82,9 +82,10 @@ async function allyRun(restore: boolean, platform: "darwin" | "win32") {
 	return { h, pane };
 }
 for (const platform of ["darwin", "win32"] as const) {
-	test(`RVSEAT3-F001 ${platform}: a restored session closes and unmarks the live ally run's pane`, async () => {
+	test(`RVSEAT3-F001 ${platform}: a restored session leaves the live ally run's pane untouched`, async () => {
 		const { h, pane } = await allyRun(true, platform);
-		assert.ok(h.closed.includes(pane), "the ally pane stays");
+		assert.deepEqual(touches(h, pane), []);
+		assert.ok(!h.closed.includes(pane), "closed the old ally pane");
 	});
 	test(`RVSEAT3-F001 ${platform}: a lost session leaves a stranger under the old pane id untouched`, async () => {
 		const { h, pane } = await allyRun(false, platform);
@@ -180,11 +181,20 @@ async function liveAlly(platform: "darwin" | "win32", opts: { busy?: number } = 
 	if (!opts.busy) await ownSession(s, h, pane);
 	return { s, h, pane, tab: String(ensured.tab), tower: String(ensured.pane) };
 }
-const touches = (h: TowerWorld["herdr"], pane: string) => h.calls.filter((a) => a.includes(pane) && (a[1] === "close" || a[1] === "report" || a[1] === "report-metadata" || a[1] === "clear-token"));
+/** Everything the server may do to a pane: close, marks, keys, text, a start. After a Herdr restart none of it reaches an old ally pane. */
+const touches = (h: TowerWorld["herdr"], pane: string) => h.calls.filter((a) => a.includes(pane) && (a[1] === "close" || a[1] === "report" || a[1] === "report-metadata" || a[1] === "clear-token" || a[1] === "send-keys" || a[1] === "send-text" || a[1] === "run" || (a[0] === "agent" && a[1] === "start")));
+const BOSS = "/fake/2026-10-30T00-00-00Z_boss.jsonl", runOf = (pane: string) => [...world.pis.entries()].find(([, p]) => p.pane === pane)?.[0];
+/** The desk's base at the recorded ids after a lost session, and a pane of the boss's at the old ally id in that tab. */
+function lostS1(h: TowerWorld["herdr"], tab: string, tower: string, pane: string, agent = "shell") {
+	h.lose();
+	h.workspaces.push({ workspace_id: "wA", label: "Desk", tokens: {} } as never);
+	h.addTab(tab, TOWER_LABEL, tower, "shell");
+	h.addPane(pane, tab, agent);
+}
 
 for (const platform of ["darwin", "win32"] as const) {
 	// L1: a restore whose tower tab is not listed yet when the takeover's look runs (the restore brings tabs back one by one, towers.ts takeover).
-	test(`RVSEAT4-F001 ${platform}: restore, tower tab listed only after the takeover: ally pane closed`, async () => {
+	test(`RVSEAT4-F001 ${platform}: restore, tower tab listed only after the takeover: ally pane untouched`, async () => {
 		const { h, pane, tab } = await liveAlly(platform);
 		h.restart(false);
 		const savedTabs = h.tabs.filter((t) => t.tab_id === tab), savedPanes = h.panes.filter((p) => p.tab_id === tab);
@@ -197,7 +207,8 @@ for (const platform of ["darwin", "win32"] as const) {
 		h.panes.push(...savedPanes);
 		h.emit("tab.closed", "tab_closed", {}); // Herdr's events make the server look again; the look proves the seat
 		await sleep(500);
-		assert.ok(h.closed.includes(pane), "ally pane leaked after a late restore");
+		assert.deepEqual(touches(h, pane), []);
+		assert.ok(!h.closed.includes(pane), "closed the old ally pane after a late restore");
 	});
 
 	// S1: lost session; the desk made a new tower tab (glyph) whose base got the recorded tower pane id, and a pane of the boss's in that tab holds the old ally id.
@@ -398,26 +409,104 @@ test("RVSEAT5-F003: the ally start's retries stop when its run has ended", async
 	assert.ok(starts() <= before + 1, "retries went on after the run ended");
 });
 
-// RVSEAT5-F004: Herdr lists an agent only while it runs (scratch Herdr: a restored pane lists none until the resumed pi reports, and none after it leaves); the resumed pi is told to quit, so the fact is read at the takeover's start and kept.
-test("RVSEAT5-F004: a restored pane that listed the run's session at the takeover's start is closed though the resumed pi has left by the end", async () => {
+// RVSEAT5-F004 (replaced): a restored pane that lists the run's own session is left too; a resumed pi there is not sent keys.
+for (const listed of [true, false]) test(`restored pane ${listed ? "lists" : "lists no"} the run's session at the takeover: untouched, whatever happens to the pi`, async () => {
 	const { h, pane } = await liveAlly("darwin");
 	h.restart(false);
-	let armed = true, cleared = false;
+	if (!listed) Object.assign(h.pane(pane), { agent: undefined, agent_session: undefined });
+	h.calls.length = 0;
+	world.takeovers.forEach((cb) => cb());
+	await sleep(300);
+	Object.assign(h.pane(pane), { agent: undefined, agent_session: undefined });
+	await sleep(1000);
+	assert.deepEqual(touches(h, pane), []);
+	assert.ok(!h.closed.includes(pane));
+});
+
+// Probes N3, N3b, N3p of the fifth re-review (seat-rereview5-probes): two Herdrs in a row; the second lost its session and a stranger sits at the old ally id.
+test("N3: restore, then a lost session with a shell of the boss's at the ally id: untouched", async () => {
+	world.runTimers = { restored: 20_000 } as never;
+	const { h, pane, tab, tower } = await liveAlly("darwin");
+	const id = runOf(pane)!;
+	h.restart(false);
+	h.tabs.find((x) => x.tab_id === tab)!.label = "1";
+	h.calls.length = 0;
+	world.takeovers.forEach((cb) => cb());
+	await until(() => readRun(world.slot, "wA", id)?.outcome === "herdr-restart", "the run ended herdr-restart", 3000);
+	lostS1(h, tab, tower, pane, "shell");
+	world.takeovers.forEach((cb) => cb());
+	await sleep(1500);
+	assert.deepEqual(touches(h, pane), []);
+	assert.ok(!h.closed.includes(pane), "closed the stranger's shell");
+});
+test("N3b: two takeovers overlap, the second Herdr lost its session: untouched", async () => {
+	const { h, pane, tab, tower } = await liveAlly("darwin");
+	h.restart(false);
+	h.calls.length = 0;
+	let release!: () => void, armed = true;
+	const gate = new Promise<void>((r) => (release = r));
 	const push = h.calls.push.bind(h.calls);
 	h.calls.push = (...a: string[][]) => {
-		if (armed && a[0]?.[0] === "pane" && a[0][1] === "list") (armed = false, queueMicrotask(() => { cleared = !h.closed.includes(pane); Object.assign(h.panes.find((p) => p.pane_id === pane) ?? {}, { agent: undefined, agent_session: undefined }); }));
+		if (armed && a[0]?.[0] === "pane" && a[0][1] === "list") (armed = false, (h.paneListGate = gate));
 		return push(...a);
 	};
 	world.takeovers.forEach((cb) => cb());
-	await until(() => h.closed.includes(pane), "the pane closed", 3000);
-	assert.ok(cleared, "the pi left before the run ended");
+	await sleep(100);
+	lostS1(h, tab, tower, pane, "shell");
+	world.takeovers.forEach((cb) => cb());
+	h.paneListGate = undefined;
+	release();
+	await sleep(1500);
+	assert.deepEqual(touches(h, pane), []);
+	assert.ok(!h.closed.includes(pane), "closed the stranger's shell");
 });
-test("RVSEAT5-F004: a restored pane that never listed the run's session is left", async () => {
-	const { h, pane } = await liveAlly("darwin");
+test("N3p: as N3, the stranger at the ally id is the boss's pi with its own session: untouched", async () => {
+	world.runTimers = { restored: 20_000 } as never;
+	const { h, pane, tab, tower } = await liveAlly("win32");
+	const id = runOf(pane)!;
 	h.restart(false);
-	Object.assign(h.pane(pane), { agent: undefined, agent_session: undefined });
+	h.tabs.find((x) => x.tab_id === tab)!.label = "1";
 	h.calls.length = 0;
 	world.takeovers.forEach((cb) => cb());
+	await until(() => readRun(world.slot, "wA", id)?.outcome === "herdr-restart", "the run ended herdr-restart", 3000);
+	lostS1(h, tab, tower, pane, "pi");
+	h.pane(pane).agent_session = { value: BOSS };
+	world.takeovers.forEach((cb) => cb());
+	await sleep(1500);
+	assert.deepEqual(touches(h, pane), []);
+	assert.ok(!h.closed.includes(pane), "closed the boss's pi");
+});
+// A pi that Herdr resumed in an old ally pane and asks the server for its role is answered "none": the server sends it no keys and leaves it to the boss.
+test("a pi resumed in an old ally pane after the run ended with the restart is answered none and sent no keys", async () => {
+	const { s, h, pane } = await liveAlly("darwin");
+	const id = runOf(pane)!;
+	h.restart(false);
+	h.calls.length = 0;
+	world.takeovers.forEach((cb) => cb());
+	await until(() => readRun(world.slot, "wA", id)?.outcome === "herdr-restart", "the run ended herdr-restart", 3000);
+	await sleep(300);
+	const got = await ask(s, { cmd: "pane-role", pane, pid: 4242 }).catch(() => undefined);
+	if (got) assert.equal((got as { role?: string }).role, "none");
+	assert.deepEqual(touches(h, pane), []);
+});
+
+// A Herdr that lists no terminal ids proves nothing by terminal: after its restart the old ally pane is still left (the run ended with the restart).
+test("a Herdr that lists no terminal ids: restart, the old ally pane is untouched", async () => {
+	const h0 = world.herdr, add = h0.addPane.bind(h0);
+	h0.addPane = (...a: Parameters<typeof add>) => {
+		const p = add(...a);
+		delete (p as { terminal_id?: string }).terminal_id;
+		return p;
+	};
+	const { h, pane } = await liveAlly("darwin");
+	for (const p of h.panes) delete (p as { terminal_id?: string }).terminal_id;
+	h.restart(false);
+	for (const p of h.panes) delete (p as { terminal_id?: string }).terminal_id;
+	h.calls.length = 0;
+	world.takeovers.forEach((cb) => cb());
+	await until(() => [...world.pis.values()].length >= 0 && world.herdr.calls.length > 0, "the takeover's looks", 2000).catch(() => {});
 	await sleep(1000);
+	// The run's live marks before the takeover is seen cannot be told from a same-instance publish on a Herdr without terminal ids; what the end does is checked: no close, no keys, no start.
+	assert.deepEqual(touches(h, pane).filter((a) => a[1] !== "report-metadata" && a[1] !== "report"), []);
 	assert.ok(!h.closed.includes(pane));
 });

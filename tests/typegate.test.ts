@@ -286,28 +286,9 @@ test("refusedGate: a refusal keeps the mark the pane had (a lapsing one is pushe
 	assert.deepEqual(refusedGate({ ...base, failures: 4 }), { fresh: false, freshUntil: undefined, giveUp: false });
 });
 
-import { allyCloseGate } from "../src/server/typegate.ts";
-test("allyCloseGate: holds, or a re-proven seat with a resumed pane in the tower's tab", () => {
-	const yes = { seated: true, inTowerTab: true, resumed: true, restart: true };
-	const rows: [Parameters<typeof allyCloseGate>[0], boolean][] = [
-		[{ proof: "holds", seated: false, inTowerTab: false, resumed: false, restart: true }, true],
-		[{ proof: "moved", ...yes }, true],
-		[{ proof: "bind", ...yes }, true],
-		[{ proof: "bind", seated: false, inTowerTab: false, resumed: false, restart: false }, true],
-		[{ proof: "bind", seated: false, inTowerTab: false, resumed: false, restart: true }, false],
-		[{ proof: "moved", ...yes, seated: false }, false],
-		[{ proof: "moved", ...yes, inTowerTab: false }, false],
-		[{ proof: "moved", ...yes, resumed: false }, false],
-		[{ proof: "moved", seated: true, inTowerTab: true, resumed: true, restart: false }, true],
-		[{ proof: "absent", ...yes }, false],
-		[{ proof: "absent", seated: false, inTowerTab: false, resumed: false, restart: false }, false],
-	];
-	for (const [f, want] of rows) assert.equal(allyCloseGate(f), want, JSON.stringify(f));
-});
-import { allyMarkGate } from "../src/server/typegate.ts";
-test("allyMarkGate: only a pane in its run's own terminal is marked", () => {
-	assert.deepEqual((["holds", "bind", "moved", "absent"] as const).map((p) => allyMarkGate(p)), [true, true, false, false]);
-	assert.deepEqual((["holds", "bind", "moved", "absent"] as const).map((p) => allyMarkGate(p, true)), [true, false, false, false], "a run recovered without a terminal is never bound by id alone");
+import { allyPaneGate } from "../src/server/typegate.ts";
+test("allyPaneGate: only a pane in its run's own terminal is touched; bind, moved and absent never", () => {
+	assert.deepEqual((["holds", "bind", "moved", "absent"] as const).map((p) => allyPaneGate(p)), [true, false, false, false]);
 });
 test("tableGate: unreadable, program, prompt (below the shell, no program), empty", () => {
 	assert.equal(tableGate(undefined), "unreadable");
