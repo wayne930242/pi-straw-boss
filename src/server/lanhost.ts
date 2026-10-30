@@ -5,11 +5,13 @@ import type { Gui } from "../gui.ts";
 import type { LanEvent, LanPending } from "../lan/access.ts";
 import { CA_FILES, CA_MIME, caStatus, createCa, crt, fingerprints, type LanCa, localName as readLocalName, type LocalName, mobileconfig, readCa, writeCa, type WriteDeps } from "../lan/ca.ts";
 import { createFaces } from "../lan/faces.ts";
+import { type FirewallInput, type FirewallRead, readFirewall } from "../lan/firewall.ts";
 import { createLanListener, type ListenerOptions, type ListenerStatus, type LanListener } from "../lan/listener.ts";
 import { qr } from "../qr.ts";
 import { LAN_PORT } from "../devices.ts";
 import type { Log } from "./log.ts";
 import type { Reply as SocketReply } from "./socket.ts";
+import { inTestRun } from "./testguard.ts";
 
 // Wi-Fi access inside the sb server (docs/specs/2026-10-30-sb-gui-lan.md, "Commands and what the boss sees", "How it fits the rest"; Steps L5): the LAN listeners (lan/listener.ts) wired to the GUI's handler of kind "lan", the CA the boss
 // accepted the risk for, the switches (`gui-lan`), the pairing codes and the approval by number (`gui-lan-pair`, `gui-lan-pending`, `gui-lan-approve`), the reset (`gui-lan-reset`), the public certificate files (`gui-lan-files`), and the
@@ -33,6 +35,8 @@ export interface LanSeams extends Pick<ListenerOptions, "interfaces" | "bindAddr
 	localName?: () => LocalName;
 	/** The write hook of `lan-ca.json` (Time Machine's exclusion); default `tmutil` on macOS. */
 	exclude?: WriteDeps["exclude"];
+	/** The firewall read (lan/firewall.ts); a test run does none unless it hands one in. */
+	firewall?: (input: FirewallInput) => Promise<FirewallRead>;
 }
 export interface LanHostOptions {
 	/** The primary slot's folder: `lan-ca.json`, `lan-ca-files/`. */
@@ -55,6 +59,8 @@ export function createLanHost(o: LanHostOptions) {
 	let gui: Gui | undefined, ca: LanCa | undefined, listener: LanListener | undefined, status: ListenerStatus | undefined;
 	/** Why Wi-Fi access is off though it is wanted, or what the move of the port was; kept until the next success. */
 	let held: string | undefined, moved: string | undefined;
+	/** What the firewall read found (lan/firewall.ts), once it is done; cleared when the listeners close. */
+	let fire: string[] = [];
 	let tileAt = -Infinity, nameAt = -Infinity, nameNow: LocalName | undefined;
 	const events: { at: number; text: string }[] = [], notices = new Map<string, string>();
 	let chain: Promise<unknown> = Promise.resolve();
@@ -117,6 +123,7 @@ export function createLanHost(o: LanHostOptions) {
 			for (const a of taken) out.push(`Port ${status.port ?? lan().port} is taken on ${a.address} by another program; Wi-Fi access does not serve that address. Run /boss gui lan to move to a free port (installed apps then need to be added again).`);
 			if (status.noAddress) out.push(NO_ADDRESS);
 			if (status.vpn && !status.noAddress) out.push(VPN);
+			out.push(...fire);
 		}
 		if (ca) {
 			const state = caStatus(ca, now());
@@ -146,7 +153,7 @@ export function createLanHost(o: LanHostOptions) {
 	// The listeners ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 	function make(port: number, bindWaitMs?: number): LanListener {
-		const { localName: _name, exclude: _exclude, ...options } = seams;
+		const { localName: _name, exclude: _exclude, firewall: _firewall, ...options } = seams;
 		return createLanListener({
 			...options,
 			ca: ca!, port,
@@ -183,8 +190,18 @@ export function createLanHost(o: LanHostOptions) {
 			return false;
 		}
 		if (status.port && status.port !== lan().port) lan().setPort(status.port);
+		watchFirewall();
 		o.log.line("lan-on", flat({ port: status.port, addresses: status.addresses.filter((a) => a.state === "open").map((a) => `${a.address} (${a.iface})`) }));
 		return true;
+	}
+	/** The firewall read runs after the listeners are up (PowerShell takes seconds) and its notes arrive when it is done; it never holds a switch, and a read of listeners that are gone is dropped. */
+	function watchFirewall() {
+		const mine = listener, port = status?.port, read = seams.firewall ?? (inTestRun() ? undefined : readFirewall);
+		if (!mine || !port || !read) return;
+		void read({ port, served: served().map((a) => ({ address: a.address, iface: a.iface })) }).then((found) => {
+			o.log.line("lan-firewall", { summary: found.summary });
+			if (listener === mine) fire = found.notes;
+		}, (error: Error) => o.log.line("lan-firewall", { summary: `the read failed: ${String(error.message).slice(0, 160)}` }));
 	}
 	/** Closes the listeners and voids what belongs to them. `wish` forgets the wish (Wi-Fi access off); the allowed devices stay either way. */
 	async function down(wish: boolean, why = wish ? "off" : "stop") {
@@ -192,6 +209,7 @@ export function createLanHost(o: LanHostOptions) {
 		listener = undefined;
 		await was?.stop();
 		status = undefined;
+		fire = [];
 		if (gui) lan().disable(!wish);
 		notices.clear();
 		told();

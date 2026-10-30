@@ -23,5 +23,5 @@ jobs:
           node-version: 24
       - run: npm ci
       - run: node --test tests/platform.test.ts
-      # The LAN CA's writer, store, and network checks (a CI skip of an OpenSSL check fails there; Windows has certutil, below), and the listener: the first-byte split and `pauseOnConnect` on a Windows socket.
-      - run: node --import ./tests/setup.ts --test tests/lan-x509.test.ts tests/lan-ca.test.ts tests/lan-net.test.ts tests/lan-listener.test.ts
+      # The LAN CA's writer, store, and network checks (a CI skip of an OpenSSL check fails there; Windows has certutil, below), and the listener: the first-byte split and `pauseOnConnect` on a Windows socket, and the firewall's rule-name quoting through PowerShell's own parser (tests/lan-firewall.test.ts).
+      - run: node --import ./tests/setup.ts --test tests/lan-x509.test.ts tests/lan-ca.test.ts tests/lan-net.test.ts tests/lan-listener.test.ts tests/lan-firewall.test.ts
