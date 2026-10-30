@@ -72,3 +72,24 @@ test("D19: the tower run reads why= from the header: milestone updates obligatio
 	const run = readFileSync(`${PROMPT_DIR}/tower-run.md`, "utf8");
 	for (const term of ["`why=`", "`milestone`", "`shared`", "`blocked`", "go or wait", "owner", "Never ask mains for progress", "board_read"]) assert.ok(run.includes(term), `tower-run.md names ${term}`);
 });
+
+// Merge train, phase 1 (docs/specs/2026-10-30-merge-train.md): prompt-only. Budgets are unchanged; the new text displaced other words.
+test("merge train: apps-config names the integration fields and the skill headings; the integrator refuses to depart without the three required ones", () => {
+	const cfg = readFileSync(`${PROMPT_DIR}/apps-config.md`, "utf8");
+	for (const term of ["`integration`", "`maxCars`", "`maxWaitMin`", "`base`", "## Light checks", "## Train assembly", "## Full gates", "## Merge", "## Post-merge", "## Urgent lane", "## Load", "Format, lint, build, full type-check, full suites, publish"]) assert.ok(cfg.includes(term), `apps-config.md names ${term}`);
+	const integrator = readFileSync(`${PROMPT_DIR}/integrator.md`, "utf8");
+	assert.match(integrator, /^# Integrator/);
+	for (const term of ["`Light checks`, `Full gates`, or `Merge`", "`why=blocked`", "car:", "auth:", "`train/<code>`", "nothing is force pushed", "`maxCars`", "`maxWaitMin`", "`why=milestone`"]) assert.ok(integrator.includes(term), `integrator.md names ${term}`);
+});
+
+test("merge train: main hands integration cars over with why shared, planning states the principle, and the tower forwards a shared merge request to the one integrator", () => {
+	const main = readFileSync(`${PROMPT_DIR}/main.md`, "utf8");
+	for (const term of ["`integration`", "{{dir}}/integrator.md", "never merge to its base or claim a pre-dev branch", "`why: shared`"]) assert.ok(main.includes(term), `main.md names ${term}`);
+	const plan = readFileSync(`${PROMPT_DIR}/planning.md`, "utf8");
+	for (const term of ["`Light checks`", "once, by the integrator", "may name exceptions"]) assert.ok(plan.includes(term), `planning.md names ${term}`);
+	for (const file of ["tower.md", "tower-run.md"]) {
+		const text = readFileSync(`${PROMPT_DIR}/${file}`, "utf8");
+		for (const term of ["`integration`", "integrator", "boss_open_main", "integrator.md"]) assert.ok(text.includes(term), `${file} names ${term}`);
+	}
+	assert.ok(words(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8")) <= 380);
+});

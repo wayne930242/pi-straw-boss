@@ -160,6 +160,16 @@ The tower runs pi's default model unless you set one for it in `~/.pi/agent/stra
 
 Straw Boss passes it to pi as `--model` whenever it starts a tower, and reads the file at each start, so a change applies to the next tower without a reload. A tower already running keeps its model; restart it (or switch with `/model` in its pane) to change that one.
 
+### Merge train
+
+A project may give each app a merge train: one integrator main merges the coordinators' work instead of each coordinator merging for itself. It is opt-in and prompt-only (phase 1); the server reads none of it. [`prompts/apps-config.md`](../prompts/apps-config.md) holds the fields and [`prompts/integrator.md`](../prompts/integrator.md) the integrator's role; the design record is [`docs/specs/2026-10-30-merge-train.md`](specs/2026-10-30-merge-train.md).
+
+- **Principle.** Straw Boss states the principle and the contract; the project's skill holds the concrete checks. Before handoff a coordinator's anchor is its review (P0 and P1 clear) plus behaviour tests for its own change and the skill's `Light checks`. Format, lint, build, full type-check, full suites, publish, and similar gates run once, by the integrator, on the integrated pre-dev head. A skill may name exceptions.
+- **Fields.** `apps.json` has a top-level `integration` (`skill`, `maxCars` 4, `maxWaitMin` 60) and a per-app `integration` (`base`, optional `skill`). An app without the field keeps today's flow.
+- **Skill contract.** The skill is found by headings: `## Light checks`, `## Train assembly`, `## Full gates`, `## Merge`, `## Post-merge`, optional `## Urgent lane` and `## Load`. The integrator does not depart, and calls the tower with `why=blocked`, if `Light checks`, `Full gates`, or `Merge` is missing.
+- **Hand-off and routing.** A coordinator sends a car slip with `call_tower` `why=shared`. The tower does not answer go: it forwards the slip to the project's one integrator, opening one with `boss_open_main` when none runs, and closes it when it reports idle. Until phase 2 a prompt and the integrator's name keep it single; the pane token and a server heavy-gate semaphore are not built.
+- **Integrator.** It owns `pre-dev/<code>`, assembles `train/<code>` locally, reviews the merged result once with a fresh reviewer, runs the gates once per train, and pushes only when green, so a dropped car is a local rebuild and nothing is force pushed. It keeps a ledger under `<state dir>/trains/<project>/<app>.json`. A red train is handled by flake rerun, then blame, then bisect, then dropping the car.
+
 ## Tower dashboard
 
 A tower session with a TUI shows a monitoring widget above its editor. It is read-only: it never takes focus, never prompts, and is shown only while the session holds the tower role (a tower that yields, a headless tower, and main agents never show it). Its first lines say what the pane is, the channel main agents reach each other through with `call_tower`, and give the straw net GUI's link while a GUI server answers (otherwise that `/boss gui` opens it).
