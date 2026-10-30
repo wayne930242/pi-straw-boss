@@ -46,12 +46,13 @@ export interface LanTaken { result: Typed; /** This peer's wrong tries so far, a
 
 /**
  * The LAN's codes: one-time QR codes (128 bits) and typed codes (40 bits), `ms` each, at most `max` of each waiting. Each surface that shows codes (an overlay face, a tile) holds at most one unredeemed code, QR or typed:
- * minting another on the same surface voids the one before it. A QR code is never locked. Typed tries are locked per peer address (five wrong tries lock that address out) and 200 wrong tries from all peers void every
- * typed code; a newly issued typed code clears the counts. Only hashes are kept.
+ * minting another on the same surface voids the one before it. A QR code is never locked. A wrong typed try cannot say which code it aimed at, so it counts against every live typed code, each with counts of its own: five wrong tries
+ * from one peer address lock that address out while any live code holds them, and 200 wrong tries from all peers void the code that has seen them. A newly issued code starts with no counts, and gives back none of another code's.
+ * Only hashes are kept.
  */
 export function createLanCodes(ms: number, max: number, now: () => number = Date.now) {
-	const kinds = { qr: new Map<string, { until: number; surface: string }>(), typed: new Map<string, { until: number; surface: string }>() }, mine = new Map<string, { kind: "qr" | "typed"; key: string }>();
-	let misses = new Map<string, number>(), total = 0;
+	type Tries = { until: number; surface: string; misses?: Map<string, number>; total?: number };
+	const kinds = { qr: new Map<string, Tries>(), typed: new Map<string, Tries>() }, mine = new Map<string, { kind: "qr" | "typed"; key: string }>();
 	const forget = (kind: "qr" | "typed", key: string) => {
 		const held = kinds[kind].get(key);
 		kinds[kind].delete(key);
@@ -62,7 +63,7 @@ export function createLanCodes(ms: number, max: number, now: () => number = Date
 		if (was) forget(was.kind, was.key);
 		for (const [old, v] of kinds[kind]) if (v.until < now()) forget(kind, old);
 		const key = hash(code);
-		kinds[kind].set(key, { until: now() + ms, surface });
+		kinds[kind].set(key, { until: now() + ms, surface, ...(kind === "typed" && { misses: new Map<string, number>(), total: 0 }) });
 		mine.set(surface, { kind, key });
 		for (const old of kinds[kind].keys()) if (kinds[kind].size > max) forget(kind, old);
 	};
@@ -78,12 +79,10 @@ export function createLanCodes(ms: number, max: number, now: () => number = Date
 			mint("qr", surface, code);
 			return code;
 		},
-		/** A new typed code for `surface`; every peer's tries start over. */
+		/** A new typed code for `surface`, with no wrong tries counted against it; the tries other codes have seen stay. */
 		typed(surface: string): string {
 			const code = Array.from({ length: LENGTH }, () => ALPHABET[randomInt(ALPHABET.length)]).join("");
 			mint("typed", surface, code);
-			misses = new Map();
-			total = 0;
 			return `${code.slice(0, 4)}-${code.slice(4)}`;
 		},
 		/** Which kind `text` is by its length, so a form post can carry either. */
@@ -91,21 +90,23 @@ export function createLanCodes(ms: number, max: number, now: () => number = Date
 		/** Uses a QR code up; true when it was waiting and not expired. */
 		takeQr: (text: string) => spend("qr", hash(text.trim())),
 		takeTyped(text: string, peer: string): LanTaken {
-			if (total >= LAN_CODE_MISSES || (misses.get(peer) ?? 0) >= LAN_PEER_MISSES) return { result: "locked" };
+			const live = [...kinds.typed.entries()].filter(([, v]) => v.until >= now());
+			if (live.some(([, v]) => (v.misses!.get(peer) ?? 0) >= LAN_PEER_MISSES)) return { result: "locked" };
 			const code = normal(text);
 			if (SHAPE.test(code) && spend("typed", hash(code))) return { result: "ok" };
-			const mine = (misses.get(peer) ?? 0) + 1;
-			misses.set(peer, mine);
-			if (++total < LAN_CODE_MISSES) return { result: "wrong", misses: mine };
-			for (const key of [...kinds.typed.keys()]) forget("typed", key);
-			return { result: "wrong", misses: mine, voided: misses.size };
+			let worst = 1, voided: number | undefined;
+			for (const [key, v] of live) {
+				const tries = (v.misses!.get(peer) ?? 0) + 1;
+				v.misses!.set(peer, tries);
+				worst = Math.max(worst, tries);
+				if (++v.total! >= LAN_CODE_MISSES) (voided = Math.max(voided ?? 0, v.misses!.size), forget("typed", key));
+			}
+			return { result: "wrong", misses: worst, ...(voided !== undefined && { voided }) };
 		},
 		clear() {
 			kinds.qr.clear();
 			kinds.typed.clear();
 			mine.clear();
-			misses = new Map();
-			total = 0;
 		},
 	};
 }

@@ -11,7 +11,7 @@ import { createLanCodes } from "../paircode.ts";
 export const APP = "/sb-app/";
 /** The LAN cookie: `__Secure-` stops a plain-HTTP response on the same host from setting it, and no other network's cookie has this name. */
 export const LAN_COOKIE = "__Secure-sb_lan";
-const CODE_MS = 10 * 60_000, MAX_CODES = 16, PENDING_MS = 2 * 60_000, MAX_PENDING = 4, NOISE_MAX = 20, NOISE_MS = 10 * 60_000, OUTCOME_MS = 10 * 60_000, MAX_REMEMBERED = 64, MAX_PEERS = 2048;
+const CODE_MS = 10 * 60_000, MAX_CODES = 16, NUMBER_MISSES = 3, PENDING_MS = 2 * 60_000, MAX_PENDING = 4, NOISE_MAX = 20, NOISE_MS = 10 * 60_000, OUTCOME_MS = 10 * 60_000, MAX_REMEMBERED = 64, MAX_PEERS = 2048;
 const COOKIE = new RegExp(`(?:^|;\\s*)${LAN_COOKIE}=([0-9a-f]{64})(?:;|$)`);
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const attributes = `Max-Age=${SESSION_MS / 1000}; HttpOnly; Secure; SameSite=Strict`;
@@ -61,7 +61,7 @@ export function createLanAccess({ token, ended, file, notify = () => {}, log = (
 	const store = createLanDevices(file, hash(token), log), codes = createLanCodes(CODE_MS, MAX_CODES, now);
 	const pending = new Map<string, Pending>(), outcomes = new Map<string, { state: "denied" | "timeout"; until: number }>();
 	const hits = new Map<string, number[]>(), limited = new Map<string, number>();
-	let on = false;
+	let on = false, wrongNumbers = 0;
 	const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 
 	/** The hosts a request may name: the computer's name or the listener's address, each with the listener's port. The listener checks the same; this is not left to it. */
@@ -106,6 +106,7 @@ export function createLanAccess({ token, ended, file, notify = () => {}, log = (
 		remember(p.hash, why);
 		log("lan-pair-refused", { peer: p.peer, why });
 		notify({ type: "refused", id: p.id, label: p.label, peer: p.peer, why });
+		if (!pending.size) wrongNumbers = 0;
 	};
 
 	return {
@@ -126,6 +127,7 @@ export function createLanAccess({ token, ended, file, notify = () => {}, log = (
 			codes.clear();
 			for (const p of pending.values()) p.cancel();
 			pending.clear();
+			wrongNumbers = 0;
 			outcomes.clear();
 			if (!stop) store.set({ wanted: false });
 			ended();
@@ -210,12 +212,24 @@ export function createLanAccess({ token, ended, file, notify = () => {}, log = (
 
 		/** The requests waiting for the boss, oldest first. */
 		pending: (): LanPending[] => [...pending.values()].map(({ id, label, peer, iface, since }) => ({ id, label, peer, iface, since })),
-		/** The boss typed `number` (what the device in their hand shows): the pending device with it is allowed and kept. */
+		/**
+		 * The boss typed `number` (what the device in their hand shows): the pending device with it is allowed and kept. The number is four digits, so it is a barrier only with a budget: three wrong four-digit numbers while anything waits deny every pending
+		 * device (each is told, and the computer hears a denial per device), and the count starts over when nothing waits. A right number does not refill it, so a device of one's own to allow gives an enumeration nothing.
+		 */
 		approve(number: string): { id: string; label: string; peer: string } | undefined {
-			const p = /^\d{4}$/.test(number) ? [...pending.values()].find((x) => x.number === number) : undefined;
-			if (!p) return undefined;
+			const shaped = /^\d{4}$/.test(number), p = shaped ? [...pending.values()].find((x) => x.number === number) : undefined;
+			if (!p) {
+				if (shaped && pending.size && ++wrongNumbers >= NUMBER_MISSES) {
+					const all = [...pending.values()];
+					log("lan-approve-wrong", { denied: all.length });
+					for (const q of all) drop(q, "denied");
+					wrongNumbers = 0;
+				}
+				return undefined;
+			}
 			p.cancel();
 			pending.delete(p.hash);
+			if (!pending.size) wrongNumbers = 0;
 			store.add(p.hash, p.label, p.host);
 			log("lan-paired", { label: p.label, peer: p.peer });
 			notify({ type: "paired", id: p.id, label: p.label, peer: p.peer });

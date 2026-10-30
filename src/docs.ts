@@ -16,6 +16,8 @@ import type { Fields } from "./documents.ts";
 // Chrome withholds the SameSite=Strict cookie from a sandboxed frame's requests (remote.ts). Over Wi-Fi access nothing like the Tailscale identity stands behind a link (docs/specs/2026-10-30-sb-gui-lan.md, "Documents on the LAN"), so
 // there the document load and `api/doc` need an allowed device's cookie (remote.ts `check` sees to that, and `serve` asks again), the load mints a ticket into the `<base>` it inserts, and everything the document fetches or answers is
 // served only under that ticket: GET /<t>/doc/<cap>/r/<ticket>/<path> and /r/<ticket>/answer/<nonce>. The ticketless forms answer 401 there, and an empty path under a ticket (an in-page #link) goes back to the document.
+// A ticket and the nonces of a LAN load belong to the device whose cookie made the load (`revoke` ends them with the device: Unpair, Unpair all, Wi-Fi access off), and a top-level navigation (a link in the document, opened in a tab of its own)
+// is sent on to the ticketless URL, where the cookie decides, so a ticket is never in the address bar.
 
 const SIBLING: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml", ".css": "text/css; charset=utf-8", ".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf", ".otf": "font/otf" };
 const MAX_DOC = 2 * 1024 * 1024, MAX_FILE = 8 * 1024 * 1024, NONCE_MS = 30 * 60_000, MAX_NONCES = 256, TICKET_MS = 30 * 60_000, MAX_TICKETS = 256, TICKET = /^[0-9a-f]{32}$/, MAX_QUERY = 16 * 1024, MAX_ANSWER = 12 * 1024, CAP = /^[0-9a-f]{32}$/;
@@ -41,7 +43,9 @@ export function fieldsOf(query: string): Fields | string {
 }
 
 export function createDocs(hub: Pick<Hub, "doc" | "form">, name: (key: string) => string) {
-	const nonces = new Map<string, { cap: string; until: number }>(), tickets = new Map<string, { cap: string; until: number }>();
+	// `lan` marks what a Wi-Fi load handed out; `device` is the allowed device (the hash of its cookie) whose load it was, when the caller named it (an entry without one goes with any revocation).
+	type Held = { cap: string; until: number; lan?: true; device?: string };
+	const nonces = new Map<string, Held>(), tickets = new Map<string, Held>();
 	/** A file the document may use: the listed one itself, or one under its directory, as its real path, within `max` bytes. */
 	const file = (path: string, max: number, under?: string) => {
 		try {
@@ -52,8 +56,12 @@ export function createDocs(hub: Pick<Hub, "doc" | "form">, name: (key: string) =
 		}
 	};
 	return {
-		/** `parts` is the path after doc/; `origin` the page's own origin, which the document's policy names. `lan` is set for a request that came in over Wi-Fi access: the token (for the ticket's URL) and whether the request carried an allowed device's cookie. */
-		async serve(req: IncomingMessage, res: ServerResponse, [cap = "", ...path]: string[], origin: string, lan?: { token: string; cookie: boolean }) {
+		/** Ends the tickets and answer nonces that the loads of `device` handed out, or every LAN one when it names none (a network-wide end, or Unpair all). Those that name no device go with any call. The access's `ended(device, net)` calls it for the LAN. */
+		revoke(device?: string) {
+			for (const map of [tickets, nonces]) for (const [key, v] of map) if (v.lan && (!device || !v.device || v.device === device)) map.delete(key);
+		},
+		/** `parts` is the path after doc/; `origin` the page's own origin, which the document's policy names. `lan` is set for a request that came in over Wi-Fi access: the token (for the ticket's URL), whether the request carried an allowed device's cookie, and that device (the hash `check` returned as `device`), whose Unpair ends what its load hands out. */
+		async serve(req: IncomingMessage, res: ServerResponse, [cap = "", ...path]: string[], origin: string, lan?: { token: string; cookie: boolean; device?: string }) {
 			const h = req.headers, base = { "cache-control": "no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", "content-security-policy": docCsp(origin) };
 			const page = (status: number, title: string, text: string) => res.writeHead(status, { ...base, "content-type": "text/html; charset=utf-8" }).end(`<!doctype html><meta charset="utf-8"><title>${escape(title)}</title><style>body{margin:0;padding:24px;background:#0b1222;color:#dbe6ff;font:15px/1.5 system-ui,sans-serif}h1{margin:0 0 6px;font-size:17px;color:#ffd27a}p{margin:0;color:#8b99ba}</style><h1>${escape(title)}</h1><p>${escape(text)}</p>`);
 			let rest = path;
@@ -62,10 +70,13 @@ export function createDocs(hub: Pick<Hub, "doc" | "form">, name: (key: string) =
 				if (rest[0] === "r" && rest.length >= 2) {
 					// Under a ticket: an empty path (an in-page #link resolves against the base) goes back to the document whatever the ticket says; anything else needs a live ticket of this capability.
 					if (rest.length === 2 || (rest.length === 3 && rest[2] === "")) return void res.writeHead(303, { ...base, location: root! }).end();
+					// A tab of its own (a link in the document; Sec-Fetch-Dest is "document" only for a top-level navigation) must not stay on a URL that holds the ticket: it goes on to the ticketless one, which takes the cookie. An answer is not
+					// moved (its fields are in the query and only the ticket route takes it), and a browser that sends no Sec-Fetch-Dest is not told apart from an embed (the residual named in the spec).
+					if (h["sec-fetch-dest"] === "document" && rest[2] !== "answer") return void res.writeHead(303, { ...base, location: `${root}${rest.slice(2).join("/")}` }).end();
 					const t = TICKET.test(rest[1]!) ? tickets.get(rest[1]!) : undefined;
 					if (!t || t.cap !== cap || t.until < Date.now()) return void page(401, "Not allowed", "This link does not carry a ticket this document handed out. Open the document again from the page.");
 					rest = rest.slice(2);
-				} else if (!(lan.cookie && (rest.length === 0 || (rest.length === 1 && rest[0] === "")))) {
+				} else if (!(lan.cookie && (rest.length === 0 || (rest.length === 1 && rest[0] === "") || (h["sec-fetch-dest"] === "document" && rest[0] !== "answer")))) {
 					return void page(401, "Not allowed", "A document opens only from a paired device's page on this network, and what it fetches only with the ticket that page gave it.");
 				}
 			}
@@ -81,12 +92,12 @@ export function createDocs(hub: Pick<Hub, "doc" | "form">, name: (key: string) =
 				if (site && site !== "same-origin" && site !== "none") return void page(409, "Reload the document", "Use Reload on its tile, or open it again, to see it and send its form again.");
 				const nonce = randomBytes(16).toString("hex"), now = Date.now();
 				for (const [n, v] of nonces) if (v.until < now || nonces.size >= MAX_NONCES) nonces.delete(n);
-				nonces.set(nonce, { cap, until: now + NONCE_MS });
+				nonces.set(nonce, { cap, until: now + NONCE_MS, ...(lan && { lan: true as const, ...(lan.device && { device: lan.device }) }) });
 				let ticketBase: string | undefined;
 				if (lan) {
 					const ticket = randomBytes(16).toString("hex");
 					for (const [t, v] of tickets) if (v.until < now || tickets.size >= MAX_TICKETS) tickets.delete(t);
-					tickets.set(ticket, { cap, until: now + TICKET_MS });
+					tickets.set(ticket, { cap, until: now + TICKET_MS, lan: true, ...(lan.device && { device: lan.device }) });
 					ticketBase = `${root}r/${ticket}/`;
 				}
 				// Back and Forward show this copy again (its nonce is spent once sent); a reload fetches a fresh one.
