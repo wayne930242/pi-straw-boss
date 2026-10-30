@@ -49,7 +49,7 @@ afterEach(async () => {
 	await server.stop().catch(() => {});
 	server = new FakeServer();
 });
-const watch = (onTakeover: () => void, retry = FAST) => (stops.push(herdrWatch(server.path, retry)(onTakeover)), stops.at(-1)!);
+const watch = (onTakeover: () => void, retry = FAST, onLost?: () => void) => (stops.push(herdrWatch(server.path, retry)(onTakeover, onLost)), stops.at(-1)!);
 
 test("the first connection subscribes to a rare event and is not a takeover; the open connection then stays quiet", async () => {
 	await server.start();
@@ -73,6 +73,32 @@ test("a server that stops and starts again is a takeover, once, however long the
 	await until(() => takeovers === 1, "the takeover");
 	await new Promise((resolve) => setTimeout(resolve, 60));
 	assert.deepEqual([takeovers, server.requests.length], [1, 2], "one more subscription, and no further attempts");
+});
+
+test("onLost: a server that had answered stops: lost, once, before any takeover; an attempt that finds no server, a refused or damaged answer, and stop are not", async () => {
+	await server.start();
+	const seen: string[] = [];
+	const stop = watch(() => seen.push("takeover"), FAST, () => seen.push("lost"));
+	await until(() => server.requests.length === 1, "the subscription");
+	assert.deepEqual(seen, [], "the first connection is neither");
+	await server.stop();
+	await until(() => seen.length === 1, "lost");
+	await new Promise((resolve) => setTimeout(resolve, 60)); // refused attempts with no server
+	assert.deepEqual(seen, ["lost"]);
+	await server.start();
+	await until(() => seen.length === 2, "the takeover");
+	assert.deepEqual(seen, ["lost", "takeover"]);
+	stop();
+	await new Promise((resolve) => setTimeout(resolve, 30));
+	assert.deepEqual(seen, ["lost", "takeover"], "stop is no loss");
+	await server.stop();
+	server = new FakeServer();
+	await server.start();
+	server.answer = (id, socket) => void socket.write(`${JSON.stringify({ id, error: { code: "nope" } })}\n`);
+	const bad: string[] = [];
+	watch(() => bad.push("takeover"), FAST, () => bad.push("lost"));
+	await until(() => server.requests.length >= 2, "retries after an error reply");
+	assert.deepEqual(bad, [], "a connection that was never acknowledged was not lost");
 });
 
 test("a watch whose first attempt found no server calls the takeover when one appears", async () => {

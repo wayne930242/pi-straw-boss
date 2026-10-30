@@ -8,6 +8,7 @@ import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { TOWER_LABEL } from "../src/herdr.ts";
 import { eventText } from "../src/runmode.ts";
 import { inRun, inStandingRun } from "../src/runmark.ts";
+import { ALLY_ENTRY } from "../src/state.ts";
 import { type Answer, call, type Request, results, rig as makeRig, scratchRoot } from "./run-rig.ts";
 import { until } from "./server-world.ts";
 
@@ -365,6 +366,61 @@ test("R-F004: a pi in a tower-glyph tab whose pane lost its tokens asks pane-rol
 	await until(() => r.shutdowns.length === 1, "the pi to quit");
 	assert.equal(srv.requests.filter((q) => q.cmd === "pane-role").length, 4, "asked again while the server was not there");
 	assert.match(r.notes.join("\n"), /Herdr restored this pane/);
+});
+
+test("RVAC-F003: the pane-role ask carries the pi's own session file (the server quits only a session an ally run recorded), and none for a session with no file", async () => {
+	flagOn();
+	for (const withFile of [true, false]) {
+		const srv = server();
+		const inner = srv.ask.bind(srv);
+		srv.ask = async (request: Request): Promise<Answer> => (request.cmd === "pane-role" ? (srv.requests.push(request), { ok: true, role: "none" }) : inner(request));
+		const dir = join(root, withFile ? "files" : "nofiles");
+		mkdirSync(dir, { recursive: true });
+		await rig(srv, { flag: null, herdr: herdrWith({}, TOWER_LABEL), glyphWaitMs: 5000, ...(withFile ? { sessionDir: dir } : {}) });
+		await until(() => srv.requests.some((q) => q.cmd === "pane-role"), "the pane-role ask");
+		const got = srv.requests.find((q) => q.cmd === "pane-role") as Request & { file?: string };
+		if (withFile) assert.match(String(got.file), new RegExp(`^${dir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*\\.jsonl$`));
+		else assert.equal(got.file, undefined);
+	}
+});
+
+const PEER = { device: "dev1", label: "Dev", short: "d1", team: "t1", teamName: "T" };
+const markers = (r: Awaited<ReturnType<typeof makeRig>>) => r.session.sessionManager.getEntries().filter((e) => e.type === "custom" && e.customType === ALLY_ENTRY);
+
+test("RVAF-F001: an ally run writes the ally marker into its own session (once); a local run writes none", async () => {
+	for (const kind of ["local", "ally"] as const) {
+		const srv = server();
+		const inner = srv.ask.bind(srv);
+		srv.ask = async (request: Request): Promise<Answer> => { const a = await inner(request); return request.cmd === "claim" ? { ...a, kind, ...(kind === "ally" ? { level: "reply", peer: PEER } : {}) } : a; };
+		const r = await rig(srv);
+		await until(() => srv.requests.some((q) => q.cmd === "run-poll"), `the ${kind} run to poll`);
+		assert.equal(markers(r).length, kind === "ally" ? 1 : 0, `${kind}: markers`);
+		(globalThis as Record<symbol, unknown>)[Symbol.for("pi-straw-boss.run.mark")] = undefined;
+	}
+});
+
+test("RVAF-F001: the pane-role ask says the session carries the ally marker, and says nothing of it when it does not", async () => {
+	flagOn();
+	for (const allyMark of [true, false]) {
+		const srv = server();
+		const inner = srv.ask.bind(srv);
+		srv.ask = async (request: Request): Promise<Answer> => (request.cmd === "pane-role" ? (srv.requests.push(request), { ok: true, role: allyMark ? "quit" : "none" }) : inner(request));
+		const r = await rig(srv, { flag: null, herdr: herdrWith({}, TOWER_LABEL), glyphWaitMs: 5000, allyMark });
+		await until(() => srv.requests.some((q) => q.cmd === "pane-role"), "the pane-role ask");
+		const got = srv.requests.find((q) => q.cmd === "pane-role") as Request & { ally?: unknown };
+		if (allyMark) { assert.strictEqual(got.ally, true); await until(() => r.shutdowns.length === 1, "the quit"); } else assert.equal("ally" in got, false);
+		(globalThis as Record<symbol, unknown>)[Symbol.for("pi-straw-boss.run.mark")] = undefined;
+	}
+});
+
+test("RVAF-F001: a pi with STRAW_BOSS_ROLE=tower in a migrated pane (no tower entry) says its session carries the ally marker too, and is quit on the server's answer", async () => {
+	flagOn();
+	const srv = server();
+	const inner = srv.ask.bind(srv);
+	srv.ask = async (request: Request): Promise<Answer> => (request.cmd === "pane-role" ? (srv.requests.push(request), { ok: true, role: "quit", reason: "ally" }) : inner(request));
+	const r = await rig(srv, { flag: null, herdr: herdrWith({ sb_role: "tower" }, TOWER_LABEL), env: { STRAW_BOSS_ROLE: "tower" }, allyMark: true });
+	await until(() => r.shutdowns.length === 1, "the pi to quit");
+	assert.strictEqual((srv.requests.find((q) => q.cmd === "pane-role") as Request & { ally?: unknown }).ally, true);
 });
 
 test("B6 VM F4: a resident tower (STRAW_BOSS_ROLE=tower) in a pane the server marked is never asked pane-role, so a /reload cannot make it a hand run; it stays a normal session that hands over itself", async () => {

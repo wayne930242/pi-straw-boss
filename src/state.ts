@@ -15,6 +15,8 @@ import type { HerdrEvents, HerdrWatch } from "./server-watch.ts";
 
 /** The session entry the extension writes to the pi session (a tower's mark, an orphan nudge) and the key of its system prompt section. */
 export const ENTRY = "straw-boss";
+/** The entry an ally run writes into its own session: a mark that outlives the server's run records, so a pi that later resumes the session is told to quit (the server grants nothing else on its word). */
+export const ALLY_ENTRY = "straw-boss-ally";
 // pi-intercom's extension API as constants and minimal types: intercom is a runtime requirement, not an import.
 export const REGISTER = "intercom:extension-register";
 

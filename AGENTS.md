@@ -19,3 +19,4 @@
 ## Design
 
 - Reading the screen cannot tell a TUI dialog's state apart from model-written text. Review rounds broke such a check with transcript text, model text inside the dialog box, ANSI escapes in model text (`\x1b[3G`, split SGR), and a hidden draft restored by the dialog. Anything that sends keys to a dialog needs a state signal from the extension that owns the dialog, or a re-read after every key step.
+- Whether the server may type the tower prompt's command into a standing pane (F10: never into a pane that runs a program) is decided by `src/server/typegate.ts` alone. A fix for a pane typed into wrongly changes a rule there and its table test (`tests/typegate.test.ts`), never a branch in `standing.ts` or `runs.ts`, which only gather facts and act on the answer (the marks set at `attach` and `reset` are facts, listed in the header of `typegate.ts`); B6 review rounds RV10 to RV14 reopened F10 three times because each fix touched one path.

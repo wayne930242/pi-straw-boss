@@ -321,3 +321,45 @@ test("idleShell is unchanged: a shells-only list is idle only for a pane known f
 	assert.equal(idleShell(info, false, false), false);
 	assert.equal(idleShell(info, true, false), true);
 });
+
+// The facts the look gathers for the gate (src/server/typegate.ts, tests/typegate.test.ts pins the rules alone): each of these fails if the look hands the gate a wrong fact.
+test("gate facts: a held Windows service is not typed into, whatever else proves the pane fresh; where Herdr gives the groups the hold does not matter", async () => {
+	const r = rig();
+	r.state = "held";
+	r.standing.handed("wA"); // the resident's pi is gone: the pane is fresh, but the service holds it
+	await looks(r, 4);
+	assert.deepEqual(r.typed, [], "held: nothing typed");
+	r.state = "standing";
+	await looks(r, 2);
+	assert.equal(r.typed.length, 1, "the hold over, the proof stands");
+	const d = rig("darwin");
+	d.state = "held";
+	await looks(d, 1);
+	assert.equal(d.typed.length, 1, "macOS: the groups say the shell is idle");
+});
+
+test("gate facts: a run holds the pane (its state, or the order to leave) and nothing is typed until it has ended", async () => {
+	const r = rig("darwin");
+	r.state = "running" as never;
+	await looks(r, 3);
+	assert.deepEqual(r.typed, [], "a run is live");
+	r.state = "standing";
+	await looks(r, 1);
+	assert.equal(r.typed.length, 1);
+	const w = rig("darwin");
+	await w.standing.yieldPane("wA"); // a run is about to start pi there: the prompt is told to leave
+	await looks(w, 3);
+	assert.deepEqual(w.typed, [], "leaving");
+	w.standing.freed("wA");
+	await w.standing.tick();
+	assert.equal(w.typed.length, 1, "the run ended");
+});
+
+test("gate facts: a resident tower's hand-over is not believed while the prompt polls: the pane it would free is not a bare shell once the prompt is gone", async () => {
+	const r = rig();
+	r.standing.poll("wA", 4321);
+	r.standing.handed("wA");
+	await looks(r, 9); // the prompt stops polling, and 6 s later it no longer counts as there
+	assert.deepEqual(r.typed, [], "no proof: Windows types nothing");
+	assert.equal(said(r, "prompt-lost").length, 1, "and says the prompt is lost");
+});

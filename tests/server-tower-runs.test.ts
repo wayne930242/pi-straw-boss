@@ -324,6 +324,8 @@ test("the computer slept: a clock step longer than `lost` between two watcher ti
 		const from = world.aliveCalls;
 		await until(() => world.aliveCalls >= from + 2, "two watcher ticks", 20_000);
 	};
+	// A gap is measured from the end of the last tick: the watcher has completed one before the clock steps (a process that is slow to run its timer would otherwise take the step for the run's silence).
+	await ticks();
 	// A Mac wakes after five minutes: the first tick that runs sees the run silent for that long, whatever the order of the run's own poll.
 	clock.advance(300_000);
 	await ticks();

@@ -6,7 +6,7 @@ import { type AgentSession, createAgentSession, DefaultResourceLoader, type Exte
 import { Type } from "typebox";
 import { createLink } from "../src/link/runtime.ts";
 import { createRunMode } from "../src/runmode.ts";
-import type { Kit } from "../src/state.ts";
+import { ALLY_ENTRY, type Kit } from "../src/state.ts";
 
 // A real pi agent session (a faux model, no network) with the run mode of the extension loaded and the server it asks replaced by a function: tests/run-session.test.ts scripts it, and
 // tests/run-e2e.test.ts hands it the sb server of a test world.
@@ -16,7 +16,7 @@ export type Answer = { ok: boolean; [key: string]: unknown };
 /** The scratch folder of one rig: made by `scratchRoot()`, removed by the caller with `rmSync`. */
 export const scratchRoot = () => realpathSync(mkdtempSync(join(tmpdir(), "psb-run-session-")));
 
-export async function rig(root: string, ask: (request: Request) => Promise<Answer>, sessions: AgentSession[], { flag = "RUN", herdr, glyphWaitMs = 300, lostMs = 300, gateMs = 60, sessionDir, env, entries, towerAskMs = 300, startOf, realSleep, reason, exitWaitMs }: { towerAskMs?: number; /** How long a quit waits for a pane-role answer in flight. */ exitWaitMs?: number; /** Why the session starts (pi's `session_start` reason); startup by default. */ reason?: "startup" | "reload" | "new" | "resume" | "fork"; /** Replaces the process start time read (a test counts the reads). */ startOf?: (pid: number) => string | undefined; /** The run mode's sleeps are real timers (the bound of the pane-role ask is a race against one). */ realSleep?: boolean; entries?: unknown[]; env?: Record<string, string>; flag?: string | null; herdr?: (args: string[]) => Promise<string>; glyphWaitMs?: number; lostMs?: number; gateMs?: number; /** Keep the session in a file of this folder, as pi does (its file appears at the first assistant message); in memory by default. */ sessionDir?: string } = {}) {
+export async function rig(root: string, ask: (request: Request) => Promise<Answer>, sessions: AgentSession[], { flag = "RUN", herdr, glyphWaitMs = 300, lostMs = 300, gateMs = 60, sessionDir, env, entries, allyMark, towerAskMs = 300, startOf, realSleep, reason, exitWaitMs }: { towerAskMs?: number; /** How long a quit waits for a pane-role answer in flight. */ exitWaitMs?: number; /** Why the session starts (pi's `session_start` reason); startup by default. */ reason?: "startup" | "reload" | "new" | "resume" | "fork"; /** Replaces the process start time read (a test counts the reads). */ startOf?: (pid: number) => string | undefined; /** The run mode's sleeps are real timers (the bound of the pane-role ask is a race against one). */ realSleep?: boolean; entries?: unknown[]; /** The session already carries the ally marker (it is an ally run's session, resumed). */ allyMark?: boolean; env?: Record<string, string>; flag?: string | null; herdr?: (args: string[]) => Promise<string>; glyphWaitMs?: number; lostMs?: number; gateMs?: number; /** Keep the session in a file of this folder, as pi does (its file appears at the first assistant message); in memory by default. */ sessionDir?: string } = {}) {
 	// A run in this process that was not shut down by a quit leaves its claim for a /reload (runmode.ts KEPT): a rig is a new process.
 	(globalThis as Record<symbol, unknown>)[Symbol.for("pi-straw-boss.run")] = undefined;
 	(globalThis as Record<symbol, unknown>)[Symbol.for("pi-straw-boss.resident")] = undefined;
@@ -46,7 +46,7 @@ export async function rig(root: string, ask: (request: Request) => Promise<Answe
 	await loader.reload();
 	if (flag !== null) loader.getExtensions().runtime.flagValues.set("sb-run", flag);
 	const { session } = await createAgentSession({
-		cwd: project, agentDir, modelRuntime: runtime, model: runtime.getModel("faux", "faux-1")!, resourceLoader: loader, sessionManager: (() => { const sm = sessionDir ? SessionManager.create(project, sessionDir) : SessionManager.inMemory(); for (const data of entries ?? []) sm.appendCustomEntry("straw-boss", data); return sm; })(),
+		cwd: project, agentDir, modelRuntime: runtime, model: runtime.getModel("faux", "faux-1")!, resourceLoader: loader, sessionManager: (() => { const sm = sessionDir ? SessionManager.create(project, sessionDir) : SessionManager.inMemory(); for (const data of entries ?? []) sm.appendCustomEntry("straw-boss", data); if (allyMark) sm.appendCustomEntry(ALLY_ENTRY, { run: true }); return sm; })(),
 		settingsManager: SettingsManager.inMemory({}),
 		...(reason ? { sessionStartEvent: { type: "session_start", reason } } : {}),
 	} as never);

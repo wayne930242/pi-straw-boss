@@ -20,10 +20,17 @@ export class FakeAlly implements AllyPort {
 	level = new Map<string, string>();
 	projects = new Map<string, string>();
 	threads = new Map<string, { dir: "in" | "out"; at: number; kind: string; text: string }[]>();
+	/** The holder is slow to drop an item it was told is taken (its inbox file goes under a lock): the item stays listed. */
+	lingering = false;
 	waiting(identity: string) {
-		return identity === this.identity ? this.items.filter((i) => !this.takenIds.includes(i.id)) : [];
+		return identity === this.identity ? this.items.filter((i) => this.lingering || !this.takenIds.includes(i.id)) : [];
 	}
+	/** While set, the holder takes its time to drop a message (`takenCalls` counts the asks that wait). */
+	takenGate: Promise<void> | undefined;
+	takenCalls = 0;
 	async taken(id: string) {
+		this.takenCalls++;
+		await this.takenGate;
 		this.takenIds.push(id);
 	}
 	standing(device: string) {
@@ -58,6 +65,8 @@ export class TowerWorld extends ServerWorld {
 	/** What every client's `listSessions` answers: the live sessions of the broker. */
 	sessions: Session[] = [];
 	takeovers: (() => void)[] = [];
+	/** The watch's second callback: the Herdr it was open to has stopped (its socket closed), before any new one answers. */
+	losts: (() => void)[] = [];
 	/** The pi processes `agent start` made: run id → PID and pane; and the signals the server sent. */
 	pis = new Map<string, { pid: number; pane: string; args: string[] }>();
 	kills: [number, string][] = [];
@@ -73,6 +82,8 @@ export class TowerWorld extends ServerWorld {
 	settingsError: Error | undefined;
 	/** While set, the settings check waits for it (a pi started by hand meanwhile). */
 	settingsHold: Promise<void> | undefined;
+	/** How often the settings check ran: once for every run the server starts. */
+	settingsCalls = 0;
 	runTimers: Partial<Timers> = {};
 	standingTimers: Partial<StandingTimers> = {};
 	/**
@@ -121,7 +132,7 @@ export class TowerWorld extends ServerWorld {
 				this.clients.push(client);
 				return client;
 			} }),
-			herdr: { run: this.herdr.runFor("none"), events: this.herdr.events, api: this.herdr.api, watch: (cb: () => void) => (this.takeovers.push(cb), () => {}) },
+			herdr: { run: this.herdr.runFor("none"), events: this.herdr.events, api: this.herdr.api, watch: (cb: () => void, lost?: () => void) => (this.takeovers.push(cb), lost && this.losts.push(lost), () => {}) },
 			towers: {
 				recoverMs: 150, registerMs: 500, residentMs: 20, retryMs: [20], ally: this.ally, ...(this.refreshMs ? { refreshMs: this.refreshMs } : {}), standing: { ...FAST_STANDING, ...this.standingTimers }, ...(this.serverAllows ? {} : { allows: this.allows }), expose: (t: Towers) => void (this.expose = t),
 				link: async (body, from) => {
@@ -131,7 +142,7 @@ export class TowerWorld extends ServerWorld {
 				},
 				runs: {
 					timers: { ...FAST_RUNS, ...this.runTimers }, ...(this.runClock ? { now: this.runClock.now } : {}), alive: (pid) => (this.aliveCalls++, this.aliveHook?.(pid), this.live.has(pid)), procs: async (runId) => (this.procReads++, await this.procGate?.(runId), this.procTable), startOf: (pid) => (this.startCalls++, `T-${pid}`), kill: (pid, signal) => void this.kills.push([pid, signal]),
-					settings: async () => { await this.settingsHold; if (this.settingsError) throw this.settingsError; },
+					settings: async () => { this.settingsCalls++; await this.settingsHold; if (this.settingsError) throw this.settingsError; },
 					...(this.runMax ? { max: () => this.runMax! } : {}),
 					...(this.runPlatform ? { platform: this.runPlatform } : {}),
 				},

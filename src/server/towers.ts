@@ -20,6 +20,7 @@ import type { Allows } from "./allows.ts";
 import type { Asks } from "./asks.ts";
 import { ageOf, allyTools, buildAllyBrief, buildBrief, gatherMains, LOCAL_TOOLS } from "./towerbrief.ts";
 import { createStanding, type PromptReply, type StandingTimers } from "./standing.ts";
+import { claimGate, proofGate, seatGate, type SeatVerdict } from "./typegate.ts";
 import { addAnswer, addRoute, ALLY_LEDGER, type Peer, readAnswers, removeAnswer, routeOf, spendRoute } from "./allyroute.ts";
 import { type AllyItem, type AllyPort, createRuns, type Runs, type RunsOptions, type ServiceRef, type ServiceStatus } from "./runs.ts";
 import { type ConversationInfo, sessionsRoot } from "./bossconv.ts";
@@ -44,6 +45,8 @@ const UNKNOWN = "(unknown)";
 export const RUN_SEND_CAP_MS = 20_000;
 const RETRY_MS = [1000, 2000, 5000, 10_000, 30_000];
 const REFRESH_MS = 4 * 60_000, RECOVER_MS = 60_000, RECOVER_POLL_MS = 2000, RESIDENT_MS = 2000, REGISTER_WAIT_MS = 3000, LEAVE_MS = 2000;
+/** How old a caller's "I just made this pane" may be and still be believed (the desk step asks within a second or two of making the base). */
+const MADE_WITHIN_MS = 30_000;
 /** What a tab is called once its standing pane was replaced and it kept other panes. */
 const FORMER_LABEL = "former tower";
 /** What Herdr reports that ends a tower's tab, or moves the head: any of them makes the service look again. */
@@ -66,6 +69,8 @@ export interface TowersOptions {
 	sessions(): Promise<Session[]>;
 	/** How long a Herdr restart is given to bring the tower tabs back, how often the tokens are written again, and how often a waiting service looks at its resident. */
 	recoverMs?: number;
+	/** How often the minute after a restart looks at the tabs again (2 s); a test shortens it to leave the minute's look out of what it pins. */
+	recoverPollMs?: number;
 	refreshMs?: number;
 	residentMs?: number;
 	/** How long `ensure` waits for the identity to register before it answers. */
@@ -98,7 +103,7 @@ export interface Towers {
 	/** Whether the runs of the last server are loaded and the identities adopted (true when the tower runs are off: there is nothing to load). */
 	loaded(): boolean;
 	/** Gives a workspace its tower (a promotion, `/boss tower`, a handover from a resident tower of this build). */
-	ensure(request: { workspace: string; pane?: string; cwd?: string; pid?: number }): Promise<Ensured>;
+	ensure(request: { workspace: string; pane?: string; cwd?: string; pid?: number; made?: { pane: string; at: number } }): Promise<Ensured>;
 	/** The boss closed the tower: its tab goes, and the service with it. */
 	close(workspace: string): Promise<{ workspace: string; id: string }>;
 	/** The opener, with the persisted ledger, for the workspace's tower. */
@@ -137,6 +142,14 @@ interface Live {
 	registered?: Promise<boolean>;
 	/** The standing pane is being replaced (`renew`). */
 	renewing?: boolean;
+	/**
+	 * The recorded pane is proven to be this service's own seat (typegate.ts `seatGate`). A service the server made or renewed is seated; one adopted from `service.json`, or after a Herdr came back, is not until `prove` says so: nothing is
+	 * typed, marked, or woken in a pane before (a lost session's reused ids can name the boss's own shell, VM pass B7 F10). `epoch` moves whenever the proof is voided, so a proof read before it is not believed after.
+	 * The proof is for one terminal of the pane (`terminal`, typegate.ts `proofGate`): each act asks it of a listing read just before, so a new Herdr that answers before the server's connections are acknowledged again is a stranger's at once.
+	 */
+	seated: boolean;
+	terminal?: string;
+	epoch: number;
 	stopped: boolean;
 	/** The messages taken, for dedupe (towerseen.ts); opened when the first message comes. */
 	seen?: Seen;
@@ -161,7 +174,8 @@ export function createTowers(o: TowersOptions): Towers {
 	const refOf = (l: Live): ServiceRef => ({
 		workspace: l.record.workspace,
 		record: () => l.record,
-		live: () => l.state === "live" && Boolean(l.client?.isConnected()),
+		live: () => l.state === "live" && l.seated && Boolean(l.client?.isConnected()),
+		proven: () => proven(l),
 		cwd: async () => (await panes(run, l.record.workspace).catch(() => [])).find((p) => p.pane_id === l.record.pane)?.cwd ?? l.record.cwd ?? slot.stateDir,
 		towerKey: async () => (await netTokens(run, place(l), "tower", l.record.name, now(), cfg.world)).own.sb_order ?? undefined,
 		yieldPane: () => standing.yieldPane(l.record.workspace),
@@ -374,10 +388,14 @@ export function createTowers(o: TowersOptions): Towers {
 
 	/** The marks the guard, `tower_list`, the dashboard, and the sidebar find the tower by: the workspace's `tower` token and the standing pane's role and sort key. Display and discovery only. */
 	const publish = async (l: Live) => {
+		// Nothing is written to a pane that is not proven to be the tower's own (a stranger's shell under a reused id gets no marks).
+		if (!l.seated) return;
 		// A live foreign holder keeps the workspace: this service steps back and waits for it (a hand-over whose reply was lost leaves the resident running and publishing its own token).
 		const foreign = await residentOf(l);
 		if (foreign) return void (await yieldTo(l, foreign));
 		const own: Record<string, string | null> = await netTokens(run, place(l), "tower", l.record.name, now(), cfg.world).then((net) => net.own, () => ({}));
+		// The proof is asked of a listing read now, after the reads above: the marks go only to a pane that is still in the terminal it was proven for.
+		if (!(await proven(l))) return;
 		await Promise.all([
 			report(run, "workspace", l.record.workspace, { tower: l.record.id, sb_tower_quit: null }),
 			report(run, "pane", l.record.pane, { sb_role: "tower", ...own }),
@@ -403,9 +421,10 @@ export function createTowers(o: TowersOptions): Towers {
 	 * The standing pane: the recorded one when Herdr kept it. After a Herdr restart (`fallback`) a tab labelled with the tower glyph that has a single pane in the workspace stands
 	 * in for a pane whose id was not kept. Undefined when neither is there.
 	 */
-	const locate = async (l: Live, fallback: boolean): Promise<Pane | undefined> => {
+	const locate = async (l: Live, fallback: boolean, notId?: string): Promise<Pane | undefined> => {
 		const ps = await panes(run, l.record.workspace);
-		const byId = ps.find((p) => p.pane_id === l.record.pane);
+		// `notId`: the pane under the recorded id is a stranger's (`prove`), so only the tab the glyph names can stand in.
+		const byId = notId ? undefined : ps.find((p) => p.pane_id === l.record.pane);
 		if (byId || !fallback) return byId;
 		const claimed = new Set([...services.values()].filter((x) => x !== l).map((x) => x.record.pane));
 		const candidates = (await tabs(run, l.record.workspace)).filter((t) => t.label === TOWER_LABEL).flatMap((t) => {
@@ -415,14 +434,83 @@ export function createTowers(o: TowersOptions): Towers {
 		return candidates[0];
 	};
 
+	/**
+	 * Whether the pane (the recorded one, or the one a restore put the tower's tab in) is this service's own seat: the facts are read here, the answer is typegate.ts `seatGate`'s. A proof of the recorded pane seats the service,
+	 * unless the proof was voided or the record moved while Herdr answered. `unknown`: Herdr did not answer, nothing is proven or refuted.
+	 */
+	const prove = async (l: Live, pane?: Pane): Promise<SeatVerdict | "unknown"> => {
+		const record = l.record, epoch = l.epoch;
+		try {
+			const seat = pane ?? (await panes(run, record.workspace)).find((p) => p.pane_id === record.pane);
+			const tab = seat ? (await tabs(run, record.workspace)).find((t) => t.tab_id === seat.tab_id) : undefined;
+			const verdict = seatGate({ pane: seat, tab });
+			// The proof is for the terminal the pane is in now (`terminal` stays undefined where Herdr lists none).
+			if (verdict === "ours" && seat?.pane_id === record.pane && l.record === record && l.epoch === epoch && !l.stopped) (l.seated = true, l.terminal = seat.terminal_id);
+			return verdict;
+		} catch {
+			return "unknown";
+		}
+	};
+	/** The proof of one service is void until it is proven again; a look of it that is in flight stops at its next question. */
+	const voidSeat = (l: Live) => {
+		l.seated = false;
+		l.terminal = undefined;
+		l.epoch++;
+	};
+	/** A Herdr came back (or its events connection did): what was proven of the panes is void until it is proven again. */
+	const unseat = () => {
+		for (const l of services.values()) voidSeat(l);
+	};
+	/** A new Herdr server holds the ids: every proof is void, and the minute in which a restore brings the tabs back opens (the events connection acknowledging again says the same, up to two seconds later). */
+	const herdrChanged = () => {
+		unseat();
+		recoverUntil = Math.max(recoverUntil, now() + (o.recoverMs ?? RECOVER_MS));
+	};
+	/**
+	 * Whether the proof still holds for the pane as `pane` lists it (typegate.ts `proofGate`); an act that rests on the proof asks it of a listing it has just read. A pane in another terminal than the one proven means a new Herdr
+	 * server (Herdr gives every pane of a new server a new terminal id): the proof is void, the minute opens, and the look proves the seats again, which a pane under a reused id never passes. A proof made for a pane whose
+	 * terminal was not known (a tab this server made a moment ago) takes the terminal of the first listing that shows it.
+	 */
+	const holds = (l: Live, pane: Pane | undefined): boolean => {
+		if (!l.seated || l.stopped) return false;
+		switch (proofGate({ terminal: l.terminal, pane })) {
+			case "holds":
+				return true;
+			case "bind":
+				l.terminal = pane!.terminal_id;
+				return true;
+			case "moved":
+				log.line("tower-unseated", { workspace: l.record.workspace, pane: l.record.pane, why: "the pane is in another terminal than the one proven: a new Herdr server" });
+				herdrChanged();
+				void look();
+				return false;
+			default:
+				return false;
+		}
+	};
+	/** `holds`, for a listing read now: a run's start and the marks use it; a listing that fails proves nothing. */
+	const proven = async (l: Live): Promise<boolean> => {
+		if (!l.seated || l.stopped) return false;
+		const record = l.record, epoch = l.epoch;
+		try {
+			const pane = (await panes(run, record.workspace)).find((p) => p.pane_id === record.pane);
+			return l.record === record && l.epoch === epoch && holds(l, pane);
+		} catch {
+			return false;
+		}
+	};
+
 	/** The boss closed the tower, or its tab is gone: the identity leaves, the marks go, `sb_tower_quit` records how many members the base had, and the record goes. The queue stays 24 h. */
-	const lose = async (l: Live, why: string) => {
+	const lose = async (l: Live, why: string, stranger = false) => {
+		// A look of this service that is waiting on Herdr stops at its next question: it types nothing after the service is gone.
+		voidSeat(l);
 		if (services.get(l.record.workspace) === l) services.delete(l.record.workspace);
 		await standing.detach(l.record.workspace);
 		await runs.detach(l.record.workspace, why);
 		await release(l);
 		log.line("tower-closed", { workspace: l.record.workspace, id: l.record.id, why });
-		try {
+		// A pane that proved to be a stranger's is not ours to mark or clear, not even as a quit tower's.
+		if (!stranger) try {
 			const [ps, all] = await Promise.all([panes(run, l.record.workspace).catch(() => []), workspaces(run)]);
 			const held = all.find((w) => w.workspace_id === l.record.workspace)?.tokens?.tower;
 			// Another tower's token (a resident tower that took the workspace) is not ours to clear.
@@ -490,7 +578,7 @@ export function createTowers(o: TowersOptions): Towers {
 			await release(l);
 			if (services.get(ws) !== l) return await abandon();
 			if (stopped) return undefined;
-			services.set(ws, adopt(l.record));
+			services.set(ws, adopt(l.record, false, true));
 			return made.paneId;
 		} catch (cause) {
 			error("tower-renew", `${old.id}: ${(cause as Error).message}`);
@@ -520,10 +608,30 @@ export function createTowers(o: TowersOptions): Towers {
 				continue; // a pane or tab list that failed is unknown, not a tab that is gone
 			}
 			if (!found) {
-				if (!recovering) await lose(l, "its tab is gone");
+				// A service not seated on this Herdr is lost as a stranger's workspace unless it still carries the label of the one the service made: the id may name the boss's own workspace of a lost session (RVSEAT6-F006).
+				if (!recovering) await lose(l, "its tab is gone", !l.seated && all.find((w) => w.workspace_id === l.record.workspace)?.label !== l.record.label);
 				continue;
 			}
-			if (found.pane_id === l.record.pane && found.tab_id === l.record.tab) continue;
+			// After a Herdr came back the ids prove nothing: the pane under the recorded id must be in a tab the service made (`seatGate`), else it is a stranger's (a lost session's counters named the boss's own workspace).
+			// While the minute after a restore runs the tower's tab may stand under other ids, and is looked for; a stranger is never typed into, marked, or woken in, and the service ends when no tab is found.
+			let seated = false;
+			if (!l.seated) {
+				const verdict = await prove(l, found);
+				if (verdict === "stranger") {
+					const own = recovering ? await locate(l, true, found.pane_id).catch(() => undefined) : undefined;
+					if (!own) {
+						if (!recovering) await lose(l, "its workspace now holds another tab under the ids it made", true);
+						continue;
+					}
+					found = own;
+				} else if (verdict !== "ours") continue;
+				else seated = true;
+			}
+			if (found.pane_id === l.record.pane && found.tab_id === l.record.tab) {
+				// The proof came now: the marks are written, the prompt typed, and a waiting run woken.
+				if (seated && l.state === "live") (await publish(l), standing.kick(l.record.workspace), runs.poke(l.record.workspace));
+				continue;
+			}
 			// Herdr kept neither id: the identity registers again with the pane it stands in now, so the broker resolves its place.
 			l.record = { ...l.record, pane: found.pane_id, tab: found.tab_id };
 			writeService(slot, l.record);
@@ -548,13 +656,13 @@ export function createTowers(o: TowersOptions): Towers {
 		return !sessions || sessions.some((x) => x.id === held) ? held : undefined;
 	};
 	/** `fresh`: the standing pane was made by this call, so it is known to be a shell nobody has used (standing.ts types into it where Herdr cannot tell an idle shell from a busy one). A pane a resident tower hands over is marked by `standing.handed` once that tower's pi has left it. */
-	const adopt = (record: ServiceRecord, fresh = false): Live => {
-		const l: Live = { record, state: "registering", stopped: false, requests: new Map() };
+	const adopt = (record: ServiceRecord, fresh = false, seated = false, terminal?: string): Live => {
+		const l: Live = { record, state: "registering", stopped: false, requests: new Map(), seated, ...(seated && terminal ? { terminal } : {}), epoch: 0 };
 		const prior = services.get(record.workspace);
 		if (prior && !prior.stopped) return prior;
 		services.set(record.workspace, l);
 		runs.attach(refOf(l));
-		standing.attach({ workspace: record.workspace, label: () => l.record.label, pane: () => l.record.pane, live: () => l.state === "live" && !l.stopped && Boolean(l.client?.isConnected()), status: () => runs.status(record.workspace), runWithin: (ms) => runs.startsWithin(record.workspace, ms), paneBusy: () => runs.paneBusy(record.workspace), busyPids: () => runs.busyPids(record.workspace), paneFree: () => runs.retry(record.workspace) }, fresh);
+		standing.attach({ workspace: record.workspace, label: () => l.record.label, pane: () => l.record.pane, live: () => l.state === "live" && !l.stopped && Boolean(l.client?.isConnected()), seated: (pane) => holds(l, pane), status: () => runs.status(record.workspace), runWithin: (ms) => runs.startsWithin(record.workspace, ms), paneBusy: () => runs.paneBusy(record.workspace), busyPids: () => runs.busyPids(record.workspace), paneFree: () => runs.retry(record.workspace) }, fresh);
 		l.starting = (async () => {
 			// A resident tower keeps its workspace; the service registers its identity once that session leaves. Two towers never hold one workspace.
 			let waited = false;
@@ -570,6 +678,9 @@ export function createTowers(o: TowersOptions): Towers {
 			l.state = "registering";
 			if (!(await register(l))) return;
 			l.state = "live";
+			runs.poke(record.workspace);
+			// A record read from `service.json` names a pane whose id may be a stranger's now: the reconcile ends the service when it is, or waits for the tab while a restore brings it back.
+			if (!l.seated && (await prove(l)) !== "ours") return;
 			runs.poke(record.workspace);
 			await publish(l);
 			standing.kick(record.workspace);
@@ -600,6 +711,8 @@ export function createTowers(o: TowersOptions): Towers {
 			if (!glyph && !(typeof (record as { file?: unknown }).file === "string" && pane.agent_session?.value === (record as { file?: string }).file)) continue;
 			if (!services.has(workspace.workspace_id) && !readService(slot, workspace.workspace_id)) {
 				const made: ServiceRecord = { workspace: workspace.workspace_id, label: workspace.label, id: towerId(slot, workspace.workspace_id), name: towerName(slot, workspace.label), pane: pane.pane_id, tab: pane.tab_id, created: new Date(now()).toISOString(), seq: 0 };
+				// A tab that is the tower's by its session file, not by the glyph, gets the glyph: it is what proves the seat after a Herdr restart (typegate.ts `seatGate`).
+				if (!glyph) await run(["tab", "rename", pane.tab_id, TOWER_LABEL]).catch(() => {});
 				writeService(slot, made);
 				log.line("tower-converted", { workspace: made.workspace, pane: made.pane });
 			}
@@ -622,7 +735,7 @@ export function createTowers(o: TowersOptions): Towers {
 		const stop = cfg.events(WATCHED, (event) => {
 			// Every acknowledgement after the first is a reconnection (Herdr restarted): the recovery window opens here too, since nothing orders this connection against the watch's
 			// takeover, and a tab that is not back yet must not end its service.
-			if (event === null && connections++ > 0) recoverUntil = Math.max(recoverUntil, now() + (o.recoverMs ?? RECOVER_MS));
+			if (event === null && connections++ > 0) herdrChanged();
 			if (event === null || HEAD_EVENTS.has(event.event)) readHead();
 			look();
 		});
@@ -630,7 +743,8 @@ export function createTowers(o: TowersOptions): Towers {
 		readHead();
 		timers.push(setInterval(() => {
 			if (!o.enabled()) return void retire().catch((cause: Error) => error("retire", cause.message));
-			for (const l of services.values()) if (l.state === "live") void publish(l);
+			// A run that was refused because the seat could not be read is woken again here, at the latest.
+			for (const l of services.values()) if (l.state === "live") (void publish(l), runs.poke(l.record.workspace));
 			try {
 				purgeQueues(slot, now());
 			} catch (cause) {
@@ -638,7 +752,8 @@ export function createTowers(o: TowersOptions): Towers {
 			}
 		}, o.refreshMs ?? REFRESH_MS));
 		// A service whose tab is not found yet (Herdr is restoring) is looked for until the minute is over; one waiting for a resident looks at it. Both stop themselves.
-		timers.push(setInterval(() => { if (now() < recoverUntil + RECOVER_POLL_MS) look(); }, RECOVER_POLL_MS));
+		const poll = o.recoverPollMs ?? RECOVER_POLL_MS;
+		timers.push(setInterval(() => { if (now() < recoverUntil + poll) look(); }, poll));
 		timers.forEach((t) => t.unref());
 		standing.start();
 		await Promise.race([Promise.all(adopted.map((l) => l.starting)), sleep(o.registerMs ?? REGISTER_WAIT_MS)]);
@@ -679,20 +794,52 @@ export function createTowers(o: TowersOptions): Towers {
 
 	const answer = (l: Live, opened: boolean): Ensured => ({ id: l.record.id, workspace: l.record.workspace, label: l.record.label, tab: l.record.tab, pane: l.record.pane, opened, live: l.state === "live" });
 
-	const openFor = async (target: Workspace, hint: string | undefined, cwd: string | undefined, handedBy?: number): Promise<Ensured> => {
+	/**
+	 * What the server sees of the pane the desk step says it just made (`up --dir`, desk.ts `makeBase`): it is a base the claim is believed for when the claim is seconds old and the pane is the workspace's only pane, and a bare shell
+	 * nobody has used (so the prompt may be typed into it where Herdr cannot tell an idle shell from a busy one, F10) when it is marked as a tower and holds no agent. What the claim does with them is typegate.ts `claimGate`.
+	 */
+	const baseOf = async (ws: string, claim: { pane: string; at: number } | undefined): Promise<{ base: boolean; bare: boolean; terminal: string | undefined }> => {
+		if (!claim || Math.abs(now() - claim.at) > MADE_WITHIN_MS) return { base: false, bare: false, terminal: undefined };
+		const here = await panes(run, ws).catch(() => []);
+		const base = here.length === 1 && here[0]!.pane_id === claim.pane;
+		return { base, bare: base && here[0]!.tokens?.sb_role === "tower" && !here[0]!.agent, terminal: base ? here[0]!.terminal_id : undefined };
+	};
+
+	const openFor = async (target: Workspace, hint: string | undefined, cwd: string | undefined, handedBy?: number, claim?: { pane: string; at: number }): Promise<Ensured> => {
 		const ws = target.workspace_id;
-		const existing = services.get(ws);
+		let existing = services.get(ws);
+		// A base the caller made a moment ago is new to the server: a service still registered for its id belongs to a workspace that was lost (Herdr was killed with its session unsaved and numbered the new one alike), and it is
+		// dropped now instead of at the next refresh, so the new tower gets its tokens at once, whatever that service did in the pane meanwhile (it may have proven the base by its glyph, started its prompt there, and shows its
+		// stand-in). The pane is a fresh shell only if nothing was typed into it since (`claimGate`).
+		// A claim is used once: a service opened for this pane after the claim was made has used it, and a replay would drop the live tower and type the prompt again.
+		const used = Boolean(claim && existing && !existing.stopped && existing.record.pane === claim.pane && Date.parse(existing.record.created) >= claim.at);
+		const seen = used ? { base: false, bare: false, terminal: undefined } : await baseOf(ws, claim);
+		const { fresh } = await claimGate({
+			base: seen.base,
+			bare: seen.bare,
+			used,
+			end: async () => {
+				if (existing && !existing.stopped) await lose(existing, "its workspace was made again");
+				existing = undefined;
+			},
+			typed: () => standing.typedSince(claim!.pane, seen.terminal, claim!.at),
+		});
 		if (existing && !existing.stopped) {
 			// A pane list that fails is unknown: the ask fails, the service stays.
-			if (await locate(existing, false)) {
+			const here = await locate(existing, false);
+			// A pane under the recorded id that is a stranger's (a lost session's reused id) is no tower: the service ends and a tower is made anew.
+			const stranger = here && !existing.seated && (await prove(existing, here)) === "stranger";
+			if (here && !stranger) {
 				if (hint === existing.record.pane) standing.handed(ws, handedBy);
 				if (existing.state !== "waiting") await Promise.race([existing.starting, sleep(o.registerMs ?? REGISTER_WAIT_MS)]);
 				return answer(existing, false);
 			}
-			await lose(existing, "its tab is gone");
+			// No tab is no proof of whose workspace it is: an unseated service writes to it only while it still carries the label the service made (RVSEAT6-F006).
+			const foreign = stranger || (!existing.seated && (await workspaces(run).catch(() => [])).find((w) => w.workspace_id === ws)?.label !== existing.record.label);
+			await lose(existing, stranger ? "its workspace now holds another tab under the ids it made" : "its tab is gone", Boolean(foreign));
 		}
 		// A resident tower of an older build keeps its workspace; it is the tower until it leaves.
-		const draft: Live = { record: { workspace: ws, label: target.label, id: towerId(slot, ws), name: towerName(slot, target.label), pane: "", tab: "", created: "", seq: 0 }, state: "registering", stopped: false, requests: new Map() };
+		const draft: Live = { record: { workspace: ws, label: target.label, id: towerId(slot, ws), name: towerName(slot, target.label), pane: "", tab: "", created: "", seq: 0 }, state: "registering", stopped: false, requests: new Map(), seated: false, epoch: 0 };
 		const resident = await residentOf(draft);
 		if (resident) return { id: resident, workspace: ws, label: target.label, opened: false, resident: true, live: true };
 
@@ -723,7 +870,9 @@ export function createTowers(o: TowersOptions): Towers {
 		await cfg.api("tab.move", { tab_id: pane.tab_id, insert_index: 0 }).catch((cause: Error) => error("tab-move", cause.message));
 		const record: ServiceRecord = { ...draft.record, pane: pane.pane_id, tab: pane.tab_id, ...(pane.cwd ?? dir ? { cwd: pane.cwd ?? dir } : {}), created: new Date(now()).toISOString() };
 		writeService(slot, record);
-		const l = adopt(record, made);
+		// This call chose the pane (a tab it made, a leftover tower tab, or the pane it was handed): it is the tower's seat.
+		// A claim the server believes and that `claimGate` finds untouched is a fact the pane is a shell nobody has used, as a pane this call made is.
+		const l = adopt(record, made || (fresh && pane.pane_id === claim?.pane), true, pane.terminal_id);
 		// A pane a resident tower hands over is a shell nobody has used once that tower's pi has left it (standing.ts).
 		if (given && !made) standing.handed(ws, handedBy);
 		log.line("tower-opened", { workspace: ws, id: record.id, pane: record.pane, tab: record.tab });
@@ -731,7 +880,7 @@ export function createTowers(o: TowersOptions): Towers {
 		return answer(l, true);
 	};
 
-	const ensure: Towers["ensure"] = async ({ workspace, pane, cwd, pid }) => {
+	const ensure: Towers["ensure"] = async ({ workspace, pane, cwd, pid, made }) => {
 		if (!o.enabled()) throw new Error("towerRuns.enabled is off in config.json, so the sb server stands in for no tower");
 		if (stopped) throw new Error("the sb server is stopping");
 		await activate();
@@ -741,7 +890,7 @@ export function createTowers(o: TowersOptions): Towers {
 		// A sub workspace never has a tower: its parent workspace's tower serves it.
 		const target = isSub(asked) ? parentOf(all, asked) : asked;
 		if (!target) throw new Error(`${asked.label} is a sub workspace with no open parent workspace, so it has no tower; open the parent workspace first`);
-		const pending = opening.get(target.workspace_id) ?? openFor(target, target === asked ? pane : undefined, cwd, pid).finally(() => opening.delete(target.workspace_id));
+		const pending = opening.get(target.workspace_id) ?? openFor(target, target === asked ? pane : undefined, cwd, pid, target === asked ? made : undefined).finally(() => opening.delete(target.workspace_id));
 		opening.set(target.workspace_id, pending);
 		return pending;
 	};
@@ -816,7 +965,8 @@ export function createTowers(o: TowersOptions): Towers {
 		async close(workspace) {
 			const l = services.get(workspace);
 			if (!l) throw new Error(`The sb server stands in for no tower of workspace ${workspace}`);
-			await run(["tab", "close", l.record.tab]).catch(() => {});
+			// The tab is closed only while it is proven the tower's own (a new Herdr may have given its id to a tab of the boss's); an unproven one is left, and the service ends all the same.
+			if (l.seated || (await prove(l)) === "ours") if (await proven(l)) await run(["tab", "close", l.record.tab]).catch(() => {});
 			await lose(l, "closed by the boss");
 			return { workspace, id: l.record.id };
 		},
@@ -825,6 +975,8 @@ export function createTowers(o: TowersOptions): Towers {
 		async takeover() {
 			// A new Herdr server has no tokens and no pane environment: the tabs are looked for (for a minute, since a restore brings them back one by one), and the marks are written again.
 			recoverUntil = now() + (o.recoverMs ?? RECOVER_MS);
+			// Nothing proven of the panes holds in a new Herdr (a lost session's ids can name the boss's own shells): the look below proves each seat again, and until it does nothing is typed, marked, or woken.
+			unseat();
 			// Every pane is a fresh shell: the prompt that stood there is gone, and so is the label Herdr kept for it.
 			standing.reset();
 			// Runs that were live end with outcome `herdr-restart`, and claims are held until this has been processed (the wake protocol, step 2).

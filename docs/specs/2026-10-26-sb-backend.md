@@ -855,7 +855,7 @@ Between runs the standing pane is not a bare shell, so that the tower keeps its 
   its events connection and, for each `service.json`, finds the tower tab again: by the recorded tab and pane id when Herdr kept them,
   else by the tower glyph label with a single pane in that workspace. It marks the pane again and republishes the `tower` token.
 - Runs that were live are ended in the records (outcome `herdr-restart`), and their taken events go back to the queue with the crash
-  flag (**Crash and timeout**). Herdr's pi integration may resume their pi in the restored panes. Such a pi is quit at its start
+  flag (**Crash and timeout**). Herdr's pi integration may resume their pi in the restored panes. Such a pi is quit at its start only when the session file it sends with its `pane-role` ask is an ally run's recorded file, or when it reports that its session carries the ally marker (any other pi in that pane, or one that sends neither, is answered `none`; the server never touches the pane)
   (**The wake protocol**, step 2).
 - The next event wakes a fresh run in the restored standing pane. A test does exactly that (**Tests and anchor**).
 
@@ -995,6 +995,12 @@ something: the `boss` row. A send on its own wakes nothing.
    - **A pi without the flag** in a pane the server lists as a standing or ally pane asks `pane-role {pane, pid}` at `session_start`,
      before it joins. A pi in a tower glyph tab whose server is not live waits up to 30 s for one before it joins. The server answers:
      - `quit` in an ally pane: only the server starts pi there.
+     - `quit` for a pi that sends the session file of an ally run's record (any pane id; a pi that sends a file no record names is `none`),
+       or `ally: true`: its session carries the `straw-boss-ally` entry an ally run writes into its own session at its start. The marker
+       outlives the run records, which keep only the newest 50 of a workspace, so a session resumed again long after its run is still quit
+       and never runs unpinned at the boss's level with a teammate's text. The server takes the client's word because `quit` grants less than
+       `none` would (the pi shuts itself down; no claim, role, key, or pane action follows), and the marker is never read for anything else.
+       It is persisted by pi's own session (a custom entry written with the first message), not by the server, so no list of files grows.
      - `quit` in a standing pane that held a live run when Herdr went away, for 2 minutes after the restart. That is Herdr's pi
        integration resuming the old run, whatever its session file holds.
      - otherwise, in a standing pane, `hand`: the boss started pi there by hand. It becomes a local run with the brief and no events, gets
@@ -1557,7 +1563,7 @@ spec replaces:
 | S2, no browser | Stays: `/boss gui` prints the URL and opens nothing in desk mode. The server itself never opens a browser. |
 | S3, the state path | Stays. |
 | S4, `gui.json` as contract | Stays, extended by **`gui.json` and its successor** and **States for a shell**. |
-| S5, `desk up` | **Replaced by `cli.mjs up --dir <folder> --label <name> [--timeout s] [--exact]`** at the path of **What the server runs from**. Steps: `herdr`, `integration` (S6), `version`, `server` (start, find, restart for the switch, or upgrade), `base` (`desk.json`, as specified), `tower` (`ensure-tower`, no pi, no 90 s restore wait: a restored run is quit rather than kept), `gui` (the URL answers). With `--dir`, `up` refuses with exit 2 when the switch is missing, as specified. Without `--dir`, `up` only makes sure the server runs. |
+| S5, `desk up` | **Replaced by `cli.mjs up --dir <folder> --label <name> [--timeout s] [--exact]`** at the path of **What the server runs from**. Steps: `herdr`, `integration` (S6), `version`, `server` (start, find, restart for the switch, or upgrade), `base` (`desk.json`, as specified, except that the recorded workspace id is the base only while the workspace still matches the record: Herdr numbers a new workspace from the highest id it restored, so a quit base's id can come back as someone's project; a match is the recorded label or a pane whose real path is the recorded folder (a tower tab is no match: every workspace's tower tab has the same label), else a new base is made with the `desk_base_replaced` warning. A kept base opens its tower in the recorded folder, and `--dir` is checked only when a base is made), `tower` (`ensure-tower`, no pi, no 90 s restore wait: a restored run is quit rather than kept; when `up` made the base in this run, the ask carries `made {pane, at}`, believed only for the workspace's sole pane, made within 30 s; a tower service still registered for the id of a lost workspace is dropped at once, whatever it did in the pane meanwhile; the pane counts as a fresh shell, so on Windows the `tower>` prompt is typed into it, only when it is also marked as a tower, holds no agent, and the server has typed nothing into it since: once per pane), `gui` (the URL answers). With `--dir`, `up` refuses with exit 2 when the switch is missing, as specified. Without `--dir`, `up` only makes sure the server runs. |
 | S6, Herdr's pi integration | Stays, installed by `up`. |
 | S7, S8 | On `main` (R1). The detached start adds `windowsHide` too (**Starting**). |
 | S9, hidden features | Stays. The server reads the switch and tells the page. |
@@ -1595,7 +1601,8 @@ One JSON line on stdout:
 - `steps` lists every step that ran, in order: `herdr`, `integration` (with `--dir`), `version`, `server`, then `base`, `tower`, and
   `gui` with `--dir`, or `gui` alone without it.
 - `warnings` codes: `server_newer`, `desk_on` (a desk server found by an `up` without the switch), `remote_off` (remote access did not
-  resume, with the reason), and `integration_installed`.
+  resume, with the reason), `integration_installed`, `desk_json_unreadable` (`desk.json` is no record of the home base; a new one is made), and
+  `desk_base_replaced` (the workspace with the recorded id is no longer the base; a new one is made).
 - The last five fields come only with `--dir`.
 - Exit codes:
   - 0: done.

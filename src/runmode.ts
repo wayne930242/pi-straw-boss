@@ -12,7 +12,7 @@ import type { ServerLook } from "./server-look.ts";
 import { towerRunsEnabled } from "./server/towerruns.ts";
 import { markRun } from "./runmark.ts";
 import { startOf as processStart } from "./startof.ts";
-import { ENTRY, type Kit } from "./state.ts";
+import { ALLY_ENTRY, ENTRY, type Kit } from "./state.ts";
 import { MEMORY_DESCRIPTION, memoryParameters } from "./memorytool.ts";
 import { createTools, LINK_REQUEST_DESCRIPTION, linkRequestParameters } from "./tools.ts";
 
@@ -145,10 +145,17 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	function residentTower(context: ExtensionContext): boolean {
 		try { return context.sessionManager.getBranch().some((e) => e.type === "custom" && e.customType === ENTRY && (e.data as { tower?: unknown } | undefined)?.tower === true); } catch { return false; }
 	}
+	/** Whether this session was an ally run's: the run wrote the marker into it, and it outlives the server's run records. */
+	function allyMarked(context: ExtensionContext): boolean {
+		try { return context.sessionManager.getBranch().some((e) => e.type === "custom" && e.customType === ALLY_ENTRY); } catch { return false; }
+	}
 	async function paneRole(context: ExtensionContext): Promise<Found | { role: "late"; ask: PaneAsk }> {
 		const pane = env.HERDR_PANE_ID, workspace = env.HERDR_WORKSPACE_ID;
 		// Without the flag file no sb server runs towers, so no pane is one (and a session asks Herdr nothing at its start for this).
 		if (!pane || !workspace || !towerRunsEnabled(guiDir)) return { role: "none" };
+		const file = (() => { try { return context.sessionManager.getSessionFile() || undefined; } catch { return undefined; } })();
+		// The server answers `quit` for it and for nothing else: an ally run's session is never the boss's, however old its run record is.
+		const ally = allyMarked(context);
 		// A resident tower (it carries STRAW_BOSS_ROLE=tower) is no pi the boss typed into a standing pane: it hands its pane over itself (tower.ts). A /reload right after the server registered its identity finds its pane marked
 		// `tower` already, and asking would make it a hand run that never hands over and never ends (B6 VM F4).
 		// Only a session that already wrote its tower entry, or a process that already became a resident, is one: the env alone stays in a migrated standing pane's tab, and a pi the boss types there is a hand run. A resident's
@@ -164,7 +171,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 			if (carried) return { role: "late", ask: carried };
 			const started = startOf(process.pid);
 			// An ask that fails is no answer: resident when it fails within the bound (no server), a plain session when it fails after it (`late` settles undefined).
-			const asked = ask({ cmd: "pane-role", pane, pid: process.pid, ...(started ? { started } : {}) }).then((answer): Found | undefined => {
+			const asked = ask({ cmd: "pane-role", pane, pid: process.pid, ...(started ? { started } : {}), ...(file ? { file } : {}), ...(ally ? { ally: true } : {}) }).then((answer): Found | undefined => {
 				// SAFETY: same `pane-role` answer shape as below (runs.ts, paneRole).
 				return answer?.ok && (answer.role === "hand" || answer.role === "quit") ? (answer as unknown as Found) : { role: "none" };
 			}, () => undefined);
@@ -183,7 +190,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		if (!marked && !glyph) return { role: "none" };
 		const end = cfg.now() + (glyph ? glyphWaitMs : claimWaitMs), started = startOf(process.pid);
 		for (;;) {
-			const answer = await ask({ cmd: "pane-role", pane, pid: process.pid, ...(started ? { started } : {}) }).catch(() => undefined);
+			const answer = await ask({ cmd: "pane-role", pane, pid: process.pid, ...(started ? { started } : {}), ...(file ? { file } : {}), ...(ally ? { ally: true } : {}) }).catch(() => undefined);
 			// No server to ask: a marked pane's pi is what it was before; one in a tower tab keeps asking until its wait is over.
 			if (!answer?.ok && !glyph) return { role: "none" };
 			if (answer?.ok && answer.role !== "wait") {
@@ -421,6 +428,8 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		markRun(claim?.kind); // balance.ts reads it at the quit
 		keep();
 		if (!pinPeer()) return void refuseUnpinned();
+		// A session that was an ally run's stays one: the server's run records are pruned, this entry goes with the session when pi resumes it (paneRole asks the server to quit that pi).
+		if (claim?.kind === "ally" && !allyMarked(context)) pi.appendEntry(ALLY_ENTRY, { run: claim.run, at: new Date(cfg.now()).toISOString() });
 		registerTools();
 		await call({ cmd: "run-file", file: context.sessionManager.getSessionFile() ?? "", session: context.sessionManager.getSessionId() }).catch(() => {});
 		timer = setInterval(() => void tick(), pollMs);

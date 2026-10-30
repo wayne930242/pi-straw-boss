@@ -15,8 +15,12 @@ export interface TowerAsk {
 	pane?: string;
 	/** The PID of the resident tower that hands the pane over: the server types nothing into the pane until that process is gone. */
 	pid?: number;
+	/** The root pane of a base this run made a moment ago (desk mode): a bare shell nobody has used, which the server may type the prompt into where Herdr cannot tell an idle shell from a busy one. The server checks it before it believes it. */
+	made?: { pane: string; at: number };
 	/** The boss's own command (`/boss tower`): it clears a stop on purpose and starts the server. Anything else fails against a stopped server. */
 	boss?: boolean;
+	/** How long the ask waits for the server's answer (30 s by default). */
+	ms?: number;
 }
 
 /** Waits for a server that is restarting, starts one that is down (the boss's command may start a stopped one), and returns the record to ask. */
@@ -60,7 +64,7 @@ async function serverFor(ctx: Ctx, boss: boolean) {
 export async function ensureTowerVia(ctx: Ctx, ask: TowerAsk): Promise<TowerAnswer> {
 	const record = await serverFor(ctx, ask.boss === true);
 	try {
-		const { reply } = await callControl(record.socket, record.secret, { cmd: "ensure-tower", workspace: ask.workspace, ...(ask.cwd ? { cwd: ask.cwd } : {}), ...(ask.pane ? { pane: ask.pane } : {}), ...(ask.pid !== undefined ? { pid: ask.pid } : {}) }, 30_000);
+		const { reply } = await callControl(record.socket, record.secret, { cmd: "ensure-tower", workspace: ask.workspace, ...(ask.cwd ? { cwd: ask.cwd } : {}), ...(ask.pane ? { pane: ask.pane } : {}), ...(ask.pid !== undefined ? { pid: ask.pid } : {}), ...(ask.made ? { made: ask.made } : {}) }, ask.ms ?? 30_000);
 		if (!reply?.ok) throw new Error(`the sb server did not give the tower of ${ask.workspace}: ${String(reply?.error ?? "no answer")}`);
 		const { ok: _ok, ...answer } = reply;
 		// SAFETY: the server's `ensure-tower` reply carries exactly these fields (src/server/towers.ts, Ensured).

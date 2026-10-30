@@ -30,6 +30,8 @@ export interface RunRecord {
 	started?: string;
 	/** The processes between Herdr's listed one and pi's own, when pi was started through a wrapper (`cmd.exe /c pi.cmd`): the listed one first. A kill takes pi's own and then the listed one. */
 	via?: number[];
+	/** An ally run: the terminal its pane ran in when it was split off; a recovered run proves its pane by it (RVSEAT5-F002). */
+	terminal?: string;
 	/** The pi session file, once the pane reports it. */
 	file?: string;
 	startedAt: string;

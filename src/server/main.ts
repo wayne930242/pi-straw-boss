@@ -374,8 +374,11 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		};
 		const workspace = text(request.workspace);
 		switch (request.cmd) {
-			case "ensure-tower":
-				return workspace ? answer(async (t) => ({ ...(await t.ensure({ workspace, ...(text(request.pane) ? { pane: text(request.pane)! } : {}), ...(text(request.cwd, 4096) ? { cwd: text(request.cwd, 4096)! } : {}), ...(Number.isInteger(request.pid) && (request.pid as number) > 0 ? { pid: request.pid as number } : {}) })) })) : Promise.resolve({ ok: false, error: "ensure-tower needs a workspace" });
+			case "ensure-tower": {
+				const claim = typeof request.made === "object" && request.made !== null ? (request.made as Record<string, unknown>) : undefined;
+				const made = text(claim?.pane) && typeof claim?.at === "number" && Number.isFinite(claim.at) ? { pane: text(claim.pane)!, at: claim.at } : undefined;
+				return workspace ? answer(async (t) => ({ ...(await t.ensure({ workspace, ...(text(request.pane) ? { pane: text(request.pane)! } : {}), ...(text(request.cwd, 4096) ? { cwd: text(request.cwd, 4096)! } : {}), ...(Number.isInteger(request.pid) && (request.pid as number) > 0 ? { pid: request.pid as number } : {}), ...(made ? { made } : {}) })) })) : Promise.resolve({ ok: false, error: "ensure-tower needs a workspace" });
+			}
 			case "close-tower":
 				return workspace ? answer((t) => t.close(workspace)) : Promise.resolve({ ok: false, error: "close-tower needs a workspace" });
 			case "open-main": {
@@ -518,7 +521,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	stops.push(cfg.watch(() => {
 		log.line("herdr-takeover");
 		void towers?.takeover().catch((error: Error) => recordError("towers", error.message));
-	}));
+	}, () => (log.line("herdr-lost", { at: Date.now() }), towers?.runs.herdrLost())));
 	let downSince: number | undefined;
 	const herdrUp = o.herdrUp ?? (() => herdrListens({ slot, platform }));
 	timers.push(setInterval(() => void herdrUp().then((up) => {

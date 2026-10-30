@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { lstatSync, realpathSync } from "node:fs";
 import { basename, resolve, sep } from "node:path";
 import { fieldsOf } from "../header.ts";
-import { type HerdrRun, panes, report, result, type Sleep, startPi } from "../herdr.ts";
+import { type HerdrRun, panes, report, result, type Sleep, startPi, StartUnproven } from "../herdr.ts";
 import { allyKids, clearOrder } from "../order.ts";
 import { alive as pidAlive } from "../remote.ts";
 import { rememberStart, startOf as processStartOf, startedLater as processStartedLater } from "../startof.ts";
@@ -11,7 +11,9 @@ import { waitPastTrust } from "../trust/wait.ts";
 import type { MemorySummary, TowerView } from "../net.ts";
 import { type BossPointer, type ConversationInfo, readPointer, resumable, sessionsRoot, underRoot, writePointer } from "./bossconv.ts";
 import { herdrCode } from "./herdrcode.ts";
+import { allyPaneGate, proofGate } from "./typegate.ts";
 import { isShell, nestedShells, programName, programProcs } from "./standing.ts";
+import { retryGate, runEndGate, tableGate } from "./typegate.ts";
 import { chain, isWrapper, leafOf, type Proc, type Procs, readProcs } from "./lineage.ts";
 import type { Log } from "./log.ts";
 import type { Slot } from "./record.ts";
@@ -145,6 +147,8 @@ export interface ServiceRef {
 	record(): ServiceRecord;
 	/** Whether the identity is registered with pi-intercom: runs reply under it. */
 	live(): boolean;
+	/** Whether the standing pane is still the tower's own seat, proven on a listing read now (towers.ts `proven`): a run starts pi in no pane that is not. A listing that fails is no proof. */
+	proven(): Promise<boolean>;
 	/** The folder the settings check looks at: the standing pane's, else the workspace's checkout path. */
 	cwd(): Promise<string>;
 	/** The tower's `sb_order` key, which the panes of its ally runs are keyed after; undefined when Herdr cannot place the tower. */
@@ -202,6 +206,10 @@ interface Active {
 	polled?: true;
 	/** A local run whose `agent start` did not complete (Herdr refused it or it timed out): its pane may hold a program of the boss's, so it is not marked a fresh shell when the run ends (RV10-F002). */
 	unstarted?: true;
+	/** An ally run: the terminal its pane ran in when it was split off (Herdr lists it), the proof that the pane is still that one after a Herdr came back. */
+	terminal?: string;
+	/** An ally run recovered after a server restart whose record names no terminal: nothing proves its pane is still the one the split made, so it is treated as one a Herdr restart may have come between (RVSEAT5-F002). */
+	unbound?: true;
 	idleSince?: number;
 	started: number;
 	closing?: number;
@@ -220,6 +228,8 @@ interface Active {
 	resolving?: Promise<void>;
 	/** When the process start time was last compared with the recorded one (a `ps` call on macOS and Linux): once at first, then every `lost`. */
 	startChecked?: number;
+	/** The watch saw this run's pi gone without a word from the run: a crash is taken for one only when the next tick sees it gone too (`diedWithHerdr`). */
+	goneSeen?: boolean;
 	digestKeys: string[];
 	/** The expired waits of memory its brief showed, marked shown at its first poll (towermemory.ts). */
 	expired?: string[];
@@ -290,7 +300,7 @@ export interface RunsOptions {
 	model(): string | undefined;
 	timers?: Partial<Timers>;
 	// Seams for tests: starting pi, the settings check, process liveness, the start time of a process, signals, and run ids.
-	startPi?: typeof startPi;
+	startPi?: (run: HerdrRun, sleep: Sleep, name: string, paneId: string, piArgs: string[], proven?: () => Promise<boolean>) => Promise<unknown>;
 	settings?: (dirs: string[]) => Promise<void>;
 	alive?: (pid: number) => boolean;
 	startOf?: (pid: number) => string | undefined;
@@ -331,7 +341,9 @@ export function createRuns(o: RunsOptions) {
 	const services = new Map<string, Svc>(), byToken = new Map<string, Active>(), byRun = new Map<string, Active>(), blocked = new Set<Svc>();
 	/** The `forward` confirms an ally run waits for: dialog id → run id. */
 	const confirms = new Map<string, string>();
-	let slots = 0, pendingTakeovers = 0, watcher: ReturnType<typeof setInterval> | undefined, stopped = false;
+	let slots = 0, pendingTakeovers = 0, herdrLostAt: number | undefined, watcher: ReturnType<typeof setInterval> | undefined, stopped = false;
+	/** The messages handed back to the holder as taken, and when: the holder drops its inbox file under a lock, and a message it still lists for a moment is not given to another run (A6). */
+	const handedBack = new Map<string, number>();
 	/** Panes that held a live run when Herdr went away, with when a resumed pi there stops being the old run. */
 	const restored = new Map<string, number>();
 	const error = (code: string, text: string) => log.line("error", { code, text: phrase(text, 300) });
@@ -402,6 +414,17 @@ export function createRuns(o: RunsOptions) {
 		if (active.ended) return; // the service was detached during the check
 		svc.refusedAt = undefined;
 		svc.notices = svc.notices.filter((n) => n.id !== "settings");
+		// The seat is proven on a listing read now, not on the flag the last Herdr left: a new Herdr that answers before the server's connections are acknowledged again may hold the pane's id for the boss's own shell (F10).
+		// A refused wake is made again when the seat is proven (the look pokes) or at the service's next refresh.
+		if (!(await svc.ref.proven())) {
+			if (active.ended) return;
+			slots--;
+			svc.run = undefined;
+			svc.state = "standing";
+			log.line("run-refused", { workspace: svc.ref.workspace, why: "seat" });
+			return;
+		}
+		if (active.ended) return;
 		// A boss event written at the tower prompt (or the GUI's composer) with no local run live starts the boss conversation: it resumes the boss session when bossconv.ts says it may, else begins a new one.
 		const resume = bossWake(svc) ? await conversationOf(svc) : undefined;
 		if (active.ended) return;
@@ -435,16 +458,18 @@ export function createRuns(o: RunsOptions) {
 		svc.proving = true;
 		// The pane is not marked fresh before the read: the unstarted run left it unmarked, the look's proof sets no mark (RV13-F002), and a give-back here would clear what is known of a prompt that polls (RV14-F001).
 		try {
-			const found = await belowShell(svc.ref.record().pane, newId()).catch(() => undefined);
-			if (stopped || svc.run || waitingOf(svc).length) return; // a run is about to take the pane: its start decides
-			if (found === undefined) return void noticeOf(svc, { id: "start", level: "warning", kind: "start", text: "The tower could not check the standing pane for a program of yours, so it types nothing there; press Retry when it is free" });
-			const busy = [...new Set(found.map(programName))];
-			if (busy.length) {
+			const scan = await scanBelow(svc.ref.record().pane, newId()).catch(() => undefined), found = scan?.programs;
+			if (stopped || retryGate({ win, run: Boolean(svc.run), queued: waitingOf(svc).length > 0, wasBusy: false }) !== "prove") return; // a run is about to take the pane: its start decides (the gate's rule, asked again after the read)
+			const proof = tableGate(found, scan?.prompt === true);
+			if (proof === "unreadable") return void noticeOf(svc, { id: "start", level: "warning", kind: "start", text: "The tower could not check the standing pane for a program of yours, so it types nothing there; press Retry when it is free" });
+			const busy = [...new Set((found ?? []).map(programName))];
+			if (proof === "program") {
 				svc.paneBusy = busy;
-				svc.busyPids = found.flatMap((p) => (typeof p.pid === "number" ? [p.pid] : []));
+				svc.busyPids = (found ?? []).flatMap((p) => (typeof p.pid === "number" ? [p.pid] : []));
 				svc.state = "held";
 				return void noticeOf(svc, { id: "start", level: "warning", kind: "start", text: `The tower types nothing in the standing pane: ${busyText(busy)}` });
 			}
+			if (proof === "prompt") return;
 			svc.paneUnproven = undefined;
 			svc.ref.freed({ keepParked: true });
 		} finally {
@@ -459,7 +484,14 @@ export function createRuns(o: RunsOptions) {
 			try {
 				// The standing pane shows the tower prompt between runs; Herdr starts an agent only in an available shell, so the prompt leaves first. An ally run has a pane of its own.
 				if (rec.kind === "local") await svc.ref.yieldPane().catch((cause: Error) => error("run-yield", `${rec.id}: ${cause.message}`));
-				await start(o.run, o.sleep, rec.agent, rec.pane, ["--name", name, "--sb-run", id, ...extra, ...(o.model() ? ["--model", o.model()!] : [])]);
+				// The wait above (the prompt leaving, up to seconds) may have outlasted the seat: pi starts in the pane only while it is proven now. A run that ends here never started pi, so the pane is not marked fresh.
+				if (!(await svc.ref.proven())) {
+					if (active.ended) return;
+					log.line("run-refused", { workspace: svc.ref.workspace, why: "seat", run: id });
+					active.unstarted = true;
+					return void (await finish(active, "herdr-restart", "the standing pane is no longer proven to be the tower's"));
+				}
+				await start(o.run, o.sleep, rec.agent, rec.pane, ["--name", name, "--sb-run", id, ...extra, ...(o.model() ? ["--model", o.model()!] : [])], () => (rec.kind === "ally" ? allyPaneHeld(active) : svc.ref.proven()));
 				started = true;
 				const found = await procOf(rec.pane, id);
 				if (!found) throw new Error("pi's process was not found in the pane");
@@ -471,6 +503,12 @@ export function createRuns(o: RunsOptions) {
 				return;
 			} catch (cause) {
 				if (active.ended) return;
+				// The seat was lost while the start waited for the pane: pi started in none, and the run ends as one whose seat was lost before it.
+				if (cause instanceof StartUnproven) {
+					log.line("run-refused", { workspace: svc.ref.workspace, why: "seat", run: id });
+					active.unstarted = true;
+					return void (await finish(active, "herdr-restart", "the standing pane is no longer proven to be the tower's"));
+				}
 				// A start that failed with a program of the boss's in the pane's foreground (not a shell, not the tower prompt) is the pane's doing (RV2-F001: nothing of theirs is closed, and a start that is not Herdr's timeout code is no reason for a new pane): the notice names the program and the service starts again when the pane is free.
 				const info = started || rec.kind !== "local" ? undefined : await paneInfo(rec.pane);
 				let programs: { pid?: number; argv0?: string; name?: string }[] = programProcs(info);
@@ -532,8 +570,14 @@ export function createRuns(o: RunsOptions) {
 	/** The devices with messages waiting that have no ally run and are not held by a crash loop, oldest message first. */
 	const devicesWaiting = (svc: Svc): { device: string; items: AllyItem[] }[] => {
 		const groups = new Map<string, AllyItem[]>();
-		for (const item of o.ally?.waiting(svc.ref.record().id) ?? []) groups.set(item.device, [...(groups.get(item.device) ?? []), item]);
+		for (const [id, at] of handedBack) if (now() - at > t.loop) handedBack.delete(id);
+		for (const item of o.ally?.waiting(svc.ref.record().id) ?? []) if (!handedBack.has(item.id)) groups.set(item.device, [...(groups.get(item.device) ?? []), item]);
 		return [...groups].filter(([device]) => !svc.allies.has(device) && !heldDevice(svc, device)).map(([device, items]) => ({ device, items }));
+	};
+	/** Tells the holder a message is taken, and remembers it: no run is begun for it again, whatever the holder still lists. */
+	const handBack = async (id: string, identity: string) => {
+		await o.ally?.taken(id, identity);
+		handedBack.set(id, now());
 	};
 	const beginAllies = async (svc: Svc) => {
 		for (const { device, items } of devicesWaiting(svc)) {
@@ -548,10 +592,12 @@ export function createRuns(o: RunsOptions) {
 		const standing = o.ally!.standing(device, first.team);
 		if (!standing) {
 			// The sender left the roster (or the team): its messages are dropped, as a tower of the previous build drops them.
-			for (const item of waiting) await o.ally!.taken(item.id, identity).catch(() => {});
+			for (const item of waiting) await handBack(item.id, identity).catch(() => {});
 			log.line("ally-dropped", { workspace: svc.ref.workspace, device, why: "not a member", n: waiting.length });
 			return;
 		}
+		// A stale snapshot of `beginAllies` may name a device whose run another pass has just begun, or one held since (RVAE-F001).
+		if (svc.allies.has(device) || heldDevice(svc, device)) return;
 		const items = waiting.slice(0, ALLY_BATCH), id = newId(), woken = now();
 		slots++;
 		const rec: RunRecord = { id, workspace: svc.ref.workspace, kind: "ally", device, deviceLabel: first.label, deviceShort: first.short, team: first.team, teamName: first.teamName, level: standing.level, pane: "", agent: agentName(slot, svc.ref.workspace, id, "ally"), startedAt: iso(woken), events: [], admitted: items.map((x) => x.id) };
@@ -563,6 +609,7 @@ export function createRuns(o: RunsOptions) {
 			if (active.ended) return;
 			slots--;
 			svc.allies.delete(device);
+			release();
 			svc.refusedAt = now();
 			noticeOf(svc, { id: "settings", level: "error", kind: "settings", text: `A run could not start: ${(cause as Error).message}` });
 			log.line("run-refused", { workspace: svc.ref.workspace, why: "settings", kind: "ally" });
@@ -571,10 +618,33 @@ export function createRuns(o: RunsOptions) {
 		if (active.ended) return;
 		svc.refusedAt = undefined;
 		svc.notices = svc.notices.filter((n) => n.id !== "settings");
+		// The ally pane is split off the standing pane: not while the seat is unproven (the tab may be a stranger's).
+		if (!(await svc.ref.proven())) {
+			if (active.ended) return;
+			slots--;
+			svc.allies.delete(device);
+			release();
+			log.line("run-refused", { workspace: svc.ref.workspace, why: "seat", kind: "ally" });
+			return;
+		}
+		if (active.ended) return;
+		// The messages the run was admitted for are read again: one that another run took, or the holder dropped, while the checks above ran is not given out, and a run left with none starts no pane.
+		const left = new Set((o.ally?.waiting(identity) ?? []).filter((x) => !handedBack.has(x.id)).map((x) => x.id));
+		rec.admitted = items.filter((x) => left.has(x.id)).map((x) => x.id);
+		if (!rec.admitted.length) {
+			slots--;
+			svc.allies.delete(device);
+			release();
+			log.line("ally-gone", { workspace: svc.ref.workspace, device, run: id, n: items.length });
+			return;
+		}
 		try {
 			const lead = svc.ref.record().pane, dir = await svc.ref.cwd();
 			const made = await result(o.run, ["pane", "split", lead, "--direction", "right", "--cwd", dir, "--no-focus"]);
 			rec.pane = made.pane.pane_id as string;
+			// A listing that fails is read again: a run whose terminal is not known stays without a terminal, and where Herdr lists terminal ids `proofGate` then says `bind`: the pane is neither marked nor closed.
+			for (let read = 0; read < 3 && active.terminal === undefined; read++) active.terminal = (await panes(o.run, svc.ref.workspace).catch(() => [])).find((p) => p.pane_id === rec.pane)?.terminal_id;
+			rec.terminal = active.terminal;
 			await markAllies(svc);
 		} catch (cause) {
 			if (active.ended) return;
@@ -599,10 +669,29 @@ export function createRuns(o: RunsOptions) {
 		if (!live.length) return;
 		const key = towerKey === undefined ? await svc.ref.towerKey().catch(() => undefined) : towerKey ?? undefined;
 		const kids = key ? allyKids(key, live.map((a) => ({ pane: a.rec.pane, label: a.rec.deviceLabel ?? a.rec.device ?? "?" }))) : [];
+		// Only a pane still in the terminal its run's split made is marked: after a Herdr restart an id may name a pane of the boss's own (F10).
+		const listed = await panes(o.run, svc.ref.workspace).catch(() => undefined);
 		for (const a of live) {
+			if (!listed || !allyPaneGate(proofGate({ terminal: a.terminal, pane: listed.find((p) => p.pane_id === a.rec.pane) }))) continue;
 			const kid = kids.find((k) => k.pane === a.rec.pane);
 			await report(o.run, "pane", a.rec.pane, { sb_role: "ally", sb_order: kid?.order ?? null, sb_mark: kid?.mark ?? null, sb_indent: kid?.indent ?? null, sb_name: kid?.name ?? null }).catch(() => {});
 		}
+	};
+	/** Whether an ally run's pane is ours to close now: only a pane still in the terminal its split made (typegate.ts `allyPaneGate`). After a Herdr restart (or for a run whose pane no terminal proves) it is never ours: the boss closes what is left. */
+	const allyOurs = async (svc: Svc, a: Active, restart: boolean): Promise<boolean> => {
+		if (restart) return false;
+		try {
+			const listed = (await panes(o.run, svc.ref.workspace)).find((p) => p.pane_id === a.rec.pane);
+			return allyPaneGate(proofGate({ terminal: a.terminal, pane: listed }));
+		} catch {
+			return false;
+		}
+	};
+	/** Whether an ally run's start may go on: the run lives, the tower's seat is proven, and the pane is still listed in the terminal its split made (a pane under that id in another terminal is a stranger's; RVSEAT5-F003). */
+	const allyPaneHeld = async (a: Active): Promise<boolean> => {
+		if (a.ended || a.unbound || !(await a.svc.ref.proven()) || a.ended) return false;
+		const listed = await panes(o.run, a.svc.ref.workspace).catch(() => undefined);
+		return !a.ended && !!listed && proofGate({ terminal: a.terminal, pane: listed.find((p) => p.pane_id === a.rec.pane) }) === "holds";
 	};
 	/** A Herdr agent name is lowercase, up to 32 characters, and unique per run. */
 	const agentName = (s: Slot, workspace: string, id: string, prefix = "tower") => `${prefix}-${s.primary ? "" : `${s.slot8}-`}${workspace.toLowerCase().replace(/[^a-z0-9_-]/g, "")}-${id.slice(0, 8)}`.slice(0, 32).replace(/[-_]+$/, "");
@@ -621,13 +710,15 @@ export function createRuns(o: RunsOptions) {
 	 */
 	const belowShell = async (pane: string, runId: string): Promise<{ pid?: number; name?: string }[] | undefined> => (await scanBelow(pane, runId))?.programs;
 	/** The same read, with the nested shells it found below the pane's shell besides (they are no program to name, but a start that Herdr refused as busy has them for its cause). */
-	const scanBelow = async (pane: string, runId: string): Promise<{ programs: { pid?: number; name?: string }[]; shells: { pid?: number; name?: string }[] } | undefined> => {
+	const scanBelow = async (pane: string, runId: string): Promise<{ programs: { pid?: number; name?: string }[]; shells: { pid?: number; name?: string }[]; prompt: boolean } | undefined> => {
 		const shell = (await paneInfo(pane))?.shell_pid, table = typeof shell === "number" ? await procs(runId) : undefined;
 		// Undefined is a read that failed (no shell PID from Herdr, the process table did not answer); an empty list is a read that found nothing.
 		if (typeof shell !== "number" || !table) return undefined;
 		const own = (pid: number) => chain(table, pid, shell)?.some((up) => table.find((p) => p.pid === up)?.carries || table.find((p) => p.pid === up)?.prompt) === true;
 		const found = table.filter((p) => p.pid !== shell && !/^(conhost|openconsole)(\.exe)?$/i.test(p.name) && chain(table, p.pid, shell) !== undefined && !own(p.pid)).map((p) => ({ pid: p.pid, name: p.name }));
-		return { programs: programProcs({ foreground_processes: found }), shells: found.filter(isShell) };
+		// A tower prompt below the shell: it is there, or still starting (not polling yet).
+		const prompt = table.some((p) => p.prompt && chain(table, p.pid, shell) !== undefined);
+		return { programs: programProcs({ foreground_processes: found }), shells: found.filter(isShell), prompt };
 	};
 	const pidsOf = async (pane: string): Promise<number[] | undefined> => (await foreground(pane))?.flatMap((p) => (typeof p.pid === "number" ? [p.pid] : []));
 	/** The process Herdr lists for the run: the one whose command line holds the run id, else the one named pi. It may be a wrapper that started pi (`resolve`). */
@@ -728,7 +819,9 @@ export function createRuns(o: RunsOptions) {
 		if (a.escalated === undefined) {
 			a.escalated = now();
 			log.line("run-quit-keys", { run: a.rec.id });
-			// pi has not exited: Escape and /quit through Herdr.
+			// pi has not exited: Escape and /quit through Herdr, into a pane proven to be the run's: an ally's own terminal, a local run's tower seat. After a lost session the id may name a pane of the boss's own (RVSEAT6-F004); the signal below ends the run.
+			const held = a.rec.kind === "ally" ? await allyPaneHeld(a) : await a.svc.ref.proven().catch(() => false);
+			if (!held) return void log.line("run-quit-keys-skipped", { run: a.rec.id, pane });
 			for (const args of [["pane", "send-keys", pane, "esc"], ["pane", "send-text", pane, "/quit"], ["pane", "send-keys", pane, "enter"]]) await o.run(args).catch(() => {});
 			return;
 		}
@@ -749,6 +842,17 @@ export function createRuns(o: RunsOptions) {
 		return current !== undefined && current !== a.rec.started;
 	};
 
+	/**
+	 * Whether a pi that is gone died with Herdr, so the takeover ends its run (`herdr-restart`) and no crash is counted. A pi lives in a pane of Herdr, and a Herdr that stops (or is killed) takes its panes' processes with it: the watch's
+	 * socket closing says so (`herdrLost`), and a takeover under way ends every live run when its look is done. A pi seen gone with neither word is a crash, but only when the next tick sees it gone too: Herdr's socket may close a moment
+	 * after its panes' processes do (a clean stop), and a verdict at the first sight would be taken before it says so. A Herdr that was lost and does not come back has `lost` to do so; then the pi's death is a crash as before (A3).
+	 */
+	const diedWithHerdr = (a: Active) => {
+		if (pendingTakeovers > 0 || (herdrLostAt !== undefined && now() - herdrLostAt < t.lost)) return true;
+		if (a.goneSeen) return false;
+		return (a.goneSeen = true);
+	};
+
 	/** Ends a run in the records: its events, its note, the crash rules, and the service goes back to standing (the next wake comes 1 s later). */
 	async function finish(a: Active, outcome: Outcome, detail?: string, keepTaken = false) {
 		if (a.ended) return;
@@ -765,10 +869,10 @@ export function createRuns(o: RunsOptions) {
 		slots = Math.max(0, slots - 1);
 		if (svc.run === a) svc.run = undefined;
 		const ally = a.rec.kind === "ally";
-		if (ally && a.rec.device && svc.allies.get(a.rec.device) === a) svc.allies.delete(a.rec.device);
 		const taken = ally ? [] : readQueue(slot, ws).filter((e) => e.taken?.run === a.rec.id);
 		const failed = outcome === "crashed" || outcome === "timeout";
-		if (ally) await finishAlly(a, outcome, failed, keepTaken);
+		// The device keeps its run until its messages are handed back: a run begun meanwhile would take them again (A6).
+		if (ally) await finishAlly(a, outcome, failed, keepTaken).finally(() => void (a.rec.device && svc.allies.get(a.rec.device) === a && svc.allies.delete(a.rec.device)));
 		for (const e of taken) {
 			try {
 				if (!failed && outcome !== "herdr-restart" && !keepTaken) removeEvent(slot, ws, e);
@@ -783,7 +887,7 @@ export function createRuns(o: RunsOptions) {
 		if (!ally) {
 			svc.lastRun = { endedAt: a.rec.endedAt, outcome };
 			svc.state = svc.state === "held" ? "held" : "standing";
-			svc.ref.freed(a.unstarted ? { fresh: false } : undefined);
+			svc.ref.freed(runEndGate(Boolean(a.unstarted)));
 		}
 		log.line("run-end", { workspace: ws, run: a.rec.id, kind: a.rec.kind, outcome, ...(detail ? { detail: phrase(detail, 120) } : {}) });
 		if (failed && ally) {
@@ -813,7 +917,9 @@ export function createRuns(o: RunsOptions) {
 	async function finishAlly(a: Active, outcome: Outcome, failed: boolean, keepTaken: boolean) {
 		const svc = a.svc, identity = svc.ref.record().id;
 		// The pane is closed once pi has exited: a pane that pi leaves returns to its shell and would stay (a started pi that is still there goes with it).
-		if (a.rec.pane) {
+		// After a new Herdr came back the id may name a pane of the boss's own: the pane is closed and unmarked only when it is listed in the terminal the ally run's pane ran in (typegate.ts `proofGate`).
+		const ours = a.rec.pane ? await allyOurs(svc, a, outcome === "herdr-restart") : false;
+		if (ours) {
 			await clearOrder(o.run, [a.rec.pane]);
 			await o.run(["pane", "close", a.rec.pane]).catch(() => {});
 			// The panes of the device's siblings move up in the order, and the branch of the last one is drawn.
@@ -822,14 +928,14 @@ export function createRuns(o: RunsOptions) {
 		for (const id of a.rec.events) {
 			try {
 				if (!failed && outcome !== "herdr-restart" && !keepTaken) {
-					await o.ally?.taken(id, identity);
+					await handBack(id, identity);
 					poison.delete(id);
 				} else if (outcome === "herdr-restart" || keepTaken) continue;
 				else {
 					const n = (poison.get(id) ?? 0) + 1;
 					poison.set(id, n);
 					if (n >= 2) {
-						await o.ally?.taken(id, identity);
+						await handBack(id, identity);
 						poison.delete(id);
 						noticeOf(svc, { id: `parked-${id}`, level: "warning", kind: "late", text: `A message from ${a.rec.device ?? "a device"} was dropped after two ally runs crashed with it` });
 					}
@@ -870,10 +976,12 @@ export function createRuns(o: RunsOptions) {
 				if (a.ended) continue;
 				const age = now() - a.started;
 				const exited = gone(a) || (a.rec.pid === undefined && a.token !== undefined && (await panes(o.run, a.rec.workspace).catch(() => undefined))?.every((p) => p.pane_id !== a.rec.pane) === true);
+				if (!exited) a.goneSeen = false; // a sighting counts only with the next tick's (RVAE-F002)
 				if (exited) {
 					// A hand run whose pi left before it ever polled was an orphan claim (the pi quit while the pane-role answer was late, and nothing released it): the boss left, nothing crashed.
 					const orphan = a.rec.hand === true && !a.polled && a.pending === undefined && a.closing === undefined;
 					const outcome = a.pending ?? (a.closing !== undefined ? "done" : orphan ? "quit" : "crashed");
+					if (outcome === "crashed" && diedWithHerdr(a)) continue;
 					await finish(a, outcome, outcome === "crashed" ? "pi exited without tower_done" : orphan ? "the pi left before its first poll" : undefined, a.left === true);
 					continue;
 				}
@@ -1005,8 +1113,11 @@ export function createRuns(o: RunsOptions) {
 	/** A pi without the flag in a pane the server lists as a standing pane (or an ally pane): quit, or take the pane as a run of the boss's own. */
 	async function paneRole(req: Record<string, unknown>): Promise<{ ok: true; role: "none" | "quit" | "wait" | "hand"; reason?: string; claim?: ClaimReply }> {
 		const pane = phrase(req.pane, 64), pid = req.pid;
-		// An ally pane is the server's: it starts pi there itself, so a pi without the flag has no business in it.
-		if ([...byRun.values()].some((a) => a.rec.kind === "ally" && a.rec.pane === pane)) return { ok: true, role: "quit", reason: "this pane belongs to an ally run; only the sb server starts pi there" };
+		// A pi is quit only when its own session file is the one an ally run recorded (Herdr resumed that session after a restart). The pane id proves nothing: after a restart it may be the boss's own pi, which is never answered `quit` and never sent keys.
+		const file = typeof req.file === "string" && req.file.length > 0 && req.file.length <= 4096 ? req.file : undefined;
+		// The pi also reports that its own session carries the ally marker (runmode.ts, ALLY_ENTRY), which outlives the run records (KEEP_RUNS). The word of a client is safe here for it can only make its own pi quit: no claim, no side effect, no pane touched.
+		if (req.ally === true) return { ok: true, role: "quit", reason: "this session was an ally run's; only the sb server starts such a run" };
+		if (file && [...byRun.values(), ...[...services.values()].flatMap((s) => listRuns(slot, s.ref.workspace).map((rec) => ({ rec })))].some((a) => a.rec.kind === "ally" && a.rec.file === file)) return { ok: true, role: "quit", reason: "this session was an ally run's; only the sb server starts such a run" };
 		const svc = [...services.values()].find((s) => s.ref.record().pane === pane);
 		if (!svc || typeof pid !== "number") return { ok: true, role: "none" };
 		if (pendingTakeovers > 0) return { ok: true, role: "wait" };
@@ -1250,6 +1361,7 @@ export function createRuns(o: RunsOptions) {
 			// A run of a server that went away: it has `lost` to reconnect with its run id; until then it is the service's run.
 			// A conversation of the last server is still the boss's: its time counts from its start (the boss's presence is memory only, and their next word tells it again).
 			const a: Active = { rec, svc, commands: [], lastPoll: now(), started: Date.parse(rec.startedAt) || now(), digestKeys: [], offered: new Map(), polled: true, recovering: now(), ...(rec.left ? { left: true, pending: "quit" as Outcome } : {}), ...(rec.conversation ? { boss: now(), bossSince: Date.parse(rec.startedAt) || now(), turns: ((p) => (p?.run === rec.id ? p.turns : rec.turns ?? rec.conversation!.turns))(readPointer(slot, ws)), ...(rec.fresh ? { fresh: true } : {}), ...(rec.deferred && rec.file && readPointer(slot, ws)?.run !== rec.id ? { pendingFile: rec.file } : {}) } : {}) };
+			if (rec.kind === "ally") rec.terminal ? (a.terminal = rec.terminal) : (a.unbound = true);
 			if (rec.kind === "ally" && rec.device) svc.allies.set(rec.device, a);
 			else {
 				svc.run = svc.run ?? a;
@@ -1344,15 +1456,23 @@ export function createRuns(o: RunsOptions) {
 			}
 			return a && !a.ended ? { id: a.rec.id, workspace: a.rec.workspace, kind: a.rec.kind, ...(a.rec.level ? { level: a.rec.level } : {}), ...(a.rec.device ? { device: a.rec.device } : {}), ...(a.rec.deviceLabel ? { deviceLabel: a.rec.deviceLabel } : {}), ...(a.rec.team ? { team: a.rec.team } : {}), pane: a.rec.pane, asks: itemsOf(a, true).flatMap((i) => (i.awaitsReply ? [i.awaitsReply] : [])) } : undefined;
 		},
+		/** The Herdr the server watched stopped (its socket closed): a pi that dies from now on died with it, and the takeover that follows ends its run. */
+		herdrLost() {
+			herdrLostAt = now();
+		},
 		/** A new Herdr server took over: the takeover is counted until `settled` (claims are held meanwhile), and every live run ends with outcome `herdr-restart`. */
 		takeoverBegin() {
 			pendingTakeovers++;
-			for (const a of [...byRun.values()]) restored.set(a.rec.pane, now() + t.restored);
+			for (const a of [...byRun.values()]) {
+				// An old ally pane is never marked restored: its run ends with the restart, and a pi Herdr resumed there is answered "none" (no run of its own, no keys from the server); the boss closes the pane.
+				if (a.rec.kind !== "ally") restored.set(a.rec.pane, now() + t.restored);
+			}
 		},
 		async takeoverEnd() {
 			const runs = [...byRun.values()];
 			for (const a of runs) await finish(a, "herdr-restart");
 			pendingTakeovers = Math.max(0, pendingTakeovers - 1);
+			if (!pendingTakeovers) herdrLostAt = undefined;
 		},
 		/** The boss writes to the tower (the GUI's composer, `/boss tower <prompt>`, the tower prompt): an event ahead of the rest; a held service wakes again. */
 		boss(workspace: string, text: string, from = "the boss", opts: { present?: boolean } = {}): QueuedEvent {
@@ -1391,12 +1511,10 @@ export function createRuns(o: RunsOptions) {
 			svc.paneBusy = undefined;
 			svc.notices = svc.notices.filter((n) => n.id !== "loop" && n.id !== "start");
 			if (svc.state === "held") svc.state = "standing";
-			// With no event to start a run the boss's Retry gives the pane back as the run's end would: the prompt is typed again (RV11-F001). Where a program of the boss's holds the pane (`wasBusy`) only the look's proof does.
-			// Windows: never before the process table shows the pane holds nothing (`proveEmpty`), whatever the service believes of the pane (RV12-F001, RV13-F001). The give-back keeps the boss's Ctrl+D park.
-			if (!svc.run && !waitingOf(svc).length) {
-				if (win) void proveEmpty(svc).catch((cause: Error) => error("run-prove", cause.message));
-				else if (!wasBusy) svc.ref.freed({ keepParked: true });
-			}
+			// What Retry may do to the pane is the gate's to say (typegate.ts `retryGate`); the give-back keeps the boss's Ctrl+D park.
+			const plan = retryGate({ win, run: Boolean(svc.run), queued: waitingOf(svc).length > 0, wasBusy });
+			if (plan === "prove") void proveEmpty(svc).catch((cause: Error) => error("run-prove", cause.message));
+			else if (plan === "give-back") svc.ref.freed({ keepParked: true });
 			poke(svc);
 		},
 		/**
@@ -1450,7 +1568,7 @@ export function createRuns(o: RunsOptions) {
 				...(run && !run.ended && run.rec.conversation ? { conversation: conversationStatus(run) } : {}),
 				...(run && !run.ended && run.rec.kind === "local" && !run.rec.conversation && run.rec.bossIn ? { bossIn: { id: run.rec.id, since: run.rec.bossIn } } : {}),
 				...(localRunRows(workspace).length ? { localRuns: localRunRows(workspace) } : {}),
-				allyRuns: [...svc.allies.values()].map((a) => ({ id: a.rec.id, device: a.rec.device ?? "?", label: a.rec.deviceLabel ?? a.rec.deviceShort ?? (a.rec.device ?? "?").slice(0, 6), startedAt: a.rec.startedAt })),
+				allyRuns: [...svc.allies.values()].filter((a) => !a.ended).map((a) => ({ id: a.rec.id, device: a.rec.device ?? "?", label: a.rec.deviceLabel ?? a.rec.deviceShort ?? (a.rec.device ?? "?").slice(0, 6), startedAt: a.rec.startedAt })),
 				...(svc.lastRun ? { lastRun: svc.lastRun } : {}),
 				...(recent ? { crashes: recent } : {}),
 				notices: svc.notices,
@@ -1538,7 +1656,7 @@ export function createRuns(o: RunsOptions) {
 			const status = api.status(workspace);
 			if (!status) return undefined;
 			const rows = api.queue(workspace).map((e) => ({ text: phrase(`${e.kind}${e.from?.name ?? e.from?.id ? ` · ${e.from?.name ?? e.from?.id}` : ""}: ${e.text.split("\n").find((l) => l.trim()) ?? ""}`, 240), as: "followUp" as const }));
-			const file = api.file(workspace), allyFiles = Object.fromEntries([...(find(workspace)?.allies.values() ?? [])].flatMap((a) => (a.rec.file ? [[a.rec.id, a.rec.file]] : [])));
+			const file = api.file(workspace), allyFiles = Object.fromEntries([...(find(workspace)?.allies.values() ?? [])].filter((a) => !a.ended).flatMap((a) => (a.rec.file ? [[a.rec.id, a.rec.file]] : [])));
 			// The event runs among the last local runs are read-only units of their own; the conversation's file is the tower unit's.
 			const eventFiles = Object.fromEntries(listRuns(slot, workspace).filter((r) => r.kind === "local" && !r.conversation && r.file).slice(-RUNS_SHOWN).map((r) => [r.id, r.file!]));
 			const memory = find(workspace)?.ref.memory?.();
