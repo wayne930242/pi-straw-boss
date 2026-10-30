@@ -96,3 +96,10 @@ test("merge train: main hands integration cars over with why shared, planning st
 	assert.ok(words(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8")) <= 380);
 	assert.ok(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8").includes("finding with evidence"));
 });
+
+test("merge train: the integrator needs no shared call for its own merges, and the tower answers its shared request instead of forwarding it back", () => {
+	const integrator = readFileSync(`${PROMPT_DIR}/integrator.md`, "utf8");
+	assert.ok(integrator.includes("Your own merges and pushes need no `shared` call: the slips' auth covers them"));
+	assert.ok(readFileSync(`${PROMPT_DIR}/tower-run.md`, "utf8").includes("from the integrator itself, answer go or wait"));
+	assert.ok(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8").includes("its own: go/wait"));
+});

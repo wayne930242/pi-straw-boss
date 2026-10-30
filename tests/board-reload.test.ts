@@ -118,3 +118,22 @@ test("RV2-F001: a finished line purged by a tower's read while the main idles is
 	await b.fire("turn_end");
 	assert.ok(entryOf("a1"));
 });
+
+test("N-F004: the session id absent at session_start (pi-intercom sets it later) still seeds the first refresh as the start", async () => {
+	const a = await main();
+	setTodos(a, DONE);
+	await a.fire("turn_end");
+	clock += ENDED_MS + 10_000;
+	purge(boardDir(), new Set(["a1"]), clock);
+	assert.equal(entryOf("a1"), undefined);
+	const carry = [...a.entries];
+	await a.stop("reload");
+	const b = world.agent({ id: "a1", name: "api-main", pane: "wA:p1", tab: "wA:t1", deps: { now } });
+	b.entries.push(...(carry as never[]));
+	delete b.env!.PI_INTERCOM_SESSION_ID;
+	await b.start();
+	b.env!.PI_INTERCOM_SESSION_ID = "a1"; // pi-intercom's own session_start
+	await b.promote();
+	await b.fire("turn_end");
+	assert.equal(entryOf("a1"), undefined, "the purged finished line is not written again");
+});

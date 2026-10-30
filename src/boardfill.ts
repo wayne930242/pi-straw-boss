@@ -19,7 +19,7 @@ export interface BoardFill {
 
 export function createBoardFill({ pi, cfg, s, guiDir, me, role, tell }: Kit): BoardFill {
 	const dir = join(guiDir, "board");
-	let ctx: { cwd?: string; sessionManager?: { getBranch(): readonly unknown[] } } | undefined, last: string | undefined, seeded = false, warned = false, doneAt: number | undefined;
+	let ctx: { cwd?: string; sessionManager?: { getBranch(): readonly unknown[] } } | undefined, last: string | undefined, seeded = false, startPending = false, warned = false, doneAt: number | undefined;
 	/** The name the user or the agent gave the session; pi's default (none, or the session id) is no name. */
 	const named = () => {
 		const name = pi.getSessionName()?.trim() ?? "";
@@ -46,7 +46,7 @@ export function createBoardFill({ pi, cfg, s, guiDir, me, role, tell }: Kit): Bo
 				seeded = true;
 				const own = readEntries(dir).find((e) => e.session === me());
 				if (own) s.boardId = me();
-				const seed = seedBoard({ own, derived: d, key, withdrawn: withdrawnKey(branchOf()) });
+				const seed = seedBoard({ own, derived: d, key, withdrawn: withdrawnKey(branchOf()), atStart: startPending }); startPending = false;
 				last = seed.last ?? last; // what the session start seeded (a finished list) stands
 				doneAt = seed.doneAt ?? doneAt;
 			}
@@ -70,10 +70,10 @@ export function createBoardFill({ pi, cfg, s, guiDir, me, role, tell }: Kit): Bo
 		refresh();
 	};
 	pi.on("session_start", (_e, c) => {
-		[ctx, last, seeded, doneAt] = [c as typeof ctx, undefined, false, undefined];
+		[ctx, last, seeded, doneAt, startPending] = [c as typeof ctx, undefined, false, undefined, true]; // pi-intercom sets the id in its own session_start, after this one: if absent, the first refresh that finds it seeds as the start
 		// A line a reload kept is this session's from the start: a quit before any turn deletes it (s.boardId), as one written here would be.
 		try {
-			if (!me()) return;
+			if (!me()) return; startPending = false;
 			const own = readEntries(dir).find((e) => e.session === me());
 			if (own) s.boardId = me();
 			// A finished list this reload carries, whose line a tower's read purged, is not written again.
