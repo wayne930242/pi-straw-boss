@@ -91,8 +91,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// T4 visual fix to 424: net.ts (`bossIn` on `TowerService`, kept equal to runs.ts).
 	// Remote app entry (D25) with T4 to 440: gui.ts routes `/sb-app/` to appentry.ts, sends a dead or unpaired document load of this machine's user there, serves a remote page's manifest with the entry as its start URL, sets the pairing cookie for both paths, and hands the page the typed code.
 	// Keep the token (D27) to 442: gui.ts takes the stored token and CSRF secret as `keep` and keeps them when it binds both of their ports (`kept` on the Gui).
-	// Wi-Fi access (L5) to 463: gui.ts hands the LAN listeners the handler of kind "lan" (the entry, the verdict, the cookies, the documents' ticket, the streams keyed by network) and routes the `lan/*` reads and writes to this computer's page only.
-	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 463, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
+	// Wi-Fi access (L5) to 466 (the RVL4 merge adds the documents' device and their revoke): gui.ts hands the LAN listeners the handler of kind "lan" (the entry, the verdict, the cookies, the documents' ticket, the streams keyed by network) and routes the `lan/*` reads and writes to this computer's page only.
+	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 466, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
 	// Input (the spec's figure), remote access over Tailscale, its terminal pairing panel (QR, c copies, o opens), and the QR encoder each have their own.
 	// What a waiting session waits on (0.5.0, read for display only; answering is deferred) has its own as well.
 	// 0.5.1 raised remote.ts from 165 to 185 (a recorded server counts as running only if its process started when the entry says: a reused PID

@@ -132,6 +132,22 @@ test("documents on a LAN listener: the load needs the cookie and hands a ticket 
 	assert.deepEqual([api.status, JSON.parse(api.body).text], [200, "# notes"], "the document's text for the page, with the cookie");
 });
 
+test("a document's tickets end with the device whose load handed them out (Unpair), and with every device when Wi-Fi access goes off; another device's stay", async () => {
+	const w = await world(), a = await w.pair("192.168.1.23"), b = await w.pair("192.168.1.24");
+	const ticketOf = async (jar: Record<string, string>) => {
+		const load = await w.send(`/${w.token}/doc/${CAP}/`, { headers: { ...jar, "sec-fetch-dest": "iframe", "sec-fetch-site": "same-origin" } });
+		return /<base href="(\/[0-9a-f]{32}\/doc\/[0-9a-f]{32}\/r\/[0-9a-f]{32}\/)"/.exec(load.body)![1]!;
+	};
+	const [ta, tb] = [await ticketOf(a.jar), await ticketOf(b.jar)];
+	const style = (base: string) => w.send(`${base}style.css`, { headers: { "sec-fetch-dest": "style" } }).then((r) => r.status);
+	assert.deepEqual([await style(ta), await style(tb)], [200, 200]);
+	assert.equal(w.gui.access.devices.unpair(sha(a.cookie).slice(0, 16)), true);
+	assert.deepEqual([await style(ta), await style(tb)], [401, 200], "Unpair ends that device's tickets only");
+	w.gui.access.lan.disable();
+	w.gui.access.lan.enable(); // (while it is off every request is refused anyway: on again, the ticket must be gone)
+	assert.equal(await style(tb), 401, "Wi-Fi access off ends the rest");
+});
+
 test("a paired device's LAN streams end with their network or device alone: Wi-Fi off ends Wi-Fi streams and leaves the tailnet's; unpairing one device ends that device's", async () => {
 	const w = await world(), a = await w.pair("192.168.1.23"), b = await w.pair("192.168.1.24");
 	const HOST = "box.tail1.ts.net:8443", LOGIN = "me@example.com", tailnet = { host: HOST, "tailscale-user-login": LOGIN, "x-forwarded-for": "100.87.7.97" };

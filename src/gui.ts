@@ -124,7 +124,10 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 	// Turning remote access off ends the streams of remote pages, and unpairing a device ends that device's (`remotes` names each stream's device); their next request finds the cookie void.
 	const clients = new Map<ServerResponse, Watch | undefined>(), remotes = new Map<ServerResponse, { device: string; net: Network }>();
 	// A device's streams end with it (`device` names it), or all of a network's when only `net` is named, or every remote one when neither is (a new token).
-	const access = createAccess(token, (device, net) => remotes.forEach((d, c) => (!device || d.device === device) && (!net || d.net === net) && c.end()), paired, { ...(lan ? { file: lan.file } : {}), ...(lan?.notify ? { notify: lan.notify } : {}), ...(lan?.log ? { log: lan.log } : {}) });
+	const access = createAccess(token, (device, net) => {
+		remotes.forEach((d, c) => (!device || d.device === device) && (!net || d.net === net) && c.end());
+		if (net !== "tailnet") docs?.revoke(device); // a LAN device's document tickets and answer nonces end with it (Unpair, Unpair all, Wi-Fi access off, a new token)
+	}, paired, { ...(lan ? { file: lan.file } : {}), ...(lan?.notify ? { notify: lan.notify } : {}), ...(lan?.log ? { log: lan.log } : {}) });
 	const pair = (code = access.pair(), host = access.remote?.host, url = `https://${host}/${token}/pair/${code}`) => (code && host ? { url, rows: qr(url).map((row) => row.map(Number).join("")), code: access.pairCode() } : undefined);
 	const entry = createEntry(access, token, HEADERS), mirrors = createMirrors({ call, lookup: (key) => net?.lookup(key), secret: waitsForSecret, canonical }), docs = hub && createDocs(hub, (key) => net?.lookup(key)?.name ?? key);
 	const stop = (asked: Asked) => (refuseTake && asked.take ? false : (setTimeout(() => (onStop ? onStop(asked) : void halt()), 10), true)); // after the reply has gone out
@@ -210,7 +213,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 		// A pairing code was just exchanged: the cookies are set, and the page reloads itself, so they also ride on a same-site navigation.
 		if ("cookie" in who) return void res.writeHead(200, { ...HEADERS, "content-type": TYPES[".html"], "set-cookie": [cookieFor(token, who.cookie), appCookieFor(who.cookie)] }).end(`<!doctype html><meta http-equiv="refresh" content="0;url=/${token}/"><p>Paired. Opening the straw net…</p>`);
 		// On a LAN listener a document needs the allowed device's cookie, and everything it fetches a ticket that load hands out (docs.ts); the listener's own verdict says whether this request carried the cookie.
-		const wifiDoc = "net" in who && who.net === "lan" ? { token, cookie: Boolean("device" in who && who.device) } : undefined;
+		const wifiDoc = "net" in who && who.net === "lan" ? { token, cookie: Boolean("device" in who && who.device), ...("device" in who && who.device ? { device: who.device } : {}) } : undefined;
 		if (path[0] === "doc") return void (docs ? docs.serve(req, res, path.slice(1), who.origin, wifiDoc).catch(() => res.destroy()) : fail(404)); // the documents sessions show (docs.ts)
 		if (path[0] === "api") {
 			let parts: string[];

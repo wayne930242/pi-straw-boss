@@ -285,6 +285,18 @@ test("a request waiting with no overlay or tile open becomes a notice every sess
 	assert.equal(h.record().lanNotice, undefined);
 });
 
+test("/boss gui lan while it is already serving leaves the listeners and the paired phone's connections alone (it restarts only to move a taken port)", async () => {
+	const h = await host(), { face: f } = await turnOn(h);
+	const lines = () => (readFileSync(fileOf(h.slot, "log"), "utf8").match(/ lan-on /g) ?? []).length;
+	assert.equal(lines(), 1);
+	const again = await h.ask("gui-lan", { on: true });
+	assert.equal(again.ok, true);
+	assert.match(String(again.text), /^Wi-Fi access is on: https:/);
+	assert.equal(lines(), 1, "no second start");
+	assert.equal((await h.ask("gui-lan", { on: true, accept_risk: true, face: f })).ok, true);
+	assert.equal(lines(), 1);
+});
+
 test("off keeps the devices and forgets the wish; a restart without the wish binds nothing; turning it on again with the certificate made needs no warning", async () => {
 	const h = await host(), { face: f } = await turnOn(h), ph = await pairedPhone(h, f), port = portOf(h);
 	const off = await h.ask("gui-lan", { on: false });

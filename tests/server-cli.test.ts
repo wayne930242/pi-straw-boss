@@ -207,6 +207,15 @@ test("up warns remote_off with the reason when remote access was wanted and cann
 	assert.equal(up.json?.url, `http://127.0.0.1:${gui.port}/${gui.token}/`);
 });
 
+test("up warns lan_off with the reason when Wi-Fi access was wanted and cannot come back, and binds nothing", async () => {
+	mkdirSync(world.slot.dir, { recursive: true });
+	writeFileSync(`${world.slot.dir}/lan.json`, JSON.stringify({ v: 1, wanted: true, port: 8445, token: "", devices: {} }), { mode: 0o600 });
+	const up = await cli(["up"]);
+	assert.equal(up.code, 0, up.err);
+	const warning = (up.json?.warnings as { code: string; text: string }[]).find((w) => w.code === "lan_off");
+	assert.match(warning?.text ?? "", /Wi-Fi access stays off: this computer's Wi-Fi certificate is missing; run \/boss gui lan/);
+});
+
 test("up waits for the GUI's URL to answer 200 before it prints it, and fails at step gui when it never does", async () => {
 	const s = await world.start();
 	await s.handle.ready;
