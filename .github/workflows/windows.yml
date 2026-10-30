@@ -5,7 +5,7 @@ name: Windows
 on:
   push:
     branches: [main]
-    paths: ["src/**", "herdr-plugin/**", "tests/platform.test.ts", "package.json", "package-lock.json", ".github/workflows/windows.yml"]
+    paths: ["src/**", "herdr-plugin/**", "tests/platform.test.ts", "tests/lan-*.test.ts", "package.json", "package-lock.json", ".github/workflows/windows.yml"]
   pull_request:
   workflow_call:
   workflow_dispatch:
@@ -23,3 +23,5 @@ jobs:
           node-version: 24
       - run: npm ci
       - run: node --test tests/platform.test.ts
+      # The LAN CA's writer, store, and network checks (a CI skip of an OpenSSL check fails there; Windows has certutil, below).
+      - run: node --test tests/lan-x509.test.ts tests/lan-ca.test.ts tests/lan-net.test.ts

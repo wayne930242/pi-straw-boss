@@ -13,7 +13,9 @@ import { cidrBytes, ipBytes, issueCa, issueLeaf, type Constraints, type Issued }
 // itself) is read by OpenSSL, a decoder that is not the writer. Keys stay in memory; the only files are public certificates in a folder of this process's temp root.
 
 const openssl = spawnSync("openssl", ["version"]).status === 0;
-const skip = openssl ? false : "openssl is not on PATH";
+// A skip says why in the test output; in CI (the Windows job has no openssl) a missing decoder fails instead, so the check cannot vanish without anyone seeing it.
+const skip = openssl ? false : process.env.CI ? undefined : "openssl is not on PATH (these tests read the certificates with OpenSSL; they run where it is installed)";
+if (!openssl && process.env.CI && process.platform !== "win32") test("openssl is on PATH in CI", () => assert.fail("openssl is not on PATH, so every OpenSSL check was skipped"));
 const text = (pem: string) => execFileSync("openssl", ["x509", "-noout", "-text"], { input: pem }).toString();
 const dir = mkdtempSync(join(tmpdir(), "lan-x509-"));
 after(() => rmSync(dir, { recursive: true, force: true }));
@@ -23,8 +25,8 @@ const now = Date.now();
 const span = (days: number, from = now - HOUR) => ({ notBefore: from, notAfter: from + days * DAY });
 const production = productionConstraints("weis-mbp");
 const makeCa = (constraints: Constraints = production, validity = span(730)) => issueCa({ subject: { cn: "Straw Boss LAN CA · weis-mbp", org: "pi-straw-boss" }, validity, constraints });
-const leafOf = (ca: Issued, o: { cn?: string; dns?: string[]; ip?: string[]; validity?: { notBefore: number; notAfter: number } } = {}) =>
-	issueLeaf({ issuer: { certPem: ca.pem, keyPem: ca.keyPem }, cn: o.cn ?? "weis-mbp.local", dns: o.dns ?? ["weis-mbp.local"], ip: o.ip ?? ["192.168.1.5"], validity: o.validity ?? span(90) });
+const leafOf = (ca: Issued, o: { cn?: string; dns?: string[]; ip?: string[]; email?: string[]; uri?: string[]; eku?: "serverAuth" | "emailProtection" | "codeSigning"; validity?: { notBefore: number; notAfter: number } } = {}) =>
+	issueLeaf({ issuer: { certPem: ca.pem, keyPem: ca.keyPem }, cn: o.cn ?? "weis-mbp.local", dns: o.dns ?? ["weis-mbp.local"], ip: o.ip ?? ["192.168.1.5"], email: o.email, uri: o.uri, eku: o.eku, validity: o.validity ?? span(90) });
 
 let files = 0;
 /** `openssl verify` of a leaf against the CA as the only trust anchor; the CA goes in a `.crt` file (a public certificate). Returns whether it verified and what OpenSSL said. */
@@ -92,7 +94,7 @@ test("OpenSSL reads the CA's extensions: critical CA:TRUE pathlen 0, key usage, 
 	assert.match(t, /X509v3 Basic Constraints: critical\s+CA:TRUE, pathlen:0/);
 	assert.match(t, /X509v3 Key Usage: critical\s+Certificate Sign, CRL Sign\n/);
 	assert.match(t, /X509v3 Extended Key Usage:\s+TLS Web Server Authentication/);
-	assert.match(t, /X509v3 Name Constraints: critical\s+Permitted:\s+DNS:weis-mbp\.local\s+IP:10\.0\.0\.0\/255\.0\.0\.0\s+IP:172\.16\.0\.0\/255\.240\.0\.0\s+IP:192\.168\.0\.0\/255\.255\.0\.0\s+Excluded:\s+IP:0:0:0:0:0:0:0:0\/0:0:0:0:0:0:0:0/);
+	assert.match(t, /X509v3 Name Constraints: critical\s+Permitted:\s+DNS:weis-mbp\.local\s+email:invalid\s+URI:invalid\s+IP:10\.0\.0\.0\/255\.0\.0\.0\s+IP:172\.16\.0\.0\/255\.240\.0\.0\s+IP:192\.168\.0\.0\/255\.255\.0\.0\s+Excluded:\s+IP:0:0:0:0:0:0:0:0\/0:0:0:0:0:0:0:0/);
 	assert.match(t, /X509v3 Subject Key Identifier:\s+[0-9A-F:]{59}\n/);
 	assert.match(t, /Signature Algorithm: ecdsa-with-SHA256/);
 	assert.doesNotMatch(t, /Authority Key Identifier/);
@@ -118,7 +120,7 @@ test("a leaf for a CA with no name: SAN only IP:<address>, a CN that is no hostn
 	assert.match(t, /Subject: CN=Straw Boss LAN \(192\.168\.1\.5\)\n/);
 	assert.match(t, /X509v3 Subject Alternative Name:\s+IP Address:192\.168\.1\.5\n/);
 	assert.doesNotMatch(t, /DNS:/);
-	assert.match(text(ca.pem), /Permitted:\s+DNS:invalid\s+IP:10\.0\.0\.0/);
+	assert.match(text(ca.pem), /Permitted:\s+DNS:invalid\s+email:invalid\s+URI:invalid\s+IP:10\.0\.0\.0/);
 	assert.ok(verify(ca, [leaf]).ok, verify(ca, [leaf]).said);
 });
 
@@ -227,4 +229,28 @@ test("addresses and blocks become the bytes a SAN and a subtree hold", () => {
 	assert.equal(cidrBytes("::/0").length, 32);
 	assert.ok(cidrBytes("::/0").every((b) => b === 0));
 	assert.deepEqual([...cidrBytes("10.0.0.0/8").subarray(4)], [255, 0, 0, 0]);
+});
+
+test("the CA signs no email address and no URI: an S/MIME or code-signing leaf is refused by OpenSSL and by a Node TLS client, and a CA that leaves those forms free accepts it (RVL12-F001)", { skip }, async () => {
+	const ca = makeCa(), loose = makeCa({ ...production, email: undefined, uri: undefined });
+	type Form = { cn: string; dns: string[]; ip: string[]; email?: string[]; uri?: string[]; eku?: "emailProtection" | "codeSigning" };
+	const forms: [string, Form, string[]][] = [
+		["an email address, S/MIME", { cn: "ceo", dns: [], ip: [], email: ["ceo@example.com"], eku: "emailProtection" }, []],
+		["a URI, code signing", { cn: "app", dns: [], ip: [], uri: ["https://example.com/app"], eku: "codeSigning" }, []],
+		["an email address under the TLS purpose", { cn: "ceo", dns: [], ip: [], email: ["ceo@example.com"] }, []],
+		["a URI under the TLS purpose", { cn: "app", dns: [], ip: [], uri: ["https://example.com/app"] }, []],
+	];
+	for (const [label, form, purpose] of forms) {
+		const refused = verify(ca, [leafOf(ca, form)], ["-x509_strict", ...purpose]);
+		assert.ok(!refused.ok && /permitted subtree violation/.test(refused.said), `${label} must fail the name constraints: ${refused.said}`);
+		assert.ok(verify(loose, [leafOf(loose, form)], ["-x509_strict", ...purpose]).ok, `${label}: without the constraint the same leaf passes, so the test sees the constraint`);
+	}
+	for (const form of [{ cn: "ceo", dns: [], ip: [], email: ["ceo@example.com"] }, { cn: "app", dns: [], ip: [], uri: ["https://example.com/app"] }]) {
+		const refused = await handshake(leafOf(ca, form), ca);
+		assert.ok(!refused.ok && /permitted|constraint/i.test(refused.error.message), `Node refuses it: ${refused.ok ? "accepted" : refused.error.message}`);
+		assert.ok((await handshake(leafOf(loose, form), loose)).ok, "Node accepts it from a CA without the constraint");
+	}
+	const dump = text(ca.pem);
+	assert.match(dump, /email:invalid/);
+	assert.match(dump, /URI:invalid/);
 });

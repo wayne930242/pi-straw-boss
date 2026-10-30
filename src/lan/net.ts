@@ -46,7 +46,7 @@ export function isTunnel(info: InterfaceInfo): boolean {
 export function eligible(interfaces: Interfaces): Served[] {
 	const out: Served[] = [], seen = new Set<string>();
 	for (const iface of Object.keys(interfaces).sort()) {
-		for (const info of interfaces[iface] ?? []) {
+		for (const info of [...(interfaces[iface] ?? [])].sort((a, b) => (toInt(a.address) ?? 0) - (toInt(b.address) ?? 0) || a.address.localeCompare(b.address))) {
 			const address = toInt(info.address), prefix = prefixOf(info), block = address === undefined ? undefined : blockOf(address);
 			if (!isV4(info) || info.internal || address === undefined || !block || prefix === undefined || isTunnel(info) || prefix < block[1] || prefix > MAX_PREFIX || seen.has(info.address)) continue;
 			seen.add(info.address);

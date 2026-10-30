@@ -10,7 +10,7 @@ import { isIP } from "node:net";
 // subtree is the address plus the mask and a SAN `iPAddress` is the bare address.
 
 /** The CA's name constraints, as CIDR text (`10.0.0.0/8`, `::/0`) and DNS names: what it may sign, and what it may never sign. */
-export interface Constraints { dns: string[]; ip: string[]; excludedIp: string[] }
+export interface Constraints { dns: string[]; ip: string[]; excludedIp: string[]; /** Permitted rfc822Name and URI bases; an empty list leaves that form unconstrained. */ email?: string[]; uri?: string[] }
 export interface KeyPair { privateKey: KeyObject; publicKey: KeyObject }
 /** A certificate and its key: the DER, the PEM, and the private key as PKCS #8 PEM text. */
 export interface Issued { der: Buffer; pem: string; keyPem: string }
@@ -21,6 +21,7 @@ export interface Validity { notBefore: number; notAfter: number }
 
 const ECDSA_SHA256 = "1.2.840.10045.4.3.2", CN = "2.5.4.3", ORG = "2.5.4.10";
 const BASIC = "2.5.29.19", KEY_USAGE = "2.5.29.15", EKU = "2.5.29.37", NAME_CONSTRAINTS = "2.5.29.30", SKI = "2.5.29.14", AKI = "2.5.29.35", SAN = "2.5.29.17", SERVER_AUTH = "1.3.6.1.5.5.7.3.1";
+const EKUS = { serverAuth: SERVER_AUTH, emailProtection: "1.3.6.1.5.5.7.3.4", codeSigning: "1.3.6.1.5.5.7.3.3" } as const;
 
 const lengthOf = (n: number) => {
 	if (n < 0x80) return Buffer.from([n]);
@@ -143,6 +144,8 @@ const pemOf = (der: Buffer) => `-----BEGIN CERTIFICATE-----\n${der.toString("bas
 const keyPemOf = (key: KeyObject) => key.export({ type: "pkcs8", format: "pem" }).toString();
 
 const dnsName = (dns: string) => tlv(0x82, Buffer.from(dns, "ascii"));
+const emailName = (email: string) => tlv(0x81, Buffer.from(email, "ascii"));
+const uriName = (uri: string) => tlv(0x86, Buffer.from(uri, "ascii"));
 const subtree = (base: Buffer) => seq(base);
 
 /**
@@ -151,7 +154,7 @@ const subtree = (base: Buffer) => seq(base);
  */
 export function issueCa(options: { subject: { cn: string; org?: string }; validity: Validity; constraints: Constraints; key?: KeyPair }): Issued {
 	const { constraints } = options, key = options.key ?? newKeyPair(), subject = name(options.subject.cn, options.subject.org);
-	const permitted = [...constraints.dns.map((dns) => subtree(dnsName(dns))), ...constraints.ip.map((cidr) => subtree(tlv(0x87, cidrBytes(cidr))))];
+	const permitted = [...constraints.dns.map((dns) => subtree(dnsName(dns))), ...(constraints.email ?? []).map((email) => subtree(emailName(email))), ...(constraints.uri ?? []).map((uri) => subtree(uriName(uri))), ...constraints.ip.map((cidr) => subtree(tlv(0x87, cidrBytes(cidr))))];
 	const excluded = constraints.excludedIp.map((cidr) => subtree(tlv(0x87, cidrBytes(cidr))));
 	return certificate({
 		issuer: subject, subject, validity: options.validity, spki: key.publicKey.export({ type: "spki", format: "der" }),
@@ -169,17 +172,17 @@ export function issueCa(options: { subject: { cn: string; org?: string }; validi
  * A leaf signed by `issuer`: `basicConstraints` critical `CA:FALSE`, `keyUsage` critical `digitalSignature`, `extendedKeyUsage` serverAuth, a `subjectAltName` of exactly `dns` and `ip` (nothing else),
  * the authority and subject key identifiers. It has a key of its own, new with every call.
  */
-export function issueLeaf(options: { issuer: Issuer; cn: string; dns: string[]; ip: string[]; validity: Validity }): Issued {
+export function issueLeaf(options: { issuer: Issuer; cn: string; dns: string[]; ip: string[]; validity: Validity; /** Only the tests and the release gate's probe leaves set these: a leaf of a form the CA must refuse. */ email?: string[]; uri?: string[]; eku?: keyof typeof EKUS }): Issued {
 	const caKey = createPrivateKey(options.issuer.keyPem), caPublic = createPublicKey(options.issuer.certPem), key = newKeyPair();
 	const caDer = Buffer.from(options.issuer.certPem.replace(/-----[A-Z ]+-----|\s/g, ""), "base64");
-	const names = [...options.dns.map(dnsName), ...options.ip.map((ip) => tlv(0x87, ipBytes(ip)))];
+	const names = [...options.dns.map(dnsName), ...options.ip.map((ip) => tlv(0x87, ipBytes(ip))), ...(options.email ?? []).map(emailName), ...(options.uri ?? []).map(uriName)];
 	if (names.length === 0) throw new Error("a leaf needs at least one name or address");
 	return certificate({
 		issuer: subjectOf(caDer), subject: name(options.cn), validity: options.validity, spki: key.publicKey.export({ type: "spki", format: "der" }),
 		extensions: [
 			extension(BASIC, true, seq()),
 			extension(KEY_USAGE, true, bits(7, 0x80)),
-			extension(EKU, false, seq(oid(SERVER_AUTH))),
+			extension(EKU, false, seq(oid(EKUS[options.eku ?? "serverAuth"]))),
 			extension(SAN, false, seq(...names)),
 			extension(AKI, false, seq(tlv(0x80, keyId(caPublic)))),
 			extension(SKI, false, octets(keyId(key.publicKey))),

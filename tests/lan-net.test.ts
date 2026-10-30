@@ -328,3 +328,9 @@ test("the default timer is unref'd, so the watch alone never keeps a process ali
 	w.stop();
 	assert.deepEqual(w.snapshot().served, []);
 });
+
+test("addresses on one interface are sorted, so the OS listing them in another order reports no change (RVL12-F005)", () => {
+	assert.deepEqual(served({ en0: [v4("192.168.1.5", 24), v4("192.168.1.9", 24)] }), ["192.168.1.5/24@en0", "192.168.1.9/24@en0"]);
+	assert.deepEqual(served({ en0: [v4("192.168.1.9", 24), v4("192.168.1.5", 24)] }), ["192.168.1.5/24@en0", "192.168.1.9/24@en0"]);
+	assert.deepEqual(served({ en0: [v4("10.0.0.20", 8), v4("10.0.0.3", 8)] }), ["10.0.0.3/8@en0", "10.0.0.20/8@en0"], "numeric, not text, order");
+});

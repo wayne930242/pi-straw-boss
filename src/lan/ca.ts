@@ -23,22 +23,29 @@ const PRIVATE = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"];
 /** What `lan-ca.json` holds. `name` is the computer's multicast DNS name without `.local`, or null when it could not be read: the CA then signs addresses only. */
 export interface LanCa { v: 1; name: string | null; key: string; cert: string; created: string }
 
-/** This computer's name for the CA: macOS `scutil --get LocalHostName`, elsewhere the computer name, lowercased and checked as a DNS label; undefined when it cannot be read or fails the check. */
-export function localName(deps: { platform?: NodeJS.Platform; run?: (program: string, args: string[]) => string; hostname?: () => string } = {}): string | undefined {
+/** What reading this computer's name came to: a usable `name`, a name that fails the label check (`invalid`: the CA may go name-less), or no answer (`unreadable`: a hiccup, so no CA is made yet). */
+export type LocalName = { name: string } | { invalid: string } | { unreadable: string };
+
+/**
+ * This computer's name for the CA: macOS `scutil --get LocalHostName` (by absolute path, since the server's PATH may lack /usr/sbin), elsewhere the computer name, lowercased and checked as a DNS label.
+ * A program that cannot be run or times out is `unreadable`, as is scutil's exit 1 (the name is not set is told apart only by that, and a retry cannot hurt); only a name that was read and fails the check is `invalid`.
+ */
+export function localName(deps: { platform?: NodeJS.Platform; run?: (program: string, args: string[]) => string; hostname?: () => string } = {}): LocalName {
 	const platform = deps.platform ?? process.platform;
+	let raw: string;
 	try {
-		const raw = platform === "darwin"
-			? (deps.run ?? ((program, args) => String(execFileSyncExe(program, args, { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"] }))))("scutil", ["--get", "LocalHostName"])
+		raw = platform === "darwin"
+			? (deps.run ?? ((program, args) => String(execFileSyncExe(program, args, { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"] }))))("/usr/sbin/scutil", ["--get", "LocalHostName"])
 			: (deps.hostname ?? hostname)();
-		const name = raw.trim().toLowerCase();
-		return NAME.test(name) ? name : undefined;
-	} catch {
-		return undefined;
+	} catch (error) {
+		return { unreadable: error instanceof Error ? error.message : String(error) };
 	}
+	const name = raw.trim().toLowerCase();
+	return NAME.test(name) ? { name } : { invalid: raw.trim() };
 }
 
-/** The production constraint set: the exact name (`invalid` when there is none, so the DNS name form is constrained to nothing), every private IPv4 block, no IPv6 at all. */
-export const productionConstraints = (name: string | undefined): Constraints => ({ dns: [name ? `${name}.local` : "invalid"], ip: PRIVATE, excludedIp: ["::/0"] });
+/** The production constraint set: the exact name (`invalid` when there is none, so the DNS name form is constrained to nothing), no email address and no URI (`invalid`: Apple trusts S/MIME and code-signing leaves of a CA that leaves those forms free), every private IPv4 block, no IPv6 at all. */
+export const productionConstraints = (name: string | undefined): Constraints => ({ dns: [name ? `${name}.local` : "invalid"], email: ["invalid"], uri: ["invalid"], ip: PRIVATE, excludedIp: ["::/0"] });
 
 const parse = (cert: string) => new X509Certificate(cert);
 const ms = (date: string) => Date.parse(date);
@@ -199,7 +206,7 @@ function shaped(value: unknown): { ca: LanCa } | { lost: CaLost } {
 
 /** Keeps the CA out of Time Machine: `tmutil addexclusion` marks the file itself, so the mark survives the rename. Only macOS has Time Machine. */
 export function timeMachineExclude(path: string, platform: NodeJS.Platform = process.platform) {
-	if (platform === "darwin") execFileSyncExe("tmutil", ["addexclusion", path], { stdio: "ignore", timeout: 10_000 });
+	if (platform === "darwin") execFileSyncExe("/usr/bin/tmutil", ["addexclusion", path], { stdio: "ignore", timeout: 10_000 });
 }
 export interface WriteDeps {
 	/** Called on the new temporary file after it exists (empty, mode 600) and before the key is written into it; a throw is logged and the file is still written. Default: `timeMachineExclude`. */

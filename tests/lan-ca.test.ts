@@ -27,17 +27,18 @@ const HOUR = 3_600_000, DAY = 24 * HOUR;
 const now = Date.UTC(2026, 9, 30, 12, 0, 0);
 const ca = createCa("weis-mbp", now);
 
-test("the name is read per platform, lowercased, and must be a DNS label", () => {
-	const mac = (out: string | Error) => localName({ platform: "darwin", run: (program, args) => { assert.equal(program, "scutil"); assert.deepEqual(args, ["--get", "LocalHostName"]); if (out instanceof Error) throw out; return out; } });
-	assert.equal(mac("Weis-MBP\n"), "weis-mbp");
-	assert.equal(mac(new Error("not set")), undefined, "scutil exits 1 when LocalHostName is not set");
-	assert.equal(mac(""), undefined);
-	for (const bad of ["with space", "under_score", "-lead", "trail-", "a.b", "weis-mbp.local", "é", "x".repeat(64)]) assert.equal(mac(bad), undefined, bad);
-	assert.equal(mac("x".repeat(63)), "x".repeat(63));
-	assert.equal(mac("a"), "a");
-	assert.equal(localName({ platform: "win32", hostname: () => "DESKTOP-4F2K" }), "desktop-4f2k");
-	assert.equal(localName({ platform: "linux", hostname: () => "box.example.com" }), undefined, "a dotted hostname is no mDNS label");
-	assert.equal(localName({ platform: "linux", hostname: () => { throw new Error("no"); } }), undefined);
+test("the name is read per platform, lowercased, and must be a DNS label; a failed read is told apart from a bad name", () => {
+	const mac = (out: string | Error) => localName({ platform: "darwin", run: (program, args) => { assert.equal(program, "/usr/sbin/scutil", "by absolute path: a server's PATH may lack /usr/sbin"); assert.deepEqual(args, ["--get", "LocalHostName"]); if (out instanceof Error) throw out; return out; } });
+	assert.deepEqual(mac("Weis-MBP\n"), { name: "weis-mbp" });
+	assert.ok("unreadable" in mac(new Error("ENOENT")), "a program that cannot run is a hiccup, not a bad name");
+	assert.ok("unreadable" in mac(Object.assign(new Error("ETIMEDOUT"), { code: "ETIMEDOUT" })));
+	assert.ok("invalid" in mac(""));
+	for (const bad of ["with space", "under_score", "-lead", "trail-", "a.b", "weis-mbp.local", "é", "x".repeat(64)]) assert.ok("invalid" in mac(bad), bad);
+	assert.deepEqual(mac("x".repeat(63)), { name: "x".repeat(63) });
+	assert.deepEqual(mac("a"), { name: "a" });
+	assert.deepEqual(localName({ platform: "win32", hostname: () => "DESKTOP-4F2K" }), { name: "desktop-4f2k" });
+	assert.ok("invalid" in localName({ platform: "linux", hostname: () => "box.example.com" }), "a dotted hostname is no mDNS label");
+	assert.ok("unreadable" in localName({ platform: "linux", hostname: () => { throw new Error("no"); } }));
 });
 
 test("a CA is two years from one hour before creation, with the spec's subject and constraints", () => {
@@ -48,7 +49,7 @@ test("a CA is two years from one hour before creation, with the spec's subject a
 	const cert = new X509Certificate(ca.cert);
 	assert.equal(cert.subject, "CN=Straw Boss LAN CA · weis-mbp\nO=pi-straw-boss");
 	assert.ok(cert.ca);
-	assert.deepEqual(productionConstraints("weis-mbp"), { dns: ["weis-mbp.local"], ip: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"], excludedIp: ["::/0"] });
+	assert.deepEqual(productionConstraints("weis-mbp"), { dns: ["weis-mbp.local"], email: ["invalid"], uri: ["invalid"], ip: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"], excludedIp: ["::/0"] });
 	assert.deepEqual(productionConstraints(undefined).dns, ["invalid"], "no name: the DNS name form is constrained to nothing, never left out");
 	const bare = createCa(undefined, now);
 	assert.equal(bare.name, null);
