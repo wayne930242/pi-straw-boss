@@ -277,6 +277,11 @@ export async function startSidecar({ pane, kind, session, record, cli = "straw-n
 		},
 		// The work board: this main's whole entry, `--item '[x] text'` for a done step and `--item '[ ] text'` for an open one.
 		board: async (r) => {
+			if (r.clear) {
+				if (kit.role() !== "main") throw new Error("Only the main agent of a tab writes the work board; a member, a demoted main, a tower, or a subagent does not");
+				removeEntry(join(cfg.stateDir ?? stateDirOf(env), "board"), me());
+				return { text: "Board entry cleared; the towers no longer see a line from you.", clear: true };
+			}
 			const items = (Array.isArray(r.item) ? r.item : []).map((raw) => {
 				const m = /^\[( |x|X)\]\s*([\s\S]*)$/.exec(String(raw));
 				return { t: m ? m[2]! : String(raw), done: m ? m[1] !== " " : false };

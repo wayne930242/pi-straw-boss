@@ -17,9 +17,10 @@ const USAGE = `usage: cli.ts join --pane P --kind claude|codex --session S [--re
        cli.ts broadcast --message M [--scope tab|workspace|towers|all] [--pane P]
        cli.ts send --to ID --message M [--pane P]
        cli.ts rename --name N [--pane P]
-       cli.ts board --now N [--item '[x] done step'] [--item '[ ] open step']… [--pane P]`;
-const NEEDS: Record<string, string[]> = { join: ["kind", "session"], serve: ["kind", "session"], status: [], promote: [], stop: [], "call-tower": ["message"], broadcast: ["message"], send: ["to", "message"], rename: ["name"], board: ["now"] };
-const FLAGS = ["pane", "kind", "session", "record", "cli", "message", "workspace", "scope", "to", "name", "now", "item", "why", "reply"];
+       cli.ts board --now N [--item '[x] done step'] [--item '[ ] open step']… [--pane P]
+       cli.ts board --clear [--pane P]`;
+const NEEDS: Record<string, string[]> = { join: ["kind", "session"], serve: ["kind", "session"], status: [], promote: [], stop: [], "call-tower": ["message"], broadcast: ["message"], send: ["to", "message"], rename: ["name"], board: [] };
+const FLAGS = ["pane", "kind", "session", "record", "cli", "message", "workspace", "scope", "to", "name", "now", "item", "why", "reply", "clear"];
 
 export type Args = { command: string; pane: string; item?: string[] } & Partial<Record<string, string>>;
 /** The command line as options. The pane is `--pane`, else the one the process runs in (HERDR_PANE_ID). */
@@ -29,6 +30,8 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
 	if (!Object.hasOwn(NEEDS, command)) throw new UsageError(`unknown command ${command}\n${USAGE}`);
 	const given: Record<string, string> = {}, item: string[] = [];
 	for (let i = 0; i < rest.length; i += 2) {
+		if (rest[i] === "--clear" && command !== "board") throw new UsageError("--clear belongs to the board command");
+		if (command === "board" && rest[i] === "--clear") { given.clear = "true"; i -= 1; continue; } // the one option without a value
 		const flag = rest[i]!.replace(/^--/, "");
 		if (!rest[i]!.startsWith("--") || !FLAGS.includes(flag)) throw new UsageError(`unknown option ${rest[i]}`);
 		if (rest[i + 1] === undefined) throw new UsageError(`--${flag} needs a value`);
@@ -38,6 +41,8 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
 	if (item.length && command !== "board") throw new UsageError("--item belongs to the board command");
 	const pane = given.pane ?? env.HERDR_PANE_ID;
 	if (!pane) throw new UsageError("--pane or HERDR_PANE_ID is required");
+	if (command === "board" && !given.clear && !given.now) throw new UsageError("--now is required unless --clear is given");
+	if (given.clear && (given.now || item.length)) throw new UsageError("--clear takes no --now or --item");
 	for (const need of NEEDS[command]!) {
 		if (!given[need]) throw new UsageError(`--${need} is required`);
 	}
@@ -48,7 +53,7 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
 	if (given.reply && !["true", "false"].includes(given.reply)) throw new UsageError("--reply must be true or false");
 	if (given.scope && !["tab", "workspace", "towers", "all"].includes(given.scope)) throw new UsageError("--scope must be tab, workspace, towers, or all");
 	const { pane: _pane, ...options } = given;
-	const wanted = { join: ["kind", "session", "record", "cli"], serve: ["kind", "session", "record", "cli"], "call-tower": ["message", "workspace", "why", "reply"], broadcast: ["message", "scope"], send: ["to", "message"], rename: ["name"], board: ["now"] }[command] ?? [];
+	const wanted = { join: ["kind", "session", "record", "cli"], serve: ["kind", "session", "record", "cli"], "call-tower": ["message", "workspace", "why", "reply"], broadcast: ["message", "scope"], send: ["to", "message"], rename: ["name"], board: ["now", "clear"] }[command] ?? [];
 	return { command, pane, ...Object.fromEntries(wanted.map((key) => [key, options[key]]).filter(([, value]) => value !== undefined)), ...(item.length ? { item } : {}) };
 }
 

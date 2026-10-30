@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { ENDED_MS, finished, readEntries, removeEntry, writeEntry } from "./board.ts";
 import { type Derived, deriveBoard } from "./boardauto.ts";
+import { BOARD_ENTRY, seedBoard, withdrawnKey } from "./boardseed.ts";
 import type { Kit } from "./state.ts";
 import { todosOfBranch } from "./todo.ts";
 
@@ -25,10 +26,12 @@ export function createBoardFill({ pi, cfg, s, guiDir, me, role, tell }: Kit): Bo
 		return name === me() || name === me().slice(0, 8) ? "" : name;
 	};
 	const derive = () => {
-		let branch: readonly unknown[] = [];
-		try { branch = ctx?.sessionManager?.getBranch() ?? []; } catch { /* a replaced session's context throws */ }
-		return deriveBoard({ name: named(), todos: todosOfBranch(branch), root: ctx?.cwd ?? process.cwd() });
+		return deriveBoard({ name: named(), todos: todosOfBranch(branchOf()), root: ctx?.cwd ?? process.cwd() });
 	};
+	const branchOf = (): readonly unknown[] => {
+		try { return ctx?.sessionManager?.getBranch() ?? []; } catch { return []; } // a replaced session's context throws
+	};
+	const withdraw = (key: string) => { try { pi.appendEntry(BOARD_ENTRY, { cleared: key }); } catch { /* a replaced session's pi throws */ } };
 	const write = (d: Derived) => {
 		writeEntry(dir, me(), d.text, cfg.now(), { src: "todo", ...(d.count ? { count: d.count } : {}), ...(d.who ? { who: d.who } : {}) });
 		s.boardId = me(); // remembered for the shutdown that deletes the file (session.ts)
@@ -43,11 +46,14 @@ export function createBoardFill({ pi, cfg, s, guiDir, me, role, tell }: Kit): Bo
 				seeded = true;
 				const own = readEntries(dir).find((e) => e.session === me());
 				if (own) s.boardId = me();
-				if (own?.src === "set") last = key;
+				const seed = seedBoard({ own, derived: d, key, withdrawn: withdrawnKey(branchOf()) });
+				last = seed.last ?? last; // what the session start seeded (a finished list) stands
+				doneAt = seed.doneAt ?? doneAt;
 			}
 			// A finished list is said once: the line goes 30 minutes after it was written (readers also hide it, and a tower's read deletes it).
 			if (key === last && doneAt !== undefined && cfg.now() - doneAt > ENDED_MS) {
 				removeEntry(dir, me());
+				withdraw(key);
 				doneAt = undefined;
 			}
 			if (key === last) return;
@@ -65,6 +71,15 @@ export function createBoardFill({ pi, cfg, s, guiDir, me, role, tell }: Kit): Bo
 	};
 	pi.on("session_start", (_e, c) => {
 		[ctx, last, seeded, doneAt] = [c as typeof ctx, undefined, false, undefined];
+		// A line a reload kept is this session's from the start: a quit before any turn deletes it (s.boardId), as one written here would be.
+		try {
+			if (!me()) return;
+			const own = readEntries(dir).find((e) => e.session === me());
+			if (own) s.boardId = me();
+			// A finished list this reload carries, whose line a tower's read purged, is not written again.
+			const d = derive();
+			({ last, doneAt } = seedBoard({ own, derived: d, key: JSON.stringify(d ?? null), withdrawn: withdrawnKey(branchOf()), atStart: true }));
+		} catch { /* no board yet */ }
 	});
 	pi.on("turn_end", (_e, c) => again(c));
 	pi.on("session_tree", (_e, c) => again(c));
@@ -78,6 +93,7 @@ export function createBoardFill({ pi, cfg, s, guiDir, me, role, tell }: Kit): Bo
 			seeded = true;
 			doneAt = undefined;
 			removeEntry(dir, me());
+			withdraw(last);
 		},
 		handBack() {
 			if (role() !== "main") throw new Error("Only the main agent of a tab writes the work board; a member, a demoted main, a tower, or a subagent does not");
