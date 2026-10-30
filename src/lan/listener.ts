@@ -13,7 +13,7 @@ import { peerAllowed, watchAddresses, type Change, type Interfaces, type Served,
 
 export const LIMITS: Readonly<{ unpairedPerPeer: number; unpairedAll: number; pairedPerPeer: number; pairedAll: number }> = { unpairedPerPeer: 8, unpairedAll: 64, pairedPerPeer: 32, pairedAll: 256 };
 /** Timers, in milliseconds: the first byte, the TLS handshake, the request line and headers, the whole request, how often a refusal or a limit is logged, and how long a peer address that proved itself paired is remembered. */
-export const TIMEOUTS: Readonly<{ firstByteMs: number; handshakeMs: number; headersMs: number; requestMs: number; logMs: number; pairedPeerMs: number }> = { firstByteMs: 10_000, handshakeMs: 10_000, headersMs: 10_000, requestMs: 30_000, logMs: 60_000, pairedPeerMs: 600_000 };
+export const TIMEOUTS: Readonly<{ firstByteMs: number; handshakeMs: number; headersMs: number; requestMs: number; logMs: number; pairedPeerMs: number }> = { firstByteMs: 10_000, handshakeMs: 10_000, headersMs: 10_000, requestMs: 30_000, logMs: 60_000, pairedPeerMs: 86_400_000 };
 /** The most peer addresses remembered as paired; the oldest is forgotten past it. */
 const PAIRED_PEERS_MAX = 1024;
 export const BIND_WAIT_MS = 5000;
@@ -93,7 +93,7 @@ export interface LanListener {
 }
 
 /** A connection in a pool. `paired` is the pool it is counted in; `proven` says one of its requests carried an allowed device's cookie (a connection of a remembered peer address is counted paired before it has proven anything). `requests` counts the requests it has made. */
-interface Conn { peer: string; paired: boolean; proven: boolean; requests: number; kill: () => void }
+interface Conn { peer: string; paired: boolean; proven: boolean; requests: number; at: number; kill: () => void }
 interface Entry {
 	served: Served;
 	leaf: Leaf;
@@ -232,7 +232,7 @@ export function createLanListener(options: ListenerOptions): LanListener {
 
 	/**
 	 * Counts `conn` in the unpaired pool if it fits: not past its peer's own limit, and, when the pool is full, only by evicting. A full pool gives a place to a peer that holds fewer connections than the peer holding the most, taking
-	 * that peer's oldest connection that has made no request (else its oldest), so a flood churns among itself and cannot hold every slot for as long as it likes. A peer that holds as many as the heaviest is closed.
+	 * that peer's oldest request-less connection past the handshake time (else its oldest), so a flood churns among itself and cannot hold every slot for as long as it likes. A peer that holds as many as the heaviest is closed.
 	 * `conn` itself is not in the unpaired count while this runs.
 	 */
 	function place(conn: Conn): boolean {
@@ -247,15 +247,17 @@ export function createLanListener(options: ListenerOptions): LanListener {
 		for (const c of pool) if (!c.paired) held.set(c.peer, (held.get(c.peer) ?? 0) + 1);
 		const heaviest = Math.max(0, ...held.values());
 		if (heaviest <= own) return false;
-		let victim: Conn | undefined;
+		// The oldest connection of a heaviest peer that made no request and is past the handshake time; a younger one may be a phone mid-handshake. Else the oldest of them.
+		let victim: Conn | undefined, oldest: Conn | undefined;
 		for (const c of pool) {
 			if (c.paired || held.get(c.peer) !== heaviest) continue;
-			victim ??= c;
-			if (c.requests === 0) {
+			oldest ??= c;
+			if (c.requests === 0 && now() - c.at >= timeouts.handshakeMs) {
 				victim = c;
 				break;
 			}
 		}
+		victim ??= oldest;
 		if (!victim) return false;
 		pool.delete(victim);
 		noteLimited(victim.peer);
@@ -289,7 +291,7 @@ export function createLanListener(options: ListenerOptions): LanListener {
 			return;
 		}
 		let tls: TLSSocket | undefined;
-		const conn: Conn = { peer, paired: true, proven: false, requests: 0, kill: () => (tls?.destroy(), socket.destroy()) }, cancels: (() => void)[] = [];
+		const conn: Conn = { peer, paired: true, proven: false, requests: 0, at: now(), kill: () => (tls?.destroy(), socket.destroy()) }, cancels: (() => void)[] = [];
 		if (!(remembered(peer) && hasRoomPaired(peer)) && !place(conn)) {
 			noteLimited(peer);
 			socket.destroy();
@@ -352,10 +354,16 @@ export function createLanListener(options: ListenerOptions): LanListener {
 	}
 
 	function httpsRequest(entry: Entry, req: IncomingMessage, res: ServerResponse) {
-		const host = hostOf(entry, req.headers.host);
-		// An unlisted `Host` is refused before the token is looked at, and without a word about what this is.
-		if (!host) return send(res, 403, "text/plain; charset=utf-8", "forbidden");
-		const conn = connOf.get(req.socket), at = atOf(entry, host, conn?.peer);
+		const host = hostOf(entry, req.headers.host), conn = connOf.get(req.socket);
+		// An unlisted `Host` counts as a request without the cookie (so a remembered address's connection cannot stay paired on it), is refused before the token is looked at, and without a word about what this is.
+		if (!host) {
+			if (conn) {
+				conn.requests++;
+				if (!demote(conn)) return;
+			}
+			return send(res, 403, "text/plain; charset=utf-8", "forbidden");
+		}
+		const at = atOf(entry, host, conn?.peer);
 		if (conn) {
 			conn.requests++;
 			const carries = isPaired(req, at);
