@@ -741,7 +741,7 @@
 	"lan_fw_win_block_port": "Windows 防火牆有規則封鎖 TCP 連接埠 {port}（{names}）；封鎖規則的優先權高於任何允許規則。",
 	"lan_fw_win_block_cmd": "在系統管理員身分的 PowerShell 執行：{command}",
 	"lan_fw_win_block_left": "下列規則無法用指令處理（名稱含有控制字元、不可見或改變方向的字元，或萬用字元）：{left}。請在 wf.msc（輸入規則、該規則、停用規則）停用。",
-	"lan_fw_win_noallow": "沒有任何 Windows 防火牆規則允許連入 TCP 連接埠 {port}，手機連不上。在系統管理員身分的 PowerShell 執行：{command} 連接埠規則在 node 升級後仍有效，程式規則則不會。",
+	"lan_fw_win_noallow": "沒有任何 Windows 防火牆規則允許連入 TCP 連接埠 {port}，手機連不上。連接埠規則在 node 升級後仍有效，程式規則則不會。在系統管理員身分的 PowerShell 執行：{command}",
 	"lan_fw_win_public": "Windows 把 {where} 所在的網路視為「公用」，會封鎖連入連線：請到「設定」、「網路和網際網路」、「Wi-Fi」、該網路、「網路設定檔類型」，改成「私人」。",
 	"lan_fw_win_unknown": "無法讀取 Windows 防火牆（{why}）。如果手機連不上，請在系統管理員身分的 PowerShell 用 {allow} 允許該連接埠，並用 {list} 列出封鎖 node.exe 的規則；用 InstanceID 以 Disable-NetFirewallRule -Name '<InstanceID>' 停用其中一條。"
 }

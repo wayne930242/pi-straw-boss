@@ -881,7 +881,7 @@
 	"lan_fw_win_block_port": "Windows Firewall has rules that block TCP port {port} ({names}); they win over any allow rule.",
 	"lan_fw_win_block_cmd": "In an elevated PowerShell: {command}",
 	"lan_fw_win_block_left": "Cannot go in a command (the name holds a control character, an invisible or direction-changing character, or a wildcard): {left}. Disable them in wf.msc (Inbound Rules, the rule, Disable Rule).",
-	"lan_fw_win_noallow": "No Windows Firewall rule allows incoming connections to TCP port {port}, so a phone cannot connect. In an elevated PowerShell: {command} A port rule survives node upgrades, which a program rule does not.",
+	"lan_fw_win_noallow": "No Windows Firewall rule allows incoming connections to TCP port {port}, so a phone cannot connect. A port rule survives node upgrades, which a program rule does not. In an elevated PowerShell: {command}",
 	"lan_fw_win_public": "Windows calls the network of {where} Public, which blocks incoming connections: Settings, Network & internet, Wi-Fi, the network, Network profile type, Private.",
 	"lan_fw_win_unknown": "Windows Firewall could not be read ({why}). If a phone cannot connect, allow the port in an elevated PowerShell with {allow} and list rules that block node.exe with {list}; disable one by its InstanceID with Disable-NetFirewallRule -Name '<InstanceID>'."
 }
