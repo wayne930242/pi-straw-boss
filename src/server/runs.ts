@@ -623,7 +623,8 @@ export function createRuns(o: RunsOptions) {
 			const lead = svc.ref.record().pane, dir = await svc.ref.cwd();
 			const made = await result(o.run, ["pane", "split", lead, "--direction", "right", "--cwd", dir, "--no-focus"]);
 			rec.pane = made.pane.pane_id as string;
-			active.terminal = (await panes(o.run, svc.ref.workspace).catch(() => [])).find((p) => p.pane_id === rec.pane)?.terminal_id;
+			// A listing that fails is read again: a run whose terminal is not known is treated as unbound (`unboundOf`), and the pane would then be neither marked nor closed.
+			for (let read = 0; read < 3 && active.terminal === undefined; read++) active.terminal = (await panes(o.run, svc.ref.workspace).catch(() => [])).find((p) => p.pane_id === rec.pane)?.terminal_id;
 			rec.terminal = active.terminal;
 			await markAllies(svc);
 		} catch (cause) {
@@ -640,6 +641,8 @@ export function createRuns(o: RunsOptions) {
 		// The claim is waited for in the background: the next device's run starts meanwhile.
 		void launch(active, `ally run · ${first.label} · ${id.slice(0, 8)}`).catch((cause: Error) => error("run-start", `${id}: ${cause.message}`));
 	};
+	/** An ally run whose pane no terminal proves: one recovered without a terminal, or one whose split listing never named it. Where Herdr lists terminal ids it is bound by nothing (`proofGate` says `bind`), so its pane is neither marked nor closed by id after a Herdr restart (RVSEAT6-F002). */
+	const unboundOf = (a: Active) => !!a.unbound || a.terminal === undefined;
 	/**
 	 * Writes the tokens of the panes the service's ally runs live in (order.ts `allyKids`): `sb_role`, and the row's place, mark, branch and name in the net view. The tokens last 10 minutes and a run may last 20, so the
 	 * tower's publish writes them again (`markAllies`); a pane that cannot be placed (Herdr does not know the tower) keeps its role alone. A failed write waits for the next one.
@@ -653,7 +656,7 @@ export function createRuns(o: RunsOptions) {
 		// Only a pane still in the terminal its run's split made is marked: after a Herdr restart an id may name a pane of the boss's own (F10).
 		const listed = await panes(o.run, svc.ref.workspace).catch(() => undefined);
 		for (const a of live) {
-			if (!listed || !allyMarkGate(proofGate({ terminal: a.terminal, pane: listed.find((p) => p.pane_id === a.rec.pane) }), !!a.unbound)) continue;
+			if (!listed || !allyMarkGate(proofGate({ terminal: a.terminal, pane: listed.find((p) => p.pane_id === a.rec.pane) }), unboundOf(a))) continue;
 			const kid = kids.find((k) => k.pane === a.rec.pane);
 			await report(o.run, "pane", a.rec.pane, { sb_role: "ally", sb_order: kid?.order ?? null, sb_mark: kid?.mark ?? null, sb_indent: kid?.indent ?? null, sb_name: kid?.name ?? null }).catch(() => {});
 		}
@@ -677,7 +680,7 @@ export function createRuns(o: RunsOptions) {
 	};
 	/** Whether an ally run's start may go on: the run lives, the tower's seat is proven, and the pane is still listed in the terminal its split made (a pane under that id in another terminal is a stranger's; RVSEAT5-F003). */
 	const allyPaneHeld = async (a: Active): Promise<boolean> => {
-		if (a.ended || a.unbound || a.terminal === undefined || !(await a.svc.ref.proven()) || a.ended) return false;
+		if (a.ended || a.unbound || !(await a.svc.ref.proven()) || a.ended) return false;
 		const listed = await panes(o.run, a.svc.ref.workspace).catch(() => undefined);
 		return !a.ended && !!listed && proofGate({ terminal: a.terminal, pane: listed.find((p) => p.pane_id === a.rec.pane) }) === "holds";
 	};
@@ -820,7 +823,9 @@ export function createRuns(o: RunsOptions) {
 		if (a.escalated === undefined) {
 			a.escalated = now();
 			log.line("run-quit-keys", { run: a.rec.id });
-			// pi has not exited: Escape and /quit through Herdr.
+			// pi has not exited: Escape and /quit through Herdr, into a pane proven to be the run's: an ally's own terminal, a local run's tower seat. After a lost session the id may name a pane of the boss's own (RVSEAT6-F004); the signal below ends the run.
+			const held = a.rec.kind === "ally" ? await allyPaneHeld(a) : await a.svc.ref.proven().catch(() => false);
+			if (!held) return void log.line("run-quit-keys-skipped", { run: a.rec.id, pane });
 			for (const args of [["pane", "send-keys", pane, "esc"], ["pane", "send-text", pane, "/quit"], ["pane", "send-keys", pane, "enter"]]) await o.run(args).catch(() => {});
 			return;
 		}
@@ -907,7 +912,7 @@ export function createRuns(o: RunsOptions) {
 		// The pane is closed once pi has exited: a pane that pi leaves returns to its shell and would stay (a started pi that is still there goes with it).
 		// After a new Herdr came back the id may name a pane of the boss's own: the pane is closed and unmarked only when it is listed in the terminal the ally run's pane ran in (typegate.ts `proofGate`).
 		await a.observing;
-		const pane = a.rec.pane, verdict = pane ? await allyVerdict(svc, pane, a.terminal, outcome === "herdr-restart" || !!a.unbound, a.rec.file, !!a.resumedSeen) : { ours: false, wait: false };
+		const pane = a.rec.pane, verdict = pane ? await allyVerdict(svc, pane, a.terminal, outcome === "herdr-restart" || unboundOf(a), a.rec.file, !!a.resumedSeen) : { ours: false, wait: false };
 		if (pane && verdict.wait && outcome === "herdr-restart") (svc.leftAllies.push({ pane, file: a.rec.file, seen: !!a.resumedSeen, until: now() + t.restored }), ensureWatcher());
 		const ours = verdict.ours;
 		if (ours) {

@@ -608,7 +608,8 @@ export function createTowers(o: TowersOptions): Towers {
 				continue; // a pane or tab list that failed is unknown, not a tab that is gone
 			}
 			if (!found) {
-				if (!recovering) await lose(l, "its tab is gone");
+				// A service not seated on this Herdr is lost as a stranger's workspace unless it still carries the label of the one the service made: the id may name the boss's own workspace of a lost session (RVSEAT6-F006).
+				if (!recovering) await lose(l, "its tab is gone", !l.seated && all.find((w) => w.workspace_id === l.record.workspace)?.label !== l.record.label);
 				continue;
 			}
 			// After a Herdr came back the ids prove nothing: the pane under the recorded id must be in a tab the service made (`seatGate`), else it is a stranger's (a lost session's counters named the boss's own workspace).
@@ -833,7 +834,9 @@ export function createTowers(o: TowersOptions): Towers {
 				if (existing.state !== "waiting") await Promise.race([existing.starting, sleep(o.registerMs ?? REGISTER_WAIT_MS)]);
 				return answer(existing, false);
 			}
-			await lose(existing, stranger ? "its workspace now holds another tab under the ids it made" : "its tab is gone", Boolean(stranger));
+			// No tab is no proof of whose workspace it is: an unseated service writes to it only while it still carries the label the service made (RVSEAT6-F006).
+			const foreign = stranger || (!existing.seated && (await workspaces(run).catch(() => [])).find((w) => w.workspace_id === ws)?.label !== existing.record.label);
+			await lose(existing, stranger ? "its workspace now holds another tab under the ids it made" : "its tab is gone", Boolean(foreign));
 		}
 		// A resident tower of an older build keeps its workspace; it is the tower until it leaves.
 		const draft: Live = { record: { workspace: ws, label: target.label, id: towerId(slot, ws), name: towerName(slot, target.label), pane: "", tab: "", created: "", seq: 0 }, state: "registering", stopped: false, requests: new Map(), seated: false, epoch: 0 };
