@@ -89,3 +89,42 @@ test("a read that fails leaves Wi-Fi access on and no note, and says so in the l
 	assert.equal(lan.on, true);
 	assert.equal(lan.note, undefined);
 });
+
+test("running /boss gui lan again while serving reads the firewall again, and a slower old read cannot overwrite the newer one", async () => {
+	const pending: ((r: FirewallRead) => void)[] = [];
+	const { h } = await host(() => new Promise((resolve) => pending.push(resolve)));
+	const face = await on(h);
+	await until(async () => pending.length === 1, "the first read");
+	pending[0]!(read(["No Windows Firewall rule allows incoming connections"]));
+	await until(async () => /No Windows Firewall rule/.test(String((await lanOf(h)).note)), "the first note");
+	// The boss followed the note and ran the command again: the listeners stay, a second read runs, and its answer replaces the first.
+	assert.equal((await h.ask("gui-lan", { on: true, accept_risk: true, face })).ok, true);
+	await until(async () => pending.length === 2, "a second read");
+	pending[1]!(read([]));
+	await until(async () => (await lanOf(h)).note === undefined, "the note is gone");
+	// Two reads in flight: the older answer arrives last and is dropped.
+	await h.ask("gui-lan", { on: true, accept_risk: true, face });
+	await h.ask("gui-lan", { on: true, accept_risk: true, face });
+	await until(async () => pending.length === 4, "two more reads");
+	pending[3]!(read(["newer"]));
+	await until(async () => (await lanOf(h)).note === "newer", "the newer note");
+	pending[2]!(read(["older, slower"]));
+	await new Promise((r) => setTimeout(r, 50));
+	assert.equal((await lanOf(h)).note, "newer");
+});
+
+test("a change of the served addresses reads the firewall again", async () => {
+	let addr = ADDRESS;
+	const calls: FirewallInput[] = [];
+	const port = await free();
+	writeFileSync(join(world.stateDir, "lan.json"), JSON.stringify({ v: 1, wanted: false, port, token: "", devices: {} }), { mode: 0o600 });
+	const seams: LanSeams = { interfaces: () => ({ en0: [v4(addr, 24)] }), bindAddress: () => "127.0.0.1", remoteOf: () => PEER, probe: async () => addr, localName: () => ({ name: NAME }), exclude: () => {}, bindWaitMs: 0, intervalMs: 50, firewall: async (input) => (calls.push(input), read([])) };
+	const h = await startHosted(world, { gui: { lan: seams } as never });
+	hosted.push(h);
+	await on(h);
+	await until(async () => calls.length >= 1, "the first read");
+	const first = calls.length;
+	addr = "10.0.0.77";
+	await until(async () => calls.some((c) => c.served.some((s) => s.address === "10.0.0.77")), "a read for the new address");
+	assert.ok(calls.length > first);
+});

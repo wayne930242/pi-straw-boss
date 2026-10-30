@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { win32 } from "node:path";
 import { execFileExe } from "../exe.mjs";
 import { asciiJson, CLM_CHECK, CLM_TEXT, CLM_WORD, execFailure, POWERSHELL_FLAGS, PROGRESS_OFF, UTF8_OUT } from "../server/acl.ts";
@@ -13,7 +14,7 @@ export interface FirewallInput { port: number; served: { address: string; iface:
 export interface FirewallRead { notes: string[]; summary: string }
 /** Runs a program with arguments and answers its stdout; rejects when it fails, with `stderr` on the error when there is one. */
 export type FirewallExec = (file: string, args: string[], options: { timeout: number; env: NodeJS.ProcessEnv; cwd?: string }) => Promise<string>;
-export interface FirewallDeps { platform?: NodeJS.Platform; execPath?: string; env?: NodeJS.ProcessEnv; exec?: FirewallExec }
+export interface FirewallDeps { platform?: NodeJS.Platform; execPath?: string; env?: NodeJS.ProcessEnv; exec?: FirewallExec; realpath?: (path: string) => string }
 
 const READ_MS = 60_000;
 const MAX_BUFFER = 32 * 1024 * 1024;
@@ -24,8 +25,10 @@ const run: FirewallExec = (file, args, options) =>
 			reject(Object.assign(error, { stderr, stdout }));
 		});
 	});
-const reasonOf = (error: unknown) => {
-	const e = error as Error & { stderr?: string; stdout?: string };
+/** Why a run failed. A child killed by `execFile`'s timeout has no exit code (`killed`, a signal): that is a timeout, not a refusal. */
+const reasonOf = (error: unknown, timeoutMs: number) => {
+	const e = error as Error & { stderr?: string; stdout?: string; killed?: boolean; signal?: string | null; code?: unknown };
+	if (e.killed && e.signal) return `timed out after ${Math.round(timeoutMs / 1000)} s`;
 	return execFailure(e, e.stderr, e.stdout) || "it failed";
 };
 
@@ -33,7 +36,7 @@ const reasonOf = (error: unknown) => {
 export async function readFirewall(input: FirewallInput, deps: FirewallDeps = {}): Promise<FirewallRead> {
 	const platform = deps.platform ?? process.platform, execPath = deps.execPath ?? process.execPath, exec = deps.exec ?? run, env = deps.env ?? process.env;
 	if (platform === "darwin") return readMac(execPath, exec, env);
-	if (platform === "win32") return readWindows(input, execPath, exec, env);
+	if (platform === "win32") return readWindows(input, execPath, exec, env, deps.realpath ?? ((p) => realpathSync.native(p)));
 	return { notes: [], summary: "no firewall check on this platform" };
 }
 
@@ -81,7 +84,7 @@ async function readMac(execPath: string, exec: FirewallExec, env: NodeJS.Process
 		const blockAll = state.blockAll || (parseMacBlockAll(await ask("--getblockall")) ?? false), app = parseMacApp(await ask("--getappblocked", execPath));
 		return { notes: macNotes({ on: true, blockAll, app }), summary: `macOS firewall: on, block all ${blockAll ? "on" : "off"}, node ${app ?? "unknown"}` };
 	} catch (error) {
-		return { notes: [], summary: `macOS firewall: the state could not be read (${reasonOf(error)})` };
+		return { notes: [], summary: `macOS firewall: the state could not be read (${reasonOf(error, 10_000)})` };
 	}
 }
 
@@ -93,19 +96,24 @@ const PROFILES: readonly Profile[] = ["Domain", "Private", "Public"];
 export interface WinRule {
 	name: string; display: string; action: "allow" | "block";
 	profiles: Set<Profile>; program: string; tcp: boolean; ports: "any" | [number, number][];
+	/** The scope: the remote and local address entries (empty = any) and the interface types (empty = any), as the firewall prints them. */
+	remote: string[]; local: string[]; ifTypes: string[];
 }
-export interface WinRead { networks: { alias: string; category: Profile | undefined }[]; firewallOn: Partial<Record<Profile, boolean>>; rules: WinRule[] }
+export interface WinRead { networks: { alias: string; category: Profile | undefined; type?: "wired" | "wireless" }[]; firewallOn: Partial<Record<Profile, boolean>>; rules: WinRule[] }
 
 /** The steps of the read, from the networks to `$out`. ASCII only; nothing is quoted into them (the port and the path are compared in JavaScript). */
 export const WINDOWS_STEPS = [
 	// The category of each network, by the adapter's alias (what `os.networkInterfaces()` calls the interface): a failure here leaves the categories unknown, which the notes read strictly.
-	"$networks = @(); try { $networks = @(Get-NetConnectionProfile | ForEach-Object { [ordered]@{ alias = [string]$_.InterfaceAlias; category = [string]$_.NetworkCategory } }) } catch { }",
+	"$adapters = @{}; try { foreach ($a in Get-NetAdapter) { $adapters[[string]$a.Name] = [string]$a.InterfaceType } } catch { }",
+	"$networks = @(); try { $networks = @(Get-NetConnectionProfile | ForEach-Object { [ordered]@{ alias = [string]$_.InterfaceAlias; category = [string]$_.NetworkCategory; type = [string]$adapters[[string]$_.InterfaceAlias] } }) } catch { }",
 	"$profiles = @(); try { $profiles = @(Get-NetFirewallProfile | ForEach-Object { [ordered]@{ name = [string]$_.Name; enabled = [string]$_.Enabled } }) } catch { }",
 	// The filters of every rule at once (a filter's InstanceID is its rule's Name): a call per rule takes minutes on a machine with hundreds of rules. The program is never matched by `Get-NetFirewallApplicationFilter -Program`,
 	// which compares the stored text exactly (RVLAN2-F015); each stored program is expanded here and compared in JavaScript after full-path normalisation and case folding.
 	"$apps = @{}; foreach ($f in Get-NetFirewallApplicationFilter) { $apps[[string]$f.InstanceID] = $f }",
 	"$ports = @{}; foreach ($f in Get-NetFirewallPortFilter) { $ports[[string]$f.InstanceID] = $f }",
-	"$rules = @(foreach ($r in Get-NetFirewallRule -Direction Inbound -Enabled True) { $a = $apps[[string]$r.Name]; $p = $ports[[string]$r.Name]; $prog = 'Any'; $svc = 'Any'; $pkg = 'Any'; if ($a) { $prog = [string]$a.Program; $svc = [string]$a.Service; $pkg = [string]$a.Package }; [ordered]@{ name = [string]$r.Name; display = [string]$r.DisplayName; action = [string]$r.Action; direction = [string]$r.Direction; enabled = [string]$r.Enabled; profile = [string]$r.Profile; program = $prog; expanded = [Environment]::ExpandEnvironmentVariables($prog); service = $svc; package = $pkg; protocol = $(if ($p) { [string]$p.Protocol } else { 'Any' }); localPort = $(if ($p) { @($p.LocalPort | ForEach-Object { [string]$_ }) } else { @('Any') }) } })",
+	"$addrs = @{}; foreach ($f in Get-NetFirewallAddressFilter) { $addrs[[string]$f.InstanceID] = $f }",
+	"$types = @{}; foreach ($f in Get-NetFirewallInterfaceTypeFilter) { $types[[string]$f.InstanceID] = $f }",
+	"$rules = @(foreach ($r in Get-NetFirewallRule -Direction Inbound -Enabled True) { $a = $apps[[string]$r.Name]; $p = $ports[[string]$r.Name]; $ad = $addrs[[string]$r.Name]; $ty = $types[[string]$r.Name]; $prog = 'Any'; $svc = 'Any'; $pkg = 'Any'; if ($a) { $prog = [string]$a.Program; $svc = [string]$a.Service; $pkg = [string]$a.Package }; [ordered]@{ name = [string]$r.Name; display = [string]$r.DisplayName; action = [string]$r.Action; direction = [string]$r.Direction; enabled = [string]$r.Enabled; profile = [string]$r.Profile; program = $prog; expanded = [Environment]::ExpandEnvironmentVariables($prog); service = $svc; package = $pkg; protocol = $(if ($p) { [string]$p.Protocol } else { 'Any' }); localPort = $(if ($p) { @($p.LocalPort | ForEach-Object { [string]$_ }) } else { @('Any') }); remote = $(if ($ad) { @($ad.RemoteAddress | ForEach-Object { [string]$_ }) } else { @('Any') }); local = $(if ($ad) { @($ad.LocalAddress | ForEach-Object { [string]$_ }) } else { @('Any') }); ifType = $(if ($ty) { @($ty.InterfaceType | ForEach-Object { [string]$_ }) } else { @('Any') }) } })",
 	"$out = [ordered]@{ networks = $networks; profiles = $profiles; rules = $rules }",
 ];
 export const WINDOWS_SCRIPT = [UTF8_OUT, PROGRESS_OFF, CLM_CHECK, "$ErrorActionPreference = 'Stop'", ...WINDOWS_STEPS, "$json = $out | ConvertTo-Json -Compress -Depth 5", asciiJson("$json")].join("\n");
@@ -128,6 +136,50 @@ function categoryOf(value: unknown): Profile | undefined {
 	const word = text(value).toLowerCase();
 	return word === "private" || word === "1" ? "Private" : word === "public" || word === "0" ? "Public" : word === "domainauthenticated" || word === "domain" || word === "2" ? "Domain" : undefined;
 }
+/** The interface type of an adapter by its `ifType` number (71 is IEEE 802.11; 6, 62, 69, and 117 are Ethernet kinds); undefined for anything else. */
+function adapterType(value: unknown): "wired" | "wireless" | undefined {
+	const n = Number(text(value).trim());
+	return n === 71 ? "wireless" : [6, 62, 69, 117].includes(n) ? "wired" : undefined;
+}
+/** The words of a filter's list value ("Any", "Domain, Private", an array): empty when it is any. */
+function wordsOf(value: unknown): string[] {
+	const words = asList(value).flatMap((v) => text(v).split(",")).map((w) => w.trim()).filter(Boolean);
+	return words.length === 0 || words.some((w) => ["any", "*"].includes(w.toLowerCase())) ? [] : words;
+}
+/** An IPv4 or IPv6 address as a number with its bit length; undefined for text that is neither. */
+function ipOf(text_: string): { n: bigint; bits: number } | undefined {
+	const t = text_.trim().replace(/%.*$/, "");
+	const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(t);
+	if (v4) {
+		const o = v4.slice(1).map(Number);
+		return o.some((x) => x > 255) ? undefined : { n: o.reduce((a, x) => (a << 8n) | BigInt(x), 0n), bits: 32 };
+	}
+	if (!/^[0-9a-f:]+$/i.test(t) || !t.includes(":") || t.split("::").length > 2) return undefined;
+	const [head = "", tail = ""] = t.split("::"), h = head ? head.split(":") : [], k = tail ? tail.split(":") : [];
+	const groups = t.includes("::") ? [...h, ...Array(8 - h.length - k.length).fill("0"), ...k] : h;
+	if (groups.length !== 8 || groups.some((g) => !/^[0-9a-f]{1,4}$/i.test(g))) return undefined;
+	return { n: groups.reduce((a, g) => (a << 16n) | BigInt(Number.parseInt(g, 16)), 0n), bits: 128 };
+}
+/** Whether one address entry of a rule ("10.0.0.0/8", "10.0.0.0/255.0.0.0", "a-b", one address, or `LocalSubnet`) covers the address. Other keywords (DefaultGateway, Internet, …) cover nothing. */
+export function entryCovers(entry: string, address: string): boolean {
+	const e = entry.trim(), me = ipOf(address);
+	if (/^localsubnet$/i.test(e)) return true;
+	if (!me) return false;
+	const range = /^([^/-]+)-([^/-]+)$/.exec(e);
+	if (range) {
+		const lo = ipOf(range[1]!), hi = ipOf(range[2]!);
+		return Boolean(lo && hi && lo.bits === me.bits && hi.bits === me.bits && lo.n <= me.n && me.n <= hi.n);
+	}
+	const [base, len] = e.split("/") as [string, string | undefined], b = ipOf(base);
+	if (!b || b.bits !== me.bits) return false;
+	if (len === undefined) return b.n === me.n;
+	const m = /^\d+$/.test(len) ? Number(len) : undefined, mask = m === undefined ? ipOf(len) : undefined;
+	const prefix = m !== undefined ? m : mask && mask.bits === b.bits ? mask.n.toString(2).split("1").length - 1 : undefined;
+	if (prefix === undefined || prefix > b.bits) return false;
+	const shift = BigInt(b.bits - prefix);
+	return b.n >> shift === me.n >> shift;
+}
+
 /** A path in full-path form for comparison: slashes made backslashes, `.` and `..` and doubled separators resolved, no trailing separator, `\\?\` dropped, lower case. `""` for anything that is not a drive or UNC path (a relative path, or an unexpanded `%variable%`). */
 export function comparable(path: string): string {
 	let p = path.trim().replace(/^"(.*)"$/, "$1").replace(/\//g, "\\");
@@ -163,7 +215,7 @@ export function parseWindows(stdout: string): WinRead {
 	}
 	const body = (parsed ?? {}) as { networks?: unknown; profiles?: unknown; rules?: unknown };
 	if (!parsed || typeof parsed !== "object" || !("rules" in body)) throw new Error(`PowerShell's answer has no rules: ${line.slice(0, 120)}`);
-	const networks = asList(body.networks).map((n) => n as Record<string, unknown>).map((n) => ({ alias: text(n.alias), category: categoryOf(n.category) }));
+	const networks = asList(body.networks).map((n) => n as Record<string, unknown>).map((n) => ({ alias: text(n.alias), category: categoryOf(n.category), ...(adapterType(n.type) ? { type: adapterType(n.type)! } : {}) }));
 	const firewallOn: Partial<Record<Profile, boolean>> = {};
 	for (const p of asList(body.profiles).map((p) => p as Record<string, unknown>)) {
 		const profile = categoryOf(p.name);
@@ -179,6 +231,7 @@ export function parseWindows(stdout: string): WinRead {
 		const program = text(r.program).trim().toLowerCase();
 		const stored = text(r.expanded) || text(r.program);
 		rules.push({
+			remote: wordsOf(r.remote), local: wordsOf(r.local), ifTypes: wordsOf(r.ifType).flatMap((w) => w.split(/\s+/)).map((w) => w.toLowerCase()),
 			name: text(r.name), display: text(r.display), action, profiles: profilesOf(r.profile), tcp: tcpOf(r.protocol), ports: portsOf(r.localPort),
 			program: special(r.service) || special(r.package) ? "" : program === "" || program === "any" ? "any" : program === "system" ? "system" : comparable(stored),
 		});
@@ -189,10 +242,10 @@ export function parseWindows(stdout: string): WinRead {
 const covers = (ports: "any" | [number, number][], port: number) => ports === "any" || ports.some(([lo, hi]) => port >= lo && port <= hi);
 /** PowerShell reads `'` and these four as a single quote, inside a single-quoted string and as its delimiter. */
 const QUOTES = /['\u2018\u2019\u201A\u201B]/g;
-/** A control character, or a wildcard (`-Name` takes wildcards: `*` would disable more rules than the one that was found). */
-const UNQUOTABLE = /[\u0000-\u001F\u007F-\u009F\u2028\u2029*?]/;
-/** The text of a name for the boss: a control character as `\uXXXX`. */
-const shown = (name: string) => name.replace(/[\u0000-\u001F\u007F-\u009F\u2028\u2029]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+/** A control character, a bidi or invisible format character (it reorders or hides text the boss reads), or a wildcard of `-Name` (`*`, `?`, `[`, `]`: a match of more or other rules than the one that was found, or none). */
+const UNQUOTABLE = /[\u0000-\u001F\u007F-\u009F\u2028\u2029\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF*?[\]]/;
+/** The text of a name for the boss: a control or format character as `\uXXXX`. */
+const shown = (name: string) => name.replace(/[\u0000-\u001F\u007F-\u009F\u2028\u2029\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
 /** A rule name as a PowerShell literal string (RVLAN3-F011): wrapped in `'`, every quote character doubled, a backtick and `$` left as they are (literal in single quotes). */
 export const psLiteral = (name: string) => `'${name.replace(QUOTES, (q) => q + q)}'`;
 /** The command that disables rules by name (to run in an elevated PowerShell), and the names that cannot go in it. `command` is undefined when no name is left. */
@@ -204,33 +257,39 @@ export const allowCommand = (port: number) => `New-NetFirewallRule -DisplayName 
 const listCommand = "Get-NetFirewallRule -Direction Inbound -Action Block -Enabled True | Get-NetFirewallApplicationFilter | Where-Object { $_.Program -like '*node.exe' } | Select-Object InstanceID, Program";
 
 /** The notes for what the read found: rules that block, no rule that allows, a Public network (in that order). A firewall that is off for a network's profile has none for it. */
-export function windowsNotes(read: WinRead, input: FirewallInput, execPath: string): string[] {
-	const node = comparable(execPath), port = input.port;
+export function windowsNotes(read: WinRead, input: FirewallInput, execPath: string, realPath?: string): string[] {
+	// Node started through a link (nvm-windows, Scoop, fnm) is a rule's program by the link or by its target, depending on how it was started: both are compared.
+	const nodes = new Set([comparable(execPath), realPath ? comparable(realPath) : ""].filter(Boolean)), port = input.port;
 	const byAlias = new Map(read.networks.map((n) => [n.alias.toLowerCase(), n.category]));
 	// The profile of each served address; unknown (the category could not be read) is read strictly: every profile for the block rules, any allow rule for the allow check.
-	const addresses = input.served.map((s) => ({ ...s, profile: byAlias.get(s.iface.toLowerCase()) }));
+	const typeOf = new Map(read.networks.map((n) => [n.alias.toLowerCase(), n.type]));
+	const addresses = input.served.map((s) => ({ ...s, profile: byAlias.get(s.iface.toLowerCase()), type: typeOf.get(s.iface.toLowerCase()) }));
 	const live = (p: Profile) => read.firewallOn[p] !== false;
-	const watched = new Set<Profile>();
-	for (const a of addresses.length ? addresses : [{ profile: undefined }]) for (const p of a.profile ? [a.profile] : PROFILES) if (live(p)) watched.add(p);
-	const forNode = (r: WinRule) => r.program === "any" || (node !== "" && r.program === node);
+	// Whether a rule's scope (remote and local address, interface type) takes in a served address. An interface type that is not known is read strictly: it counts for a block and not for an allow. No served address: no scope to test.
+	const scoped = (r: WinRule, a: { address?: string; type?: "wired" | "wireless" | undefined }, strict: boolean) => {
+		if (a.address !== undefined && ((r.remote.length && !r.remote.some((e) => entryCovers(e, a.address!))) || (r.local.length && !r.local.some((e) => entryCovers(e, a.address!))))) return false;
+		if (!r.ifTypes.length) return true;
+		return a.type === undefined ? strict : r.ifTypes.includes(a.type);
+	};
+	const forNode = (r: WinRule) => r.program === "any" || nodes.has(r.program);
 	const fits = (r: WinRule) => r.tcp && covers(r.ports, port) && forNode(r);
-	const blocks = read.rules.filter((r) => r.action === "block" && fits(r) && (r.program !== "any" || r.ports !== "any") && [...r.profiles].some((p) => watched.has(p)));
+	const blocks = read.rules.filter((r) => r.action === "block" && fits(r) && (r.program !== "any" || r.ports !== "any") && (addresses.length ? addresses : [{ profile: undefined, address: undefined, type: undefined }]).some((a) => (a.profile ? [a.profile] : PROFILES).some((p) => live(p) && r.profiles.has(p)) && scoped(r, a, true)));
 	const out: string[] = [];
 	if (blocks.length) {
 		const names = blocks.map((r) => r.name), { command, left } = disableCommand(names);
 		const what = blocks.some((r) => r.program !== "any") ? "node.exe" : `TCP port ${port}`;
 		const parts = [`Windows Firewall has rules that block ${what} (${names.map(shown).join(", ")}); they win over any allow rule.`];
 		if (command) parts.push(`In an elevated PowerShell: \`${command}\`.`);
-		if (left.length) parts.push(`${command ? "Of these, " : ""}${left.map(shown).join(", ")} cannot go in a command (the name holds a control character or a wildcard): disable ${left.length === 1 ? "it" : "them"} in wf.msc (Inbound Rules, the rule, Disable Rule).`);
+		if (left.length) parts.push(`${command ? "Of these, " : ""}${left.map(shown).join(", ")} cannot go in a command (the name holds a control character, an invisible or direction-changing character, or a wildcard): disable ${left.length === 1 ? "it" : "them"} in wf.msc (Inbound Rules, the rule, Disable Rule).`);
 		out.push(parts.join(" "));
 	}
 	// An address is allowed when some allow rule fits its profile; a Public network counts a Private rule too, since the note below sends the boss to make it Private.
-	const allowed = (profile: Profile | undefined) => {
-		if (profile && !live(profile)) return true;
-		const wants: Profile[] = profile === undefined ? [...PROFILES] : profile === "Public" ? ["Public", "Private"] : [profile];
-		return read.rules.some((r) => r.action === "allow" && fits(r) && wants.some((p) => r.profiles.has(p)));
+	const allowed = (a: { profile: Profile | undefined; address?: string; type?: "wired" | "wireless" | undefined }) => {
+		if (a.profile && !live(a.profile)) return true;
+		const wants: Profile[] = a.profile === undefined ? [...PROFILES] : a.profile === "Public" ? ["Public", "Private"] : [a.profile];
+		return read.rules.some((r) => r.action === "allow" && fits(r) && wants.some((p) => r.profiles.has(p)) && scoped(r, a, false));
 	};
-	if (!addresses.length ? !allowed(undefined) : addresses.some((a) => !allowed(a.profile))) {
+	if (!addresses.length ? !allowed({ profile: undefined }) : addresses.some((a) => !allowed(a))) {
 		out.push(`No Windows Firewall rule allows incoming connections to TCP port ${port}, so a phone cannot connect. In an elevated PowerShell: \`${allowCommand(port)}\`. A port rule survives node upgrades, which a program rule does not.`);
 	}
 	const publics = addresses.filter((a) => a.profile === "Public" && live("Public"));
@@ -243,16 +302,18 @@ export function windowsNotes(read: WinRead, input: FirewallInput, execPath: stri
 export const windowsUnknown = (port: number, why: string) =>
 	`Windows Firewall could not be read (${why}). If a phone cannot connect, in an elevated PowerShell allow the port with \`${allowCommand(port)}\`, and list rules that block node.exe with \`${listCommand}\`; disable one by its InstanceID with \`Disable-NetFirewallRule -Name '<InstanceID>'\`.`;
 
-async function readWindows(input: FirewallInput, execPath: string, exec: FirewallExec, env: NodeJS.ProcessEnv): Promise<FirewallRead> {
+async function readWindows(input: FirewallInput, execPath: string, exec: FirewallExec, env: NodeJS.ProcessEnv, realpath: (path: string) => string): Promise<FirewallRead> {
 	if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535) throw new Error(`not a port: ${input.port}`);
 	const { file, args, options } = windowsCommand(env);
 	try {
-		const read = parseWindows(await exec(file, args, options)), notes = windowsNotes(read, input, execPath);
+		let real: string | undefined;
+		try { real = realpath(execPath); } catch { /* a path that cannot be resolved is compared as it is */ }
+		const read = parseWindows(await exec(file, args, options)), notes = windowsNotes(read, input, execPath, real);
 		return { notes, summary: `Windows Firewall: ${read.rules.length} enabled inbound rules read, ${notes.length} note${notes.length === 1 ? "" : "s"}` };
 	} catch (error) {
 		const e = error as Error & { stderr?: string };
 		// Our own parse failure has a plain message; a failed run is told by `execFailure`, and Constrained Language Mode by its sentence.
-		const why = e.stderr !== undefined || (e as { code?: unknown }).code !== undefined ? reasonOf(error) : e.message.slice(0, 160);
+		const why = e.stderr !== undefined || (e as { code?: unknown }).code !== undefined || (e as { killed?: boolean }).killed ? reasonOf(error, options.timeout) : e.message.slice(0, 160);
 		const clm = why.includes(CLM_WORD) ? CLM_TEXT : why;
 		return { notes: [windowsUnknown(input.port, clm)], summary: `Windows Firewall: the state could not be read (${clm})` };
 	}

@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { test } from "node:test";
-import { searchPath } from "../src/exe.mjs";
+import { execFileExe, searchPath } from "../src/exe.mjs";
 import {
-	allowCommand, comparable, disableCommand, macNotes, parseMacApp, parseMacBlockAll, parseMacState, parseWindows, psLiteral, readFirewall, SOCKETFILTERFW, windowsCommand, windowsNotes,
+	allowCommand, comparable, disableCommand, entryCovers, macNotes, parseMacApp, parseMacBlockAll, parseMacState, parseWindows, psLiteral, readFirewall, SOCKETFILTERFW, windowsCommand, windowsNotes,
 	windowsUnknown, WINDOWS_SCRIPT, type FirewallExec, type FirewallInput,
 } from "../src/lan/firewall.ts";
 import { asciiJson, CLM_WORD } from "../src/server/acl.ts";
@@ -324,7 +324,7 @@ test("rule names are single-quoted PowerShell literals: a quote of any kind is d
 });
 
 test("a name with a control character or a wildcard is not put in the command; the note names it and says to use wf.msc", () => {
-	const bad = ["new\nline", "tab\there", "esc\u001b[0m", "nul\u0000x", "c1\u0085", "sep\u2028x", "star*", "ques?"];
+	const bad = ["new\nline", "tab\there", "esc\u001b[0m", "nul\u0000x", "c1\u0085", "sep\u2028x", "star*", "ques?", "C:\\tools\\[dev]\\node.exe", "close]", "evil\u202Eexe.dlr", "zw\u200Bsp", "bom\uFEFFx", "iso\u2066x\u2069"];
 	const { command, left } = disableCommand(["good'one", ...bad, "{ok}"]);
 	assert.deepEqual(left, bad);
 	assert.deepEqual(literals(command!), ["good'one", "{ok}"]);
@@ -333,6 +333,9 @@ test("a name with a control character or a wildcard is not put in the command; t
 	assert.ok(notes[0]!.includes("`Disable-NetFirewallRule -Name 'good''one'`"));
 	assert.ok(notes[0]!.includes("new\\u000aline") && notes[0]!.includes("tab\\u0009here"), "named, with the character shown");
 	assert.ok(!/[\u0000-\u001f]/.test(notes[0]!), "no control character reaches the note");
+	const bidi = notesOf(win([portAllow(), nodeRule("evil\u202Eexe.dlr")]))[0]!;
+	assert.ok(!/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/.test(bidi) && bidi.includes("evil\\u202eexe.dlr"), "a direction override is shown as an escape and is not in a command");
+	assert.ok(!bidi.includes("Disable-NetFirewallRule"));
 	assert.match(notes[0]!, /wf\.msc \(Inbound Rules, the rule, Disable Rule\)/);
 	// When no name is left, only the wf.msc text is shown.
 	const only = notesOf(win([portAllow(), nodeRule("new\nline")]));
@@ -416,7 +419,7 @@ test("Windows: one PowerShell start, by absolute path, from System32, encoded, w
 });
 
 test("Windows: a read that fails says the state is unknown and gives both commands", async () => {
-	for (const failure of [Object.assign(new Error("Command failed: powershell"), { code: 1, stderr: "Get-NetFirewallRule : Access is denied" }), Object.assign(new Error("timed out"), { code: "ETIMEDOUT", killed: true })]) {
+	for (const failure of [Object.assign(new Error("Command failed: powershell"), { code: 1, stderr: "Get-NetFirewallRule : Access is denied" }), Object.assign(new Error("timed out"), { code: null, killed: true, signal: "SIGTERM" })]) {
 		const read = await readFirewall(WIFI, { platform: "win32", execPath: NODE_WIN, exec: winRunner(failure).exec, env });
 		assert.equal(read.notes.length, 1);
 		assert.match(read.notes[0]!, /^Windows Firewall could not be read \(/);
@@ -434,4 +437,69 @@ test("Windows: a port that is not one is refused before anything runs", async ()
 	const r = winRunner(win([]));
 	for (const port of [0, 70000, 1.5, Number.NaN]) await assert.rejects(readFirewall({ port, served: [] }, { platform: "win32", execPath: NODE_WIN, exec: r.exec, env }), /not a port/);
 	assert.equal(r.calls.length, 0);
+});
+
+// --- RVL8 fixes ---
+
+test("Windows: node started through a link matches a rule that holds the link's target (and the other way round)", () => {
+	const target = "C:\\Users\\me\\AppData\\Roaming\\nvm\\v24.22.1\\node.exe", link = "C:\\Program Files\\nodejs\\node.exe";
+	const json = win([portAllow(), nodeRule("{nvm}", target)]);
+	assert.deepEqual(windowsNotes(parseWindows(json), WIFI, link), [], "no real path given: the rule is not seen (the old reading)");
+	const notes = windowsNotes(parseWindows(json), WIFI, link, target.toUpperCase().replace(/\//g, "/"));
+	assert.equal(notes.length, 1);
+	assert.match(notes[0]!, /block node\.exe \(\{nvm\}\)/);
+	assert.equal(windowsNotes(parseWindows(win([portAllow(), nodeRule("{link}", link)])), WIFI, link, target).length, 1, "the link itself still matches");
+});
+test("Windows: readFirewall resolves the node path (injected) and a path that cannot be resolved is compared as it is", async () => {
+	const target = "C:\\nvm\\v1\\node.exe", answer = win([portAllow(), nodeRule("{t}", target)]);
+	const seen = await readFirewall(WIFI, { platform: "win32", execPath: NODE_WIN, exec: winRunner(answer).exec, env, realpath: () => target });
+	assert.match(seen.notes[0]!, /block node\.exe \(\{t\}\)/);
+	const broken = await readFirewall(WIFI, { platform: "win32", execPath: NODE_WIN, exec: winRunner(answer).exec, env, realpath: () => { throw new Error("ENOENT"); } });
+	assert.deepEqual(broken.notes, []);
+});
+
+test("a read killed by its timeout says it timed out, with a real slow child", { skip: process.platform === "win32" ? "needs /bin/sleep" : false }, async () => {
+	const slow: FirewallExec = (file, args, options) =>
+		new Promise((resolve, reject) => {
+			execFileExe("/bin/sleep", ["30"], { timeout: 200, env: options.env }, (error, stdout, stderr) => (error ? reject(Object.assign(error, { stdout, stderr })) : resolve(stdout)));
+		});
+	const mac = await readFirewall(PORT, { platform: "darwin", execPath: "/x/node", exec: slow, env: process.env });
+	assert.match(mac.summary, /could not be read \(timed out after 10 s\)/);
+	const w = await readFirewall(WIFI, { platform: "win32", execPath: NODE_WIN, exec: slow, env });
+	assert.match(w.notes[0]!, /could not be read \(timed out after 60 s\)/);
+	assert.ok(!/\(it failed\)/.test(w.notes[0]!));
+});
+
+test("address and interface filters: a block rule scoped away from the served address is ignored, an allow rule counts only where it covers it", () => {
+	const scope = (o: Raw) => ({ remote: ["Any"], local: ["Any"], ifType: ["Any"], ...o });
+	const blocks = (o: Raw) => notesOf(win([portAllow(), nodeRule("{b}", NODE_WIN, scope(o))])).length;
+	assert.equal(blocks({}), 1, "unscoped: counts");
+	assert.equal(blocks({ remote: ["8.8.8.8"] }), 0, "remote elsewhere: ignored");
+	assert.equal(blocks({ remote: ["10.0.0.0/8"] }), 0);
+	assert.equal(blocks({ remote: ["192.168.0.0/16"] }), 1);
+	assert.equal(blocks({ remote: ["LocalSubnet"] }), 1);
+	assert.equal(blocks({ remote: ["10.0.0.1", "192.168.1.1-192.168.1.9"] }), 1, "a range that holds it");
+	assert.equal(blocks({ local: ["10.1.1.1"] }), 0, "local address elsewhere: ignored");
+	assert.equal(blocks({ ifType: ["Wired"] }), 1, "type of the adapter unknown: read strictly, counts");
+	const typed = (o: Raw, type: string) => notesOf(win([portAllow(), nodeRule("{b}", NODE_WIN, scope(o))], { networks: [{ alias: "Wi-Fi", category: "Private", type }] })).length;
+	assert.equal(typed({ ifType: ["Wired"] }, "71"), 0, "a wired-only block does not reach Wi-Fi");
+	assert.equal(typed({ ifType: ["Wireless", "RemoteAccess"] }, "71"), 1);
+	assert.equal(typed({ ifType: ["Wired"] }, "6"), 1);
+	const allowed = (o: Raw, over: Raw = {}) => notesOf(win([portAllow("a", scope(o))], over)).length;
+	assert.equal(allowed({}), 0);
+	assert.equal(allowed({ remote: ["10.0.0.0/8"] }), 1, "an allow limited to 10/8 does not allow 192.168.1.5");
+	assert.equal(allowed({ remote: ["LocalSubnet"] }), 0);
+	assert.equal(allowed({ remote: ["192.168.1.0/255.255.255.0"] }), 0, "mask form");
+	assert.equal(allowed({ ifType: ["Wired"] }, { networks: [{ alias: "Wi-Fi", category: "Private", type: "71" }] }), 1, "an allow for Wired does not allow Wi-Fi");
+	assert.equal(allowed({ ifType: ["Wireless"] }, { networks: [{ alias: "Wi-Fi", category: "Private", type: "71" }] }), 0);
+	assert.equal(allowed({ ifType: ["Wired"] }), 1, "unknown type: an allow does not count");
+	assert.match(WINDOWS_SCRIPT, /Get-NetFirewallAddressFilter/);
+	assert.match(WINDOWS_SCRIPT, /Get-NetFirewallInterfaceTypeFilter/);
+});
+
+test("entryCovers: addresses, prefixes, masks, ranges, keywords, and IPv6", () => {
+	const yes = [["10.0.0.0/8", "10.9.9.9"], ["10.0.0.5", "10.0.0.5"], ["10.0.0.1-10.0.0.9", "10.0.0.5"], ["10.0.0.0/255.0.0.0", "10.1.2.3"], ["LocalSubnet", "10.0.0.5"], ["fe80::/10", "fe80::1%en0"], ["2001:db8::1-2001:db8::9", "2001:db8::5"]];
+	const no = [["10.0.0.0/8", "11.0.0.1"], ["10.0.0.6", "10.0.0.5"], ["Internet", "10.0.0.5"], ["10.0.0.0/33", "10.0.0.5"], ["fe80::/10", "10.0.0.5"], ["junk", "10.0.0.5"], ["10.0.0.0/8", "not an address"]];
+	for (const [e, a] of yes) assert.equal(entryCovers(e!, a!), true, `${e} ${a}`);
+	for (const [e, a] of no) assert.equal(entryCovers(e!, a!), false, `${e} ${a}`);
 });

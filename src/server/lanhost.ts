@@ -61,6 +61,8 @@ export function createLanHost(o: LanHostOptions) {
 	let held: string | undefined, moved: string | undefined;
 	/** What the firewall read found (lan/firewall.ts), once it is done; cleared when the listeners close. */
 	let fire: string[] = [];
+	/** Counts the reads: a read answers only while it is the latest; closing the listeners counts one too. `fireFor` is what the latest read was started for (the served addresses), to see a change. */
+	let fireSeq = 0, fireFor: string | undefined;
 	let tileAt = -Infinity, nameAt = -Infinity, nameNow: LocalName | undefined;
 	const events: { at: number; text: string }[] = [], notices = new Map<string, string>();
 	let chain: Promise<unknown> = Promise.resolve();
@@ -163,6 +165,8 @@ export function createLanHost(o: LanHostOptions) {
 			log: (event, fields) => o.log.line(event, flat(fields)),
 			onStatus: (next) => {
 				status = next;
+				// The port or the served addresses changed (another network, a new adapter): the firewall is read again for them.
+				if (listener && fireFor !== undefined && fireFor !== JSON.stringify({ port: next.port, served: served().map((a) => ({ address: a.address, iface: a.iface })) })) watchFirewall();
 				if (next.caEnded && listener) void serial(async () => (next.caEnded && listener && (await down(false), (held = ENDED))));
 			},
 		});
@@ -196,11 +200,13 @@ export function createLanHost(o: LanHostOptions) {
 	}
 	/** The firewall read runs after the listeners are up (PowerShell takes seconds) and its notes arrive when it is done; it never holds a switch, and a read of listeners that are gone is dropped. */
 	function watchFirewall() {
-		const mine = listener, port = status?.port, read = seams.firewall ?? (inTestRun() ? undefined : readFirewall);
-		if (!mine || !port || !read) return;
-		void read({ port, served: served().map((a) => ({ address: a.address, iface: a.iface })) }).then((found) => {
+		const port = status?.port, read = seams.firewall ?? (inTestRun() ? undefined : readFirewall);
+		if (!listener || !port || !read) return;
+		const input = { port, served: served().map((a) => ({ address: a.address, iface: a.iface })) }, seq = ++fireSeq;
+		fireFor = JSON.stringify(input);
+		void read(input).then((found) => {
 			o.log.line("lan-firewall", { summary: found.summary });
-			if (listener === mine) fire = found.notes;
+			if (seq === fireSeq) fire = found.notes;
 		}, (error: Error) => o.log.line("lan-firewall", { summary: `the read failed: ${String(error.message).slice(0, 160)}` }));
 	}
 	/** Closes the listeners and voids what belongs to them. `wish` forgets the wish (Wi-Fi access off); the allowed devices stay either way. */
@@ -210,6 +216,8 @@ export function createLanHost(o: LanHostOptions) {
 		await was?.stop();
 		status = undefined;
 		fire = [];
+		fireSeq++;
+		fireFor = undefined;
 		if (gui) lan().disable(!wish);
 		notices.clear();
 		told();
@@ -259,7 +267,11 @@ export function createLanHost(o: LanHostOptions) {
 		}
 		held = undefined;
 		// Already serving: the paired phone's connections stay. Only a port that is taken on an address is worth a restart (it moves, as the boss's command does).
-		if (listener && lan().on && status && !hasTaken(status)) return reply(200, { ...factsOf(), text: `Wi-Fi access is on: ${urlOf() ?? "no address is served yet"}` });
+		if (listener && lan().on && status && !hasTaken(status)) {
+			// The boss ran the command again, often after following a note: read the firewall as it is now.
+			watchFirewall();
+			return reply(200, { ...factsOf(), text: `Wi-Fi access is on: ${urlOf() ?? "no address is served yet"}` });
+		}
 		await down(false, "restart").catch(() => {});
 		lan().enable();
 		const serving = await bringUp(true);
