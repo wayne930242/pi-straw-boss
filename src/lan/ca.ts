@@ -1,8 +1,8 @@
 import { createHash, createPrivateKey, randomBytes, X509Certificate } from "node:crypto";
-import { execFileSync } from "node:child_process";
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, writeSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
+import { execFileSyncExe } from "../exe.mjs";
 import { renameInto } from "../server/record.ts";
 import { issueCa, issueLeaf, type Constraints, type Validity } from "./x509.ts";
 
@@ -28,7 +28,7 @@ export function localName(deps: { platform?: NodeJS.Platform; run?: (program: st
 	const platform = deps.platform ?? process.platform;
 	try {
 		const raw = platform === "darwin"
-			? (deps.run ?? ((program, args) => execFileSync(program, args, { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"] })))("/usr/sbin/scutil", ["--get", "LocalHostName"])
+			? (deps.run ?? ((program, args) => String(execFileSyncExe(program, args, { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"] }))))("scutil", ["--get", "LocalHostName"])
 			: (deps.hostname ?? hostname)();
 		const name = raw.trim().toLowerCase();
 		return NAME.test(name) ? name : undefined;
@@ -199,7 +199,7 @@ function shaped(value: unknown): { ca: LanCa } | { lost: CaLost } {
 
 /** Keeps the CA out of Time Machine: `tmutil addexclusion` marks the file itself, so the mark survives the rename. Only macOS has Time Machine. */
 export function timeMachineExclude(path: string, platform: NodeJS.Platform = process.platform) {
-	if (platform === "darwin") execFileSync("/usr/bin/tmutil", ["addexclusion", path], { stdio: "ignore", timeout: 10_000 });
+	if (platform === "darwin") execFileSyncExe("tmutil", ["addexclusion", path], { stdio: "ignore", timeout: 10_000 });
 }
 export interface WriteDeps {
 	/** Called on the new temporary file after it exists (empty, mode 600) and before the key is written into it; a throw is logged and the file is still written. Default: `timeMachineExclude`. */

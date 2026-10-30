@@ -28,7 +28,7 @@ const now = Date.UTC(2026, 9, 30, 12, 0, 0);
 const ca = createCa("weis-mbp", now);
 
 test("the name is read per platform, lowercased, and must be a DNS label", () => {
-	const mac = (out: string | Error) => localName({ platform: "darwin", run: (program, args) => { assert.equal(program, "/usr/sbin/scutil"); assert.deepEqual(args, ["--get", "LocalHostName"]); if (out instanceof Error) throw out; return out; } });
+	const mac = (out: string | Error) => localName({ platform: "darwin", run: (program, args) => { assert.equal(program, "scutil"); assert.deepEqual(args, ["--get", "LocalHostName"]); if (out instanceof Error) throw out; return out; } });
 	assert.equal(mac("Weis-MBP\n"), "weis-mbp");
 	assert.equal(mac(new Error("not set")), undefined, "scutil exits 1 when LocalHostName is not set");
 	assert.equal(mac(""), undefined);
