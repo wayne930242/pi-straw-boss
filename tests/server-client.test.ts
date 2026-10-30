@@ -296,6 +296,25 @@ test("F004: the old server's answer to a restart is waited for no longer than th
 	}
 });
 
+test("VM 7 F3: status carries the GUI's remote and lan facts of the server's own answer, and neither when it gives none", async () => {
+	const secret = "l".repeat(64), endpoint = join(world.root, "lan.sock");
+	mkdirSync(world.slot.dir, { recursive: true });
+	world.live.add(8);
+	const remote = { wanted: false, on: false }, lan = { wanted: true, on: true, port: 8445, addresses: [{ address: "192.168.1.5", interface: "Wi-Fi" }], pending: 0 };
+	let gui: Record<string, unknown> | undefined = { remote, lan };
+	const control = await listenControl({ endpoint, secret, hello: () => ({ pid: 8, version: "0.44.0", mode: "detached", desk: false, phase: "ready", ready: true }), handle: () => ({ ok: true, uptimeMs: 5, ...(gui ? { gui } : {}) }), refused: () => {} });
+	try {
+		plant({ pid: 8, socket: endpoint, secret });
+		const shown = await describe(world.ctx());
+		assert.deepEqual([shown.remote, shown.lan], [remote, lan]);
+		gui = undefined;
+		const bare = await describe(world.ctx());
+		assert.ok(!("remote" in bare) && !("lan" in bare));
+	} finally {
+		await control.close();
+	}
+});
+
 test("F004: the native calls that protect the folder get what is left of the time (never more than 15 s), and none is run for a plain lock wait", async () => {
 	const seen: (number | undefined)[] = [];
 	const ctx = world.ctx({ prepare: (slot, ms) => (seen.push(ms), secretDir(slot.dir)) });

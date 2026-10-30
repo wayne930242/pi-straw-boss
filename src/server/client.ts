@@ -673,8 +673,8 @@ export async function describe(ctx: Ctx): Promise<Record<string, unknown>> {
 	if (seen.live && record) {
 		try {
 			const { reply } = await callControl(record.socket, record.secret, { cmd: "status" }, 3000);
-			const remote = (reply?.gui as { remote?: unknown } | undefined)?.remote;
-			if (reply?.ok) more = { uptimeMs: reply.uptimeMs, towers: reply.towers ?? [], link: reply.link ?? null, ...(remote ? { remote } : {}) };
+			const { remote, lan } = (reply?.gui ?? {}) as { remote?: unknown; lan?: unknown };
+			if (reply?.ok) more = { uptimeMs: reply.uptimeMs, towers: reply.towers ?? [], link: reply.link ?? null, ...(remote ? { remote } : {}), ...(lan ? { lan } : {}) };
 		} catch { /* the server went while it was asked */ }
 	}
 	return {

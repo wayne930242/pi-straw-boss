@@ -115,11 +115,15 @@ export const WINDOWS_STEPS = [
 	"$profiles = @(); try { $profiles = @(Get-NetFirewallProfile | ForEach-Object { [ordered]@{ name = [string]$_.Name; enabled = [string]$_.Enabled } }) } catch { }",
 	// The filters of every rule at once (a filter's InstanceID is its rule's Name): a call per rule takes minutes on a machine with hundreds of rules. The program is never matched by `Get-NetFirewallApplicationFilter -Program`,
 	// which compares the stored text exactly (RVLAN2-F015); each stored program is expanded here and compared in JavaScript after full-path normalisation and case folding.
+	// The port, address, and interface-type filters are asked for through the enabled inbound rules (one pipeline each): called with no rule piped in, a filtered (non-elevated) token is answered "Access is denied" (VM 1, F1).
+	// With no rule there is nothing to pipe, and the bare call would be that same refusal.
+	"$er = @(Get-NetFirewallRule -Direction Inbound -Enabled True)",
 	"$apps = @{}; foreach ($f in Get-NetFirewallApplicationFilter) { $apps[[string]$f.InstanceID] = $f }",
-	"$ports = @{}; foreach ($f in Get-NetFirewallPortFilter) { $ports[[string]$f.InstanceID] = $f }",
-	"$addrs = @{}; foreach ($f in Get-NetFirewallAddressFilter) { $addrs[[string]$f.InstanceID] = $f }",
-	"$types = @{}; foreach ($f in Get-NetFirewallInterfaceTypeFilter) { $types[[string]$f.InstanceID] = $f }",
-	"$rules = @(foreach ($r in Get-NetFirewallRule -Direction Inbound -Enabled True) { $a = $apps[[string]$r.Name]; $p = $ports[[string]$r.Name]; $ad = $addrs[[string]$r.Name]; $ty = $types[[string]$r.Name]; $prog = 'Any'; $svc = 'Any'; $pkg = 'Any'; if ($a) { $prog = [string]$a.Program; $svc = [string]$a.Service; $pkg = [string]$a.Package }; [ordered]@{ name = [string]$r.Name; display = [string]$r.DisplayName; action = [string]$r.Action; direction = [string]$r.Direction; enabled = [string]$r.Enabled; profile = [string]$r.Profile; program = $prog; expanded = [Environment]::ExpandEnvironmentVariables($prog); service = $svc; package = $pkg; protocol = $(if ($p) { [string]$p.Protocol } else { 'Any' }); localPort = $(if ($p) { @($p.LocalPort | ForEach-Object { [string]$_ }) } else { @('Any') }); remote = $(if ($ad) { @($ad.RemoteAddress | ForEach-Object { [string]$_ }) } else { @('Any') }); local = $(if ($ad) { @($ad.LocalAddress | ForEach-Object { [string]$_ }) } else { @('Any') }); ifType = $(if ($ty) { @($ty.InterfaceType | ForEach-Object { [string]$_ }) } else { @('Any') }) } })",
+	"$ports = @{}; if ($er.Count -gt 0) { foreach ($f in ($er | Get-NetFirewallPortFilter)) { $ports[[string]$f.InstanceID] = $f } }",
+	"$addrs = @{}; if ($er.Count -gt 0) { foreach ($f in ($er | Get-NetFirewallAddressFilter)) { $addrs[[string]$f.InstanceID] = $f } }",
+	"$types = @{}; if ($er.Count -gt 0) { foreach ($f in ($er | Get-NetFirewallInterfaceTypeFilter)) { $types[[string]$f.InstanceID] = $f } }",
+	// `owner` and `family` (the rule's Owner and PackageFamilyName) are set on a packaged app's rule, which applies to that package only (VM 1, F2).
+	"$rules = @(foreach ($r in $er) { $a = $apps[[string]$r.Name]; $p = $ports[[string]$r.Name]; $ad = $addrs[[string]$r.Name]; $ty = $types[[string]$r.Name]; $prog = 'Any'; $svc = 'Any'; $pkg = 'Any'; if ($a) { $prog = [string]$a.Program; $svc = [string]$a.Service; $pkg = [string]$a.Package }; [ordered]@{ name = [string]$r.Name; display = [string]$r.DisplayName; owner = [string]$r.Owner; family = [string]$r.PackageFamilyName; action = [string]$r.Action; direction = [string]$r.Direction; enabled = [string]$r.Enabled; profile = [string]$r.Profile; program = $prog; expanded = [Environment]::ExpandEnvironmentVariables($prog); service = $svc; package = $pkg; protocol = $(if ($p) { [string]$p.Protocol } else { 'Any' }); localPort = $(if ($p) { @($p.LocalPort | ForEach-Object { [string]$_ }) } else { @('Any') }); remote = $(if ($ad) { @($ad.RemoteAddress | ForEach-Object { [string]$_ }) } else { @('Any') }); local = $(if ($ad) { @($ad.LocalAddress | ForEach-Object { [string]$_ }) } else { @('Any') }); ifType = $(if ($ty) { @($ty.InterfaceType | ForEach-Object { [string]$_ }) } else { @('Any') }) } })",
 	"$out = [ordered]@{ networks = $networks; profiles = $profiles; rules = $rules }",
 ];
 export const WINDOWS_SCRIPT = [UTF8_OUT, PROGRESS_OFF, CLM_CHECK, "$ErrorActionPreference = 'Stop'", ...WINDOWS_STEPS, "$json = $out | ConvertTo-Json -Compress -Depth 5", asciiJson("$json")].join("\n");
@@ -232,14 +236,15 @@ export function parseWindows(stdout: string): WinRead {
 		const action = /^(block|4)$/i.test(text(r.action).trim()) ? "block" : /^(allow|2)$/i.test(text(r.action).trim()) ? "allow" : undefined;
 		const inbound = /^(inbound|1)$/i.test(text(r.direction).trim()), enabled = /^(true|1)$/i.test(text(r.enabled).trim());
 		if (!action || !inbound || !enabled || !text(r.name)) continue;
-		// A rule for a service or a packaged app is not a program rule for node.
+		// A rule for a service or a packaged app is not a program rule for node. A filter left unset prints empty on this build (not "Any", VM 1), so empty is Any. A rule with an Owner or a PackageFamilyName (a packaged app's
+		// `…-In-Allow-ServerCapability`, with Program Any, TCP, ports Any) applies to that package alone, so it is neither an allow nor a block rule for node.
 		const special = (v: unknown) => !["", "any", "*"].includes(text(v).trim().toLowerCase());
 		const program = text(r.program).trim().toLowerCase();
 		const stored = text(r.expanded) || text(r.program);
 		rules.push({
 			remote: wordsOf(r.remote), local: wordsOf(r.local), ifTypes: wordsOf(r.ifType).flatMap((w) => w.split(/\s+/)).map((w) => w.toLowerCase()),
 			name: text(r.name), display: text(r.display), action, profiles: profilesOf(r.profile), tcp: tcpOf(r.protocol), ports: portsOf(r.localPort),
-			program: special(r.service) || special(r.package) ? "" : program === "" || program === "any" ? "any" : program === "system" ? "system" : comparable(stored),
+			program: special(r.service) || special(r.package) || special(r.owner) || special(r.family) ? "" : program === "" || program === "any" ? "any" : program === "system" ? "system" : comparable(stored),
 		});
 	}
 	return { networks, firewallOn, rules };

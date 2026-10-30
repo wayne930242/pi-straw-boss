@@ -497,6 +497,54 @@ test("address and interface filters: a block rule scoped away from the served ad
 	assert.match(WINDOWS_SCRIPT, /Get-NetFirewallInterfaceTypeFilter/);
 });
 
+// --- The recheck of the Windows VM (build 26300, a filtered token; ~/.local/share/sbd-review/lan/vm.md): F1, F2, and the empty words ---
+
+test("VM F1: the port, address, and interface-type filters are read through the enabled inbound rules (the bare call is refused for a filtered token), and only then", () => {
+	for (const kind of ["Port", "Address", "InterfaceType"]) {
+		const calls = WINDOWS_SCRIPT.match(new RegExp(`.{0,12}Get-NetFirewall${kind}Filter`, "g")) ?? [];
+		assert.equal(calls.length, 1, kind);
+		assert.match(calls[0]!, /\$er \| Get-/, `${kind} is piped the rules`);
+	}
+	assert.match(WINDOWS_SCRIPT, /\$er = @\(Get-NetFirewallRule -Direction Inbound -Enabled True\)/, "the rules are asked for once, enabled and inbound");
+	assert.match(WINDOWS_SCRIPT, /foreach \(\$r in \$er\)/, "and the same rules are walked");
+	assert.match(WINDOWS_SCRIPT, /\$er\.Count -gt 0/, "no rule: no pipeline (the bare call would be the refusal)");
+	assert.match(WINDOWS_SCRIPT, /owner = \[string\]\$r\.Owner/);
+	assert.match(WINDOWS_SCRIPT, /family = \[string\]\$r\.PackageFamilyName/);
+});
+
+/** The shape of the VM's read: a stock Windows 11 with a packaged app's `…-In-Allow-ServerCapability` rules (Program Any, TCP, ports Any, Service and Package empty, tied by Owner and PackageFamilyName) and the two block rules the prompt made. */
+const SID = "S-1-5-21-1441927103-2923024089-3870737035-1001";
+const capability = (app: string, o: Raw = {}) => rule(`${app}_8wekyb3d8bbweS-1-5-18-In-Allow-ServerCapability`, { action: "Allow", profile: "Domain, Private, Public", protocol: "Any", localPort: [""], service: "", package: "", family: `${app}_8wekyb3d8bbwe`, owner: "", ...o });
+const STOCK = ["Microsoft.AAD.BrokerPlugin", "Microsoft.LockApp", "Microsoft.Win32WebViewHost", "Microsoft.Windows.CloudExperienceHost", "Microsoft.Windows.ShellExperienceHost"].map((a) => capability(a));
+const promptBlocks = (): Raw[] => ["TCP", "UDP"].map((p) => rule(`${p} Query User{3D0A1F2E-6A5B-4D0E-9F61-0C2A8E7B1D44}C:\\users\\\u6e2c\u8a66pm\\appdata\\local\\straw-boss-desk\\node\\node.exe`, { display: "node.exe", profile: "Public", program: "c:\\users\\x\\node.exe", expanded: "c:\\users\\x\\node.exe", protocol: p, localPort: [""], service: "", package: "", owner: "", family: "" }));
+const VM_WIFI: FirewallInput = { port: 8445, served: [{ address: "192.168.64.2", iface: "Ethernet" }] };
+const VM_NODE = "C:\\Users\\x\\node.exe";
+const vmNotes = (rules: Raw[], category = "Public") => windowsCoded(parseWindows(win(rules, { networks: [{ alias: "Ethernet", category }] })), VM_WIFI, VM_NODE).map((n) => n.code);
+
+test("VM F2: a packaged app's rule (Owner or PackageFamilyName, Program Any, ports Any) is no allow rule for node; a plain Any rule still is", () => {
+	assert.deepEqual(vmNotes(STOCK, "Private"), ["fw_win_noallow"], "22 of them on a stock machine hid the note");
+	assert.deepEqual(vmNotes([...STOCK, capability("X", { family: "", owner: SID })], "Private"), ["fw_win_noallow"], "an Owner alone ties a rule to a user, not to every program");
+	assert.deepEqual(vmNotes([...STOCK, portAllow("mine")], "Private"), [], "the note's own allow rule");
+	assert.deepEqual(vmNotes([...STOCK, capability("Y", { family: "", owner: "" })], "Private"), [], "no Owner and no family: a plain allow-any rule");
+	assert.deepEqual(vmNotes([capability("Z", { family: "", owner: "", service: "", package: "" })], "Private"), [], "empty Service and Package read as Any");
+	assert.deepEqual(vmNotes([...STOCK, { ...portAllow("svc"), service: "Dnscache" }], "Private"), ["fw_win_noallow"], "a service rule is still no program rule");
+});
+
+test("VM F2: a packaged app's block rule does not count either; the prompt's own block rules do, and the Public network is told", () => {
+	const blockCapability = capability("Microsoft.Block", { action: "Block" });
+	assert.deepEqual(vmNotes([...STOCK, blockCapability, portAllow("mine")], "Private"), [], "an app's block rule with every filter Any is not about node");
+	assert.deepEqual(vmNotes([...STOCK, blockCapability, rule("app-port", { protocol: "TCP", localPort: ["8445"], family: "Microsoft.X_8wekyb3d8bbwe" }), portAllow("mine")], "Private"), [], "nor is one that names the port, when it is tied to a package");
+	assert.deepEqual(vmNotes([...STOCK, ...promptBlocks()]), ["fw_win_block", "fw_win_noallow", "fw_win_public"], "before the allow rule: the blocks, no allow rule, Public");
+	assert.deepEqual(vmNotes([...STOCK, ...promptBlocks(), portAllow("mine")]), ["fw_win_block", "fw_win_public"], "after it: no-allow is gone");
+	const blocks = windowsCoded(parseWindows(win([...STOCK, ...promptBlocks()], { networks: [{ alias: "Ethernet", category: "Public" }] })), VM_WIFI, VM_NODE).find((n) => n.code === "fw_win_block")!;
+	assert.match(String(blocks.params?.names), /^TCP Query User\{3D0A1F2E-/, "the TCP rule only: the UDP one is not about TCP");
+});
+
+test("VM: Profile, Service, Package, ports, and protocol that print empty are Any", () => {
+	const empty = parseWindows(win([{ name: "r", display: "d", action: "Allow", direction: "Inbound", enabled: "True", profile: "", program: "", expanded: "", service: "", package: "", owner: "", family: "", protocol: "", localPort: [""], remote: [""], local: [""], ifType: [""] }])).rules[0]!;
+	assert.deepEqual([empty.program, empty.tcp, empty.ports, empty.remote, empty.local, empty.ifTypes, [...empty.profiles].length], ["any", true, "any", [], [], [], 3]);
+});
+
 test("entryCovers: addresses, prefixes, masks, ranges, keywords, and IPv6", () => {
 	const yes = [["10.0.0.0/8", "10.9.9.9"], ["10.0.0.5", "10.0.0.5"], ["10.0.0.1-10.0.0.9", "10.0.0.5"], ["10.0.0.0/255.0.0.0", "10.1.2.3"], ["LocalSubnet", "10.0.0.5"], ["fe80::/10", "fe80::1%en0"], ["2001:db8::1-2001:db8::9", "2001:db8::5"]];
 	const no = [["10.0.0.0/8", "11.0.0.1"], ["10.0.0.6", "10.0.0.5"], ["Internet", "10.0.0.5"], ["10.0.0.0/33", "10.0.0.5"], ["fe80::/10", "10.0.0.5"], ["junk", "10.0.0.5"], ["10.0.0.0/8", "not an address"]];
