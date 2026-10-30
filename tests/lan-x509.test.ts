@@ -17,7 +17,7 @@ const openssl = spawnSync("openssl", ["version"]).status === 0;
 // On Windows the runner may have no openssl: the checks skip there with the reason stated; the Node-side certificate checks (lan-ca.test.ts) still run.
 const skip = openssl ? false : process.env.CI && process.platform !== "win32" ? undefined : "openssl is not on PATH (these tests read the certificates with OpenSSL; they run where it is installed)";
 if (!openssl && process.env.CI && process.platform !== "win32") test("openssl is on PATH in CI", () => assert.fail("openssl is not on PATH, so every OpenSSL check was skipped"));
-const text = (pem: string) => execFileSync("openssl", ["x509", "-noout", "-text"], { input: pem }).toString();
+const text = (pem: string) => execFileSync("openssl", ["x509", "-noout", "-text"], { input: pem }).toString().replaceAll("\r\n", "\n");
 const dir = mkdtempSync(join(tmpdir(), "lan-x509-"));
 after(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -39,7 +39,7 @@ function verify(ca: Issued, leaves: Issued[], extra: string[] = ["-x509_strict"]
 	});
 	writeFileSync(caFile, ca.pem);
 	const run = spawnSync("openssl", ["verify", ...extra, "-CAfile", caFile, ...names], { encoding: "utf8" });
-	return { ok: run.status === 0, said: run.stdout + run.stderr };
+	return { ok: run.status === 0, said: (run.stdout + run.stderr).replaceAll("\r\n", "\n") };
 }
 
 /** A TLS handshake on the loopback with `leaf` served and `ca` trusted; `identity` is the name the client checks the certificate for (none: only the chain, including its name constraints, is judged). */
@@ -126,7 +126,7 @@ test("a leaf for a CA with no name: SAN only IP:<address>, a CN that is no hostn
 });
 
 test("times are UTCTime before 2050 and GeneralizedTime from then on", { skip }, () => {
-	const der = (cert: Issued) => execFileSync("openssl", ["asn1parse", "-inform", "DER"], { input: cert.der }).toString();
+	const der = (cert: Issued) => execFileSync("openssl", ["asn1parse", "-inform", "DER"], { input: cert.der }).toString().replaceAll("\r\n", "\n");
 	const before = der(makeCa(production, { notBefore: Date.UTC(2049, 0, 1), notAfter: Date.UTC(2049, 11, 31) })), after2050 = der(makeCa(production, { notBefore: Date.UTC(2049, 0, 1), notAfter: Date.UTC(2051, 0, 1, 12, 30, 15) }));
 	assert.equal([...before.matchAll(/UTCTIME/g)].length, 2);
 	assert.equal([...after2050.matchAll(/UTCTIME/g)].length, 1);

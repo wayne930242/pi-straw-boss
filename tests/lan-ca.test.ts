@@ -115,7 +115,7 @@ test("a leaf is renewed under 30 days left only when the new one would end later
 });
 
 test("the fingerprint lines: the SHA-256's first 16 bytes as spaced uppercase pairs, the full SHA-1 in groups of eight", { skip: openssl ? false : "openssl is not on PATH" }, () => {
-	const ssl = (algorithm: string) => /=(.*)\n/.exec(execFileSync("openssl", ["x509", "-noout", "-fingerprint", `-${algorithm}`], { input: ca.cert }).toString())![1]!.split(":");
+	const ssl = (algorithm: string) => /=(.*)\n/.exec(execFileSync("openssl", ["x509", "-noout", "-fingerprint", `-${algorithm}`], { input: ca.cert }).toString().replaceAll("\r\n", "\n"))![1]!.split(":");
 	const f = fingerprints(ca);
 	assert.match(f.sha256, /^([0-9A-F]{2} ){15}[0-9A-F]{2}$/);
 	assert.equal(f.sha256, ssl("sha256").slice(0, 16).join(" "), "OpenSSL's SHA-256, first 16 bytes");
@@ -140,7 +140,8 @@ test("the .mobileconfig holds exactly one payload, com.apple.security.root with 
 	assert.equal([...profile.matchAll(/<key>PayloadContent<\/key>/g)].length, 2, "the outer content list and the one certificate's data");
 	const data = /<data>([^<]*)<\/data>/.exec(profile)![1]!, der = Buffer.from(data, "base64");
 	assert.ok(der.equals(caDer(ca)) && new X509Certificate(der).raw.equals(der));
-	assert.doesNotMatch(profile, /dnsSettings|vpn|wifi|PayloadURL|PayloadCertificateUUID/i);
+	// Without the certificate's base64, which can spell any of these by chance.
+	assert.doesNotMatch(profile.replace(/<data>[^<]*<\/data>/, ""), /dnsSettings|vpn|wifi|PayloadURL|PayloadCertificateUUID/i);
 	assert.match(profile, /<key>PayloadDisplayName<\/key>\s*<string>Straw Boss LAN · weis-mbp<\/string>/);
 	assert.match(profile, /<string>local\.straw-boss\.lan\.weis-mbp<\/string>/);
 	assert.match(profile, /<string>local\.straw-boss\.lan\.weis-mbp\.ca<\/string>/);
