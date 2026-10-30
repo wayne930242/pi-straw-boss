@@ -98,8 +98,11 @@ export function createLanHost(o: LanHostOptions) {
 	// The notes: what keeps Wi-Fi access from being what the boss asked for ---------------------------------------------------------------------------------------------------------------------------------
 
 	const currentName = (): LocalName => {
-		if (!nameNow || now() - nameAt > 60_000) (nameNow = name(), (nameAt = now()));
-		return nameNow;
+		if (nameNow && now() - nameAt <= 60_000) return nameNow;
+		const read = name();
+		// Only a readable answer is kept: "try again in a moment" must find a fresh read.
+		if ("unreadable" in read) return read;
+		return (nameNow = read, (nameAt = now()), read);
 	};
 	function renamed(): string | undefined {
 		if (!ca?.name) return undefined;
@@ -334,7 +337,7 @@ export function createLanHost(o: LanHostOptions) {
 		switch (request.cmd) {
 			case "gui-lan-face": {
 				if (request.open === true) {
-					const face = faces.open(request.pane ?? null);
+					const face = faces.open("pane" in request ? request.pane : undefined);
 					return face ? { ok: true, face } : { ok: false, error: "bad_request" };
 				}
 				if (request.open === false) return { ok: true, closed: faces.close(request.face) };
