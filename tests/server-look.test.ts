@@ -401,3 +401,16 @@ test("b1f-F008: a look still reading the owner when the session shuts down does 
 	assert.equal(sw.spawned.length, 0, "no server was started after the session closed");
 	assert.equal(existsSync(join(sw.slot.dir, "server.lock")), false, "and no lock was taken");
 });
+
+test("a pair request over Wi-Fi that waits while no overlay is open is told to the session once per request, and a new request is told again (docs/specs/2026-10-30-sb-gui-lan.md, Approval on this computer)", async () => {
+	sw.live.add(7);
+	plant({ lanNotice: [{ id: "req-1", peer: "192.168.1.23" }] });
+	const a = session();
+	await a.start();
+	await until(() => a.notices.some((n) => /Pair request waiting from 192\.168\.1\.23: run \/boss gui lan/.test(n.text)), "the notice");
+	await sleep(150);
+	assert.equal(a.notices.filter((n) => /Pair request waiting/.test(n.text)).length, 1, "told once for the request, not at every look");
+	plant({ lanNotice: [{ id: "req-1", peer: "192.168.1.23" }, { id: "req-2", peer: "192.168.1.40" }] });
+	await until(() => a.notices.some((n) => /waiting from 192\.168\.1\.40/.test(n.text)), "the second request is told", 8000);
+	assert.equal(a.notices.filter((n) => /waiting from 192\.168\.1\.23/.test(n.text)).length, 1);
+});

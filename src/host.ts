@@ -1,5 +1,10 @@
+import { X509Certificate } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { type GuiRecord, readRecord, urlOf } from "./handover.ts";
+import { CA_FILES, fingerprints } from "./lan/ca.ts";
 import type { Membership } from "./membership.ts";
+import { every, type LanDeps, type LanReply, revealFiles, showLan } from "./lanface.ts";
 import { pairingKeys, showLines } from "./pairing.ts";
 import { OPEN_LINE } from "./remote.ts";
 import { slotOf } from "./server/record.ts";
@@ -35,6 +40,37 @@ export function createHost({ pi, cfg, s, guiDir, tell }: Kit, { connected, ask }
 	const fail = (r: { error?: string }) => tell(r.error === "stopped" ? "The straw net GUI was stopped on purpose; /boss gui starts it" : `Straw net GUI: ${r.error ?? "the sb server did not answer"}`, "error");
 	const unsaved = (r: Record<string, unknown>) => void (typeof r.warning === "string" && tell(r.warning, "warning"));
 	const block = (active: boolean) => pi.events.emit("herdr:blocked", { active, label: "Showing the remote pairing QR code" });
+	// The overlay of /boss gui lan is open until the boss closes it or the session ends; the end of the session closes it, which drops its mark at the server.
+	let lanOpen: AbortController | undefined;
+	pi.on("session_shutdown", () => lanOpen?.abort());
+	const face = cfg.face ?? {};
+	/** The deps of the Wi-Fi overlay: control requests that never start a server, the clock and the ticker it renews on, and what it reads of the CA's public files. */
+	const lanDeps = (send: (request: Record<string, unknown>, start: "boss" | "never") => Promise<LanReply>, signal: AbortSignal): LanDeps => ({
+		ask: (request) => send(request, "never"),
+		pane: cfg.env.HERDR_PANE_ID ?? null,
+		block: (active) => pi.events.emit("herdr:blocked", { active, label: "Showing the Wi-Fi pairing screen" }),
+		now: face.now ?? Date.now, every: face.every ?? every, copy, reveal: face.reveal ?? revealFiles, tell, signal,
+		// The fingerprint comes from the public .crt the server writes (no control request returns it).
+		async certificate() {
+			const r = await send({ cmd: "gui-lan-files" }, "never");
+			const file = Array.isArray(r.files) ? (r.files as string[]).find((f) => f.endsWith(CA_FILES.crt)) : undefined;
+			try {
+				const x = new X509Certificate(readFileSync(file!));
+				return { ...fingerprints({ cert: x.toString() }), validFrom: Date.parse(x.validFrom) };
+			} catch {
+				return undefined;
+			}
+		},
+		// lan.json lists the devices allowed over Wi-Fi, each with when; one allowed after this certificate began was paired under it.
+		paired(cert) {
+			try {
+				const { devices } = JSON.parse(readFileSync(join(slotOf(guiDir, cfg.env).dir, "lan.json"), "utf8")) as { devices?: Record<string, { paired?: number }> };
+				return Object.values(devices ?? {}).some((x) => typeof x.paired === "number" && x.paired >= cert.validFrom);
+			} catch {
+				return false;
+			}
+		},
+	});
 
 	return {
 		sessions,
@@ -48,9 +84,36 @@ export function createHost({ pi, cfg, s, guiDir, tell }: Kit, { connected, ask }
 			const found = r.ok ? record() : undefined;
 			return found ? { record: found } : { error: r.error ?? "the server wrote no gui.json" };
 		},
-		/** `mode` is "", "stop", "rotate", "remote", or "remote off", and works from any session: the GUI and remote access are the server's. */
+		/** `mode` is "", "stop", "rotate", "remote", "remote off", "lan", "lan off", or "lan reset", and works from any session: the GUI and the access over a network are the server's. */
 		async command(mode: string) {
-			const send = (request: Record<string, unknown>, start: "boss" | "never") => asking()(request, { start }).catch((error: Error) => ({ ok: false as const, error: error.message }));
+			const send = (request: Record<string, unknown>, start: "boss" | "never"): Promise<LanReply> => asking()(request, { start }).catch((error: Error) => ({ ok: false as const, error: error.message }));
+			if (mode === "lan off") {
+				const r = await send({ cmd: "gui-lan", on: false }, "never");
+				return r.ok ? tell(String(r.text)) : tell(r.error === "no server" ? "Wi-Fi access is off: the straw net GUI is not running" : String(r.reason ?? r.error), r.error === "no server" ? "info" : "error");
+			}
+			if (mode === "lan" || mode === "lan reset") {
+				if (!s.ui) return tell(`/boss gui ${mode} needs the pi screen: the certificate, the risk, and the numbers of new devices are shown there, never in the conversation.`, "error");
+				if (lanOpen) return tell("The Wi-Fi screen is already open in this session.", "warning");
+				let start: Parameters<typeof showLan>[2];
+				if (mode === "lan reset") start = { screen: "reset" };
+				else {
+					// Turning it on is the boss's own command: it starts a GUI stopped on purpose. Without a certificate the answer is the warning, and nothing is made before the boss presses y.
+					const r = await send({ cmd: "gui-lan", on: true }, "boss");
+					if (r.ok) start = { screen: "home", facts: r };
+					else if (r.error === "lan_risk") start = { screen: "warning", name: typeof r.name === "string" ? r.name : null };
+					else if (r.error === "lan_ca_ended") start = { screen: "reset", ended: true };
+					else return tell(String(r.reason ?? r.error ?? "the sb server did not answer"), "error");
+				}
+				const control = (lanOpen = new AbortController());
+				try {
+					await showLan(s.ui, lanDeps(send, control.signal), start);
+				} catch (error) {
+					tell((error as Error).message, "error");
+				} finally {
+					lanOpen = undefined;
+				}
+				return;
+			}
 			if (mode === "stop") {
 				const r = await send({ cmd: "gui-stop" }, "never");
 				return r.ok ? tell(r.was ? "Straw net GUI stopped" : "The straw net GUI is not running") : tell(r.error === "no server" ? "The straw net GUI is not running" : `Straw net GUI: ${r.error}`, r.error === "no server" ? "info" : "error");
