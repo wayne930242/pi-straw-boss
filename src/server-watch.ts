@@ -2,8 +2,8 @@ import { createConnection, type Socket } from "node:net";
 import { StringDecoder } from "node:string_decoder";
 import { herdrSocket, localEndpoint } from "./endpoint.ts";
 
-/** Starts watching the Herdr server; `onTakeover` runs each time a server answers again after the one watched went away. Returns the stop function. */
-export type HerdrWatch = (onTakeover: () => void) => () => void;
+/** Starts watching the Herdr server; `onTakeover` runs each time a server answers again after the one watched went away, and `onLost` when a server that had answered stops (its connection closes). Returns the stop function. */
+export type HerdrWatch = (onTakeover: () => void, onLost?: () => void) => () => void;
 
 const RETRY_MS = [250, 500, 1000, 2000];
 const ACK_MS = 5000;
@@ -15,7 +15,7 @@ const ACK_MS = 5000;
  * acknowledges the subscription it calls `onTakeover` once. The first connection of a watch, which finds the server the session started in, does not.
  * The socket and the retry timer never keep pi alive; `stop` ends both.
  */
-export const herdrWatch = (socketPath = herdrSocket(), retryMs = RETRY_MS): HerdrWatch => (onTakeover) => {
+export const herdrWatch = (socketPath = herdrSocket(), retryMs = RETRY_MS): HerdrWatch => (onTakeover, onLost) => {
 	let socket: Socket | undefined, timer: ReturnType<typeof setTimeout> | undefined, stopped = false, initial = true, retries = 0;
 	const attempt = () => {
 		const first = initial, text = new StringDecoder("utf8");
@@ -25,6 +25,7 @@ export const herdrWatch = (socketPath = herdrSocket(), retryMs = RETRY_MS): Herd
 			if (ended) return;
 			ended = true;
 			current.destroy();
+			if (acked && !stopped) onLost?.();
 			if (!stopped) timer = setTimeout(attempt, retryMs[Math.min(retries++, retryMs.length - 1)]).unref();
 		};
 		const current = (socket = createConnection(localEndpoint(socketPath)).setTimeout(ACK_MS));

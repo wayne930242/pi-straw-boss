@@ -228,6 +228,8 @@ interface Active {
 	resolving?: Promise<void>;
 	/** When the process start time was last compared with the recorded one (a `ps` call on macOS and Linux): once at first, then every `lost`. */
 	startChecked?: number;
+	/** The watch saw this run's pi gone without a word from the run: a crash is taken for one only when the next tick sees it gone too (`diedWithHerdr`). */
+	goneSeen?: boolean;
 	digestKeys: string[];
 	/** The expired waits of memory its brief showed, marked shown at its first poll (towermemory.ts). */
 	expired?: string[];
@@ -339,7 +341,9 @@ export function createRuns(o: RunsOptions) {
 	const services = new Map<string, Svc>(), byToken = new Map<string, Active>(), byRun = new Map<string, Active>(), blocked = new Set<Svc>();
 	/** The `forward` confirms an ally run waits for: dialog id → run id. */
 	const confirms = new Map<string, string>();
-	let slots = 0, pendingTakeovers = 0, watcher: ReturnType<typeof setInterval> | undefined, stopped = false;
+	let slots = 0, pendingTakeovers = 0, herdrLostAt: number | undefined, watcher: ReturnType<typeof setInterval> | undefined, stopped = false;
+	/** The messages handed back to the holder as taken, and when: the holder drops its inbox file under a lock, and a message it still lists for a moment is not given to another run (A6). */
+	const handedBack = new Map<string, number>();
 	/** Panes that held a live run when Herdr went away, with when a resumed pi there stops being the old run. */
 	const restored = new Map<string, number>();
 	const error = (code: string, text: string) => log.line("error", { code, text: phrase(text, 300) });
@@ -566,8 +570,14 @@ export function createRuns(o: RunsOptions) {
 	/** The devices with messages waiting that have no ally run and are not held by a crash loop, oldest message first. */
 	const devicesWaiting = (svc: Svc): { device: string; items: AllyItem[] }[] => {
 		const groups = new Map<string, AllyItem[]>();
-		for (const item of o.ally?.waiting(svc.ref.record().id) ?? []) groups.set(item.device, [...(groups.get(item.device) ?? []), item]);
+		for (const [id, at] of handedBack) if (now() - at > t.loop) handedBack.delete(id);
+		for (const item of o.ally?.waiting(svc.ref.record().id) ?? []) if (!handedBack.has(item.id)) groups.set(item.device, [...(groups.get(item.device) ?? []), item]);
 		return [...groups].filter(([device]) => !svc.allies.has(device) && !heldDevice(svc, device)).map(([device, items]) => ({ device, items }));
+	};
+	/** Tells the holder a message is taken, and remembers it: no run is begun for it again, whatever the holder still lists. */
+	const handBack = async (id: string, identity: string) => {
+		await o.ally?.taken(id, identity);
+		handedBack.set(id, now());
 	};
 	const beginAllies = async (svc: Svc) => {
 		for (const { device, items } of devicesWaiting(svc)) {
@@ -582,7 +592,7 @@ export function createRuns(o: RunsOptions) {
 		const standing = o.ally!.standing(device, first.team);
 		if (!standing) {
 			// The sender left the roster (or the team): its messages are dropped, as a tower of the previous build drops them.
-			for (const item of waiting) await o.ally!.taken(item.id, identity).catch(() => {});
+			for (const item of waiting) await handBack(item.id, identity).catch(() => {});
 			log.line("ally-dropped", { workspace: svc.ref.workspace, device, why: "not a member", n: waiting.length });
 			return;
 		}
@@ -614,6 +624,15 @@ export function createRuns(o: RunsOptions) {
 			return;
 		}
 		if (active.ended) return;
+		// The messages the run was admitted for are read again: one that another run took, or the holder dropped, while the checks above ran is not given out, and a run left with none starts no pane.
+		const left = new Set((o.ally?.waiting(identity) ?? []).filter((x) => !handedBack.has(x.id)).map((x) => x.id));
+		rec.admitted = items.filter((x) => left.has(x.id)).map((x) => x.id);
+		if (!rec.admitted.length) {
+			slots--;
+			svc.allies.delete(device);
+			log.line("ally-gone", { workspace: svc.ref.workspace, device, run: id, n: items.length });
+			return;
+		}
 		try {
 			const lead = svc.ref.record().pane, dir = await svc.ref.cwd();
 			const made = await result(o.run, ["pane", "split", lead, "--direction", "right", "--cwd", dir, "--no-focus"]);
@@ -818,6 +837,17 @@ export function createRuns(o: RunsOptions) {
 		return current !== undefined && current !== a.rec.started;
 	};
 
+	/**
+	 * Whether a pi that is gone died with Herdr, so the takeover ends its run (`herdr-restart`) and no crash is counted. A pi lives in a pane of Herdr, and a Herdr that stops (or is killed) takes its panes' processes with it: the watch's
+	 * socket closing says so (`herdrLost`), and a takeover under way ends every live run when its look is done. A pi seen gone with neither word is a crash, but only when the next tick sees it gone too: Herdr's socket may close a moment
+	 * after its panes' processes do (a clean stop), and a verdict at the first sight would be taken before it says so. A Herdr that was lost and does not come back has `lost` to do so; then the pi's death is a crash as before (A3).
+	 */
+	const diedWithHerdr = (a: Active) => {
+		if (pendingTakeovers > 0 || (herdrLostAt !== undefined && now() - herdrLostAt < t.lost)) return true;
+		if (a.goneSeen) return false;
+		return (a.goneSeen = true);
+	};
+
 	/** Ends a run in the records: its events, its note, the crash rules, and the service goes back to standing (the next wake comes 1 s later). */
 	async function finish(a: Active, outcome: Outcome, detail?: string, keepTaken = false) {
 		if (a.ended) return;
@@ -834,10 +864,10 @@ export function createRuns(o: RunsOptions) {
 		slots = Math.max(0, slots - 1);
 		if (svc.run === a) svc.run = undefined;
 		const ally = a.rec.kind === "ally";
-		if (ally && a.rec.device && svc.allies.get(a.rec.device) === a) svc.allies.delete(a.rec.device);
 		const taken = ally ? [] : readQueue(slot, ws).filter((e) => e.taken?.run === a.rec.id);
 		const failed = outcome === "crashed" || outcome === "timeout";
-		if (ally) await finishAlly(a, outcome, failed, keepTaken);
+		// The device keeps its run until its messages are handed back: a run begun meanwhile would take them again (A6).
+		if (ally) await finishAlly(a, outcome, failed, keepTaken).finally(() => void (a.rec.device && svc.allies.get(a.rec.device) === a && svc.allies.delete(a.rec.device)));
 		for (const e of taken) {
 			try {
 				if (!failed && outcome !== "herdr-restart" && !keepTaken) removeEvent(slot, ws, e);
@@ -893,14 +923,14 @@ export function createRuns(o: RunsOptions) {
 		for (const id of a.rec.events) {
 			try {
 				if (!failed && outcome !== "herdr-restart" && !keepTaken) {
-					await o.ally?.taken(id, identity);
+					await handBack(id, identity);
 					poison.delete(id);
 				} else if (outcome === "herdr-restart" || keepTaken) continue;
 				else {
 					const n = (poison.get(id) ?? 0) + 1;
 					poison.set(id, n);
 					if (n >= 2) {
-						await o.ally?.taken(id, identity);
+						await handBack(id, identity);
 						poison.delete(id);
 						noticeOf(svc, { id: `parked-${id}`, level: "warning", kind: "late", text: `A message from ${a.rec.device ?? "a device"} was dropped after two ally runs crashed with it` });
 					}
@@ -945,6 +975,7 @@ export function createRuns(o: RunsOptions) {
 					// A hand run whose pi left before it ever polled was an orphan claim (the pi quit while the pane-role answer was late, and nothing released it): the boss left, nothing crashed.
 					const orphan = a.rec.hand === true && !a.polled && a.pending === undefined && a.closing === undefined;
 					const outcome = a.pending ?? (a.closing !== undefined ? "done" : orphan ? "quit" : "crashed");
+					if (outcome === "crashed" && diedWithHerdr(a)) continue;
 					await finish(a, outcome, outcome === "crashed" ? "pi exited without tower_done" : orphan ? "the pi left before its first poll" : undefined, a.left === true);
 					continue;
 				}
@@ -1419,6 +1450,10 @@ export function createRuns(o: RunsOptions) {
 			}
 			return a && !a.ended ? { id: a.rec.id, workspace: a.rec.workspace, kind: a.rec.kind, ...(a.rec.level ? { level: a.rec.level } : {}), ...(a.rec.device ? { device: a.rec.device } : {}), ...(a.rec.deviceLabel ? { deviceLabel: a.rec.deviceLabel } : {}), ...(a.rec.team ? { team: a.rec.team } : {}), pane: a.rec.pane, asks: itemsOf(a, true).flatMap((i) => (i.awaitsReply ? [i.awaitsReply] : [])) } : undefined;
 		},
+		/** The Herdr the server watched stopped (its socket closed): a pi that dies from now on died with it, and the takeover that follows ends its run. */
+		herdrLost() {
+			herdrLostAt = now();
+		},
 		/** A new Herdr server took over: the takeover is counted until `settled` (claims are held meanwhile), and every live run ends with outcome `herdr-restart`. */
 		takeoverBegin() {
 			pendingTakeovers++;
@@ -1431,6 +1466,7 @@ export function createRuns(o: RunsOptions) {
 			const runs = [...byRun.values()];
 			for (const a of runs) await finish(a, "herdr-restart");
 			pendingTakeovers = Math.max(0, pendingTakeovers - 1);
+			if (!pendingTakeovers) herdrLostAt = undefined;
 		},
 		/** The boss writes to the tower (the GUI's composer, `/boss tower <prompt>`, the tower prompt): an event ahead of the rest; a held service wakes again. */
 		boss(workspace: string, text: string, from = "the boss", opts: { present?: boolean } = {}): QueuedEvent {
@@ -1526,7 +1562,7 @@ export function createRuns(o: RunsOptions) {
 				...(run && !run.ended && run.rec.conversation ? { conversation: conversationStatus(run) } : {}),
 				...(run && !run.ended && run.rec.kind === "local" && !run.rec.conversation && run.rec.bossIn ? { bossIn: { id: run.rec.id, since: run.rec.bossIn } } : {}),
 				...(localRunRows(workspace).length ? { localRuns: localRunRows(workspace) } : {}),
-				allyRuns: [...svc.allies.values()].map((a) => ({ id: a.rec.id, device: a.rec.device ?? "?", label: a.rec.deviceLabel ?? a.rec.deviceShort ?? (a.rec.device ?? "?").slice(0, 6), startedAt: a.rec.startedAt })),
+				allyRuns: [...svc.allies.values()].filter((a) => !a.ended).map((a) => ({ id: a.rec.id, device: a.rec.device ?? "?", label: a.rec.deviceLabel ?? a.rec.deviceShort ?? (a.rec.device ?? "?").slice(0, 6), startedAt: a.rec.startedAt })),
 				...(svc.lastRun ? { lastRun: svc.lastRun } : {}),
 				...(recent ? { crashes: recent } : {}),
 				notices: svc.notices,
