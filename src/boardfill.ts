@@ -25,9 +25,7 @@ export function createBoardFill({ pi, cfg, s, guiDir, me, role, tell }: Kit): Bo
 		const name = pi.getSessionName()?.trim() ?? "";
 		return name === me() || name === me().slice(0, 8) ? "" : name;
 	};
-	const derive = () => {
-		return deriveBoard({ name: named(), todos: todosOfBranch(branchOf()), root: ctx?.cwd ?? process.cwd() });
-	};
+	const derive = () => deriveBoard({ name: named(), todos: todosOfBranch(branchOf()), root: ctx?.cwd ?? process.cwd() });
 	const branchOf = (): readonly unknown[] => {
 		try { return ctx?.sessionManager?.getBranch() ?? []; } catch { return []; } // a replaced session's context throws
 	};
@@ -46,7 +44,8 @@ export function createBoardFill({ pi, cfg, s, guiDir, me, role, tell }: Kit): Bo
 				seeded = true;
 				const own = readEntries(dir).find((e) => e.session === me());
 				if (own) s.boardId = me();
-				const seed = seedBoard({ own, derived: d, key, withdrawn: withdrawnKey(branchOf()), atStart: startPending }); startPending = false;
+				const seed = seedBoard({ own, derived: d, key, withdrawn: withdrawnKey(branchOf()), atStart: startPending });
+				startPending = false;
 				last = seed.last ?? last; // what the session start seeded (a finished list) stands
 				doneAt = seed.doneAt ?? doneAt;
 			}
@@ -73,7 +72,8 @@ export function createBoardFill({ pi, cfg, s, guiDir, me, role, tell }: Kit): Bo
 		[ctx, last, seeded, doneAt, startPending] = [c as typeof ctx, undefined, false, undefined, true]; // pi-intercom sets the id in its own session_start, after this one: if absent, the first refresh that finds it seeds as the start
 		// A line a reload kept is this session's from the start: a quit before any turn deletes it (s.boardId), as one written here would be.
 		try {
-			if (!me()) return; startPending = false;
+			if (!me()) return;
+			startPending = false;
 			const own = readEntries(dir).find((e) => e.session === me());
 			if (own) s.boardId = me();
 			// A finished list this reload carries, whose line a tower's read purged, is not written again.

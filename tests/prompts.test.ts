@@ -101,5 +101,5 @@ test("merge train: the integrator needs no shared call for its own merges, and t
 	const integrator = readFileSync(`${PROMPT_DIR}/integrator.md`, "utf8");
 	assert.ok(integrator.includes("Your own merges and pushes need no `shared` call: the slips' auth covers them"));
 	assert.ok(readFileSync(`${PROMPT_DIR}/tower-run.md`, "utf8").includes("from the integrator itself, answer go or wait"));
-	assert.ok(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8").includes("its own: go/wait"));
+	assert.ok(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8").includes("the integrator's own: go/wait"));
 });
