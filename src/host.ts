@@ -65,9 +65,16 @@ export function createHost({ pi, cfg, s, guiDir, tell }: Kit, { connected, ask }
 			const found = r.ok ? record() : undefined;
 			return found ? { record: found } : { error: r.error ?? "the server wrote no gui.json" };
 		},
-		/** `mode` is "", "stop", "rotate", "remote", "remote off", "lan", "lan off", or "lan reset", and works from any session: the GUI and the access over a network are the server's. */
+		/** `mode` is "", "stop", "rotate", "remote", "remote off", "lan", "lan off", "lan reset", "view", or "view <auto|standard|geek>", and works from any session: the GUI and the access over a network are the server's. */
 		async command(mode: string) {
 			const send = (request: Record<string, unknown>, start: "boss" | "never"): Promise<LanReply> => asking()(request, { start }).catch((error: Error) => ({ ok: false as const, error: error.message }));
+			if (/^view\b/.test(mode)) {
+				// The server's default view: a device that follows the server shows it, a device with a choice of its own keeps that. Only this command writes it (the page has no way to). Starts the sb server, not a GUI that was stopped.
+				const wanted = mode.slice(4).trim() || undefined, r = await send({ cmd: "gui-view", ...(wanted ? { view: wanted } : {}) }, "boss");
+				if (!r.ok) return tell(`Straw net GUI: ${r.error ?? "the sb server did not answer"}`, "error");
+				const name = String(r.view).replace(/^./, (c) => c.toUpperCase());
+				return tell(!wanted ? `The straw net GUI's default view is ${name}${r.view === "auto" ? " (each device follows its own screen's contrast setting)" : ""}` : r.changed === false ? `The straw net GUI's default view is already ${name}` : `The straw net GUI's default view is now ${name}; devices that follow the server switch at once, and a device with a view of its own keeps it`);
+			}
 			if (mode === "lan off") {
 				// Starts a server when none runs, as `remote off` does: the server clears the wish in lan.json, which a later start would otherwise serve again.
 				const r = await send({ cmd: "gui-lan", on: false }, "boss");

@@ -27,3 +27,8 @@ test("the boss-conversation bar has padding and its phrases wrap as units", () =
 	assert.match(rule(".tower-conv { display: grid"), /padding:\s*8px 10px/);
 	assert.match(rule(".tower-conv .conv-line > span"), /display:\s*inline-block/);
 });
+
+test("the settings' View control wraps, and a server default gives the long Auto button (Follow server (geek)) a row of its own", () => {
+	assert.match(css, /\.view-pick > div \{ flex-wrap: wrap; \}/);
+	assert.match(css, /\.view-pick\[data-following\] button\[data-choice="auto"\] \{ flex-basis: 100%; \}/);
+});

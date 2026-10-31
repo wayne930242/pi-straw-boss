@@ -19,6 +19,7 @@ import { type LanAt, type LanEvent, lanAppCookieFor, lanCookieFor } from "./lan/
 import type { Overlay } from "./lan/faces.ts";
 import type { LanHandler } from "./lan/listener.ts";
 import { APP, type Access, appCookieFor, cookieFor, createAccess, type Net as Network } from "./remote.ts";
+import type { ServerView } from "./server/guiprefs.ts";
 import { packageRoot, VERSION as PACKAGE_VERSION } from "./server/version.ts";
 import { api, type Hub as Files, image, watchSession, type Watch, watchWorkspace } from "./watch.ts";
 
@@ -52,17 +53,17 @@ const HEADERS = {
 const REPLACED = "This address does not work here (the sb server may have restarted, or the link expired): on this computer open /boss gui; on a phone scan a new QR code.";
 const REPLACED_ZH = "這個網址在這裡無法使用（sb server 可能重新啟動過，或連結已過期）：在這台電腦請開啟 /boss gui；在手機請重新掃描新的 QR code。";
 /** `kept` says the listener runs under the `keep` secrets it was given (it got both of their ports back); otherwise its token and CSRF secret are new. `lan` is the handler of kind "lan" for the LAN listeners guihost.ts binds. */
-export interface Gui { url: string; port: number; remotePort: number; token: string; csrf: string; kept: boolean; access: Access; lan: LanHandler; stop(): Promise<void> }
+export interface Gui { url: string; port: number; remotePort: number; token: string; csrf: string; kept: boolean; access: Access; lan: LanHandler; stop(): Promise<void>; /** The server's default view the pages follow now. */ view(): ServerView; /** Changes it: the pages served from now on carry it, and every open stream is told with a `view` event. False when it was that already. */ setView(next: ServerView): boolean }
 /** What the sb server hands the GUI for Wi-Fi access: the page's panel (the `lan/*` routes), the overlay marks the writing routes look at, lan.json, and where the access reports to (events, log lines). */
 export interface LanOptions { panel: LanPanel; overlay: Overlay; file?: string; notify?(event: LanEvent): void; log?(event: string, fields: Record<string, unknown>): void }
 /** `net` is the registry behind the net reading (the allow list of session keys); without it no session can be watched. `call` reaches Herdr for input. */
 /** `hub` carries answers to the dialogs bridges relay (dialogs.ts); it runs exactly as long as the server. */
 /** `onRemote` and `onRemoteOff` turn remote access on and off from the page, in the session that runs the server. `onStop` takes another session's stop request (requestStop), so the owner also takes its remote entry down; without it the server stops itself. */
-export interface GuiOptions { read(): Promise<Net>; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[]; dismiss?(key: string): boolean; dismissAll?(): number }; call?: HerdrCall; hub?: Hub; dir?: string; paired?: string; port?: number; remotePort?: number; pollMs?: number; idleMs?: number; pingMs?: number; onStop?(asked: Asked): void; /** A takeover is refused with 409 (the sb server is never taken over by a session of an older build, which then leaves its GUI alone). */ refuseTake?: boolean; onRemote?(): Promise<void>; onRemoteOff?(): Promise<void>; onSaveFailed?(reason: string): void; spawn?: ControlDeps["spawn"]; close?: ControlDeps["close"]; trust?: { answer: NonNullable<ControlDeps["trust"]>; watch(poke: () => void): () => void }; link?: ControlDeps["link"]; server?: ControlDeps["server"]; tower?: ControlDeps["tower"]; /** How long a preferred port that is still held (by the server this one replaces) is retried before another is taken. */ bindWaitMs?: number; /** The token and CSRF secret of the last listener with the two ports they belong to (server/guisecrets.ts): kept only when both ports are bound again; otherwise they are drawn anew. */ keep?: { token: string; csrf: string; port: number; remotePort: number }; /** The server runs with the desk switch (STRAW_BOSS_DESK=1): the page carries `<meta name="sb-desk">` and hides GUI remote access and stash (gui/desk.ts). */ desk?: boolean; /** Wi-Fi access (the primary slot's server only). */ lan?: LanOptions }
+export interface GuiOptions { read(): Promise<Net>; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[]; dismiss?(key: string): boolean; dismissAll?(): number }; call?: HerdrCall; hub?: Hub; dir?: string; paired?: string; port?: number; remotePort?: number; pollMs?: number; idleMs?: number; pingMs?: number; onStop?(asked: Asked): void; /** A takeover is refused with 409 (the sb server is never taken over by a session of an older build, which then leaves its GUI alone). */ refuseTake?: boolean; onRemote?(): Promise<void>; onRemoteOff?(): Promise<void>; onSaveFailed?(reason: string): void; spawn?: ControlDeps["spawn"]; close?: ControlDeps["close"]; trust?: { answer: NonNullable<ControlDeps["trust"]>; watch(poke: () => void): () => void }; link?: ControlDeps["link"]; server?: ControlDeps["server"]; tower?: ControlDeps["tower"]; /** How long a preferred port that is still held (by the server this one replaces) is retried before another is taken. */ bindWaitMs?: number; /** The token and CSRF secret of the last listener with the two ports they belong to (server/guisecrets.ts): kept only when both ports are bound again; otherwise they are drawn anew. */ keep?: { token: string; csrf: string; port: number; remotePort: number }; /** The server runs with the desk switch (STRAW_BOSS_DESK=1): the page carries `<meta name="sb-desk">` and hides GUI remote access and stash (gui/desk.ts). */ desk?: boolean; /** Wi-Fi access (the primary slot's server only). */ lan?: LanOptions; /** The server's default view the page starts with (guiprefs.ts); `auto` when none was set. */ view?: ServerView }
 export interface Asked { by: string; take: boolean }
 
 /** Starts the server. A preferred `port` and `remotePort` are reused when free. The token and the CSRF secret are drawn anew unless `keep` names them and both of its ports are bound again (D27): a listener that had to move to another port is a new one, and a page an open tab already has, or whatever else holds the old secrets, opens nothing here. */
-export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, port = 0, remotePort = 0, pollMs = 2000, idleMs = 10_000, pingMs = 15_000, onStop, refuseTake, onRemote, onRemoteOff, onSaveFailed, spawn, close, trust, link, server: panel, tower, bindWaitMs = 0, keep, desk = false, lan }: GuiOptions): Promise<Gui> {
+export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, port = 0, remotePort = 0, pollMs = 2000, idleMs = 10_000, pingMs = 15_000, onStop, refuseTake, onRemote, onRemoteOff, onSaveFailed, spawn, close, trust, link, server: panel, tower, bindWaitMs = 0, keep, desk = false, lan, view: firstView = "auto" }: GuiOptions): Promise<Gui> {
 	try {
 		if (!statSync(join(dir, "index.html")).isFile()) throw new Error();
 	} catch {
@@ -111,7 +112,9 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 	}
 	const kept = Boolean(keep && keep.port === bound && keep.remotePort === boundRemote);
 	const token = kept ? keep!.token : randomBytes(16).toString("hex"), csrf = kept ? keep!.csrf : randomBytes(16).toString("hex");
-	const page = html.toString("utf8").replace("<head>", `<head>\n<base href="/${token}/">\n<meta name="sb-csrf" content="${csrf}">${desk ? '\n<meta name="sb-desk" content="1">' : ""}\n<meta name="sb-build" content="${build}">`);
+	// The server's default view rides in the page (`sb-view`, read before the first paint, so a device that follows the server shows it with no flash) and in each stream's `hello`; a change is a `view` event to the open streams.
+	let view: ServerView = firstView;
+	const pageOf = () => html.toString("utf8").replace("<head>", `<head>\n<base href="/${token}/">\n<meta name="sb-csrf" content="${csrf}">${desk ? '\n<meta name="sb-desk" content="1">' : ""}\n<meta name="sb-view" content="${view}">\n<meta name="sb-build" content="${build}">`);
 	const remoteManifest = (() => {
 		try {
 			const manifest = bundle.get("manifest.webmanifest");
@@ -159,7 +162,7 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 		res.writeHead(200, { ...HEADERS, "content-type": "text/event-stream", connection: "keep-alive" });
 		if (remote) remotes.set(res, remote);
 		// `hello` names this stream for the terminal mirrors it attaches (mirror.ts), which end with it; before the net's first reading, after it.
-		const to = (event: string, data: unknown) => send(res, JSON.stringify(data), event), stream = randomBytes(16).toString("hex"), hello = () => to("hello", { stream, build });
+		const to = (event: string, data: unknown) => send(res, JSON.stringify(data), event), stream = randomBytes(16).toString("hex"), hello = () => to("hello", { stream, build, view });
 		mirrors.open(stream, to);
 		if (last) hello();
 		const watch = target?.startsWith("w:") ? watchWorkspace(files, target.slice(2), to) : target ? watchSession(files, target, to) : undefined;
@@ -241,14 +244,14 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 		// The page loads its assets and the stream relative to its own URL, so that URL must end with a slash.
 		if (path.length === 0) return void res.writeHead(308, { ...HEADERS, location: `${pathname}/` }).end();
 		if (path.join("/") === "events") return events(req, res, url.searchParams.get("watch"), who.remote ? { device: who.device ?? "", net: wifi ? "lan" : "tailnet" } : undefined);
-		if (path[0] === "w") return void res.writeHead(200, { ...HEADERS, "content-type": TYPES[".html"] }).end(page);
+		if (path[0] === "w") return void res.writeHead(200, { ...HEADERS, "content-type": TYPES[".html"] }).end(pageOf());
 		let file: string;
 		try {
 			file = decodeURIComponent(path.join("/")) || "index.html";
 		} catch {
 			return void fail(404);
 		}
-		if (file === "index.html") return void res.writeHead(200, { ...HEADERS, "content-type": TYPES[".html"] }).end(page);
+		if (file === "index.html") return void res.writeHead(200, { ...HEADERS, "content-type": TYPES[".html"] }).end(pageOf());
 		// A remote page installs with the fixed entry as its start URL: the token in its own address changes with every listener, and an installed app cannot follow it.
 		if (file === "manifest.webmanifest" && who.remote && remoteManifest) return void res.writeHead(200, { ...HEADERS, "content-type": TYPES[".webmanifest"] }).end(remoteManifest);
 		const body = bundle.get(file);
@@ -282,6 +285,13 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 	}
 	return {
 		url: `http://127.0.0.1:${bound}/${token}/`, port: bound, remotePort: boundRemote, token, csrf, kept, access, lan: lanHandler, stop: halt,
+		view: () => view,
+		setView(next) {
+			if (next === view) return false;
+			view = next;
+			push(JSON.stringify(next), "view");
+			return true;
+		},
 	};
 }
 

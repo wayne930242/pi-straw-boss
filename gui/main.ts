@@ -22,7 +22,7 @@ import type { mountFocus } from "./views.ts";
 // The view goes first, before anything is drawn: `data-view` on <html> picks the palette, so no frame is painted in the other one (view.ts).
 const view = mountView();
 startI18n();
-mountPick(document.getElementById("view-pick")!, view);
+mountPick(document.getElementById("view-pick")!, view, (server) => (server === "auto" ? m.view_auto() : m.view_follow({ view: server === "geek" ? m.view_geek() : m.view_standard() })));
 const page = mountPage(), timeline = mountTimeline(document.getElementById("timeline") as HTMLDetailsElement);
 const el = (id: string) => document.getElementById(id)!;
 const time = (at?: number) => (at ? new Date(at).toLocaleTimeString([], { hour12: false }) : m.never());
@@ -149,6 +149,14 @@ function forward(kind: "history" | "cards", raw: string) {
 // whose lazy chunks that server no longer has.
 const build = document.querySelector<HTMLMetaElement>('meta[name="sb-build"]')?.content;
 const rebuilt = (raw: string) => Boolean(build && build !== (JSON.parse(raw) as { build?: string }).build);
+/** The server's default view from a `hello` (its `view`) or a `view` event (the value itself); anything else is left. */
+function serverView(raw: string, bare = false) {
+	try {
+		const value: unknown = JSON.parse(raw);
+		const named = bare ? value : (value as { view?: unknown } | null)?.view;
+		if (typeof named === "string") view.setServer(named);
+	} catch {} // the next hello says it again
+}
 /** The real stream: the server's events, relative to the page's <base href> so the token path carries over from any route. */
 function live(watch: string | null): Source {
 	const es = new EventSource(watch ? `events?watch=${encodeURIComponent(watch)}` : "events");
@@ -168,7 +176,9 @@ const open = () => {
 	source.listen("history", (d) => forward("history", d));
 	source.listen("cards", (d) => forward("cards", d));
 	// The stream's name (terminal tiles attach to it) and their frames go to the overlay layer, which parses them.
-	source.listen("hello", (d) => (rebuilt(d) ? location.reload() : ((hello = d), panels?.terminal.hello())));
+	source.listen("hello", (d) => (rebuilt(d) ? location.reload() : ((hello = d), serverView(d), panels?.terminal.hello())));
+	// The server's default view changed (`/boss gui view`): a page that follows the server switches without a reload. A hello says it too, so a stream that missed the event heals when it reconnects.
+	source.listen("view", (d) => serverView(d, true));
 	source.listen("mirror", (d) => panels?.terminal.frame(d));
 	return source;
 };
