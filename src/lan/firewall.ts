@@ -116,12 +116,13 @@ export const WINDOWS_STEPS = [
 	// The filters of every rule at once (a filter's InstanceID is its rule's Name): a call per rule takes minutes on a machine with hundreds of rules. The program is never matched by `Get-NetFirewallApplicationFilter -Program`,
 	// which compares the stored text exactly (RVLAN2-F015); each stored program is expanded here and compared in JavaScript after full-path normalisation and case folding.
 	// The port, address, and interface-type filters are asked for through the enabled inbound rules (one pipeline each): called with no rule piped in, a filtered (non-elevated) token is answered "Access is denied" (VM 1, F1).
-	// With no rule there is nothing to pipe, and the bare call would be that same refusal.
-	"$er = @(Get-NetFirewallRule -Direction Inbound -Enabled True)",
+	// With no rule there is nothing to pipe, and the bare call would be that same refusal. A rule of a packaged app (an Owner or a PackageFamilyName) counts for nothing here, so its filters are not asked for: each rule costs a call of its own (a fifth of the
+	// rules on a stock Windows 11).
+	"$er = @(Get-NetFirewallRule -Direction Inbound -Enabled True); $fr = @($er | Where-Object { -not $_.Owner -and -not $_.PackageFamilyName })",
 	"$apps = @{}; foreach ($f in Get-NetFirewallApplicationFilter) { $apps[[string]$f.InstanceID] = $f }",
-	"$ports = @{}; if ($er.Count -gt 0) { foreach ($f in ($er | Get-NetFirewallPortFilter)) { $ports[[string]$f.InstanceID] = $f } }",
-	"$addrs = @{}; if ($er.Count -gt 0) { foreach ($f in ($er | Get-NetFirewallAddressFilter)) { $addrs[[string]$f.InstanceID] = $f } }",
-	"$types = @{}; if ($er.Count -gt 0) { foreach ($f in ($er | Get-NetFirewallInterfaceTypeFilter)) { $types[[string]$f.InstanceID] = $f } }",
+	"$ports = @{}; if ($fr.Count -gt 0) { foreach ($f in ($fr | Get-NetFirewallPortFilter)) { $ports[[string]$f.InstanceID] = $f } }",
+	"$addrs = @{}; if ($fr.Count -gt 0) { foreach ($f in ($fr | Get-NetFirewallAddressFilter)) { $addrs[[string]$f.InstanceID] = $f } }",
+	"$types = @{}; if ($fr.Count -gt 0) { foreach ($f in ($fr | Get-NetFirewallInterfaceTypeFilter)) { $types[[string]$f.InstanceID] = $f } }",
 	// `owner` and `family` (the rule's Owner and PackageFamilyName) are set on a packaged app's rule, which applies to that package only (VM 1, F2).
 	"$rules = @(foreach ($r in $er) { $a = $apps[[string]$r.Name]; $p = $ports[[string]$r.Name]; $ad = $addrs[[string]$r.Name]; $ty = $types[[string]$r.Name]; $prog = 'Any'; $svc = 'Any'; $pkg = 'Any'; if ($a) { $prog = [string]$a.Program; $svc = [string]$a.Service; $pkg = [string]$a.Package }; [ordered]@{ name = [string]$r.Name; display = [string]$r.DisplayName; owner = [string]$r.Owner; family = [string]$r.PackageFamilyName; action = [string]$r.Action; direction = [string]$r.Direction; enabled = [string]$r.Enabled; profile = [string]$r.Profile; program = $prog; expanded = [Environment]::ExpandEnvironmentVariables($prog); service = $svc; package = $pkg; protocol = $(if ($p) { [string]$p.Protocol } else { 'Any' }); localPort = $(if ($p) { @($p.LocalPort | ForEach-Object { [string]$_ }) } else { @('Any') }); remote = $(if ($ad) { @($ad.RemoteAddress | ForEach-Object { [string]$_ }) } else { @('Any') }); local = $(if ($ad) { @($ad.LocalAddress | ForEach-Object { [string]$_ }) } else { @('Any') }); ifType = $(if ($ty) { @($ty.InterfaceType | ForEach-Object { [string]$_ }) } else { @('Any') }) } })",
 	"$out = [ordered]@{ networks = $networks; profiles = $profiles; rules = $rules }",

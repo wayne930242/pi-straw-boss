@@ -503,11 +503,12 @@ test("VM F1: the port, address, and interface-type filters are read through the 
 	for (const kind of ["Port", "Address", "InterfaceType"]) {
 		const calls = WINDOWS_SCRIPT.match(new RegExp(`.{0,12}Get-NetFirewall${kind}Filter`, "g")) ?? [];
 		assert.equal(calls.length, 1, kind);
-		assert.match(calls[0]!, /\$er \| Get-/, `${kind} is piped the rules`);
+		assert.match(calls[0]!, /\$fr \| Get-/, `${kind} is piped the rules`);
 	}
 	assert.match(WINDOWS_SCRIPT, /\$er = @\(Get-NetFirewallRule -Direction Inbound -Enabled True\)/, "the rules are asked for once, enabled and inbound");
 	assert.match(WINDOWS_SCRIPT, /foreach \(\$r in \$er\)/, "and the same rules are walked");
-	assert.match(WINDOWS_SCRIPT, /\$er\.Count -gt 0/, "no rule: no pipeline (the bare call would be the refusal)");
+	assert.match(WINDOWS_SCRIPT, /\$fr = @\(\$er \| Where-Object \{ -not \$_\.Owner -and -not \$_\.PackageFamilyName \}\)/, "a packaged app's rules are not piped");
+	assert.equal((WINDOWS_SCRIPT.match(/\$fr\.Count -gt 0/g) ?? []).length, 3, "no rule: no pipeline (the bare call would be the refusal)");
 	assert.match(WINDOWS_SCRIPT, /owner = \[string\]\$r\.Owner/);
 	assert.match(WINDOWS_SCRIPT, /family = \[string\]\$r\.PackageFamilyName/);
 });
